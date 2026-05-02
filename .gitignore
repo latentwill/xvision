@@ -38,3 +38,7 @@ checkpoints/
 .vscode/
 .idea/
 *.swp
+
+# Rust
+target/
+**/*.rs.bk
