@@ -28,14 +28,19 @@ xianvec/
 │   └── risk.yaml
 ├── data/                       # gitignored, runtime data
 ├── vectors/                    # gitignored, saved .pt files
+├── identity/                   # ERC-8004 agentURI manifests + minted NFT IDs (committed)
+│   ├── vectors_on.json         # agentURI manifest for the vectors-ON arm
+│   ├── vectors_off.json        # agentURI manifest for the vectors-OFF arm
+│   └── registered.json         # NFT IDs returned by the Identity Registry mint
+├── .claude/skills/mantle/      # vendored mantle-skills submodule (Phase 0.4)
 ├── src/xianvec/
 │   ├── __init__.py
 │   ├── config.py               # config loading + validation
 │   ├── schemas.py              # Pydantic stage handoff models
 │   ├── data/
-│   │   ├── alpaca.py
+│   │   ├── alpaca.py           # OHLCV via Alpaca (also used by Alpaca paper executor)
 │   │   ├── nansen.py
-│   │   ├── exchange.py
+│   │   ├── exchange.py         # funding rate / open interest via ccxt
 │   │   ├── indicators.py
 │   │   └── store.py            # SQLite persistence
 │   ├── intern/                 # Stage 1 — neutral evidence prep
@@ -51,8 +56,13 @@ xianvec/
 │   ├── risk/
 │   │   └── rules.py
 │   ├── execution/
-│   │   ├── alpaca.py           # live Alpaca paper
+│   │   ├── alpaca.py           # Alpaca paper executor (pre-launch testing path, Phase 6.2)
+│   │   ├── byreal.py           # Byreal Perps executor on Mantle (hackathon path, Phase 6.3)
 │   │   └── simulator.py        # backtest sim
+│   ├── onchain/                # Mantle integration (Phase 6.5 + 11)
+│   │   ├── erc8004.py          # Identity + Reputation registry calls (web3)
+│   │   ├── decision_log.py     # on-chain reputation post per closed trade
+│   │   └── manifest.py         # build/validate agentURI JSON
 │   ├── pipeline/
 │   │   └── trade.py            # full pipeline orchestration
 │   ├── baselines/
@@ -80,7 +90,10 @@ xianvec/
 └── scripts/
     ├── extract_vectors.py
     ├── run_backtest.py
-    ├── run_paper.py
+    ├── run_ab_compare.py
+    ├── run_paper.py            # Alpaca paper forward runner (Phase 11.1)
+    ├── register_agents.py      # mint ERC-8004 NFTs (one-shot, Phase 6.5)
+    ├── run_mantle_forward.py   # Byreal forward runner + on-chain logging (Phase 11.5)
     └── compare_runs.py
 ```
 
@@ -114,6 +127,78 @@ A pre-build review surfaced ten structural issues that would have suppressed the
 - Walk-forward `train` slice is generated but unused — either delete the parameter or actually select per-fold regime weights from train Sharpe. v1 takes the delete path; document it. *(Phase 8.4)*
 - 50 contrastive pairs/axis is at the low end for a 14B model; bump to 200. *(Phase 4.1)*
 - Δ-Sharpe is the only inferential test; secondary metrics (MDD, PF, WR) are descriptive and not multiple-comparisons-corrected. State this in the report. *(Phase 10.2)*
+
+---
+
+## Mantle hackathon integration (mandatory)
+
+The Turing Test hackathon runs on Mantle. Five integrations move from "v2 deferred" to "v1 required" because the competition format demands them. Adding these *before* Phase 9's A/B run produces a meaningfully better artifact: the experimental claim becomes trustless and publicly verifiable, not just a SQLite table that lives on Edward's laptop.
+
+**Two execution paths run side by side:**
+- **Alpaca paper** — pre-launch *testing* path. Verifies Stage 1→2→3 plumbing, pipeline determinism, risk layer behaviour against a battle-tested broker simulator before any on-chain capital is touched. Required.
+- **Byreal Perps on Mantle** — *hackathon submission* path. Real on-chain execution; this is what the Turing Test judges will see.
+
+The capital bridge (`@mantleio/sdk`) is **explicitly out of scope** — funds are pre-funded on Mantle by the user before any forward run. The agent only ever sees on-Mantle balances; it never bridges anything itself.
+
+### M1. ERC-8004 identity registration (per arm)
+
+Each experimental arm gets its own identity NFT. The vectors-OFF arm registers as one agent, vectors-ON registers as a second agent, and they post performance updates to the same reputation registry — the comparison becomes an on-chain experiment, not a private claim.
+
+- Two `agentURI` manifests live in `identity/` (JSON metadata: model, vector config, code commit, contact). Pin to IPFS or HTTPS.
+- Mint via the Identity Registry contract (Mantle mainnet).
+- After every closed trade *on Byreal*, post a reputation update keyed by setup_id and outcome (PnL + Δ-Sharpe rolling). Alpaca paper trades stay off-chain.
+- Both NFTs and reputation history become demo evidence — judges can independently verify the Δ-Sharpe claim.
+
+Implemented in the new **Phase 6.5** below. Must be in place before any forward Byreal run.
+
+### M2. Byreal Perps added as the on-chain execution path
+
+`@byreal-io/byreal-cli` (npm) exposes agent skills for perpetual futures, swaps, and LP yield on Mantle. Stage 3 gets a *second* executor alongside the Alpaca paper executor — same `RiskDecision → Stage 3` contract, different downstream tool. A `--executor {alpaca,byreal}` flag selects between them at runtime.
+
+The thin wrapper at `src/xianvec/execution/byreal.py` shells out to `npx byreal-cli` and parses its JSON outputs. Python is the orchestrator; Node is a runtime dep (document in README).
+
+Implemented in **Phase 6.3** (new task, parallel to Phase 6.2 Alpaca).
+
+### M3. On-chain decision logging
+
+Every Stage-1 → Stage-2 → Stage-3 cycle that completes a trade *on Byreal* emits a reputation-registry post tagged with the agent NFT, the setup_id, the action signature, and the realized PnL. This is the on-chain mirror of `data/decisions.db`. SQLite remains for fast local replay; the on-chain log is the authoritative public record. Alpaca paper trades persist locally only.
+
+Implemented in **Phase 11.5** (forward Mantle runner) below.
+
+### M4. xStocks added to the asset whitelist
+
+Mantle's tokenized equities (Fluxion / xStocks, launched April 2026) trade 24/7 on-chain. The Intern → Trader pipeline is asset-agnostic; the only changes needed are (a) updating `config/whitelist.yaml` to include the xStock symbols xianvec will trade, (b) confirming Byreal CLI exposes them under the same skill surface as crypto perps, (c) adjusting the correlation-cluster map in `config/risk.yaml`.
+
+Implemented as a config-only change in **Phase 1** + a smoke test in Phase 11.5.
+
+### M5. mantle-skills (filesystem skill catalog)
+
+`github.com/mantle-xyz/mantle-skills` is a curated set of Mantle-focused agent skills (network primer, address registry navigator, on-chain risk evaluator, portfolio analyst, defi operator, tx simulator, openclaw competition, etc.). They are filesystem skills — `SKILL.md` + `references/` + `assets/` — designed to be loaded into an LLM's context to ground reasoning about Mantle.
+
+**Why this matters for xianvec:** the Stage 1 Intern (Claude) is the component that consults external context. Loading mantle-skills into Claude's project context means:
+
+- `mantle-network-primer` — Claude reasons about MNT gas, chain IDs, finality semantics correctly without us hand-prompting them.
+- `mantle-address-registry-navigator` — when xianvec needs ERC-8004 registry addresses or Byreal contract addresses, the skill resolves them from a verified source rather than us hardcoding addresses that could drift.
+- `mantle-risk-evaluator` — provides a *second* risk gate (LLM-mediated, Mantle-specific) on top of xianvec's deterministic risk layer (Phase 5). Pass / warn / block verdicts on state-changing intents catch failure modes the deterministic rules miss (e.g., "this position would interact with an unverified contract").
+- `mantle-tx-simulator` — pre-flight check before submitting Byreal txns. Cheap insurance.
+- `mantle-portfolio-analyst` — sanity check on-chain balances before each forward run.
+- `mantle-openclaw-competition` — likely contains hackathon-specific guidance worth reading at submission time.
+
+xianvec's deterministic risk layer stays in place — it is the load-bearing safety net. mantle-skills is additive: an LLM-mediated second gate that benefits from Mantle-specific context the deterministic rules don't have.
+
+Vendored as a git submodule under `.claude/skills/mantle/`. Implemented in **Phase 0.4** (vendor) and consumed by Stage 1 Intern config + Phase 11.5 forward runner. See **Phase 11.6** for the mantle-risk-evaluator integration as the on-chain pre-flight gate.
+
+### Priority sequencing for the hackathon
+
+1. **Phase 0–8** as planned (the structural-review fixes are independent of Mantle).
+   - `Phase 0.4` slots in here: vendor mantle-skills early so Claude has Mantle context for any Mantle-touching task.
+2. **Phase 6.5** ERC-8004 identity + reputation registry — must precede any forward Byreal run. Can develop in parallel with Phase 6.3.
+3. **Phase 6.3** Byreal executor — added alongside Phase 6.2 Alpaca, not replacing it.
+4. **Phase 9** runs unchanged: it's a backtest, no on-chain dependency. The result feeds the demo.
+5. **Phase 11.1** Alpaca paper forward run — first; validates the Stage 1→2→3 path against a battle-tested broker before any on-chain capital moves.
+6. **Phase 11.5** Byreal forward run on Mantle — second; small N (5–20 paired live trades) is enough for the on-chain proof. The headline statistical claim still rides on Phase 9's backtest.
+7. **Phase 11.6** mantle-risk-evaluator pre-flight — required between Stage 2's risk-approved decision and Byreal submission. Logs verdict; abort on `block`.
+8. **Phase 12** acceptance criteria gain Mantle items (NFTs minted, mantle-skills loaded, ≥1 Alpaca paper trade, ≥1 Byreal trade closed, ≥1 reputation post per arm, ≥1 xStock in whitelist).
 
 ---
 
@@ -154,10 +239,12 @@ dependencies = [
   "numpy>=1.26",
   "scipy>=1.12",
   "pandas-ta>=0.3.14b0",
-  "alpaca-py>=0.21",
   "anthropic>=0.34",
   "httpx>=0.27",
-  "ccxt>=4.3",
+  "ccxt>=4.3",                  # OHLCV + funding rate (free public endpoints)
+  "alpaca-py>=0.21",            # paper-trading testing path (pre-Mantle smoke)
+  "web3>=7.0",                  # ERC-8004 identity + reputation registry calls
+  "eth-account>=0.13",          # signing for Mantle txns
   "python-telegram-bot>=21",
   "matplotlib>=3.8",
   "seaborn>=0.13",
@@ -215,14 +302,31 @@ vectors/*.pt
 - [ ] **Step 4: Write .env.example**
 
 ```
+# LLM (Stage 1 Intern)
 ANTHROPIC_API_KEY=sk-ant-...
+
+# Alpaca paper (Phase 6.2 / 11.1 — pre-launch testing path)
 ALPACA_API_KEY=...
 ALPACA_API_SECRET=...
 ALPACA_PAPER=true
+
+# Onchain signals
 NANSEN_API_KEY=...
+
+# Demo
 TELEGRAM_BOT_TOKEN=...
 TELEGRAM_CHAT_ID=...
+
+# Mantle / hackathon (Phase 6.3 / 6.5 / 11.5)
+MANTLE_RPC_URL=https://rpc.mantle.xyz
+MANTLE_CHAIN_ID=5000
+MANTLE_AGENT_PRIVATE_KEY=0x...        # signs ERC-8004 + Byreal txns; pre-funded with MNT
+ERC8004_IDENTITY_REGISTRY=0x...       # populated by `mantle-address-registry-navigator`
+ERC8004_REPUTATION_REGISTRY=0x...
+BYREAL_API_BASE=https://api.byreal.io  # if needed by byreal-cli
 ```
+
+**Node.js prerequisite:** `byreal-cli` is an npm package. Install Node 20+ and verify `npx --version` works before Phase 6.3.
 
 - [ ] **Step 5: Create venv and install**
 
@@ -429,6 +533,66 @@ git commit -m "feat(spike): validate control vectors steer Qwen3-14B"
 
 ---
 
+### Task 0.4: Vendor mantle-skills as a submodule
+
+**Why:** `github.com/mantle-xyz/mantle-skills` is a curated catalog of Mantle-focused agent skills (network primer, address registry, on-chain risk evaluator, defi operator, tx simulator, portfolio analyst, openclaw competition, etc.). They are filesystem skills (`SKILL.md` + `references/` + `assets/`) loaded into an LLM's context to ground reasoning about Mantle. xianvec consumes them at the Stage 1 Intern level (Claude) and at Phase 11.6 (mantle-risk-evaluator pre-flight gate). See Mantle integration §M5.
+
+Vendor as a submodule so xianvec's commits pin a specific upstream revision — Mantle ships changes regularly and we don't want a hackathon-week regression from upstream drift.
+
+**Files:**
+- Add: `.gitmodules` entry
+- Add: `.claude/skills/mantle/` (submodule pointing at upstream)
+- Add: `.claude/settings.json` snippet enabling the skill on this project (Cowork / Claude Code)
+
+- [ ] **Step 1: Add submodule**
+
+```bash
+mkdir -p .claude/skills
+git submodule add https://github.com/mantle-xyz/mantle-skills.git .claude/skills/mantle
+git -C .claude/skills/mantle log -1 --oneline   # verify pin
+```
+
+- [ ] **Step 2: Verify the catalog is reachable**
+
+```bash
+ls .claude/skills/mantle/skills/
+# expect: mantle-network-primer, mantle-address-registry-navigator, mantle-risk-evaluator,
+#         mantle-portfolio-analyst, mantle-defi-operator, mantle-tx-simulator,
+#         mantle-data-indexer, mantle-readonly-debugger, mantle-smart-contract-developer,
+#         mantle-smart-contract-deployer, mantle-openclaw-competition
+```
+
+- [ ] **Step 3: Document which skills xianvec actually loads**
+
+Create `decisions/0004-mantle-skills.md`:
+
+```markdown
+# Mantle skills used by xianvec
+
+Loaded at Stage 1 Intern (Claude project context):
+- mantle-network-primer       — chain IDs, MNT gas, finality semantics
+- mantle-address-registry-navigator — resolves verified contract addresses (ERC-8004 registries, Byreal contracts)
+- mantle-portfolio-analyst    — pre-flight balance/allowance checks before forward runs
+- mantle-openclaw-competition — hackathon-specific guidance (read at submission time)
+
+Invoked by Phase 11.6 forward-runner gate:
+- mantle-risk-evaluator       — pass/warn/block verdict on each Byreal-bound decision (LLM-mediated, additive to xianvec's deterministic risk layer)
+- mantle-tx-simulator         — pre-flight simulation of the Byreal txn before submission
+
+Not used in v1 (deferred):
+- mantle-data-indexer, mantle-readonly-debugger — useful for triage; not in critical path
+- mantle-smart-contract-developer/deployer — xianvec doesn't ship contracts; uses Byreal/ERC-8004 only
+```
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add .gitmodules .claude/skills/mantle decisions/0004-mantle-skills.md
+git commit -m "feat: vendor mantle-skills as submodule + document which skills xianvec uses"
+```
+
+---
+
 ## Phase 1 — Schemas, config, persistence
 
 ### Task 1.1: Pydantic schemas for stage handoffs
@@ -611,10 +775,36 @@ eval:
 
 ```yaml
 # config/whitelist.yaml
+# Two execution venues are supported: alpaca (paper testing) and byreal (Mantle).
+# Symbols listed here are the *internal* names; per-venue mapping happens in code.
 assets:
+  # Crypto perps — supported on both venues
   - BTC-USD
   - ETH-USD
   - SOL-USD
+  # xStocks (Mantle/Byreal only — confirm exact symbols against Byreal's listing
+  # on submission; the names below are illustrative and need verification before
+  # the forward run).
+  - AAPLx-USD
+  - TSLAx-USD
+  - SPYx-USD
+
+# Per-venue symbol overrides. Code in execution/byreal.py and execution/alpaca.py
+# uses these to map internal names to the venue-native symbol. Anything missing
+# from a venue's map cannot be traded on that venue.
+venues:
+  alpaca:
+    BTC-USD: "BTC/USD"
+    ETH-USD: "ETH/USD"
+    SOL-USD: "SOL/USD"
+    # xStocks: NOT supported on Alpaca — these will be skipped if executor=alpaca
+  byreal:
+    BTC-USD: "BTC-PERP"
+    ETH-USD: "ETH-PERP"
+    SOL-USD: "SOL-PERP"
+    AAPLx-USD: "AAPLx-PERP"   # confirm
+    TSLAx-USD: "TSLAx-PERP"   # confirm
+    SPYx-USD: "SPYx-PERP"     # confirm
 ```
 
 ```yaml
@@ -651,6 +841,7 @@ correlation_clusters:
   btc: [BTC-USD]
   eth: [ETH-USD]
   sol: [SOL-USD]
+  equities: [AAPLx-USD, TSLAx-USD, SPYx-USD]   # xStocks share macro/index correlation
 max_per_cluster: 2
 require_stop_loss: true
 ```
@@ -2669,6 +2860,428 @@ Expected: portfolio dict with NAV ~ $100k (default Alpaca paper).
 ```bash
 git add src/xianvec/execution/alpaca.py
 git commit -m "feat(execution): alpaca paper trading executor"
+```
+
+---
+
+### Task 6.3: Byreal Perps executor (Mantle, hackathon path)
+
+**Why:** Phase 6.2 produces an Alpaca paper executor — the testing path. The hackathon submission requires real on-chain execution on Mantle via Byreal Perps. We add a *second* executor that conforms to the same protocol so the forward runner can swap between them via a `--executor {alpaca,byreal}` flag.
+
+`@byreal-io/byreal-cli` is an npm package. Python orchestrates by shelling out to `npx byreal-cli` and parsing JSON output. Node 20+ is a runtime prerequisite (verified in Phase 0.1 env-setup notes).
+
+**Files:**
+- Create: `src/xianvec/execution/byreal.py`
+- Test: `tests/integration/test_byreal_smoke.py` (network-touching; behind a flag)
+
+- [ ] **Step 1: Define the shared Executor protocol**
+
+Both Alpaca and Byreal executors must satisfy this shape so the forward runner is executor-agnostic:
+
+```python
+# src/xianvec/execution/protocol.py
+from typing import Protocol
+from xianvec.schemas import TraderDecision
+
+class Executor(Protocol):
+    def execute(self, d: TraderDecision, asset: str, nav: float) -> dict: ...
+    def get_portfolio(self) -> dict: ...
+    def close_position(self, asset: str) -> dict: ...
+```
+
+Update `AlpacaExecutor` (Phase 6.2) and the new `ByrealExecutor` to both type-implement this Protocol.
+
+- [ ] **Step 2: Implement ByrealExecutor**
+
+```python
+# src/xianvec/execution/byreal.py
+"""Byreal Perps executor on Mantle. Shells out to `npx byreal-cli`.
+
+The CLI's exact flag set should be confirmed against the version of
+`@byreal-io/byreal-cli` resolved at install time (`npx byreal-cli --help`).
+The shape below reflects the documented agent-skills surface as of 2026-04;
+adjust if upstream rev's changed.
+"""
+import json
+import os
+import subprocess
+from pathlib import Path
+from xianvec.schemas import TraderDecision
+
+class ByrealCLIError(RuntimeError):
+    pass
+
+class ByrealExecutor:
+    def __init__(self, private_key: str | None = None,
+                 rpc_url: str | None = None,
+                 cli_command: str = "npx byreal-cli"):
+        self.private_key = private_key or os.environ["MANTLE_AGENT_PRIVATE_KEY"]
+        self.rpc_url = rpc_url or os.environ.get("MANTLE_RPC_URL", "https://rpc.mantle.xyz")
+        self.cli_command = cli_command
+
+    def _call(self, *args, capture_json: bool = True) -> dict | str:
+        env = {**os.environ,
+               "BYREAL_PRIVATE_KEY": self.private_key,
+               "MANTLE_RPC_URL": self.rpc_url}
+        cmd = self.cli_command.split() + list(args) + ["--json"]
+        proc = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=60)
+        if proc.returncode != 0:
+            raise ByrealCLIError(f"byreal-cli failed: {proc.stderr.strip()[:200]}")
+        out = proc.stdout.strip()
+        return json.loads(out) if capture_json else out
+
+    def execute(self, d: TraderDecision, asset: str, nav: float) -> dict:
+        if d.action == "flat":
+            return {"status": "noop", "reason": "flat"}
+        if d.action == "close":
+            return self.close_position(asset)
+        side = "long" if d.direction == "long" else "short"
+        notional = nav * (d.size_bps / 10000)
+        # bracket: open with stop-loss + take-profit set in the same call
+        result = self._call(
+            "perp", "open",
+            "--asset", asset,
+            "--notional", f"{notional:.2f}",
+            "--side", side,
+            "--stop-loss-pct", f"{d.stop_loss_pct:.2f}",
+            "--take-profit-pct", f"{(d.take_profit_pct or 0):.2f}",
+            "--client-order-id", d.setup_id,
+        )
+        return {
+            "status": "submitted",
+            "asset": asset,
+            "tx_hash": result.get("txHash"),
+            "position_id": result.get("positionId"),
+            "client_order_id": d.setup_id,
+        }
+
+    def close_position(self, asset: str) -> dict:
+        result = self._call("perp", "close", "--asset", asset)
+        return {"status": "closed", "asset": asset, "tx_hash": result.get("txHash")}
+
+    def get_portfolio(self) -> dict:
+        result = self._call("portfolio")
+        # normalize to the shape RiskEvaluator + agent expect
+        return {
+            "nav": float(result.get("equity_usd", 0.0)),
+            "cash": float(result.get("free_collateral_usd", 0.0)),
+            "open_positions": [
+                {"asset": p["asset"], "qty": float(p["size"]),
+                 "unrealized_pl": float(p.get("unrealized_pnl_usd", 0.0))}
+                for p in result.get("positions", [])
+            ],
+            "daily_pnl_pct": float(result.get("daily_pnl_pct", 0.0)),
+        }
+```
+
+- [ ] **Step 3: Smoke test against Mantle (read-only first)**
+
+```bash
+python -c "
+from xianvec.execution.byreal import ByrealExecutor
+ex = ByrealExecutor()
+print(ex.get_portfolio())
+"
+```
+
+Expected: portfolio dict with the pre-funded MNT/USDC balances on the user's Mantle wallet. **No write-side smoke** at this step — write tests happen in Phase 11.5 once ERC-8004 identity + the reputation log are in place.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add src/xianvec/execution/byreal.py src/xianvec/execution/protocol.py
+git commit -m "feat(execution): byreal perps executor on mantle (cli wrapper)"
+```
+
+---
+
+## Phase 6.5 — ERC-8004 identity registration + reputation registry
+
+**Why:** The Turing Test hackathon issues each participating agent an ERC-8004 identity NFT on Mantle. xianvec mints **two**: one for the vectors-OFF arm, one for the vectors-ON arm. They post performance updates to the same reputation registry, so the Δ-Sharpe comparison becomes a publicly auditable on-chain experiment, not a private claim. See Mantle integration §M1.
+
+This phase produces:
+- Two `agentURI` JSON manifests under `identity/`
+- A `register_agents.py` script that mints the NFTs (one-shot)
+- The `decision_log.py` module that posts reputation-registry updates
+
+### Task 6.5.1: Author the agentURI manifests
+
+**Files:**
+- Create: `identity/vectors_on.json`
+- Create: `identity/vectors_off.json`
+- Create: `src/xianvec/onchain/manifest.py`
+
+- [ ] **Step 1: Write per-arm manifests**
+
+```json
+// identity/vectors_off.json
+{
+  "schemaVersion": "1.0",
+  "name": "xianvec-vectors-off",
+  "description": "Trading agent: same Stage 1 (Claude) + Stage 2 (Qwen3-14B Q4_K_M) pipeline as xianvec-vectors-on, but with disposition control vectors disabled. The experimental control in xianvec's Δ-Sharpe A/B comparison.",
+  "model": {
+    "stage1": "claude-haiku-4-5",
+    "stage2": "Qwen/Qwen3-14B (Q4_K_M GGUF)",
+    "vectors_enabled": false
+  },
+  "code": {
+    "repo": "https://github.com/latentwill/xianvec",
+    "commit": "<filled in by register_agents.py>"
+  },
+  "contact": "edkenne@gmail.com"
+}
+```
+
+```json
+// identity/vectors_on.json
+{
+  "schemaVersion": "1.0",
+  "name": "xianvec-vectors-on",
+  "description": "Trading agent with disposition control vectors active across four axes: conviction, patience, risk_appetite, trend_disposition. Vectors extracted via repeng on synthetic contrastive trader prompts and applied at inference time via llama.cpp's native control_vectors API.",
+  "model": {
+    "stage1": "claude-haiku-4-5",
+    "stage2": "Qwen/Qwen3-14B (Q4_K_M GGUF)",
+    "vectors_enabled": true,
+    "axes": ["conviction", "patience", "risk_appetite", "trend_disposition"]
+  },
+  "code": {
+    "repo": "https://github.com/latentwill/xianvec",
+    "commit": "<filled in by register_agents.py>"
+  },
+  "contact": "edkenne@gmail.com"
+}
+```
+
+- [ ] **Step 2: Manifest builder + IPFS pinning helper**
+
+```python
+# src/xianvec/onchain/manifest.py
+"""Build, validate, and pin agentURI manifests for ERC-8004 registration."""
+import json
+import subprocess
+from pathlib import Path
+
+REQUIRED_FIELDS = {"schemaVersion", "name", "description", "model", "code", "contact"}
+
+def load_and_fill(path: str | Path, commit_sha: str) -> dict:
+    data = json.loads(Path(path).read_text())
+    missing = REQUIRED_FIELDS - set(data.keys())
+    if missing:
+        raise ValueError(f"manifest missing fields: {missing}")
+    data["code"]["commit"] = commit_sha
+    return data
+
+def pin_to_ipfs(manifest: dict) -> str:
+    """Pin via local ipfs CLI (`ipfs add`). Returns ipfs:// URI.
+
+    Hackathon shortcut: if ipfs CLI not available, fall back to writing the
+    manifest under a public HTTPS path (e.g., pinning service or commit it to
+    the public xianvec repo and use the GitHub raw URL as agentURI).
+    """
+    raw = json.dumps(manifest, indent=2).encode("utf-8")
+    try:
+        proc = subprocess.run(["ipfs", "add", "-Q", "--pin"],
+                              input=raw, capture_output=True, check=True)
+        cid = proc.stdout.decode().strip()
+        return f"ipfs://{cid}"
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        # fallback path: caller pins via repo URL
+        raise RuntimeError("ipfs CLI unavailable — pin manually and pass URI explicitly")
+```
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add identity/ src/xianvec/onchain/manifest.py
+git commit -m "feat(onchain): per-arm agentURI manifests for ERC-8004 registration"
+```
+
+---
+
+### Task 6.5.2: ERC-8004 registry client + register_agents.py
+
+**Files:**
+- Create: `src/xianvec/onchain/erc8004.py`
+- Create: `scripts/register_agents.py`
+
+- [ ] **Step 1: Implement registry client**
+
+```python
+# src/xianvec/onchain/erc8004.py
+"""ERC-8004 Identity + Reputation registry client (Mantle).
+
+Verified contract addresses are resolved at runtime via the
+`mantle-address-registry-navigator` skill (Phase 0.4) so we never hardcode
+addresses that could drift. For the v1 build, addresses are read from env
+vars (`ERC8004_IDENTITY_REGISTRY`, `ERC8004_REPUTATION_REGISTRY`); the
+register_agents.py script populates them by querying the registry navigator
+and writes them into `.env` for subsequent runs.
+"""
+import os
+import json
+from pathlib import Path
+from web3 import Web3
+from eth_account import Account
+
+# Minimal ABIs — verify against deployed contracts via the mantle-address-registry-navigator
+IDENTITY_ABI = json.loads(Path(__file__).parent.joinpath("erc8004_identity.abi.json").read_text())
+REPUTATION_ABI = json.loads(Path(__file__).parent.joinpath("erc8004_reputation.abi.json").read_text())
+
+class ERC8004Client:
+    def __init__(self, rpc_url: str | None = None, private_key: str | None = None):
+        self.w3 = Web3(Web3.HTTPProvider(rpc_url or os.environ["MANTLE_RPC_URL"]))
+        self.account = Account.from_key(private_key or os.environ["MANTLE_AGENT_PRIVATE_KEY"])
+        self.identity = self.w3.eth.contract(
+            address=os.environ["ERC8004_IDENTITY_REGISTRY"], abi=IDENTITY_ABI,
+        )
+        self.reputation = self.w3.eth.contract(
+            address=os.environ["ERC8004_REPUTATION_REGISTRY"], abi=REPUTATION_ABI,
+        )
+
+    def mint_identity(self, agent_uri: str) -> dict:
+        """Mint a new agent NFT pointing at agent_uri. Returns {token_id, tx_hash}."""
+        tx = self.identity.functions.mint(self.account.address, agent_uri).build_transaction({
+            "from": self.account.address,
+            "nonce": self.w3.eth.get_transaction_count(self.account.address),
+            "gas": 300_000,
+            "gasPrice": self.w3.eth.gas_price,
+        })
+        signed = self.account.sign_transaction(tx)
+        tx_hash = self.w3.eth.send_raw_transaction(signed.rawTransaction)
+        receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+        token_id = int(receipt.logs[0].topics[3].hex(), 16)
+        return {"token_id": token_id, "tx_hash": tx_hash.hex()}
+
+    def post_reputation(self, token_id: int, score_payload: dict) -> str:
+        """Post a reputation update for the given agent NFT.
+
+        score_payload is JSON-serialized + uploaded to IPFS or written to a
+        cheap on-chain field; this keeps gas bounded while preserving rich
+        per-trade detail (setup_id, action, pnl, rolling Δ-Sharpe).
+        """
+        payload = json.dumps(score_payload, separators=(",", ":")).encode("utf-8")
+        tx = self.reputation.functions.post(token_id, payload).build_transaction({
+            "from": self.account.address,
+            "nonce": self.w3.eth.get_transaction_count(self.account.address),
+            "gas": 250_000,
+            "gasPrice": self.w3.eth.gas_price,
+        })
+        signed = self.account.sign_transaction(tx)
+        tx_hash = self.w3.eth.send_raw_transaction(signed.rawTransaction)
+        self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+        return tx_hash.hex()
+```
+
+The two `*.abi.json` files are produced by querying the on-chain ABI of the deployed Identity / Reputation registries — fetch them via `cast interface <addr>` or by reading the verified-contract page on Mantle's block explorer. Cache locally; don't re-fetch on every run.
+
+- [ ] **Step 2: register_agents.py — one-shot mint script**
+
+```python
+# scripts/register_agents.py
+"""Mint ERC-8004 identity NFTs for both arms (vectors-on, vectors-off).
+
+Idempotent: reads `identity/registered.json` and skips arms that already have
+a token_id. Run once at hackathon start; commit `identity/registered.json`
+afterward so the forward runner can find the NFTs.
+"""
+import json
+import subprocess
+from pathlib import Path
+import typer
+from xianvec.onchain.manifest import load_and_fill, pin_to_ipfs
+from xianvec.onchain.erc8004 import ERC8004Client
+
+REGISTERED_PATH = Path("identity/registered.json")
+
+def main():
+    commit = subprocess.check_output(["git", "rev-parse", "HEAD"]).decode().strip()
+    registered = json.loads(REGISTERED_PATH.read_text()) if REGISTERED_PATH.exists() else {}
+    client = ERC8004Client()
+
+    for arm in ["vectors_off", "vectors_on"]:
+        if arm in registered and registered[arm].get("token_id"):
+            print(f"{arm} already registered: token_id={registered[arm]['token_id']}")
+            continue
+        manifest = load_and_fill(f"identity/{arm}.json", commit_sha=commit)
+        agent_uri = pin_to_ipfs(manifest)
+        result = client.mint_identity(agent_uri=agent_uri)
+        registered[arm] = {
+            "token_id": result["token_id"],
+            "agent_uri": agent_uri,
+            "tx_hash": result["tx_hash"],
+            "commit_sha": commit,
+        }
+        print(f"minted {arm}: token_id={result['token_id']}  uri={agent_uri}")
+
+    REGISTERED_PATH.write_text(json.dumps(registered, indent=2))
+    print(f"\nWrote {REGISTERED_PATH}")
+
+if __name__ == "__main__":
+    typer.run(main)
+```
+
+- [ ] **Step 3: Run the mint**
+
+```bash
+python scripts/register_agents.py
+```
+
+Expected: two transactions on Mantle, two token_ids saved in `identity/registered.json`. Verify the txs on Mantle's block explorer.
+
+- [ ] **Step 4: Commit (registered.json IS committed — it's the public proof)**
+
+```bash
+git add scripts/register_agents.py src/xianvec/onchain/erc8004.py \
+        src/xianvec/onchain/erc8004_identity.abi.json \
+        src/xianvec/onchain/erc8004_reputation.abi.json \
+        identity/registered.json
+git commit -m "feat(onchain): mint ERC-8004 identity NFTs for both arms"
+```
+
+---
+
+### Task 6.5.3: Reputation log helper
+
+**Files:**
+- Create: `src/xianvec/onchain/decision_log.py`
+- Test: `tests/unit/test_decision_log.py`
+
+- [ ] **Step 1: Decision-log facade**
+
+```python
+# src/xianvec/onchain/decision_log.py
+"""Posts reputation-registry updates after each closed Byreal trade.
+
+Backtest decisions are NEVER logged on-chain — only forward live trades, to
+keep the chain log honest. Alpaca paper trades also stay off-chain.
+"""
+import json
+from pathlib import Path
+from xianvec.onchain.erc8004 import ERC8004Client
+
+class DecisionLog:
+    def __init__(self, client: ERC8004Client | None = None,
+                 registered_path: str = "identity/registered.json"):
+        self.client = client or ERC8004Client()
+        self.registered = json.loads(Path(registered_path).read_text())
+
+    def post_trade(self, arm: str, setup_id: str, action: str, direction: str,
+                   size_bps: int, pnl: float, rolling_sharpe: float | None = None) -> str:
+        token_id = self.registered[arm]["token_id"]
+        payload = {
+            "setup_id": setup_id, "action": action, "direction": direction,
+            "size_bps": size_bps, "pnl": pnl,
+        }
+        if rolling_sharpe is not None:
+            payload["rolling_sharpe"] = rolling_sharpe
+        return self.client.post_reputation(token_id=token_id, score_payload=payload)
+```
+
+- [ ] **Step 2: Commit**
+
+```bash
+git add src/xianvec/onchain/decision_log.py tests/unit/test_decision_log.py
+git commit -m "feat(onchain): reputation-log helper for forward Byreal trades"
 ```
 
 ---
@@ -4740,6 +5353,247 @@ git commit -m "feat(data): nansen smart-money client and live onchain wiring"
 
 ---
 
+### Task 11.5: Mantle/Byreal forward runner with on-chain reputation logging
+
+**Why:** Phase 11.1 (Alpaca paper) is the pre-launch sanity-check path. This task adds the *hackathon submission* path: real execution on Mantle via Byreal Perps, with each closed trade posting a reputation-registry update to the corresponding ERC-8004 NFT. Capital is pre-funded; the agent never bridges. See Mantle integration §M2/M3.
+
+**Files:**
+- Create: `scripts/run_mantle_forward.py`
+
+**Pre-flight requirements:**
+- Phase 6.3 ByrealExecutor implemented and read-side smoke-tested.
+- Phase 6.5 NFTs minted; `identity/registered.json` committed.
+- Phase 11.6 mantle-risk-evaluator gate implemented (this script invokes it).
+
+- [ ] **Step 1: Implement runner**
+
+```python
+# scripts/run_mantle_forward.py
+"""Forward Mantle/Byreal execution with on-chain reputation logging.
+
+Alternates vectors-ON and vectors-OFF setups for paired forward data. Each
+closed trade posts a reputation update keyed to that arm's ERC-8004 NFT.
+The mantle-risk-evaluator skill is invoked between the deterministic risk
+layer's approval and the Byreal submission as a second gate.
+"""
+import time
+import itertools
+import uuid
+import typer
+from xianvec.config import load_config
+from xianvec.intern.claude import ClaudeIntern
+from xianvec.trader.model import TraderModel
+from xianvec.trader.runtime import VectorTrader
+from xianvec.pipeline.trade import TradePipeline
+from xianvec.execution.byreal import ByrealExecutor
+from xianvec.data.alpaca import fetch_recent_bars
+from xianvec.data.indicators import compute_indicators
+from xianvec.data.store import Store
+from xianvec.schemas import MarketState
+from xianvec.onchain.decision_log import DecisionLog
+from xianvec.onchain.mantle_skills_gate import MantleRiskEvaluator  # Task 11.6
+
+DISPOSITION_AXES = ["conviction", "patience", "risk_appetite", "trend_disposition"]
+
+def main(asset: str = "BTC-USD", cadence_min: int = 15, dry_run: bool = False):
+    cfg = load_config("config/default.yaml")
+    regime_cfg = load_config("config/regime_vectors.yaml")
+    risk_cfg = load_config("config/risk.yaml")
+    store = Store("data/decisions.db"); store.init()
+
+    intern = ClaudeIntern(model=cfg["intern"]["claude_model"])
+    model = TraderModel(model_path=cfg["trader"]["model_path"])
+    executor = ByrealExecutor()
+    decision_log = DecisionLog()
+    mantle_gate = MantleRiskEvaluator()
+
+    flip = itertools.cycle([True, False])  # alternate ON/OFF for paired forward data
+
+    while True:
+        vectors_enabled = next(flip)
+        arm = "vectors_on" if vectors_enabled else "vectors_off"
+        axis_names = DISPOSITION_AXES if vectors_enabled else []
+        trader = VectorTrader(model, axis_names, vectors_enabled=vectors_enabled,
+                              backtest_mode=False)  # forward path keeps gating reload
+        pipeline = TradePipeline(intern, trader, risk_cfg, regime_cfg)
+
+        bars = fetch_recent_bars(asset, lookback=200)
+        portfolio = executor.get_portfolio()
+        state = MarketState(
+            asset=asset, timestamp=time.time(), ohlcv_recent=[],
+            indicators=compute_indicators(bars), onchain={}, portfolio=portfolio,
+        )
+        sid = f"{asset}-{int(time.time())}-{uuid.uuid4().hex[:6]}-{arm}"
+        result = pipeline.run(state, setup_id=sid)
+        store.save_briefing(result["briefing"])
+        store.save_decision(result["decision"], vectors_enabled=vectors_enabled)
+
+        if not result["risk"].approved:
+            print(f"[{sid}] vetoed (deterministic): {result['risk'].veto_reason}")
+            time.sleep(cadence_min * 60); continue
+
+        actual = result["risk"].modified or result["risk"].original
+
+        # Phase 11.6 gate: mantle-risk-evaluator pre-flight
+        verdict = mantle_gate.evaluate(actual, asset=asset, portfolio=portfolio)
+        store.save_mantle_verdict(setup_id=sid, verdict=verdict)
+        if verdict["status"] == "block":
+            print(f"[{sid}] vetoed (mantle-risk-evaluator): {verdict['reason']}")
+            time.sleep(cadence_min * 60); continue
+
+        if dry_run:
+            print(f"[{sid}] DRY RUN — would submit: {actual.action} {actual.size_bps}bps")
+            time.sleep(cadence_min * 60); continue
+
+        ack = executor.execute(actual, asset=asset, nav=portfolio["nav"])
+        print(f"[{sid}] {arm}  action={actual.action} size_bps={actual.size_bps} -> {ack}")
+
+        # On Byreal, "execute" submits an open order; the closed-trade reputation post
+        # happens via a position-monitor loop (separate concern, not in v1's hot path —
+        # for the hackathon, post on submission with placeholder pnl=0, then update on close).
+        decision_log.post_trade(
+            arm=arm, setup_id=sid, action=actual.action, direction=actual.direction,
+            size_bps=actual.size_bps, pnl=0.0,
+        )
+
+        time.sleep(cadence_min * 60)
+
+if __name__ == "__main__":
+    typer.run(main)
+```
+
+- [ ] **Step 2: Smoke run with `--dry-run` first**
+
+```bash
+python scripts/run_mantle_forward.py --asset BTC-USD --cadence-min 15 --dry-run
+```
+
+Expected: pipeline runs, deterministic risk + mantle-risk-evaluator both report verdicts, no Byreal txns submitted, reputation log not posted. Verifies the wiring before any on-chain capital moves.
+
+- [ ] **Step 3: Live run (small notional only)**
+
+Once dry-run looks clean, drop the flag and let it run. Cap initial position sizes via `config/risk.yaml`'s `max_position_size_pct` to a small number (e.g. 2%) for the first few hours.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add scripts/run_mantle_forward.py
+git commit -m "feat: mantle/byreal forward runner with on-chain reputation logging"
+```
+
+---
+
+### Task 11.6: mantle-risk-evaluator pre-flight gate
+
+**Why:** Phase 5's deterministic `RiskEvaluator` knows position sizing, exposure caps, and loss-streak cooldown. It does NOT know Mantle-specific failure modes — interacting with an unverified contract, a venue with thin liquidity, a position that conflicts with on-chain governance. The `mantle-risk-evaluator` skill from `.claude/skills/mantle/` provides a second, LLM-mediated verdict (pass / warn / block) with that Mantle context. Additive, not replacing.
+
+For v1, "invoke the skill" means: send the decision + portfolio context to a Claude API call with the skill's `SKILL.md` and relevant `references/` loaded as system prompt, parse the verdict from the response.
+
+**Files:**
+- Create: `src/xianvec/onchain/mantle_skills_gate.py`
+
+- [ ] **Step 1: Implement gate**
+
+```python
+# src/xianvec/onchain/mantle_skills_gate.py
+"""Invokes the mantle-risk-evaluator filesystem skill via the Claude API.
+
+The skill files live under .claude/skills/mantle/skills/mantle-risk-evaluator/
+(vendored in Phase 0.4). We load SKILL.md as the system prompt and forward
+the structured decision + portfolio for evaluation. The skill returns a
+verdict: "pass", "warn", or "block" with a one-line reason.
+
+This is additive to xianvec's deterministic RiskEvaluator (Phase 5). Forward
+runs invoke both gates; backtests skip this one.
+"""
+import json
+from pathlib import Path
+from anthropic import Anthropic
+from xianvec.schemas import TraderDecision
+
+SKILL_DIR = Path(".claude/skills/mantle/skills/mantle-risk-evaluator")
+
+class MantleRiskEvaluator:
+    def __init__(self, client: Anthropic | None = None,
+                 model: str = "claude-haiku-4-5"):
+        self.client = client or Anthropic()
+        self.model = model
+        self.skill_md = (SKILL_DIR / "SKILL.md").read_text()
+        # Load any small references the skill explicitly says to consult
+        ref_dir = SKILL_DIR / "references"
+        self.references = ""
+        if ref_dir.exists():
+            for f in sorted(ref_dir.glob("*.md")):
+                self.references += f"\n\n--- {f.name} ---\n{f.read_text()}"
+
+    def evaluate(self, d: TraderDecision, asset: str, portfolio: dict) -> dict:
+        system = (self.skill_md + self.references +
+                  "\n\nReply ONLY with JSON: {\"status\": \"pass\"|\"warn\"|\"block\", "
+                  "\"reason\": \"<one short line>\"}")
+        user = json.dumps({
+            "asset": asset,
+            "decision": {"action": d.action, "direction": d.direction,
+                         "size_bps": d.size_bps, "stop_loss_pct": d.stop_loss_pct,
+                         "take_profit_pct": d.take_profit_pct,
+                         "active_vectors": d.active_vectors},
+            "portfolio": portfolio,
+            "venue": "Byreal Perps on Mantle",
+        }, indent=2)
+        resp = self.client.messages.create(
+            model=self.model, max_tokens=300, temperature=0.0,
+            system=system, messages=[{"role": "user", "content": user}],
+        )
+        text = resp.content[0].text.strip()
+        if text.startswith("```"):
+            text = text.split("```", 2)[1].lstrip("json").strip()
+        verdict = json.loads(text)
+        if verdict.get("status") not in ("pass", "warn", "block"):
+            return {"status": "block", "reason": f"malformed verdict: {text[:100]}"}
+        return verdict
+```
+
+- [ ] **Step 2: Unit test (mocked Claude)**
+
+```python
+# tests/unit/test_mantle_gate.py
+from unittest.mock import MagicMock
+from xianvec.onchain.mantle_skills_gate import MantleRiskEvaluator
+from xianvec.schemas import TraderDecision
+
+def test_pass_verdict_parsed():
+    fake_resp = MagicMock()
+    fake_resp.content = [MagicMock(text='{"status": "pass", "reason": "looks ok"}')]
+    client = MagicMock()
+    client.messages.create.return_value = fake_resp
+    g = MantleRiskEvaluator(client=client)
+    d = TraderDecision(setup_id="x", action="buy", size_bps=100, direction="long",
+                       stop_loss_pct=2.0, take_profit_pct=4.0,
+                       trader_summary="t", active_vectors={})
+    out = g.evaluate(d, asset="BTC-USD", portfolio={"nav": 10000})
+    assert out["status"] == "pass"
+
+def test_block_verdict_on_malformed():
+    fake_resp = MagicMock()
+    fake_resp.content = [MagicMock(text="not json at all")]
+    client = MagicMock()
+    client.messages.create.return_value = fake_resp
+    g = MantleRiskEvaluator(client=client)
+    d = TraderDecision(setup_id="x", action="buy", size_bps=100, direction="long",
+                       stop_loss_pct=2.0, take_profit_pct=4.0,
+                       trader_summary="t", active_vectors={})
+    out = g.evaluate(d, asset="BTC-USD", portfolio={"nav": 10000})
+    assert out["status"] == "block"     # fail closed on parse errors
+```
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add src/xianvec/onchain/mantle_skills_gate.py tests/unit/test_mantle_gate.py
+git commit -m "feat(onchain): mantle-risk-evaluator pre-flight gate"
+```
+
+---
+
 ## Phase 12 — Self-review checklist
 
 Before declaring the build done for hackathon:
@@ -4768,6 +5622,19 @@ Before declaring the build done for hackathon:
 - [ ] Walk-forward fold-level Δ-Sharpe is roughly stationary (large fold-to-fold divergence = leakage signal or regime instability)
 - [ ] No secrets in code or committed config (audit with `git log -p | grep -E "sk-|api_key"`)
 
+**Mantle integration acceptance (hackathon submission):**
+
+- [ ] mantle-skills submodule pinned and reachable: `ls .claude/skills/mantle/skills/` lists all 11 skills
+- [ ] `decisions/0004-mantle-skills.md` documents which skills xianvec consumes
+- [ ] Both ERC-8004 NFTs minted; `identity/registered.json` committed; both `agentURI`s resolve to valid manifests
+- [ ] At least one Alpaca paper trade completes (Phase 11.1) — proves Stage 1→2→3 plumbing
+- [ ] At least one Byreal perp open + close completes on Mantle mainnet (Phase 11.5) — verify on block explorer
+- [ ] At least one reputation-registry post per arm (`vectors_on`, `vectors_off`) on Mantle — verify on block explorer
+- [ ] mantle-risk-evaluator gate exercised at least once with each verdict (pass / warn / block) — capture transcripts in `decisions/`
+- [ ] At least one xStock symbol attempted on Byreal (even if vetoed) — confirms whitelist + venue mapping is wired through
+- [ ] No `@mantleio/sdk` or other bridge code present in repo (`git grep mantleio`) — capital is pre-funded, not bridged by the agent
+- [ ] MNT balance + base collateral on the agent wallet documented in `identity/registered.json` for reproducibility
+
 ---
 
 ## Hackathon parallelization
@@ -4782,8 +5649,9 @@ Phase 0 → Phase 1.1 (schemas) → Phase 4 (vectors) → Phase 9 (A/B) → Phas
 - **Track B: Eval framework.** Phase 8.1 (metrics) + 8.2 (paired bootstrap) are pure stats; Haiku can implement against the test specs in this doc.
 - **Track C: Data fetchers.** Phase 11.2 (Alpaca), 11.3 (exchange), 11.4 (Nansen) are independent IO modules; one subagent can do all three.
 - **Track D: Contrastive datasets.** Phase 4.1's four JSON files (200 pairs each, post-structural-review) is content generation — Sonnet/Opus subagent producing high-quality contrastive prompts.
+- **Track E: Mantle integration.** Phase 0.4 (vendor mantle-skills), Phase 6.5 (ERC-8004 mint), and Phase 6.3 (Byreal executor) can run in parallel with the trader/eval critical path. Sonnet-class subagent for Phase 6.3 (CLI wrapper); Opus for Phase 6.5 (web3 + ABI work has more failure modes).
 
-Recommended sequence: kick off tracks A, B, C, D in parallel as soon as Phase 1 schemas are merged. They feed back into the critical path at Phase 4 (D), Phase 8 (B), Phase 9 (A), and Phase 11 (C).
+Recommended sequence: kick off tracks A, B, C, D, E in parallel as soon as Phase 1 schemas are merged. They feed back into the critical path at Phase 4 (D), Phase 8 (B), Phase 9 (A), Phase 11 (C, E).
 
 ---
 
@@ -4795,7 +5663,8 @@ The story arc that the data should tell:
 2. **The vectors-OFF baseline** (30 sec): show the agent's vectors-off Sharpe alongside textbook baselines (RSI, MA, Donchian, smart-money copy). Establish "this is a competent baseline trader."
 3. **The vectors-ON result and the experimental controls** (60 sec): show Δ-Sharpe with bootstrap CI for all four arms — `vectors_on`, `vectors_random`, `vectors_orth`, `vectors_off`. The headline is Δ-Sharpe(on − off); the credibility comes from `vectors_on` beating both random and orthogonal arms. If it doesn't beat both, the result is consistent with "any perturbation activates exploration" and the narrative is honest about that.
 4. **What the vectors did** (60 sec): show 2-3 specific setups where vectors-on and vectors-off chose different actions. Read the `trader_summary` from each. This is where the demo lives — the human-legible behavior shift.
-5. **What's next** (30 sec): SVF for context-conditional steering, Karpathy loop for self-improvement from trade outcomes, ERC-8004 for verifiable track record.
+5. **The on-chain proof** (30 sec): both arms are ERC-8004 NFTs on Mantle; every Byreal trade's reputation update is on-chain and publicly queryable. The Δ-Sharpe claim is independently verifiable — pull the reputation history for both `token_id`s and run the bootstrap yourself.
+6. **What's next** (30 sec): SVF for context-conditional steering, Karpathy loop for self-improvement from on-chain trade outcomes (the ERC-8004 reputation log becomes the training signal), expansion to multi-venue execution beyond Byreal.
 
 ---
 
