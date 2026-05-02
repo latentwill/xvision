@@ -1,0 +1,40 @@
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Data / runtime
+*.sqlite
+*.sqlite3
+*.db
+data/
+logs/
+checkpoints/
+*.gguf
+*.safetensors
+*.bin
+
+# Editor
+.vscode/
+.idea/
+*.swp
