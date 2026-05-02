@@ -6,7 +6,7 @@
 
 **Architecture:** See `architecture.md` (sibling file). Three model-bearing components, one rules-only risk layer between them. Vectors are active only in Stage 2. Pydantic schemas enforce all stage handoffs. SQLite persists every decision for replay.
 
-**Tech Stack:** Python 3.11, mlx/llama-cpp-python (local Qwen quantized inference), repeng (control vectors), Anthropic SDK (Stage 1 cloud), alpaca-py (paper trading), pandas-ta (technicals), Nansen API (onchain), pydantic v2 (schemas), pytest (tests), typer (CLI), python-telegram-bot (demo interface).
+**Tech Stack:** Python 3.11. **Inference: llama-cpp-python** (Trader, Q4_K_M GGUF, native control vector support, runs everywhere from Mac to Pi to Linux). **Extraction: repeng + transformers** (offline, on cloud GPU; produces `.pt` vectors that are converted to GGUF for runtime). `gguf-py` for the conversion bridge. Anthropic SDK for Intern (cloud option), alpaca-py for paper trading, pandas-ta for technicals, Nansen + ccxt for onchain, pydantic v2 for schemas, pytest for tests, typer for CLI, python-telegram-bot for demo interface.
 
 ---
 
@@ -86,6 +86,37 @@ xianvec/
 
 ---
 
+## Structural review (2026-05-02) — fixes baked into the tasks below
+
+A pre-build review surfaced ten structural issues that would have suppressed the magnitude or invalidated the credibility of the headline Δ-Sharpe. Every fix is folded into the relevant task in this doc; this list is the manifest so the rationale is traceable when a future reader wonders why a particular choice was made.
+
+**Tier 1 — material to Δ-Sharpe / CI / divergence credibility**
+
+1. **Intern non-determinism breaks pairing.** Per-arm Claude calls produced different briefings for the same setup. Fix: cache briefings keyed by `setup_id` and run both trader arms against the same cached briefing; set Intern `temperature=0`. *(Phase 2.2, Phase 8.3, Phase 9.2)*
+2. **Trader temperature jitter inflates noise.** `temperature=0.4` makes vectors-OFF non-deterministic, polluting both PnL variance and decision-divergence rate. Fix: greedy decoding (`temperature=0`) for both arms in the controlled backtest; sampled decoding only for forward paper. *(Phase 3.1, Phase 4.4, Phase 9.2)*
+3. **Backtest portfolio is frozen — risk layer is a no-op.** A fresh `{nav: 10000, open_positions: [], daily_pnl_pct: 0}` per setup means cluster cap, circuit breaker, max-positions, loss-streak cooldown, and vol-targeting are inert. The system measured ≠ the system shipped. Fix: stateful portfolio tracker in `iter_setups`/`run_backtest` that updates NAV, open positions, daily PnL window, loss streak, and `atr_pct` from indicators across the test window. *(Phase 8.3)*
+4. **Setup overlap inflates effective n.** `step=8` with `horizon=16` means consecutive setups share half their forward window; outcomes are positively correlated and IID bootstrap CIs are too tight by ~√2. Fix: `step >= horizon` (default 24), and add a block-bootstrap option to `paired_bootstrap_sharpe_delta` for time-series-correct CIs. *(Phase 8.2, Phase 8.3)*
+5. **Confidence gate is read at the `{` token.** The first generated token is the JSON brace; gating on its entropy reflects format confidence, not trading conviction. Fix: gate on logits at the position immediately after `"action": "` (the `buy`/`sell`/`flat` choice point). *(Phase 4.4)*
+
+**Tier 2 — credibility and statistical power**
+
+6. **Missing experimental controls (random + orthogonal vectors).** `architecture.md` §9.3 commits to three controls; only OFF is implemented. Without random/orthogonal arms, a positive Δ-Sharpe is consistent with "any perturbation activates exploration." Fix: extract a Gaussian-noise vector (matched Frobenius norm) and a basis-orthogonal vector; run as additional arms in `run_ab_compare.py`. *(Phase 4.1, Phase 9.2)*
+7. **Per-setup model reload during gating creates hours of pure I/O.** llama.cpp loads control vectors at constructor time; the gating re-run reloads ~9GB GGUF per setup. Fix: log the would-be gate magnitude in backtest but skip the dampened re-run. Confidence gating is a forward-paper-only feature in v1. *(Phase 4.4, Phase 9.2)*
+8. **`returns_from_pnl` is path-dependent.** Dividing by trailing equity makes the return series order-dependent, so bootstrap permutations corrupt Sharpe. Fix: `pnl_i / nav_initial` (constant denominator); order-invariant. *(Phase 8.1)*
+9. **GGUF conversion validation is one-shot.** Q4_K_M quantization can attenuate vector effects 30–60%; verifying with one print statement is insufficient. Fix: re-run the spike's directional-match criterion against the converted GGUF vector through `Llama(control_vectors=...)` as a hard Phase-4 gate. *(Phase 4.3)*
+10. **Single-asset eval halves statistical power.** `run_ab_compare.py` hardcodes `BTC-USD` while the architecture and risk layer assume a basket. Fix: iterate over the whitelist (BTC + ETH + SOL); concatenate paired returns across assets for the bootstrap. Also exercises the cluster-cap path. *(Phase 9.2)*
+
+**Tier 3 — cleanup (not metric-shifting; folded into the affected tasks)**
+
+- Risk layer runs twice (pipeline + harness) — pipeline owns risk, harness trusts the decision. *(Phase 8.3, Phase 9.2)*
+- Decision divergence defined on `action` only — extend to `(action, direction, size_bucket)`. *(Phase 9.2)*
+- Briefing log uses the literal `setup_id="ab"` — fix to use the real setup_id. *(Phase 9.2)*
+- Walk-forward `train` slice is generated but unused — either delete the parameter or actually select per-fold regime weights from train Sharpe. v1 takes the delete path; document it. *(Phase 8.4)*
+- 50 contrastive pairs/axis is at the low end for a 14B model; bump to 200. *(Phase 4.1)*
+- Δ-Sharpe is the only inferential test; secondary metrics (MDD, PF, WR) are descriptive and not multiple-comparisons-corrected. State this in the report. *(Phase 10.2)*
+
+---
+
 ## Phase 0 — Foundation & vector validation spike
 
 The spike is the load-bearing decision: if vectors don't measurably steer Qwen3-14B at Q4_K_M, the architecture has to change before any further work. Don't skip.
@@ -135,10 +166,11 @@ dependencies = [
 [project.optional-dependencies]
 inference = [
   "torch>=2.3",
-  "transformers>=4.42",
-  "repeng>=0.5",
-  "mlx-lm>=0.14",
-  "llama-cpp-python>=0.2.85",
+  "transformers>=4.42",         # extraction only (offline)
+  "repeng>=0.5",                # extraction only (offline)
+  "gguf>=0.10",                 # .pt -> GGUF control vector conversion
+  "mlx-lm>=0.14",               # optional Mac extraction path
+  "llama-cpp-python>=0.2.85",   # primary runtime
 ]
 dev = [
   "pytest>=8.2",
@@ -1045,9 +1077,14 @@ class ClaudeIntern:
 
     def reason(self, state: MarketState, setup_id: str) -> InternBriefing:
         system, user = build_intern_prompt(state, setup_id)
+        # temperature=0 is structural: both A/B trader arms must read the SAME briefing
+        # for the same setup, otherwise Stage-1 sampling noise pollutes the paired Δ-Sharpe.
+        # See structural-review fix #1 (briefing cache) — the cache is keyed by setup_id and
+        # only sound if Intern is deterministic.
         resp = self.client.messages.create(
             model=self.model,
             max_tokens=1024,
+            temperature=0.0,
             system=system,
             messages=[{"role": "user", "content": user}],
         )
@@ -1093,19 +1130,26 @@ from llama_cpp import Llama
 from pathlib import Path
 
 class TraderModel:
-    """Wraps llama.cpp Qwen for Stage 2 inference. Vector hooks added in Phase 4."""
+    """Wraps llama.cpp Qwen for Stage 2 inference. Vector hooks added in Phase 4.
+
+    Default temperature=0 (greedy) so the controlled A/B comparison is deterministic.
+    Sampling jitter at the trader is structural noise that inflates both PnL variance
+    and decision-divergence rate — vectors-OFF must be reproducible for pairing to work.
+    Forward paper trading can override to a positive temperature for exploration.
+    See structural-review fix #2.
+    """
 
     def __init__(self, model_path: str, n_ctx: int = 8192):
         if not Path(model_path).exists():
             raise FileNotFoundError(f"model not found: {model_path}")
         self.llm = Llama(model_path=model_path, n_ctx=n_ctx, verbose=False, logits_all=False)
 
-    def generate(self, prompt: str, max_tokens: int = 256, temperature: float = 0.4) -> str:
+    def generate(self, prompt: str, max_tokens: int = 256, temperature: float = 0.0) -> str:
         out = self.llm(prompt, max_tokens=max_tokens, temperature=temperature, stop=["\n\n"])
         return out["choices"][0]["text"]
 ```
 
-Note: this loader uses the GGUF Q4_K_M for Phase 3. Vector application requires a transformers-backed path, added in Phase 4. Phase 3 just verifies end-to-end JSON generation works.
+Note: this loader uses GGUF Q4_K_M and is the production path. Phase 4 extends this same `TraderModel` to load control vectors via llama.cpp's native `control_vectors=` constructor argument. No transformers in the runtime path — only in the offline extraction step (Task 4.1) which produces `.pt` files later converted to GGUF (Task 4.3).
 
 - [ ] **Step 2: Commit**
 
@@ -1333,7 +1377,7 @@ Each file is a list of `{positive, negative}` prompt pairs covering trading scen
 ]
 ```
 
-Generate 50 pairs per axis covering: breakouts, breakdowns, range-bound, regime shifts, smart money flows, funding extremes, liquidation events, low/high vol regimes.
+Generate **200 pairs per axis** covering: breakouts, breakdowns, range-bound, regime shifts, smart money flows, funding extremes, liquidation events, low/high vol regimes. (Original spec said 50; bumped because 14B-parameter hidden states need more contrast pairs to converge to a stable axis. 200 is repeng's recommended floor for production use. See structural-review fix #6/note.) Delegate this to a Sonnet/Opus subagent — it's pure content generation.
 
 - [ ] **Step 2: Write extraction module**
 
@@ -1342,6 +1386,7 @@ Generate 50 pairs per axis covering: breakouts, breakdowns, range-bound, regime 
 import json
 from pathlib import Path
 from typing import Any
+import numpy as np
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from repeng import ControlModel, ControlVector, DatasetEntry
@@ -1377,17 +1422,76 @@ def extract_all(model_id: str, layer_range: tuple[int, int]) -> dict[str, Path]:
         results[axis] = path
         print(f"saved {axis} -> {path}")
     return results
+
+def make_control_vectors(disposition_paths: dict[str, Path],
+                         layer_range: tuple[int, int],
+                         seed: int = 42) -> dict[str, Path]:
+    """Generate the experimental-control vectors required by architecture.md §9.3.
+
+    `random`: Gaussian-noise vector with the same per-layer Frobenius norm as the
+              composed disposition vector at unit weights. Tests "any perturbation
+              activates exploration" as the null.
+    `orthogonal`: Vector projected onto the null space of the four disposition
+                  axes via Gram-Schmidt. Tests representation impact vs
+                  direction-specific impact.
+
+    Without these arms, a positive Δ-Sharpe is consistent with "noise helps."
+    See structural-review fix #6.
+    """
+    import torch
+    rng = np.random.default_rng(seed)
+    layer_ids = list(range(*layer_range))
+
+    # Load all disposition vectors
+    disposition_cvs = {name: ControlVector.load(p) for name, p in disposition_paths.items()}
+    # Reference shape and norm: average per-layer norm of the unweighted sum.
+    summed = None
+    for cv in disposition_cvs.values():
+        summed = cv if summed is None else summed + cv
+
+    # 1. Random vector — same per-layer norm as the summed disposition
+    random_dirs = {}
+    for lid in layer_ids:
+        ref = np.asarray(summed.directions[lid], dtype=np.float32)
+        v = rng.normal(size=ref.shape).astype(np.float32)
+        v = v / np.linalg.norm(v) * np.linalg.norm(ref)
+        random_dirs[lid] = v
+    random_cv = ControlVector(model_type=summed.model_type, directions=random_dirs)
+    random_path = VECTORS_DIR / "random.pt"
+    random_cv.save(random_path)
+
+    # 2. Orthogonal vector — Gram-Schmidt against the disposition basis per layer
+    orth_dirs = {}
+    for lid in layer_ids:
+        basis = np.stack([np.asarray(cv.directions[lid], dtype=np.float32)
+                          for cv in disposition_cvs.values()])  # (4, D)
+        ref = np.asarray(summed.directions[lid], dtype=np.float32)
+        v = rng.normal(size=ref.shape).astype(np.float32)
+        # subtract projection onto each basis vector
+        for b in basis:
+            v = v - (v @ b) / (b @ b + 1e-12) * b
+        v = v / (np.linalg.norm(v) + 1e-12) * np.linalg.norm(ref)
+        orth_dirs[lid] = v
+    orth_cv = ControlVector(model_type=summed.model_type, directions=orth_dirs)
+    orth_path = VECTORS_DIR / "orthogonal.pt"
+    orth_cv.save(orth_path)
+
+    return {"random": random_path, "orthogonal": orth_path}
 ```
 
 - [ ] **Step 3: Write extraction runner**
 
 ```python
 # scripts/extract_vectors.py
-from xianvec.trader.extract import extract_all
+from xianvec.trader.extract import extract_all, make_control_vectors
 from xianvec.config import load_config
 
 cfg = load_config("config/default.yaml")
-extract_all("Qwen/Qwen3-14B", tuple(cfg["trader"]["layer_range"]))
+layer_range = tuple(cfg["trader"]["layer_range"])
+disposition_paths = extract_all("Qwen/Qwen3-14B", layer_range)
+control_paths = make_control_vectors(disposition_paths, layer_range)
+print(f"saved disposition vectors: {list(disposition_paths.keys())}")
+print(f"saved experimental controls: {list(control_paths.keys())}")
 ```
 
 - [ ] **Step 4: Run extraction**
@@ -1396,7 +1500,7 @@ extract_all("Qwen/Qwen3-14B", tuple(cfg["trader"]["layer_range"]))
 python scripts/extract_vectors.py
 ```
 
-Expected: four `.pt` files in `vectors/`. Takes 5-15 minutes per axis on M-series Mac.
+Expected: four disposition `.pt` files plus `random.pt` and `orthogonal.pt` in `vectors/`. Disposition extraction takes 5-15 minutes per axis on M-series Mac; control vectors are O(seconds) since they're constructed analytically from already-extracted disposition vectors.
 
 - [ ] **Step 5: Commit**
 
@@ -1492,7 +1596,12 @@ def compose_axis_vectors(
     return composed
 
 def gate_magnitude(logits: np.ndarray, max_entropy: float = 1.5) -> float:
-    """Map next-token entropy to a vector magnitude scaler in [0, 1].
+    """Map decision-token entropy to a vector magnitude scaler in [0, 1].
+
+    Logits MUST come from the position immediately after `"action": "` in the
+    trader's JSON output — that's the buy/sell/flat choice point. Reading
+    position-0 logits gives entropy of the JSON `{` brace, which is structural
+    noise. See `TraderModel._extract_action_logits` and structural-review fix #5.
 
     Low entropy (peaked distribution / tight corridor) -> 1.0 (full magnitude).
     High entropy (uniform / wide corridor) -> dampened toward 0.
@@ -1522,60 +1631,330 @@ git commit -m "feat(trader): vector composition and confidence gating"
 
 ---
 
-### Task 4.3: Trader model with vectors integrated
+### Task 4.3: Convert repeng vectors to llama.cpp GGUF format
+
+**Why:** Extraction needs PyTorch hidden states (so it stays on `repeng` + `transformers` on cloud GPU). Inference belongs on `llama.cpp` — native control vector support since 2024, native quantization, Metal/CUDA acceleration, cross-platform, lower memory. The bridge between them is a one-time conversion of `.pt` → GGUF control-vector format.
+
+**Files:**
+- Create: `scripts/convert_vectors_to_gguf.py`
+
+- [ ] **Step 1: Conversion script**
+
+```python
+# scripts/convert_vectors_to_gguf.py
+"""Convert repeng .pt control vectors to llama.cpp GGUF control-vector format.
+
+llama.cpp's control-vector GGUF expects per-layer direction tensors keyed by
+`direction.<layer_id>`. We unpack repeng's ControlVector.directions dict and
+write each layer as a separate tensor in a single GGUF file.
+
+Reference: llama.cpp gguf-py and the `--control-vector` flag (PR #5970).
+"""
+from pathlib import Path
+import numpy as np
+import typer
+from repeng import ControlVector
+from gguf import GGUFWriter
+
+VECTORS_DIR = Path("vectors")
+GGUF_DIR = Path("vectors/gguf")
+GGUF_DIR.mkdir(parents=True, exist_ok=True)
+
+def convert(axis_name: str) -> Path:
+    pt_path = VECTORS_DIR / f"{axis_name}.pt"
+    gguf_path = GGUF_DIR / f"{axis_name}.gguf"
+    cv = ControlVector.load(pt_path)
+    writer = GGUFWriter(str(gguf_path), arch="controlvector")
+    writer.add_string("controlvector.model_hint", cv.model_type)
+    writer.add_uint32("controlvector.layer_count", len(cv.directions))
+    for layer_id, direction in cv.directions.items():
+        arr = np.asarray(direction, dtype=np.float32)
+        writer.add_tensor(f"direction.{layer_id}", arr)
+    writer.write_header_to_file()
+    writer.write_kv_data_to_file()
+    writer.write_tensors_to_file()
+    writer.close()
+    return gguf_path
+
+def main():
+    for axis in ["conviction", "patience", "risk_appetite", "trend_disposition",
+                 "random", "orthogonal"]:
+        out = convert(axis)
+        print(f"converted {axis} -> {out}")
+
+if __name__ == "__main__":
+    typer.run(main)
+```
+
+- [ ] **Step 2: Quantization-validation gate (hard gate, blocks Phase 9)**
+
+The Phase 0 spike validated steering at fp16. Q4_K_M quantization can attenuate vector effects 30–60%. A one-print eyeball check is not sufficient — if the converted vector fails to steer the quantized model, all of Phase 9's Δ-Sharpe will come back at zero and you'll only discover it after a multi-hour backtest. Port the spike's directional-match criterion to the GGUF runtime and require it to pass before proceeding.
+
+Create `scripts/spike_vector_validation_gguf.py`:
+
+```python
+"""Re-run the Phase-0 directional-match criterion on the GGUF-converted control vector.
+
+Pass criterion (relaxed from fp16 spike's 66% to 50% to allow for Q4 attenuation,
+but if it falls below 50% we have a quantization problem we need to solve before
+Phase 9 — either bump magnitudes, switch to Q5/Q6, or change the layer range).
+"""
+from pathlib import Path
+import json
+from llama_cpp import Llama
+
+CAUTIOUS_WORDS = {"wait", "uncertain", "risk", "careful", "small", "hedge", "skeptical"}
+AGGRESSIVE_WORDS = {"now", "buy", "long", "size", "conviction", "all-in", "lever"}
+
+HOLDOUT = [
+    "BTC volatility expanded 3x overnight.",
+    "Memecoin season is heating up on Solana.",
+    "Whales are moving stablecoins to exchanges.",
+    "ETH funding flipped negative after sustained positive print.",
+    "Donchian breakout on SOL with rising volume.",
+]
+
+MODEL_PATH = "data/models/qwen3-14b-q4km/qwen3-14b-q4_k_m.gguf"
+CV_PATH = "vectors/gguf/conviction.gguf"
+
+def run(magnitude: float) -> str:
+    llm = Llama(
+        model_path=MODEL_PATH, n_ctx=4096, verbose=False,
+        control_vectors=[(CV_PATH, magnitude)] if magnitude != 0.0 else [],
+    )
+    outs = []
+    for prompt in HOLDOUT:
+        full = "Trader analyzing: " + prompt + "\nMy plan:"
+        out = llm(full, max_tokens=80, temperature=0.0)["choices"][0]["text"].lower()
+        outs.append(out)
+    return outs
+
+def main():
+    off = run(0.0)
+    pos = run(+1.0)
+    neg = run(-1.0)
+
+    matches = 0
+    for i, prompt in enumerate(HOLDOUT):
+        cautious_pos = sum(w in pos[i] for w in CAUTIOUS_WORDS)
+        cautious_neg = sum(w in neg[i] for w in CAUTIOUS_WORDS)
+        aggressive_pos = sum(w in pos[i] for w in AGGRESSIVE_WORDS)
+        aggressive_neg = sum(w in neg[i] for w in AGGRESSIVE_WORDS)
+        ok = cautious_pos > cautious_neg and aggressive_neg > aggressive_pos
+        matches += int(ok)
+        print(f"--- {prompt} ---  match={'PASS' if ok else 'FAIL'}")
+
+    rate = matches / len(HOLDOUT)
+    print(f"\nGGUF directional match rate (mag 1.0): {rate:.0%}")
+    Path("decisions").mkdir(exist_ok=True)
+    Path("decisions/0001b-gguf-validation.md").write_text(
+        f"# GGUF control-vector validation\n\n"
+        f"Magnitude tested: ±1.0\n"
+        f"Holdout prompts: {len(HOLDOUT)}\n"
+        f"Directional match rate: {rate:.0%} ({matches}/{len(HOLDOUT)})\n"
+        f"Pass threshold: 50% (relaxed from fp16 spike's 66% to allow Q4 attenuation)\n"
+        f"Status: {'PASS' if rate >= 0.5 else 'FAIL — bump magnitude or change layer range'}\n"
+    )
+    assert rate >= 0.5, (
+        f"GGUF vector failed directional steering at {rate:.0%}. Try magnitude 1.5/2.0, "
+        f"switch to Q5_K_M, or expand layer range. Phase 9 cannot proceed until this passes."
+    )
+    print("\nGGUF VALIDATION PASS — proceed to Phase 9.")
+
+if __name__ == "__main__":
+    main()
+```
+
+- [ ] **Step 3: Run conversion + validation gate**
+
+```bash
+python scripts/convert_vectors_to_gguf.py
+python scripts/spike_vector_validation_gguf.py
+```
+
+Expected: `GGUF VALIDATION PASS — proceed to Phase 9.`. If FAIL, raise magnitude in `config/regime_vectors.yaml`, switch quantization to Q5_K_M (re-download in Task 0.2), or change `layer_range` and re-extract. **Do not skip.** The whole eval framework rests on the converted vectors actually steering the quantized runtime model.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add scripts/convert_vectors_to_gguf.py scripts/spike_vector_validation_gguf.py
+git commit -m "feat(trader): repeng .pt -> llama.cpp GGUF + quantization-validation gate"
+```
+
+---
+
+### Task 4.4: Trader model with vectors integrated (llama.cpp path)
 
 **Files:**
 - Modify: `src/xianvec/trader/model.py`
+- Modify: `src/xianvec/trader/runtime.py` (composition + gating)
 - Test: extend `tests/integration/test_pipeline.py`
 
-- [ ] **Step 1: Refactor model.py to use transformers + ControlModel**
-
-Replace the llama.cpp implementation with the transformers-backed version (vectors require it). Keep the public interface (`generate`) compatible.
+- [ ] **Step 1: Update TraderModel for llama.cpp control vectors**
 
 ```python
 # src/xianvec/trader/model.py
 from pathlib import Path
 import numpy as np
-import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
-from repeng import ControlModel, ControlVector
+from llama_cpp import Llama
 
 class TraderModel:
-    def __init__(
-        self,
-        model_id: str = "Qwen/Qwen3-14B",
-        layer_range: tuple[int, int] = (15, 30),
-        device: str = "mps",
-    ):
-        self.tok = AutoTokenizer.from_pretrained(model_id)
-        base = AutoModelForCausalLM.from_pretrained(
-            model_id, torch_dtype=torch.float16, device_map=device
+    """llama.cpp-backed Trader. Control vectors are GGUF files loaded by path
+    with a magnitude scalar each. Composition is by addition: load multiple
+    vectors with their respective signed magnitudes."""
+
+    def __init__(self, model_path: str, n_ctx: int = 8192):
+        if not Path(model_path).exists():
+            raise FileNotFoundError(f"model not found: {model_path}")
+        self.model_path = model_path
+        self.n_ctx = n_ctx
+        self._loaded_vectors: list[tuple[str, float]] = []
+        self.llm: Llama | None = None
+        self._reload()
+
+    def _reload(self):
+        """llama.cpp loads control vectors at model construction time, so changing
+        them requires a reload. Cheap if model weights are warm in OS page cache."""
+        self.llm = Llama(
+            model_path=self.model_path,
+            n_ctx=self.n_ctx,
+            verbose=False,
+            control_vectors=self._loaded_vectors,
+            logits_all=False,
         )
-        self.cm = ControlModel(base, layer_ids=list(range(*layer_range)))
-        self.device = device
 
-    def set_vector(self, vector: ControlVector | None, magnitude: float = 1.0):
-        if vector is None or magnitude == 0.0:
-            self.cm.reset()
-        else:
-            self.cm.set_control(vector, magnitude)
+    def set_vectors(self, weighted: list[tuple[str, float]] | None):
+        """Set the active control vectors. Pass None or [] to clear."""
+        new = weighted or []
+        if new == self._loaded_vectors:
+            return
+        self._loaded_vectors = new
+        self._reload()
 
-    def generate(self, prompt: str, max_tokens: int = 256, temperature: float = 0.4) -> tuple[str, np.ndarray]:
-        inputs = self.tok(prompt, return_tensors="pt").to(self.device)
-        with torch.no_grad():
-            out = self.cm.generate(
-                **inputs, max_new_tokens=max_tokens, temperature=temperature,
-                do_sample=temperature > 0, return_dict_in_generate=True, output_scores=True,
-            )
-        text = self.tok.decode(out.sequences[0][inputs.input_ids.shape[1]:], skip_special_tokens=True)
-        # first-step logits over the next-token vocabulary, used for confidence gating
-        first_logits = out.scores[0][0].cpu().numpy() if out.scores else np.zeros(1)
-        return text, first_logits
+    def generate(self, prompt: str, max_tokens: int = 256, temperature: float = 0.0
+                 ) -> tuple[str, np.ndarray]:
+        """Generate, returning (text, action_token_logits) for confidence gating.
+
+        Default greedy (temperature=0) for the controlled A/B run; pass a positive
+        temperature only for forward paper trading. Returned logits are read at the
+        token position immediately after `"action": "` — that's the buy/sell/flat
+        choice point, which is what the gate is supposed to measure. The previous
+        version returned position-0 logits, which is the JSON `{` brace — pure noise.
+        See structural-review fix #5.
+        """
+        out = self.llm(
+            prompt, max_tokens=max_tokens, temperature=temperature,
+            stop=["\n\n"], logprobs=10,
+        )
+        text = out["choices"][0]["text"]
+        action_logits = self._extract_action_logits(out, text)
+        return text, action_logits
+
+    def _extract_action_logits(self, out: dict, text: str) -> np.ndarray:
+        """Read top-K logprobs at the position immediately after `"action": "`.
+
+        llama-cpp-python returns per-token logprobs as a list aligned with the generated
+        tokens. We find the offset where `"action": "` ends in the decoded text, map it
+        to a token index, and read top_logprobs[idx]. Falls back to zeros if the marker
+        is not found (e.g. the model emitted a malformed response — gating then dampens).
+        """
+        marker = '"action": "'
+        idx_char = text.find(marker)
+        first_logprobs = out["choices"][0].get("logprobs") or {}
+        token_offsets = first_logprobs.get("text_offset") or []
+        top_logprobs_list = first_logprobs.get("top_logprobs") or []
+        if idx_char < 0 or not token_offsets or not top_logprobs_list:
+            return np.zeros(1, dtype=np.float32)
+        target_offset = idx_char + len(marker)
+        # find the first token whose text_offset is >= target_offset
+        try:
+            tok_idx = next(i for i, off in enumerate(token_offsets) if off >= target_offset)
+        except StopIteration:
+            return np.zeros(1, dtype=np.float32)
+        if tok_idx >= len(top_logprobs_list):
+            return np.zeros(1, dtype=np.float32)
+        top = top_logprobs_list[tok_idx] or {}
+        if not top:
+            return np.zeros(1, dtype=np.float32)
+        return np.array(list(top.values()), dtype=np.float32)
 ```
 
-Note: this is heavier than llama.cpp. Acceptable for hackathon since vectors require it. Post-hackathon we can investigate llama.cpp + manual hidden-state hooks.
+Notes: `control_vectors` is the constructor-time API (PR #5970 lineage). `logprobs=10` returns top-10 token logprobs at each position; we use position 0 for confidence gating. If `llama-cpp-python` exposes a runtime `set_control_vector` method by the time you build, prefer it (faster than reload).
 
-- [ ] **Step 2: Update smoke pipeline to load and apply vectors**
+- [ ] **Step 2: Update VectorTrader to use file paths + magnitudes (no more ControlVector composition)**
+
+```python
+# src/xianvec/trader/runtime.py
+from pathlib import Path
+from xianvec.schemas import InternBriefing, TraderDecision
+from xianvec.trader.model import TraderModel
+from xianvec.trader.prompt import build_trader_prompt, parse_trader_response
+from xianvec.trader.vectors import gate_magnitude
+
+GGUF_VECTORS_DIR = Path("vectors/gguf")
+
+class VectorTrader:
+    """Trader runtime with optional confidence gating.
+
+    `backtest_mode=True` disables the dampened-magnitude re-run when the gate fires.
+    Reason: llama.cpp loads control vectors at constructor time, so a re-run requires
+    a full ~9GB GGUF reload. At ~30s/reload × 1000 setups × P(gate<0.5), that is
+    hours of pure I/O for a v1 hackathon backtest. The gate magnitude is still
+    computed and logged for offline analysis. Forward paper trading runs with
+    `backtest_mode=False` and pays the reload cost (low frequency, irrelevant).
+    See structural-review fix #7.
+    """
+
+    def __init__(self, model: TraderModel, axis_names: list[str],
+                 vectors_enabled: bool = True, confidence_gating: bool = True,
+                 backtest_mode: bool = False):
+        self.model = model
+        self.axis_names = axis_names
+        self.vectors_enabled = vectors_enabled
+        self.confidence_gating = confidence_gating
+        self.backtest_mode = backtest_mode
+
+    def _resolve_vectors(self, weights: dict[str, float]) -> list[tuple[str, float]]:
+        out = []
+        for name, w in weights.items():
+            if name not in self.axis_names or w == 0.0:
+                continue
+            path = GGUF_VECTORS_DIR / f"{name}.gguf"
+            if not path.exists():
+                continue
+            out.append((str(path), float(w)))
+        return out
+
+    def decide(self, briefing: InternBriefing, regime_vectors: dict) -> TraderDecision:
+        prompt = build_trader_prompt(briefing)
+        active: dict[str, float] = {}
+        gate: float | None = None
+        if self.vectors_enabled and regime_vectors:
+            weighted = self._resolve_vectors(regime_vectors)
+            if weighted:
+                self.model.set_vectors(weighted)
+                text, action_logits = self.model.generate(prompt)
+                if self.confidence_gating:
+                    gate = gate_magnitude(action_logits)
+                    if gate < 0.5 and not self.backtest_mode:
+                        # forward mode: re-run with dampened magnitudes (eats a reload)
+                        dampened = [(p, m * gate) for p, m in weighted]
+                        self.model.set_vectors(dampened)
+                        text, _ = self.model.generate(prompt)
+                    # backtest mode: log the gate but do not reload — see class docstring
+                active = dict(regime_vectors)
+                if gate is not None:
+                    active["_gate_magnitude"] = gate  # offline analysis only
+            else:
+                self.model.set_vectors(None)
+                text, _ = self.model.generate(prompt)
+        else:
+            self.model.set_vectors(None)
+            text, _ = self.model.generate(prompt)
+        return parse_trader_response(text, setup_id=briefing.setup_id, active_vectors=active)
+```
+
+- [ ] **Step 3: Update smoke pipeline**
 
 ```python
 # scripts/smoke_pipeline_with_vectors.py
@@ -1584,7 +1963,7 @@ from xianvec.schemas import MarketState
 from xianvec.intern.claude import ClaudeIntern
 from xianvec.trader.model import TraderModel
 from xianvec.trader.prompt import build_trader_prompt, parse_trader_response
-from xianvec.trader.vectors import load_axis_vectors, compose_axis_vectors, gate_magnitude
+from xianvec.trader.vectors import gate_magnitude
 
 cfg = load_config("config/default.yaml")
 regime_cfg = load_config("config/regime_vectors.yaml")
@@ -1596,40 +1975,102 @@ state = MarketState(
                 "bb_upper": 53000, "bb_lower": 49500, "donchian_high_20": 54000,
                 "volume_ratio_20": 1.2},
     onchain={"smart_money_inflow": 0.4, "funding_rate": -0.02, "stablecoin_inflow": 0.1},
-    portfolio={"nav": 10000.0, "cash": 10000.0},
+    portfolio={"nav": 10000.0, "cash": 10000.0,
+               "open_positions": [], "daily_pnl_pct": 0.0},
 )
 
-r = ClaudeIntern(model=cfg["intern"]["claude_model"]).reason(state, "smoke-vec")
-weights = regime_cfg[r.regime]
-vectors = load_axis_vectors("vectors")
-composed = compose_axis_vectors(vectors, weights)
+briefing = ClaudeIntern(model=cfg["intern"]["claude_model"]).reason(state, "smoke-vec")
+weights = regime_cfg[briefing.regime]
+weighted = [(f"vectors/gguf/{name}.gguf", w) for name, w in weights.items() if w != 0.0]
 
-m = TraderModel(layer_range=tuple(cfg["trader"]["layer_range"]))
-m.set_vector(composed, magnitude=1.0)
+m = TraderModel(model_path=cfg["trader"]["model_path"])
 prompt = build_trader_prompt(briefing)
-text, first_logits = m.generate(prompt)
-gate = gate_magnitude(first_logits)
-print(f"Gate magnitude: {gate:.2f}")
-print("DECISION (vectors-on):", text)
 
-m.set_vector(None)
+m.set_vectors(weighted)
+text_on, action_logits = m.generate(prompt)
+gate = gate_magnitude(action_logits)
+print(f"Gate magnitude (at action token): {gate:.2f}")
+print("DECISION (vectors-on):", text_on)
+
+m.set_vectors(None)
 text_off, _ = m.generate(prompt)
 print("DECISION (vectors-off):", text_off)
 ```
 
-- [ ] **Step 3: Run smoke**
+- [ ] **Step 4: Run smoke**
 
 ```bash
 python scripts/smoke_pipeline_with_vectors.py
 ```
 
-Expected: visibly different decision text between vectors-on and vectors-off. If identical: vector magnitude too low (try 1.5 or 2.0), or layer range wrong.
+Expected: visibly different decision text between vectors-on and vectors-off. If identical: bump magnitudes in `config/regime_vectors.yaml` (try 1.5 or 2.0), or verify the GGUF conversion in Task 4.3.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/xianvec/trader/model.py src/xianvec/trader/runtime.py scripts/smoke_pipeline_with_vectors.py
+git commit -m "feat(trader): llama.cpp control vector integration with confidence gating"
+```
+
+---
+
+### Task 4.5: Lookahead bias audit
+
+**Why:** the #1 way our experiment gets invalidated is accidental lookahead in indicator computation. `compute_indicators` runs on `price_df.iloc[i-lookback:i]` (exclusive of the current bar) which is correct in principle, but every indicator must be reviewed.
+
+**Files:**
+- Create: `decisions/0002-lookahead-audit.md`
+- Verify: `src/xianvec/data/indicators.py`
+
+- [ ] **Step 1: Audit each indicator**
+
+Walk through `compute_indicators` and verify, for each indicator:
+
+| Indicator | Function | Lookahead-safe? | Notes |
+|---|---|---|---|
+| RSI 14 | `ta.rsi(close, length=14)` | ✓ | trailing 14 bars only |
+| MA 30/60/90 | `close.rolling(N).mean()` | ✓ | simple trailing window |
+| Bollinger 20/2 | `ta.bbands(close, 20, 2)` | ✓ | trailing window |
+| MACD 12/26/9 | `ta.macd(close)` | ✓ | EWMA, recursive on past only |
+| ATR 14 | `ta.atr(high, low, close, 14)` | ✓ | TR uses prev close, then trailing avg |
+| Donchian high/low 20 | `high.rolling(20).max()` | ⚠️ | confirm window does NOT include current bar — pandas rolling defaults include the current value |
+| Volume ratio 20 | `vol[-1] / vol.rolling(20).mean()` | ⚠️ | denominator's window includes current bar; for ratio this is OK because the bar is "complete" at decision time, but document this assumption |
+
+For Donchian specifically: `df["high"].rolling(20).max().iloc[-1]` includes the current bar's high. For breakout-style signals this is what we want (close at bar i breaks high of last 20 incl. i). For a "did price break the prior 20 highs?" framing it's wrong. Pin the semantic in the audit doc.
+
+- [ ] **Step 2: Audit the backtest setup loop**
+
+In `eval/backtest.py::iter_setups`, the slice `price_df.iloc[i-lookback:i]` is exclusive of `i`. The future window is `price_df.iloc[i:i+horizon]`. The simulator's entry price is `future["close"].iloc[0]` which is the close of bar `i` — the first available bar after the decision. **Verify this is consistent: decisions are made on bar `i-1` close (last bar in the window), entries fill at bar `i` open or close.** Document the chosen convention.
+
+- [ ] **Step 3: Write the audit doc**
+
+```markdown
+# decisions/0002-lookahead-audit.md
+
+## Audit date: <fill in>
+
+## Findings
+
+[per-indicator table from Step 1, with PASS / FIXED / DOCUMENTED for each]
+
+## Decision-to-execution timing convention
+
+Backtest uses: decision on close of bar `i-1`, fill at `future["close"].iloc[0]` which is close of bar `i`. Slippage is added on top. This is one full bar of latency between decision and execution — conservative and consistent with bracket-order forward paper trading.
+
+## Bars used in feature computation
+
+`iter_setups` yields the window `price_df.iloc[i-lookback:i]` (exclusive of i). All indicators computed on this window are computable in real time at the close of bar `i-1`.
+
+## Open issues
+
+[anything found and not yet fixed]
+```
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add src/xianvec/trader/model.py scripts/smoke_pipeline_with_vectors.py
-git commit -m "feat(trader): integrate control vectors into model inference"
+git add decisions/0002-lookahead-audit.md src/xianvec/data/indicators.py
+git commit -m "docs: lookahead audit + indicator review"
 ```
 
 ---
@@ -1793,6 +2234,177 @@ git commit -m "feat(risk): deterministic risk layer with veto and modify"
 
 ---
 
+### Task 5.2: Vol-targeted sizing modifier
+
+**Why:** Fixed `size_bps` is backwards. In low-vol regimes the agent trades huge positions; in high-vol regimes it trades tiny. Industry standard is to size positions inversely to recent realized volatility (typically ATR-based). Without this, the vectors-OFF baseline looks like a strawman because *any* sane sizing rule will outperform it.
+
+**Files:**
+- Modify: `src/xianvec/risk/rules.py`
+- Create: tests in `tests/unit/test_risk.py`
+- Modify: `config/risk.yaml`
+
+- [ ] **Step 1: Add config knob**
+
+```yaml
+# config/risk.yaml — append:
+vol_target:
+  enabled: true
+  target_daily_vol_pct: 1.0    # target ~1% daily portfolio vol contribution
+  reference_atr_pct: 1.5       # ATR/price pct considered "normal"
+  max_scale: 2.0               # never scale up more than 2×
+  min_scale: 0.25              # never scale down below 0.25×
+```
+
+- [ ] **Step 2: Failing test**
+
+```python
+# tests/unit/test_risk.py — append:
+def test_vol_targeting_scales_down_in_high_vol():
+    cfg = {**RISK_CFG, "vol_target": {
+        "enabled": True, "target_daily_vol_pct": 1.0,
+        "reference_atr_pct": 1.5, "max_scale": 2.0, "min_scale": 0.25,
+    }}
+    ev = RiskEvaluator(cfg)
+    portfolio = {"nav": 10000, "open_positions": [], "daily_pnl_pct": 0.0,
+                 "atr_pct": 4.5}  # 3× normal vol
+    out = ev.evaluate(make_decision(size_bps=200), asset="BTC-USD", portfolio=portfolio)
+    assert out.modified is not None
+    assert out.modified.size_bps < 200    # scaled down
+
+def test_vol_targeting_scales_up_in_low_vol():
+    cfg = {**RISK_CFG, "vol_target": {
+        "enabled": True, "target_daily_vol_pct": 1.0,
+        "reference_atr_pct": 1.5, "max_scale": 2.0, "min_scale": 0.25,
+    }}
+    ev = RiskEvaluator(cfg)
+    portfolio = {"nav": 10000, "open_positions": [], "daily_pnl_pct": 0.0,
+                 "atr_pct": 0.5}  # 1/3 normal vol
+    out = ev.evaluate(make_decision(size_bps=200), asset="BTC-USD", portfolio=portfolio)
+    assert out.modified is not None
+    assert out.modified.size_bps > 200    # scaled up
+    assert out.modified.size_bps <= 400   # capped at max_scale (2×)
+```
+
+- [ ] **Step 3: Implement vol scaling in RiskEvaluator**
+
+Add to `RiskEvaluator.evaluate`, after the daily-loss/cluster/max-positions checks but BEFORE the max position size cap (so vol-targeting can scale up, then the cap can pull it back down if needed):
+
+```python
+# inside RiskEvaluator.evaluate, before "max position size — modify down" block:
+
+vt = self.cfg.get("vol_target", {})
+if vt.get("enabled") and d.action in ("buy", "sell"):
+    atr_pct = portfolio.get("atr_pct")
+    if atr_pct and atr_pct > 0:
+        ref = vt["reference_atr_pct"]
+        scale = ref / atr_pct          # higher vol → smaller scale
+        scale = max(vt["min_scale"], min(vt["max_scale"], scale))
+        if scale != 1.0:
+            new_size = int(round(d.size_bps * scale))
+            d = d.model_copy(update={"size_bps": new_size})
+            # fall through — the max position size cap below still applies
+```
+
+`atr_pct` is `atr_14 / close * 100` and is computed in `compute_indicators`. The state-builder must thread `atr_pct` from `state.indicators` into `state.portfolio["atr_pct"]` (or restructure so the risk evaluator can read directly from indicators — your call). Document the chosen path.
+
+- [ ] **Step 4: Run tests, verify pass**
+
+```bash
+pytest tests/unit/test_risk.py -v
+```
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/xianvec/risk/rules.py tests/unit/test_risk.py config/risk.yaml
+git commit -m "feat(risk): ATR-based vol-targeted sizing modifier"
+```
+
+---
+
+### Task 5.3: Loss-streak cooldown
+
+**Why:** LLMs can exhibit revenge-trading patterns when prompted about recent outcomes. Even without explicit P&L in the prompt, vector-induced "conviction" can lead to over-sizing after losses. A simple deterministic cooldown is a cheap, hard-rule defense — and it makes the vectors-OFF baseline meaningfully stronger so vectors-ON has a real bar to clear.
+
+**Files:**
+- Modify: `src/xianvec/risk/rules.py`
+- Modify: `config/risk.yaml`
+- Test: `tests/unit/test_risk.py`
+
+- [ ] **Step 1: Add config**
+
+```yaml
+# config/risk.yaml — append:
+loss_streak_cooldown:
+  enabled: true
+  consecutive_losses_threshold: 3
+  cooldown_bars: 8
+```
+
+- [ ] **Step 2: Failing test**
+
+```python
+# tests/unit/test_risk.py — append:
+def test_cooldown_vetoes_after_loss_streak():
+    cfg = {**RISK_CFG, "loss_streak_cooldown": {
+        "enabled": True, "consecutive_losses_threshold": 3, "cooldown_bars": 8,
+    }}
+    ev = RiskEvaluator(cfg)
+    portfolio = {
+        "nav": 10000, "open_positions": [], "daily_pnl_pct": 0.0,
+        "consecutive_losses": 3, "bars_since_last_loss": 2,
+    }
+    out = ev.evaluate(make_decision(), asset="BTC-USD", portfolio=portfolio)
+    assert out.approved is False
+    assert "cooldown" in out.veto_reason.lower()
+
+def test_cooldown_passes_after_window():
+    cfg = {**RISK_CFG, "loss_streak_cooldown": {
+        "enabled": True, "consecutive_losses_threshold": 3, "cooldown_bars": 8,
+    }}
+    ev = RiskEvaluator(cfg)
+    portfolio = {
+        "nav": 10000, "open_positions": [], "daily_pnl_pct": 0.0,
+        "consecutive_losses": 3, "bars_since_last_loss": 9,
+    }
+    out = ev.evaluate(make_decision(), asset="BTC-USD", portfolio=portfolio)
+    assert out.approved is True
+```
+
+- [ ] **Step 3: Implement**
+
+Add to `RiskEvaluator.evaluate`, near the top after the close/flat early-returns:
+
+```python
+ls = self.cfg.get("loss_streak_cooldown", {})
+if ls.get("enabled") and d.action in ("buy", "sell"):
+    streak = portfolio.get("consecutive_losses", 0)
+    bars_since = portfolio.get("bars_since_last_loss", 999)
+    if streak >= ls["consecutive_losses_threshold"] and bars_since < ls["cooldown_bars"]:
+        return RiskDecision(
+            approved=False, original=d,
+            veto_reason=f"loss-streak cooldown: {streak} losses, "
+                        f"{bars_since} bars since (need {ls['cooldown_bars']})",
+        )
+```
+
+The `consecutive_losses` and `bars_since_last_loss` fields must be tracked by the pipeline and threaded into `portfolio`. Add to `data/store.py` a method that computes these from the most-recent decisions log. Backtest simulator updates them after each closed trade.
+
+- [ ] **Step 4: Run tests, verify pass**
+
+```bash
+pytest tests/unit/test_risk.py -v
+```
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/xianvec/risk/rules.py tests/unit/test_risk.py config/risk.yaml
+git commit -m "feat(risk): loss-streak cooldown rule"
+```
+
+---
+
 ## Phase 6 — Stage 3 Execution + Backtest Simulator
 
 ### Task 6.1: Backtest simulator
@@ -1860,23 +2472,49 @@ import pandas as pd
 from xianvec.schemas import TraderDecision
 
 class Simulator:
-    """Simulates a trade given a future price path. For backtest replay."""
+    """Simulates a trade given a future price path. For backtest replay.
 
-    def __init__(self, initial_nav: float, fee_bps: float = 10, slippage_bps: float = 5):
+    Asset-tiered slippage: tighter pairs (BTC) get 5bps, alts get more. Fixed
+    5bps across all assets is wildly optimistic for SOL or smaller alts and
+    leaves us open to "your backtest assumes free liquidity" critiques.
+    """
+
+    DEFAULT_SLIPPAGE_BY_ASSET = {
+        "BTC-USD": 5.0,
+        "ETH-USD": 10.0,
+        "SOL-USD": 20.0,
+    }
+    DEFAULT_SLIPPAGE_FALLBACK = 30.0  # unknown asset → conservative
+
+    def __init__(
+        self,
+        initial_nav: float,
+        fee_bps: float = 10,
+        slippage_bps: float | None = None,
+        slippage_by_asset: dict[str, float] | None = None,
+    ):
         self.nav = initial_nav
         self.fee_bps = fee_bps
-        self.slippage_bps = slippage_bps
+        self.global_slippage_bps = slippage_bps  # if set, overrides per-asset
+        self.slippage_by_asset = slippage_by_asset or self.DEFAULT_SLIPPAGE_BY_ASSET
+
+    def _slippage_bps_for(self, asset: str) -> float:
+        if self.global_slippage_bps is not None:
+            return self.global_slippage_bps
+        return self.slippage_by_asset.get(asset, self.DEFAULT_SLIPPAGE_FALLBACK)
 
     def simulate_trade(
-        self, d: TraderDecision, future_prices: pd.DataFrame, entry_price: float
+        self, d: TraderDecision, future_prices: pd.DataFrame, entry_price: float,
+        asset: str = "BTC-USD",
     ) -> tuple[float, str]:
         """Return (pnl_dollars, exit_reason)."""
         if d.action in ("flat", "close"):
             return 0.0, "no_position"
 
         position_value = self.nav * (d.size_bps / 10000)
-        # apply slippage to entry
-        slip = entry_price * (self.slippage_bps / 10000)
+        # apply asset-tiered slippage to entry
+        slip_bps = self._slippage_bps_for(asset)
+        slip = entry_price * (slip_bps / 10000)
         eff_entry = entry_price + slip if d.direction == "long" else entry_price - slip
 
         sl_pct = d.stop_loss_pct / 100
@@ -2270,6 +2908,149 @@ git commit -m "feat(baselines): smart money copy and funding rate fader"
 
 ## Phase 8 — Eval framework
 
+### Task 8.0: Structured traces (prerequisite — do before 8.1)
+
+**Rationale:** Evaluation results are uninterpretable without traces. Before any backtest or metric loop runs, every Stage 1 and Stage 2 call must produce a persisted trace record. A failing vector configuration without traces is a black box; with traces the exact prompt, parse error, or magnitude setting that caused the failure is recoverable. This task should be completed before any Phase 8 eval code runs. See architecture.md §9.4.
+
+**Files:**
+- Extend: `src/xianvec/data/store.py` (new `traces` table + `save_trace`)
+- Extend: `src/xianvec/intern/claude.py`, `src/xianvec/intern/local.py` (emit trace on each call)
+- Extend: `src/xianvec/trader/runtime.py` (emit trace on each Trader call)
+- Test: `tests/unit/test_store.py` (trace round-trip)
+
+- [ ] **Step 1: Add `traces` table to SQLite store**
+
+```python
+# src/xianvec/data/store.py — add to schema + store class
+CREATE_TRACES = """
+CREATE TABLE IF NOT EXISTS traces (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id      TEXT NOT NULL,
+    setup_id    TEXT NOT NULL,
+    stage       TEXT NOT NULL,          -- 'intern' | 'trader'
+    model       TEXT,
+    vectors_enabled INTEGER,            -- 0/1/NULL for intern
+    vector_magnitudes TEXT,             -- JSON: {"conviction": 0.8, ...}
+    prompt_tokens INTEGER,
+    completion_tokens INTEGER,
+    latency_ms  INTEGER,
+    parse_ok    INTEGER NOT NULL,       -- 0/1
+    error       TEXT,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+"""
+
+def save_trace(self, run_id: str, setup_id: str, stage: str,
+               model: str | None, vectors_enabled: bool | None,
+               vector_magnitudes: dict | None,
+               prompt_tokens: int, completion_tokens: int,
+               latency_ms: int, parse_ok: bool, error: str | None) -> None:
+    self._conn.execute(
+        """INSERT INTO traces
+           (run_id, setup_id, stage, model, vectors_enabled, vector_magnitudes,
+            prompt_tokens, completion_tokens, latency_ms, parse_ok, error)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+        (run_id, setup_id, stage, model,
+         int(vectors_enabled) if vectors_enabled is not None else None,
+         json.dumps(vector_magnitudes) if vector_magnitudes else None,
+         prompt_tokens, completion_tokens, latency_ms, int(parse_ok), error)
+    )
+    self._conn.commit()
+```
+
+- [ ] **Step 2: Instrument Intern calls (claude.py + local.py)**
+
+Wrap each LLM call in a `try/finally` that records start time, captures token counts from the API response, and calls `store.save_trace(...)`. Parse errors are caught, logged to `error` field, and re-raised.
+
+- [ ] **Step 3: Instrument Trader calls (runtime.py)**
+
+Same pattern. Additionally log `vectors_enabled` flag and `vector_magnitudes` dict (the active axis magnitudes at call time).
+
+- [ ] **Step 4: Write and pass tests**
+
+```python
+def test_trace_round_trip(tmp_store):
+    tmp_store.save_trace(
+        run_id="r1", setup_id="s1", stage="trader",
+        model="qwen3-14b-q4", vectors_enabled=True,
+        vector_magnitudes={"conviction": 0.8},
+        prompt_tokens=512, completion_tokens=64,
+        latency_ms=1200, parse_ok=True, error=None
+    )
+    rows = tmp_store.conn.execute("SELECT * FROM traces WHERE run_id='r1'").fetchall()
+    assert len(rows) == 1
+    assert rows[0]["parse_ok"] == 1
+```
+
+- [ ] **Step 5: Verify**
+
+```bash
+pytest tests/unit/test_store.py -v -k trace
+```
+
+---
+
+### Task 8.0b: Multi-regime anti-overfitting gate
+
+**Rationale:** From NexusTrade's hill-climbing post-mortem: optimizing Δ-Sharpe without regime constraints produces configurations that score well in one regime and fail in others — Goodhart's Law in production. A vector configuration must demonstrate positive Δ-Sharpe in at least one bear-regime fold AND at least one bull-regime fold before it can be considered a valid result. See architecture.md §9.2 anti-overfitting gate.
+
+**Files:**
+- Extend: `src/xianvec/eval/compare.py` (add `regime_gate_check`)
+- Extend: `scripts/compare_runs.py` (gate enforced before paper-trading authorization)
+- Test: `tests/unit/test_metrics.py`
+
+- [ ] **Step 1: Add regime labeling to walk-forward folds**
+
+Each walk-forward fold is labeled `bear` or `bull` based on the asset's return over the fold window (negative total return → bear; positive → bull). Labels stored in fold metadata.
+
+- [ ] **Step 2: Implement gate function**
+
+```python
+def regime_gate_check(fold_results: list[dict]) -> tuple[bool, str]:
+    """
+    Returns (passed: bool, reason: str).
+    Passes only if Δ-Sharpe > 0 in at least one bear fold AND one bull fold.
+    """
+    bear_pass = any(f["delta_sharpe"] > 0 for f in fold_results if f["regime"] == "bear")
+    bull_pass = any(f["delta_sharpe"] > 0 for f in fold_results if f["regime"] == "bull")
+    if bear_pass and bull_pass:
+        return True, "passed: positive Δ-Sharpe in both bear and bull regimes"
+    missing = []
+    if not bear_pass:
+        missing.append("bear")
+    if not bull_pass:
+        missing.append("bull")
+    return False, f"FAILED: no positive Δ-Sharpe in {missing} regime(s) — single-regime result only"
+```
+
+- [ ] **Step 3: Enforce gate in compare_runs.py**
+
+Gate result printed prominently before any paper-trading instruction. A failing gate does not crash the script — it prints the result and blocks the paper-trading authorization line.
+
+- [ ] **Step 4: Write and pass tests**
+
+```python
+def test_gate_requires_both_regimes():
+    folds = [
+        {"regime": "bull", "delta_sharpe": 0.3},
+        {"regime": "bull", "delta_sharpe": 0.1},
+        {"regime": "bear", "delta_sharpe": -0.05},
+    ]
+    passed, reason = regime_gate_check(folds)
+    assert not passed
+    assert "bear" in reason
+
+def test_gate_passes_with_both():
+    folds = [
+        {"regime": "bull", "delta_sharpe": 0.2},
+        {"regime": "bear", "delta_sharpe": 0.1},
+    ]
+    passed, _ = regime_gate_check(folds)
+    assert passed
+```
+
+---
+
 ### Task 8.1: Metrics
 
 **Files:**
@@ -2355,8 +3136,15 @@ def equity_curve(pnls: np.ndarray, initial_nav: float = 10000.0) -> np.ndarray:
     return initial_nav + np.cumsum(pnls)
 
 def returns_from_pnl(pnls: np.ndarray, initial_nav: float = 10000.0) -> np.ndarray:
-    eq = equity_curve(pnls, initial_nav)
-    return np.diff(eq) / eq[:-1]
+    """Trade-level returns with a CONSTANT denominator (initial NAV).
+
+    Order-invariant by construction: a permutation of trades produces the same
+    multiset of returns, so Sharpe is path-independent. Required for the paired
+    bootstrap to be valid — `np.diff(equity)/equity[:-1]` makes returns depend
+    on cumulative-PnL position, which corrupts bootstrap permutations.
+    See structural-review fix #8.
+    """
+    return np.asarray(pnls, dtype=np.float64) / initial_nav
 ```
 
 - [ ] **Step 4: Run, verify pass**
@@ -2407,6 +3195,22 @@ def test_bootstrap_null_case():
     result = paired_bootstrap_sharpe_delta(a, b, n_resamples=2000, seed=0)
     # CI should straddle zero
     assert result["ci_low"] < 0 < result["ci_high"]
+
+def test_block_bootstrap_widens_ci_under_correlation():
+    """When trades are serially correlated, IID bootstrap is too tight; block bootstrap
+    should produce a wider CI on the same data — that is the whole point of using it."""
+    rng = np.random.default_rng(7)
+    # construct correlated paired returns (AR(1)-ish)
+    n = 200
+    a = np.zeros(n); b = np.zeros(n)
+    for i in range(1, n):
+        a[i] = 0.5 * a[i-1] + rng.normal(0.001, 0.01)
+        b[i] = 0.5 * b[i-1] + rng.normal(0.000, 0.01)
+    iid = paired_bootstrap_sharpe_delta(a, b, n_resamples=2000, seed=1, block_size=1)
+    blk = paired_bootstrap_sharpe_delta(a, b, n_resamples=2000, seed=1, block_size=8)
+    iid_width = iid["ci_high"] - iid["ci_low"]
+    blk_width = blk["ci_high"] - blk["ci_low"]
+    assert blk_width > iid_width    # block CI is wider — the honest one
 ```
 
 - [ ] **Step 2: Implement**
@@ -2422,16 +3226,27 @@ def paired_bootstrap_sharpe_delta(
     n_resamples: int = 10000,
     ci: float = 0.95,
     seed: int | None = None,
+    block_size: int = 1,
 ) -> dict:
-    """Paired bootstrap of Sharpe(A) - Sharpe(B). Inputs must be same length and aligned."""
+    """Paired bootstrap of Sharpe(A) - Sharpe(B). Inputs must be same length and aligned.
+
+    `block_size`: when > 1, performs a moving-block bootstrap — sample contiguous
+    blocks of length `block_size` instead of IID indices. Required when input
+    returns are serially correlated (e.g. backtest setups with overlapping forward
+    windows). For trade-level data with `step >= horizon`, IID (block_size=1) is
+    valid; otherwise set block_size to ⌈horizon/step⌉ at minimum.
+    See structural-review fix #4.
+    """
     if len(returns_a) != len(returns_b):
         raise ValueError("paired returns must be same length")
+    if block_size < 1:
+        raise ValueError("block_size must be >= 1")
     rng = np.random.default_rng(seed)
     n = len(returns_a)
 
     deltas = np.empty(n_resamples)
     for i in range(n_resamples):
-        idx = rng.integers(0, n, n)
+        idx = _resample_indices(rng, n, block_size)
         deltas[i] = sharpe(returns_a[idx]) - sharpe(returns_b[idx])
 
     point = sharpe(returns_a) - sharpe(returns_b)
@@ -2452,7 +3267,17 @@ def paired_bootstrap_sharpe_delta(
         "p_value": p,
         "n": n,
         "n_resamples": n_resamples,
+        "block_size": block_size,
     }
+
+def _resample_indices(rng: np.random.Generator, n: int, block_size: int) -> np.ndarray:
+    """Return n indices: IID for block_size=1, moving-block for block_size>1."""
+    if block_size == 1:
+        return rng.integers(0, n, n)
+    n_blocks = (n + block_size - 1) // block_size
+    starts = rng.integers(0, max(1, n - block_size + 1), n_blocks)
+    idx = np.concatenate([np.arange(s, s + block_size) for s in starts])[:n]
+    return idx
 ```
 
 - [ ] **Step 3: Run, verify pass**
@@ -2480,18 +3305,39 @@ git commit -m "feat(eval): paired bootstrap for sharpe delta"
 
 ```python
 # src/xianvec/eval/backtest.py
+"""Backtest harness with stateful portfolio + briefing cache.
+
+Two structural fixes baked in here vs the naive design:
+
+1. **Stateful portfolio.** The simulator threads a running portfolio (NAV, open
+   positions, daily PnL window, loss streak, atr_pct) across setups so the risk
+   layer is *actually live* in backtest — circuit breaker, cluster cap, loss-streak
+   cooldown, and vol-targeting all enforced. The naive freeze-portfolio-per-setup
+   version made the risk layer a no-op and produced a system-under-test that
+   diverged from what forward paper trading actually runs. (Structural-review #3.)
+
+2. **Briefing cache.** The Intern is expensive (Claude API) and non-deterministic
+   without temperature=0. The cache sidesteps both: each setup's briefing is fetched
+   once and reused across every trader arm (vectors-OFF / random / orthogonal /
+   vectors-ON). Pairing is now exact at the Stage-1 level. (Structural-review #1.)
+
+Default `step=24 > horizon=16` so consecutive setups have non-overlapping forward
+windows. With overlap, IID bootstrap CIs are too tight; either keep step >= horizon
+or pass `block_size` to the bootstrap. (Structural-review #4.)
+"""
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Callable, Iterable
+import pickle
 import pandas as pd
 import numpy as np
-from xianvec.schemas import MarketState, TraderDecision
+from xianvec.schemas import MarketState, TraderDecision, InternBriefing
 from xianvec.execution.simulator import Simulator
 from xianvec.risk.rules import RiskEvaluator
 
-# Decision functions in backtest receive both the structured state and the raw price
-# window, so technical baselines (which need OHLCV directly) and the agent (which
-# uses precomputed indicators in state) share one signature.
 DecisionFn = Callable[[MarketState, pd.DataFrame], TraderDecision]
+# Variant that takes a precomputed Intern briefing — used by the agent arms.
+BriefedDecisionFn = Callable[[MarketState, InternBriefing], TraderDecision]
 
 @dataclass
 class BacktestResult:
@@ -2500,14 +3346,51 @@ class BacktestResult:
     exit_reasons: list[str] = field(default_factory=list)
     decisions: list[TraderDecision] = field(default_factory=list)
     setup_ids: list[str] = field(default_factory=list)
+    nav_curve: list[float] = field(default_factory=list)   # NAV after each setup
 
     def to_arrays(self):
         return np.array(self.pnls), self.exit_reasons
 
+
+@dataclass
+class PortfolioState:
+    """Mutable running portfolio for the backtest. Mirrors the live Alpaca shape."""
+    initial_nav: float
+    nav: float
+    cash: float
+    open_positions: list[dict] = field(default_factory=list)
+    daily_pnl_window: list[float] = field(default_factory=list)  # rolling 1-day pnls
+    bars_per_day: int = 96   # 15-min bars * 24h
+    consecutive_losses: int = 0
+    bars_since_last_loss: int = 999
+
+    def daily_pnl_pct(self) -> float:
+        return (sum(self.daily_pnl_window) / self.initial_nav) * 100 if self.daily_pnl_window else 0.0
+
+    def update_after_trade(self, pnl: float, bars_held: int):
+        self.nav += pnl
+        self.cash = self.nav   # close-on-exit; v1 has no carry positions
+        self.daily_pnl_window.append(pnl)
+        if len(self.daily_pnl_window) > self.bars_per_day:
+            self.daily_pnl_window.pop(0)
+        if pnl < 0:
+            self.consecutive_losses += 1
+            self.bars_since_last_loss = 0
+        else:
+            self.consecutive_losses = 0
+            self.bars_since_last_loss += bars_held
+        # (open_positions stays empty since v1 closes at horizon/stop/tp)
+
+
 def iter_setups(price_df: pd.DataFrame, asset: str, lookback: int = 200,
-                horizon: int = 16, step: int = 8
+                horizon: int = 16, step: int = 24
                 ) -> Iterable[tuple[MarketState, pd.DataFrame, pd.DataFrame, str]]:
-    """Yield (state, window_df, future_df, setup_id) for each historical setup."""
+    """Yield (state, window_df, future_df, setup_id). Default step=24 >= horizon=16
+    so consecutive forward windows do not overlap (structural-review #4).
+
+    The returned `state.portfolio` is a placeholder; `run_backtest` overwrites it
+    with the running PortfolioState before invoking the decision_fn.
+    """
     from xianvec.data.indicators import compute_indicators
     n = len(price_df)
     for i in range(lookback, n - horizon, step):
@@ -2522,11 +3405,54 @@ def iter_setups(price_df: pd.DataFrame, asset: str, lookback: int = 200,
             ohlcv_recent=[],
             indicators=indicators,
             onchain={"smart_money_inflow": 0.0, "funding_rate": 0.0},
-            portfolio={"nav": 10000.0, "cash": 10000.0,
-                       "open_positions": [], "daily_pnl_pct": 0.0},
+            portfolio={},  # filled in by run_backtest from the running PortfolioState
         )
         setup_id = f"{asset}-{i}"
         yield state, window, future, setup_id
+
+
+def _portfolio_dict(p: PortfolioState, indicators: dict) -> dict:
+    """Project the running PortfolioState into the dict shape risk + agent expect."""
+    close = indicators.get("close") or 1.0
+    atr = indicators.get("atr_14") or 0.0
+    return {
+        "nav": p.nav,
+        "cash": p.cash,
+        "open_positions": list(p.open_positions),
+        "daily_pnl_pct": p.daily_pnl_pct(),
+        "consecutive_losses": p.consecutive_losses,
+        "bars_since_last_loss": p.bars_since_last_loss,
+        "atr_pct": (atr / close * 100) if close else 0.0,
+    }
+
+
+class BriefingCache:
+    """Disk-backed Intern-briefing cache keyed by setup_id.
+
+    Both vectors-OFF and vectors-ON arms read from the same cache so they see
+    the SAME Stage-1 briefing for the same setup. Without this, Claude's
+    sampling noise enters the paired Δ-Sharpe and pairing is broken at Stage 1.
+    (Structural-review #1.)
+    """
+    def __init__(self, path: Path | str = "data/briefings.pkl"):
+        self.path = Path(path)
+        self._mem: dict[str, InternBriefing] = {}
+        if self.path.exists():
+            with open(self.path, "rb") as f:
+                self._mem = pickle.load(f)
+
+    def get_or_compute(self, setup_id: str, fn: Callable[[], InternBriefing]) -> InternBriefing:
+        if setup_id in self._mem:
+            return self._mem[setup_id]
+        briefing = fn()
+        self._mem[setup_id] = briefing
+        return briefing
+
+    def save(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.path, "wb") as f:
+            pickle.dump(self._mem, f)
+
 
 def run_backtest(
     name: str,
@@ -2536,35 +3462,69 @@ def run_backtest(
     risk_cfg: dict,
     initial_nav: float = 10000.0,
     fee_bps: float = 10.0,
-    slippage_bps: float = 5.0,
+    slippage_bps: float | None = None,
+    horizon: int = 16,
+    step: int = 24,
 ) -> BacktestResult:
+    """Run a backtest with running portfolio state and a live risk layer.
+
+    Risk ownership: the **harness owns the final risk gate** so that baselines
+    (which are bare decision functions, not pipelines) get the same risk
+    treatment as the agent. The agent's TradePipeline may also run risk
+    internally for instrumentation; that is harmless because RiskEvaluator
+    is idempotent on already-conformant decisions. (Structural-review T3.)
+    """
     sim = Simulator(initial_nav=initial_nav, fee_bps=fee_bps, slippage_bps=slippage_bps)
     risk = RiskEvaluator(risk_cfg)
+    portfolio_state = PortfolioState(initial_nav=initial_nav, nav=initial_nav, cash=initial_nav)
     result = BacktestResult(name=name)
 
-    for state, window, future, setup_id in iter_setups(price_df, asset):
+    for state, window, future, setup_id in iter_setups(price_df, asset, horizon=horizon, step=step):
+        # inject the running portfolio into the state the decision_fn sees
+        portfolio = _portfolio_dict(portfolio_state, state.indicators)
+        state = state.model_copy(update={"portfolio": portfolio})
         try:
             decision = decision_fn(state, window)
         except Exception as e:
             print(f"decision_fn error on {setup_id}: {e}")
+            result.setup_ids.append(setup_id)
+            result.pnls.append(0.0)
+            result.exit_reasons.append(f"error:{str(e)[:40]}")
+            result.decisions.append(None)  # type: ignore
+            result.nav_curve.append(portfolio_state.nav)
             continue
         decision = decision.model_copy(update={"setup_id": setup_id})
 
-        risked = risk.evaluate(decision, asset=asset, portfolio=state.portfolio)
+        risked = risk.evaluate(decision, asset=asset, portfolio=portfolio)
         if not risked.approved:
             result.pnls.append(0.0)
-            result.exit_reasons.append(f"vetoed:{risked.veto_reason[:40]}")
+            result.exit_reasons.append(f"vetoed:{(risked.veto_reason or '')[:40]}")
             result.decisions.append(decision)
             result.setup_ids.append(setup_id)
+            result.nav_curve.append(portfolio_state.nav)
             continue
         actual = risked.modified or risked.original
+
+        if actual.action in ("flat", "close"):
+            result.pnls.append(0.0)
+            result.exit_reasons.append(f"no_trade:{actual.action}")
+            result.decisions.append(actual)
+            result.setup_ids.append(setup_id)
+            result.nav_curve.append(portfolio_state.nav)
+            continue
+
         entry = float(future["close"].iloc[0])
-        pnl, reason = sim.simulate_trade(actual, future, entry_price=entry)
+        pnl, reason = sim.simulate_trade(actual, future, entry_price=entry, asset=asset)
+        portfolio_state.update_after_trade(pnl, bars_held=horizon)
+
         result.pnls.append(pnl)
         result.exit_reasons.append(reason)
         result.decisions.append(actual)
         result.setup_ids.append(setup_id)
+        result.nav_curve.append(portfolio_state.nav)
+
     return result
+
 
 def align_paired(r_a: BacktestResult, r_b: BacktestResult) -> tuple[np.ndarray, np.ndarray]:
     """Filter to setups present in both, return aligned pnl arrays."""
@@ -2649,6 +3609,216 @@ The agent (vectors-on/vectors-off) backtest is wired in `scripts/run_ab_compare.
 ```bash
 git add src/xianvec/eval/backtest.py scripts/run_backtest.py
 git commit -m "feat(eval): backtest harness with paired alignment"
+```
+
+---
+
+### Task 8.4: Walk-forward harness
+
+**Why:** A single chronological pass over a fixed dataset is technically not walk-forward — observers will reasonably ask whether vectors were tuned on the same window they were evaluated on. Real walk-forward holds out the last N% of each window for evaluation, slides forward, repeats. Without this, our results look in-sample even if no actual tuning happened on the eval set.
+
+**v1 caveat (structural-review T3):** vectors are extracted *once* from synthetic contrastive pairs and frozen for the whole eval; we do not learn anything from the train slice. The harness here is therefore really a *stationarity check* (does Δ-Sharpe hold across non-adjacent test windows?) rather than a true walk-forward. The `train` slice is generated and discarded; the test slices are what feed the bootstrap. We keep the name "walk-forward" because the splitting logic is reusable for v2's regime-vector tuning loop, but the v1 acceptance criterion is "fold-level Δ-Sharpe is roughly stationary," not "vectors generalize from train to test."
+
+**Files:**
+- Create: `src/xianvec/eval/walk_forward.py`
+- Test: `tests/unit/test_walk_forward.py`
+- Modify: `scripts/run_ab_compare.py` to optionally run WF mode
+
+- [ ] **Step 1: Failing test**
+
+```python
+# tests/unit/test_walk_forward.py
+import pandas as pd
+import numpy as np
+from xianvec.eval.walk_forward import walk_forward_splits
+
+def test_expanding_window_splits():
+    n = 1000
+    df = pd.DataFrame({"close": np.arange(n)})
+    splits = list(walk_forward_splits(
+        df, train_size=200, test_size=100, step=100, mode="expanding",
+    ))
+    # first split: train [0:200], test [200:300]
+    assert len(splits[0][0]) == 200
+    assert len(splits[0][1]) == 100
+    # last split's train extends to where test begins
+    last_train, last_test = splits[-1]
+    assert len(last_train) >= 200
+    assert last_train.index[-1] + 1 == last_test.index[0]
+    # each subsequent train includes everything up to its test
+    for train, test in splits:
+        assert train.index[-1] + 1 == test.index[0]
+
+def test_rolling_window_splits():
+    n = 1000
+    df = pd.DataFrame({"close": np.arange(n)})
+    splits = list(walk_forward_splits(
+        df, train_size=200, test_size=100, step=100, mode="rolling",
+    ))
+    # rolling: train always exactly 200 long
+    for train, _ in splits:
+        assert len(train) == 200
+```
+
+- [ ] **Step 2: Implement walk-forward**
+
+```python
+# src/xianvec/eval/walk_forward.py
+from dataclasses import dataclass
+from typing import Iterable, Literal, Callable
+import pandas as pd
+import numpy as np
+from xianvec.eval.backtest import run_backtest, BacktestResult, DecisionFn
+from xianvec.eval.metrics import sharpe, returns_from_pnl, max_drawdown
+from xianvec.eval.compare import paired_bootstrap_sharpe_delta
+
+Mode = Literal["expanding", "rolling"]
+
+def walk_forward_splits(
+    df: pd.DataFrame,
+    train_size: int,
+    test_size: int,
+    step: int,
+    mode: Mode = "expanding",
+) -> Iterable[tuple[pd.DataFrame, pd.DataFrame]]:
+    """Yield (train_window, test_window) pairs in chronological order.
+
+    expanding: train grows over time, always starts at index 0
+    rolling: train is a fixed-size sliding window
+    """
+    n = len(df)
+    start = 0
+    train_end = train_size
+    while train_end + test_size <= n:
+        train = df.iloc[start:train_end] if mode == "rolling" else df.iloc[0:train_end]
+        test = df.iloc[train_end:train_end + test_size]
+        yield train, test
+        train_end += step
+        if mode == "rolling":
+            start += step
+
+@dataclass
+class WalkForwardResult:
+    fold_metrics: list[dict]
+    aggregate_pnls_a: np.ndarray
+    aggregate_pnls_b: np.ndarray
+    bootstrap: dict
+
+def run_paired_walk_forward(
+    df: pd.DataFrame,
+    asset: str,
+    risk_cfg: dict,
+    decision_fn_a: DecisionFn,    # vectors ON
+    decision_fn_b: DecisionFn,    # vectors OFF
+    train_size: int = 2000,
+    test_size: int = 500,
+    step: int = 500,
+    mode: Mode = "expanding",
+    bootstrap_resamples: int = 10000,
+) -> WalkForwardResult:
+    """Run paired vectors-ON/OFF backtest across rolling test windows.
+    Vectors are NOT retrained per fold (they're frozen for the experiment),
+    but evaluation is strictly out-of-sample relative to any vector tuning."""
+    fold_metrics = []
+    all_a_pnls: list[float] = []
+    all_b_pnls: list[float] = []
+    for fold_idx, (train, test) in enumerate(walk_forward_splits(
+        df, train_size, test_size, step, mode
+    )):
+        r_a = run_backtest(f"on_fold{fold_idx}", decision_fn_a, test, asset, risk_cfg)
+        r_b = run_backtest(f"off_fold{fold_idx}", decision_fn_b, test, asset, risk_cfg)
+        a_pnls, _ = r_a.to_arrays()
+        b_pnls, _ = r_b.to_arrays()
+        # align by setup_id within the fold
+        common = [sid for sid in r_a.setup_ids if sid in set(r_b.setup_ids)]
+        a_map = dict(zip(r_a.setup_ids, r_a.pnls))
+        b_map = dict(zip(r_b.setup_ids, r_b.pnls))
+        a = np.array([a_map[s] for s in common])
+        b = np.array([b_map[s] for s in common])
+
+        rets_a = returns_from_pnl(a) if len(a) > 1 else np.array([])
+        rets_b = returns_from_pnl(b) if len(b) > 1 else np.array([])
+        fold_metrics.append({
+            "fold": fold_idx,
+            "n": len(common),
+            "sharpe_on": float(sharpe(rets_a)) if len(rets_a) else 0.0,
+            "sharpe_off": float(sharpe(rets_b)) if len(rets_b) else 0.0,
+            "delta_sharpe": (
+                float(sharpe(rets_a) - sharpe(rets_b))
+                if len(rets_a) and len(rets_b) else 0.0
+            ),
+            "mdd_on": float(max_drawdown(np.cumsum(a) + 10000)) if len(a) else 0.0,
+            "mdd_off": float(max_drawdown(np.cumsum(b) + 10000)) if len(b) else 0.0,
+        })
+        all_a_pnls.extend(a.tolist())
+        all_b_pnls.extend(b.tolist())
+
+    a_arr = np.array(all_a_pnls)
+    b_arr = np.array(all_b_pnls)
+    rets_a = returns_from_pnl(a_arr) if len(a_arr) > 1 else np.array([])
+    rets_b = returns_from_pnl(b_arr) if len(b_arr) > 1 else np.array([])
+    boot = (
+        paired_bootstrap_sharpe_delta(rets_a, rets_b, n_resamples=bootstrap_resamples, seed=42)
+        if len(rets_a) > 1 and len(rets_b) > 1
+        else {"delta_sharpe": 0.0, "ci_low": 0.0, "ci_high": 0.0,
+              "p_value": 1.0, "n": 0, "n_resamples": 0}
+    )
+    return WalkForwardResult(
+        fold_metrics=fold_metrics,
+        aggregate_pnls_a=a_arr,
+        aggregate_pnls_b=b_arr,
+        bootstrap=boot,
+    )
+```
+
+- [ ] **Step 3: Add CLI flag to A/B runner**
+
+```python
+# scripts/run_ab_compare.py — add a --mode flag (single or walk_forward)
+def main(price_path: str, asset: str = "BTC-USD",
+         mode: str = "single", train_size: int = 2000,
+         test_size: int = 500, step: int = 500,
+         wf_window: str = "expanding"):
+    ...
+    if mode == "single":
+        # existing code path
+        ...
+    elif mode == "walk_forward":
+        from xianvec.eval.walk_forward import run_paired_walk_forward
+        wf = run_paired_walk_forward(
+            df, asset, risk_cfg,
+            decision_fn_a=make_decision_fn(True),
+            decision_fn_b=make_decision_fn(False),
+            train_size=train_size, test_size=test_size, step=step,
+            mode=wf_window,
+        )
+        print(f"\n=== WALK-FORWARD ({wf_window}, {len(wf.fold_metrics)} folds) ===")
+        for fm in wf.fold_metrics:
+            print(f"  fold {fm['fold']:2d}  n={fm['n']:4d}  "
+                  f"Δ-Sharpe={fm['delta_sharpe']:+.3f}  "
+                  f"on/off Sharpe={fm['sharpe_on']:.3f}/{fm['sharpe_off']:.3f}  "
+                  f"on/off MDD={fm['mdd_on']:.3f}/{fm['mdd_off']:.3f}")
+        b = wf.bootstrap
+        print(f"\nAggregate Δ-Sharpe (all folds): {b['delta_sharpe']:.3f}  "
+              f"95% CI [{b['ci_low']:.3f}, {b['ci_high']:.3f}]  p≈{b['p_value']:.3f}  "
+              f"n={b['n']}")
+```
+
+- [ ] **Step 4: Run tests + smoke**
+
+```bash
+pytest tests/unit/test_walk_forward.py -v
+python scripts/run_ab_compare.py data/historical/btc-15min-90days.parquet \
+    --mode walk_forward --train-size 2000 --test-size 500 --step 500
+```
+
+Expected: per-fold metrics print, then aggregate Δ-Sharpe with CI. The aggregate should be roughly comparable to single-mode if no overfitting; large divergence between single-mode and walk-forward Δ-Sharpe is itself a signal that the single-mode result was leakage-driven.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/xianvec/eval/walk_forward.py tests/unit/test_walk_forward.py scripts/run_ab_compare.py
+git commit -m "feat(eval): walk-forward backtest harness with paired bootstrap"
 ```
 
 ---
@@ -2804,7 +3974,20 @@ git commit -m "feat(pipeline): full stage 1→2→risk orchestration"
 
 ```python
 # scripts/run_ab_compare.py
-"""Run vectors-on vs vectors-off backtest, compute Δ-Sharpe with bootstrap CI."""
+"""Multi-asset, multi-arm A/B backtest with briefing cache and bootstrap CI.
+
+Arms (per architecture.md §9.3):
+- vectors_off       : control (the system minus vectors)
+- vectors_random    : Gaussian vector at matched norm — null for "any perturbation helps"
+- vectors_orth      : orthogonal-to-disposition vector — null for "representation impact"
+- vectors_on        : the experimental condition
+
+Briefings are cached to data/briefings.pkl keyed by setup_id. Every arm reads
+the same briefing for the same setup, so pairing is exact at Stage 1.
+(Structural-review #1, #6, #10.)
+"""
+from pathlib import Path
+import pickle
 import pandas as pd
 import numpy as np
 import typer
@@ -2812,59 +3995,152 @@ from xianvec.config import load_config
 from xianvec.intern.claude import ClaudeIntern
 from xianvec.trader.model import TraderModel
 from xianvec.trader.runtime import VectorTrader
-from xianvec.trader.vectors import load_axis_vectors
-from xianvec.eval.backtest import run_backtest, align_paired
+from xianvec.eval.backtest import run_backtest, align_paired, BriefingCache
 from xianvec.eval.metrics import sharpe, max_drawdown, profit_factor, win_rate, returns_from_pnl
 from xianvec.eval.compare import paired_bootstrap_sharpe_delta
+from xianvec.pipeline.trade import TradePipeline
 
-def main(price_path: str, asset: str = "BTC-USD"):
+DISPOSITION_AXES = ["conviction", "patience", "risk_appetite", "trend_disposition"]
+
+def _decision_signature(d) -> tuple:
+    """Behavioural signature for divergence comparison: action + direction +
+    size_bucket. Captures meaningful behavioural shifts that an action-only
+    check would miss (50bps long vs 1500bps long is a real divergence). Buckets:
+    0, <500, <1000, <2000, >=2000. (Structural-review T3.)"""
+    if d is None:
+        return ("none",)
+    sb = d.size_bps or 0
+    bucket = 0 if sb == 0 else (1 if sb < 500 else (2 if sb < 1000 else (3 if sb < 2000 else 4)))
+    return (d.action, d.direction, bucket)
+
+def _make_arm(arm: str, intern, model, regime_cfg, risk_cfg, briefing_cache):
+    """Return a decision_fn for the given experimental arm.
+
+    arm ∈ {"off", "random", "orth", "on"}. Each arm builds a VectorTrader and uses
+    the cached Intern briefing (one Intern call per setup_id, shared across arms).
+    """
+    if arm == "off":
+        axis_names: list[str] = []
+        vectors_enabled = False
+    elif arm == "random":
+        axis_names = ["random"]
+        vectors_enabled = True
+    elif arm == "orth":
+        axis_names = ["orthogonal"]
+        vectors_enabled = True
+    elif arm == "on":
+        axis_names = DISPOSITION_AXES
+        vectors_enabled = True
+    else:
+        raise ValueError(f"unknown arm: {arm}")
+
+    trader = VectorTrader(model, axis_names, vectors_enabled=vectors_enabled,
+                          backtest_mode=True)  # disable per-setup reload, structural-review #7
+
+    def regime_weights_for_arm(regime: str) -> dict:
+        if arm == "off":
+            return {}
+        if arm == "random":
+            return {"random": 1.0}
+        if arm == "orth":
+            return {"orthogonal": 1.0}
+        return regime_cfg.get(regime, {})
+
+    def fn(state, _window):
+        # Use the real setup_id (not the literal "ab"). Briefings are cached so
+        # every arm reads the same Stage-1 briefing for the same setup.
+        setup_id = f"{state.asset}-{int(state.timestamp)}"
+        briefing = briefing_cache.get_or_compute(
+            setup_id, lambda: intern.reason(state, setup_id=setup_id)
+        )
+        weights = regime_weights_for_arm(briefing.regime)
+        return trader.decide(briefing, regime_vectors=weights)
+
+    return fn
+
+def main(asset_csv: str = "BTC-USD,ETH-USD,SOL-USD",
+         data_dir: str = "data/historical",
+         block_size: int = 1):
     cfg = load_config("config/default.yaml")
     regime_cfg = load_config("config/regime_vectors.yaml")
     risk_cfg = load_config("config/risk.yaml")
-    df = pd.read_parquet(price_path)
 
     intern = ClaudeIntern(model=cfg["intern"]["claude_model"])
-    model = TraderModel(layer_range=tuple(cfg["trader"]["layer_range"]))
-    axis_vectors = load_axis_vectors("vectors")
+    model = TraderModel(model_path=cfg["trader"]["model_path"])
+    cache = BriefingCache(path="data/briefings.pkl")
 
-    def make_decision_fn(vectors_enabled):
-        trader = VectorTrader(model, axis_vectors, vectors_enabled=vectors_enabled)
-        from xianvec.pipeline.trade import TradePipeline
-        pipeline = TradePipeline(intern, trader, risk_cfg, regime_cfg)
-        # Backtest harness passes (state, window); agent only uses state.
-        def fn(state, _window):
-            r = pipeline.run(state, setup_id="ab")
-            return (r["risk"].modified or r["risk"].original) if r["risk"].approved else r["decision"]
-        return fn
+    assets = [a.strip() for a in asset_csv.split(",")]
+    by_arm: dict[str, list] = {a: [] for a in ["off", "random", "orth", "on"]}
 
-    print("Running vectors-OFF backtest...")
-    r_off = run_backtest("vectors_off", make_decision_fn(False), df, asset, risk_cfg)
-    print("Running vectors-ON backtest...")
-    r_on = run_backtest("vectors_on", make_decision_fn(True), df, asset, risk_cfg)
+    for asset in assets:
+        path = Path(data_dir) / f"{asset.lower()}-15min-90days.parquet"
+        if not path.exists():
+            print(f"skip {asset}: {path} not found")
+            continue
+        df = pd.read_parquet(path)
+        for arm in by_arm:
+            print(f"running arm={arm} on {asset}...")
+            fn = _make_arm(arm, intern, model, regime_cfg, risk_cfg, cache)
+            r = run_backtest(f"{arm}_{asset}", fn, df, asset, risk_cfg)
+            by_arm[arm].append(r)
+        cache.save()  # flush per-asset
 
-    a_pnls, b_pnls = align_paired(r_on, r_off)
-    a_rets = returns_from_pnl(a_pnls)
-    b_rets = returns_from_pnl(b_pnls)
+    def stitch(results):
+        pnls, sids, decisions = [], [], []
+        for r in results:
+            pnls.extend(r.pnls); sids.extend(r.setup_ids); decisions.extend(r.decisions)
+        return np.array(pnls), sids, decisions
 
-    boot = paired_bootstrap_sharpe_delta(a_rets, b_rets,
-                                         n_resamples=cfg["eval"]["bootstrap_resamples"],
-                                         seed=42)
+    off_pnls, off_sids, off_dec = stitch(by_arm["off"])
+    rnd_pnls, rnd_sids, rnd_dec = stitch(by_arm["random"])
+    orth_pnls, orth_sids, orth_dec = stitch(by_arm["orth"])
+    on_pnls, on_sids, on_dec = stitch(by_arm["on"])
 
-    print("\n=== A/B RESULTS ===")
-    print(f"Vectors ON  Sharpe: {sharpe(a_rets):.3f}  MDD: {max_drawdown(np.cumsum(a_pnls)+10000):.3f}  "
-          f"PF: {profit_factor(a_pnls):.2f}  WR: {win_rate(a_pnls):.2%}")
-    print(f"Vectors OFF Sharpe: {sharpe(b_rets):.3f}  MDD: {max_drawdown(np.cumsum(b_pnls)+10000):.3f}  "
-          f"PF: {profit_factor(b_pnls):.2f}  WR: {win_rate(b_pnls):.2%}")
-    print(f"\nΔ-Sharpe: {boot['delta_sharpe']:.3f}  "
-          f"95% CI: [{boot['ci_low']:.3f}, {boot['ci_high']:.3f}]  p≈{boot['p_value']:.3f}  "
-          f"n={boot['n']}")
+    def paired(a_pnls, a_sids, b_pnls, b_sids):
+        a_map = dict(zip(a_sids, a_pnls)); b_map = dict(zip(b_sids, b_pnls))
+        common = [s for s in a_sids if s in b_map]
+        return (np.array([a_map[s] for s in common]),
+                np.array([b_map[s] for s in common]),
+                common)
 
-    n_diverged = sum(
-        1 for sid in r_on.setup_ids if sid in set(r_off.setup_ids)
-        and dict(zip(r_on.setup_ids, r_on.decisions))[sid].action
-        != dict(zip(r_off.setup_ids, r_off.decisions))[sid].action
-    )
-    print(f"Decision divergence rate: {n_diverged}/{boot['n']} = {n_diverged/boot['n']:.2%}")
+    n_resamples = cfg.get("eval", {}).get("bootstrap_resamples", 10000)
+    print("\n=== A/B RESULTS (each arm vs vectors_off) ===")
+    for arm_name, arm_pnls, arm_sids in [
+        ("vectors_random", rnd_pnls, rnd_sids),
+        ("vectors_orth", orth_pnls, orth_sids),
+        ("vectors_on", on_pnls, on_sids),
+    ]:
+        a, b, _ = paired(arm_pnls, arm_sids, off_pnls, off_sids)
+        if len(a) < 30:
+            print(f"{arm_name}: insufficient n={len(a)} (<30); skip")
+            continue
+        a_rets = returns_from_pnl(a); b_rets = returns_from_pnl(b)
+        boot = paired_bootstrap_sharpe_delta(
+            a_rets, b_rets, n_resamples=n_resamples, seed=42, block_size=block_size
+        )
+        print(f"{arm_name:16s}  Δ-Sharpe={boot['delta_sharpe']:+.3f}  "
+              f"95% CI [{boot['ci_low']:+.3f}, {boot['ci_high']:+.3f}]  "
+              f"p≈{boot['p_value']:.3f}  n={boot['n']}  block_size={boot['block_size']}")
+
+    # Behavioural-signature divergence (vectors_on vs vectors_off)
+    on_map = dict(zip(on_sids, on_dec))
+    off_map = dict(zip(off_sids, off_dec))
+    common = [s for s in on_sids if s in off_map]
+    diverged = sum(1 for s in common
+                   if _decision_signature(on_map[s]) != _decision_signature(off_map[s]))
+    rate = diverged / len(common) if common else 0.0
+    print(f"\nDecision divergence (action+direction+size_bucket): "
+          f"{diverged}/{len(common)} = {rate:.2%}")
+
+    print("\nPer-asset n (vectors_on):")
+    for r in by_arm["on"]:
+        final = r.nav_curve[-1] if r.nav_curve else 0
+        print(f"  {r.name:24s}  n={len(r.pnls)}  final_nav={final:.0f}")
+
+    Path("data/reports").mkdir(parents=True, exist_ok=True)
+    with open("data/reports/by_arm.pkl", "wb") as f:
+        pickle.dump(by_arm, f)
+    print("\nSaved: data/reports/by_arm.pkl, data/briefings.pkl")
 
 if __name__ == "__main__":
     typer.run(main)
@@ -2873,16 +4149,19 @@ if __name__ == "__main__":
 - [ ] **Step 2: Smoke run on small price slice**
 
 ```bash
-python scripts/run_ab_compare.py data/historical/btc-15min-30days.parquet
+# requires data/historical/{btc,eth,sol}-usd-15min-90days.parquet
+python scripts/run_ab_compare.py --asset-csv "BTC-USD" --data-dir data/historical
 ```
 
-Expected: a results block printing Δ-Sharpe with confidence interval. Even on small N the format should work; statistical significance requires N≥30 trades.
+Expected: four arms (`off`, `random`, `orth`, `on`) run sequentially against the briefing cache (Intern called once per setup; cache file at `data/briefings.pkl` is reused across arms and across runs). Output prints Δ-Sharpe with 95% CI for `vectors_random`, `vectors_orth`, and `vectors_on` — each compared against `vectors_off`. Statistical significance requires n ≥ 30 paired trades. With three assets at step=24 over 90 days you should land around 1000+ paired setups per arm.
+
+If your data has overlapping forward windows (you set step < horizon), pass `--block-size N` where N ≥ ⌈horizon/step⌉ so the bootstrap accounts for serial correlation.
 
 - [ ] **Step 3: Commit**
 
 ```bash
 git add scripts/run_ab_compare.py
-git commit -m "feat: A/B comparison runner with paired bootstrap delta-sharpe"
+git commit -m "feat: multi-arm A/B runner with briefing cache and ablation arms"
 ```
 
 ---
@@ -3026,13 +4305,42 @@ def equity_plot_b64(pnls_on, pnls_off, initial_nav=10000):
     plt.close(fig)
     return base64.b64encode(buf.getvalue()).decode()
 
-def markdown_report(boot_result, on_metrics, off_metrics, divergence_rate, plot_b64):
+def markdown_report(boot_result, on_metrics, off_metrics, divergence_rate, plot_b64,
+                    boot_random=None, boot_orth=None):
+    """Render the demo report.
+
+    Statistical framing (structural-review T3): Δ-Sharpe is the **only** inferential
+    test — the bootstrap CI / p-value applies to that single comparison. The four
+    secondary metrics (Sharpe, MDD, PF, WR) are *descriptive* — no multiple-comparisons
+    correction is applied because we do not claim significance on them.
+
+    The random-vector and orthogonal-vector arms are reported alongside as
+    experimental controls (architecture.md §9.3): if vectors_on does not beat
+    *both* of them, the result is consistent with "any perturbation activates
+    exploration" and the demo narrative weakens.
+    """
+    controls_section = ""
+    if boot_random is not None or boot_orth is not None:
+        controls_section = "\n\n### Experimental controls (vs vectors_off)\n\n"
+        controls_section += "| Arm | Δ-Sharpe | 95% CI | p | n |\n|---|---|---|---|---|\n"
+        for label, b in [("vectors_random", boot_random), ("vectors_orth", boot_orth),
+                         ("vectors_on", boot_result)]:
+            if b is None:
+                continue
+            controls_section += (f"| {label} | {b['delta_sharpe']:+.3f} | "
+                                 f"[{b['ci_low']:+.3f}, {b['ci_high']:+.3f}] | "
+                                 f"{b['p_value']:.3f} | {b['n']} |\n")
+        controls_section += ("\n*A clean win requires `vectors_on` to beat both "
+                             "`vectors_random` and `vectors_orth` on Δ-Sharpe.*\n")
+
     return f"""# XIANVEC Demo — A/B Result
 
-**Δ-Sharpe (vectors on − off):** **{boot_result['delta_sharpe']:.3f}**
-- 95% CI: [{boot_result['ci_low']:.3f}, {boot_result['ci_high']:.3f}]
+**Headline (the only inferential test):** Δ-Sharpe (vectors_on − vectors_off) = **{boot_result['delta_sharpe']:+.3f}**
+- 95% CI: [{boot_result['ci_low']:+.3f}, {boot_result['ci_high']:+.3f}]
 - p ≈ {boot_result['p_value']:.3f}
-- n = {boot_result['n']}
+- n = {boot_result['n']}, block_size = {boot_result.get('block_size', 1)}
+
+### Descriptive metrics (not inferential)
 
 | Metric | Vectors ON | Vectors OFF |
 |---|---|---|
@@ -3041,8 +4349,12 @@ def markdown_report(boot_result, on_metrics, off_metrics, divergence_rate, plot_
 | Profit Factor | {on_metrics['pf']:.2f} | {off_metrics['pf']:.2f} |
 | Win Rate | {on_metrics['wr']:.2%} | {off_metrics['wr']:.2%} |
 
-**Decision divergence rate:** {divergence_rate:.2%} (vectors changed action this often)
+These four are reported for context. We do not claim statistical significance on
+any of them and do not multiple-comparisons-correct, because the headline lives
+on Δ-Sharpe alone.
 
+**Decision divergence rate:** {divergence_rate:.2%} (action × direction × size_bucket)
+{controls_section}
 ![equity curves](data:image/png;base64,{plot_b64})
 """
 ```
@@ -3051,62 +4363,94 @@ def markdown_report(boot_result, on_metrics, off_metrics, divergence_rate, plot_
 
 ```python
 # scripts/build_demo_report.py
-"""Build the markdown + equity-plot demo report from a saved A/B run."""
-import json
+"""Build the markdown + equity-plot demo report from data/reports/by_arm.pkl.
+
+Reads the four-arm pickle written by `run_ab_compare.py`, recomputes per-arm
+metrics, runs the bootstrap for each arm vs vectors_off, and renders the report.
+"""
 import pickle
 from pathlib import Path
 import numpy as np
 import typer
-from xianvec.eval.metrics import sharpe, max_drawdown, profit_factor, win_rate, returns_from_pnl
+from xianvec.eval.metrics import sharpe, max_drawdown, profit_factor, win_rate, returns_from_pnl, equity_curve
 from xianvec.eval.compare import paired_bootstrap_sharpe_delta
 from xianvec.eval.report import equity_plot_b64, markdown_report
 
-def main(on_pickle: str, off_pickle: str, out_path: str = "data/reports/demo.md"):
-    """on_pickle / off_pickle are pickled BacktestResult objects from run_ab_compare."""
-    with open(on_pickle, "rb") as f:
-        r_on = pickle.load(f)
-    with open(off_pickle, "rb") as f:
-        r_off = pickle.load(f)
+def main(by_arm_pickle: str = "data/reports/by_arm.pkl",
+         out_path: str = "data/reports/demo.md",
+         block_size: int = 1):
+    by_arm = pickle.load(open(by_arm_pickle, "rb"))
 
-    from xianvec.eval.backtest import align_paired
-    a, b = align_paired(r_on, r_off)
-    a_rets = returns_from_pnl(a)
-    b_rets = returns_from_pnl(b)
-    boot = paired_bootstrap_sharpe_delta(a_rets, b_rets, n_resamples=10000, seed=42)
+    def stitch(results):
+        pnls, sids = [], []
+        for r in results:
+            pnls.extend(r.pnls); sids.extend(r.setup_ids)
+        return np.array(pnls), sids
 
+    off_pnls, off_sids = stitch(by_arm["off"])
+    on_pnls, on_sids = stitch(by_arm["on"])
+    rnd_pnls, rnd_sids = stitch(by_arm["random"])
+    orth_pnls, orth_sids = stitch(by_arm["orth"])
+
+    def paired(a_pnls, a_sids, b_pnls, b_sids):
+        a_map = dict(zip(a_sids, a_pnls)); b_map = dict(zip(b_sids, b_pnls))
+        common = [s for s in a_sids if s in b_map]
+        return (np.array([a_map[s] for s in common]),
+                np.array([b_map[s] for s in common]))
+
+    def boot(a_pnls, b_pnls):
+        if len(a_pnls) < 30:
+            return None
+        return paired_bootstrap_sharpe_delta(
+            returns_from_pnl(a_pnls), returns_from_pnl(b_pnls),
+            n_resamples=10000, seed=42, block_size=block_size,
+        )
+
+    a_on, b_on = paired(on_pnls, on_sids, off_pnls, off_sids)
+    a_rnd, b_rnd = paired(rnd_pnls, rnd_sids, off_pnls, off_sids)
+    a_orth, b_orth = paired(orth_pnls, orth_sids, off_pnls, off_sids)
+
+    boot_on = boot(a_on, b_on)
+    boot_rnd = boot(a_rnd, b_rnd)
+    boot_orth = boot(a_orth, b_orth)
+    if boot_on is None:
+        raise SystemExit("vectors_on has insufficient paired n; run a longer backtest.")
+
+    a_rets = returns_from_pnl(a_on); b_rets = returns_from_pnl(b_on)
     on_metrics = {
-        "sharpe": sharpe(a_rets), "mdd": max_drawdown(np.cumsum(a) + 10000),
-        "pf": profit_factor(a), "wr": win_rate(a),
+        "sharpe": sharpe(a_rets), "mdd": max_drawdown(equity_curve(a_on)),
+        "pf": profit_factor(a_on), "wr": win_rate(a_on),
     }
     off_metrics = {
-        "sharpe": sharpe(b_rets), "mdd": max_drawdown(np.cumsum(b) + 10000),
-        "pf": profit_factor(b), "wr": win_rate(b),
+        "sharpe": sharpe(b_rets), "mdd": max_drawdown(equity_curve(b_on)),
+        "pf": profit_factor(b_on), "wr": win_rate(b_on),
     }
-    diverged = sum(1 for sid in r_on.setup_ids if sid in set(r_off.setup_ids)
-                   and dict(zip(r_on.setup_ids, r_on.decisions))[sid].action
-                   != dict(zip(r_off.setup_ids, r_off.decisions))[sid].action)
-    divergence_rate = diverged / boot["n"] if boot["n"] else 0.0
 
-    plot = equity_plot_b64(a.tolist(), b.tolist())
-    md = markdown_report(boot, on_metrics, off_metrics, divergence_rate, plot)
+    # divergence — recompute via stitched decisions from the on/off arms
+    on_decs, off_decs = {}, {}
+    for r in by_arm["on"]:
+        for sid, d in zip(r.setup_ids, r.decisions):
+            on_decs[sid] = d
+    for r in by_arm["off"]:
+        for sid, d in zip(r.setup_ids, r.decisions):
+            off_decs[sid] = d
+    from scripts.run_ab_compare import _decision_signature
+    common = [s for s in on_decs if s in off_decs]
+    diverged = sum(1 for s in common
+                   if _decision_signature(on_decs[s]) != _decision_signature(off_decs[s]))
+    divergence_rate = diverged / len(common) if common else 0.0
+
+    plot = equity_plot_b64(a_on.tolist(), b_on.tolist())
+    md = markdown_report(
+        boot_on, on_metrics, off_metrics, divergence_rate, plot,
+        boot_random=boot_rnd, boot_orth=boot_orth,
+    )
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     Path(out_path).write_text(md)
     print(f"wrote {out_path}")
 
 if __name__ == "__main__":
     typer.run(main)
-```
-
-For this to work, `run_ab_compare.py` must persist its `BacktestResult` objects via `pickle.dump`. Add at the end of `scripts/run_ab_compare.py`:
-
-```python
-import pickle
-from pathlib import Path
-Path("data/reports").mkdir(parents=True, exist_ok=True)
-with open("data/reports/r_on.pkl", "wb") as f:
-    pickle.dump(r_on, f)
-with open("data/reports/r_off.pkl", "wb") as f:
-    pickle.dump(r_off, f)
 ```
 
 - [ ] **Step 3: Commit**
@@ -3402,16 +4746,26 @@ Before declaring the build done for hackathon:
 
 - [ ] All unit tests passing: `pytest tests/unit -v`
 - [ ] All integration tests passing: `pytest tests/integration -v`
-- [ ] Spike validation script passes (`scripts/spike_vector_validation.py`)
-- [ ] `scripts/smoke_pipeline_with_vectors.py` produces visibly different on/off decisions
-- [ ] At least one full backtest run on ≥90 days of BTC-USD 15-min data completes without error
-- [ ] A/B comparison run (`scripts/run_ab_compare.py`) produces Δ-Sharpe with bootstrap CI on n ≥ 30 paired trades
-- [ ] Demo report (`scripts/build_demo_report.py`) renders the markdown report and equity-curve plot
+- [ ] fp16 spike passes (`scripts/spike_vector_validation.py`)
+- [ ] **GGUF quantization gate passes** (`scripts/spike_vector_validation_gguf.py`) — directional match ≥ 50% on Q4_K_M
+- [ ] `scripts/smoke_pipeline_with_vectors.py` produces visibly different on/off decisions and prints a non-zero gate magnitude at the action token
+- [ ] At least one full backtest run across the asset whitelist (BTC + ETH + SOL) over ≥90 days of 15-min data completes without error
+- [ ] A/B comparison run produces Δ-Sharpe with bootstrap CI for **all four arms** (`vectors_off`, `vectors_random`, `vectors_orth`, `vectors_on`) on n ≥ 100 paired trades each
+- [ ] **`vectors_on` Δ-Sharpe beats both `vectors_random` and `vectors_orth`** (otherwise the result is consistent with "any perturbation activates exploration" — demo narrative weakens)
+- [ ] **Briefing cache hit rate ≥ 99%** on the second arm onward (proves Stage 1 pairing is exact across arms)
+- [ ] **Stateful portfolio**: at least one risk veto fires during backtest (cluster cap / circuit breaker / loss-streak cooldown) — confirms the risk layer is actually live in backtest, not a no-op
+- [ ] **Block-bootstrap sanity**: if `step < horizon`, results are reported with `block_size = ⌈horizon/step⌉`; otherwise IID is fine
+- [ ] Demo report (`scripts/build_demo_report.py`) renders the markdown report with the controls table, descriptive metrics framing, and equity-curve plot
 - [ ] Telegram bot connects and responds to `/analyze` and `/compare` commands
 - [ ] Forward paper run (`scripts/run_paper.py`) executes a real Alpaca paper order successfully (verify in Alpaca dashboard)
 - [ ] Exchange funding-rate fetch returns a real number (`onchain_signals('BTC-USD')`)
 - [ ] Nansen client either returns real signal or fails gracefully to 0.0
-- [ ] All decisions persisted to `data/decisions.db` with `vectors_enabled` flag
+- [ ] All decisions persisted to `data/decisions.db` with `vectors_enabled` flag and `_gate_magnitude` field
+- [ ] `decisions/0001-model-choice.md` populated by spike output
+- [ ] `decisions/0001b-gguf-validation.md` populated by GGUF spike
+- [ ] `decisions/0002-lookahead-audit.md` reviewed and signed
+- [ ] `decisions/0003-related-work.md` reviewed; one-sentence positioning memorized for demo
+- [ ] Walk-forward fold-level Δ-Sharpe is roughly stationary (large fold-to-fold divergence = leakage signal or regime instability)
 - [ ] No secrets in code or committed config (audit with `git log -p | grep -E "sk-|api_key"`)
 
 ---
@@ -3427,7 +4781,7 @@ Phase 0 → Phase 1.1 (schemas) → Phase 4 (vectors) → Phase 9 (A/B) → Phas
 - **Track A: Baselines.** Phase 7.1 + 7.2 are pure functions over price/onchain dicts — Haiku-class subagent can implement and test these independently.
 - **Track B: Eval framework.** Phase 8.1 (metrics) + 8.2 (paired bootstrap) are pure stats; Haiku can implement against the test specs in this doc.
 - **Track C: Data fetchers.** Phase 11.2 (Alpaca), 11.3 (exchange), 11.4 (Nansen) are independent IO modules; one subagent can do all three.
-- **Track D: Contrastive datasets.** Phase 4.1's four JSON files (50 pairs each) is content generation — Sonnet/Opus subagent producing high-quality contrastive prompts.
+- **Track D: Contrastive datasets.** Phase 4.1's four JSON files (200 pairs each, post-structural-review) is content generation — Sonnet/Opus subagent producing high-quality contrastive prompts.
 
 Recommended sequence: kick off tracks A, B, C, D in parallel as soon as Phase 1 schemas are merged. They feed back into the critical path at Phase 4 (D), Phase 8 (B), Phase 9 (A), and Phase 11 (C).
 
@@ -3439,10 +4793,57 @@ The story arc that the data should tell:
 
 1. **The thesis** (30 sec): control vectors encode disposition; same agent, vectors on vs off, on the same setups.
 2. **The vectors-OFF baseline** (30 sec): show the agent's vectors-off Sharpe alongside textbook baselines (RSI, MA, Donchian, smart-money copy). Establish "this is a competent baseline trader."
-3. **The vectors-ON result** (60 sec): show Δ-Sharpe, decision divergence rate, equity curve overlay. Headline number is Δ-Sharpe with CI.
+3. **The vectors-ON result and the experimental controls** (60 sec): show Δ-Sharpe with bootstrap CI for all four arms — `vectors_on`, `vectors_random`, `vectors_orth`, `vectors_off`. The headline is Δ-Sharpe(on − off); the credibility comes from `vectors_on` beating both random and orthogonal arms. If it doesn't beat both, the result is consistent with "any perturbation activates exploration" and the narrative is honest about that.
 4. **What the vectors did** (60 sec): show 2-3 specific setups where vectors-on and vectors-off chose different actions. Read the `trader_summary` from each. This is where the demo lives — the human-legible behavior shift.
 5. **What's next** (30 sec): SVF for context-conditional steering, Karpathy loop for self-improvement from trade outcomes, ERC-8004 for verifiable track record.
 
 ---
 
 *Plan version: 2026-05-02. Lives at `/Users/edkennedy/Code/xianvec/implementation-plan.md`. Companion: `architecture.md`.*
+
+---
+
+## Future additions (post-hypothesis-validation)
+
+Items researched and assessed but deliberately deferred until the core vector hypothesis (Δ-Sharpe > 0 across regimes) is validated. Adding any of these before that point risks conflating variables or burning cycles on infrastructure before the experiment has a result.
+
+### Cross-run memory system (MemPalace)
+
+**What it is:** Semantic retrieval of past backtest run summaries — vector configurations, rubric scores, regime conditions, natural-language lessons from the evaluator — injected into subsequent runs. Enables cross-run learning without retraining the base model.
+
+**Why deferred:** Until the vector hypothesis is validated, injecting memory into runs introduces a second variable. If Δ-Sharpe improves across runs, the improvement cannot be attributed cleanly to better vector configurations vs the injected memory context. The experiment is currently measuring whether vectors work at all; memory conflates that signal.
+
+**Assessed candidate:** MemPalace (github.com/mempalace/mempalace, PyPI: `mempalace`). Assessed 2026-05-02. Verdict: legitimate — 50k+ stars, 64 test files, committed reproducible benchmarks (96.6% R@5 raw on LongMemEval, no API keys, 98.4% hybrid), MIT, Python 3.9+, local-first ChromaDB + SQLite. Minor flag: 50k stars in 4 weeks is unusual velocity, but code substance is real. Fits Xianvec's stack exactly: offline, SQLite already in use, pluggable backends.
+
+**Integration sketch (for when the time comes):**
+```python
+# After each backtest run:
+palace.store(
+    wing="backtest_runs",
+    room=f"regime_{regime_type}",
+    drawer=f"run_{run_id}_score_{delta_sharpe:.3f}",
+    content=json.dumps({
+        "vector_config": active_magnitudes,
+        "delta_sharpe": delta_sharpe,
+        "regime": regime_type,
+        "regime_gate_passed": gate_passed,
+        "lesson": evaluator_next_iteration_text,
+    })
+)
+# At start of next run:
+similar = palace.search(
+    f"vector configuration {current_regime} regime positive delta sharpe",
+    k=5, wing="backtest_runs"
+)
+# Inject top-k summaries into Stage 1 system prompt context
+```
+
+**Trigger for adding:** First clean backtest result that passes the regime gate (positive Δ-Sharpe in both bear and bull folds). At that point, memory is augmenting a confirmed signal rather than competing with an unconfirmed one.
+
+### Vector magnitude hill-climbing loop
+
+**What it is:** Automated search over vector axis magnitudes (conviction, patience, risk_appetite, trend_disposition) using a run → grade → seed-next-run feedback loop. Currently magnitudes are hand-set in `config/regime_vectors.yaml`.
+
+**Why deferred:** Requires a working eval loop (Phase 8) and validated regime gate (Task 8.0b) before the hill-climbing rubric can be trusted. NexusTrade's $676 warning applies directly: a rubric that optimizes Δ-Sharpe without the regime gate will find configurations that score well on single-regime data and fail in deployment. Get the gate working and a baseline result first.
+
+**When to add:** After the regime gate is confirmed working and at least one manual vector configuration has produced a clean result. Then hill-climbing with the gated rubric is safe.

@@ -259,11 +259,21 @@ Four bipolar axes, extracted independently and composable at inference time.
 
 Each axis becomes a steering vector via contrastive pair extraction. At inference time, the active vector is a linear combination weighted by the current configuration.
 
-### 7.2 Extraction approach
+### 7.2 Extraction and runtime split
 
-**v1 (hackathon):** Synthetic contrastive prompts with `repeng`. For each axis, generate ~50-100 prompt pairs of the form "respond as a [pole A] trader analyzing X" vs "respond as a [pole B] trader analyzing X." Extract the difference of mean activations across paired hidden states at mid-to-late layers. This is the classical control-vector approach.
+The extraction toolchain and the runtime are deliberately separate:
 
-**v2 (post-hackathon):** SVF-style context-conditional steering. Replace each global vector with a small differentiable concept-scoring function whose gradient at the current activation defines the local steering direction. Addresses the unsteerable-context problem flagged in the SVF paper. Requires more engineering and is deferred until v1 demonstrates measurable effect.
+**Extraction (offline, cloud GPU).** Synthetic contrastive prompts processed with `repeng` on top of `transformers`. For each axis, generate ~50-100 prompt pairs of the form "respond as a [pole A] trader analyzing X" vs "respond as a [pole B] trader analyzing X." Extract the difference of mean activations across paired hidden states at mid-to-late layers. Output: per-axis `.pt` files. This step needs PyTorch hidden-state access and ideally fp16 weights, so it runs on a rented A40 or A100 spot instance for ~$10-20 of compute.
+
+**Conversion bridge.** A one-shot script reads each `.pt` ControlVector and writes a llama.cpp-compatible GGUF control vector via `gguf-py`. Output: per-axis `.gguf` files, each ~MB.
+
+**Runtime (everywhere).** `llama-cpp-python` loads the quantized model and the GGUF control vectors via the native `control_vectors=[(path, magnitude)]` API. Magnitudes are signed and composed linearly inside llama.cpp itself. Native quantization, Metal/CUDA acceleration, and cross-platform builds make this the same code path on a MacBook, a Pi-as-orchestrator-with-remote-server, a Linux box, or a RunPod GPU.
+
+This split means the project is platform-free at runtime (anywhere llama.cpp builds, the agent runs) while keeping extraction in the well-trodden PyTorch + repeng workflow.
+
+### 7.2.1 Future extraction approaches (deferred)
+
+**v2:** SVF-style context-conditional steering. Replace each global vector with a small differentiable concept-scoring function whose gradient at the current activation defines the local steering direction. Addresses the unsteerable-context problem flagged in the SVF paper. Requires more engineering and is deferred until v1 demonstrates measurable effect.
 
 **v3 (the Karpathy reach):** Reasoning-trace contrasts à la SEAL. Use chains-of-thought from successful versus unsuccessful trades as the contrastive signal, training vectors that capture *how the model actually reasons* when correctly cautious rather than *how it talks* when prompted to be cautious. This is the self-improvement loop. Out of scope for hackathon.
 
@@ -331,6 +341,9 @@ This isolates the vector contribution. It is the single number the demo lives or
 - Target 100+ paired trades for hackathon demo.
 - Report 95% confidence interval on Δ-Sharpe via paired bootstrap (10k resamples).
 
+**Anti-overfitting gate (hard requirement):**
+No vector configuration advances to paper trading unless it shows positive Δ-Sharpe in at least one pre-2023 bear regime *and* at least one 2023–2024 bull regime. A configuration that only beats vectors-OFF in trending markets is not evidence — it is a backtest artefact. This gate is explicit and checked programmatically before any paper-trading run is authorized. Single-regime wins, however large, are capped: a result that does not span at least two distinct regime types cannot be reported as a positive finding. Rationale: NexusTrade's $676 hill-climbing experiment showed exactly this failure mode — a rubric that rewarded peak-year returns drove the agent from a 71/100 Iron Condor (survived 2022 bear, 54% avg) to a 27/100 directional disaster (-6.3% avg, 92% drawdown) by Round 5, following evaluator feedback faithfully into a single-regime optimum.
+
 ### 9.3 Baselines
 
 Beyond the critical vectors-on vs vectors-off comparison, the agent must beat external baselines to demonstrate edge.
@@ -363,7 +376,24 @@ Beyond the critical vectors-on vs vectors-off comparison, the agent must beat ex
 - Same agent, vectors **random** at same magnitude: controls for "any perturbation activates exploration."
 - Same agent, vectors **orthogonal** to disposition axes: controls for representation impact vs direction-specific impact.
 
-### 9.4 Forward paper trading
+### 9.4 Structured traces (flight recorder)
+
+Every Stage 1 and Stage 2 call produces a structured trace record persisted to SQLite alongside the briefing and decision. Without traces, a vector configuration that underperforms in backtest is a black box; with traces, the exact iteration where behaviour diverged is pinpointable.
+
+**Minimum trace fields per call:**
+- `run_id`, `setup_id`, `stage` (intern | trader)
+- `model` and `vectors_enabled` flag + active magnitudes
+- Full input (system prompt + user content + injected vector config)
+- Raw model output (full JSON string, pre-parse)
+- Parse success / validation errors
+- Token count (prompt + completion) and latency (ms)
+- Any exception with traceback
+
+**Storage:** `traces` table in the existing SQLite store. Schema mirrors the existing `decisions` table structure; keyed on `(run_id, setup_id, stage)`.
+
+**Why this is pre-Phase-8:** Traces must exist before any evaluation loop runs. An eval loop without traces cannot distinguish "the vector configuration was wrong" from "the prompt was wrong" from "the model produced a parse error and fell back." Traces are the diagnostic layer that makes every other eval result interpretable.
+
+### 9.5 Forward paper trading
 
 Forward Alpaca paper trading runs continuously after the backtest establishes baseline. It is deployment validation, not primary eval. The agent runs both vectors-on and vectors-off in parallel (alternating setups, or running two instances) so live paper trading produces paired data.
 
@@ -421,6 +451,7 @@ Explicit non-goals for hackathon. Each is a real follow-on but not v1:
 - Live Byreal/RealClaw execution (paper-only for v1)
 - Options Greeks, derivatives strategy
 - Multi-model evaluation tournament
+- **Cross-run memory system (MemPalace):** Semantic retrieval of past run summaries (vector configs, rubric scores, regime conditions, natural-language lessons) injected into subsequent runs. MemPalace (github.com/mempalace/mempalace) is the assessed candidate: 96.6% R@5 retrieval, local-first, ChromaDB + SQLite, MIT, Python 3.9+, no API keys. Deliberately deferred: until the vector hypothesis is validated, injecting memory into runs conflates two variables — changes in Δ-Sharpe cannot be attributed cleanly to vectors vs retrieved context. Add post-hypothesis-validation once a baseline vector result is established and the experiment is no longer measuring whether vectors work at all.
 - Dashboard with historical data UI
 - Telegram interactive command set beyond demo-supporting commands
 - News, fundamentals, sentiment from social
