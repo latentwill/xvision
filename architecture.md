@@ -76,7 +76,7 @@ flowchart TD
 
     S3[<b>Stage 3 · Execution</b><br/>idempotent tool calls<br/>━━━━━━━━━━━━<br/>NO vectors]
     AP[Alpaca Paper<br/>bracket orders<br/>v1 primary]
-    DEX[Byreal Perps CLI<br/>perpetual futures · Hyperliquid<br/>npx @byreal-io/byreal-perps-cli<br/>v1 — Mantle hackathon Path 1]
+    DEX[Orderly Network<br/>perpetual futures · Mantle<br/>orderly-connector-rs (Rust)<br/>v1 — Mantle hackathon executor]
 
     DB[(SQLite<br/>decisions · briefings<br/>market state<br/>vectors_enabled flag)]
 
@@ -242,13 +242,18 @@ The risk layer logs every veto with reason. Vetoes are valuable signal — they 
 
 **State sync:** Portfolio state is read from Alpaca after every action and cached for the next Stage 1 input.
 
-**Two execution paths run in parallel for v1 (Mantle Turing Test hackathon, Path 1 — DeFi Deep Dive):**
+**Two execution paths run in parallel for v1 (Mantle Turing Test hackathon):**
 - **Alpaca paper** is the pre-launch testing path. Validates Stage 1→2→3 plumbing against a battle-tested broker simulator before any on-chain capital is touched.
-- **Byreal Perps CLI** is the hackathon submission path — the hackathon's Path 1 ("DeFi Deep Dive") explicitly names "Byreal Agent Skills / Byreal Perps CLI / RealClaw" as winning tooling. The CLI executes perpetual futures on **Hyperliquid** (Byreal's perps deployment chain). Capital is pre-funded on Hyperliquid by the user; the agent never bridges.
+- **Orderly Network on Mantle** is the hackathon submission path. Orderly is shared-orderbook infrastructure that 340+ brokers (FusionX, Ranger, Aark, Ascendex, Kai, …) front-end onto; trades execute against Mantle vault `0x816f722424B49Cf1275cc86DA9840Fbd5a6167e9` (chain_id 5000). Capital is pre-funded on Mantle by the user; the agent never bridges. The integration is native Rust via `orderly-connector-rs = "0.4"` — no Node.js dependency, no subprocess shellout.
 
-A `--executor {alpaca,byreal}` flag selects between them at runtime. The Byreal executor (`crates/xianvec-execution/byreal.rs`) shells out to `npx -y @byreal-io/byreal-perps-cli@latest <subcommand> -o json` via `tokio::process::Command`, parses the structured JSON envelope (`{success, meta, data}`), and surfaces it through the trait. Node.js is a runtime dependency for the byreal path; documented in README.
+A `--executor {alpaca,orderly}` flag selects between them at runtime. The Orderly executor (`crates/xianvec-execution/orderly.rs`) holds an `OrderlyService` instance plus signed-request `Credentials` and surfaces the SDK's `create_order` / `cancel_order` / `get_holding` / `get_positions` methods through the `Executor` trait.
 
-> **Venue history (2026-05-03).** I had this right in earlier drafts and wrong in the morning. Byreal Perps runs on Hyperliquid (not Mantle). I briefly pivoted to Vertex Protocol on the assumption that the hackathon required on-chain Mantle execution; Vertex turned out to be operationally dead (all gateways 404, repos stale ~1 year). The hackathon's actual Path 1 endorses Byreal tooling, where execution is on Hyperliquid — that's the corrected target. The Mantle anchor for the submission is **ERC-8004 identity + reputation on Mantle** (§6.1), not the trade venue. The earlier-considered Mantle perps alternates (KTX.Finance — DNS gone; TsunamiX — app/docs NXDOMAIN; IntentX — alive but Base-leaning) are off the table until Mantle's perps ecosystem matures.
+> **Venue history (2026-05-03).** Three iterations in one day:
+> 1. Earliest drafts named "Byreal Perps on Mantle" — wrong on its face: Byreal CLMM is Solana, Byreal Perps CLI is Hyperliquid, the "Byreal-on-Mantle" association is a Mantle Super Portal bridge into Byreal's *Solana* liquidity.
+> 2. Pivoted to Vertex Protocol; M0 found Vertex operationally dead (all gateways 404, repos ~1 year stale).
+> 3. Fell back to Byreal Perps CLI on Hyperliquid (M0 passed, committed at `1703b71`); then discovered Orderly via FusionX's `fusionx_pro` broker_id. M0' for Orderly also passed, and Orderly's Mantle-native + Rust-native integration shape strictly dominates the cross-chain Byreal CLI path.
+>
+> The hackathon Path 1 ("DeFi Deep Dive") names *Byreal Agent Skills / Byreal Perps CLI / RealClaw* as winning tooling. v1 keeps **Byreal Agent Skills** vendored as the Stage 1 Intern's skill catalog (M4) so the Path 1 endorsement is satisfied via context, not execution. The Byreal Perps CLI path is preserved as a verified fork option — see `decisions/0006-executor-choice.md` and `probes/m0-byreal/`. Earlier-considered Mantle perps alternates (KTX.Finance — DNS gone; TsunamiX — app/docs NXDOMAIN; IntentX — alive but Base-leaning) are off the table until Mantle's perps ecosystem matures.
 
 ---
 
@@ -260,7 +265,7 @@ ERC-8004 (deployed on Ethereum mainnet and Mantle mainnet, January–February 20
 
 **Reputation Registry.** Feedback records accrue to the agent NFT after every closed experiment run — the vectors-on and vectors-off agents each receive a reputation entry recording their Δ-Sharpe, regime context, and manifest hash. Critically, reputation attaches to a specific manifest hash, not just an address. Two runs with the same manifest compound the same reputation. A new extraction run (new contrast pairs, new model version) starts fresh. This makes stance configurations composable trust primitives: well-performing vector configs can be forked and their reputation partially inherited.
 
-**Validation Registry.** This is the "prove it" layer and the most important for xianvec's core claim. After every closed Byreal/Hyperliquid trade, Stage 3 constructs and submits a validation proof to the Mantle Validation Registry — the trade venue is Hyperliquid; the proof anchor is Mantle:
+**Validation Registry.** This is the "prove it" layer and the most important for xianvec's core claim. After every closed Orderly/Mantle trade, Stage 3 constructs and submits a validation proof to the Mantle Validation Registry — same chain as the trade, single-chain audit trail:
 
 ```json
 {
@@ -290,7 +295,7 @@ ERC-8004 (deployed on Ethereum mainnet and Mantle mainnet, January–February 20
 
 The full vectors never live on-chain — EVM storage at 20K gas per 32-byte slot makes 80KB prohibitively expensive even on Mantle. The on-chain artifacts are hashes, commitments, and the tiny per-trade alpha configuration. This is not a compromise: the alpha config per trade is more informative than the raw vectors, because it records which magnitudes were actually active at decision time under confidence gating and regime conditioning.
 
-**Implementation.** `xianvec-execution` constructs the Validation proof after each closed Hyperliquid position (placed via the Byreal Perps CLI) and submits to Mantle via `alloy`. ERC-8004 contract addresses (Identity, Reputation, Validation registries on Mantle mainnet) live in `config/mantle.toml`. The agent NFT is minted once during initial setup via `xianvec-cli setup --mint-agent-nft`; subsequent runs only post to Reputation and Validation.
+**Implementation.** `xianvec-execution` constructs the Validation proof after each closed Orderly position on Mantle and submits via `alloy`. ERC-8004 contract addresses (Identity, Reputation, Validation registries on Mantle mainnet) live in `config/mantle.toml` alongside the Orderly vault address. The agent NFT is minted once during initial setup via `xianvec-cli setup --mint-agent-nft`; subsequent runs only post to Reputation and Validation. Trades, identity, and reputation all live on the same chain — no cross-chain handoff in the audit trail.
 
 ---
 
@@ -540,8 +545,8 @@ The runtime is Rust. The vector-extraction toolchain is Python, invoked offline 
 
 **Trading:**
 - `apca` for Stage 3 Alpaca paper (`alpaca-rs` on crates.io is a stub)
-- `tokio::process::Command` shellout to `npx -y @byreal-io/byreal-perps-cli@latest` for Stage 3 Hyperliquid execution; output parsed as JSON via `serde_json` against the CLI's `{success, meta, data}` envelope (verified by the M0 probe at `probes/m0-byreal/`)
-- `alloy` for direct Mantle / EVM interactions (ERC-8004 identity NFT mint + reputation-registry posts on Mantle)
+- `orderly-connector-rs = "0.4"` for Stage 3 Mantle execution (native Rust async; verified by `probes/m0-orderly/`). Trades land on Mantle's Orderly vault `0x816f722424B49Cf1275cc86DA9840Fbd5a6167e9`
+- `alloy` for direct Mantle / EVM interactions (ERC-8004 identity NFT mint + reputation/validation registry posts; same chain as the trades, no bridge)
 - `ta` crate (or hand-rolled in `polars`) for technical indicators
 - Custom thin clients for Nansen and exchange APIs via `reqwest`
 
@@ -603,7 +608,7 @@ xianvec/
 │   ├── xianvec-intern/           # Stage 1
 │   ├── xianvec-trader/           # Stage 2 (vectors active)
 │   ├── xianvec-risk/             # deterministic risk layer
-│   ├── xianvec-execution/        # Stage 3: Alpaca + Byreal Perps CLI
+│   ├── xianvec-execution/        # Stage 3: Alpaca + Orderly
 │   ├── xianvec-eval/             # backtest harness, baselines, Δ-Sharpe
 │   ├── xianvec-harness/          # boundary probes (minimal v1 corpus)
 │   └── xianvec-cli/              # clap-based CLI binary
@@ -668,7 +673,7 @@ Explicit non-goals for hackathon. Each is a real follow-on but not v1:
 - Telegram demo bot
 - `mantle-risk-evaluator` LLM pre-flight gate
 
-**Note on previously-deferred items still in v1:** ERC-8004 identity + reputation registry are v1-required as the Mantle anchor for the hackathon submission. On-chain *trade execution* runs on Hyperliquid via the **Byreal Perps CLI** — the hackathon's Path 1 ("DeFi Deep Dive") explicitly endorses Byreal Agent Skills / Byreal Perps CLI / RealClaw as winning tooling. The Mantle anchor is identity, not venue. See §6 (Stage 3) and implementation-plan.md → "Mantle hackathon integration."
+**Note on previously-deferred items still in v1:** ERC-8004 identity + reputation + validation registries are v1-required, all on Mantle. On-chain trade execution runs on Mantle via **Orderly Network** (`orderly-connector-rs`, native Rust). **Byreal Agent Skills** stays vendored as the Stage 1 Intern's skill catalog, satisfying the hackathon Path 1 endorsement of Byreal tooling without forcing the trade venue. The Byreal Perps CLI executor path is preserved as a verified fork option (see `decisions/0006-executor-choice.md`). See §6 (Stage 3) and implementation-plan.md → "Mantle hackathon integration."
 
 ---
 
@@ -693,7 +698,7 @@ For the record, the following were debated and decided:
 | Telemetry backend (v2)? | **Self-hosted Langfuse** as primary, OpenTelemetry GenAI conventions throughout. **v1 ships SQLite flight recorder + `tracing` console only**; full OTel/Langfuse deferred to v2. See §7.6 and implementation-plan.md "Telemetry (v1)". |
 | Adopt Glamin directly? | **No, adopt the patterns.** Corridors, contract layer, boundary probes, document/geometry separation, async-first storage, FAISS compatibility — rebuilt in Rust. Leave Fortran/C, hand-tuned SIMD, the YAML DSL, and the unfinished geometric-logic layer. See §7.5. |
 | Reusable across projects? | **Yes, but deferred to v2.** Lodestar / xianvec subtree split was the design but is collapsed into a single `crates/xianvec-*` tree for the 45-day hackathon window. The mechanical lift (`git mv`) costs a few hours and triggers when a second domain consumer materializes or when v1 ships. See §10.2. |
-| On-chain executor? | **Byreal Perps CLI** (Hyperliquid execution) per the hackathon's Path 1 winning tooling. The Mantle anchor is ERC-8004 identity + reputation on Mantle (§6.1), not the trade venue. Vertex was briefly considered as a Mantle-native alternative on 2026-05-03 morning; turned out operationally dead (all gateways 404, ~1-year-stale repos). Other Mantle perps alternates (KTX, TsunamiX, IntentX) are off the table until Mantle's perps ecosystem matures. See §6. |
+| On-chain executor? | **Orderly Network on Mantle** via `orderly-connector-rs = "0.4"` (native Rust async). Decision rationale and the day's three-pivot history live in `decisions/0006-executor-choice.md`. Byreal Agent Skills stay vendored as the Stage 1 Intern's skill catalog so Path 1's named-tooling endorsement is satisfied through context, not execution. The Byreal Perps CLI path (Hyperliquid execution) is preserved as a fork option — M0 probe at `probes/m0-byreal/` passed. Vertex Protocol was eliminated on 2026-05-03 morning (operationally dead — gateways 404, repos ~1 year stale). See §6. |
 | Active disposition axes in v1? | **One — Conviction.** Earlier drafts shipped four (Conviction / Patience / Risk-appetite / Trend-disposition). The other three are extracted to exercise the contrast pipeline but are not active in the headline experiment. Composition + regime-conditioned configs are v2. See §7.1. |
 | Anti-overfit gate? | **Reportable, not blocking, in v1.** Original framing as a hard requirement was correct for a deployable trading agent and wrong for a hackathon — strict gate plus weak Q4 vectors plus a 100-trade sample makes "no config advances" too likely. v1 surfaces a named verdict (PassesBothRegimes / SingleRegimeEvidence / Fails) in the report. The gate must re-tighten to blocking when any automated optimizer over vector configs ships (Karpathy v2). See implementation-plan.md Phase 8.4. |
 
