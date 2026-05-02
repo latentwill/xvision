@@ -76,7 +76,7 @@ flowchart TD
 
     S3[<b>Stage 3 · Execution</b><br/>idempotent tool calls<br/>━━━━━━━━━━━━<br/>NO vectors]
     AP[Alpaca Paper<br/>bracket orders<br/>v1 primary]
-    DEX[DEX CLI · Byreal<br/>perps · spot<br/>v1 — Mantle hackathon path]
+    DEX[Byreal Perps CLI<br/>perpetual futures · Hyperliquid<br/>npx @byreal-io/byreal-perps-cli<br/>v1 — Mantle hackathon Path 1]
 
     DB[(SQLite<br/>decisions · briefings<br/>market state<br/>vectors_enabled flag)]
 
@@ -133,8 +133,8 @@ flowchart TD
 **Purpose:** Produce a structured, neutral evidence briefing. The Intern researches; it does not recommend. The output is symmetric by construction so the Trader's vectors get clean steering room.
 
 **Model choice:** Two options, picked at runtime via config.
-- **Cloud:** Anthropic Claude API (`claude-haiku-4-5` for speed, `claude-sonnet-4-6` for higher-quality analysis). Faster and broader knowledge than any local 14B.
-- **Local:** Qwen3-7B via llama.cpp/MLX. Used when running fully air-gapped or for cost containment in long backtests.
+- **Cloud:** Anthropic Claude API (`claude-haiku-4-5` for speed, `claude-sonnet-4-6` for higher-quality analysis), called via `anthropic-sdk` or raw `reqwest`. Faster and broader knowledge than any local 14B.
+- **Local:** Qwen3-7B via `candle` (HuggingFace's Rust ML framework) with quantization. Used when running fully air-gapped or for cost containment in long backtests. `llama-cpp-rs` is the fallback path if candle's quantization story is rough on Qwen-3 in practice.
 
 **Input:** Market state object containing technical indicators (RSI, MAs, Bollinger, ATR, recent OHLCV), onchain signals (Nansen smart money flows, funding rate, exchange flows for the asset), and current portfolio state (open positions, unrealized P&L, available capital).
 
@@ -164,7 +164,7 @@ The Intern's prompt explicitly instructs: *"Present balanced cases on all three 
 
 `regime` drives the choice of disposition weights at the Trader (regime-conditioned vector configuration, §7.4) and is itself directionally neutral — knowing the market is "choppy" doesn't tell you which way it'll resolve.
 
-This object is the contract between Intern and Trader. It is validated by Pydantic before handoff.
+This object is the contract between Intern and Trader. It is validated by `serde` + `garde` (Rust) before handoff — schema violations produce a typed error rather than a silently malformed briefing.
 
 ---
 
@@ -179,8 +179,10 @@ This object is the contract between Intern and Trader. It is validated by Pydant
 **Inference path:**
 1. Receive Intern Briefing JSON.
 2. Render the briefing as a prompt that requests a structured decision. The prompt presents bull/bear/flat cases in parallel structure with no anchored recommendation.
-3. Run forward pass with control vectors injected at selected layers (mid-to-late, per SEAL findings).
-4. Parse output as JSON via constrained generation (grammar-constrained or schema-validated with retry).
+3. Run forward pass via `candle` with steering hooks injected at selected layers (mid-to-late, per SEAL and Mitra findings). The hook receives the residual stream at layer N and returns `residual + Σ alpha_i * vector_i`. Different vectors can apply at different layers (Weij et al.) with confidence gating modulating each magnitude.
+4. Parse output as JSON via `serde_json` with `garde` validation; on parse failure, retry once with a corrective system message before falling back to a parse-error path.
+
+`candle` exposes the hidden-state hooks needed for fine-grained steering — strictly more flexible than the static `--control-vector` path llama.cpp exposes. CAST-style projection-based gating, PID-controlled alpha, and probe-gated firing all live naturally in this hook.
 
 **Output (JSON):**
 
@@ -228,7 +230,7 @@ The risk layer logs every veto with reason. Vetoes are valuable signal — they 
 
 **Purpose:** Translate approved decisions into Alpaca paper trading API calls. No model in the loop.
 
-**Library:** `alpaca-py` SDK.
+**Library:** `apca` (mature Alpaca client on crates.io; `alpaca-rs` is a 0.1.0 stub). Fall back to a thin `reqwest`-based wrapper if `apca` is missing endpoints we need — Alpaca's REST/WS surface is small.
 
 **Operations supported:**
 - Submit market order (entry).
@@ -240,11 +242,55 @@ The risk layer logs every veto with reason. Vetoes are valuable signal — they 
 
 **State sync:** Portfolio state is read from Alpaca after every action and cached for the next Stage 1 input.
 
-**Two execution paths run in parallel for v1 (Mantle hackathon):**
+**Two execution paths run in parallel for v1 (Mantle Turing Test hackathon, Path 1 — DeFi Deep Dive):**
 - **Alpaca paper** is the pre-launch testing path. Validates Stage 1→2→3 plumbing against a battle-tested broker simulator before any on-chain capital is touched.
-- **Byreal Perps on Mantle** is the hackathon submission path. Same `RiskDecision → Stage 3` contract, different downstream tool. A second LLM-mediated risk gate (`mantle-risk-evaluator`) runs between Stage 2 and Byreal submission. Capital is pre-funded on Mantle by the user; the agent never bridges. Each closed Byreal trade emits an ERC-8004 reputation-registry post tagged with the agent NFT — the comparison becomes a publicly auditable on-chain experiment.
+- **Byreal Perps CLI** is the hackathon submission path — the hackathon's Path 1 ("DeFi Deep Dive") explicitly names "Byreal Agent Skills / Byreal Perps CLI / RealClaw" as winning tooling. The CLI executes perpetual futures on **Hyperliquid** (Byreal's perps deployment chain). Capital is pre-funded on Hyperliquid by the user; the agent never bridges.
 
-A `--executor {alpaca,byreal}` flag selects between them at runtime. See implementation-plan.md → "Mantle hackathon integration" for the integration manifest, sequencing, and out-of-scope items (notably the `@mantleio/sdk` capital bridge — funds are pre-positioned on Mantle and never bridged by the agent).
+A `--executor {alpaca,byreal}` flag selects between them at runtime. The Byreal executor (`crates/xianvec-execution/byreal.rs`) shells out to `npx -y @byreal-io/byreal-perps-cli@latest <subcommand> -o json` via `tokio::process::Command`, parses the structured JSON envelope (`{success, meta, data}`), and surfaces it through the trait. Node.js is a runtime dependency for the byreal path; documented in README.
+
+> **Venue history (2026-05-03).** I had this right in earlier drafts and wrong in the morning. Byreal Perps runs on Hyperliquid (not Mantle). I briefly pivoted to Vertex Protocol on the assumption that the hackathon required on-chain Mantle execution; Vertex turned out to be operationally dead (all gateways 404, repos stale ~1 year). The hackathon's actual Path 1 endorses Byreal tooling, where execution is on Hyperliquid — that's the corrected target. The Mantle anchor for the submission is **ERC-8004 identity + reputation on Mantle** (§6.1), not the trade venue. The earlier-considered Mantle perps alternates (KTX.Finance — DNS gone; TsunamiX — app/docs NXDOMAIN; IntentX — alive but Base-leaning) are off the table until Mantle's perps ecosystem matures.
+
+---
+
+### 6.1 ERC-8004 — On-chain agent identity and stance provenance
+
+ERC-8004 (deployed on Ethereum mainnet and Mantle mainnet, January–February 2026) defines three lightweight on-chain registries for autonomous agents: **Identity**, **Reputation**, and **Validation**. All three are load-bearing for xianvec's Mantle submission, and each maps cleanly onto the control-vector architecture.
+
+**Identity Registry (ERC-721 agent NFT).** The agent is minted as an NFT at first run. The token's metadata includes a `vector_manifest_cid` — an IPFS/Arweave content hash of the full vector manifest (`model_version`, `layer_id`, `contrast_pair_set_hash`, `alpha_curve_hash`, `derivation_timestamp`). The manifest CID is 32–64 bytes on-chain; the full manifest file lives off-chain. This is exactly the ERC-721 metadata pattern. The NFT is the agent's permanent character definition: swapping the manifest hash means the agent has changed its dispositional configuration and starts a fresh reputation trace for that stance.
+
+**Reputation Registry.** Feedback records accrue to the agent NFT after every closed experiment run — the vectors-on and vectors-off agents each receive a reputation entry recording their Δ-Sharpe, regime context, and manifest hash. Critically, reputation attaches to a specific manifest hash, not just an address. Two runs with the same manifest compound the same reputation. A new extraction run (new contrast pairs, new model version) starts fresh. This makes stance configurations composable trust primitives: well-performing vector configs can be forked and their reputation partially inherited.
+
+**Validation Registry.** This is the "prove it" layer and the most important for xianvec's core claim. After every closed Byreal/Hyperliquid trade, Stage 3 constructs and submits a validation proof to the Mantle Validation Registry — the trade venue is Hyperliquid; the proof anchor is Mantle:
+
+```json
+{
+  "setup_id": "uuid",
+  "action": "buy | sell | flat | close",
+  "active_vector_alphas": { "conviction": 0.8 },
+  "vector_manifest_hash": "0x...",
+  "vectors_enabled": true,
+  "trade_result_hash": "keccak256(closed_pnl | timestamp | price)",
+  "run_id": "uuid"
+}
+```
+
+`active_vector_alphas` is one float in v1 (Conviction only) = 4 bytes; the schema accepts up to four when post-v1 work activates more axes. `vector_manifest_hash` is 32 bytes. The proof is cheap to post and gives anyone the ability to verify on-chain that a specific geometrically-defined stance produced a specific trade. The vectors-off control posts the same structure with `vectors_enabled: false` and an empty alpha map — the comparison is publicly auditable without trusting the operator's reporting.
+
+**Why this matters for the thesis.** Most on-chain agent identity is retrospective: address + transaction history. The Validation proof is prospective — the stance is committed at inference time, embedded in the geometry that produced the decision, and recorded before the outcome is known. The trade is the *output* of the stance, not the definition of it. The on-chain record proves the causal chain: this manifested disposition → this decision → this outcome.
+
+**On-chain footprint summary:**
+
+| Artifact | Size | Location | When |
+|---|---|---|---|
+| Full control vectors (4 axes, fp32) | 80–640 KB | IPFS / Arweave | Once per vector extraction run |
+| Vector manifest (JSON sidecar) | ~500 bytes | IPFS / Arweave | Once per extraction run |
+| `vector_manifest_cid` in agent NFT metadata | 32–64 bytes | Mantle (Identity Registry) | Once at agent mint |
+| `active_vector_alphas` + manifest hash per trade | ~48 bytes | Mantle (Validation Registry) | After every closed position |
+| Reputation entry per experiment run | ~64 bytes | Mantle (Reputation Registry) | After each backtest / paper run |
+
+The full vectors never live on-chain — EVM storage at 20K gas per 32-byte slot makes 80KB prohibitively expensive even on Mantle. The on-chain artifacts are hashes, commitments, and the tiny per-trade alpha configuration. This is not a compromise: the alpha config per trade is more informative than the raw vectors, because it records which magnitudes were actually active at decision time under confidence gating and regime conditioning.
+
+**Implementation.** `xianvec-execution` constructs the Validation proof after each closed Hyperliquid position (placed via the Byreal Perps CLI) and submits to Mantle via `alloy`. ERC-8004 contract addresses (Identity, Reputation, Validation registries on Mantle mainnet) live in `config/mantle.toml`. The agent NFT is minted once during initial setup via `xianvec-cli setup --mint-agent-nft`; subsequent runs only post to Reputation and Validation.
 
 ---
 
@@ -254,26 +300,26 @@ A `--executor {alpaca,byreal}` flag selects between them at runtime. See impleme
 
 Four bipolar axes, extracted independently and composable at inference time.
 
-| Axis | Pole A | Pole B |
-|---|---|---|
-| Conviction | Hesitant, hedged | Decisive, committed |
-| Patience | Urgent, act-now | Patient, wait-for-better |
-| Risk appetite | Risk-averse | Risk-seeking |
-| Trend disposition | Contrarian | Trend-following |
+| Axis | Pole A | Pole B | v1 status |
+|---|---|---|---|
+| Conviction | Hesitant, hedged | Decisive, committed | **Active** (the v1 headline axis) |
+| Patience | Urgent, act-now | Patient, wait-for-better | Extracted, not active |
+| Risk appetite | Risk-averse | Risk-seeking | Extracted, not active |
+| Trend disposition | Contrarian | Trend-following | Extracted, not active |
 
-Each axis becomes a steering vector via contrastive pair extraction. At inference time, the active vector is a linear combination weighted by the current configuration.
+Each axis becomes a steering vector via contrastive pair extraction. **v1 (2026-05-03 scope cut):** Conviction is the only axis active in the headline experiment. The other three are extracted to exercise the contrast pipeline end-to-end, persisted as FAISS `.index` files with manifests, and available for ablation reports — but they do not participate in the Δ-Sharpe arms. Multi-axis composition and the regime-conditioned linear combinations are deferred to v2 (re-add trigger: a clean Conviction-only result that warrants composition work).
 
 ### 7.2 Extraction and runtime split
 
-The extraction toolchain and the runtime are deliberately separate:
+The extraction toolchain and the runtime are deliberately separate languages, by design:
 
-**Extraction (offline, cloud GPU).** Synthetic contrastive prompts processed with `repeng` on top of `transformers`. For each axis, generate ~50-100 prompt pairs of the form "respond as a [pole A] trader analyzing X" vs "respond as a [pole B] trader analyzing X." Extract the difference of mean activations across paired hidden states at mid-to-late layers. Output: per-axis `.pt` files. This step needs PyTorch hidden-state access and ideally fp16 weights, so it runs on a rented A40 or A100 spot instance for ~$10-20 of compute.
+**Extraction (offline, Python — `tools/extract_vectors/`).** Synthetic contrastive prompts processed with `repeng` on top of `transformers`. For each axis, generate ~50–100 templated prompt pairs differing on exactly one dimension (per Mitra). Extract the difference of mean activations across paired hidden states at mid-to-late layers. Output: per-axis FAISS-compatible `.index` files plus contract manifest sidecars (`model_version`, `embedder_version`, `layer_id`, `contrast_pair_set_hash`, `alpha_curve_hash`, `derivation_timestamp`). This step needs PyTorch hidden-state access and fp16 weights, so it runs on a rented A40/A100 spot instance for ~$10–20 of compute.
 
-**Conversion bridge.** A one-shot script reads each `.pt` ControlVector and writes a llama.cpp-compatible GGUF control vector via `gguf-py`. Output: per-axis `.gguf` files, each ~MB.
+The extraction utility is invoked via subprocess from the Rust orchestrator: `python tools/extract_vectors.py --spec contrast_spec.json --out vectors/conviction.index`. The Karpathy self-improvement loop calls the same utility — to the agent, vector extraction is just another tool that produces a file. Subprocess isolation is a feature: a crashed extraction (OOM, GPU contention) does not bring down the agent.
 
-**Runtime (everywhere).** `llama-cpp-python` loads the quantized model and the GGUF control vectors via the native `control_vectors=[(path, magnitude)]` API. Magnitudes are signed and composed linearly inside llama.cpp itself. Native quantization, Metal/CUDA acceleration, and cross-platform builds make this the same code path on a MacBook, a Pi-as-orchestrator-with-remote-server, a Linux box, or a RunPod GPU.
+**Runtime (Rust — `crates/xianvec-inference/`).** `candle` loads the quantized Qwen-3 model. Steering vectors are loaded from FAISS-compatible `.index` files via the contract layer — a vector cannot be loaded into a slot whose contract doesn't match its manifest. The forward pass runs with hook closures at the chosen layers; each hook receives the residual stream and adds `Σ alpha_i(state) * vector_i`, where `alpha_i(state)` is the gating function (entropy gate v1, CAST projection post-v1) and the alpha schedule is PID-controlled within hand-set bounds.
 
-This split means the project is platform-free at runtime (anywhere llama.cpp builds, the agent runs) while keeping extraction in the well-trodden PyTorch + repeng workflow.
+This split keeps extraction in the well-trodden PyTorch ecosystem (where it has the best tooling) and runtime in Rust (where contracts express as types and the hot path is honest about latency). The boundary is the FAISS file format plus the contract manifest schema. No runtime Python.
 
 ### 7.2.1 Future extraction approaches (deferred)
 
@@ -289,15 +335,84 @@ A single global vector applied at constant magnitude is fragile — when the mod
 
 This is a lightweight stand-in for SVF. It gives us a dial that approximates context-conditional steering without learning a full vector field. Implementation is straightforward; the gating function itself becomes a logged signal for offline analysis.
 
-### 7.4 Regime-conditioned configuration
+### 7.4 Regime-conditioned configuration (deferred to v2)
 
-The active vector configuration depends on detected market regime (from Stage 1 output: `trending | choppy | high_vol | low_vol`). The mapping is initially hand-set and lives in `config/regime_vectors.yaml`. Example:
+The original design conditioned the active vector configuration on detected market regime (`trending | choppy | high_vol | low_vol`) via a hand-set mapping in `config/regime_vectors.toml`. Example:
 
 - Trending: `{conviction: +0.7, trend_disposition: +0.6, patience: -0.2}`
 - Choppy: `{patience: +0.6, conviction: -0.3, trend_disposition: -0.5}`
 - High vol: `{risk_appetite: -0.6, conviction: -0.2}`
 
-These start as hypotheses to be validated, not ground truth.
+**v1 (2026-05-03):** with only Conviction active (§7.1), regime conditioning collapses to a single magnitude per regime — not a meaningful intervention surface. The full regime-conditioned config returns when the second and third axes activate. The Stage 1 `regime` field is still emitted (it feeds the regime-stratified eval in §9.2 and the anti-overfit verdict) — it just doesn't drive vector magnitudes in v1.
+
+### 7.5 Glamin-derived patterns (extended)
+
+§7.3 borrows the corridor framing for v1 confidence gating. The fuller pattern set we are adopting from Glamin (rebuilt in our own stack — we are not adopting the Fortran/C codebase) is documented in `steering-vector-architecture.md`. The patterns we are *bringing*:
+
+- **Corridors as decision boundaries.** Each major decision (long vs flat, scale-in vs wait, act vs stand-down) is a parametrized region between anchor points with `width`, `risk_profile`, and a firing rule. Generalizes the v1 entropy gate from a per-emission check to a first-class artifact that probes can be evaluated against and that drift can be measured on.
+- **Contract layer.** Every vector and corridor write carries a manifest hash: `(model_version, embedder_version, layer_id, contrast_pair_set_hash, alpha_curve_hash, derivation_timestamp)`. Mismatched writes are rejected at the storage boundary. Becomes load-bearing in Phase 5 (self-improvement) when the model generates its own vector candidates.
+- **Boundary probes as first-class artifacts.** Curated edge cases (regime transitions, low-liquidity setups, hardest historical decisions, flash-crash conditions) paired with expected decisions, versioned and replayable. Re-run on every model/vector/prompt change. Output: decision-flip count, corridor drift, capability-floor delta. This is the §9 eval surface elevated to canonical artifacts.
+- **Document/Geometry separation.** Two distinct vector spaces with explicit contracted bridges. Document space holds market data, news, filings, on-chain events. Geometry space holds steering directions, decision corridors, regime classifiers, probe corpora. Cross-transforms are explicit (`embed_market_event_to_geometry()`), preventing silent contamination of "what I read" into "what stance I should take."
+- **Async-first vector storage.** Non-blocking add/search, snapshot read semantics, worker pool with backpressure, priority queue (gating reads beat probe re-evaluations beat batch maintenance), cancellation as first-class. Implementable as a thin wrapper around an existing index library.
+- **FAISS file format compatibility.** Vector data interchanges freely with the broader FAISS ecosystem. We use FAISS via bindings (`faiss-rs` post-migration, `faiss-cpu` during Python phase) for index operations and write the canonical `.index` format with sidecar JSON manifests. HNSW is the pragmatic index choice at our scale.
+
+The patterns we are *leaving behind*: Fortran/C performance maximalism, hand-written SIMD/AVX kernels, the custom YAML geometry-spec DSL, "everything is geometry" maximalism (Mars stays Mars — kill-switch and position sizing are not corridors), and the unfinished geometric-logic DSL (we write the gating logic ourselves).
+
+### 7.5.1 Layer introspection (the lamp Saturn carries)
+
+Output text alone is an underspecified diagnostic for steering work. A vector that "doesn't seem to do anything" might be unapplied, applied at the wrong layer, washed out by subsequent layers, attenuated by quantization, or pulling the residual stream in the right direction with effects only visible deeper in the network. Without layer-level visibility you cannot distinguish these failure modes from each other, and you cannot validate that a vector is meaningfully changing the model's internal trajectory rather than just nudging the surface.
+
+The `xianvec-introspect` crate provides this visibility. It is **opt-in by composition** — the production hot path does not pay for it. When you want diagnostics (the Phase 0.3 validation spike, probe runs, debugging a misbehaving vector, magnitude sweeps), you wrap the steering hook in an introspection hook. When you don't, the steering hook runs naked and there is zero introspection overhead.
+
+```rust
+// Production (zero overhead):
+engine.install_hook(layer, Arc::new(steering_hook));
+
+// Diagnostics (opt-in):
+let introspect_hook = IntrospectionHook::wrap(steering_hook, capture_flags);
+engine.install_hook(layer, Arc::new(introspect_hook));
+let report = introspect_hook.drain_report();   // structured JSON output
+```
+
+**What it captures, configurable per run:**
+
+- *Per-layer residual stream norms*, pre and post hook. If post-norm doesn't change when steering is on, the vector isn't being applied.
+- *Per-layer activation diff*, `||post - pre||`. Should match `alpha * gate * ||vector||`.
+- *Vector–residual cosine similarity* at each hooked layer. Reveals whether the vector is aligned with where the model was already going (small effect) or genuinely redirecting (large effect).
+- *Logit lens* at every captured layer. Apply final layer norm + unembedding to the residual stream as if generation stopped there, get a probability distribution over the vocabulary. Compare across layers to see how the steering propagates through the network — if a "decisive" vector at layer 22 shifts the layer-22 prediction toward decisive tokens but the layer-30 prediction reverts to baseline, subsequent layers are washing it out and you need to re-inject or tune the layer.
+- *Decision-token logits and probabilities* at the gate point — the position immediately after `"action": "` (Tier 1 fix #5). Direct measurement of whether the steering reaches the decision.
+- *Decision-token entropy*. Direct measurement of conviction.
+- *Magnitude-sweep diagnostics* when run with multiple `alpha` values: confirms Mitra's non-monotonicity by direct measurement on this vector.
+- *Per-layer ablation* when run with the same vector applied at different layers: empirically finds the right layer rather than reading it from the literature.
+- *Multi-vector composition diagnostics*: each vector's contribution to each downstream layer's logit lens, catching interference invisible from output alone.
+
+**Required usage:**
+
+- Phase 0.3 (spike validation gate) — pass criteria expand from "directional match rate ≥80%" to also require "logit lens at the decision-emit layer shows a clear shift in decision-token probabilities AND magnitude sweep is non-monotonic past threshold."
+- Phase 4.4 (steering hook installation) — introspection mode emits per-decision JSON snapshots when enabled.
+- Phase 8.5 (probe runner) — every probe is run with introspection so the harness reports decision flips *with their layer-level mechanism*. A vector that game-flips probes by exploiting a quantization artifact will have a different layer signature than one that genuinely shifts the residual stream toward the desired disposition. The harness can flag the former as suspect.
+
+**Optional usage:** any backtest, forward paper, or live run can opt in via config (`introspect.enabled = true` plus capture flags). Off by default in production; on by default in dev and CI.
+
+The output format is structured JSON consumed by `notebooks/inspect_vector.py` for multi-panel plots — one panel per metric, magnitude on the x-axis, layer on the y-axis where applicable, side-by-side steered vs. unsteered. This is what you look at when you want to know whether your vector works.
+
+### 7.6 Telemetry & observability (Mercury's diary)
+
+Tracing is not optional. A self-improvement loop without traces is just drift wearing a confidence interval. The §9.4 structured-trace requirement is dual-write: SQLite for replay, OTel for live observability.
+
+**Stack:** the `tracing` crate (Tokio team) for structured spans, `tracing-opentelemetry` to bridge into OTel, `opentelemetry-otlp` to ship spans over OTLP. Backend is **self-hosted Langfuse** — open source, LLM-native (token counts, cost rollups, prompt diffs as first-class), Docker compose deployment (Postgres + Clickhouse), free forever, no metering. Honourable mentions retained for specific needs: Phoenix (Arize) if the validation harness grows into a deeper eval surface; Honeycomb for general serving APM if scope grows; Logfire-via-OTLP as a fallback (Logfire accepts OTLP from any language).
+
+**Required span coverage.** Every Stage 1 (Intern) and Stage 2 (Trader) call emits spans tagged with OpenTelemetry GenAI semantic conventions (`gen_ai.system`, `gen_ai.request.model`, `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`) plus xianvec-specific attributes:
+
+- `xianvec.run_id`, `xianvec.setup_id`, `xianvec.stage`
+- `xianvec.vectors.enabled`, `xianvec.vectors.config_hash`, `xianvec.vectors.magnitudes`
+- `xianvec.gating.entropy`, `xianvec.gating.applied_magnitude`
+- `xianvec.regime.classification`, `xianvec.regime.confidence`
+- Tool calls as nested spans with input/output payloads
+- Vector reads as nested spans with corridor IDs and distances
+- Decision outputs and parse success/failure
+
+The Python extraction utility also emits OTel spans (via `opentelemetry-python`) so subprocess invocations from the Rust orchestrator appear in the same trace tree as the calls that triggered them.
 
 ---
 
@@ -405,44 +520,123 @@ Forward Alpaca paper trading runs continuously after the backtest establishes ba
 
 ## 10. Tech stack
 
-**Runtime:**
-- Python 3.11+
-- macOS Apple Silicon primary; Linux/CUDA stretch for cloud runs
+The runtime is Rust. The vector-extraction toolchain is Python, invoked offline as a subprocess. Python is a build tool, not a runtime dependency — the production binary has no Python in its process tree.
+
+**Runtime (Rust):**
+- Rust stable (current MSRV pinned in `rust-toolchain.toml`)
+- Cargo workspace with one crate per architectural concern (see §10.1)
+- macOS Apple Silicon (Metal) primary; Linux/CUDA for cloud runs
 
 **Inference:**
-- `mlx` or `llama.cpp` (via `llama-cpp-python`) for quantized local inference on Mac
-- `transformers` + `torch` for full-precision validation runs and vector extraction
-- Anthropic Python SDK for Stage 1 cloud option
+- `candle` — HuggingFace's Rust ML framework, supports Qwen-3 with Q4/Q5 quantization, Metal and CUDA backends, and (critically) hidden-state hooks for steering injection
+- `llama-cpp-rs` — fallback if candle's Qwen-3 quantization story has rough edges in practice; less flexible for fine-grained steering but well-tested
+- `anthropic-sdk` (or raw `reqwest`) — Stage 1 cloud option
 
 **Control vectors:**
-- `repeng` (primary) for v1 contrastive extraction
-- `dialz` evaluated as alternative
-- Hand-rolled SVF implementation post-hackathon
+- *Extraction (offline, Python):* `repeng` + `transformers` + `torch` in `tools/extract_vectors/`, invoked via subprocess
+- *Storage:* FAISS-compatible `.index` files via `faiss-rs`, with contract manifest sidecars
+- *Application:* candle hidden-state hooks in `crates/xianvec-inference/`
+- *Gating:* `crates/xianvec-gating/` — entropy gate v1; CAST projection-based gating and PID-controlled alpha are deferred to v2
 
 **Trading:**
-- `alpaca-py` for Stage 3
-- `pandas-ta` for technical indicators
-- `ccxt` for exchange funding/OI data
-- Nansen API client (custom thin wrapper)
+- `apca` for Stage 3 Alpaca paper (`alpaca-rs` on crates.io is a stub)
+- `tokio::process::Command` shellout to `npx -y @byreal-io/byreal-perps-cli@latest` for Stage 3 Hyperliquid execution; output parsed as JSON via `serde_json` against the CLI's `{success, meta, data}` envelope (verified by the M0 probe at `probes/m0-byreal/`)
+- `alloy` for direct Mantle / EVM interactions (ERC-8004 identity NFT mint + reputation-registry posts on Mantle)
+- `ta` crate (or hand-rolled in `polars`) for technical indicators
+- Custom thin clients for Nansen and exchange APIs via `reqwest`
 
 **Data/eval:**
-- SQLite for log persistence (decisions, prices, signals)
-- `pandas`, `numpy`, `scipy`
-- `matplotlib`, `seaborn` for analysis plots
+- `sqlx` (compile-time-checked queries) on SQLite for persistence
+- `polars` for tabular data manipulation (faster and more ergonomic than pandas at our scale)
+- `ndarray` for numerical work where polars isn't the right shape
+- Eval results emit structured JSON; plotting via a small Python notebook (`notebooks/eval_plots.py`) consuming those JSONs — pragmatic concession, plotting is the one place Python remains genuinely better
 
 **App layer:**
-- `pydantic` v2 for schema enforcement on stage handoffs
-- `typer` for CLI
-- `rich` for terminal output
-- `python-telegram-bot` for the demo interface
+- `serde` + `garde` (or `validator`) for typed schema enforcement on stage handoffs — contract violations become compile errors where possible, runtime errors elsewhere
+- `clap` for CLI
+- `tracing` for structured logging (also drives observability — see telemetry block)
+- `teloxide` for the Telegram demo bot
+
+**Vector substrate & geometry:**
+- `faiss-rs` for FAISS-compatible HNSW indexes
+- `tokio` + `arc-swap` for async vector storage with snapshot reads
+- `serde_json` for contract manifests and FAISS sidecars
+
+**Introspection (opt-in, per §7.5.1):**
+- `xianvec-introspect` crate — composes via the `LayerHook` trait, zero overhead when not installed
+- Captures per-layer residual norms, activation diffs, vector–residual cosines, logit lens at every hooked layer, decision-token logits/probabilities/entropy at the gate point
+- Output: structured JSON consumed by `notebooks/inspect_vector.py` for multi-panel plots
+
+**Tracing & observability:**
+- `tracing` + `tracing-subscriber` for structured spans
+- `tracing-opentelemetry` + `opentelemetry-otlp` for OTLP export
+- Self-hosted Langfuse as primary backend (Docker compose: Postgres + Clickhouse)
+- OpenTelemetry GenAI semantic conventions throughout
+- Dual-write: SQLite (§9.4 flight recorder) for replay; OTel for live observability
+- Python extractor emits OTel spans via `opentelemetry-python` so subprocess invocations join the trace tree
 
 **Dev:**
-- `pytest` for unit tests
-- `ruff` for lint/format
-- `mypy` for typing
-- `pre-commit` hooks
+- `cargo test` + `proptest` for unit and property-based tests
+- `criterion` for benchmarks (gating hot path, especially)
+- `clippy` for lint
+- `cargo fmt` for formatting
+- `cargo deny` for license/CVE auditing
+- `pre-commit` hooks calling `cargo fmt --check`, `cargo clippy --all-targets`, `cargo test`
 
 **Secrets:** `op` (1Password CLI) per workspace convention. Never hardcode keys.
+
+### 10.1 Cargo workspace layout
+
+**v1 scope (2026-05-03):** the workspace is a **single `crates/xianvec-*` tree**. The lodestar / xianvec subtree split documented in earlier drafts is deferred to v2 — see §10.2 for the lift trigger. The implementation-plan.md "v1 scope cuts" block lists the full set of items (multi-axis disposition, multi-asset basket, full contract-layer crate, geometry crate, async substrate crate, telemetry crate + OTel/Langfuse, Telegram bot, xStocks, mantle-risk-evaluator) that move to v2 with this collapse.
+
+```
+xianvec/
+├── Cargo.toml                    # workspace root
+├── rust-toolchain.toml
+│
+├── crates/
+│   ├── xianvec-core/             # types, schemas, config, SQLite persistence, manifest types
+│   ├── xianvec-data/             # OHLCV ingest, indicators, onchain signals
+│   ├── xianvec-inference/        # candle wrapper + steering hooks + inline FAISS load
+│   ├── xianvec-gating/           # entropy gating, alpha schedule
+│   ├── xianvec-introspect/       # OPTIONAL layer analytics (Phase 0.3 spike requires)
+│   ├── xianvec-intern/           # Stage 1
+│   ├── xianvec-trader/           # Stage 2 (vectors active)
+│   ├── xianvec-risk/             # deterministic risk layer
+│   ├── xianvec-execution/        # Stage 3: Alpaca + Byreal Perps CLI
+│   ├── xianvec-eval/             # backtest harness, baselines, Δ-Sharpe
+│   ├── xianvec-harness/          # boundary probes (minimal v1 corpus)
+│   └── xianvec-cli/              # clap-based CLI binary
+│
+├── tools/
+│   └── extract_vectors/          # Python: repeng-based contrast extractor
+├── config/                       # TOML configs (whitelist, risk)
+├── data/
+│   ├── probes/                   # boundary probe corpus (minimal v1, versioned)
+│   └── vectors/                  # FAISS .index files + manifests
+├── notebooks/                    # eval plotting (Python, offline)
+└── docs/
+```
+
+The workspace structure still makes the contract layer load-bearing: each crate's public API is a typed surface, and cross-crate calls fail to compile if the contract doesn't match. The discipline that motivated the Rust choice carries over even without the formal lodestar boundary — a `xianvec-data` function still cannot reach into `xianvec-gating`'s internals.
+
+### 10.2 The lodestar / xianvec boundary (deferred to v2)
+
+The original design extracts a domain-agnostic `crates/lodestar/` subtree (inference, vector substrate, geometry, gating, introspection, telemetry, CLI) so it can be forklifted into a sibling project (EditEngage, character/voice work, any other domain) without modification. **v1 collapses this into the single `xianvec-*` tree above** to compress workspace overhead during the 45-day hackathon window. The discipline survives — domain logic still does not reach into substrate internals — but the boundary is convention, not Cargo-enforced.
+
+**Lift trigger:** a second domain consumer materializes, OR v1 ships with a positive headline Δ-Sharpe and there is a 2-week refactor window. The mechanical lift is `git mv crates/{xianvec-inference,xianvec-substrate,xianvec-contracts,xianvec-geometry,xianvec-gating,xianvec-introspect,xianvec-telemetry} crates/lodestar/lodestar-{...}` plus a path-to-git swap in `Cargo.toml`. Cost is small precisely because the v1 single-tree still respects the substrate-vs-domain split at the function-import level.
+
+**What the lodestar surface will provide post-lift** (preserved for forward planning, since its existence shapes which v1 modules to keep clean):
+
+- Load a model via candle (with pluggable backend trait for llama-cpp-rs)
+- Async FAISS-compatible vector storage with snapshot reads, contract validation, priority queuing
+- Steering hooks gated by entropy / CAST / PID-alpha
+- Generic geometry primitives (Mint, Corridor, Probe) parametrized over domain types
+- Optional layer introspection
+- OpenTelemetry span schema (also v2)
+- A generic `lodestar inspect-vectors` CLI
+
+**A note on naming:** "lodestar" is the working name. If a different name lands better at extraction time (`polaris`, `prism`, etc.), rename then; the structural intent doesn't depend on the name.
 
 ---
 
@@ -454,13 +648,27 @@ Explicit non-goals for hackathon. Each is a real follow-on but not v1:
 - **Capital bridge** (`@mantleio/sdk` ETH↔Mantle): explicitly out of scope. Funds are pre-positioned on Mantle by the user; the agent only ever sees on-Mantle balances and never executes a bridge transaction itself.
 - Options Greeks, derivatives strategy
 - Multi-model evaluation tournament
-- **Cross-run memory system (MemPalace):** Semantic retrieval of past run summaries (vector configs, rubric scores, regime conditions, natural-language lessons) injected into subsequent runs. MemPalace (github.com/mempalace/mempalace) is the assessed candidate: 96.6% R@5 retrieval, local-first, ChromaDB + SQLite, MIT, Python 3.9+, no API keys. Deliberately deferred: until the vector hypothesis is validated, injecting memory into runs conflates two variables — changes in Δ-Sharpe cannot be attributed cleanly to vectors vs retrieved context. Add post-hypothesis-validation once a baseline vector result is established and the experiment is no longer measuring whether vectors work at all.
+- **Cross-run memory system (MemPalace):** Deferred until the vector hypothesis is validated — injecting memory into runs conflates two variables.
 - Dashboard with historical data UI
 - Telegram interactive command set beyond demo-supporting commands
 - News, fundamentals, sentiment from social
 - Auto-scaling / cloud deployment beyond a single Vast.ai/RunPod box for backtest acceleration
 
-**Note on previously-deferred items now in v1:** ERC-8004 identity + reputation registry and live Byreal/RealClaw execution were originally listed as deferred. They are now v1-required for the Mantle hackathon — see §6 (Stage 3) and the Mantle integration section in implementation-plan.md.
+**v1 scope cuts (added 2026-05-03):** the items below appeared in earlier drafts as v1 commitments. Each is now deferred with an explicit re-add trigger documented in implementation-plan.md → "Future additions / Scope items cut from v1":
+
+- lodestar / xianvec subtree split + `cargo deny` boundary (§10.2)
+- 3 of 4 disposition axes active — v1 ships **Conviction only**
+- Regime-conditioned vector configs (§7.4 hand-set magnitudes per regime)
+- Multi-asset basket — v1 is BTC only
+- xStocks / Mantle tokenized equities
+- Async vector substrate as a separate crate (worker pool, snapshot reads, priority queue)
+- Full contract layer crate with `Vector<L, M>` generics
+- Geometry crate with first-class corridor abstractions
+- Telemetry crate + OpenTelemetry export + self-hosted Langfuse
+- Telegram demo bot
+- `mantle-risk-evaluator` LLM pre-flight gate
+
+**Note on previously-deferred items still in v1:** ERC-8004 identity + reputation registry are v1-required as the Mantle anchor for the hackathon submission. On-chain *trade execution* runs on Hyperliquid via the **Byreal Perps CLI** — the hackathon's Path 1 ("DeFi Deep Dive") explicitly endorses Byreal Agent Skills / Byreal Perps CLI / RealClaw as winning tooling. The Mantle anchor is identity, not venue. See §6 (Stage 3) and implementation-plan.md → "Mantle hackathon integration."
 
 ---
 
@@ -478,6 +686,16 @@ For the record, the following were debated and decided:
 | Where does risk live? | **Between Stage 2 and Stage 3** as deterministic rule code. |
 | Primary eval metric? | **Δ-Sharpe** (vectors-on minus vectors-off, paired). |
 | Backtest or forward paper? | **Backtest first** for population statistics; forward paper for deployment validation. |
+| Implementation language? | **Rust from day one** for the runtime. `candle` for inference (with `llama-cpp-rs` fallback). Python retained only as an offline build tool for vector extraction (`tools/extract_vectors/`). No runtime Python. See §10. |
+| Vector extraction language? | **Python**, offline. `repeng` + `transformers` is the well-trodden path with no Rust equivalent worth the rewrite cost during v1. Invoked via subprocess from the Rust orchestrator. The Karpathy self-improvement loop calls the same utility — to the agent, vector extraction is a tool that produces a file. See §7.2. |
+| Inference framework? | **`candle`**, primary. Provides hidden-state hooks for fine-grained steering (different vectors at different layers, CAST projection gating, PID alpha) that llama.cpp's static `--control-vector` API cannot express. `llama-cpp-rs` retained as fallback if candle's Qwen-3 quantization is rough in Phase 0 validation. |
+| Vector file format? | **FAISS-compatible `.index`** with contract manifest sidecars. Both languages read/write the same format; this is the boundary between offline Python tooling and Rust runtime. |
+| Telemetry backend (v2)? | **Self-hosted Langfuse** as primary, OpenTelemetry GenAI conventions throughout. **v1 ships SQLite flight recorder + `tracing` console only**; full OTel/Langfuse deferred to v2. See §7.6 and implementation-plan.md "Telemetry (v1)". |
+| Adopt Glamin directly? | **No, adopt the patterns.** Corridors, contract layer, boundary probes, document/geometry separation, async-first storage, FAISS compatibility — rebuilt in Rust. Leave Fortran/C, hand-tuned SIMD, the YAML DSL, and the unfinished geometric-logic layer. See §7.5. |
+| Reusable across projects? | **Yes, but deferred to v2.** Lodestar / xianvec subtree split was the design but is collapsed into a single `crates/xianvec-*` tree for the 45-day hackathon window. The mechanical lift (`git mv`) costs a few hours and triggers when a second domain consumer materializes or when v1 ships. See §10.2. |
+| On-chain executor? | **Byreal Perps CLI** (Hyperliquid execution) per the hackathon's Path 1 winning tooling. The Mantle anchor is ERC-8004 identity + reputation on Mantle (§6.1), not the trade venue. Vertex was briefly considered as a Mantle-native alternative on 2026-05-03 morning; turned out operationally dead (all gateways 404, ~1-year-stale repos). Other Mantle perps alternates (KTX, TsunamiX, IntentX) are off the table until Mantle's perps ecosystem matures. See §6. |
+| Active disposition axes in v1? | **One — Conviction.** Earlier drafts shipped four (Conviction / Patience / Risk-appetite / Trend-disposition). The other three are extracted to exercise the contrast pipeline but are not active in the headline experiment. Composition + regime-conditioned configs are v2. See §7.1. |
+| Anti-overfit gate? | **Reportable, not blocking, in v1.** Original framing as a hard requirement was correct for a deployable trading agent and wrong for a hackathon — strict gate plus weak Q4 vectors plus a 100-trade sample makes "no config advances" too likely. v1 surfaces a named verdict (PassesBothRegimes / SingleRegimeEvidence / Fails) in the report. The gate must re-tighten to blocking when any automated optimizer over vector configs ships (Karpathy v2). See implementation-plan.md Phase 8.4. |
 
 ---
 
@@ -501,10 +719,45 @@ For the record, the following were debated and decided:
 **Geometric / corridor framing inspiration:**
 - Glamin (executable geometry). https://github.com/LynnColeArt/glamin
 
-**Tooling:**
+**Inference & ML (Rust):**
+- candle (HuggingFace Rust ML framework). https://github.com/huggingface/candle
+- llama-cpp-rs (fallback). https://github.com/utilityai/llama-cpp-rs
+- mistralrs (candle-based serving). https://github.com/EricLBuehler/mistral.rs
+
+**Vector extraction (Python, offline):**
 - repeng (control vectors). https://github.com/vgel/repeng
-- dialz (steering toolkit). https://github.com/dialz/dialz
-- alpaca-py. https://github.com/alpacahq/alpaca-py
+- dialz (alternative steering toolkit). https://github.com/dialz/dialz
+- transformers. https://github.com/huggingface/transformers
+
+**Trading & onchain (Rust):**
+- apca. https://github.com/d-e-s-o/apca
+- alloy (modern Ethereum stack). https://github.com/alloy-rs/alloy
+- ta (technical analysis). https://crates.io/crates/ta
+
+**ERC-8004 — on-chain agent identity:**
+- ERC-8004: Trustless Agents (EIP). https://eips.ethereum.org/EIPS/eip-8004
+- Mantle ERC-8004 mainnet deployment. https://chainwire.org/2026/02/16/mantle-unlocks-autonomous-economy-with-erc-8004-deployment/
+- ERC-8004 Identity and Reputation for AI Agents (Allium). https://www.allium.so/blog/onchain-ai-identity-what-erc-8004-unlocks-for-agent-infrastructure/
+- ERC-8004 Developer Guide (QuickNode). https://blog.quicknode.com/erc-8004-a-developers-guide-to-trustless-ai-agent-identity/
+
+**Observability & tracing:**
+- OpenTelemetry GenAI semantic conventions. https://opentelemetry.io/docs/specs/semconv/gen-ai/
+- Langfuse (self-hosted LLM observability). https://github.com/langfuse/langfuse
+- Phoenix (Arize). https://github.com/Arize-ai/phoenix
+- Pydantic Logfire (fallback via OTLP). https://logfire.pydantic.dev/
+- Rust `tracing` crate. https://docs.rs/tracing/latest/tracing/
+- `tracing-opentelemetry`. https://docs.rs/tracing-opentelemetry/
+
+**Rust substrate:**
+- `faiss-rs`. https://github.com/Enet4/faiss-rs
+- `tokio`. https://tokio.rs/
+- `arc-swap` (snapshot semantics). https://docs.rs/arc-swap/
+- `serde` + `garde` (typed schemas with validation). https://serde.rs/ · https://github.com/jprochazk/garde
+- `polars` (tabular data). https://pola.rs/
+- `sqlx` (compile-time-checked queries). https://github.com/launchbadge/sqlx
+
+**Companion design doc:**
+- `steering-vector-architecture.md` — forward-thinking sibling, captures the May 2026 design conversation around Mitra, Glamin patterns, the Rust-from-day-one decision, and the offline Python extraction boundary.
 
 ---
 
