@@ -1,0 +1,80 @@
+%% XIANVEC system architecture
+%% Vertical flow: data sources at top, execution + metrics at bottom.
+%% Yellow = vectors active. Blue = deterministic. Purple = storage. Green = external. Red dashed = deferred to v2.
+
+flowchart TD
+    %% ─────── Data sources ───────
+    A1[Alpaca OHLCV<br/>price + volume]
+    A2[Exchange APIs<br/>funding rate, OI]
+    A3[Nansen<br/>smart-money flows]
+
+    IND[Technical Indicators<br/>RSI · MA · Bollinger<br/>MACD · Donchian · ATR]
+
+    %% ─────── Orchestrator ───────
+    HA[<b>Hermes Agent</b><br/>pipeline orchestrator<br/>state assembly · scheduling]
+
+    %% ─────── Stage 1 · Intern ───────
+    S1[<b>Stage 1 · Intern</b><br/>Claude API or Qwen3-7B local<br/>━━━━━━━━━━━━<br/>bull case · bear case · flat case<br/>evidence inventory · regime<br/>━━━━━━━━━━━━<br/>NO candidate decision<br/>NO vectors]
+
+    %% ─────── Stage 2 · Trader ───────
+    S2[<b>Stage 2 · Trader</b><br/>Qwen3-14B local quantized<br/>━━━━━━━━━━━━<br/>action · size · direction<br/>stop · take-profit<br/>━━━━━━━━━━━━<br/>VECTORS ACTIVE]
+
+    CV[<b>Control Vectors</b><br/>━━━━━━━━━━━━<br/>conviction ↔ hesitation<br/>patience ↔ urgency<br/>risk-seek ↔ risk-averse<br/>trend ↔ contrarian<br/>━━━━━━━━━━━━<br/>regime-conditioned<br/>confidence-gated]
+
+    %% ─────── Risk layer ───────
+    R[<b>Risk Layer</b><br/>deterministic rules · no LLM<br/>━━━━━━━━━━━━<br/>position limits<br/>daily-loss circuit breaker<br/>correlation cluster cap<br/>asset whitelist]
+
+    %% ─────── Stage 3 + targets ───────
+    S3[<b>Stage 3 · Execution</b><br/>idempotent tool calls<br/>━━━━━━━━━━━━<br/>NO vectors]
+    AP[Alpaca Paper<br/>bracket orders<br/>v1 primary]
+    DEX[DEX CLI · Byreal<br/>perps · spot<br/>v2 deferred]
+
+    %% ─────── Storage + eval ───────
+    DB[(SQLite<br/>decisions · briefings<br/>market state<br/>vectors_enabled flag)]
+
+    M[<b>Metrics · Eval</b><br/>━━━━━━━━━━━━<br/>Δ-Sharpe primary<br/>max drawdown<br/>profit factor · win rate<br/>decision divergence rate<br/>━━━━━━━━━━━━<br/>paired bootstrap 95% CI]
+
+    BL[Baselines<br/>━━━━━━━━━━━━<br/>buy-hold · random<br/>RSI · MA-cross · Bollinger<br/>MACD · Donchian · Fibs<br/>smart-money copy<br/>funding-rate fader<br/>━━━━━━━━━━━━<br/>vectors-OFF · vectors-RANDOM<br/>vectors-ORTHOGONAL]
+
+    %% ─────── Edges ───────
+    A1 --> IND
+    A1 --> HA
+    A2 --> HA
+    A3 --> HA
+    IND --> HA
+
+    HA --> S1
+    S1 -->|JSON: InternBriefing<br/>neutral evidence only| S2
+    CV -.->|injected at<br/>mid-late layers| S2
+    S2 -->|JSON: TraderDecision| R
+
+    R -->|approved or modified| S3
+    R -.->|vetoed| DB
+
+    S3 --> AP
+    S3 -.-> DEX
+
+    S1 -.-> DB
+    S2 -.-> DB
+    R -.-> DB
+    S3 -.-> DB
+
+    DB --> M
+    BL --> M
+
+    %% ─────── Styling ───────
+    classDef vectorOn fill:#fef3c7,stroke:#d97706,stroke-width:2px,color:#000
+    classDef deterministic fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#000
+    classDef storage fill:#f3e8ff,stroke:#7c3aed,color:#000
+    classDef external fill:#dcfce7,stroke:#16a34a,color:#000
+    classDef deferred fill:#fee2e2,stroke:#dc2626,stroke-dasharray:5 5,color:#000
+    classDef orchestrator fill:#ffedd5,stroke:#ea580c,stroke-width:2px,color:#000
+    classDef eval fill:#cffafe,stroke:#0891b2,color:#000
+
+    class S2,CV vectorOn
+    class R deterministic
+    class DB storage
+    class A1,A2,A3,AP external
+    class DEX deferred
+    class HA orchestrator
+    class M,BL eval
