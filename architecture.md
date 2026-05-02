@@ -76,7 +76,7 @@ flowchart TD
 
     S3[<b>Stage 3 · Execution</b><br/>idempotent tool calls<br/>━━━━━━━━━━━━<br/>NO vectors]
     AP[Alpaca Paper<br/>bracket orders<br/>v1 primary]
-    DEX[DEX CLI · Byreal<br/>perps · spot<br/>v2 deferred]
+    DEX[DEX CLI · Byreal<br/>perps · spot<br/>v1 — Mantle hackathon path]
 
     DB[(SQLite<br/>decisions · briefings<br/>market state<br/>vectors_enabled flag)]
 
@@ -240,7 +240,11 @@ The risk layer logs every veto with reason. Vetoes are valuable signal — they 
 
 **State sync:** Portfolio state is read from Alpaca after every action and cached for the next Stage 1 input.
 
-Alpaca paper is primary for v1. Byreal/RealClaw integration is deferred to v2 once the loop is validated end-to-end on paper.
+**Two execution paths run in parallel for v1 (Mantle hackathon):**
+- **Alpaca paper** is the pre-launch testing path. Validates Stage 1→2→3 plumbing against a battle-tested broker simulator before any on-chain capital is touched.
+- **Byreal Perps on Mantle** is the hackathon submission path. Same `RiskDecision → Stage 3` contract, different downstream tool. A second LLM-mediated risk gate (`mantle-risk-evaluator`) runs between Stage 2 and Byreal submission. Capital is pre-funded on Mantle by the user; the agent never bridges. Each closed Byreal trade emits an ERC-8004 reputation-registry post tagged with the agent NFT — the comparison becomes a publicly auditable on-chain experiment.
+
+A `--executor {alpaca,byreal}` flag selects between them at runtime. See implementation-plan.md → "Mantle hackathon integration" for the integration manifest, sequencing, and out-of-scope items (notably the `@mantleio/sdk` capital bridge — funds are pre-positioned on Mantle and never bridged by the agent).
 
 ---
 
@@ -447,8 +451,7 @@ Forward Alpaca paper trading runs continuously after the backtest establishes ba
 Explicit non-goals for hackathon. Each is a real follow-on but not v1:
 
 - Karpathy self-improvement loop (vector training from agent's own trades)
-- ERC-8004 trustless agent registration / on-chain reputation
-- Live Byreal/RealClaw execution (paper-only for v1)
+- **Capital bridge** (`@mantleio/sdk` ETH↔Mantle): explicitly out of scope. Funds are pre-positioned on Mantle by the user; the agent only ever sees on-Mantle balances and never executes a bridge transaction itself.
 - Options Greeks, derivatives strategy
 - Multi-model evaluation tournament
 - **Cross-run memory system (MemPalace):** Semantic retrieval of past run summaries (vector configs, rubric scores, regime conditions, natural-language lessons) injected into subsequent runs. MemPalace (github.com/mempalace/mempalace) is the assessed candidate: 96.6% R@5 retrieval, local-first, ChromaDB + SQLite, MIT, Python 3.9+, no API keys. Deliberately deferred: until the vector hypothesis is validated, injecting memory into runs conflates two variables — changes in Δ-Sharpe cannot be attributed cleanly to vectors vs retrieved context. Add post-hypothesis-validation once a baseline vector result is established and the experiment is no longer measuring whether vectors work at all.
@@ -456,6 +459,8 @@ Explicit non-goals for hackathon. Each is a real follow-on but not v1:
 - Telegram interactive command set beyond demo-supporting commands
 - News, fundamentals, sentiment from social
 - Auto-scaling / cloud deployment beyond a single Vast.ai/RunPod box for backtest acceleration
+
+**Note on previously-deferred items now in v1:** ERC-8004 identity + reputation registry and live Byreal/RealClaw execution were originally listed as deferred. They are now v1-required for the Mantle hackathon — see §6 (Stage 3) and the Mantle integration section in implementation-plan.md.
 
 ---
 
