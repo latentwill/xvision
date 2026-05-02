@@ -28,7 +28,7 @@ xianvec/
 │   ├── xianvec-intern/           # Stage 1 (Claude API or local Qwen-7B)
 │   ├── xianvec-trader/           # Stage 2 (vectors active here)
 │   ├── xianvec-risk/             # deterministic risk layer
-│   ├── xianvec-execution/        # Stage 3: alpaca + byreal executors
+│   ├── xianvec-execution/        # Stage 3: alpaca + orderly executors
 │   ├── xianvec-eval/             # backtest harness, baselines, Δ-Sharpe
 │   ├── xianvec-harness/          # boundary probes (minimal v1 corpus)
 │   └── xianvec-cli/              # clap-based CLI (binary)
@@ -67,16 +67,16 @@ The following items appeared in earlier drafts and are **explicitly out of v1**.
 
 - **lodestar / xianvec subtree split** — single-tree v1; the lodestar lift is a `git mv` away if/when a second consumer materializes. No `cargo deny` boundary check, no `deny.toml`, no separate `lodestar-*` crates.
 - **3 of 4 disposition axes** — v1 ships **Conviction only** as the active axis. Patience, Risk-appetite, and Trend-disposition are extracted (so the contrast pipeline gets exercised) but not active in the headline experiment. Composition, regime-conditioned configs, and `regime_vectors.toml` come post-v1.
-- **Multi-asset basket** — v1 runs on **BTC only** (BTC-PERP on Hyperliquid via Byreal; BTC-USD on Alpaca paper). ETH/SOL return when the 1-axis result is established and the cluster-cap rule needs exercising.
+- **Multi-asset basket** — v1 runs on **BTC only** (PERP_BTC_USDC on Mantle via Orderly; BTC-USD on Alpaca paper). ETH/SOL return when the 1-axis result is established and the cluster-cap rule needs exercising.
 - **Async vector substrate as a separate crate** — for one active vector, the FAISS index loads inline in `xianvec-inference`. The async worker pool / priority queue / cancellation surface returns when the v2 self-improvement loop needs concurrent vector mutations.
 - **Full contract-layer crate** — manifest types live in `xianvec-core` for v1 and validate via `serde + garde` at load time. The dedicated `xianvec-contracts` crate with generic `Vector<Layer, Model>` types lands when there's more than one vector slot to police.
 - **Geometry crate (`xianvec-geometry`)** — corridors as first-class artifacts are v2. v1 uses a single-anchor entropy gate inline in `xianvec-gating`.
 - **Telemetry crate + OTel/Langfuse** — v1 writes a `traces` table in SQLite (§9.4 flight recorder is sufficient for replay). `tracing` + console output for live dev. OTel export, GenAI semantic conventions, and self-hosted Langfuse return post-v1.
 - **Telegram bot (`xianvec-bot`)** — v1 demo is CLI + report markdown + plots. Telegram is post-v1 polish.
-- **xStocks integration** — Mantle tokenized equities are out of v1 entirely. BTC-PERP on Hyperliquid via Byreal is the on-chain trade artifact; ERC-8004 NFT mint on Mantle is the on-chain identity artifact.
-- **`mantle-risk-evaluator` LLM pre-flight gate** — v1 trusts the deterministic risk layer for the small forward run. Re-add when Byreal trade volume justifies a second LLM-mediated gate.
+- **xStocks integration** — Mantle tokenized equities are out of v1 entirely. PERP_BTC_USDC on Mantle via Orderly is the on-chain trade artifact; ERC-8004 NFT mint on Mantle is the on-chain identity artifact (same chain).
+- **`mantle-risk-evaluator` LLM pre-flight gate** — v1 trusts the deterministic risk layer for the small forward run. Re-add when Orderly trade volume justifies a second LLM-mediated gate.
 
-What stays in v1: introspection (required by the Phase 0.3 spike), the four experimental control arms (off / on / random / orthogonal — cheap and protects credibility), Alpaca paper for plumbing validation, ERC-8004 identity registration on Mantle (anchors the cross-chain audit trail), Byreal Perps CLI executor for live Hyperliquid trades, the structural-review Tier 1 fixes, the boundary-probe runner (minimal corpus).
+What stays in v1: introspection (required by the Phase 0.3 spike), the four experimental control arms (off / on / random / orthogonal — cheap and protects credibility), Alpaca paper for plumbing validation, ERC-8004 identity registration on Mantle, Orderly executor for live Mantle trades (single-chain audit trail), Byreal Agent Skills vendored for the Stage 1 Intern's context, the structural-review Tier 1 fixes, the boundary-probe runner (minimal corpus).
 
 ---
 
@@ -113,71 +113,75 @@ A pre-build review surfaced ten structural issues that would have suppressed the
 
 ## Mantle hackathon integration (mandatory)
 
-The Turing Test hackathon's **Path 1 — DeFi Deep Dive** explicitly endorses *Byreal Agent Skills / Byreal Perps CLI / RealClaw* as the winning toolchain for "advanced on-chain trading strategies." xianvec is a Path 1 submission. Two integrations move from "v2 deferred" to "v1 required" because of this:
+The Turing Test hackathon runs on Mantle. Two integrations move from "v2 deferred" to "v1 required":
 
-1. **Byreal Perps CLI** as the on-chain execution path (perpetual futures on Hyperliquid).
-2. **ERC-8004 identity + reputation on Mantle** as the public anchor for the experimental comparison.
+1. **Orderly Network** as the on-chain perpetual-futures execution path on Mantle (chain_id 5000).
+2. **ERC-8004 identity + reputation + validation registries on Mantle** as the public anchor for the experimental comparison.
 
-Adding these *before* Phase 9's A/B run produces a meaningfully better artifact: the experimental claim becomes trustless and publicly verifiable, not just a SQLite table on a laptop.
+Adding these *before* Phase 9's A/B run produces a meaningfully better artifact: the experimental claim becomes trustless and publicly verifiable, not just a SQLite table on a laptop. With Orderly on Mantle, identity / trades / reputation / validation all live on the same chain — single-chain audit trail.
 
-**Venue clarification (2026-05-03).** Byreal Perps runs on **Hyperliquid**, not Mantle. The hackathon is hosted by Mantle but Path 1 is satisfied by using Byreal tooling regardless of execution chain. Mantle Super Portal exists to bridge MNT → Solana for Byreal CLMM users; xianvec doesn't use that bridge (we hit Hyperliquid via the Perps CLI directly). The Mantle hackathon anchor for xianvec is **identity** (ERC-8004 NFT minted per experimental arm on Mantle mainnet), not the trade venue. Vertex Protocol was briefly considered as a Mantle-native execution alternative on 2026-05-03 morning; the M0 probe established that Vertex is operationally dead (gateways 404, repos ~1-year-stale).
+**Venue choice (2026-05-03).** The day went through three candidates before settling: Byreal Perps on Mantle (turned out to be Hyperliquid, not Mantle), Vertex Protocol (operationally dead), Byreal Perps CLI on Hyperliquid (worked but cross-chain), and finally Orderly on Mantle (Mantle-native + Rust-native + bigger liquidity). Full rationale and decision matrix at `decisions/0006-executor-choice.md`. The hackathon's Path 1 endorsement of Byreal tooling is satisfied by vendoring **Byreal Agent Skills** as the Stage 1 Intern's skill catalog (M4) — the named-tool endorsement is met through context, not execution. The Byreal Perps CLI executor path is preserved as a verified fork option (M0 at `probes/m0-byreal/` passed) if a stricter reading of the brief turns out to require it.
 
 **Two execution paths run side by side:**
 
 - **Alpaca paper** — pre-launch testing path. Verifies Stage 1→2→3 plumbing, pipeline determinism, risk-layer behaviour against a battle-tested broker simulator before on-chain capital is touched. Required.
-- **Byreal Perps CLI on Hyperliquid** — hackathon submission path. Real on-chain execution; the Path 1 winning tool.
+- **Orderly Network on Mantle** — hackathon submission path. Real on-chain execution against Mantle vault `0x816f722424B49Cf1275cc86DA9840Fbd5a6167e9`.
 
-The capital bridge (`@mantleio/sdk`) is **explicitly out of scope** — funds are pre-funded on Hyperliquid by the user before any forward run. The agent only ever sees on-Hyperliquid balances; ERC-8004 posts go to Mantle separately.
+The capital bridge (`@mantleio/sdk`) is **explicitly out of scope** — funds are pre-funded on Mantle by the user before any forward run. The agent only ever sees on-Mantle balances.
 
 ### M0. Pre-skeleton venue verification ✅ (2026-05-03)
 
-Probe at `probes/m0-byreal/` shells out via `tokio::process::Command` to `npx -y @byreal-io/byreal-perps-cli@latest catalog -o json` and parses the `{success, meta, data.capabilities}` envelope into typed `serde` structs. **Result: PASS.** CLI v0.3.7 returns 20 capabilities (5 query, 13 execute, 2 update). All Phase 6.3 primitives are present; one minor naming note: `position.close` is split into `position.close-market` / `position.close-limit` / `position.close-all` — a 30-second mapping during Phase 6.3, not an architectural issue.
+Two probes verified the executor path end-to-end. Both passed.
 
-The probe directory stays in-tree as a reference until Phase 6.3 lands; then it can be deleted.
+**Primary probe — `probes/m0-orderly/`** (the v1 path). Constructs `OrderlyService::with_base_url("https://api-evm.orderly.org", Some(10))` via `orderly-connector-rs = "0.4.15"`, calls `get_system_status` and `get_futures_info("PERP_BTC_USDC")` against the live EVM gateway. Verifies Mantle (chain_id 5000) is a registered deposit chain with vault `0x816f722424B49Cf1275cc86DA9840Fbd5a6167e9`. **Result: PASS.** System status 0, BTC-PERP mark $78,382 / index $78,419 live, 99 perp markets, all Phase 6.3 SDK methods resolve.
+
+**Fork-option probe — `probes/m0-byreal/`** (preserved as the verified alternate). Shells out via `tokio::process::Command` to `npx -y @byreal-io/byreal-perps-cli@latest catalog -o json` and parses the `{success, meta, data.capabilities}` envelope. **Result: PASS.** CLI v0.3.7 returns 20 capabilities (5 query, 13 execute, 2 update). One naming note: `position.close` is split into `close-market` / `close-limit` / `close-all`. Retained because forking the executor from `orderly.rs` to `byreal.rs` is mechanical if Path 1 turns out to require it.
+
+Both probe directories stay in-tree until Phase 6.3 lands; then they can be deleted (or kept as smoke tests in CI).
 
 ### M1. ERC-8004 identity registration (per arm)
 
-Each experimental arm gets its own identity NFT on Mantle. Vectors-OFF registers as one agent, vectors-ON registers as a second, and both post performance updates to the same reputation registry — the comparison becomes a publicly auditable cross-chain experiment (identity on Mantle, trades on Hyperliquid).
+Each experimental arm gets its own identity NFT on Mantle. Vectors-OFF registers as one agent, vectors-ON registers as a second, and both post performance updates to the same reputation registry — the comparison is a publicly auditable single-chain experiment.
 
 - Two `agentURI` manifests live in `identity/` (JSON metadata: model, vector config, code commit, contact). Pin to IPFS or HTTPS.
 - Mint via the Identity Registry contract (Mantle mainnet) using `alloy`.
-- After every closed Hyperliquid trade *via Byreal Perps CLI*, post a reputation update keyed by setup_id and outcome.
+- After every closed Orderly position on Mantle, post a reputation update keyed by setup_id and outcome.
 - Both NFTs and reputation history become demo evidence.
 
-Implemented in **Phase 6.5**. Must be in place before any forward Byreal run.
+Implemented in **Phase 6.5**. Must be in place before any forward Orderly run.
 
-### M2. Byreal Perps CLI as the on-chain execution path
+### M2. Orderly Network as the on-chain execution path
 
-`@byreal-io/byreal-perps-cli` is an npm package exposing perpetual-futures trading on Hyperliquid through a JSON-output CLI explicitly designed for AI-agent consumption (`-o json` envelope, `auth_required` flag per command, `catalog` subcommand for capability discovery). Stage 3 gets a *second* executor alongside Alpaca paper — same `RiskDecision → Stage 3` contract, different downstream tool. A `--executor {alpaca,byreal}` CLI flag selects between them.
+`orderly-connector-rs = "0.4"` (ranger-finance, MIT, last published 2025-06; M0 confirms it works against the current API). Stage 3 gets a *second* executor alongside Alpaca paper — same `RiskDecision → Stage 3` contract, different downstream tool. A `--executor {alpaca,orderly}` CLI flag selects between them.
 
-Implementation in `crates/xianvec-execution/byreal.rs` shells out to `npx -y @byreal-io/byreal-perps-cli@latest <subcommand> -o json` via `tokio::process::Command`, parses JSON output into typed `Executor` trait responses. Node.js is a runtime dependency for the byreal path; documented in README.
+Implementation in `crates/xianvec-execution/orderly.rs` constructs an `OrderlyService` against `https://api-evm.orderly.org`, holds `Credentials { orderly_key, orderly_secret, orderly_account_id }` for signed calls, and surfaces SDK methods (`create_order`, `cancel_order`, `get_holding`, `get_positions`, `get_account_info`) through the `Executor` trait. No Node.js runtime dependency, no subprocess shellout.
 
 Implemented in **Phase 6.3** (parallel to Phase 6.2 Alpaca).
 
 ### M3. On-chain decision logging
 
-Every Stage-1 → Stage-2 → Stage-3 cycle that completes a trade via the Byreal Perps CLI emits a reputation-registry post on Mantle, tagged with the agent NFT, the setup_id, the action signature, and the realized PnL. SQLite remains for fast local replay; the on-chain log is the authoritative public record. Alpaca paper trades persist locally only.
+Every Stage-1 → Stage-2 → Stage-3 cycle that completes a trade via Orderly emits a reputation- and validation-registry post on Mantle, tagged with the agent NFT, the setup_id, the action signature, and the realized PnL. SQLite remains for fast local replay; the on-chain log is the authoritative public record. Alpaca paper trades persist locally only.
 
 Implemented in **Phase 11.5**.
 
 ### M4. Skill catalogs (Byreal Agent Skills + mantle-skills)
 
-The hackathon's Path 1 names *Byreal Agent Skills* alongside the CLI. Two skill catalogs feed into the Stage 1 Intern's Claude context:
+The hackathon's Path 1 names *Byreal Agent Skills* among its winning tooling. Even though we don't execute through Byreal, the Stage 1 Intern still loads Byreal Agent Skills as Claude-context, satisfying that endorsement and giving the Intern domain knowledge about perpetual-futures trading patterns and risk shapes (the skills travel cleanly even when the execution venue is different).
 
-- **`@byreal-io/byreal-perps-cli`** auto-installs a `skills/` directory on first run; vendor as a git submodule under `.claude/skills/byreal/`.
-- **`github.com/mantle-xyz/mantle-skills`** stays vendored under `.claude/skills/mantle/` (Mantle-host context for the ERC-8004 work).
+- **`byreal-git/byreal-agent-skills`** — vendor as a git submodule under `.claude/skills/byreal/`.
+- **`github.com/mantle-xyz/mantle-skills`** — vendor under `.claude/skills/mantle/` (Mantle-host context for the ERC-8004 work and for any Mantle-specific Stage-1 reasoning).
 
 Implemented in **Phase 0.4** (vendor) and consumed by Stage 1 Intern config + Phase 11.5 forward runner.
 
 ### Priority sequencing for the hackathon
 
-1. **M0 venue verification** — ✅ done 2026-05-03 via `probes/m0-byreal/`.
-2. **Phase 0–8** as planned (structural fixes are Hyperliquid-/Mantle-independent). Phase 0.4 vendors both skill catalogs.
-3. **Phase 6.5** ERC-8004 — must precede the forward Byreal run. Develop in parallel with Phase 6.3.
-4. **Phase 6.3** Byreal executor — alongside Phase 6.2 Alpaca, not replacing it.
+1. **M0 venue verification** — ✅ done 2026-05-03 via `probes/m0-orderly/` (primary) and `probes/m0-byreal/` (fork option).
+2. **Phase 0–8** as planned (structural fixes are venue-independent). Phase 0.4 vendors both skill catalogs.
+3. **Phase 6.5** ERC-8004 — must precede the forward Orderly run. Develop in parallel with Phase 6.3.
+4. **Phase 6.3** Orderly executor — alongside Phase 6.2 Alpaca, not replacing it.
 5. **Phase 9** unchanged: backtest, no on-chain dependency.
 6. **Phase 11.1** Alpaca paper forward run — first; validates Stage 1→2→3 against a battle-tested broker.
-7. **Phase 11.5** Byreal forward run on Hyperliquid — second; small N (5–20 paired trades) suffices for on-chain proof. Headline statistical claim still rides on Phase 9.
+7. **Phase 11.5** Orderly forward run on Mantle — second; small N (5–20 paired trades) suffices for on-chain proof. Headline statistical claim still rides on Phase 9.
 8. **Phase 12** acceptance criteria include the on-chain items.
 
 **v1 cuts to this section:** xStocks integration (Mantle tokenized equities — out, no execution venue) and `mantle-risk-evaluator` LLM pre-flight gate. Both documented in "Future additions" with re-add triggers.
@@ -357,7 +361,7 @@ TOML-backed config (we use TOML over YAML — it integrates with Cargo idioms an
 ```toml
 [runtime]
 mode = "backtest"           # backtest | paper | live
-executor = "alpaca"         # alpaca | byreal
+executor = "alpaca"         # alpaca | orderly
 random_seed = 42
 
 [intern]
@@ -696,45 +700,56 @@ Idempotency: each decision carries `setup_id` used as client order ID.
 
 `apca` (mature Alpaca client; `alpaca-rs` on crates.io is a 0.1.0 stub). Submit market or bracket orders. Read portfolio state after every action and cache for next Stage-1 input.
 
-### Task 6.3: Byreal executor (`crates/xianvec-execution/byreal.rs`)
+### Task 6.3: Orderly executor (`crates/xianvec-execution/orderly.rs`)
 
-Shells out to `npx -y @byreal-io/byreal-perps-cli@latest <subcommand> -o json` via `tokio::process::Command`, parses the `{success, meta, data}` JSON envelope into typed `serde` structs, surfaces them through the `Executor` trait. Same trait surface as `AlpacaExecutor`; different downstream tool.
+Native Rust async via `orderly-connector-rs = "0.4"` (`OrderlyService` + `Credentials`). Same `Executor` trait surface as `AlpacaExecutor`; different downstream tool. No Node.js dependency, no subprocess.
 
 ```rust
-pub struct ByrealExecutor {
-    /// Resolved path to a `npx` shim — agent stays explicit about which Node tooling fires.
-    npx_path: PathBuf,
-    /// Pinned CLI version, e.g. "0.3.7" — bumped deliberately, not floated.
-    cli_version: String,
-    /// Wallet address of the configured Hyperliquid account (read once at connect).
-    account: Address,
+use orderly_connector_rs::rest::OrderlyService;
+use orderly_connector_rs::rest::client::Credentials;
+
+pub struct OrderlyExecutor {
+    svc: OrderlyService,
+    creds: Credentials<'static>,
+    /// "PERP_BTC_USDC" for v1 BTC-only.
+    symbol: String,
+}
+
+impl OrderlyExecutor {
+    pub fn connect(creds: Credentials<'static>) -> Result<Self> {
+        let svc = OrderlyService::with_base_url("https://api-evm.orderly.org", Some(10))?;
+        Ok(Self { svc, creds, symbol: "PERP_BTC_USDC".into() })
+    }
 }
 
 #[async_trait]
-impl Executor for ByrealExecutor {
+impl Executor for OrderlyExecutor {
     async fn submit(&self, decision: &RiskDecision) -> Result<ExecutionReceipt> { ... }
     async fn close_position(&self, asset: AssetSymbol) -> Result<ExecutionReceipt> { ... }
     async fn portfolio(&self) -> Result<PortfolioState> { ... }
 }
 ```
 
-**Subcommand mapping** (verified against the M0 catalog probe, CLI v0.3.7):
+**SDK method mapping** (verified against `probes/m0-orderly/` 2026-05-03):
 
-| Trait surface | Byreal subcommand |
+| Trait surface | Orderly SDK call |
 |---|---|
-| `submit(decision)` (entry) | `order market <side> <size> <coin>` (or `order limit ...` for non-market) |
-| `submit(decision)` (with TP/SL) | `position tpsl <coin>` after the entry fills |
-| `close_position(asset)` | `position close-market <coin>` (split: `close-limit` for limit close, `close-all` for emergency stop — `close_position` defaults to market-close) |
-| `portfolio()` | `account info` + `position list` (joined) |
-| Cancel an open order | `order cancel <oid>` |
+| `submit(decision)` (entry) | `svc.create_order(&creds, …)` with `OrderType::Market` (or `Limit` with `price`) |
+| `submit(decision)` (TP/SL) | algo orders via `svc.create_algo_order(&creds, …)` after the entry fills |
+| `close_position(asset)` | submit an opposing `OrderType::Market` of equal size (Orderly is order-based; "close" is a counter-trade, not a distinct primitive) |
+| `portfolio()` | `svc.get_account_info(&creds)` + `svc.get_positions(&creds)` joined |
+| Cancel an open order | `svc.cancel_order(&creds, order_id)` |
+| Live mark price for stops | `svc.get_futures_info(Some(symbol))` (no creds) |
 
-`setup_id` is included as a tag in order metadata where the CLI permits; otherwise we record `(setup_id, returned_oid)` pairs in SQLite for reconciliation.
+`setup_id` rides in the `client_order_id` field on `create_order`; we record `(setup_id, server_order_id)` pairs in SQLite for reconciliation.
+
+**Credentials.** Orderly uses `(orderly_key, orderly_secret, orderly_account_id)` for signed calls. The `account_id` is derived from a brokered onboarding flow (one-time setup); keys are loaded from `op` (1Password CLI) per workspace convention. `xianvec-cli setup --orderly-onboard` runs the brokered onboarding once and writes the resulting account_id to local config; secrets stay in `op`.
 
 **Acceptance:**
-- M0 probe (✅ 2026-05-03) already verified the subprocess + JSON contract end-to-end against the live CLI. Phase 6.3 builds the `Executor` impl on top of that proven shellout shape.
-- Place + cancel a small test order on a testnet account (or a tiny mainnet position with appropriate caps) under the trait surface.
-- `account info` + `position list` reads land in the same `PortfolioState` shape Alpaca produces.
-- The `-y` flag is passed on every invocation so the agent never blocks on a confirmation prompt.
+- M0' probe (✅ 2026-05-03) already verified the SDK reaches the live API on Mantle. Phase 6.3 builds the `Executor` impl on top of the proven SDK surface.
+- Place + cancel a small `PERP_BTC_USDC` order against the live API with size below the caps in `risk.toml` (or testnet equivalent if Orderly exposes one — check `https://testnet-api-evm.orderly.org` during Phase 6.3).
+- `get_account_info` + `get_positions` reads land in the same `PortfolioState` shape Alpaca produces.
+- All SDK errors (`OrderlyError`) map cleanly into the executor's error enum without `unwrap()` in the hot path.
 
 ### Task 6.4: Backtest simulator
 
@@ -959,9 +974,9 @@ The report explicitly states which metrics are inferential (Δ-Sharpe) versus de
 
 Run the full pipeline live against Alpaca paper for at least 4–7 days (whatever fits in the schedule after the backtest is in the can — see premortem; this is one of the easiest tasks to lose to clock drift) before any Mantle capital is touched. Both arms (vectors-on, vectors-off) run alternating setups so live data is paired.
 
-### Task 11.5: Byreal forward run on Hyperliquid (M3)
+### Task 11.5: Orderly forward run on Mantle (M3)
 
-After Alpaca paper validation, switch the executor to `byreal`. Small N (5–20 paired live trades on BTC-PERP) suffices for the on-chain proof — the headline statistical claim still rides on Phase 9's backtest. Each closed Hyperliquid trade emits an ERC-8004 reputation-registry post on Mantle (M3) tagged with the agent NFT, completing the cross-chain audit trail.
+After Alpaca paper validation, switch the executor to `orderly`. Small N (5–20 paired live trades on `PERP_BTC_USDC`) suffices for the on-chain proof — the headline statistical claim still rides on Phase 9's backtest. Each closed Orderly trade emits an ERC-8004 reputation- and validation-registry post on the same chain (Mantle), tagged with the agent NFT, completing the single-chain audit trail.
 
 `mantle-risk-evaluator` LLM pre-flight gate from earlier drafts is **deferred to v2** — v1 trusts the deterministic risk layer for the small forward run. Re-add when forward volume justifies a second LLM-mediated gate.
 
@@ -971,7 +986,7 @@ After Alpaca paper validation, switch the executor to `byreal`. Small N (5–20 
 
 Acceptance criteria for hackathon submission:
 
-- [x] M0 venue verification passed (Byreal Perps CLI subprocess + JSON contract — done 2026-05-03 via `probes/m0-byreal/`)
+- [x] M0 venue verification passed: Orderly primary (`probes/m0-orderly/`) + Byreal fork option (`probes/m0-byreal/`) — done 2026-05-03
 - [ ] All Tier 1 structural fixes verified in code and tests
 - [ ] Spike (Phase 0.3) passed with documented evidence in `decisions/0002-spike-validation.md`
 - [ ] Conviction vector extracted with manifest sidecar (active axis)
@@ -984,8 +999,8 @@ Acceptance criteria for hackathon submission:
 - [ ] Both ERC-8004 identity NFTs minted on Mantle mainnet
 - [ ] Byreal Agent Skills + mantle-skills loaded into Claude project context
 - [ ] ≥1 Alpaca paper trade closed
-- [ ] ≥1 Byreal Perps CLI trade closed on Hyperliquid (BTC-PERP)
-- [ ] ≥1 ERC-8004 reputation-registry post per arm on Mantle, tied to a closed Hyperliquid trade
+- [ ] ≥1 Orderly trade closed on Mantle (`PERP_BTC_USDC`)
+- [ ] ≥1 ERC-8004 reputation-registry post per arm on Mantle, tied to a closed Orderly trade
 - [ ] Demo report rendered with plots and reproducibility steps (single `cargo run --release` invocation reproduces the headline)
 
 ---
