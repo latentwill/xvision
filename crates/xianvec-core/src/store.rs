@@ -181,7 +181,7 @@ impl Store {
         let setup_id = decision
             .effective()
             .map(|d| d.setup_id)
-            .or_else(|| match decision {
+            .or(match decision {
                 RiskDecision::Vetoed { original, .. } => Some(original.setup_id),
                 _ => None,
             })
