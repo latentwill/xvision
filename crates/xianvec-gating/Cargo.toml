@@ -1,0 +1,12 @@
+[package]
+name        = "xianvec-gating"
+description = "entropy gating + alpha schedule"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+
+[lib]
+name = "xianvec_gating"
+path = "src/lib.rs"

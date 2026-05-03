@@ -1,0 +1,12 @@
+[package]
+name        = "xianvec-intern"
+description = "Stage 1 — OpenAI/Anthropic-compatible briefing backend"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+
+[lib]
+name = "xianvec_intern"
+path = "src/lib.rs"

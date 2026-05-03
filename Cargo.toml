@@ -1,0 +1,79 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/xianvec-core",
+    "crates/xianvec-data",
+    "crates/xianvec-inference",
+    "crates/xianvec-gating",
+    "crates/xianvec-introspect",
+    "crates/xianvec-intern",
+    "crates/xianvec-trader",
+    "crates/xianvec-risk",
+    "crates/xianvec-execution",
+    "crates/xianvec-eval",
+    "crates/xianvec-harness",
+    "crates/xianvec-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.95"
+license = "Apache-2.0"
+repository = "https://github.com/latentwill/xianvec"
+
+[workspace.dependencies]
+# inference
+candle-core         = "0.10"
+candle-nn           = "0.10"
+candle-transformers = "0.10"
+
+# async / runtime
+tokio       = { version = "1", features = ["full"] }
+async-trait = "0.1"
+
+# serde
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml       = "0.9"
+garde      = { version = "0.22", features = ["derive"] }
+
+# persistence
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "macros", "chrono", "uuid"] }
+
+# numerics
+faiss   = "0.13"
+arc-swap = "1"
+polars  = { version = "0.53", features = ["lazy", "parquet"] }
+ndarray = "0.16"
+
+# observability
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# cli / http / chain
+clap    = { version = "4", features = ["derive"] }
+reqwest = { version = "0.13", features = ["json"] }
+alloy   = { version = "2", features = ["full"] }
+
+# error
+thiserror = "2"
+anyhow    = "1"
+
+# misc
+chrono = { version = "0.4", features = ["serde"] }
+uuid   = { version = "1", features = ["v4", "serde"] }
+
+# brokerage
+apca = "0.30"
+# orderly-connector-rs pinned at 0.4.15 per M0 probe (probes/m0-orderly/)
+orderly-connector-rs = "0.4.15"
+
+# test / bench
+proptest  = "1"
+criterion = "0.8"
+
+[profile.release]
+lto           = "thin"
+codegen-units = 1
+strip         = "symbols"

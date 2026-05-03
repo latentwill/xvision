@@ -1,0 +1,6 @@
+[submodule ".claude/skills/byreal"]
+	path = .claude/skills/byreal
+	url = https://github.com/byreal-git/byreal-agent-skills
+[submodule ".claude/skills/mantle"]
+	path = .claude/skills/mantle
+	url = https://github.com/mantle-xyz/mantle-skills
