@@ -5269,12 +5269,14 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "rand 0.8.6",
  "serde",
  "thiserror 2.0.18",
  "tokio",
  "uuid",
  "xianvec-core",
  "xianvec-execution",
+ "xianvec-risk",
 ]
 
 [[package]]

@@ -14,6 +14,8 @@ path = "src/lib.rs"
 [dependencies]
 xianvec-core      = { path = "../xianvec-core" }
 xianvec-execution = { path = "../xianvec-execution" }
+xianvec-risk      = { path = "../xianvec-risk" }
+rand              = { version = "0.8", default-features = false, features = ["std", "std_rng"] }
 
 async-trait = { workspace = true }
 chrono      = { workspace = true, features = ["serde"] }
