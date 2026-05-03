@@ -4853,6 +4853,22 @@ version = "0.1.0"
 [[package]]
 name = "xianvec-trader"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "garde",
+ "proptest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "xianvec-core",
+ "xianvec-inference",
+ "xianvec-intern",
+]
 
 [[package]]
 name = "yoke"

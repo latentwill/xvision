@@ -15,9 +15,7 @@ use std::sync::OnceLock;
 static THINK_RE: OnceLock<Regex> = OnceLock::new();
 
 fn think_re() -> &'static Regex {
-    THINK_RE.get_or_init(|| {
-        Regex::new(r"(?is)<think>.*?</think>").expect("static regex")
-    })
+    THINK_RE.get_or_init(|| Regex::new(r"(?is)<think>.*?</think>").expect("static regex"))
 }
 
 /// Remove `<think>...</think>` blocks (case-insensitive, multi-line, lazy).

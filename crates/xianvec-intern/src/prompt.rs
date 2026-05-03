@@ -13,7 +13,9 @@ pub struct PromptOpts {
 
 impl Default for PromptOpts {
     fn default() -> Self {
-        Self { recent_bars_limit: 12 }
+        Self {
+            recent_bars_limit: 12,
+        }
     }
 }
 
@@ -27,11 +29,7 @@ impl Default for PromptOpts {
 /// 5. Onchain panel (skips None fields)
 /// 6. Loaded skills (catalog + name + summary)
 /// 7. Required output schema (JSON only) with field descriptions
-pub fn build_intern_prompt(
-    state: &MarketSnapshot,
-    skills: &[SkillRef],
-    opts: &PromptOpts,
-) -> String {
+pub fn build_intern_prompt(state: &MarketSnapshot, skills: &[SkillRef], opts: &PromptOpts) -> String {
     let mut s = String::with_capacity(2048);
 
     s.push_str(SYSTEM_PREAMBLE);
@@ -114,7 +112,11 @@ fn write_indicators(s: &mut String, p: &IndicatorPanel) {
         let _ = writeln!(s, "- EMA(26): {:.2}", v);
     }
     if let (Some(u), Some(m), Some(l)) = (p.bb_upper, p.bb_middle, p.bb_lower) {
-        let _ = writeln!(s, "- Bollinger(20,2σ): upper={:.2} mid={:.2} lower={:.2}", u, m, l);
+        let _ = writeln!(
+            s,
+            "- Bollinger(20,2σ): upper={:.2} mid={:.2} lower={:.2}",
+            u, m, l
+        );
     }
     if let Some(v) = p.atr_14 {
         let _ = writeln!(s, "- ATR(14): {:.2}", v);
@@ -198,8 +200,8 @@ mod tests {
     use super::*;
     use chrono::TimeZone;
     use uuid::Uuid;
-    use xianvec_core::trading::{AssetSymbol, Regime};
     use xianvec_core::market::Ohlcv;
+    use xianvec_core::trading::{AssetSymbol, Regime};
 
     fn fixture_state() -> MarketSnapshot {
         MarketSnapshot {
@@ -298,7 +300,10 @@ mod tests {
         let mut s = fixture_state();
         s.recent_bars = (0..50)
             .map(|i| Ohlcv {
-                timestamp: chrono::Utc.timestamp_opt(1_700_000_000 - i * 3600, 0).single().unwrap(),
+                timestamp: chrono::Utc
+                    .timestamp_opt(1_700_000_000 - i * 3600, 0)
+                    .single()
+                    .unwrap(),
                 open: 70_000.0,
                 high: 70_500.0,
                 low: 69_900.0,

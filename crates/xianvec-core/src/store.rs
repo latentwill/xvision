@@ -51,7 +51,10 @@ impl Store {
         }
         let pool = SqlitePoolOptions::new()
             .max_connections(8)
-            .connect_with(url.parse::<sqlx::sqlite::SqliteConnectOptions>()?.create_if_missing(true))
+            .connect_with(
+                url.parse::<sqlx::sqlite::SqliteConnectOptions>()?
+                    .create_if_missing(true),
+            )
             .await?;
         let store = Self { pool };
         store.migrate().await?;
@@ -132,11 +135,7 @@ impl Store {
 
     // --- decisions -------------------------------------------------------
 
-    pub async fn insert_decision(
-        &self,
-        arm_name: &str,
-        decision: &TraderDecision,
-    ) -> Result<(), StoreError> {
+    pub async fn insert_decision(&self, arm_name: &str, decision: &TraderDecision) -> Result<(), StoreError> {
         let cfg_hash = vector_config_hash(&decision.active_vectors);
         let json = serde_json::to_string(decision)?;
         sqlx::query(
@@ -157,12 +156,11 @@ impl Store {
         &self,
         setup_id: &Uuid,
     ) -> Result<Vec<(String, TraderDecision)>, StoreError> {
-        let rows = sqlx::query(
-            "SELECT arm_name, decision_json FROM decisions WHERE setup_id = ? ORDER BY arm_name",
-        )
-        .bind(setup_id.to_string())
-        .fetch_all(&self.pool)
-        .await?;
+        let rows =
+            sqlx::query("SELECT arm_name, decision_json FROM decisions WHERE setup_id = ? ORDER BY arm_name")
+                .bind(setup_id.to_string())
+                .fetch_all(&self.pool)
+                .await?;
         rows.into_iter()
             .map(|r| {
                 let arm: String = r.get(0);
@@ -262,9 +260,7 @@ pub fn vector_config_hash(active: &BTreeMap<DispositionAxis, f32>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::trading::{
-        Action, AssetSymbol, Direction, EvidenceTag, Regime, TraderDecision, VetoReason,
-    };
+    use crate::trading::{Action, AssetSymbol, Direction, EvidenceTag, Regime, TraderDecision, VetoReason};
     use chrono::TimeZone;
 
     fn fixture_briefing() -> InternBriefing {
@@ -310,7 +306,9 @@ mod tests {
     async fn briefing_round_trips() {
         let s = fresh_store().await;
         let b = fixture_briefing();
-        s.upsert_briefing("anthropic", "claude-haiku-4-5", &b).await.unwrap();
+        s.upsert_briefing("anthropic", "claude-haiku-4-5", &b)
+            .await
+            .unwrap();
         let back = s.get_briefing(&b.setup_id).await.unwrap().expect("present");
         assert_eq!(b, back);
     }
@@ -319,9 +317,13 @@ mod tests {
     async fn upsert_briefing_replaces_same_setup() {
         let s = fresh_store().await;
         let mut b = fixture_briefing();
-        s.upsert_briefing("anthropic", "claude-haiku-4-5", &b).await.unwrap();
+        s.upsert_briefing("anthropic", "claude-haiku-4-5", &b)
+            .await
+            .unwrap();
         b.bull_case = "Updated bull case with sufficiently long content.".into();
-        s.upsert_briefing("anthropic", "claude-haiku-4-5", &b).await.unwrap();
+        s.upsert_briefing("anthropic", "claude-haiku-4-5", &b)
+            .await
+            .unwrap();
         let back = s.get_briefing(&b.setup_id).await.unwrap().expect("present");
         assert_eq!(back.bull_case, b.bull_case);
     }
@@ -345,8 +347,7 @@ mod tests {
     async fn vector_config_hash_distinguishes_arms() {
         let off = vector_config_hash(&BTreeMap::new());
         let on = vector_config_hash(&BTreeMap::from([(DispositionAxis::Conviction, 1.0)]));
-        let on_other_mag =
-            vector_config_hash(&BTreeMap::from([(DispositionAxis::Conviction, 1.5)]));
+        let on_other_mag = vector_config_hash(&BTreeMap::from([(DispositionAxis::Conviction, 1.5)]));
         assert_ne!(off, on);
         assert_ne!(on, on_other_mag);
     }
@@ -356,16 +357,18 @@ mod tests {
         let s = fresh_store().await;
         let d = decision_with_vectors(BTreeMap::new());
         let approved = RiskDecision::Approved { decision: d.clone() };
-        let vetoed = RiskDecision::Vetoed { original: d, reason: VetoReason::DailyLossCircuitBreaker };
+        let vetoed = RiskDecision::Vetoed {
+            original: d,
+            reason: VetoReason::DailyLossCircuitBreaker,
+        };
         s.insert_risk_outcome("hash-off", &approved).await.unwrap();
         s.insert_risk_outcome("hash-random", &vetoed).await.unwrap();
         // Both rows must exist.
-        let count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM risk_outcomes WHERE setup_id = ?")
-                .bind(Uuid::nil().to_string())
-                .fetch_one(s.pool())
-                .await
-                .unwrap();
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM risk_outcomes WHERE setup_id = ?")
+            .bind(Uuid::nil().to_string())
+            .fetch_one(s.pool())
+            .await
+            .unwrap();
         assert_eq!(count, 2);
     }
 

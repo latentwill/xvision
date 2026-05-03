@@ -95,8 +95,7 @@ impl Qwen3Engine {
     ) -> Result<Self, EngineError> {
         let gguf_path: PathBuf = gguf_path.as_ref().to_path_buf();
         let mut file = std::fs::File::open(&gguf_path)?;
-        let content = gguf_file::Content::read(&mut file)
-            .map_err(|e| EngineError::Load(format!("{e:?}")))?;
+        let content = gguf_file::Content::read(&mut file).map_err(|e| EngineError::Load(format!("{e:?}")))?;
 
         let total_bytes: usize = content
             .tensor_infos
@@ -122,7 +121,13 @@ impl Qwen3Engine {
             .copied()
             .ok_or_else(|| EngineError::Tokenizer("missing <|im_end|> token".into()))?;
 
-        Ok(Self { model, tokenizer, device, eos_token, hooks: BTreeMap::new() })
+        Ok(Self {
+            model,
+            tokenizer,
+            device,
+            eos_token,
+            hooks: BTreeMap::new(),
+        })
     }
 
     /// Install a steering or introspection hook at `layer`. v1 stores hooks
@@ -137,18 +142,15 @@ impl Qwen3Engine {
     }
 
     /// One-shot generation. Greedy when `temperature == 0.0`.
-    pub fn generate(
-        &mut self,
-        prompt: &str,
-        opts: &GenerateOpts,
-    ) -> Result<GenerateResult, EngineError> {
+    pub fn generate(&mut self, prompt: &str, opts: &GenerateOpts) -> Result<GenerateResult, EngineError> {
         // Apply Qwen3 chat template, no-thinking variant — eliminates <think>
         // tokens that would dilute the steering signal at the action choice point.
-        let formatted = format!(
-            "<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
-        );
-        let encoded =
-            self.tokenizer.encode(formatted, true).map_err(|e| EngineError::Tokenizer(e.to_string()))?;
+        let formatted =
+            format!("<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n");
+        let encoded = self
+            .tokenizer
+            .encode(formatted, true)
+            .map_err(|e| EngineError::Tokenizer(e.to_string()))?;
         let prompt_tokens = encoded.get_ids().to_vec();
 
         let mut sampling = match opts.temperature {
@@ -175,7 +177,10 @@ impl Qwen3Engine {
 
         for index in 0..opts.max_tokens.saturating_sub(1) {
             let input = Tensor::new(&[next_token], &self.device)?.unsqueeze(0)?;
-            let logits = self.model.forward(&input, prompt_tokens.len() + index)?.squeeze(0)?;
+            let logits = self
+                .model
+                .forward(&input, prompt_tokens.len() + index)?
+                .squeeze(0)?;
             let logits = if opts.repeat_penalty == 1.0 {
                 logits
             } else {

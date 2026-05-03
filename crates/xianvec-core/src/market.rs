@@ -109,7 +109,10 @@ mod tests {
                 sma_20: Some(69_500.0),
                 ..Default::default()
             },
-            onchain: OnchainPanel { funding_rate_8h: Some(0.00012), ..Default::default() },
+            onchain: OnchainPanel {
+                funding_rate_8h: Some(0.00012),
+                ..Default::default()
+            },
             regime: Regime::Chop,
             horizon_hours: 24,
         }

@@ -46,3 +46,6 @@ models/
 # Rust
 target/
 **/*.rs.bk
+
+# Claude Code runtime state (skills submodule is tracked; lock/local are not)
+.claude/scheduled_tasks.lock

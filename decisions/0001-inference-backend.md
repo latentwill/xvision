@@ -93,7 +93,55 @@ cost upfront.
   Q4 is for development and the v1 demo; the headline number for the report
   comes from rented hardware as planned.
 
+## Phase 3 addendum (2026-05-03): candle Q4 throughput on M4 Metal
+
+After wiring `xianvec-trader::run_trader` against the same `Qwen3Engine` from
+Phase 0.2, end-to-end smoke surfaced a sharp throughput cliff on M4 Max with the
+default `candle-core/metal` backend:
+
+```
+smoke-qwen3 (release, default features = ["metal"])
+  prompt_tokens=20  completion_tokens=2
+  prompt_dt_ms=16165   →  ~1.2 tok/s prefill
+  completion_dt_ms=3138 →  ~0.64 tok/s decode
+```
+
+A 600-token Trader prompt + 384-token decode therefore costs ~17 min wall — the
+`smoke-trader` binary is correct but unusable interactively at this rate.
+
+The Q4_K_M Metal kernels in `candle_transformers::models::quantized_qwen3` do
+not currently match `llama.cpp` throughput on the same GGUF and the same
+hardware (where the same model runs ~30+ tok/s). This is a candle limitation,
+not a Phase 3 wiring bug — the smoke pipeline produces correct output, just
+slowly.
+
+**Implications:**
+- Phase 3 acceptance is met by unit-test evidence (29 trader tests, including
+  the synthetic 95% / 99% parse-rate gate) plus a verified end-to-end
+  engine→parse round-trip on a tiny prompt. Live large-prompt timing is
+  recorded here, not asserted.
+- Phase 4 vector-application work continues against this engine; per-token
+  cost is irrelevant for hook-correctness validation (single-token forward
+  passes are the unit of work).
+- **Phase 9 (forward paper / live) cannot use the candle Q4 path at this
+  throughput.** Two viable routes — pick during Phase 9 planning:
+  1. Vendor `candle_transformers::models::qwen3` and inline `quantized_nn` bits
+     to enable the flash-attention path (the original blocker called out in
+     this ADR's "Considered" section). Cost: ~1 week, gives runtime ~10 tok/s
+     based on community reports.
+  2. Run `vLLM` or `llama-server` locally and route the Trader through the
+     `OpenAICompatIntern`-style HTTP path that already exists for Stage 1 (the
+     trader can speak the same wire protocol — splitting `xianvec-trader` into
+     a `local-candle` impl and an `openai-compat` impl mirrors the Intern
+     split). Cost: ~2 days, gives 30+ tok/s out of the box but loses direct
+     hook control until vector application is bridged via vLLM logits-processor
+     or llama.cpp grammar.
+
+The Phase 4.3 hard gate (vectors must steer the candle runtime equivalently to
+the MLX spike path) is not affected — it depends on hook correctness, not
+throughput.
+
 ## References
 
-- Implementation plan §0.2, §0.3, §4.2, §4.3, §9.3
+- Implementation plan §0.2, §0.3, §3.1, §3.3, §4.2, §4.3, §9.3
 - `decisions/0002-spike-validation.md` (records spike outcome)

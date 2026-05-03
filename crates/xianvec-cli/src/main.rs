@@ -3,7 +3,11 @@
 use clap::Parser;
 
 #[derive(Parser, Debug)]
-#[command(name = "xvn", version, about = "XIANVEC: vectors-on vs vectors-off trading agent")]
+#[command(
+    name = "xvn",
+    version,
+    about = "XIANVEC: vectors-on vs vectors-off trading agent"
+)]
 struct Cli {}
 
 fn main() -> anyhow::Result<()> {

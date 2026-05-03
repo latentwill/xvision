@@ -18,14 +18,15 @@ const DEFAULT_GGUF: &str = "models/qwen3-32b-q4-gguf/Qwen_Qwen3-32B-Q4_K_M.gguf"
 const DEFAULT_TOKENIZER: &str = "models/qwen3-32b-mlx-4bit/tokenizer.json";
 
 fn env_path(var: &str, default: &str) -> PathBuf {
-    std::env::var(var).map(PathBuf::from).unwrap_or_else(|_| PathBuf::from(default))
+    std::env::var(var)
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from(default))
 }
 
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
 
@@ -40,9 +41,8 @@ fn main() -> Result<()> {
     let mut engine = Qwen3Engine::load(&gguf, &tokenizer, device)?;
     println!("model loaded in {:.2}s", load_start.elapsed().as_secs_f32());
 
-    let prompt = std::env::var("XVN_PROMPT").unwrap_or_else(|_| {
-        "You are a market analyst. The trading signal is".to_string()
-    });
+    let prompt = std::env::var("XVN_PROMPT")
+        .unwrap_or_else(|_| "You are a market analyst. The trading signal is".to_string());
     println!("\nprompt: {prompt}");
 
     let opts = GenerateOpts {

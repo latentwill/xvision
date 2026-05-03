@@ -30,11 +30,18 @@ impl BriefingCache {
     }
 
     pub fn get(&self, key: &CacheKey) -> Option<InternBriefing> {
-        self.inner.lock().expect("BriefingCache mutex poisoned").get(key).cloned()
+        self.inner
+            .lock()
+            .expect("BriefingCache mutex poisoned")
+            .get(key)
+            .cloned()
     }
 
     pub fn insert(&self, key: CacheKey, briefing: InternBriefing) {
-        self.inner.lock().expect("BriefingCache mutex poisoned").insert(key, briefing);
+        self.inner
+            .lock()
+            .expect("BriefingCache mutex poisoned")
+            .insert(key, briefing);
     }
 
     pub fn len(&self) -> usize {
@@ -72,8 +79,11 @@ mod tests {
     #[test]
     fn round_trip_get() {
         let c = BriefingCache::new();
-        let k =
-            CacheKey { setup_id: Uuid::nil(), provider: "anthropic".into(), model: "claude".into() };
+        let k = CacheKey {
+            setup_id: Uuid::nil(),
+            provider: "anthropic".into(),
+            model: "claude".into(),
+        };
         assert!(c.get(&k).is_none());
         c.insert(k.clone(), fixture_briefing());
         assert_eq!(c.get(&k).unwrap().bull_case, fixture_briefing().bull_case);
@@ -83,10 +93,16 @@ mod tests {
     #[test]
     fn provider_change_invalidates() {
         let c = BriefingCache::new();
-        let k_anthropic =
-            CacheKey { setup_id: Uuid::nil(), provider: "anthropic".into(), model: "claude".into() };
-        let k_openai =
-            CacheKey { setup_id: Uuid::nil(), provider: "openai-compat".into(), model: "gpt-5".into() };
+        let k_anthropic = CacheKey {
+            setup_id: Uuid::nil(),
+            provider: "anthropic".into(),
+            model: "claude".into(),
+        };
+        let k_openai = CacheKey {
+            setup_id: Uuid::nil(),
+            provider: "openai-compat".into(),
+            model: "gpt-5".into(),
+        };
         c.insert(k_anthropic.clone(), fixture_briefing());
         assert!(c.get(&k_openai).is_none(), "different provider must miss");
         assert!(c.get(&k_anthropic).is_some());

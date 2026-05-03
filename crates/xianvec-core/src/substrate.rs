@@ -190,7 +190,10 @@ mod tests {
     #[test]
     fn gen_params_default_is_greedy_for_backtest() {
         let p = GenParams::default();
-        assert_eq!(p.temperature, 0.0, "Tier 1 fix #2: backtest must be deterministic");
+        assert_eq!(
+            p.temperature, 0.0,
+            "Tier 1 fix #2: backtest must be deterministic"
+        );
         assert!(p.seed.is_some());
     }
 
