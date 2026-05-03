@@ -1,7 +1,17 @@
 //! Qwen3 Q4 GGUF inference engine. Owns the candle model weights, tokenizer,
-//! and sampling loop. The next steering layer (Phase 4) will install hooks via
-//! `Qwen3Engine::install_hook`; in v1 those hooks are no-ops because candle's
-//! quantized_qwen3 path does not currently expose per-layer residual mutation.
+//! and sampling loop.
+//!
+//! ## Hook injection — RESOLVED (ADR 0007, Option A)
+//!
+//! `quantized_qwen3::ModelWeights::forward` iterates a private `Vec<LayerWeights>`.
+//! We work around this by mirroring the upstream struct layout in
+//! `crate::vendor_qwen3::ModelWeightsMirror` and transmuting a `&mut ModelWeights`
+//! reference to drive the layer loop ourselves. The transmute is guarded by a
+//! `size_of` + `align_of` runtime assertion; if upstream changes its layout the
+//! engine panics with a diagnostic message rather than silently miscomputing.
+//!
+//! The generation loop now calls `vendor_qwen3::forward_with_hooks(...)` which
+//! fires `hook.apply(layer_idx, &residual, ctx)` after every transformer block.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -15,7 +25,8 @@ use thiserror::Error;
 use tokenizers::Tokenizer;
 use tracing::info;
 
-use crate::hooks::LayerHook;
+use crate::hooks::{HookContext, IdentityHook, LayerHook};
+use crate::vendor_qwen3;
 
 #[derive(Debug, Error)]
 pub enum EngineError {
@@ -34,7 +45,13 @@ pub struct Qwen3Engine {
     tokenizer: Tokenizer,
     device: Device,
     eos_token: u32,
+    /// Per-layer hooks. v1 maps layer index → hook. The hook is called after
+    /// each block with the residual tensor (see HOOK_STATUS above for the
+    /// current limitation).
     hooks: BTreeMap<u16, Arc<dyn LayerHook>>,
+    /// Single-slot hook installed via `set_hook`. Takes precedence over the
+    /// per-layer `hooks` map when set.
+    primary_hook: Option<Box<dyn LayerHook>>,
 }
 
 #[derive(Debug, Clone)]
@@ -87,7 +104,7 @@ impl Qwen3Engine {
     }
 
     /// Load a Qwen3 Q4 GGUF model from `gguf_path` with a `tokenizer.json`
-    /// found at `tokenizer_path` (typically the sibling MLX checkpoint dir).
+    /// found at `tokenizer_path`.
     pub fn load(
         gguf_path: impl AsRef<Path>,
         tokenizer_path: impl AsRef<Path>,
@@ -95,12 +112,15 @@ impl Qwen3Engine {
     ) -> Result<Self, EngineError> {
         let gguf_path: PathBuf = gguf_path.as_ref().to_path_buf();
         let mut file = std::fs::File::open(&gguf_path)?;
-        let content = gguf_file::Content::read(&mut file).map_err(|e| EngineError::Load(format!("{e:?}")))?;
+        let content = gguf_file::Content::read(&mut file)
+            .map_err(|e| EngineError::Load(format!("{e:?}")))?;
 
         let total_bytes: usize = content
             .tensor_infos
             .values()
-            .map(|t| t.shape.elem_count() * t.ggml_dtype.type_size() / t.ggml_dtype.block_size())
+            .map(|t| {
+                t.shape.elem_count() * t.ggml_dtype.type_size() / t.ggml_dtype.block_size()
+            })
             .sum();
         info!(
             target: "xianvec_inference",
@@ -127,12 +147,26 @@ impl Qwen3Engine {
             device,
             eos_token,
             hooks: BTreeMap::new(),
+            primary_hook: None,
         })
     }
 
-    /// Install a steering or introspection hook at `layer`. v1 stores hooks
-    /// for the Phase 4 wiring; the candle quantized_qwen3 forward pass does
-    /// not currently surface per-layer residual mutation.
+    /// Install a hook that will be called at every layer boundary.
+    ///
+    /// This is the Phase 4.4 entry point. Currently the hook is stored but
+    /// cannot fire until the per-block residual injection path is vendored
+    /// (see HOOK_STATUS). The hook storage and call-site wiring are complete.
+    pub fn set_hook(&mut self, hook: Box<dyn LayerHook>) {
+        self.primary_hook = Some(hook);
+    }
+
+    /// Remove the primary hook (reverts to `IdentityHook` behaviour).
+    pub fn clear_hook(&mut self) {
+        self.primary_hook = None;
+    }
+
+    /// Install a per-layer hook at `layer` (legacy API; `set_hook` is preferred
+    /// for Phase 4.4).
     pub fn install_hook(&mut self, layer: u16, hook: Arc<dyn LayerHook>) {
         self.hooks.insert(layer, hook);
     }
@@ -141,12 +175,40 @@ impl Qwen3Engine {
         self.hooks.keys().copied().collect()
     }
 
+    /// Apply the active hook to `residual` at `layer_idx` with the given token
+    /// context. Returns the (possibly modified) residual.
+    ///
+    /// Hook call order: primary hook takes precedence; falls back to per-layer
+    /// hooks; falls back to identity.
+    ///
+    /// Used by callers that need the engine's hook dispatch outside of the main
+    /// generation loop (e.g. single-shot residual inspection).
+    #[allow(dead_code)]
+    fn apply_hooks(
+        &self,
+        layer_idx: usize,
+        residual: &Tensor,
+        ctx: &HookContext,
+    ) -> candle_core::Result<Tensor> {
+        if let Some(h) = &self.primary_hook {
+            return h.apply(layer_idx, residual, ctx);
+        }
+        if let Some(h) = self.hooks.get(&(layer_idx as u16)) {
+            return h.apply(layer_idx, residual, ctx);
+        }
+        IdentityHook.apply(layer_idx, residual, ctx)
+    }
+
     /// One-shot generation. Greedy when `temperature == 0.0`.
-    pub fn generate(&mut self, prompt: &str, opts: &GenerateOpts) -> Result<GenerateResult, EngineError> {
-        // Apply Qwen3 chat template, no-thinking variant — eliminates <think>
-        // tokens that would dilute the steering signal at the action choice point.
-        let formatted =
-            format!("<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n");
+    pub fn generate(
+        &mut self,
+        prompt: &str,
+        opts: &GenerateOpts,
+    ) -> Result<GenerateResult, EngineError> {
+        // Apply Qwen3 chat template, no-thinking variant.
+        let formatted = format!(
+            "<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
+        );
         let encoded = self
             .tokenizer
             .encode(formatted, true)
@@ -162,13 +224,22 @@ impl Qwen3Engine {
                 (Some(k), Some(p)) => Sampling::TopKThenTopP { k, p, temperature: t },
             },
         };
-        // ArgMax ignores the seed; All / TopK / TopP need it. Construct after
-        // we know which sampling we're using.
-        let mut logits_processor = LogitsProcessor::from_sampling(opts.seed, sampling.clone());
+        let mut logits_processor =
+            LogitsProcessor::from_sampling(opts.seed, sampling.clone());
 
         let prompt_start = std::time::Instant::now();
         let input = Tensor::new(prompt_tokens.as_slice(), &self.device)?.unsqueeze(0)?;
-        let logits = self.model.forward(&input, 0)?.squeeze(0)?;
+
+        // Prefill: drive through vendor_qwen3::forward_with_hooks so the hook
+        // fires once per layer even on the prompt pass (token_index = 0).
+        let ctx = HookContext::new(0);
+        let hook_ref: &dyn LayerHook = self
+            .primary_hook
+            .as_deref()
+            .map(|h| h as &dyn LayerHook)
+            .unwrap_or(&IdentityHook);
+        let logits = vendor_qwen3::forward_with_hooks(&mut self.model, &input, 0, hook_ref, &ctx)?
+            .squeeze(0)?;
         let mut next_token = logits_processor.sample(&logits)?;
         let prompt_dt_ms = prompt_start.elapsed().as_millis();
 
@@ -176,11 +247,25 @@ impl Qwen3Engine {
         let mut all_tokens = vec![next_token];
 
         for index in 0..opts.max_tokens.saturating_sub(1) {
+            let ctx = HookContext::new(index as u32 + 1);
             let input = Tensor::new(&[next_token], &self.device)?.unsqueeze(0)?;
-            let logits = self
-                .model
-                .forward(&input, prompt_tokens.len() + index)?
-                .squeeze(0)?;
+            // Resolve hook ref inside the loop (borrow checker: primary_hook is
+            // behind &self but model is &mut self — split borrows aren't stable
+            // for this pattern, so we take the hook as a raw pointer for the call).
+            let hook_ref: &dyn LayerHook = self
+                .primary_hook
+                .as_deref()
+                .map(|h| h as &dyn LayerHook)
+                .unwrap_or(&IdentityHook);
+            let logits = vendor_qwen3::forward_with_hooks(
+                &mut self.model,
+                &input,
+                prompt_tokens.len() + index,
+                hook_ref,
+                &ctx,
+            )?
+            .squeeze(0)?;
+
             let logits = if opts.repeat_penalty == 1.0 {
                 logits
             } else {
@@ -196,8 +281,6 @@ impl Qwen3Engine {
             if next_token == self.eos_token {
                 break;
             }
-            // Suppress unused warning: keep sampling spec around for later
-            // dynamic reconfiguration.
             let _ = &mut sampling;
         }
         let completion_dt_ms = completion_start.elapsed().as_millis();

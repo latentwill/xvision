@@ -1,6 +1,6 @@
 [package]
 name        = "xianvec-gating"
-description = "entropy gating + alpha schedule"
+description = "entropy gating + alpha schedule + steering hook"
 version.workspace      = true
 edition.workspace      = true
 rust-version.workspace = true
@@ -10,3 +10,14 @@ repository.workspace   = true
 [lib]
 name = "xianvec_gating"
 path = "src/lib.rs"
+
+[dependencies]
+xianvec-core    = { path = "../xianvec-core" }
+xianvec-inference = { path = "../xianvec-inference" }
+candle-core     = { workspace = true }
+thiserror       = { workspace = true }
+serde           = { workspace = true }
+chrono          = { workspace = true }
+
+[dev-dependencies]
+candle-core = { workspace = true }
