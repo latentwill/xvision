@@ -10,6 +10,16 @@
 //! - **vectors-OFF** (`identity/vectors_off.agent.json`)
 //! - **vectors-ON**  (`identity/vectors_on.agent.json`)
 //!
+//! # Optional dependency
+//! This crate is **opt-in** at the workspace level.  It is excluded from the
+//! root `default-members` array so bare `cargo build` / `cargo test` skip it
+//! (and the heavy `alloy v2` transitive compile).  Use `cargo build -p
+//! xianvec-identity` or `cargo test --workspace` to include it explicitly.
+//! No other crate in the workspace depends on this one; the trading pipeline
+//! is functional end-to-end without minting any NFTs.  Future harness wiring
+//! (FOLLOWUPS.md F4) gates the on-chain flow behind a runtime config flag so
+//! `cargo run` of the harness without Mantle credentials still works.
+//!
 //! # ERC-8004 status
 //! The standard is **Draft** as of 2025-05.  No production deployment on
 //! Mantle mainnet or Mantle Sepolia testnet exists at build time.  This crate

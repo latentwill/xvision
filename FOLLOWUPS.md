@@ -32,11 +32,11 @@ Format: title → trigger → scope → blocking?
 
 ## Blocking forward paper / on-chain
 
-### F4. ERC-8004 manifests for both arms
+### F4. ERC-8004 manifests for both arms + harness wiring (runtime-optional)
 
-- **Trigger:** Phase 6.5 lands.
-- **Scope:** write `identity/vectors_off.agent.json` and `identity/vectors_on.agent.json` with model id, vector config, code commit, contact. Pin to IPFS or HTTPS. Mint via Phase 6.5's `IdentityClient::register` on Mantle testnet first; mainnet after Phase 9 eval clears.
-- **Blocking:** YES for Phase 11.5 Orderly forward run on Mantle.
+- **Trigger:** Phase 11.5 forward run on Mantle.
+- **Scope:** Phase 6.5 already shipped placeholder `identity/vectors_{off,on}.agent.json` with `code_commit=PENDING`, `contact=PENDING`, and (for vectors_on) `manifest_hashes=["PENDING_PHASE_4_2_EXTRACTION"]`. Before the forward run, fill these from `git rev-parse HEAD` and the actual production vector manifest hashes from F2; mint via `IdentityClient::register` on Mantle testnet first, mainnet after Phase 9 eval clears. Harness wiring must be **runtime-optional** — gate behind a config flag (`identity.enabled = true/false` in `config/default.toml`) so the harness runs without Mantle credentials when identity is disabled, and `xianvec-identity` stays an opt-in workspace member (excluded from `default-members`; explicit `--workspace` or `-p xianvec-identity` to include).
+- **Blocking:** YES for Phase 11.5 Orderly forward run on Mantle. Non-blocking for Phase 9 backtest (no on-chain dep).
 
 ### F5. Orderly testnet credentials + smoke trade
 
@@ -138,7 +138,14 @@ Format: title → trigger → scope → blocking?
 - **Scope:** schema field add + cascade through xianvec-trader (prompt schema), xianvec-intern (briefing format), xianvec-risk (drop the separate `asset` parameter), xianvec-execution (Alpaca + Orderly stop pinning to BTC), xianvec-eval (drop `BacktestConfig.instrument`). Mechanical but wide.
 - **Blocking:** YES for multi-asset.
 
-### F19. Add `VetoReason::TakeProfitTooTight` (resolves choice #2 in `strategy-choices.md`)
+### F19. Re-adopt `orderly-connector-rs` SDK when its `zeroize` pin loosens
+
+- **Trigger:** `orderly-connector-rs` releases a version that no longer transitively pins `zeroize = "=1.3.0"` (currently 0.4.15 does, via `solana-sdk` → `ed25519-dalek 1.x`). The pin conflicts with `rustls 0.23` (workspace `reqwest 0.13`'s TLS) which needs `zeroize ≥ 1.7`.
+- **Current state:** Phase 6.3 reimplements the five required Orderly REST endpoints directly via signed `reqwest` + `ed25519-dalek 2.x` calls. Signing scheme is byte-identical to the SDK's `auth::generate_signature` (Ed25519 over `${ts}${METHOD}${path}${body}`, base64-encoded, secret base58). Tests cover the path; ergonomics of the SDK are gone.
+- **Scope:** swap the in-house REST shims for SDK calls (`OrderlyService::create_order`, `create_algo_order`, `cancel_order`, `get_account_info`, `get_positions`, `get_futures_info`). Keep the `OrderlyApi` trait so tests stay independent. Strip the local signing code.
+- **Blocking:** non-blocking; current implementation is functional. Follow-up only matters for code-mass and SDK-feature pickup (e.g. WebSockets if v2 wants live mark-price streams).
+
+### F20. Add `VetoReason::TakeProfitTooTight` (resolves choice #2 in `strategy-choices.md`)
 
 - **Trigger:** any other `VetoReason::Custom(...)` site lands in the codebase.
 - **Scope:** one line in `xianvec-core::trading.rs` enum + serde rename + cascade through any exhaustive `match VetoReason {...}` — `xianvec-risk::rules::take_profit_rr` switches off `Custom("rr_too_low")`.
