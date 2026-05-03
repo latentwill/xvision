@@ -10,3 +10,29 @@ repository.workspace   = true
 [lib]
 name = "xianvec_trader"
 path = "src/lib.rs"
+
+[dependencies]
+xianvec-core      = { path = "../xianvec-core" }
+xianvec-inference = { path = "../xianvec-inference" }
+xianvec-intern    = { path = "../xianvec-intern" }
+serde       = { workspace = true }
+serde_json  = { workspace = true }
+garde       = { workspace = true }
+chrono      = { workspace = true }
+uuid        = { workspace = true }
+thiserror   = { workspace = true }
+anyhow      = { workspace = true }
+tracing     = { workspace = true }
+tracing-subscriber = { workspace = true }
+tokio       = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+
+[[bin]]
+name = "smoke-trader"
+path = "src/bin/smoke_trader.rs"
+
+[[bin]]
+name = "smoke-pipeline"
+path = "src/bin/smoke_pipeline.rs"

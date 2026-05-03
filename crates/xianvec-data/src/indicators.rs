@@ -106,13 +106,20 @@ pub fn bollinger(prices: &[f64], period: usize, k: f64) -> BollingerBands {
     let mut lower = vec![f64::NAN; n];
     for i in (period - 1)..n {
         let mean = mid[i];
-        let var = prices[i + 1 - period..=i].iter().map(|p| (p - mean).powi(2)).sum::<f64>()
+        let var = prices[i + 1 - period..=i]
+            .iter()
+            .map(|p| (p - mean).powi(2))
+            .sum::<f64>()
             / period as f64;
         let std = var.sqrt();
         upper[i] = mean + k * std;
         lower[i] = mean - k * std;
     }
-    BollingerBands { middle: mid, upper, lower }
+    BollingerBands {
+        middle: mid,
+        upper,
+        lower,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -177,7 +184,11 @@ pub fn macd(prices: &[f64], fast: usize, slow: usize, signal: usize) -> Macd {
             hist[i] = macd_line[i] - signal_full[i];
         }
     }
-    Macd { macd: macd_line, signal: signal_full, histogram: hist }
+    Macd {
+        macd: macd_line,
+        signal: signal_full,
+        histogram: hist,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -229,7 +240,11 @@ pub fn fib_retracements(prices: &[f64], lookback: usize) -> Option<FibLevels> {
     if (high - low).abs() < f64::EPSILON {
         return None;
     }
-    let direction = if high_idx < low_idx { Direction::Down } else { Direction::Up };
+    let direction = if high_idx < low_idx {
+        Direction::Down
+    } else {
+        Direction::Up
+    };
     let span = high - low;
     Some(FibLevels {
         high,
@@ -303,8 +318,8 @@ mod tests {
         // be in [70, 75]. We don't pin to a paper value because rounding in
         // published examples varies; we assert structural correctness.
         let prices = [
-            44.34, 44.09, 44.15, 43.61, 44.33, 44.83, 45.10, 45.42, 45.84, 46.08, 45.89, 46.03,
-            45.61, 46.28, 46.28, 46.00, 46.03, 46.41, 46.22, 45.64,
+            44.34, 44.09, 44.15, 43.61, 44.33, 44.83, 45.10, 45.42, 45.84, 46.08, 45.89, 46.03, 45.61, 46.28,
+            46.28, 46.00, 46.03, 46.41, 46.22, 45.64,
         ];
         let r = rsi(&prices, 14);
         assert!(r[..14].iter().all(|x| x.is_nan()), "warmup must be NaN");
@@ -362,7 +377,11 @@ mod tests {
         let close: Vec<f64> = (0..n).map(|_| 102.5).collect();
         let a = atr(&high, &low, &close, 14);
         // Allow a small window for Wilder smoothing convergence.
-        assert!((a[40] - 5.0).abs() < 0.1, "ATR should converge to 5, got {}", a[40]);
+        assert!(
+            (a[40] - 5.0).abs() < 0.1,
+            "ATR should converge to 5, got {}",
+            a[40]
+        );
     }
 
     #[test]

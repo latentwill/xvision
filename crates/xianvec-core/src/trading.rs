@@ -152,6 +152,60 @@ impl TraderDecision {
     }
 }
 
+/// One open position. Direction is `Long` or `Short` (never `Flat`).
+#[derive(Debug, Clone, PartialEq, Validate, Serialize, Deserialize)]
+pub struct OpenPosition {
+    #[garde(skip)]
+    pub asset: AssetSymbol,
+    #[garde(skip)]
+    pub direction: Direction,
+    /// Notional position size in basis points of NAV at entry.
+    #[garde(range(min = 1, max = 2000))]
+    pub size_bps: u32,
+    #[garde(range(min = 0.0))]
+    pub entry_price: f64,
+    #[garde(range(min = 0.0))]
+    pub mark_price: f64,
+    #[garde(range(min = 0.1, max = 20.0))]
+    pub stop_loss_pct: f32,
+    #[garde(range(min = 0.1, max = 50.0))]
+    pub take_profit_pct: f32,
+    #[garde(skip)]
+    pub opened_at: DateTime<Utc>,
+}
+
+/// Snapshot of the trading account at decision time. The Trader uses this to
+/// reason about exposure (e.g. "I'm already long BTC at 1500 bps; consider
+/// closing before sizing up another position"). Risk rules read it too.
+#[derive(Debug, Clone, PartialEq, Validate, Serialize, Deserialize)]
+pub struct PortfolioState {
+    #[garde(range(min = 0.0))]
+    pub equity_usd: f64,
+    /// Realized PnL today (UTC day) — informs daily-loss circuit-breaker logic.
+    #[garde(skip)]
+    pub realized_pnl_today_usd: f64,
+    /// Day index since strategy start; used by risk rules for windowed limits.
+    #[garde(skip)]
+    pub day_index: u32,
+    /// Open positions keyed by asset for stable iteration order.
+    #[garde(skip)]
+    pub open_positions: BTreeMap<AssetSymbol, OpenPosition>,
+    #[garde(skip)]
+    pub as_of: DateTime<Utc>,
+}
+
+impl PortfolioState {
+    /// Sum of open exposure in basis points across all positions.
+    pub fn total_exposure_bps(&self) -> u32 {
+        self.open_positions.values().map(|p| p.size_bps).sum()
+    }
+
+    /// Flat = no open positions.
+    pub fn is_flat(&self) -> bool {
+        self.open_positions.is_empty()
+    }
+}
+
 /// Coarse size bucketing for divergence analysis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SizeBucket {
@@ -211,7 +265,10 @@ impl RiskDecision {
     /// The decision the executor should act on (None for veto).
     pub fn effective(&self) -> Option<&TraderDecision> {
         match self {
-            Self::Approved { decision } | Self::Modified { modified: decision, .. } => Some(decision),
+            Self::Approved { decision }
+            | Self::Modified {
+                modified: decision, ..
+            } => Some(decision),
             Self::Vetoed { .. } => None,
         }
     }
@@ -239,6 +296,29 @@ mod tests {
         }
     }
 
+    fn fixture_open_position() -> OpenPosition {
+        OpenPosition {
+            asset: AssetSymbol::Btc,
+            direction: Direction::Long,
+            size_bps: 800,
+            entry_price: 70_000.0,
+            mark_price: 70_500.0,
+            stop_loss_pct: 2.0,
+            take_profit_pct: 5.0,
+            opened_at: Utc.timestamp_opt(1_699_900_000, 0).single().unwrap(),
+        }
+    }
+
+    fn fixture_portfolio() -> PortfolioState {
+        PortfolioState {
+            equity_usd: 100_000.0,
+            realized_pnl_today_usd: -250.0,
+            day_index: 7,
+            open_positions: BTreeMap::from([(AssetSymbol::Btc, fixture_open_position())]),
+            as_of: Utc.timestamp_opt(1_700_000_000, 0).single().unwrap(),
+        }
+    }
+
     fn fixture_decision() -> TraderDecision {
         TraderDecision {
             setup_id: Uuid::nil(),
@@ -261,7 +341,9 @@ mod tests {
     fn briefing_rejects_short_bull_case() {
         let mut b = fixture_briefing();
         b.bull_case = "tiny".into();
-        let err = b.validate().expect_err("short string should fail garde length(min=20)");
+        let err = b
+            .validate()
+            .expect_err("short string should fail garde length(min=20)");
         assert!(format!("{err}").contains("bull_case"));
     }
 
@@ -288,7 +370,8 @@ mod tests {
     fn decision_rejects_zero_stop_loss() {
         let mut d = fixture_decision();
         d.stop_loss_pct = 0.0;
-        d.validate().expect_err("stop_loss_pct < 0.1 must fail (Tier-3 risk hygiene)");
+        d.validate()
+            .expect_err("stop_loss_pct < 0.1 must fail (Tier-3 risk hygiene)");
     }
 
     #[test]
@@ -321,10 +404,16 @@ mod tests {
             RiskDecision::Approved { decision: d.clone() },
             RiskDecision::Modified {
                 original: d.clone(),
-                modified: TraderDecision { size_bps: 500, ..d.clone() },
+                modified: TraderDecision {
+                    size_bps: 500,
+                    ..d.clone()
+                },
                 reason: VetoReason::PositionTooLarge,
             },
-            RiskDecision::Vetoed { original: d.clone(), reason: VetoReason::DailyLossCircuitBreaker },
+            RiskDecision::Vetoed {
+                original: d.clone(),
+                reason: VetoReason::DailyLossCircuitBreaker,
+            },
         ];
         for r in cases {
             let s = serde_json::to_string(&r).unwrap();
@@ -336,7 +425,9 @@ mod tests {
     #[test]
     fn risk_decision_effective_skips_veto() {
         let d = fixture_decision();
-        assert!(RiskDecision::Approved { decision: d.clone() }.effective().is_some());
+        assert!(RiskDecision::Approved { decision: d.clone() }
+            .effective()
+            .is_some());
         assert!(RiskDecision::Vetoed {
             original: d,
             reason: VetoReason::AssetNotWhitelisted
@@ -356,6 +447,34 @@ mod tests {
         assert_eq!(d.divergence_key().2, SizeBucket::Medium);
         d.size_bps = 1900;
         assert_eq!(d.divergence_key().2, SizeBucket::Large);
+    }
+
+    #[test]
+    fn portfolio_validates_and_round_trips() {
+        let p = fixture_portfolio();
+        p.validate().expect("fixture must pass");
+        let s = serde_json::to_string(&p).unwrap();
+        let back: PortfolioState = serde_json::from_str(&s).unwrap();
+        assert_eq!(p, back);
+    }
+
+    #[test]
+    fn portfolio_total_exposure_sums_open_positions() {
+        let p = fixture_portfolio();
+        assert_eq!(p.total_exposure_bps(), 800);
+        assert!(!p.is_flat());
+
+        let mut empty = p.clone();
+        empty.open_positions.clear();
+        assert_eq!(empty.total_exposure_bps(), 0);
+        assert!(empty.is_flat());
+    }
+
+    #[test]
+    fn open_position_rejects_oversize() {
+        let mut op = fixture_open_position();
+        op.size_bps = 2500;
+        op.validate().expect_err("size_bps > 2000 must fail");
     }
 
     proptest::proptest! {

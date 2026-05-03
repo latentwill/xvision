@@ -30,10 +30,7 @@ pub enum ConfigError {
         source: toml::de::Error,
     },
     #[error("validation failed for {path}: {report}")]
-    Validation {
-        path: PathBuf,
-        report: garde::Report,
-    },
+    Validation { path: PathBuf, report: garde::Report },
     #[error("cross-field validation failed for {path}: {message}")]
     CrossField { path: PathBuf, message: String },
 }
@@ -198,7 +195,11 @@ pub struct AssetVenues {
 
 impl WhitelistConfig {
     pub fn enabled_symbols(&self) -> Vec<&str> {
-        self.assets.iter().filter(|a| a.enabled).map(|a| a.symbol.as_str()).collect()
+        self.assets
+            .iter()
+            .filter(|a| a.enabled)
+            .map(|a| a.symbol.as_str())
+            .collect()
     }
 }
 
@@ -242,12 +243,13 @@ pub struct RiskStops {
 
 // --- loader -----------------------------------------------------------------
 
-fn read_toml<T: for<'de> Deserialize<'de> + Validate<Context = ()>>(
-    path: &Path,
-) -> Result<T, ConfigError> {
+fn read_toml<T: for<'de> Deserialize<'de> + Validate<Context = ()>>(path: &Path) -> Result<T, ConfigError> {
     let bytes = std::fs::read(path).map_err(|e| match e.kind() {
         std::io::ErrorKind::NotFound => ConfigError::NotFound(path.to_path_buf()),
-        _ => ConfigError::Io { path: path.to_path_buf(), source: e },
+        _ => ConfigError::Io {
+            path: path.to_path_buf(),
+            source: e,
+        },
     })?;
     let s = String::from_utf8(bytes).map_err(|e| ConfigError::Io {
         path: path.to_path_buf(),
@@ -257,9 +259,10 @@ fn read_toml<T: for<'de> Deserialize<'de> + Validate<Context = ()>>(
         path: path.to_path_buf(),
         source: e,
     })?;
-    parsed
-        .validate()
-        .map_err(|report| ConfigError::Validation { path: path.to_path_buf(), report })?;
+    parsed.validate().map_err(|report| ConfigError::Validation {
+        path: path.to_path_buf(),
+        report,
+    })?;
     Ok(parsed)
 }
 
@@ -267,7 +270,10 @@ pub fn load_runtime(path: &Path) -> Result<RuntimeConfig, ConfigError> {
     let cfg: RuntimeConfig = read_toml(path)?;
     cfg.backtest
         .validate_step_vs_horizon()
-        .map_err(|msg| ConfigError::CrossField { path: path.to_path_buf(), message: msg })?;
+        .map_err(|msg| ConfigError::CrossField {
+            path: path.to_path_buf(),
+            message: msg,
+        })?;
     Ok(cfg)
 }
 
@@ -285,13 +291,18 @@ mod tests {
 
     fn project_root() -> PathBuf {
         // crates/xianvec-core -> ../..
-        Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().parent().unwrap().to_path_buf()
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .to_path_buf()
     }
 
     #[test]
     fn loads_repo_default_toml() {
-        let cfg = load_runtime(&project_root().join("config/default.toml"))
-            .expect("config/default.toml must load");
+        let cfg =
+            load_runtime(&project_root().join("config/default.toml")).expect("config/default.toml must load");
         assert_eq!(cfg.intern.temperature, 0.0, "Tier 1 fix #1");
         assert_eq!(cfg.trader.temperature, 0.0, "Tier 1 fix #2");
         assert!(cfg.backtest.step >= cfg.backtest.horizon, "Tier 1 fix #4");
@@ -307,8 +318,7 @@ mod tests {
 
     #[test]
     fn loads_repo_risk_toml() {
-        let cfg = load_risk(&project_root().join("config/risk.toml"))
-            .expect("config/risk.toml must load");
+        let cfg = load_risk(&project_root().join("config/risk.toml")).expect("config/risk.toml must load");
         assert!(cfg.limits.max_position_pct_nav > 0.0);
         assert!(cfg.stops.stop_loss_required, "v1 requires stops");
     }

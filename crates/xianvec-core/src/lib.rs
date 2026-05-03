@@ -14,10 +14,9 @@ pub mod trading;
 pub use market::{IndicatorPanel, MarketSnapshot, Ohlcv, OnchainPanel, SkillRef};
 
 pub use substrate::{
-    FinishReason, GenParams, Generation, InferenceError, LayerIndex, Manifest, TokenLogprob,
-    VectorRef,
+    FinishReason, GenParams, Generation, InferenceError, LayerIndex, Manifest, TokenLogprob, VectorRef,
 };
 pub use trading::{
-    Action, AssetSymbol, Direction, DispositionAxis, EvidenceTag, InternBriefing, Regime,
-    RiskDecision, TraderDecision, VetoReason,
+    Action, AssetSymbol, Direction, DispositionAxis, EvidenceTag, InternBriefing, OpenPosition,
+    PortfolioState, Regime, RiskDecision, TraderDecision, VetoReason,
 };

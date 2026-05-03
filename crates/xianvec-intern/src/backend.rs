@@ -22,9 +22,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
-use xianvec_core::trading::{
-    AssetSymbol, EvidenceTag, InternBriefing, Regime,
-};
+use xianvec_core::trading::{AssetSymbol, EvidenceTag, InternBriefing, Regime};
 
 use crate::reasoning::strip_reasoning;
 
@@ -118,9 +116,21 @@ pub(crate) fn parse_llm_response(
         bull_case: llm.bull_case,
         bear_case: llm.bear_case,
         flat_case: llm.flat_case,
-        evidence_long: llm.evidence_long.into_iter().map(EvidenceItem::into_tag).collect(),
-        evidence_short: llm.evidence_short.into_iter().map(EvidenceItem::into_tag).collect(),
-        evidence_flat: llm.evidence_flat.into_iter().map(EvidenceItem::into_tag).collect(),
+        evidence_long: llm
+            .evidence_long
+            .into_iter()
+            .map(EvidenceItem::into_tag)
+            .collect(),
+        evidence_short: llm
+            .evidence_short
+            .into_iter()
+            .map(EvidenceItem::into_tag)
+            .collect(),
+        evidence_flat: llm
+            .evidence_flat
+            .into_iter()
+            .map(EvidenceItem::into_tag)
+            .collect(),
         regime,
         signal_quality: llm.signal_quality,
         horizon_hours,
@@ -221,7 +231,10 @@ impl InternBackend for OpenAICompatIntern {
         let status = resp.status();
         let text = resp.text().await?;
         if !status.is_success() {
-            return Err(InternError::Api { status: status.as_u16(), body: text });
+            return Err(InternError::Api {
+                status: status.as_u16(),
+                body: text,
+            });
         }
         let parsed: serde_json::Value =
             serde_json::from_str(&text).map_err(|e| InternError::Parse(format!("{e}")))?;
@@ -251,8 +264,8 @@ impl AnthropicIntern {
         model: impl Into<String>,
         api_key_env: &str,
     ) -> Result<Self, InternError> {
-        let api_key = std::env::var(api_key_env)
-            .map_err(|_| InternError::MissingApiKey(api_key_env.to_string()))?;
+        let api_key =
+            std::env::var(api_key_env).map_err(|_| InternError::MissingApiKey(api_key_env.to_string()))?;
         Ok(Self {
             base_url: base_url.into(),
             model: model.into(),
@@ -295,7 +308,10 @@ impl InternBackend for AnthropicIntern {
         let status = resp.status();
         let text = resp.text().await?;
         if !status.is_success() {
-            return Err(InternError::Api { status: status.as_u16(), body: text });
+            return Err(InternError::Api {
+                status: status.as_u16(),
+                body: text,
+            });
         }
         let parsed: serde_json::Value =
             serde_json::from_str(&text).map_err(|e| InternError::Parse(format!("{e}")))?;
@@ -377,7 +393,10 @@ mod tests {
 
     #[test]
     fn evidence_unknown_kind_falls_back_to_sentiment() {
-        let item = EvidenceItem { kind: "weird".into(), detail: "x".into() };
+        let item = EvidenceItem {
+            kind: "weird".into(),
+            detail: "x".into(),
+        };
         match item.into_tag() {
             EvidenceTag::Sentiment(s) => assert!(s.starts_with("weird:")),
             other => panic!("unexpected: {other:?}"),
