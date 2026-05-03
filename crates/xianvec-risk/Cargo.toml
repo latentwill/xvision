@@ -10,3 +10,14 @@ repository.workspace   = true
 [lib]
 name = "xianvec_risk"
 path = "src/lib.rs"
+
+[dependencies]
+xianvec-core = { path = "../xianvec-core" }
+serde        = { workspace = true }
+toml         = { workspace = true }
+thiserror    = { workspace = true }
+tracing      = { workspace = true }
+
+[dev-dependencies]
+chrono = { workspace = true }
+uuid   = { workspace = true }

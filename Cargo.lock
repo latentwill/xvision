@@ -4959,6 +4959,13 @@ dependencies = [
 [[package]]
 name = "xianvec-harness"
 version = "0.1.0"
+dependencies = [
+ "chrono",
+ "tracing",
+ "uuid",
+ "xianvec-core",
+ "xianvec-risk",
+]
 
 [[package]]
 name = "xianvec-inference"
@@ -5012,6 +5019,15 @@ dependencies = [
 [[package]]
 name = "xianvec-risk"
 version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "thiserror 2.0.18",
+ "toml",
+ "tracing",
+ "uuid",
+ "xianvec-core",
+]
 
 [[package]]
 name = "xianvec-trader"

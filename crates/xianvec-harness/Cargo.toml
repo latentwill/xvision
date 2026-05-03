@@ -10,3 +10,12 @@ repository.workspace   = true
 [lib]
 name = "xianvec_harness"
 path = "src/lib.rs"
+
+[dependencies]
+xianvec-core = { path = "../xianvec-core" }
+xianvec-risk = { path = "../xianvec-risk" }
+tracing      = { workspace = true }
+
+[dev-dependencies]
+chrono = { workspace = true }
+uuid   = { workspace = true }
