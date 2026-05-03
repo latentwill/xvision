@@ -27,7 +27,7 @@ when to revisit.
 - **Current default:** `VetoReason::Custom("rr_too_low")`. Functionally correct — the verdict is recorded, downstream code can match on the string — but the catch-all `Custom` variant erodes the value of the enum's exhaustiveness.
 - **Question to settle:** add a first-class variant (e.g. `RiskRewardTooLow` or `TakeProfitTooTight`) to `VetoReason` so the rule's modification reason appears in the schema, the decision divergence analysis can group on it cleanly, and audit dashboards don't need string parsing. One-line schema add + serde rename + cascade through any `match VetoReason {...}` blocks.
 - **Impact if revisited:** schema migration in `xianvec-core::trading.rs` only; no SQL migration (the `risk_outcomes` table stores reasons as JSON-tagged enum). Trade-off: every `Custom(_)` site we add is a small claim that the enum is incomplete; the cleaner read is to add the variant now while the enum is still small enough to keep cohesive.
-- **Revisit when:** any other `Custom` reason gets added in Phase 6 or Phase 8 — that's the trigger that says "the enum is no longer exhaustive enough." Owner: schema / pipeline.
+- **Revisit when:** any other `Custom` reason gets added in Phase 6 or Phase 8 — that's the trigger that says "the enum is no longer exhaustive enough." Owner: schema / pipeline. (See FOLLOWUPS.md F20.)
 
 ---
 
