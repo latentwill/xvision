@@ -145,7 +145,31 @@ Format: title → trigger → scope → blocking?
 - **Scope:** swap the in-house REST shims for SDK calls (`OrderlyService::create_order`, `create_algo_order`, `cancel_order`, `get_account_info`, `get_positions`, `get_futures_info`). Keep the `OrderlyApi` trait so tests stay independent. Strip the local signing code.
 - **Blocking:** non-blocking; current implementation is functional. Follow-up only matters for code-mass and SDK-feature pickup (e.g. WebSockets if v2 wants live mark-price streams).
 
-### F20. Add `VetoReason::TakeProfitTooTight` (resolves choice #2 in `strategy-choices.md`)
+### F20. Upstream PR: gate Solana stack in `orderly-connector-rs` behind a feature
+
+- **Trigger:** any time before F19's re-adoption (or never, if Orderly upstream fixes it without our PR).
+- **Current state:** F19 documents the workspace-side workaround. The conflict is *not* workspace-specific — `orderly-connector-rs 0.4.15` has no `[features]` section, hard-pulls `solana-sdk = "=1.16.13"` + `solana-client = "=1.16.13"` + `ed25519-dalek 1.0` + `zeroize = "=1.3.0"` even for EVM-only users (the only consumer surface that actually exists for Mantle v1). Anyone in the modern async/rustls Rust ecosystem hits it.
+- **Scope:** PR against `ranger-finance/orderly-connector-rs` adding:
+  - `[features] default = ["solana", "evm"]` to preserve current behavior.
+  - `solana-sdk`/`solana-client`/`solana_vault_cpi` and `ed25519-dalek 1.x` made `optional = true`, gated behind `feature = "solana"`.
+  - For the `evm` feature, depend on `ed25519-dalek 2.x` (no zeroize pin); the EVM gateway's Ed25519 signing scheme works under either major.
+  - Drop the `zeroize = "=1.3.0"` exact pin; let cargo resolve it.
+- **Impact if landed upstream:** F19 collapses to "switch from in-house REST shims to `OrderlyService` calls behind `default-features = false, features = ["evm"]`." ~30–50 LoC PR upstream; tests should cover both `--features solana` and `--features evm` invocations.
+- **Blocking:** non-blocking. Worth filing whether or not we want to take F19 ourselves; the wider Rust EVM ecosystem benefits.
+
+### F21. Replace HTTP-backend Intern with an OpenClaw / ACPX agent-harness backend
+
+- **Trigger:** Phase 9 result is positive and we want to push the Intern's analytical depth before forward paper, OR Phase 11 forward run shows the Intern is the bottleneck on hard setups.
+- **Current state:** Phase 2.2 ships `OpenAICompatIntern` and `AnthropicIntern` — both single-shot LLM calls that take a prompt and emit `InternBriefing`. The backend trait surface is interchangeable by design (Tier 1 fix #1 + plan §2.2), so a new backend impl plugs in cleanly without touching the prompt builder, cache, or trader.
+- **Scope:** add a third Intern backend that drives an agent harness (OpenClaw / ACPX or equivalent — research the current options before committing) instead of a single completion call. Multi-step reasoning, tool use (price fetchers, indicator recomputation, onchain queries), constrained-output gating, retries with critique. The harness still has to terminate at an `InternBriefing` matching the existing schema; everything new is internal to the backend.
+- **Open questions to resolve in the spike:**
+  - Which harness — pinned upstream framework, or a thin home-rolled loop? OpenClaw and ACPX are research candidates; LangGraph / Autogen / CrewAI / Inngest agent kit are alternatives.
+  - Does the harness call out to `xianvec-data` for indicator recomputation (giving the Intern a tool to interrogate market state beyond what the snapshot prebakes), or does it stay snapshot-only?
+  - Cost / latency profile vs single-shot — agent harnesses can 5–10× the wall time and token spend; need a budget cap and a fallback to single-shot when the budget is hit.
+  - Determinism for backtest (Tier 1 fix #2) — agent loops with tool use are inherently non-deterministic unless temperature=0 *and* all tool calls are deterministic. Backtest may have to use the simpler single-shot backend even after this lands.
+- **Blocking:** non-blocking; pure capability lift. The current single-shot Intern is sufficient for the v1 headline result.
+
+### F22. Add `VetoReason::TakeProfitTooTight` (resolves choice #2 in `strategy-choices.md`)
 
 - **Trigger:** any other `VetoReason::Custom(...)` site lands in the codebase.
 - **Scope:** one line in `xianvec-core::trading.rs` enum + serde rename + cascade through any exhaustive `match VetoReason {...}` — `xianvec-risk::rules::take_profit_rr` switches off `Custom("rr_too_low")`.
