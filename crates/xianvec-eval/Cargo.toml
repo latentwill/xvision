@@ -10,3 +10,16 @@ repository.workspace   = true
 [lib]
 name = "xianvec_eval"
 path = "src/lib.rs"
+
+[dependencies]
+xianvec-core      = { path = "../xianvec-core" }
+xianvec-execution = { path = "../xianvec-execution" }
+
+async-trait = { workspace = true }
+chrono      = { workspace = true, features = ["serde"] }
+serde       = { workspace = true, features = ["derive"] }
+thiserror   = { workspace = true }
+uuid        = { workspace = true, features = ["serde", "v4"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros"] }

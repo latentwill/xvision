@@ -65,7 +65,7 @@ chrono = { version = "0.4", features = ["serde"] }
 uuid   = { version = "1", features = ["v4", "serde"] }
 
 # brokerage
-apca = "0.30"
+apca = { version = "0.30", default-features = false }
 # orderly-connector-rs pinned at 0.4.15 per M0 probe (probes/m0-orderly/)
 orderly-connector-rs = "0.4.15"
 

@@ -10,3 +10,26 @@ repository.workspace   = true
 [lib]
 name = "xianvec_execution"
 path = "src/lib.rs"
+
+[dependencies]
+xianvec-core = { path = "../xianvec-core" }
+
+async-trait = { workspace = true }
+chrono = { workspace = true, features = ["serde"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true, features = ["serde", "v4"] }
+tokio = { workspace = true }
+
+# Alpaca trading client — v0.30.0; no rustls feature exists upstream,
+# hyper-tls is the only TLS backend offered by this crate.
+apca = { workspace = true }
+# num-decimal is apca's numeric type; not re-exported so we depend on it directly.
+num-decimal = { version = "0.2", features = ["num-v04", "serde"], default-features = false }
+
+[dev-dependencies]
+# mockito chosen over wiremock: simpler sync setup, no async mock-server
+# startup boilerplate, adequate for the four deterministic unit scenarios.
+mockito = "1"
+tokio = { workspace = true, features = ["rt", "macros"] }
