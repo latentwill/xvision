@@ -25,13 +25,13 @@ xianvec/
 │   ├── xianvec-inference/        # candle wrapper + steering hooks + inline FAISS load
 │   ├── xianvec-gating/           # entropy gating, alpha schedule
 │   ├── xianvec-introspect/       # OPTIONAL layer analytics — required by Phase 0.3
-│   ├── xianvec-intern/           # Stage 1 (Claude API or local Qwen-7B)
+│   ├── xianvec-intern/           # Stage 1 (any OpenAI- or Anthropic-compatible endpoint, or local candle)
 │   ├── xianvec-trader/           # Stage 2 (vectors active here)
 │   ├── xianvec-risk/             # deterministic risk layer
 │   ├── xianvec-execution/        # Stage 3: alpaca + orderly executors
 │   ├── xianvec-eval/             # backtest harness, baselines, Δ-Sharpe
 │   ├── xianvec-harness/          # boundary probes (minimal v1 corpus)
-│   └── xianvec-cli/              # clap-based CLI (binary)
+│   └── xianvec-cli/              # clap-based CLI; installed binary is `xvn`
 │
 ├── tools/
 │   └── extract_vectors/          # Python: repeng-based contrast extractor (offline)
@@ -190,7 +190,7 @@ Implemented in **Phase 0.4** (vendor) and consumed by Stage 1 Intern config + Ph
 
 ## Phase 0 — Foundation & vector validation spike
 
-The spike is the load-bearing decision: if vectors don't measurably steer Qwen3-14B at Q4 via candle, the architecture has to change before further work. Don't skip.
+The spike is the load-bearing decision: if vectors don't measurably steer Qwen3.6-27B at Q4 via candle, the architecture has to change before further work. Don't skip.
 
 ### Task 0.1: Cargo workspace init (single tree)
 
@@ -238,9 +238,9 @@ uuid             = { version = "1", features = ["v4", "serde"] }
 apca             = "0.30"          # mature Alpaca client (alpaca-rs is a stub)
 ```
 
-### Task 0.2: Pull Qwen3-14B locally + candle smoke test
+### Task 0.2: Pull Qwen3.6-27B locally + candle smoke test
 
-Download Qwen3-14B Q4 weights (HuggingFace mirror). Verify candle loads them and runs a forward pass on M-series Metal.
+Download Qwen3.6-27B Q4 weights (HuggingFace mirror) — **no-thinking variant** (chain-of-thought tokens dilute the steering signal at the action choice point). Verify candle loads them and runs a forward pass on M-series Metal. Local dev runs at 4-bit for velocity; rented-GPU runs (Task 9.3) step up to 8-bit or 16-bit as memory permits.
 
 **`crates/xianvec-inference/src/smoke.rs`:**
 ```rust
@@ -262,7 +262,7 @@ pub async fn smoke_test(model_path: &Path) -> Result<()> {
 
 ### Task 0.3: Vector validation spike (CRITICAL GATE) — with introspection mandatory
 
-Verify that disposition-style vectors actually steer Qwen3-14B Q4 *via candle's hook mechanism* before committing the architecture. This is the single most important phase-0 task and the first consumer of `xianvec-introspect`.
+Verify that disposition-style vectors actually steer Qwen3.6-27B Q4 *via candle's hook mechanism* before committing the architecture. This is the single most important phase-0 task and the first consumer of `xianvec-introspect`.
 
 **Approach:** Pick one toy axis (e.g. "decisive vs hedging"), generate ~30 contrast pairs in Python (`tools/extract_vectors/spike.py`), extract the vector via repeng, save to FAISS-compatible format, load into candle, run on 20 holdout prompts comparing baseline vs. magnitudes [-2.0, -1.0, 0.0, +1.0, +2.0]. Wrap the steering hook in `IntrospectionHook` with all capture flags enabled.
 
@@ -365,12 +365,21 @@ executor = "alpaca"         # alpaca | orderly
 random_seed = 42
 
 [intern]
-backend = "anthropic"       # anthropic | local
+provider = "anthropic"      # anthropic | openai | local-candle
+base_url = "https://api.anthropic.com"   # any Anthropic- or OpenAI-compatible endpoint
 model = "claude-haiku-4-5"
+api_key_env = "ANTHROPIC_API_KEY"        # env var name; empty for local servers without auth
 temperature = 0.0           # MUST be 0 for backtest pairing (Tier 1 fix #1)
+reasoning_effort = "low"    # forwarded when provider supports it (o-series, R1, Qwen-thinking)
+# Examples (drop-in swaps):
+#   OpenAI:      provider = "openai",   base_url = "https://api.openai.com/v1",        model = "gpt-5",                 api_key_env = "OPENAI_API_KEY"
+#   OpenRouter:  provider = "openai",   base_url = "https://openrouter.ai/api/v1",     model = "deepseek/deepseek-r1",  api_key_env = "OPENROUTER_API_KEY"
+#   vLLM (loc):  provider = "openai",   base_url = "http://localhost:8000/v1",         model = "Qwen/Qwen3-32B",        api_key_env = ""
+#   Ollama:      provider = "openai",   base_url = "http://localhost:11434/v1",        model = "qwen3:32b",             api_key_env = ""
+#   LM Studio:   provider = "openai",   base_url = "http://localhost:1234/v1",         model = "<loaded-model-name>",   api_key_env = ""
 
 [trader]
-model_path = "models/Qwen3-14B-Q4.bin"
+model_path = "models/Qwen3.6-27B-Q4.bin"
 temperature = 0.0           # MUST be 0 for backtest (Tier 1 fix #2)
 forward_paper_temperature = 0.4
 
@@ -423,9 +432,9 @@ pub fn build_intern_prompt(state: &MarketState, mantle_skills: &[Skill]) -> Stri
 
 Acceptance: snapshot tests against fixed market state inputs; output prompts are deterministic.
 
-### Task 2.2: Intern via Anthropic SDK or local Qwen-7B
+### Task 2.2: Intern via interchangeable HTTP backends (OpenAI- or Anthropic-compatible)
 
-Two backends behind a trait:
+One trait, three concrete backends — picked at runtime via config so users can point any reasoning model, hosted API, or self-hosted inference server at Stage 1 without a recompile.
 
 ```rust
 #[async_trait]
@@ -434,14 +443,23 @@ pub trait InternBackend: Send + Sync {
 }
 ```
 
-Implementations: `AnthropicIntern` (via `anthropic-sdk` or raw `reqwest`), `LocalIntern` (via `xianvec-inference` with Qwen3-7B). Both set `temperature=0` for the backtest path (Tier 1 fix #1). Output is parsed via `serde_json` + `garde`; on parse failure, retry once with a corrective system message.
+Implementations:
 
-**Briefing cache:** keyed on `setup_id`. Both vectors-on and vectors-off arms read the same cached briefing (Tier 1 fix #1 — pairing).
+- **`OpenAICompatIntern`** — speaks the OpenAI Chat Completions wire format. Configurable `base_url` covers the entire OpenAI-compatible ecosystem with a single code path: OpenAI proper, OpenRouter, Together, Groq, DeepSeek, xAI, Mistral, vLLM, Ollama (`/v1` endpoint), LM Studio, llama.cpp's server, TGI, etc. Optional `api_key_env` (skip for local servers without auth).
+- **`AnthropicIntern`** — speaks the Anthropic Messages API. Used for Claude models and any Anthropic-API-compatible gateway.
+- **`LocalCandleIntern`** *(optional, deferred)* — direct in-process candle inference for fully air-gapped runs. Lower priority than the HTTP path because OpenAI-compat against a local vLLM/Ollama server gives the same air-gap property with vastly more model coverage.
+
+All backends set `temperature=0` for the backtest path (Tier 1 fix #1). Output is parsed via `serde_json` + `garde`; on parse failure, retry once with a corrective system message.
+
+**Reasoning-model handling.** Reasoning models (o-series, DeepSeek-R1, Qwen-thinking, gpt-oss with reasoning) emit thinking tokens before the JSON. The backend strips two shapes before validation: provider-native reasoning fields (`response.choices[].message.reasoning_content`, Anthropic `thinking` blocks) and inline `<think>...</think>` blocks. When the provider exposes `reasoning_effort`, the backend forwards a configured value; otherwise the strip step alone is sufficient.
+
+**Briefing cache:** keyed on `setup_id`. Both vectors-on and vectors-off arms read the same cached briefing (Tier 1 fix #1 — pairing). The cache key includes `(provider, model)` so swapping backends invalidates cleanly.
 
 Acceptance:
-- Live Anthropic call returns a valid `InternBriefing` for a fixture market state
-- Cached briefing reused across paired arms
-- Mantle-skill context loaded into Anthropic project context for Mantle-touching setups
+- Live call against each of {Anthropic Claude, OpenAI gpt-style, a local OpenAI-compat server (Ollama or vLLM)} returns a valid `InternBriefing` for a fixture market state
+- Reasoning-model fixture (one of: o-series, R1, Qwen-thinking) parses correctly with thinking tokens stripped
+- Cached briefing reused across paired arms; cache key invalidated when `(provider, model)` changes
+- Mantle-skill context loaded into the prompt for Mantle-touching setups, regardless of backend
 
 ---
 
@@ -449,7 +467,7 @@ Acceptance:
 
 ### Task 3.1: Local model loader (`crates/xianvec-inference/`)
 
-`candle`-based Qwen3-14B Q4 loader with hidden-state hooks at configurable layers. The hook signature is the point where steering will eventually live:
+`candle`-based Qwen3.6-27B Q4 loader with hidden-state hooks at configurable layers. The hook signature is the point where steering will eventually live:
 
 ```rust
 pub trait LayerHook: Send + Sync {
@@ -516,11 +534,11 @@ negative = [template.format(asset=a, regime=r, behavior="hedged and conditional 
 
 ### Task 4.2: Extraction utility (`tools/extract_vectors/extract_vectors.py`)
 
-Python CLI that reads a contrast spec, runs `repeng` against `transformers`-loaded Qwen3-14B (fp16), extracts the steering vector at configurable layers, and writes a FAISS-compatible `.index` file plus a contract manifest sidecar.
+Python CLI that reads a contrast spec, runs `repeng` against `transformers`-loaded Qwen3.6-27B (fp16), extracts the steering vector at configurable layers, and writes a FAISS-compatible `.index` file plus a contract manifest sidecar.
 
 ```bash
 python tools/extract_vectors.py \
-  --model Qwen/Qwen3-14B \
+  --model Qwen/Qwen3.6-27B \
   --spec specs/conviction.yaml \
   --layers 20,22,24 \
   --out data/vectors/conviction.index
@@ -743,7 +761,7 @@ impl Executor for OrderlyExecutor {
 
 `setup_id` rides in the `client_order_id` field on `create_order`; we record `(setup_id, server_order_id)` pairs in SQLite for reconciliation.
 
-**Credentials.** Orderly uses `(orderly_key, orderly_secret, orderly_account_id)` for signed calls. The `account_id` is derived from a brokered onboarding flow (one-time setup); keys are loaded from `op` (1Password CLI) per workspace convention. `xianvec-cli setup --orderly-onboard` runs the brokered onboarding once and writes the resulting account_id to local config; secrets stay in `op`.
+**Credentials.** Orderly uses `(orderly_key, orderly_secret, orderly_account_id)` for signed calls. The `account_id` is derived from a brokered onboarding flow (one-time setup); keys are loaded from `op` (1Password CLI) per workspace convention. `xvn setup --orderly-onboard` runs the brokered onboarding once and writes the resulting account_id to local config; secrets stay in `op`.
 
 **Acceptance:**
 - M0' probe (✅ 2026-05-03) already verified the SDK reaches the live API on Mantle. Phase 6.3 builds the `Executor` impl on top of the proven SDK surface.
@@ -912,7 +930,7 @@ pub struct ProbeReport {
 
 ## Phase 9 — Pipeline orchestration + the A/B experiment
 
-### Task 9.1: Hermes orchestrator (`crates/xianvec-cli/src/hermes.rs`)
+### Task 9.1: Ops (`crates/xianvec-cli/src/ops.rs`)
 
 Composes Stage 1 (cached briefing per setup) → Stage 2 (paired arms) → Risk → Executor. Logs everything via `tracing` with the GenAI semantic conventions (Phase T.1 telemetry).
 
@@ -932,15 +950,15 @@ Output: structured JSON consumed by the Python notebook for plots + summary stat
 
 ### Task 9.3: Headline run on rented GPU at higher precision
 
-Q4 quantization attenuates vector effects 30–60% (architecture review). The local M-series dev loop runs Q4 for velocity. **The single headline backtest run for the demo report** runs once on a rented GPU (Vast.ai or RunPod, A40/A100 spot, ~$30) at **Q5_K_M or Q6_K**, same setups, same arms, same seeds. If the Q5 result diverges materially from the local Q4 result, the report leads with the Q5 number and explains the precision dependency; if they agree, the report uses the Q4 number with a footnote that Q5 was checked.
+Q4 quantization attenuates vector effects 30–60% (architecture review). The local M-series dev loop runs 4-bit for velocity. **The single headline backtest run for the demo report** runs once on a rented GPU (Vast.ai or RunPod, A40/A100/H100 spot) at the **highest precision the rented card fits — 8-bit (Q8_0) preferred, 16-bit (bf16) when memory permits**, same setups, same arms, same seeds. If the higher-precision result diverges materially from the local Q4 result, the report leads with the higher-precision number and explains the precision dependency; if they agree, the report uses the Q4 number with a footnote that the higher-precision check was performed.
 
 ```bash
-xianvec-cli ab-compare \
+xvn ab-compare \
   --setups data/setups/2022_2024_paired.parquet \
   --asset BTC-USD \
   --arms off,on,random,orthogonal \
-  --quant Q5_K_M \
-  --output reports/ab_compare_headline_Q5/$(date -Iseconds)
+  --quant Q8_0 \
+  --output reports/ab_compare_headline_Q8/$(date -Iseconds)
 ```
 
 Provides a defensive moat against the headline number being a Q4 artifact.
@@ -951,12 +969,12 @@ Provides a defensive moat against the headline number being a Q4 artifact.
 
 ### Task 10.1: Demo CLI commands
 
-`xianvec-cli` gains a small set of demo-supporting subcommands that double as judge-reproducibility entry points:
+`xvn` gains a small set of demo-supporting subcommands that double as judge-reproducibility entry points:
 
-- `xianvec-cli run-setup --setup-id <uuid>` — runs a single setup end-to-end, prints the briefing, the paired decisions (off/on), the risk verdict, and the would-be execution.
-- `xianvec-cli show-decision --setup-id <uuid>` — pretty-prints the cached decision with active vectors and gate metadata.
-- `xianvec-cli show-metrics --report <path>` — renders the latest A/B report's headline Δ-Sharpe and dashboard.
-- `xianvec-cli explain-vectors` — prints the active disposition axis (Conviction in v1), the manifest hash, the layers it's installed at, and the introspection summary from its last spike validation.
+- `xvn run-setup --setup-id <uuid>` — runs a single setup end-to-end, prints the briefing, the paired decisions (off/on), the risk verdict, and the would-be execution.
+- `xvn show-decision --setup-id <uuid>` — pretty-prints the cached decision with active vectors and gate metadata.
+- `xvn show-metrics --report <path>` — renders the latest A/B report's headline Δ-Sharpe and dashboard.
+- `xvn explain-vectors` — prints the active disposition axis (Conviction in v1), the manifest hash, the layers it's installed at, and the introspection summary from its last spike validation.
 
 Telegram bot (`xianvec-bot`) is deferred to v2 polish — see "Future additions."
 
@@ -993,7 +1011,7 @@ Acceptance criteria for hackathon submission:
 - [ ] Patience / Risk-appetite / Trend-disposition vectors extracted as pipeline tests (not active)
 - [ ] Random + orthogonal control vectors extracted on the Conviction direction (Tier 2 fix #6)
 - [ ] Backtest harness produces stable results across 3 reruns on identical seeds
-- [ ] Q5_K_M headline backtest run completed on rented GPU (Task 9.3)
+- [ ] Higher-precision (Q8_0 or bf16) headline backtest run completed on rented GPU (Task 9.3)
 - [ ] Anti-overfit gate computed and verdict reported (gate is reportable, not blocking — Task 8.4)
 - [ ] Δ-Sharpe with 95% CI reported for ≥100 paired trades on BTC-USD
 - [ ] Both ERC-8004 identity NFTs minted on Mantle mainnet
@@ -1011,7 +1029,7 @@ v1 ships the §9.4 SQLite flight recorder plus `tracing` with `tracing-subscribe
 
 ### Task T.1: `tracing` console subscriber
 
-Initialize `tracing_subscriber::fmt` with `EnvFilter::from_default_env()` early in `xianvec-cli`'s main. Every Intern and Trader call emits a structured span. SQLite `traces` table mirrors the same structure for replay (§9.4 covers the schema).
+Initialize `tracing_subscriber::fmt` with `EnvFilter::from_default_env()` early in `xvn`'s main. Every Intern and Trader call emits a structured span. SQLite `traces` table mirrors the same structure for replay (§9.4 covers the schema).
 
 ### Task T.2: SQLite trace verification
 

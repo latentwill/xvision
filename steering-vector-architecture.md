@@ -22,7 +22,7 @@ Implication: vectors can shape *posture during reasoning*. They cannot shape *qu
 
 The default mistake is to start with vectors. Don't.
 
-**Phase 0 — Foundation (no LLM steering).** Cargo workspace skeleton. Candle smoke test on Qwen-3-14B Q4 with hidden-state hooks verified. Data pipeline, valuation primitives, regime classifier, slippage model, position-sizing function. Pre-signed transaction templates, bundle submission on Mantle/byReal, kill-switch and drawdown circuit breakers as **hard rules outside the LLM**. Hard rules are not vectors; they are not overridable by the model. Discipline the model can ignore is not discipline.
+**Phase 0 — Foundation (no LLM steering).** Cargo workspace skeleton. Candle smoke test on Qwen3.6-27B Q4 with hidden-state hooks verified. Data pipeline, valuation primitives, regime classifier, slippage model, position-sizing function. Pre-signed transaction templates, bundle submission on Mantle/byReal, kill-switch and drawdown circuit breakers as **hard rules outside the LLM**. Hard rules are not vectors; they are not overridable by the model. Discipline the model can ignore is not discipline.
 
 **Phase 1 — Baseline agent.** Tight system prompt, Phase 0 tools, rule-based constraints (circle-of-competence filter, position-size cap, cooldown after losses). Backtest until performance is at minimum *not loss-making* across multiple regimes. No vectors yet. This is the unsteered control that all later evaluation pairs against.
 
@@ -38,7 +38,7 @@ The default mistake is to start with vectors. Don't.
 
 **Stance over personality.** Personality vectors are entangled bundles. Stance vectors satisfy Mitra's one-dimension rule by construction. The four disposition axes already locked in `architecture.md` §7.1 (Conviction, Patience, Risk appetite, Trend disposition) are the v1 set. Forward candidates worth adding once v1 is validated: narrative skepticism, calibration/uncertainty, convexity preference, stand-down disposition (refusal repurposed as a veto on ambiguous setups).
 
-**Layer placement.** Qwen-3-14B places stance representations in late layers (~75% depth). Probe a window centred there per vector. There is no global "best layer" — different stances live cleanest at different layers, and that's a feature for composition (Weij et al. show injection at distinct layers reduces interference relative to stacking).
+**Layer placement.** Qwen3.6-27B places stance representations in late layers (~75% depth). Probe a window centred there per vector. There is no global "best layer" — different stances live cleanest at different layers, and that's a feature for composition (Weij et al. show injection at distinct layers reduces interference relative to stacking).
 
 **Alpha tuning.** Alpha is non-monotonic and the single most important hyperparameter. Binary search from α = 1.0; double if no effect, halve if degradation. 20–30 test prompts per setting. Posture-style vectors typically land in [1.0, 2.5].
 
@@ -80,7 +80,7 @@ Type parameters carry the layer and model the corridor was derived for. Cross-la
 
 Every vector and corridor write carries a manifest hash: `(model_version, embedder_version, layer_id, contrast_pair_set_hash, alpha_curve_hash, derivation_timestamp)`. Mismatched writes are rejected at the storage boundary.
 
-In Rust, contracts express naturally as types — `Vector<Layer22, Qwen3_14B>` cannot be stored in a slot expecting `Vector<Layer24, _>`. The `crates/lodestar-contracts/` crate defines the manifest types; downstream crates are generic over them. The compile-time enforcement is the type-system-as-discipline payoff that motivated the Rust-from-day-one choice.
+In Rust, contracts express naturally as types — `Vector<Layer22, Qwen36_27B>` cannot be stored in a slot expecting `Vector<Layer24, _>`. The `crates/lodestar-contracts/` crate defines the manifest types; downstream crates are generic over them. The compile-time enforcement is the type-system-as-discipline payoff that motivated the Rust-from-day-one choice.
 
 For the parts where compile-time enforcement isn't possible (loading from disk, RPC boundaries, the Python subprocess call), the manifest sidecar JSON is validated at runtime via `serde` + `garde`.
 
