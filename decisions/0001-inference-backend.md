@@ -55,6 +55,31 @@ binary remains a candle process with no Python in its tree.
   in ways the plan does not analyze. Dense 32B keeps the experimental surface
   unambiguous.
 
+## Spike runtime split (added 2026-05-03 during Phase 0.3 wiring)
+
+After scaffolding the candle Q4 GGUF engine, we discovered that
+`candle_transformers::models::quantized_qwen3::ModelWeights` does not expose
+per-layer residual mutation (the layer loop is private — `for layer in &mut
+self.layers { h = layer.forward(...)?; }`). Adding a `LayerHook` requires
+**vendoring the file plus its private deps** — `super::with_tracing::QMatMul`,
+`crate::quantized_nn::RmsNorm`, `crate::utils::repeat_kv`, the flash-attention
+CPU path, and the KV-cache impls. ~1000 LOC pulled in.
+
+That vendoring belongs in Phase 4 where Tier 1 fix #5 (gate at the action
+choice point) is implemented anyway. For the **Phase 0.3 spike specifically**,
+we run extraction *and* steering in Python/MLX:
+
+| Question | Phase | Backend | Why this split |
+|---|---|---|---|
+| "Do disposition vectors steer this model at 4-bit?" | 0.3 spike | MLX (Python) | Hooks are first-class — monkey-patch `model.layers[L].__call__`. The hypothesis question. |
+| "Does the candle Q4 runtime respond to the same vector?" | 4.3 hard gate | candle (vendored qwen3_steered.rs) | Already a planned gate (re-runs spike's directional-match through runtime path). The engineering question. |
+
+The Phase 4.3 hard gate was already specified to "re-run the spike's directional-
+match criterion against the loaded vector through the runtime path" (Tier 2 fix
+#9 / plan §4.3). This split makes that gate load-bearing rather than redundant
+and lets the Phase 0.3 question be answered without paying the candle-vendor
+cost upfront.
+
 ## Consequences
 
 - Extraction quality is dampened by Q4 quantization noise on activations.
