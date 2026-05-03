@@ -7,6 +7,8 @@
 
 pub mod alpaca;
 pub mod executor;
+pub mod orderly;
 
 pub use alpaca::AlpacaExecutor;
 pub use executor::{ExecutionReceipt, Executor, ExecutorError};
+pub use orderly::OrderlyExecutor;
