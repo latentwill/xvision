@@ -64,11 +64,11 @@ flowchart TD
 
     IND[Technical Indicators<br/>RSI · MA · Bollinger<br/>MACD · Donchian · ATR]
 
-    HA[<b>Hermes Agent</b><br/>pipeline orchestrator<br/>state assembly · scheduling]
+    HA[<b>Ops</b><br/>pipeline orchestrator<br/>state assembly · scheduling]
 
-    S1[<b>Stage 1 · Intern</b><br/>Claude API or Qwen3-7B local<br/>━━━━━━━━━━━━<br/>bull case · bear case · flat case<br/>evidence inventory · regime<br/>━━━━━━━━━━━━<br/>NO candidate decision<br/>NO vectors]
+    S1[<b>Stage 1 · Intern</b><br/>OpenAI- or Anthropic-compat API<br/>or local candle<br/>━━━━━━━━━━━━<br/>bull case · bear case · flat case<br/>evidence inventory · regime<br/>━━━━━━━━━━━━<br/>NO candidate decision<br/>NO vectors]
 
-    S2[<b>Stage 2 · Trader</b><br/>Qwen3-14B local quantized<br/>━━━━━━━━━━━━<br/>action · size · direction<br/>stop · take-profit<br/>━━━━━━━━━━━━<br/>VECTORS ACTIVE]
+    S2[<b>Stage 2 · Trader</b><br/>Qwen3.6-27B local quantized<br/>━━━━━━━━━━━━<br/>action · size · direction<br/>stop · take-profit<br/>━━━━━━━━━━━━<br/>VECTORS ACTIVE]
 
     CV[<b>Control Vectors</b><br/>━━━━━━━━━━━━<br/>conviction ↔ hesitation<br/>patience ↔ urgency<br/>risk-seek ↔ risk-averse<br/>trend ↔ contrarian<br/>━━━━━━━━━━━━<br/>regime-conditioned<br/>confidence-gated]
 
@@ -132,9 +132,12 @@ flowchart TD
 
 **Purpose:** Produce a structured, neutral evidence briefing. The Intern researches; it does not recommend. The output is symmetric by construction so the Trader's vectors get clean steering room.
 
-**Model choice:** Two options, picked at runtime via config.
-- **Cloud:** Anthropic Claude API (`claude-haiku-4-5` for speed, `claude-sonnet-4-6` for higher-quality analysis), called via `anthropic-sdk` or raw `reqwest`. Faster and broader knowledge than any local 14B.
-- **Local:** Qwen3-7B via `candle` (HuggingFace's Rust ML framework) with quantization. Used when running fully air-gapped or for cost containment in long backtests. `llama-cpp-rs` is the fallback path if candle's quantization story is rough on Qwen-3 in practice.
+**Model choice:** Backend-agnostic — picked at runtime via config (`provider`, `base_url`, `model`, `api_key_env`). Three backends behind one `InternBackend` trait:
+- **OpenAI-compatible HTTP** (default for non-Anthropic models). One implementation covers OpenAI, OpenRouter, Together, Groq, DeepSeek, xAI, Mistral, plus any self-hosted server speaking the Chat Completions wire format — vLLM, Ollama (`/v1`), LM Studio, llama.cpp, TGI. Swap models or providers by editing config; no recompile.
+- **Anthropic Messages API.** Used for Claude models (`claude-haiku-4-5` for speed, `claude-sonnet-4-6` for higher-quality analysis) and any Anthropic-API-compatible gateway. Called via `anthropic-sdk` or raw `reqwest`.
+- **Local candle (optional, deferred).** Direct in-process inference via `candle` for fully air-gapped runs without an HTTP hop. Lower priority than the HTTP path because OpenAI-compat against a localhost vLLM/Ollama gives the same air-gap property with vastly more model coverage.
+
+Reasoning models (o-series, DeepSeek-R1, Qwen-thinking, gpt-oss reasoning) are first-class — the backend strips provider-native reasoning fields and inline `<think>` blocks before JSON validation, and forwards `reasoning_effort` when supported.
 
 **Input:** Market state object containing technical indicators (RSI, MAs, Bollinger, ATR, recent OHLCV), onchain signals (Nansen smart money flows, funding rate, exchange flows for the asset), and current portfolio state (open positions, unrealized P&L, available capital).
 
@@ -174,7 +177,7 @@ This object is the contract between Intern and Trader. It is validated by `serde
 
 **Naming:** "Trader" replaces earlier candidates ("Stance," "Decision Agent"). The role is characterological — this model carries the disposition. The Intern hands it neutral evidence; the Trader decides.
 
-**Model choice:** Qwen3-14B at Q4_K_M quantization is the primary candidate. Stretch target: Qwen3-32B or 36B at Q3_K_M / Q2_K depending on memory headroom. Larger models give cleaner dispositional axis separation in vector extraction; the tradeoff is that heavy quantization adds noise to hidden states and may degrade vector effects unpredictably. **A one-day spike (Phase 0, Task 2) validates vector behavior on toy axes before committing the architecture to a specific model.**
+**Model choice:** Qwen3.6-27B (no-thinking mode) is the primary model. Precision floats between **4-bit and 16-bit depending on available resources** — local M-series dev runs at 4-bit (Q4_K_M) for velocity; rented-GPU headline runs step up to 8-bit or 16-bit when memory permits, since heavier quantization adds noise to hidden states and may degrade vector effects unpredictably. No-thinking mode is mandatory — chain-of-thought tokens before the decision dilute the vector's influence at the action choice point and inflate latency without buying signal. **A one-day spike (Phase 0, Task 2) validates vector behavior on toy axes before committing the architecture to a specific precision.**
 
 **Inference path:**
 1. Receive Intern Briefing JSON.
@@ -295,7 +298,7 @@ ERC-8004 (deployed on Ethereum mainnet and Mantle mainnet, January–February 20
 
 The full vectors never live on-chain — EVM storage at 20K gas per 32-byte slot makes 80KB prohibitively expensive even on Mantle. The on-chain artifacts are hashes, commitments, and the tiny per-trade alpha configuration. This is not a compromise: the alpha config per trade is more informative than the raw vectors, because it records which magnitudes were actually active at decision time under confidence gating and regime conditioning.
 
-**Implementation.** `xianvec-execution` constructs the Validation proof after each closed Orderly position on Mantle and submits via `alloy`. ERC-8004 contract addresses (Identity, Reputation, Validation registries on Mantle mainnet) live in `config/mantle.toml` alongside the Orderly vault address. The agent NFT is minted once during initial setup via `xianvec-cli setup --mint-agent-nft`; subsequent runs only post to Reputation and Validation. Trades, identity, and reputation all live on the same chain — no cross-chain handoff in the audit trail.
+**Implementation.** `xianvec-execution` constructs the Validation proof after each closed Orderly position on Mantle and submits via `alloy`. ERC-8004 contract addresses (Identity, Reputation, Validation registries on Mantle mainnet) live in `config/mantle.toml` alongside the Orderly vault address. The agent NFT is minted once during initial setup via `xvn setup --mint-agent-nft`; subsequent runs only post to Reputation and Validation. Trades, identity, and reputation all live on the same chain — no cross-chain handoff in the audit trail.
 
 ---
 
@@ -535,7 +538,7 @@ The runtime is Rust. The vector-extraction toolchain is Python, invoked offline 
 **Inference:**
 - `candle` — HuggingFace's Rust ML framework, supports Qwen-3 with Q4/Q5 quantization, Metal and CUDA backends, and (critically) hidden-state hooks for steering injection
 - `llama-cpp-rs` — fallback if candle's Qwen-3 quantization story has rough edges in practice; less flexible for fine-grained steering but well-tested
-- `anthropic-sdk` (or raw `reqwest`) — Stage 1 cloud option
+- `reqwest` — Stage 1 HTTP backend (covers OpenAI- and Anthropic-compatible endpoints uniformly); `anthropic-sdk` and `async-openai` are optional ergonomic wrappers
 
 **Control vectors:**
 - *Extraction (offline, Python):* `repeng` + `transformers` + `torch` in `tools/extract_vectors/`, invoked via subprocess
@@ -605,13 +608,13 @@ xianvec/
 │   ├── xianvec-inference/        # candle wrapper + steering hooks + inline FAISS load
 │   ├── xianvec-gating/           # entropy gating, alpha schedule
 │   ├── xianvec-introspect/       # OPTIONAL layer analytics (Phase 0.3 spike requires)
-│   ├── xianvec-intern/           # Stage 1
+│   ├── xianvec-intern/           # Stage 1 (OpenAI- or Anthropic-compatible HTTP, optional local candle)
 │   ├── xianvec-trader/           # Stage 2 (vectors active)
 │   ├── xianvec-risk/             # deterministic risk layer
 │   ├── xianvec-execution/        # Stage 3: Alpaca + Orderly
 │   ├── xianvec-eval/             # backtest harness, baselines, Δ-Sharpe
 │   ├── xianvec-harness/          # boundary probes (minimal v1 corpus)
-│   └── xianvec-cli/              # clap-based CLI binary
+│   └── xianvec-cli/              # clap-based CLI; installed binary is `xvn`
 │
 ├── tools/
 │   └── extract_vectors/          # Python: repeng-based contrast extractor
@@ -686,7 +689,7 @@ For the record, the following were debated and decided:
 | Stage 2 as decider vs calibrator? | **Decider.** User chose to maximize the experimental signal of vector influence. Risk layer compensates for safety. |
 | Stage 2 name? | **Trader** (paired with Stage 1 = **Intern**). Characterological roles: Intern researches neutrally, Trader decides with disposition. |
 | Does Intern recommend a candidate decision? | **No.** Intern emits balanced bull/bear/flat cases with parallel evidence inventories. Recommending would prompt-anchor the Trader and drown the vectors. |
-| Local model for Stage 2? | **Qwen3-14B** primary, 32B/36B quantized as stretch. Validated by toy-axis spike before lock-in. |
+| Local model for Stage 2? | **Qwen3.6-27B (no-thinking)** primary, precision 4-bit→16-bit depending on resources. Validated by toy-axis spike before lock-in. |
 | Confidence gating? | **Yes**, via decision-token entropy. Lightweight stand-in for SVF. |
 | Where does risk live? | **Between Stage 2 and Stage 3** as deterministic rule code. |
 | Primary eval metric? | **Δ-Sharpe** (vectors-on minus vectors-off, paired). |

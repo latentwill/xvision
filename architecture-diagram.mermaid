@@ -11,13 +11,13 @@ flowchart TD
     IND[Technical Indicators<br/>RSI · MA · Bollinger<br/>MACD · Donchian · ATR]
 
     %% ─────── Orchestrator ───────
-    HA[<b>Hermes Agent</b><br/>pipeline orchestrator<br/>state assembly · scheduling]
+    HA[<b>Ops</b><br/>pipeline orchestrator<br/>state assembly · scheduling]
 
     %% ─────── Stage 1 · Intern ───────
-    S1[<b>Stage 1 · Intern</b><br/>Claude API or Qwen3-7B local<br/>━━━━━━━━━━━━<br/>bull case · bear case · flat case<br/>evidence inventory · regime<br/>━━━━━━━━━━━━<br/>NO candidate decision<br/>NO vectors]
+    S1[<b>Stage 1 · Intern</b><br/>OpenAI- or Anthropic-compat API<br/>or local candle<br/>━━━━━━━━━━━━<br/>bull case · bear case · flat case<br/>evidence inventory · regime<br/>━━━━━━━━━━━━<br/>NO candidate decision<br/>NO vectors]
 
     %% ─────── Stage 2 · Trader ───────
-    S2[<b>Stage 2 · Trader</b><br/>Qwen3-14B local quantized<br/>━━━━━━━━━━━━<br/>action · size · direction<br/>stop · take-profit<br/>━━━━━━━━━━━━<br/>VECTORS ACTIVE]
+    S2[<b>Stage 2 · Trader</b><br/>Qwen3.6-27B local quantized<br/>━━━━━━━━━━━━<br/>action · size · direction<br/>stop · take-profit<br/>━━━━━━━━━━━━<br/>VECTORS ACTIVE]
 
     CV[<b>Control Vectors</b><br/>━━━━━━━━━━━━<br/>conviction ↔ hesitation<br/>patience ↔ urgency<br/>risk-seek ↔ risk-averse<br/>trend ↔ contrarian<br/>━━━━━━━━━━━━<br/>regime-conditioned<br/>confidence-gated]
 
