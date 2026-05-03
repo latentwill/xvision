@@ -1,0 +1,12 @@
+[package]
+name        = "xianvec-trader"
+description = "Stage 2 — local Qwen with vectors active"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+
+[lib]
+name = "xianvec_trader"
+path = "src/lib.rs"

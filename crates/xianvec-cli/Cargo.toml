@@ -1,0 +1,20 @@
+[package]
+name        = "xianvec-cli"
+description = "clap-based CLI; installed binary is xvn"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+
+[lib]
+name = "xianvec_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "xvn"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+anyhow = { workspace = true }

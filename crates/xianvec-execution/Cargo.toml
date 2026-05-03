@@ -1,0 +1,12 @@
+[package]
+name        = "xianvec-execution"
+description = "Stage 3 — Alpaca + Orderly executors"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+
+[lib]
+name = "xianvec_execution"
+path = "src/lib.rs"

@@ -1,0 +1,12 @@
+[package]
+name        = "xianvec-inference"
+description = "candle wrapper + steering hooks + inline FAISS load"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+
+[lib]
+name = "xianvec_inference"
+path = "src/lib.rs"

@@ -28,8 +28,12 @@ env/
 *.sqlite3
 *.db
 data/
+!data/probes/
+!data/probes/.gitkeep
 logs/
 checkpoints/
+models/
+!models/.gitkeep
 *.gguf
 *.safetensors
 *.bin
