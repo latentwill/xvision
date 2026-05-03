@@ -212,3 +212,35 @@ The stable decode rate of ~5–6 tok/s on a warm shader cache is ~8–10× bette
 - The `target-cpu=native` flag now builds clean; running smoke-qwen3 under it for an apples-to-apples decode/prefill measurement is a follow-up.
 
 **Decision matrix update:** No change to the matrix rankings, but annotate option B with "MLX pre-warms Metal shaders at load; eliminates 10–90 s first-run penalty". The 5 tok/s threshold being met on warm cache does NOT eliminate the port — cold-start latency still disqualifies candle for production Trader use.
+
+## Re-measured 2026-05-03 (post-vendor-patch + native CPU codegen)
+
+Prompted by Phase 4 landing the `vendor_qwen3::forward_with_hooks` path (which inserts an `IdentityHook::apply()` per layer in the default no-steering case, expected overhead but not optimization) and the `target-cpu=native` build proving to actually work in the current workspace. Five back-to-back smoke-qwen3 runs from one shell session, same machine, same fixture (22-token prompt → 48 decode tokens), `RUSTFLAGS="-C target-cpu=native"` release build:
+
+| Run | Decode tok/s | Prefill tok/s | Prefill wall | Notes |
+| --- | --- | --- | --- | --- |
+| 1 | 7.11 | 1.25 | 17.6 s | post-build, partial shader cache |
+| 2 | 5.02 | 4.75 | 4.6 s | warm |
+| 3 | 15.53 | 4.63 | 4.7 s | warm |
+| 4 | 11.04 | 2.34 | 9.4 s | warm |
+| 5 | 15.86 | 10.69 | 2.1 s | warm, hottest |
+
+**Median warm decode: ~11 tok/s. Best: 15.86 tok/s.** Compared to the cheap-wins agent's earlier 4.92–6.35 tok/s warm-cache numbers (which did not have `target-cpu=native`), this is roughly 2× the median — the native CPU codegen is a real win on the f32 softmax / dequantize path that Metal does not own. The vendor_qwen3 wrapper itself adds overhead (a per-layer Tensor clone via IdentityHook), so the gain is purely from codegen + warmer Metal shader cache.
+
+**Variance is large** (5.02 → 15.86, 3.2× spread across 5 runs). That's noisy enough that a single number is not safe to commit to without a controlled bench rig (consistent thermal state, CPU/GPU isolation, repeated trials with statistics). Median 11 tok/s is the headline number to use for planning, with the caveat that p95 latency under sustained load remains unmeasured.
+
+**Cold-start unchanged:** the first invocation per shape family still pays Metal shader JIT (17.6 s on run 1's prefill, dominated by JIT). Warm-cache decode tok/s says nothing about cold-start latency.
+
+**Findings update:**
+- `target-cpu=native` is worth ~2× on Apple Silicon for this workload — material, not marginal.
+- The ≥10 tok/s "forward paper minimum" from §9.x is **met on warm cache, median**, post-native-CPU.
+- The ≥10 tok/s threshold is **not** met on cold start (~7 tok/s on first-shape JIT pass).
+- Cold-start latency is now the dominant remaining throughput problem — not steady-state decode.
+
+**Decision matrix update (revised):**
+- **Option A** (vendor candle qwen3 + flash attention) — drops in priority. Steady-state decode is no longer the bottleneck; flash-attention would help cold start by reducing per-block compile time but doesn't eliminate the JIT phase. ~1 week of vendoring effort no longer pays back at parity with B.
+- **Option B** (mlx-rs spike) — remains relevant *exclusively* for cold-start mitigation. MLX's load-time shader pre-warm is the single biggest lever on first-token latency.
+- **Option C / D** (llama-cpp-rs / HTTP) — still disqualified on the steering hook contract (no residual hooks).
+- **Cold-start workaround for v1**: pre-warm the Metal shader cache during process init by running a discard 1-token forward pass on a fixed prompt shape before the first real call. This converts the 10–90 s JIT into a 10–90 s startup cost paid once, and lets sustained Trader runs operate at the warm-cache median.
+
+**Recommendation:** keep `target-cpu=native` as the workspace's required release flag (codify in `.cargo/config.toml` so it's not optional). Defer option A. Spike option B only if cold-start latency actually blocks forward paper or if the headline GPU run on Vast.ai/RunPod (Phase 9.3) shows the same shader-JIT pattern at higher precision.
