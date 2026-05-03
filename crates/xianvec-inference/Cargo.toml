@@ -10,3 +10,25 @@ repository.workspace   = true
 [lib]
 name = "xianvec_inference"
 path = "src/lib.rs"
+
+[features]
+default = ["metal"]
+metal   = ["candle-core/metal", "candle-nn/metal"]
+cuda    = ["candle-core/cuda", "candle-nn/cuda"]
+
+[dependencies]
+xianvec-core        = { path = "../xianvec-core" }
+candle-core         = { workspace = true }
+candle-nn           = { workspace = true }
+candle-transformers = { workspace = true }
+tokenizers          = "0.22"
+anyhow              = { workspace = true }
+thiserror           = { workspace = true }
+tracing             = { workspace = true }
+tracing-subscriber  = { workspace = true }
+serde               = { workspace = true }
+serde_json          = { workspace = true }
+
+[[bin]]
+name = "smoke-qwen3"
+path = "src/bin/smoke_qwen3.rs"
