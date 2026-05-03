@@ -1,0 +1,40 @@
+# XIANVEC v1 default runtime configuration.
+#
+# Override per-environment with XVN_CONFIG=path/to/override.toml or
+# XVN_<SECTION>_<KEY>=value (e.g. XVN_TRADER_TEMPERATURE=0.4 for forward paper).
+
+[runtime]
+mode        = "backtest"        # backtest | paper | live
+executor    = "alpaca"          # alpaca | orderly
+random_seed = 42
+
+[intern]
+provider          = "anthropic"  # anthropic | openai-compat | local-candle
+base_url          = "https://api.anthropic.com"
+model             = "claude-haiku-4-5"
+api_key_env       = "ANTHROPIC_API_KEY"
+temperature       = 0.0          # MUST be 0 for backtest pairing — Tier 1 fix #1
+reasoning_effort  = "low"        # forwarded when provider supports it
+max_tokens        = 1024
+
+[trader]
+model_path                = "models/qwen3-32b-q4-gguf/Qwen_Qwen3-32B-Q4_K_M.gguf"
+temperature               = 0.0  # MUST be 0 for backtest — Tier 1 fix #2
+forward_paper_temperature = 0.4
+max_tokens                = 512
+
+[trader.vectors]
+enabled = true
+config  = "off"                  # off | on | random | orthogonal | regime_conditioned
+
+[backtest]
+step    = 24                     # MUST be >= horizon — Tier 1 fix #4
+horizon = 16
+bootstrap_resamples = 10000
+bootstrap_block_size = 8         # for time-series-correct CIs
+
+[paths]
+data_root  = "data"
+vectors    = "data/vectors"
+probes     = "data/probes"
+sqlite_url = "sqlite://data/decisions.db"

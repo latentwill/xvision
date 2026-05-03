@@ -1,9 +1,8 @@
-//! xianvec_data — see implementation-plan.md for scope.
+//! xianvec-data — OHLCV ingest + indicators + onchain signals.
+//!
+//! v1 keeps indicators as pure `Vec<f64>` functions; `polars` enters in the
+//! ingest pipeline (TODO Phase 1.x) where lazy frames pull their weight.
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn crate_smoke() {
-        assert_eq!(2 + 2, 4);
-    }
-}
+pub mod indicators;
+
+pub use indicators::*;

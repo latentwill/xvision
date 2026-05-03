@@ -1,0 +1,27 @@
+# Tradeable assets and per-venue symbol mappings.
+# v1 ships BTC only. ETH/SOL declared but disabled — re-enable once the BTC
+# headline result is established (see implementation-plan.md "Future additions").
+
+[[assets]]
+symbol  = "BTC"
+enabled = true
+cluster = "btc"
+[assets.venues]
+alpaca  = "BTC/USD"
+orderly = "PERP_BTC_USDC"
+
+[[assets]]
+symbol  = "ETH"
+enabled = false
+cluster = "eth"
+[assets.venues]
+alpaca  = "ETH/USD"
+orderly = "PERP_ETH_USDC"
+
+[[assets]]
+symbol  = "SOL"
+enabled = false
+cluster = "sol"
+[assets.venues]
+alpaca  = "SOL/USD"
+orderly = "PERP_SOL_USDC"

@@ -1,0 +1,16 @@
+# Deterministic risk-layer thresholds. Pipeline owns risk; harness trusts the
+# decision (Tier 3 cleanup).
+
+[limits]
+max_position_pct_nav     = 20.0   # any single position
+max_total_exposure_pct   = 100.0
+max_open_positions       = 5
+max_daily_loss_pct       = 5.0    # circuit breaker — flat-only afterwards until next UTC day
+max_correlation_cluster  = 2      # ≤2 concurrent positions in the same cluster
+
+[stops]
+stop_loss_required          = true
+stop_loss_min_pct           = 0.5
+stop_loss_max_pct           = 10.0
+take_profit_required        = false
+take_profit_min_rr          = 1.5  # take-profit must be ≥1.5× stop distance when present
