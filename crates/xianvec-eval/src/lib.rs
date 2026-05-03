@@ -1,9 +1,8 @@
-//! xianvec_eval — see implementation-plan.md for scope.
+//! xianvec-eval — Phase 6.4 in-process backtest simulator + future baselines /
+//! Δ-Sharpe evaluation (see implementation-plan.md §6.4).
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn crate_smoke() {
-        assert_eq!(2 + 2, 4);
-    }
-}
+pub mod backtest;
+
+pub use backtest::{
+    BacktestConfig, BacktestExecutor, BacktestState, DailyPnl, MarketBar, TickReport,
+};
