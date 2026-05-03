@@ -6,9 +6,12 @@
 //! xianvec-specific.
 
 pub mod config;
+pub mod market;
 pub mod store;
 pub mod substrate;
 pub mod trading;
+
+pub use market::{IndicatorPanel, MarketSnapshot, Ohlcv, OnchainPanel, SkillRef};
 
 pub use substrate::{
     FinishReason, GenParams, Generation, InferenceError, LayerIndex, Manifest, TokenLogprob,
