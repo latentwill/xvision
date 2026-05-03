@@ -1,0 +1,33 @@
+# Trend-disposition axis — pipeline-only (not active in v1 headline experiment)
+# Positive pole: trend-following, momentum chasing
+# Negative pole: contrarian, fade-the-move
+#
+# target_pairs: 60 (Mitra lower bound for pipeline-only axes)
+# Cartesian: 5 assets × 4 regimes × 3 behavior-pairs = 60
+
+axis_name: trend_disposition
+
+assets:
+  - BTC-PERP
+  - ETH-PERP
+  - SOL-PERP
+  - OP-PERP
+  - DOGE-PERP
+
+regimes:
+  - bull trending
+  - bear trending
+  - high volatility
+  - low volatility choppy
+
+positive_behaviors:
+  - "aligns with the prevailing trend — adds in the direction of momentum without fading"
+  - "follows breakouts — enters long on new highs or short on new lows with the trend"
+  - "rides the trend until proven otherwise — holds through pullbacks expecting continuation"
+
+negative_behaviors:
+  - "fades the move — shorts strength and buys weakness as a contrarian mean-reversion bet"
+  - "anticipates reversal at extremes — positions against the trend expecting a correction"
+  - "sells into rallies and buys into selloffs — contrarian posture throughout the setup"
+
+target_pairs: 60

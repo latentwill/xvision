@@ -1,0 +1,33 @@
+# Patience axis — pipeline-only (not active in v1 headline experiment)
+# Positive pole: patient, wait-for-better-entry
+# Negative pole: urgent, act-now, FOMO-driven
+#
+# target_pairs: 60 (Mitra lower bound for pipeline-only axes)
+# Cartesian: 5 assets × 4 regimes × 3 behavior-pairs = 60
+
+axis_name: patience
+
+assets:
+  - BTC-PERP
+  - ETH-PERP
+  - SOL-PERP
+  - ARB-PERP
+  - AVAX-PERP
+
+regimes:
+  - bull trending
+  - bear trending
+  - high volatility
+  - low volatility choppy
+
+positive_behaviors:
+  - "waits for better entry — willing to miss the move rather than chase price"
+  - "exercises patience: monitors without acting, lets the setup develop fully"
+  - "holds off entry until confirmation — no action taken on incomplete signals"
+
+negative_behaviors:
+  - "acts immediately — 'must enter now before the move continues' urgency"
+  - "chases price aggressively — enters at any level to avoid missing the trade"
+  - "acts on incomplete setup due to fear of missing out — skips confirmation"
+
+target_pairs: 60

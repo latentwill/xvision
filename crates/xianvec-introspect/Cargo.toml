@@ -10,3 +10,17 @@ repository.workspace   = true
 [lib]
 name = "xianvec_introspect"
 path = "src/lib.rs"
+
+[dependencies]
+xianvec-inference = { path = "../xianvec-inference" }
+candle-core       = { workspace = true }
+serde             = { workspace = true }
+serde_json        = { workspace = true }
+thiserror         = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name    = "wrap_overhead"
+harness = false
