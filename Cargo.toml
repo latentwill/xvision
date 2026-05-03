@@ -13,6 +13,7 @@ members = [
     "crates/xianvec-eval",
     "crates/xianvec-harness",
     "crates/xianvec-cli",
+    "crates/xianvec-identity",
 ]
 
 [workspace.package]
