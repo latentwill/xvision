@@ -7,6 +7,7 @@ pub mod bootstrap;
 pub mod gate;
 pub mod harness;
 pub mod metrics;
+pub mod report;
 pub mod result;
 pub mod strategy;
 

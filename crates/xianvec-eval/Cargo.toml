@@ -20,6 +20,7 @@ xianvec-intern    = { path = "../xianvec-intern" }
 xianvec-inference = { path = "../xianvec-inference" }
 rand              = { version = "0.8", default-features = false, features = ["std", "std_rng"] }
 
+anyhow      = { workspace = true }
 async-trait = { workspace = true }
 chrono      = { workspace = true, features = ["serde"] }
 serde       = { workspace = true, features = ["derive"] }
