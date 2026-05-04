@@ -22,11 +22,28 @@ Format: title → trigger → scope → blocking?
 - **Scope:** run `python tools/extract_vectors/extract_vectors.py --model Qwen/Qwen3-32B --spec specs/conviction.yaml --layers 20,32,42,50 --out data/vectors/conviction_v1` plus the same for `patience.yaml`, `risk.yaml`, `trend.yaml`. Generate Random + Orthogonal control vectors against the Conviction axis. Verify all manifests parse cleanly via `xianvec_inference::substrate::load_vector`.
 - **Blocking:** YES for Phase 9 (cannot A/B vectors-on/off without vectors-on).
 
-### F3. Live Trader-as-Strategy adapter
+### F3. Live Trader-as-Strategy adapter — **LANDED 2026-05-04**
 
-- **Trigger:** F1 + F2 land.
-- **Scope:** thin wrapper in `crates/xianvec-eval/src/baselines/` (or its own `crates/xianvec-trader/` module) that implements `Strategy` over the Stage 1 Intern + Stage 2 Trader pipeline with a configurable `VectorConfig` (off | on | random | orthogonal). Phase 8.2 harness already takes `Box<dyn Strategy>`, so no harness changes.
-- **Blocking:** YES for Phase 9.2 A/B runner.
+- **Status:** landed at `crates/xianvec-eval/src/baselines/trader_arm.rs`
+  with `VectorConfig::{Off, On, Random, Orthogonal}`. Only the `Off` arm
+  is end-to-end tested (`cache_key_pairs_arms_for_same_setup_id`). The
+  other three accept their config + compile but degrade-with-warn to
+  vectors-off behaviour until F1 + F2 land — they emit a `tracing::warn`
+  noting the directional claim is invalid pre-F2.
+- **Side effects of F3:**
+  - `Strategy::decide` lifted to `async` via `#[async_trait]`. All seven
+    Phase 7 baselines + the in-test impls in the harness updated. Phase
+    8.2 harness `await`s `decide` at `harness.rs:232`; no other API
+    changes.
+  - `xianvec-eval` gains deps on `xianvec-trader`, `xianvec-intern`,
+    `xianvec-inference` (per the FOLLOWUPS guidance — eval is the
+    "things that implement Strategy" home).
+  - Phase 9.1 + 9.2 (A/B orchestrator + `xvn ab-compare` runner) landed
+    in the same session; see `crates/xianvec-eval/src/ab_compare.rs` and
+    `crates/xianvec-cli/src/commands/ab_compare.rs`.
+- **Blocked-on-F3 items now unblocked:** Phase 9.2 A/B runner (built),
+  F16 vectors-OFF/RANDOM/ORTHOGONAL controls (compile path live; pending
+  F1 + F2 for directional validity).
 
 ---
 
