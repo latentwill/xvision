@@ -16,5 +16,25 @@ name = "xvn"
 path = "src/main.rs"
 
 [dependencies]
-clap = { workspace = true }
+clap   = { workspace = true }
 anyhow = { workspace = true }
+
+xianvec-core      = { path = "../xianvec-core" }
+xianvec-eval      = { path = "../xianvec-eval" }
+xianvec-intern    = { path = "../xianvec-intern" }
+xianvec-trader    = { path = "../xianvec-trader" }
+xianvec-inference = { path = "../xianvec-inference" }
+xianvec-risk      = { path = "../xianvec-risk" }
+xianvec-execution = { path = "../xianvec-execution" }
+xianvec-harness   = { path = "../xianvec-harness" }
+
+serde      = { workspace = true }
+serde_json = { workspace = true }
+tokio      = { workspace = true }
+chrono     = { workspace = true }
+uuid       = { workspace = true, features = ["serde", "v4"] }
+tracing            = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
