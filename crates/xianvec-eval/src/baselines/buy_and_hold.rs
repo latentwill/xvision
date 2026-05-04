@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use async_trait::async_trait;
 use xianvec_core::market::MarketSnapshot;
 use xianvec_core::trading::{Action, Direction, TraderDecision};
 
@@ -27,12 +28,13 @@ impl Default for BuyAndHold {
     }
 }
 
+#[async_trait]
 impl Strategy for BuyAndHold {
     fn name(&self) -> &'static str {
         "buy_and_hold"
     }
 
-    fn decide(&self, snapshot: &MarketSnapshot) -> Option<TraderDecision> {
+    async fn decide(&self, snapshot: &MarketSnapshot) -> Option<TraderDecision> {
         // Only enter once — use compare_exchange to avoid TOCTOU on concurrent
         // harness calls (though the harness is single-threaded per arm).
         if self
@@ -90,11 +92,11 @@ mod tests {
         }
     }
 
-    #[test]
-    fn decide_returns_expected_shape() {
+    #[tokio::test]
+    async fn decide_returns_expected_shape() {
         let snap = fixture_snapshot();
         let strat = BuyAndHold::new();
-        let dec = strat.decide(&snap).expect("first call must return Some");
+        let dec = strat.decide(&snap).await.expect("first call must return Some");
         assert_eq!(dec.setup_id, snap.setup_id, "setup_id must propagate");
         assert_eq!(dec.action, Action::Buy);
         assert_eq!(dec.direction, Direction::Long);
@@ -104,12 +106,12 @@ mod tests {
         assert!(dec.active_vectors.is_empty(), "baselines have no vectors");
     }
 
-    #[test]
-    fn edge_case_only_fires_once() {
+    #[tokio::test]
+    async fn edge_case_only_fires_once() {
         let strat = BuyAndHold::new();
         let snap = fixture_snapshot();
-        assert!(strat.decide(&snap).is_some(), "first call must be Some");
-        assert!(strat.decide(&snap).is_none(), "second call must be None");
-        assert!(strat.decide(&snap).is_none(), "third call must be None");
+        assert!(strat.decide(&snap).await.is_some(), "first call must be Some");
+        assert!(strat.decide(&snap).await.is_none(), "second call must be None");
+        assert!(strat.decide(&snap).await.is_none(), "third call must be None");
     }
 }

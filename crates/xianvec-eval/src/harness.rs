@@ -229,7 +229,7 @@ impl BacktestRunner {
                 let st = &mut arm_states[arm_idx];
                 let nav_before = st.exec.portfolio_snapshot().equity_usd;
 
-                let maybe_decision = arm.strategy.decide(snapshot);
+                let maybe_decision = arm.strategy.decide(snapshot).await;
                 if let Some(td) = maybe_decision {
                     st.decisions.push(td.clone());
                     st.regimes.push(snapshot.regime);
@@ -395,11 +395,12 @@ mod tests {
     }
 
     struct AlwaysBuy;
+    #[async_trait::async_trait]
     impl Strategy for AlwaysBuy {
         fn name(&self) -> &'static str {
             "always_buy"
         }
-        fn decide(&self, snapshot: &MarketSnapshot) -> Option<TraderDecision> {
+        async fn decide(&self, snapshot: &MarketSnapshot) -> Option<TraderDecision> {
             Some(TraderDecision {
                 setup_id: snapshot.setup_id,
                 action: Action::Buy,
@@ -414,11 +415,12 @@ mod tests {
     }
 
     struct AlwaysFlat;
+    #[async_trait::async_trait]
     impl Strategy for AlwaysFlat {
         fn name(&self) -> &'static str {
             "always_flat"
         }
-        fn decide(&self, _snapshot: &MarketSnapshot) -> Option<TraderDecision> {
+        async fn decide(&self, _snapshot: &MarketSnapshot) -> Option<TraderDecision> {
             None
         }
     }

@@ -16,6 +16,7 @@
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
+use async_trait::async_trait;
 use xianvec_core::market::MarketSnapshot;
 use xianvec_core::trading::{Action, Direction, TraderDecision};
 
@@ -49,12 +50,13 @@ fn sma(bars: &[xianvec_core::market::Ohlcv], window: usize) -> Option<f64> {
     Some(sum / window as f64)
 }
 
+#[async_trait]
 impl Strategy for MaCrossover {
     fn name(&self) -> &'static str {
         "ma_crossover"
     }
 
-    fn decide(&self, snapshot: &MarketSnapshot) -> Option<TraderDecision> {
+    async fn decide(&self, snapshot: &MarketSnapshot) -> Option<TraderDecision> {
         let curr_fast = sma(&snapshot.recent_bars, self.fast_window)?;
         let curr_slow = sma(&snapshot.recent_bars, self.slow_window)?;
 
@@ -181,18 +183,18 @@ mod tests {
         }
     }
 
-    #[test]
-    fn decide_returns_expected_shape_golden_cross() {
+    #[tokio::test]
+    async fn decide_returns_expected_shape_golden_cross() {
         let strat = MaCrossover::new(30, 90);
 
         // First call: both SMAs equal (90 bars at 100) → warmup, no signal
         let flat_snap = snapshot_with_bars(90, 100.0);
-        let warmup = strat.decide(&flat_snap);
+        let warmup = strat.decide(&flat_snap).await;
         assert!(warmup.is_none(), "first call must be warmup None");
 
         // Second call: golden cross setup
         let cross_snap = snapshot_golden_cross();
-        let dec = strat.decide(&cross_snap).expect("golden cross must return Some");
+        let dec = strat.decide(&cross_snap).await.expect("golden cross must return Some");
         assert_eq!(dec.setup_id, cross_snap.setup_id, "setup_id must propagate");
         assert_eq!(dec.action, Action::Buy);
         assert_eq!(dec.direction, Direction::Long);
@@ -200,27 +202,27 @@ mod tests {
         assert!(dec.active_vectors.is_empty());
     }
 
-    #[test]
-    fn edge_case_warmup_returns_none_when_insufficient_bars() {
+    #[tokio::test]
+    async fn edge_case_warmup_returns_none_when_insufficient_bars() {
         let strat = MaCrossover::new(30, 90);
         // Only 50 bars — not enough for slow_window=90
         let snap = snapshot_with_bars(50, 100.0);
         assert!(
-            strat.decide(&snap).is_none(),
+            strat.decide(&snap).await.is_none(),
             "insufficient bars must return None"
         );
     }
 
-    #[test]
-    fn edge_case_no_crossover_returns_none() {
+    #[tokio::test]
+    async fn edge_case_no_crossover_returns_none() {
         let strat = MaCrossover::new(30, 90);
         // Warmup
         let flat = snapshot_with_bars(90, 100.0);
-        strat.decide(&flat);
+        strat.decide(&flat).await;
         // Same price → no crossover
         let still_flat = snapshot_with_bars(90, 100.0);
         assert!(
-            strat.decide(&still_flat).is_none(),
+            strat.decide(&still_flat).await.is_none(),
             "no crossover must return None"
         );
     }
