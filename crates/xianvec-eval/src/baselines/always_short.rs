@@ -3,6 +3,7 @@
 
 use std::collections::BTreeMap;
 
+use async_trait::async_trait;
 use xianvec_core::market::MarketSnapshot;
 use xianvec_core::trading::{Action, Direction, TraderDecision};
 
@@ -10,12 +11,13 @@ use crate::strategy::Strategy;
 
 pub struct AlwaysShort;
 
+#[async_trait]
 impl Strategy for AlwaysShort {
     fn name(&self) -> &'static str {
         "always_short"
     }
 
-    fn decide(&self, snapshot: &MarketSnapshot) -> Option<TraderDecision> {
+    async fn decide(&self, snapshot: &MarketSnapshot) -> Option<TraderDecision> {
         Some(TraderDecision {
             setup_id: snapshot.setup_id,
             action: Action::Sell,
@@ -59,11 +61,11 @@ mod tests {
         }
     }
 
-    #[test]
-    fn decide_returns_expected_shape() {
+    #[tokio::test]
+    async fn decide_returns_expected_shape() {
         let snap = fixture_snapshot();
         let strat = AlwaysShort;
-        let dec = strat.decide(&snap).expect("must always return Some");
+        let dec = strat.decide(&snap).await.expect("must always return Some");
         assert_eq!(dec.setup_id, snap.setup_id, "setup_id must propagate");
         assert_eq!(dec.action, Action::Sell);
         assert_eq!(dec.direction, Direction::Short);
@@ -73,13 +75,13 @@ mod tests {
         assert!(dec.active_vectors.is_empty());
     }
 
-    #[test]
-    fn edge_case_always_returns_some() {
+    #[tokio::test]
+    async fn edge_case_always_returns_some() {
         let strat = AlwaysShort;
         for _ in 0..5 {
             let snap = fixture_snapshot();
             assert!(
-                strat.decide(&snap).is_some(),
+                strat.decide(&snap).await.is_some(),
                 "AlwaysShort must emit on every snapshot"
             );
         }

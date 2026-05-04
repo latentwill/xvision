@@ -8,6 +8,7 @@
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
+use async_trait::async_trait;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
@@ -30,12 +31,13 @@ impl RandomDirection {
     }
 }
 
+#[async_trait]
 impl Strategy for RandomDirection {
     fn name(&self) -> &'static str {
         "random_direction"
     }
 
-    fn decide(&self, snapshot: &MarketSnapshot) -> Option<TraderDecision> {
+    async fn decide(&self, snapshot: &MarketSnapshot) -> Option<TraderDecision> {
         let go_long = {
             let mut rng = self.rng.lock().expect("RandomDirection RNG poisoned");
             rng.gen::<bool>()
@@ -90,11 +92,11 @@ mod tests {
         }
     }
 
-    #[test]
-    fn decide_returns_expected_shape() {
+    #[tokio::test]
+    async fn decide_returns_expected_shape() {
         let snap = fixture_snapshot();
         let strat = RandomDirection::new(42);
-        let dec = strat.decide(&snap).expect("must always return Some");
+        let dec = strat.decide(&snap).await.expect("must always return Some");
         assert_eq!(dec.setup_id, snap.setup_id, "setup_id must propagate");
         assert_eq!(dec.size_bps, 100);
         assert!((dec.stop_loss_pct - 2.0).abs() < f32::EPSILON);
@@ -106,19 +108,19 @@ mod tests {
         assert!(is_long || is_short, "must be Long or Short pair");
     }
 
-    #[test]
-    fn edge_case_determinism_same_seed() {
+    #[tokio::test]
+    async fn edge_case_determinism_same_seed() {
         // Two instances with the same seed must produce identical first 5 decisions.
         let snap = fixture_snapshot();
         let strat_a = RandomDirection::new(99);
         let strat_b = RandomDirection::new(99);
 
-        let decisions_a: Vec<_> = (0..5)
-            .map(|_| strat_a.decide(&snap).unwrap().direction)
-            .collect();
-        let decisions_b: Vec<_> = (0..5)
-            .map(|_| strat_b.decide(&snap).unwrap().direction)
-            .collect();
+        let mut decisions_a = Vec::new();
+        let mut decisions_b = Vec::new();
+        for _ in 0..5 {
+            decisions_a.push(strat_a.decide(&snap).await.unwrap().direction);
+            decisions_b.push(strat_b.decide(&snap).await.unwrap().direction);
+        }
 
         assert_eq!(
             decisions_a, decisions_b,

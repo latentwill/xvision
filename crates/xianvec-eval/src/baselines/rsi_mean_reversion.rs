@@ -6,6 +6,7 @@
 
 use std::collections::BTreeMap;
 
+use async_trait::async_trait;
 use xianvec_core::market::MarketSnapshot;
 use xianvec_core::trading::{Action, Direction, TraderDecision};
 
@@ -33,12 +34,13 @@ impl Default for RsiMeanReversion {
     }
 }
 
+#[async_trait]
 impl Strategy for RsiMeanReversion {
     fn name(&self) -> &'static str {
         "rsi_mean_reversion"
     }
 
-    fn decide(&self, snapshot: &MarketSnapshot) -> Option<TraderDecision> {
+    async fn decide(&self, snapshot: &MarketSnapshot) -> Option<TraderDecision> {
         let rsi = snapshot.indicators.rsi_14?;
 
         let (action, direction, summary) = if rsi <= self.oversold {
@@ -103,11 +105,11 @@ mod tests {
         }
     }
 
-    #[test]
-    fn decide_returns_expected_shape_oversold() {
+    #[tokio::test]
+    async fn decide_returns_expected_shape_oversold() {
         let snap = fixture_snapshot_with_rsi(Some(25.0));
         let strat = RsiMeanReversion::new();
-        let dec = strat.decide(&snap).expect("oversold must return Some");
+        let dec = strat.decide(&snap).await.expect("oversold must return Some");
         assert_eq!(dec.setup_id, snap.setup_id, "setup_id must propagate");
         assert_eq!(dec.action, Action::Buy);
         assert_eq!(dec.direction, Direction::Long);
@@ -117,32 +119,32 @@ mod tests {
         assert!(dec.active_vectors.is_empty());
     }
 
-    #[test]
-    fn decide_returns_expected_shape_overbought() {
+    #[tokio::test]
+    async fn decide_returns_expected_shape_overbought() {
         let snap = fixture_snapshot_with_rsi(Some(75.0));
         let strat = RsiMeanReversion::new();
-        let dec = strat.decide(&snap).expect("overbought must return Some");
+        let dec = strat.decide(&snap).await.expect("overbought must return Some");
         assert_eq!(dec.action, Action::Sell);
         assert_eq!(dec.direction, Direction::Short);
         assert_eq!(dec.size_bps, 800);
     }
 
-    #[test]
-    fn edge_case_rsi_none_returns_none() {
+    #[tokio::test]
+    async fn edge_case_rsi_none_returns_none() {
         let snap = fixture_snapshot_with_rsi(None);
         let strat = RsiMeanReversion::new();
         assert!(
-            strat.decide(&snap).is_none(),
+            strat.decide(&snap).await.is_none(),
             "missing RSI must return None"
         );
     }
 
-    #[test]
-    fn edge_case_neutral_rsi_returns_none() {
+    #[tokio::test]
+    async fn edge_case_neutral_rsi_returns_none() {
         let snap = fixture_snapshot_with_rsi(Some(50.0));
         let strat = RsiMeanReversion::new();
         assert!(
-            strat.decide(&snap).is_none(),
+            strat.decide(&snap).await.is_none(),
             "neutral RSI must return None"
         );
     }

@@ -11,6 +11,7 @@
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
+use async_trait::async_trait;
 use xianvec_core::market::MarketSnapshot;
 use xianvec_core::trading::{Action, Direction, TraderDecision};
 
@@ -34,12 +35,13 @@ impl Default for MacdMomentum {
     }
 }
 
+#[async_trait]
 impl Strategy for MacdMomentum {
     fn name(&self) -> &'static str {
         "macd_momentum"
     }
 
-    fn decide(&self, snapshot: &MarketSnapshot) -> Option<TraderDecision> {
+    async fn decide(&self, snapshot: &MarketSnapshot) -> Option<TraderDecision> {
         let macd = snapshot.indicators.macd?;
         let macd_signal = snapshot.indicators.macd_signal?;
         let macd_hist = snapshot.indicators.macd_hist?;
@@ -122,18 +124,19 @@ mod tests {
         }
     }
 
-    #[test]
-    fn decide_returns_expected_shape_bullish_cross() {
+    #[tokio::test]
+    async fn decide_returns_expected_shape_bullish_cross() {
         let strat = MacdMomentum::new();
 
         // Warmup: hist was negative
         let neg_snap = fixture_snapshot_with_macd(Some(-0.5), Some(-0.2), Some(-0.1));
-        assert!(strat.decide(&neg_snap).is_none(), "warmup returns None");
+        assert!(strat.decide(&neg_snap).await.is_none(), "warmup returns None");
 
         // Bullish cross: hist just turned positive, macd > signal
         let bull_snap = fixture_snapshot_with_macd(Some(1.0), Some(0.5), Some(0.3));
         let dec = strat
             .decide(&bull_snap)
+            .await
             .expect("bullish cross must return Some");
         assert_eq!(dec.setup_id, bull_snap.setup_id, "setup_id must propagate");
         assert_eq!(dec.action, Action::Buy);
@@ -142,41 +145,42 @@ mod tests {
         assert!(dec.active_vectors.is_empty());
     }
 
-    #[test]
-    fn decide_returns_expected_shape_bearish_cross() {
+    #[tokio::test]
+    async fn decide_returns_expected_shape_bearish_cross() {
         let strat = MacdMomentum::new();
 
         // Warmup: hist was positive
         let pos_snap = fixture_snapshot_with_macd(Some(0.5), Some(0.2), Some(0.1));
-        assert!(strat.decide(&pos_snap).is_none(), "warmup returns None");
+        assert!(strat.decide(&pos_snap).await.is_none(), "warmup returns None");
 
         // Bearish cross: hist just turned negative, macd < signal
         let bear_snap = fixture_snapshot_with_macd(Some(-1.0), Some(-0.5), Some(-0.3));
         let dec = strat
             .decide(&bear_snap)
+            .await
             .expect("bearish cross must return Some");
         assert_eq!(dec.action, Action::Sell);
         assert_eq!(dec.direction, Direction::Short);
         assert_eq!(dec.size_bps, 800);
     }
 
-    #[test]
-    fn edge_case_macd_none_returns_none() {
+    #[tokio::test]
+    async fn edge_case_macd_none_returns_none() {
         let strat = MacdMomentum::new();
         let snap = fixture_snapshot_with_macd(None, None, None);
         assert!(
-            strat.decide(&snap).is_none(),
+            strat.decide(&snap).await.is_none(),
             "missing MACD indicators must return None"
         );
     }
 
-    #[test]
-    fn edge_case_warmup_first_bar_returns_none() {
+    #[tokio::test]
+    async fn edge_case_warmup_first_bar_returns_none() {
         let strat = MacdMomentum::new();
         // Even with valid data, first bar is warmup
         let snap = fixture_snapshot_with_macd(Some(1.0), Some(0.5), Some(0.3));
         assert!(
-            strat.decide(&snap).is_none(),
+            strat.decide(&snap).await.is_none(),
             "first bar must be warmup None"
         );
     }
