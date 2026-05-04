@@ -1,17 +1,16 @@
 //! xvn — XIANVEC CLI entry point.
 
 use clap::Parser;
+use xianvec_cli::Cli;
 
-#[derive(Parser, Debug)]
-#[command(
-    name = "xvn",
-    version,
-    about = "XIANVEC: vectors-on vs vectors-off trading agent"
-)]
-struct Cli {}
-
-fn main() -> anyhow::Result<()> {
-    let _ = Cli::parse();
-    println!("xvn v0.1.0 — see `xvn --help`");
-    Ok(())
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "info".into()),
+        )
+        .init();
+    let cli = Cli::parse();
+    cli.run().await
 }
