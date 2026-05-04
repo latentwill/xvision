@@ -36,6 +36,7 @@ pub mod ma_crossover;
 pub mod macd_momentum;
 pub mod random_direction;
 pub mod rsi_mean_reversion;
+pub mod trader_arm;
 
 pub use always_long::AlwaysLong;
 pub use always_short::AlwaysShort;
@@ -44,6 +45,7 @@ pub use ma_crossover::MaCrossover;
 pub use macd_momentum::MacdMomentum;
 pub use random_direction::RandomDirection;
 pub use rsi_mean_reversion::RsiMeanReversion;
+pub use trader_arm::{PortfolioProvider, TraderArm, VectorConfig};
 
 use crate::strategy::Strategy;
 
