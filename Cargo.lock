@@ -7494,7 +7494,23 @@ name = "xianvec-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "clap",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "xianvec-core",
+ "xianvec-eval",
+ "xianvec-execution",
+ "xianvec-harness",
+ "xianvec-inference",
+ "xianvec-intern",
+ "xianvec-risk",
+ "xianvec-trader",
 ]
 
 [[package]]
@@ -7531,16 +7547,22 @@ dependencies = [
 name = "xianvec-eval"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "chrono",
  "rand 0.8.6",
  "serde",
+ "serde_json",
  "thiserror 2.0.18",
  "tokio",
+ "tracing",
  "uuid",
  "xianvec-core",
  "xianvec-execution",
+ "xianvec-inference",
+ "xianvec-intern",
  "xianvec-risk",
+ "xianvec-trader",
 ]
 
 [[package]]
