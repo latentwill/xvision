@@ -132,7 +132,27 @@ The Phase 4.3 hard gate (vectors must steer the candle runtime equivalently to
 the MLX spike path) is not affected — it depends on hook correctness, not
 throughput.
 
+## Qwen3-Next addendum (2026-05-05): footnote in §Context line 17 is now stale
+
+The §Context note "The plan's nominal `Qwen3.6-27B` is aspirational — no
+such checkpoint exists" was true on 2026-05-03 but is no longer true:
+Qwen3.6 dropped 2026-04-16 (which we missed at the time of writing) and
+weights are now on disk. A fear-greed vector was extracted against
+Qwen3.6 fp16 on 2026-05-05.
+
+This **does not change the production decision in this ADR.** Production
+remains Qwen3-32B, candle Q4_K_M, vendored quantized_qwen3 with `LayerHook`.
+Qwen3.6 is a hybrid Gated DeltaNet architecture not implemented in
+candle, and switching the runtime path is out of Phase 4 scope.
+
+The Qwen3-Next runtime question (cvec on hybrid + candle port options + when
+to migrate) is captured in `decisions/0009-qwen3-next-runtime-options.md`.
+That ADR is open and gated on F27 (Python eval) + F28 (llama.cpp cvec
+spike) before it can ratify a new runtime path.
+
 ## References
 
 - Implementation plan §0.2, §0.3, §3.1, §3.3, §4.2, §4.3, §9.3
 - `decisions/0002-spike-validation.md` (records spike outcome)
+- `decisions/0007-inference-throughput-routes.md` (Qwen3-32B throughput options)
+- `decisions/0009-qwen3-next-runtime-options.md` (forward-looking — Qwen3.6 hybrid runtime)
