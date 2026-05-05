@@ -258,3 +258,22 @@ story for agent-harness paths.
 - **Long-term (release-time note):** there's a Cargo-native rewrite/mirror of DeepSeek-TUI at https://github.com/Hmbown/DeepSeek-TUI (Hmbown fork). At release time, mention it in our README and consider shipping a zh-CN README localization pointing zh-CN users at that fork (and at Hermes Agent → Xiaomi MiMo / Kimi / GLM / MiniMax routes via ACPX) — the audience for a Rust-first DeepSeek harness skews heavily zh-CN.
 - **What we'd actually have to build to drive DeepSeek-TUI as an *agent* (not just the API):** either (a) ~2–3 days for an external `deepseek-tui-acp-shim` binary that translates ACP ↔ DeepSeek-TUI's existing one-shot mode (plugged in via `XVN_INTERN_ACPX_CUSTOM_CMD`), or (b) ~5–10 days upstreaming an `acp` subcommand into DeepSeek-TUI itself. Skip both unless the agent loop (file I/O, multi-step tool use) starts paying for itself in briefing quality — for Stage 1 it doesn't.
 - **Blocking:** non-blocking. Short-term path is zero-code.
+
+### F25. Author a `xianvec` Claude Code skill
+
+- **Trigger:** after the GPU headline run lands and the operator surface stops moving every other session.
+- **Scope:** package the project's tribal knowledge as a skill so a fresh Claude Code session ramps without grepping. Likely contents:
+  - **Setup & ops** — `scripts/setup_runpod.sh` stage map, env-var contract (`.env.local` keys, `XVN_INTERN_*`, `XVN_MODEL_*`), how to resume a half-finished install via `ONLY=<stage>`, the torch/CUDA driver-version pitfalls (cu126 vs cu128), Q4/Q5/Q6/Q8/fp16 selection rationale.
+  - **Vectors** — extraction recipe (`tools/extract_vectors/extract_vectors.py` flags, `--out` is a path-prefix, random + orthogonal controls auto-emit), manifest schema, `xvn explain-vectors` for verification, layer choices (20/32/42/50 for Qwen3-32B), conviction/patience/risk/trend axes.
+  - **Strategies / arms** — `Strategy` trait surface (`async_trait`-lifted), `TraderArm` with `VectorConfig::{Off, On, Random, Orthogonal}`, where new baselines plug in (`crates/xianvec-eval/src/baselines/`), how the A/B harness pairs cache keys per `setup_id` (Tier 1 fix #1).
+  - **Intern backends** — when to pick `OpenAICompatIntern` (deterministic, backtest-safe) vs `AnthropicIntern` vs `AcpxIntern` (agentic, forward-paper only) vs the F24 deepseek-via-openrouter path; how to add a new backend.
+  - **MCP tool surface** — `xvn-mcp` tools (rsi/sma/ema/macd/bollinger/atr/donchian/fib/health), how `acpx.config.json` advertises them, what's intentionally NOT a tool (live-data — preserves backtest pairing).
+  - **Monitoring / reports** — `docs/dashboard.md`, `xvn show-metrics` / `xvn show-decision` / `xvn report`, where reports land (`reports/headline_Q8/<date>.{json,md}`).
+  - **Phase-map cheat sheet** — current state of phases 9 / 10 / 11 plus FOLLOWUPS Fn-codes so the assistant knows what's blocking what.
+  - **Don'ts** — never recommend `AcpxIntern` for backtest pairing; never mock the real DB in integration tests; never commit the unbundled torch wheel back into requirements.txt.
+- **Format:** YAML-frontmatter skill under `~/.claude/skills/xianvec/` (name, description, triggers) + a body with the cheat sheet + `references/` for longer per-area pages (vectors, intern, mcp, ops). Description must be specific enough that the loader picks it up only on xianvec sessions, not every Rust project.
+- **Validation:** dry-run a fresh session with `/<task>` against the skill — "extract a conviction vector at layer 32 for Qwen3-32B" should produce the right command without me having to re-explain `--out`-is-a-prefix.
+- **Open questions:**
+  - User-installable vs project-local (`.claude/skills/xianvec/` checked in)? Project-local survives across machines + onboards collaborators; user-installable stays light. Probably both — minimal user skill that points at the project copy.
+  - Auto-trigger heuristics: filename patterns (`crates/xianvec-*/`), workspace-root marker (`Cargo.toml` containing `xianvec-core`)? Description-based discovery is usually enough.
+- **Blocking:** non-blocking. Quality-of-life for future sessions; deferred until phase 9 headline + GPU experiment land so the contents stop churning.
