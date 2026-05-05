@@ -10,7 +10,11 @@
 #   GH_TOKEN              optional. Plumbed into .env.local if set.
 #
 # Optional non-interactive overrides:
-#   MODEL=fp16|q4|q5|q6|q8                Skip the model menu.
+#   MODEL=fp16|gguf|q4|q5|q6|q8           Skip the model menu.
+#                                         fp16  = safetensors (vector extraction —
+#                                                 REQUIRED for training control vectors)
+#                                         gguf  = best quant (Q8_0); for inference only
+#                                         qN    = pick a specific GGUF quant
 #   INTERN=anthropic|openai|openrouter|together|groq|deepseek|local|acpx|custom|skip
 #   ACPX_AGENT=codex|claude|openclaw|pi   (used when INTERN=acpx)
 #                                         Skip the intern backend menu.
@@ -314,28 +318,59 @@ hf_login() {
 # 6. model — pick ONE artifact, download just that
 # ---------------------------------------------------------------------------
 choose_model() {
-  # Prints a key (fp16|q4|q5|q6|q8) on stdout.
-  if [[ -n "${MODEL:-}" ]]; then echo "$MODEL"; return; fi
+  # Prints a key (fp16|q4|q5|q6|q8) on stdout. Two-tier prompt: first ask
+  # the *purpose* (vector extraction vs inference), then drill into a quant
+  # if GGUF is chosen. MODEL= override accepts the leaf keys directly plus
+  # `gguf` as a synonym for the best quant (q8).
+  if [[ -n "${MODEL:-}" ]]; then
+    case "$MODEL" in
+      gguf) echo q8 ;;          # "gguf" → best quant
+      fp16|q4|q5|q6|q8) echo "$MODEL" ;;
+      *) fail "unknown MODEL override: $MODEL (expected fp16|gguf|q4|q5|q6|q8)" ;;
+    esac
+    return
+  fi
   if [[ "$ASSUME_YES" == "1" || ! -t 0 ]]; then echo "q8"; return; fi
+
   cat >&2 <<EOF
 
-Pick ONE Qwen3.6-27B artifact:
-  1) fp16 safetensors  (~55 GB)  — for control-vector extraction (needs ≥80 GB VRAM,
-                                    or bf16 + device_map='auto' offload on smaller GPUs)
-  2) GGUF Q8_0         (~29 GB)  — xvn inference, headline-quality (M4)
-  3) GGUF Q6_K         (~23 GB)  — xvn inference, near-lossless
-  4) GGUF Q5_K_M       (~20 GB)  — xvn inference, balanced
-  5) GGUF Q4_K_M       (~17 GB)  — xvn inference, dev-loop default
+What are you doing with Qwen3.6-27B on this box?
+
+  1) FP16 safetensors  (~55 GB) — REQUIRED to train / extract control vectors.
+                                  Loads in transformers; needs ≥80 GB VRAM, or
+                                  bf16 + device_map='auto' offload on smaller GPUs.
+                                  Pick this if you'll run extract_vectors.py.
+
+  2) GGUF (quantized)   (17–29 GB) — INFERENCE ONLY (xvn run-setup / ab-compare).
+                                  Cannot be used to train vectors — the candle
+                                  runtime that loads GGUF doesn't expose the
+                                  hooks repeng needs. Pick a quant in step 2.
 
 EOF
-  local sel; sel=$(prompt "Selection [1-5, default 2]:" "2")
+  local tier; tier=$(prompt "Selection [1=fp16 / 2=gguf, default 2]:" "2")
+  case "$tier" in
+    1) echo fp16; return ;;
+    2|"") : ;;  # fall through to GGUF quant menu
+    *) fail "unknown selection: $tier" ;;
+  esac
+
+  cat >&2 <<EOF
+
+Pick a GGUF quant for inference:
+
+  1) Q8_0    (~29 GB) — headline-quality (M4 default)
+  2) Q6_K    (~23 GB) — near-lossless
+  3) Q5_K_M  (~20 GB) — balanced
+  4) Q4_K_M  (~17 GB) — dev-loop default
+
+EOF
+  local sel; sel=$(prompt "Selection [1-4, default 1]:" "1")
   case "$sel" in
-    1) echo fp16 ;;
-    2|"") echo q8 ;;
-    3) echo q6 ;;
-    4) echo q5 ;;
-    5) echo q4 ;;
-    *) fail "unknown model selection: $sel" ;;
+    1|"") echo q8 ;;
+    2) echo q6 ;;
+    3) echo q5 ;;
+    4) echo q4 ;;
+    *) fail "unknown GGUF selection: $sel" ;;
   esac
 }
 
