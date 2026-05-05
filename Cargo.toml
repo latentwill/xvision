@@ -77,7 +77,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # cli / http / chain
 clap    = { version = "4", features = ["derive"] }
-reqwest = { version = "0.13", features = ["json"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "charset", "http2"] }
 alloy   = { version = "2", features = ["full"] }
 
 # error
@@ -89,7 +89,7 @@ chrono = { version = "0.4", features = ["serde"] }
 uuid   = { version = "1", features = ["v4", "serde"] }
 
 # brokerage
-apca = { version = "0.30", default-features = false }
+apca = { version = "0.30", default-features = false, features = ["vendored-openssl"] }
 # orderly-connector-rs pinned at 0.4.15 per M0 probe (probes/m0-orderly/)
 orderly-connector-rs = "0.4.15"
 

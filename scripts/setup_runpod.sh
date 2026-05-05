@@ -60,6 +60,14 @@ export HUGGING_FACE_HUB_TOKEN="${HF_TOKEN}"
 
 ASSUME_YES="${ASSUME_YES:-0}"
 
+# Force progress output even when stdout is not a TTY (RunPod's web shell often
+# isn't). pip and cargo both auto-disable progress on non-TTY, which makes long
+# stages look frozen. These overrides keep the status line visible.
+export PIP_PROGRESS_BAR="${PIP_PROGRESS_BAR:-on}"
+export CARGO_TERM_PROGRESS_WHEN="${CARGO_TERM_PROGRESS_WHEN:-always}"
+export CARGO_TERM_PROGRESS_WIDTH="${CARGO_TERM_PROGRESS_WIDTH:-80}"
+export CARGO_TERM_COLOR="${CARGO_TERM_COLOR:-always}"
+
 # Persisted env choices live in .env.local (gitignored — see end of script).
 # Helper: set or replace KEY=VALUE in $ENV_FILE.
 env_set() {
@@ -126,8 +134,17 @@ install_apt() {
   # Don't abort on third-party PPA failures (deadsnakes etc. can be unreachable
   # from RunPod). Base images already ship the deps below, so a degraded
   # `update` is usually fine — `install` will succeed against the cached lists.
-  if ! $SUDO apt-get update -y; then
-    warn "apt-get update reported errors (likely a broken third-party PPA in /etc/apt/sources.list.d/) — continuing"
+  # Cap update at 90s with strict per-source timeouts so a hung mirror
+  # (security.ubuntu.com is sometimes blocked from RunPod) doesn't block
+  # the whole run for 10+ min before timing out at the kernel layer.
+  if ! timeout 90 $SUDO apt-get \
+       -o Acquire::http::Timeout=15 \
+       -o Acquire::https::Timeout=15 \
+       -o Acquire::Retries=1 \
+       update -y; then
+    warn "apt-get update timed out or reported errors (broken PPA / blocked Ubuntu mirror) — continuing"
+    warn "  if 'install' below also fails, re-run with SKIP_APT=1 (the script's pip-installed cmake/pkgconf"
+    warn "  + OPENSSL_VENDORED=1 build path covers the build deps when apt is unusable)"
   fi
   if ! $SUDO apt-get install -y --no-install-recommends \
     build-essential cmake pkg-config git curl ca-certificates \
@@ -214,6 +231,7 @@ install_python() {
     fi
     if (( need_install )); then
       log "installing torch from $torch_index (matches host driver CUDA)"
+      log "  ~2 GB wheel — typically 1–4 min on RunPod, longer on slow pods. Output may pause between chunks."
       python -m pip install --upgrade --force-reinstall \
         --index-url "$torch_index" \
         torch torchvision torchaudio
@@ -222,8 +240,24 @@ install_python() {
     warn "could not detect host CUDA from nvidia-smi — falling back to default torch wheel (may fail at runtime)"
   fi
 
+  log "installing extract-vectors deps (transformers + accelerate + repeng)"
+  log "  ~1–3 min. transformers wheel resolution can pause for 30–60s — not frozen."
   python -m pip install -r tools/extract_vectors/requirements.txt
   python -m pip install "huggingface_hub[cli]>=0.24"
+
+  # Build tools as PyPI fallbacks for pods where apt couldn't install them.
+  # cmake is needed by several Rust crates; pkgconf is the pkg-config drop-in.
+  # Both ship pre-built binaries — installing them here is cheap (~5s) and
+  # guarantees stage 9 has them on PATH (the venv is activated in build_xvn).
+  if ! command -v cmake >/dev/null 2>&1 || ! command -v pkg-config >/dev/null 2>&1; then
+    log "installing cmake + pkgconf via pip (apt couldn't, or they were missing)"
+    python -m pip install cmake pkgconf
+    # pkgconf-pypi installs the binary as `pkgconf`; alias to `pkg-config`
+    # because openssl-sys / many build.rs scripts hardcode that name.
+    if [[ -x "$VENV_DIR/bin/pkgconf" && ! -e "$VENV_DIR/bin/pkg-config" ]]; then
+      ln -sf "$VENV_DIR/bin/pkgconf" "$VENV_DIR/bin/pkg-config"
+    fi
+  fi
 
   log "verifying torch + CUDA"
   if ! python - <<'PY'
@@ -271,8 +305,8 @@ hf_login() {
   stage 5/9 "huggingface auth"
   # shellcheck disable=SC1091
   source "$VENV_DIR/bin/activate"
-  huggingface-cli login --token "$HF_TOKEN" --add-to-git-credential
-  log "whoami:"; huggingface-cli whoami | sed 's/^/    /'
+  hf auth login --token "$HF_TOKEN" --add-to-git-credential
+  log "whoami:"; hf auth whoami | sed 's/^/    /'
   ok "huggingface authenticated"
 }
 
@@ -285,12 +319,12 @@ choose_model() {
   if [[ "$ASSUME_YES" == "1" || ! -t 0 ]]; then echo "q8"; return; fi
   cat >&2 <<EOF
 
-Pick ONE Qwen3-32B artifact:
-  1) fp16 safetensors  (~64 GB)  — for control-vector extraction (needs ≥80 GB VRAM,
+Pick ONE Qwen3.6-27B artifact:
+  1) fp16 safetensors  (~55 GB)  — for control-vector extraction (needs ≥80 GB VRAM,
                                     or bf16 + device_map='auto' offload on smaller GPUs)
-  2) GGUF Q8_0         (~32 GB)  — xvn inference, headline-quality (M4)
-  3) GGUF Q6_K         (~26 GB)  — xvn inference, near-lossless
-  4) GGUF Q5_K_M       (~22 GB)  — xvn inference, balanced
+  2) GGUF Q8_0         (~29 GB)  — xvn inference, headline-quality (M4)
+  3) GGUF Q6_K         (~23 GB)  — xvn inference, near-lossless
+  4) GGUF Q5_K_M       (~20 GB)  — xvn inference, balanced
   5) GGUF Q4_K_M       (~17 GB)  — xvn inference, dev-loop default
 
 EOF
@@ -316,26 +350,28 @@ download_model() {
 
   case "$choice" in
     fp16)
-      log "→ Qwen/Qwen3-32B safetensors → models/qwen3-32b/  (~64 GB)"
-      huggingface-cli download Qwen/Qwen3-32B \
-        --local-dir "$MODELS_DIR/qwen3-32b" \
+      log "→ Qwen/Qwen3.6-27B safetensors → models/qwen3.6-27b/  (~55 GB)"
+      log "  15 safetensors shards. On a 100 Mbit pod expect 60–90 min."
+      hf download Qwen/Qwen3.6-27B \
+        --local-dir "$MODELS_DIR/qwen3.6-27b" \
         --exclude "*.gguf" "*.msgpack" "*.h5" "*.ot" "*flax*" "*.onnx"
       env_set XVN_MODEL_KIND "fp16"
-      env_set XVN_MODEL_DIR  "$MODELS_DIR/qwen3-32b"
+      env_set XVN_MODEL_DIR  "$MODELS_DIR/qwen3.6-27b"
       ;;
     q4|q5|q6|q8)
       local file dir
       case "$choice" in
-        q4) file="Qwen_Qwen3-32B-Q4_K_M.gguf"; dir="qwen3-32b-q4-gguf" ;;
-        q5) file="Qwen_Qwen3-32B-Q5_K_M.gguf"; dir="qwen3-32b-q5-gguf" ;;
-        q6) file="Qwen_Qwen3-32B-Q6_K.gguf";   dir="qwen3-32b-q6-gguf" ;;
-        q8) file="Qwen_Qwen3-32B-Q8_0.gguf";   dir="qwen3-32b-q8-gguf" ;;
+        q4) file="Qwen_Qwen3.6-27B-Q4_K_M.gguf"; dir="qwen3.6-27b-q4-gguf" ;;
+        q5) file="Qwen_Qwen3.6-27B-Q5_K_M.gguf"; dir="qwen3.6-27b-q5-gguf" ;;
+        q6) file="Qwen_Qwen3.6-27B-Q6_K.gguf";   dir="qwen3.6-27b-q6-gguf" ;;
+        q8) file="Qwen_Qwen3.6-27B-Q8_0.gguf";   dir="qwen3.6-27b-q8-gguf" ;;
       esac
-      log "→ Qwen/Qwen3-32B-GGUF $file → models/$dir/"
-      huggingface-cli download Qwen/Qwen3-32B-GGUF "$file" \
+      log "→ bartowski/Qwen_Qwen3.6-27B-GGUF $file → models/$dir/"
+      log "  17–29 GB depending on quant. On a 100 Mbit pod expect 25–40 min."
+      hf download bartowski/Qwen_Qwen3.6-27B-GGUF "$file" \
         --local-dir "$MODELS_DIR/$dir"
-      log "→ tokenizer.json (from Qwen/Qwen3-32B base repo)"
-      huggingface-cli download Qwen/Qwen3-32B tokenizer.json \
+      log "→ tokenizer.json (from Qwen/Qwen3.6-27B base repo)"
+      hf download Qwen/Qwen3.6-27B tokenizer.json \
         --local-dir "$MODELS_DIR/$dir"
       env_set XVN_MODEL_KIND "gguf"
       env_set XVN_MODEL_PATH "$MODELS_DIR/$dir/$file"
@@ -442,7 +478,7 @@ setup_intern() {
     together)
       env_set XVN_INTERN_PROVIDER  "openai-compat"
       env_set XVN_INTERN_BASE_URL  "https://api.together.xyz/v1"
-      env_set XVN_INTERN_MODEL     "$(prompt 'Together model [Qwen/Qwen3-32B]:' 'Qwen/Qwen3-32B')"
+      env_set XVN_INTERN_MODEL     "$(prompt 'Together model [Qwen/Qwen3.6-27B]:' 'Qwen/Qwen3.6-27B')"
       env_set XVN_INTERN_KEY_ENV   "TOGETHER_API_KEY"
       key=$(prompt "TOGETHER_API_KEY (paste, blank to skip):" "")
       [[ -n "$key" ]] && env_set TOGETHER_API_KEY "$key"
@@ -450,7 +486,7 @@ setup_intern() {
     groq)
       env_set XVN_INTERN_PROVIDER  "openai-compat"
       env_set XVN_INTERN_BASE_URL  "https://api.groq.com/openai/v1"
-      env_set XVN_INTERN_MODEL     "$(prompt 'Groq model [qwen/qwen3-32b]:' 'qwen/qwen3-32b')"
+      env_set XVN_INTERN_MODEL     "$(prompt 'Groq model [qwen/qwen3.6-27b]:' 'qwen/qwen3.6-27b')"
       env_set XVN_INTERN_KEY_ENV   "GROQ_API_KEY"
       key=$(prompt "GROQ_API_KEY (paste, blank to skip):" "")
       [[ -n "$key" ]] && env_set GROQ_API_KEY "$key"
@@ -467,7 +503,7 @@ setup_intern() {
       local url; url=$(prompt "Local OpenAI-compat URL [http://localhost:8000/v1]:" "http://localhost:8000/v1")
       env_set XVN_INTERN_PROVIDER  "openai-compat"
       env_set XVN_INTERN_BASE_URL  "$url"
-      env_set XVN_INTERN_MODEL     "$(prompt 'Model name as the local server expects [Qwen/Qwen3-32B]:' 'Qwen/Qwen3-32B')"
+      env_set XVN_INTERN_MODEL     "$(prompt 'Model name as the local server expects [Qwen/Qwen3.6-27B]:' 'Qwen/Qwen3.6-27B')"
       env_set XVN_INTERN_KEY_ENV   ""
       ;;
     custom)
@@ -626,12 +662,20 @@ setup_alpaca() {
 # 9. patch + build xvn (--features cuda)
 # ---------------------------------------------------------------------------
 patch_build_for_cuda() {
-  # GAP fix: xianvec-inference defaults to [metal] (Apple), and xianvec-cli
-  # has no cuda passthrough. On Linux we need the cli to (a) disable
-  # default-features on the inference dep and (b) expose `cuda`. Minimal
-  # scoped patch — only crates/xianvec-cli/Cargo.toml is touched.
+  # GAP fix: xianvec-inference defaults to [metal] (Apple). On Linux any crate
+  # in the workspace that depends on it (xianvec-cli/eval/trader/gating/...)
+  # transitively pulls candle-metal-kernels → objc2 → compile_error! on Linux.
+  # Cargo unifies features across the workspace, so disabling defaults on a
+  # single dep doesn't help — we have to neutralize the default at the source.
+  # We do two patches:
+  #   (1) crates/xianvec-cli/Cargo.toml — add a `cuda` passthrough so the cli
+  #       can be built with --features cuda.
+  #   (2) crates/xianvec-inference/Cargo.toml — flip `default = ["metal"]` to
+  #       `default = []`. Apple users opt back in via `--features metal`.
   local cli_toml="$REPO_ROOT/crates/xianvec-cli/Cargo.toml"
-  if grep -q '^cuda = \["xianvec-inference/cuda"\]' "$cli_toml"; then
+  local inf_toml="$REPO_ROOT/crates/xianvec-inference/Cargo.toml"
+  if grep -q '^cuda = \["xianvec-inference/cuda"\]' "$cli_toml" \
+     && grep -q '^default = \[\]' "$inf_toml"; then
     return
   fi
   log "patching $cli_toml — cuda feature passthrough"
@@ -650,6 +694,14 @@ elif 'cuda = ["xianvec-inference/cuda"]' not in src:
     src = src.replace("[features]\n", '[features]\ncuda = ["xianvec-inference/cuda"]\n', 1)
 p.write_text(src)
 PY
+  log "patching $inf_toml — drop metal from default features (Linux can't build candle-metal-kernels)"
+  python3 - <<PY
+import pathlib, re
+p = pathlib.Path("$inf_toml")
+src = p.read_text()
+src = re.sub(r'^default = \["metal"\]\s*$', 'default = []', src, count=1, flags=re.MULTILINE)
+p.write_text(src)
+PY
   ok "patched"
 }
 
@@ -658,7 +710,13 @@ build_xvn() {
   if [[ "${SKIP_BUILD:-0}" == "1" ]]; then warn "SKIP_BUILD=1, skipping"; return; fi
   # shellcheck disable=SC1091
   source "$HOME/.cargo/env"
+  # Activate venv so any pip-installed build tools (cmake, pkgconf) are on PATH
+  # when apt couldn't install them (e.g. RunPod with Ubuntu mirrors blocked).
+  # shellcheck disable=SC1091
+  [[ -d "$VENV_DIR" ]] && source "$VENV_DIR/bin/activate"
   patch_build_for_cuda
+  log "compiling xianvec-cli (release + cuda — ~150 crates, 5–15 min on small pods; first build only)"
+  log "  cargo can sit on cudarc/candle-cuda for 60–120s with no output between 'Compiling X' lines — not frozen."
   cargo build --release -p xianvec-cli --features cuda
   ok "built target/release/xvn"
 
@@ -667,7 +725,7 @@ build_xvn() {
   # Advertised to ACPX via acpx.config.json so any ACP-compatible agent
   # (Hermes, Claude Code, Codex, OpenCode, etc.) gets the xvn_* tools at
   # session start.
-  log "building xvn-mcp"
+  log "building xvn-mcp (CPU-only, typically <1 min; reuses target/ from above)"
   cargo build --release -p xianvec-mcp
   ok "built target/release/xvn-mcp"
 }
