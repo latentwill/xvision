@@ -54,7 +54,7 @@ Vectors cannot influence tool call formatting, schema enforcement, or risk rules
 
 ### 2.1 Full system diagram
 
-Renders inline on GitHub. Standalone source: `architecture-diagram.mermaid`. Yellow blocks indicate where control vectors are active; blue is deterministic rule code; green is external services; purple is storage; red dashed is deferred to v2.
+Renders inline on GitHub. Standalone source: `architecture-diagram.mermaid`. Yellow blocks indicate where control vectors are active; blue is deterministic rule code; green is external services; purple is storage; orange is orchestrator + tool-surface code; pink is on-chain ERC-8004 registries on Mantle; cyan is eval. Red dashed remains reserved for future v2-deferred nodes.
 
 ```mermaid
 flowchart TD
@@ -66,17 +66,25 @@ flowchart TD
 
     HA[<b>Ops</b><br/>pipeline orchestrator<br/>state assembly · scheduling]
 
-    S1[<b>Stage 1 · Intern</b><br/>OpenAI- or Anthropic-compat API<br/>or local candle<br/>━━━━━━━━━━━━<br/>bull case · bear case · flat case<br/>evidence inventory · regime<br/>━━━━━━━━━━━━<br/>NO candidate decision<br/>NO vectors]
+    S1[<b>Stage 1 · Intern</b><br/>OpenAI- / Anthropic-compat<br/>or ACPX agent harness<br/>━━━━━━━━━━━━<br/>bull · bear · flat cases<br/>evidence inventory · regime<br/>━━━━━━━━━━━━<br/>NO candidate decision<br/>NO vectors]
 
-    S2[<b>Stage 2 · Trader</b><br/>Qwen3.6-27B local quantized<br/>━━━━━━━━━━━━<br/>action · size · direction<br/>stop · take-profit<br/>━━━━━━━━━━━━<br/>VECTORS ACTIVE]
+    MCP[<b>xvn-mcp</b><br/>stdio MCP server · stateless<br/>━━━━━━━━━━━━<br/>indicator tools<br/>rsi · sma · ema · macd<br/>bollinger · atr · donchian<br/>fib_retracements · health<br/>━━━━━━━━━━━━<br/>active when INTERN=acpx]
 
-    CV[<b>Control Vectors</b><br/>━━━━━━━━━━━━<br/>conviction ↔ hesitation<br/>patience ↔ urgency<br/>risk-seek ↔ risk-averse<br/>trend ↔ contrarian<br/>━━━━━━━━━━━━<br/>regime-conditioned<br/>confidence-gated]
+    S2[<b>Stage 2 · Trader</b><br/>Qwen3-32B local quantized<br/>━━━━━━━━━━━━<br/>action · size · direction<br/>stop · take-profit<br/>━━━━━━━━━━━━<br/>VECTORS ACTIVE]
+
+    CV[<b>Control Vectors</b><br/>━━━━━━━━━━━━<br/>conviction (v1 active)<br/>patience · risk · trend<br/>(extracted, v2 active)<br/>━━━━━━━━━━━━<br/>confidence-gated · entropy v1]
 
     R[<b>Risk Layer</b><br/>deterministic rules · no LLM<br/>━━━━━━━━━━━━<br/>position limits<br/>daily-loss circuit breaker<br/>correlation cluster cap<br/>asset whitelist]
 
     S3[<b>Stage 3 · Execution</b><br/>idempotent tool calls<br/>━━━━━━━━━━━━<br/>NO vectors]
-    AP[Alpaca Paper<br/>bracket orders<br/>v1 primary]
-    DEX[Orderly Network<br/>perpetual futures · Mantle<br/>orderly-connector-rs (Rust)<br/>v1 — Mantle hackathon executor]
+    AP[Alpaca Paper<br/>bracket orders<br/>v1 testing path]
+    OR[Orderly Network<br/>perpetual futures · Mantle<br/>orderly-connector-rs<br/>v1 hackathon executor]
+
+    subgraph ERC8004 [ERC-8004 · Mantle]
+        ID[Identity Registry<br/>agent NFT<br/>+ vector_manifest_cid]
+        RP[Reputation Registry<br/>per-run feedback<br/>Δ-Sharpe + manifest hash]
+        VL[Validation Registry<br/>per-trade stance proof<br/>active alphas + result hash]
+    end
 
     DB[(SQLite<br/>decisions · briefings<br/>market state<br/>vectors_enabled flag)]
 
@@ -91,6 +99,8 @@ flowchart TD
     IND --> HA
 
     HA --> S1
+    S1 -.->|tool calls<br/>when INTERN=acpx| MCP
+    MCP -.->|computes at agent-supplied<br/>parameters| IND
     S1 -->|JSON: InternBriefing<br/>neutral evidence only| S2
     CV -.->|injected at<br/>mid-late layers| S2
     S2 -->|JSON: TraderDecision| R
@@ -99,7 +109,11 @@ flowchart TD
     R -.->|vetoed| DB
 
     S3 --> AP
-    S3 -.-> DEX
+    S3 --> OR
+    S3 -.->|after closed trade| VL
+
+    HA -.->|once at agent mint| ID
+    M -.->|after each run| RP
 
     S1 -.-> DB
     S2 -.-> DB
@@ -113,17 +127,17 @@ flowchart TD
     classDef deterministic fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#000
     classDef storage fill:#f3e8ff,stroke:#7c3aed,color:#000
     classDef external fill:#dcfce7,stroke:#16a34a,color:#000
-    classDef deferred fill:#fee2e2,stroke:#dc2626,stroke-dasharray:5 5,color:#000
     classDef orchestrator fill:#ffedd5,stroke:#ea580c,stroke-width:2px,color:#000
     classDef eval fill:#cffafe,stroke:#0891b2,color:#000
+    classDef onchain fill:#fce7f3,stroke:#db2777,stroke-width:2px,color:#000
 
     class S2,CV vectorOn
     class R deterministic
     class DB storage
-    class A1,A2,A3,AP external
-    class DEX deferred
-    class HA orchestrator
+    class A1,A2,A3,AP,OR external
+    class HA,MCP orchestrator
     class M,BL eval
+    class ID,RP,VL onchain
 ```
 
 ---
