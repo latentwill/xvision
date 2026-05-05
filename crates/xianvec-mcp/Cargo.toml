@@ -1,0 +1,31 @@
+[package]
+name        = "xianvec-mcp"
+description = "Model Context Protocol server exposing xianvec-data indicators as agent-callable tools"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+
+[lib]
+name = "xianvec_mcp"
+path = "src/lib.rs"
+
+[[bin]]
+name = "xvn-mcp"
+path = "src/main.rs"
+
+[dependencies]
+xianvec-data = { path = "../xianvec-data" }
+
+# rmcp 1.6: official Rust MCP SDK. Default features = base64 + macros + server.
+# transport-io enables `rmcp::transport::stdio()` for MCP-over-stdin/stdout.
+rmcp = { version = "1.6", features = ["transport-io"] }
+schemars = "1"
+
+tokio              = { workspace = true }
+serde              = { workspace = true }
+serde_json         = { workspace = true }
+tracing            = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow             = { workspace = true }
