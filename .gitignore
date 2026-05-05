@@ -17,8 +17,7 @@ env/
 .ruff_cache/
 
 # Env / secrets
-.env
-.env.*
+.env*
 !.env.example
 *.pem
 *.key
