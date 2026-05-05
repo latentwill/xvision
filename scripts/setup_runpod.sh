@@ -18,6 +18,12 @@
 #   ASSUME_YES=1                          Take all defaults; never prompt.
 #   SKIP_APT=1 SKIP_MODEL=1 SKIP_BUILD=1  Skip individual stages.
 #   ONLY=preflight|apt|rust|python|hf|model|intern|alpaca|build|verify
+#   TORCH_CUDA=cu118|cu121|cu124|cu126|cu128
+#                                         Override auto-detected PyTorch wheel
+#                                         channel. Auto-detection reads CUDA
+#                                         from `nvidia-smi`; override only when
+#                                         that's wrong or PyTorch publishes a
+#                                         channel newer than this script knows.
 #
 # Idempotent — re-running is safe.
 
@@ -117,13 +123,23 @@ install_apt() {
     return
   fi
   export DEBIAN_FRONTEND=noninteractive
-  $SUDO apt-get update -y
-  $SUDO apt-get install -y --no-install-recommends \
+  # Don't abort on third-party PPA failures (deadsnakes etc. can be unreachable
+  # from RunPod). Base images already ship the deps below, so a degraded
+  # `update` is usually fine — `install` will succeed against the cached lists.
+  if ! $SUDO apt-get update -y; then
+    warn "apt-get update reported errors (likely a broken third-party PPA in /etc/apt/sources.list.d/) — continuing"
+  fi
+  if ! $SUDO apt-get install -y --no-install-recommends \
     build-essential cmake pkg-config git curl ca-certificates \
     libssl-dev libsqlite3-dev \
     python3 python3-venv python3-pip python3-dev \
-    rsync jq tmux unzip
-  ok "apt packages installed"
+    rsync jq tmux unzip; then
+    warn "apt-get install reported errors — RunPod base images normally pre-install these."
+    warn "If a later stage fails with a missing system lib, disable broken PPAs with:"
+    warn "    sudo rm /etc/apt/sources.list.d/*deadsnakes* /etc/apt/sources.list.d/*ppa*"
+    warn "and re-run with ONLY=apt, or skip this stage entirely with SKIP_APT=1."
+  fi
+  ok "apt stage complete"
 }
 
 # ---------------------------------------------------------------------------
@@ -145,30 +161,99 @@ install_rust() {
 # ---------------------------------------------------------------------------
 # 4. python
 # ---------------------------------------------------------------------------
+# Pick a PyTorch wheel channel (cu118|cu121|cu124|cu126|cu128) matching the
+# host driver's CUDA. PyPI's default torch wheel is sometimes built against a
+# CUDA newer than RunPod's driver supports — that installs cleanly but then
+# torch.cuda.is_available() == False. Operator can override with TORCH_CUDA.
+pick_torch_cuda() {
+  if [[ -n "${TORCH_CUDA:-}" ]]; then echo "$TORCH_CUDA"; return; fi
+  local cuda_str maj min
+  cuda_str=$(nvidia-smi 2>/dev/null | sed -n 's/.*CUDA Version: \([0-9.]*\).*/\1/p' | head -1)
+  [[ -z "$cuda_str" ]] && return 0
+  maj=${cuda_str%%.*}
+  min=${cuda_str#*.}; min=${min%%.*}
+  # Pick the highest published cu12X channel <= host. >=12.8 / 13.x both use
+  # cu128 — the cu12 wheels are forward-compatible with newer drivers.
+  if   (( maj >= 13 ));               then echo "cu128"
+  elif (( maj == 12 && min >= 8 ));   then echo "cu128"
+  elif (( maj == 12 && min >= 6 ));   then echo "cu126"
+  elif (( maj == 12 && min >= 4 ));   then echo "cu124"
+  elif (( maj == 12 ));               then echo "cu121"
+  elif (( maj == 11 && min >= 8 ));   then echo "cu118"
+  fi
+}
+
 install_python() {
   stage 4/9 "python venv + deps"
   [[ -d "$VENV_DIR" ]] || python3 -m venv "$VENV_DIR"
   # shellcheck disable=SC1091
   source "$VENV_DIR/bin/activate"
   python -m pip install --upgrade pip wheel
+
+  # Install torch from the right wheel channel BEFORE requirements.txt so
+  # transitive resolution doesn't pull a default-PyPI wheel mismatched to the
+  # host CUDA. If torch is already installed and its bundled CUDA major
+  # doesn't match the host, force-reinstall.
+  local torch_cuda; torch_cuda="$(pick_torch_cuda)"
+  if [[ -n "$torch_cuda" ]]; then
+    local torch_index="https://download.pytorch.org/whl/$torch_cuda"
+    local need_install=1
+    if python -c "import torch" >/dev/null 2>&1; then
+      local installed_cuda
+      installed_cuda=$(python -c "import torch; print(torch.version.cuda or '')" 2>/dev/null || true)
+      # Bundled CUDA major must equal channel major (e.g. cu126 -> 12).
+      local channel_maj=${torch_cuda#cu}; channel_maj=${channel_maj:0:2}
+      local installed_maj=${installed_cuda%%.*}
+      if [[ -n "$installed_maj" && "$installed_maj" == "$channel_maj" ]] \
+         && python -c "import torch, sys; sys.exit(0 if torch.cuda.is_available() else 1)" 2>/dev/null; then
+        need_install=0
+        log "torch already installed and CUDA-functional ($installed_cuda) — skipping reinstall"
+      else
+        warn "torch present but CUDA mismatch (bundled=${installed_cuda:-?}, host=$torch_cuda) — force-reinstalling"
+      fi
+    fi
+    if (( need_install )); then
+      log "installing torch from $torch_index (matches host driver CUDA)"
+      python -m pip install --upgrade --force-reinstall \
+        --index-url "$torch_index" \
+        torch torchvision torchaudio
+    fi
+  else
+    warn "could not detect host CUDA from nvidia-smi — falling back to default torch wheel (may fail at runtime)"
+  fi
+
   python -m pip install -r tools/extract_vectors/requirements.txt
   python -m pip install "huggingface_hub[cli]>=0.24"
 
   log "verifying torch + CUDA"
-  python - <<'PY'
+  if ! python - <<'PY'
 import torch, sys
 print(f"  torch:          {torch.__version__}")
 print(f"  cuda available: {torch.cuda.is_available()}")
 print(f"  cuda built:     {torch.version.cuda}")
-print(f"  cudnn:          {torch.backends.cudnn.version()}")
+print(f"  cudnn:          {torch.backends.cudnn.version() if torch.cuda.is_available() else 'n/a'}")
 if torch.cuda.is_available():
     print(f"  device:         {torch.cuda.get_device_name(0)}")
     print(f"  capability:     {torch.cuda.get_device_capability(0)}")
 else:
-    print("  ERROR: torch.cuda.is_available() is False. The wheel may be CPU-only "
-          "or its bundled CUDA does not match the host driver.", file=sys.stderr)
+    print("  ERROR: torch.cuda.is_available() is False. The wheel's bundled CUDA "
+          "does not match the host driver.", file=sys.stderr)
     sys.exit(1)
 PY
+  then
+    # Last-ditch repair: re-resolve the channel and force-reinstall once.
+    local repair_cuda; repair_cuda="$(pick_torch_cuda)"
+    if [[ -n "$repair_cuda" ]]; then
+      warn "torch CUDA verification failed — force-reinstalling from cu wheel channel: $repair_cuda"
+      python -m pip install --upgrade --force-reinstall \
+        --index-url "https://download.pytorch.org/whl/$repair_cuda" \
+        torch torchvision torchaudio
+      python -c "import torch; assert torch.cuda.is_available(), 'still no CUDA'" \
+        || fail "torch.cuda.is_available() still False after reinstall — override with TORCH_CUDA=cuXXX"
+    else
+      fail "torch CUDA verification failed and no host CUDA detected"
+    fi
+  fi
   ok "torch+CUDA verified"
 
   python - <<'PY'
