@@ -98,6 +98,9 @@ pub enum InternProvider {
     Anthropic,
     OpenaiCompat,
     LocalCandle,
+    /// Subprocess to the `acpx` CLI driving an Agent Client Protocol
+    /// harness (codex / claude / openclaw / pi). See FOLLOWUPS F21.
+    Acpx,
 }
 
 #[derive(Debug, Clone, PartialEq, Validate, Serialize, Deserialize)]
