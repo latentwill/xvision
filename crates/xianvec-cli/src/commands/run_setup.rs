@@ -12,7 +12,7 @@ use xianvec_core::market::MarketSnapshot;
 use xianvec_core::trading::{
     Action, AssetSymbol, Direction, PortfolioState, TraderDecision,
 };
-use xianvec_intern::backend::{AnthropicIntern, InternBackend, OpenAICompatIntern};
+use xianvec_intern::backend::{AcpxIntern, AnthropicIntern, InternBackend, OpenAICompatIntern};
 use xianvec_intern::prompt::{build_intern_prompt, PromptOpts};
 
 pub async fn run(snapshot_path: PathBuf, intern_provider: String, model: String) -> anyhow::Result<()> {
@@ -23,6 +23,10 @@ pub async fn run(snapshot_path: PathBuf, intern_provider: String, model: String)
     let prompt = build_intern_prompt(&snap, &[], &PromptOpts::default());
     println!("(prompt {} chars)", prompt.len());
 
+    // ACPX provider can specify the underlying agent inline as `acpx:<agent>`
+    // (e.g. `acpx:codex`, `acpx:claude`) OR by setting `XVN_INTERN_ACPX_AGENT`.
+    // The `model` arg is treated as documentation when the provider is acpx —
+    // the actual model is whatever the harness has configured.
     let intern: Box<dyn InternBackend> = match intern_provider.as_str() {
         "anthropic" => Box::new(AnthropicIntern::from_env(
             "https://api.anthropic.com",
@@ -34,6 +38,16 @@ pub async fn run(snapshot_path: PathBuf, intern_provider: String, model: String)
             &model,
             "OPENAI_API_KEY",
         )?),
+        p if p == "acpx" || p.starts_with("acpx:") => {
+            let agent = p
+                .strip_prefix("acpx:")
+                .map(str::to_string)
+                .or_else(|| std::env::var("XVN_INTERN_ACPX_AGENT").ok())
+                .ok_or_else(|| anyhow::anyhow!(
+                    "acpx provider requires an agent: pass `acpx:<agent>` or set XVN_INTERN_ACPX_AGENT"
+                ))?;
+            Box::new(AcpxIntern::from_env(agent)?)
+        }
         other => anyhow::bail!("unknown intern provider: {other}"),
     };
 
