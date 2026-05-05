@@ -174,7 +174,50 @@ Format: title → trigger → scope → blocking?
 - **Impact if landed upstream:** F19 collapses to "switch from in-house REST shims to `OrderlyService` calls behind `default-features = false, features = ["evm"]`." ~30–50 LoC PR upstream; tests should cover both `--features solana` and `--features evm` invocations.
 - **Blocking:** non-blocking. Worth filing whether or not we want to take F19 ourselves; the wider Rust EVM ecosystem benefits.
 
-### F21. Replace HTTP-backend Intern with an OpenClaw / ACPX agent-harness backend
+### F21. Replace HTTP-backend Intern with an OpenClaw / ACPX agent-harness backend  *(partial — ACPX subprocess backend landed)*
+
+**Landed 2026-05-04:** `AcpxIntern` in `crates/xianvec-intern/src/backend.rs`
+spawns `acpx <agent> exec --file -` (or `acpx --agent "<cmd>" exec --file -`
+in escape-hatch mode) with a wall-clock timeout, captures stdout, strips
+ACP markers (`[thinking]/[tool]/[done]`), and runs the result through the
+shared `parse_llm_response`. Wired into `xvn run-setup` and `xvn ab-compare`
+via provider strings `acpx` or `acpx:<agent>`. Setup script
+(`scripts/setup_runpod.sh`) installs Node + acpx and exposes the full ACPX
+built-in registry (claude / codex / gemini / opencode / cursor / copilot /
+qwen / kimi / iflow / trae / qoder / kilocode / kiro / droid / openclaw /
+pi) plus an escape-hatch slot for Hermes Agent — itself an ACP server,
+reached via `acpx --agent "hermes acp" exec ...`. The underlying agent
+CLI is NOT auto-installed; auth flows vary.
+
+Hermes Agent (NousResearch) is the OpenClaw successor — its own README
+documents `hermes claw migrate` from OpenClaw — and it has direct first-
+class routes to Xiaomi MiMo / Kimi / GLM / MiniMax / Nous Portal that
+none of the other ACPX agents offer in one place. Because it ships an
+ACP adapter (`acp_adapter/` in the repo), no separate Rust backend is
+needed: `XVN_INTERN_ACPX_CUSTOM_CMD="hermes acp"` routes through the
+same `AcpxIntern` code path.
+
+**Tools (landed 2026-05-04):** new crate `crates/xianvec-mcp/` ships a
+stdio MCP server (`xvn-mcp`) wrapping `xianvec-data` indicators as
+agent-callable tools — `xvn_rsi`, `xvn_sma`, `xvn_ema`, `xvn_bollinger`,
+`xvn_atr`, `xvn_macd`, `xvn_donchian`, `xvn_fib_retracements`, plus
+`xvn_health`. Built on rmcp 1.6 (the official Rust MCP SDK) so the wire
+contract is maintained upstream. The setup script writes
+`<acpx-workspace>/acpx.config.json` registering xvn-mcp as a stdio MCP
+server, and ACPX threads `mcpServers: [...]` into every agent session —
+so Hermes, Claude Code, Codex, OpenCode, and any future ACPX agent
+inherit the tools without further wiring. Pure compute, stateless, no
+data root or API keys; preserves backtest pairing because the agent
+supplies the input series from prompt context. Live API tools (funding
+rates, onchain panel reads) are deferred until the live data path is
+solid.
+
+**Still open:** budget/cost telemetry, deterministic-fallback wiring (caller
+currently falls back manually by switching provider), live-data MCP tools
+(funding/onchain) once the data layer stabilises, backtest determinism
+story for agent-harness paths.
+
+
 
 - **Trigger:** Phase 9 result is positive and we want to push the Intern's analytical depth before forward paper, OR Phase 11 forward run shows the Intern is the bottleneck on hard setups.
 - **Current state:** Phase 2.2 ships `OpenAICompatIntern` and `AnthropicIntern` — both single-shot LLM calls that take a prompt and emit `InternBriefing`. The backend trait surface is interchangeable by design (Tier 1 fix #1 + plan §2.2), so a new backend impl plugs in cleanly without touching the prompt builder, cache, or trader.
@@ -191,3 +234,27 @@ Format: title → trigger → scope → blocking?
 - **Trigger:** any other `VetoReason::Custom(...)` site lands in the codebase.
 - **Scope:** one line in `xianvec-core::trading.rs` enum + serde rename + cascade through any exhaustive `match VetoReason {...}` — `xianvec-risk::rules::take_profit_rr` switches off `Custom("rr_too_low")`.
 - **Blocking:** non-blocking; quality-of-enum.
+
+### F23. Pluggable Trader stage — let users bring their own agent instead of vectors
+
+- **Trigger:** want to position xianvec as a framework, not just a vector-steering project. Adopters who don't care about control vectors should still be able to use the data layer, indicator MCP server, paired-arm A/B harness, and Alpaca paper plumbing with their own decision-making agent.
+- **Current state:** Stage 2 (`crates/xianvec-trader/`) is hardcoded to candle + Qwen3 GGUF + steering-vector hooks. The vector-on / vector-off arms ARE the experimental contrast. Anyone who wants to swap the brain has to fork.
+- **Scope:**
+  - Define `TraderBackend` trait analogous to `InternBackend`. Input: `MarketSnapshot` + `InternBriefing`. Output: `TraderDecision`.
+  - Keep the existing Qwen3-with-vectors path as one impl (`Qwen3VectorTrader`).
+  - Add a new impl `McpAgentTrader` that drives an external agent over MCP / ACPX. The xianvec MCP server (already shipped — F21 partial) gives the agent indicator + onchain tools; the agent emits a `TraderDecision`-shaped JSON the same way the Intern emits an `InternBriefing`.
+  - Pluggable via `[trader] backend = "qwen3-vectors" | "mcp-agent"` in `config/default.toml`.
+- **Why MCP and not "any agent":** MCP is the lowest-friction glue. Agents that don't speak MCP can still be reached via `acpx --agent` once the trader backend goes through ACPX too. We're not committing to MCP being the only route — it's the *default* one.
+- **Open questions:**
+  - The vectors-on / vectors-off pairing breaks down if the Trader is a generic agent — the experimental contrast is no longer "vectors do X." The Trader-via-MCP path should disable the `random` and `orthogonal` arms automatically and run a single arm; A/B becomes "with-xianvec-data-tools vs without" or just "headline run, no contrast."
+  - Determinism for backtest (Tier 1 fix #2) — same problem as F21 / the AcpxIntern.
+  - How to surface the "I have an agent, no vectors" path in `setup_runpod.sh`. Probably a top-level mode prompt: "vectors / agent / both" before the model menu.
+- **Blocking:** non-blocking. v1 headline still wants the Qwen3-vectors path. F23 is for v2-and-beyond positioning.
+
+### F24. DeepSeek-TUI as a reasoning intern — short-term via OpenAI-compat, long-term via Hmbown cargo mirror
+
+- **Trigger:** want DeepSeek's reasoner (R1) or chat (V3.x) line in the Stage 1 Intern slot.
+- **Short-term (no code):** DeepSeek's hosted API is OpenAI Chat Completions wire-compatible. Use the existing `OpenAICompatIntern` against `https://api.deepseek.com/v1` with `DEEPSEEK_API_KEY`; `deepseek-reasoner` emits `<think>...</think>` blocks which `strip_reasoning` (`crates/xianvec-intern/src/reasoning.rs`) already handles. Single-shot, deterministic at `temperature=0` — the *right* shape for Stage 1 (briefing only, no tool use), and unlike `AcpxIntern` it pairs cleanly for backtest (Tier 1 fix #1). No new backend needed.
+- **Long-term (release-time note):** there's a Cargo-native rewrite/mirror of DeepSeek-TUI at https://github.com/Hmbown/DeepSeek-TUI (Hmbown fork). At release time, mention it in our README and consider shipping a zh-CN README localization pointing zh-CN users at that fork (and at Hermes Agent → Xiaomi MiMo / Kimi / GLM / MiniMax routes via ACPX) — the audience for a Rust-first DeepSeek harness skews heavily zh-CN.
+- **What we'd actually have to build to drive DeepSeek-TUI as an *agent* (not just the API):** either (a) ~2–3 days for an external `deepseek-tui-acp-shim` binary that translates ACP ↔ DeepSeek-TUI's existing one-shot mode (plugged in via `XVN_INTERN_ACPX_CUSTOM_CMD`), or (b) ~5–10 days upstreaming an `acp` subcommand into DeepSeek-TUI itself. Skip both unless the agent loop (file I/O, multi-step tool use) starts paying for itself in briefing quality — for Stage 1 it doesn't.
+- **Blocking:** non-blocking. Short-term path is zero-code.

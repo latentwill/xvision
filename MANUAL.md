@@ -22,8 +22,9 @@ operator-side prerequisites.
   2. Pick an instance with ≥80 GB VRAM (A100/H100) or ≥48 GB (A40 — works for
      Q4 + bf16 single-layer extraction).
   3. SSH in; clone the repo on the box.
-  4. `pip install -r tools/extract_vectors/requirements.txt` (huggingface_hub,
-     mlx-lm or transformers, numpy, pyyaml).
+  4. `pip install -r tools/extract_vectors/requirements.txt` (torch,
+     transformers, accelerate, repeng, numpy, pyyaml — see the file for
+     pinned versions and rationale).
   5. `huggingface-cli login` if you don't have the Qwen3-32B weights cached on
      the GPU.
 - **Exit:** GPU box can `python tools/extract_vectors/extract_vectors.py --help`
@@ -34,45 +35,42 @@ operator-side prerequisites.
 
 - **Trigger:** M1 complete.
 - **What:** run `tools/extract_vectors/extract_vectors.py` for each of the four
-  axes against `Qwen/Qwen3-32B`, layers 20/32/42/50.
-- **Commands** (on the GPU box):
+  axes against `Qwen/Qwen3-32B`, layers 20/32/42/50. **`--out` is a path
+  prefix, not a directory.** Each invocation writes (relative to that
+  prefix): `<out>.npz` + `<out>.manifest.json` for the real vector,
+  `<out>_random.npz` + `_random.manifest.json` (Frobenius-norm-matched
+  Gaussian control), `<out>_orth.npz` + `_orth.manifest.json` (orthogonal
+  control), plus per-layer sidecars `<out>_L<layer>.manifest.json`. **The
+  Random + Orthogonal controls auto-emit on every run — no separate
+  invocation needed.**
+- **Commands** (on the GPU box, run from repo root):
 
   ```bash
   python tools/extract_vectors/extract_vectors.py \
-    --model Qwen/Qwen3-32B \
-    --spec specs/conviction.yaml \
+    --model  Qwen/Qwen3-32B \
+    --spec   tools/extract_vectors/specs/conviction.yaml \
     --layers 20,32,42,50 \
-    --out data/vectors/conviction_v1
+    --out    data/vectors/conviction_v1
   ```
 
   Repeat for `patience.yaml`, `risk.yaml`, `trend.yaml` (each: pipeline-only;
-  Conviction is the active axis for v1).
-
-  Then generate **Random + Orthogonal control vectors** against the
-  Conviction axis (for the Phase 9.2 A/B nulls):
-
+  Conviction is the active axis for v1). The Phase 9.2 A/B nulls consume the
+  Conviction-axis `_random.npz` and `_orth.npz` produced by the first run.
+- **Verify** the manifest sidecars parse cleanly via the runtime's surface:
   ```bash
-  python tools/extract_vectors/extract_vectors.py \
-    --model Qwen/Qwen3-32B \
-    --control random   --against data/vectors/conviction_v1 \
-    --out data/vectors/control_random_v1
-  python tools/extract_vectors/extract_vectors.py \
-    --model Qwen/Qwen3-32B \
-    --control orthogonal --against data/vectors/conviction_v1 \
-    --out data/vectors/control_orthogonal_v1
+  xvn explain-vectors --manifest data/vectors/conviction_v1.manifest.json
+  xvn explain-vectors --manifest data/vectors/conviction_v1_orth.manifest.json
   ```
-- **Verify:**
-  ```bash
-  cargo test -p xianvec-inference substrate::tests::load_spike_fixture_returns_correct_shape
-  ```
-  passes against the new `.npz` + sidecar; manifest fields (`model_id`,
-  `model_quant`, `contrast_pair_set_hash`) match what the runtime expects.
+  Both should pretty-print `model_id`, `model_quant`, `layers`, and
+  `contrast_pair_set_hash` without errors. (Directional-match validation is
+  M3's job, not M2's.)
 - **Then SCP back:**
   ```bash
   rsync -avz <gpu_user>@<gpu_host>:~/xianvec/data/vectors/ data/vectors/
   ```
-- **Exit:** four `data/vectors/*_v1/` directories present locally; each loads
-  via `xianvec_inference::substrate::load_vector`.
+- **Exit:** four `data/vectors/<axis>_v1.npz` files locally, each with
+  matching `.manifest.json`, `_random.npz`, `_orth.npz`, and per-layer
+  sidecars; each loads via `xianvec_inference::substrate::load_vector`.
 - **Unblocks:** F2, F1 (next), F16, Phase 9.2 / 9.3.
 
 ### M3. Re-run spike directional match through the candle runtime (F1 hard gate)
@@ -100,11 +98,11 @@ operator-side prerequisites.
   ```bash
   xvn ab-compare \
     --setups data/setups/2022_2024_paired.parquet.json \
-    --bars data/bars/btc_2022_2024.json \
-    --asset BTC \
-    --arms off,on:data/vectors/conviction_v1/conviction.npz:data/vectors/conviction_v1/conviction.manifest.json:1.0,random:layer=20:dim=5120:alpha=1.0:seed=42,orthogonal:axis=conviction:path=data/vectors/control_orthogonal_v1/orth.npz:alpha=1.0 \
-    --model models/qwen3-32b-Q8_0/qwen3-32b.Q8_0.gguf \
-    --tokenizer models/qwen3-32b-Q8_0/tokenizer.json \
+    --bars   data/bars/btc_2022_2024.json \
+    --asset  BTC \
+    --arms   off,on:data/vectors/conviction_v1.npz:data/vectors/conviction_v1.manifest.json:1.0,random:layer=20:dim=5120:alpha=1.0:seed=42,orthogonal:axis=conviction:path=data/vectors/conviction_v1_orth.npz:alpha=1.0 \
+    --model     models/qwen3-32b-q8-gguf/Qwen_Qwen3-32B-Q8_0.gguf \
+    --tokenizer models/qwen3-32b-q8-gguf/tokenizer.json \
     --output reports/headline_Q8/$(date +%F).json
   xvn report --input reports/headline_Q8/$(date +%F).json --output reports/headline_Q8/$(date +%F).md
   ```
@@ -129,17 +127,26 @@ operator-side prerequisites.
      export APCA_API_SECRET_KEY=$(op read 'op://Personal/xianvec-alpaca-paper/api_secret_key')
      export APCA_API_BASE_URL=https://paper-api.alpaca.markets
      ```
-  5. Smoke: place + cancel a test order via `xvn run-setup` against an
-     Alpaca-supported asset (BTC/USD on Alpaca crypto, or use SPY equity).
-- **Exit:** ≥1 round-trip submit+cancel against paper API succeeds.
+  5. Smoke the credentials with a read-only `/v2/account` round-trip
+     (no submit-flow on `xvn` ships yet — `xvn run-setup` is the
+     Intern → Risk slice; execution is added in Phase 11.1):
+     ```bash
+     curl -s \
+       -H "APCA-API-KEY-ID: $APCA_API_KEY_ID" \
+       -H "APCA-API-SECRET-KEY: $APCA_API_SECRET_KEY" \
+       "$APCA_API_BASE_URL/v2/account" | jq '.id, .status, .buying_power'
+     ```
+- **Exit:** `/v2/account` returns the paper account id + `status: ACTIVE`.
 - **Unblocks:** Phase 11.1.
 
 ### M6. Onboard to Orderly testnet + smoke trade (F5)
 
 - **Trigger:** Phase 11.5 prep.
 - **What:**
-  1. Complete Orderly's brokered onboarding for an EVM (Mantle) wallet.
-     `xvn setup --orderly-onboard` runs the flow per implementation-plan §6.3.
+  1. Complete Orderly's brokered onboarding for an EVM (Mantle) wallet via
+     the Orderly EVM gateway (web flow). The `xvn setup --orderly-onboard`
+     subcommand specced in implementation-plan §6.3 is **not yet shipped**;
+     onboarding is currently manual.
   2. Save `(orderly_key, orderly_secret, orderly_account_id)` in 1Password
      under `xianvec/orderly-testnet`.
   3. Export at runtime:
@@ -149,10 +156,16 @@ operator-side prerequisites.
      export ORDERLY_ACCOUNT_ID=$(op read 'op://Personal/xianvec-orderly-testnet/account_id')
      export ORDERLY_BASE_URL=https://testnet-api-evm.orderly.org
      ```
-  4. Smoke: place + cancel a tiny `PERP_BTC_USDC` market order against
-     testnet via `xvn run-setup --executor orderly --network testnet`.
-- **Exit:** ≥1 round-trip submit+cancel against Orderly testnet succeeds; SDK
-  errors map to `ExecutorError`.
+  4. Smoke against testnet via the existing M0 probe — it exercises the
+     full signed-request path used by `xianvec-execution`:
+     ```bash
+     cargo run --release --manifest-path probes/m0-orderly/Cargo.toml
+     ```
+     The probe places + cancels a tiny `PERP_BTC_USDC` order and verifies
+     SDK errors map to `ExecutorError`. (When `xvn run-setup` grows
+     `--executor orderly`, this step migrates to the CLI.)
+- **Exit:** the M0 probe completes a round-trip submit+cancel against
+  Orderly testnet without errors.
 - **Unblocks:** Phase 11.5.
 - **FOLLOWUPS:** F5.
 
@@ -172,15 +185,31 @@ operator-side prerequisites.
        with the actual `Manifest::content_hash()` of the production vector
        from M2.
   4. Set `identity.enabled = true` in `config/default.toml` (or per-env override).
-  5. Mint:
+  5. Mint. **`xianvec-identity` ships as a library only today** — no
+     `mint-identity` binary, no `xvn mint-identity` subcommand. Until one
+     lands, write a thin driver against the real surface
+     (`crates/xianvec-identity/src/client.rs`):
+     - `RegistryAddresses::custom(identity, reputation)` — pass the
+       deployed-on-Mantle contract addresses (the `mantle_mainnet()` and
+       `mantle_testnet()` constructors currently return `None` until those
+       deployments are pinned in the crate).
+     - `IdentityClient::connect(rpc_url, addrs, chain_id).await?`
+     - `client.register(&agent_uri, &signer).await?` returns a `TokenId`.
+     The canonical usage pattern lives in the integration test at
+     `crates/xianvec-identity/src/client.rs` (the `register_*` tests around
+     L560–L580). Mantle testnet is `chain_id = 5003`; mainnet is `5000`.
+     Then:
      ```bash
      export MANTLE_RPC_URL=https://rpc.sepolia.mantle.xyz   # testnet
      export MANTLE_DEPLOYER_KEY=$(op read 'op://Personal/xianvec-mantle/deployer_pk')
-     cargo run --release -p xianvec-identity --bin mint-identity -- \
-       --manifest identity/vectors_off.agent.json
-     cargo run --release -p xianvec-identity --bin mint-identity -- \
-       --manifest identity/vectors_on.agent.json
+     cargo run --release -p xianvec-identity \
+       --example mint_identity -- identity/vectors_off.agent.json
+     cargo run --release -p xianvec-identity \
+       --example mint_identity -- identity/vectors_on.agent.json
      ```
+     (`examples/mint_identity.rs` is the driver you write; the workspace
+     doesn't ship it yet. File a follow-up — this gap also blocks Phase
+     11.5 the moment F4 reaches "ready to mint.")
   6. Save the resulting (token_id, contract_addr) pair into the manifest
      and commit.
 - **Exit:** both NFTs minted on the chosen network; `identity/<arm>.agent.json`
@@ -234,12 +263,48 @@ operator-side prerequisites.
 
 ### M11. Download tokenizer.json
 
-- **What:** the Qwen3-32B `tokenizer.json` (separate from the GGUF).
+- **What:** the Qwen3-32B `tokenizer.json` (separate from the GGUF;
+  identical content for Q4 and Q8 — copy/symlink it into whichever quant
+  dirs you've downloaded).
 - **Suggested:**
   ```bash
   huggingface-cli download Qwen/Qwen3-32B tokenizer.json \
     --local-dir models/qwen3-32b-q4-gguf --local-dir-use-symlinks False
+  cp models/qwen3-32b-q4-gguf/tokenizer.json models/qwen3-32b-q8-gguf/
   ```
+  (M4's headline run reads from the Q8 dir.)
+
+### M11.5. Wire the MCP indicator server (only when `INTERN=acpx`)
+
+- **Trigger:** running the Stage 1 Intern through the ACPX agent harness
+  (`XVN_INTERN_PROVIDER=acpx`) and you want the agent to recompute
+  indicators at parameter sets the snapshot doesn't pre-bake (e.g. RSI(7)
+  when the snapshot only carries RSI(14)). Skip otherwise — the MCP server
+  is irrelevant to the OpenAI-compat / Anthropic Intern paths.
+- **What:** `crates/xianvec-mcp/` builds a stateless stdio MCP server,
+  `xvn-mcp`, that exposes `xianvec-data`'s indicator surface (rsi · sma ·
+  ema · bollinger · atr · macd · donchian · fib_retracements · health) as
+  agent-callable tools. ACPX advertises it to every agent session via
+  `mcpServers: [...]` in `acpx.config.json`.
+- **Setup steps** (auto-run by `scripts/setup_runpod.sh` when
+  `INTERN=acpx`):
+  1. `cargo build --release -p xianvec-mcp` (produces `target/release/xvn-mcp`).
+  2. Write `<acpx-workspace>/acpx.config.json` registering the binary as a
+     stdio MCP server. The setup script does this for you; otherwise
+     install ACPX (`npm install -g acpx@latest`) and add the stanza by
+     hand. Each ACPX-driven agent (claude / codex / openclaw / hermes /
+     etc.) has its own install + auth flow on top — see the relevant agent
+     CLI for those.
+- **Verify:** from inside the chosen ACPX agent session, ask it to call
+  the `xvn_health` tool. Expected response: `{"ok": true, "name":
+  "xianvec-mcp", "version": "<x.y.z>"}`. Any other indicator (`xvn_rsi` on
+  a small synthetic price series) is a fine smoke too.
+- **Exit:** `xvn_health` returns `ok: true` from the agent's tool channel.
+- **Unblocks:** F21 (ACPX-driven Intern), and any future agent-harness
+  caller that needs the indicator surface (F23 pluggable Trader).
+- **Caveat:** live-data tools (funding rates, onchain panel reads) are not
+  in this MCP yet — the agent must supply input series from prompt
+  context. Determinism for backtest stays via that constraint.
 
 ### M12. Source paired setups + bars JSON for the backtest
 
@@ -321,32 +386,60 @@ operator-side prerequisites.
 
 ---
 
-## Quick env-var checklist
+## Quick env-var checklist (remote GPU box)
+
+These exports belong on the remote server (RunPod / Vast.ai), not the
+local dev machine. `scripts/setup_runpod.sh` persists most of them to
+`$REPO_ROOT/.env.local` — `source .env.local` before running `xvn`.
 
 ```bash
-# Stage 1 Intern
-export ANTHROPIC_API_KEY=...                  # M8
-export OPENAI_API_KEY=...   (optional)        # M9
-export OPENAI_BASE_URL=...  (optional)        # M9
+# Hugging Face — required by setup_runpod.sh preflight + M2 model download
+export HF_TOKEN=...                           # M1, M10
+export HUGGING_FACE_HUB_TOKEN="$HF_TOKEN"     # huggingface-cli also reads this
+
+# Stage 1 Intern — pick one provider and set the matching key
+# Persisted by setup_runpod.sh based on the INTERN= choice:
+export XVN_INTERN_PROVIDER=anthropic          # | openai-compat | acpx
+export XVN_INTERN_BASE_URL=https://api.anthropic.com
+export XVN_INTERN_MODEL=claude-haiku-4-5
+export XVN_INTERN_KEY_ENV=ANTHROPIC_API_KEY   # name of the var that holds the key
+export ANTHROPIC_API_KEY=...                  # M8 (or OPENAI_API_KEY etc. — M9)
+# ACPX path only (XVN_INTERN_PROVIDER=acpx):
+export XVN_INTERN_ACPX_AGENT=claude           # | codex | openclaw | hermes | ...
+# export XVN_INTERN_ACPX_CUSTOM_CMD="hermes acp"   # escape hatch for Hermes
+# export XVN_INTERN_ACPX_BIN=acpx                  # override binary name
+# export XVN_INTERN_ACPX_TIMEOUT_SECS=300          # default 300s
+# export XVN_INTERN_ACPX_MAX_OUTPUT_BYTES=2097152  # default 2 MiB
+
+# Local Trader (Stage 2) — persisted by setup_runpod.sh from the model menu
+export XVN_MODEL_KIND=gguf                    # | fp16
+export XVN_MODEL_PATH=$PWD/models/qwen3-32b-q8-gguf/Qwen_Qwen3-32B-Q8_0.gguf
+export XVN_TOKENIZER=$PWD/models/qwen3-32b-q8-gguf/tokenizer.json
+# (XVN_MODEL_KIND=fp16 uses XVN_MODEL_DIR instead of XVN_MODEL_PATH/_TOKENIZER.)
 
 # Phase 11.1 Alpaca paper
 export APCA_API_KEY_ID=...                    # M5
 export APCA_API_SECRET_KEY=...                # M5
 export APCA_API_BASE_URL=https://paper-api.alpaca.markets
 
-# Phase 11.5 Orderly
+# Phase 11.5 Orderly testnet
 export ORDERLY_KEY=...                        # M6
 export ORDERLY_SECRET=...                     # M6
 export ORDERLY_ACCOUNT_ID=...                 # M6
 export ORDERLY_BASE_URL=https://testnet-api-evm.orderly.org
 
 # Phase 11.5 Mantle (only if identity.enabled = true)
-export MANTLE_RPC_URL=https://rpc.sepolia.mantle.xyz   # M7
+export MANTLE_RPC_URL=https://rpc.sepolia.mantle.xyz   # M7 (testnet, chain 5003)
 export MANTLE_DEPLOYER_KEY=...                # M7
+
+# Throughput (advisory; codify in .cargo/config.toml when F9 confirms a stable win)
+# export RUSTFLAGS="-C target-cpu=native"     # F9 / F10
 ```
 
-Recommend stashing all of the above in `.envrc` (direnv) at the workspace
-root, gitignored, populated via `op read`. Never commit the raw keys.
+Pull values from 1Password with `op read 'op://...'` rather than pasting
+secrets inline. The setup script writes `$REPO_ROOT/.env.local`
+(gitignored); use `direnv` locally if you want auto-loading, otherwise
+`source .env.local` per shell.
 
 ---
 
