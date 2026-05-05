@@ -277,3 +277,14 @@ story for agent-harness paths.
   - User-installable vs project-local (`.claude/skills/xianvec/` checked in)? Project-local survives across machines + onboards collaborators; user-installable stays light. Probably both — minimal user skill that points at the project copy.
   - Auto-trigger heuristics: filename patterns (`crates/xianvec-*/`), workspace-root marker (`Cargo.toml` containing `xianvec-core`)? Description-based discovery is usually enough.
 - **Blocking:** non-blocking. Quality-of-life for future sessions; deferred until phase 9 headline + GPU experiment land so the contents stop churning.
+
+### F26. Split Mac/MLX path out of the shared `scripts/download_qwen.py`
+
+- **Trigger:** any time after the current GPU headline run completes — non-blocking; the recent `setup_runpod.sh` torch-wheel fix already made the Linux path MLX-clean.
+- **Current state:** `scripts/download_qwen.py` is dual-purpose — Step 1 grabs `mlx-community/Qwen3-32B-4bit` (~18 GB, Mac/Apple Silicon spike), Step 2 grabs GGUF Q4. Mac operators always get GGUF too; Linux operators have no reason to call this script at all (setup_runpod.sh does its own download). `tools/extract_vectors/spike/{extract,validate}.py` imports `mlx`/`mlx_lm` — fine on Mac, hard-fails on Linux even though they live under the otherwise cross-platform `tools/extract_vectors/` tree.
+- **Scope:**
+  - Rename `scripts/download_qwen.py` → `scripts/download_qwen_mlx.py`; strip the GGUF half (Linux/CUDA users go through `setup_runpod.sh`).
+  - Add `scripts/setup_mac.sh` — Apple Silicon counterpart to `setup_runpod.sh`. Preflight (`uname -sm` → Darwin/arm64 check), venv, `pip install mlx mlx-lm transformers accelerate repeng pyyaml numpy`, call `download_qwen_mlx.py`, print next steps for the Phase 0.3 spike. Mirror the stage layout (preflight → python → hf → model → verify) so muscle memory transfers.
+  - Add a clearer "Apple Silicon only — requires `mlx`/`mlx-lm`" docstring header to `tools/extract_vectors/spike/extract.py` and `validate.py` so they don't read as cross-platform. Optionally move them under `tools/extract_vectors/spike/mlx/`.
+  - MANUAL.md M0/M1: split into "Linux GPU box (RunPod / Vast.ai) → `scripts/setup_runpod.sh`" vs "Apple Silicon (local dev / spike) → `scripts/setup_mac.sh`".
+- **Blocking:** non-blocking. Refactor for clarity; current Linux path is already correct (verified: setup_runpod.sh has zero MLX references, and the agent doing the install on the GPU box cleaned up any stragglers).
