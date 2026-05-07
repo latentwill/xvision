@@ -13,7 +13,6 @@
 //! - prev_fast >= prev_slow AND curr_fast < curr_slow → Sell Short (death cross)
 //! - No prior bar (warmup) or same relative position → None
 
-use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 use async_trait::async_trait;
@@ -83,7 +82,6 @@ impl Strategy for MaCrossover {
                             "MaCrossover: SMA{} crossed above SMA{} — golden cross long.",
                             self.fast_window, self.slow_window
                         ),
-                        active_vectors: BTreeMap::new(),
                     })
                 } else if death_cross {
                     Some(TraderDecision {
@@ -97,7 +95,6 @@ impl Strategy for MaCrossover {
                             "MaCrossover: SMA{} crossed below SMA{} — death cross short.",
                             self.fast_window, self.slow_window
                         ),
-                        active_vectors: BTreeMap::new(),
                     })
                 } else {
                     None
@@ -199,7 +196,6 @@ mod tests {
         assert_eq!(dec.action, Action::Buy);
         assert_eq!(dec.direction, Direction::Long);
         assert_eq!(dec.size_bps, 1000);
-        assert!(dec.active_vectors.is_empty());
     }
 
     #[tokio::test]

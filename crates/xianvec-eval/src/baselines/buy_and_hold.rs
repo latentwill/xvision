@@ -1,7 +1,6 @@
 //! BuyAndHold baseline — fires one Buy Long on the first snapshot, then
 //! returns `None` for all subsequent calls. Acts as the static long benchmark.
 
-use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use async_trait::async_trait;
@@ -50,7 +49,6 @@ impl Strategy for BuyAndHold {
                 stop_loss_pct: 5.0,
                 take_profit_pct: 10.0,
                 trader_summary: "BuyAndHold: static long entry — buy once, hold forever.".into(),
-                active_vectors: BTreeMap::new(),
             })
         } else {
             None
@@ -103,7 +101,6 @@ mod tests {
         assert_eq!(dec.size_bps, 1500);
         assert!((dec.stop_loss_pct - 5.0).abs() < f32::EPSILON);
         assert!((dec.take_profit_pct - 10.0).abs() < f32::EPSILON);
-        assert!(dec.active_vectors.is_empty(), "baselines have no vectors");
     }
 
     #[tokio::test]

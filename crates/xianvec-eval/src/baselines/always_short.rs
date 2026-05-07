@@ -1,8 +1,6 @@
 //! AlwaysShort baseline — emits Sell Short 500 bps on every snapshot.
 //! Mirror of AlwaysLong; acts as the constant-bear null hypothesis.
 
-use std::collections::BTreeMap;
-
 use async_trait::async_trait;
 use xianvec_core::market::MarketSnapshot;
 use xianvec_core::trading::{Action, Direction, TraderDecision};
@@ -26,7 +24,6 @@ impl Strategy for AlwaysShort {
             stop_loss_pct: 2.0,
             take_profit_pct: 4.0,
             trader_summary: "AlwaysShort: unconditional short entry at 500 bps.".into(),
-            active_vectors: BTreeMap::new(),
         })
     }
 }
@@ -72,7 +69,6 @@ mod tests {
         assert_eq!(dec.size_bps, 500);
         assert!((dec.stop_loss_pct - 2.0).abs() < f32::EPSILON);
         assert!((dec.take_profit_pct - 4.0).abs() < f32::EPSILON);
-        assert!(dec.active_vectors.is_empty());
     }
 
     #[tokio::test]

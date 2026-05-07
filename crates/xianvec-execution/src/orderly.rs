@@ -892,7 +892,6 @@ impl<A: OrderlyApi + 'static> Executor for OrderlyExecutor<A> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeMap;
     use std::sync::{Arc, Mutex};
 
     use uuid::Uuid;
@@ -1050,7 +1049,6 @@ mod tests {
                 stop_loss_pct: 2.5,
                 take_profit_pct: 5.0,
                 trader_summary: "Long entry on confirmed range break with 2:1 R:R.".into(),
-                active_vectors: BTreeMap::new(),
             },
         }
     }
@@ -1155,7 +1153,6 @@ mod tests {
                 stop_loss_pct: 2.0,
                 take_profit_pct: 4.0,
                 trader_summary: "Vetoed test decision — should not reach executor.".into(),
-                active_vectors: BTreeMap::new(),
             },
             reason: VetoReason::DailyLossCircuitBreaker,
         };

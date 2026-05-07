@@ -351,7 +351,6 @@ impl BacktestRunner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeMap;
     use chrono::TimeZone;
     use uuid::Uuid;
     use xianvec_core::market::{IndicatorPanel, OnchainPanel, Ohlcv};
@@ -409,7 +408,6 @@ mod tests {
                 stop_loss_pct: 5.0,
                 take_profit_pct: 10.0,
                 trader_summary: "AlwaysBuy test strategy for harness smoke test.".into(),
-                active_vectors: BTreeMap::new(),
             })
         }
     }
