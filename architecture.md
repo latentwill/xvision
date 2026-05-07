@@ -295,13 +295,13 @@ A `--executor {alpaca,orderly}` flag selects between them at runtime. The Orderl
 
 ---
 
-### 6.1 ERC-8004 — On-chain agent identity and stance provenance
+### 6.1 ERC-8004 — On-chain agent identity and strategy provenance
 
-ERC-8004 (deployed on Ethereum mainnet and Mantle mainnet, January–February 2026) defines three lightweight on-chain registries for autonomous agents: **Identity**, **Reputation**, and **Validation**. All three are load-bearing for xianvec's Mantle submission, and each maps cleanly onto the control-vector architecture.
+ERC-8004 (deployed on Ethereum mainnet and Mantle mainnet, January–February 2026) defines three lightweight on-chain registries for autonomous agents: **Identity**, **Reputation**, and **Validation**. All three are load-bearing for xianvec's Mantle submission, and each maps cleanly onto the multistrategy loom architecture.
 
-**Identity Registry (ERC-721 agent NFT).** The agent is minted as an NFT at first run. The token's metadata includes a `vector_manifest_cid` — an IPFS/Arweave content hash of the full vector manifest (`model_version`, `layer_id`, `contrast_pair_set_hash`, `alpha_curve_hash`, `derivation_timestamp`). The manifest CID is 32–64 bytes on-chain; the full manifest file lives off-chain. This is exactly the ERC-721 metadata pattern. The NFT is the agent's permanent character definition: swapping the manifest hash means the agent has changed its dispositional configuration and starts a fresh reputation trace for that stance.
+**Identity Registry (ERC-721 agent NFT).** Each strategy variant in the loom is minted as an NFT at first run. The token's metadata includes a `strategy_manifest_cid` — an IPFS/Arweave content hash of the strategy manifest (`agent_id`, `strategy_name`, `code_commit`, `strategy_adapter_type`, `risk_preset`). The manifest CID is 32–64 bytes on-chain; the full manifest file lives off-chain. This is exactly the ERC-721 metadata pattern. The NFT is the strategy's permanent identity: swapping the code commit or adapter type means the strategy has forked and starts a fresh reputation trace.
 
-**Reputation Registry.** Feedback records accrue to the agent NFT after every closed experiment run — the vectors-on and vectors-off agents each receive a reputation entry recording their Δ-Sharpe, regime context, and manifest hash. Critically, reputation attaches to a specific manifest hash, not just an address. Two runs with the same manifest compound the same reputation. A new extraction run (new contrast pairs, new model version) starts fresh. This makes stance configurations composable trust primitives: well-performing vector configs can be forked and their reputation partially inherited.
+**Reputation Registry.** Feedback records accrue to the strategy NFT after every closed experiment run. Each strategy in the loom receives reputation entries recording its risk-adjusted return, regime context, and code commit. Critically, reputation attaches to a specific `(strategy_id, code_commit)`, not just an address. Two runs of the same strategy at the same commit compound the same reputation. A new commit (mutated parameters, new adapter) starts fresh. This makes strategy variants composable trust primitives: well-performing strategies can be forked and their reputation partially inherited via on-chain lineage.
 
 **Validation Registry.** This is the "prove it" layer and the most important for xianvec's core claim. After every closed Orderly/Mantle trade, Stage 3 constructs and submits a validation proof to the Mantle Validation Registry — same chain as the trade, single-chain audit trail:
 
@@ -309,31 +309,29 @@ ERC-8004 (deployed on Ethereum mainnet and Mantle mainnet, January–February 20
 {
   "setup_id": "uuid",
   "action": "buy | sell | flat | close",
-  "active_vector_alphas": { "conviction": 0.8 },
-  "vector_manifest_hash": "0x...",
-  "vectors_enabled": true,
+  "strategy_id": 42,
+  "strategy_name": "trader_arm",
   "trade_result_hash": "keccak256(closed_pnl | timestamp | price)",
   "run_id": "uuid"
 }
 ```
 
-`active_vector_alphas` is one float in v1 (Conviction only) = 4 bytes; the schema accepts up to four when post-v1 work activates more axes. `vector_manifest_hash` is 32 bytes. The proof is cheap to post and gives anyone the ability to verify on-chain that a specific geometrically-defined stance produced a specific trade. The vectors-off control posts the same structure with `vectors_enabled: false` and an empty alpha map — the comparison is publicly auditable without trusting the operator's reporting.
+`strategy_id` is the agent NFT token ID = 8 bytes; `strategy_name` is the readable label preserved off-chain. The proof is cheap to post and gives anyone the ability to verify on-chain that a specific strategy produced a specific trade. Comparisons across strategies in the loom are publicly auditable without trusting the operator's reporting.
 
-**Why this matters for the thesis.** Most on-chain agent identity is retrospective: address + transaction history. The Validation proof is prospective — the stance is committed at inference time, embedded in the geometry that produced the decision, and recorded before the outcome is known. The trade is the *output* of the stance, not the definition of it. The on-chain record proves the causal chain: this manifested disposition → this decision → this outcome.
+**Why this matters for the thesis.** Most on-chain agent identity is retrospective: address + transaction history. The Validation proof is prospective — the strategy is committed at inference time, identified by its NFT token, and recorded before the outcome is known. The trade is the *output* of the strategy, not the definition of it. The on-chain record proves the causal chain: this strategy variant → this decision → this outcome.
 
 **On-chain footprint summary:**
 
 | Artifact | Size | Location | When |
 |---|---|---|---|
-| Full control vectors (4 axes, fp32) | 80–640 KB | IPFS / Arweave | Once per vector extraction run |
-| Vector manifest (JSON sidecar) | ~500 bytes | IPFS / Arweave | Once per extraction run |
-| `vector_manifest_cid` in agent NFT metadata | 32–64 bytes | Mantle (Identity Registry) | Once at agent mint |
-| `active_vector_alphas` + manifest hash per trade | ~48 bytes | Mantle (Validation Registry) | After every closed position |
+| Strategy manifest (JSON sidecar) | ~500 bytes | IPFS / Arweave | Once per strategy mint / fork |
+| `strategy_manifest_cid` in agent NFT metadata | 32–64 bytes | Mantle (Identity Registry) | Once at strategy mint |
+| `strategy_id` + receipt fields per trade | ~32 bytes | Mantle (Validation Registry) | After every closed position |
 | Reputation entry per experiment run | ~64 bytes | Mantle (Reputation Registry) | After each backtest / paper run |
 
-The full vectors never live on-chain — EVM storage at 20K gas per 32-byte slot makes 80KB prohibitively expensive even on Mantle. The on-chain artifacts are hashes, commitments, and the tiny per-trade alpha configuration. This is not a compromise: the alpha config per trade is more informative than the raw vectors, because it records which magnitudes were actually active at decision time under confidence gating and regime conditioning.
+The on-chain artifacts are hashes, commitments, and the tiny per-trade strategy reference. EVM storage at 20K gas per 32-byte slot keeps the loom's per-trade and per-run costs bounded even on Mantle.
 
-**Implementation.** `xianvec-execution` constructs the Validation proof after each closed Orderly position on Mantle and submits via `alloy`. ERC-8004 contract addresses (Identity, Reputation, Validation registries on Mantle mainnet) live in `config/mantle.toml` alongside the Orderly vault address. The agent NFT is minted once during initial setup via `xvn setup --mint-agent-nft`; subsequent runs only post to Reputation and Validation. Trades, identity, and reputation all live on the same chain — no cross-chain handoff in the audit trail.
+**Implementation.** `xianvec-execution` constructs the Validation proof after each closed Orderly position on Mantle and submits via `alloy`. ERC-8004 contract addresses (Identity, Reputation, Validation registries on Mantle mainnet) live in `config/mantle.toml` alongside the Orderly vault address. The agent NFT is minted once per strategy via `xvn setup --mint-agent-nft`; subsequent runs only post to Reputation and Validation. Trades, identity, and reputation all live on the same chain — no cross-chain handoff in the audit trail.
 
 ---
 
