@@ -1,5 +1,5 @@
-//! Trader runtime parameters. Post-CV-extraction (ADR 0011) the Trader
-//! is a vanilla LLM caller — no steering-vector flags.
+//! Trader runtime parameters. Post-ADR-0011 the Trader is a vanilla LLM
+//! caller — see decisions/0011-cv-extraction.md for the substrate move.
 
 use serde::{Deserialize, Serialize};
 

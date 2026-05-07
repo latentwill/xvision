@@ -108,12 +108,11 @@ The hackathon sprint queue. Branch: `hackathon/turing`. Submission deadline:
 - **Scope:** define `RiskPreset::{Conservative, Balanced, Aggressive}` in `xianvec-risk`. Each strategy NFT manifest declares which preset(s) it's compatible with. Dashboard's Delegate view filters on this. Tentative defaults (finalise week 2): Conservative = max 2% per position, no leverage, 30% max drawdown halt; Balanced = 5% / 1× / 50%; Aggressive = 10% / 2× / 70%.
 - **Blocking:** non-blocking for demo (defaults work); blocking for the "trust" framing.
 
-### SLF12. `control-vectors` cargo feature — pre-merge refactor
+### SLF12. `control-vectors` cargo feature — **OBSOLETE per ADR 0011**
 
-- **Trigger:** post-hackathon (after Jun 15 submission).
-- **Scope:** lift the existing `default-members` opt-in pattern from `xianvec-identity` to a named feature `control-vectors`. Gate `xianvec-introspect` and `xianvec-inference`'s steering paths. CI runs both `cargo build` (default, no GPU) and `cargo build --workspace --features control-vectors`. Update `setup_runpod.sh` to install vectors-on dependencies only when the feature is selected.
-- **Why deferred to post-hackathon:** during the sprint, hackathon work lives on `hackathon/turing` and CV work lives on `main`. The feature flag is the merge-back glue; doing it pre-sprint adds friction without payoff during the sprint.
-- **Blocking:** YES for hackathon→main merge after Jun 15.
+- **Status:** closed 2026-05-07. The CV substrate moved to xianvec-play
+  rather than living behind a cargo feature gate. This item required no
+  follow-on work in xianvec.
 
 ### SLF13. Cross-pollination — agents read other agents' Reputation
 
@@ -134,7 +133,7 @@ The hackathon sprint queue. Branch: `hackathon/turing`. Submission deadline:
 (supersedes F23 — the Strategy Loom IS this)
 
 - **Trigger:** post-hackathon, but the architecture should be designed during the sprint.
-- **Scope:** see F23 for original framing. `Qwen3VectorTrader` (existing, behind `--features control-vectors`) and `McpAgentTrader` (new, default) become two `Strategy` impls among many on the marketplace ladder. F23's "vectors-on / vectors-off pairing breaks down" concern dissolves: in the marketplace world, every strategy is on its own ledger, no implicit pairing.
+- **Scope:** see F23 for original framing. `McpAgentTrader` becomes one `Strategy` impl among many on the marketplace ladder, alongside `TraderArm` and the classical TA / onchain baselines. F23's pairing concern dissolves: every strategy is on its own ledger, no implicit pairing. (Per ADR 0011, the previously-planned `Qwen3VectorTrader` lives in xianvec-play and would re-enter as a `Strategy` if a CV-driven trader is later built.)
 - **Blocking:** non-blocking for v1 hackathon; the loom can run with TraderArm-Off (DeepSeek-via-OpenAICompat per F24 short-term) as the only intern-driven strategy and onchain/TA baselines as the population.
 
 ### SLF16. Demo polish — pitch video, README, submission package
@@ -162,10 +161,10 @@ Infrastructure used by both tracks. Lives on `main`.
 
 ### F4 [SLF — superseded by SLF3, SLF4]. ERC-8004 manifests for both arms + harness wiring (runtime-optional)
 
-- **Status:** Original framing was "vectors_off / vectors_on manifests for the personal-track A/B run." Pivot reframes as "per-strategy NFTs across the marketplace population." See SLF3 (mint per-strategy NFT on `ab_compare` startup) + SLF4 (per-cycle Reputation write path).
-- **Original scope (preserved for reference):** Phase 6.5 already shipped placeholder `identity/vectors_{off,on}.agent.json` with `code_commit=PENDING`, `contact=PENDING`, and (for vectors_on) `manifest_hashes=["PENDING_PHASE_4_2_EXTRACTION"]`. Before the forward run, fill these from `git rev-parse HEAD` and the actual production vector manifest hashes from F2; mint via `IdentityClient::register` on Mantle testnet first, mainnet after Phase 9 eval clears.
+- **Status:** Original framing was "two A/B-arm manifests for the personal-track run." Pivot reframes as "per-strategy NFTs across the marketplace population." See SLF3 (mint per-strategy NFT on `ab_compare` startup) + SLF4 (per-cycle Reputation write path).
+- **Original placeholder manifests (vectors_off.agent.json, vectors_on.agent.json) deleted in pivot/cv-extract per ADR 0011.**
 - **What still applies post-pivot:** the runtime-optional gating (`identity.enabled = true/false` in `config/default.toml`) carries forward — the harness must run without Mantle credentials when identity is disabled, and `xianvec-identity` stays an opt-in workspace member.
-- **Blocking:** the *concept* is now in SLF3/SLF4. The original placeholders can be deleted post-SLF3.
+- **Blocking:** the *concept* is now in SLF3/SLF4.
 
 ### F5 [Shared]. Orderly testnet credentials + smoke trade
 
@@ -250,8 +249,7 @@ Hermes Agent (NousResearch) is the OpenClaw successor — its own README documen
 - **Trigger:** after the GPU headline run lands and the operator surface stops moving every other session. Post-hackathon is also a natural trigger — the SLF surface is fresh tribal knowledge worth capturing.
 - **Scope:** package the project's tribal knowledge as a skill so a fresh Claude Code session ramps without grepping. Likely contents:
   - **Setup & ops** — `scripts/setup_runpod.sh` stage map, env-var contract (`.env.local` keys, `XVN_INTERN_*`, `XVN_MODEL_*`), how to resume a half-finished install via `ONLY=<stage>`, the torch/CUDA driver-version pitfalls (cu126 vs cu128), Q4/Q5/Q6/Q8/fp16 selection rationale.
-  - **Vectors** — extraction recipe (`tools/extract_vectors/extract_vectors.py` flags, `--out` is a path-prefix, random + orthogonal controls auto-emit), manifest schema, `xvn explain-vectors` for verification, layer choices (20/32/42/50 for Qwen3-32B), conviction/patience/risk/trend axes.
-  - **Strategies / arms** — `Strategy` trait surface (`async_trait`-lifted), `TraderArm` with `VectorConfig::{Off, On, Random, Orthogonal}`, where new baselines plug in (`crates/xianvec-eval/src/baselines/`), how the A/B harness pairs cache keys per `setup_id` (Tier 1 fix #1).
+  - **Strategies / arms** — `Strategy` trait surface (`async_trait`-lifted), `TraderArm` as a vanilla LLM-driven Strategy (post-ADR-0011), where new baselines plug in (`crates/xianvec-eval/src/baselines/`), how the A/B harness pairs cache keys per `setup_id` (Tier 1 fix #1).
   - **Loom (post-hackathon)** — SLF1–16 outcomes: ERC-8004 mint flow, evening cycle, dashboard data shape.
   - **Intern backends** — when to pick `OpenAICompatIntern` (deterministic, backtest-safe) vs `AnthropicIntern` vs `AcpxIntern` (agentic, forward-paper only) vs the F24 deepseek-via-openrouter path; how to add a new backend.
   - **MCP tool surface** — `xvn-mcp` tools (rsi/sma/ema/macd/bollinger/atr/donchian/fib/health), how `acpx.config.json` advertises them, what's intentionally NOT a tool (live-data — preserves backtest pairing).
