@@ -1,113 +1,105 @@
-//! Phase 9.1 — A/B orchestration. Composes a shared Intern + Qwen3Engine
-//! + BriefingCache across N `TraderArm`s (each with its own `VectorConfig`)
+//! A/B orchestration. Composes a shared Intern + Trader HTTP backend +
+//! BriefingCache across N arms (one `TraderArm` plus optional baselines)
 //! and drives them through `BacktestRunner` over historical OHLCV.
 //!
-//! The CLI parses arm spec strings (`off`, `on:<npz>:<manifest>:<alpha>`,
-//! `random:k=v:...`, `orthogonal:k=v:...`) and hands the resulting
-//! `Vec<ArmSpec>` to `run_ab_compare`. v1 only the `off` arm is end-to-end
-//! tested; the other three short-circuit-with-warn until F1+F2 land
-//! (see `crates/xianvec-eval/src/baselines/trader_arm.rs`).
+//! Post-CV-extraction (ADR 0011) the arm split is no longer "vectors on /
+//! off / random / orthogonal" — there is one TraderArm (LLM-without-
+//! steering) and any number of classical baselines.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Context};
-use tokio::sync::Mutex;
+use anyhow::anyhow;
 
 use xianvec_core::market::MarketSnapshot;
-use xianvec_core::trading::DispositionAxis;
-use xianvec_core::Manifest;
-use xianvec_inference::engine::Qwen3Engine;
 use xianvec_intern::{BriefingCache, InternBackend};
 use xianvec_risk::RiskLayer;
-use xianvec_trader::TraderParams;
+use xianvec_trader::{TraderBackend, TraderParams};
 
 use crate::backtest::MarketBar;
-use crate::baselines::{PortfolioProvider, TraderArm, VectorConfig};
+use crate::baselines::{
+    AlwaysLong, AlwaysShort, BuyAndHold, MaCrossover, MacdMomentum, PortfolioProvider,
+    RandomDirection, RsiMeanReversion, TraderArm,
+};
 use crate::harness::{ArmConfig, BacktestRunConfig, BacktestRunner};
 use crate::result::BacktestResult;
+use crate::strategy::Strategy;
 
 /// One arm spec parsed from the CLI.
 #[derive(Debug, Clone)]
 pub struct ArmSpec {
     pub name: String,
-    pub vector: VectorConfig,
+    pub kind: ArmKind,
+}
+
+/// Which strategy this arm wraps. Post-CV-extraction the only LLM arm is
+/// `TraderArm` (no per-arm vector config); classical baselines are listed
+/// for explicit selection from the CLI.
+#[derive(Debug, Clone)]
+pub enum ArmKind {
+    Trader,
+    BuyAndHold,
+    AlwaysLong,
+    AlwaysShort,
+    RandomDirection { seed: u64 },
+    RsiMeanReversion,
+    MaCrossover { fast: usize, slow: usize },
+    MacdMomentum,
 }
 
 /// Parse a CLI arm string. Forms accepted:
-/// - `off`
-/// - `on:<npz_path>:<manifest_path>:<alpha>`
-/// - `random:layer=<u16>:dim=<usize>:alpha=<f32>:seed=<u64>`
-/// - `orthogonal:axis=<conviction|patience|risk|trend>:path=<npz>:alpha=<f32>:seed=<u64>`
+/// - `trader_arm`        — the LLM-driven TraderArm (Stage 1 + 2 pipeline).
+/// - `buy_and_hold` | `always_long` | `always_short`
+/// - `random_direction:seed=<u64>`
+/// - `rsi_mean_reversion`
+/// - `ma_crossover:fast=<usize>:slow=<usize>`
+/// - `macd_momentum`
 pub fn parse_arm_spec(s: &str) -> anyhow::Result<ArmSpec> {
     let mut parts = s.splitn(2, ':');
     let head = parts.next().unwrap_or("");
     let rest = parts.next().unwrap_or("");
     match head {
-        "off" => Ok(ArmSpec {
-            name: "vectors_off".into(),
-            vector: VectorConfig::Off,
+        "trader_arm" => Ok(ArmSpec {
+            name: "trader_arm".into(),
+            kind: ArmKind::Trader,
         }),
-        "on" => {
-            let mut p = rest.splitn(3, ':');
-            let npz = p.next().ok_or_else(|| anyhow!("on: missing npz path"))?;
-            let manifest_path = p.next().ok_or_else(|| anyhow!("on: missing manifest path"))?;
-            let alpha: f32 = p
-                .next()
-                .unwrap_or("1.0")
-                .parse()
-                .context("on: alpha parse")?;
-            let manifest_bytes = std::fs::read(manifest_path)?;
-            let manifest: Manifest = serde_json::from_slice(&manifest_bytes)
-                .context("on: parse manifest sidecar")?;
-            Ok(ArmSpec {
-                name: "vectors_on".into(),
-                vector: VectorConfig::On {
-                    manifest,
-                    npz_path: PathBuf::from(npz),
-                    alpha,
-                },
-            })
-        }
-        "random" => {
+        "buy_and_hold" => Ok(ArmSpec {
+            name: "buy_and_hold".into(),
+            kind: ArmKind::BuyAndHold,
+        }),
+        "always_long" => Ok(ArmSpec {
+            name: "always_long".into(),
+            kind: ArmKind::AlwaysLong,
+        }),
+        "always_short" => Ok(ArmSpec {
+            name: "always_short".into(),
+            kind: ArmKind::AlwaysShort,
+        }),
+        "random_direction" => {
             let kv = parse_kv(rest);
+            let seed = kv.get("seed").and_then(|s| s.parse().ok()).unwrap_or(42);
             Ok(ArmSpec {
-                name: "vectors_random".into(),
-                vector: VectorConfig::Random {
-                    seed: kv.get("seed").and_then(|s| s.parse().ok()).unwrap_or(42),
-                    layer: kv.get("layer").and_then(|s| s.parse().ok()).unwrap_or(20),
-                    hidden_dim: kv
-                        .get("dim")
-                        .and_then(|s| s.parse().ok())
-                        .unwrap_or(5120),
-                    alpha: kv.get("alpha").and_then(|s| s.parse().ok()).unwrap_or(1.0),
-                },
+                name: "random_direction".into(),
+                kind: ArmKind::RandomDirection { seed },
             })
         }
-        "orthogonal" => {
+        "rsi_mean_reversion" => Ok(ArmSpec {
+            name: "rsi_mean_reversion".into(),
+            kind: ArmKind::RsiMeanReversion,
+        }),
+        "ma_crossover" => {
             let kv = parse_kv(rest);
-            let axis = match kv.get("axis").map(String::as_str) {
-                Some("conviction") | None => DispositionAxis::Conviction,
-                Some("patience") => DispositionAxis::Patience,
-                Some("risk") => DispositionAxis::RiskAppetite,
-                Some("trend") => DispositionAxis::TrendDisposition,
-                Some(other) => anyhow::bail!("orthogonal: unknown axis `{other}`"),
-            };
-            let path = kv
-                .get("path")
-                .map(PathBuf::from)
-                .ok_or_else(|| anyhow!("orthogonal: missing path=<npz>"))?;
+            let fast = kv.get("fast").and_then(|s| s.parse().ok()).unwrap_or(30);
+            let slow = kv.get("slow").and_then(|s| s.parse().ok()).unwrap_or(90);
             Ok(ArmSpec {
-                name: "vectors_orthogonal".into(),
-                vector: VectorConfig::Orthogonal {
-                    axis,
-                    seed: kv.get("seed").and_then(|s| s.parse().ok()).unwrap_or(42),
-                    npz_path: path,
-                    alpha: kv.get("alpha").and_then(|s| s.parse().ok()).unwrap_or(1.0),
-                },
+                name: "ma_crossover".into(),
+                kind: ArmKind::MaCrossover { fast, slow },
             })
         }
-        other => anyhow::bail!("unknown arm head: `{other}`"),
+        "macd_momentum" => Ok(ArmSpec {
+            name: "macd_momentum".into(),
+            kind: ArmKind::MacdMomentum,
+        }),
+        other => Err(anyhow!("unknown arm head: `{other}`")),
     }
 }
 
@@ -122,6 +114,21 @@ fn parse_kv(s: &str) -> std::collections::BTreeMap<String, String> {
         .collect()
 }
 
+/// Default arm set used by the CLI when `--arms` is omitted: the LLM
+/// `trader_arm` plus a `buy_and_hold` reference baseline.
+pub fn default_arms() -> Vec<ArmSpec> {
+    vec![
+        ArmSpec {
+            name: "trader_arm".into(),
+            kind: ArmKind::Trader,
+        },
+        ArmSpec {
+            name: "buy_and_hold".into(),
+            kind: ArmKind::BuyAndHold,
+        },
+    ]
+}
+
 /// Run an N-arm A/B comparison. Returns the `BacktestResult` for serialisation.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_ab_compare(
@@ -132,7 +139,7 @@ pub async fn run_ab_compare(
     intern: Arc<dyn InternBackend>,
     intern_provider: String,
     intern_model: String,
-    engine: Arc<Mutex<Qwen3Engine>>,
+    trader: Arc<dyn TraderBackend>,
     trader_params: TraderParams,
     portfolio_provider: PortfolioProvider,
     risk: &RiskLayer,
@@ -146,20 +153,28 @@ pub async fn run_ab_compare(
             // The leak is bounded (one per arm per process invocation, ≤8 in
             // practice) and the runtime is short-lived.
             let static_name: &'static str = Box::leak(spec.name.clone().into_boxed_str());
-            let arm = TraderArm::new(
-                static_name,
-                Arc::clone(&intern),
-                intern_provider.clone(),
-                intern_model.clone(),
-                Arc::clone(&cache),
-                Arc::clone(&engine),
-                trader_params.clone(),
-                spec.vector,
-                Arc::clone(&portfolio_provider),
-            );
+            let strategy: Box<dyn Strategy> = match spec.kind {
+                ArmKind::Trader => Box::new(TraderArm::new(
+                    static_name,
+                    Arc::clone(&intern),
+                    intern_provider.clone(),
+                    intern_model.clone(),
+                    Arc::clone(&cache),
+                    Arc::clone(&trader),
+                    trader_params.clone(),
+                    Arc::clone(&portfolio_provider),
+                )),
+                ArmKind::BuyAndHold => Box::new(BuyAndHold::new()),
+                ArmKind::AlwaysLong => Box::new(AlwaysLong),
+                ArmKind::AlwaysShort => Box::new(AlwaysShort),
+                ArmKind::RandomDirection { seed } => Box::new(RandomDirection::new(seed)),
+                ArmKind::RsiMeanReversion => Box::new(RsiMeanReversion::new()),
+                ArmKind::MaCrossover { fast, slow } => Box::new(MaCrossover::new(fast, slow)),
+                ArmKind::MacdMomentum => Box::new(MacdMomentum::new()),
+            };
             ArmConfig {
                 name: spec.name,
-                strategy: Box::new(arm),
+                strategy,
             }
         })
         .collect();
@@ -174,60 +189,52 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_off_arm() {
-        let a = parse_arm_spec("off").unwrap();
-        assert_eq!(a.name, "vectors_off");
-        assert!(matches!(a.vector, VectorConfig::Off));
+    fn parse_trader_arm() {
+        let a = parse_arm_spec("trader_arm").unwrap();
+        assert_eq!(a.name, "trader_arm");
+        assert!(matches!(a.kind, ArmKind::Trader));
     }
 
     #[test]
-    fn parse_random_arm() {
-        let a = parse_arm_spec("random:layer=20:dim=5120:alpha=1.5:seed=7").unwrap();
-        assert_eq!(a.name, "vectors_random");
-        match a.vector {
-            VectorConfig::Random {
-                seed,
-                layer,
-                hidden_dim,
-                alpha,
-            } => {
-                assert_eq!(seed, 7);
-                assert_eq!(layer, 20);
-                assert_eq!(hidden_dim, 5120);
-                assert!((alpha - 1.5).abs() < 1e-6);
-            }
+    fn parse_buy_and_hold() {
+        let a = parse_arm_spec("buy_and_hold").unwrap();
+        assert_eq!(a.name, "buy_and_hold");
+        assert!(matches!(a.kind, ArmKind::BuyAndHold));
+    }
+
+    #[test]
+    fn parse_random_with_seed() {
+        let a = parse_arm_spec("random_direction:seed=7").unwrap();
+        assert_eq!(a.name, "random_direction");
+        match a.kind {
+            ArmKind::RandomDirection { seed } => assert_eq!(seed, 7),
             _ => panic!("wrong variant"),
         }
     }
 
     #[test]
-    fn parse_orthogonal_arm_with_axis() {
-        let a = parse_arm_spec("orthogonal:axis=patience:path=/tmp/v.npz:alpha=0.5:seed=11")
-            .unwrap();
-        assert_eq!(a.name, "vectors_orthogonal");
-        match a.vector {
-            VectorConfig::Orthogonal {
-                axis,
-                seed,
-                npz_path,
-                alpha,
-            } => {
-                assert_eq!(axis, DispositionAxis::Patience);
-                assert_eq!(seed, 11);
-                assert_eq!(npz_path, PathBuf::from("/tmp/v.npz"));
-                assert!((alpha - 0.5).abs() < 1e-6);
+    fn parse_ma_crossover_with_windows() {
+        let a = parse_arm_spec("ma_crossover:fast=20:slow=80").unwrap();
+        assert_eq!(a.name, "ma_crossover");
+        match a.kind {
+            ArmKind::MaCrossover { fast, slow } => {
+                assert_eq!(fast, 20);
+                assert_eq!(slow, 80);
             }
             _ => panic!("wrong variant"),
         }
-    }
-
-    #[test]
-    fn parse_orthogonal_missing_path_errors() {
-        assert!(parse_arm_spec("orthogonal:axis=conviction").is_err());
     }
 
     #[test]
     fn parse_unknown_head_errors() {
         assert!(parse_arm_spec("bogus").is_err());
+    }
+
+    #[test]
+    fn default_arms_includes_trader_and_buy_and_hold() {
+        let arms = default_arms();
+        let names: Vec<_> = arms.iter().map(|a| a.name.as_str()).collect();
+        assert!(names.contains(&"trader_arm"));
+        assert!(names.contains(&"buy_and_hold"));
     }
 }

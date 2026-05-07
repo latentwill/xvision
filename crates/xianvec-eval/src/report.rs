@@ -35,7 +35,7 @@ pub struct ReportConfig {
 impl Default for ReportConfig {
     fn default() -> Self {
         Self {
-            baseline_arm: "vectors_off".into(),
+            baseline_arm: "buy_and_hold".into(),
             n_bootstrap_resamples: 1000,
             block_size: None,
             // Setup-cadence default. Reports may override per-asset / per-cadence.
@@ -247,9 +247,9 @@ mod tests {
         BacktestResult {
             arms: BTreeMap::from([
                 (
-                    "vectors_off".into(),
+                    "buy_and_hold".into(),
                     ArmResult {
-                        name: "vectors_off".into(),
+                        name: "buy_and_hold".into(),
                         equity_curve: vec![],
                         fills: vec![],
                         decisions: vec![],
@@ -266,9 +266,9 @@ mod tests {
                     },
                 ),
                 (
-                    "vectors_on".into(),
+                    "trader_arm".into(),
                     ArmResult {
-                        name: "vectors_on".into(),
+                        name: "trader_arm".into(),
                         equity_curve: vec![],
                         fills: vec![],
                         decisions: vec![],
@@ -301,7 +301,7 @@ mod tests {
         };
         let md = render(&result, &cfg).expect("render must succeed");
         assert!(md.contains("Headline Δ-Sharpe"), "headline section");
-        assert!(md.contains("vectors_on"), "treatment arm row");
+        assert!(md.contains("trader_arm"), "treatment arm row");
         assert!(md.contains("Per-arm dashboard"), "dashboard section");
         assert!(md.contains("Gate:"), "gate verdict line");
     }

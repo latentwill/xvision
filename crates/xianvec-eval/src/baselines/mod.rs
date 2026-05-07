@@ -1,10 +1,8 @@
 //! Phase 7 baselines — null and classical-technical strategies that consume
 //! `MarketSnapshot` and emit `TraderDecision`-shaped outputs.
 //!
-//! All baselines implement [`crate::strategy::Strategy`] with:
-//! - `setup_id` propagated from the incoming snapshot.
-//! - `active_vectors` always empty (`BTreeMap::new()`); baselines carry no
-//!   steering vectors.
+//! All baselines implement [`crate::strategy::Strategy`] with `setup_id`
+//! propagated from the incoming snapshot.
 //!
 //! ## v1 baseline set (7 strategies)
 //! | Baseline            | Signal                                    |
@@ -26,8 +24,6 @@
 //! - Onchain baselines (Nansen smart-money, funding-rate fader, stablecoin
 //!   inflow, liquidation cascade) — Phase 7.5; data sourcing is separate.
 //! - XGBoost ML baseline — Phase 7.5+.
-//! - Vector experimental controls (vectors-OFF, RANDOM, ORTHOGONAL) — Phase 9
-//!   A/B work; these wrap the actual Trader, not the baselines layer.
 
 pub mod always_long;
 pub mod always_short;
@@ -45,7 +41,7 @@ pub use ma_crossover::MaCrossover;
 pub use macd_momentum::MacdMomentum;
 pub use random_direction::RandomDirection;
 pub use rsi_mean_reversion::RsiMeanReversion;
-pub use trader_arm::{PortfolioProvider, TraderArm, VectorConfig};
+pub use trader_arm::{PortfolioProvider, TraderArm};
 
 use crate::strategy::Strategy;
 
