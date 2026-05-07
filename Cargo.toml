@@ -3,9 +3,6 @@ resolver = "2"
 members = [
     "crates/xianvec-core",
     "crates/xianvec-data",
-    "crates/xianvec-inference",
-    "crates/xianvec-gating",
-    "crates/xianvec-introspect",
     "crates/xianvec-intern",
     "crates/xianvec-trader",
     "crates/xianvec-risk",
@@ -26,9 +23,6 @@ members = [
 default-members = [
     "crates/xianvec-core",
     "crates/xianvec-data",
-    "crates/xianvec-inference",
-    "crates/xianvec-gating",
-    "crates/xianvec-introspect",
     "crates/xianvec-intern",
     "crates/xianvec-trader",
     "crates/xianvec-risk",
@@ -47,11 +41,6 @@ license = "Apache-2.0"
 repository = "https://github.com/latentwill/xianvec"
 
 [workspace.dependencies]
-# inference
-candle-core         = "0.10"
-candle-nn           = "0.10"
-candle-transformers = "0.10"
-
 # async / runtime
 tokio       = { version = "1", features = ["full"] }
 async-trait = "0.1"
@@ -66,8 +55,6 @@ garde      = { version = "0.22", features = ["derive"] }
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "macros", "chrono", "uuid"] }
 
 # numerics
-faiss   = "0.13"
-arc-swap = "1"
 polars  = { version = "0.53", features = ["lazy", "parquet"] }
 ndarray = "0.16"
 
