@@ -1,8 +1,14 @@
 # ADR 0010 — Hackathon Pivot: Strategy Loom + ERC-8004 Marketplace
 
 **Date:** 2026-05-05
-**Status:** Accepted
+**Status:** Accepted (partially superseded 2026-05-07 by ADR 0011)
 **Phase:** Hackathon sprint (May 5 → Jun 15, 2026)
+
+> **2026-05-07 partial supersession (ADR 0011):** the `--features control-vectors`
+> cargo gate described below is obsolete — CV substrate moved to xianvec-play
+> entirely. TraderArm survives without `VectorConfig`. Strategy Loom +
+> ERC-8004 Marketplace + Karpathy autoresearch framing are otherwise
+> unchanged. Body preserved as historical record.
 
 ## Context
 
