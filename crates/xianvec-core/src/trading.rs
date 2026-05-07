@@ -69,18 +69,6 @@ pub enum EvidenceTag {
     Fundamental(String),
 }
 
-/// One axis of disposition along which a steering vector can be installed.
-/// v1 active axis: Conviction. The other three are extracted for pipeline
-/// validation but not active in the headline experiment.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DispositionAxis {
-    Conviction,
-    Patience,
-    RiskAppetite,
-    TrendDisposition,
-}
-
 /// Stage 1 output: balanced bull/bear/flat case for one setup. The Intern is
 /// forbidden from naming a recommendation (§2 architecture) — that keeps
 /// vectors' steering surface clean for Stage 2.
@@ -118,8 +106,10 @@ pub struct InternBriefing {
     pub created_at: DateTime<Utc>,
 }
 
-/// Stage 2 output: a concrete trade decision. Vectors-on and vectors-off arms
-/// each emit one of these against the same cached briefing (Tier 1 fix #1).
+/// Stage 2 output: a concrete trade decision. Multiple arms (e.g.
+/// trader_arm + baselines) each emit one of these against the same cached
+/// briefing (Tier 1 fix #1) — arm identity is carried by the storage key
+/// `(setup_id, arm_name)`, not by a field on the decision itself.
 #[derive(Debug, Clone, PartialEq, Validate, Serialize, Deserialize)]
 pub struct TraderDecision {
     #[garde(skip)]
@@ -137,10 +127,6 @@ pub struct TraderDecision {
     pub take_profit_pct: f32,
     #[garde(length(min = 10, max = 500))]
     pub trader_summary: String,
-    /// Per-axis active magnitude. Empty = vectors-off arm. v1 uses `BTreeMap`
-    /// for stable ordering in `decisions` SQL keying.
-    #[garde(skip)]
-    pub active_vectors: BTreeMap<DispositionAxis, f32>,
 }
 
 impl TraderDecision {
@@ -328,7 +314,6 @@ mod tests {
             stop_loss_pct: 2.5,
             take_profit_pct: 5.0,
             trader_summary: "Long entry on confirmed range break with 2:1 R:R.".into(),
-            active_vectors: BTreeMap::from([(DispositionAxis::Conviction, 1.0)]),
         }
     }
 
