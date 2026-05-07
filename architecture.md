@@ -28,20 +28,20 @@ Everything in this document is in service of evaluating that claim cleanly.
 
 ## 2. System overview
 
-A four-stage pipeline with two named LLM roles: **Intern** (Stage 1) and **Trader** (Stage 2). The Intern prepares neutral, balanced evidence — bull case, bear case, flat case, signal inventory, regime — but commits to no action. The Trader receives the briefing and produces the actual decision, with disposition control vectors active on its hidden states. Vectors live in exactly one place. The risk layer between the Trader and the Execution stage is deterministic code, no model in the loop.
+A four-stage pipeline with two named LLM roles: **Intern** (Stage 1) and **Trader** (Stage 2). The Intern prepares neutral, balanced evidence — bull case, bear case, flat case, signal inventory, regime — but commits to no action. The Trader receives the briefing and produces the actual decision via a vanilla LLM call. The risk layer between the Trader and the Execution stage is deterministic code, no model in the loop.
 
 ```
                  ┌────────────────┐
    Setup ──────► │  Stage 1       │  Intern
                  │  Intern        │  • neutral evidence prep
-                 │  (no vectors)  │  • bull/bear/flat cases
+                 │                │  • bull/bear/flat cases
                  └───────┬────────┘  • NO candidate decision
                          │ Briefing (JSON)
                          ▼
                  ┌────────────────┐
-                 │  Stage 2       │  Trader (the experiment)
-                 │  Trader        │  • local quantized model
-                 │  (vectors ON)  │  • makes the actual call
+                 │  Stage 2       │  Trader (one Strategy variant
+                 │  Trader        │  in the loom)
+                 │                │  • LLM judgment on briefing
                  └───────┬────────┘
                          │ Decision JSON
                          ▼
@@ -53,18 +53,18 @@ A four-stage pipeline with two named LLM roles: **Intern** (Stage 1) and **Trade
                          ▼
                  ┌────────────────┐
                  │  Stage 3       │  Execution
-                 │  Execution     │  • Alpaca paper API
-                 │  (no vectors)  │  • strict tool calls only
+                 │  Execution     │  • Alpaca paper API / Orderly
+                 │                │  • strict tool calls only
                  └────────────────┘
 ```
 
-Why the split is structured this way: a previous draft had the Intern emit a candidate direction and size. That made Stage 2 a calibrator in disguise — vectors could only nudge sizing because the textual prompt had already committed Stage 2 to the Intern's recommendation. Vectors operate on hidden-state geometry; prompt conditioning operates on token attention. The latter generally wins. To give vectors real room to drive the decision, the Intern must hand off *evidence*, not *recommendations*. Bull case / bear case / flat case is symmetric by construction. The Trader sees balanced inputs and the disposition vectors get clean influence over what the model actually decides.
+Why the split is structured this way: a previous draft had the Intern emit a candidate direction and size. That collapsed Stage 2 into a calibrator that simply rubber-stamped the Intern's anchor. Asking the Intern to hand off *evidence*, not *recommendations*, gives the Trader a real decision to make. Bull case / bear case / flat case is symmetric by construction. The Trader sees balanced inputs and produces a clean judgment that can be evaluated against other strategies in the loom on equal terms.
 
-Vectors cannot influence tool call formatting, schema enforcement, or risk rules. They only shape the decision content emitted by the Trader. Schema validation guarantees output shape; the risk layer guarantees safety. Vectors are free to express disposition within those bounds.
+The Trader is wrapped as a `Strategy` adapter (`TraderArm`) so it competes against classical TA + onchain strategies on identical setups. Schema validation guarantees output shape; the risk layer guarantees safety.
 
 ### 2.1 Full system diagram
 
-Renders inline on GitHub. Standalone source: `architecture-diagram.mermaid`. Yellow blocks indicate where control vectors are active; blue is deterministic rule code; green is external services; purple is storage; orange is orchestrator + tool-surface code; pink is on-chain ERC-8004 registries on Mantle; cyan is eval. Red dashed remains reserved for future v2-deferred nodes.
+Renders inline on GitHub. Standalone source: `architecture-diagram.mermaid`. Blue is deterministic rule code; green is external services; purple is storage; orange is orchestrator + tool-surface code; pink is on-chain ERC-8004 registries on Mantle; cyan is eval. Red dashed remains reserved for future v2-deferred nodes.
 
 ```mermaid
 flowchart TD
@@ -76,31 +76,29 @@ flowchart TD
 
     HA[<b>Ops</b><br/>pipeline orchestrator<br/>state assembly · scheduling]
 
-    S1[<b>Stage 1 · Intern</b><br/>OpenAI- / Anthropic-compat<br/>or ACPX agent harness<br/>━━━━━━━━━━━━<br/>bull · bear · flat cases<br/>evidence inventory · regime<br/>━━━━━━━━━━━━<br/>NO candidate decision<br/>NO vectors]
+    S1[<b>Stage 1 · Intern</b><br/>OpenAI- / Anthropic-compat<br/>or ACPX agent harness<br/>━━━━━━━━━━━━<br/>bull · bear · flat cases<br/>evidence inventory · regime<br/>━━━━━━━━━━━━<br/>NO candidate decision]
 
     MCP[<b>xvn-mcp</b><br/>stdio MCP server · stateless<br/>━━━━━━━━━━━━<br/>indicator tools<br/>rsi · sma · ema · macd<br/>bollinger · atr · donchian<br/>fib_retracements · health<br/>━━━━━━━━━━━━<br/>active when INTERN=acpx]
 
-    S2[<b>Stage 2 · Trader</b><br/>Qwen3-32B local quantized<br/>━━━━━━━━━━━━<br/>action · size · direction<br/>stop · take-profit<br/>━━━━━━━━━━━━<br/>VECTORS ACTIVE]
-
-    CV[<b>Control Vectors</b><br/>━━━━━━━━━━━━<br/>conviction (v1 active)<br/>patience · risk · trend<br/>(extracted, v2 active)<br/>━━━━━━━━━━━━<br/>confidence-gated · entropy v1]
+    S2[<b>Stage 2 · Trader</b><br/>OpenAI-compat HTTP<br/>or local candle<br/>━━━━━━━━━━━━<br/>action · size · direction<br/>stop · take-profit]
 
     R[<b>Risk Layer</b><br/>deterministic rules · no LLM<br/>━━━━━━━━━━━━<br/>position limits<br/>daily-loss circuit breaker<br/>correlation cluster cap<br/>asset whitelist]
 
-    S3[<b>Stage 3 · Execution</b><br/>idempotent tool calls<br/>━━━━━━━━━━━━<br/>NO vectors]
+    S3[<b>Stage 3 · Execution</b><br/>idempotent tool calls]
     AP[Alpaca Paper<br/>bracket orders<br/>v1 testing path]
     OR[Orderly Network<br/>perpetual futures · Mantle<br/>orderly-connector-rs<br/>v1 hackathon executor]
 
     subgraph ERC8004 [ERC-8004 · Mantle]
-        ID[Identity Registry<br/>agent NFT<br/>+ vector_manifest_cid]
-        RP[Reputation Registry<br/>per-run feedback<br/>Δ-Sharpe + manifest hash]
-        VL[Validation Registry<br/>per-trade stance proof<br/>active alphas + result hash]
+        ID[Identity Registry<br/>per-strategy NFT<br/>+ strategy_manifest_cid]
+        RP[Reputation Registry<br/>per-run feedback<br/>Δ-Sharpe + code commit]
+        VL[Validation Registry<br/>per-trade strategy proof<br/>strategy_id + result hash]
     end
 
-    DB[(SQLite<br/>decisions · briefings<br/>market state<br/>vectors_enabled flag)]
+    DB[(SQLite<br/>decisions · briefings<br/>market state · arm_name)]
 
     M[<b>Metrics · Eval</b><br/>━━━━━━━━━━━━<br/>Δ-Sharpe primary<br/>max drawdown<br/>profit factor · win rate<br/>decision divergence rate<br/>━━━━━━━━━━━━<br/>paired bootstrap 95% CI]
 
-    BL[Baselines<br/>━━━━━━━━━━━━<br/>buy-hold · random<br/>RSI · MA-cross · Bollinger<br/>MACD · Donchian · Fibs<br/>smart-money copy<br/>funding-rate fader<br/>━━━━━━━━━━━━<br/>vectors-OFF · vectors-RANDOM<br/>vectors-ORTHOGONAL]
+    BL[Baselines<br/>━━━━━━━━━━━━<br/>buy-hold · random<br/>RSI · MA-cross · Bollinger<br/>MACD · Donchian · Fibs<br/>smart-money copy<br/>funding-rate fader]
 
     A1 --> IND
     A1 --> HA
@@ -112,7 +110,6 @@ flowchart TD
     S1 -.->|tool calls<br/>when INTERN=acpx| MCP
     MCP -.->|computes at agent-supplied<br/>parameters| IND
     S1 -->|JSON: InternBriefing<br/>neutral evidence only| S2
-    CV -.->|injected at<br/>mid-late layers| S2
     S2 -->|JSON: TraderDecision| R
 
     R -->|approved or modified| S3
@@ -122,7 +119,7 @@ flowchart TD
     S3 --> OR
     S3 -.->|after closed trade| VL
 
-    HA -.->|once at agent mint| ID
+    HA -.->|once at strategy mint| ID
     M -.->|after each run| RP
 
     S1 -.-> DB
@@ -133,7 +130,6 @@ flowchart TD
     DB --> M
     BL --> M
 
-    classDef vectorOn fill:#fef3c7,stroke:#d97706,stroke-width:2px,color:#000
     classDef deterministic fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#000
     classDef storage fill:#f3e8ff,stroke:#7c3aed,color:#000
     classDef external fill:#dcfce7,stroke:#16a34a,color:#000
@@ -141,11 +137,10 @@ flowchart TD
     classDef eval fill:#cffafe,stroke:#0891b2,color:#000
     classDef onchain fill:#fce7f3,stroke:#db2777,stroke-width:2px,color:#000
 
-    class S2,CV vectorOn
     class R deterministic
     class DB storage
     class A1,A2,A3,AP,OR external
-    class HA,MCP orchestrator
+    class HA,MCP,S1,S2,S3 orchestrator
     class M,BL eval
     class ID,RP,VL onchain
 ```
@@ -154,7 +149,7 @@ flowchart TD
 
 ## 3. Stage 1 — Intern
 
-**Purpose:** Produce a structured, neutral evidence briefing. The Intern researches; it does not recommend. The output is symmetric by construction so the Trader's vectors get clean steering room.
+**Purpose:** Produce a structured, neutral evidence briefing. The Intern researches; it does not recommend. The output is symmetric by construction so the Trader makes a clean judgment from balanced inputs.
 
 **Model choice:** Backend-agnostic — picked at runtime via config (`provider`, `base_url`, `model`, `api_key_env`). Three backends behind one `InternBackend` trait:
 - **OpenAI-compatible HTTP** (default for non-Anthropic models). One implementation covers OpenAI, OpenRouter, Together, Groq, DeepSeek, xAI, Mistral, plus any self-hosted server speaking the Chat Completions wire format — vLLM, Ollama (`/v1`), LM Studio, llama.cpp, TGI. Swap models or providers by editing config; no recompile.
@@ -185,11 +180,11 @@ No news, no fundamentals (out of scope by user decision).
 }
 ```
 
-The Intern's prompt explicitly instructs: *"Present balanced cases on all three sides. Do not recommend an action. Your job ends with the briefing — the Trader will decide."* No `candidate_direction` field, no `candidate_size_bps`. Those would commit the decision before vectors get to express disposition.
+The Intern's prompt explicitly instructs: *"Present balanced cases on all three sides. Do not recommend an action. Your job ends with the briefing — the Trader will decide."* No `candidate_direction` field, no `candidate_size_bps`. Those would commit the decision before the Trader gets to evaluate the evidence.
 
-`signal_quality` is the analyst's estimate of *how clean the setup is* — a quality signal, not a directional signal. It feeds into the confidence-gating mechanism (§7.3), where low-quality setups dampen vector magnitude so vectors don't push the model into confidently-wrong territory on noisy inputs.
+`signal_quality` is the analyst's estimate of *how clean the setup is* — a quality signal, not a directional signal. Strategies that read it can defer or downsize on noisy inputs.
 
-`regime` drives the choice of disposition weights at the Trader (regime-conditioned vector configuration, §7.4) and is itself directionally neutral — knowing the market is "choppy" doesn't tell you which way it'll resolve.
+`regime` is part of the briefing payload and is itself directionally neutral — knowing the market is "choppy" doesn't tell you which way it'll resolve.
 
 This object is the contract between Intern and Trader. It is validated by `serde` + `garde` (Rust) before handoff — schema violations produce a typed error rather than a silently malformed briefing.
 
@@ -245,7 +240,7 @@ in the loom against classical TA + onchain strategies on equal terms.
 
 ## 5. Risk Layer
 
-**Purpose:** Deterministic safety net between Stage 2 and Stage 3. No LLM, no vectors. Pure rule evaluation.
+**Purpose:** Deterministic safety net between Stage 2 and Stage 3. No LLM. Pure rule evaluation.
 
 The risk layer either passes the decision through unchanged, modifies sizing downward, or vetoes the decision entirely. It never increases size or flips direction.
 
@@ -260,7 +255,7 @@ The risk layer either passes the decision through unchanged, modifies sizing dow
 
 **Output:** `RiskDecision { approved: bool, original: Decision, modified: Decision | None, veto_reason: str | None }`
 
-The risk layer logs every veto with reason. Vetoes are valuable signal — they tell us when vectors push the agent into regions a human risk manager would also reject.
+The risk layer logs every veto with reason. Vetoes are valuable signal — they tell us when a strategy pushes the agent into regions a human risk manager would also reject.
 
 ---
 
@@ -351,28 +346,28 @@ The on-chain artifacts are hashes, commitments, and the tiny per-trade strategy 
 
 ## 9. Eval framework
 
-The eval framework is the most important non-obvious piece of this project. Without it, vector improvements cannot be measured and the Karpathy loop has nothing to learn from.
+The eval framework is the most important non-obvious piece of this project. Without it, strategy comparisons cannot be measured and the Karpathy autoresearch loop has nothing to learn from.
 
 ### 9.1 Backtest harness
 
 Replays historical setups through the full Stage 1 → Stage 2 → Risk → Stage 3 pipeline against historical price data. Stage 3 in backtest mode hits a simulated execution engine instead of Alpaca. Slippage and fee assumptions are configurable.
 
-**Why this matters more than forward paper trading:** 500 backtested setups in an evening yields more statistical signal than 500 forward paper trades over weeks. Per-trade noise is brutal; you need population statistics to evaluate vector configurations.
+**Why this matters more than forward paper trading:** 500 backtested setups in an evening yields more statistical signal than 500 forward paper trades over weeks. Per-trade noise is brutal; you need population statistics to evaluate strategy variants.
 
 ### 9.2 Metrics — pre-committed
 
 These are the metrics the hackathon demo will report. Picked now, before any results are run, so we can't backfit:
 
 **Primary metric (the headline number):**
-> **Sharpe ratio delta (Δ-Sharpe):** annualized Sharpe with vectors ON minus annualized Sharpe with vectors OFF, evaluated on the same set of setups, paired.
+> **Sharpe ratio delta (Δ-Sharpe):** annualized Sharpe of Strategy A minus annualized Sharpe of Strategy B, evaluated on the same set of setups, paired.
 
-This isolates the vector contribution. It is the single number the demo lives or dies on.
+This isolates the contribution of one strategy variant against another. It is the single number the demo lives or dies on.
 
 **Secondary metrics (the dashboard):**
-- **Max drawdown** (peak-to-trough loss, %): Risk profile. Must not be catastrophic for either condition.
+- **Max drawdown** (peak-to-trough loss, %): Risk profile. Must not be catastrophic for either strategy.
 - **Profit factor** (gross wins / gross losses): Intuitive, demo-friendly.
 - **Win rate** (% of trades profitable): Caveat that high win rate with bad profit factor is a warning sign.
-- **Decision divergence rate** (% of setups where vectors-on and vectors-off produced different actions): Confirms that vectors are actually changing behavior, not just nudging within the same decision.
+- **Decision divergence rate** (% of setups where Strategy A and Strategy B produced different actions): Confirms that strategies are actually behaving differently, not just nudging within the same decision.
 
 **Statistical significance:**
 - Minimum 30 paired trades for any signal interpretation.
@@ -380,11 +375,11 @@ This isolates the vector contribution. It is the single number the demo lives or
 - Report 95% confidence interval on Δ-Sharpe via paired bootstrap (10k resamples).
 
 **Anti-overfitting gate (hard requirement):**
-No vector configuration advances to paper trading unless it shows positive Δ-Sharpe in at least one pre-2023 bear regime *and* at least one 2023–2024 bull regime. A configuration that only beats vectors-OFF in trending markets is not evidence — it is a backtest artefact. This gate is explicit and checked programmatically before any paper-trading run is authorized. Single-regime wins, however large, are capped: a result that does not span at least two distinct regime types cannot be reported as a positive finding. Rationale: NexusTrade's $676 hill-climbing experiment showed exactly this failure mode — a rubric that rewarded peak-year returns drove the agent from a 71/100 Iron Condor (survived 2022 bear, 54% avg) to a 27/100 directional disaster (-6.3% avg, 92% drawdown) by Round 5, following evaluator feedback faithfully into a single-regime optimum.
+No strategy variant advances to paper trading unless it shows positive Δ-Sharpe vs a pre-committed baseline in at least one pre-2023 bear regime *and* at least one 2023–2024 bull regime. A strategy that only beats the baseline in trending markets is not evidence — it is a backtest artefact. This gate is explicit and checked programmatically before any paper-trading run is authorized. Single-regime wins, however large, are capped: a result that does not span at least two distinct regime types cannot be reported as a positive finding. Rationale: NexusTrade's $676 hill-climbing experiment showed exactly this failure mode — a rubric that rewarded peak-year returns drove the agent from a 71/100 Iron Condor (survived 2022 bear, 54% avg) to a 27/100 directional disaster (-6.3% avg, 92% drawdown) by Round 5, following evaluator feedback faithfully into a single-regime optimum.
 
 ### 9.3 Baselines
 
-Beyond the critical vectors-on vs vectors-off comparison, the agent must beat external baselines to demonstrate edge.
+Beyond pairwise Strategy A vs Strategy B comparisons, every strategy variant must beat external baselines to demonstrate edge.
 
 **Null baselines (must beat):**
 - Buy-and-hold the asset basket from t=0.
@@ -409,19 +404,14 @@ Beyond the critical vectors-on vs vectors-off comparison, the agent must beat ex
 **ML baseline (stretch):**
 - XGBoost on technical + onchain features. Often surprisingly hard to beat.
 
-**Experimental controls (the thesis-defining comparisons):**
-- Same agent, vectors **OFF**: the critical control.
-- Same agent, vectors **random** at same magnitude: controls for "any perturbation activates exploration."
-- Same agent, vectors **orthogonal** to disposition axes: controls for representation impact vs direction-specific impact.
-
 ### 9.4 Structured traces (flight recorder)
 
-Every Stage 1 and Stage 2 call produces a structured trace record persisted to SQLite alongside the briefing and decision. Without traces, a vector configuration that underperforms in backtest is a black box; with traces, the exact iteration where behaviour diverged is pinpointable.
+Every Stage 1 and Stage 2 call produces a structured trace record persisted to SQLite alongside the briefing and decision. Without traces, a strategy that underperforms in backtest is a black box; with traces, the exact iteration where behaviour diverged is pinpointable.
 
 **Minimum trace fields per call:**
-- `run_id`, `setup_id`, `stage` (intern | trader)
-- `model` and `vectors_enabled` flag + active magnitudes
-- Full input (system prompt + user content + injected vector config)
+- `run_id`, `setup_id`, `stage` (intern | trader), `arm_name` (strategy label)
+- `model` and backend identifier
+- Full input (system prompt + user content)
 - Raw model output (full JSON string, pre-parse)
 - Parse success / validation errors
 - Token count (prompt + completion) and latency (ms)
@@ -429,17 +419,17 @@ Every Stage 1 and Stage 2 call produces a structured trace record persisted to S
 
 **Storage:** `traces` table in the existing SQLite store. Schema mirrors the existing `decisions` table structure; keyed on `(run_id, setup_id, stage)`.
 
-**Why this is pre-Phase-8:** Traces must exist before any evaluation loop runs. An eval loop without traces cannot distinguish "the vector configuration was wrong" from "the prompt was wrong" from "the model produced a parse error and fell back." Traces are the diagnostic layer that makes every other eval result interpretable.
+**Why this matters:** Traces must exist before any evaluation loop runs. An eval loop without traces cannot distinguish "the strategy was wrong" from "the prompt was wrong" from "the model produced a parse error and fell back." Traces are the diagnostic layer that makes every other eval result interpretable.
 
 ### 9.5 Forward paper trading
 
-Forward Alpaca paper trading runs continuously after the backtest establishes baseline. It is deployment validation, not primary eval. The agent runs both vectors-on and vectors-off in parallel (alternating setups, or running two instances) so live paper trading produces paired data.
+Forward Alpaca paper trading runs continuously after the backtest establishes baseline. It is deployment validation, not primary eval. The loom runs multiple strategies in parallel (alternating setups across instances) so live paper trading produces paired data.
 
 ---
 
 ## 10. Tech stack
 
-The runtime is Rust. The vector-extraction toolchain is Python, invoked offline as a subprocess. Python is a build tool, not a runtime dependency — the production binary has no Python in its process tree.
+The runtime is Rust. Plotting and a small offline analysis surface use Python via notebooks; nothing in the production binary depends on Python.
 
 **Runtime (Rust):**
 - Rust stable (current MSRV pinned in `rust-toolchain.toml`)
@@ -447,15 +437,9 @@ The runtime is Rust. The vector-extraction toolchain is Python, invoked offline 
 - macOS Apple Silicon (Metal) primary; Linux/CUDA for cloud runs
 
 **Inference:**
-- `candle` — HuggingFace's Rust ML framework, supports Qwen-3 with Q4/Q5 quantization, Metal and CUDA backends, and (critically) hidden-state hooks for steering injection
-- `llama-cpp-rs` — fallback if candle's Qwen-3 quantization story has rough edges in practice; less flexible for fine-grained steering but well-tested
-- `reqwest` — Stage 1 HTTP backend (covers OpenAI- and Anthropic-compatible endpoints uniformly); `anthropic-sdk` and `async-openai` are optional ergonomic wrappers
-
-**Control vectors:**
-- *Extraction (offline, Python):* `repeng` + `transformers` + `torch` in `tools/extract_vectors/`, invoked via subprocess
-- *Storage:* FAISS-compatible `.index` files via `faiss-rs`, with contract manifest sidecars
-- *Application:* candle hidden-state hooks in `crates/xianvec-inference/`
-- *Gating:* `crates/xianvec-gating/` — entropy gate v1; CAST projection-based gating and PID-controlled alpha are deferred to v2
+- `reqwest` — primary backend for both Intern (Stage 1) and Trader (Stage 2). Covers OpenAI- and Anthropic-compatible HTTP endpoints uniformly (vLLM, llama.cpp, Ollama, OpenRouter, Anthropic, OpenAI). `anthropic-sdk` and `async-openai` are optional ergonomic wrappers.
+- `candle` — HuggingFace's Rust ML framework, supports Qwen-3 with Q4/Q5 quantization, Metal and CUDA backends. Optional local-inference path for the Trader (air-gapped runs).
+- `llama-cpp-rs` — fallback option if candle quantization quality is insufficient on a given platform.
 
 **Trading:**
 - `apca` for Stage 3 Alpaca paper (`alpaca-rs` on crates.io is a stub)
@@ -476,23 +460,12 @@ The runtime is Rust. The vector-extraction toolchain is Python, invoked offline 
 - `tracing` for structured logging (also drives observability — see telemetry block)
 - `teloxide` for the Telegram demo bot
 
-**Vector substrate & geometry:**
-- `faiss-rs` for FAISS-compatible HNSW indexes
-- `tokio` + `arc-swap` for async vector storage with snapshot reads
-- `serde_json` for contract manifests and FAISS sidecars
-
-**Introspection (opt-in, per §7.5.1):**
-- `xianvec-introspect` crate — composes via the `LayerHook` trait, zero overhead when not installed
-- Captures per-layer residual norms, activation diffs, vector–residual cosines, logit lens at every hooked layer, decision-token logits/probabilities/entropy at the gate point
-- Output: structured JSON consumed by `notebooks/inspect_vector.py` for multi-panel plots
-
 **Tracing & observability:**
 - `tracing` + `tracing-subscriber` for structured spans
 - `tracing-opentelemetry` + `opentelemetry-otlp` for OTLP export
 - Self-hosted Langfuse as primary backend (Docker compose: Postgres + Clickhouse)
 - OpenTelemetry GenAI semantic conventions throughout
 - Dual-write: SQLite (§9.4 flight recorder) for replay; OTel for live observability
-- Python extractor emits OTel spans via `opentelemetry-python` so subprocess invocations join the trace tree
 
 **Dev:**
 - `cargo test` + `proptest` for unit and property-based tests
@@ -506,8 +479,6 @@ The runtime is Rust. The vector-extraction toolchain is Python, invoked offline 
 
 ### 10.1 Cargo workspace layout
 
-**v1 scope (2026-05-03):** the workspace is a **single `crates/xianvec-*` tree**. The lodestar / xianvec subtree split documented in earlier drafts is deferred to v2 — see §10.2 for the lift trigger. The implementation-plan.md "v1 scope cuts" block lists the full set of items (multi-axis disposition, multi-asset basket, full contract-layer crate, geometry crate, async substrate crate, telemetry crate + OTel/Langfuse, Telegram bot, xStocks, mantle-risk-evaluator) that move to v2 with this collapse.
-
 ```
 xianvec/
 ├── Cargo.toml                    # workspace root
@@ -516,46 +487,23 @@ xianvec/
 ├── crates/
 │   ├── xianvec-core/             # types, schemas, config, SQLite persistence, manifest types
 │   ├── xianvec-data/             # OHLCV ingest, indicators, onchain signals
-│   ├── xianvec-inference/        # candle wrapper + steering hooks + inline FAISS load
-│   ├── xianvec-gating/           # entropy gating, alpha schedule
-│   ├── xianvec-introspect/       # OPTIONAL layer analytics (Phase 0.3 spike requires)
-│   ├── xianvec-intern/           # Stage 1 (OpenAI- or Anthropic-compatible HTTP, optional local candle)
-│   ├── xianvec-trader/           # Stage 2 (vectors active)
+│   ├── xianvec-intern/           # Stage 1 (OpenAI- or Anthropic-compatible HTTP)
+│   ├── xianvec-trader/           # Stage 2 (TraderBackend HTTP trait, optional local candle)
 │   ├── xianvec-risk/             # deterministic risk layer
 │   ├── xianvec-execution/        # Stage 3: Alpaca + Orderly
+│   ├── xianvec-identity/         # ERC-8004 manifest + reputation/validation receipts
 │   ├── xianvec-eval/             # backtest harness, baselines, Δ-Sharpe
 │   ├── xianvec-harness/          # boundary probes (minimal v1 corpus)
 │   └── xianvec-cli/              # clap-based CLI; installed binary is `xvn`
 │
-├── tools/
-│   └── extract_vectors/          # Python: repeng-based contrast extractor
 ├── config/                       # TOML configs (whitelist, risk)
 ├── data/
-│   ├── probes/                   # boundary probe corpus (minimal v1, versioned)
-│   └── vectors/                  # FAISS .index files + manifests
+│   └── probes/                   # boundary probe corpus (minimal v1, versioned)
 ├── notebooks/                    # eval plotting (Python, offline)
 └── docs/
 ```
 
-The workspace structure still makes the contract layer load-bearing: each crate's public API is a typed surface, and cross-crate calls fail to compile if the contract doesn't match. The discipline that motivated the Rust choice carries over even without the formal lodestar boundary — a `xianvec-data` function still cannot reach into `xianvec-gating`'s internals.
-
-### 10.2 The lodestar / xianvec boundary (deferred to v2)
-
-The original design extracts a domain-agnostic `crates/lodestar/` subtree (inference, vector substrate, geometry, gating, introspection, telemetry, CLI) so it can be forklifted into a sibling project (EditEngage, character/voice work, any other domain) without modification. **v1 collapses this into the single `xianvec-*` tree above** to compress workspace overhead during the 45-day hackathon window. The discipline survives — domain logic still does not reach into substrate internals — but the boundary is convention, not Cargo-enforced.
-
-**Lift trigger:** a second domain consumer materializes, OR v1 ships with a positive headline Δ-Sharpe and there is a 2-week refactor window. The mechanical lift is `git mv crates/{xianvec-inference,xianvec-substrate,xianvec-contracts,xianvec-geometry,xianvec-gating,xianvec-introspect,xianvec-telemetry} crates/lodestar/lodestar-{...}` plus a path-to-git swap in `Cargo.toml`. Cost is small precisely because the v1 single-tree still respects the substrate-vs-domain split at the function-import level.
-
-**What the lodestar surface will provide post-lift** (preserved for forward planning, since its existence shapes which v1 modules to keep clean):
-
-- Load a model via candle (with pluggable backend trait for llama-cpp-rs)
-- Async FAISS-compatible vector storage with snapshot reads, contract validation, priority queuing
-- Steering hooks gated by entropy / CAST / PID-alpha
-- Generic geometry primitives (Mint, Corridor, Probe) parametrized over domain types
-- Optional layer introspection
-- OpenTelemetry span schema (also v2)
-- A generic `lodestar inspect-vectors` CLI
-
-**A note on naming:** "lodestar" is the working name. If a different name lands better at extraction time (`polaris`, `prism`, etc.), rename then; the structural intent doesn't depend on the name.
+The workspace structure makes the contract layer load-bearing: each crate's public API is a typed surface, and cross-crate calls fail to compile if the contract doesn't match. A `xianvec-data` function cannot reach into `xianvec-eval`'s internals.
 
 ---
 
@@ -563,29 +511,19 @@ The original design extracts a domain-agnostic `crates/lodestar/` subtree (infer
 
 Explicit non-goals for hackathon. Each is a real follow-on but not v1:
 
-- Karpathy self-improvement loop (vector training from agent's own trades)
+- Karpathy autoresearch loop (LLM-proposed strategy mutations from per-strategy trade ledgers)
 - **Capital bridge** (`@mantleio/sdk` ETH↔Mantle): explicitly out of scope. Funds are pre-positioned on Mantle by the user; the agent only ever sees on-Mantle balances and never executes a bridge transaction itself.
 - Options Greeks, derivatives strategy
 - Multi-model evaluation tournament
-- **Cross-run memory system (MemPalace):** Deferred until the vector hypothesis is validated — injecting memory into runs conflates two variables.
+- **Cross-run memory system (MemPalace):** Deferred — strategy ledgers are the v1 substitute for cross-run learning.
 - Dashboard with historical data UI
+- Multi-asset basket — v1 is BTC only
+- xStocks / Mantle tokenized equities
+- Telegram demo bot
+- `mantle-risk-evaluator` LLM pre-flight gate
 - Telegram interactive command set beyond demo-supporting commands
 - News, fundamentals, sentiment from social
 - Auto-scaling / cloud deployment beyond a single Vast.ai/RunPod box for backtest acceleration
-
-**v1 scope cuts (added 2026-05-03):** the items below appeared in earlier drafts as v1 commitments. Each is now deferred with an explicit re-add trigger documented in implementation-plan.md → "Future additions / Scope items cut from v1":
-
-- lodestar / xianvec subtree split + `cargo deny` boundary (§10.2)
-- 3 of 4 disposition axes active — v1 ships **Conviction only**
-- Regime-conditioned vector configs (§7.4 hand-set magnitudes per regime)
-- Multi-asset basket — v1 is BTC only
-- xStocks / Mantle tokenized equities
-- Async vector substrate as a separate crate (worker pool, snapshot reads, priority queue)
-- Full contract layer crate with `Vector<L, M>` generics
-- Geometry crate with first-class corridor abstractions
-- Telemetry crate + OpenTelemetry export + self-hosted Langfuse
-- Telegram demo bot
-- `mantle-risk-evaluator` LLM pre-flight gate
 
 **Note on previously-deferred items still in v1:** ERC-8004 identity + reputation + validation registries are v1-required, all on Mantle. On-chain trade execution runs on Mantle via **Orderly Network** (`orderly-connector-rs`, native Rust). **Byreal Agent Skills** stays vendored as the Stage 1 Intern's skill catalog, satisfying the hackathon Path 1 endorsement of Byreal tooling without forcing the trade venue. The Byreal Perps CLI executor path is preserved as a verified fork option (see `decisions/0006-executor-choice.md`). See §6 (Stage 3) and implementation-plan.md → "Mantle hackathon integration."
 
@@ -597,56 +535,25 @@ For the record, the following were debated and decided:
 
 | Question | Resolution |
 |---|---|
-| Stage 2 as decider vs calibrator? | **Decider.** User chose to maximize the experimental signal of vector influence. Risk layer compensates for safety. |
-| Stage 2 name? | **Trader** (paired with Stage 1 = **Intern**). Characterological roles: Intern researches neutrally, Trader decides with disposition. |
-| Does Intern recommend a candidate decision? | **No.** Intern emits balanced bull/bear/flat cases with parallel evidence inventories. Recommending would prompt-anchor the Trader and drown the vectors. |
-| Local model for Stage 2? | **Qwen3.6-27B (no-thinking)** primary, precision 4-bit→16-bit depending on resources. Validated by toy-axis spike before lock-in. |
-| Confidence gating? | **Yes**, via decision-token entropy. Lightweight stand-in for SVF. |
+| CV substrate location? | **Moved to xianvec-play** per ADR 0011. xianvec is multistrategy + marketplace; CV research continues in xianvec-play with the full development trail preserved. |
+| Stage 2 as decider vs calibrator? | **Decider.** Risk layer compensates for safety; the Trader emits the action. |
+| Stage 2 name? | **Trader** (paired with Stage 1 = **Intern**). Characterological roles: Intern researches neutrally, Trader decides. |
+| Does Intern recommend a candidate decision? | **No.** Intern emits balanced bull/bear/flat cases with parallel evidence inventories. Recommending would prompt-anchor the Trader. |
 | Where does risk live? | **Between Stage 2 and Stage 3** as deterministic rule code. |
-| Primary eval metric? | **Δ-Sharpe** (vectors-on minus vectors-off, paired). |
+| Primary eval metric? | **Δ-Sharpe** between Strategy A and Strategy B, paired on the same setups. |
 | Backtest or forward paper? | **Backtest first** for population statistics; forward paper for deployment validation. |
-| Implementation language? | **Rust from day one** for the runtime. `candle` for inference (with `llama-cpp-rs` fallback). Python retained only as an offline build tool for vector extraction (`tools/extract_vectors/`). No runtime Python. See §10. |
-| Vector extraction language? | **Python**, offline. `repeng` + `transformers` is the well-trodden path with no Rust equivalent worth the rewrite cost during v1. Invoked via subprocess from the Rust orchestrator. The Karpathy self-improvement loop calls the same utility — to the agent, vector extraction is a tool that produces a file. See §7.2. |
-| Inference framework? | **`candle`**, primary. Provides hidden-state hooks for fine-grained steering (different vectors at different layers, CAST projection gating, PID alpha) that llama.cpp's static `--control-vector` API cannot express. `llama-cpp-rs` retained as fallback if candle's Qwen-3 quantization is rough in Phase 0 validation. |
-| Vector file format? | **FAISS-compatible `.index`** with contract manifest sidecars. Both languages read/write the same format; this is the boundary between offline Python tooling and Rust runtime. |
-| Telemetry backend (v2)? | **Self-hosted Langfuse** as primary, OpenTelemetry GenAI conventions throughout. **v1 ships SQLite flight recorder + `tracing` console only**; full OTel/Langfuse deferred to v2. See §7.6 and implementation-plan.md "Telemetry (v1)". |
-| Adopt Glamin directly? | **No, adopt the patterns.** Corridors, contract layer, boundary probes, document/geometry separation, async-first storage, FAISS compatibility — rebuilt in Rust. Leave Fortran/C, hand-tuned SIMD, the YAML DSL, and the unfinished geometric-logic layer. See §7.5. |
-| Reusable across projects? | **Yes, but deferred to v2.** Lodestar / xianvec subtree split was the design but is collapsed into a single `crates/xianvec-*` tree for the 45-day hackathon window. The mechanical lift (`git mv`) costs a few hours and triggers when a second domain consumer materializes or when v1 ships. See §10.2. |
+| Telemetry backend (v2)? | **Self-hosted Langfuse** as primary, OpenTelemetry GenAI conventions throughout. **v1 ships SQLite flight recorder + `tracing` console only**; full OTel/Langfuse deferred to v2. |
 | On-chain executor? | **Orderly Network on Mantle** via `orderly-connector-rs = "0.4"` (native Rust async). Decision rationale and the day's three-pivot history live in `decisions/0006-executor-choice.md`. Byreal Agent Skills stay vendored as the Stage 1 Intern's skill catalog so Path 1's named-tooling endorsement is satisfied through context, not execution. The Byreal Perps CLI path (Hyperliquid execution) is preserved as a fork option — M0 probe at `probes/m0-byreal/` passed. Vertex Protocol was eliminated on 2026-05-03 morning (operationally dead — gateways 404, repos ~1 year stale). See §6. |
-| Active disposition axes in v1? | **One — Conviction.** Earlier drafts shipped four (Conviction / Patience / Risk-appetite / Trend-disposition). The other three are extracted to exercise the contrast pipeline but are not active in the headline experiment. Composition + regime-conditioned configs are v2. See §7.1. |
-| Anti-overfit gate? | **Reportable, not blocking, in v1.** Original framing as a hard requirement was correct for a deployable trading agent and wrong for a hackathon — strict gate plus weak Q4 vectors plus a 100-trade sample makes "no config advances" too likely. v1 surfaces a named verdict (PassesBothRegimes / SingleRegimeEvidence / Fails) in the report. The gate must re-tighten to blocking when any automated optimizer over vector configs ships (Karpathy v2). See implementation-plan.md Phase 8.4. |
+| Anti-overfit gate? | **Reportable, not blocking, in v1.** v1 surfaces a named verdict (PassesBothRegimes / SingleRegimeEvidence / Fails) in the report. The gate re-tightens to blocking when any automated optimizer over strategies ships (Karpathy autoresearch v2). |
 
 ---
 
 ## 13. References
 
-**Steering Vector Fields (SVF) — the core 2026 result on context-aware steering:**
-- Li, Li, Huang. *Steering Vector Fields for Context-Aware Inference-Time Control in Large Language Models.* arXiv:2602.01654, Feb 2026. https://arxiv.org/abs/2602.01654
-
-**SEAL — reasoning steering via hidden-state contrasts:**
-- *SEAL: Steerable Reasoning Calibration of Large Language Models for Free.* arXiv:2504.07986. https://arxiv.org/abs/2504.07986
-- *Self-Adapting Language Models* (related but separate — RL-driven self-edits). arXiv:2506.10943. https://arxiv.org/abs/2506.10943
-
-**Practical state of the art — useful synthesis:**
-- Mitra. *Activation Steering in 2026: A Practitioner's Field Guide.* https://subhadipmitra.com/blog/2026/activation-steering-field-guide/
-
-**Adjacent work worth knowing:**
-- *Steer2Adapt: Dynamically Composing Steering Vectors.* arXiv:2602.07276. https://arxiv.org/abs/2602.07276
-- *From Steering Vectors to Conceptors: Compositional Affine Activation Steering.* OpenReview. https://openreview.net/forum?id=0Yu0eNdHyV
-- *Reliable Control-Point Selection for Steering Reasoning.* arXiv:2604.02113. https://arxiv.org/abs/2604.02113
-
-**Geometric / corridor framing inspiration:**
-- Glamin (executable geometry). https://github.com/LynnColeArt/glamin
-
 **Inference & ML (Rust):**
 - candle (HuggingFace Rust ML framework). https://github.com/huggingface/candle
 - llama-cpp-rs (fallback). https://github.com/utilityai/llama-cpp-rs
 - mistralrs (candle-based serving). https://github.com/EricLBuehler/mistral.rs
-
-**Vector extraction (Python, offline):**
-- repeng (control vectors). https://github.com/vgel/repeng
-- dialz (alternative steering toolkit). https://github.com/dialz/dialz
-- transformers. https://github.com/huggingface/transformers
 
 **Trading & onchain (Rust):**
 - apca. https://github.com/d-e-s-o/apca
@@ -668,16 +575,12 @@ For the record, the following were debated and decided:
 - `tracing-opentelemetry`. https://docs.rs/tracing-opentelemetry/
 
 **Rust substrate:**
-- `faiss-rs`. https://github.com/Enet4/faiss-rs
 - `tokio`. https://tokio.rs/
 - `arc-swap` (snapshot semantics). https://docs.rs/arc-swap/
 - `serde` + `garde` (typed schemas with validation). https://serde.rs/ · https://github.com/jprochazk/garde
 - `polars` (tabular data). https://pola.rs/
 - `sqlx` (compile-time-checked queries). https://github.com/launchbadge/sqlx
 
-**Companion design doc:**
-- `steering-vector-architecture.md` — forward-thinking sibling, captures the May 2026 design conversation around Mitra, Glamin patterns, the Rust-from-day-one decision, and the offline Python extraction boundary.
-
 ---
 
-*Document version: 2026-05-02. Lives at `/Users/edkennedy/Code/xianvec/architecture.md`.*
+*Document version: 2026-05-07 (post-ADR-0011 slim-down). Lives at `/Users/edkennedy/Code/xianvec/architecture.md`.*
