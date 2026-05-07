@@ -9,9 +9,9 @@ CREATE TABLE IF NOT EXISTS setups (
     created_at  TEXT NOT NULL
 );
 
--- Tier 1 fix #1: briefings are keyed by setup_id only — both vectors-on and
--- vectors-off arms read the SAME briefing. Cache key in xianvec-intern includes
--- (provider, model) so changing the Intern backend invalidates rows.
+-- Tier 1 fix #1: briefings are keyed by setup_id only — every arm reads the
+-- SAME briefing. Cache key in xianvec-intern includes (provider, model) so
+-- changing the Intern backend invalidates rows.
 CREATE TABLE IF NOT EXISTS briefings (
     setup_id      TEXT PRIMARY KEY,
     provider      TEXT NOT NULL,
@@ -21,31 +21,30 @@ CREATE TABLE IF NOT EXISTS briefings (
     FOREIGN KEY (setup_id) REFERENCES setups(setup_id)
 );
 
--- Decisions are keyed by (setup_id, vector_config_hash) so both arms persist
--- independently. vector_config_hash is the SHA-of-the-active-vectors-map.
+-- Decisions are keyed by (setup_id, arm_name) so multiple strategy arms
+-- (trader_arm + baselines) persist independently against the same setup.
 CREATE TABLE IF NOT EXISTS decisions (
     setup_id            TEXT NOT NULL,
-    vector_config_hash  TEXT NOT NULL,
     arm_name            TEXT NOT NULL,
     decision_json       TEXT NOT NULL,
     created_at          TEXT NOT NULL,
-    PRIMARY KEY (setup_id, vector_config_hash),
+    PRIMARY KEY (setup_id, arm_name),
     FOREIGN KEY (setup_id) REFERENCES setups(setup_id)
 );
 
 CREATE TABLE IF NOT EXISTS risk_outcomes (
     setup_id            TEXT NOT NULL,
-    vector_config_hash  TEXT NOT NULL,
+    arm_name            TEXT NOT NULL,
     risk_decision_json  TEXT NOT NULL,
     created_at          TEXT NOT NULL,
-    PRIMARY KEY (setup_id, vector_config_hash),
+    PRIMARY KEY (setup_id, arm_name),
     FOREIGN KEY (setup_id) REFERENCES setups(setup_id)
 );
 
 CREATE TABLE IF NOT EXISTS executions (
     execution_id        TEXT PRIMARY KEY,
     setup_id            TEXT NOT NULL,
-    vector_config_hash  TEXT NOT NULL,
+    arm_name            TEXT NOT NULL,
     venue               TEXT NOT NULL,    -- alpaca | orderly | backtest
     receipt_json        TEXT NOT NULL,
     realized_pnl        REAL,
