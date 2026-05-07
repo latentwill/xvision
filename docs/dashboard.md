@@ -1,5 +1,14 @@
 # Dashboard — surface inventory
 
+> **2026-05-07: Partially superseded by ADR 0011.** Panels referencing
+> `vectors_on`/`vectors_off`, `active_vectors`, `vector_config_hash`, and
+> the per-axis (Conviction/Patience/Risk/Trend) cuts are obsolete in
+> xianvec — they apply to xianvec-play if/when the CV substrate ships a
+> dashboard there. The strategy-level Δ-Sharpe / leaderboard / per-trade
+> ledger panels (V1, V2, V3 etc. retargeted at `arm_name` not
+> `vector_config_hash`) carry forward as the marketplace dashboard
+> surface.
+
 > Working doc · 2026-05-04 · Draft v0.1
 >
 > Scope: enumerate every panel xianvec's dashboard could reasonably show,

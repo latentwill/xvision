@@ -37,8 +37,7 @@ pub struct AgentManifest {
 }
 
 /// Summary of the strategy configuration applied to this agent arm.
-/// Post-CV-extraction (ADR 0011) the per-arm split is by strategy name,
-/// not by steering-vector configuration.
+/// Per ADR 0011, the per-arm split is by strategy name.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct StrategyConfigSummary {
     /// Strategy name: `"trader_arm"` | `"buy_and_hold"` | `"always_long"` | …
