@@ -44,9 +44,9 @@ mod tests {
     fn show_metrics_reads_a_fixture_report() {
         let result = BacktestResult {
             arms: BTreeMap::from([(
-                "vectors_off".to_string(),
+                "trader_arm".to_string(),
                 ArmResult {
-                    name: "vectors_off".into(),
+                    name: "trader_arm".into(),
                     equity_curve: vec![],
                     fills: vec![],
                     decisions: vec![],

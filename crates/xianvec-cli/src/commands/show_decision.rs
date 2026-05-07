@@ -29,10 +29,9 @@ pub async fn run(setup_id: Uuid, db: PathBuf) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeMap;
 
     use xianvec_core::trading::{
-        Action, AssetSymbol, Direction, DispositionAxis, TraderDecision,
+        Action, AssetSymbol, Direction, TraderDecision,
     };
 
     #[tokio::test]
@@ -50,7 +49,6 @@ mod tests {
             stop_loss_pct: 2.0,
             take_profit_pct: 5.0,
             trader_summary: "show-decision smoke fixture decision.".into(),
-            active_vectors: BTreeMap::from([(DispositionAxis::Conviction, 0.9)]),
         };
         store
             .upsert_setup(
@@ -62,7 +60,7 @@ mod tests {
             .await
             .unwrap();
         store
-            .insert_decision("vectors_on", &decision)
+            .insert_decision("trader_arm", &decision)
             .await
             .unwrap();
 
@@ -70,7 +68,7 @@ mod tests {
         // sqlite needs the string form — we exercise the same fetch logic).
         let fetched = store.get_decisions_for_setup(&setup_id).await.unwrap();
         assert_eq!(fetched.len(), 1);
-        assert_eq!(fetched[0].0, "vectors_on");
+        assert_eq!(fetched[0].0, "trader_arm");
         assert_eq!(fetched[0].1.action, Action::Buy);
     }
 }
