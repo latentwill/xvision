@@ -6278,9 +6278,11 @@ name = "xianvec-trader"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "chrono",
  "garde",
  "proptest",
+ "reqwest",
  "serde",
  "serde_json",
  "thiserror",

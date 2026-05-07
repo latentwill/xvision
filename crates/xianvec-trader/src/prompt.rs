@@ -5,8 +5,7 @@
 //! 1. Role + JSON-only directive
 //! 2. The Intern's bull/bear/flat case + evidence + signal_quality + regime
 //! 3. Portfolio state (equity, exposure, open positions)
-//! 4. Vectors-active hint (Phase 4 wiring; Phase 3 always says "off")
-//! 5. Required output schema with field constraints
+//! 4. Required output schema with field constraints
 
 use std::fmt::Write;
 
@@ -32,7 +31,7 @@ impl Default for TraderPromptOpts {
 pub fn build_trader_prompt(
     briefing: &InternBriefing,
     portfolio: &PortfolioState,
-    params: &TraderParams,
+    _params: &TraderParams,
     opts: &TraderPromptOpts,
 ) -> String {
     let mut s = String::with_capacity(2048);
@@ -77,16 +76,6 @@ pub fn build_trader_prompt(
         for op in portfolio.open_positions.values().take(opts.max_open_positions) {
             write_open_position(&mut s, op);
         }
-    }
-
-    s.push_str("\n# Vectors\n");
-    if params.vectors_enabled {
-        s.push_str(
-            "Disposition steering vectors ARE active for this decision. Reason as your usual self;\n\
-             do not narrate the vectors or apologize for them.\n",
-        );
-    } else {
-        s.push_str("Disposition steering vectors are OFF for this decision (control arm).\n");
     }
 
     s.push_str(SCHEMA_INSTRUCTIONS);
@@ -163,7 +152,7 @@ const SCHEMA_INSTRUCTIONS: &str = "\n\n# Required output (JSON only)\n\
 }\n\
 ```\n\
 \n\
-Emit only the JSON object. The runtime will fill in `setup_id` and `active_vectors`.";
+Emit only the JSON object. The runtime will fill in `setup_id`.";
 
 #[cfg(test)]
 mod tests {
@@ -253,29 +242,6 @@ mod tests {
         ] {
             assert!(s.contains(needle), "missing: {needle}\n---\n{s}");
         }
-    }
-
-    #[test]
-    fn prompt_advertises_vectors_off_by_default() {
-        let s = build_trader_prompt(
-            &fixture_briefing(),
-            &fixture_portfolio_flat(),
-            &TraderParams::default(),
-            &TraderPromptOpts::default(),
-        );
-        assert!(s.contains("OFF for this decision"), "vectors-off label missing");
-    }
-
-    #[test]
-    fn prompt_advertises_vectors_on_when_enabled() {
-        let params = TraderParams { vectors_enabled: true, ..TraderParams::default() };
-        let s = build_trader_prompt(
-            &fixture_briefing(),
-            &fixture_portfolio_flat(),
-            &params,
-            &TraderPromptOpts::default(),
-        );
-        assert!(s.contains("ARE active"), "vectors-on label missing");
     }
 
     #[test]

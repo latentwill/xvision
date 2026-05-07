@@ -24,14 +24,8 @@ anyhow      = { workspace = true }
 tracing     = { workspace = true }
 tracing-subscriber = { workspace = true }
 tokio       = { workspace = true }
+async-trait = { workspace = true }
+reqwest     = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
-
-[[bin]]
-name = "smoke-trader"
-path = "src/bin/smoke_trader.rs"
-
-[[bin]]
-name = "smoke-pipeline"
-path = "src/bin/smoke_pipeline.rs"
