@@ -56,9 +56,9 @@ The codebase is in **early Phase 1.x** — stub status dominates. `xianvec-data`
 | File | Line | Read site | Bounding mechanism | Status |
 |------|------|-----------|-------------------|--------|
 | `crates/xianvec-core/src/store.rs:78–96` | `upsert_setup()` | Writes setup_id, asset, horizon_h, market_state_json, created_at. | Creates or updates a setup row. `setup_id` is the caller's Uuid; timestamp immutability is enforced at the application layer (Phase 9 harness). | SMELL (application-level validation missing in v1) |
-| `crates/xianvec-core/src/store.rs:103–121` | `upsert_briefing()` | Writes briefing_json keyed on setup_id. Both arms read same row (Tier 1 fix #1). | **Correct by design.** One briefing per `setup_id`; vectors-on and vectors-off are both side-effect readers via `get_briefing()`. The cache key (provider, model) ensures different LLM backends don't collide. | CLEAN |
+| `crates/xianvec-core/src/store.rs:103–121` | `upsert_briefing()` | Writes briefing_json keyed on setup_id. All paired strategy arms read the same row (Tier 1 fix #1). | **Correct by design.** One briefing per `setup_id`; every strategy arm is a side-effect reader via `get_briefing()`. The cache key (provider, model) ensures different LLM backends don't collide. | CLEAN |
 | `crates/xianvec-core/src/store.rs:124–134` | `get_briefing(setup_id)` | SELECT briefing_json WHERE setup_id = ? | One row per setup_id. No cross-setup leakage; schema has FK to setups(setup_id). | CLEAN |
-| `crates/xianvec-core/src/store.rs:138–152` | `insert_decision()` | Writes (setup_id, vector_config_hash, arm_name, decision_json). Primary key prevents duplicates per arm within a setup. | **Paired-arm keying:** vector_config_hash distinguishes arms (off vs on). Two arms with identical vectors collide intentionally (deterministic on same briefing, temperature=0). Tier 1 fix #1 works correctly. | CLEAN |
+| `crates/xianvec-core/src/store.rs:138–152` | `insert_decision()` | Writes (setup_id, arm_name, decision_json). Primary key prevents duplicates per arm within a setup. | **Paired-arm keying:** arm_name distinguishes strategies. Two arms with identical decisions collide intentionally (deterministic on same briefing, temperature=0). Tier 1 fix #1 works correctly. | CLEAN |
 
 ## Cache-key analysis
 
@@ -81,7 +81,7 @@ The codebase is in **early Phase 1.x** — stub status dominates. `xianvec-data`
 
 3. **Line `crates/xianvec-intern/src/prompt.rs:47–62` (recent bars in prompt)** — Recent OHLCV bars are capped to 12 by default and presented in chronological order. The Intern prompt explicitly states the decision timestamp (`Timestamp (UTC): ...`) so the LLM receives the temporal anchor. No forward bars are ever visible. **Verdict: CLEAN.**
 
-4. **Line `crates/xianvec-core/src/store.rs:78–96, 103–121` (setup + briefing persistence)** — The briefing cache is keyed on `setup_id` + `provider` + `model`. Tier 1 fix #1 is correctly wired: both vectors-on and vectors-off arms read the *same* briefing for the same setup. **Verdict: CLEAN.** Note: cache-key immutability depends on the caller (Phase 9 harness) never mutating a setup_id or creating duplicate setups with different timestamps.
+4. **Line `crates/xianvec-core/src/store.rs:78–96, 103–121` (setup + briefing persistence)** — The briefing cache is keyed on `setup_id` + `provider` + `model`. Tier 1 fix #1 is correctly wired: every paired strategy arm reads the *same* briefing for the same setup. **Verdict: CLEAN.** Note: cache-key immutability depends on the caller (Phase 9 harness) never mutating a setup_id or creating duplicate setups with different timestamps.
 
 5. **Line `crates/xianvec-core/src/market.rs:12–62` (MarketSnapshot structure)** — All fields are scalar or fixed-size aggregates. No history buffer; no precomputed features that might be computed over a sliding or future window. Indicators are point-in-time values tied to MarketSnapshot.timestamp. **Verdict: CLEAN.**
 

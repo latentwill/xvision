@@ -1,12 +1,18 @@
 # ADR 0002 — Vector validation spike outcome
 
 **Date:** 2026-05-03
-**Status:** **Substantive PASS** — proceed to Phase 2. Strict 8-criterion gate
-fails on (1)/(3)/(5)/(6); the substantive evidence (1.17-point score swing across
-α ∈ [-2, +2], confirmed vector mechanism, monotonic effect) overrides because
-those four failing criteria are downstream of a single conservative threshold
-choice. See "Decision" below.
-**Phase:** 0.3 (CRITICAL GATE)
+**Status:** **Substantive PASS** — historical record (preserved per ADR 0011).
+Originally cleared Phase 0.3 strict 8-criterion gate substantively despite
+strict-mode failures on (1)/(3)/(5)/(6); the 1.17-point score swing across
+α ∈ [-2, +2], confirmed vector mechanism, and monotonic effect were the
+load-bearing evidence. See "Decision" below.
+**Phase:** 0.3 (was CRITICAL GATE — now historical)
+
+> **2026-05-07 status:** Per ADR 0011, CV substrate moved to xianvec-play.
+> This ADR is preserved as historical record of the validation spike;
+> the work it documents now continues in xianvec-play. References to
+> Phase 0.3 / Phase 4 in the body are obsolete in xianvec; their
+> equivalents live in xianvec-play.
 
 ## Question
 

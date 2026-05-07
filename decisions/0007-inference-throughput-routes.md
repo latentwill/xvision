@@ -1,10 +1,8 @@
-# 0007 — Routes to fix candle Q4 throughput on Apple Silicon
+# 0007 — Routes for Trader inference throughput on Apple Silicon
 
-**Status:** Open. Spike target for Phase 4.5 (after vector application is wired
-on the existing slow path) or Phase 9 prerequisite (hard gate before forward
-paper).
+**Status:** Revised 2026-05-07 per ADR 0011. Trader-only inference throughput considerations remain valid; CV-driven steering-hook constraints have been excised.
 **Owner:** TBD
-**Date:** 2026-05-03
+**Date:** 2026-05-03 (revised 2026-05-07)
 
 ## Context
 
@@ -16,6 +14,7 @@ Phase 3 wired `xianvec-trader::run_trader` against `xianvec-inference::Qwen3Engi
 | `candle` Q4_K_M / Metal (smoke-qwen3)         | ~0.64 tok/s decode, ~1.2 tok/s prefill |
 | `llama.cpp` Q4_K_M / Metal (community, M4)    | ~30–50 tok/s on 7B, ~16 tok/s on 32B   |
 | MLX 4-bit / Apple Silicon (community, M4 Max) | ~25–40 tok/s on 32B-class             |
+| OpenAI-compat HTTP (vLLM/Ollama localhost)    | ~30+ tok/s on 32B (no per-token in-process cost) |
 
 Same model. Same machine. Same quantization. The candle path is **20–60× slower**
 than the alternatives. A 600-token Trader prompt + 384-token decode ⇒ 17 min
@@ -26,28 +25,11 @@ not surface flash-attention or fused Q4_K_M kernels), but Phase 0.2 didn't
 benchmark it; the cost only became visible once Stage 2 made the Trader the
 hot path.
 
-The Phase 4.3 hard gate (vectors must steer the candle runtime equivalently to
-the MLX spike) does not depend on throughput, so Phase 4 can proceed against
-the slow path. But forward paper / live (Phase 9) needs ≥10 tok/s end-to-end
-to be tolerable, and the headline rented-GPU run still benefits from a faster
-local dev loop.
+Forward paper / live needs ≥10 tok/s end-to-end to be tolerable.
 
-## What Phase 4+ actually needs from the runtime
+## What the runtime needs (post-ADR-0011)
 
-The steering vectors live at a specific transformer layer's residual stream:
-
-```rust
-pub trait LayerHook: Send + Sync {
-    fn apply(&self, layer_idx: usize, residual: &Tensor) -> Result<Tensor>;
-}
-```
-
-Anything that can intercept the residual at a configured layer satisfies the
-contract. Output-only knobs (logits processor, grammar) do **not** — they
-cannot reproduce hidden-state steering.
-
-So the throughput route must preserve a **forward-pass hook surface**, not
-just produce text. That filters the option space.
+The Trader needs to produce a structured JSON decision from a briefing prompt. Anything that can run a Qwen3-class chat model and return text satisfies the contract. **There is no steering-hook constraint.** OpenAI-compatible HTTP is a fully valid target.
 
 ## Options
 
@@ -55,32 +37,22 @@ just produce text. That filters the option space.
 
 ADR 0001 already names this. Pull `candle_transformers::models::qwen3` and
 the supporting `quantized_nn` / `utils::repeat_kv` / flash-attention pieces
-into our tree as `xianvec-inference/src/model/qwen3_steered.rs`. Replace the
-attention block with the flash-attention path; keep our hook surface; ship.
+into our tree. Replace the attention block with the flash-attention path; ship.
 
-- **Pros:** stays in Rust, keeps direct hook control, no FFI, expected
+- **Pros:** stays in Rust, no FFI, expected
   throughput ~10 tok/s per community ports of the same approach.
 - **Cons:** ~1 week of model-vendoring + maintenance burden; we now own the
   forward pass and have to track upstream candle bugfixes; flash-attention
   on Metal in candle is less battle-tested than on CUDA.
-- **Steering: yes**, native Rust hooks at any layer.
 
 ### B. `mlx-rs` (Rust bindings to Apple's MLX)
 
 `oxideai/mlx-rs` — unofficial but actively maintained Rust bindings to MLX
 (MSRV 1.82). MLX is the fastest framework on Apple Silicon for Q4 inference
-in 2026 (Apple research: Qwen3-14B-4bit on M5 hit 4.06× TTFT and 1.19×
-decode vs M4; Ollama switched its Apple Silicon backend to MLX in March 2026).
+in 2026.
 
-- **Pros:** likely fastest of the four routes on M4 Max; stays in Rust;
-  Apple is the upstream and continues to invest.
-- **Cons:** binding maturity is the open question — verify `mlx-rs` exposes
-  module-level forward hooks (or its Python `mlx-lm` equivalent does and the
-  binding plumbs them through). If hooks aren't surfaced, this collapses to
-  option D.
-- **Steering: needs validation.** The Phase 0.3 spike already steered Qwen3
-  via MLX in Python by patching `nn.Module.__call__` — the hook surface is
-  there in MLX core, the question is binding-level access from Rust.
+- **Pros:** likely fastest of the routes on M4 Max; stays in Rust.
+- **Cons:** binding maturity is the open question; production-grade error handling and Metal cache lifecycle still maturing.
 
 ### C. `llama-cpp-2` / `llama-cpp-rs` (Rust bindings to llama.cpp)
 
@@ -90,56 +62,43 @@ doesn't).
 
 - **Pros:** known-good throughput; well-maintained bindings; little surprise
   surface.
-- **Cons:** llama.cpp's public API is decode-side (logits and KV cache); it
-  does **not** expose per-layer residual hooks. Steering would have to be
-  rebuilt as a logits processor or via a custom llama.cpp fork — both of
-  which abandon the residual-stream contract that Phase 4 is built on.
-- **Steering: no** without forking llama.cpp itself. Disqualifying for v1.
+- **Cons:** Native FFI; llama.cpp ABI churn between versions.
 
 ### D. Run vLLM / llama-server / Ollama locally; route Trader over OpenAI-compat
 
-The Stage 1 `OpenAICompatIntern` already speaks this wire format. Mirror it
-for Stage 2: split `xianvec-trader` into a `local-candle` impl (current
-code) and an `openai-compat` impl (new). Pick at config time.
+The Stage 1 `OpenAICompatIntern` already speaks this wire format. The Trader's
+`TraderBackend` HTTP trait + `OpenAiCompatBackend` impl is the natural
+default — the same backend abstraction Stage 1 uses.
 
-- **Pros:** zero per-token cost in our process; vLLM-metal community plugin
-  exists; the wire format is already a workspace primitive.
-- **Cons:** same as option C — no residual hook. Steering becomes a
-  vLLM/llama-server logits-processor plugin or a sidecar service, both of
-  which abandon the Phase 4 contract.
-- **Steering: no** in the standard sense. vLLM has a logits-processor extension
-  point but logits-side steering ≠ residual-stream steering.
+- **Pros:** zero per-token cost in our process; the wire format is already a workspace primitive; no in-process model loading; trivial to swap backends (OpenAI, Anthropic, OpenRouter, vLLM, llama.cpp, Ollama).
+- **Cons:** Adds a localhost HTTP hop for fully air-gapped runs; depends on a separate process being managed.
 
 ## Decision matrix
 
-| Route                  | Throughput | Steering hook | Effort   | Risk           |
-| ---------------------- | ---------- | ------------- | -------- | -------------- |
-| A. Vendor candle qwen3 | ~10 tok/s  | ✓ native      | ~1 week  | Maintain a fork |
-| B. mlx-rs              | ~25–40 tok/s | ?           | 2–5 days spike + 3–5 days port | Binding maturity, hook surface unverified |
-| C. llama-cpp-rs        | ~30 tok/s  | ✗             | 2 days   | Loses Phase 4 contract |
-| D. HTTP (vLLM/etc.)    | ~30+ tok/s | ✗             | 2 days   | Loses Phase 4 contract |
+| Route                  | Throughput | Effort   | Risk           |
+| ---------------------- | ---------- | -------- | -------------- |
+| A. Vendor candle qwen3 | ~10 tok/s  | ~1 week  | Maintain a fork |
+| B. mlx-rs              | ~25–40 tok/s | 2–5 days spike + 3–5 days port | Binding maturity |
+| C. llama-cpp-rs        | ~30 tok/s  | 2 days   | FFI / ABI tracking |
+| D. HTTP (vLLM/etc.)    | ~30+ tok/s | landed   | Localhost process management |
 
-C and D are eliminated by the steering-hook requirement (they remain valid
-forward-paper deployment targets if we bifurcate into a "decision-only" arm
-that has already absorbed steering at training/extraction time, but that is a
-different project shape).
+**Decision (post-ADR-0011): D is the default.** `TraderBackend` HTTP via
+`OpenAiCompatBackend` is the default Trader path, matching Stage 1's
+`InternBackend`. Local candle remains an optional fully-air-gapped fallback
+under route A. Routes B and C remain advisory for someone optimizing the
+local candle path further.
 
-## Proposed plan
+## Proposed plan (post-ADR-0011)
 
-1. **Phase 4 proceeds on the slow candle path.** Hook correctness can be
-   validated with tens of tokens per smoke run; throughput is irrelevant here.
-2. **Phase 4.5 spike: `mlx-rs` viability** (1–2 days)
-   - Run `oxideai/mlx-rs` against the same Q4 weights; record TTFT + decode
-     tok/s on the same prompt as `smoke-qwen3` for an apples-to-apples
-     comparison against candle's 0.64 tok/s baseline.
-   - Verify whether `mlx-rs` exposes (or can be extended to expose) a
-     pre-/post-block forward hook. If yes, port `Qwen3Engine` to mlx-rs and
-     deprecate the candle Q4 runtime — Phase 4.3 hard gate then re-runs on
-     the mlx-rs path.
-   - If hook surface is absent and patching it needs upstream changes, fall
-     back to option A (vendor candle qwen3).
-3. **Document the spike outcome** as `decisions/0008-runtime-throughput-fix.md`
-   with the chosen route and measured numbers.
+1. **Default path: HTTP (option D).** Both Intern and Trader call OpenAI-compat
+   backends by default. Local vLLM/Ollama serves as the "local" path; remote
+   API providers serve the "cloud" path; zero in-process model loading.
+2. **Optional path: candle local inference.** Keep `xianvec-trader`'s candle
+   wrapper for fully-air-gapped runs. Performance follows the cheap-wins
+   benchmarks below.
+3. **No spike required.** ADR 0007 was originally gated on the steering-hook
+   constraint that ADR 0011 retired. With that constraint gone, HTTP wins on
+   throughput, ergonomics, and zero local model management.
 
 ## Build flags worth verifying first (cheap wins before any port)
 
@@ -215,7 +174,7 @@ The stable decode rate of ~5–6 tok/s on a warm shader cache is ~8–10× bette
 
 ## Re-measured 2026-05-03 (post-vendor-patch + native CPU codegen)
 
-Prompted by Phase 4 landing the `vendor_qwen3::forward_with_hooks` path (which inserts an `IdentityHook::apply()` per layer in the default no-steering case, expected overhead but not optimization) and the `target-cpu=native` build proving to actually work in the current workspace. Five back-to-back smoke-qwen3 runs from one shell session, same machine, same fixture (22-token prompt → 48 decode tokens), `RUSTFLAGS="-C target-cpu=native"` release build:
+Prompted by `target-cpu=native` proving to actually work in the current workspace and post-ADR-0011 housekeeping (the original `vendor_qwen3::forward_with_hooks` path was a CV substrate concern; that code lived in `xianvec-inference` and now lives in xianvec-play). Five back-to-back smoke-qwen3 runs from one shell session, same machine, same fixture (22-token prompt → 48 decode tokens), `RUSTFLAGS="-C target-cpu=native"` release build:
 
 | Run | Decode tok/s | Prefill tok/s | Prefill wall | Notes |
 | --- | --- | --- | --- | --- |
@@ -240,7 +199,7 @@ Prompted by Phase 4 landing the `vendor_qwen3::forward_with_hooks` path (which i
 **Decision matrix update (revised):**
 - **Option A** (vendor candle qwen3 + flash attention) — drops in priority. Steady-state decode is no longer the bottleneck; flash-attention would help cold start by reducing per-block compile time but doesn't eliminate the JIT phase. ~1 week of vendoring effort no longer pays back at parity with B.
 - **Option B** (mlx-rs spike) — remains relevant *exclusively* for cold-start mitigation. MLX's load-time shader pre-warm is the single biggest lever on first-token latency.
-- **Option C / D** (llama-cpp-rs / HTTP) — still disqualified on the steering hook contract (no residual hooks).
+- **Option C / D** (llama-cpp-rs / HTTP) — post-ADR-0011, no longer disqualified. Option D (HTTP via `TraderBackend`) is now the default Trader path; the rest of this section's analysis applies only to operators choosing the optional local-candle fallback.
 - **Cold-start workaround for v1**: pre-warm the Metal shader cache during process init by running a discard 1-token forward pass on a fixed prompt shape before the first real call. This converts the 10–90 s JIT into a 10–90 s startup cost paid once, and lets sustained Trader runs operate at the warm-cache median.
 
 **Recommendation:** keep `target-cpu=native` as the workspace's required release flag (codify in `.cargo/config.toml` so it's not optional). Defer option A. Spike option B only if cold-start latency actually blocks forward paper or if the headline GPU run on Vast.ai/RunPod (Phase 9.3) shows the same shader-JIT pattern at higher precision.

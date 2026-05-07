@@ -2,6 +2,13 @@
 
 Status: living doc. Update as the field moves and as we encounter new comparables in the wild.
 
+> **2026-05-07 status (ADR 0011):** xianvec's positioning shifted from
+> "control-vector trading agent" to "multistrategy trading agent with
+> on-chain reputation via ERC-8004." The CV-vs-prompts framing below is
+> historical record — the CV substrate now lives in xianvec-play. The
+> TradingAgents / FinMem / FinGPT / Freqtrade comparisons remain valid
+> as related-work positioning for the multistrategy + marketplace direction.
+
 ## Why this exists
 
 Demo prep. The two questions that will be asked at hackathon presentation, in order of likelihood:
