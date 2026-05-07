@@ -14,12 +14,11 @@ hackathon work uses the **SLF** series.
 
 | Track | Items | Lives on |
 |---|---|---|
-| **SLF — Strategy Loom** | new SLF1–16 (below); supersedes F4, F14, F15, F17, F23 | `hackathon/turing` until Jun 15, then merged to `main` |
-| **CVF — Control Vector** | F1, F2, F3 (landed), F9, F10, F11, F12, F13, F16, F26, F27, F28, F29, F30, F31, F32 | `main`, behind `--features control-vectors` after SLF12 lands |
+| **SLF — Strategy Loom** | new SLF1–16 (below); supersedes F4, F14, F15, F17, F23 | `main` (post-merge of `pivot/cv-extract`) |
 | **Shared** | F5, F6, F7, F8, F18, F19, F20, F21 (landed partial), F22, F24, F25 | `main` |
 
 Quick navigation: [SLF queue](#strategy-loom-queue-slf) ·
-[CVF queue](#control-vector-queue-cvf) · [Shared queue](#shared-queue)
+[Shared queue](#shared-queue)
 
 ---
 
@@ -45,8 +44,8 @@ The hackathon sprint queue. Branch: `hackathon/turing`. Submission deadline:
 
 - **Trigger:** SLF2 done.
 - **Scope:** extend `xianvec-eval::ab_compare` to call `IdentityClient::register` for each Strategy in the active set on run start, persisting `(strategy_name, agent_id, agent_uri)` mapping. `agent_uri` points to a stable manifest (code commit + Strategy adapter type + risk preset). Idempotent — re-runs reuse the existing `agent_id` if the manifest hash matches.
-- **Decision:** each `VectorConfig` mode of TraderArm gets its own NFT (TraderArm-Off, -On, -Random, -Orth = four NFTs). The leaderboard view needs them as separate units.
-- **Blocking:** YES for SLF4. Also supersedes the vectors_off/vectors_on placeholder manifests in F4.
+- **Decision:** TraderArm gets one NFT (vectors-on/off/random/orth no longer apply post-ADR-0011). The leaderboard view treats it as a single unit alongside other Strategy implementations.
+- **Blocking:** YES for SLF4.
 
 ### SLF4. Per-cycle Reputation Registry write path
 
@@ -146,135 +145,14 @@ The hackathon sprint queue. Branch: `hackathon/turing`. Submission deadline:
 
 ---
 
-## Control Vector queue (CVF)
+## Control Vector queue — closed (2026-05-07)
 
-Personal-project track. Lives on `main` and (after SLF12) behind
-`--features control-vectors`. Numbering preserved as historical anchors;
-each entry tagged `[CVF]` in its title.
+Per ADR 0011, the CV substrate moved to xianvec-play. The following CVF
+items are closed in xianvec; their live state continues in xianvec-play if
+applicable: F1, F2, F3 (partial — TraderArm survives without VectorConfig),
+F9, F10, F11, F12, F13, F16, F26, F27, F28, F29, F30, F31, F32.
 
-### F1 [CVF]. Phase 4.3 hard gate — re-run spike directional match through candle runtime
-
-- **Trigger:** production Conviction vectors extracted via `tools/extract_vectors/extract_vectors.py` on a rented GPU.
-- **Scope:** call `xianvec_inference::substrate::validate_directional_match(bundle, holdout, engine)` on the loaded production vector; assert ≥0.75 match rate (matches spike empirical PASS). Drop the `#[ignore]` on the integration test.
-- **Blocking:** YES for Phase 9.3 headline run on the personal track. Non-blocking for hackathon submission (TraderArm-On not in default build per SLF12).
-
-### F2 [CVF]. Extract production Conviction vector (and Patience/Risk/Trend pipeline-only)
-
-- **Trigger:** GPU access (Vast.ai/RunPod) provisioned.
-- **Scope:** run `python tools/extract_vectors/extract_vectors.py --model Qwen/Qwen3-32B --spec specs/conviction.yaml --layers 20,32,42,50 --out data/vectors/conviction_v1` plus the same for `patience.yaml`, `risk.yaml`, `trend.yaml`. Generate Random + Orthogonal control vectors against the Conviction axis. Verify all manifests parse cleanly via `xianvec_inference::substrate::load_vector`.
-- **Blocking:** YES for personal-track Phase 9 (cannot A/B vectors-on/off without vectors-on). Non-blocking for hackathon.
-
-### F3 [CVF]. Live Trader-as-Strategy adapter — **LANDED 2026-05-04**
-
-- **Status:** landed at `crates/xianvec-eval/src/baselines/trader_arm.rs` with `VectorConfig::{Off, On, Random, Orthogonal}`. Only the `Off` arm is end-to-end tested (`cache_key_pairs_arms_for_same_setup_id`). The other three accept their config + compile but degrade-with-warn to vectors-off behaviour until F1 + F2 land — they emit a `tracing::warn` noting the directional claim is invalid pre-F2.
-- **Side effects of F3:**
-  - `Strategy::decide` lifted to `async` via `#[async_trait]`. All seven Phase 7 baselines + the in-test impls in the harness updated. Phase 8.2 harness `await`s `decide` at `harness.rs:232`; no other API changes.
-  - `xianvec-eval` gains deps on `xianvec-trader`, `xianvec-intern`, `xianvec-inference` (per the FOLLOWUPS guidance — eval is the "things that implement Strategy" home).
-  - Phase 9.1 + 9.2 (A/B orchestrator + `xvn ab-compare` runner) landed in the same session; see `crates/xianvec-eval/src/ab_compare.rs` and `crates/xianvec-cli/src/commands/ab_compare.rs`.
-- **Blocked-on-F3 items now unblocked:** Phase 9.2 A/B runner (built), F16 vectors-OFF/RANDOM/ORTHOGONAL controls (compile path live; pending F1 + F2 for directional validity).
-
-### F9 [CVF]. Measure `target-cpu=native` numeric delta vs default codegen
-
-- **Trigger:** stable bench rig (controlled thermal state, repeated trials with statistics).
-- **Scope:** rerun smoke-qwen3 with and without `RUSTFLAGS="-C target-cpu=native"`, ≥10 trials each, report median + p95 decode/prefill tok/s. The current ADR 0007 §"Re-measured" cites 5–16 tok/s with 3.2× variance across 5 runs — that's not enough to commit to a single number. From `decisions/0007-inference-throughput-routes.md`.
-- **Blocking:** non-blocking; numbers are advisory until forward paper exposes whether warm cache holds.
-
-### F10 [CVF]. Codify `RUSTFLAGS=-C target-cpu=native` in `.cargo/config.toml`
-
-- **Trigger:** F9 confirms the win is material (≥1.5×) and stable.
-- **Scope:** add `[build] rustflags = ["-C", "target-cpu=native"]` so contributors don't have to remember the flag. From ADR 0007 recommendation.
-- **Blocking:** non-blocking.
-
-### F11 [CVF]. Shader pre-warm pass during engine init
-
-- **Trigger:** cold-start latency materially affects the forward-paper experience (a 17–90 s wait per process start).
-- **Scope:** `Qwen3Engine::new` runs a discard 1-token forward pass on a fixed prompt shape before returning, so the first user-visible prefill doesn't pay the JIT. From ADR 0007 v1 cold-start workaround.
-- **Blocking:** YES for personal-track Phase 11.1 if cold-start latency is unacceptable to the operator; non-blocking otherwise.
-
-### F12 [CVF]. mlx-rs viability spike (ADR 0007 option B)
-
-- **Trigger:** F11 isn't enough OR the rented-GPU run (Phase 9.3) shows the same shader-JIT pattern at higher precision.
-- **Scope:** 1–2 day spike: run `oxideai/mlx-rs` against the same Q4 weights; record TTFT + decode tok/s; verify `mlx-rs` exposes (or can be extended to expose) a pre-/post-block forward hook. From `decisions/0007-...` proposed plan.
-- **Blocking:** conditionally blocking on cold-start.
-
-### F13 [CVF]. Phase 8.5 boundary probes (Glamin pattern formalization)
-
-- **Trigger:** Phase 9.2 A/B runner stable; need a regression-detection net for vector / prompt / model changes.
-- **Scope:** curated `data/probes/` corpus (ambiguous regime transitions, low-liquidity setups, hardest historical decisions, flash-crash conditions, regulatory edge cases). `ProbeRunner` in `xianvec-eval`; `IntrospectionHook`-attached when `--introspect` set. From implementation-plan §8.5.
-- **Blocking:** non-blocking for v1 demo; recommended before Phase 11 forward paper.
-
-### F16 [CVF]. Vectors-OFF / RANDOM / ORTHOGONAL experimental controls
-
-- **Trigger:** F2 (extracted vectors) + F3 (Trader-as-Strategy adapter, landed).
-- **Scope:** the experimental "control" arms in Phase 9.2 A/B runner — three more Strategy adapters that wrap the Trader with each `VectorConfig`. Reuses the same Trader + Intern; differs only in which vector bundle is loaded.
-- **Blocking:** YES for personal-track Phase 9.2 if the headline experiment depends on the Random/Orthogonal nulls. Non-blocking if a vectors-OFF vs vectors-ON two-arm comparison is acceptable for v1.
-
-### F26 [CVF]. Split Mac/MLX path out of the shared `scripts/download_qwen.py`
-
-- **Trigger:** any time after the current GPU headline run completes — non-blocking; the recent `setup_runpod.sh` torch-wheel fix already made the Linux path MLX-clean.
-- **Current state:** `scripts/download_qwen.py` is dual-purpose — Step 1 grabs `mlx-community/Qwen3-32B-4bit` (~18 GB, Mac/Apple Silicon spike), Step 2 grabs GGUF Q4. Mac operators always get GGUF too; Linux operators have no reason to call this script at all (setup_runpod.sh does its own download). `tools/extract_vectors/spike/{extract,validate}.py` imports `mlx`/`mlx_lm` — fine on Mac, hard-fails on Linux even though they live under the otherwise cross-platform `tools/extract_vectors/` tree.
-- **Scope:**
-  - Rename `scripts/download_qwen.py` → `scripts/download_qwen_mlx.py`; strip the GGUF half (Linux/CUDA users go through `setup_runpod.sh`).
-  - Add `scripts/setup_mac.sh` — Apple Silicon counterpart to `setup_runpod.sh`. Preflight (`uname -sm` → Darwin/arm64 check), venv, `pip install mlx mlx-lm transformers accelerate repeng pyyaml numpy`, call `download_qwen_mlx.py`, print next steps for the Phase 0.3 spike. Mirror the stage layout (preflight → python → hf → model → verify) so muscle memory transfers.
-  - Add a clearer "Apple Silicon only — requires `mlx`/`mlx-lm`" docstring header to `tools/extract_vectors/spike/extract.py` and `validate.py` so they don't read as cross-platform. Optionally move them under `tools/extract_vectors/spike/mlx/`.
-  - MANUAL.md M0/M1: split into "Linux GPU box (RunPod / Vast.ai) → `scripts/setup_runpod.sh`" vs "Apple Silicon (local dev / spike) → `scripts/setup_mac.sh`".
-- **Blocking:** non-blocking. Refactor for clarity; current Linux path is already correct.
-
-### F27 [CVF]. Python eval on Qwen3.6 — does the fear-greed vector actually steer hybrid-arch outputs?
-
-- **Trigger:** Qwen3.6 weights on disk + fear-greed vector extracted (both done 2026-05-05). This is the immediate next step.
-- **Scope:** mirror `tools/extract_vectors/spike/validate.py`'s structure against Qwen3.6 fp16 via HF `transformers` (NOT MLX — MLX's qwen35 path is also unproven). 20+ holdout prompts × magnitudes [-2, -1, 0, +1, +2] × the layer where extraction happened. Greedy decode, log per-prompt logit-difference, mean disposition score swing, residual-norm shift, and a coherence/safety control set. Compare against ADR 0002's 1.17 swing baseline (toy axis on Qwen3-32B Q4) — Qwen3.6 is RL-trained so expect ~½× per-layer logit-diff. Bias the layer choice to L36–L46 (RL models peak at 70–85% depth, not the L42 used on Qwen3-32B).
-  - Pass: any clear monotonic swing across α with zero coherence violations. Treat the strict 8-criterion gate from ADR 0002 as advisory, same substantive PASS framing.
-  - Fail: vectors do not transfer through the DeltaNet recurrence in any meaningful way → ADR 0009 closes as "Qwen3-32B remains production through v1," and the Qwen3.6 weights become exploration artifacts only.
-- **Blocking:** YES for ADR 0009 ratification. Non-blocking for hackathon. From `decisions/0009-qwen3-next-runtime-options.md`.
-
-### F28 [CVF]. llama.cpp `--control-vector` spike on Qwen3.6 GGUF
-
-- **Trigger:** F27 PASSes.
-- **Scope:** generate a Qwen3.6 GGUF (jukofyork/control-vectors tool or hand-export from F27's vector); run `llama-cli --model qwen3.6-q4_k_m.gguf --control-vector <fear-greed>.gguf -p <fixed prompt>` at α ∈ [-2, +2]. Compare behavioural outcome to F27's Python results. Pass: same directional shift in disposition / fear-greed scoring at comparable α. Fail: llama.cpp's cvec hook point (post-FFN-residual, before next-layer-norm — `qwen3next.cpp:164`) does not propagate through DeltaNet's recurrent state the way Python's per-token activation injection does.
-  - This is the validation oracle for the runtime question. With both F27 (Python ground truth) and F28 (llama.cpp ground truth) in hand, ADR 0009's δ vs γ choice has two independent references to validate against.
-- **Blocking:** YES for ADR 0009 ratification. Non-blocking for hackathon. From `decisions/0009-qwen3-next-runtime-options.md`.
-
-### F29 [CVF]. Candle DeltaNet port — chunked variant
-
-- **Trigger:** F27 PASS + F28 PASS + ADR 0009 ratifies route δ.
-- **Scope:** port `build_layer_attn_linear()` from llama.cpp `src/models/qwen3next.cpp` (lines 367–550) and the chunked variant of `delta-net-base.cpp` to a new `crates/xianvec-inference/src/model/qwen3next_steered.rs`. The chunked variant uses `cumsum`, `solve_tri`, and standard matmul/RMSNorm — all already in candle, so no custom Metal/CUDA kernels needed for the port. Add cvec hook as a one-line `LayerHook::apply()` after the FFN residual (matches llama.cpp's hook point in `qwen3next.cpp:164`).
-  - Estimate: ~250–350 lines for the DeltaNet block, ~80–100 for tensor/hparam loading, ~10 for cvec hook. ~1–2 weeks calendar.
-  - Validation: layer-by-layer residual parity vs F27 (Python) and F28 (llama.cpp) — both ground truths. Single-token forward parity first, then multi-token, then logit parity, then behavioural cvec parity at α-sweep.
-- **Blocking:** YES for adopting Qwen3.6 in production on the personal track. Non-blocking for hackathon.
-
-### F30 [CVF]. Verify repeng layer-discovery against Qwen3.6 / `qwen35` arch string
-
-- **Trigger:** before F27. Should be ~30 minutes; cheap to do upfront.
-- **Scope:** load Qwen3.6-27B in HF `transformers`, instantiate `repeng.ControlModel`, and confirm `model_layer_list()` returns the expected layer count without an explicit override. PR #73 (Sep 2025) fixed `attention_type` AttributeError on Qwen3 by adding `__getattr__` delegation, but Qwen3.6 declares architecture `qwen35` — verify that the layer walk (`model.model.layers` first, then fallbacks) hits cleanly. If not, add `model.repeng_layers = list(model.model.layers)` as the override. Document the resolved path in F27's eval script.
-- **Blocking:** non-blocking; defensive.
-
-### F31 [CVF]. Watch upstream candle for qwen3-next / DeltaNet PRs
-
-- **Trigger:** ongoing (weekly check until F29 lands or v1 ships).
-- **Scope:** subscribe to `huggingface/candle` PRs filtered for `qwen3`, `mamba`, `deltanet`, `state-space`, `linear-attention`, `hybrid`. If a clean upstream impl lands before F29 starts, F29 collapses to "use upstream + add cvec hook" — saves 1–2 weeks. If it lands during F29, decide whether to abandon the in-flight port or contribute it back. As of 2026-05-05 there are zero in-flight PRs.
-- **Blocking:** non-blocking.
-
-### F32 [CVF]. Tier-2 model swap eval — DeepSeek-R1-Distill-Qwen-32B
-
-- **Trigger:** Qwen3-32B headline run (Phase 9.3) lands, AND the eval suggests steering headroom is the binding constraint on the result (e.g., per-layer logit-difference materially below the Mitra/Subramani published values for Mistral-7B-class models, or vector strength saturates before behavioural change is decisive). Also valid trigger: F27 fails (Qwen3.6 hybrid path closes), so Qwen3-32B is locked in but you want to push capability further before forward paper.
-- **Why this model specifically:** four properties stack favourably — (1) **distilled** from R1 rather than RL-aligned, so per Omar Ayyub's 2026 layer-sweep finding it should produce ~2× the per-layer logit-difference of Qwen3-32B for the same vector; (2) **Qwen2.5 architecture** (the base it was distilled onto), which candle supports via the `quantized_qwen2` path — vendoring is shorter than the existing Qwen3 work because Qwen2.5 attention is simpler (no q/k norm layers Qwen3 added on top); (3) **reasoning-capable** from the R1 distillation, which directly improves the Trader stage's structured-judgment task without adding an agent loop; (4) **dense, pure transformer, 32B** — fits the same 36 GB Q4 budget as the current production model, no MoE/hybrid/SSM compatibility concerns.
-- **Scope:**
-  - Vendor `candle_transformers::models::quantized_qwen2` to a new `crates/xianvec-inference/src/model/qwen2_steered.rs` mirroring the `vendor_qwen3.rs` pattern (LayerHook contract, no other API change). Estimated ~600–800 LoC (smaller than vendor_qwen3 because Qwen2.5 has fewer normalization layers per block).
-  - Re-run the F27 / ADR 0002 vector-extraction + directional-match flow against `deepseek-ai/DeepSeek-R1-Distill-Qwen-32B` at fp16 (extract) and Q4_K_M (runtime). Measure per-layer logit-difference at the optimal layer (likely L36–L46 — distilled models peak around 50–65% depth per Omar Ayyub vs RL's 70–85%, so try L32 first).
-  - Compare against the Qwen3-32B Q4 numbers from ADR 0002 / Phase 4.3 hard gate. **Pass condition:** per-layer logit-difference at least 1.5× the Qwen3-32B baseline at comparable α, with no degradation in coherence-violation rate. **Bonus signal:** Trader-stage briefing quality improves on hard probe sets (F13 boundary probes if landed).
-  - Decision point: if PASS, ratify in ADR 0011 as the new production model and migrate Phase 4 + Phase 9 work to the qwen2_steered path. If FAIL (steering doesn't materially improve OR coherence regresses), keep Qwen3-32B and document the negative result.
-- **Why "Tier 2" not "Tier 1":** different question from ADR 0009's F27–F31 lane. F27–F31 ask "can we adopt the new architecture?" F32 asks "should we adopt a different *training method* on the architecture we already support?" Both lanes can run in parallel — they don't conflict.
-- **Why not just go to QwQ-32B or Qwen2.5-32B-Instruct instead:** QwQ is a reasonable substitute (same Qwen2.5 base, distilled approach, slightly weaker reasoning per benchmarks but more conventional alignment) — worth running as a comparison arm in F32 once the runtime path is open. Vanilla Qwen2.5-32B-Instruct gives less RL alignment than Qwen3 but no reasoning lift, which is the trade DeepSeek-R1-Distill-Qwen-32B avoids.
-- **Estimate:** ~3–5 days for the candle vendoring + extraction tooling adjustment + first eval pass. Validation against Qwen3-32B baseline is another 1–2 days.
-- **Blocking:** non-blocking. v1 headline still wants the validated Qwen3-32B path. F32 is post-headline capability lift.
-- **References:**
-  - [Omar Ayyub — What I Learned (And Didn't) Steering Qwen3 Models](https://omar.bet/2026/01/17/What-I-Learned-Steering-Qwen3-Models/) (distilled vs RL layer-depth + headroom finding)
-  - [DeepSeek-R1-Distill-Qwen-32B model card](https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-32B)
-  - [QwQ-32B model card](https://huggingface.co/Qwen/QwQ-32B) (comparison arm)
-  - `decisions/0001-inference-backend.md` (architecture support patterns to mirror)
-  - `decisions/0002-spike-validation.md` (validation methodology to reuse)
-  - `decisions/0009-qwen3-next-runtime-options.md` (sibling lane — F27–F31)
+See `decisions/0011-cv-extraction.md`.
 
 ---
 
