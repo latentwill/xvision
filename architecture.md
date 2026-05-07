@@ -197,19 +197,32 @@ This object is the contract between Intern and Trader. It is validated by `serde
 
 ## 4. Stage 2 — Trader
 
-**Purpose:** Make the final trading decision, shaped by the agent's current dispositional state via active control vectors. This is where the experiment lives.
+**Purpose:** Make the final trading decision based on the Intern's neutral
+evidence briefing. Stage 2 is one Strategy variant in the loom (LLM judgment
+on balanced inputs); other strategies in the loom are classical TA, onchain
+signal, or hybrid implementations.
 
-**Naming:** "Trader" replaces earlier candidates ("Stance," "Decision Agent"). The role is characterological — this model carries the disposition. The Intern hands it neutral evidence; the Trader decides.
+**Naming:** "Trader" is the characterological role — the Intern researches
+neutrally, the Trader decides. Both stages are LLM-backed; only the Trader
+emits the final action.
 
-**Model choice:** Qwen3.6-27B (no-thinking mode) is the primary model. Precision floats between **4-bit and 16-bit depending on available resources** — local M-series dev runs at 4-bit (Q4_K_M) for velocity; rented-GPU headline runs step up to 8-bit or 16-bit when memory permits, since heavier quantization adds noise to hidden states and may degrade vector effects unpredictably. No-thinking mode is mandatory — chain-of-thought tokens before the decision dilute the vector's influence at the action choice point and inflate latency without buying signal. **A one-day spike (Phase 0, Task 2) validates vector behavior on toy axes before committing the architecture to a specific precision.**
+**Model choice:** Backend-agnostic, picked at runtime via config. The
+`TraderBackend` HTTP trait (see `crates/xianvec-trader/src/backend.rs`)
+abstracts over OpenAI-compatible endpoints — `OpenAiCompatBackend` is the
+default impl, covering OpenAI, Anthropic, OpenRouter, vLLM, llama.cpp,
+Ollama. Local `candle` inference is an optional path for fully air-gapped
+runs. No model-side hooks or instrumentation; the Trader is a plain LLM
+caller.
 
 **Inference path:**
 1. Receive Intern Briefing JSON.
-2. Render the briefing as a prompt that requests a structured decision. The prompt presents bull/bear/flat cases in parallel structure with no anchored recommendation.
-3. Run forward pass via `candle` with steering hooks injected at selected layers (mid-to-late, per SEAL and Mitra findings). The hook receives the residual stream at layer N and returns `residual + Σ alpha_i * vector_i`. Different vectors can apply at different layers (Weij et al.) with confidence gating modulating each magnitude.
-4. Parse output as JSON via `serde_json` with `garde` validation; on parse failure, retry once with a corrective system message before falling back to a parse-error path.
-
-`candle` exposes the hidden-state hooks needed for fine-grained steering — strictly more flexible than the static `--control-vector` path llama.cpp exposes. CAST-style projection-based gating, PID-controlled alpha, and probe-gated firing all live naturally in this hook.
+2. Render briefing as a prompt requesting a structured decision. Prompt
+   presents bull/bear/flat cases in parallel structure with no anchored
+   recommendation.
+3. Call the configured backend.
+4. Parse output as JSON via `serde_json` with `garde` validation; on parse
+   failure, retry once with a corrective system message before falling back
+   to a parse-error path.
 
 **Output (JSON):**
 
@@ -221,14 +234,12 @@ This object is the contract between Intern and Trader. It is validated by `serde
   "direction": "long | short | flat",
   "stop_loss_pct": 2.5,
   "take_profit_pct": 5.0,
-  "trader_summary": "string — one-line dispositional rationale",
-  "active_vectors": {"conviction": 0.8, "patience": -0.3, "risk_appetite": 0.5}
+  "trader_summary": "string — one-line rationale"
 }
 ```
 
-`active_vectors` is logged for offline analysis — it records which dispositional axes were applied and at what magnitude during this decision.
-
-**Vectors-off mode:** The same code path runs with all vector magnitudes set to 0. This is the experimental control. A single config flag toggles it.
+The Trader is wrapped as a `Strategy` adapter (`TraderArm`) so it competes
+in the loom against classical TA + onchain strategies on equal terms.
 
 ---
 
