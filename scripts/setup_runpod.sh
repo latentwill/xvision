@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
 # scripts/setup_runpod.sh
 #
+# Updated 2026-05-07 per ADR 0011: CV setup removed. RunPod is now
+# only needed if the Trader runs local candle inference — for Trader
+# inference + Alpaca paper trading. CV vector extraction setup
+# (repeng, tools/extract_vectors/, FP16 weights) has moved to
+# xianvec-play.
+#
 # One-time setup for a CUDA Linux GPU server (RunPod / Vast.ai). Scoped to v1
-# testing: control-vector extraction + xianvec inference + Alpaca paper trading.
+# testing: xianvec local-candle Trader inference + Alpaca paper trading.
 # Out of scope: identity (ERC-8004), Orderly, Mantle, web3, 1Password.
 #
 # Prerequisites — export BEFORE running:
@@ -10,10 +16,8 @@
 #   GH_TOKEN              optional. Plumbed into .env.local if set.
 #
 # Optional non-interactive overrides:
-#   MODEL=fp16|gguf|q4|q5|q6|q8           Skip the model menu.
-#                                         fp16  = safetensors (vector extraction —
-#                                                 REQUIRED for training control vectors)
-#                                         gguf  = best quant (Q8_0); for inference only
+#   MODEL=gguf|q4|q5|q6|q8                Skip the model menu.
+#                                         gguf  = best quant (Q8_0); inference path
 #                                         qN    = pick a specific GGUF quant
 #   INTERN=anthropic|openai|openrouter|together|groq|deepseek|local|acpx|custom|skip
 #   ACPX_AGENT=codex|claude|openclaw|pi   (used when INTERN=acpx)
@@ -244,9 +248,7 @@ install_python() {
     warn "could not detect host CUDA from nvidia-smi — falling back to default torch wheel (may fail at runtime)"
   fi
 
-  log "installing extract-vectors deps (transformers + accelerate + repeng)"
-  log "  ~1–3 min. transformers wheel resolution can pause for 30–60s — not frozen."
-  python -m pip install -r tools/extract_vectors/requirements.txt
+  log "installing huggingface_hub CLI for weight downloads"
   python -m pip install "huggingface_hub[cli]>=0.24"
 
   # Build tools as PyPI fallbacks for pods where apt couldn't install them.
@@ -294,12 +296,7 @@ PY
   fi
   ok "torch+CUDA verified"
 
-  python - <<'PY'
-import transformers, repeng
-print(f"  transformers:   {transformers.__version__}")
-print(f"  repeng:         {getattr(repeng, '__version__', 'unknown')}")
-PY
-  ok "extraction deps verified"
+  ok "torch deps verified"
 }
 
 # ---------------------------------------------------------------------------
@@ -318,15 +315,14 @@ hf_login() {
 # 6. model — pick ONE artifact, download just that
 # ---------------------------------------------------------------------------
 choose_model() {
-  # Prints a key (fp16|q4|q5|q6|q8) on stdout. Two-tier prompt: first ask
-  # the *purpose* (vector extraction vs inference), then drill into a quant
-  # if GGUF is chosen. MODEL= override accepts the leaf keys directly plus
-  # `gguf` as a synonym for the best quant (q8).
+  # Prints a quant key (q4|q5|q6|q8) on stdout. MODEL= override accepts those
+  # plus `gguf` as a synonym for the best quant (q8). fp16 path is no longer
+  # offered — CV extraction moved to xianvec-play per ADR 0011.
   if [[ -n "${MODEL:-}" ]]; then
     case "$MODEL" in
       gguf) echo q8 ;;          # "gguf" → best quant
-      fp16|q4|q5|q6|q8) echo "$MODEL" ;;
-      *) fail "unknown MODEL override: $MODEL (expected fp16|gguf|q4|q5|q6|q8)" ;;
+      q4|q5|q6|q8) echo "$MODEL" ;;
+      *) fail "unknown MODEL override: $MODEL (expected gguf|q4|q5|q6|q8)" ;;
     esac
     return
   fi
@@ -334,29 +330,7 @@ choose_model() {
 
   cat >&2 <<EOF
 
-What are you doing with Qwen3.6-27B on this box?
-
-  1) FP16 safetensors  (~55 GB) — REQUIRED to train / extract control vectors.
-                                  Loads in transformers; needs ≥80 GB VRAM, or
-                                  bf16 + device_map='auto' offload on smaller GPUs.
-                                  Pick this if you'll run extract_vectors.py.
-
-  2) GGUF (quantized)   (17–29 GB) — INFERENCE ONLY (xvn run-setup / ab-compare).
-                                  Cannot be used to train vectors — the candle
-                                  runtime that loads GGUF doesn't expose the
-                                  hooks repeng needs. Pick a quant in step 2.
-
-EOF
-  local tier; tier=$(prompt "Selection [1=fp16 / 2=gguf, default 2]:" "2")
-  case "$tier" in
-    1) echo fp16; return ;;
-    2|"") : ;;  # fall through to GGUF quant menu
-    *) fail "unknown selection: $tier" ;;
-  esac
-
-  cat >&2 <<EOF
-
-Pick a GGUF quant for inference:
+Pick a GGUF quant for Trader inference:
 
   1) Q8_0    (~29 GB) — headline-quality (M4 default)
   2) Q6_K    (~23 GB) — near-lossless
@@ -384,15 +358,6 @@ download_model() {
   log "selected: $choice"
 
   case "$choice" in
-    fp16)
-      log "→ Qwen/Qwen3.6-27B safetensors → models/qwen3.6-27b/  (~55 GB)"
-      log "  15 safetensors shards. On a 100 Mbit pod expect 60–90 min."
-      hf download Qwen/Qwen3.6-27B \
-        --local-dir "$MODELS_DIR/qwen3.6-27b" \
-        --exclude "*.gguf" "*.msgpack" "*.h5" "*.ot" "*flax*" "*.onnx"
-      env_set XVN_MODEL_KIND "fp16"
-      env_set XVN_MODEL_DIR  "$MODELS_DIR/qwen3.6-27b"
-      ;;
     q4|q5|q6|q8)
       local file dir
       case "$choice" in
@@ -775,10 +740,6 @@ verify() {
   # shellcheck disable=SC1091
   source "$HOME/.cargo/env"
 
-  python tools/extract_vectors/extract_vectors.py --help >/dev/null \
-    && ok "extract_vectors imports cleanly" \
-    || fail "extract_vectors --help failed"
-
   if [[ -x "$REPO_ROOT/target/release/xvn" ]]; then
     "$REPO_ROOT/target/release/xvn" --help >/dev/null \
       && ok "xvn --help works" \
@@ -828,13 +789,6 @@ Activate in new shells:
 
 Persisted env (.env.local):
 $(sed 's/^/    /' "$ENV_FILE" 2>/dev/null || echo "    (none)")
-
-Vector extraction (uses fp16 safetensors):
-    python tools/extract_vectors/extract_vectors.py \\
-      --model "\$XVN_MODEL_DIR" \\
-      --spec tools/extract_vectors/specs/conviction.yaml \\
-      --layers 20,32,42,50 --device cuda --dtype fp16 \\
-      --out data/vectors/conviction_v1
 
 xvn inference (uses GGUF + tokenizer):
     target/release/xvn run-setup --model "\$XVN_MODEL_PATH" --tokenizer "\$XVN_TOKENIZER" ...

@@ -1,5 +1,10 @@
 # XIANVEC v1 — Step-by-Step Build
 
+> **2026-05-07: CV build steps removed per ADR 0011.** Phase 0 vector
+> validation spike, Phase 4 vector extraction, and Task 4.4.1 introspection
+> hook installation are gone. xianvec is now a CV-free multistrategy +
+> ERC-8004 marketplace codebase.
+
 Sequential build order distilled from `implementation-plan.md`. Each step links back to its phase/task for full context.
 
 ---
@@ -10,35 +15,24 @@ Sequential build order distilled from `implementation-plan.md`. Each step links 
 
 ---
 
-## Phase 0 — Foundation & vector validation spike
+## Phase 0 — Foundation
 1. **0.1** `cargo new` workspace; stub all `crates/xianvec-*` with one passing test each.
-2. **0.2** Pull Qwen3-27B locally; candle smoke test (load + single forward pass).
-3. **0.3** Vector validation spike — **CRITICAL GATE**, introspection mandatory. Document in `decisions/0002-spike-validation.md`.
-4. **0.4** Vendor `byreal-agent-skills` and `mantle-skills` as submodules under `.claude/skills/`.
+2. **0.4** Vendor `byreal-agent-skills` and `mantle-skills` as submodules under `.claude/skills/`.
 
 ## Phase 1 — Schemas, config, persistence
 1. **1.1** Schema crate (`xianvec-core`): types + `serde + garde` validation.
 2. **1.2** Config loader (`config/default.toml`, `whitelist.toml`, `risk.toml`).
-3. **1.3** SQLite persistence (`store.rs`) — decisions, briefings, traces.
+3. **1.3** SQLite persistence (`store.rs`) — decisions, briefings, traces. Decisions keyed on `(setup_id, arm_name)`.
 4. **1.4** Technical indicators (`xianvec-data/indicators.rs`).
 
 ## Phase 2 — Stage 1 Intern
 1. **2.1** Intern prompt builder.
-2. **2.2** Intern via Anthropic SDK or local Qwen-7B; **`temperature=0`**; cache briefings keyed by `setup_id` (Tier 1 fix #1).
+2. **2.2** Intern via Anthropic SDK or any OpenAI-compatible HTTP backend; **`temperature=0`**; cache briefings keyed by `setup_id` (Tier 1 fix #1).
 
-## Phase 3 — Stage 2 Trader (no vectors yet)
-1. **3.1** Local model loader (`xianvec-inference`).
+## Phase 3 — Stage 2 Trader
+1. **3.1** Trader backend (`xianvec-trader`): `TraderBackend` HTTP trait + `OpenAiCompatBackend` impl. Optional local candle inference for air-gapped runs.
 2. **3.2** Trader prompt + JSON-constrained generation.
-3. **3.3** Smoke pipeline: Intern → Trader, no vectors.
-
-## Phase 4 — Vector extraction
-1. **4.1** Contrastive datasets per axis (200 pairs/axis). Extract Conviction (active) + Patience/Risk/Trend (pipeline-only).
-2. **4.2** Python extractor (`tools/extract_vectors/`) using repeng.
-3. **4.3** Rust vector loader (`xianvec-inference::substrate`); re-run spike's directional-match through runtime path as **Phase-4 hard gate** (Tier 1 fix #9).
-4. **4.4** Steering hooks + confidence gating (`xianvec-gating`); gate at the `action` choice point, not `{` (Tier 1 fix #5). Backtest logs gate magnitude only — no dampened re-run (Tier 1 fix #7).
-5. **4.4.1** Introspection hook (`xianvec-introspect`).
-6. **4.1 controls** Extract random (norm-matched Gaussian) + orthogonal control vectors (Tier 2 fix #6).
-7. **4.5** Lookahead bias audit → `decisions/0005-lookahead-audit.md`.
+3. **3.3** Smoke pipeline: Intern → Trader.
 
 ## Phase 5 — Risk Layer
 - Deterministic rules in `xianvec-risk`. Pipeline owns risk; harness trusts the decision (Tier 3 cleanup).
@@ -50,25 +44,23 @@ Sequential build order distilled from `implementation-plan.md`. Each step links 
 4. **6.4** Backtest simulator with **stateful portfolio** — NAV, positions, daily PnL, loss streak, ATR (Tier 1 fix #3).
 
 ## Phase 6.5 — ERC-8004 identity (Mantle)
-- Mint two `agentURI` NFTs (vectors-OFF, vectors-ON) via Identity Registry on Mantle mainnet using `alloy`. Manifests in `identity/`.
+- Mint per-strategy NFTs via Identity Registry on Mantle mainnet using `alloy`. One manifest per Strategy variant in `identity/`.
 
 ## Phase 7 — Baselines
 - Buy-and-hold, momentum, etc. in `xianvec-eval/baselines/`.
 
 ## Phase 8 — Eval framework
-1. **8.1** Returns + Sharpe; use `pnl_i / nav_initial` (constant denominator) (Tier 1 fix #8).
+1. **8.1** Returns + Sharpe; use `pnl_i / nav_initial` (constant denominator) (Tier 2 fix #5).
 2. **8.2** Backtest harness; **`step >= horizon`** (default 24); block-bootstrap option (Tier 1 fix #4).
 3. **8.3** Pre-committed metrics; risk layer at pipeline scope only (Tier 3).
 4. **8.4** Anti-overfitting gate (reportable, not blocking).
-5. **8.5** Boundary probes — minimal v1 corpus.
 
 ## Phase 9 — A/B experiment
 1. **9.1** Ops (`xianvec-cli/src/ops.rs`).
-2. **9.2** A/B runner: arms `off,on,random,orthogonal`, **`temperature=0`** both arms (Tier 1 fix #2), divergence on `(action, direction, size_bucket)`. BTC-only v1.
-3. **9.3** Headline run on rented GPU at **8-bit (Q8_0) or 16-bit (bf16)** depending on card memory (Vast.ai/RunPod).
+2. **9.2** A/B runner: paired strategy arms (e.g., `trader_arm`, `buy_hold`, classical TA, onchain), **`temperature=0`** for LLM-driven arms (Tier 1 fix #2), divergence on `(action, direction, size_bucket)`. BTC-only v1.
 
 ## Phase 10 — Demo polish
-1. **10.1** CLI: `run-setup`, `show-decision`, `show-metrics`, `explain-vectors`.
+1. **10.1** CLI: `run-setup`, `show-decision`, `show-metrics`.
 2. **10.2** Report generator: Markdown + notebook plots; Δ-Sharpe inferential, MDD/PF/WR descriptive.
 
 ## Phase 11 — Forward trading
@@ -76,7 +68,7 @@ Sequential build order distilled from `implementation-plan.md`. Each step links 
 2. **11.5** Orderly forward run on Mantle (`PERP_BTC_USDC`), 5–20 paired trades; each closed trade posts to ERC-8004 reputation + validation registries on Mantle.
 
 ## Phase 12 — Acceptance checklist
-See `implementation-plan.md` §Phase 12 for the full submission checklist (16 items).
+See `implementation-plan.md` §Phase 12 for the full submission checklist.
 
 ---
 

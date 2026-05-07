@@ -1,114 +1,16 @@
 # Manual operator tasks
 
+> **2026-05-07 status (ADR 0011):** CV vector-extraction operator tasks
+> (M1–M4) have been removed. They moved to xianvec-play with the rest of
+> the CV substrate. The surviving tasks below are Tier 2 (forward-paper
+> + on-chain identity) and Tier 3 (one-time setup) only.
+
 Things that **cannot** be done from inside Claude Code / cargo / a clean repo.
 Each entry: trigger, what's needed, exit criterion, FOLLOWUPS cross-ref.
 
 Sorted by which milestone they unblock. Keep this file in sync with
 `FOLLOWUPS.md` — that file tracks engineering follow-ups; this one tracks
 operator-side prerequisites.
-
----
-
-## Tier 1 — blocking the Phase 9.3 headline backtest run
-
-### M1. Provision GPU (Vast.ai or RunPod)
-
-- **Trigger:** ready to extract production vectors + run the headline backtest.
-- **What:** rent an A40 / A100 / H100 spot. Approximate burn: ~$0.40–1.50/hr.
-  The full vector-extraction + backtest cycle fits in 2–4 GPU-hours; budget
-  $5–20 plus iteration.
-- **Setup steps:**
-  1. Create account on Vast.ai or RunPod.
-  2. Pick an instance with ≥80 GB VRAM (A100/H100) or ≥48 GB (A40 — works for
-     Q4 + bf16 single-layer extraction).
-  3. SSH in; clone the repo on the box.
-  4. `pip install -r tools/extract_vectors/requirements.txt` (torch,
-     transformers, accelerate, repeng, numpy, pyyaml — see the file for
-     pinned versions and rationale).
-  5. `huggingface-cli login` if you don't have the Qwen3-32B weights cached on
-     the GPU.
-- **Exit:** GPU box can `python tools/extract_vectors/extract_vectors.py --help`
-  without crashing on imports.
-- **Unblocks:** F1, F2, Phase 9.3.
-
-### M2. Extract production Conviction vector + Patience/Risk/Trend pipeline-only
-
-- **Trigger:** M1 complete.
-- **What:** run `tools/extract_vectors/extract_vectors.py` for each of the four
-  axes against `Qwen/Qwen3-32B`, layers 20/32/42/50. **`--out` is a path
-  prefix, not a directory.** Each invocation writes (relative to that
-  prefix): `<out>.npz` + `<out>.manifest.json` for the real vector,
-  `<out>_random.npz` + `_random.manifest.json` (Frobenius-norm-matched
-  Gaussian control), `<out>_orth.npz` + `_orth.manifest.json` (orthogonal
-  control), plus per-layer sidecars `<out>_L<layer>.manifest.json`. **The
-  Random + Orthogonal controls auto-emit on every run — no separate
-  invocation needed.**
-- **Commands** (on the GPU box, run from repo root):
-
-  ```bash
-  python tools/extract_vectors/extract_vectors.py \
-    --model  Qwen/Qwen3-32B \
-    --spec   tools/extract_vectors/specs/conviction.yaml \
-    --layers 20,32,42,50 \
-    --out    data/vectors/conviction_v1
-  ```
-
-  Repeat for `patience.yaml`, `risk.yaml`, `trend.yaml` (each: pipeline-only;
-  Conviction is the active axis for v1). The Phase 9.2 A/B nulls consume the
-  Conviction-axis `_random.npz` and `_orth.npz` produced by the first run.
-- **Verify** the manifest sidecars parse cleanly via the runtime's surface:
-  ```bash
-  xvn explain-vectors --manifest data/vectors/conviction_v1.manifest.json
-  xvn explain-vectors --manifest data/vectors/conviction_v1_orth.manifest.json
-  ```
-  Both should pretty-print `model_id`, `model_quant`, `layers`, and
-  `contrast_pair_set_hash` without errors. (Directional-match validation is
-  M3's job, not M2's.)
-- **Then SCP back:**
-  ```bash
-  rsync -avz <gpu_user>@<gpu_host>:~/xianvec/data/vectors/ data/vectors/
-  ```
-- **Exit:** four `data/vectors/<axis>_v1.npz` files locally, each with
-  matching `.manifest.json`, `_random.npz`, `_orth.npz`, and per-layer
-  sidecars; each loads via `xianvec_inference::substrate::load_vector`.
-- **Unblocks:** F2, F1 (next), F16, Phase 9.2 / 9.3.
-
-### M3. Re-run spike directional match through the candle runtime (F1 hard gate)
-
-- **Trigger:** M2 complete.
-- **What:** drop the `#[ignore]` on
-  `crates/xianvec-inference/src/substrate.rs::tests::validate_directional_match_production`,
-  load the production Conviction vector, run 5 holdout prompts steered, assert
-  `directional_match_rate >= 0.75` (matches the spike's empirical PASS).
-- **Run:**
-  ```bash
-  cargo test -p xianvec-inference \
-    substrate::tests::validate_directional_match_production -- --ignored
-  ```
-- **Exit:** test passes; remove `#[ignore]`.
-- **Unblocks:** F1, F3 directional validity, the headline run.
-- **FOLLOWUPS:** F1.
-
-### M4. Run the headline backtest at higher precision (Phase 9.3)
-
-- **Trigger:** M3 passes.
-- **What:** on the GPU box, run `xvn ab-compare` against the same setups +
-  bars locally tested, but with the Q8_0 (preferred) or bf16 GGUF.
-- **Command:**
-  ```bash
-  xvn ab-compare \
-    --setups data/setups/2022_2024_paired.parquet.json \
-    --bars   data/bars/btc_2022_2024.json \
-    --asset  BTC \
-    --arms   off,on:data/vectors/conviction_v1.npz:data/vectors/conviction_v1.manifest.json:1.0,random:layer=20:dim=5120:alpha=1.0:seed=42,orthogonal:axis=conviction:path=data/vectors/conviction_v1_orth.npz:alpha=1.0 \
-    --model     models/qwen3-32b-q8-gguf/Qwen_Qwen3-32B-Q8_0.gguf \
-    --tokenizer models/qwen3-32b-q8-gguf/tokenizer.json \
-    --output reports/headline_Q8/$(date +%F).json
-  xvn report --input reports/headline_Q8/$(date +%F).json --output reports/headline_Q8/$(date +%F).md
-  ```
-- **Exit:** `reports/headline_Q8/<date>.md` rendered with Δ-Sharpe + 95% CI
-  for ≥100 paired trades on BTC-USD.
-- **Unblocks:** Phase 12 self-review checklist; v1 demo headline.
 
 ---
 
@@ -169,7 +71,7 @@ operator-side prerequisites.
 - **Unblocks:** Phase 11.5.
 - **FOLLOWUPS:** F5.
 
-### M7. Mint ERC-8004 agent identity NFTs on Mantle (F4)
+### M7. Mint ERC-8004 per-strategy identity NFTs on Mantle (SLF3)
 
 - **Trigger:** Phase 11.5 prep, after M6.
 - **What:**
@@ -177,46 +79,41 @@ operator-side prerequisites.
      Mint on testnet first; mainnet only after Phase 9 eval clears.
   2. Fund the deployer wallet with testnet MNT (faucet) or mainnet MNT
      (~$5–20 worth).
-  3. Update `identity/vectors_{off,on}.agent.json`:
-     - `code_commit`: replace `PENDING` with `git rev-parse HEAD` at the time
-       of the run.
-     - `contact`: replace `PENDING` with an email or GitHub URL.
-     - `vectors_on.manifest_hashes`: replace `["PENDING_PHASE_4_2_EXTRACTION"]`
-       with the actual `Manifest::content_hash()` of the production vector
-       from M2.
+  3. For each strategy variant in the active loom set, prepare an
+     `identity/<strategy_name>.agent.json` manifest:
+     - `agent_id`: assigned at mint time
+     - `strategy_name`: human-readable label (e.g., `trader_arm`, `buy_hold`)
+     - `code_commit`: `git rev-parse HEAD` at the time of the run
+     - `strategy_adapter_type`: identifier for the Strategy impl
+     - `risk_preset`: matches `config/risk.toml`
+     - `contact`: email or GitHub URL
   4. Set `identity.enabled = true` in `config/default.toml` (or per-env override).
   5. Mint. **`xianvec-identity` ships as a library only today** — no
-     `mint-identity` binary, no `xvn mint-identity` subcommand. Until one
-     lands, write a thin driver against the real surface
-     (`crates/xianvec-identity/src/client.rs`):
+     `mint-identity` binary. Until one lands, write a thin driver against
+     `crates/xianvec-identity/src/client.rs`:
      - `RegistryAddresses::custom(identity, reputation)` — pass the
-       deployed-on-Mantle contract addresses (the `mantle_mainnet()` and
-       `mantle_testnet()` constructors currently return `None` until those
-       deployments are pinned in the crate).
+       deployed-on-Mantle contract addresses.
      - `IdentityClient::connect(rpc_url, addrs, chain_id).await?`
      - `client.register(&agent_uri, &signer).await?` returns a `TokenId`.
-     The canonical usage pattern lives in the integration test at
-     `crates/xianvec-identity/src/client.rs` (the `register_*` tests around
-     L560–L580). Mantle testnet is `chain_id = 5003`; mainnet is `5000`.
+     Mantle testnet is `chain_id = 5003`; mainnet is `5000`.
      Then:
      ```bash
      export MANTLE_RPC_URL=https://rpc.sepolia.mantle.xyz   # testnet
      export MANTLE_DEPLOYER_KEY=$(op read 'op://Personal/xianvec-mantle/deployer_pk')
-     cargo run --release -p xianvec-identity \
-       --example mint_identity -- identity/vectors_off.agent.json
-     cargo run --release -p xianvec-identity \
-       --example mint_identity -- identity/vectors_on.agent.json
+     for manifest in identity/*.agent.json; do
+       cargo run --release -p xianvec-identity \
+         --example mint_identity -- "$manifest"
+     done
      ```
      (`examples/mint_identity.rs` is the driver you write; the workspace
-     doesn't ship it yet. File a follow-up — this gap also blocks Phase
-     11.5 the moment F4 reaches "ready to mint.")
-  6. Save the resulting (token_id, contract_addr) pair into the manifest
+     doesn't ship it yet.)
+  6. Save the resulting (token_id, contract_addr) pair into each manifest
      and commit.
-- **Exit:** both NFTs minted on the chosen network; `identity/<arm>.agent.json`
-  has populated identity fields; `xvn` runs without `Mantle creds missing`
-  errors when `identity.enabled = true`.
+- **Exit:** each strategy's NFT minted on the chosen network; per-strategy
+  manifests have populated identity fields; `xvn` runs without `Mantle creds
+  missing` errors when `identity.enabled = true`.
 - **Unblocks:** Phase 11.5.
-- **FOLLOWUPS:** F4. **xianvec-identity is opt-in** — keep it excluded from
+- **FOLLOWUPS:** SLF3. **xianvec-identity is opt-in** — keep it excluded from
   `default-members` in `Cargo.toml`; explicit `cargo build -p xianvec-identity`
   to compile.
 
@@ -355,7 +252,7 @@ operator-side prerequisites.
   3. Save under `data/probes/<bucket>/<uuid>.json` as `MarketSnapshot`.
   4. Wire `ProbeRunner` in `xianvec-eval` per implementation-plan §8.5.
 - **Trigger:** Phase 9.2 A/B runner stable + want a regression-detection net
-  for vector / prompt / model changes.
+  for strategy / prompt / model changes.
 - **FOLLOWUPS:** F13.
 
 ### M15. Source onchain baselines data (F14 / Phase 7.5)
