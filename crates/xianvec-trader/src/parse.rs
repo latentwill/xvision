@@ -1,5 +1,5 @@
-//! Parse + validate the Trader's JSON response. Pure function; the engine wire
-//! is in `run.rs`.
+//! Parse + validate the Trader's JSON response. Pure function; the backend
+//! wire is in `run.rs`.
 //!
 //! The parser is forgiving in the same ways `xianvec_intern::parse_llm_response`
 //! is forgiving:
@@ -8,17 +8,15 @@
 //!    handling fenced markdown / leading prose.
 //! 3. The decoded shape is validated via garde at the boundary.
 
-use std::collections::BTreeMap;
-
 use garde::Validate;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use xianvec_core::trading::{Action, Direction, DispositionAxis, TraderDecision};
+use xianvec_core::trading::{Action, Direction, TraderDecision};
 use xianvec_intern::strip_reasoning;
 
 use crate::error::TraderError;
 
-/// What the LLM produces. The runtime fills in `setup_id` and `active_vectors`.
+/// What the LLM produces. The runtime fills in `setup_id`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmTraderDecision {
     pub action: Action,
@@ -30,12 +28,8 @@ pub struct LlmTraderDecision {
 }
 
 /// Parse + validate a Trader response. The caller supplies the runtime-owned
-/// fields (`setup_id`, `active_vectors`).
-pub fn parse_trader_response(
-    body: &str,
-    setup_id: Uuid,
-    active_vectors: BTreeMap<DispositionAxis, f32>,
-) -> Result<TraderDecision, TraderError> {
+/// `setup_id`.
+pub fn parse_trader_response(body: &str, setup_id: Uuid) -> Result<TraderDecision, TraderError> {
     if body.trim().is_empty() {
         return Err(TraderError::Empty);
     }
@@ -54,7 +48,6 @@ pub fn parse_trader_response(
         stop_loss_pct: llm.stop_loss_pct,
         take_profit_pct: llm.take_profit_pct,
         trader_summary: llm.trader_summary,
-        active_vectors,
     };
     decision.validate().map_err(TraderError::Validation)?;
     Ok(decision)
@@ -82,7 +75,7 @@ mod tests {
     use super::*;
 
     fn parse(body: &str) -> Result<TraderDecision, TraderError> {
-        parse_trader_response(body, Uuid::nil(), BTreeMap::new())
+        parse_trader_response(body, Uuid::nil())
     }
 
     const GOLDEN_BUY: &str = r#"{
@@ -100,7 +93,6 @@ mod tests {
         assert_eq!(d.action, Action::Buy);
         assert_eq!(d.direction, Direction::Long);
         assert_eq!(d.size_bps, 800);
-        assert_eq!(d.active_vectors.len(), 0);
     }
 
     #[test]
@@ -161,21 +153,5 @@ mod tests {
         let body = r#"{"action":"explode","direction":"long","size_bps":500,"stop_loss_pct":2.0,"take_profit_pct":5.0,"trader_summary":"Invalid action keyword."}"#;
         let err = parse(body).expect_err("invalid action must fail");
         assert!(matches!(err, TraderError::Parse(_)));
-    }
-
-    #[test]
-    fn fills_active_vectors_from_caller() {
-        let av = BTreeMap::from([(DispositionAxis::Conviction, 1.5_f32)]);
-        let d = parse_trader_response(GOLDEN_BUY, Uuid::nil(), av.clone()).unwrap();
-        assert_eq!(d.active_vectors, av);
-    }
-
-    #[test]
-    fn round_trip_with_active_vectors() {
-        let av = BTreeMap::from([(DispositionAxis::Conviction, 0.75_f32)]);
-        let d = parse_trader_response(GOLDEN_BUY, Uuid::nil(), av).unwrap();
-        let s = serde_json::to_string(&d).unwrap();
-        let back: TraderDecision = serde_json::from_str(&s).unwrap();
-        assert_eq!(d, back);
     }
 }
