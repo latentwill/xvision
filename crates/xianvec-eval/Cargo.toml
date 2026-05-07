@@ -17,7 +17,6 @@ xianvec-execution = { path = "../xianvec-execution" }
 xianvec-risk      = { path = "../xianvec-risk" }
 xianvec-trader    = { path = "../xianvec-trader" }
 xianvec-intern    = { path = "../xianvec-intern" }
-xianvec-inference = { path = "../xianvec-inference" }
 rand              = { version = "0.8", default-features = false, features = ["std", "std_rng"] }
 
 anyhow      = { workspace = true }

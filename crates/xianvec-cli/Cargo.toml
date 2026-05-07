@@ -23,7 +23,6 @@ xianvec-core      = { path = "../xianvec-core" }
 xianvec-eval      = { path = "../xianvec-eval" }
 xianvec-intern    = { path = "../xianvec-intern" }
 xianvec-trader    = { path = "../xianvec-trader" }
-xianvec-inference = { path = "../xianvec-inference", default-features = false }
 xianvec-risk      = { path = "../xianvec-risk" }
 xianvec-execution = { path = "../xianvec-execution" }
 xianvec-harness   = { path = "../xianvec-harness" }
@@ -41,4 +40,3 @@ tempfile = "3"
 
 [features]
 default = []
-cuda = ["xianvec-inference/cuda"]
