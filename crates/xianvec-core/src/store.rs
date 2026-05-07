@@ -6,10 +6,10 @@
 //! at the cost of one extra parse per call; performance is irrelevant for this
 //! workload (≤100 rows per backtest run).
 //!
-//! Tier 1 fix #1: `briefings` is keyed on `setup_id` alone — both paired arms
-//! read the same briefing. `decisions` is keyed on `(setup_id, vector_config_hash)`.
+//! Tier 1 fix #1: `briefings` is keyed on `setup_id` alone — every arm reads
+//! the same briefing. `decisions` and `risk_outcomes` are keyed on
+//! `(setup_id, arm_name)` so multiple strategy arms persist independently.
 
-use std::collections::BTreeMap;
 use std::path::Path;
 
 use chrono::{DateTime, Utc};
@@ -19,7 +19,7 @@ use sqlx::{Row, SqlitePool};
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::trading::{DispositionAxis, InternBriefing, RiskDecision, TraderDecision};
+use crate::trading::{InternBriefing, RiskDecision, TraderDecision};
 
 #[derive(Debug, Error)]
 pub enum StoreError {
@@ -98,7 +98,7 @@ impl Store {
 
     // --- briefings -------------------------------------------------------
 
-    /// Insert or replace the briefing for `setup_id`. Both paired arms read
+    /// Insert or replace the briefing for `setup_id`. All arms read
     /// the same row (Tier 1 fix #1).
     pub async fn upsert_briefing(
         &self,
@@ -136,14 +136,12 @@ impl Store {
     // --- decisions -------------------------------------------------------
 
     pub async fn insert_decision(&self, arm_name: &str, decision: &TraderDecision) -> Result<(), StoreError> {
-        let cfg_hash = vector_config_hash(&decision.active_vectors);
         let json = serde_json::to_string(decision)?;
         sqlx::query(
-            "INSERT OR REPLACE INTO decisions (setup_id, vector_config_hash, arm_name, decision_json, created_at) \
-             VALUES (?, ?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO decisions (setup_id, arm_name, decision_json, created_at) \
+             VALUES (?, ?, ?, ?)",
         )
         .bind(decision.setup_id.to_string())
-        .bind(cfg_hash)
         .bind(arm_name)
         .bind(json)
         .bind(Utc::now().to_rfc3339())
@@ -175,7 +173,7 @@ impl Store {
 
     pub async fn insert_risk_outcome(
         &self,
-        vector_config_hash: &str,
+        arm_name: &str,
         decision: &RiskDecision,
     ) -> Result<(), StoreError> {
         let setup_id = decision
@@ -188,11 +186,11 @@ impl Store {
             .expect("RiskDecision must reference a TraderDecision");
         let json = serde_json::to_string(decision)?;
         sqlx::query(
-            "INSERT OR REPLACE INTO risk_outcomes (setup_id, vector_config_hash, risk_decision_json, created_at) \
+            "INSERT OR REPLACE INTO risk_outcomes (setup_id, arm_name, risk_decision_json, created_at) \
              VALUES (?, ?, ?, ?)",
         )
         .bind(setup_id.to_string())
-        .bind(vector_config_hash)
+        .bind(arm_name)
         .bind(json)
         .bind(Utc::now().to_rfc3339())
         .execute(&self.pool)
@@ -238,25 +236,6 @@ pub struct TraceSpan {
     pub ended_at: DateTime<Utc>,
 }
 
-/// Stable hash for `decision.active_vectors` so paired arms with identical
-/// configurations collide on the `decisions` primary key — and arms that
-/// differ on even one axis magnitude store independently.
-pub fn vector_config_hash(active: &BTreeMap<DispositionAxis, f32>) -> String {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    let mut h = DefaultHasher::new();
-    if active.is_empty() {
-        "off".hash(&mut h);
-    } else {
-        for (axis, mag) in active {
-            axis.hash(&mut h);
-            // f32 is not Hash; bit-pattern hashes are stable across runs.
-            mag.to_bits().hash(&mut h);
-        }
-    }
-    format!("{:016x}", h.finish())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -280,7 +259,7 @@ mod tests {
         }
     }
 
-    fn decision_with_vectors(active: BTreeMap<DispositionAxis, f32>) -> TraderDecision {
+    fn make_decision() -> TraderDecision {
         TraderDecision {
             setup_id: Uuid::nil(),
             action: Action::Buy,
@@ -289,7 +268,6 @@ mod tests {
             stop_loss_pct: 2.5,
             take_profit_pct: 5.0,
             trader_summary: "Long entry on confirmed range break with 2:1 R:R.".into(),
-            active_vectors: active,
         }
     }
 
@@ -330,39 +308,29 @@ mod tests {
 
     #[tokio::test]
     async fn paired_decisions_persist_independently() {
-        // Tier 1 fix #1 corollary: same setup_id, different vector_config_hash
-        // → both rows exist.
+        // Tier 1 fix #1 corollary: same setup_id, different arm_name → both
+        // rows exist.
         let s = fresh_store().await;
-        let off = decision_with_vectors(BTreeMap::new());
-        let on = decision_with_vectors(BTreeMap::from([(DispositionAxis::Conviction, 1.0)]));
-        s.insert_decision("off", &off).await.unwrap();
-        s.insert_decision("on", &on).await.unwrap();
+        let d = make_decision();
+        s.insert_decision("trader_arm", &d).await.unwrap();
+        s.insert_decision("buy_and_hold", &d).await.unwrap();
         let rows = s.get_decisions_for_setup(&Uuid::nil()).await.unwrap();
         assert_eq!(rows.len(), 2, "both arms persist");
         let arms: Vec<_> = rows.iter().map(|(a, _)| a.as_str()).collect();
-        assert!(arms.contains(&"off") && arms.contains(&"on"));
-    }
-
-    #[tokio::test]
-    async fn vector_config_hash_distinguishes_arms() {
-        let off = vector_config_hash(&BTreeMap::new());
-        let on = vector_config_hash(&BTreeMap::from([(DispositionAxis::Conviction, 1.0)]));
-        let on_other_mag = vector_config_hash(&BTreeMap::from([(DispositionAxis::Conviction, 1.5)]));
-        assert_ne!(off, on);
-        assert_ne!(on, on_other_mag);
+        assert!(arms.contains(&"trader_arm") && arms.contains(&"buy_and_hold"));
     }
 
     #[tokio::test]
     async fn risk_outcome_keyed_by_arm() {
         let s = fresh_store().await;
-        let d = decision_with_vectors(BTreeMap::new());
+        let d = make_decision();
         let approved = RiskDecision::Approved { decision: d.clone() };
         let vetoed = RiskDecision::Vetoed {
             original: d,
             reason: VetoReason::DailyLossCircuitBreaker,
         };
-        s.insert_risk_outcome("hash-off", &approved).await.unwrap();
-        s.insert_risk_outcome("hash-random", &vetoed).await.unwrap();
+        s.insert_risk_outcome("trader_arm", &approved).await.unwrap();
+        s.insert_risk_outcome("buy_and_hold", &vetoed).await.unwrap();
         // Both rows must exist.
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM risk_outcomes WHERE setup_id = ?")
             .bind(Uuid::nil().to_string())
