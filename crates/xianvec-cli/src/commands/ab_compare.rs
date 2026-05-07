@@ -1,19 +1,20 @@
-//! `xvn ab-compare` — N-arm backtest A/B runner. Phase 9.1 + 9.2.
+//! `xvn ab-compare` — N-arm backtest A/B runner.
+//!
+//! Post-CV-extraction (ADR 0011) the LLM-driven `trader_arm` is a vanilla
+//! HTTP backend (`xianvec_trader::OpenAiCompatBackend`); other arms are the
+//! classical baselines defined in `xianvec_eval::baselines`.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use tokio::sync::Mutex;
-
 use xianvec_core::market::MarketSnapshot;
 use xianvec_core::trading::{AssetSymbol, PortfolioState};
-use xianvec_eval::ab_compare::{parse_arm_spec, run_ab_compare};
+use xianvec_eval::ab_compare::{default_arms, parse_arm_spec, run_ab_compare};
 use xianvec_eval::backtest::MarketBar;
 use xianvec_eval::baselines::PortfolioProvider;
 use xianvec_eval::harness::BacktestRunConfig;
-use xianvec_inference::engine::Qwen3Engine;
 use xianvec_intern::backend::{AcpxIntern, AnthropicIntern, InternBackend, OpenAICompatIntern};
-use xianvec_trader::TraderParams;
+use xianvec_trader::{OpenAiCompatBackend, TraderBackend, TraderParams};
 
 #[allow(clippy::too_many_arguments)]
 pub async fn run(
@@ -26,17 +27,21 @@ pub async fn run(
     step_hours: u32,
     horizon_hours: u32,
     asset: String,
-    model: PathBuf,
-    tokenizer: PathBuf,
     intern_provider: String,
     intern_model: String,
+    trader_base_url: String,
+    trader_model: String,
+    trader_api_key_env: String,
 ) -> anyhow::Result<()> {
     let snapshots: Vec<MarketSnapshot> = serde_json::from_slice(&std::fs::read(&setups)?)?;
     let bars_vec: Vec<MarketBar> = serde_json::from_slice(&std::fs::read(&bars)?)?;
-    let arm_specs: Vec<_> = arms
-        .split(',')
-        .map(|s| parse_arm_spec(s.trim()))
-        .collect::<anyhow::Result<Vec<_>>>()?;
+    let arm_specs: Vec<_> = if arms.trim().is_empty() {
+        default_arms()
+    } else {
+        arms.split(',')
+            .map(|s| parse_arm_spec(s.trim()))
+            .collect::<anyhow::Result<Vec<_>>>()?
+    };
 
     let asset_sym = match asset.as_str() {
         "BTC" => AssetSymbol::Btc,
@@ -45,10 +50,11 @@ pub async fn run(
         other => anyhow::bail!("unknown asset: {other}"),
     };
 
-    println!("loading Qwen3 weights from {}…", model.display());
-    let device = Qwen3Engine::pick_device()?;
-    let engine = Qwen3Engine::load(&model, &tokenizer, device)?;
-    let engine = Arc::new(Mutex::new(engine));
+    let trader: Arc<dyn TraderBackend> = Arc::new(OpenAiCompatBackend::from_env(
+        trader_base_url,
+        trader_model,
+        &trader_api_key_env,
+    )?);
 
     // ACPX is non-deterministic by design — F21 calls out that backtest
     // pairing (Tier 1 fix #1) likely needs single-shot. We allow it here
@@ -114,7 +120,7 @@ pub async fn run(
         intern,
         intern_provider,
         intern_model,
-        engine,
+        trader,
         TraderParams::default(),
         portfolio_provider,
         &risk,

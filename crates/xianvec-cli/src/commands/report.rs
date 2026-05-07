@@ -29,9 +29,9 @@ mod tests {
         let result = BacktestResult {
             arms: BTreeMap::from([
                 (
-                    "vectors_off".into(),
+                    "buy_and_hold".into(),
                     ArmResult {
-                        name: "vectors_off".into(),
+                        name: "buy_and_hold".into(),
                         equity_curve: vec![],
                         fills: vec![],
                         decisions: vec![],
@@ -48,9 +48,9 @@ mod tests {
                     },
                 ),
                 (
-                    "vectors_on".into(),
+                    "trader_arm".into(),
                     ArmResult {
-                        name: "vectors_on".into(),
+                        name: "trader_arm".into(),
                         equity_curve: vec![],
                         fills: vec![],
                         decisions: vec![],
@@ -79,6 +79,6 @@ mod tests {
             .expect("report must succeed on a 2-arm fixture");
         let md = std::fs::read_to_string(out_tmp.path()).unwrap();
         assert!(md.contains("Headline Δ-Sharpe"));
-        assert!(md.contains("vectors_on"));
+        assert!(md.contains("trader_arm"));
     }
 }
