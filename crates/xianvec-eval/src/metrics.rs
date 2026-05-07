@@ -354,7 +354,6 @@ fn compute_regime_stratified(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeMap;
     use uuid::Uuid;
     use xianvec_core::trading::{Action, Direction, Regime, TraderDecision};
 
@@ -502,7 +501,6 @@ mod tests {
             stop_loss_pct: 2.0,
             take_profit_pct: 4.0,
             trader_summary: "test decision fixture for divergence test".into(),
-            active_vectors: BTreeMap::new(),
         }
     }
 

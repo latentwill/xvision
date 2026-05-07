@@ -629,7 +629,6 @@ fn date_of(dt: &DateTime<Utc>) -> chrono::NaiveDate {
 mod tests {
     use super::*;
     use chrono::TimeZone;
-    use std::collections::BTreeMap;
     use uuid::Uuid;
     use xianvec_core::{Action, AssetSymbol, Direction, RiskDecision, TraderDecision, VetoReason};
 
@@ -664,7 +663,6 @@ mod tests {
                 stop_loss_pct: sl,
                 take_profit_pct: tp,
                 trader_summary: "test fixture decision for unit test".into(),
-                active_vectors: BTreeMap::new(),
             },
         }
     }
@@ -773,7 +771,6 @@ mod tests {
                 stop_loss_pct: 2.0,
                 take_profit_pct: 5.0,
                 trader_summary: "test vetoed decision fixture for test".into(),
-                active_vectors: BTreeMap::new(),
             },
             reason: VetoReason::DailyLossCircuitBreaker,
         };

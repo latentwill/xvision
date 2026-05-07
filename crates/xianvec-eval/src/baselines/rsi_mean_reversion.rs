@@ -4,8 +4,6 @@
 //! - `rsi_14 >= overbought (70)` → Sell Short 800 bps, stop 2.5%, tp 5%
 //! - Otherwise or when RSI is None → `None`
 
-use std::collections::BTreeMap;
-
 use async_trait::async_trait;
 use xianvec_core::market::MarketSnapshot;
 use xianvec_core::trading::{Action, Direction, TraderDecision};
@@ -67,7 +65,6 @@ impl Strategy for RsiMeanReversion {
             stop_loss_pct: 2.5,
             take_profit_pct: 5.0,
             trader_summary: summary.into(),
-            active_vectors: BTreeMap::new(),
         })
     }
 }
@@ -116,7 +113,6 @@ mod tests {
         assert_eq!(dec.size_bps, 800);
         assert!((dec.stop_loss_pct - 2.5).abs() < f32::EPSILON);
         assert!((dec.take_profit_pct - 5.0).abs() < f32::EPSILON);
-        assert!(dec.active_vectors.is_empty());
     }
 
     #[tokio::test]

@@ -1,10 +1,9 @@
 //! `xvn run-setup` — run a single setup through Intern → Risk slice.
 //!
 //! v1 covers Stage 1 (Intern HTTP call) and Stage 3 (Risk layer over a
-//! placeholder decision). Stage 2 (the real Trader call) requires loading
-//! a Qwen3 GGUF; that path lives in the `smoke-pipeline` binary in
-//! `xianvec-trader`. Re-add Stage 2 here post-Phase 10 if the demo
-//! narrative requires it.
+//! placeholder decision). Stage 2 (the real Trader call) is now a vanilla
+//! HTTP backend (`xianvec_trader::OpenAiCompatBackend`) — wire it in here
+//! when the demo narrative requires it.
 
 use std::path::PathBuf;
 
@@ -66,7 +65,7 @@ pub async fn run(snapshot_path: PathBuf, intern_provider: String, model: String)
     println!("signal_quality: {:.3}", briefing.signal_quality);
 
     println!();
-    println!("=== Stage 2: Trader (skipped — load Qwen3 weights via xianvec-trader smoke-pipeline) ===");
+    println!("=== Stage 2: Trader (skipped — wire xianvec_trader::OpenAiCompatBackend here when needed) ===");
 
     println!();
     println!("=== Stage 3: Risk ===");
@@ -90,7 +89,6 @@ pub async fn run(snapshot_path: PathBuf, intern_provider: String, model: String)
         stop_loss_pct: 2.0,
         take_profit_pct: 5.0,
         trader_summary: "run-setup placeholder decision (Trader path not invoked here).".into(),
-        active_vectors: Default::default(),
     };
     let risk_outcome = xianvec_harness::apply_risk(placeholder, &portfolio, AssetSymbol::Btc, &risk);
     println!("risk verdict: {risk_outcome:?}");

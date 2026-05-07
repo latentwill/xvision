@@ -54,7 +54,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::path::Path;
 
-    use xianvec_core::{Action, AssetSymbol, Direction, DispositionAxis, TraderDecision};
+    use xianvec_core::{Action, AssetSymbol, Direction, TraderDecision};
     use uuid::Uuid;
 
     fn fixture_decision() -> TraderDecision {
@@ -66,7 +66,6 @@ mod tests {
             stop_loss_pct: 2.0,
             take_profit_pct: 5.0,
             trader_summary: "Harness smoke test decision.".into(),
-            active_vectors: BTreeMap::from([(DispositionAxis::Conviction, 0.8)]),
         }
     }
 

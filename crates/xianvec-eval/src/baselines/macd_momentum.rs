@@ -8,7 +8,6 @@
 //! Interior mutability: **`Mutex<Option<f64>>`** for previous bar's `macd_hist`.
 //! Same rationale as MaCrossover: uncontended in harness, clear semantics.
 
-use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 use async_trait::async_trait;
@@ -66,7 +65,6 @@ impl Strategy for MacdMomentum {
                 stop_loss_pct: 2.0,
                 take_profit_pct: 4.0,
                 trader_summary: "MacdMomentum: MACD hist crossed above zero — long momentum.".into(),
-                active_vectors: BTreeMap::new(),
             })
         } else if bearish_cross {
             Some(TraderDecision {
@@ -77,7 +75,6 @@ impl Strategy for MacdMomentum {
                 stop_loss_pct: 2.0,
                 take_profit_pct: 4.0,
                 trader_summary: "MacdMomentum: MACD hist crossed below zero — short momentum.".into(),
-                active_vectors: BTreeMap::new(),
             })
         } else {
             None
@@ -142,7 +139,6 @@ mod tests {
         assert_eq!(dec.action, Action::Buy);
         assert_eq!(dec.direction, Direction::Long);
         assert_eq!(dec.size_bps, 800);
-        assert!(dec.active_vectors.is_empty());
     }
 
     #[tokio::test]

@@ -5,7 +5,6 @@
 //! so it cannot be `&self`-compatible without a cell. `Mutex` is idiomatic for
 //! non-Copy state that must be mutated through a shared reference.
 
-use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 use async_trait::async_trait;
@@ -57,7 +56,6 @@ impl Strategy for RandomDirection {
             stop_loss_pct: 2.0,
             take_profit_pct: 3.0,
             trader_summary: "RandomDirection: coin-flip long/short at 100 bps.".into(),
-            active_vectors: BTreeMap::new(),
         })
     }
 }
@@ -101,7 +99,6 @@ mod tests {
         assert_eq!(dec.size_bps, 100);
         assert!((dec.stop_loss_pct - 2.0).abs() < f32::EPSILON);
         assert!((dec.take_profit_pct - 3.0).abs() < f32::EPSILON);
-        assert!(dec.active_vectors.is_empty());
         // action/direction must be a valid long or short pair
         let is_long = dec.action == Action::Buy && dec.direction == Direction::Long;
         let is_short = dec.action == Action::Sell && dec.direction == Direction::Short;
