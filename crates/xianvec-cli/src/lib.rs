@@ -3,9 +3,6 @@
 //! Subcommands:
 //! - `show-metrics` — render a `BacktestResult` JSON's headline numbers.
 //! - `show-decision` — pretty-print a cached `TraderDecision` from SQLite.
-//! - `explain-vectors` — print a vector manifest sidecar with highlights
-//!    (kept as a passthrough JSON pretty-printer; the active CV substrate
-//!    lives in xianvec-play after ADR 0011).
 //! - `run-setup` — run a single setup through Intern → Risk slice.
 //! - `report` — render a Markdown report from a `BacktestResult`.
 //! - `ab-compare` — run an N-arm backtest A/B over a setups + bars JSON.
@@ -41,12 +38,6 @@ pub enum Command {
         setup_id: Uuid,
         #[arg(long, default_value = "data/store.db")]
         db: PathBuf,
-    },
-    /// Print a vector manifest sidecar with highlights. Passthrough JSON
-    /// inspector — the active CV substrate lives in xianvec-play.
-    ExplainVectors {
-        #[arg(long)]
-        manifest: PathBuf,
     },
     /// Run a single setup through Intern → Risk slice.
     RunSetup {
@@ -120,7 +111,6 @@ impl Cli {
             Command::ShowDecision { setup_id, db } => {
                 commands::show_decision::run(setup_id, db).await
             }
-            Command::ExplainVectors { manifest } => commands::explain_vectors::run(manifest),
             Command::RunSetup {
                 snapshot,
                 intern,
