@@ -1,18 +1,28 @@
 # XIANVEC — Architecture
 
-> AI trading agent with control-vector-shaped disposition. Hackathon scope: prove that disposition-encoding control vectors meaningfully change trading behavior versus a vectors-off baseline of the same agent on the same setups.
+> Multistrategy trading agent with on-chain reputation. Hackathon scope: prove that a population of strategies evaluated through a deterministic loom, with ERC-8004 reputation/validation receipts, produces a credibly auditable ranking of strategy variants.
 
 ---
 
 ## 1. Thesis
 
-Successful traders carry embodied expertise — pattern recognition, emotional calibration, intuitive risk sense — that does not survive abstraction into rules. The hypothesis under test: **control vectors are the mechanism to encode this dispositional knowledge directly into a model's inference geometry.** Disposition is shaped geometrically; episodic memory is retrieved textually. They are complementary, not interchangeable.
+A multistrategy population evaluated through a deterministic loom, with
+on-chain reputation and validation receipts via ERC-8004, produces a
+credibly auditable ranking of trading strategy variants. The system is a
+*marketplace* in shape — strategies have provenance, performance history,
+and fork lineage as first-class on-chain artifacts.
 
-The hackathon claim is narrower than the long-term thesis. We are not yet claiming the agent can self-improve from its own trades (that is the deferred Karpathy loop). The hackathon claim is:
+The hackathon claim is narrower than the long-term thesis. We are not yet
+claiming the loom can self-improve indefinitely (that's the deferred
+Karpathy autoresearch direction). The hackathon claim is:
 
-> On a fixed set of trading setups, the same agent with disposition control vectors active outperforms the same agent with vectors disabled on a pre-committed risk-adjusted return metric, statistically beyond noise.
+> On a fixed set of trading setups, a population of N strategies (classical
+> TA + onchain + LLM-driven) evaluated through the loom produces an
+> on-chain ranking that distinguishes strategies beyond noise on a
+> pre-committed risk-adjusted return metric, with reputation and validation
+> receipts visible on Mantle.
 
-Everything in this document is in service of evaluating that one claim cleanly.
+Everything in this document is in service of evaluating that claim cleanly.
 
 ---
 
