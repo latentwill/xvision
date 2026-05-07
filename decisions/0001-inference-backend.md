@@ -1,8 +1,15 @@
 # ADR 0001 — Inference backend + extraction precision
 
 **Date:** 2026-05-03
-**Status:** Accepted
+**Status:** Accepted (revised 2026-05-07 per ADR 0011)
 **Phase:** 0.2 / 0.3 prerequisite
+
+> **2026-05-07 revision:** Per ADR 0011, CV substrate moved to xianvec-play.
+> This ADR retains candle as a local-inference option for the Trader, but
+> steering-hook flexibility is no longer the load-bearing justification.
+> The MLX extraction path and `repeng` references below are historical
+> record — the CV pipeline they describe lives in xianvec-play. ADR 0007
+> covers the surviving Trader-only inference throughput considerations.
 
 ## Context
 
