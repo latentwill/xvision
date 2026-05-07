@@ -2,7 +2,7 @@
 //!
 //! After CV extraction (ADR 0011), the Trader is a vanilla LLM caller against
 //! the same kind of OpenAI-compatible Chat Completions endpoint as Stage 1
-//! Intern. There are no candle / Qwen3Engine / steering hooks in this crate.
+//! Intern. There are no candle / steering hooks in this crate.
 //!
 //! The trait surface intentionally mirrors `xianvec_intern::backend::InternBackend`:
 //! one async method, prompt in / response text out, returning a domain

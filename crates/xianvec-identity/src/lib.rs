@@ -6,9 +6,10 @@
 //! xianvec-identity — Phase 6.5 ERC-8004 identity registration client.
 //!
 //! Provides [`IdentityClient`] for minting `agentURI` NFTs and posting
-//! reputation updates on Mantle.  Two experimental arms are supported:
-//! - **vectors-OFF** (`identity/vectors_off.agent.json`)
-//! - **vectors-ON**  (`identity/vectors_on.agent.json`)
+//! reputation updates on Mantle. One manifest per strategy arm
+//! (`identity/<arm_name>.agent.json`) — post-CV-extraction (ADR 0011)
+//! the per-arm split is no longer "vectors-on / vectors-off" but the
+//! deployed strategy name (e.g. `trader_arm`, `buy_and_hold`).
 //!
 //! # Optional dependency
 //! This crate is **opt-in** at the workspace level.  It is excluded from the
@@ -37,4 +38,4 @@ pub mod client;
 pub mod manifest;
 
 pub use client::{IdentityClient, IdentityError, RegistryAddresses, TokenId, TxHash};
-pub use manifest::{AgentManifest, ReputationEntry, TradeOutcome, VectorConfigSummary};
+pub use manifest::{AgentManifest, ReputationEntry, StrategyConfigSummary, TradeOutcome};

@@ -26,8 +26,8 @@ pub struct AgentManifest {
     pub description: String,
     /// Base LLM identifier (e.g. `"Qwen/Qwen3-32B"`).
     pub model: String,
-    /// Steering vector configuration for this arm.
-    pub vector_config: VectorConfigSummary,
+    /// Strategy configuration for this arm.
+    pub strategy_config: StrategyConfigSummary,
     /// Git commit SHA at the time of minting (`"PENDING"` until mint time).
     pub code_commit: String,
     /// Operator contact (email or URL; `"PENDING"` until operator fills in).
@@ -36,17 +36,16 @@ pub struct AgentManifest {
     pub created_at: DateTime<Utc>,
 }
 
-/// Summary of the vector configuration applied to this agent arm.
+/// Summary of the strategy configuration applied to this agent arm.
+/// Post-CV-extraction (ADR 0011) the per-arm split is by strategy name,
+/// not by steering-vector configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct VectorConfigSummary {
-    /// Operating mode: `"off"` | `"on"` | `"random"` | `"orthogonal"`.
-    pub mode: String,
-    /// Active steering axes (e.g. `["conviction"]`; empty for the OFF arm).
-    pub axes: Vec<String>,
-    /// SHA-256 hashes of the `xianvec-core::Manifest` files for each loaded
-    /// vector.  Filled in at production time; `"PENDING_PHASE_4_2_EXTRACTION"`
-    /// is a placeholder until vectors are extracted (see FOLLOWUPS.md §F2).
-    pub manifest_hashes: Vec<String>,
+pub struct StrategyConfigSummary {
+    /// Strategy name: `"trader_arm"` | `"buy_and_hold"` | `"always_long"` | …
+    pub name: String,
+    /// Free-form configuration parameters (e.g. RSI thresholds, MA windows).
+    /// Empty for parameter-less strategies.
+    pub params: Vec<String>,
 }
 
 /// A single trade outcome, keyed by `setup_id`, posted to the
@@ -88,13 +87,12 @@ mod tests {
     fn sample_manifest() -> AgentManifest {
         AgentManifest {
             schema: SCHEMA_VERSION.to_string(),
-            name: "xianvec-vectors-on".to_string(),
-            description: "Conviction-steered arm".to_string(),
+            name: "xianvec-trader-arm".to_string(),
+            description: "LLM-driven trader arm".to_string(),
             model: "Qwen/Qwen3-32B".to_string(),
-            vector_config: VectorConfigSummary {
-                mode: "on".to_string(),
-                axes: vec!["conviction".to_string()],
-                manifest_hashes: vec!["PENDING_PHASE_4_2_EXTRACTION".to_string()],
+            strategy_config: StrategyConfigSummary {
+                name: "trader_arm".to_string(),
+                params: vec![],
             },
             code_commit: "abc1234".to_string(),
             contact: "test@example.com".to_string(),
