@@ -1,3 +1,4 @@
+pub mod mean_reversion;
 pub mod registry;
 
 use crate::bundle::StrategyBundle;
