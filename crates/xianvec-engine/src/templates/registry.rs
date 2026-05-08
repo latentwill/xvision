@@ -1,5 +1,6 @@
 use std::sync::OnceLock;
 
+use crate::templates::mean_reversion::MeanReversion;
 use crate::templates::Template;
 
 static REGISTRY: OnceLock<Vec<Box<dyn Template>>> = OnceLock::new();
@@ -7,7 +8,7 @@ static REGISTRY: OnceLock<Vec<Box<dyn Template>>> = OnceLock::new();
 fn registry() -> &'static [Box<dyn Template>] {
     REGISTRY.get_or_init(|| {
         // Templates added via Task 9.
-        vec![]
+        vec![Box::new(MeanReversion) as Box<dyn Template>]
     })
 }
 
