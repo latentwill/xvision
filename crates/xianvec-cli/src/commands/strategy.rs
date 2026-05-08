@@ -32,6 +32,8 @@ enum StrategyAction {
     Ls,
     /// Show a saved strategy bundle as JSON.
     Show { id: String },
+    /// List available strategy templates.
+    Templates,
 }
 
 pub async fn run(cmd: StrategyCmd) -> anyhow::Result<()> {
@@ -40,6 +42,7 @@ pub async fn run(cmd: StrategyCmd) -> anyhow::Result<()> {
         StrategyAction::Validate { id } => validate(&id).await,
         StrategyAction::Ls => ls().await,
         StrategyAction::Show { id } => show(&id).await,
+        StrategyAction::Templates => templates().await,
     }
 }
 
@@ -88,5 +91,15 @@ async fn show(id: &str) -> anyhow::Result<()> {
     let bundle = store().load(id).await?;
     let json = serde_json::to_string_pretty(&bundle)?;
     println!("{json}");
+    Ok(())
+}
+
+async fn templates() -> anyhow::Result<()> {
+    let names = registry::list_template_names();
+    for name in names {
+        if let Some(tpl) = registry::get(&name) {
+            println!("{:<20} {}", name, tpl.display_name());
+        }
+    }
     Ok(())
 }
