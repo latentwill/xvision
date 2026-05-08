@@ -1,6 +1,15 @@
 # ADR 0008 — ERC-8004 Registry Deployment on Mantle
 
-## Status: Accepted (pending operator execution)
+## Status: Accepted, deferred (2026-05-08)
+
+> **Deferral note (2026-05-08):** Operator execution of this ADR is paused.
+> v1 of Xianvec ships as Alpaca-paper eval only with no on-chain function.
+> The deployment runbook below stays valid as-is; it gets picked back up
+> after the Strategy Creation Engine and Eval Engine are shipped and
+> battle-tested end-to-end. The broader marketplace + commerce contract
+> surface that builds on these registries is designed in
+> [`docs/superpowers/specs/2026-05-08-smart-contract-surface-design.md`](../docs/superpowers/specs/2026-05-08-smart-contract-surface-design.md)
+> and is deferred under the same gate.
 
 ## Context
 
