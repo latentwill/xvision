@@ -1,5 +1,6 @@
 use xianvec_engine::bundle::slot::LLMSlot;
 use xianvec_engine::bundle::risk::{RiskConfig, RiskPreset};
+use xianvec_engine::bundle::manifest::{PublicManifest, RegimeFit};
 
 #[test]
 fn slot_serializes_to_json_and_back() {
@@ -32,4 +33,25 @@ fn risk_config_roundtrips() {
     let json = serde_json::to_string(&cfg).unwrap();
     let parsed: RiskConfig = serde_json::from_str(&json).unwrap();
     assert_eq!(cfg, parsed);
+}
+
+#[test]
+fn manifest_roundtrip_with_required_fields() {
+    let m = PublicManifest {
+        id: "01H8N7Z123".to_string(),
+        display_name: "Buys dips".to_string(),
+        plain_summary: "Buys ETH when oversold, sells when recovered.".to_string(),
+        creator: "@xianvec_official".to_string(),
+        template: "mean_reversion".to_string(),
+        regime_fit: vec![RegimeFit::RangeBound, RegimeFit::LowVol],
+        asset_universe: vec!["ETH/USD".to_string()],
+        decision_cadence_minutes: 15,
+        required_models: vec!["anthropic.claude-sonnet-4.6+".to_string()],
+        required_tools: vec!["ohlcv".to_string(), "indicator_panel".to_string()],
+        risk_preset_or_config: "balanced".to_string(),
+        published_at: None,
+    };
+    let json = serde_json::to_string(&m).unwrap();
+    let parsed: PublicManifest = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed.template, "mean_reversion");
 }
