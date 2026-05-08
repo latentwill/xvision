@@ -275,6 +275,54 @@ pub struct FibLevels {
     pub levels: [(f64, f64); 5],
 }
 
+// ---------------------------------------------------------------------------
+// Panel computation
+// ---------------------------------------------------------------------------
+
+use xianvec_core::market::IndicatorPanel;
+
+/// Compute [`IndicatorPanel`] at the latest bar from a named parquet fixture.
+///
+/// Loads `lookback_bars` bars, then derives RSI(14), SMA(20/50/200),
+/// EMA(12/26), Bollinger(20, 2), ATR(14). MACD fields are left `None` for now.
+pub fn compute_panel_from_fixture(
+    fixture: &str,
+    asset: &str,
+    lookback_bars: usize,
+) -> anyhow::Result<IndicatorPanel> {
+    let bars = crate::fixtures::load_ohlcv_fixture(fixture, asset, lookback_bars)?;
+    let closes: Vec<f64> = bars.iter().map(|b| b.close).collect();
+    let highs: Vec<f64> = bars.iter().map(|b| b.high).collect();
+    let lows: Vec<f64> = bars.iter().map(|b| b.low).collect();
+
+    let last_or_none = |v: Vec<f64>| -> Option<f64> {
+        v.last().copied().filter(|x| x.is_finite())
+    };
+
+    // Bollinger(20, 2) via the existing `bollinger` fn.
+    let bb = bollinger(&closes, 20.min(closes.len().max(1)), 2.0);
+    let bb_upper = bb.upper.last().copied().filter(|x| x.is_finite());
+    let bb_middle = bb.middle.last().copied().filter(|x| x.is_finite());
+    let bb_lower = bb.lower.last().copied().filter(|x| x.is_finite());
+
+    Ok(IndicatorPanel {
+        rsi_14: last_or_none(rsi(&closes, 14)),
+        sma_20: last_or_none(sma(&closes, 20)),
+        sma_50: last_or_none(sma(&closes, 50)),
+        sma_200: last_or_none(sma(&closes, 200)),
+        ema_12: last_or_none(ema(&closes, 12)),
+        ema_26: last_or_none(ema(&closes, 26)),
+        bb_upper,
+        bb_middle,
+        bb_lower,
+        atr_14: last_or_none(atr(&highs, &lows, &closes, 14)),
+        macd: None,
+        macd_signal: None,
+        macd_hist: None,
+        ..Default::default()
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

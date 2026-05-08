@@ -1,6 +1,19 @@
 use async_trait::async_trait;
+use serde::Deserialize;
 
 use crate::tools::{Tool, ToolName};
+
+#[derive(Deserialize)]
+struct PanelRequest {
+    asset: String,
+    fixture: String,
+    #[serde(default = "default_lookback")]
+    lookback_bars: usize,
+}
+
+fn default_lookback() -> usize {
+    200
+}
 
 pub struct IndicatorPanelTool;
 
@@ -11,10 +24,16 @@ impl Tool for IndicatorPanelTool {
     }
 
     fn description(&self) -> &'static str {
-        "Computed indicator panel for an asset"
+        "Computed indicator panel (RSI, MACD, BB, ATR, MA, EMA)"
     }
 
-    async fn invoke(&self, _input: serde_json::Value) -> anyhow::Result<serde_json::Value> {
-        Ok(serde_json::json!({"stub": true, "tool": "indicator_panel"}))
+    async fn invoke(&self, input: serde_json::Value) -> anyhow::Result<serde_json::Value> {
+        let req: PanelRequest = serde_json::from_value(input)?;
+        let panel = xianvec_data::compute_panel_from_fixture(
+            &req.fixture,
+            &req.asset,
+            req.lookback_bars,
+        )?;
+        Ok(serde_json::to_value(panel)?)
     }
 }
