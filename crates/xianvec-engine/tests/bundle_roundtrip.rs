@@ -137,3 +137,23 @@ fn bundle_with_zero_capital_risk_fails() {
     let err = validate_bundle(&b).unwrap_err();
     assert!(matches!(err, ValidationError::InvalidRisk(_)));
 }
+
+#[test]
+fn bundle_without_trader_slot_fails() {
+    let mut b = sample_bundle();
+    b.trader_slot = None; // regime_slot still Some, so NoLlmSlots wouldn't fire
+    let err = validate_bundle(&b).unwrap_err();
+    assert!(matches!(err, ValidationError::MissingTraderSlot));
+}
+
+#[test]
+fn bundle_with_undeclared_required_tool_fails() {
+    let mut b = sample_bundle();
+    // Manifest declares a tool no slot has in its allowed_tools.
+    b.manifest.required_tools.push("nansen_smartmoney".into());
+    let err = validate_bundle(&b).unwrap_err();
+    match err {
+        ValidationError::UndeclaredTool(name) => assert_eq!(name, "nansen_smartmoney"),
+        other => panic!("expected UndeclaredTool, got {other:?}"),
+    }
+}

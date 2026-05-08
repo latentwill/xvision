@@ -6,6 +6,8 @@ use crate::bundle::StrategyBundle;
 pub enum ValidationError {
     #[error("strategy must have at least one filled LLM slot")]
     NoLlmSlots,
+    #[error("strategy must have a trader slot (slot ④ Decision Arbiter)")]
+    MissingTraderSlot,
     #[error("asset universe cannot be empty")]
     EmptyAssetUniverse,
     #[error("invalid risk config: {0}")]
@@ -17,6 +19,9 @@ pub enum ValidationError {
 pub fn validate_bundle(b: &StrategyBundle) -> Result<(), ValidationError> {
     if b.regime_slot.is_none() && b.intern_slot.is_none() && b.trader_slot.is_none() {
         return Err(ValidationError::NoLlmSlots);
+    }
+    if b.trader_slot.is_none() {
+        return Err(ValidationError::MissingTraderSlot);
     }
     if b.manifest.asset_universe.is_empty() {
         return Err(ValidationError::EmptyAssetUniverse);
@@ -32,6 +37,17 @@ pub fn validate_bundle(b: &StrategyBundle) -> Result<(), ValidationError> {
             "max_leverage must be in (0, 100], got {}",
             b.risk.max_leverage
         )));
+    }
+    // Every tool the manifest declares must appear in at least one filled
+    // slot's allowed_tools — otherwise the runtime would never grant it.
+    for required in &b.manifest.required_tools {
+        let granted = [&b.regime_slot, &b.intern_slot, &b.trader_slot]
+            .into_iter()
+            .flatten()
+            .any(|slot| slot.allowed_tools.iter().any(|t| t == required));
+        if !granted {
+            return Err(ValidationError::UndeclaredTool(required.clone()));
+        }
     }
     Ok(())
 }
