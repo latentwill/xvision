@@ -15,6 +15,8 @@ path = "src/lib.rs"
 xianvec-core   = { path = "../xianvec-core" }
 xianvec-data   = { path = "../xianvec-data" }
 
+reqwest     = { workspace = true }
+
 serde       = { workspace = true }
 serde_json  = { workspace = true }
 schemars    = "0.8"
