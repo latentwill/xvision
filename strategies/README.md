@@ -41,7 +41,7 @@ Each strategy gets its own markdown file: `<slug>.md`. Required sections:
 ### Queued — Classical TA (FOLLOWUPS SLF7 / F15)
 
 - [`EMA/`](EMA/README.md) — full EMA strategy compendium (atlas of 6 perspective-pages, 8 scoped + 5 idea-pool entries).
-- `bollinger_bands` — mean-reversion at band touches.
+- [`bollinger/`](bollinger/README.md) — full Bollinger compendium (spectrum × scale matrix, 9 scoped + 7 idea-pool entries; symmetry-breaking pivot).
 - `donchian_breakout` — N-bar high/low channel breakouts.
 - `fibonacci_retracement` — pullback entries on golden ratios.
 - `ma_triple_screen` — Elder triple-screen (trend / oscillator / entry).
