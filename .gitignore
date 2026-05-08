@@ -28,7 +28,7 @@ env/
 *.db
 data/
 !data/probes/
-!data/probes/.gitkeep
+!data/probes/**
 logs/
 checkpoints/
 models/

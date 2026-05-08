@@ -397,11 +397,9 @@ impl AcpxIntern {
     /// - `XVN_INTERN_ACPX_WORKSPACE`         CWD for the child
     /// - `XVN_INTERN_ACPX_TIMEOUT_SECS`      default `300`
     /// - `XVN_INTERN_ACPX_MAX_OUTPUT_BYTES`  default `2 * 1024 * 1024`
-    /// - `XVN_INTERN_ACPX_CUSTOM_CMD`        when set, used as `acpx --agent
-    ///                                       "<cmd>"` (escape hatch for
-    ///                                       Hermes or any other ACP
-    ///                                       server not in acpx's built-in
-    ///                                       registry). Overrides `agent`.
+    /// - `XVN_INTERN_ACPX_CUSTOM_CMD`        when set, used as `acpx --agent "<cmd>"`
+    ///   (escape hatch for Hermes or any other ACP server not in acpx's built-in
+    ///   registry). Overrides `agent`.
     pub fn from_env(agent: impl Into<String>) -> Result<Self, InternError> {
         let binary = std::env::var("XVN_INTERN_ACPX_BIN").unwrap_or_else(|_| "acpx".into());
         let custom_command = std::env::var("XVN_INTERN_ACPX_CUSTOM_CMD").ok().filter(|s| !s.is_empty());

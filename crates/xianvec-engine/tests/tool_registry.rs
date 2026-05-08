@@ -13,3 +13,27 @@ async fn unknown_tool_returns_none() {
     let reg = ToolRegistry::default_with_builtins();
     assert!(reg.get(&ToolName::new("nonsense_tool")).is_none());
 }
+
+#[tokio::test]
+async fn ohlcv_tool_returns_real_bars_for_known_fixture() {
+    // Ensure the fixture parquet exists before invoking the tool.
+    xianvec_data::fixtures::ensure_test_fixture("test-fixture-btc-2024-01")
+        .expect("fixture creation");
+
+    let reg = ToolRegistry::default_with_builtins();
+    let tool = reg.get(&ToolName::new("ohlcv")).expect("ohlcv tool must be registered");
+    let out = tool
+        .invoke(serde_json::json!({
+            "asset": "BTC/USD",
+            "fixture": "test-fixture-btc-2024-01"
+        }))
+        .await
+        .expect("invoke must succeed");
+
+    let bars = out.get("bars").expect("response must contain 'bars' key");
+    assert!(bars.is_array(), "bars must be a JSON array");
+    assert!(
+        !bars.as_array().unwrap().is_empty(),
+        "bars array must not be empty"
+    );
+}
