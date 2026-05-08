@@ -1,6 +1,6 @@
-use xianvec_engine::bundle::slot::LLMSlot;
-use xianvec_engine::bundle::risk::{RiskConfig, RiskPreset};
 use xianvec_engine::bundle::manifest::{PublicManifest, RegimeFit};
+use xianvec_engine::bundle::risk::{RiskConfig, RiskPreset};
+use xianvec_engine::bundle::slot::LLMSlot;
 use xianvec_engine::bundle::StrategyBundle;
 
 fn sample_bundle() -> StrategyBundle {
@@ -22,13 +22,15 @@ fn sample_bundle() -> StrategyBundle {
             published_at: None,
         },
         regime_slot: Some(LLMSlot {
-            role: "regime".into(), prompt: "...".into(),
+            role: "regime".into(),
+            prompt: "...".into(),
             model_requirement: "anthropic.claude-sonnet-4.6".into(),
             allowed_tools: vec!["ohlcv".into(), "indicator_panel".into()],
         }),
         intern_slot: None,
         trader_slot: Some(LLMSlot {
-            role: "trader".into(), prompt: "...".into(),
+            role: "trader".into(),
+            prompt: "...".into(),
             model_requirement: "anthropic.claude-sonnet-4.6".into(),
             allowed_tools: vec!["ohlcv".into()],
         }),

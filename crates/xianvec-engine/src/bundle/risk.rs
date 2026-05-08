@@ -2,11 +2,11 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RiskConfig {
-    pub risk_pct_per_trade: f64,            // e.g., 0.015 = 1.5%
+    pub risk_pct_per_trade: f64, // e.g., 0.015 = 1.5%
     pub max_concurrent_positions: u32,
     pub max_leverage: f64,
     pub stop_loss_atr_multiple: f64,
-    pub daily_loss_kill_pct: f64,           // e.g., 0.05 = 5%
+    pub daily_loss_kill_pct: f64, // e.g., 0.05 = 5%
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

@@ -1,4 +1,4 @@
-use xianvec_engine::tools::{ToolRegistry, ToolName};
+use xianvec_engine::tools::{ToolName, ToolRegistry};
 
 #[tokio::test]
 async fn registry_lists_required_tools() {
@@ -17,11 +17,12 @@ async fn unknown_tool_returns_none() {
 #[tokio::test]
 async fn ohlcv_tool_returns_real_bars_for_known_fixture() {
     // Ensure the fixture parquet exists before invoking the tool.
-    xianvec_data::fixtures::ensure_test_fixture("test-fixture-btc-2024-01")
-        .expect("fixture creation");
+    xianvec_data::fixtures::ensure_test_fixture("test-fixture-btc-2024-01").expect("fixture creation");
 
     let reg = ToolRegistry::default_with_builtins();
-    let tool = reg.get(&ToolName::new("ohlcv")).expect("ohlcv tool must be registered");
+    let tool = reg
+        .get(&ToolName::new("ohlcv"))
+        .expect("ohlcv tool must be registered");
     let out = tool
         .invoke(serde_json::json!({
             "asset": "BTC/USD",

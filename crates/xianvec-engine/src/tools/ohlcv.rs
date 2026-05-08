@@ -31,12 +31,9 @@ impl Tool for OhlcvTool {
     async fn invoke(&self, input: serde_json::Value) -> anyhow::Result<serde_json::Value> {
         let req: OhlcvRequest = serde_json::from_value(input)?;
         let fixture = req.fixture.ok_or_else(|| {
-            anyhow::anyhow!(
-                "MVP requires a fixture name; live Alpaca fetch lands in Plan #2"
-            )
+            anyhow::anyhow!("MVP requires a fixture name; live Alpaca fetch lands in Plan #2")
         })?;
-        let bars =
-            xianvec_data::fixtures::load_ohlcv_fixture(&fixture, &req.asset, req.lookback_bars)?;
+        let bars = xianvec_data::fixtures::load_ohlcv_fixture(&fixture, &req.asset, req.lookback_bars)?;
         Ok(serde_json::json!({"asset": req.asset, "bars": bars}))
     }
 }

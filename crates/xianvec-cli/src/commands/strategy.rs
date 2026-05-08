@@ -57,13 +57,21 @@ enum StrategyAction {
 
 pub async fn run(cmd: StrategyCmd) -> anyhow::Result<()> {
     match cmd.action {
-        StrategyAction::New { template, name, creator } => new(&template, &name, creator).await,
+        StrategyAction::New {
+            template,
+            name,
+            creator,
+        } => new(&template, &name, creator).await,
         StrategyAction::Validate { id } => validate(&id).await,
         StrategyAction::Ls => ls().await,
         StrategyAction::Show { id } => show(&id).await,
         StrategyAction::Templates => templates().await,
-        StrategyAction::Run { id, fixture, decisions, mock } =>
-            run_inline(&id, &fixture, decisions, mock).await,
+        StrategyAction::Run {
+            id,
+            fixture,
+            decisions,
+            mock,
+        } => run_inline(&id, &fixture, decisions, mock).await,
     }
 }
 
@@ -134,7 +142,9 @@ async fn run_inline(id: &str, fixture: &str, decisions: u32, mock: bool) -> anyh
     );
 
     let dispatch: Arc<dyn LlmDispatch> = if mock {
-        Arc::new(MockDispatch::echo(r#"{"action":"hold","conviction":0.5,"justification":"mock"}"#))
+        Arc::new(MockDispatch::echo(
+            r#"{"action":"hold","conviction":0.5,"justification":"mock"}"#,
+        ))
     } else {
         let key = std::env::var("ANTHROPIC_API_KEY")
             .map_err(|_| anyhow::anyhow!("set ANTHROPIC_API_KEY or pass --mock"))?;
@@ -142,7 +152,11 @@ async fn run_inline(id: &str, fixture: &str, decisions: u32, mock: bool) -> anyh
     };
     let tools = Arc::new(ToolRegistry::default_with_builtins());
 
-    let asset = bundle.manifest.asset_universe.first().cloned()
+    let asset = bundle
+        .manifest
+        .asset_universe
+        .first()
+        .cloned()
         .ok_or_else(|| anyhow::anyhow!("bundle has empty asset_universe"))?;
     let mut total_in = 0u32;
     let mut total_out = 0u32;

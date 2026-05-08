@@ -295,9 +295,7 @@ pub fn compute_panel_from_fixture(
     let highs: Vec<f64> = bars.iter().map(|b| b.high).collect();
     let lows: Vec<f64> = bars.iter().map(|b| b.low).collect();
 
-    let last_or_none = |v: Vec<f64>| -> Option<f64> {
-        v.last().copied().filter(|x| x.is_finite())
-    };
+    let last_or_none = |v: Vec<f64>| -> Option<f64> { v.last().copied().filter(|x| x.is_finite()) };
 
     // Bollinger(20, 2) via the existing `bollinger` fn.
     let bb = bollinger(&closes, 20.min(closes.len().max(1)), 2.0);

@@ -1,9 +1,9 @@
+use tempfile::tempdir;
 use xianvec_engine::bundle::manifest::{PublicManifest, RegimeFit};
 use xianvec_engine::bundle::risk::RiskPreset;
 use xianvec_engine::bundle::slot::LLMSlot;
 use xianvec_engine::bundle::store::{BundleStore, FilesystemStore};
 use xianvec_engine::bundle::StrategyBundle;
-use tempfile::tempdir;
 
 fn sample_bundle(id: &str) -> StrategyBundle {
     StrategyBundle {

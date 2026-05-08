@@ -130,9 +130,7 @@ impl Cli {
     pub async fn run(self) -> anyhow::Result<()> {
         match self.command {
             Command::ShowMetrics { report } => commands::show_metrics::run(report),
-            Command::ShowDecision { setup_id, db } => {
-                commands::show_decision::run(setup_id, db).await
-            }
+            Command::ShowDecision { setup_id, db } => commands::show_decision::run(setup_id, db).await,
             Command::RunSetup {
                 snapshot,
                 intern,
@@ -145,10 +143,7 @@ impl Cli {
                 stop_loss_pct,
                 take_profit_pct,
                 summary,
-            } => {
-                commands::fire_trade::run(side, size_bps, stop_loss_pct, take_profit_pct, summary)
-                    .await
-            }
+            } => commands::fire_trade::run(side, size_bps, stop_loss_pct, take_profit_pct, summary).await,
             Command::AbCompare {
                 setups,
                 bars,
