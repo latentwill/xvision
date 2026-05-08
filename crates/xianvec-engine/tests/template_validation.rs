@@ -7,12 +7,6 @@ fn unknown_template_returns_none() {
 }
 
 #[test]
-fn list_template_names_returns_a_vec() {
-    let _names: Vec<String> = registry::list_template_names();
-    // empty until Task 9 — Task 9 adds the assertion that mean_reversion is present.
-}
-
-#[test]
 fn registry_has_mean_reversion() {
     let names = registry::list_template_names();
     assert!(names.contains(&"mean_reversion".to_string()));

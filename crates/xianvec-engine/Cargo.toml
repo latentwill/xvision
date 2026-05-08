@@ -19,7 +19,6 @@ reqwest     = { workspace = true }
 
 serde       = { workspace = true }
 serde_json  = { workspace = true }
-schemars    = "0.8"
 chrono      = { workspace = true }
 uuid        = { workspace = true }
 ulid        = { version = "1", features = ["serde"] }
