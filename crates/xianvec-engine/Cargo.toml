@@ -1,0 +1,34 @@
+[package]
+name        = "xianvec-engine"
+description = "strategy creation, bundling, agent execution"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+
+[lib]
+name = "xianvec_engine"
+path = "src/lib.rs"
+
+[dependencies]
+xianvec-core   = { path = "../xianvec-core" }
+xianvec-data   = { path = "../xianvec-data" }
+
+reqwest     = { workspace = true }
+
+serde       = { workspace = true }
+serde_json  = { workspace = true }
+chrono      = { workspace = true }
+uuid        = { workspace = true }
+ulid        = { version = "1", features = ["serde"] }
+anyhow      = { workspace = true }
+thiserror   = { workspace = true }
+async-trait = { workspace = true }
+tokio       = { workspace = true }
+tracing     = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+tempfile = "3"
+tokio    = { workspace = true, features = ["rt", "macros"] }
