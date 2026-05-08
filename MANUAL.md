@@ -283,6 +283,22 @@ operator-side prerequisites.
 
 ---
 
+## Strategy authoring (MVP — see crates/xianvec-engine/README.md)
+
+```bash
+xvn strategy templates                 # list templates
+xvn strategy new --template <t> --name <n>
+xvn strategy validate <id>
+xvn strategy show <id>
+xvn strategy ls
+xvn strategy run <id> --fixture <name> --decisions <N> [--mock]
+```
+
+End-to-end paths beyond this surface (web Wizard, marketplace publishing, live trading,
+batch eval) land in subsequent plans (#2, #3) — they share this same bundle format.
+
+---
+
 ## Quick env-var checklist (remote GPU box)
 
 These exports belong on the remote server (RunPod / Vast.ai), not the
