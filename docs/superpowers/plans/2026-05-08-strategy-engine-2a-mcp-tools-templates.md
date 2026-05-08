@@ -2,6 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 > **Depends on:** Plan #1 (`docs/superpowers/plans/2026-05-08-strategy-creation-engine-mvp.md`) merged. PR: https://github.com/latentwill/xianvec/pull/3.
+> **Execution-order decision (2026-05-08):** Execute this plan **after Plan 3 (eval engine) ships**, in case eval surfaces design decisions affecting MCP authoring verbs, the 7 templates, or the tool-call dispatch shape. Eval's findings extractor (Plan 3 Task 8) uses inline OSShip-style markdown prompts; that prompt-loading pattern may inform how skills (Plan 2b) and tool-use loops (this plan) should be structured. The plan's *technical* deps remain Plan #1 only — only the execution timing is deferred.
 
 **Goal:** Make xvn fully driveable by an external AI agent (Claude Code, Hermes, Cursor) over MCP — and make the agent loop actually use tools during decisions instead of operating on stub inputs. After this plan ships, an external agent can connect to xvn via `xvn agent serve --mcp`, list templates, create + customize a strategy bundle, and run it inline against a fixture where the LLM *itself* requests OHLCV/indicator data via tool-use mid-decision. All 7 remaining v1 templates are registered (trend_follower, breakout, momentum, range_trade, scalping, news_trader, custom).
 

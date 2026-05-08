@@ -1,8 +1,9 @@
 # Strategy Creation Engine — Plan 2c (Durable Scheduler + Live Execution) Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-> **Depends on:** Plan #1 + Plan 2a + Plan 2b (skills) merged. Pre-research: read `swarmclawai/swarmclaw` source for the scheduler pattern we're porting.
-> **Marketplace deferral note (2026-05-08):** Plan 2b was rescoped to skills-only; the marketplace surface is deferred to Plan 5 (blockchain integration). This plan persists live-run decisions locally to scheduler_events; on-chain attestation publishing happens in Plan 5 via `xvn marketplace push-to-chain`.
+> **Depends on:** Plan #1 only. Pre-research: read `swarmclawai/swarmclaw` source for the scheduler pattern we're porting.
+> **Execution-order decision (2026-05-08):** This plan ships in parallel with Plan 3 (eval engine) — neither blocks the other. Both depend only on Plan #1's foundations. Plans 2a and 2b were originally listed as deps but were dropped — the live daemon uses Plan #1's basic agent pipeline (no tool-call loops). When Plan 2a later ships, the daemon picks up tool-call dispatch automatically since both share `execute_slot`.
+> **Marketplace deferral note (2026-05-08):** The marketplace surface is deferred to Plan 5 (blockchain integration). This plan persists live-run decisions locally to scheduler_events; on-chain attestation publishing happens in Plan 5 via `xvn marketplace push-to-chain`.
 
 **Goal:** Make an author's locally-developed strategy run continuously and durably with real broker execution. After this plan ships: `xvn live deploy <strategy-id> --mode paper` starts a long-lived xvn daemon that fires the strategy's agents on its declared cadence, executes resulting decisions through Alpaca paper (or Orderly live with `--mode live`), persists every decision and fill to a SQLite event store, and retries on transient failures. Reputation receipts are *not* written in this plan — that surface ships with Plan 5's marketplace.
 

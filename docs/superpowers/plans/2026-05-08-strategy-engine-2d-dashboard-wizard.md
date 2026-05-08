@@ -1,8 +1,9 @@
 # Strategy Creation Engine — Plan 2d (Web Dashboard + Agent Wizard) Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-> **Depends on:** Plan #1 + Plan 2a + Plan 2b (skills) + Plan 2c merged. Visual design system locked in `docs/design/gptprompts.md`. UX archetypes defined in `docs/design/ux-field.md`.
-> **Marketplace deferral note (2026-05-08):** Plan 2b was rescoped to skills-only; the marketplace surface is deferred to Plan 5 (blockchain integration). This plan ships the Wizard, Inspector, and Live cockpit archetypes only. The Marketplace tab + Spreadsheet listings grid will be reintroduced in Plan 5.
+> **Depends on:** Plan #1 + Plan 2a (for wizard's MCP-driven authoring) + Plan 2c (for live cockpit's deployment events). Visual design system locked in `docs/design/gptprompts.md`. UX archetypes defined in `docs/design/ux-field.md`.
+> **Execution-order decision (2026-05-08):** This plan ships **after Plans 3, 2a, and 2c**, in this order: eval first (informs design), then 2a (MCP+templates), then 2c (live exec, in parallel with 2a), then this plan. Plan 2b (skills) ships alongside or after this plan — its skill-attach UI in the Inspector is an opt-in extension.
+> **Marketplace deferral note (2026-05-08):** The marketplace surface is deferred to Plan 5 (blockchain integration). This plan ships the Wizard, Inspector, and Live cockpit archetypes only. The Marketplace tab + Spreadsheet listings grid will be reintroduced in Plan 5.
 
 **Goal:** The product's face. After this plan ships: `xvn` (no args) opens the dashboard at `http://localhost:7878/`. The default landing is the **Agent Wizard** — chat on the left, live visual strategy progress on the right. The wizard is itself an LLM agent that drives xvn's MCP server (Plan 2a) on the user's behalf. Users without an external AI agent (Claude Code / Hermes) can still author strategies end-to-end.
 
