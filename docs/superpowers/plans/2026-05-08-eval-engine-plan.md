@@ -2,7 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 > **Spec:** `docs/superpowers/specs/2026-05-08-eval-engine-design.md` — full design context.
-> **Depends on:** Plan #1 (bundle types, agent loop), Plan 2a (tool-call dispatch). Independent of Plans 2b, 2c, 2d — can run in parallel with them. Plan 2b (marketplace) and Plan 2d (dashboard) consume eval outputs but don't block this plan.
+> **Depends on:** Plan #1 (bundle types, agent loop), Plan 2a (tool-call dispatch). Independent of Plans 2b (skills), 2c, 2d — can run in parallel with them. Plan 2d (dashboard) consumes eval outputs but doesn't block this plan.
+> **Marketplace deferral note (2026-05-08):** Plan 2b was rescoped to skills-only; the marketplace surface is deferred to Plan 5 (blockchain integration). This plan still produces signed Ed25519 eval attestations and persists them to local SQLite (`eval_attestations` table). Plan 5's `xvn marketplace push-to-chain` will batch-publish them to the on-chain `EvalAttestationRegistry`. **No `xianvec-marketplace` dep in this plan.**
 
 **Goal:** Make every strategy evaluable. After this plan ships: `xvn eval run <strategy_id> --scenario <scenario_id>` runs a backtest (or paper) execution, persists every decision + fill + metric to a SQLite event store, computes summary metrics (Sharpe, max drawdown, win rate, total return), extracts structured findings via LLM, and emits a signed attestation suitable for marketplace publishing. `xvn eval compare <run_a> <run_b> ...` opens a comparison view rendering equity curves, trade markers, and findings side-by-side.
 
@@ -58,7 +59,7 @@ crates/xianvec-engine/
 Plus modifications:
 - `crates/xianvec-cli/src/commands/eval.rs` — NEW: `xvn eval {run | status | compare | extract-findings | scenarios | publish-attestation | batch}`
 - `crates/xianvec-engine/src/mcp/eval.rs` — NEW: 6 eval MCP verbs
-- `crates/xianvec-marketplace/src/publish.rs` — extend `publish_strategy` to attach eval attestations
+- (Plan 5 will extend `crates/xianvec-marketplace/src/publish.rs` to attach eval attestations to listings — that crate doesn't exist in v1; this plan writes attestations to the local SQLite store only)
 - `crates/xianvec-dashboard/src/routes/eval.rs` (Plan 2d) — NEW route: comparison view at `/eval/compare?ids=...`
 - `data/probes/scenarios/` — NEW: 4 canonical scenario definitions (JSON)
 

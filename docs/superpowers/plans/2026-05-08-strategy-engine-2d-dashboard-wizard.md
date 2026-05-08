@@ -1,11 +1,12 @@
 # Strategy Creation Engine — Plan 2d (Web Dashboard + Agent Wizard) Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-> **Depends on:** Plan #1 + Plan 2a + Plan 2b + Plan 2c merged. Visual design system locked in `docs/design/gptprompts.md`. UX archetypes defined in `docs/design/ux-field.md`.
+> **Depends on:** Plan #1 + Plan 2a + Plan 2b (skills) + Plan 2c merged. Visual design system locked in `docs/design/gptprompts.md`. UX archetypes defined in `docs/design/ux-field.md`.
+> **Marketplace deferral note (2026-05-08):** Plan 2b was rescoped to skills-only; the marketplace surface is deferred to Plan 5 (blockchain integration). This plan ships the Wizard, Inspector, and Live cockpit archetypes only. The Marketplace tab + Spreadsheet listings grid will be reintroduced in Plan 5.
 
 **Goal:** The product's face. After this plan ships: `xvn` (no args) opens the dashboard at `http://localhost:7878/`. The default landing is the **Agent Wizard** — chat on the left, live visual strategy progress on the right. The wizard is itself an LLM agent that drives xvn's MCP server (Plan 2a) on the user's behalf. Users without an external AI agent (Claude Code / Hermes) can still author strategies end-to-end.
 
-**Architecture:** New crate `xianvec-dashboard` ships an axum HTTP server + a single-page app. The SPA is hand-written HTML/JS (NO Node build step — keep one binary, one install). TradingView Lightweight Charts is embedded as a CDN-loaded library (single `<script src=...>`). The wizard's LLM loop runs *server-side* in the dashboard — the SPA just streams chat over SSE; the dashboard holds the user's API key in memory and calls Anthropic directly (the same `LlmDispatch` from Plan 2a). Multi-archetype routing: `/` is Wizard (L1 default), `/authoring/<id>` is Inspector form (L3), `/marketplace` is the listings spreadsheet, `/live/<deployment_id>` is the live cockpit (Flight Deck archetype).
+**Architecture:** New crate `xianvec-dashboard` ships an axum HTTP server + a single-page app. The SPA is hand-written HTML/JS (NO Node build step — keep one binary, one install). TradingView Lightweight Charts is embedded as a CDN-loaded library (single `<script src=...>`). The wizard's LLM loop runs *server-side* in the dashboard — the SPA just streams chat over SSE; the dashboard holds the user's API key in memory and calls Anthropic directly (the same `LlmDispatch` from Plan 2a). Multi-archetype routing in v1: `/` is Wizard (L1 default), `/authoring/<id>` is Inspector form (L3), `/live/<deployment_id>` is the live cockpit (Flight Deck archetype). The `/marketplace` route + Spreadsheet listings grid is deferred to Plan 5.
 
 **Tech Stack:** Rust 2021. New deps: `axum 0.7` (server), `tower-http` (static file serving + tracing), `axum-extra` (SSE), `askama` or `minijinja` (server-side HTML templating). No JS bundler; the SPA is plain HTML + ES modules + Tailwind via CDN. Chart library: TradingView Lightweight Charts via CDN (`https://unpkg.com/lightweight-charts@4.x/dist/lightweight-charts.standalone.production.js`).
 
@@ -91,9 +92,9 @@ name = "xianvec_dashboard"
 path = "src/lib.rs"
 
 [dependencies]
-xianvec-engine      = { path = "../xianvec-engine" }
-xianvec-marketplace = { path = "../xianvec-marketplace" }
-xianvec-skills      = { path = "../xianvec-skills" }
+xianvec-engine = { path = "../xianvec-engine" }
+xianvec-skills = { path = "../xianvec-skills" }
+# xianvec-marketplace dep is deferred to Plan 5 (blockchain integration)
 
 axum         = { version = "0.7", features = ["macros"] }
 axum-extra   = { version = "0.9", features = ["typed-routing"] }
@@ -439,9 +440,10 @@ Commit `feat(dashboard): static asset mount + design system CSS`.
   <div class="font-semibold mono lowercase">xvn</div>
   <nav class="flex gap-4 text-sm">
     <a href="/" class="hover:text-mint">Wizard</a>
-    <a href="/marketplace" class="hover:text-mint">Marketplace</a>
+    <a href="/templates" class="hover:text-mint">Templates</a>
     <a href="/authoring" class="hover:text-mint">Authoring</a>
     <a href="/live" class="hover:text-mint">Live</a>
+    <!-- Marketplace tab deferred to Plan 5 (blockchain) -->
   </nav>
 </header>
 <main class="p-6">{% block main %}{% endblock %}</main>
@@ -932,15 +934,17 @@ Commit `feat(dashboard): Inspector form (L3 archetype) for direct authoring`.
 
 ---
 
-### Task 9: Marketplace listings grid
+### Task 9: Templates browse grid (Spreadsheet archetype)
 
-Per archetype 7a — sortable spreadsheet of templates / listings. Route `GET /marketplace`. JS sorts client-side.
+Per archetype 7a — sortable spreadsheet, but in v1 the rows are **templates** (from `xianvec-engine::templates::registry`), not marketplace listings. The marketplace listings grid lands when Plan 5 ships the marketplace surface.
 
-Listings come from `xianvec-marketplace::browse_listings` (Plan 2b). Templates come from `xianvec-engine::templates::registry`.
+Route `GET /templates`. JS sorts client-side. Click a row → `/authoring/new?template=<name>`.
 
-Test: render with a few seeded listings, assert sortable columns + row click navigates to a detail page.
+Test: render with the 9 v1 templates (`mean_reversion`, `trend_follower`, `breakout`, `momentum`, `range_trade`, `scalping`, `news_trader`, `custom`, `ma_crossover_baseline` from Plans #1 + 2a), assert sortable columns + row click triggers the create-strategy flow.
 
-Commit `feat(dashboard): marketplace grid (Spreadsheet archetype)`.
+Commit `feat(dashboard): templates browse grid (Spreadsheet archetype)`.
+
+> **Plan 5 follow-up:** when the marketplace ships, this same grid is reused for `/marketplace` listings — same archetype, different data source.
 
 ---
 
@@ -1012,9 +1016,9 @@ Commit `docs: Plan 2d dashboard README + manual update`.
 **Spec coverage:**
 - [x] §2 KISS / Agent Wizard — Wizard at `/`, chat + visual progress sidecar, server-side LLM loop driving MCP
 - [x] §8 Authoring entry points — Web UI form (Inspector) + Wizard (built-in CLI wizard from Plan #1 + external MCP from Plan 2a all share the same authoring dispatcher)
-- [x] §13 Marketplace browsing — listings grid (Spreadsheet archetype)
 - [x] §11 Live execution monitoring — Flight Deck cockpit, SSE-streamed events
 - [x] Visual design system locked — palette / typography / components per docs/design/gptprompts.md
+- [ ] §13 Marketplace browsing — **deferred to Plan 5**. The Spreadsheet archetype lands as the templates grid in v1; same component is reused for marketplace listings when Plan 5 ships.
 
 **Out of scope as planned:**
 - [ ] Notebook / Lab Bench / Canvas / Slot Machine archetypes — post-hackathon
