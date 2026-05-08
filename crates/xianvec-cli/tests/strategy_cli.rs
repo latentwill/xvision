@@ -31,3 +31,13 @@ fn new_validate_ls_show_roundtrip() {
     assert!(json.contains("\"template\""));
     assert!(json.contains("mean_reversion"));
 }
+
+#[test]
+fn templates_lists_known_templates() {
+    let dir = tempdir().unwrap();
+    let out = xvn(&["strategy", "templates"], dir.path());
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("mean_reversion"));
+    assert!(stdout.contains("Buys dips"));  // display_name
+}
