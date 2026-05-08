@@ -42,6 +42,7 @@ Each strategy gets its own markdown file: `<slug>.md`. Required sections:
 
 - [`EMA/`](EMA/README.md) — full EMA strategy compendium (atlas of 6 perspective-pages, 8 scoped + 5 idea-pool entries).
 - [`bollinger/`](bollinger/README.md) — full Bollinger compendium (spectrum × scale matrix, 9 scoped + 7 idea-pool entries; symmetry-breaking pivot).
+- [`rsi_volume/`](rsi_volume/README.md) — RSI + volume two-source verification (map of regions, 8 scoped + 10 idea-pool entries; medical-consensus template).
 - `donchian_breakout` — N-bar high/low channel breakouts.
 - `fibonacci_retracement` — pullback entries on golden ratios.
 - `ma_triple_screen` — Elder triple-screen (trend / oscillator / entry).
