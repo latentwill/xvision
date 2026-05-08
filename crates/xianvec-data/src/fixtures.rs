@@ -31,14 +31,10 @@ pub fn fixture_path(fixture: &str) -> PathBuf {
 /// Load a parquet OHLCV fixture. Returns the LAST `lookback_bars` bars in
 /// chronological order. `asset` is currently informational — fixtures are
 /// per-asset so the caller picks the right file.
-pub fn load_ohlcv_fixture(
-    fixture: &str,
-    _asset: &str,
-    lookback_bars: usize,
-) -> anyhow::Result<Vec<Ohlcv>> {
+pub fn load_ohlcv_fixture(fixture: &str, _asset: &str, lookback_bars: usize) -> anyhow::Result<Vec<Ohlcv>> {
     let path = fixture_path(fixture);
-    let file = std::fs::File::open(&path)
-        .map_err(|e| anyhow::anyhow!("opening {}: {}", path.display(), e))?;
+    let file =
+        std::fs::File::open(&path).map_err(|e| anyhow::anyhow!("opening {}: {}", path.display(), e))?;
     let df = ParquetReader::new(file).finish()?;
 
     let ts_col = df.column("timestamp")?.str()?;

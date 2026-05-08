@@ -29,11 +29,7 @@ impl Tool for IndicatorPanelTool {
 
     async fn invoke(&self, input: serde_json::Value) -> anyhow::Result<serde_json::Value> {
         let req: PanelRequest = serde_json::from_value(input)?;
-        let panel = xianvec_data::compute_panel_from_fixture(
-            &req.fixture,
-            &req.asset,
-            req.lookback_bars,
-        )?;
+        let panel = xianvec_data::compute_panel_from_fixture(&req.fixture, &req.asset, req.lookback_bars)?;
         Ok(serde_json::to_value(panel)?)
     }
 }
