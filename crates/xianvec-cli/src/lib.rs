@@ -122,6 +122,8 @@ pub enum Command {
         #[arg(long, default_value = "OPENAI_API_KEY")]
         trader_api_key_env: String,
     },
+    /// Strategy authoring (create / validate / ls / show / templates / run).
+    Strategy(commands::strategy::StrategyCmd),
 }
 
 impl Cli {
@@ -181,6 +183,7 @@ impl Cli {
                 )
                 .await
             }
+            Command::Strategy(cmd) => commands::strategy::run(cmd).await,
         }
     }
 }

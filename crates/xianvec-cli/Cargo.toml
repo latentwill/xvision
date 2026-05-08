@@ -26,6 +26,9 @@ xianvec-trader    = { path = "../xianvec-trader" }
 xianvec-risk      = { path = "../xianvec-risk" }
 xianvec-execution = { path = "../xianvec-execution" }
 xianvec-harness   = { path = "../xianvec-harness" }
+xianvec-engine    = { path = "../xianvec-engine" }
+ulid              = "1"
+dirs              = "5"
 
 serde      = { workspace = true }
 serde_json = { workspace = true }
