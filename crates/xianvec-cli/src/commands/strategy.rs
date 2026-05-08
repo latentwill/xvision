@@ -1,9 +1,13 @@
 //! `xvn strategy ...` — strategy authoring subcommands.
-//!
-//! All mutations route through `xianvec_engine`: templates, bundle types,
-//! filesystem store. Real handlers land in Task 18+; T17 is the skeleton.
+
+use std::env;
+use std::path::PathBuf;
 
 use clap::{Args, Subcommand};
+use ulid::Ulid;
+use xianvec_engine::bundle::store::{BundleStore, FilesystemStore};
+use xianvec_engine::bundle::validate::validate_bundle;
+use xianvec_engine::templates::registry;
 
 #[derive(Args, Debug)]
 pub struct StrategyCmd {
@@ -15,13 +19,10 @@ pub struct StrategyCmd {
 enum StrategyAction {
     /// Create a new strategy draft from a template.
     New {
-        /// Template name (e.g., "mean_reversion").
         #[arg(long)]
         template: String,
-        /// Human-readable name.
         #[arg(long)]
         name: String,
-        /// Creator handle (default: $XVN_CREATOR or "@anonymous").
         #[arg(long)]
         creator: Option<String>,
     },
@@ -42,9 +43,50 @@ pub async fn run(cmd: StrategyCmd) -> anyhow::Result<()> {
     }
 }
 
-async fn new(_template: &str, _name: &str, _creator: Option<String>) -> anyhow::Result<()> {
-    anyhow::bail!("not implemented yet — Task 18")
+fn home() -> PathBuf {
+    if let Ok(p) = env::var("XVN_HOME") {
+        return PathBuf::from(p);
+    }
+    let h = dirs::home_dir().expect("$HOME");
+    h.join(".xvn")
 }
-async fn validate(_id: &str) -> anyhow::Result<()> { anyhow::bail!("not implemented yet — Task 18") }
-async fn ls() -> anyhow::Result<()> { anyhow::bail!("not implemented yet — Task 18") }
-async fn show(_id: &str) -> anyhow::Result<()> { anyhow::bail!("not implemented yet — Task 18") }
+
+fn store() -> FilesystemStore {
+    FilesystemStore::new(home().join("strategies"))
+}
+
+async fn new(template: &str, name: &str, creator: Option<String>) -> anyhow::Result<()> {
+    let tpl = registry::get(template)
+        .ok_or_else(|| anyhow::anyhow!("unknown template '{template}' — try `xvn strategy templates`"))?;
+    let id = Ulid::new().to_string();
+    let creator = creator
+        .or_else(|| env::var("XVN_CREATOR").ok())
+        .unwrap_or_else(|| "@anonymous".to_string());
+    let draft = tpl.new_draft(id.clone(), name.to_string(), creator);
+    validate_bundle(&draft)?;
+    store().save(&draft).await?;
+    println!("{id}");
+    Ok(())
+}
+
+async fn validate(id: &str) -> anyhow::Result<()> {
+    let bundle = store().load(id).await?;
+    validate_bundle(&bundle)?;
+    println!("ok");
+    Ok(())
+}
+
+async fn ls() -> anyhow::Result<()> {
+    let ids = store().list().await?;
+    for id in ids {
+        println!("{id}");
+    }
+    Ok(())
+}
+
+async fn show(id: &str) -> anyhow::Result<()> {
+    let bundle = store().load(id).await?;
+    let json = serde_json::to_string_pretty(&bundle)?;
+    println!("{json}");
+    Ok(())
+}
