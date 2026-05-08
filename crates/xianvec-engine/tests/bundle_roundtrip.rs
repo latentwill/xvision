@@ -101,3 +101,37 @@ fn bundle_roundtrip() {
     assert!(parsed.intern_slot.is_none());
     assert!(parsed.trader_slot.is_some());
 }
+
+use xianvec_engine::bundle::validate::{validate_bundle, ValidationError};
+
+#[test]
+fn valid_bundle_passes() {
+    let b = sample_bundle();
+    assert!(validate_bundle(&b).is_ok());
+}
+
+#[test]
+fn bundle_without_any_llm_slot_fails() {
+    let mut b = sample_bundle();
+    b.regime_slot = None;
+    b.intern_slot = None;
+    b.trader_slot = None;
+    let err = validate_bundle(&b).unwrap_err();
+    assert!(matches!(err, ValidationError::NoLlmSlots));
+}
+
+#[test]
+fn bundle_with_empty_asset_universe_fails() {
+    let mut b = sample_bundle();
+    b.manifest.asset_universe.clear();
+    let err = validate_bundle(&b).unwrap_err();
+    assert!(matches!(err, ValidationError::EmptyAssetUniverse));
+}
+
+#[test]
+fn bundle_with_zero_capital_risk_fails() {
+    let mut b = sample_bundle();
+    b.risk.risk_pct_per_trade = 0.0;
+    let err = validate_bundle(&b).unwrap_err();
+    assert!(matches!(err, ValidationError::InvalidRisk(_)));
+}
