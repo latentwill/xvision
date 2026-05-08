@@ -53,6 +53,15 @@ Each strategy gets its own markdown file: `<slug>.md`. Required sections:
 - `funding_rate_fader` — fade extreme perp funding.
 - `liquidation_cascade_fader` — buy capitulation-flagged liquidations.
 
+### Queued — Idea generators (meta-strategies)
+
+- [`slot_machine/`](slot_machine/README.md) — LLM + ideonomy-driven variant
+  generator. Two modes: pull-the-lever factory that emits candidate strategy
+  bundles, and tradeable arm that samples a variant per window. Evaluated by
+  hit rate + diversity score, not a single equity curve. Depends on the
+  strategy creation engine MVP. Design:
+  [`docs/superpowers/specs/2026-05-08-slot-machine-design.md`](../docs/superpowers/specs/2026-05-08-slot-machine-design.md).
+
 ### Idea pool
 
 (Add candidate strategies here as one-line entries; promote to a full file
