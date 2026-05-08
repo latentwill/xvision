@@ -47,9 +47,8 @@ Each strategy gets its own markdown file: `<slug>.md`. Required sections:
 
 ### Queued — Onchain / Mantle-native (FOLLOWUPS SLF6 / F14)
 
-- `nansen_smart_money_copy` — follow smart-money wallet flow.
+- [`nansen/`](nansen/README.md) — full Nansen strategy compendium (cohort × signal matrix, 8 scoped + 14 idea-pool entries).
 - `funding_rate_fader` — fade extreme perp funding.
-- `stablecoin_inflow_riskoff` — risk-off on stablecoin exchange inflows.
 - `liquidation_cascade_fader` — buy capitulation-flagged liquidations.
 
 ### Idea pool
