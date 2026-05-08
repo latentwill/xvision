@@ -1,7 +1,7 @@
 # Smart Contract Surface — Design
 
-> **Status:** Draft for user review · 2026-05-08
-> **Depends on:** [`decisions/0008-erc8004-deployment.md`](../../../decisions/0008-erc8004-deployment.md), [`docs/superpowers/specs/2026-05-08-strategy-creation-engine-design.md`](./2026-05-08-strategy-creation-engine-design.md), and `architecture.md` §6.1.
+> **Status:** Deferred — design accepted, implementation gated on Strategy Creation Engine + Eval Engine being shipped and battle-tested against Alpaca paper. v1 of Xianvec is Alpaca-eval only with no on-chain function. Pick this spec back up once the engine + eval prove the multistrategy ranking claim end-to-end. · 2026-05-08
+> **Depends on:** [`decisions/0008-erc8004-deployment.md`](../../../decisions/0008-erc8004-deployment.md) (status of that ADR likely needs re-scoping under the same deferral), [`docs/superpowers/specs/2026-05-08-strategy-creation-engine-design.md`](./2026-05-08-strategy-creation-engine-design.md), and `architecture.md` §6.1.
 > **Related:** [`docs/erc-8004-agent-uses.md`](../../erc-8004-agent-uses.md).
 
 ---
