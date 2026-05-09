@@ -9,6 +9,18 @@
 > generator. Use these to surface hierarchy and feel, then iterate before
 > hand-off to implementation.
 >
+> ## Changelog — v0.3.1 (2026-05-09)
+>
+> Added two settings-screen prompts:
+>
+> - §17 Settings · Autoresearch — sidebar nav + active-session card + config form for the next session
+> - §18 Settings · Marketplace — sidebar nav + connected-wallet state + attester agents + anchor preferences
+>
+> Both reflect the persona-split decision: Marketplace is always visible in the
+> settings sidebar (framed as opt-in, not "plugin"); the cargo feature `marketplace`
+> is build-flexibility, not user-facing visibility. v1 in-scope grew 16 → 18.
+> Deferred archetypes renumbered §17–§21 → §19–§23.
+>
 > ## Changelog — v0.3 (2026-05-09)
 >
 > Added six prompts for the autoresearch + marketplace surfaces from the
@@ -147,7 +159,7 @@ screenshot — pixel grid clean, no painterly textures, no bokeh, no faux-3D.
 
 ---
 
-## Prompt Library — v1 in-scope (16 prompts)
+## Prompt Library — v1 in-scope (18 prompts)
 
 Each prompt is a single block. Paste verbatim after the design system block above.
 
@@ -1016,7 +1028,7 @@ and "born from" column turn a scoreboard into a genealogy at a glance.
 
 ---
 
-### 16. Marketplace Tab  —  `/marketplace` (Persona B; visible only with `--features marketplace`)
+### 16. Marketplace Tab  —  `/marketplace` (Persona B; opt-in via wallet connect in Settings)
 
 ```
 App screen of the xvn marketplace tab — the Persona B surface where strategy lineages are
@@ -1024,9 +1036,11 @@ exposed on Mantle via ERC-8004. Dark mode, desktop 16:9. Chat rail docked on the
 collapsed.
 
 Top nav: standard nav. NOTE: this nav has an additional item "Marketplace" appearing AFTER
-"Journal" — visible only because --features marketplace is enabled. "Marketplace" is the
-active tab (amber-gold underline). Top right shows daemon pill, LLM pill, AND a new wallet
-pill: "● 0xa83…f12 · 0.42 ETH" in amber-gold outline.
+"Journal" — visible because the user has opted into Marketplace by connecting a wallet in
+Settings. (For users who haven't connected a wallet, this nav item still appears but
+clicking it routes to the empty/opt-in state of /marketplace, not the active state shown
+here.) "Marketplace" is the active tab (amber-gold underline). Top right shows daemon
+pill, LLM pill, AND a new wallet pill: "● 0xa83…f12 · 0.42 ETH" in amber-gold outline.
 
 Page header strip: title "Marketplace · Mantle mainnet" in primary. Subtitle in dim
 secondary "4 lineages on chain · 9 NFTs minted · 18 attestations posted · session
@@ -1094,13 +1108,178 @@ wallet-aware surface and the user should always know what's about to spend gas.
 
 ---
 
+### 17. Settings · Autoresearch  —  `/settings` with sidebar nav, Autoresearch section active
+
+```
+App screen of the xvn settings page, with the Autoresearch section selected. Dark mode,
+desktop 16:9. Chat rail docked on the right, collapsed (40px).
+
+Top nav: standard nav. NOTE: no top-nav item is "active" because /settings is reached via
+the avatar dropdown ("Settings"), not via top nav. Top right shows daemon pill, LLM pill,
+avatar with a faint amber-gold ring indicating dropdown was just used.
+
+Page body: 220px sidebar nav on the left, content flex on the right.
+
+Sidebar nav (220px wide, slate panel surface):
+- Small uppercase dim header "ACCOUNT", with two rows below: "Account" and "Appearance".
+- Thin slate divider.
+- Small uppercase dim header "CONFIG", with five rows: "LLM keys", "Brokers",
+  "Autoresearch" (highlighted, active, with amber-gold left bar), "Marketplace", and indented
+  one level "└ Identity".
+- Thin slate divider.
+- Small uppercase dim header "RUNTIME", with two rows: "Daemon", "Telemetry".
+- Thin slate divider.
+- One row "Danger zone" in slightly tinted cinnabar text.
+
+Right content area:
+
+Page header strip: title "Autoresearch" in primary (Cormorant Garamond serif). Subtitle
+in dim secondary "Evening cycle configuration · pre-commitments · models · budget".
+Right side: ghost "View live cycle ↗" linking to the autoresearch live view.
+
+Active session card (top of content, ~280px tall, tinted slate panel surface, prominent
+amber-gold left border):
+- Header row: "● Session active · 01H8…RTZ" in primary, with "Started 2026-05-15 22:00 ·
+  uptime 4d 18h · 14 evenings ran" in dim mono on the right.
+- Sub-header in dim text: "Pre-commitments (sealed at session start, immutable):".
+- Four-row table of pre-commitment artifacts. Columns: field name, value, content hash
+  (mono, truncated), verification chip ("◆ verified" amber-gold). Rows:
+  - "ε" · "0.07" · "blake3:7f2…a91" · ◆ verified
+  - "Hold-out window" · "2024-Q3 · 92 days" · "blake3:c4d…bb1" · ◆ verified
+  - "Parent policy seed" · "4502119…" · "blake3:9a8…02e" · ◆ verified
+  - "Loosening schedule (3 steps)" · "0.10 → 0.07 → 0.05" · "blake3:f12…d8c" · ◆ verified
+- Footer line in dim mono: "Operator signature ✓ · Commitment posted on Mantle ↗ (tx
+  0x4f8a…dc11)".
+- Right-aligned bottom: ghost danger button "End session ⚠".
+
+Below the active session card — the config form for the NEXT session (slightly faded
+heading "When this session ends, the next session will use these values:" in dim text).
+
+Form is a vertical stack of four collapsible sub-sections, each with a slate divider
+between them:
+
+1. "Pre-commitment" sub-section (open):
+   - "ε (merge gate threshold)" with a numeric input "0.07" and a "?" tooltip icon. Help
+     text below in dim: "child's Δ-Sharpe must beat parent by ε on day AND held-out".
+   - "Hold-out window" with a date-range picker showing "2025-Q3 (90 days)" and a "?"
+     tooltip. Help text: "pinned at session start; never touched by day trading".
+   - "Loosening schedule" with three rows showing "Default loosening (3 steps)" with an
+     "Edit schedule…" ghost link.
+
+2. "Cycle budget" sub-section (open):
+   - "Mutations per parent" numeric "3", "Parents per evening" numeric "5", "Per-cycle
+     token cap" numeric "150,000" with a tiny inline 80px sparkline showing recent
+     evening usage in amber-gold.
+   - "Run nightly at" time input "22:00" with a timezone dropdown "UTC".
+
+3. "Models" sub-section (collapsed, header only):
+   - Header strip "Models · claude-haiku-4-5 · claude-sonnet-4-6 · text-embedding-3-small"
+     with an expand chevron "▾".
+
+4. "Parent policy" sub-section (open):
+   - Three radio cards in a row: "Round-robin", "Top-K by Sharpe", "ε-greedy" (selected,
+     amber-gold outline).
+   - Conditional fields beneath: "ε exploration rate" numeric "0.15".
+   - "Parent policy seed" mono "4502119…" with a "Regenerate" ghost link.
+   - "Canary seed" mono "8841…" with a "Regenerate" ghost link.
+
+Sticky footer at the bottom of the content area:
+- Primary amber-gold "Start session" button (gated, with a small lock glyph indicating
+  confirmation modal). Disabled because there's already an active session — has a
+  tooltip "End current session first".
+- Ghost "Save as default config" button.
+
+Right edge — Chat rail collapsed (40px) with the speech-bubble icon.
+
+Mood: builder's pre-flight checklist. Dense, structured, every field labeled with a
+help tooltip and a content-hash receipt for accountability. The active-session card at
+top is the load-bearing element — it tells the user "values are sealed, here's the
+proof, you cannot tweak mid-session". The config form below feels deliberately faded
+because it's about a future session, not the current one.
+```
+
+---
+
+### 18. Settings · Marketplace  —  `/settings` with sidebar nav, Marketplace section active (wallet connected)
+
+```
+App screen of the xvn settings page, with the Marketplace section selected and a wallet
+connected (so the active state shows). Dark mode, desktop 16:9. Chat rail docked on the
+right, collapsed.
+
+Top nav: standard nav, no top-nav item active (reached via avatar dropdown).
+
+Page body: 220px sidebar nav on the left, content flex on the right. Sidebar nav matches
+§17 layout but "Marketplace" is the active row (highlighted with amber-gold left bar);
+"Autoresearch" is inactive. The "└ Identity" row indented under Marketplace is visible
+but not active.
+
+Right content area:
+
+Page header strip: title "Marketplace" in primary (Cormorant Garamond serif). Subtitle in
+dim secondary "On-chain reputation via ERC-8004 on Mantle · opt-in". Right side: ghost
+"What is this? ↗" + ghost "View on Mantlescan ↗".
+
+Below the header — Connected wallet card (full width, ~120px tall, tinted slate, NO
+amber-gold border because this isn't an alarm card):
+- Top row: a small wallet icon glyph, then mono address "0xa83e…f12d4" in primary, then a
+  copy icon, then a network pill on the right "● Mantle mainnet" in amber-gold.
+- Sub-row in dim mono: "Balance: 0.42 ETH · Chain ID: 5000 · RPC: rpc.mantle.xyz" with a
+  small "Edit RPC…" ghost link.
+- Right-aligned bottom action: ghost "Switch to Sepolia" + ghost danger "Disconnect".
+
+Below the wallet card — three sub-sections, each with its own header.
+
+Sub-section 1: "Attester agents" (open by default):
+- Header line: "Attester agents · 2 active" with a small "?" tooltip glyph. Help text in
+  dim secondary: "These agents read your committed lineages and post their own validation
+  receipts on chain. v1 ships two in-house attesters; future versions open this to
+  external participants."
+- Two attester cards stacked, each ~80px tall, slate-bordered:
+  - Card 1: "regime-verifier" header in primary, NFT chip "#0007" mono on the right.
+    Sub-line in dim mono: "Verifies finding's regime claim against trace · 27 endorse · 4
+    question · 0 reject". Right-aligned actions: ghost "View on chain ↗" + ghost "Pause".
+  - Card 2: "diversity-check" header. NFT chip "#0008". Sub-line: "Confirms variant adds
+    embedding diversity · 21 endorse · 6 question · 0 reject · last action 2 minutes ago".
+- Below the cards: a ghost "+ Add attester (advanced)" button with a tiny dim "advanced"
+  chip.
+
+Sub-section 2: "Anchor preferences" (open by default):
+- Header line: "Anchor preferences" with help text "When and how lineages reach Mantle.".
+- Two side-by-side fields:
+  - "Anchor mode" radio (vertical): "On-demand" (default, amber-gold), "After every cycle"
+    (slate, with a small dim hint "increases gas usage"), "At session end only" (slate).
+  - "IPFS pin provider" dropdown: "Pinata" (selected) with options "Web3.Storage",
+    "Filebase", "Self-hosted (operator URL)".
+- Below the fields: a small footer line in dim mono: "Estimated gas this session at
+  current settings: ~0.014 ETH · ~$42".
+
+Sub-section 3: "Identity (ERC-8004)" — header strip only with a chevron link:
+- "Identity (ERC-8004) · operator NFT #0001 · 2 attester NFTs" with a "Manage identity →"
+  ghost link on the right (links to /settings/marketplace/identity).
+
+Sticky footer at the bottom of the content area:
+- Primary amber-gold "Test on-chain action (Sepolia)" button (helps users verify everything
+  works on testnet before spending real gas).
+- Ghost "Disconnect wallet" button.
+
+Right edge — Chat rail collapsed (40px) with the speech-bubble icon.
+
+Mood: an opt-in chamber. The user has chosen to connect a wallet; the page should feel
+calm and accountable, not pushy. Gas costs are visible everywhere ("0.42 ETH balance",
+"~0.014 ETH estimate"); attester counts are honest about endorses-vs-questions.
+Disconnecting is one click away. The page does not pretend marketplace is mandatory.
+```
+
+---
+
 ## Deferred archetypes  (preserved for post-v1 reference)
 
 These five archetypes are not in the v1 wireframe scope per `ui-elements.md` v0.2 §16
 but their prompts are kept here verbatim for the day they get picked up. Spec status
 noted on each.
 
-### 17. Canvas  —  spatial node graph (DEFERRED — post-hackathon)
+### 19. Canvas  —  spatial node graph (DEFERRED — post-hackathon)
 
 ```
 App screen of a node-graph canvas for composing an xvn trading strategy visually. Dark mode,
@@ -1127,7 +1306,7 @@ Floating top-right: zoom controls (− 100% +) and a "Run preview eval" amber-go
 Mood: spatial, expressive, designer-oriented power tool.
 ```
 
-### 18. Power Notebook  —  cell-based REPL (DEFERRED — `/lab` post-hackathon)
+### 20. Power Notebook  —  cell-based REPL (DEFERRED — `/lab` post-hackathon)
 
 > Distinct from `/journal` (Lab Notebook §4 above). The Lab Notebook is a chronological
 > findings journal; the Power Notebook is a Jupyter-style REPL for L4 researchers
@@ -1159,7 +1338,7 @@ Active cell has a amber-gold left border. Below the last cell: an empty "+ new c
 Mood: code-first, programmable, L4 researcher tool.
 ```
 
-### 19. Spreadsheet  —  parameter sweep matrix (DEFERRED — paid-tier batch eval)
+### 21. Spreadsheet  —  parameter sweep matrix (DEFERRED — paid-tier batch eval)
 
 ```
 App screen of an xvn parameter sweep — paid-tier batch eval rendered as a heatmap-style
@@ -1185,7 +1364,7 @@ Below the heatmap, two side-by-side smaller heatmaps labeled "seed #1234" and "s
 Mood: research-lab spreadsheet, data-dense, inviting drilldown.
 ```
 
-### 20. Pass-Ribbon (Ticker)  —  ambient persistent footer (DEFERRED — Move H)
+### 22. Pass-Ribbon (Ticker)  —  ambient persistent footer (DEFERRED — Move H)
 
 > The ideonomy evaluation surfaced this as Move H (ambient deployment ticker), deferred
 > in favor of the higher-leverage moves A/B/E/F/I. Pick this up after the v0.2 bundle
@@ -1210,7 +1389,7 @@ Aspect: very wide and short. The strip persists across page navigation — the d
 read as "ambient", not as a primary surface.
 ```
 
-### 21. Slot Machine (starter spinner)  —  L1 onboarding (DEFERRED — see slot-machine spec)
+### 23. Slot Machine (starter spinner)  —  L1 onboarding (DEFERRED — see slot-machine spec)
 
 > See `docs/superpowers/specs/2026-05-08-slot-machine-design.md` — the slot machine is a
 > meta-strategy generator, not a UI archetype. The L1 "starter spinner" UI prompt below

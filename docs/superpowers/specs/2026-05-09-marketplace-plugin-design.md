@@ -9,13 +9,15 @@
 
 ## 1. Purpose, scope, and persona
 
-The Marketplace Plugin is the **optional Persona B layer** on top of the autoresearcher. It consumes `CycleSeal` artifacts from the autoresearch core and exposes them as ERC-8004 receipts on Mantle. Persona A (the trader/researcher) never installs this plugin and never sees any of its UI. Persona B (the marketplace participant — including hackathon judges) installs it via the `marketplace` cargo feature.
+The Marketplace Plugin is the **opt-in Persona B layer** on top of the autoresearcher. It consumes `CycleSeal` artifacts from the autoresearch core and exposes them as ERC-8004 receipts on Mantle. Marketplace is part of the default xvn build; Persona A always sees a Marketplace section in Settings but never has to engage. Persona B (the marketplace participant — including hackathon judges) opts in by **connecting a wallet** in Settings → Marketplace; nothing reaches Mantle until that step.
+
+The cargo feature gate `marketplace` exists for build-flexibility (size-conscious / audit / minimal builds) but is enabled by default. The user-facing opt-in is the wallet-connect step in Settings, not a recompile. Mirroring the framing from [ADR 0010](../../decisions/0010-hackathon-pivot-strategy-loom.md): the feature gate handles build choice, the wallet-connect handles user choice.
 
 The plugin's job is narrow: **publish what's already provable.** It does not generate new lineage data, does not gate the autoresearch loop, does not modify the core's behavior. It reads sealed artifacts, mints NFTs, posts Merkle roots, and indexes external attestations. Anything else is out of scope.
 
 ### 1.1 In scope (v1, by 2026-06-15)
 
-- Cargo feature gate `marketplace` (mirrors `control-vectors` from [ADR 0010](../../decisions/0010-hackathon-pivot-strategy-loom.md))
+- Cargo feature gate `marketplace` for build-flexibility (default builds include it; minimal/audit builds can opt out via `--no-default-features`)
 - Per-lineage ERC-8004 Identity NFT minting (one NFT per *lineage*, not per variant; ~5–10 mints over the hackathon)
 - Counterfactual-chain Merkle receipts posted to Reputation Registry (one per anchored lineage; ~5–10 over the hackathon)
 - SessionCommitment hash anchored to Reputation Registry at session start (1 tx)
@@ -53,7 +55,7 @@ Mantle is cheap; this is a small budget. Pre-fund the operator wallet to 5× est
 
 | # | Decision |
 |---|---|
-| 1 | **Plugin architecture.** Optional cargo feature `marketplace` in `xianvec-engine`. Core compiles without it. |
+| 1 | **Marketplace is part of default xvn build, opt-in at wallet-connect.** Cargo feature `marketplace` in `xianvec-engine` is on by default; available to opt out for minimal builds (`--no-default-features`). User-facing opt-in is the Settings → Marketplace wallet-connect step. |
 | 2 | **One NFT per lineage**, not per variant. Variants are referenced inside the lineage manifest by content hash. |
 | 3 | **Lineage-end Merkle anchoring** (or on-demand mid-hackathon) is the default. No per-cycle anchoring in v1. |
 | 4 | **In-house attesters seeded for the demo.** xianvec operates 1–2 ERC-8004 attester agents. Public/external participation is v2. |
