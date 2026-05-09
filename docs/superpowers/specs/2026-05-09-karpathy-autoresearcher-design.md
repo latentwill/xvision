@@ -22,10 +22,10 @@ xianvec serves two user personas. The autoresearcher core is built for **Persona
 | Cares about chain? | No | Yes |
 | Cares about NFTs? | No | Yes |
 | Wants the dashboard? | Yes — live cycle, tree, ladder | Yes + a marketplace tab |
-| Install | `xvn autoresearch start` | `xvn autoresearch start --features marketplace` |
-| Wallet required? | No | Yes (one-time setup) |
+| Install | `xvn autoresearch start` (default build includes marketplace) | Same install; opts in by connecting a wallet in Settings → Marketplace |
+| Wallet required? | No | Yes (one-time setup, in Settings) |
 
-The hackathon submission targets Persona B but the foundation must work cleanly for Persona A — it's the durable artifact, not the hackathon-specific wrapper. Core compiles and runs without the marketplace plugin enabled. The cargo feature gate `marketplace` mirrors the `control-vectors` idiom from [ADR 0010](../../decisions/0010-hackathon-pivot-strategy-loom.md).
+The hackathon submission targets Persona B but the foundation must work cleanly for Persona A — it's the durable artifact, not the hackathon-specific wrapper. **Marketplace is part of xvn, framed as opt-in.** Persona A always sees a Marketplace section in Settings but never has to engage with it; nothing reaches Mantle until they connect a wallet. The cargo feature gate `marketplace` exists for build-flexibility (size-conscious / audit / minimal builds) but the default `cargo build` includes marketplace; user-visible opt-in is the wallet-connect step, not a recompile.
 
 ### 1.2 In scope (v1, by 2026-06-15)
 
@@ -64,7 +64,7 @@ The hackathon submission targets Persona B but the foundation must work cleanly 
 | 8 | **Hard go/no-go on 2026-05-23:** if eval engine paper-test path is not working end-to-end, fall back to "Mutator + lineage UI, run once" branch (no live evening cycle). The go/no-go is purely about the loop; chain readiness is a separate concern. |
 | 9 | **Module location:** new `xianvec-engine/src/autoresearch/` parallel to `eval/`. Reuses eval engine's executor, findings extractor, persistence. |
 | 10 | **Cheap mutator + expensive judge:** Haiku for proposals (high volume), Sonnet for findings (only on accepted children). Per-cycle token cap with alarm. |
-| 11 | **Cargo feature gate:** marketplace plugin is opt-in via `--features marketplace`. Core compiles and runs without it. |
+| 11 | **Marketplace is part of default build, opt-in at wallet-connect.** Cargo feature `marketplace` exists for build-flexibility (minimal / audit builds) but default `cargo build` includes it; user-visible opt-in is the Settings → Marketplace wallet-connect step, not a recompile. Core still compiles and runs without the feature. |
 
 ---
 
