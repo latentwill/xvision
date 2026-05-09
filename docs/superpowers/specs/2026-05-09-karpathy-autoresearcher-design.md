@@ -1,35 +1,50 @@
 # Karpathy Autoresearcher — Design
 
-> **Status:** Draft for user review · 2026-05-09
+> **Status:** Draft for user review · 2026-05-09 (revised same day to decouple from ERC-8004)
 > **Author:** xianvec hackathon team
-> **Companion specs:** [Eval Engine](./2026-05-08-eval-engine-design.md) · [Strategy Creation Engine](./2026-05-08-strategy-creation-engine-design.md) · [Smart Contract Surface](./2026-05-08-smart-contract-surface-design.md)
+> **Companion specs:** [Marketplace Plugin](./2026-05-09-marketplace-plugin-design.md) · [Eval Engine](./2026-05-08-eval-engine-design.md) · [Strategy Creation Engine](./2026-05-08-strategy-creation-engine-design.md) · [Smart Contract Surface](./2026-05-08-smart-contract-surface-design.md)
 > **Reference:** github.com/karpathy/autoresearch (March 2026)
 > **Hackathon deadline:** 2026-06-15 (5 weeks)
 
 ---
 
-## 1. Purpose and scope
+## 1. Purpose, scope, and personas
 
-The Karpathy Autoresearcher is xianvec's evening cycle: an LLM-driven loop that proposes mutations to existing strategy variants, paper-tests them on day-of trades plus a held-out window, and commits surviving children into a content-addressed lineage with on-chain receipts on Mantle.
+The Karpathy Autoresearcher is xianvec's evening cycle: an LLM-driven loop that proposes mutations to existing strategy variants, paper-tests them on day-of trades plus a held-out window, and commits surviving children into a content-addressed lineage. The loop runs entirely off-chain. Whether any of its outputs ever reach Mantle is a separate, optional concern handled by the [Marketplace Plugin](./2026-05-09-marketplace-plugin-design.md).
 
-This spec un-defers the loop from architecture.md §11 ("the deferred Karpathy autoresearch direction") and brings it inside the hackathon submission. It is the **autoresearch-first demo path**: the live evening cycle is the headline beat; the on-chain ladder and genealogy tree are supporting context.
+### 1.1 Personas
 
-**In scope (v1, by 2026-06-15):**
+xianvec serves two user personas. The autoresearcher core is built for **Persona A**; the marketplace plugin extends it for **Persona B**.
+
+| | **Persona A — trader/researcher** | **Persona B — marketplace participant** |
+|---|---|---|
+| Goal | Better trading strategies; watch evolution | Publish lineages on-chain; reputation/provenance |
+| Cares about chain? | No | Yes |
+| Cares about NFTs? | No | Yes |
+| Wants the dashboard? | Yes — live cycle, tree, ladder | Yes + a marketplace tab |
+| Install | `xvn autoresearch start` | `xvn autoresearch start --features marketplace` |
+| Wallet required? | No | Yes (one-time setup) |
+
+The hackathon submission targets Persona B but the foundation must work cleanly for Persona A — it's the durable artifact, not the hackathon-specific wrapper. Core compiles and runs without the marketplace plugin enabled. The cargo feature gate `marketplace` mirrors the `control-vectors` idiom from [ADR 0010](../../decisions/0010-hackathon-pivot-strategy-loom.md).
+
+### 1.2 In scope (v1, by 2026-06-15)
+
 - Mutator (LLM proposes prose/param/tool diffs against parent bundle)
 - Numeric merge gate (Δ-Sharpe ≥ pre-committed ε on day + held-out windows)
 - LLM judge writes a structured finding for accepted children, blind to numeric metrics
-- Lineage store (content-addressed mutation log)
+- Lineage store (content-addressed mutation log on disk + SQLite)
 - Evening cycle orchestrator (cron via the durable scheduler)
-- ERC-8004 wiring extensions: per-child NFT mint, batched receipts, finding-hash to validation registry
-- Open Attestation Surface (event feed for external agents to score and post their own receipts)
-- Five novel evals: counterfactual-chain Merkle receipts, null-result canary, inversion-pair eval, mutator-skill ladder, embedding-divergence diversity-decay metric
+- **CycleSeal artifact** — the contract surface between core and any downstream consumer (marketplace plugin, future v2 consumers, external auditors)
+- Five novel evals: counterfactual-chain Merkle receipts, null-result canary, inversion-pair eval, mutator-skill ladder, embedding-divergence diversity-decay
 - Dashboard: genealogy tree, live evening cycle viewer, mutation diff inspector, lineage timeline, mutator-skill ladder, ladder-with-provenance
 - Replay fixture (`xvn autoresearch demo`) for offline reproduction
 
-**Out of scope (deferred):**
+### 1.3 Out of scope (v1)
+
+- Any ERC-8004 / Mantle / on-chain integration → handled by the [Marketplace Plugin spec](./2026-05-09-marketplace-plugin-design.md)
+- Open attestation surface → covered in marketplace spec; v1 is "in-house attesters seeded by xianvec," v2 is public participation
 - Slot/template-swap mutations (architectural mutations beyond prose/params/tools)
 - Adaptive cycle budget (per-lineage allocation tied to recent gains)
-- TEE / zkML attestation for findings (signed-oracle only in v1)
 - Cross-run memory beyond the strategy ledger
 - Multi-asset autoresearch (BTC-only in v1, matches the rest of the hackathon scope)
 
@@ -44,11 +59,12 @@ This spec un-defers the loop from architecture.md §11 ("the deferred Karpathy a
 | 3 | **Merge gate:** numeric primary (Δ-Sharpe ≥ ε on day AND held-out). LLM judge writes structured finding for accepted children, **blind to metrics**. |
 | 4 | **Cycle budget:** configurable via `config/autoresearch.toml` (mutations-per-parent, parents-per-evening, token caps). Default tuned during week 4. |
 | 5 | **Demo shape:** autoresearch-first. Live evening cycle is the headline. `xvn autoresearch demo` replay is the air-gap fallback. |
-| 6 | **Open Attestation Surface:** structured trace + numeric-gate result + draft finding exposed as JSON event feed. External ERC-8004 agents subscribe and post their own validation receipts. The lineage's reputation becomes an ensemble of attestations. Replaces in-house "twin judges." |
-| 7 | **Pre-commitment:** ε, held-out window, parent-selection seed, and cycle config are hashed and posted on-chain at session start. Stops "tuned post-hoc" objections. |
-| 8 | **Hard go/no-go on 2026-05-23:** if eval engine paper-test path is not working end-to-end, fall back to "Mutator + lineage UI, run once" branch (no live evening cycle). |
+| 6 | **No chain coupling.** Core emits `CycleSeal` artifacts; the marketplace plugin reads them. The autoresearch module has zero `use` statements pointing at chain code. |
+| 7 | **Pre-commitment:** ε, held-out window, parent-selection seed, and cycle config are sealed and operator-signed locally at session start. Anchoring on-chain is optional and handled by the marketplace plugin. |
+| 8 | **Hard go/no-go on 2026-05-23:** if eval engine paper-test path is not working end-to-end, fall back to "Mutator + lineage UI, run once" branch (no live evening cycle). The go/no-go is purely about the loop; chain readiness is a separate concern. |
 | 9 | **Module location:** new `xianvec-engine/src/autoresearch/` parallel to `eval/`. Reuses eval engine's executor, findings extractor, persistence. |
 | 10 | **Cheap mutator + expensive judge:** Haiku for proposals (high volume), Sonnet for findings (only on accepted children). Per-cycle token cap with alarm. |
+| 11 | **Cargo feature gate:** marketplace plugin is opt-in via `--features marketplace`. Core compiles and runs without it. |
 
 ---
 
@@ -60,24 +76,27 @@ This spec un-defers the loop from architecture.md §11 ("the deferred Karpathy a
 xianvec-engine/
 └── src/
     ├── eval/                    # existing — paper-test executor, scenario fixtures, findings extractor
-    ├── autoresearch/            # THIS SPEC
+    ├── autoresearch/            # THIS SPEC — chain-free
     │   ├── mod.rs
     │   ├── mutator.rs           # parent + ledger → candidate bundle + MutationDiff
-    │   ├── lineage.rs           # content-addressed mutation log; genealogy queries
+    │   ├── lineage.rs           # content-addressed mutation log; genealogy queries; Merkle root computation
     │   ├── gate.rs              # deterministic Δ-Sharpe gate; pre-committed ε
     │   ├── judge.rs             # LLM judge writes finding; metrics-blind
-    │   ├── cycle.rs             # evening orchestration: select → mutate → eval → gate → commit
+    │   ├── cycle.rs             # evening orchestration: select → mutate → eval → gate → commit → seal
     │   ├── parent_policy.rs     # ε-greedy / round-robin / top-K (pluggable)
     │   ├── canary.rs            # null-result canary: sabotaged-parent injection
     │   ├── inversion.rs         # forward + reverse mutation pair eval
     │   ├── diversity.rs         # embedding-divergence diversity-decay metric
-    │   ├── attestation.rs       # Open Attestation Surface: event feed + receipt ingestion
+    │   ├── seal.rs              # CycleSeal artifact: content-addressed bundle of every cycle output
     │   └── progress.rs          # SSE event emitters for dashboard
+    ├── marketplace/             # COMPANION SPEC — only compiled with `--features marketplace`
+    │   └── ...                  # see 2026-05-09-marketplace-plugin-design.md
     ├── strategy/                # existing — bundles
-    ├── identity/                # existing — ERC-8004 NFT minting; extended for parent_agent_id
     ├── mcp/                     # existing — tool surface
     └── scheduler/               # existing — durable cron, owns the evening cycle trigger
 ```
+
+**Dependency rule:** `autoresearch/` has zero `use` statements pointing at `marketplace/`. The arrow only goes the other direction. CI enforces this with a feature-flag-off build that must succeed.
 
 ### 3.2 Per-cycle data flow
 
@@ -101,15 +120,16 @@ for parent in parents + [canary_parent]:
                 lineage.commit_as_quarantined(candidate, diff, finding, "noise-suspect")
                 continue
             lineage.commit(candidate, diff, finding, parent_hash)
-            identity.mint_child_nft(candidate, parent_agent_id=parent.agent_id)
-            attestation.emit(candidate, traces, gate_result, finding_draft)  # external agents listen
         else:
             lineage.commit_ghost(candidate, diff, "gate-rejected")            # genealogy keeps ghost branches
 
-identity.batch_post_receipts()       # ONE Mantle tx per cycle
 diversity.update()                   # embedding-divergence rate published
 mutator_ladder.update()              # mutator-skill metrics for the second ladder
+seal.write(CycleSeal { ... })        # content-addressed bundle of everything above
+                                     # if marketplace plugin is enabled, it subscribes here
 ```
+
+The cycle ends with `seal.write()`. Anything beyond that — minting NFTs, anchoring Merkle roots, posting attestations — happens in downstream consumers. Core has done its job.
 
 ### 3.3 Reused vs new code
 
@@ -119,10 +139,36 @@ mutator_ladder.update()              # mutator-skill metrics for the second ladd
 | Paper-test executor | `xianvec-engine/src/eval/executor.rs` | reused as-is for both day and held-out windows |
 | Scenario fixtures | `xianvec-engine/src/eval/scenario.rs` | held-out window pinned at session start |
 | Finding extractor | `xianvec-engine/src/eval/findings.rs` | judge.rs wraps it with metrics-blind input filtering |
-| Persistence | SQLite + JSONL | new tables: `mutations`, `lineage_edges`, `findings`, `attestations`, `canary_runs` |
-| ERC-8004 | `xianvec-identity` | extended: `mint_child_nft(parent_agent_id)`, `batch_post_receipts()` |
+| Persistence | SQLite + JSONL | new tables: `mutations`, `lineage_edges`, `findings`, `canary_runs`, `cycle_seals` |
 | Scheduler | `scheduler/` (ported from SwarmClaw) | new job: `autoresearch.evening_cycle` |
 | MCP | `xianvec-mcp` | tool selection mutations validated against the live tool registry |
+
+### 3.4 The CycleSeal artifact (the contract surface)
+
+```rust
+struct CycleSeal {
+    cycle_id: Ulid,
+    sealed_at: DateTime,
+    config_hash: ContentHash,                   // autoresearch.toml + ε + holdout window at session start
+    session_commitment: ContentHash,            // operator-signed; pre-committed at session start
+    parent_seeds: Vec<ContentHash>,             // bundles that were mutated this evening
+    mutations: Vec<ContentHash>,                // every mutation diff blob (incl. rejected/ghost)
+    paper_tests: Vec<ContentHash>,              // every paper-test trace
+    findings: Vec<ContentHash>,                 // every finding written
+    canary_outcome: ContentHash,                // sabotaged-parent acceptance/rejection
+    lineage_edges_added: Vec<(ContentHash, ContentHash)>,
+    diversity_metric: f64,                      // diversity-decay rate this cycle
+    operator_signature: Signature,              // operator's long-lived key signs the seal
+    merkle_root: B256,                          // root over everything above; this is what marketplace anchors
+}
+```
+
+The seal lives on disk + SQLite. Anyone with the artifact bundle can independently:
+1. Recompute every leaf hash.
+2. Recompute the Merkle root.
+3. Verify the operator signature.
+
+That's the provability guarantee. Posting the Merkle root to a chain (the marketplace plugin's job) only adds a public timestamp; the *correctness* of the seal is provable from the bytes alone.
 
 ---
 
@@ -172,7 +218,7 @@ A child variant merges if and only if:
 Δ_holdout  = sharpe(child, holdout_window)  − sharpe(parent, holdout_window)  ≥ ε
 ```
 
-Both inequalities required. Single-window improvements are rejected. ε is pre-committed at hackathon kickoff and posted on-chain (see §8).
+Both inequalities required. Single-window improvements are rejected. ε is pre-committed at session start (see §8).
 
 ### 5.2 LLM judge (`judge.rs`)
 
@@ -217,7 +263,6 @@ struct LineageNode {
     status: LineageStatus,                      // Active | Ghost | Quarantined
     born_at: DateTime,
     metrics_at_birth: MetricsSummary,
-    nft_id: Option<U256>,                       // ERC-8004 Identity Registry
     cycle_id: Ulid,                             // which evening cycle produced this
 }
 
@@ -225,136 +270,86 @@ enum LineageStatus { Active, Ghost, Quarantined }
 ```
 
 SQLite tables:
-- `lineage_nodes` — primary store, one row per bundle_hash.
-- `lineage_edges` — (parent_hash, child_hash, edge_type) for fast genealogy traversal.
-- `mutations` — full diff blobs (JSONL on disk, indexed by bundle_hash).
-- `findings` — judge outputs.
-- `canary_runs` — per-evening canary results (sabotaged-parent acceptance/rejection).
+- `lineage_nodes` — primary store, one row per bundle_hash
+- `lineage_edges` — (parent_hash, child_hash, edge_type) for fast genealogy traversal
+- `mutations` — full diff blobs (JSONL on disk, indexed by bundle_hash)
+- `findings` — judge outputs
+- `canary_runs` — per-evening canary results (sabotaged-parent acceptance/rejection)
+- `cycle_seals` — one row per evening cycle, holds the seal's Merkle root and operator signature
 
-### 6.2 Counterfactual-chain Merkle receipt (novel eval #1)
+### 6.2 Counterfactual-chain Merkle root
 
-ERC-8004 reputation receipt for a lineage is **not a scalar.** It is a Merkle path:
+For each lineage, `lineage.rs` computes a Merkle root over the chain:
 
 ```
 parent_hash → child_hash → days_alive → trades_attributed → realized_pnl_attributed
 ```
 
-Each step is a leaf; the path's Merkle root is what's posted to the Reputation Registry. Verifiers can audit any segment of the lineage independently. This is the strongest single differentiator from a Karpathy-clone framing — the on-chain artifact carries the audit trail itself, not just an endorsement summary.
-
-Implementation: `xianvec-identity` extension `post_lineage_merkle_receipt(lineage_id)`.
+Each step is a leaf; the path's Merkle root is what *can be* posted on-chain (by the marketplace plugin). The root computation lives in core; **whether to anchor it is a marketplace decision**. Persona A still gets the genealogy view and the local Merkle root; they just don't see anchored receipts.
 
 ---
 
-## 7. Open Attestation Surface
+## 7. Pre-commitment protocol
 
-### 7.1 Event feed
-
-After every committed child (Active or Quarantined), `attestation.emit()` writes a structured event:
-
-```json
-{
-  "event": "lineage.candidate_committed",
-  "cycle_id": "01H...",
-  "bundle_hash": "blake3:...",
-  "parent_hash": "blake3:...",
-  "diff": { "prose_diff": "...", "param_changes": [...], "tool_changes": {...} },
-  "trace_uri": "ipfs://...",
-  "gate_result": { "delta_day": 0.18, "delta_holdout": 0.07, "epsilon": 0.05, "passed": true },
-  "finding_draft": { "summary": "...", "regime_affinity": [...], "confidence": "Med" },
-  "open_for_attestation_until": "2026-06-09T08:00:00Z"
-}
-```
-
-Distribution:
-- **In-process:** SSE stream to the dashboard.
-- **Off-process:** posted to a public endpoint (`/autoresearch/feed`), pollable by external agents.
-- **On-chain pointer:** the Reputation Registry receipt for the cycle includes the feed batch's content hash, so external agents can prove what they were responding to.
-
-### 7.2 External attestation ingestion
-
-Any address with an ERC-8004 Identity NFT can post a `ValidationReceipt` against a `bundle_hash` within the attestation window:
+At session start (one-time, generated by core):
 
 ```rust
-struct ExternalAttestation {
-    attester_agent_id: U256,                    // their ERC-8004 identity
-    bundle_hash: ContentHash,
-    verdict: AttestationVerdict,                // Endorse | Question | Reject
-    rationale_hash: ContentHash,                // pointer to off-chain rationale
-    posted_at: DateTime,
-    on_chain_tx: TxHash,
-}
-```
-
-The dashboard renders external attestations beside the in-house finding. A lineage with multiple independent endorsements gets a `multi-attested` badge. Disagreements are not hidden; they are themselves a finding.
-
-This replaces hard-coded twin judges with an open marketplace of attestations. It is *deeply* on-brand for the marketplace narrative and uses ERC-8004 exactly as designed.
-
-### 7.3 Hackathon demo seeding
-
-For the demo, the xianvec team operates 2–3 internal agents (each with its own ERC-8004 identity) that consume the feed and post their own attestations. The system is open by design; the demo seeds it with internal participation. External participation is the v2 narrative.
-
----
-
-## 8. Pre-commitment protocol
-
-At session start (one-time, posted on-chain):
-
-```rust
-struct AutoresearchSessionCommitment {
+struct SessionCommitment {
     epsilon: f64,                               // merge-gate threshold
     holdout_window: TimeRange,                  // pinned, never touched by day trading
     parent_policy_seed: u64,                    // for reproducible parent selection
     cycle_config_hash: ContentHash,             // hash of autoresearch.toml at session start
     canary_seed: u64,                           // for reproducible sabotaged-parent generation
-    hackathon_session_id: Ulid,
+    session_id: Ulid,
+    operator_signature: Signature,              // long-lived key signs the commitment
 }
 ```
 
-Posted to the Reputation Registry with operator signature. Any post-hoc tuning is provable on chain. This is the "we didn't move the goalposts" artifact.
+The commitment is sealed locally and operator-signed. The signature establishes **"this commitment existed at this hash before any cycles ran."** Forgery requires operator key compromise.
 
-If ε is loosened mid-hackathon (e.g., merge rate < 1/evening for 3 consecutive evenings), the loosening follows a **pre-committed schedule** — written into `autoresearch.toml` from day one and hashed in `cycle_config_hash`. Schedule example: ε starts at 0.10, drops to 0.07 if no merges for 3 nights, drops to 0.05 if still none. The schedule itself is on-chain; the values aren't tuned, only triggered.
+If the marketplace plugin is enabled, the session commitment hash is anchored to Mantle at session start (one tx, see marketplace spec). Without the plugin, the commitment is purely local — auditable via the artifact bundle but not publicly timestamped.
+
+If ε is loosened mid-hackathon (e.g., merge rate < 1/evening for 3 consecutive evenings), the loosening follows a **pre-committed schedule** — written into `autoresearch.toml` from day one and hashed in `cycle_config_hash`. Schedule example: ε starts at 0.10, drops to 0.07 if no merges for 3 nights, drops to 0.05 if still none. The schedule itself is in the commitment; the values aren't tuned, only triggered.
 
 ---
 
-## 9. Novel eval suite (v1)
+## 8. Novel eval suite (v1)
 
-Five evals beyond the standard Δ-Sharpe gate. Each one earns its slot by addressing a specific failure mode of LLM-driven autoresearch:
+Five evals beyond the standard Δ-Sharpe gate. All run in core; all produce on-disk artifacts. The marketplace plugin can optionally surface them on-chain (see marketplace spec) but Persona A gets the full suite locally.
 
 | Eval | Failure mode addressed | Cost | Where it lives |
 |---|---|---|---|
-| **Counterfactual-chain Merkle receipt** | "lineage's track record is a single number, unauditable" | low (one Merkle build per lineage) | `lineage.rs` + `identity` extension |
+| **Counterfactual-chain Merkle root** | "lineage's track record is unauditable" | low (one Merkle build per lineage) | `lineage.rs` |
 | **Null-result canary** (sabotaged parent injected nightly) | "the gate fits noise" | low (one extra parent per evening) | `canary.rs` |
 | **Inversion-pair eval** (forward + reverse mutation) | "the mutation passed the gate by chance" | medium (one extra paper-test per accepted child) | `inversion.rs` |
 | **Mutator-skill ladder** (acceptance rate, calibration, regime bias of the LLM mutator itself) | "we're optimizing strategies but never measuring the optimizer" | low (derived metrics over existing tables) | new dashboard view + `mutator_ladder.rs` |
 | **Embedding-divergence / diversity-decay metric** (rate at which sibling embedding distance shrinks) | "lineages mode-collapse into one strategy" | low (one embedding API call per committed bundle) | `diversity.rs` |
 
-### 9.1 Null-result canary (`canary.rs`)
+### 8.1 Null-result canary (`canary.rs`)
 
 Each evening, one synthetic "broken parent" is injected: random params, contradictory `program.md`, conflicting tool set. Generated reproducibly from `canary_seed`. The autoresearcher doesn't know which parent is the canary. The gate's behavior on the canary is published nightly:
 - **Mutations rejected** → gate is healthy.
 - **Mutations accepted** → gate is fitting noise; alarm raised; that night's results are flagged.
 
-The canary's nightly outcome is itself an on-chain artifact (a `CanaryReceipt` in the Reputation Registry). This is a powerful judging-day talking point: "we publish on-chain proof that our gate rejects garbage."
-
-### 9.2 Mutator-skill ladder
+### 8.2 Mutator-skill ladder
 
 Treats the LLM mutator as a model with measurable skill:
-- **Acceptance rate** by parent type (TA / onchain / LLM-driven).
-- **Calibration** (the mutator can optionally claim expected Δ-Sharpe; we measure realized vs claimed).
-- **Regime bias** (what regimes does the mutator improve disproportionately?).
-- **Token efficiency** (Sharpe gain per 1k mutator tokens).
+- **Acceptance rate** by parent type (TA / onchain / LLM-driven)
+- **Calibration** (the mutator can optionally claim expected Δ-Sharpe; we measure realized vs claimed)
+- **Regime bias** (what regimes does the mutator improve disproportionately?)
+- **Token efficiency** (Sharpe gain per 1k mutator tokens)
 
 Rendered as a second ladder in the dashboard. Recursive reputation: the thing that's optimizing is itself being optimized over.
 
-### 9.3 Embedding-divergence diversity-decay
+### 8.3 Embedding-divergence diversity-decay
 
 For every committed bundle, embed `program.md` (one OpenAI / Voyage embedding call). For each lineage, compute mean pairwise distance between siblings at each cycle. Diversity-decay rate = ratio at t to t-1. Published as a single dashboard number plus a sparkline. Falling rate = mode collapse alarm. Rising = healthy exploration.
 
 ---
 
-## 10. Dashboard surfaces (autoresearch-first)
+## 9. Dashboard surfaces (autoresearch-first)
 
-Five views, ordered for the demo:
+Five core views, ordered for the demo. The marketplace plugin adds a sixth tab (see marketplace spec) but the five below render fully without the plugin enabled.
 
 1. **Live evening cycle viewer** (the headline, beat 1)
    - Real-time SSE stream during the evening run. Per-parent, per-mutation, per-paper-test status.
@@ -364,10 +359,10 @@ Five views, ordered for the demo:
 2. **Genealogy tree** (beat 2)
    - D3 force-directed (or radial when lineages > 20).
    - Node size = trade count; color = lineage; edge stroke encodes mutation type (solid prose / dashed param / dotted tool); ghost branches faded.
-   - Click → drawer with `program.md`, params, tools, lineage trail, NFT link, attestations.
+   - Click → drawer with `program.md`, params, tools, lineage trail, performance sparkline.
 3. **Mutation diff inspector**
    - Three-pane: prose diff (markdown red/green), param diff (table), tool diff (chips).
-   - LLM finding below; external attestations beside.
+   - LLM finding below.
 4. **Mutator-skill ladder** (the second ladder)
    - Acceptance rate, calibration, regime bias, token efficiency.
    - Side by side with the strategy ladder.
@@ -376,55 +371,43 @@ Five views, ordered for the demo:
    - Click row → genealogy tree zoomed to that node.
 
 **SSE event taxonomy:**
-`mutation_proposed` · `mutation_evaluating` · `mutation_committed` · `mutation_rejected` · `lineage_forked` · `nft_minted` · `receipt_posted` · `attestation_received` · `canary_outcome` · `diversity_updated`
+`mutation_proposed` · `mutation_evaluating` · `mutation_committed` · `mutation_rejected` · `lineage_forked` · `canary_outcome` · `diversity_updated` · `cycle_sealed`
+
+Marketplace-plugin events (`nft_minted`, `receipt_posted`, `attestation_received`) are emitted from the plugin and rendered in its own dashboard tab.
 
 **Demo replay fallback:**
 `xvn autoresearch demo` replays the most recent successful evening cycle from saved fixtures + cached LLM responses. No API keys required. This is the air-gap path — used only if the live demo network or LLM API fails on stage.
 
 ---
 
-## 11. ERC-8004 wiring extensions
+## 10. Sequencing (5 weeks)
 
-`xianvec-identity` gains:
-- `mint_child_nft(bundle: &Bundle, parent_agent_id: U256)` — mints with the parent linkage encoded in the manifest CID.
-- `batch_post_receipts(cycle_id: Ulid, receipts: Vec<Receipt>)` — single Mantle tx per evening cycle. Uses Mantle's batch endpoint.
-- `post_lineage_merkle_receipt(lineage_id, root: B256)` — counterfactual-chain Merkle root.
-- `post_canary_receipt(cycle_id, outcome: CanaryOutcome)` — nightly canary result.
-- `accept_external_attestation(att: ExternalAttestation)` — verifies attester's ERC-8004 identity and indexes the validation-registry receipt.
-
-Gas estimate (Mantle Sepolia, conservative):
-- Per evening cycle: 1 batch tx covering N receipts (N typically 5–20).
-- Per session: 1 commitment tx + 1 canary receipt × evenings + 1 batch × evenings.
-- Pre-fund operator wallet with 5× estimate before kickoff.
-
----
-
-## 12. Sequencing (5 weeks)
-
-Today is 2026-05-09. Submission is 2026-06-15. Six weekly milestones with a hard go/no-go on the second.
+Today is 2026-05-09. Submission is 2026-06-15.
 
 | Wk | Dates | Deliverable | Hard milestone |
 |---|---|---|---|
 | 1 | 5/09 → 5/16 | Eval engine paper-test path complete. Scenario fixtures pinned. Held-out window pinned. | Paper-test runs end-to-end in CI. |
-| 2 | 5/16 → 5/23 | Mutator + lineage store + numeric gate. Run end-to-end on 2 lineages locally. | **Go/no-go decision.** If not working, fall back to "Mutator + lineage UI, run once" branch. |
-| 3 | 5/23 → 5/30 | Cycle orchestrator + judge + canary + inversion-pair + diversity. ERC-8004 wiring extensions. Sepolia smoke. | Full evening cycle runs end-to-end on testnet. |
-| 4 | 5/30 → 6/06 | Dashboard: all 5 views. SSE event flow. Mutator-skill ladder. Open Attestation Surface (in-process feed; external endpoint). | Dashboard renders live cycle in real time. |
-| 5 | 6/06 → 6/13 | Live evening cycles every night. Tune cycle budget. Pre-commitment posted to Mantle mainnet. Replay fixture sealed. Submission polish. | Submission package complete by 6/13 (2-day buffer). |
+| 2 | 5/16 → 5/23 | Mutator + lineage store + numeric gate + CycleSeal artifact. Run end-to-end on 2 lineages locally. | **Go/no-go decision.** If not working, fall back to "Mutator + lineage UI, run once" branch. **Note: this milestone is purely about the loop; chain readiness is irrelevant here.** |
+| 3 | 5/23 → 5/30 | Cycle orchestrator + judge + canary + inversion-pair + diversity. | Full evening cycle runs end-to-end locally. |
+| 4 | 5/30 → 6/06 | Dashboard: all 5 core views. SSE event flow. Mutator-skill ladder. | Dashboard renders live cycle in real time. |
+| 5 | 6/06 → 6/13 | **Marketplace plugin (companion spec)** lands. Live evening cycles every night. Tune cycle budget. Submission polish. Replay fixture sealed. | Submission package complete by 6/13 (2-day buffer). |
 | 6 | 6/13 → 6/15 | Buffer. Bug fixes. Final demo rehearsal. | Submit. |
+
+Wks 1–4 require zero chain dependencies. The marketplace plugin is integrated only in Wk 5 (see [marketplace spec](./2026-05-09-marketplace-plugin-design.md) §4 for its own sequencing).
 
 **Wk 2 go/no-go criteria (must all be true to continue full-loop path):**
 1. Eval engine paper-test runs deterministically on the pinned scenario fixture, two consecutive runs produce identical metrics.
 2. Mutator generates a structurally valid candidate from a real parent in < 30 seconds.
 3. Numeric gate compares parent vs child correctly on a known-improvement test case (synthetic).
-4. SQLite tables for lineage / mutations / findings exist and are written by the prototype loop.
+4. SQLite tables for lineage / mutations / findings / cycle_seals exist and are written by the prototype loop.
 
 If any of those four are missing, fall back to "Mutator + lineage UI, run once" (genealogy view rendered from manually-seeded variants; no live evening cycle; demo shape changes from autoresearch-first to genealogy-first).
 
 ---
 
-## 13. Failure modes and mitigations
+## 11. Failure modes and mitigations
 
-Distilled from the ideonomy adversarial pass; each row is a way the loop could publicly fail.
+Distilled from the ideonomy adversarial pass; each row is a way the loop could publicly fail. Marketplace-coupled failure modes (chain costs, NFT mint flakiness, attestation flow) live in the [marketplace spec](./2026-05-09-marketplace-plugin-design.md).
 
 | # | Failure | Mitigation |
 |---|---|---|
@@ -433,36 +416,35 @@ Distilled from the ideonomy adversarial pass; each row is a way the loop could p
 | 3 | Mutator hallucinates invalid bundles | JSON-mode + bundle validator; 2-retry cap with error feedback; ungrammatical mutations never enter lineage. |
 | 4 | All lineages converge (mode collapse) | Diversity-decay metric public; ε-greedy parent policy with explicit exploration term. |
 | 5 | "Karpathy" framing reads as hype | Lead pitch with on-chain population evolution; cite Karpathy in references with explicit list of xianvec extensions. |
-| 6 | On-chain costs balloon | Batch all receipts into 1 tx per cycle; pre-fund 5× estimate; Sepolia smoke before mainnet. |
-| 7 | LLM judge reverse-engineers the gate | Judge metrics-blinded in code (panic on leak); numeric gate runs first, deterministically. |
-| 8 | Eval engine slips | Wk 2 hard go/no-go; fallback branch ready. |
-| 9 | Genealogy unreadable at >50 nodes | Cluster by lineage; top-K filter; on-demand expand; demo storyboard ≤ 10 visible. |
-| 10 | Judges can't reproduce | `xvn autoresearch demo` replay; no API keys needed. |
-| 11 | Token budget runs out | Haiku mutator + Sonnet judge only on accepted; per-cycle cap with alarm. |
-| 12 | Gate too tight, nothing merges | Pre-committed loosening schedule (NOT retroactive); pre-baked "honest gate refused noise" messaging if still nothing. |
-| 13 | Single point of demo failure | Three-beat demo: live cycle → genealogy → ladder. Each beat tells a partial story alone. |
-| 14 | "It's a Karpathy clone with crypto bolted on" | Submission write-up has a one-page extensions section: counterfactual-chain receipts, Open Attestation Surface, mutator-skill ladder, null-result canary, embedding-divergence. None are in his repo. |
+| 6 | LLM judge reverse-engineers the gate | Judge metrics-blinded in code (panic on leak); numeric gate runs first, deterministically. |
+| 7 | Eval engine slips | Wk 2 hard go/no-go; fallback branch ready. |
+| 8 | Genealogy unreadable at >50 nodes | Cluster by lineage; top-K filter; on-demand expand; demo storyboard ≤ 10 visible. |
+| 9 | Judges can't reproduce | `xvn autoresearch demo` replay; no API keys needed. |
+| 10 | Token budget runs out | Haiku mutator + Sonnet judge only on accepted; per-cycle cap with alarm. |
+| 11 | Gate too tight, nothing merges | Pre-committed loosening schedule (NOT retroactive); pre-baked "honest gate refused noise" messaging if still nothing. |
+| 12 | Single point of demo failure | Three-beat demo: live cycle → genealogy → ladder. Each beat tells a partial story alone. The marketplace beat is *additive* to all three; if it breaks, the core demo still stands. |
+| 13 | "It's a Karpathy clone with crypto bolted on" | Submission write-up has a one-page extensions section: counterfactual-chain Merkle, mutator-skill ladder, null-result canary, embedding-divergence, persona-split architecture. None are in his repo. |
 
 ---
 
-## 14. Open questions (to resolve in the implementation plan)
+## 12. Open questions (to resolve in the implementation plan)
 
 1. **Embedding model for diversity-decay** — OpenAI `text-embedding-3-small` vs Voyage. Cost vs quality trade-off; decide in Wk 4.
 2. **Default cycle budget values** — `mutations_per_parent`, `parents_per_evening`, per-cycle token cap. Tune empirically in Wk 4 against actual evening run wall-clock.
 3. **Genealogy layout algorithm at scale** — force-directed vs radial vs Sugiyama for >20 lineages. Benchmark in Wk 4.
-4. **External attestation window length** — hours-to-days. Affects how quickly external agents can participate. Default 24h, configurable.
-5. **Sepolia vs mainnet for hackathon submission** — current Identity work is Sepolia. Plan for mainnet cutover in Wk 5; budget gas accordingly.
+4. **Operator key management** — long-lived signing key for SessionCommitment + CycleSeal signatures. Use existing identity infrastructure or generate fresh? Resolve before session start.
 
 ---
 
-## 15. References
+## 13. References
 
 - `architecture.md` §11 (deferred Karpathy autoresearch direction — un-deferred by this spec)
-- `decisions/0010-hackathon-pivot-strategy-loom.md` (the loom + autoresearch framing)
+- `decisions/0010-hackathon-pivot-strategy-loom.md` (the loom + autoresearch framing; cargo-feature-gate idiom)
 - `FOLLOWUPS.md` SLF8, SLF9 (program.md as autoresearch unit-of-work; evening-loop wrapper)
-- `docs/superpowers/specs/2026-05-08-eval-engine-design.md` (paper-test runner, findings extractor, scenario fixtures)
-- `docs/superpowers/specs/2026-05-08-strategy-creation-engine-design.md` (bundle schema, slot templates)
-- `docs/superpowers/specs/2026-05-08-smart-contract-surface-design.md` (ERC-8004 registries on Mantle)
+- [Marketplace Plugin spec](./2026-05-09-marketplace-plugin-design.md) (companion — handles all chain/8004/marketplace concerns)
+- [Eval Engine spec](./2026-05-08-eval-engine-design.md) (paper-test runner, findings extractor, scenario fixtures)
+- [Strategy Creation Engine spec](./2026-05-08-strategy-creation-engine-design.md) (bundle schema, slot templates)
+- [Smart Contract Surface spec](./2026-05-08-smart-contract-surface-design.md) (ERC-8004 registries on Mantle; consumed by marketplace plugin)
 - ERC-8004 EIP — eips.ethereum.org/EIPS/eip-8004 (mainnet live 2026-01-29)
 - Karpathy autoresearch — github.com/karpathy/autoresearch (March 2026)
 - Mantle Turing Test Hackathon 2026 (Phase 2, "AI Awakening")
