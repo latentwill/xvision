@@ -24,6 +24,7 @@ export const router = createBrowserRouter([
       { index: true, element: <HomeRoute /> },
       { path: "strategies", element: <StrategiesRoute /> },
       { path: "authoring", element: <AuthoringRoute /> },
+      { path: "authoring/:id", element: <AuthoringRoute /> },
       { path: "eval-runs", element: <EvalRunsRoute /> },
       { path: "eval-runs/:runId", element: <EvalRunDetailRoute /> },
       { path: "eval-runs/compare", element: <EvalCompareRoute /> },
