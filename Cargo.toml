@@ -13,6 +13,7 @@ members = [
     "crates/xvision-cli",
     "crates/xvision-identity",
     "crates/xvision-mcp",
+    "crates/xvision-dashboard",
 ]
 
 # `default-members` excludes xvision-identity from bare `cargo build` /
@@ -33,6 +34,7 @@ default-members = [
     "crates/xvision-harness",
     "crates/xvision-cli",
     "crates/xvision-mcp",
+    "crates/xvision-dashboard",
 ]
 
 [workspace.package]
