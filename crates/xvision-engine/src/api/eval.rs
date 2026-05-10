@@ -3,7 +3,9 @@
 //! Phase 3.D shipped the read-only core (`list`, `get`, `scenarios`) returning
 //! the engine's full `Run` shape. This module also exposes a slimmer
 //! `RunSummary` wire shape via `list_summaries` for clients (today: the
-//! dashboard, tomorrow: MCP browse tools) that don't want the full Run.
+//! dashboard, tomorrow: MCP browse tools) that don't want the full Run, and a
+//! `get_run` fn that returns a `RunDetail` (summary + decisions + equity
+//! curve) for the dashboard's `/eval-runs/:id` page.
 //!
 //! The `run` dispatch (which constructs PaperExecutor + LlmDispatch +
 //! ToolRegistry from env) is still deferred to a follow-up PR.
@@ -48,9 +50,7 @@ pub struct RunSummary {
     pub id: String,
     pub strategy_bundle_hash: String,
     pub scenario_id: String,
-    /// Lower-case discriminant ("backtest" | "paper").
     pub mode: String,
-    /// Lower-case discriminant ("queued" | "running" | "completed" | "failed" | "cancelled").
     pub status: String,
     #[cfg_attr(feature = "ts-export", ts(type = "string"))]
     pub started_at: DateTime<Utc>,
@@ -60,6 +60,53 @@ pub struct RunSummary {
     pub max_drawdown_pct: Option<f64>,
     pub total_return_pct: Option<f64>,
     pub error: Option<String>,
+}
+
+/// Full run detail — `RunSummary` plus the decision rows and equity samples.
+/// Used by `/api/eval/runs/:id`.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunDetail {
+    pub summary: RunSummary,
+    pub decisions: Vec<DecisionRowDto>,
+    pub equity_curve: Vec<EquityPoint>,
+}
+
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DecisionRowDto {
+    pub decision_index: u32,
+    #[cfg_attr(feature = "ts-export", ts(type = "string"))]
+    pub timestamp: DateTime<Utc>,
+    pub asset: String,
+    pub action: String,
+    pub conviction: Option<f64>,
+    pub justification: Option<String>,
+    pub order_size: Option<f64>,
+    pub fill_price: Option<f64>,
+    pub fill_size: Option<f64>,
+    pub fee: Option<f64>,
+    pub pnl_realized: Option<f64>,
+}
+
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EquityPoint {
+    #[cfg_attr(feature = "ts-export", ts(type = "string"))]
+    pub timestamp: DateTime<Utc>,
+    pub equity_usd: f64,
 }
 
 pub async fn list(ctx: &ApiContext, req: ListRunsRequest) -> ApiResult<Vec<Run>> {
@@ -97,9 +144,7 @@ async fn list_inner(ctx: &ApiContext, req: &ListRunsRequest) -> ApiResult<Vec<Ru
         .map_err(|e| ApiError::Internal(e.to_string()))
 }
 
-/// Same as `list` but returns the slim `RunSummary` shape. Wraps `list_inner`
-/// directly (no second audit row) — the audit-trail entry from the parent
-/// `list_summaries` call is what gets recorded.
+/// Same as `list` but returns the slim `RunSummary` shape.
 pub async fn list_summaries(
     ctx: &ApiContext,
     req: ListRunsRequest,
@@ -163,6 +208,80 @@ async fn get_inner(ctx: &ApiContext, run_id: &str) -> ApiResult<Run> {
         } else {
             ApiError::Internal(msg)
         }
+    })
+}
+
+/// Full run detail (summary + decisions + equity curve). Maps the engine's
+/// `run not found` error to typed `NotFound` so the dashboard renders 404
+/// rather than 500.
+pub async fn get_run(ctx: &ApiContext, id: &str) -> ApiResult<RunDetail> {
+    let started = Instant::now();
+    let result = get_run_inner(ctx, id).await;
+
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let _ = audit::record(
+        ctx,
+        "eval",
+        "get_run",
+        Some(id),
+        None,
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    result
+}
+
+async fn get_run_inner(ctx: &ApiContext, id: &str) -> ApiResult<RunDetail> {
+    let store = RunStore::new(ctx.db.clone());
+
+    let run = store.get(id).await.map_err(|e| {
+        let msg = e.to_string();
+        if msg.contains("run not found") {
+            ApiError::NotFound(format!("eval run '{id}'"))
+        } else {
+            ApiError::Internal(msg)
+        }
+    })?;
+
+    let decisions = store
+        .read_decisions(id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .into_iter()
+        .map(|d| DecisionRowDto {
+            decision_index: d.decision_index,
+            timestamp: d.timestamp,
+            asset: d.asset,
+            action: d.action,
+            conviction: d.conviction,
+            justification: d.justification,
+            order_size: d.order_size,
+            fill_price: d.fill_price,
+            fill_size: d.fill_size,
+            fee: d.fee,
+            pnl_realized: d.pnl_realized,
+        })
+        .collect();
+
+    let equity_curve = store
+        .read_equity_curve(id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .into_iter()
+        .map(|(timestamp, equity_usd)| EquityPoint {
+            timestamp,
+            equity_usd,
+        })
+        .collect();
+
+    Ok(RunDetail {
+        summary: summarise(run),
+        decisions,
+        equity_curve,
     })
 }
 

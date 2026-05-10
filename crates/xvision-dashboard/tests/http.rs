@@ -321,3 +321,100 @@ fn scoped_unset(key: &'static str) -> EnvGuard {
     std::env::remove_var(key);
     EnvGuard { key, prev }
 }
+
+#[tokio::test]
+async fn eval_run_detail_returns_404_for_unknown() {
+    let (server, _tmp) = boot().await;
+    let response = server.get("/api/eval/runs/01J0NOSUCHRUN0000000000001").await;
+    response.assert_status_not_found();
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["code"], "not_found");
+}
+
+#[tokio::test]
+async fn eval_run_detail_returns_summary_decisions_and_equity() {
+    use chrono::Utc;
+    use xvision_engine::eval::{
+        run::{Run, RunMode},
+        store::{DecisionRow, RunStore},
+    };
+
+    let (server, _tmp) = boot().await;
+    let pool = sqlx::SqlitePool::connect(&format!(
+        "sqlite://{}/xvn.db",
+        _tmp.path().display()
+    ))
+    .await
+    .unwrap();
+    let store = RunStore::new(pool);
+
+    let run = Run::new_queued(
+        "feedface".into(),
+        "crypto-bull-q1-2025".into(),
+        RunMode::Backtest,
+    );
+    let run_id = run.id.clone();
+    store.create(&run).await.unwrap();
+
+    store
+        .record_decision(&DecisionRow {
+            run_id: run_id.clone(),
+            decision_index: 0,
+            timestamp: Utc::now(),
+            asset: "BTC/USD".into(),
+            action: "long_open".into(),
+            conviction: Some(0.7),
+            justification: Some("test".into()),
+            order_size: Some(0.05),
+            fill_price: Some(67_000.0),
+            fill_size: Some(0.05),
+            fee: Some(3.35),
+            pnl_realized: None,
+        })
+        .await
+        .unwrap();
+    store
+        .record_decision(&DecisionRow {
+            run_id: run_id.clone(),
+            decision_index: 1,
+            timestamp: Utc::now(),
+            asset: "BTC/USD".into(),
+            action: "flat".into(),
+            conviction: Some(0.4),
+            justification: None,
+            order_size: Some(0.05),
+            fill_price: Some(68_500.0),
+            fill_size: Some(0.05),
+            fee: Some(3.43),
+            pnl_realized: Some(75.0),
+        })
+        .await
+        .unwrap();
+    store
+        .record_equity(&run_id, Utc::now(), 100_000.0)
+        .await
+        .unwrap();
+    store
+        .record_equity(&run_id, Utc::now(), 100_075.0)
+        .await
+        .unwrap();
+
+    let response = server.get(&format!("/api/eval/runs/{run_id}")).await;
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+
+    assert_eq!(body["summary"]["id"], run_id);
+    assert_eq!(body["summary"]["status"], "queued");
+    assert_eq!(body["summary"]["scenario_id"], "crypto-bull-q1-2025");
+
+    let decisions = body["decisions"].as_array().expect("decisions");
+    assert_eq!(decisions.len(), 2, "two decisions seeded");
+    assert_eq!(decisions[0]["decision_index"], 0);
+    assert_eq!(decisions[0]["action"], "long_open");
+    assert_eq!(decisions[1]["pnl_realized"], 75.0);
+
+    let equity = body["equity_curve"].as_array().expect("equity_curve");
+    assert_eq!(equity.len(), 2);
+    assert_eq!(equity[0]["equity_usd"], 100_000.0);
+    assert_eq!(equity[1]["equity_usd"], 100_075.0);
+}
