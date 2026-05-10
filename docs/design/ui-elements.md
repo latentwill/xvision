@@ -244,6 +244,11 @@ lineage →`. Only renders when ≥3 sibling drafts exist from one root. Links t
 the future lineage tree view (Move G, deferred). v1 wireframes can show this
 as a stub link with `Coming soon` chip.
 
+**Model-fork variant.** When ≥3 of the sibling drafts differ from the root
+*only* on the Trader or Intern slot model, the cue flips to:
+`You've A/B-tested btc-momentum across 4 models this week — see leaderboard →`.
+The link points at `/eval/compare?ids=<lineage_root>` filtered by parent.
+
 ### 2.4 Empty / cold-start states
 
 If the daemon has artifacts but the user hasn't visited in >7 days, the
@@ -475,7 +480,7 @@ slot expensive?`, `Suggest a tool to add`, `Diff vs template`.
 | Header actions | primary `New strategy` (→ `/setup`) · ghost `New from template…` |
 | Filters bar | search input `Filter by name…` · status select `All / Draft / Validated / Published` · template select |
 | Table columns | `Name`, `Template`, `Forked from` *(new in v0.2 — shows parent draft when set)*, `Status`, `Last eval`, `Tokens / run`, `Updated`, `Actions` |
-| Row action menu | `⋯` → `Open in Inspector`, `Duplicate`, `Fork` *(new — preserves parentage)*, `Run eval`, `Deploy paper`, `Delete` |
+| Row action menu | `⋯` → `Open in Inspector`, `Duplicate`, `Fork` *(preserves parentage)*, `Fork with different model →` *(focused fork — opens Inspector with Trader Provider+Model select pre-focused)*, `Run eval`, `Deploy paper`, `Delete` |
 | Empty state | `No drafts yet. Start with the setup agent or pick a template.` + buttons `Open setup agent` · `Browse templates` |
 
 The `Forked from` column is the v1 stub for the deferred lineage tree view
