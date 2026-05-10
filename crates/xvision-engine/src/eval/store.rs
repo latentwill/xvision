@@ -13,7 +13,9 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::{Row, SqlitePool};
 
+use crate::eval::attestation::EvalAttestation;
 use crate::eval::run::{MetricsSummary, Run, RunMode, RunStatus};
+use ulid::Ulid;
 
 #[derive(Debug, Clone)]
 pub struct RunStore {
@@ -270,6 +272,105 @@ impl RunStore {
                 Ok((parsed, equity))
             })
             .collect()
+    }
+
+    /// Persist a signed attestation against the given run. The store
+    /// serializes the metrics + tokens block to the `signed_metrics_json`
+    /// column; pubkey + signature go to their dedicated columns.
+    pub async fn record_attestation(
+        &self,
+        run_id: &str,
+        att: &EvalAttestation,
+    ) -> Result<()> {
+        let id = Ulid::new().to_string();
+        let signed_payload = serde_json::json!({
+            "metrics": att.metrics,
+            "tokens_used": att.tokens_used,
+            "ran_at": att.ran_at,
+        });
+        let signed_metrics_json =
+            serde_json::to_string(&signed_payload).context("serialize signed payload")?;
+        sqlx::query(
+            "INSERT INTO eval_attestations \
+             (id, run_id, strategy_bundle_hash, scenario_id, signed_metrics_json, \
+              signature_hex, signing_pubkey_hex, signed_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(id)
+        .bind(run_id)
+        .bind(&att.strategy_bundle_hash)
+        .bind(&att.scenario_id)
+        .bind(signed_metrics_json)
+        .bind(&att.signature_hex)
+        .bind(&att.signing_pubkey_hex)
+        .bind(att.ran_at.to_rfc3339())
+        .execute(&self.pool)
+        .await
+        .with_context(|| format!("insert eval_attestations run_id={run_id}"))?;
+        Ok(())
+    }
+
+    /// Reads back the most recent attestation for a run, if any.
+    pub async fn get_attestation(&self, run_id: &str) -> Result<Option<EvalAttestation>> {
+        let row = sqlx::query(
+            "SELECT strategy_bundle_hash, scenario_id, signed_metrics_json, \
+                    signature_hex, signing_pubkey_hex, signed_at \
+             FROM eval_attestations \
+             WHERE run_id = ? \
+             ORDER BY signed_at DESC \
+             LIMIT 1",
+        )
+        .bind(run_id)
+        .fetch_optional(&self.pool)
+        .await
+        .context("select eval_attestations")?;
+        let Some(row) = row else { return Ok(None) };
+
+        let strategy_bundle_hash: String = row
+            .try_get("strategy_bundle_hash")
+            .context("read attestation strategy_bundle_hash")?;
+        let scenario_id: String = row
+            .try_get("scenario_id")
+            .context("read attestation scenario_id")?;
+        let signed_metrics_json: String = row
+            .try_get("signed_metrics_json")
+            .context("read signed_metrics_json")?;
+        let signature_hex: String =
+            row.try_get("signature_hex").context("read signature_hex")?;
+        let signing_pubkey_hex: String = row
+            .try_get("signing_pubkey_hex")
+            .context("read signing_pubkey_hex")?;
+        let signed_at_str: String = row.try_get("signed_at").context("read signed_at")?;
+
+        let signed_payload: serde_json::Value = serde_json::from_str(&signed_metrics_json)
+            .context("deserialize signed_metrics_json")?;
+        let metrics: MetricsSummary = serde_json::from_value(
+            signed_payload
+                .get("metrics")
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("signed payload missing 'metrics'"))?,
+        )
+        .context("deserialize attestation metrics")?;
+        let tokens_used: crate::eval::attestation::TokensUsed = serde_json::from_value(
+            signed_payload
+                .get("tokens_used")
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("signed payload missing 'tokens_used'"))?,
+        )
+        .context("deserialize attestation tokens_used")?;
+        let ran_at: DateTime<Utc> = DateTime::parse_from_rfc3339(&signed_at_str)
+            .with_context(|| format!("parse signed_at {signed_at_str:?}"))?
+            .with_timezone(&Utc);
+
+        Ok(Some(EvalAttestation {
+            strategy_bundle_hash,
+            scenario_id,
+            metrics,
+            tokens_used,
+            ran_at,
+            signing_pubkey_hex,
+            signature_hex,
+        }))
     }
 }
 
