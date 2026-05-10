@@ -524,6 +524,23 @@ sqlite_url = "sqlite://x.db"
     }
 
     #[test]
+    fn repo_default_toml_declares_anthropic_provider() {
+        let cfg = load_runtime(&project_root().join("config/default.toml")).unwrap();
+        let anthropic = cfg
+            .providers
+            .iter()
+            .find(|p| p.name == "anthropic")
+            .expect("repo default.toml must declare an `anthropic` provider row");
+        assert_eq!(anthropic.kind, ProviderKind::Anthropic);
+        assert_eq!(anthropic.api_key_env, "ANTHROPIC_API_KEY");
+        // [intern] points at the same triple → no synthetic row should appear
+        assert!(
+            !cfg.providers.iter().any(|p| p.name == "_default_intern"),
+            "synthetic should be skipped when user-declared match exists"
+        );
+    }
+
+    #[test]
     fn auto_derives_default_intern_provider() {
         let cfg = load_runtime(&project_root().join("config/default.toml"))
             .expect("must load");
