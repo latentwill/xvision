@@ -2,53 +2,53 @@
 track: coordinator
 worktree: /Users/edkennedy/Code/xvision (main)
 branch: main
-phase: phase-a-engine-api-pr-open
-last_updated: 2026-05-10T06:52:22Z
+phase: phase-a-two-prs-open
+last_updated: 2026-05-10T07:05:47Z
 ---
 
 # What I'm doing right now
 
-Engine API Foundation (Plan #3) lands as PR #4:
-https://github.com/latentwill/xvision/pull/4
+Two Phase A PRs open, both independent of each other and ready for review:
 
-All 5 phases committed on `feature/engine-api-foundation`:
-- migration 001 (api_audit table)
-- ApiContext / Actor / ApiError types
-- audit::record + Outcome
-- api::strategy::{list, get} representative ops
-- api/README.md pattern doc
+- **PR #4** — Engine API Foundation (Plan #3): https://github.com/latentwill/xvision/pull/4
+  Branch: `feature/engine-api-foundation`. 38 tests pass.
+- **PR #5** — Broker Surface (Plan 2c §Task 7 extraction): https://github.com/latentwill/xvision/pull/5
+  Branch: `feature/broker-surface-trait`. 25 tests pass + 2 ignored live tests.
 
-38/38 tests pass, workspace builds clean.
-
-Queue message posted: `team/queue/engine-api__2026-05-10T065222Z__phase-a-pr-open.md`.
+Together these unblock eval-engine (Plan #5) for Phase B.
 
 # Blocked on
 
-Operator merge review for PR #4. Once merged, downstream tracks unblock.
+Operator merge review for PR #4 and PR #5. Once PR #4 merges, the rest of
+Phase B (chat-rail, command-palette, llm-providers, settings, strategy-2a-mcp,
+strategy-2b-skills) becomes available. Once both #4 and #5 merge, eval-engine
+can begin.
 
-# Next up
+# Next up for this session
 
-After PR #4 merges (or if the operator wants me to keep moving on this main session):
+The third Phase A track — `frontend-foundation` — has independent scaffolding
+work (Vite/Tailwind/Tokens/Shell) that can start NOW without waiting on
+either PR. Phase B work for that track waits for PR #4.
 
-1. Pop into `.worktrees/broker-surface` and start Plan 2c §Task 7 — independent of PR #4 (different crate). OR
-2. Pop into `.worktrees/frontend-foundation` and start Phase A scaffolding (vite/tailwind/tokens/shell) — also independent of PR #4 in that scope.
-
-The operator should also consider spawning external Claude CLIs into the
-other two worktrees so all three Phase A tracks run in parallel. Each has
-a briefing in `team/briefings/<track>.md`.
+Reasonable next moves:
+1. Pick up `frontend-foundation` Phase A scaffolding in this session — Vite/
+   Tailwind/Tokens/Shell from prototype, plus `xvision-dashboard` axum crate
+   skeleton with stubbed routes. No backend dependency.
+2. OR start preparing `eval-engine` plan execution (read-only — actually
+   implementing has to wait for both PRs to merge).
+3. OR await operator merge review and react.
 
 # Tracks ready for external CLI pickup
 
-- `broker-surface` — independent, can start NOW (different crate from PR #4)
-- `frontend-foundation` — Phase A (scaffolding) can start NOW; Phase B waits
-  for PR #4 merge
+- `frontend-foundation` — Phase A scaffolding can start NOW; Phase B (the
+  `/strategies` API integration) waits for PR #4 merge.
 
-To spawn:
+To spawn an external CLI on it:
 ```
-cd /Users/edkennedy/Code/xvision/.worktrees/<track>
+cd /Users/edkennedy/Code/xvision/.worktrees/frontend-foundation
 claude
 # inside Claude:
 #   1. Read team/MANIFEST.md
-#   2. Read team/briefings/<track>.md
-#   3. Begin work
+#   2. Read team/briefings/frontend-foundation.md
+#   3. Begin Phase A work
 ```
