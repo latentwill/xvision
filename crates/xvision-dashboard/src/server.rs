@@ -11,6 +11,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/health", get(health))
         .route("/api/strategies", get(strategies::list))
         .route("/api/eval/runs", get(eval_runs::list))
+        .route("/api/eval/runs/:id", get(eval_runs::get))
         .route("/api/settings/brokers", get(settings::brokers::get))
         .route("/api/settings/daemon", get(settings::daemon::get))
         .route("/api/settings/identity", get(settings::identity::get))

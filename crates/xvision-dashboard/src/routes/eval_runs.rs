@@ -1,16 +1,18 @@
-//! `GET /api/eval/runs` — list eval runs.
+//! `GET /api/eval/runs[/:id]` — list + detail.
 //!
-//! Thin wrapper over `engine::api::eval::list_summaries`. Query params
-//! (`strategy_bundle_hash`, `scenario_id`, `status`) are honored. Body shape
-//! is `{ "items": RunSummary[] }` to match `/api/strategies`.
+//! Both handlers are thin wrappers over `engine::api::eval::*`. The detail
+//! route maps `ApiError::NotFound` to `404 + JSON {code:"not_found"}` via
+//! the existing `DashboardError: From<ApiError>` impl. The list handler
+//! parses the query-string `?status=` into the typed `RunStatus` enum and
+//! returns the slim `RunSummary` shape via `list_summaries`.
 
 use axum::{
-    extract::{Query, State},
+    extract::{Path, Query, State},
     Json,
 };
 use serde::{Deserialize, Serialize};
 
-use xvision_engine::api::eval::{self, ListRunsRequest, RunSummary};
+use xvision_engine::api::eval::{self, ListRunsRequest, RunDetail, RunSummary};
 use xvision_engine::eval::run::RunStatus;
 
 use crate::error::DashboardError;
@@ -20,9 +22,9 @@ use crate::state::AppState;
 pub struct ListParams {
     pub strategy_bundle_hash: Option<String>,
     pub scenario_id: Option<String>,
-    /// Free-form status string from the URL ("queued", "running", …). Parsed
-    /// into the typed `RunStatus` enum below; unknown values surface as a
-    /// validation error.
+    /// Free-form status string ("queued", "running", …). Parsed into the
+    /// typed `RunStatus` enum below; unknown values surface as a validation
+    /// error.
     pub status: Option<String>,
 }
 
@@ -53,4 +55,12 @@ pub async fn list(
     };
     let items = eval::list_summaries(&state.api_context(), req).await?;
     Ok(Json(RunsListResponse { items }))
+}
+
+pub async fn get(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<RunDetail>, DashboardError> {
+    let detail = eval::get_run(&state.api_context(), &id).await?;
+    Ok(Json(detail))
 }
