@@ -7,6 +7,7 @@
 //! roadmap.
 
 pub mod attestation;
+pub mod compare;
 pub mod executor;
 pub mod findings;
 pub mod metrics;
@@ -15,6 +16,10 @@ pub mod scenario;
 pub mod store;
 
 pub use attestation::{EvalAttestation, TokensUsed};
+pub use compare::{
+    compare_runs, ComparisonEquityCurve, ComparisonEquitySample, ComparisonReport,
+    ComparisonRunSummary,
+};
 pub use findings::{Finding, Severity};
 
 pub use run::{MetricsSummary, Run, RunMode, RunStatus};
