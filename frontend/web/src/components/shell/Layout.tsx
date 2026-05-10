@@ -1,6 +1,6 @@
 import { Outlet } from "react-router-dom";
 import { Sidebar } from "./Sidebar";
-import { ChatRailPlaceholder } from "./ChatRailPlaceholder";
+import { ChatRail } from "./ChatRail";
 
 export function Layout() {
   return (
@@ -9,7 +9,7 @@ export function Layout() {
       <main className="px-9 pt-9 pb-6 overflow-x-hidden">
         <Outlet />
       </main>
-      <ChatRailPlaceholder />
+      <ChatRail />
     </div>
   );
 }
