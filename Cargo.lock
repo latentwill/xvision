@@ -8055,6 +8055,7 @@ dependencies = [
  "uuid",
  "xvision-core",
  "xvision-data",
+ "xvision-execution",
 ]
 
 [[package]]

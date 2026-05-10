@@ -6,6 +6,7 @@
 //! See `docs/superpowers/plans/2026-05-08-eval-engine-plan.md` for the full
 //! roadmap.
 
+pub mod executor;
 pub mod run;
 pub mod scenario;
 pub mod store;
