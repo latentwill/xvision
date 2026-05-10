@@ -25,10 +25,18 @@ Phase A unblocked all of Phase B. Pick a row from the build order, claim it via
 
 | Track | Worktree | Branch | Owner CLI | Plan | Status |
 |---|---|---|---|---|---|
+<<<<<<< HEAD
 | `coordinator` | `xvision/` (main) | `main` | session 1 (this one) | — | active — coordinator + integration |
 | `eval-engine` | `.worktrees/eval-engine` | `feature/eval-engine-foundation` | session 1 (this one) | [#5 (Eval Engine)](../docs/superpowers/plans/2026-05-08-eval-engine-plan.md) Phase 3.A only (Tasks 1–3) | **PR #10 open** — awaiting merge |
 | `frontend-foundation-phase-b` | `.worktrees/frontend-foundation` | `feature/frontend-foundation-phase-b` | session 2 (external CLI) | [Frontend Plan 1](../docs/superpowers/plans/2026-05-10-frontend-1-foundation-and-strategies.md) Phase B (ts-rs codegen + `/strategies` wired) | **PR #9 open** — awaiting merge |
 | `leverage-items` | `.worktrees/leverage-items` | `feature/leverage-items` | session 3 (external CLI) | [#13 (Leverage items)](../docs/superpowers/plans/2026-05-10-leverage-items.md) Items A–D (docs) | **PR #8 open** — awaiting merge |
+=======
+| `coordinator` | `xvision/` (main) | `main` | session 1 | — | active — coordinator + integration |
+| `eval-engine` | `.worktrees/eval-engine` | `feature/eval-engine` | session 1 | [Plan #5](../docs/superpowers/plans/2026-05-08-eval-engine-plan.md) Phase 3.A only (Tasks 1–3) | claiming — migration 002 + Run/Scenario types + RunStore |
+| `frontend-foundation` (Phase B) | `.worktrees/frontend-foundation` | (off latest main) | session 2 | [Plan 1](../docs/superpowers/plans/2026-05-10-frontend-1-foundation-and-strategies.md) Phase B (ts-rs codegen, /api/strategies) | active |
+| `leverage-items` (A–D) | `.worktrees/leverage-items` | `feature/leverage-items` | session 3 | [Plan #13](../docs/superpowers/plans/2026-05-10-leverage-items.md) Items A–D (v1 test cut) | PR #8 open |
+| `strategy-2a-templates` | `.worktrees/templates` | `feature/strategy-2a-templates` | session 3 | [Plan 2a](../docs/superpowers/plans/2026-05-08-strategy-engine-2a-mcp-tools-templates.md) Phase 2A.D only (Tasks 13–20) | active — 7 v1 strategy templates |
+>>>>>>> 2c914b5 (chore(team): MANIFEST — add strategy-2a-templates and Phase B in-flight rows)
 
 ## Build order (post-Phase-A)
 
