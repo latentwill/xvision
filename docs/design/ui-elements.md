@@ -387,12 +387,21 @@ Two-pane split (50/50 by default, draggable divider).
 | Field | Label | Control |
 |---|---|---|
 | Enabled | `Use this agent` | toggle (Trader required, can't disable) |
-| Model class | `Model` | select |
+| Provider | `Provider` | select sourced from `/settings → Providers`, with `+ Add new…` last item that opens the add-provider modal inline |
+| Model | `Model` | combobox (free-text + autocomplete suggestions per provider — Anthropic suggests `claude-*`, OpenAI suggests `gpt-*`, etc.) |
 | Prompt | `System prompt` | code editor (monospace, 12pt), `Format` button, `Diff vs template` toggle |
 | Tools allowed | `Tools the agent can call` | multi-select chips |
 | Output schema | `Expected output` | read-only JSON, `Edit schema` ghost (Advanced) |
 | Compose skill | `Add a skill` | button → skill picker modal |
 | Token budget | `Max tokens / call` | numeric |
+
+**Cost cue chip** (informational, dismissable per session):
+
+- Intern slot / Regime slot: `Changes here re-run Stage 1 for every setup ($$ per arm)`
+- Trader slot: `Changes here are cheap — Stage 1 is reused across arms`
+
+Quotes the BriefingCache rule from spec
+[`2026-05-10-llm-providers-and-per-arm-models-design.md`](../superpowers/specs/2026-05-10-llm-providers-and-per-arm-models-design.md) §3.5.
 
 **Right pane — Live preview**:
 
