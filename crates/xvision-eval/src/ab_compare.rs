@@ -66,13 +66,49 @@ pub fn parse_arm_spec(s: &str) -> anyhow::Result<ArmSpec> {
     let head = parts.next().unwrap_or("");
     let rest = parts.next().unwrap_or("");
     match head {
-        "trader_arm" => Ok(ArmSpec {
-            name: "trader_arm".into(),
-            kind: ArmKind::Trader {
-                intern: None,
-                trader: None,
-            },
-        }),
+        "trader_arm" => {
+            let kv = parse_kv(rest);
+            const ALLOWED: &[&str] = &["intern", "trader", "intern_model", "trader_model"];
+            for k in kv.keys() {
+                if !ALLOWED.contains(&k.as_str()) {
+                    return Err(anyhow!("unknown key `{k}` in trader_arm spec"));
+                }
+            }
+            if kv.contains_key("intern") && kv.contains_key("intern_model") {
+                return Err(anyhow!(
+                    "`intern=` and `intern_model=` are mutually exclusive on trader_arm"
+                ));
+            }
+            if kv.contains_key("trader") && kv.contains_key("trader_model") {
+                return Err(anyhow!(
+                    "`trader=` and `trader_model=` are mutually exclusive on trader_arm"
+                ));
+            }
+            // Empty-provider trick (`SlotRef { provider: "", model: ... }`) is
+            // the marker for "shorthand — fill provider from CLI flag default at
+            // ProviderRegistry resolve time". Only produced by intern_model= /
+            // trader_model= shorthand, only consumed by Phase 3's resolver.
+            let intern = match (kv.get("intern"), kv.get("intern_model")) {
+                (Some(slot), _) => Some(
+                    slot.parse::<SlotRef>()
+                        .map_err(|e| anyhow!("intern slot ref: {e}"))?,
+                ),
+                (_, Some(model)) => Some(SlotRef::new("", model.clone())),
+                _ => None,
+            };
+            let trader = match (kv.get("trader"), kv.get("trader_model")) {
+                (Some(slot), _) => Some(
+                    slot.parse::<SlotRef>()
+                        .map_err(|e| anyhow!("trader slot ref: {e}"))?,
+                ),
+                (_, Some(model)) => Some(SlotRef::new("", model.clone())),
+                _ => None,
+            };
+            Ok(ArmSpec {
+                name: "trader_arm".into(),
+                kind: ArmKind::Trader { intern, trader },
+            })
+        }
         "buy_and_hold" => Ok(ArmSpec {
             name: "buy_and_hold".into(),
             kind: ArmKind::BuyAndHold,
@@ -234,6 +270,76 @@ mod tests {
             }
             _ => panic!("wrong variant"),
         }
+    }
+
+    #[test]
+    fn parses_trader_arm_with_intern_slot() {
+        let a = parse_arm_spec("trader_arm:intern=anthropic/claude-opus-4-7").unwrap();
+        match a.kind {
+            ArmKind::Trader { intern, trader } => {
+                let s = intern.expect("intern slot must be present");
+                assert_eq!(s.provider, "anthropic");
+                assert_eq!(s.model, "claude-opus-4-7");
+                assert!(trader.is_none());
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn parses_trader_arm_with_trader_slot_only() {
+        let a = parse_arm_spec("trader_arm:trader=openai/gpt-4o").unwrap();
+        match a.kind {
+            ArmKind::Trader { intern, trader } => {
+                assert!(intern.is_none());
+                let s = trader.expect("trader slot must be present");
+                assert_eq!(s.provider, "openai");
+                assert_eq!(s.model, "gpt-4o");
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn parses_trader_arm_with_both_slots() {
+        let a = parse_arm_spec(
+            "trader_arm:intern=anthropic/claude-haiku-4-5:trader=openai/gpt-4o",
+        )
+        .unwrap();
+        match a.kind {
+            ArmKind::Trader { intern, trader } => {
+                assert_eq!(intern.unwrap().model, "claude-haiku-4-5");
+                assert_eq!(trader.unwrap().model, "gpt-4o");
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn parses_trader_model_shorthand() {
+        let a = parse_arm_spec("trader_arm:trader_model=gpt-4o-mini").unwrap();
+        match a.kind {
+            ArmKind::Trader { intern, trader } => {
+                assert!(intern.is_none());
+                let s = trader.expect("trader slot must be present");
+                assert_eq!(s.provider, "");
+                assert_eq!(s.model, "gpt-4o-mini");
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn rejects_intern_and_intern_model_together() {
+        let err =
+            parse_arm_spec("trader_arm:intern=anthropic/x:intern_model=y").unwrap_err();
+        assert!(format!("{err}").contains("mutually exclusive"));
+    }
+
+    #[test]
+    fn rejects_trader_arm_with_unknown_kv() {
+        let err = parse_arm_spec("trader_arm:bogus=x").unwrap_err();
+        assert!(format!("{err}").contains("unknown key"));
     }
 
     #[test]
