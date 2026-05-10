@@ -1,6 +1,8 @@
 //! `xvn dashboard serve` — boot the embedded SPA + axum API on localhost.
 
+use std::env;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 
 use anyhow::Context;
 use clap::{Args, Subcommand};
@@ -22,6 +24,9 @@ pub struct ServeArgs {
     /// Bind address. Defaults to localhost:8788.
     #[arg(long, default_value = "127.0.0.1:8788")]
     pub bind: String,
+    /// Override the XVN home dir (defaults to $XVN_HOME or ~/.xvn).
+    #[arg(long)]
+    pub home: Option<PathBuf>,
 }
 
 pub async fn run(cmd: DashboardCmd) -> anyhow::Result<()> {
@@ -31,7 +36,20 @@ pub async fn run(cmd: DashboardCmd) -> anyhow::Result<()> {
                 .bind
                 .parse()
                 .with_context(|| format!("invalid --bind address: {}", args.bind))?;
-            xvision_dashboard::serve(addr).await
+            let home = resolve_home(args.home)?;
+            let state = xvision_dashboard::AppState::new(home).await?;
+            xvision_dashboard::serve(addr, state).await
         }
     }
+}
+
+fn resolve_home(flag: Option<PathBuf>) -> anyhow::Result<PathBuf> {
+    if let Some(p) = flag {
+        return Ok(p);
+    }
+    if let Ok(p) = env::var("XVN_HOME") {
+        return Ok(PathBuf::from(p));
+    }
+    let h = dirs::home_dir().context("$HOME not set")?;
+    Ok(h.join(".xvn"))
 }
