@@ -1,17 +1,31 @@
 //! Tool surface advertised over MCP.
 //!
-//! Every tool is stateless: the caller supplies the price / HLC series as
-//! parameters and we dispatch into `xvision-data`. NaN positions in the
-//! output mark indicator warmup and travel through the wire as JSON
-//! `null` (serde's default for `f64::NAN` is `null` when wrapped in a
-//! sentinel-aware type — we round-trip through `Option<f64>` for that).
+//! Two surfaces:
+//! - **Indicator tools** (`xvn_health`, `xvn_sma`, ...) — stateless: the
+//!   caller supplies the price / HLC series as parameters and we dispatch
+//!   into `xvision-data`. NaN positions in the output mark indicator warmup
+//!   and travel through the wire as JSON `null` (we round-trip through
+//!   `Option<f64>` for that).
+//! - **Authoring tools** (`xvn_list_templates`, `xvn_create_strategy`, ...)
+//!   — stateful: persist `StrategyBundle`s to `$XVN_HOME/strategies/`
+//!   via `xvision_engine::bundle::store::FilesystemStore`.
+
+use std::path::PathBuf;
 
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{tool, tool_router};
 use schemars::JsonSchema;
 use serde::Deserialize;
+use ulid::Ulid;
 
 use xvision_data as xvn;
+use xvision_engine::bundle::{
+    risk::{RiskConfig, RiskPreset},
+    slot::LLMSlot,
+    store::{BundleStore, FilesystemStore},
+    validate::validate_bundle,
+};
+use xvision_engine::templates::registry as template_registry;
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -85,16 +99,107 @@ pub struct FibReq {
 }
 
 // ---------------------------------------------------------------------------
+// authoring request shapes — one per stateful tool. Each verb takes a
+// strategy `id` (ULID); `xvn_list_templates` and `xvn_create_strategy`
+// don't need an existing one.
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CreateStrategyReq {
+    /// Template name. Use `xvn_list_templates` to enumerate options.
+    pub template: String,
+    /// Human-readable name (e.g., `btc-momentum-v1`).
+    pub name: String,
+    /// Optional `@handle` of the author. Defaults to `@anonymous`.
+    #[serde(default)]
+    pub creator: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct StrategyId {
+    /// ULID of the strategy draft.
+    pub id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct UpdateSlotReq {
+    pub id: String,
+    /// Slot to update: `regime` | `intern` | `trader`.
+    pub slot: String,
+    /// New system prompt for the slot.
+    #[serde(default)]
+    pub prompt: Option<String>,
+    /// Model requirement (e.g., `anthropic.claude-sonnet-4.6+`).
+    #[serde(default)]
+    pub model_requirement: Option<String>,
+    /// Tools the slot is allowed to call.
+    #[serde(default)]
+    pub allowed_tools: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SetMechanicalParamReq {
+    pub id: String,
+    /// Key inside `bundle.mechanical_params` (template-specific).
+    pub key: String,
+    /// New value (any JSON type the template accepts).
+    pub value: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SetRiskConfigReq {
+    pub id: String,
+    /// `conservative` | `balanced` | `aggressive`. Mutually exclusive with `explicit`.
+    #[serde(default)]
+    pub preset: Option<String>,
+    /// Full `RiskConfig`. Mutually exclusive with `preset`. Expected shape:
+    /// `{ risk_pct_per_trade: f64, max_concurrent_positions: u32,
+    ///    max_leverage: f64, stop_loss_atr_multiple: f64,
+    ///    daily_loss_kill_pct: f64 }`.
+    #[serde(default)]
+    pub explicit: Option<serde_json::Value>,
+}
+
+// ---------------------------------------------------------------------------
 // XvisionTools — the rmcp router.
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Default)]
-pub struct XvisionTools;
+pub struct XvisionTools {
+    /// Optional override for `$XVN_HOME` used by authoring tools (tests).
+    /// `None` → read `XVN_HOME` env var, falling back to `$HOME/.xvn`.
+    xvn_home: Option<PathBuf>,
+}
+
+fn resolve_xvn_home() -> PathBuf {
+    if let Ok(s) = std::env::var("XVN_HOME") {
+        return PathBuf::from(s);
+    }
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    PathBuf::from(home).join(".xvn")
+}
 
 #[tool_router(server_handler)]
 impl XvisionTools {
     pub fn new() -> Self {
-        Self
+        Self::default()
+    }
+
+    /// Test-only constructor that pins `$XVN_HOME` to a known directory.
+    /// Production callers use `XvisionTools::new()` and rely on the env var.
+    pub fn with_xvn_home(home: PathBuf) -> Self {
+        Self {
+            xvn_home: Some(home),
+        }
+    }
+
+    fn store(&self) -> FilesystemStore {
+        let root = self
+            .xvn_home
+            .clone()
+            .unwrap_or_else(resolve_xvn_home)
+            .join("strategies");
+        FilesystemStore::new(root)
     }
 
     /// Server health + version probe. Returns a JSON object with
@@ -201,5 +306,485 @@ impl XvisionTools {
                 }))
             }
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // authoring tools — operate on `$XVN_HOME/strategies/<id>.json` via
+    // xvision_engine's bundle store + template registry + validator.
+    // -----------------------------------------------------------------------
+
+    /// List strategy templates available to `xvn_create_strategy`. Returns an
+    /// array of `{ name, display_name, plain_summary }`.
+    #[tool(
+        description = "List the strategy templates available for xvn_create_strategy. Returns array of {name, display_name, plain_summary}."
+    )]
+    async fn xvn_list_templates(&self) -> Result<String, rmcp::ErrorData> {
+        let entries: Vec<_> = template_registry::list_template_names()
+            .iter()
+            .filter_map(|name| {
+                template_registry::get(name).map(|t| {
+                    serde_json::json!({
+                        "name": t.name(),
+                        "display_name": t.display_name(),
+                        "plain_summary": t.plain_summary(),
+                    })
+                })
+            })
+            .collect();
+        json_or_err(&entries)
+    }
+
+    /// Create a new strategy draft from a template. Persists to
+    /// `$XVN_HOME/strategies/<id>.json`. Returns `{ id }`.
+    #[tool(
+        description = "Create a new strategy draft from a template. Persists the bundle and returns { id } (ULID)."
+    )]
+    async fn xvn_create_strategy(
+        &self,
+        Parameters(req): Parameters<CreateStrategyReq>,
+    ) -> Result<String, rmcp::ErrorData> {
+        let tpl = template_registry::get(&req.template).ok_or_else(|| {
+            rmcp::ErrorData::invalid_params(
+                format!(
+                    "unknown template '{}' — try xvn_list_templates",
+                    req.template
+                ),
+                None,
+            )
+        })?;
+        let id = Ulid::new().to_string();
+        let creator = req.creator.unwrap_or_else(|| "@anonymous".to_string());
+        let draft = tpl.new_draft(id.clone(), req.name, creator);
+        self.store()
+            .save(&draft)
+            .await
+            .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))?;
+        json_or_err(&serde_json::json!({ "id": id }))
+    }
+
+    /// Get a strategy bundle by id. Returns the full `StrategyBundle` JSON.
+    #[tool(
+        description = "Get a strategy bundle by id. Returns the full StrategyBundle JSON."
+    )]
+    async fn xvn_get_strategy(
+        &self,
+        Parameters(req): Parameters<StrategyId>,
+    ) -> Result<String, rmcp::ErrorData> {
+        let bundle = self.store().load(&req.id).await.map_err(|e| {
+            rmcp::ErrorData::invalid_params(format!("load `{}`: {e}", req.id), None)
+        })?;
+        json_or_err(&bundle)
+    }
+
+    /// Update a slot on a strategy bundle. Only fields with non-null values
+    /// are mutated. Returns `{ id, updated: [...] }` listing which fields
+    /// changed.
+    #[tool(
+        description = "Update a slot on a strategy bundle. Only fields with non-null values are mutated. Returns { id, updated }."
+    )]
+    async fn xvn_update_slot(
+        &self,
+        Parameters(req): Parameters<UpdateSlotReq>,
+    ) -> Result<String, rmcp::ErrorData> {
+        let store = self.store();
+        let mut bundle = store.load(&req.id).await.map_err(|e| {
+            rmcp::ErrorData::invalid_params(format!("load `{}`: {e}", req.id), None)
+        })?;
+        let slot_field = match req.slot.as_str() {
+            "regime" => &mut bundle.regime_slot,
+            "intern" => &mut bundle.intern_slot,
+            "trader" => &mut bundle.trader_slot,
+            other => {
+                return Err(rmcp::ErrorData::invalid_params(
+                    format!(
+                        "unknown slot `{other}` — must be one of: regime, intern, trader"
+                    ),
+                    None,
+                ));
+            }
+        };
+        let slot = slot_field.get_or_insert_with(|| LLMSlot {
+            role: req.slot.clone(),
+            prompt: String::new(),
+            model_requirement: String::new(),
+            allowed_tools: vec![],
+        });
+        let mut updated: Vec<&'static str> = Vec::new();
+        if let Some(p) = req.prompt {
+            slot.prompt = p;
+            updated.push("prompt");
+        }
+        if let Some(m) = req.model_requirement {
+            slot.model_requirement = m;
+            updated.push("model_requirement");
+        }
+        if let Some(t) = req.allowed_tools {
+            slot.allowed_tools = t;
+            updated.push("allowed_tools");
+        }
+        if updated.is_empty() {
+            return Err(rmcp::ErrorData::invalid_params(
+                "no fields to update — supply at least one of prompt / model_requirement / allowed_tools".to_string(),
+                None,
+            ));
+        }
+        store
+            .save(&bundle)
+            .await
+            .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))?;
+        json_or_err(&serde_json::json!({ "id": req.id, "updated": updated }))
+    }
+
+    /// Set a key inside `bundle.mechanical_params`. Templates document
+    /// which keys they accept. Returns `{ id, key }`.
+    #[tool(
+        description = "Set a key inside bundle.mechanical_params. Templates document which keys they accept. Returns { id, key }."
+    )]
+    async fn xvn_set_mechanical_param(
+        &self,
+        Parameters(req): Parameters<SetMechanicalParamReq>,
+    ) -> Result<String, rmcp::ErrorData> {
+        let store = self.store();
+        let mut bundle = store.load(&req.id).await.map_err(|e| {
+            rmcp::ErrorData::invalid_params(format!("load `{}`: {e}", req.id), None)
+        })?;
+        let map = bundle.mechanical_params.as_object_mut().ok_or_else(|| {
+            rmcp::ErrorData::internal_error(
+                "mechanical_params is not a JSON object — template invariant violation".to_string(),
+                None,
+            )
+        })?;
+        map.insert(req.key.clone(), req.value);
+        store
+            .save(&bundle)
+            .await
+            .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))?;
+        json_or_err(&serde_json::json!({ "id": req.id, "key": req.key }))
+    }
+
+    /// Set the risk config on a strategy bundle. Provide either `preset`
+    /// (one of `conservative` / `balanced` / `aggressive`) or `explicit`
+    /// (a full `RiskConfig`). Mutually exclusive. Returns `{ id, applied }`.
+    #[tool(
+        description = "Set the risk config on a strategy bundle. Supply either preset (conservative/balanced/aggressive) or explicit (full RiskConfig). Mutually exclusive. Returns { id, applied }."
+    )]
+    async fn xvn_set_risk_config(
+        &self,
+        Parameters(req): Parameters<SetRiskConfigReq>,
+    ) -> Result<String, rmcp::ErrorData> {
+        let (config, applied) = match (req.preset, req.explicit) {
+            (Some(p), None) => {
+                let preset = match p.as_str() {
+                    "conservative" => RiskPreset::Conservative,
+                    "balanced" => RiskPreset::Balanced,
+                    "aggressive" => RiskPreset::Aggressive,
+                    other => {
+                        return Err(rmcp::ErrorData::invalid_params(
+                            format!(
+                                "unknown preset `{other}` — must be one of: conservative, balanced, aggressive"
+                            ),
+                            None,
+                        ));
+                    }
+                };
+                (preset.expand(), "preset")
+            }
+            (None, Some(value)) => {
+                let cfg: RiskConfig = serde_json::from_value(value).map_err(|e| {
+                    rmcp::ErrorData::invalid_params(
+                        format!("explicit risk config: {e}"),
+                        None,
+                    )
+                })?;
+                (cfg, "explicit")
+            }
+            (Some(_), Some(_)) => {
+                return Err(rmcp::ErrorData::invalid_params(
+                    "preset and explicit are mutually exclusive".to_string(),
+                    None,
+                ));
+            }
+            (None, None) => {
+                return Err(rmcp::ErrorData::invalid_params(
+                    "supply either preset or explicit".to_string(),
+                    None,
+                ));
+            }
+        };
+        let store = self.store();
+        let mut bundle = store.load(&req.id).await.map_err(|e| {
+            rmcp::ErrorData::invalid_params(format!("load `{}`: {e}", req.id), None)
+        })?;
+        bundle.risk = config;
+        store
+            .save(&bundle)
+            .await
+            .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))?;
+        json_or_err(&serde_json::json!({ "id": req.id, "applied": applied }))
+    }
+
+    /// Validate a strategy draft against bundle invariants (trader slot
+    /// required, asset universe non-empty, risk in range, declared tools
+    /// granted by some slot, etc.). Returns `{ id, ok, errors }` —
+    /// `errors` is empty when `ok` is true.
+    #[tool(
+        description = "Validate a strategy draft. Returns { id, ok, errors } — errors is a flat string list, empty when ok=true."
+    )]
+    async fn xvn_validate_draft(
+        &self,
+        Parameters(req): Parameters<StrategyId>,
+    ) -> Result<String, rmcp::ErrorData> {
+        let bundle = self.store().load(&req.id).await.map_err(|e| {
+            rmcp::ErrorData::invalid_params(format!("load `{}`: {e}", req.id), None)
+        })?;
+        let (ok, errors) = match validate_bundle(&bundle) {
+            Ok(()) => (true, vec![]),
+            Err(e) => (false, vec![e.to_string()]),
+        };
+        json_or_err(&serde_json::json!({ "id": req.id, "ok": ok, "errors": errors }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tools_with_tmp() -> (XvisionTools, tempfile::TempDir) {
+        let td = tempfile::tempdir().unwrap();
+        (XvisionTools::with_xvn_home(td.path().to_path_buf()), td)
+    }
+
+    fn parsed(s: &str) -> serde_json::Value {
+        serde_json::from_str(s).unwrap()
+    }
+
+    fn id_of(s: &str) -> String {
+        parsed(s)["id"].as_str().unwrap().to_string()
+    }
+
+    #[tokio::test]
+    async fn list_templates_returns_known_set() {
+        let tools = XvisionTools::default();
+        let s = tools.xvn_list_templates().await.unwrap();
+        let v = parsed(&s);
+        let names: Vec<_> = v
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap())
+            .collect();
+        assert!(names.contains(&"trend_follower"), "names: {names:?}");
+        assert!(names.contains(&"breakout"));
+        assert!(names.contains(&"mean_reversion"));
+    }
+
+    #[tokio::test]
+    async fn create_then_get_round_trips() {
+        let (tools, _td) = tools_with_tmp();
+        let s = tools
+            .xvn_create_strategy(Parameters(CreateStrategyReq {
+                template: "trend_follower".into(),
+                name: "btc-mom-1".into(),
+                creator: Some("@test".into()),
+            }))
+            .await
+            .unwrap();
+        let id = id_of(&s);
+
+        let g = tools
+            .xvn_get_strategy(Parameters(StrategyId { id: id.clone() }))
+            .await
+            .unwrap();
+        let bundle = parsed(&g);
+        assert_eq!(bundle["manifest"]["id"], id);
+        assert_eq!(bundle["manifest"]["template"], "trend_follower");
+    }
+
+    #[tokio::test]
+    async fn create_rejects_unknown_template() {
+        let (tools, _td) = tools_with_tmp();
+        let err = tools
+            .xvn_create_strategy(Parameters(CreateStrategyReq {
+                template: "nope".into(),
+                name: "x".into(),
+                creator: None,
+            }))
+            .await
+            .unwrap_err();
+        let msg = err.to_string().to_lowercase();
+        assert!(msg.contains("unknown template"), "msg: {msg}");
+    }
+
+    #[tokio::test]
+    async fn update_slot_mutates_only_provided_fields() {
+        let (tools, _td) = tools_with_tmp();
+        let s = tools
+            .xvn_create_strategy(Parameters(CreateStrategyReq {
+                template: "trend_follower".into(),
+                name: "x".into(),
+                creator: None,
+            }))
+            .await
+            .unwrap();
+        let id = id_of(&s);
+
+        let upd = tools
+            .xvn_update_slot(Parameters(UpdateSlotReq {
+                id: id.clone(),
+                slot: "trader".into(),
+                prompt: Some("New prompt".into()),
+                model_requirement: None,
+                allowed_tools: None,
+            }))
+            .await
+            .unwrap();
+        let v = parsed(&upd);
+        assert_eq!(v["updated"], serde_json::json!(["prompt"]));
+
+        let g = tools
+            .xvn_get_strategy(Parameters(StrategyId { id }))
+            .await
+            .unwrap();
+        let bundle = parsed(&g);
+        assert_eq!(bundle["trader_slot"]["prompt"], "New prompt");
+    }
+
+    #[tokio::test]
+    async fn update_slot_rejects_unknown_slot() {
+        let (tools, _td) = tools_with_tmp();
+        let s = tools
+            .xvn_create_strategy(Parameters(CreateStrategyReq {
+                template: "trend_follower".into(),
+                name: "x".into(),
+                creator: None,
+            }))
+            .await
+            .unwrap();
+        let id = id_of(&s);
+        let err = tools
+            .xvn_update_slot(Parameters(UpdateSlotReq {
+                id,
+                slot: "nope".into(),
+                prompt: Some("p".into()),
+                model_requirement: None,
+                allowed_tools: None,
+            }))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("unknown slot"));
+    }
+
+    #[tokio::test]
+    async fn set_mechanical_param_round_trips() {
+        let (tools, _td) = tools_with_tmp();
+        let s = tools
+            .xvn_create_strategy(Parameters(CreateStrategyReq {
+                template: "trend_follower".into(),
+                name: "x".into(),
+                creator: None,
+            }))
+            .await
+            .unwrap();
+        let id = id_of(&s);
+
+        tools
+            .xvn_set_mechanical_param(Parameters(SetMechanicalParamReq {
+                id: id.clone(),
+                key: "ema_fast".into(),
+                value: serde_json::json!(8),
+            }))
+            .await
+            .unwrap();
+
+        let g = tools
+            .xvn_get_strategy(Parameters(StrategyId { id }))
+            .await
+            .unwrap();
+        let bundle = parsed(&g);
+        assert_eq!(bundle["mechanical_params"]["ema_fast"], 8);
+    }
+
+    #[tokio::test]
+    async fn set_risk_config_preset_balanced_applies_known_values() {
+        let (tools, _td) = tools_with_tmp();
+        let s = tools
+            .xvn_create_strategy(Parameters(CreateStrategyReq {
+                template: "trend_follower".into(),
+                name: "x".into(),
+                creator: None,
+            }))
+            .await
+            .unwrap();
+        let id = id_of(&s);
+
+        let r = tools
+            .xvn_set_risk_config(Parameters(SetRiskConfigReq {
+                id: id.clone(),
+                preset: Some("balanced".into()),
+                explicit: None,
+            }))
+            .await
+            .unwrap();
+        assert_eq!(parsed(&r)["applied"], "preset");
+
+        let g = tools
+            .xvn_get_strategy(Parameters(StrategyId { id }))
+            .await
+            .unwrap();
+        let bundle = parsed(&g);
+        assert_eq!(bundle["risk"]["risk_pct_per_trade"], 0.015);
+        assert_eq!(bundle["risk"]["max_concurrent_positions"], 2);
+    }
+
+    #[tokio::test]
+    async fn set_risk_config_rejects_both_supplied() {
+        let (tools, _td) = tools_with_tmp();
+        let s = tools
+            .xvn_create_strategy(Parameters(CreateStrategyReq {
+                template: "trend_follower".into(),
+                name: "x".into(),
+                creator: None,
+            }))
+            .await
+            .unwrap();
+        let id = id_of(&s);
+
+        let err = tools
+            .xvn_set_risk_config(Parameters(SetRiskConfigReq {
+                id,
+                preset: Some("balanced".into()),
+                explicit: Some(serde_json::json!({
+                    "risk_pct_per_trade": 0.01,
+                    "max_concurrent_positions": 1,
+                    "max_leverage": 1.0,
+                    "stop_loss_atr_multiple": 2.0,
+                    "daily_loss_kill_pct": 0.05,
+                })),
+            }))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("mutually exclusive"));
+    }
+
+    #[tokio::test]
+    async fn validate_draft_succeeds_for_fresh_template() {
+        let (tools, _td) = tools_with_tmp();
+        let s = tools
+            .xvn_create_strategy(Parameters(CreateStrategyReq {
+                template: "trend_follower".into(),
+                name: "x".into(),
+                creator: None,
+            }))
+            .await
+            .unwrap();
+        let id = id_of(&s);
+
+        let v = tools
+            .xvn_validate_draft(Parameters(StrategyId { id }))
+            .await
+            .unwrap();
+        let r = parsed(&v);
+        assert_eq!(r["ok"], true);
+        assert_eq!(r["errors"], serde_json::json!([]));
     }
 }
