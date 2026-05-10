@@ -62,15 +62,27 @@ impl Store {
     }
 
     pub async fn migrate(&self) -> Result<(), StoreError> {
-        // Single migration file shipped with the crate. When the schema settles
-        // we can switch to sqlx_migrate macro that bundles the dir.
-        let sql = include_str!("../migrations/0001_init.sql");
-        sqlx::raw_sql(sql).execute(&self.pool).await?;
+        // sqlx::migrate! discovers all .sql files in the migrations directory at
+        // compile time, applies them in lexical order, and tracks applied versions
+        // in the _sqlx_migrations table — so re-running is idempotent.
+        sqlx::migrate!("./migrations").run(&self.pool).await?;
         Ok(())
     }
 
     pub fn pool(&self) -> &SqlitePool {
         &self.pool
+    }
+
+    /// Row counts for the named tables, in input order. Missing tables surface
+    /// as the underlying `sqlx::Error`. Use for diagnostic CLI output.
+    pub async fn counts(&self, tables: &[&str]) -> Result<Vec<(String, i64)>, StoreError> {
+        let mut out = Vec::with_capacity(tables.len());
+        for t in tables {
+            let q = format!("SELECT COUNT(*) FROM {t}");
+            let n: i64 = sqlx::query_scalar(&q).fetch_one(&self.pool).await?;
+            out.push(((*t).to_string(), n));
+        }
+        Ok(out)
     }
 
     // --- setups ----------------------------------------------------------
