@@ -5,10 +5,14 @@
 //! as one SSE `data:` line containing the event JSON. Streams keep-alive
 //! comments every 15s so reverse proxies don't time the connection out.
 //!
+//! This route is the legacy one-shot wizard (`/setup` page). Each request
+//! creates a fresh `Workspace`-scoped `chat_sessions` row; the WizardLoop
+//! persists everything to it. For the persistent rail (multi-turn,
+//! cross-route) see `routes/chat_rail.rs`.
+//!
 //! Reads the Anthropic API key from `ANTHROPIC_API_KEY`. Missing key →
 //! 500 with `{"code":"internal","message":"..."}`. Future plan-#7
-//! work will switch this to the per-arm provider registry; for now the
-//! wizard always uses the workspace Anthropic key.
+//! work will switch this to the per-arm provider registry.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -20,11 +24,12 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::StreamExt;
 
-use xvision_engine::agent::llm::AnthropicDispatch;
+use xvision_engine::agent::llm::{AnthropicDispatch, LlmDispatch};
+use xvision_engine::chat_session::{ChatSessionStore, ContextScope};
 
 use crate::error::DashboardError;
 use crate::state::AppState;
-use crate::wizard_loop::{ChatRequest, WizardEvent, WizardLoop};
+use crate::wizard_loop::{WizardEvent, WizardLoop};
 
 #[derive(Debug, Deserialize)]
 pub struct ChatBody {
@@ -50,20 +55,46 @@ pub async fn chat(
         ))
     })?;
 
+    // One-shot route: create a fresh Workspace-scoped session at request
+    // time. The persistent rail uses POST /api/chat-rail/sessions instead.
+    let session_id =
+        ChatSessionStore::create_session(&state.pool, &ContextScope::Workspace)
+            .await
+            .map_err(DashboardError::Internal)?;
+
     // Bounded channel: the wizard's tool-use loop yields events in
     // bursts (token-then-tool-then-result), so 16 absorbs a full
     // turn without backpressure surprising the producer task.
     let (tx, rx) = mpsc::channel::<WizardEvent>(16);
 
-    let dispatch = Arc::new(AnthropicDispatch::new(api_key));
-    let req = ChatRequest {
-        message: body.message,
-        model: body.model,
-    };
+    let dispatch: Arc<dyn LlmDispatch> = Arc::new(AnthropicDispatch::new(api_key));
     let xvn_home = state.xvn_home.clone();
+    let pool = state.pool.clone();
+    let model = body.model;
+    let message = body.message;
 
     tokio::spawn(async move {
-        let mut wl = WizardLoop::new(xvn_home, dispatch, req);
+        let mut wl = match WizardLoop::new(
+            xvn_home,
+            dispatch,
+            model,
+            pool,
+            session_id,
+            ContextScope::Workspace,
+            message,
+        )
+        .await
+        {
+            Ok(w) => w,
+            Err(e) => {
+                let _ = tx
+                    .send(WizardEvent::Error {
+                        message: e.to_string(),
+                    })
+                    .await;
+                return;
+            }
+        };
         while let Some(ev) = wl.next_event().await {
             if tx.send(ev).await.is_err() {
                 // Client disconnected — drop the WizardLoop and exit.

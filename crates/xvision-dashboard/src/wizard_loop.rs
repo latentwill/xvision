@@ -1,31 +1,35 @@
 //! Server-side LLM agent that drives the strategy authoring loop. The user
 //! sends one chat message; this struct repeatedly calls the LLM with the
 //! seven authoring verbs as `ToolDefinition`s, routes any `ToolUse` blocks
-//! the model emits to `xvision_engine::authoring`, appends the
-//! `ToolResult`s to the conversation, and re-calls until the model
-//! responds with a text-only `EndTurn`.
+//! the model emits to `xvision_engine::authoring`, persists every turn
+//! (user / assistant / tool_result) to the `chat_sessions` store, and
+//! re-calls until the model responds with a text-only `EndTurn`.
 //!
-//! Plan 2d Phase 2D.B Task 6. Stacks on Plan 2a Phase 2A.B (PR #31; the
-//! seven authoring verbs in the engine module) and Phase 2A.C T10 (PR
-//! #33; the multi-turn `Message`/`ContentBlock`/`ToolDefinition` shape).
+//! Plan 2d Phase 2D.B Task 6 + Plan #11 Phase B Task 3 (chat-rail
+//! persistence). Stacks on Plan 2a Phase 2A.B (PR #31; the seven
+//! authoring verbs in the engine module), Phase 2A.C T10 (PR #33; the
+//! multi-turn `Message`/`ContentBlock`/`ToolDefinition` shape), and
+//! Plan #11 Phase A (PR #44; `ChatSessionStore` + `ContextScope`).
 //!
-//! Deliberately surface-agnostic at this layer — the SSE route in
-//! `routes::wizard` (follow-up) wraps `WizardEvent`s into an
+//! Deliberately surface-agnostic at this layer — the SSE routes in
+//! `routes::wizard` and `routes::chat_rail` wrap `WizardEvent`s into an
 //! `event-stream` body. Tests drive the loop directly with a
-//! `MockDispatch::sequence(...)`.
+//! `MockDispatch::sequence(...)` against a tempdir-backed sqlite.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
+use sqlx::SqlitePool;
 
 use xvision_engine::agent::llm::{
     ContentBlock, LlmDispatch, LlmRequest, LlmResponse, Message, StopReason, ToolDefinition,
 };
 use xvision_engine::authoring;
 use xvision_engine::bundle::store::FilesystemStore;
+use xvision_engine::chat_session::{ChatSessionStore, ContextScope};
 
-const WIZARD_SYSTEM_PROMPT: &str = include_str!("../prompts/wizard.md");
+const WIZARD_SYSTEM_PROMPT_BASE: &str = include_str!("../prompts/wizard.md");
 
 /// Cap on tool-use → tool-result iterations per `next_event` call. Prevents
 /// a misbehaving model from looping forever; v1 wizards never need more
@@ -58,19 +62,13 @@ pub enum WizardEvent {
     Error { message: String },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChatRequest {
-    /// User's chat message for this turn.
-    pub message: String,
-    /// Anthropic model id (e.g., `claude-sonnet-4-6`).
-    pub model: String,
-}
-
 pub struct WizardLoop {
     xvn_home: PathBuf,
     dispatch: Arc<dyn LlmDispatch>,
     model: String,
-    messages: Vec<Message>,
+    pool: SqlitePool,
+    session_id: String,
+    scope: ContextScope,
     /// Tracked across iterations: the most recent strategy id mentioned in
     /// a tool-call/-result. Used to populate `Done.draft_id`.
     last_draft_id: Option<String>,
@@ -80,20 +78,34 @@ pub struct WizardLoop {
 }
 
 impl WizardLoop {
-    pub fn new(xvn_home: PathBuf, dispatch: Arc<dyn LlmDispatch>, req: ChatRequest) -> Self {
-        let messages = vec![Message {
-            role: "user".into(),
-            content: vec![ContentBlock::Text { text: req.message }],
-        }];
-        Self {
+    /// Construct a session-aware wizard loop. The user's `new_message` is
+    /// persisted as a `user` text block in the chat session store BEFORE
+    /// any LLM call so even a dispatch failure leaves the message in
+    /// history. Subsequent LLM turns are reconstructed from the store, not
+    /// in-memory state — that's the load-bearing change for the rail
+    /// (Plan #11): a session can pause and resume across HTTP requests.
+    pub async fn new(
+        xvn_home: PathBuf,
+        dispatch: Arc<dyn LlmDispatch>,
+        model: String,
+        pool: SqlitePool,
+        session_id: String,
+        scope: ContextScope,
+        new_message: String,
+    ) -> anyhow::Result<Self> {
+        let user_block = serde_json::json!({"type": "text", "text": new_message});
+        ChatSessionStore::append(&pool, &session_id, "user", &[user_block]).await?;
+        Ok(Self {
             xvn_home,
             dispatch,
-            model: req.model,
-            messages,
+            model,
+            pool,
+            session_id,
+            scope,
             last_draft_id: None,
             pending: vec![],
             is_done: false,
-        }
+        })
     }
 
     /// Pop one event. The caller streams these to the client one-by-one
@@ -117,28 +129,55 @@ impl WizardLoop {
         self.pending.pop()
     }
 
+    fn system_prompt(&self) -> String {
+        // Plan #11 Phase B Task 3 Step 2: inject scope header so the model
+        // knows what the user is asking about (workspace, a specific run,
+        // a draft, etc.). Tool calls remain available for deeper info.
+        format!(
+            "{base}\n\n## Current context\n{header}\n",
+            base = WIZARD_SYSTEM_PROMPT_BASE,
+            header = self.scope.header_label()
+        )
+    }
+
     async fn run_one_turn(&mut self) -> anyhow::Result<()> {
         for _ in 0..MAX_TOOL_LOOP_ITERATIONS {
+            let messages = self.load_messages_from_store().await?;
             let req = LlmRequest {
                 model: self.model.clone(),
-                system_prompt: WIZARD_SYSTEM_PROMPT.into(),
-                messages: self.messages.clone(),
+                system_prompt: self.system_prompt(),
+                messages,
                 max_tokens: 1500,
                 tools: wizard_tool_defs(),
             };
             let resp: LlmResponse = self.dispatch.complete(req).await?;
 
+            // Persist the assistant turn — text + any tool_use blocks all
+            // go to the same row. The store keeps the same JSON shape
+            // ContentBlock derives, so reads round-trip back to Message.
+            let assistant_blocks: Vec<serde_json::Value> = resp
+                .content
+                .iter()
+                .map(serde_json::to_value)
+                .collect::<Result<Vec<_>, _>>()?;
+            ChatSessionStore::append(
+                &self.pool,
+                &self.session_id,
+                "assistant",
+                &assistant_blocks,
+            )
+            .await?;
+
             // Emit Token events for any text blocks the model produced.
             for block in &resp.content {
                 if let ContentBlock::Text { text } = block {
                     if !text.is_empty() {
-                        self.pending.push(WizardEvent::Token { text: text.clone() });
+                        self.pending
+                            .push(WizardEvent::Token { text: text.clone() });
                     }
                 }
             }
 
-            // Collect tool-use calls. If there are none, the loop ends:
-            // emit Done and return.
             let tool_uses: Vec<(String, String, serde_json::Value)> = resp
                 .content
                 .iter()
@@ -158,16 +197,11 @@ impl WizardLoop {
                 return Ok(());
             }
 
-            // Append the assistant turn (with the tool_use blocks) so the
-            // next call sees its own request.
-            self.messages.push(Message {
-                role: "assistant".into(),
-                content: resp.content.clone(),
-            });
-
             // Run each tool, build a tool_result block per call, emit
-            // ToolCall + ToolResult WizardEvents.
-            let mut tool_results: Vec<ContentBlock> = Vec::with_capacity(tool_uses.len());
+            // ToolCall + ToolResult WizardEvents, persist all results as
+            // one user turn.
+            let mut tool_result_blocks: Vec<serde_json::Value> =
+                Vec::with_capacity(tool_uses.len());
             for (id, name, input) in tool_uses {
                 self.pending.push(WizardEvent::ToolCall {
                     tool: name.clone(),
@@ -183,23 +217,24 @@ impl WizardLoop {
                     tool: name.clone(),
                     result: result_value.clone(),
                 });
-                tool_results.push(ContentBlock::ToolResult {
-                    tool_use_id: id,
-                    content: result_value.to_string(),
-                });
+                tool_result_blocks.push(serde_json::json!({
+                    "type": "tool_result",
+                    "tool_use_id": id,
+                    "content": result_value.to_string(),
+                }));
             }
-
-            // Append the user turn carrying the tool_result blocks for the
-            // next iteration.
-            self.messages.push(Message {
-                role: "user".into(),
-                content: tool_results,
-            });
+            ChatSessionStore::append(
+                &self.pool,
+                &self.session_id,
+                "user",
+                &tool_result_blocks,
+            )
+            .await?;
 
             if !matches!(resp.stop_reason, StopReason::ToolUse) {
                 // Defensive: the model said EndTurn/MaxTokens but emitted
                 // tool_uses. Anthropic shouldn't do this, but if it does
-                // we've already enqueued the tool_results; finish the turn.
+                // we've already persisted the tool_results; finish the turn.
                 self.is_done = true;
                 self.pending.push(WizardEvent::Done {
                     draft_id: self.last_draft_id.clone(),
@@ -211,6 +246,28 @@ impl WizardLoop {
             "wizard tool-use loop exceeded {MAX_TOOL_LOOP_ITERATIONS} iterations \
              — model is stuck calling tools without responding"
         );
+    }
+
+    /// Reconstruct the message log from the persisted store. Each
+    /// `ChatMessage.content_blocks` is a `Vec<serde_json::Value>` whose
+    /// shape matches `ContentBlock`'s tagged-union derive — round-trip
+    /// via `from_value`.
+    async fn load_messages_from_store(&self) -> anyhow::Result<Vec<Message>> {
+        let history =
+            ChatSessionStore::load_history(&self.pool, &self.session_id).await?;
+        let mut out = Vec::with_capacity(history.len());
+        for cm in history {
+            let mut blocks = Vec::with_capacity(cm.content_blocks.len());
+            for v in cm.content_blocks {
+                let block: ContentBlock = serde_json::from_value(v)?;
+                blocks.push(block);
+            }
+            out.push(Message {
+                role: cm.role,
+                content: blocks,
+            });
+        }
+        Ok(out)
     }
 
     fn maybe_track_draft_id(&mut self, tool: &str, result: &serde_json::Value) {
@@ -372,19 +429,45 @@ fn wizard_tool_defs() -> Vec<ToolDefinition> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xvision_engine::agent::llm::{LlmResponse, MockDispatch};
+    use sqlx::sqlite::SqliteConnectOptions;
+    use xvision_engine::agent::llm::MockDispatch;
 
-    fn loop_with_tmp(dispatch: Arc<dyn LlmDispatch>, msg: &str) -> (WizardLoop, tempfile::TempDir) {
+    /// Build a real sqlite-backed pool against a tempdir + run engine
+    /// migrations. Each test gets its own DB so concurrent runs don't
+    /// step on each other's chat sessions.
+    async fn fresh_pool() -> (SqlitePool, tempfile::TempDir) {
         let td = tempfile::tempdir().unwrap();
+        let path = td.path().join("xvn.db");
+        let opts = SqliteConnectOptions::new()
+            .filename(&path)
+            .create_if_missing(true);
+        let pool = SqlitePool::connect_with(opts).await.unwrap();
+        sqlx::migrate!("../xvision-engine/migrations")
+            .run(&pool)
+            .await
+            .unwrap();
+        (pool, td)
+    }
+
+    async fn loop_with_session(
+        dispatch: Arc<dyn LlmDispatch>,
+        msg: &str,
+        scope: ContextScope,
+    ) -> (WizardLoop, SqlitePool, tempfile::TempDir, String) {
+        let (pool, td) = fresh_pool().await;
+        let session_id = ChatSessionStore::create_session(&pool, &scope).await.unwrap();
         let wl = WizardLoop::new(
             td.path().to_path_buf(),
             dispatch,
-            ChatRequest {
-                message: msg.into(),
-                model: "claude-sonnet-4-6".into(),
-            },
-        );
-        (wl, td)
+            "claude-sonnet-4-6".into(),
+            pool.clone(),
+            session_id.clone(),
+            scope,
+            msg.into(),
+        )
+        .await
+        .unwrap();
+        (wl, pool, td, session_id)
     }
 
     async fn drain(wl: &mut WizardLoop) -> Vec<WizardEvent> {
@@ -398,7 +481,8 @@ mod tests {
     #[tokio::test]
     async fn text_only_response_emits_token_then_done() {
         let mock = Arc::new(MockDispatch::echo("Sure — which template?"));
-        let (mut wl, _td) = loop_with_tmp(mock, "help me build a strategy");
+        let (mut wl, _pool, _td, _sid) =
+            loop_with_session(mock, "help me build a strategy", ContextScope::Workspace).await;
         let events = drain(&mut wl).await;
         assert_eq!(events.len(), 2, "events: {events:?}");
         assert!(matches!(&events[0], WizardEvent::Token { text } if text.contains("which template")));
@@ -407,7 +491,6 @@ mod tests {
 
     #[tokio::test]
     async fn tool_use_runs_authoring_verb_and_appends_text() {
-        // First turn: model wants to list templates. Second turn: text reply.
         let mock = Arc::new(MockDispatch::sequence(vec![
             MockDispatch::tool_use("tu_1", "list_templates", serde_json::json!({})),
             LlmResponse {
@@ -419,10 +502,9 @@ mod tests {
                 output_tokens: 5,
             },
         ]));
-        let (mut wl, _td) = loop_with_tmp(mock, "what can i build");
+        let (mut wl, _pool, _td, _sid) =
+            loop_with_session(mock, "what can i build", ContextScope::Workspace).await;
         let events = drain(&mut wl).await;
-
-        // Sequence: ToolCall → ToolResult → Token → Done.
         assert!(matches!(&events[0], WizardEvent::ToolCall { tool, .. } if tool == "list_templates"));
         match &events[1] {
             WizardEvent::ToolResult { tool, result } => {
@@ -452,10 +534,13 @@ mod tests {
                 output_tokens: 5,
             },
         ]));
-        let (mut wl, _td) = loop_with_tmp(mock, "make me a trend follower");
+        let (mut wl, _pool, _td, _sid) =
+            loop_with_session(mock, "make me a trend follower", ContextScope::Workspace).await;
         let events = drain(&mut wl).await;
-        // The Done event should carry a draft_id (the ULID returned by create_strategy).
-        let done = events.iter().rev().find(|e| matches!(e, WizardEvent::Done { .. }));
+        let done = events
+            .iter()
+            .rev()
+            .find(|e| matches!(e, WizardEvent::Done { .. }));
         match done {
             Some(WizardEvent::Done { draft_id: Some(id) }) => {
                 assert!(!id.is_empty());
@@ -474,24 +559,22 @@ mod tests {
             ),
             LlmResponse {
                 content: vec![ContentBlock::Text {
-                    text: "That template doesn't exist. Try one of these: ...".into(),
+                    text: "That template doesn't exist.".into(),
                 }],
                 stop_reason: StopReason::EndTurn,
                 input_tokens: 5,
                 output_tokens: 5,
             },
         ]));
-        let (mut wl, _td) = loop_with_tmp(mock, "make me a nope");
+        let (mut wl, _pool, _td, _sid) =
+            loop_with_session(mock, "make me a nope", ContextScope::Workspace).await;
         let events = drain(&mut wl).await;
         let result = events
             .iter()
             .find(|e| matches!(e, WizardEvent::ToolResult { tool, .. } if tool == "create_strategy"));
         match result {
             Some(WizardEvent::ToolResult { result, .. }) => {
-                assert!(
-                    result.get("error").is_some(),
-                    "expected error key in {result}"
-                );
+                assert!(result.get("error").is_some(), "expected error key in {result}");
             }
             other => panic!("expected ToolResult with error, got {other:?}"),
         }
@@ -510,7 +593,8 @@ mod tests {
                 output_tokens: 5,
             },
         ]));
-        let (mut wl, _td) = loop_with_tmp(mock, "go");
+        let (mut wl, _pool, _td, _sid) =
+            loop_with_session(mock, "go", ContextScope::Workspace).await;
         let events = drain(&mut wl).await;
         let result = events
             .iter()
@@ -539,5 +623,136 @@ mod tests {
         ] {
             assert!(names.contains(&v), "missing verb {v} in {names:?}");
         }
+    }
+
+    // -- Plan #11 Phase B persistence assertions ----------------------------
+
+    #[tokio::test]
+    async fn user_message_persists_immediately_at_construction() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (mut _wl, pool, _td, sid) =
+            loop_with_session(mock, "hi there", ContextScope::Workspace).await;
+        let history = ChatSessionStore::load_history(&pool, &sid).await.unwrap();
+        // After ::new and BEFORE any next_event call, the user message is
+        // already in the store.
+        assert_eq!(history.len(), 1, "history: {history:?}");
+        assert_eq!(history[0].role, "user");
+        assert_eq!(history[0].content_blocks[0]["text"], "hi there");
+    }
+
+    #[tokio::test]
+    async fn assistant_response_persists_after_drain() {
+        let mock = Arc::new(MockDispatch::echo("got it"));
+        let (mut wl, pool, _td, sid) =
+            loop_with_session(mock, "hi", ContextScope::Workspace).await;
+        drain(&mut wl).await;
+        let history = ChatSessionStore::load_history(&pool, &sid).await.unwrap();
+        // user "hi" + assistant "got it" + (stop_reason was EndTurn so no
+        // tool_result turn).
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[1].role, "assistant");
+        let text = history[1].content_blocks[0]["text"].as_str().unwrap();
+        assert!(text.contains("got it"));
+    }
+
+    #[tokio::test]
+    async fn tool_result_user_turn_persists_after_round_trip() {
+        let mock = Arc::new(MockDispatch::sequence(vec![
+            MockDispatch::tool_use("tu_1", "list_templates", serde_json::json!({})),
+            LlmResponse {
+                content: vec![ContentBlock::Text {
+                    text: "thanks".into(),
+                }],
+                stop_reason: StopReason::EndTurn,
+                input_tokens: 1,
+                output_tokens: 1,
+            },
+        ]));
+        let (mut wl, pool, _td, sid) =
+            loop_with_session(mock, "list", ContextScope::Workspace).await;
+        drain(&mut wl).await;
+        let history = ChatSessionStore::load_history(&pool, &sid).await.unwrap();
+        // Expected: user "list" → assistant tool_use → user tool_result →
+        // assistant "thanks". 4 rows.
+        assert_eq!(history.len(), 4, "history: {history:#?}");
+        assert_eq!(history[0].role, "user");
+        assert_eq!(history[1].role, "assistant");
+        assert_eq!(history[2].role, "user");
+        // The third row's content is a tool_result block.
+        assert_eq!(
+            history[2].content_blocks[0]["type"].as_str().unwrap(),
+            "tool_result"
+        );
+        assert_eq!(history[3].role, "assistant");
+    }
+
+    #[tokio::test]
+    async fn second_message_resumes_session_history() {
+        // First turn establishes history.
+        let mock1 = Arc::new(MockDispatch::echo("first reply"));
+        let (mut wl1, pool, td, sid) =
+            loop_with_session(mock1, "first", ContextScope::Workspace).await;
+        drain(&mut wl1).await;
+
+        // Second turn against the SAME session — the loop should see the
+        // first turn in its message log via load_history.
+        let mock2 = Arc::new(MockDispatch::echo("second reply"));
+        let mut wl2 = WizardLoop::new(
+            td.path().to_path_buf(),
+            mock2,
+            "claude-sonnet-4-6".into(),
+            pool.clone(),
+            sid.clone(),
+            ContextScope::Workspace,
+            "second".into(),
+        )
+        .await
+        .unwrap();
+        drain(&mut wl2).await;
+
+        let history = ChatSessionStore::load_history(&pool, &sid).await.unwrap();
+        // user1 + assistant1 + user2 + assistant2 = 4 rows.
+        assert_eq!(history.len(), 4);
+        assert_eq!(history[0].content_blocks[0]["text"], "first");
+        assert_eq!(history[2].content_blocks[0]["text"], "second");
+    }
+
+    #[tokio::test]
+    async fn scope_header_appears_in_system_prompt() {
+        // Spy on the system prompt by capturing it via a dispatch that
+        // records the request. We use a simple wrapper around MockDispatch.
+        use std::sync::Mutex;
+        struct Spy {
+            inner: MockDispatch,
+            seen: Arc<Mutex<Vec<String>>>,
+        }
+        #[async_trait::async_trait]
+        impl LlmDispatch for Spy {
+            async fn complete(&self, req: LlmRequest) -> anyhow::Result<LlmResponse> {
+                self.seen.lock().unwrap().push(req.system_prompt.clone());
+                self.inner.complete(req).await
+            }
+        }
+        let seen: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(vec![]));
+        let dispatch: Arc<dyn LlmDispatch> = Arc::new(Spy {
+            inner: MockDispatch::echo("ok"),
+            seen: seen.clone(),
+        });
+        let (mut wl, _pool, _td, _sid) = loop_with_session(
+            dispatch,
+            "what's this run?",
+            ContextScope::Run {
+                run_id: "01HABC".into(),
+            },
+        )
+        .await;
+        drain(&mut wl).await;
+        let prompts = seen.lock().unwrap();
+        assert!(!prompts.is_empty());
+        assert!(
+            prompts[0].contains("Run · 01HABC"),
+            "system prompt did not include scope header: {}",
+            prompts[0]
+        );
     }
 }
