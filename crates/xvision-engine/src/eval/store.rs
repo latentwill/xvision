@@ -14,6 +14,7 @@ use serde_json::Value;
 use sqlx::{Row, SqlitePool};
 
 use crate::eval::attestation::EvalAttestation;
+use crate::eval::findings::{Finding, Severity};
 use crate::eval::run::{MetricsSummary, Run, RunMode, RunStatus};
 use ulid::Ulid;
 
@@ -372,6 +373,85 @@ impl RunStore {
             signature_hex,
         }))
     }
+
+    /// INSERT INTO eval_findings. Each call writes one row; downstream
+    /// callers iterate `extract_findings` results. Uses the Finding's
+    /// in-memory id rather than auto-generating one — extractor.rs already
+    /// stamps a ULID on every finding, so the store preserves it.
+    pub async fn record_finding(&self, finding: &Finding) -> Result<()> {
+        let evidence_json = serde_json::to_string(&finding.evidence)
+            .context("serialize finding evidence")?;
+        sqlx::query(
+            "INSERT INTO eval_findings \
+             (id, run_id, kind, severity, summary, evidence_json, extracted_at, schema_version) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&finding.id)
+        .bind(&finding.run_id)
+        .bind(&finding.kind)
+        .bind(finding.severity.as_str())
+        .bind(&finding.summary)
+        .bind(evidence_json)
+        .bind(finding.extracted_at.to_rfc3339())
+        .bind(&finding.schema_version)
+        .execute(&self.pool)
+        .await
+        .with_context(|| {
+            format!(
+                "insert eval_findings run_id={} id={}",
+                finding.run_id, finding.id
+            )
+        })?;
+        Ok(())
+    }
+
+    /// Read all findings for a run, ordered by extraction time ASC. Empty
+    /// vec when the run has none (or doesn't exist).
+    pub async fn read_findings(&self, run_id: &str) -> Result<Vec<Finding>> {
+        let rows = sqlx::query(
+            "SELECT id, run_id, kind, severity, summary, evidence_json, extracted_at, schema_version \
+             FROM eval_findings WHERE run_id = ? ORDER BY extracted_at ASC, id ASC",
+        )
+        .bind(run_id)
+        .fetch_all(&self.pool)
+        .await
+        .context("read eval_findings")?;
+        rows.iter().map(row_to_finding).collect()
+    }
+}
+
+fn row_to_finding(row: &sqlx::sqlite::SqliteRow) -> Result<Finding> {
+    let id: String = row.try_get("id").context("read finding id")?;
+    let run_id: String = row.try_get("run_id").context("read finding run_id")?;
+    let kind: String = row.try_get("kind").context("read finding kind")?;
+    let severity_str: String = row.try_get("severity").context("read finding severity")?;
+    let severity = Severity::parse(&severity_str)
+        .ok_or_else(|| anyhow::anyhow!("unknown finding severity {severity_str:?}"))?;
+    let summary: String = row.try_get("summary").context("read finding summary")?;
+    let evidence_json: String = row
+        .try_get("evidence_json")
+        .context("read finding evidence_json")?;
+    let evidence: serde_json::Value =
+        serde_json::from_str(&evidence_json).context("deserialize finding evidence")?;
+    let extracted_at_str: String = row
+        .try_get("extracted_at")
+        .context("read finding extracted_at")?;
+    let extracted_at = DateTime::parse_from_rfc3339(&extracted_at_str)
+        .with_context(|| format!("parse finding extracted_at {extracted_at_str:?}"))?
+        .with_timezone(&Utc);
+    let schema_version: String = row
+        .try_get("schema_version")
+        .context("read finding schema_version")?;
+    Ok(Finding {
+        id,
+        run_id,
+        kind,
+        severity,
+        summary,
+        evidence,
+        extracted_at,
+        schema_version,
+    })
 }
 
 fn row_to_run(row: &sqlx::sqlite::SqliteRow) -> Result<Run> {

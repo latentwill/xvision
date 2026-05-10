@@ -8,12 +8,14 @@
 
 pub mod attestation;
 pub mod executor;
+pub mod findings;
 pub mod metrics;
 pub mod run;
 pub mod scenario;
 pub mod store;
 
 pub use attestation::{EvalAttestation, TokensUsed};
+pub use findings::{Finding, Severity};
 
 pub use run::{MetricsSummary, Run, RunMode, RunStatus};
 pub use scenario::{
