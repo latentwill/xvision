@@ -1,0 +1,39 @@
+/* xvision — Folio dark theme.
+ *
+ * Ported verbatim from frontend/prototype/styles.css :root block. Tailwind
+ * (tailwind.config.ts) maps utility classes onto these variables, so React
+ * components can use either `bg-bg` (Tailwind) or `var(--bg)` (raw CSS).
+ */
+
+:root {
+  /* Surfaces — warm, ink-like */
+  --bg: #0f0e0c;
+  --surface-sidebar: #17150f;
+  --surface-card: #14120e;
+  --surface-elev: #1b1810;
+  --surface-panel: #221e14;
+  --surface-hover: #1f1c13;
+
+  /* Borders — warm slate */
+  --border: #2a2618;
+  --border-strong: #3a3322;
+  --border-soft: #221f15;
+
+  /* Text */
+  --text: #f1ecdd;
+  --text-2: #a39a85;
+  --text-3: #6b6553;
+  --text-4: #4a4536;
+
+  /* Accents */
+  --gold: #d4a547;
+  --gold-soft: #b8862e;
+  --gold-bg: rgba(212, 165, 71, 0.1);
+  --gold-bg-strong: rgba(212, 165, 71, 0.18);
+  --warn: #db9230;
+  --danger: #c8443a;
+  --info: #6f8fb8;
+
+  --radius-card: 6px;
+  --radius-sm: 4px;
+}

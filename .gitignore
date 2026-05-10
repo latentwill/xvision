@@ -55,3 +55,11 @@ target/
 
 # Git worktrees for parallel team operation (see team/README.md)
 .worktrees/
+
+# Frontend bundle (Vite emits into the dashboard crate; baked at compile time)
+crates/xvision-dashboard/static/*
+!crates/xvision-dashboard/static/.gitkeep
+frontend/web/node_modules/
+frontend/web/dist/
+frontend/web/*.tsbuildinfo
+frontend/web/.vite/
