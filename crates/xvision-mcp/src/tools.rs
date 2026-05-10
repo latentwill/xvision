@@ -23,15 +23,13 @@ use xvision_engine::api::eval::{
     self as api_eval, CompareRunsRequest, ListRunsRequest,
 };
 use xvision_engine::api::{Actor, ApiContext};
+use xvision_engine::authoring;
 use xvision_engine::bundle::{
-    risk::{RiskConfig, RiskPreset},
-    slot::LLMSlot,
-    store::{BundleStore, FilesystemStore},
-    validate::validate_bundle,
+    risk::RiskConfig,
+    store::FilesystemStore,
 };
 use xvision_engine::eval::run::RunStatus;
 use xvision_engine::eval::store::RunStore;
-use xvision_engine::templates::registry as template_registry;
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -45,6 +43,14 @@ fn nan_to_null(xs: Vec<f64>) -> Vec<Option<f64>> {
 
 fn json_or_err<T: serde::Serialize>(t: &T) -> Result<String, rmcp::ErrorData> {
     serde_json::to_string(t).map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))
+}
+
+/// Convert a `xvision_engine::authoring` error into an MCP error. Engine
+/// authoring failures are always caller-attributable (unknown template,
+/// missing draft, malformed input, etc.) so we map them to JSON-RPC
+/// `invalid_params` rather than `internal_error`.
+fn authoring_err(e: anyhow::Error) -> rmcp::ErrorData {
+    rmcp::ErrorData::invalid_params(format!("{e:#}"), None)
 }
 
 // ---------------------------------------------------------------------------
@@ -352,19 +358,7 @@ impl XvisionTools {
         description = "List the strategy templates available for xvn_create_strategy. Returns array of {name, display_name, plain_summary}."
     )]
     async fn xvn_list_templates(&self) -> Result<String, rmcp::ErrorData> {
-        let entries: Vec<_> = template_registry::list_template_names()
-            .iter()
-            .filter_map(|name| {
-                template_registry::get(name).map(|t| {
-                    serde_json::json!({
-                        "name": t.name(),
-                        "display_name": t.display_name(),
-                        "plain_summary": t.plain_summary(),
-                    })
-                })
-            })
-            .collect();
-        json_or_err(&entries)
+        json_or_err(&authoring::list_templates())
     }
 
     /// Create a new strategy draft from a template. Persists to
@@ -376,23 +370,17 @@ impl XvisionTools {
         &self,
         Parameters(req): Parameters<CreateStrategyReq>,
     ) -> Result<String, rmcp::ErrorData> {
-        let tpl = template_registry::get(&req.template).ok_or_else(|| {
-            rmcp::ErrorData::invalid_params(
-                format!(
-                    "unknown template '{}' — try xvn_list_templates",
-                    req.template
-                ),
-                None,
-            )
-        })?;
-        let id = Ulid::new().to_string();
-        let creator = req.creator.unwrap_or_else(|| "@anonymous".to_string());
-        let draft = tpl.new_draft(id.clone(), req.name, creator);
-        self.store()
-            .save(&draft)
-            .await
-            .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))?;
-        json_or_err(&serde_json::json!({ "id": id }))
+        let out = authoring::create_strategy(
+            &self.store(),
+            authoring::CreateStrategyReq {
+                template: req.template,
+                name: req.name,
+                creator: req.creator,
+            },
+        )
+        .await
+        .map_err(authoring_err)?;
+        json_or_err(&out)
     }
 
     /// Get a strategy bundle by id. Returns the full `StrategyBundle` JSON.
@@ -403,9 +391,9 @@ impl XvisionTools {
         &self,
         Parameters(req): Parameters<StrategyId>,
     ) -> Result<String, rmcp::ErrorData> {
-        let bundle = self.store().load(&req.id).await.map_err(|e| {
-            rmcp::ErrorData::invalid_params(format!("load `{}`: {e}", req.id), None)
-        })?;
+        let bundle = authoring::get_strategy(&self.store(), &req.id)
+            .await
+            .map_err(authoring_err)?;
         json_or_err(&bundle)
     }
 
@@ -419,53 +407,19 @@ impl XvisionTools {
         &self,
         Parameters(req): Parameters<UpdateSlotReq>,
     ) -> Result<String, rmcp::ErrorData> {
-        let store = self.store();
-        let mut bundle = store.load(&req.id).await.map_err(|e| {
-            rmcp::ErrorData::invalid_params(format!("load `{}`: {e}", req.id), None)
-        })?;
-        let slot_field = match req.slot.as_str() {
-            "regime" => &mut bundle.regime_slot,
-            "intern" => &mut bundle.intern_slot,
-            "trader" => &mut bundle.trader_slot,
-            other => {
-                return Err(rmcp::ErrorData::invalid_params(
-                    format!(
-                        "unknown slot `{other}` — must be one of: regime, intern, trader"
-                    ),
-                    None,
-                ));
-            }
-        };
-        let slot = slot_field.get_or_insert_with(|| LLMSlot {
-            role: req.slot.clone(),
-            prompt: String::new(),
-            model_requirement: String::new(),
-            allowed_tools: vec![],
-        });
-        let mut updated: Vec<&'static str> = Vec::new();
-        if let Some(p) = req.prompt {
-            slot.prompt = p;
-            updated.push("prompt");
-        }
-        if let Some(m) = req.model_requirement {
-            slot.model_requirement = m;
-            updated.push("model_requirement");
-        }
-        if let Some(t) = req.allowed_tools {
-            slot.allowed_tools = t;
-            updated.push("allowed_tools");
-        }
-        if updated.is_empty() {
-            return Err(rmcp::ErrorData::invalid_params(
-                "no fields to update — supply at least one of prompt / model_requirement / allowed_tools".to_string(),
-                None,
-            ));
-        }
-        store
-            .save(&bundle)
-            .await
-            .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))?;
-        json_or_err(&serde_json::json!({ "id": req.id, "updated": updated }))
+        let out = authoring::update_slot(
+            &self.store(),
+            authoring::UpdateSlotReq {
+                id: req.id,
+                slot: req.slot,
+                prompt: req.prompt,
+                model_requirement: req.model_requirement,
+                allowed_tools: req.allowed_tools,
+            },
+        )
+        .await
+        .map_err(authoring_err)?;
+        json_or_err(&out)
     }
 
     /// Set a key inside `bundle.mechanical_params`. Templates document
@@ -477,22 +431,19 @@ impl XvisionTools {
         &self,
         Parameters(req): Parameters<SetMechanicalParamReq>,
     ) -> Result<String, rmcp::ErrorData> {
-        let store = self.store();
-        let mut bundle = store.load(&req.id).await.map_err(|e| {
-            rmcp::ErrorData::invalid_params(format!("load `{}`: {e}", req.id), None)
-        })?;
-        let map = bundle.mechanical_params.as_object_mut().ok_or_else(|| {
-            rmcp::ErrorData::internal_error(
-                "mechanical_params is not a JSON object — template invariant violation".to_string(),
-                None,
-            )
-        })?;
-        map.insert(req.key.clone(), req.value);
-        store
-            .save(&bundle)
-            .await
-            .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))?;
-        json_or_err(&serde_json::json!({ "id": req.id, "key": req.key }))
+        let id = req.id.clone();
+        let key = req.key.clone();
+        authoring::set_mechanical_param(
+            &self.store(),
+            authoring::SetMechanicalParamReq {
+                id: req.id,
+                key: req.key,
+                value: req.value,
+            },
+        )
+        .await
+        .map_err(authoring_err)?;
+        json_or_err(&serde_json::json!({ "id": id, "key": key }))
     }
 
     /// Set the risk config on a strategy bundle. Provide either `preset`
@@ -505,55 +456,26 @@ impl XvisionTools {
         &self,
         Parameters(req): Parameters<SetRiskConfigReq>,
     ) -> Result<String, rmcp::ErrorData> {
-        let (config, applied) = match (req.preset, req.explicit) {
-            (Some(p), None) => {
-                let preset = match p.as_str() {
-                    "conservative" => RiskPreset::Conservative,
-                    "balanced" => RiskPreset::Balanced,
-                    "aggressive" => RiskPreset::Aggressive,
-                    other => {
-                        return Err(rmcp::ErrorData::invalid_params(
-                            format!(
-                                "unknown preset `{other}` — must be one of: conservative, balanced, aggressive"
-                            ),
-                            None,
-                        ));
-                    }
-                };
-                (preset.expand(), "preset")
-            }
-            (None, Some(value)) => {
-                let cfg: RiskConfig = serde_json::from_value(value).map_err(|e| {
-                    rmcp::ErrorData::invalid_params(
-                        format!("explicit risk config: {e}"),
-                        None,
-                    )
-                })?;
-                (cfg, "explicit")
-            }
-            (Some(_), Some(_)) => {
-                return Err(rmcp::ErrorData::invalid_params(
-                    "preset and explicit are mutually exclusive".to_string(),
-                    None,
-                ));
-            }
-            (None, None) => {
-                return Err(rmcp::ErrorData::invalid_params(
-                    "supply either preset or explicit".to_string(),
-                    None,
-                ));
-            }
+        // The MCP wire shape carries `explicit` as `serde_json::Value` so the
+        // emitted schema doesn't require RiskConfig to derive `JsonSchema`.
+        // Deserialize at the boundary; engine takes a typed `RiskConfig`.
+        let explicit_typed = match req.explicit {
+            Some(v) => Some(serde_json::from_value::<RiskConfig>(v).map_err(|e| {
+                rmcp::ErrorData::invalid_params(format!("explicit risk config: {e}"), None)
+            })?),
+            None => None,
         };
-        let store = self.store();
-        let mut bundle = store.load(&req.id).await.map_err(|e| {
-            rmcp::ErrorData::invalid_params(format!("load `{}`: {e}", req.id), None)
-        })?;
-        bundle.risk = config;
-        store
-            .save(&bundle)
-            .await
-            .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))?;
-        json_or_err(&serde_json::json!({ "id": req.id, "applied": applied }))
+        let out = authoring::set_risk_config(
+            &self.store(),
+            authoring::SetRiskConfigReq {
+                id: req.id,
+                preset: req.preset,
+                explicit: explicit_typed,
+            },
+        )
+        .await
+        .map_err(authoring_err)?;
+        json_or_err(&out)
     }
 
     /// Validate a strategy draft against bundle invariants (trader slot
@@ -567,14 +489,10 @@ impl XvisionTools {
         &self,
         Parameters(req): Parameters<StrategyId>,
     ) -> Result<String, rmcp::ErrorData> {
-        let bundle = self.store().load(&req.id).await.map_err(|e| {
-            rmcp::ErrorData::invalid_params(format!("load `{}`: {e}", req.id), None)
-        })?;
-        let (ok, errors) = match validate_bundle(&bundle) {
-            Ok(()) => (true, vec![]),
-            Err(e) => (false, vec![e.to_string()]),
-        };
-        json_or_err(&serde_json::json!({ "id": req.id, "ok": ok, "errors": errors }))
+        let out = authoring::validate_draft(&self.store(), &req.id)
+            .await
+            .map_err(authoring_err)?;
+        json_or_err(&out)
     }
 
     // --- eval browse / compare verbs (Phase 3.D Task 12) -------------------
