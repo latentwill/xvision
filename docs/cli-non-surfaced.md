@@ -114,6 +114,12 @@ addition to the pre-existing commands, exposes:
 - `xvn store migrate` / `xvn store stats` — explicit DB ops
 - `xvn metrics` / `xvn gate` — pre-committed metrics + anti-overfit verdict
 - `xvn indicator <name>` — compute one indicator from a JSON price series
+- `xvn provider {list,show,check,add,remove}` — manage the LLM provider
+  registry in `config/default.toml` (per-arm Intern/Trader model selection
+  for `xvn ab-compare`). `add` / `remove` mutate the file in place via
+  `toml_edit` (comments preserved); `check` is a TCP-connect smoke with an
+  opt-in `--probe` that GETs `<base_url>/models`. See migration note
+  `docs/migrations/2026-05-10-providers-config.md`.
 
 Everything else inside the workspace (engine internals, eval bootstrap helpers,
 backtest sim executor, `tracing-subscriber` config) is library-only. If a real

@@ -244,6 +244,11 @@ lineage →`. Only renders when ≥3 sibling drafts exist from one root. Links t
 the future lineage tree view (Move G, deferred). v1 wireframes can show this
 as a stub link with `Coming soon` chip.
 
+**Model-fork variant.** When ≥3 of the sibling drafts differ from the root
+*only* on the Trader or Intern slot model, the cue flips to:
+`You've A/B-tested btc-momentum across 4 models this week — see leaderboard →`.
+The link points at `/eval/compare?ids=<lineage_root>` filtered by parent.
+
 ### 2.4 Empty / cold-start states
 
 If the daemon has artifacts but the user hasn't visited in >7 days, the
@@ -387,12 +392,21 @@ Two-pane split (50/50 by default, draggable divider).
 | Field | Label | Control |
 |---|---|---|
 | Enabled | `Use this agent` | toggle (Trader required, can't disable) |
-| Model class | `Model` | select |
+| Provider | `Provider` | select sourced from `/settings → Providers`, with `+ Add new…` last item that opens the add-provider modal inline |
+| Model | `Model` | combobox (free-text + autocomplete suggestions per provider — Anthropic suggests `claude-*`, OpenAI suggests `gpt-*`, etc.) |
 | Prompt | `System prompt` | code editor (monospace, 12pt), `Format` button, `Diff vs template` toggle |
 | Tools allowed | `Tools the agent can call` | multi-select chips |
 | Output schema | `Expected output` | read-only JSON, `Edit schema` ghost (Advanced) |
 | Compose skill | `Add a skill` | button → skill picker modal |
 | Token budget | `Max tokens / call` | numeric |
+
+**Cost cue chip** (informational, dismissable per session):
+
+- Intern slot / Regime slot: `Changes here re-run Stage 1 for every setup ($$ per arm)`
+- Trader slot: `Changes here are cheap — Stage 1 is reused across arms`
+
+Quotes the BriefingCache rule from spec
+[`2026-05-10-llm-providers-and-per-arm-models-design.md`](../superpowers/specs/2026-05-10-llm-providers-and-per-arm-models-design.md) §3.5.
 
 **Right pane — Live preview**:
 
@@ -466,7 +480,7 @@ slot expensive?`, `Suggest a tool to add`, `Diff vs template`.
 | Header actions | primary `New strategy` (→ `/setup`) · ghost `New from template…` |
 | Filters bar | search input `Filter by name…` · status select `All / Draft / Validated / Published` · template select |
 | Table columns | `Name`, `Template`, `Forked from` *(new in v0.2 — shows parent draft when set)*, `Status`, `Last eval`, `Tokens / run`, `Updated`, `Actions` |
-| Row action menu | `⋯` → `Open in Inspector`, `Duplicate`, `Fork` *(new — preserves parentage)*, `Run eval`, `Deploy paper`, `Delete` |
+| Row action menu | `⋯` → `Open in Inspector`, `Duplicate`, `Fork` *(preserves parentage)*, `Fork with different model →` *(focused fork — opens Inspector with Trader Provider+Model select pre-focused)*, `Run eval`, `Deploy paper`, `Delete` |
 | Empty state | `No drafts yet. Start with the setup agent or pick a template.` + buttons `Open setup agent` · `Browse templates` |
 
 The `Forked from` column is the v1 stub for the deferred lineage tree view
@@ -851,7 +865,25 @@ real?`, `Should I pause it?`, `Draft a variant from yesterday's vetoes`.
 
 (Unchanged from v0.1 §11.)
 
-### 13.1 LLM keys
+### 13.1 Providers
+
+(Was "LLM keys" in v0.1 — promoted to a first-class registry. v0.1 single-key
+state continues to work via auto-derivation; see spec
+[`2026-05-10-llm-providers-and-per-arm-models-design.md`](../superpowers/specs/2026-05-10-llm-providers-and-per-arm-models-design.md) §1.3.)
+
+| Element | Label / control |
+|---|---|
+| Page header | `Providers` · `+ Add provider` primary button |
+| Table | columns: `Name`, `Kind`, `Base URL`, `API key env`, `Key`, `Used by`, `Actions` |
+| Per row — Key chip | `● set` (green) when `std::env::var(api_key_env).is_ok()`, `○ missing` (amber) otherwise, `n/a` (grey) when the env name is empty |
+| Per row — Used by | count + tooltip listing slot references (e.g. `2 slots: workspace default Intern, draft btc-momentum.trader`) |
+| Per row — Actions | `Edit`, `Delete` (disabled with tooltip when `Used by > 0`), `Test` (calls `xvn provider check`) |
+| Empty state | `No providers yet. Add Anthropic, OpenAI, or any OpenAI-compatible endpoint.` + three quick-link buttons (Anthropic / OpenAI / OpenRouter) carried over from the v0.1 first-run modal |
+| Add modal | fields: `Name` (regex-validated `[a-z0-9-]+`), `Kind` (select: `anthropic` / `openai-compat` / `local-candle`), `Base URL`, `API key env` (with `Detect` ghost button trying common names like `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`), `Test connection` ghost. Submit calls `xvn provider add`. |
+| Synthetic row marker | rows with name starting `_` (e.g. `_default_intern`, `_cli_default_trader`) render with a `synthetic` chip and a tooltip explaining they were auto-derived |
+
+The first-run modal at `/setup` (§3.3) keeps its current shape (single key paste); the saved key materializes as a `[[providers]]` row, not a standalone `[intern]` block.
+
 ### 13.2 Brokers
 ### 13.3 Daemon & runtime
 ### 13.4 Identity (ERC-8004)
