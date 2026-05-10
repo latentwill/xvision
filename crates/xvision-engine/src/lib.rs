@@ -8,6 +8,7 @@ pub mod baselines;
 pub mod bundle;
 pub mod error;
 pub mod eval;
+pub mod search;
 pub mod templates;
 pub mod tokens;
 pub mod tools;

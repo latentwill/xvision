@@ -22,6 +22,8 @@ pub mod strategy;
 /// so re-running them on an already-initialized DB is a no-op.
 const MIGRATION_001: &str = include_str!("../../migrations/001_api_audit.sql");
 const MIGRATION_002: &str = include_str!("../../migrations/002_eval.sql");
+// 003_chat_sessions.sql is owned by Plan #11 (chat rail) and lands separately.
+const MIGRATION_004: &str = include_str!("../../migrations/004_search_index.sql");
 
 #[derive(Clone, Debug)]
 pub struct ApiContext {
@@ -56,6 +58,7 @@ impl ApiContext {
         // Multi-statement SQL — sqlx::query executes the whole text.
         sqlx::query(MIGRATION_001).execute(&pool).await?;
         sqlx::query(MIGRATION_002).execute(&pool).await?;
+        sqlx::query(MIGRATION_004).execute(&pool).await?;
 
         Ok(Self {
             db: pool,
