@@ -1,5 +1,12 @@
+export type { BrokerEntry } from "./types.gen/BrokerEntry";
+export type { BrokersReport } from "./types.gen/BrokersReport";
+export type { CredentialRef } from "./types.gen/CredentialRef";
+export type { DaemonReport } from "./types.gen/DaemonReport";
+export type { DaemonStatus } from "./types.gen/DaemonStatus";
 export type { HealthReport } from "./types.gen/HealthReport";
 export type { HealthStatus } from "./types.gen/HealthStatus";
+export type { IdentityReport } from "./types.gen/IdentityReport";
 export type { Probe } from "./types.gen/Probe";
 export type { RunSummary } from "./types.gen/RunSummary";
 export type { StrategySummary } from "./types.gen/StrategySummary";
+export type { WalletStatus } from "./types.gen/WalletStatus";

@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 pub mod audit;
 pub mod eval;
 pub mod health;
+pub mod settings;
 pub mod strategy;
 
 /// Migrations baked into the binary at compile time. Order matters —
