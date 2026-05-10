@@ -1,21 +1,19 @@
+import { useMemo } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { useQueries } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
 import { ApiError } from "@/api/client";
-import { evalKeys, getRun } from "@/api/eval";
+import { compareRuns, evalKeys } from "@/api/eval";
 import type {
-  DecisionRowDto,
-  EquityPoint,
-  RunDetail,
-  RunSummary,
-} from "@/api/types.gen";
+  ComparisonEquityCurve,
+  ComparisonRunSummary,
+  CompareFinding,
+  MetricsSummary,
+} from "@/api/types.compare";
 
-const STATUS_TONE: Record<
-  string,
-  "gold" | "warn" | "danger" | "default" | "info"
-> = {
+const STATUS_TONE: Record<string, "gold" | "warn" | "danger" | "default" | "info"> = {
   completed: "gold",
   running: "info",
   queued: "default",
@@ -23,452 +21,485 @@ const STATUS_TONE: Record<
   cancelled: "warn",
 };
 
+// Curve colors are stable per-position (run A always gold, run B always
+// info, etc.) so the legend matches the chart without per-id randomization.
+const CURVE_PALETTE = [
+  { stroke: "var(--gold)", label: "gold" },
+  { stroke: "var(--info)", label: "info" },
+  { stroke: "var(--warn)", label: "warn" },
+  { stroke: "var(--danger)", label: "danger" },
+] as const;
+
 export function EvalCompareRoute() {
-  const [search] = useSearchParams();
-  const idsParam = search.get("ids") ?? "";
-  const ids = idsParam
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const [params] = useSearchParams();
+  const ids = useMemo(() => parseIds(params.get("ids")), [params]);
 
-  if (ids.length === 0) {
-    return <EmptyCompare />;
-  }
-
-  return <CompareGrid ids={ids} />;
-}
-
-function CompareGrid({ ids }: { ids: string[] }) {
-  const queries = useQueries({
-    queries: ids.map((id) => ({
-      queryKey: evalKeys.run(id),
-      queryFn: () => getRun(id),
-    })),
+  const q = useQuery({
+    queryKey: evalKeys.compare(ids),
+    queryFn: () => compareRuns(ids),
+    enabled: ids.length >= 2,
   });
 
-  // Pre-compute equity scale across all runs so sparklines are visually
-  // comparable across columns. Only consider runs that loaded successfully.
-  const allEquity = queries
-    .flatMap((q) => q.data?.equity_curve ?? [])
-    .map((p) => p.equity_usd);
-  const sharedMin = allEquity.length > 0 ? Math.min(...allEquity) : 0;
-  const sharedMax = allEquity.length > 0 ? Math.max(...allEquity) : 1;
+  // Empty / single-id state — short-circuit before hitting the api so the
+  // user gets actionable copy + a link back to /eval-runs to pick more.
+  if (ids.length < 2) {
+    return (
+      <>
+        <Topbar
+          title="Compare"
+          sub={ids.length === 1 ? "1 id given" : "0 ids given"}
+        />
+        <NeedTwoOrMore given={ids.length} />
+      </>
+    );
+  }
 
+  if (q.isPending) {
+    return (
+      <>
+        <Topbar title="Compare" sub={`${ids.length} runs · loading…`} />
+        <Card className="p-6 animate-pulse">
+          <div className="h-5 w-72 bg-surface-elev rounded mb-3" />
+          <div className="h-4 w-48 bg-surface-elev rounded" />
+        </Card>
+      </>
+    );
+  }
+
+  if (q.isError || !q.data) {
+    return (
+      <>
+        <Topbar title="Compare" sub={`${ids.length} runs`} />
+        <ErrorState err={q.error} ids={ids} onRetry={() => q.refetch()} />
+      </>
+    );
+  }
+
+  const report = q.data;
   return (
     <>
       <Topbar
-        title="Compare runs"
-        sub={`${ids.length} run${ids.length === 1 ? "" : "s"}`}
+        title="Compare"
+        sub={`${report.runs.length} runs · ${report.findings.length} findings`}
       />
-
-      <ComparisonSummary queries={queries} />
-
+      <MetricsTable runs={report.runs} />
       <h2 className="font-serif italic text-[20px] text-text mt-8 mb-3">
         Equity curves
       </h2>
-      <div
-        className="grid gap-5"
-        style={{ gridTemplateColumns: `repeat(${ids.length}, minmax(0, 1fr))` }}
-      >
-        {queries.map((q, i) => (
-          <Card key={ids[i]} className="p-4">
-            <CompactHeader id={ids[i]} q={q} />
-            {q.data ? (
-              <SharedSparkline
-                points={q.data.equity_curve}
-                sharedMin={sharedMin}
-                sharedMax={sharedMax}
-              />
-            ) : q.isPending ? (
-              <Skeleton h={120} />
-            ) : (
-              <p className="m-0 text-text-3 text-[12px] py-6 text-center">
-                couldn't load
-              </p>
-            )}
-          </Card>
-        ))}
-      </div>
-
+      <Card className="p-5">
+        <EquityOverlay curves={report.equity_curves} runs={report.runs} />
+      </Card>
       <h2 className="font-serif italic text-[20px] text-text mt-8 mb-3">
-        Decisions
-      </h2>
-      <div
-        className="grid gap-5"
-        style={{ gridTemplateColumns: `repeat(${ids.length}, minmax(0, 1fr))` }}
-      >
-        {queries.map((q, i) => (
-          <Card key={ids[i]} className="p-4">
-            <CompactHeader id={ids[i]} q={q} />
-            {q.data ? (
-              <DecisionsBreakdown
-                decisions={q.data.decisions}
-                runId={q.data.summary.id}
-              />
-            ) : q.isPending ? (
-              <Skeleton h={80} />
-            ) : (
-              <p className="m-0 text-text-3 text-[12px] py-6 text-center">
-                couldn't load
-              </p>
-            )}
-          </Card>
-        ))}
-      </div>
-
-      <BackLink />
-    </>
-  );
-}
-
-function ComparisonSummary({
-  queries,
-}: {
-  queries: { data?: RunDetail; isPending: boolean; isError: boolean; error?: unknown }[];
-}) {
-  const summaries = queries.map((q) => q.data?.summary);
-
-  // The "winner" highlights: highest Sharpe + highest total_return + lowest
-  // max_drawdown. Each is a column-position highlight (or -1 when nobody has
-  // finite numbers).
-  const idxOfMax = (vals: (number | null | undefined)[]) => {
-    let bestIdx = -1;
-    let best = -Infinity;
-    vals.forEach((v, i) => {
-      if (v != null && Number.isFinite(v) && v > best) {
-        best = v;
-        bestIdx = i;
-      }
-    });
-    return bestIdx;
-  };
-  const idxOfMin = (vals: (number | null | undefined)[]) => {
-    let bestIdx = -1;
-    let best = Infinity;
-    vals.forEach((v, i) => {
-      if (v != null && Number.isFinite(v) && v < best) {
-        best = v;
-        bestIdx = i;
-      }
-    });
-    return bestIdx;
-  };
-  const sharpes = summaries.map((s) => s?.sharpe);
-  const returns = summaries.map((s) => s?.total_return_pct);
-  const drawdowns = summaries.map((s) => s?.max_drawdown_pct);
-
-  const winner = {
-    sharpe: idxOfMax(sharpes),
-    return_: idxOfMax(returns),
-    drawdown: idxOfMin(drawdowns),
-  };
-
-  return (
-    <div
-      className="grid gap-5"
-      style={{
-        gridTemplateColumns: `repeat(${queries.length}, minmax(0, 1fr))`,
-      }}
-    >
-      {queries.map((q, i) => (
-        <Card key={i} className="p-4">
-          {q.isPending ? (
-            <>
-              <div className="h-4 w-32 bg-surface-elev rounded mb-3 animate-pulse" />
-              <Skeleton h={64} />
-            </>
-          ) : q.isError || !q.data ? (
-            <div>
-              <div className="text-text-3 text-[12px] font-mono mb-3">
-                run #{i + 1}
-              </div>
-              <p className="m-0 text-danger text-[12px]">
-                {errorMessage(q.error)}
-              </p>
-            </div>
-          ) : (
-            <RunSummaryColumn
-              summary={q.data.summary}
-              winner={{
-                sharpe: winner.sharpe === i,
-                return_: winner.return_ === i,
-                drawdown: winner.drawdown === i,
-              }}
-            />
-          )}
-        </Card>
-      ))}
-    </div>
-  );
-}
-
-function RunSummaryColumn({
-  summary,
-  winner,
-}: {
-  summary: RunSummary;
-  winner: { sharpe: boolean; return_: boolean; drawdown: boolean };
-}) {
-  const tone = STATUS_TONE[summary.status] ?? "default";
-  return (
-    <>
-      <div className="flex items-center justify-between mb-3">
-        <Link
-          to={`/eval-runs/${encodeURIComponent(summary.id)}`}
-          className="text-text-3 text-[12px] font-mono hover:text-text"
-          title={summary.id}
-        >
-          {summary.id.slice(0, 12)}…
-        </Link>
-        <Pill tone={tone}>{summary.status}</Pill>
-      </div>
-      <div className="text-text-2 text-[12px] mb-3">
-        scenario{" "}
-        <code className="font-mono text-text">{summary.scenario_id}</code> ·{" "}
-        <span className="font-mono">{summary.mode}</span>
-      </div>
-      <dl className="grid grid-cols-2 gap-y-2 text-[13px]">
-        <Metric
-          label="Sharpe"
-          value={fmtNumber(summary.sharpe)}
-          highlight={winner.sharpe}
-        />
-        <Metric
-          label="Total return"
-          value={fmtPct(summary.total_return_pct)}
-          highlight={winner.return_}
-        />
-        <Metric
-          label="Max DD"
-          value={fmtPct(summary.max_drawdown_pct)}
-          highlight={winner.drawdown}
-        />
-        <Metric label="Started" value={fmtTime(summary.started_at)} />
-      </dl>
-      {summary.error ? (
-        <p className="mt-3 text-[12px] text-danger m-0">
-          <code className="font-mono">{summary.error}</code>
-        </p>
-      ) : null}
-    </>
-  );
-}
-
-function Metric({
-  label,
-  value,
-  highlight,
-}: {
-  label: string;
-  value: string;
-  highlight?: boolean;
-}) {
-  return (
-    <>
-      <dt className="text-text-3 text-[11px] uppercase tracking-wide">
-        {label}
-      </dt>
-      <dd
-        className={`m-0 font-mono ${highlight ? "text-gold" : "text-text"}`}
-        title={highlight ? "Best across compared runs" : undefined}
-      >
-        {value}
-        {highlight ? <span className="text-gold ml-1">★</span> : null}
-      </dd>
-    </>
-  );
-}
-
-function CompactHeader({
-  id,
-  q,
-}: {
-  id: string;
-  q: { data?: RunDetail };
-}) {
-  return (
-    <div className="flex items-center justify-between mb-3">
-      <Link
-        to={`/eval-runs/${encodeURIComponent(id)}`}
-        className="text-text-3 text-[11px] font-mono hover:text-text"
-      >
-        {id.slice(0, 12)}…
-      </Link>
-      {q.data ? (
-        <Pill tone={STATUS_TONE[q.data.summary.status] ?? "default"}>
-          {q.data.summary.status}
-        </Pill>
-      ) : null}
-    </div>
-  );
-}
-
-function SharedSparkline({
-  points,
-  sharedMin,
-  sharedMax,
-}: {
-  points: EquityPoint[];
-  sharedMin: number;
-  sharedMax: number;
-}) {
-  if (points.length === 0) {
-    return (
-      <p className="m-0 text-text-3 text-[12px] text-center py-6">no samples</p>
-    );
-  }
-  const w = 360;
-  const h = 120;
-  const range = sharedMax - sharedMin || 1;
-  const path = points
-    .map((p, i) => {
-      const x = (i / (points.length - 1 || 1)) * w;
-      const y = h - 4 - ((p.equity_usd - sharedMin) / range) * (h - 8);
-      return `${i === 0 ? "M" : "L"}${x.toFixed(2)},${y.toFixed(2)}`;
-    })
-    .join(" ");
-  const last = points[points.length - 1];
-  return (
-    <div>
-      <svg
-        viewBox={`0 0 ${w} ${h}`}
-        className="w-full h-[120px]"
-        aria-label="Equity sparkline (shared scale across compared runs)"
-      >
-        <path d={path} fill="none" stroke="var(--gold)" strokeWidth="1.4" />
-      </svg>
-      <div className="flex items-center justify-between text-[11px] text-text-3 mt-1">
-        <span>{fmtTime(points[0].timestamp)}</span>
-        <span className="font-mono text-text">
-          $
-          {last.equity_usd.toLocaleString(undefined, {
-            maximumFractionDigits: 0,
-          })}
+        Findings{" "}
+        <span className="text-text-3 text-[14px]">
+          ({report.findings.length})
         </span>
-        <span>{fmtTime(last.timestamp)}</span>
-      </div>
-    </div>
-  );
-}
-
-function DecisionsBreakdown({
-  decisions,
-  runId,
-}: {
-  decisions: DecisionRowDto[];
-  runId: string;
-}) {
-  if (decisions.length === 0) {
-    return (
-      <p className="m-0 text-text-3 text-[12px] text-center py-6">
-        no decisions recorded
-      </p>
-    );
-  }
-  const counts = new Map<string, number>();
-  let fills = 0;
-  for (const d of decisions) {
-    counts.set(d.action, (counts.get(d.action) ?? 0) + 1);
-    if (d.fill_price != null) fills += 1;
-  }
-  const ordered = Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
-  return (
-    <>
-      <dl className="grid grid-cols-2 gap-y-1.5 text-[12px]">
-        <dt className="text-text-3 uppercase tracking-wide">Total</dt>
-        <dd className="m-0 font-mono text-text">{decisions.length}</dd>
-        <dt className="text-text-3 uppercase tracking-wide">Fills</dt>
-        <dd className="m-0 font-mono text-text">{fills}</dd>
-        {ordered.map(([action, n]) => (
-          <FragmentRow key={action} label={action} value={n} />
-        ))}
-      </dl>
-      <Link
-        to={`/eval-runs/${encodeURIComponent(runId)}`}
-        className="block mt-3 text-[12px] text-text-3 hover:text-text"
-      >
-        View full run →
-      </Link>
-    </>
-  );
-}
-
-function FragmentRow({ label, value }: { label: string; value: number }) {
-  return (
-    <>
-      <dt className="text-text-3 capitalize">{label.replace(/_/g, " ")}</dt>
-      <dd className="m-0 font-mono text-text">{value}</dd>
-    </>
-  );
-}
-
-function EmptyCompare() {
-  return (
-    <>
-      <Topbar title="Compare runs" sub="Pick runs to compare" />
-      <Card className="px-6 py-16 text-center">
-        <div className="font-serif italic text-[28px] text-text-3 mb-3">
-          nothing to compare yet
-        </div>
-        <p className="m-0 max-w-md mx-auto text-text-2 leading-snug mb-5">
-          Compare runs side-by-side by passing them on the URL:{" "}
-          <code className="font-mono text-text">
-            /eval-runs/compare?ids=&lt;a&gt;,&lt;b&gt;
-          </code>
-        </p>
-        <Link
-          to="/eval-runs"
-          className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium border border-border text-text hover:border-text-3"
-        >
-          ← Browse runs
-        </Link>
+      </h2>
+      <Card>
+        {report.findings.length === 0 ? (
+          <EmptyFindings />
+        ) : (
+          <FindingsTable findings={report.findings} runs={report.runs} />
+        )}
       </Card>
     </>
   );
 }
 
-function BackLink() {
+// ────────────────────────────────────────────────────────────────────────────
+
+function MetricsTable({ runs }: { runs: ComparisonRunSummary[] }) {
   return (
-    <div className="mt-8 text-[13px]">
-      <Link to="/eval-runs" className="text-text-2 hover:text-text">
-        ← Back to runs
-      </Link>
+    <Card>
+      <table className="w-full">
+        <thead>
+          <tr className="text-left text-text-2 text-[12px] border-b border-border-soft">
+            <th className="font-normal py-2.5 px-5">Run</th>
+            <th className="font-normal py-2.5 px-3">Status</th>
+            <th className="font-normal py-2.5 px-3">Strategy</th>
+            <th className="font-normal py-2.5 px-3">Scenario</th>
+            <th className="font-normal py-2.5 px-3 text-right">Total return</th>
+            <th className="font-normal py-2.5 px-3 text-right">Sharpe</th>
+            <th className="font-normal py-2.5 px-3 text-right">Max DD</th>
+            <th className="font-normal py-2.5 px-3 text-right">Win rate</th>
+            <th className="font-normal py-2.5 px-3 text-right">Trades</th>
+            <th className="font-normal py-2.5 px-3 text-right">Decisions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {runs.map((r, i) => {
+            const tone = STATUS_TONE[r.status] ?? "default";
+            const palette = CURVE_PALETTE[i % CURVE_PALETTE.length];
+            return (
+              <tr
+                key={r.id}
+                className="border-b border-border-soft last:border-b-0 hover:bg-surface-hover transition-colors"
+              >
+                <td className="py-2.5 px-5">
+                  <span
+                    className="inline-block w-2 h-2 rounded-full mr-2"
+                    style={{ background: palette.stroke }}
+                    aria-hidden
+                  />
+                  <Link
+                    to={`/eval-runs/${encodeURIComponent(r.id)}`}
+                    className="font-mono text-text hover:underline"
+                  >
+                    {r.id.slice(0, 12)}…
+                  </Link>
+                </td>
+                <td className="py-2.5 px-3">
+                  <Pill tone={tone}>{r.status}</Pill>
+                </td>
+                <td className="py-2.5 px-3 font-mono text-text-2 text-[12px]">
+                  {r.strategy_bundle_hash.slice(0, 12)}
+                </td>
+                <td className="py-2.5 px-3 text-text-2 text-[12px]">
+                  {r.scenario_id}
+                </td>
+                <MetricCell
+                  value={fmtPct(r.metrics?.total_return_pct)}
+                  sign={signOf(r.metrics?.total_return_pct)}
+                />
+                <MetricCell value={fmtNumber(r.metrics?.sharpe, 3)} />
+                <MetricCell value={fmtPct(r.metrics?.max_drawdown_pct)} />
+                <MetricCell value={fmtNumber(r.metrics?.win_rate, 2)} />
+                <MetricCell value={fmtInt(r.metrics?.n_trades)} />
+                <MetricCell value={fmtInt(r.metrics?.n_decisions)} />
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </Card>
+  );
+}
+
+function MetricCell({ value, sign }: { value: string; sign?: 1 | -1 | 0 }) {
+  const tone =
+    sign == null
+      ? "text-text"
+      : sign > 0
+        ? "text-gold"
+        : sign < 0
+          ? "text-danger"
+          : "text-text-2";
+  return <td className={`py-2.5 px-3 text-right font-mono ${tone}`}>{value}</td>;
+}
+
+// Multi-curve overlay. Each curve is normalized to its own [min,max] so
+// shape-comparison reads regardless of absolute equity (one run starting
+// at $100k and another at $10k still align). For absolute-axis comparison
+// the operator clicks through to `/eval-runs/<id>`.
+function EquityOverlay({
+  curves,
+  runs,
+}: {
+  curves: ComparisonEquityCurve[];
+  runs: ComparisonRunSummary[];
+}) {
+  const drawn = curves.filter((c) => c.samples.length > 0);
+  if (drawn.length === 0) {
+    return (
+      <p className="m-0 text-text-3 text-[13px] text-center py-6">
+        no equity samples on any run
+      </p>
+    );
+  }
+  const w = 800;
+  const h = 220;
+  const pad = 6;
+
+  const idToIndex = new Map(runs.map((r, i) => [r.id, i] as const));
+
+  return (
+    <div>
+      <Legend curves={drawn} runs={runs} idToIndex={idToIndex} />
+      <svg
+        viewBox={`0 0 ${w} ${h}`}
+        className="w-full h-[220px]"
+        aria-label={`Equity overlay for ${drawn.length} runs`}
+      >
+        {drawn.map((curve) => {
+          const idx = idToIndex.get(curve.run_id) ?? 0;
+          const palette = CURVE_PALETTE[idx % CURVE_PALETTE.length];
+          const ys = curve.samples.map((s) => s.equity_usd);
+          const min = Math.min(...ys);
+          const max = Math.max(...ys);
+          const range = max - min || 1;
+          const path = curve.samples
+            .map((s, i) => {
+              const x = (i / (curve.samples.length - 1 || 1)) * w;
+              const y =
+                h - pad - ((s.equity_usd - min) / range) * (h - 2 * pad);
+              return `${i === 0 ? "M" : "L"}${x.toFixed(2)},${y.toFixed(2)}`;
+            })
+            .join(" ");
+          return (
+            <path
+              key={curve.run_id}
+              d={path}
+              fill="none"
+              stroke={palette.stroke}
+              strokeWidth="1.4"
+              opacity={0.85}
+            />
+          );
+        })}
+      </svg>
+      <div className="text-[11px] text-text-3 mt-2">
+        Each curve is normalized to its own range — shape comparison only.
+        Click a run id above for absolute-axis detail.
+      </div>
     </div>
   );
 }
 
-function Skeleton({ h }: { h: number }) {
+function Legend({
+  curves,
+  runs,
+  idToIndex,
+}: {
+  curves: ComparisonEquityCurve[];
+  runs: ComparisonRunSummary[];
+  idToIndex: Map<string, number>;
+}) {
   return (
-    <div
-      className="bg-surface-elev rounded animate-pulse w-full"
-      style={{ height: h }}
-    />
+    <div className="flex flex-wrap items-center gap-x-5 gap-y-2 mb-3">
+      {curves.map((curve) => {
+        const idx = idToIndex.get(curve.run_id) ?? 0;
+        const palette = CURVE_PALETTE[idx % CURVE_PALETTE.length];
+        const run = runs.find((r) => r.id === curve.run_id);
+        return (
+          <span
+            key={curve.run_id}
+            className="inline-flex items-center gap-2 text-[12px] text-text-2"
+          >
+            <span
+              className="w-3 h-[2px] rounded-sm"
+              style={{ background: palette.stroke }}
+              aria-hidden
+            />
+            <code className="font-mono">{curve.run_id.slice(0, 8)}…</code>
+            <span className="text-text-3">
+              {fmtMetricsBrief(run?.metrics)}
+            </span>
+          </span>
+        );
+      })}
+    </div>
   );
 }
 
-function fmtNumber(n: number | null | undefined): string {
-  if (n == null || !Number.isFinite(n)) return "—";
-  return n.toFixed(3);
+function FindingsTable({
+  findings,
+  runs,
+}: {
+  findings: CompareFinding[];
+  runs: ComparisonRunSummary[];
+}) {
+  const idToIndex = new Map(runs.map((r, i) => [r.id, i] as const));
+  return (
+    <table className="w-full">
+      <thead>
+        <tr className="text-left text-text-2 text-[12px] border-b border-border-soft">
+          <th className="font-normal py-2.5 px-5">Run</th>
+          <th className="font-normal py-2.5 px-3">Severity</th>
+          <th className="font-normal py-2.5 px-3">Kind</th>
+          <th className="font-normal py-2.5 px-3">Summary</th>
+        </tr>
+      </thead>
+      <tbody>
+        {findings.map((f) => {
+          const idx = idToIndex.get(f.run_id) ?? 0;
+          const palette = CURVE_PALETTE[idx % CURVE_PALETTE.length];
+          return (
+            <tr
+              key={f.id}
+              className="border-b border-border-soft last:border-b-0 hover:bg-surface-hover transition-colors"
+            >
+              <td className="py-2.5 px-5">
+                <span
+                  className="inline-block w-2 h-2 rounded-full mr-2"
+                  style={{ background: palette.stroke }}
+                  aria-hidden
+                />
+                <Link
+                  to={`/eval-runs/${encodeURIComponent(f.run_id)}`}
+                  className="font-mono text-text hover:underline text-[12px]"
+                >
+                  {f.run_id.slice(0, 8)}…
+                </Link>
+              </td>
+              <td className="py-2.5 px-3">
+                <Pill tone={severityTone(f.severity)}>{f.severity}</Pill>
+              </td>
+              <td className="py-2.5 px-3 text-text">{f.kind}</td>
+              <td className="py-2.5 px-3 text-text-2">{f.summary}</td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
+function severityTone(
+  s: string,
+): "gold" | "warn" | "danger" | "default" | "info" {
+  switch (s) {
+    case "critical":
+      return "danger";
+    case "warning":
+      return "warn";
+    case "info":
+      return "info";
+    default:
+      return "default";
+  }
+}
+
+function EmptyFindings() {
+  return (
+    <div className="px-6 py-12 text-center text-text-2">
+      <div className="font-serif italic text-[22px] text-text-3 mb-2">
+        no findings
+      </div>
+      <p className="m-0 text-[13px]">
+        None of the selected runs have extracted findings yet. Run the
+        findings extractor to surface regime / risk / behavioral notes.
+      </p>
+    </div>
+  );
+}
+
+function NeedTwoOrMore({ given }: { given: number }) {
+  return (
+    <Card className="px-6 py-12 text-center">
+      <div className="font-serif italic text-[22px] text-text-3 mb-2">
+        compare needs two or more runs
+      </div>
+      <p className="m-0 mb-5 text-text-2 text-[13px]">
+        {given === 0
+          ? "No run ids in the URL — this view expects ?ids=<a>,<b>."
+          : "One id was provided — pick another to compare it against."}
+      </p>
+      <Link
+        to="/eval-runs"
+        className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium border border-border text-text hover:border-text-3"
+      >
+        ← Back to runs
+      </Link>
+    </Card>
+  );
+}
+
+function ErrorState({
+  err,
+  ids,
+  onRetry,
+}: {
+  err: unknown;
+  ids: string[];
+  onRetry: () => void;
+}) {
+  if (err instanceof ApiError && err.code === "not_found") {
+    return (
+      <Card className="px-6 py-12 text-center">
+        <div className="font-serif italic text-[22px] text-text-3 mb-2">
+          a run is missing
+        </div>
+        <p className="m-0 mb-5 text-text-2 text-[13px]">
+          One of <code className="font-mono">{ids.join(", ")}</code> doesn't
+          exist. Server said:{" "}
+          <code className="text-danger font-mono">{err.message}</code>
+        </p>
+        <Link
+          to="/eval-runs"
+          className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium border border-border text-text hover:border-text-3"
+        >
+          ← Back to runs
+        </Link>
+      </Card>
+    );
+  }
+  if (err instanceof ApiError && err.code === "validation") {
+    return (
+      <Card className="px-6 py-12 text-center">
+        <div className="font-serif italic text-[22px] text-text-3 mb-2">
+          can't compare these
+        </div>
+        <p className="m-0 mb-5 text-text-2 text-[13px]">
+          <code className="text-danger font-mono">{err.message}</code>
+        </p>
+        <button
+          onClick={onRetry}
+          className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium border border-border text-text hover:border-text-3"
+        >
+          Retry
+        </button>
+      </Card>
+    );
+  }
+  const detail =
+    err instanceof ApiError
+      ? `${err.code}: ${err.message}`
+      : err instanceof Error
+        ? err.message
+        : String(err);
+  return (
+    <Card className="px-6 py-12 text-center">
+      <div className="font-serif italic text-[22px] text-danger mb-3">
+        couldn't load comparison
+      </div>
+      <p className="m-0 mb-5 text-text-2 text-[13px]">
+        <code className="text-danger font-mono">{detail}</code>
+      </p>
+      <button
+        onClick={onRetry}
+        className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium border border-border text-text hover:border-text-3"
+      >
+        Retry
+      </button>
+    </Card>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// helpers
+
+function parseIds(raw: string | null): string[] {
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+function fmtNumber(n: number | null | undefined, digits = 2): string {
+  if (n == null) return "—";
+  return n.toFixed(digits);
 }
 
 function fmtPct(n: number | null | undefined): string {
-  if (n == null || !Number.isFinite(n)) return "—";
-  return `${n.toFixed(2)}%`;
+  if (n == null) return "—";
+  const sign = n > 0 ? "+" : "";
+  return `${sign}${n.toFixed(2)}%`;
 }
 
-function fmtTime(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString(undefined, {
-    month: "short",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+function fmtInt(n: number | null | undefined): string {
+  if (n == null) return "—";
+  return n.toString();
 }
 
-function errorMessage(err: unknown): string {
-  if (err instanceof ApiError) return `${err.code}: ${err.message}`;
-  if (err instanceof Error) return err.message;
-  return String(err);
+function signOf(n: number | null | undefined): 1 | -1 | 0 | undefined {
+  if (n == null) return undefined;
+  if (n > 0) return 1;
+  if (n < 0) return -1;
+  return 0;
+}
+
+function fmtMetricsBrief(m: MetricsSummary | null | undefined): string {
+  if (!m) return "(no metrics)";
+  return `${fmtPct(m.total_return_pct)} · sharpe ${m.sharpe.toFixed(2)}`;
 }
