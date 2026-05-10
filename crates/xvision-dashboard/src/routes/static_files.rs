@@ -6,7 +6,9 @@ use axum::{
     extract::Path,
     http::{header, StatusCode, Uri},
     response::{IntoResponse, Response},
+    Json,
 };
+use serde_json::json;
 
 use crate::embed::Assets;
 
@@ -20,6 +22,13 @@ pub async fn serve_static(Path(path): Path<String>) -> Response {
 
 pub async fn fallback(uri: Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
+    if uri.path().starts_with("/api/") {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "code": "not_found", "message": format!("no route for {}", uri.path()) })),
+        )
+            .into_response();
+    }
     if path.is_empty() {
         return serve_path("index.html").await;
     }
