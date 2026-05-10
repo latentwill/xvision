@@ -116,8 +116,12 @@ jobs:
         run: |
           docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
           docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest --version
+          # No bind mount: the image's /data is already chown'd to the
+          # `xvision` non-root user (Dockerfile L86 + USER xvision). A
+          # `-v $PWD/data:/data` would override that with a runner-side
+          # root-owned host dir, blocking writes (errno 14 / CANTOPEN).
+          # `--rm` discards the in-container /data after the run anyway.
           docker run --rm \
             -e XVN_AUTOMIGRATE=1 \
-            -v $PWD/data:/data \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
             store stats --db /data/store.db
