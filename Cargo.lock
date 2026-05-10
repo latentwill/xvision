@@ -7912,6 +7912,7 @@ dependencies = [
  "ulid",
  "uuid",
  "xvision-core",
+ "xvision-dashboard",
  "xvision-data",
  "xvision-engine",
  "xvision-eval",
