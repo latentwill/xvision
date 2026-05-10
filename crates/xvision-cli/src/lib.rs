@@ -187,6 +187,8 @@ pub enum Command {
     Dashboard(commands::dashboard::DashboardCmd),
     /// Browse eval runs and canonical scenarios. (`run` lands in a follow-up.)
     Eval(commands::eval::EvalCmd),
+    /// Manage registered LLM providers in config/default.toml.
+    Provider(commands::provider::ProviderCmd),
 }
 
 impl Cli {
@@ -269,6 +271,7 @@ impl Cli {
             Command::Indicator(cmd) => commands::indicator::run(cmd),
             Command::Dashboard(cmd) => commands::dashboard::run(cmd).await,
             Command::Eval(cmd) => commands::eval::run(cmd).await,
+            Command::Provider(cmd) => commands::provider::run(cmd).await,
         }
     }
 }

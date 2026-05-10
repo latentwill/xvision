@@ -6,6 +6,7 @@ pub mod fire_trade;
 pub mod indicator;
 pub mod intern;
 pub mod metrics;
+pub mod provider;
 pub mod report;
 pub mod risk;
 pub mod run_setup;
