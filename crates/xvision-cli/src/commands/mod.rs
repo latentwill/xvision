@@ -1,6 +1,7 @@
 pub mod ab_compare;
 pub mod asset;
 pub mod dashboard;
+pub mod eod;
 pub mod eval;
 pub mod fire_trade;
 pub mod indicator;
