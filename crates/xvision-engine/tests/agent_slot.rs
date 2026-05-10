@@ -25,7 +25,7 @@ async fn execute_slot_returns_parsed_output() {
     })
     .await
     .unwrap();
-    assert!(out.text.contains("long_open"));
+    assert!(out.text().contains("long_open"));
     assert!(out.input_tokens > 0);
 }
 

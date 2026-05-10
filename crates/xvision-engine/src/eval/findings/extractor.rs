@@ -14,7 +14,7 @@ use anyhow::{anyhow, Context, Result};
 use chrono::Utc;
 use ulid::Ulid;
 
-use crate::agent::llm::{LlmDispatch, LlmRequest};
+use crate::agent::llm::{LlmDispatch, LlmRequest, Message};
 use crate::eval::findings::{Finding, Severity};
 use crate::eval::run::Run;
 
@@ -41,15 +41,18 @@ pub async fn extract_findings(
         "equity_curve_summary": equity_summary,
     });
 
+    let user_text = serde_json::to_string_pretty(&user_payload)
+        .context("serialize findings extractor user payload")?;
     let req = LlmRequest {
         model: model.to_string(),
         system_prompt: PROMPT.to_string(),
-        user_prompt: serde_json::to_string_pretty(&user_payload)
-            .context("serialize findings extractor user payload")?,
+        messages: vec![Message::user_text(user_text)],
         max_tokens: 2000,
+        tools: vec![],
     };
     let resp = dispatch.complete(req).await?;
-    let text = &resp.text;
+    let text = resp.text();
+    let text = text.as_str();
 
     let json_start = text
         .find('[')
