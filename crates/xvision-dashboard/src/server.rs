@@ -1,9 +1,12 @@
 use std::net::SocketAddr;
 
-use axum::{routing::get, Router};
+use axum::{
+    routing::{get, post},
+    Router,
+};
 use tower_http::trace::TraceLayer;
 
-use crate::routes::{eval_runs, health::health, settings, static_files, strategies};
+use crate::routes::{eval_runs, health::health, settings, static_files, strategies, wizard};
 use crate::state::AppState;
 
 pub fn build_router(state: AppState) -> Router {
@@ -15,6 +18,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/settings/brokers", get(settings::brokers::get))
         .route("/api/settings/daemon", get(settings::daemon::get))
         .route("/api/settings/identity", get(settings::identity::get))
+        .route("/api/wizard/chat", post(wizard::chat))
         .route("/", get(static_files::serve_index))
         .route("/assets/*path", get(static_files::serve_static))
         .fallback(static_files::fallback)
