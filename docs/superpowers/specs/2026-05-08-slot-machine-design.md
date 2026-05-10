@@ -1,7 +1,7 @@
 # Slot Machine Strategy — Design
 
-> **Status:** Draft for user review · 2026-05-08
-> **Depends on:** [`2026-05-08-strategy-creation-engine-design.md`](./2026-05-08-strategy-creation-engine-design.md) and the in-flight engine MVP plan [`docs/superpowers/plans/2026-05-08-strategy-creation-engine-mvp.md`](../plans/2026-05-08-strategy-creation-engine-mvp.md). The slot machine is a downstream feature; nothing here ships until the engine MVP lands.
+> **Status:** Deferred — design accepted, no plan written for v1. Tracked in [`docs/superpowers/plans/2026-05-10-deferred-archetypes-roadmap.md`](../plans/2026-05-10-deferred-archetypes-roadmap.md) as **Post-v1 Phase 2**. Pickup trigger: the slot-machine engine ships AND there's evidence that L1 users bounce off the open-ended Wizard chat. Until both conditions hold, the engine MVP wizard chat is the v1 onboarding path. · originally drafted 2026-05-08; deferral added 2026-05-10
+> **Depends on:** [`2026-05-08-strategy-creation-engine-design.md`](./2026-05-08-strategy-creation-engine-design.md) and the engine MVP plan [`docs/superpowers/plans/2026-05-08-strategy-creation-engine-mvp.md`](../plans/2026-05-08-strategy-creation-engine-mvp.md). The slot machine is a downstream feature; nothing here ships until the engine MVP lands AND the deferral conditions above are met.
 > **Sibling:** Backlog entry at [`strategies/slot_machine/README.md`](../../../strategies/slot_machine/README.md).
 
 ---

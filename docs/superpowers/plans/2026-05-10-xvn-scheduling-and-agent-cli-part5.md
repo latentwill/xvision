@@ -185,7 +185,7 @@ export XVN_HOME=/tmp/xvn-risk-smoke
 rm -rf $XVN_HOME
 mkdir -p $XVN_HOME/deployments/dep_x
 cat > $XVN_HOME/deployments/dep_x/config.json <<'EOF'
-{"deployment_id":"dep_x","strategy_id":"sh_t","broker":"alpaca_paper","capital_usd":1000,"stop_loss_atr_multiple":1.5,"position_size_pct":0.05,"max_concurrent_positions":3,"circuit_breaker_tripped":false}
+{"deployment_id":"dep_x","agent_id":"sh_t","broker":"alpaca_paper","capital_usd":1000,"stop_loss_atr_multiple":1.5,"position_size_pct":0.05,"max_concurrent_positions":3,"circuit_breaker_tripped":false}
 EOF
 cargo run -p xianvec-cli -- risk show dep_x
 cargo run -p xianvec-cli -- risk set-capital dep_x --usd 500 --reason "halve"
@@ -264,7 +264,7 @@ pub async fn run(cmd: DeployCmd) -> anyhow::Result<()> {
             let l = deploy::list(&ctx, deploy::DepListFilter::default()).await?;
             println!("{:<28} {:<24} {:<14} {:<10} {}", "ID", "STRATEGY", "BROKER", "STATUS", "CAPITAL");
             for d in l {
-                println!("{:<28} {:<24} {:<14} {:<10} ${:.2}", d.id, d.strategy_id, d.broker, format!("{:?}", d.status), d.capital_usd);
+                println!("{:<28} {:<24} {:<14} {:<10} ${:.2}", d.id, d.agent_id, d.broker, format!("{:?}", d.status), d.capital_usd);
             }
         }
         DeployAction::Show { deployment_id } => {
@@ -272,7 +272,7 @@ pub async fn run(cmd: DeployCmd) -> anyhow::Result<()> {
         }
         DeployAction::Create { strategy, broker, capital, stop_loss_atr, position_size_pct, max_concurrent } => {
             let id = deploy::create(&ctx, deploy::DeploymentConfig {
-                deployment_id: None, strategy_id: strategy, broker,
+                deployment_id: None, agent_id: strategy, broker,
                 capital_usd: capital, stop_loss_atr_multiple: stop_loss_atr,
                 position_size_pct, max_concurrent_positions: max_concurrent,
             }, Actor::Cli).await?;
@@ -610,7 +610,7 @@ pub async fn run(cmd: AutoresearchCmd) -> anyhow::Result<()> {
     let ctx = ctx().await?;
     match cmd.action {
         AutoresearchAction::RunEveningCycle { strategy, dry_run } => {
-            let r = autoresearch::run_evening_cycle(&ctx, autoresearch::EveningCycleOpts { strategy_id: strategy, dry_run }).await;
+            let r = autoresearch::run_evening_cycle(&ctx, autoresearch::EveningCycleOpts { agent_id: strategy, dry_run }).await;
             match r {
                 Ok(rep) => println!("{}", serde_json::to_string_pretty(&rep)?),
                 Err(e) => eprintln!("autoresearch not yet implemented: {e}"),

@@ -7,7 +7,7 @@
 > **Tool-call dispatch note:** Plan 2a was originally listed as a dep here for tool-call loops in the agent pipeline. Reverted — this plan uses Plan #1's basic `execute_slot` (no tool-use). Strategies' agents see flat seeded data instead of fetching via tools mid-decision. When Plan 2a ships afterward, eval automatically picks up tool-call dispatch since both share `execute_slot`. The eval engine's findings still produce useful signal without tool calls.
 > **Marketplace deferral note (2026-05-08):** The marketplace surface is deferred to Plan 5 (blockchain integration). This plan still produces signed Ed25519 eval attestations and persists them to local SQLite (`eval_attestations` table). Plan 5's `xvn marketplace push-to-chain` will batch-publish them to the on-chain `EvalAttestationRegistry`. **No `xianvec-marketplace` dep in this plan.**
 
-**Goal:** Make every strategy evaluable. After this plan ships: `xvn eval run <strategy_id> --scenario <scenario_id>` runs a backtest (or paper) execution, persists every decision + fill + metric to a SQLite event store, computes summary metrics (Sharpe, max drawdown, win rate, total return), extracts structured findings via LLM, and emits a signed attestation suitable for marketplace publishing. `xvn eval compare <run_a> <run_b> ...` opens a comparison view rendering equity curves, trade markers, and findings side-by-side.
+**Goal:** Make every strategy evaluable. After this plan ships: `xvn eval run <agent_id> --scenario <scenario_id>` runs a backtest (or paper) execution, persists every decision + fill + metric to a SQLite event store, computes summary metrics (Sharpe, max drawdown, win rate, total return), extracts structured findings via LLM, and emits a signed attestation suitable for marketplace publishing. `xvn eval compare <run_a> <run_b> ...` opens a comparison view rendering equity curves, trade markers, and findings side-by-side.
 
 **Architecture:** New module `xianvec-engine/src/eval/` (per spec §3 — folded into engine, NOT a separate crate). Reuses Plan 2c's scheduler types for run lifecycle. Shares the SQLite database with the scheduler (one `xvn.db` file under `$XVN_HOME`, multiple migrations). Eval loop is in-process for backtest mode (replays a fixture parquet); for paper mode, drives the same execute_slot pipeline against the live broker (Alpaca paper). Findings extractor is its own LLM call after run completion.
 
@@ -1078,7 +1078,7 @@ Commit `feat(eval): run-set comparison report`.
 **File:** `crates/xianvec-cli/src/commands/eval.rs`
 
 Subcommands:
-- `xvn eval run <strategy_id> --scenario <id> [--mode paper|backtest] [--mock] [--estimate-only]`
+- `xvn eval run <agent_id> --scenario <id> [--mode paper|backtest] [--mock] [--estimate-only]`
 - `xvn eval status <run_id>`
 - `xvn eval ls [--strategy <id>] [--scenario <id>]`
 - `xvn eval compare <run_id> <run_id> [<run_id>...]`
@@ -1101,14 +1101,14 @@ Commit `feat(cli): xvn eval run/status/ls/compare/extract-findings/scenarios/bat
 **File:** `crates/xianvec-engine/src/mcp/eval.rs`
 
 Six verbs (per spec §14):
-- `run_eval(strategy_id, scenario_id, mode?, params_override?, estimate_only?)` → `{run_id} | {estimate}`
+- `run_eval(agent_id, scenario_id, mode?, params_override?, estimate_only?)` → `{run_id} | {estimate}`
 - `eval_status(run_id)` → status + partial metrics
 - `eval_metrics(run_id)` → full MetricsSummary
 - `compare_runs(run_ids[])` → ComparisonReport
 - `list_findings(run_id | run_ids[])` → Vec<Finding>
 - `extract_findings(run_id, model_override?)` → Vec<Finding>
 - `register_scenario(scenario_json)` → {scenario_id}
-- `eval_batch(grid | strategy_ids[], scenario_id, concurrency?)` → {batch_id, run_ids}
+- `eval_batch(grid | agent_ids[], scenario_id, concurrency?)` → {batch_id, run_ids}
 - `publish_attestation(run_id)` → SignedAttestation
 
 (That's 9 verbs; the spec lists 8 — sort out which are essential. `register_scenario` is optional in v1 since canonical scenarios are static.)

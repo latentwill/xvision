@@ -1,11 +1,12 @@
 # Blockchain Plan #1 — Non-Custodial Agent Wallets Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Terminology:** Updated 2026-05-10 — `strategy_id` renamed to `agent_id` per Option B (see [`docs/superpowers/plans/2026-05-10-terminology-rename-option-b.md`](2026-05-10-terminology-rename-option-b.md)). The id is a local ULID pre-mint, resolves to the NFT token id post-SLF3. The amendments doc [`2026-05-10-blockchain-1-non-custodial-wallets-amendments.md`](2026-05-10-blockchain-1-non-custodial-wallets-amendments.md) supersedes specific sections of this plan; read it before executing.
 > **Spec:** [`docs/superpowers/specs/2026-05-09-non-custodial-agent-wallets-design.md`](../specs/2026-05-09-non-custodial-agent-wallets-design.md)
 > **Depends on:** Plan #1 (Strategy Creation Engine MVP — shipped). No hard dependency on Plans 2a / 2b / 2c, but Phase 4 (CLI) and Phase 8 (UI) integrate with their surfaces if shipped.
 > **Related (parallel work):**
 > - **SLF2 — ERC-8004 deployment on Mantle Sepolia** (`decisions/0008-erc8004-deployment.md`). Independent of this plan; wallet rail does not depend on registries existing.
-> - **SLF3 — per-strategy NFT mint** (FOLLOWUPS.md). Once shipped, `strategy_id` in this plan's ledger resolves to the NFT id; pre-mint we use a local ULID.
+> - **SLF3 — per-strategy NFT mint** (FOLLOWUPS.md). Once shipped, `agent_id` in this plan's ledger resolves to the NFT id; pre-mint we use a local ULID.
 > - **Plan 5 — Marketplace contract surface** (`docs/superpowers/specs/2026-05-08-smart-contract-surface-design.md`, deferred). This plan assumes that contract spec verbatim; the only shared dependency is the `protocolFeeRecipient` settlement wallet address.
 > - **Plan 2c — Durable scheduler** (`docs/superpowers/plans/2026-05-08-strategy-engine-2c-scheduler-live-exec.md`). The reconciliation job in Phase 7 ships as a scheduled job; if 2c is in flight, it lives in 2c's scheduler. Otherwise it ships as a standalone tokio task.
 > - **Plan 2d — Web dashboard** (`docs/superpowers/plans/2026-05-08-strategy-engine-2d-dashboard-wizard.md`). **Assumed complete by the time this plan executes** — Phase 8 ships the Strategy Budgets spreadsheet as a new route inside `crates/xianvec-dashboard`, alongside the existing Wizard / Inspector / Live cockpit archetypes. A standalone Axum server is documented in Phase 8 as a fallback if 2d slips, but the primary path is the dashboard route.
@@ -26,7 +27,7 @@
 - MPC trading-key signing (spec §10) — single-process key custody acknowledged residual risk.
 - Smart-account / ERC-4337 trading scope (spec §10).
 - Marketplace contract implementation (Plan 5, separate plan).
-- ERC-8004 registry writes (SLF4/SLF5, separate work). The ledger will tag positions with `strategy_id` regardless; once the NFT registry ships, the same id resolves to the on-chain NFT.
+- ERC-8004 registry writes (SLF4/SLF5, separate work). The ledger will tag positions with `agent_id` regardless; once the NFT registry ships, the same id resolves to the on-chain NFT.
 
 ---
 
@@ -529,7 +530,7 @@ git commit -m "adr: 0012 orderly key-scope validation; 0013 margin-mode support"
 
 ## Phase 1 — Schema + Ledger + Audit Log
 
-Build the persistence layer that the rest of the plan writes to. End of phase: SQLite migrations apply cleanly, every Orderly trade currently flowing through the system is tagged with `strategy_id` and persisted in `positions` + `decisions`.
+Build the persistence layer that the rest of the plan writes to. End of phase: SQLite migrations apply cleanly, every Orderly trade currently flowing through the system is tagged with `agent_id` and persisted in `positions` + `decisions`.
 
 ### Task 1.1: SQLite migrations
 
@@ -565,7 +566,7 @@ CREATE TABLE positions (
     position_id           TEXT PRIMARY KEY,
     client_order_id       TEXT NOT NULL UNIQUE,
     user_id               TEXT NOT NULL,
-    strategy_id           TEXT NOT NULL,
+    agent_id           TEXT NOT NULL,
     asset                 TEXT NOT NULL,
     side                  TEXT NOT NULL CHECK (side IN ('LONG','SHORT')),
     size_usdc             REAL NOT NULL,
@@ -576,8 +577,8 @@ CREATE TABLE positions (
     closed_at             INTEGER,
     orderly_position_id   TEXT
 );
-CREATE INDEX idx_positions_strategy        ON positions(strategy_id, closed_at);
-CREATE INDEX idx_positions_open            ON positions(strategy_id) WHERE closed_at IS NULL;
+CREATE INDEX idx_positions_strategy        ON positions(agent_id, closed_at);
+CREATE INDEX idx_positions_open            ON positions(agent_id) WHERE closed_at IS NULL;
 CREATE INDEX idx_positions_user            ON positions(user_id, closed_at);
 ```
 
@@ -587,14 +588,14 @@ CREATE INDEX idx_positions_user            ON positions(user_id, closed_at);
 CREATE TABLE funding_attributions (
     funding_id        TEXT PRIMARY KEY,
     position_id       TEXT NOT NULL REFERENCES positions(position_id),
-    strategy_id       TEXT NOT NULL,
+    agent_id       TEXT NOT NULL,
     asset             TEXT NOT NULL,
     funding_rate_bps  REAL NOT NULL,
     notional_usdc     REAL NOT NULL,
     payment_usdc      REAL NOT NULL,
     funded_at         INTEGER NOT NULL
 );
-CREATE INDEX idx_funding_strategy ON funding_attributions(strategy_id, funded_at);
+CREATE INDEX idx_funding_strategy ON funding_attributions(agent_id, funded_at);
 CREATE INDEX idx_funding_position ON funding_attributions(position_id);
 ```
 
@@ -605,7 +606,7 @@ CREATE TABLE decisions (
     decision_id          TEXT PRIMARY KEY,
     occurred_at          INTEGER NOT NULL,
     user_id              TEXT NOT NULL,
-    strategy_id          TEXT NOT NULL,
+    agent_id          TEXT NOT NULL,
     stage                TEXT NOT NULL CHECK (stage IN
                             ('emit','risk_eval','simulate','sign','submit',
                              'response','fill','close','cancel','reject')),
@@ -615,7 +616,7 @@ CREATE TABLE decisions (
     payload_sha256       TEXT NOT NULL,
     notes                TEXT
 );
-CREATE INDEX idx_decisions_strategy_time ON decisions(strategy_id, occurred_at);
+CREATE INDEX idx_decisions_strategy_time ON decisions(agent_id, occurred_at);
 CREATE INDEX idx_decisions_position      ON decisions(related_position_id);
 CREATE INDEX idx_decisions_chain         ON decisions(related_decision_id);
 ```
@@ -624,7 +625,7 @@ CREATE INDEX idx_decisions_chain         ON decisions(related_decision_id);
 
 ```sql
 CREATE TABLE strategy_status (
-    strategy_id      TEXT PRIMARY KEY,
+    agent_id      TEXT PRIMARY KEY,
     state            TEXT NOT NULL CHECK (state IN
                         ('active','halted_auto','halted_manual')),
     halted_at        INTEGER,
@@ -643,7 +644,7 @@ CREATE TABLE pending_approvals (
     requested_at     INTEGER NOT NULL,
     expires_at       INTEGER NOT NULL,
     user_id          TEXT NOT NULL,
-    strategy_id      TEXT NOT NULL,
+    agent_id      TEXT NOT NULL,
     decision_payload TEXT NOT NULL,
     notional_usdc    REAL NOT NULL,
     state            TEXT NOT NULL CHECK (state IN ('pending','approved','rejected','expired'))
@@ -660,14 +661,14 @@ CREATE INDEX idx_approvals_pending ON pending_approvals(state, expires_at);
 CREATE TABLE policy_changes (
     change_id        TEXT PRIMARY KEY,
     occurred_at      INTEGER NOT NULL,
-    strategy_id      TEXT NOT NULL,
+    agent_id      TEXT NOT NULL,
     field            TEXT NOT NULL,
     old_value_json   TEXT,
     new_value_json   TEXT NOT NULL,
     changed_by       TEXT NOT NULL,
     comment          TEXT
 );
-CREATE INDEX idx_policy_strategy ON policy_changes(strategy_id, occurred_at);
+CREATE INDEX idx_policy_strategy ON policy_changes(agent_id, occurred_at);
 ```
 
 - [ ] **Step 8: Write 007 — pending_reservations**
@@ -675,14 +676,14 @@ CREATE INDEX idx_policy_strategy ON policy_changes(strategy_id, occurred_at);
 ```sql
 CREATE TABLE pending_reservations (
     reservation_id   TEXT PRIMARY KEY,
-    strategy_id      TEXT NOT NULL,
+    agent_id      TEXT NOT NULL,
     user_id          TEXT NOT NULL,
     notional_usdc    REAL NOT NULL,
     created_at       INTEGER NOT NULL,
     expires_at       INTEGER NOT NULL
 );
 CREATE INDEX idx_reservations_strategy_active
-    ON pending_reservations(strategy_id, expires_at);
+    ON pending_reservations(agent_id, expires_at);
 ```
 
 - [ ] **Step 9: Verify migrations apply**
@@ -753,7 +754,7 @@ async fn writes_decision_and_returns_id() {
 
     let row = log.get(&id).await.expect("get").expect("row exists");
     assert_eq!(row.user_id, "user-1");
-    assert_eq!(row.strategy_id, "strat-1");
+    assert_eq!(row.agent_id, "strat-1");
     assert_eq!(row.stage, Stage::Emit);
     assert_eq!(row.payload_sha256.len(), 64); // hex sha256
 }
@@ -816,7 +817,7 @@ pub struct DecisionRow {
     pub decision_id: String,
     pub occurred_at: i64,
     pub user_id: String,
-    pub strategy_id: String,
+    pub agent_id: String,
     pub stage: Stage,
     pub related_position_id: Option<String>,
     pub related_decision_id: Option<String>,
@@ -840,7 +841,7 @@ impl AuditLog {
         &self,
         stage: Stage,
         user_id: &str,
-        strategy_id: &str,
+        agent_id: &str,
         related_position_id: Option<&str>,
         related_decision_id: Option<&str>,
         payload: serde_json::Value,
@@ -853,7 +854,7 @@ impl AuditLog {
 
         sqlx::query(
             r#"INSERT INTO decisions
-               (decision_id, occurred_at, user_id, strategy_id, stage,
+               (decision_id, occurred_at, user_id, agent_id, stage,
                 related_position_id, related_decision_id,
                 payload_json, payload_sha256, notes)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
@@ -861,7 +862,7 @@ impl AuditLog {
         .bind(&decision_id)
         .bind(occurred_at)
         .bind(user_id)
-        .bind(strategy_id)
+        .bind(agent_id)
         .bind(stage)
         .bind(related_position_id)
         .bind(related_decision_id)
@@ -1018,7 +1019,7 @@ pub struct Position {
     pub position_id: String,
     pub client_order_id: String,
     pub user_id: String,
-    pub strategy_id: String,
+    pub agent_id: String,
     pub asset: String,
     pub side: Side,
     pub size_usdc: f64,
@@ -1031,13 +1032,13 @@ pub struct Position {
 }
 
 impl Position {
-    pub fn new(user_id: &str, strategy_id: &str, asset: &str, side: Side, size_usdc: f64) -> Self {
+    pub fn new(user_id: &str, agent_id: &str, asset: &str, side: Side, size_usdc: f64) -> Self {
         let id = Ulid::new().to_string();
         Self {
             position_id: id.clone(),
             client_order_id: id, // ULID doubles as client_order_id for idempotency
             user_id: user_id.into(),
-            strategy_id: strategy_id.into(),
+            agent_id: agent_id.into(),
             asset: asset.into(),
             side,
             size_usdc,
@@ -1060,11 +1061,11 @@ impl Ledger {
     pub async fn open_position(&self, p: Position) -> Result<Position> {
         sqlx::query(
             r#"INSERT INTO positions
-               (position_id, client_order_id, user_id, strategy_id, asset, side, size_usdc, opened_at)
+               (position_id, client_order_id, user_id, agent_id, asset, side, size_usdc, opened_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)"#,
         )
         .bind(&p.position_id).bind(&p.client_order_id).bind(&p.user_id)
-        .bind(&p.strategy_id).bind(&p.asset).bind(p.side).bind(p.size_usdc)
+        .bind(&p.agent_id).bind(&p.asset).bind(p.side).bind(p.size_usdc)
         .bind(p.opened_at)
         .execute(&self.pool).await?;
         Ok(p)
@@ -1091,31 +1092,31 @@ impl Ledger {
         Ok(())
     }
 
-    pub async fn in_flight_notional(&self, strategy_id: &str) -> Result<f64> {
+    pub async fn in_flight_notional(&self, agent_id: &str) -> Result<f64> {
         let row: (Option<f64>,) = sqlx::query_as(
             "SELECT COALESCE(SUM(size_usdc), 0.0) FROM positions
-             WHERE strategy_id = ? AND closed_at IS NULL",
+             WHERE agent_id = ? AND closed_at IS NULL",
         )
-        .bind(strategy_id)
+        .bind(agent_id)
         .fetch_one(&self.pool).await?;
         Ok(row.0.unwrap_or(0.0))
     }
 
-    pub async fn open_count_for_strategy(&self, strategy_id: &str) -> Result<i64> {
+    pub async fn open_count_for_strategy(&self, agent_id: &str) -> Result<i64> {
         let row: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM positions WHERE strategy_id = ? AND closed_at IS NULL",
+            "SELECT COUNT(*) FROM positions WHERE agent_id = ? AND closed_at IS NULL",
         )
-        .bind(strategy_id)
+        .bind(agent_id)
         .fetch_one(&self.pool).await?;
         Ok(row.0)
     }
 
-    pub async fn realized_pnl_window(&self, strategy_id: &str, since_ms: i64) -> Result<f64> {
+    pub async fn realized_pnl_window(&self, agent_id: &str, since_ms: i64) -> Result<f64> {
         let row: (Option<f64>,) = sqlx::query_as(
             "SELECT COALESCE(SUM(realized_pnl_usdc), 0.0) FROM positions
-             WHERE strategy_id = ? AND closed_at >= ?",
+             WHERE agent_id = ? AND closed_at >= ?",
         )
-        .bind(strategy_id).bind(since_ms)
+        .bind(agent_id).bind(since_ms)
         .fetch_one(&self.pool).await?;
         Ok(row.0.unwrap_or(0.0))
     }
@@ -1163,48 +1164,48 @@ pub struct StatusStore { pool: SqlitePool }
 impl StatusStore {
     pub fn new(pool: SqlitePool) -> Self { Self { pool } }
 
-    pub async fn get_or_init(&self, strategy_id: &str) -> Result<State> {
+    pub async fn get_or_init(&self, agent_id: &str) -> Result<State> {
         let row: Option<(State,)> = sqlx::query_as(
-            "SELECT state FROM strategy_status WHERE strategy_id = ?",
+            "SELECT state FROM strategy_status WHERE agent_id = ?",
         )
-        .bind(strategy_id)
+        .bind(agent_id)
         .fetch_optional(&self.pool).await?;
 
         if let Some((s,)) = row { return Ok(s); }
 
-        sqlx::query("INSERT INTO strategy_status (strategy_id, state) VALUES (?, 'active')")
-            .bind(strategy_id).execute(&self.pool).await?;
+        sqlx::query("INSERT INTO strategy_status (agent_id, state) VALUES (?, 'active')")
+            .bind(agent_id).execute(&self.pool).await?;
         Ok(State::Active)
     }
 
-    pub async fn halt(&self, strategy_id: &str, reason: &str, by: &str, automatic: bool) -> Result<()> {
+    pub async fn halt(&self, agent_id: &str, reason: &str, by: &str, automatic: bool) -> Result<()> {
         let new_state = if automatic { State::HaltedAuto } else { State::HaltedManual };
         sqlx::query(
-            r#"INSERT INTO strategy_status (strategy_id, state, halted_at, halt_reason, halted_by)
+            r#"INSERT INTO strategy_status (agent_id, state, halted_at, halt_reason, halted_by)
                VALUES (?, ?, ?, ?, ?)
-               ON CONFLICT(strategy_id) DO UPDATE SET
+               ON CONFLICT(agent_id) DO UPDATE SET
                   state = excluded.state, halted_at = excluded.halted_at,
                   halt_reason = excluded.halt_reason, halted_by = excluded.halted_by"#,
         )
-        .bind(strategy_id).bind(new_state)
+        .bind(agent_id).bind(new_state)
         .bind(Utc::now().timestamp_millis()).bind(reason).bind(by)
         .execute(&self.pool).await?;
         Ok(())
     }
 
-    pub async fn unhalt(&self, strategy_id: &str, by: &str) -> Result<()> {
+    pub async fn unhalt(&self, agent_id: &str, by: &str) -> Result<()> {
         sqlx::query(
             r#"UPDATE strategy_status
                SET state = 'active', last_unhalted_at = ?, last_unhalted_by = ?
-               WHERE strategy_id = ?"#,
+               WHERE agent_id = ?"#,
         )
-        .bind(Utc::now().timestamp_millis()).bind(by).bind(strategy_id)
+        .bind(Utc::now().timestamp_millis()).bind(by).bind(agent_id)
         .execute(&self.pool).await?;
         Ok(())
     }
 
-    pub async fn is_active(&self, strategy_id: &str) -> Result<bool> {
-        Ok(matches!(self.get_or_init(strategy_id).await?, State::Active))
+    pub async fn is_active(&self, agent_id: &str) -> Result<bool> {
+        Ok(matches!(self.get_or_init(agent_id).await?, State::Active))
     }
 }
 ```
@@ -1248,7 +1249,7 @@ impl PolicyJournal {
     pub fn new(pool: SqlitePool) -> Self { Self { pool } }
 
     pub async fn record<T: Serialize, U: Serialize>(
-        &self, strategy_id: &str, field: &str,
+        &self, agent_id: &str, field: &str,
         old: Option<&T>, new: &U, changed_by: &str, comment: Option<&str>,
     ) -> Result<String> {
         let id = Ulid::new().to_string();
@@ -1259,11 +1260,11 @@ impl PolicyJournal {
         let new_json = serde_json::to_string(new)?;
         sqlx::query(
             r#"INSERT INTO policy_changes
-               (change_id, occurred_at, strategy_id, field,
+               (change_id, occurred_at, agent_id, field,
                 old_value_json, new_value_json, changed_by, comment)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)"#,
         )
-        .bind(&id).bind(Utc::now().timestamp_millis()).bind(strategy_id).bind(field)
+        .bind(&id).bind(Utc::now().timestamp_millis()).bind(agent_id).bind(field)
         .bind(old_json).bind(new_json).bind(changed_by).bind(comment)
         .execute(&self.pool).await?;
         Ok(id)
@@ -1311,24 +1312,24 @@ git commit -m "feat(data): strategy status, policy journal, pending approvals + 
 
 - [ ] **Step 1: Identify the existing trade-emitting call site**
 
-Read `crates/xianvec-execution/src/orderly.rs` and locate the function that submits an order to Orderly. (Likely named `submit_order` or similar; uses `client_order_id = setup_id.to_string()` per the survey.)
+Read `crates/xianvec-execution/src/orderly.rs` and locate the function that submits an order to Orderly. (Likely named `submit_order` or similar; uses `client_order_id = cycle_id.to_string()` per the survey.)
 
-- [ ] **Step 2: Pass strategy_id + ledger into the executor**
+- [ ] **Step 2: Pass agent_id + ledger into the executor**
 
-Modify the executor's constructor to accept `Arc<xianvec_data::ledger::Ledger>` and `Arc<xianvec_data::audit::AuditLog>`. Modify `submit_order` to take an explicit `strategy_id: &str` parameter.
+Modify the executor's constructor to accept `Arc<xianvec_data::ledger::Ledger>` and `Arc<xianvec_data::audit::AuditLog>`. Modify `submit_order` to take an explicit `agent_id: &str` parameter.
 
 After successful submission, call `ledger.open_position(...)` and `audit.write(Stage::Submit, ...)`. After fill confirmation, call `ledger.record_fill(...)` and `audit.write(Stage::Fill, ...)`.
 
 - [ ] **Step 3: Update existing call sites**
 
-`grep -rn "submit_order\|OrderlyExecutor" crates/` — every call site must now pass a `strategy_id`. For the current single-strategy fixture, hardcode `"hackathon-baseline"` as `strategy_id` until Phase 3 wires per-strategy dispatch.
+`grep -rn "submit_order\|OrderlyExecutor" crates/` — every call site must now pass a `agent_id`. For the current single-strategy fixture, hardcode `"hackathon-baseline"` as `agent_id` until Phase 3 wires per-strategy dispatch.
 
 - [ ] **Step 4: Integration test**
 
 ```rust
 // crates/xianvec-execution/tests/orderly_ledger_integration.rs
 // Mock the Orderly HTTP layer; assert that on submit_order success,
-// a positions row appears with the supplied strategy_id and a decisions
+// a positions row appears with the supplied agent_id and a decisions
 // row appears with stage=submit.
 ```
 
@@ -1341,7 +1342,7 @@ Expected: PASS
 
 ```bash
 git add crates/xianvec-execution/
-git commit -m "feat(execution): tag every Orderly order with strategy_id; persist to ledger + audit"
+git commit -m "feat(execution): tag every Orderly order with agent_id; persist to ledger + audit"
 ```
 
 ---
@@ -1694,26 +1695,26 @@ impl ReservationManager {
         Self { pool, ledger, ttl, locks: Mutex::new(Default::default()) }
     }
 
-    async fn lock_for(&self, strategy_id: &str) -> Arc<Mutex<()>> {
+    async fn lock_for(&self, agent_id: &str) -> Arc<Mutex<()>> {
         let mut map = self.locks.lock().await;
-        map.entry(strategy_id.to_string())
+        map.entry(agent_id.to_string())
             .or_insert_with(|| Arc::new(Mutex::new(())))
             .clone()
     }
 
-    /// Reserve `notional` for `strategy_id` if `in_flight + already_reserved + notional <= cap`.
-    pub async fn try_reserve(&self, user_id: &str, strategy_id: &str, notional: f64, cap: f64) -> Result<String> {
-        let lock = self.lock_for(strategy_id).await;
+    /// Reserve `notional` for `agent_id` if `in_flight + already_reserved + notional <= cap`.
+    pub async fn try_reserve(&self, user_id: &str, agent_id: &str, notional: f64, cap: f64) -> Result<String> {
+        let lock = self.lock_for(agent_id).await;
         let _guard = lock.lock().await;
 
         let mut tx = self.pool.begin().await?;
-        let in_flight = self.ledger.in_flight_notional(strategy_id).await?;
+        let in_flight = self.ledger.in_flight_notional(agent_id).await?;
         let now_ms = Utc::now().timestamp_millis();
         let reserved: (Option<f64>,) = sqlx::query_as(
             r#"SELECT COALESCE(SUM(notional_usdc), 0.0) FROM pending_reservations
-               WHERE strategy_id = ? AND expires_at > ?"#,
+               WHERE agent_id = ? AND expires_at > ?"#,
         )
-        .bind(strategy_id).bind(now_ms)
+        .bind(agent_id).bind(now_ms)
         .fetch_one(&mut *tx).await?;
 
         if in_flight + reserved.0.unwrap_or(0.0) + notional > cap {
@@ -1725,10 +1726,10 @@ impl ReservationManager {
         let expires_at = now_ms + self.ttl.as_millis() as i64;
         sqlx::query(
             r#"INSERT INTO pending_reservations
-               (reservation_id, strategy_id, user_id, notional_usdc, created_at, expires_at)
+               (reservation_id, agent_id, user_id, notional_usdc, created_at, expires_at)
                VALUES (?, ?, ?, ?, ?, ?)"#,
         )
-        .bind(&id).bind(strategy_id).bind(user_id).bind(notional)
+        .bind(&id).bind(agent_id).bind(user_id).bind(notional)
         .bind(now_ms).bind(expires_at)
         .execute(&mut *tx).await?;
         tx.commit().await?;
@@ -1931,7 +1932,7 @@ impl OrderDispatcher {
     pub async fn dispatch(
         &self,
         user_id: &str,
-        strategy_id: &str,
+        agent_id: &str,
         cfg: &StrategyConfig,
         decision: TraderDecision,
         chain: &str,
@@ -1943,20 +1944,20 @@ impl OrderDispatcher {
     ) -> Result<DispatchOutcome> {
         // Stage 1: emit
         let emit_id = self.audit.write(
-            Stage::Emit, user_id, strategy_id, None, None,
+            Stage::Emit, user_id, agent_id, None, None,
             serde_json::to_value(&decision)?, None,
         ).await?;
 
         // Stage 2: status check
-        if !self.status.is_active(strategy_id).await? {
-            self.audit.write(Stage::Reject, user_id, strategy_id, None, Some(&emit_id),
+        if !self.status.is_active(agent_id).await? {
+            self.audit.write(Stage::Reject, user_id, agent_id, None, Some(&emit_id),
                 serde_json::json!({"reason": "strategy halted"}), None).await?;
             return Ok(DispatchOutcome::Halted);
         }
 
         // Stage 3: risk eval
-        let in_flight = self.ledger.in_flight_notional(strategy_id).await?;
-        let open_count = self.ledger.open_count_for_strategy(strategy_id).await? as u32;
+        let in_flight = self.ledger.in_flight_notional(agent_id).await?;
+        let open_count = self.ledger.open_count_for_strategy(agent_id).await? as u32;
         let intended_notional = decision.notional_usdc(); // helper on TraderDecision; add if missing
         let asset = decision.asset().to_string();
         let side = decision.side_str();
@@ -1974,13 +1975,13 @@ impl OrderDispatcher {
             protocol: protocol.into(),
         });
 
-        self.audit.write(Stage::RiskEval, user_id, strategy_id, None, Some(&emit_id),
+        self.audit.write(Stage::RiskEval, user_id, agent_id, None, Some(&emit_id),
             serde_json::json!({"verdict": format!("{:?}", verdict)}), None).await?;
 
         match verdict {
             Verdict::Vetoed { reason } => return Ok(DispatchOutcome::Vetoed { reason }),
             Verdict::RequiresApproval { threshold } => {
-                let approval_id = self.request_approval(user_id, strategy_id, &decision, intended_notional, threshold).await?;
+                let approval_id = self.request_approval(user_id, agent_id, &decision, intended_notional, threshold).await?;
                 return Ok(DispatchOutcome::AwaitingApproval { approval_id });
             }
             Verdict::Approved => {}
@@ -1988,26 +1989,26 @@ impl OrderDispatcher {
 
         // Stage 4: reserve
         let reservation_id = self.reservations
-            .try_reserve(user_id, strategy_id, intended_notional, cfg.hard_cap_usdc_notional)
+            .try_reserve(user_id, agent_id, intended_notional, cfg.hard_cap_usdc_notional)
             .await?;
 
         // Stage 5: simulate
         let sim = self.simulator.simulate(&asset, side, intended_notional / 78_000.0 /* qty proxy; replace with mark */).await?;
         if sim.estimated_slippage_bps > cfg.max_slippage_bps as f64 {
             self.reservations.release(&reservation_id).await?;
-            self.audit.write(Stage::Simulate, user_id, strategy_id, None, Some(&emit_id),
+            self.audit.write(Stage::Simulate, user_id, agent_id, None, Some(&emit_id),
                 serde_json::json!({"slippage_bps": sim.estimated_slippage_bps, "rejected": true}), None).await?;
             return Ok(DispatchOutcome::Vetoed { reason: format!("slippage too high: {}", sim.estimated_slippage_bps) });
         }
-        self.audit.write(Stage::Simulate, user_id, strategy_id, None, Some(&emit_id),
+        self.audit.write(Stage::Simulate, user_id, agent_id, None, Some(&emit_id),
             serde_json::to_value(&sim)?, None).await?;
 
         // Stage 6: open ledger row + sign + submit
-        let position = Position::new(user_id, strategy_id, &asset,
+        let position = Position::new(user_id, agent_id, &asset,
             if side == "BUY" { Side::Long } else { Side::Short }, intended_notional);
         let position = self.ledger.open_position(position).await?;
 
-        self.audit.write(Stage::Sign, user_id, strategy_id, Some(&position.position_id), Some(&emit_id),
+        self.audit.write(Stage::Sign, user_id, agent_id, Some(&position.position_id), Some(&emit_id),
             serde_json::json!({"client_order_id": &position.client_order_id}), None).await?;
 
         let orderly_pos_id = self.orderly
@@ -2017,7 +2018,7 @@ impl OrderDispatcher {
         self.ledger.record_fill(&position.position_id, sim.estimated_fill_price, Some(&orderly_pos_id)).await?;
         self.reservations.release(&reservation_id).await?;
 
-        self.audit.write(Stage::Submit, user_id, strategy_id, Some(&position.position_id), Some(&emit_id),
+        self.audit.write(Stage::Submit, user_id, agent_id, Some(&position.position_id), Some(&emit_id),
             serde_json::json!({"orderly_position_id": &orderly_pos_id}), None).await?;
 
         Ok(DispatchOutcome::Submitted {
@@ -2026,7 +2027,7 @@ impl OrderDispatcher {
     }
 
     async fn request_approval(
-        &self, _user_id: &str, _strategy_id: &str, _decision: &TraderDecision,
+        &self, _user_id: &str, _agent_id: &str, _decision: &TraderDecision,
         _notional: f64, _threshold: f64,
     ) -> Result<String> {
         // Implemented in Phase 4 Task 4.5; for now, write a pending row and return its id.
@@ -2065,7 +2066,7 @@ List the call sites. Likely in `crates/xianvec-engine/`, `crates/xianvec-cli/src
 
 - [ ] **Step 2: Replace direct executor calls with `OrderDispatcher::dispatch`**
 
-For each call site, construct the dispatcher (via a shared `AppContext` or DI struct) and call `.dispatch(user_id, strategy_id, &cfg, decision, ...)`. The previous direct submission becomes the `OrderlyOrderSubmit` impl backing the dispatcher.
+For each call site, construct the dispatcher (via a shared `AppContext` or DI struct) and call `.dispatch(user_id, agent_id, &cfg, decision, ...)`. The previous direct submission becomes the `OrderlyOrderSubmit` impl backing the dispatcher.
 
 - [ ] **Step 3: Run integration tests**
 
@@ -2417,7 +2418,7 @@ impl ApprovalWorkflow {
     pub fn new(pool: SqlitePool) -> Self { Self { pool, ttl: DEFAULT_APPROVAL_TTL } }
 
     pub async fn request(
-        &self, user_id: &str, strategy_id: &str,
+        &self, user_id: &str, agent_id: &str,
         decision_payload: &serde_json::Value, notional: f64,
     ) -> Result<String> {
         let id = Ulid::new().to_string();
@@ -2425,11 +2426,11 @@ impl ApprovalWorkflow {
         let exp = now + self.ttl.as_millis() as i64;
         sqlx::query(
             r#"INSERT INTO pending_approvals
-               (approval_id, requested_at, expires_at, user_id, strategy_id,
+               (approval_id, requested_at, expires_at, user_id, agent_id,
                 decision_payload, notional_usdc, state)
                VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')"#,
         )
-        .bind(&id).bind(now).bind(exp).bind(user_id).bind(strategy_id)
+        .bind(&id).bind(now).bind(exp).bind(user_id).bind(agent_id)
         .bind(serde_json::to_string(decision_payload)?).bind(notional)
         .execute(&self.pool).await?;
         Ok(id)
@@ -2477,7 +2478,7 @@ pub struct PendingApproval {
     pub requested_at: i64,
     pub expires_at: i64,
     pub user_id: String,
-    pub strategy_id: String,
+    pub agent_id: String,
     pub decision_payload: String,
     pub notional_usdc: f64,
     pub state: String,
@@ -2490,7 +2491,7 @@ In `dispatcher.rs`, the `request_approval` body becomes:
 
 ```rust
 let decision_value = serde_json::to_value(decision)?;
-self.approval_workflow.request(user_id, strategy_id, &decision_value, notional).await
+self.approval_workflow.request(user_id, agent_id, &decision_value, notional).await
 ```
 
 (Add `pub approval_workflow: Arc<ApprovalWorkflow>` to `OrderDispatcher` struct.)
@@ -2531,7 +2532,7 @@ pub async fn run(args: ApproveArgs) -> Result<()> {
         for p in pending {
             let secs = (p.expires_at - chrono::Utc::now().timestamp_millis()) / 1000;
             println!("{}  user={}  strategy={}  notional=${}  expires_in={}s",
-                p.approval_id, p.user_id, p.strategy_id, p.notional_usdc, secs);
+                p.approval_id, p.user_id, p.agent_id, p.notional_usdc, secs);
         }
         return Ok(());
     }
@@ -2765,7 +2766,7 @@ pub enum AuditCmd {
     /// Full pipeline trace for one position.
     Position { position_id: String },
     /// All decisions for one strategy since timestamp (RFC3339 or "1h"/"1d"/etc).
-    Strategy { strategy_id: String, #[arg(long)] since: Option<String> },
+    Strategy { agent_id: String, #[arg(long)] since: Option<String> },
     /// Decisions awaiting operator approval.
     Pending,
 }
@@ -3206,7 +3207,7 @@ struct BudgetsTemplate {
 }
 
 pub struct BudgetRow {
-    pub strategy_id: String,
+    pub agent_id: String,
     pub hard_cap: f64,
     pub slippage_bps: u32,
     pub orders_per_minute: u32,
@@ -3231,13 +3232,13 @@ pub async fn list(State(state): State<AppState>) -> Html<String> {
 pub struct UpdateBody { pub field: String, pub value: String }
 
 pub async fn update(
-    Path(strategy_id): Path<String>,
+    Path(agent_id): Path<String>,
     State(state): State<AppState>,
     Json(body): Json<UpdateBody>,
 ) -> axum::http::StatusCode {
     // Whitelist `field`; validate `value`; read current StrategyConfig;
     // apply change; write policy_changes row; persist new config.
-    match apply_update(&state, &strategy_id, &body).await {
+    match apply_update(&state, &agent_id, &body).await {
         Ok(()) => axum::http::StatusCode::OK,
         Err(_) => axum::http::StatusCode::BAD_REQUEST,
     }
@@ -3248,7 +3249,7 @@ async fn collect_rows(state: &AppState) -> Result<Vec<BudgetRow>> {
     todo!()
 }
 
-async fn apply_update(state: &AppState, strategy_id: &str, body: &UpdateBody) -> Result<()> {
+async fn apply_update(state: &AppState, agent_id: &str, body: &UpdateBody) -> Result<()> {
     // ... ~25 lines: validate field is in allowlist, parse value to typed field,
     //                read current config, journal change to policy_changes, write back ...
     todo!()
@@ -3303,7 +3304,7 @@ Plan 2d's dashboard likely renders a nav bar. Add a "Budgets" link pointing at `
   <table id="budgets">
     <thead>
       <tr>
-        <th data-sort="strategy_id">Strategy</th>
+        <th data-sort="agent_id">Strategy</th>
         <th data-sort="hard_cap">Hard Cap</th>
         <th data-sort="slippage_bps">Slippage</th>
         <th data-sort="orders_per_minute">Orders/min</th>
@@ -3316,8 +3317,8 @@ Plan 2d's dashboard likely renders a nav bar. Add a "Budgets" link pointing at `
     </thead>
     <tbody>
       {% for r in rows %}
-      <tr data-strategy="{{ r.strategy_id }}">
-        <td>{{ r.strategy_id }}</td>
+      <tr data-strategy="{{ r.agent_id }}">
+        <td>{{ r.agent_id }}</td>
         <td class="editable" data-field="hard_cap">${{ r.hard_cap }}</td>
         <td class="editable" data-field="slippage_bps">{{ r.slippage_bps }} bps</td>
         <td class="editable" data-field="orders_per_minute">{{ r.orders_per_minute }}</td>
@@ -3326,8 +3327,8 @@ Plan 2d's dashboard likely renders a nav bar. Add a "Budgets" link pointing at `
         <td>{{ r.quota_factor }}</td>
         <td class="status-{{ r.status }}">{{ r.status }}</td>
         <td>
-          <button onclick="kill('{{ r.strategy_id }}')">kill</button>
-          {% if r.status != "active" %}<button onclick="unhalt('{{ r.strategy_id }}')">unhalt</button>{% endif %}
+          <button onclick="kill('{{ r.agent_id }}')">kill</button>
+          {% if r.status != "active" %}<button onclick="unhalt('{{ r.agent_id }}')">unhalt</button>{% endif %}
         </td>
       </tr>
       {% endfor %}
@@ -3355,7 +3356,7 @@ async fn list_renders_seeded_budgets() {
     // Seed pool with 3 strategy_status rows + 3 fake budget configs.
     // Build a Router with just the budgets routes attached.
     // Send GET /budgets via tower::ServiceExt::oneshot.
-    // Assert HTML body contains all three strategy_ids.
+    // Assert HTML body contains all three agent_ids.
 }
 ```
 
@@ -3597,7 +3598,7 @@ git commit -m "docs(followups): mark non-custodial wallets v1 shipped; record po
 - `Verdict` enum (`Approved, RequiresApproval, Vetoed`) defined in Task 2.2 and matched in dispatcher Task 3.2.
 - `StrategyConfig` field names match between Task 2.1 (definition) and Task 2.2 (consumer).
 - `quota_factor` constant names match between spec §3.4 and Phase 6 Task 6.1.
-- `ReservationManager::try_reserve` signature `(user_id, strategy_id, notional, cap)` consistent across Task 2.3 (definition), Task 3.2 (dispatcher consumer), Task 6.1 step 4 (quota wiring).
+- `ReservationManager::try_reserve` signature `(user_id, agent_id, notional, cap)` consistent across Task 2.3 (definition), Task 3.2 (dispatcher consumer), Task 6.1 step 4 (quota wiring).
 
 No mismatches found.
 

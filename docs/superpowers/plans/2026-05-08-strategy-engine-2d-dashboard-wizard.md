@@ -913,6 +913,201 @@ Commit `feat(dashboard): wizard.js front-end with SSE + visual progress`.
 
 ---
 
+### Task 7a: Wizard `?seed=` context handler (Move I cross-cycle entry, added 2026-05-10)
+
+Per `docs/design/ui-elements.md` §3.5: `/setup` accepts pre-loaded contexts from elsewhere in the app via the `?seed=…` query param. Each seed mode pins a context chip in the wizard header and pre-seeds the first user-side message. This is the back-edge that closes the Notice→Hypothesize loop (Move I).
+
+**Files:**
+- Create: `crates/xianvec-dashboard/src/seed.rs`
+- Modify: `crates/xianvec-dashboard/src/routes/wizard.rs` (`root` handler accepts `Query<SetupQuery>`)
+- Modify: `crates/xianvec-dashboard/templates/wizard.html` (renders context chip when seeded)
+- Modify: `crates/xianvec-dashboard/static/js/wizard.js` (auto-sends pre-seeded first message on load)
+
+**Seed grammar:**
+
+```
+seed=finding:<run_id>:<finding_id>          // from /eval/runs/<id> Findings panel + /eval/compare Findings
+seed=veto:<deployment_id>:<rule_name>       // from /live/<id> Risk panel veto button
+seed=slot:<draft_id>:<slot_role>            // from /authoring/<id> Inspector overflow
+seed=nudge:<nudge_id>                       // from / Control Tower wizard nudge
+```
+
+- [ ] **Step 1: Define `SeedContext` + parser**
+
+```rust
+// crates/xianvec-dashboard/src/seed.rs
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SeedContext {
+    Finding { run_id: String, finding_id: String },
+    Veto    { deployment_id: String, rule_name: String },
+    Slot    { draft_id: String, slot_role: String },
+    Nudge   { nudge_id: String },
+}
+
+impl SeedContext {
+    pub fn parse(raw: &str) -> Result<Self, String> {
+        let mut parts = raw.splitn(4, ':');
+        match parts.next().ok_or("empty seed")? {
+            "finding" => {
+                let run = parts.next().ok_or("finding seed missing run_id")?;
+                let fid = parts.next().ok_or("finding seed missing finding_id")?;
+                Ok(Self::Finding { run_id: run.into(), finding_id: fid.into() })
+            }
+            "veto" => {
+                let dep = parts.next().ok_or("veto seed missing deployment_id")?;
+                let rule = parts.next().ok_or("veto seed missing rule_name")?;
+                Ok(Self::Veto { deployment_id: dep.into(), rule_name: rule.into() })
+            }
+            "slot" => {
+                let draft = parts.next().ok_or("slot seed missing draft_id")?;
+                let role  = parts.next().ok_or("slot seed missing slot_role")?;
+                Ok(Self::Slot { draft_id: draft.into(), slot_role: role.into() })
+            }
+            "nudge" => {
+                let nid = parts.next().ok_or("nudge seed missing nudge_id")?;
+                Ok(Self::Nudge { nudge_id: nid.into() })
+            }
+            other => Err(format!("unknown seed kind: {other}")),
+        }
+    }
+
+    /// Header chip text per ui-elements.md §3.5.
+    pub fn context_chip(&self) -> String {
+        match self {
+            Self::Finding { run_id, finding_id } => format!("Context: finding {finding_id} on run {}", &run_id[..run_id.len().min(8)]),
+            Self::Veto    { rule_name, .. }      => format!("Context: vetoes for rule {rule_name}"),
+            Self::Slot    { draft_id, slot_role } => format!("Context: editing {slot_role} in draft {draft_id}"),
+            Self::Nudge   { nudge_id }           => format!("Context: nudge {nudge_id}"),
+        }
+    }
+
+    /// First user-side message template per ui-elements.md §3.5 entry-source table.
+    /// Returned text is what auto-fires on page load — the user can edit before sending,
+    /// but the wizard JS will pre-fill the composer.
+    pub async fn pre_seeded_message(&self, xvn_home: &std::path::Path) -> anyhow::Result<String> {
+        Ok(match self {
+            Self::Finding { run_id, finding_id } => {
+                let f = lookup_finding(xvn_home, run_id, finding_id).await?;
+                format!("The previous version did `{}` because: {}. Let's draft a variant that fixes it.",
+                        f.kind, f.summary)
+            }
+            Self::Veto { rule_name, deployment_id } => {
+                let count = count_recent_vetoes(xvn_home, deployment_id, rule_name).await.unwrap_or(0);
+                format!("My deployment is getting vetoed for `{rule_name}` ({count} times in the last 24h). Let's revise.")
+            }
+            Self::Slot { draft_id, slot_role } => {
+                format!("Help me write a better prompt for the {slot_role} slot in draft `{draft_id}`.")
+            }
+            Self::Nudge { nudge_id } => {
+                let body = lookup_nudge(xvn_home, nudge_id).await.unwrap_or_else(|_| "I'd like a variant suggestion.".into());
+                body
+            }
+        })
+    }
+}
+```
+
+`lookup_finding` reads from the eval engine's findings store; `count_recent_vetoes` reads from the scheduler events table; `lookup_nudge` from a nudges store the autoresearch plan owns. v1 stubs return empty strings + `0` for unknown ids — the template still renders, the user just sees a generic prompt.
+
+- [ ] **Step 2: Wizard root accepts `Query<SetupQuery>`**
+
+```rust
+#[derive(Deserialize)]
+pub struct SetupQuery { pub seed: Option<String> }
+
+#[derive(Template)]
+#[template(path = "wizard.html")]
+struct WizardPage {
+    pub seed_chip: Option<String>,
+    pub seed_first_message: Option<String>,
+}
+
+pub async fn root(
+    State(state): State<crate::AppState>,
+    Query(q): Query<SetupQuery>,
+) -> Response {
+    let (chip, msg) = if let Some(raw) = &q.seed {
+        match crate::seed::SeedContext::parse(raw) {
+            Ok(ctx) => {
+                let m = ctx.pre_seeded_message(&state.xvn_home).await.ok();
+                (Some(ctx.context_chip()), m)
+            }
+            Err(_) => (None, None),
+        }
+    } else { (None, None) };
+    WizardPage { seed_chip: chip, seed_first_message: msg }.into_response()
+}
+```
+
+- [ ] **Step 3: Template renders the chip + JS reads the pre-seeded message**
+
+```html
+{# templates/wizard.html — extend section header #}
+<div class="text-xs uppercase text-secondary mb-3">
+  Wizard
+  {% if seed_chip %}<span class="pill ml-2 mono">{{ seed_chip }}</span>{% endif %}
+</div>
+{% if seed_first_message %}<script>window.__xvnSeedFirstMsg = {{ seed_first_message|tojson }};</script>{% endif %}
+```
+
+- [ ] **Step 4: `wizard.js` auto-fires pre-seeded message (paused for confirmation)**
+
+Per ui-elements.md §3.5: "The user can confirm or redirect before any tool calls fire." So the seeded text **pre-fills the composer** but does not auto-send — the user reviews + clicks Send.
+
+```javascript
+// at the end of wizard.js, after the greeting
+if (window.__xvnSeedFirstMsg) {
+  msgInput.value = window.__xvnSeedFirstMsg;
+  msgInput.focus();
+  msgInput.scrollTop = 0;
+  // Replace the greeting bubble with a context-aware one:
+  thread.innerHTML = '';
+  appendMessage('assistant', "I've loaded the context above. Edit the message below if you want to adjust, then hit Send.");
+}
+```
+
+- [ ] **Step 5: Tests**
+
+```rust
+#[test]
+fn seed_finding_parses() {
+    let s = SeedContext::parse("finding:01H8N:f-12").unwrap();
+    matches!(s, SeedContext::Finding { run_id, finding_id }
+                if run_id == "01H8N" && finding_id == "f-12");
+}
+
+#[test]
+fn seed_veto_chip_text() {
+    let s = SeedContext::Veto { deployment_id: "dep1".into(), rule_name: "max_drawdown".into() };
+    assert!(s.context_chip().contains("max_drawdown"));
+}
+
+#[tokio::test]
+async fn root_with_unknown_seed_renders_without_chip() { /* page renders, no panic, no chip */ }
+```
+
+- [ ] **Step 6: Wire trigger buttons in other routes**
+
+Add the `Draft variant from this →` href on:
+- Run detail Findings panel (Task 8 / future plan): `href="/setup?seed=finding:{{ run_id }}:{{ finding.id }}"`
+- Compare Findings panel: same
+- Live cockpit veto rule rows: `href="/setup?seed=veto:{{ deployment_id }}:{{ rule.name }}"`
+- Inspector overflow link: `href="/setup?seed=slot:{{ draft_id }}:{{ slot_role }}"`
+
+These are template-level edits in the corresponding routes' HTML files. Do them as part of those routes' tasks (Task 8 for Inspector, future plan for Run/Compare/Live cockpit when those surfaces ship richer findings panels).
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add crates/xianvec-dashboard
+git commit -m "feat(dashboard): wizard /setup?seed= context handler for Move I cross-cycle entry"
+```
+
+---
+
 ## Phase 2D.C — Inspector form (L3 archetype)
 
 ### Task 8: Inspector route + template
@@ -932,6 +1127,233 @@ JS `static/js/inspector.js`: wire form changes to PUT calls; show validation res
 Test: render Inspector for an existing draft, assert all 7 layer rows present + validation status visible.
 
 Commit `feat(dashboard): Inspector form (L3 archetype) for direct authoring`.
+
+---
+
+### Task 8a: Inspector LLM-slot split editor with live preview (Move E, added 2026-05-10)
+
+Per `docs/design/ui-elements.md` §4.2.2: LLM slot sections (Regime / Intern / Trader) get a 50/50 split editor — slot form on the left, live preview pane on the right. The preview re-runs the slot against a fixture so the user gets immediate "what does this prompt do?" feedback. Mechanical sections (Manifest, Data, Entry/Exit, Risk, Execution) use the single-column form from Task 8 unchanged.
+
+**Files:**
+- Create: `crates/xianvec-engine/src/fixtures/mod.rs` + `store.rs` — fixture file storage
+- Create: `crates/xianvec-engine/src/fixtures/builtin.rs` — 4 built-in fixtures
+- Create: `crates/xianvec-dashboard/src/routes/preview.rs` — `POST /api/strategy/<id>/slot/<role>/preview` (SSE)
+- Modify: `crates/xianvec-dashboard/templates/authoring.html` — split layout for LLM slot sections
+- Create: `crates/xianvec-dashboard/static/js/inspector_preview.js` — preview pane logic
+- Create: `crates/xianvec-dashboard/static/js/fixture_picker.js` — modal picker
+
+**Built-in fixtures:** `BTC bull 2025-01-15 08:00`, `BTC chop 2024-09-10 14:00`, `ETH bear 2024-08-05 10:00`, `Flash crash 2024-08-05 12:00`. Each is a JSON snapshot of the inputs an LLM slot would see (`ohlcv_history`, `indicator_panel`, etc.) frozen at that instant. Ship them in the binary via `include_str!`.
+
+- [ ] **Step 1: Fixture store**
+
+```rust
+// xianvec-engine/src/fixtures/mod.rs
+pub mod store;
+pub mod builtin;
+pub use store::FixtureStore;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Fixture {
+    pub id: String,
+    pub display_name: String,
+    pub origin: FixtureOrigin,        // BuiltIn | FromRun { run_id, ts } | Custom
+    pub asset: String,
+    pub regime_tag: Option<String>,
+    pub inputs: serde_json::Value,    // { ohlcv_history, indicator_panel, … }
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+```
+
+`FixtureStore::list(filter)` returns built-in + recent-run + custom fixtures. Custom storage: filesystem JSONL at `~/.xvn/fixtures/`.
+
+- [ ] **Step 2: Built-in fixtures**
+
+```rust
+// xianvec-engine/src/fixtures/builtin.rs
+const BTC_BULL_2025_01_15: &str = include_str!("data/btc-bull-2025-01-15-0800.json");
+const BTC_CHOP_2024_09_10: &str = include_str!("data/btc-chop-2024-09-10-1400.json");
+const ETH_BEAR_2024_08_05: &str = include_str!("data/eth-bear-2024-08-05-1000.json");
+const FLASH_CRASH_2024_08_05: &str = include_str!("data/flash-crash-2024-08-05-1200.json");
+
+pub fn load_built_in() -> Vec<Fixture> { /* parse + tag */ }
+```
+
+The four `data/*.json` files: pull from real OHLCV at those timestamps (or hand-craft if no historical data). One-time work — commit the data alongside.
+
+- [ ] **Step 3: Preview SSE endpoint**
+
+```rust
+// crates/xianvec-dashboard/src/routes/preview.rs
+#[derive(Deserialize)]
+pub struct PreviewRequest {
+    pub prompt: String,                       // raw system prompt for the slot
+    pub model: String,                        // resolved model id
+    pub provider: String,                     // resolved provider name
+    pub fixture_id: String,                   // selected fixture
+    pub fixture_inputs: Option<serde_json::Value>,  // override for ad-hoc edits
+    pub output_schema: Option<serde_json::Value>,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum PreviewEvent {
+    Token { text: String },
+    Done { parsed: serde_json::Value, valid: bool, validation_errors: Vec<String>, tokens_in: u32, tokens_out: u32, cost_usd: f64 },
+    Error { message: String },
+}
+
+pub async fn preview(
+    Path((draft_id, role)): Path<(String, String)>,
+    State(state): State<AppState>,
+    Json(req): Json<PreviewRequest>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    // 1. Load fixture inputs (req.fixture_inputs overrides if present)
+    // 2. Build LlmRequest using prompt + inputs
+    // 3. Stream tokens via existing AnthropicDispatch / OpenAIDispatch
+    // 4. On done: parse output against output_schema, validate, emit Done event with tokens + cost
+}
+```
+
+- [ ] **Step 4: authoring.html — split layout for LLM slot sections**
+
+Inside the Inspector's center column rendering, when the section type is LLM (Regime / Intern / Trader), render:
+
+```html
+<div class="grid grid-cols-2 gap-3" data-slot="{{ slot_role }}">
+  <div class="card slot-form">
+    {# fields from §4.2.2 left pane: Enabled, Model, Prompt, Tools, Output schema, Compose skill, Token budget #}
+  </div>
+  <div class="card slot-preview">
+    <header class="flex items-center justify-between mb-2">
+      <span class="text-xs uppercase text-secondary">Preview decision</span>
+      <button class="btn-ghost text-xs" data-action="change-fixture">
+        Fixture: <span class="mono" data-fixture-name>BTC bull 2025-01-15 08:00</span> <span aria-hidden>▾</span>
+      </button>
+    </header>
+    <div class="flex gap-3 items-center text-xs mb-2">
+      <label class="inline-flex items-center gap-1">
+        <input type="checkbox" class="auto-rerun-toggle"> Auto-rerun on (2s debounce)
+      </label>
+      <button class="btn-ghost manual-run-btn">Run preview</button>
+    </div>
+    <details class="mb-2"><summary class="text-xs text-secondary">Inputs the agent sees</summary>
+      <pre class="mono text-xs p-2 bg-panel rounded overflow-x-auto inputs-json"></pre>
+    </details>
+    <div class="output-panel min-h-[140px] mono text-sm border border-soft rounded p-2"></div>
+    <div class="diff-strip text-xs text-secondary mt-2 hidden">Δ vs last preview: <span class="diff-summary"></span></div>
+    <div class="cost-row text-xs text-tertiary mt-2"></div>
+    <button class="btn-ghost text-xs mt-2" data-action="save-fixture">Save these inputs as a custom fixture</button>
+  </div>
+</div>
+```
+
+- [ ] **Step 5: `inspector_preview.js` — debounced auto-rerun + diff + cost**
+
+```javascript
+const DEBOUNCE_MS = 2000;
+
+function bindSlotPreview(slotEl) {
+  const role = slotEl.dataset.slot;
+  const formEl = slotEl.querySelector('.slot-form');
+  const previewEl = slotEl.querySelector('.slot-preview');
+  const promptEl = formEl.querySelector('[name="prompt"]');
+  const autoToggle = previewEl.querySelector('.auto-rerun-toggle');
+  const runBtn = previewEl.querySelector('.manual-run-btn');
+  const inputsBox = previewEl.querySelector('.inputs-json');
+  const outputBox = previewEl.querySelector('.output-panel');
+  const diffStrip = previewEl.querySelector('.diff-strip');
+  const costRow = previewEl.querySelector('.cost-row');
+  let fixtureId = previewEl.querySelector('[data-fixture-name]').dataset.fixtureId;
+  let lastParsed = null;
+  let pendingTimer = null;
+  let autoRerunCount = 0;
+
+  async function runPreview() {
+    outputBox.innerHTML = '<span class="text-secondary">● Streaming…</span>';
+    const req = {
+      prompt: promptEl.value,
+      model: formEl.querySelector('[name="model"]').value,
+      provider: formEl.querySelector('[name="provider"]').value,
+      fixture_id: fixtureId,
+    };
+    const resp = await fetch(`/api/strategy/${currentDraftId()}/slot/${role}/preview`, {
+      method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify(req),
+    });
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let textBuf = '';
+    while (true) {
+      const {value, done} = await reader.read();
+      if (done) break;
+      const chunk = decoder.decode(value, {stream: true});
+      // parse SSE lines, route to handlers below
+      for (const line of chunk.split('\n').filter(l => l.startsWith('data: '))) {
+        const ev = JSON.parse(line.slice(6));
+        if (ev.type === 'token') { textBuf += ev.text; outputBox.textContent = textBuf; }
+        else if (ev.type === 'done') {
+          renderParsed(ev.parsed, ev.valid, ev.validation_errors, outputBox);
+          if (lastParsed) showDiff(lastParsed, ev.parsed, diffStrip);
+          lastParsed = ev.parsed;
+          costRow.textContent = `Last preview: ${ev.tokens_in + ev.tokens_out} tokens · ~$${ev.cost_usd.toFixed(4)} at your current model`;
+        }
+      }
+    }
+  }
+
+  function maybeRun() {
+    if (!autoToggle.checked) return;
+    if (pendingTimer) clearTimeout(pendingTimer);
+    pendingTimer = setTimeout(runPreview, DEBOUNCE_MS);
+  }
+
+  promptEl.addEventListener('input', maybeRun);
+  runBtn.addEventListener('click', () => {
+    runPreview();
+    autoRerunCount++;
+    if (autoRerunCount === 2 && !autoToggle.checked) {
+      showHint(slotEl, "You can turn on auto-rerun if you want continuous feedback as you edit.");
+    }
+  });
+
+  // Auto-rerun default: OFF for first edit session per ui-elements.md §18.3.
+  autoToggle.checked = false;
+}
+```
+
+Wireframer note from §18.3 explicitly resolved here: auto-rerun defaults OFF; surface a hint after two manual runs.
+
+- [ ] **Step 6: Fixture picker modal (`fixture_picker.js`)**
+
+Modal listing three sections: `Built-in` (4 fixtures), `From your runs` (last 20 setups, filterable by asset / regime), `Custom` (user-saved). Selecting one updates `fixtureId` and re-runs the preview.
+
+- [ ] **Step 7: Tests**
+
+```rust
+#[tokio::test]
+async fn preview_endpoint_streams_tokens_and_emits_done() {
+    let app = build_router_with_mock_dispatch(state());
+    let body = serde_json::json!({"prompt": "...", "model": "claude-haiku-4-5", "provider": "anthropic", "fixture_id": "btc-bull-2025-01-15"});
+    let resp = app.oneshot(
+        Request::post("/api/strategy/draft1/slot/trader/preview")
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string())).unwrap()
+    ).await.unwrap();
+    let body_bytes = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+    let body_str = std::str::from_utf8(&body_bytes).unwrap();
+    assert!(body_str.contains(r#""type":"token""#));
+    assert!(body_str.contains(r#""type":"done""#));
+}
+
+#[test]
+fn diff_summary_renders_when_action_changes() { /* ... */ }
+```
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add crates/xianvec-dashboard crates/xianvec-engine/src/fixtures
+git commit -m "feat(dashboard): Inspector LLM-slot split editor with live preview pane (Move E)"
+```
 
 ---
 
@@ -992,6 +1414,11 @@ sleep 2
 # - You can click "Run preview eval" and see decisions stream
 # - Marketplace tab shows the new draft (after publish)
 # - Live tab shows a deployment's gauges + chart
+# - Inspector LLM slot rows render the split editor; Run preview button streams a parsed
+#   decision against a built-in fixture; cost row shows token count + USD estimate (Task 8a / Move E)
+# - Visiting /setup?seed=finding:01H8N:f-12 (with seeded data) loads a context chip in the
+#   wizard header and pre-fills the composer with the finding-template message;
+#   the user can edit and Send to start the wizard loop with that context (Task 7a / Move I)
 
 kill $DASHBOARD_PID
 ```
@@ -1008,7 +1435,7 @@ Commit `docs: Plan 2d dashboard README + manual update`.
 
 ### Task 13: Final workspace check
 
-`cargo test --workspace` clean. clippy clean. fmt scoped to plan-touched crates. xianvec-eval still untouched. ~13 commits since Plan 2c's tip.
+`cargo test --workspace` clean. clippy clean. fmt scoped to plan-touched crates. xianvec-eval still untouched. ~15 commits since Plan 2c's tip (Tasks 1–13 plus 7a + 8a inserts).
 
 ---
 
@@ -1019,6 +1446,8 @@ Commit `docs: Plan 2d dashboard README + manual update`.
 - [x] §8 Authoring entry points — Web UI form (Inspector) + Wizard (built-in CLI wizard from Plan #1 + external MCP from Plan 2a all share the same authoring dispatcher)
 - [x] §11 Live execution monitoring — Flight Deck cockpit, SSE-streamed events
 - [x] Visual design system locked — palette / typography / components per docs/design/gptprompts.md
+- [x] ui-elements.md §3.5 Cross-cycle entry points (Move I) — Task 7a `/setup?seed=…` handler
+- [x] ui-elements.md §4.2.2 Inspector LLM-slot split editor (Move E) — Task 8a live-preview pane + fixture picker
 - [ ] §13 Marketplace browsing — **deferred to Plan 5**. The Spreadsheet archetype lands as the templates grid in v1; same component is reused for marketplace listings when Plan 5 ships.
 
 **Out of scope as planned:**
@@ -1028,7 +1457,7 @@ Commit `docs: Plan 2d dashboard README + manual update`.
 
 **Type consistency:** `AppState`, `WizardLoop`, `ChatRequest`, `WizardEvent`, all axum routers + handlers, JS event types — consistent.
 
-**Frequent commits:** 13 tasks → ~13 commits.
+**Frequent commits:** 13 numbered tasks + 2 letter-suffixed inserts (7a, 8a) → ~15 commits.
 
 ---
 

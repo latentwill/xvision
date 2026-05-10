@@ -740,13 +740,13 @@ fn register_autoresearch(reg: &mut ToolRegistry) {
     reg.add(Arc::new(FnHandler::new(
         schema("autoresearch.run_evening_cycle", "Run AR-2 evening cycle",
             json!({"type":"object","properties":{
-                "strategy_id":{"type":"string"},"dry_run":{"type":"boolean"}
+                "agent_id":{"type":"string"},"dry_run":{"type":"boolean"}
             }})),
         |ctx, args, _actor| async move {
-            let sid: Option<String> = optional(&args, "strategy_id")?;
+            let sid: Option<String> = optional(&args, "agent_id")?;
             let dry: bool = optional::<bool>(&args, "dry_run")?.unwrap_or(false);
             Ok(serde_json::to_value(autoresearch::run_evening_cycle(ctx,
-                autoresearch::EveningCycleOpts { strategy_id: sid, dry_run: dry }).await?)?)
+                autoresearch::EveningCycleOpts { agent_id: sid, dry_run: dry }).await?)?)
         }.boxed(),
     )));
 }

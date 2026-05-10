@@ -269,17 +269,17 @@ xvn skill new <name>                         # create skill from template
 xvn skill list                               # list skills (mine + marketplace)
 xvn skill attach <draft_id> <agent> <skill>  # attach skill to agent slot
 
-xvn eval run <strategy_id> <scenario>        # run eval (defined in eval engine spec)
+xvn eval run <agent_id> <scenario>        # run eval (defined in eval engine spec)
 xvn eval batch <grid.json>                   # parallel batch (L4 power-user)
 xvn eval compare <run_ids...>                # comparison view
 
-xvn live deploy <strategy_id> --mode paper           # default; Alpaca paper
-xvn live deploy <strategy_id> --mode live            # Orderly (default for live)
-xvn live deploy <strategy_id> --mode live --broker alpaca-live   # optional secondary
+xvn live deploy <agent_id> --mode paper           # default; Alpaca paper
+xvn live deploy <agent_id> --mode live            # Orderly (default for live)
+xvn live deploy <agent_id> --mode live --broker alpaca-live   # optional secondary
 xvn live status <deployment_id>              # uptime, P&L, last decision
 xvn live stop <deployment_id>                # graceful shutdown
 
-xvn deploy <strategy_id> --target fly        # fly.io recipe (only target in v1)
+xvn deploy <agent_id> --target fly        # fly.io recipe (only target in v1)
 
 xvn agent serve --mcp                        # run MCP server for external agents
 ```
@@ -304,15 +304,15 @@ xvn binary on the buyer's machine or cloud is the executor. Xianvec the company 
 
 ### L1 default — buyer's machine, paper mode (Alpaca)
 
-`xvn live deploy <strategy_id> --mode paper --capital 10000` runs a long-lived xvn daemon on the user's laptop. Strategy fires per its scheduler, calls user's LLM with user's key, calls Alpaca paper API for fill simulation, logs trades to `~/.xvn/runs/<run_id>/trades.jsonl`. Buyer manages uptime. **Default broker for paper mode is Alpaca.**
+`xvn live deploy <agent_id> --mode paper --capital 10000` runs a long-lived xvn daemon on the user's laptop. Strategy fires per its scheduler, calls user's LLM with user's key, calls Alpaca paper API for fill simulation, logs trades to `~/.xvn/runs/<run_id>/trades.jsonl`. Buyer manages uptime. **Default broker for paper mode is Alpaca.**
 
 ### L2 — buyer's machine, real money via Orderly
 
-`xvn live deploy <strategy_id> --mode live --broker orderly` deploys to live trading via the Orderly setup integrated through xvn (hackathon priority). Buyer connects their Orderly account through xvn's Orderly onboarding flow during the deploy step. Real-money guardrails: explicit confirmation, capital cap shown clearly, daily-loss kill-switch active. **Alpaca live is optional secondary** (`--broker alpaca-live`) — supported but not the default v1 path.
+`xvn live deploy <agent_id> --mode live --broker orderly` deploys to live trading via the Orderly setup integrated through xvn (hackathon priority). Buyer connects their Orderly account through xvn's Orderly onboarding flow during the deploy step. Real-money guardrails: explicit confirmation, capital cap shown clearly, daily-loss kill-switch active. **Alpaca live is optional secondary** (`--broker alpaca-live`) — supported but not the default v1 path.
 
 ### L4 — buyer's cloud, fly.io recipe
 
-`xvn deploy <strategy_id> --target fly` ships a fly.io deployment recipe (Dockerfile + `fly.toml` template). Buyer's fly.io account, buyer's keys, buyer-managed uptime. **fly.io is the only deploy recipe in v1.** Modal/Daytona/Railway recipes deferred. xvn provides templates; xvn does not run cloud infra for buyers and does not provide free hosting credits — buyer rolls their own account.
+`xvn deploy <agent_id> --target fly` ships a fly.io deployment recipe (Dockerfile + `fly.toml` template). Buyer's fly.io account, buyer's keys, buyer-managed uptime. **fly.io is the only deploy recipe in v1.** Modal/Daytona/Railway recipes deferred. xvn provides templates; xvn does not run cloud infra for buyers and does not provide free hosting credits — buyer rolls their own account.
 
 ## 12. Durable scheduler — port from SwarmClaw
 
