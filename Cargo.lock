@@ -8291,6 +8291,7 @@ name = "xvision-mcp"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "rmcp",
  "schemars 1.2.1",
  "serde",
