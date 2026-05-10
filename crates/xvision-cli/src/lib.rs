@@ -185,6 +185,8 @@ pub enum Command {
     Indicator(commands::indicator::IndicatorCmd),
     /// Run the embedded web dashboard (axum + Vite SPA).
     Dashboard(commands::dashboard::DashboardCmd),
+    /// Browse eval runs and canonical scenarios. (`run` lands in a follow-up.)
+    Eval(commands::eval::EvalCmd),
 }
 
 impl Cli {
@@ -266,6 +268,7 @@ impl Cli {
             Command::Store(cmd) => commands::store_cmd::run(cmd).await,
             Command::Indicator(cmd) => commands::indicator::run(cmd),
             Command::Dashboard(cmd) => commands::dashboard::run(cmd).await,
+            Command::Eval(cmd) => commands::eval::run(cmd).await,
         }
     }
 }
