@@ -1,4 +1,4 @@
-//! TraderArm — the `Strategy` adapter that runs the real Stage 1 Intern +
+//! TraderArm — the `Algorithm` adapter that runs the real Stage 1 Intern +
 //! Stage 2 Trader pipeline against a `MarketSnapshot`.
 //!
 //! Post-CV-extraction (ADR 0011) there is no longer a four-arm steering
@@ -20,14 +20,14 @@ use xianvec_intern::cache::CacheKey;
 use xianvec_intern::{BriefingCache, InternBackend};
 use xianvec_trader::{TraderBackend, TraderParams};
 
-use crate::strategy::Strategy;
+use crate::algorithm::Algorithm;
 
 /// Closure that builds the portfolio snapshot the Trader sees on each
 /// decision. The harness owns the executor's portfolio; v1 hands the
 /// adapter a closure rather than coupling to a specific executor surface.
 pub type PortfolioProvider = Arc<dyn Fn() -> PortfolioState + Send + Sync>;
 
-/// The `Strategy`-implementing adapter.
+/// The `Algorithm`-implementing adapter.
 pub struct TraderArm {
     arm_name: &'static str,
     intern: Arc<dyn InternBackend>,
@@ -67,7 +67,7 @@ impl TraderArm {
 }
 
 #[async_trait]
-impl Strategy for TraderArm {
+impl Algorithm for TraderArm {
     fn name(&self) -> &'static str {
         self.arm_name
     }

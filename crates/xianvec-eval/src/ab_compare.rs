@@ -22,7 +22,7 @@ use crate::baselines::{
 };
 use crate::harness::{ArmConfig, BacktestRunConfig, BacktestRunner};
 use crate::result::BacktestResult;
-use crate::strategy::Strategy;
+use crate::algorithm::Algorithm;
 
 /// One arm spec parsed from the CLI.
 #[derive(Debug, Clone)]
@@ -153,7 +153,7 @@ pub async fn run_ab_compare(
             // The leak is bounded (one per arm per process invocation, ≤8 in
             // practice) and the runtime is short-lived.
             let static_name: &'static str = Box::leak(spec.name.clone().into_boxed_str());
-            let strategy: Box<dyn Strategy> = match spec.kind {
+            let strategy: Box<dyn Algorithm> = match spec.kind {
                 ArmKind::Trader => Box::new(TraderArm::new(
                     static_name,
                     Arc::clone(&intern),

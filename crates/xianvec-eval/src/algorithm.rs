@@ -1,4 +1,4 @@
-//! Strategy trait — async surface so an LLM-backed arm can `.await` an HTTP
+//! Algorithm trait — async surface so an LLM-backed arm can `.await` an HTTP
 //! Intern call inside `decide`. v1.0 was sync (pure function); v1.1 lifts to
 //! async to plug the Stage 1 + Stage 2 pipeline in (F3, FOLLOWUPS.md).
 //!
@@ -14,7 +14,7 @@ use xianvec_core::market::MarketSnapshot;
 use xianvec_core::trading::TraderDecision;
 
 #[async_trait]
-pub trait Strategy: Send + Sync {
+pub trait Algorithm: Send + Sync {
     fn name(&self) -> &'static str;
     async fn decide(&self, snapshot: &MarketSnapshot) -> Option<TraderDecision>;
 }
