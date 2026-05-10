@@ -15,3 +15,4 @@ pub use scenario::{
     canonical_scenarios, Capital, Fees, LatencyModel, Scenario, ScenarioRisk, SlippageModel,
     TimeWindow,
 };
+pub use store::{DecisionRow, ListFilter, RunStore};
