@@ -427,5 +427,49 @@ Three things break here:
 
 ---
 
+## Incident response
+
+Use this checklist when something is wrong or might be wrong. The order is
+fixed: contain first, diagnose second, communicate third, post-mortem fourth.
+
+### 1. Contain (≤ 5 min)
+
+- [ ] Run `xvn kill --all` to halt every dispatcher. New orders blocked.
+- [ ] Decide whether to also `xvn emergency-close --all`. Defaults: YES if
+      "wrong direction" exposure is suspected, NO if you're investigating a
+      tooling glitch with no exposure component.
+- [ ] Post a one-line status to wherever your status channel is: "Halt at
+      <UTC time>; investigating <one-line>." Don't wait for completeness.
+
+### 2. Diagnose (≤ 30 min)
+
+- [ ] Pull the last hour of audit log: `xvn audit agent --since 1h --all`.
+- [ ] Cross-check positions: `xvn reconcile --user op --dry-run` — server
+      state vs ledger.
+- [ ] Identify whether the issue is:
+      - **Strategy bug** (specific agent producing wrong decisions)
+      - **Risk engine miss** (decision passed risk that shouldn't have)
+      - **Execution glitch** (signed payload mismatched, fill mismatched)
+      - **Broker outage** (Orderly returned 5xx)
+      - **Operator error** (wrong CLI command run)
+- [ ] If the issue is constrained to one agent, halt that agent specifically
+      and unhalt the others: `xvn kill --strategy <id>; xvn unhalt --all`.
+
+### 3. Communicate (≤ 60 min after detection)
+
+- [ ] Update status channel with what you've found.
+- [ ] If user funds are or were at risk, the open-source disclosure SLA is:
+      a public summary within 7 days of containment (not 30 — sooner is more
+      credible). Post-launch, this can be a `SECURITY.md` policy.
+
+### 4. Post-mortem (within 7 days)
+
+- [ ] Write up: timeline, root cause, what worked, what didn't, what changes.
+- [ ] If the post-mortem identifies a missing safety check, add a task to a
+      plan that addresses it. Don't leave the gap open.
+- [ ] If the post-mortem reveals a policy or runbook gap, update MANUAL.md.
+
+---
+
 *Last updated: 2026-05-04. Cross-references: `FOLLOWUPS.md`,
 `implementation-plan.md` Phases 9–12.*
