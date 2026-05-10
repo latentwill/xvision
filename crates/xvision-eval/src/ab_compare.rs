@@ -150,6 +150,66 @@ pub fn parse_arm_spec(s: &str) -> anyhow::Result<ArmSpec> {
     }
 }
 
+/// Mutates `specs` in place so any two `trader_arm` entries with distinct
+/// slot configs end up with distinct names. Bare `trader_arm` (no slot
+/// overrides) keeps its name unchanged so existing scripts/reports keep
+/// working.
+pub fn auto_suffix_arm_names(specs: &mut [ArmSpec]) {
+    // Pass 1: derive the candidate suffix per spec.
+    let mut suffixes: Vec<Option<String>> = specs
+        .iter()
+        .map(|spec| match &spec.kind {
+            ArmKind::Trader { intern, trader } => match (trader, intern) {
+                (None, None) => None, // bare trader_arm — leave alone
+                (Some(t), _) => Some(short_model_segment(&t.model)),
+                (None, Some(i)) => Some(format!("i:{}", short_model_segment(&i.model))),
+            },
+            _ => None,
+        })
+        .collect();
+
+    // Pass 2: detect collisions on the candidate suffix and promote to
+    // `<model>@<provider>` when needed. Only applies among `Trader` specs.
+    let mut by_suffix: std::collections::HashMap<String, Vec<usize>> =
+        std::collections::HashMap::new();
+    for (i, s) in suffixes.iter().enumerate() {
+        if let Some(s) = s {
+            by_suffix.entry(s.clone()).or_default().push(i);
+        }
+    }
+    let mut promotions: Vec<(usize, String)> = vec![];
+    for (_, idxs) in by_suffix.iter().filter(|(_, v)| v.len() > 1) {
+        for &i in idxs {
+            if let ArmKind::Trader { trader, intern } = &specs[i].kind {
+                let (model, provider) = match (trader, intern) {
+                    (Some(t), _) => (&t.model, &t.provider),
+                    (None, Some(j)) => (&j.model, &j.provider),
+                    _ => continue,
+                };
+                let suffix = format!("{}@{}", short_model_segment(model), provider);
+                promotions.push((i, suffix));
+            }
+        }
+    }
+    for (i, suf) in promotions {
+        suffixes[i] = Some(suf);
+    }
+
+    // Pass 3: apply.
+    for (spec, suffix) in specs.iter_mut().zip(suffixes.into_iter()) {
+        if let Some(suf) = suffix {
+            spec.name = format!("{}[{}]", spec.name, suf);
+        }
+    }
+}
+
+/// `meta-llama/Llama-3.3-70B-Instruct-Turbo` → `Llama-3.3-70B-Instruct-Turbo`.
+/// Trims to 32 chars to keep BacktestResult arm names readable.
+fn short_model_segment(model: &str) -> String {
+    let last = model.rsplit('/').next().unwrap_or(model);
+    last.chars().take(32).collect()
+}
+
 fn parse_kv(s: &str) -> std::collections::BTreeMap<String, String> {
     s.split(':')
         .filter_map(|kv| {
@@ -270,6 +330,72 @@ mod tests {
             }
             _ => panic!("wrong variant"),
         }
+    }
+
+    #[test]
+    fn auto_suffix_uses_last_path_segment_of_model() {
+        let mut specs = vec![
+            parse_arm_spec("trader_arm:trader=anthropic/claude-opus-4-7").unwrap(),
+            parse_arm_spec("trader_arm:trader=openai/gpt-4o").unwrap(),
+        ];
+        auto_suffix_arm_names(&mut specs);
+        assert_eq!(specs[0].name, "trader_arm[claude-opus-4-7]");
+        assert_eq!(specs[1].name, "trader_arm[gpt-4o]");
+    }
+
+    #[test]
+    fn auto_suffix_strips_provider_path_from_model_id() {
+        let mut specs = vec![parse_arm_spec(
+            "trader_arm:trader=together/meta-llama/Llama-3.3-70B-Instruct-Turbo",
+        )
+        .unwrap()];
+        auto_suffix_arm_names(&mut specs);
+        assert_eq!(specs[0].name, "trader_arm[Llama-3.3-70B-Instruct-Turbo]");
+    }
+
+    #[test]
+    fn auto_suffix_appends_provider_when_models_collide() {
+        let mut specs = vec![
+            parse_arm_spec("trader_arm:trader=openai/gpt-4o").unwrap(),
+            parse_arm_spec("trader_arm:trader=together/gpt-4o").unwrap(),
+        ];
+        auto_suffix_arm_names(&mut specs);
+        assert_eq!(specs[0].name, "trader_arm[gpt-4o@openai]");
+        assert_eq!(specs[1].name, "trader_arm[gpt-4o@together]");
+    }
+
+    #[test]
+    fn auto_suffix_leaves_bare_trader_arm_alone() {
+        let mut specs = vec![
+            parse_arm_spec("trader_arm").unwrap(),
+            parse_arm_spec("trader_arm:trader=openai/gpt-4o").unwrap(),
+        ];
+        auto_suffix_arm_names(&mut specs);
+        assert_eq!(specs[0].name, "trader_arm");
+        assert_eq!(specs[1].name, "trader_arm[gpt-4o]");
+    }
+
+    #[test]
+    fn auto_suffix_ignores_non_trader_arms() {
+        let mut specs = vec![
+            parse_arm_spec("buy_and_hold").unwrap(),
+            parse_arm_spec("trader_arm:trader=openai/gpt-4o").unwrap(),
+        ];
+        auto_suffix_arm_names(&mut specs);
+        assert_eq!(specs[0].name, "buy_and_hold");
+        assert_eq!(specs[1].name, "trader_arm[gpt-4o]");
+    }
+
+    #[test]
+    fn auto_suffix_handles_intern_only_override() {
+        let mut specs = vec![
+            parse_arm_spec("trader_arm:intern=anthropic/claude-opus-4-7").unwrap(),
+            parse_arm_spec("trader_arm:intern=anthropic/claude-haiku-4-5").unwrap(),
+        ];
+        auto_suffix_arm_names(&mut specs);
+        // When only intern differs, suffix is the intern model id.
+        assert_eq!(specs[0].name, "trader_arm[i:claude-opus-4-7]");
+        assert_eq!(specs[1].name, "trader_arm[i:claude-haiku-4-5]");
     }
 
     #[test]

@@ -35,13 +35,14 @@ pub async fn run(
 ) -> anyhow::Result<()> {
     let snapshots: Vec<MarketSnapshot> = serde_json::from_slice(&std::fs::read(&cycles)?)?;
     let bars_vec: Vec<MarketBar> = serde_json::from_slice(&std::fs::read(&bars)?)?;
-    let arm_specs: Vec<_> = if arms.trim().is_empty() {
+    let mut arm_specs: Vec<_> = if arms.trim().is_empty() {
         default_arms()
     } else {
         arms.split(',')
             .map(|s| parse_arm_spec(s.trim()))
             .collect::<anyhow::Result<Vec<_>>>()?
     };
+    xvision_eval::ab_compare::auto_suffix_arm_names(&mut arm_specs);
 
     let asset_sym = match asset.as_str() {
         "BTC" => AssetSymbol::Btc,
