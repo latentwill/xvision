@@ -123,11 +123,75 @@ fn show(config_path: &std::path::Path, name: &str) -> anyhow::Result<()> {
 }
 
 async fn check(
-    _config_path: &std::path::Path,
-    _name: &str,
-    _probe: bool,
+    config_path: &std::path::Path,
+    name: &str,
+    probe: bool,
 ) -> anyhow::Result<()> {
-    anyhow::bail!("`xvn provider check` lands in Plan #7 Phase 4 Task 15")
+    let cfg = xvision_core::config::load_runtime(config_path)?;
+    let p = cfg
+        .providers
+        .iter()
+        .find(|p| p.name == name)
+        .ok_or_else(|| anyhow::anyhow!("provider `{name}` not found"))?;
+
+    if !p.api_key_env.is_empty() && std::env::var(&p.api_key_env).is_err() {
+        println!("○ env {} not set", p.api_key_env);
+    } else if !p.api_key_env.is_empty() {
+        println!("● env {} set", p.api_key_env);
+    }
+
+    let url = url_parse_minimal(&p.base_url)?;
+    let stream = tokio::net::TcpStream::connect((url.host.as_str(), url.port)).await;
+    match stream {
+        Ok(_) => println!("● tcp {}:{} reachable", url.host, url.port),
+        Err(e) => println!("○ tcp {}:{} {e}", url.host, url.port),
+    }
+
+    if probe {
+        let client = reqwest::Client::new();
+        let probe_url = if p.base_url.ends_with('/') {
+            format!("{}models", p.base_url)
+        } else {
+            format!("{}/models", p.base_url)
+        };
+        let mut req = client.get(&probe_url);
+        if !p.api_key_env.is_empty() {
+            if let Ok(key) = std::env::var(&p.api_key_env) {
+                req = req.header("Authorization", format!("Bearer {key}"));
+            }
+        }
+        match req.send().await {
+            Ok(resp) => println!("● GET {probe_url} → {}", resp.status()),
+            Err(e) => println!("○ GET {probe_url} → {e}"),
+        }
+    }
+    Ok(())
+}
+
+struct MinimalUrl {
+    host: String,
+    port: u16,
+}
+
+/// Tiny URL parser for `https://host[:port]/...` and `http://host[:port]/...`.
+/// Avoids pulling in the `url` crate just for `provider check`.
+fn url_parse_minimal(s: &str) -> anyhow::Result<MinimalUrl> {
+    let (scheme, rest) = s
+        .split_once("://")
+        .ok_or_else(|| anyhow::anyhow!("base_url missing scheme: {s}"))?;
+    let host_port_path = rest.split('/').next().unwrap_or(rest);
+    let (host, port) = match host_port_path.split_once(':') {
+        Some((h, p)) => (
+            h.to_string(),
+            p.parse::<u16>()
+                .map_err(|e| anyhow::anyhow!("port parse: {e}"))?,
+        ),
+        None => (
+            host_port_path.to_string(),
+            if scheme == "https" { 443 } else { 80 },
+        ),
+    };
+    Ok(MinimalUrl { host, port })
 }
 
 fn add(
@@ -292,6 +356,25 @@ api_key_env = "K"
         remove(&path, "ephemeral").unwrap();
         let cfg = xvision_core::config::load_runtime(&path).unwrap();
         assert!(!cfg.providers.iter().any(|p| p.name == "ephemeral"));
+    }
+
+    #[test]
+    fn url_parse_handles_https_default_port() {
+        let u = url_parse_minimal("https://api.openai.com/v1").unwrap();
+        assert_eq!(u.host, "api.openai.com");
+        assert_eq!(u.port, 443);
+    }
+
+    #[test]
+    fn url_parse_handles_explicit_port() {
+        let u = url_parse_minimal("http://localhost:11434/v1").unwrap();
+        assert_eq!(u.host, "localhost");
+        assert_eq!(u.port, 11434);
+    }
+
+    #[test]
+    fn url_parse_rejects_no_scheme() {
+        assert!(url_parse_minimal("api.openai.com/v1").is_err());
     }
 
     #[test]
