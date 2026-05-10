@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
-use xvision_engine::api::eval::{self, EvalRunRequest, ListRunsRequest};
+use xvision_engine::api::eval::{self, CompareRunsRequest, EvalRunRequest, ListRunsRequest};
 use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::eval::run::{RunMode, RunStatus};
 
@@ -29,6 +29,8 @@ pub enum Op {
     Show(ShowArgs),
     /// List canonical scenarios bundled with this binary.
     Scenarios(ScenariosArgs),
+    /// Compare 2+ completed runs side-by-side (metrics + equity + findings).
+    Compare(CompareArgs),
 }
 
 #[derive(Args, Debug)]
@@ -91,12 +93,27 @@ pub struct ScenariosArgs {
     pub json: bool,
 }
 
+#[derive(Args, Debug)]
+pub struct CompareArgs {
+    /// Two or more run ids (ULIDs) to compare.
+    #[arg(num_args = 2.., required = true)]
+    pub run_ids: Vec<String>,
+    /// Override the xvn home directory.
+    #[arg(long)]
+    pub xvn_home: Option<PathBuf>,
+    /// Emit the full `ComparisonReport` as JSON (default: human-readable
+    /// metrics-table summary).
+    #[arg(long)]
+    pub json: bool,
+}
+
 pub async fn run(cmd: EvalCmd) -> Result<()> {
     match cmd.op {
         Op::Run(args) => run_run(args).await,
         Op::List(args) => run_list(args).await,
         Op::Show(args) => run_show(args).await,
         Op::Scenarios(args) => run_scenarios(args).await,
+        Op::Compare(args) => run_compare(args).await,
     }
 }
 
@@ -246,6 +263,81 @@ async fn run_show(args: ShowArgs) -> Result<()> {
     if let Some(e) = run.error.as_deref() {
         println!("\nerror: {e}");
     }
+    Ok(())
+}
+
+async fn run_compare(args: CompareArgs) -> Result<()> {
+    let ctx = open_ctx(args.xvn_home.clone()).await?;
+    let report = eval::compare(
+        &ctx,
+        CompareRunsRequest {
+            run_ids: args.run_ids.clone(),
+        },
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("eval compare: {e}"))?;
+
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
+
+    // Headline metrics table — one column per run, one row per metric.
+    println!("RUN_ID\tSTRATEGY\tSCENARIO\tSTATUS\tTOTAL_RETURN_%\tSHARPE\tMAX_DD_%\tWIN_RATE\tN_TRADES\tN_DECISIONS");
+    for r in &report.runs {
+        let (tr, sh, dd, wr, nt, nd) = match &r.metrics {
+            Some(m) => (
+                format!("{:.2}", m.total_return_pct),
+                format!("{:.3}", m.sharpe),
+                format!("{:.2}", m.max_drawdown_pct),
+                format!("{:.2}", m.win_rate),
+                m.n_trades.to_string(),
+                m.n_decisions.to_string(),
+            ),
+            None => (
+                "-".into(),
+                "-".into(),
+                "-".into(),
+                "-".into(),
+                "-".into(),
+                "-".into(),
+            ),
+        };
+        println!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            r.id,
+            r.strategy_bundle_hash,
+            r.scenario_id,
+            r.status.as_str(),
+            tr,
+            sh,
+            dd,
+            wr,
+            nt,
+            nd,
+        );
+    }
+
+    println!("\nEquity curves");
+    for c in &report.equity_curves {
+        println!("  {}: {} samples", c.run_id, c.samples.len());
+    }
+
+    if !report.findings.is_empty() {
+        println!("\nFindings ({} total)", report.findings.len());
+        for f in &report.findings {
+            println!(
+                "  [{}] run={} {}: {}",
+                f.severity.as_str(),
+                f.run_id,
+                f.kind,
+                f.summary,
+            );
+        }
+    } else {
+        println!("\nFindings: (none)");
+    }
+
     Ok(())
 }
 

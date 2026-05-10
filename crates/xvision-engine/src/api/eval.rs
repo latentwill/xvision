@@ -12,6 +12,8 @@
 //! - `run_with_deps` — testable variant that takes the broker / dispatch /
 //!   tools as parameters; useful for tests and any caller that wants to
 //!   inject a `MockBrokerSurface` (e.g., a future "dry-run" mode)
+//! - `compare` — wraps `eval::compare_runs` with audit + typed-error mapping
+//!   for the dashboard's run-comparison view + `xvn eval compare` CLI
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -22,6 +24,7 @@ use serde::{Deserialize, Serialize};
 use crate::agent::llm::{AnthropicDispatch, LlmDispatch};
 use crate::api::audit::{self, Outcome};
 use crate::api::{strategy as api_strategy, ApiContext, ApiError, ApiResult};
+use crate::eval::compare::{compare_runs, ComparisonReport};
 use crate::eval::executor::{Executor, PaperExecutor};
 use crate::eval::run::{Run, RunMode, RunStatus};
 use crate::eval::scenario::{canonical_scenarios, Scenario};
@@ -215,6 +218,84 @@ async fn get_inner(ctx: &ApiContext, run_id: &str) -> ApiResult<Run> {
             ApiError::NotFound(format!("run '{run_id}'"))
         } else {
             ApiError::Internal(msg)
+        }
+    })
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct CompareRunsRequest {
+    /// Two-or-more run ids to fold into a single `ComparisonReport`.
+    pub run_ids: Vec<String>,
+}
+
+/// Run-set comparison. Loads each run + equity curve + findings from the
+/// store and packages them into a `ComparisonReport`.
+///
+/// Validation:
+/// - rejects zero or one run id with `ApiError::Validation` (compare needs
+///   ≥2 to do its job — the dashboard's existing `/eval-runs/:id` view
+///   already covers single-run inspection)
+/// - maps a missing run to `ApiError::NotFound` naming the offending id so
+///   operators can fix typos without grepping logs
+pub async fn compare(
+    ctx: &ApiContext,
+    req: CompareRunsRequest,
+) -> ApiResult<ComparisonReport> {
+    let started = Instant::now();
+    let target = if req.run_ids.is_empty() {
+        None
+    } else {
+        Some(req.run_ids.join(","))
+    };
+    let args_json = serde_json::to_string(&req).ok();
+
+    let result = compare_inner(ctx, &req).await;
+
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let _ = audit::record(
+        ctx,
+        "eval",
+        "compare",
+        target.as_deref(),
+        args_json.as_deref(),
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    result
+}
+
+async fn compare_inner(
+    ctx: &ApiContext,
+    req: &CompareRunsRequest,
+) -> ApiResult<ComparisonReport> {
+    if req.run_ids.is_empty() {
+        return Err(ApiError::Validation(
+            "compare requires at least one run id".into(),
+        ));
+    }
+    if req.run_ids.len() < 2 {
+        return Err(ApiError::Validation(
+            "compare requires at least two run ids — single-run views go through `eval get`".into(),
+        ));
+    }
+    let store = RunStore::new(ctx.db.clone());
+    compare_runs(&req.run_ids, &store).await.map_err(|e| {
+        // anyhow's alternate formatter walks the entire context chain so
+        // the underlying "run not found: <id>" surfaces even though
+        // `compare_runs` wraps it with `with_context`.
+        let chain = format!("{e:#}");
+        if chain.contains("run not found") {
+            let missing = chain
+                .rsplit_once("run not found:")
+                .map(|(_, tail)| tail.trim().trim_end_matches(['\'', '"']).to_string())
+                .unwrap_or_else(|| "<unknown>".into());
+            ApiError::NotFound(format!("eval run '{missing}'"))
+        } else {
+            ApiError::Internal(chain)
         }
     })
 }
