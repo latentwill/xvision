@@ -27,7 +27,7 @@ The slot machine is interesting precisely because it is **not** evaluated like a
   2. **Diversity score** — how spread out is the return distribution? (variance of per-variant returns)
 - A slot machine that emits a tight cluster of near-identical variants is broken. One that emits a wide distribution with a heavy positive tail is the goal — the right tail is where novel alpha lives.
 
-This makes the slot machine a tool for **exploring strategy space**, not a tool for trading any single thesis well. It is the closest thing xianvec has to a strategy-discovery engine.
+This makes the slot machine a tool for **exploring strategy space**, not a tool for trading any single thesis well. It is the closest thing xvision has to a strategy-discovery engine.
 
 ## 3. Architecture
 
@@ -36,7 +36,7 @@ This makes the slot machine a tool for **exploring strategy space**, not a tool 
 New template under the engine MVP layout:
 
 ```
-crates/xianvec-engine/src/templates/
+crates/xvision-engine/src/templates/
 ├── mod.rs                  # existing — registers templates
 ├── mean_reversion.rs       # existing (engine MVP v1 template)
 └── slot_machine.rs         # NEW — this spec
@@ -45,7 +45,7 @@ crates/xianvec-engine/src/templates/
 Plus a small data module:
 
 ```
-crates/xianvec-engine/src/templates/slot_machine/
+crates/xvision-engine/src/templates/slot_machine/
 ├── mod.rs                  # template impl
 ├── operators.rs            # ideonomy operator catalog (static text inlined into prompts)
 └── variants.rs             # variant pool persistence (read/write JSON under bundles/<id>/variants/)
@@ -69,7 +69,7 @@ Every pull is seeded from `(bundle_ulid, slot_ulid, pull_index)`. The seed feeds
 
 - The operator sampler's PRNG (which operators get picked when the LLM is given a "pick from this set" instruction).
 - The variant ID assigned to the output bundle.
-- The receipt logged via `xianvec-identity` (ADR 0008) so a pull sequence can be replayed offline.
+- The receipt logged via `xvision-identity` (ADR 0008) so a pull sequence can be replayed offline.
 
 LLM responses themselves are non-deterministic, but the pull sequence and receipt chain are. Replay reproduces the same pull-by-pull operator picks, regenerates the variant bundles via the same prompts, and re-evaluates. Differences between replays are attributable to LLM stochasticity alone, which is logged.
 

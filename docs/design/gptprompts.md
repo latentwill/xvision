@@ -1060,7 +1060,7 @@ Top-left panel "Lineages on chain" (~50% wide):
 - Footer in dim mono: "Last mint tx: 0x4f8a…dc11 · 14 minutes ago".
 
 Top-right panel "Attestations · in-house" (~50% wide):
-- Header sub-title in dim mono "2 attesters operated by xianvec · v1 · external
+- Header sub-title in dim mono "2 attesters operated by xvision · v1 · external
   participation in v2".
 - Two attester cards stacked, each ~70px tall:
   - Card 1: "regime-verifier · NFT #0007" with a "● Active" amber-gold dot. Sub-line "27

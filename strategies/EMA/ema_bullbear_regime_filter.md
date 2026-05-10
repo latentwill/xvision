@@ -92,5 +92,5 @@ to make the trade-off visible.
 ## References
 
 - Atlas Page 3 (the AVOID / FILTER cells in R5 column).
-- Wraps: any directional strategy in this folder or `crates/xianvec-eval/src/baselines/`.
+- Wraps: any directional strategy in this folder or `crates/xvision-eval/src/baselines/`.
 - Particularly impactful on: [`ema_50_200_golden_cross`](ema_50_200_golden_cross.md), [`ema_ribbon_alignment`](ema_ribbon_alignment.md), [`ema_slope_momentum`](ema_slope_momentum.md).

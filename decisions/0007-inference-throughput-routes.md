@@ -1,12 +1,14 @@
 # 0007 — Routes for Trader inference throughput on Apple Silicon
 
+> **2026-05-10:** Project renamed `xianvec` → `xvision`. References below reflect the post-rename name; project history prior to this date used `xianvec`.
+
 **Status:** Revised 2026-05-07 per ADR 0011. Trader-only inference throughput considerations remain valid; CV-driven steering-hook constraints have been excised.
 **Owner:** TBD
 **Date:** 2026-05-03 (revised 2026-05-07)
 
 ## Context
 
-Phase 3 wired `xianvec-trader::run_trader` against `xianvec-inference::Qwen3Engine`
+Phase 3 wired `xvision-trader::run_trader` against `xvision-inference::Qwen3Engine`
 (candle 0.10 `quantized_qwen3` Q4_K_M GGUF) on M4 Max. End-to-end smoke surfaced:
 
 | Path                                          | Throughput   |
@@ -93,7 +95,7 @@ local candle path further.
 1. **Default path: HTTP (option D).** Both Intern and Trader call OpenAI-compat
    backends by default. Local vLLM/Ollama serves as the "local" path; remote
    API providers serve the "cloud" path; zero in-process model loading.
-2. **Optional path: candle local inference.** Keep `xianvec-trader`'s candle
+2. **Optional path: candle local inference.** Keep `xvision-trader`'s candle
    wrapper for fully-air-gapped runs. Performance follows the cheap-wins
    benchmarks below.
 3. **No spike required.** ADR 0007 was originally gated on the steering-hook
@@ -146,7 +148,7 @@ and would change the cost-benefit math of options A and B.
 `engine.rs` already logs `device: metal` at line 78 (`Qwen3Engine::pick_device`). Confirmed active on every run. Metal is not silently falling back to CPU. No code change needed for this experiment; the log line was added in a prior commit.
 
 **Experiment 2 — `RUSTFLAGS="-C target-cpu=native"` rebuild:**
-Originally reported as blocked by a `lzma-rust2 0.15.3` vs `crc 2.1.0` API incompatibility surfaced when RUSTFLAGS invalidates the build fingerprint cache. **Re-investigated post-Phase-4 implementation: the block does not reproduce.** `cargo tree -i lzma-rust2` returns "package not found" and `cargo tree -i crc` resolves to `crc 3.4.0` (via `sqlx-core`); `RUSTFLAGS="-C target-cpu=native" cargo build -p xianvec-inference --bin smoke-qwen3 --features metal` succeeds clean. The likely cause of the resolution shift: the Phase 4.3 substrate work replaced a planned `zip 7.2.0` NPZ-reader dep with a hand-rolled ZIP64 parser (see `crates/xianvec-inference/src/substrate.rs` doc header), and that may have pruned `lzma-rust2` from the transitive graph — though a side-by-side lockfile comparison was not performed. Whether the original report was a misdiagnosis or a real conflict the substrate work happened to repair was not pursued; the cheap-wins lane is unblocked. Actual benchmark numbers under `target-cpu=native` were not captured in this pass — carry as a follow-up so we can quantify the delta vs the warm-cache decode rate.
+Originally reported as blocked by a `lzma-rust2 0.15.3` vs `crc 2.1.0` API incompatibility surfaced when RUSTFLAGS invalidates the build fingerprint cache. **Re-investigated post-Phase-4 implementation: the block does not reproduce.** `cargo tree -i lzma-rust2` returns "package not found" and `cargo tree -i crc` resolves to `crc 3.4.0` (via `sqlx-core`); `RUSTFLAGS="-C target-cpu=native" cargo build -p xvision-inference --bin smoke-qwen3 --features metal` succeeds clean. The likely cause of the resolution shift: the Phase 4.3 substrate work replaced a planned `zip 7.2.0` NPZ-reader dep with a hand-rolled ZIP64 parser (see `crates/xvision-inference/src/substrate.rs` doc header), and that may have pruned `lzma-rust2` from the transitive graph — though a side-by-side lockfile comparison was not performed. Whether the original report was a misdiagnosis or a real conflict the substrate work happened to repair was not pursued; the cheap-wins lane is unblocked. Actual benchmark numbers under `target-cpu=native` were not captured in this pass — carry as a follow-up so we can quantify the delta vs the warm-cache decode rate.
 
 **Experiment 3 — Prefill batching investigation:**
 `engine.rs:170`: `Tensor::new(prompt_tokens.as_slice(), &device)?.unsqueeze(0)?` — the entire prompt is sent as a single `[1, N]` tensor in one `model.forward(&input, 0)` call. This IS true batched prefill; there is no per-token prefill loop.
@@ -174,7 +176,7 @@ The stable decode rate of ~5–6 tok/s on a warm shader cache is ~8–10× bette
 
 ## Re-measured 2026-05-03 (post-vendor-patch + native CPU codegen)
 
-Prompted by `target-cpu=native` proving to actually work in the current workspace and post-ADR-0011 housekeeping (the original `vendor_qwen3::forward_with_hooks` path was a CV substrate concern; that code lived in `xianvec-inference` and now lives in xianvec-play). Five back-to-back smoke-qwen3 runs from one shell session, same machine, same fixture (22-token prompt → 48 decode tokens), `RUSTFLAGS="-C target-cpu=native"` release build:
+Prompted by `target-cpu=native` proving to actually work in the current workspace and post-ADR-0011 housekeeping (the original `vendor_qwen3::forward_with_hooks` path was a CV substrate concern; that code lived in `xvision-inference` and now lives in xvision-play). Five back-to-back smoke-qwen3 runs from one shell session, same machine, same fixture (22-token prompt → 48 decode tokens), `RUSTFLAGS="-C target-cpu=native"` release build:
 
 | Run | Decode tok/s | Prefill tok/s | Prefill wall | Notes |
 | --- | --- | --- | --- | --- |

@@ -1,5 +1,7 @@
 # 0006 — On-chain executor choice: Orderly Network on Mantle
 
+> **2026-05-10:** Project renamed `xianvec` → `xvision`. References below reflect the post-rename name; project history prior to this date used `xianvec`.
+
 Date: 2026-05-03
 Status: accepted
 
@@ -39,7 +41,7 @@ The **Byreal Perps CLI** path is documented as an evaluated alternate in this fi
 
 ## Why we kept the door open to Byreal
 
-1. **Hackathon Path 1 names Byreal Perps CLI explicitly.** If a stricter reading of the brief requires using the named CLI for trade execution (not just Byreal Agent Skills for context), forking is mechanical: the executor trait stays unchanged, only `crates/xianvec-execution/orderly.rs` swaps for `byreal.rs`. The M0 probe at `probes/m0-byreal/` proved that path works.
+1. **Hackathon Path 1 names Byreal Perps CLI explicitly.** If a stricter reading of the brief requires using the named CLI for trade execution (not just Byreal Agent Skills for context), forking is mechanical: the executor trait stays unchanged, only `crates/xvision-execution/orderly.rs` swaps for `byreal.rs`. The M0 probe at `probes/m0-byreal/` proved that path works.
 2. **Byreal Agent Skills remain in v1.** Vendored under `.claude/skills/byreal/`, loaded into the Stage 1 Intern's Claude context. This is the single integration point that satisfies the Path 1 endorsement without forcing the trade venue.
 
 ## Risks accepted

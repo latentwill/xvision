@@ -2,16 +2,16 @@
 
 > Continues `2026-05-10-xvn-scheduling-and-agent-cli-part4.md`. Same goals/architecture/tech stack apply. Final part.
 
-> **Common pattern for Tasks 19–24:** Each is "create a CLI subcommand file that thin-wraps engine API functions, register it in `commands/mod.rs` and the top-level `Command` enum, smoke test, commit." Where the existing `crates/xianvec-cli/src/commands/<name>.rs` already exists (e.g., `strategy.rs`, `risk.rs`, `report.rs`), **modify** to add the new subcommands; do not replace existing functionality.
+> **Common pattern for Tasks 19–24:** Each is "create a CLI subcommand file that thin-wraps engine API functions, register it in `commands/mod.rs` and the top-level `Command` enum, smoke test, commit." Where the existing `crates/xvision-cli/src/commands/<name>.rs` already exists (e.g., `strategy.rs`, `risk.rs`, `report.rs`), **modify** to add the new subcommands; do not replace existing functionality.
 
 ---
 
 ### Task 19: `xvn strategy` lifecycle subcommands
 
 **Files:**
-- Modify: `crates/xianvec-cli/src/commands/strategy.rs`
+- Modify: `crates/xvision-cli/src/commands/strategy.rs`
 
-> **Context.** Existing `strategy.rs` has `new`, `validate`, `ls`, `show`, `templates`, `run`. Add `deactivate`, `reactivate`, `archive`, `unarchive`, `delete`. Each thin-wraps `xianvec_engine::api::strategy::*`.
+> **Context.** Existing `strategy.rs` has `new`, `validate`, `ls`, `show`, `templates`, `run`. Add `deactivate`, `reactivate`, `archive`, `unarchive`, `delete`. Each thin-wraps `xvision_engine::api::strategy::*`.
 
 - [ ] **Step 1: Add subcommand variants**
 
@@ -28,14 +28,14 @@ Delete     { id: String, #[arg(long)] confirm: bool },
 - [ ] **Step 2: Add ApiContext helper (top of file)**
 
 ```rust
-async fn ctx() -> anyhow::Result<std::sync::Arc<xianvec_engine::api::ApiContext>> {
+async fn ctx() -> anyhow::Result<std::sync::Arc<xvision_engine::api::ApiContext>> {
     let xvn_home = std::env::var("XVN_HOME").map(std::path::PathBuf::from)
         .unwrap_or_else(|_| dirs::home_dir().unwrap().join(".xvn"));
     std::fs::create_dir_all(&xvn_home)?;
     let url = format!("sqlite://{}?mode=rwc", xvn_home.join("xvn.db").display());
     let db = sqlx::SqlitePool::connect(&url).await?;
-    sqlx::migrate!("../xianvec-engine/migrations").run(&db).await?;
-    Ok(std::sync::Arc::new(xianvec_engine::api::ApiContext::new(xvn_home, db)))
+    sqlx::migrate!("../xvision-engine/migrations").run(&db).await?;
+    Ok(std::sync::Arc::new(xvision_engine::api::ApiContext::new(xvn_home, db)))
 }
 ```
 
@@ -44,28 +44,28 @@ async fn ctx() -> anyhow::Result<std::sync::Arc<xianvec_engine::api::ApiContext>
 ```rust
 StrategyAction::Deactivate { id, reason } => {
     let ctx = ctx().await?;
-    xianvec_engine::api::strategy::deactivate(&ctx, &id, &reason, xianvec_engine::api::Actor::Cli).await?;
+    xvision_engine::api::strategy::deactivate(&ctx, &id, &reason, xvision_engine::api::Actor::Cli).await?;
     println!("deactivated {id}: {reason}");
 }
 StrategyAction::Reactivate { id } => {
     let ctx = ctx().await?;
-    xianvec_engine::api::strategy::reactivate(&ctx, &id, xianvec_engine::api::Actor::Cli).await?;
+    xvision_engine::api::strategy::reactivate(&ctx, &id, xvision_engine::api::Actor::Cli).await?;
     println!("reactivated {id}");
 }
 StrategyAction::Archive { id, reason } => {
     let ctx = ctx().await?;
-    xianvec_engine::api::strategy::archive(&ctx, &id, &reason, xianvec_engine::api::Actor::Cli).await?;
+    xvision_engine::api::strategy::archive(&ctx, &id, &reason, xvision_engine::api::Actor::Cli).await?;
     println!("archived {id}: {reason}");
 }
 StrategyAction::Unarchive { id } => {
     let ctx = ctx().await?;
-    xianvec_engine::api::strategy::unarchive(&ctx, &id, xianvec_engine::api::Actor::Cli).await?;
+    xvision_engine::api::strategy::unarchive(&ctx, &id, xvision_engine::api::Actor::Cli).await?;
     println!("unarchived {id}");
 }
 StrategyAction::Delete { id, confirm } => {
     if !confirm { anyhow::bail!("pass --confirm to delete (this is destructive)"); }
     let ctx = ctx().await?;
-    xianvec_engine::api::strategy::delete(&ctx, &id, xianvec_engine::api::Actor::Cli).await?;
+    xvision_engine::api::strategy::delete(&ctx, &id, xvision_engine::api::Actor::Cli).await?;
     println!("deleted {id}");
 }
 ```
@@ -79,15 +79,15 @@ echo 'name="t"' > $XVN_HOME/strategies/sh_smoke/manifest.toml
 # Note: strategy create will only call record_created when an existing
 # `xvn strategy new` integration writes the bundle. For the smoke test,
 # write a minimal status manually via deactivate (which auto-creates audit).
-cargo run -p xianvec-cli -- strategy deactivate sh_smoke --reason "test"
-cargo run -p xianvec-cli -- strategy show sh_smoke
-cargo run -p xianvec-cli -- strategy reactivate sh_smoke
+cargo run -p xvision-cli -- strategy deactivate sh_smoke --reason "test"
+cargo run -p xvision-cli -- strategy show sh_smoke
+cargo run -p xvision-cli -- strategy reactivate sh_smoke
 ```
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-cli/src/commands/strategy.rs
+git add crates/xvision-cli/src/commands/strategy.rs
 git commit -m "feat(cli): xvn strategy {deactivate, reactivate, archive, unarchive, delete}"
 ```
 
@@ -96,18 +96,18 @@ git commit -m "feat(cli): xvn strategy {deactivate, reactivate, archive, unarchi
 ### Task 20: `xvn risk` subcommands
 
 **Files:**
-- Modify or Create: `crates/xianvec-cli/src/commands/risk.rs`
-- Modify: `crates/xianvec-cli/src/commands/mod.rs` (if new)
-- Modify: `crates/xianvec-cli/src/lib.rs` (if new)
+- Modify or Create: `crates/xvision-cli/src/commands/risk.rs`
+- Modify: `crates/xvision-cli/src/commands/mod.rs` (if new)
+- Modify: `crates/xvision-cli/src/lib.rs` (if new)
 
 - [ ] **Step 1: Implement**
 
-Replace the contents of `crates/xianvec-cli/src/commands/risk.rs` (or create new):
+Replace the contents of `crates/xvision-cli/src/commands/risk.rs` (or create new):
 
 ```rust
 use clap::{Args, Subcommand};
 
-use xianvec_engine::api::{risk, Actor};
+use xvision_engine::api::{risk, Actor};
 
 #[derive(Args, Debug)]
 pub struct RiskCmd {
@@ -127,14 +127,14 @@ pub enum RiskAction {
     ResetCircuitBreaker { deployment_id: String },
 }
 
-async fn ctx() -> anyhow::Result<std::sync::Arc<xianvec_engine::api::ApiContext>> {
+async fn ctx() -> anyhow::Result<std::sync::Arc<xvision_engine::api::ApiContext>> {
     let xvn_home = std::env::var("XVN_HOME").map(std::path::PathBuf::from)
         .unwrap_or_else(|_| dirs::home_dir().unwrap().join(".xvn"));
     std::fs::create_dir_all(&xvn_home)?;
     let url = format!("sqlite://{}?mode=rwc", xvn_home.join("xvn.db").display());
     let db = sqlx::SqlitePool::connect(&url).await?;
-    sqlx::migrate!("../xianvec-engine/migrations").run(&db).await?;
-    Ok(std::sync::Arc::new(xianvec_engine::api::ApiContext::new(xvn_home, db)))
+    sqlx::migrate!("../xvision-engine/migrations").run(&db).await?;
+    Ok(std::sync::Arc::new(xvision_engine::api::ApiContext::new(xvn_home, db)))
 }
 
 pub async fn run(cmd: RiskCmd) -> anyhow::Result<()> {
@@ -187,17 +187,17 @@ mkdir -p $XVN_HOME/deployments/dep_x
 cat > $XVN_HOME/deployments/dep_x/config.json <<'EOF'
 {"deployment_id":"dep_x","agent_id":"sh_t","broker":"alpaca_paper","capital_usd":1000,"stop_loss_atr_multiple":1.5,"position_size_pct":0.05,"max_concurrent_positions":3,"circuit_breaker_tripped":false}
 EOF
-cargo run -p xianvec-cli -- risk show dep_x
-cargo run -p xianvec-cli -- risk set-capital dep_x --usd 500 --reason "halve"
-cargo run -p xianvec-cli -- risk show dep_x
+cargo run -p xvision-cli -- risk show dep_x
+cargo run -p xvision-cli -- risk set-capital dep_x --usd 500 --reason "halve"
+cargo run -p xvision-cli -- risk show dep_x
 ```
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/xianvec-cli/src/commands/risk.rs \
-        crates/xianvec-cli/src/commands/mod.rs \
-        crates/xianvec-cli/src/lib.rs
+git add crates/xvision-cli/src/commands/risk.rs \
+        crates/xvision-cli/src/commands/mod.rs \
+        crates/xvision-cli/src/lib.rs
 git commit -m "feat(cli): xvn risk subcommands — set-capital, scale-capital, knobs, circuit breaker"
 ```
 
@@ -206,18 +206,18 @@ git commit -m "feat(cli): xvn risk subcommands — set-capital, scale-capital, k
 ### Task 21: `xvn deploy` subcommands
 
 **Files:**
-- Create: `crates/xianvec-cli/src/commands/deploy.rs`
-- Modify: `crates/xianvec-cli/src/commands/mod.rs`
-- Modify: `crates/xianvec-cli/src/lib.rs`
+- Create: `crates/xvision-cli/src/commands/deploy.rs`
+- Modify: `crates/xvision-cli/src/commands/mod.rs`
+- Modify: `crates/xvision-cli/src/lib.rs`
 
 - [ ] **Step 1: Implement**
 
-Create `crates/xianvec-cli/src/commands/deploy.rs`:
+Create `crates/xvision-cli/src/commands/deploy.rs`:
 
 ```rust
 use clap::{Args, Subcommand};
 
-use xianvec_engine::api::{deploy, Actor};
+use xvision_engine::api::{deploy, Actor};
 
 #[derive(Args, Debug)]
 pub struct DeployCmd {
@@ -247,14 +247,14 @@ pub enum DeployAction {
     SwitchMode { deployment_id: String, #[arg(long)] broker: String },
 }
 
-async fn ctx() -> anyhow::Result<std::sync::Arc<xianvec_engine::api::ApiContext>> {
+async fn ctx() -> anyhow::Result<std::sync::Arc<xvision_engine::api::ApiContext>> {
     let xvn_home = std::env::var("XVN_HOME").map(std::path::PathBuf::from)
         .unwrap_or_else(|_| dirs::home_dir().unwrap().join(".xvn"));
     std::fs::create_dir_all(&xvn_home)?;
     let url = format!("sqlite://{}?mode=rwc", xvn_home.join("xvn.db").display());
     let db = sqlx::SqlitePool::connect(&url).await?;
-    sqlx::migrate!("../xianvec-engine/migrations").run(&db).await?;
-    Ok(std::sync::Arc::new(xianvec_engine::api::ApiContext::new(xvn_home, db)))
+    sqlx::migrate!("../xvision-engine/migrations").run(&db).await?;
+    Ok(std::sync::Arc::new(xvision_engine::api::ApiContext::new(xvn_home, db)))
 }
 
 pub async fn run(cmd: DeployCmd) -> anyhow::Result<()> {
@@ -318,15 +318,15 @@ In `commands/mod.rs`: `pub mod deploy;`. In `lib.rs`: `Deploy(commands::deploy::
 export XVN_HOME=/tmp/xvn-deploy-smoke
 rm -rf $XVN_HOME && mkdir -p $XVN_HOME/strategies/sh_t
 echo 'name="t"' > $XVN_HOME/strategies/sh_t/manifest.toml
-cargo run -p xianvec-cli -- deploy create --strategy sh_t --capital 500
-cargo run -p xianvec-cli -- deploy ls
-cargo run -p xianvec-cli -- deploy start <id>
+cargo run -p xvision-cli -- deploy create --strategy sh_t --capital 500
+cargo run -p xvision-cli -- deploy ls
+cargo run -p xvision-cli -- deploy start <id>
 ```
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/xianvec-cli/src/commands/deploy.rs crates/xianvec-cli/src/commands/mod.rs crates/xianvec-cli/src/lib.rs
+git add crates/xvision-cli/src/commands/deploy.rs crates/xvision-cli/src/commands/mod.rs crates/xvision-cli/src/lib.rs
 git commit -m "feat(cli): xvn deploy subcommands"
 ```
 
@@ -335,7 +335,7 @@ git commit -m "feat(cli): xvn deploy subcommands"
 ### Task 22: `xvn report` subcommands (extend with eod, anomaly-scan, etc.)
 
 **Files:**
-- Modify: `crates/xianvec-cli/src/commands/report.rs`
+- Modify: `crates/xvision-cli/src/commands/report.rs`
 
 > **Context.** Existing `report.rs` has the backtest-result → Markdown command. Refactor to a `Subcommand` enum containing `Backtest` (existing logic), `Eod`, `StrategyReview`, `DeploymentHealth`, `AnomalyScan`, `TokenSpend`, `Pnl`.
 
@@ -346,7 +346,7 @@ use std::path::PathBuf;
 
 use clap::{Args, Subcommand};
 
-use xianvec_engine::api::{report, Actor};
+use xvision_engine::api::{report, Actor};
 
 #[derive(Args, Debug)]
 pub struct ReportCmd {
@@ -374,14 +374,14 @@ pub enum ReportAction {
     },
 }
 
-async fn ctx() -> anyhow::Result<std::sync::Arc<xianvec_engine::api::ApiContext>> {
+async fn ctx() -> anyhow::Result<std::sync::Arc<xvision_engine::api::ApiContext>> {
     let xvn_home = std::env::var("XVN_HOME").map(std::path::PathBuf::from)
         .unwrap_or_else(|_| dirs::home_dir().unwrap().join(".xvn"));
     std::fs::create_dir_all(&xvn_home)?;
     let url = format!("sqlite://{}?mode=rwc", xvn_home.join("xvn.db").display());
     let db = sqlx::SqlitePool::connect(&url).await?;
-    sqlx::migrate!("../xianvec-engine/migrations").run(&db).await?;
-    Ok(std::sync::Arc::new(xianvec_engine::api::ApiContext::new(xvn_home, db)))
+    sqlx::migrate!("../xvision-engine/migrations").run(&db).await?;
+    Ok(std::sync::Arc::new(xvision_engine::api::ApiContext::new(xvn_home, db)))
 }
 
 pub async fn run(cmd: ReportCmd) -> anyhow::Result<()> {
@@ -450,8 +450,8 @@ pub async fn run(cmd: ReportCmd) -> anyhow::Result<()> {
 ```bash
 export XVN_HOME=/tmp/xvn-report-smoke
 rm -rf $XVN_HOME && mkdir -p $XVN_HOME
-cargo run -p xianvec-cli -- report eod --no-markdown
-cargo run -p xianvec-cli -- report anomaly-scan
+cargo run -p xvision-cli -- report eod --no-markdown
+cargo run -p xvision-cli -- report anomaly-scan
 ```
 
 Expected: empty/no-deployment EOD report rendered, empty anomaly list.
@@ -459,7 +459,7 @@ Expected: empty/no-deployment EOD report rendered, empty anomaly list.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/xianvec-cli/src/commands/report.rs crates/xianvec-cli/src/lib.rs
+git add crates/xvision-cli/src/commands/report.rs crates/xvision-cli/src/lib.rs
 git commit -m "feat(cli): xvn report — eod, strategy-review, deployment-health, anomaly-scan, token-spend, pnl, backtest"
 ```
 
@@ -468,17 +468,17 @@ git commit -m "feat(cli): xvn report — eod, strategy-review, deployment-health
 ### Task 23: `xvn maintenance` subcommands
 
 **Files:**
-- Create: `crates/xianvec-cli/src/commands/maintenance.rs`
+- Create: `crates/xvision-cli/src/commands/maintenance.rs`
 - Modify: CLI mod + dispatch.
 
 - [ ] **Step 1: Implement**
 
-Create `crates/xianvec-cli/src/commands/maintenance.rs`:
+Create `crates/xvision-cli/src/commands/maintenance.rs`:
 
 ```rust
 use clap::{Args, Subcommand};
 
-use xianvec_engine::api::{maintenance, Actor};
+use xvision_engine::api::{maintenance, Actor};
 
 #[derive(Args, Debug)]
 pub struct MaintenanceCmd {
@@ -497,14 +497,14 @@ pub enum MaintenanceAction {
     IntegrityCheck,
 }
 
-async fn ctx() -> anyhow::Result<std::sync::Arc<xianvec_engine::api::ApiContext>> {
+async fn ctx() -> anyhow::Result<std::sync::Arc<xvision_engine::api::ApiContext>> {
     let xvn_home = std::env::var("XVN_HOME").map(std::path::PathBuf::from)
         .unwrap_or_else(|_| dirs::home_dir().unwrap().join(".xvn"));
     std::fs::create_dir_all(&xvn_home)?;
     let url = format!("sqlite://{}?mode=rwc", xvn_home.join("xvn.db").display());
     let db = sqlx::SqlitePool::connect(&url).await?;
-    sqlx::migrate!("../xianvec-engine/migrations").run(&db).await?;
-    Ok(std::sync::Arc::new(xianvec_engine::api::ApiContext::new(xvn_home, db)))
+    sqlx::migrate!("../xvision-engine/migrations").run(&db).await?;
+    Ok(std::sync::Arc::new(xvision_engine::api::ApiContext::new(xvn_home, db)))
 }
 
 pub async fn run(cmd: MaintenanceCmd) -> anyhow::Result<()> {
@@ -550,16 +550,16 @@ pub async fn run(cmd: MaintenanceCmd) -> anyhow::Result<()> {
 ```bash
 export XVN_HOME=/tmp/xvn-mntn-smoke
 rm -rf $XVN_HOME
-cargo run -p xianvec-cli -- maintenance integrity-check
-cargo run -p xianvec-cli -- maintenance vacuum-db
+cargo run -p xvision-cli -- maintenance integrity-check
+cargo run -p xvision-cli -- maintenance vacuum-db
 ```
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/xianvec-cli/src/commands/maintenance.rs \
-        crates/xianvec-cli/src/commands/mod.rs \
-        crates/xianvec-cli/src/lib.rs
+git add crates/xvision-cli/src/commands/maintenance.rs \
+        crates/xvision-cli/src/commands/mod.rs \
+        crates/xvision-cli/src/lib.rs
 git commit -m "feat(cli): xvn maintenance subcommands"
 ```
 
@@ -568,17 +568,17 @@ git commit -m "feat(cli): xvn maintenance subcommands"
 ### Task 24: `xvn autoresearch` subcommands
 
 **Files:**
-- Create: `crates/xianvec-cli/src/commands/autoresearch.rs`
+- Create: `crates/xvision-cli/src/commands/autoresearch.rs`
 - Modify: CLI mod + dispatch.
 
 - [ ] **Step 1: Implement**
 
-Create `crates/xianvec-cli/src/commands/autoresearch.rs`:
+Create `crates/xvision-cli/src/commands/autoresearch.rs`:
 
 ```rust
 use clap::{Args, Subcommand};
 
-use xianvec_engine::api::autoresearch;
+use xvision_engine::api::autoresearch;
 
 #[derive(Args, Debug)]
 pub struct AutoresearchCmd {
@@ -596,14 +596,14 @@ pub enum AutoresearchAction {
     ShowCycle  { cycle_id: String },
 }
 
-async fn ctx() -> anyhow::Result<std::sync::Arc<xianvec_engine::api::ApiContext>> {
+async fn ctx() -> anyhow::Result<std::sync::Arc<xvision_engine::api::ApiContext>> {
     let xvn_home = std::env::var("XVN_HOME").map(std::path::PathBuf::from)
         .unwrap_or_else(|_| dirs::home_dir().unwrap().join(".xvn"));
     std::fs::create_dir_all(&xvn_home)?;
     let url = format!("sqlite://{}?mode=rwc", xvn_home.join("xvn.db").display());
     let db = sqlx::SqlitePool::connect(&url).await?;
-    sqlx::migrate!("../xianvec-engine/migrations").run(&db).await?;
-    Ok(std::sync::Arc::new(xianvec_engine::api::ApiContext::new(xvn_home, db)))
+    sqlx::migrate!("../xvision-engine/migrations").run(&db).await?;
+    Ok(std::sync::Arc::new(xvision_engine::api::ApiContext::new(xvn_home, db)))
 }
 
 pub async fn run(cmd: AutoresearchCmd) -> anyhow::Result<()> {
@@ -635,7 +635,7 @@ pub async fn run(cmd: AutoresearchCmd) -> anyhow::Result<()> {
 - [ ] **Step 3: Smoke**
 
 ```bash
-cargo run -p xianvec-cli -- autoresearch list-cycles --since-days 7
+cargo run -p xvision-cli -- autoresearch list-cycles --since-days 7
 ```
 
 Expected: empty array output (`[]`).
@@ -643,9 +643,9 @@ Expected: empty array output (`[]`).
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/xianvec-cli/src/commands/autoresearch.rs \
-        crates/xianvec-cli/src/commands/mod.rs \
-        crates/xianvec-cli/src/lib.rs
+git add crates/xvision-cli/src/commands/autoresearch.rs \
+        crates/xvision-cli/src/commands/mod.rs \
+        crates/xvision-cli/src/lib.rs
 git commit -m "feat(cli): xvn autoresearch — run-evening-cycle, list-cycles, show-cycle (stubs until AR-2)"
 ```
 
@@ -672,12 +672,12 @@ echo "XVN_HOME=$XVN_HOME"
 for sid in sh_X sh_Y sh_Z; do
     mkdir -p "$XVN_HOME/strategies/$sid"
     echo 'name="t"' > "$XVN_HOME/strategies/$sid/manifest.toml"
-    cargo run -q -p xianvec-cli -- strategy deactivate "$sid" --reason "smoke_init" >/dev/null
-    cargo run -q -p xianvec-cli -- strategy reactivate "$sid" >/dev/null
+    cargo run -q -p xvision-cli -- strategy deactivate "$sid" --reason "smoke_init" >/dev/null
+    cargo run -q -p xvision-cli -- strategy reactivate "$sid" >/dev/null
 done
 
 # 2. Create a schedule for nightly cull.
-ID=$(cargo run -q -p xianvec-cli -- schedule create \
+ID=$(cargo run -q -p xvision-cli -- schedule create \
   --name nightly-cull \
   --schedule "at 21:00 UTC" \
   --prompt "Review all Active strategies. Deactivate any with rolling-30d Sharpe < 0.5." \
@@ -691,23 +691,23 @@ export XVN_MOCK_TURN_1='{"text":null,"tool_calls":[{"tool_call_id":"c2","name":"
 export XVN_MOCK_TURN_2='{"text":"done","tool_calls":[{"tool_call_id":"c3","name":"record_outcome","arguments":{"summary":"Deactivated 2 of 3 strategies for low Sharpe","actions_taken":["strategy.deactivate sh_X","strategy.deactivate sh_Y"],"anomalies":[]}}],"stop_reason":"tool_use","tokens_in":20,"tokens_out":15,"cache_read_tokens":0,"cache_write_tokens":0}'
 
 # 4. Trigger it manually + run daemon for ~3 seconds.
-cargo run -q -p xianvec-cli -- schedule run-now "$ID"
-cargo run -q -p xianvec-cli -- agent run --mock &
+cargo run -q -p xvision-cli -- schedule run-now "$ID"
+cargo run -q -p xvision-cli -- agent run --mock &
 DAEMON=$!
 sleep 4
 kill "$DAEMON" 2>/dev/null || true
 wait "$DAEMON" 2>/dev/null || true
 
 # 5. Verify outcome.
-cargo run -q -p xianvec-cli -- schedule history --id "$ID"
+cargo run -q -p xvision-cli -- schedule history --id "$ID"
 echo "--- transcript ---"
 FIRE_ID=$(sqlite3 "$XVN_HOME/xvn.db" "SELECT fire_id FROM schedule_fires WHERE schedule_id='$ID' ORDER BY started_at DESC LIMIT 1;")
-cargo run -q -p xianvec-cli -- schedule transcript "$FIRE_ID" | head -40
+cargo run -q -p xvision-cli -- schedule transcript "$FIRE_ID" | head -40
 
 # 6. Verify strategy state.
-cargo run -q -p xianvec-cli -- strategy show sh_X
-cargo run -q -p xianvec-cli -- strategy show sh_Y
-cargo run -q -p xianvec-cli -- strategy show sh_Z
+cargo run -q -p xvision-cli -- strategy show sh_X
+cargo run -q -p xvision-cli -- strategy show sh_Y
+cargo run -q -p xvision-cli -- strategy show sh_Z
 
 echo "smoke OK; XVN_HOME=$XVN_HOME"
 ```
@@ -736,12 +736,12 @@ git commit -m "test: end-to-end smoke for xvn scheduling foundation"
 ### Task 26: Documentation — README + manual
 
 **Files:**
-- Modify: `crates/xianvec-engine/README.md`
+- Modify: `crates/xvision-engine/README.md`
 - Modify: `MANUAL.md` (or appropriate top-level docs file — check repo for the canonical user manual)
 
 - [ ] **Step 1: Engine README**
 
-Append to `crates/xianvec-engine/README.md`:
+Append to `crates/xvision-engine/README.md`:
 
 ```markdown
 ## Engine API (since 2026-05-10)
@@ -761,7 +761,7 @@ tool registry both call these functions; one source of truth.
 ## Agent runner (since 2026-05-10)
 
 `src/agent_runner/` is a generic tool-use loop usable for both scheduled jobs
-and ad-hoc agent invocations. Pluggable via `xianvec_intern::tool_dispatch::LlmToolDispatch`.
+and ad-hoc agent invocations. Pluggable via `xvision_intern::tool_dispatch::LlmToolDispatch`.
 
 ## Scheduler (since 2026-05-10)
 
@@ -779,7 +779,7 @@ Default schedules ship pre-paused — `xvn schedule resume <id>` to enable:
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/xianvec-engine/README.md MANUAL.md
+git add crates/xvision-engine/README.md MANUAL.md
 git commit -m "docs: README + manual for engine API, agent runner, scheduler"
 ```
 
@@ -850,7 +850,7 @@ These limitations are intentional — they ship safely as stubs, and the plumbin
 
 ## What's next
 
-- **Follow-up: real LlmToolDispatch impl.** Two small tasks: Anthropic Messages API and OpenAI Chat Completions, each reusing existing `xianvec-intern` plumbing.
-- **Follow-up: dashboard /schedule routes.** Extends Plan 2d (`xianvec-dashboard`). Adds list/detail/create routes + Live cockpit panel.
+- **Follow-up: real LlmToolDispatch impl.** Two small tasks: Anthropic Messages API and OpenAI Chat Completions, each reusing existing `xvision-intern` plumbing.
+- **Follow-up: dashboard /schedule routes.** Extends Plan 2d (`xvision-dashboard`). Adds list/detail/create routes + Live cockpit panel.
 - **Follow-up: scheduler_events live data wiring.** Once Plan 2c daemon writes to `scheduler_events`, fill in `report.strategy_review` decisions/PnL and the anomaly heuristics.
 - **Follow-up: AR-2 wires `autoresearch.run_evening_cycle`** to actual mutator + judge logic per AR-2 plan.

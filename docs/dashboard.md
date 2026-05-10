@@ -17,14 +17,14 @@
 >
 > **What's obsolete:** Panels referencing `vectors_on`/`vectors_off`,
 > `active_vectors`, `vector_config_hash`, and the per-axis (Conviction/Patience/
-> Risk/Trend) cuts are obsolete in xianvec per ADR 0011 — the CV substrate moved
-> to xianvec-play. The strategy-level Δ-Sharpe / leaderboard / per-trade ledger
+> Risk/Trend) cuts are obsolete in xvision per ADR 0011 — the CV substrate moved
+> to xvision-play. The strategy-level Δ-Sharpe / leaderboard / per-trade ledger
 > panels (V1, V2, V3 retargeted at `arm_name` not `vector_config_hash`) carry
 > forward via the eval engine and marketplace plans linked above.
 
 > Working doc · 2026-05-04 · Draft v0.1
 >
-> Scope: enumerate every panel xianvec's dashboard could reasonably show,
+> Scope: enumerate every panel xvision's dashboard could reasonably show,
 > evaluate which ones the thesis actually needs, map each to a data source,
 > and call v1 / v2 scope explicitly so demo-week doesn't accidentally inherit
 > the full surface.
@@ -33,7 +33,7 @@
 
 ## 1. Why this dashboard exists
 
-Xianvec's reason to exist is to defend one number: **Δ-Sharpe of vectors-ON
+Xvision's reason to exist is to defend one number: **Δ-Sharpe of vectors-ON
 minus vectors-OFF on a fixed setup population, with a 95% CI that excludes
 zero, validated across at least one bull and one bear regime.** Every other
 panel has to justify itself either as (a) a credibility prop for that
@@ -50,7 +50,7 @@ mixed bag:
   seeing the underlying decisions.
 - **(3) A/B evaluation across multiple agents/strategies** — *this is the
   product*. It is the headline number. Top priority.
-- **(4) Vector usage, strength, win-rate vs baselines** — unique-to-xianvec
+- **(4) Vector usage, strength, win-rate vs baselines** — unique-to-xvision
   diagnostic. Without it, vectors-on vs vectors-off becomes a black box even
   to us.
 
@@ -96,7 +96,7 @@ visual reviewers will spend the most time on after the headline tile.
 
 - *Source:* `executions.realized_pnl` joined to `setups.created_at` and
   the regime tag from briefings.
-- *v1:* yes if `xianvec-eval` already computes paired returns; cheap to add
+- *v1:* yes if `xvision-eval` already computes paired returns; cheap to add
   if not.
 
 **H4 — Decision divergence rate.** % of paired setups where vectors-on and
@@ -157,7 +157,7 @@ implementation-plan §8.5. Show: probe set name, n probes, last
 re-evaluation timestamp, decision-flip count vs. baseline, capability-floor
 delta. Wired up only after F13 / M14 lands.
 
-- *Source:* `xianvec-harness` JSON.
+- *Source:* `xvision-harness` JSON.
 - *v1:* stub only — corpus is curated post-headline.
 
 ### 2.3 Trade history (user idea #2, expanded)
@@ -211,7 +211,7 @@ demo moment we have.
 decision divergence vs OFF, mean latency, mean cost / decision, cache hit
 rate. Sort by any column.
 
-- *Source:* `xianvec-eval` rollup JSON.
+- *Source:* `xvision-eval` rollup JSON.
 - *v1:* yes.
 
 **E2 — Pairwise bootstrap confidence intervals.** A matrix showing the
@@ -240,11 +240,11 @@ baselines.
 
 - *Source:* same eval crate output, baselines arm.
 - *v1:* yes for technical baselines (already in
-  `xianvec-eval/src/baselines/`); onchain panels are stub-only until F14.
+  `xvision-eval/src/baselines/`); onchain panels are stub-only until F14.
 
 ### 2.5 Vector mechanics (user idea #4, expanded)
 
-This is the section where xianvec's dashboard becomes *actually different*
+This is the section where xvision's dashboard becomes *actually different*
 from a normal trading dashboard. Most of these panels exist nowhere else.
 
 **V1 — Active vector alpha histogram.** For each axis (Conviction in v1;
@@ -275,11 +275,11 @@ the Δ-return when vectors-ON disagrees with the baseline vs when it
 agrees. Reveals whether vectors add value *at decision time* or only
 through entry filtering.
 
-- *Source:* baseline outputs from `xianvec-eval/src/baselines/`.
+- *Source:* baseline outputs from `xvision-eval/src/baselines/`.
 - *v1:* yes — cheap composition over E4.
 
-**V4 — Confidence gate trace.** Time series of `xianvec.gating.entropy`
-and `xianvec.gating.applied_magnitude` per decision over the run.
+**V4 — Confidence gate trace.** Time series of `xvision.gating.entropy`
+and `xvision.gating.applied_magnitude` per decision over the run.
 Annotated with regime transitions. Shows whether the gate's entropy
 threshold is sane in production data — a flat line at full magnitude
 means the gate isn't gating.
@@ -295,7 +295,7 @@ decision-token entropy at the gate point. This is the panel the spike
 validation gate (Phase 0.3) and any "is this vector real" investigation
 will live in.
 
-- *Source:* `xianvec-introspect` JSON + `notebooks/inspect_vector.py`.
+- *Source:* `xvision-introspect` JSON + `notebooks/inspect_vector.py`.
 - *v1:* opt-in tab only — off in production hot path. The PoC is
   re-rendering the existing notebook plots inline.
 
@@ -364,7 +364,7 @@ vectors_enabled flag, trade result hash, run_id, on-chain tx hash.
 Reviewer can click any row to verify on Mantle Etherscan.
 
 - *Source:* Validation Registry contract events on Mantle. Posted by
-  `xianvec-execution` after every closed Orderly position
+  `xvision-execution` after every closed Orderly position
   (`architecture.md` §6.1).
 - *v1:* yes — this is the prospective-stance audit trail and it's the
   novel piece of the demo.
@@ -384,7 +384,7 @@ the harness exports it.
 latency, Stage 2 wall time, Stage 3 round-trip latency, on-chain post
 gas. Aggregated per setup, plotted over time.
 
-- *Source:* `traces` `gen_ai.usage.*` + custom `xianvec.*.duration_ms`.
+- *Source:* `traces` `gen_ai.usage.*` + custom `xvision.*.duration_ms`.
 - *v1:* yes — the Anthropic-Haiku-vs-Opus tradeoff in §M8 is a real
   budget question and this panel makes it visible.
 
@@ -472,14 +472,14 @@ provenance graph).
 | T1, T2, T3 | `setups + briefings + decisions + risk_outcomes + executions` join in SQLite |
 | T4 | `briefings.briefing_json` + per-arm `decisions.decision_json` |
 | V1, V2, V3 | `decisions.decision_json.active_vectors` joined to `executions.realized_pnl` |
-| V4 | `traces` rows with `xianvec.gating.*` attributes |
-| V5, V6 | `xianvec-introspect` JSON + `notebooks/inspect_vector.py` |
+| V4 | `traces` rows with `xvision.gating.*` attributes |
+| V5, V6 | `xvision-introspect` JSON + `notebooks/inspect_vector.py` |
 | R0, R1, R2 | `risk_outcomes.risk_decision_json` |
 | Op1–Op4 | `traces` + runtime metrics export |
 | X1, X2 | `traces` joined to `executions` per `run_id`; manifest sidecars |
 
 All of the SQLite-backed panels can be served straight from the existing
-`xianvec_core::store::Store` — the schema in `migrations/0001_init.sql`
+`xvision_core::store::Store` — the schema in `migrations/0001_init.sql`
 already has everything except the optional gating-trace columns.
 
 ---
@@ -530,6 +530,6 @@ real-time during the demo. Until then, the Markdown report is sufficient.
 ---
 
 *Document version: 0.1 · 2026-05-04. Lives at
-`/Users/edkennedy/Code/xianvec/docs/dashboard.md`. Cross-references:
+`/Users/edkennedy/Code/xvision/docs/dashboard.md`. Cross-references:
 `architecture.md` §§5, 6.1, 7.5.1, 7.6, 9; `MANUAL.md` M2/M4/M7;
-`FOLLOWUPS.md` F1/F2/F3/F4/F13/F14; `crates/xianvec-core/migrations/0001_init.sql`.*
+`FOLLOWUPS.md` F1/F2/F3/F4/F13/F14; `crates/xvision-core/migrations/0001_init.sql`.*

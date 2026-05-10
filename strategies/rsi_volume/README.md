@@ -179,6 +179,6 @@ Suggested next tuple: `combination + abstraction-lift` over
 - [`../nansen/README.md`](../nansen/README.md) — Nansen's labeled-flow
   signals are *labeled volume*; a three-source extension joins this folder
   to that one.
-- `crates/xianvec-eval/src/baselines/rsi_mean_reversion.rs` — existing RSI
+- `crates/xvision-eval/src/baselines/rsi_mean_reversion.rs` — existing RSI
   baseline; volume-aware variants in this folder build on the same
   `IndicatorPanel.rsi_14` field.

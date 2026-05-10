@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Land a minimum-viable `xianvec-engine` crate that can author, validate, and inline-execute a strategy bundle end-to-end via CLI. After this plan ships, an external AI agent (Claude Code or Hermes) can call `xvn strategy new mean_reversion --name eth-mr` → `xvn strategy validate eth-mr` → `xvn strategy run eth-mr --bars data/probes/btc-2025q1.parquet` and see the agent's decisions logged.
+**Goal:** Land a minimum-viable `xvision-engine` crate that can author, validate, and inline-execute a strategy bundle end-to-end via CLI. After this plan ships, an external AI agent (Claude Code or Hermes) can call `xvn strategy new mean_reversion --name eth-mr` → `xvn strategy validate eth-mr` → `xvn strategy run eth-mr --bars data/probes/btc-2025q1.parquet` and see the agent's decisions logged.
 
-**Architecture:** New `xianvec-engine` crate sits alongside the existing `xianvec-*` workspace members. Strategy bundles are JSON-serialized; templates produce default bundles via a `Template` trait; tools dispatch through a registry; LLM calls go through a `LlmDispatch` trait (initial impl: Anthropic SDK + async-openai). Agent loop is inline (no durable scheduler — that's Plan #2). One template ships in v1 (`mean_reversion`), one existing baseline migrated as LLM-shim (`ma_crossover`).
+**Architecture:** New `xvision-engine` crate sits alongside the existing `xvision-*` workspace members. Strategy bundles are JSON-serialized; templates produce default bundles via a `Template` trait; tools dispatch through a registry; LLM calls go through a `LlmDispatch` trait (initial impl: Anthropic SDK + async-openai). Agent loop is inline (no durable scheduler — that's Plan #2). One template ships in v1 (`mean_reversion`), one existing baseline migrated as LLM-shim (`ma_crossover`).
 
 **Tech Stack:** Rust 2021, anyhow, serde + serde_json + schemars, tokio, sqlx (sqlite, deferred to Plan #2 for actual storage — MVP uses filesystem), clap, ulid, async-trait, anthropic-sdk + async-openai, tracing, proptest, tempfile.
 
@@ -15,7 +15,7 @@
 ## File structure
 
 ```
-crates/xianvec-engine/
+crates/xvision-engine/
 ├── Cargo.toml
 ├── src/
 │   ├── lib.rs                      # crate root, re-exports
@@ -35,8 +35,8 @@ crates/xianvec-engine/
 │   │   └── ma_crossover.rs         # migrated baseline
 │   ├── tools/
 │   │   ├── mod.rs                  # ToolRegistry
-│   │   ├── ohlcv.rs                # proxies xianvec-data OHLCV
-│   │   └── indicators.rs           # proxies xianvec-data IndicatorPanel
+│   │   ├── ohlcv.rs                # proxies xvision-data OHLCV
+│   │   └── indicators.rs           # proxies xvision-data IndicatorPanel
 │   ├── agent/
 │   │   ├── mod.rs                  # public agent API
 │   │   ├── llm.rs                  # LlmDispatch trait + impls
@@ -54,26 +54,26 @@ crates/xianvec-engine/
 ```
 
 Plus modifications to:
-- `Cargo.toml` (workspace) — add `xianvec-engine` to members + default-members
-- `crates/xianvec-cli/Cargo.toml` — add `xianvec-engine` dependency
-- `crates/xianvec-cli/src/` — add `strategy` subcommand module
+- `Cargo.toml` (workspace) — add `xvision-engine` to members + default-members
+- `crates/xvision-cli/Cargo.toml` — add `xvision-engine` dependency
+- `crates/xvision-cli/src/` — add `strategy` subcommand module
 
 ---
 
 ## Phase 1A — Crate scaffolding & bundle types
 
-### Task 1: Create `xianvec-engine` crate skeleton
+### Task 1: Create `xvision-engine` crate skeleton
 
 **Files:**
-- Create: `crates/xianvec-engine/Cargo.toml`
-- Create: `crates/xianvec-engine/src/lib.rs`
+- Create: `crates/xvision-engine/Cargo.toml`
+- Create: `crates/xvision-engine/src/lib.rs`
 - Modify: `Cargo.toml` (workspace root) — add to `members` and `default-members`
 
-- [ ] **Step 1: Create `crates/xianvec-engine/Cargo.toml`**
+- [ ] **Step 1: Create `crates/xvision-engine/Cargo.toml`**
 
 ```toml
 [package]
-name        = "xianvec-engine"
+name        = "xvision-engine"
 description = "strategy creation, bundling, agent execution"
 version.workspace      = true
 edition.workspace      = true
@@ -82,12 +82,12 @@ license.workspace      = true
 repository.workspace   = true
 
 [lib]
-name = "xianvec_engine"
+name = "xvision_engine"
 path = "src/lib.rs"
 
 [dependencies]
-xianvec-core   = { path = "../xianvec-core" }
-xianvec-data   = { path = "../xianvec-data" }
+xvision-core   = { path = "../xvision-core" }
+xvision-data   = { path = "../xvision-data" }
 
 serde       = { workspace = true }
 serde_json  = { workspace = true }
@@ -107,10 +107,10 @@ tempfile = "3"
 tokio    = { workspace = true, features = ["rt", "macros"] }
 ```
 
-- [ ] **Step 2: Create `crates/xianvec-engine/src/lib.rs`**
+- [ ] **Step 2: Create `crates/xvision-engine/src/lib.rs`**
 
 ```rust
-//! xianvec-engine — strategy creation, bundling, agent execution.
+//! xvision-engine — strategy creation, bundling, agent execution.
 //!
 //! See: docs/superpowers/specs/2026-05-08-strategy-creation-engine-design.md
 
@@ -139,18 +139,18 @@ Create empty placeholder files:
 
 - [ ] **Step 4: Register crate in workspace `Cargo.toml`**
 
-In the root `Cargo.toml`, add `"crates/xianvec-engine",` to both the `members` array and the `default-members` array. Insert alphabetically after `crates/xianvec-eval`.
+In the root `Cargo.toml`, add `"crates/xvision-engine",` to both the `members` array and the `default-members` array. Insert alphabetically after `crates/xvision-eval`.
 
 - [ ] **Step 5: Smoke test — verify it builds**
 
-Run: `cargo build -p xianvec-engine`
+Run: `cargo build -p xvision-engine`
 Expected: clean build, no warnings about unused imports.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/xianvec-engine Cargo.toml
-git commit -m "feat(engine): scaffold xianvec-engine crate"
+git add crates/xvision-engine Cargo.toml
+git commit -m "feat(engine): scaffold xvision-engine crate"
 ```
 
 ---
@@ -158,15 +158,15 @@ git commit -m "feat(engine): scaffold xianvec-engine crate"
 ### Task 2: Define `LLMSlot` type
 
 **Files:**
-- Create: `crates/xianvec-engine/src/bundle/slot.rs`
-- Test: `crates/xianvec-engine/tests/bundle_roundtrip.rs`
+- Create: `crates/xvision-engine/src/bundle/slot.rs`
+- Test: `crates/xvision-engine/tests/bundle_roundtrip.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-Create `crates/xianvec-engine/tests/bundle_roundtrip.rs`:
+Create `crates/xvision-engine/tests/bundle_roundtrip.rs`:
 
 ```rust
-use xianvec_engine::bundle::slot::LLMSlot;
+use xvision_engine::bundle::slot::LLMSlot;
 
 #[test]
 fn slot_serializes_to_json_and_back() {
@@ -185,12 +185,12 @@ fn slot_serializes_to_json_and_back() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p xianvec-engine slot_serializes`
+Run: `cargo test -p xvision-engine slot_serializes`
 Expected: FAIL — `LLMSlot` not found.
 
 - [ ] **Step 3: Implement `LLMSlot`**
 
-Create `crates/xianvec-engine/src/bundle/slot.rs`:
+Create `crates/xvision-engine/src/bundle/slot.rs`:
 
 ```rust
 use serde::{Deserialize, Serialize};
@@ -214,13 +214,13 @@ pub struct StrategyBundle;  // placeholder, replaced in Task 5
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cargo test -p xianvec-engine slot_serializes`
+Run: `cargo test -p xvision-engine slot_serializes`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-engine/src/bundle crates/xianvec-engine/tests
+git add crates/xvision-engine/src/bundle crates/xvision-engine/tests
 git commit -m "feat(engine): add LLMSlot bundle type"
 ```
 
@@ -229,13 +229,13 @@ git commit -m "feat(engine): add LLMSlot bundle type"
 ### Task 3: Define `RiskConfig` + preset expansion
 
 **Files:**
-- Create: `crates/xianvec-engine/src/bundle/risk.rs`
-- Test: `crates/xianvec-engine/tests/bundle_roundtrip.rs` (extend)
+- Create: `crates/xvision-engine/src/bundle/risk.rs`
+- Test: `crates/xvision-engine/tests/bundle_roundtrip.rs` (extend)
 
 - [ ] **Step 1: Write the failing test (append to `bundle_roundtrip.rs`)**
 
 ```rust
-use xianvec_engine::bundle::risk::{RiskConfig, RiskPreset};
+use xvision_engine::bundle::risk::{RiskConfig, RiskPreset};
 
 #[test]
 fn preset_expands_to_explicit_config() {
@@ -259,12 +259,12 @@ fn risk_config_roundtrips() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p xianvec-engine preset_expands`
+Run: `cargo test -p xvision-engine preset_expands`
 Expected: FAIL — `RiskConfig` not found.
 
 - [ ] **Step 3: Implement `RiskConfig` + presets**
 
-Create `crates/xianvec-engine/src/bundle/risk.rs`:
+Create `crates/xvision-engine/src/bundle/risk.rs`:
 
 ```rust
 use serde::{Deserialize, Serialize};
@@ -324,13 +324,13 @@ pub mod slot;
 
 - [ ] **Step 4: Run tests**
 
-Run: `cargo test -p xianvec-engine bundle`
+Run: `cargo test -p xvision-engine bundle`
 Expected: PASS for both new tests.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-engine/src/bundle/risk.rs crates/xianvec-engine/tests
+git add crates/xvision-engine/src/bundle/risk.rs crates/xvision-engine/tests
 git commit -m "feat(engine): add RiskConfig and three presets"
 ```
 
@@ -339,13 +339,13 @@ git commit -m "feat(engine): add RiskConfig and three presets"
 ### Task 4: Define `PublicManifest` type
 
 **Files:**
-- Create: `crates/xianvec-engine/src/bundle/manifest.rs`
+- Create: `crates/xvision-engine/src/bundle/manifest.rs`
 - Test: extend `bundle_roundtrip.rs`
 
 - [ ] **Step 1: Write the failing test**
 
 ```rust
-use xianvec_engine::bundle::manifest::{PublicManifest, RegimeFit};
+use xvision_engine::bundle::manifest::{PublicManifest, RegimeFit};
 
 #[test]
 fn manifest_roundtrip_with_required_fields() {
@@ -353,7 +353,7 @@ fn manifest_roundtrip_with_required_fields() {
         id: "01H8N7Z123".to_string(),
         display_name: "Buys dips".to_string(),
         plain_summary: "Buys ETH when oversold, sells when recovered.".to_string(),
-        creator: "@xianvec_official".to_string(),
+        creator: "@xvision_official".to_string(),
         template: "mean_reversion".to_string(),
         regime_fit: vec![RegimeFit::RangeBound, RegimeFit::LowVol],
         asset_universe: vec!["ETH/USD".to_string()],
@@ -371,12 +371,12 @@ fn manifest_roundtrip_with_required_fields() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p xianvec-engine manifest_roundtrip`
+Run: `cargo test -p xvision-engine manifest_roundtrip`
 Expected: FAIL — `PublicManifest` not found.
 
 - [ ] **Step 3: Implement `PublicManifest`**
 
-Create `crates/xianvec-engine/src/bundle/manifest.rs`:
+Create `crates/xvision-engine/src/bundle/manifest.rs`:
 
 ```rust
 use chrono::{DateTime, Utc};
@@ -421,13 +421,13 @@ pub mod slot;
 
 - [ ] **Step 4: Run tests**
 
-Run: `cargo test -p xianvec-engine manifest`
+Run: `cargo test -p xvision-engine manifest`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-engine/src/bundle/manifest.rs crates/xianvec-engine/tests
+git add crates/xvision-engine/src/bundle/manifest.rs crates/xvision-engine/tests
 git commit -m "feat(engine): add PublicManifest type"
 ```
 
@@ -436,16 +436,16 @@ git commit -m "feat(engine): add PublicManifest type"
 ### Task 5: Define `StrategyBundle` root type
 
 **Files:**
-- Modify: `crates/xianvec-engine/src/bundle/mod.rs` (replace placeholder)
+- Modify: `crates/xvision-engine/src/bundle/mod.rs` (replace placeholder)
 - Test: extend `bundle_roundtrip.rs`
 
 - [ ] **Step 1: Write the failing test**
 
 ```rust
-use xianvec_engine::bundle::StrategyBundle;
-use xianvec_engine::bundle::manifest::{PublicManifest, RegimeFit};
-use xianvec_engine::bundle::risk::{RiskConfig, RiskPreset};
-use xianvec_engine::bundle::slot::LLMSlot;
+use xvision_engine::bundle::StrategyBundle;
+use xvision_engine::bundle::manifest::{PublicManifest, RegimeFit};
+use xvision_engine::bundle::risk::{RiskConfig, RiskPreset};
+use xvision_engine::bundle::slot::LLMSlot;
 
 fn sample_bundle() -> StrategyBundle {
     StrategyBundle {
@@ -493,7 +493,7 @@ fn bundle_roundtrip() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p xianvec-engine bundle_roundtrip`
+Run: `cargo test -p xvision-engine bundle_roundtrip`
 Expected: FAIL — `StrategyBundle` is unit struct (placeholder).
 
 - [ ] **Step 3: Replace placeholder with real `StrategyBundle`**
@@ -533,13 +533,13 @@ pub struct StrategyBundle {
 
 - [ ] **Step 4: Run tests**
 
-Run: `cargo test -p xianvec-engine bundle_roundtrip`
+Run: `cargo test -p xvision-engine bundle_roundtrip`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-engine/src/bundle/mod.rs crates/xianvec-engine/tests
+git add crates/xvision-engine/src/bundle/mod.rs crates/xvision-engine/tests
 git commit -m "feat(engine): define StrategyBundle root type"
 ```
 
@@ -548,13 +548,13 @@ git commit -m "feat(engine): define StrategyBundle root type"
 ### Task 6: Bundle validation
 
 **Files:**
-- Create: `crates/xianvec-engine/src/bundle/validate.rs`
+- Create: `crates/xvision-engine/src/bundle/validate.rs`
 - Test: extend `bundle_roundtrip.rs`
 
 - [ ] **Step 1: Write the failing test**
 
 ```rust
-use xianvec_engine::bundle::validate::{validate_bundle, ValidationError};
+use xvision_engine::bundle::validate::{validate_bundle, ValidationError};
 
 #[test]
 fn valid_bundle_passes() {
@@ -591,12 +591,12 @@ fn bundle_with_zero_capital_risk_fails() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p xianvec-engine valid_bundle_passes`
+Run: `cargo test -p xvision-engine valid_bundle_passes`
 Expected: FAIL — `validate_bundle` not found.
 
 - [ ] **Step 3: Implement validation**
 
-Create `crates/xianvec-engine/src/bundle/validate.rs`:
+Create `crates/xvision-engine/src/bundle/validate.rs`:
 
 ```rust
 use thiserror::Error;
@@ -642,13 +642,13 @@ Update `src/bundle/mod.rs`: add `pub mod validate;`
 
 - [ ] **Step 4: Run tests**
 
-Run: `cargo test -p xianvec-engine validate`
+Run: `cargo test -p xvision-engine validate`
 Expected: PASS for all four validation tests.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-engine/src/bundle/validate.rs crates/xianvec-engine/src/bundle/mod.rs crates/xianvec-engine/tests
+git add crates/xvision-engine/src/bundle/validate.rs crates/xvision-engine/src/bundle/mod.rs crates/xvision-engine/tests
 git commit -m "feat(engine): add bundle validation"
 ```
 
@@ -657,19 +657,19 @@ git commit -m "feat(engine): add bundle validation"
 ### Task 7: Filesystem store (save/load)
 
 **Files:**
-- Create: `crates/xianvec-engine/src/bundle/store.rs`
-- Test: `crates/xianvec-engine/tests/bundle_store.rs`
+- Create: `crates/xvision-engine/src/bundle/store.rs`
+- Test: `crates/xvision-engine/tests/bundle_store.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-Create `crates/xianvec-engine/tests/bundle_store.rs`:
+Create `crates/xvision-engine/tests/bundle_store.rs`:
 
 ```rust
-use xianvec_engine::bundle::manifest::{PublicManifest, RegimeFit};
-use xianvec_engine::bundle::risk::RiskPreset;
-use xianvec_engine::bundle::slot::LLMSlot;
-use xianvec_engine::bundle::store::{BundleStore, FilesystemStore};
-use xianvec_engine::bundle::StrategyBundle;
+use xvision_engine::bundle::manifest::{PublicManifest, RegimeFit};
+use xvision_engine::bundle::risk::RiskPreset;
+use xvision_engine::bundle::slot::LLMSlot;
+use xvision_engine::bundle::store::{BundleStore, FilesystemStore};
+use xvision_engine::bundle::StrategyBundle;
 use tempfile::tempdir;
 
 fn sample_bundle(id: &str) -> StrategyBundle {
@@ -719,12 +719,12 @@ async fn list_returns_saved_bundles() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p xianvec-engine save_and_load`
+Run: `cargo test -p xvision-engine save_and_load`
 Expected: FAIL — `FilesystemStore` not found.
 
 - [ ] **Step 3: Implement `FilesystemStore`**
 
-Create `crates/xianvec-engine/src/bundle/store.rs`:
+Create `crates/xvision-engine/src/bundle/store.rs`:
 
 ```rust
 use std::path::PathBuf;
@@ -796,13 +796,13 @@ Update `src/bundle/mod.rs`: add `pub mod store;`.
 
 - [ ] **Step 4: Run tests**
 
-Run: `cargo test -p xianvec-engine save_and_load list_returns`
+Run: `cargo test -p xvision-engine save_and_load list_returns`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-engine/src/bundle/store.rs crates/xianvec-engine/src/bundle/mod.rs crates/xianvec-engine/tests
+git add crates/xvision-engine/src/bundle/store.rs crates/xvision-engine/src/bundle/mod.rs crates/xvision-engine/tests
 git commit -m "feat(engine): add filesystem-backed BundleStore"
 ```
 
@@ -813,15 +813,15 @@ git commit -m "feat(engine): add filesystem-backed BundleStore"
 ### Task 8: `Template` trait + registry
 
 **Files:**
-- Create: `crates/xianvec-engine/src/templates/mod.rs` (replace placeholder)
-- Test: `crates/xianvec-engine/tests/template_validation.rs`
+- Create: `crates/xvision-engine/src/templates/mod.rs` (replace placeholder)
+- Test: `crates/xvision-engine/tests/template_validation.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-Create `crates/xianvec-engine/tests/template_validation.rs`:
+Create `crates/xvision-engine/tests/template_validation.rs`:
 
 ```rust
-use xianvec_engine::templates::{Template, registry};
+use xvision_engine::templates::{Template, registry};
 
 #[test]
 fn unknown_template_returns_none() {
@@ -837,7 +837,7 @@ fn list_template_names_returns_a_vec() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p xianvec-engine unknown_template_returns_none`
+Run: `cargo test -p xvision-engine unknown_template_returns_none`
 Expected: FAIL — `registry` module not found.
 
 - [ ] **Step 3: Implement `Template` trait**
@@ -887,13 +887,13 @@ pub fn list_template_names() -> Vec<String> {
 
 - [ ] **Step 4: Run tests — both should pass with empty registry**
 
-Run: `cargo test -p xianvec-engine template`
+Run: `cargo test -p xvision-engine template`
 Expected: PASS for both `unknown_template_returns_none` and `list_template_names_returns_a_vec`.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-engine/src/templates crates/xianvec-engine/tests
+git add crates/xvision-engine/src/templates crates/xvision-engine/tests
 git commit -m "feat(engine): Template trait and empty registry"
 ```
 
@@ -902,12 +902,12 @@ git commit -m "feat(engine): Template trait and empty registry"
 ### Task 9: `mean_reversion` template
 
 **Files:**
-- Create: `crates/xianvec-engine/src/templates/mean_reversion.rs`
-- Modify: `crates/xianvec-engine/src/templates/registry.rs`
+- Create: `crates/xvision-engine/src/templates/mean_reversion.rs`
+- Modify: `crates/xvision-engine/src/templates/registry.rs`
 
 - [ ] **Step 1: Implement `mean_reversion` template**
 
-Create `crates/xianvec-engine/src/templates/mean_reversion.rs`:
+Create `crates/xvision-engine/src/templates/mean_reversion.rs`:
 
 ```rust
 use crate::bundle::manifest::{PublicManifest, RegimeFit};
@@ -1003,7 +1003,7 @@ Update `src/templates/mod.rs`: add `pub mod mean_reversion;`.
 Append to `tests/template_validation.rs`:
 
 ```rust
-use xianvec_engine::bundle::validate::validate_bundle;
+use xvision_engine::bundle::validate::validate_bundle;
 
 #[test]
 fn registry_has_mean_reversion() {
@@ -1028,13 +1028,13 @@ fn mean_reversion_draft_validates() {
 
 - [ ] **Step 4: Run all template tests**
 
-Run: `cargo test -p xianvec-engine template`
+Run: `cargo test -p xvision-engine template`
 Expected: PASS for `unknown_template_returns_none`, `list_template_names_returns_a_vec`, `registry_has_mean_reversion`, `mean_reversion_draft_validates`.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-engine/src/templates crates/xianvec-engine/tests
+git add crates/xvision-engine/src/templates crates/xvision-engine/tests
 git commit -m "feat(engine): mean_reversion v1 template"
 ```
 
@@ -1045,18 +1045,18 @@ git commit -m "feat(engine): mean_reversion v1 template"
 ### Task 10: LLM-shim wrapper trait + `ma_crossover` migration
 
 **Files:**
-- Create: `crates/xianvec-engine/src/baselines/mod.rs` (replace placeholder)
-- Create: `crates/xianvec-engine/src/baselines/ma_crossover.rs`
-- Test: `crates/xianvec-engine/tests/ma_crossover_shim.rs`
+- Create: `crates/xvision-engine/src/baselines/mod.rs` (replace placeholder)
+- Create: `crates/xvision-engine/src/baselines/ma_crossover.rs`
+- Test: `crates/xvision-engine/tests/ma_crossover_shim.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-Create `crates/xianvec-engine/tests/ma_crossover_shim.rs`:
+Create `crates/xvision-engine/tests/ma_crossover_shim.rs`:
 
 ```rust
-use xianvec_engine::baselines::ma_crossover::ma_crossover_template;
-use xianvec_engine::bundle::validate::validate_bundle;
-use xianvec_engine::templates::Template;
+use xvision_engine::baselines::ma_crossover::ma_crossover_template;
+use xvision_engine::bundle::validate::validate_bundle;
+use xvision_engine::templates::Template;
 
 #[test]
 fn ma_crossover_produces_valid_bundle() {
@@ -1064,7 +1064,7 @@ fn ma_crossover_produces_valid_bundle() {
     let draft = tpl.new_draft(
         "01H8N7ZBASE".into(),
         "btc-ma-cross".into(),
-        "@xianvec_official".into(),
+        "@xvision_official".into(),
     );
     validate_bundle(&draft).expect("baseline must validate");
     // The shim wraps a deterministic rule in a single LLM trader slot.
@@ -1076,7 +1076,7 @@ fn ma_crossover_produces_valid_bundle() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p xianvec-engine ma_crossover_produces`
+Run: `cargo test -p xvision-engine ma_crossover_produces`
 Expected: FAIL — module not found.
 
 - [ ] **Step 3: Implement the shim**
@@ -1158,13 +1158,13 @@ impl Template for MaCrossover {
 
 - [ ] **Step 4: Run test**
 
-Run: `cargo test -p xianvec-engine ma_crossover_produces`
+Run: `cargo test -p xvision-engine ma_crossover_produces`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-engine/src/baselines crates/xianvec-engine/tests
+git add crates/xvision-engine/src/baselines crates/xvision-engine/tests
 git commit -m "feat(engine): ma_crossover baseline as LLM-shim template"
 ```
 
@@ -1175,15 +1175,15 @@ git commit -m "feat(engine): ma_crossover baseline as LLM-shim template"
 ### Task 11: `ToolRegistry` trait
 
 **Files:**
-- Create: `crates/xianvec-engine/src/tools/mod.rs` (replace placeholder)
-- Test: `crates/xianvec-engine/tests/tool_registry.rs`
+- Create: `crates/xvision-engine/src/tools/mod.rs` (replace placeholder)
+- Test: `crates/xvision-engine/tests/tool_registry.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-Create `crates/xianvec-engine/tests/tool_registry.rs`:
+Create `crates/xvision-engine/tests/tool_registry.rs`:
 
 ```rust
-use xianvec_engine::tools::{ToolRegistry, ToolName};
+use xvision_engine::tools::{ToolRegistry, ToolName};
 
 #[tokio::test]
 async fn registry_lists_required_tools() {
@@ -1202,7 +1202,7 @@ async fn unknown_tool_returns_none() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p xianvec-engine registry_lists`
+Run: `cargo test -p xvision-engine registry_lists`
 Expected: FAIL — types not found.
 
 - [ ] **Step 3: Implement `ToolRegistry` and `Tool` trait**
@@ -1305,34 +1305,34 @@ impl Tool for IndicatorPanelTool {
 
 - [ ] **Step 5: Run tests**
 
-Run: `cargo test -p xianvec-engine registry_lists unknown_tool_returns_none`
+Run: `cargo test -p xvision-engine registry_lists unknown_tool_returns_none`
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/xianvec-engine/src/tools crates/xianvec-engine/tests
+git add crates/xvision-engine/src/tools crates/xvision-engine/tests
 git commit -m "feat(engine): ToolRegistry with stub OHLCV and IndicatorPanel"
 ```
 
 ---
 
-### Task 12: Wire OHLCV + IndicatorPanel tools to `xianvec-data`
+### Task 12: Wire OHLCV + IndicatorPanel tools to `xvision-data`
 
 **Files:**
-- Modify: `crates/xianvec-engine/src/tools/ohlcv.rs`
-- Modify: `crates/xianvec-engine/src/tools/indicators.rs`
-- Modify: `crates/xianvec-engine/Cargo.toml` — confirm `xianvec-data` dep
+- Modify: `crates/xvision-engine/src/tools/ohlcv.rs`
+- Modify: `crates/xvision-engine/src/tools/indicators.rs`
+- Modify: `crates/xvision-engine/Cargo.toml` — confirm `xvision-data` dep
 
-- [ ] **Step 1: Inspect xianvec-data public API**
+- [ ] **Step 1: Inspect xvision-data public API**
 
-Run: `grep -n 'pub fn\|pub struct' crates/xianvec-data/src/lib.rs`
+Run: `grep -n 'pub fn\|pub struct' crates/xvision-data/src/lib.rs`
 Expected: see `Ohlcv`, indicator entry points; capture exact names.
 
 If the public surface returns `MarketSnapshot` or similar, use that path. If the file is small, read it whole:
 
 ```bash
-cat crates/xianvec-data/src/lib.rs
+cat crates/xvision-data/src/lib.rs
 ```
 
 - [ ] **Step 2: Write failing integration test**
@@ -1356,10 +1356,10 @@ async fn ohlcv_tool_returns_real_bars_for_known_fixture() {
 
 - [ ] **Step 3: Run test to confirm it fails**
 
-Run: `cargo test -p xianvec-engine ohlcv_tool_returns_real_bars`
+Run: `cargo test -p xvision-engine ohlcv_tool_returns_real_bars`
 Expected: FAIL — stub returns `{"stub": true}`.
 
-- [ ] **Step 4: Implement OHLCV tool against `xianvec-data`**
+- [ ] **Step 4: Implement OHLCV tool against `xvision-data`**
 
 Replace `src/tools/ohlcv.rs`:
 
@@ -1391,7 +1391,7 @@ impl Tool for OhlcvTool {
         // For MVP, fixture-mode reads parquet from data/probes/.
         // Real Alpaca pull is a Plan #2 task — keeping MVP deterministic.
         let bars = if let Some(fixture) = req.fixture {
-            xianvec_data::fixtures::load_ohlcv_fixture(&fixture, &req.asset, req.lookback_bars)?
+            xvision_data::fixtures::load_ohlcv_fixture(&fixture, &req.asset, req.lookback_bars)?
         } else {
             anyhow::bail!("MVP requires a fixture name; live Alpaca fetch lands in Plan #2");
         };
@@ -1400,7 +1400,7 @@ impl Tool for OhlcvTool {
 }
 ```
 
-> **Note:** if `xianvec_data::fixtures::load_ohlcv_fixture` doesn't exist yet, add a minimal one in `crates/xianvec-data/src/fixtures.rs` that reads a parquet file from `data/probes/<fixture>.parquet` and returns a `Vec<Ohlcv>` (or whatever the existing OHLCV type is). The existing `xianvec-data` already has parquet loading via `polars` per workspace deps; reuse that machinery rather than introducing a new code path.
+> **Note:** if `xvision_data::fixtures::load_ohlcv_fixture` doesn't exist yet, add a minimal one in `crates/xvision-data/src/fixtures.rs` that reads a parquet file from `data/probes/<fixture>.parquet` and returns a `Vec<Ohlcv>` (or whatever the existing OHLCV type is). The existing `xvision-data` already has parquet loading via `polars` per workspace deps; reuse that machinery rather than introducing a new code path.
 
 - [ ] **Step 5: Implement IndicatorPanel tool similarly**
 
@@ -1430,7 +1430,7 @@ impl Tool for IndicatorPanelTool {
     fn description(&self) -> &'static str { "Computed indicator panel (RSI, MACD, BB, ATR, MA, EMA)" }
     async fn invoke(&self, input: serde_json::Value) -> anyhow::Result<serde_json::Value> {
         let req: PanelRequest = serde_json::from_value(input)?;
-        let panel = xianvec_data::indicators::compute_panel_from_fixture(
+        let panel = xvision_data::indicators::compute_panel_from_fixture(
             &req.fixture, &req.asset, req.lookback_bars,
         )?;
         Ok(serde_json::to_value(panel)?)
@@ -1438,7 +1438,7 @@ impl Tool for IndicatorPanelTool {
 }
 ```
 
-> **Note:** add `compute_panel_from_fixture` to `crates/xianvec-data/src/indicators.rs` if it doesn't already exist — it's a thin wrapper over the existing indicator computation that takes a fixture path.
+> **Note:** add `compute_panel_from_fixture` to `crates/xvision-data/src/indicators.rs` if it doesn't already exist — it's a thin wrapper over the existing indicator computation that takes a fixture path.
 
 - [ ] **Step 6: Add a tiny test fixture**
 
@@ -1474,14 +1474,14 @@ Expected: file exists, ~10KB.
 
 - [ ] **Step 7: Run tests**
 
-Run: `cargo test -p xianvec-engine ohlcv_tool_returns`
+Run: `cargo test -p xvision-engine ohlcv_tool_returns`
 Expected: PASS.
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add crates/xianvec-engine/src/tools crates/xianvec-data/src crates/xianvec-engine/tests data/probes/test-fixture-btc-2024-01.parquet
-git commit -m "feat(engine): wire OHLCV and IndicatorPanel tools to xianvec-data fixtures"
+git add crates/xvision-engine/src/tools crates/xvision-data/src crates/xvision-engine/tests data/probes/test-fixture-btc-2024-01.parquet
+git commit -m "feat(engine): wire OHLCV and IndicatorPanel tools to xvision-data fixtures"
 ```
 
 ---
@@ -1489,14 +1489,14 @@ git commit -m "feat(engine): wire OHLCV and IndicatorPanel tools to xianvec-data
 ### Task 13: `LlmDispatch` trait + Anthropic implementation
 
 **Files:**
-- Create: `crates/xianvec-engine/src/agent/llm.rs`
-- Modify: `crates/xianvec-engine/src/agent/mod.rs` (replace placeholder)
-- Modify: `crates/xianvec-engine/Cargo.toml` (add anthropic-sdk + reqwest)
-- Test: `crates/xianvec-engine/tests/llm_dispatch.rs`
+- Create: `crates/xvision-engine/src/agent/llm.rs`
+- Modify: `crates/xvision-engine/src/agent/mod.rs` (replace placeholder)
+- Modify: `crates/xvision-engine/Cargo.toml` (add anthropic-sdk + reqwest)
+- Test: `crates/xvision-engine/tests/llm_dispatch.rs`
 
 - [ ] **Step 1: Add deps**
 
-In `crates/xianvec-engine/Cargo.toml`, add to `[dependencies]`:
+In `crates/xvision-engine/Cargo.toml`, add to `[dependencies]`:
 
 ```toml
 reqwest = { workspace = true }
@@ -1508,10 +1508,10 @@ Pick the most-downloaded maintained crate. Document choice with a one-line comme
 
 - [ ] **Step 2: Write failing test (with `#[ignore]` for live API)**
 
-Create `crates/xianvec-engine/tests/llm_dispatch.rs`:
+Create `crates/xvision-engine/tests/llm_dispatch.rs`:
 
 ```rust
-use xianvec_engine::agent::llm::{LlmDispatch, LlmRequest, MockDispatch};
+use xvision_engine::agent::llm::{LlmDispatch, LlmRequest, MockDispatch};
 
 #[tokio::test]
 async fn mock_dispatch_returns_expected_output() {
@@ -1530,7 +1530,7 @@ async fn mock_dispatch_returns_expected_output() {
 #[tokio::test]
 #[ignore = "needs ANTHROPIC_API_KEY"]
 async fn anthropic_dispatch_returns_real_text() {
-    use xianvec_engine::agent::llm::AnthropicDispatch;
+    use xvision_engine::agent::llm::AnthropicDispatch;
     let key = std::env::var("ANTHROPIC_API_KEY").unwrap();
     let d = AnthropicDispatch::new(key);
     let resp = d.complete(LlmRequest {
@@ -1545,7 +1545,7 @@ async fn anthropic_dispatch_returns_real_text() {
 
 - [ ] **Step 3: Run mock test to verify it fails**
 
-Run: `cargo test -p xianvec-engine mock_dispatch_returns`
+Run: `cargo test -p xvision-engine mock_dispatch_returns`
 Expected: FAIL — types not found.
 
 - [ ] **Step 4: Implement `LlmDispatch` + `MockDispatch` + `AnthropicDispatch`**
@@ -1652,18 +1652,18 @@ impl LlmDispatch for AnthropicDispatch {
 
 - [ ] **Step 5: Run mock test**
 
-Run: `cargo test -p xianvec-engine mock_dispatch_returns`
+Run: `cargo test -p xvision-engine mock_dispatch_returns`
 Expected: PASS.
 
 - [ ] **Step 6: Run live test if you have a key (otherwise skip)**
 
-Run: `ANTHROPIC_API_KEY=$(op read 'op://Personal/Anthropic API/credential') cargo test -p xianvec-engine anthropic_dispatch_returns_real_text -- --ignored`
+Run: `ANTHROPIC_API_KEY=$(op read 'op://Personal/Anthropic API/credential') cargo test -p xvision-engine anthropic_dispatch_returns_real_text -- --ignored`
 Expected: PASS if key works. Skip if no key.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add crates/xianvec-engine/src/agent crates/xianvec-engine/Cargo.toml crates/xianvec-engine/tests/llm_dispatch.rs
+git add crates/xvision-engine/src/agent crates/xvision-engine/Cargo.toml crates/xvision-engine/tests/llm_dispatch.rs
 git commit -m "feat(engine): LlmDispatch trait with Mock and Anthropic implementations"
 ```
 
@@ -1674,20 +1674,20 @@ git commit -m "feat(engine): LlmDispatch trait with Mock and Anthropic implement
 ### Task 14: Single-slot execution (`execute_slot`)
 
 **Files:**
-- Create: `crates/xianvec-engine/src/agent/execute.rs`
-- Modify: `crates/xianvec-engine/src/agent/mod.rs`
-- Test: `crates/xianvec-engine/tests/agent_slot.rs`
+- Create: `crates/xvision-engine/src/agent/execute.rs`
+- Modify: `crates/xvision-engine/src/agent/mod.rs`
+- Test: `crates/xvision-engine/tests/agent_slot.rs`
 
 - [ ] **Step 1: Write failing test**
 
-Create `crates/xianvec-engine/tests/agent_slot.rs`:
+Create `crates/xvision-engine/tests/agent_slot.rs`:
 
 ```rust
 use std::sync::Arc;
-use xianvec_engine::agent::execute::{execute_slot, SlotInput};
-use xianvec_engine::agent::llm::MockDispatch;
-use xianvec_engine::bundle::slot::LLMSlot;
-use xianvec_engine::tools::ToolRegistry;
+use xvision_engine::agent::execute::{execute_slot, SlotInput};
+use xvision_engine::agent::llm::MockDispatch;
+use xvision_engine::bundle::slot::LLMSlot;
+use xvision_engine::tools::ToolRegistry;
 
 #[tokio::test]
 async fn execute_slot_returns_parsed_output() {
@@ -1714,7 +1714,7 @@ async fn execute_slot_returns_parsed_output() {
 
 #[tokio::test]
 async fn execute_slot_rejects_undeclared_tool() {
-    use xianvec_engine::tools::ToolName;
+    use xvision_engine::tools::ToolName;
     use std::sync::Arc;
 
     let slot = LLMSlot {
@@ -1743,7 +1743,7 @@ async fn execute_slot_rejects_undeclared_tool() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p xianvec-engine execute_slot_returns`
+Run: `cargo test -p xvision-engine execute_slot_returns`
 Expected: FAIL — `execute_slot` not found.
 
 - [ ] **Step 3: Implement `execute_slot`**
@@ -1792,13 +1792,13 @@ pub mod llm;
 
 - [ ] **Step 4: Run tests**
 
-Run: `cargo test -p xianvec-engine execute_slot`
+Run: `cargo test -p xvision-engine execute_slot`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-engine/src/agent crates/xianvec-engine/tests/agent_slot.rs
+git add crates/xvision-engine/src/agent crates/xvision-engine/tests/agent_slot.rs
 git commit -m "feat(engine): execute_slot — single-slot inline LLM dispatch"
 ```
 
@@ -1807,23 +1807,23 @@ git commit -m "feat(engine): execute_slot — single-slot inline LLM dispatch"
 ### Task 15: 3-slot pipeline (regime → intern → trader)
 
 **Files:**
-- Create: `crates/xianvec-engine/src/agent/pipeline.rs`
-- Modify: `crates/xianvec-engine/src/agent/mod.rs`
-- Test: `crates/xianvec-engine/tests/pipeline_inline.rs`
+- Create: `crates/xvision-engine/src/agent/pipeline.rs`
+- Modify: `crates/xvision-engine/src/agent/mod.rs`
+- Test: `crates/xvision-engine/tests/pipeline_inline.rs`
 
 - [ ] **Step 1: Write failing test**
 
-Create `crates/xianvec-engine/tests/pipeline_inline.rs`:
+Create `crates/xvision-engine/tests/pipeline_inline.rs`:
 
 ```rust
 use std::sync::Arc;
-use xianvec_engine::agent::llm::MockDispatch;
-use xianvec_engine::agent::pipeline::{run_pipeline, PipelineInputs, PipelineOutputs};
-use xianvec_engine::bundle::manifest::{PublicManifest, RegimeFit};
-use xianvec_engine::bundle::risk::RiskPreset;
-use xianvec_engine::bundle::slot::LLMSlot;
-use xianvec_engine::bundle::StrategyBundle;
-use xianvec_engine::tools::ToolRegistry;
+use xvision_engine::agent::llm::MockDispatch;
+use xvision_engine::agent::pipeline::{run_pipeline, PipelineInputs, PipelineOutputs};
+use xvision_engine::bundle::manifest::{PublicManifest, RegimeFit};
+use xvision_engine::bundle::risk::RiskPreset;
+use xvision_engine::bundle::slot::LLMSlot;
+use xvision_engine::bundle::StrategyBundle;
+use xvision_engine::tools::ToolRegistry;
 
 fn fixture_bundle() -> StrategyBundle {
     StrategyBundle {
@@ -1891,7 +1891,7 @@ async fn skips_missing_optional_slots() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p xianvec-engine three_slot_pipeline`
+Run: `cargo test -p xvision-engine three_slot_pipeline`
 Expected: FAIL — types not found.
 
 - [ ] **Step 3: Implement pipeline**
@@ -1977,13 +1977,13 @@ pub mod pipeline;
 
 - [ ] **Step 4: Run tests**
 
-Run: `cargo test -p xianvec-engine pipeline`
+Run: `cargo test -p xvision-engine pipeline`
 Expected: PASS for both tests.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-engine/src/agent/pipeline.rs crates/xianvec-engine/src/agent/mod.rs crates/xianvec-engine/tests/pipeline_inline.rs
+git add crates/xvision-engine/src/agent/pipeline.rs crates/xvision-engine/src/agent/mod.rs crates/xvision-engine/tests/pipeline_inline.rs
 git commit -m "feat(engine): 3-slot agent pipeline (regime → intern → trader)"
 ```
 
@@ -1992,17 +1992,17 @@ git commit -m "feat(engine): 3-slot agent pipeline (regime → intern → trader
 ### Task 16: Token estimator (deterministic, pre-run)
 
 **Files:**
-- Modify: `crates/xianvec-engine/src/tokens.rs` (replace placeholder)
-- Test: `crates/xianvec-engine/tests/tokens.rs`
+- Modify: `crates/xvision-engine/src/tokens.rs` (replace placeholder)
+- Test: `crates/xvision-engine/tests/tokens.rs`
 
 - [ ] **Step 1: Write failing test**
 
-Create `crates/xianvec-engine/tests/tokens.rs`:
+Create `crates/xvision-engine/tests/tokens.rs`:
 
 ```rust
-use xianvec_engine::bundle::risk::RiskPreset;
-use xianvec_engine::tokens::estimate_pipeline_tokens;
-use xianvec_engine::templates::{registry, Template};
+use xvision_engine::bundle::risk::RiskPreset;
+use xvision_engine::tokens::estimate_pipeline_tokens;
+use xvision_engine::templates::{registry, Template};
 
 #[test]
 fn estimator_returns_positive_token_counts_for_real_bundle() {
@@ -2018,7 +2018,7 @@ fn estimator_returns_positive_token_counts_for_real_bundle() {
 
 #[test]
 fn estimator_scales_with_decision_points() {
-    let tpl = xianvec_engine::templates::registry::get("mean_reversion").unwrap();
+    let tpl = xvision_engine::templates::registry::get("mean_reversion").unwrap();
     let b = tpl.new_draft("01H8N7ZSCALE".into(), "scale-test".into(), "@t".into());
     let est_small = estimate_pipeline_tokens(&b, 10);
     let est_big   = estimate_pipeline_tokens(&b, 1000);
@@ -2028,7 +2028,7 @@ fn estimator_scales_with_decision_points() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p xianvec-engine estimator_returns`
+Run: `cargo test -p xvision-engine estimator_returns`
 Expected: FAIL — `estimate_pipeline_tokens` not found.
 
 - [ ] **Step 3: Implement estimator**
@@ -2067,13 +2067,13 @@ pub fn estimate_pipeline_tokens(b: &StrategyBundle, decision_points: u64) -> Tok
 
 - [ ] **Step 4: Run tests**
 
-Run: `cargo test -p xianvec-engine estimator`
+Run: `cargo test -p xvision-engine estimator`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-engine/src/tokens.rs crates/xianvec-engine/tests/tokens.rs
+git add crates/xvision-engine/src/tokens.rs crates/xvision-engine/tests/tokens.rs
 git commit -m "feat(engine): token estimator for pipeline runs"
 ```
 
@@ -2084,27 +2084,27 @@ git commit -m "feat(engine): token estimator for pipeline runs"
 ### Task 17: Wire `xvn strategy` subcommand skeleton
 
 **Files:**
-- Modify: `crates/xianvec-cli/Cargo.toml` — add `xianvec-engine` dep
-- Modify: `crates/xianvec-cli/src/main.rs` — register `strategy` subcommand
-- Create: `crates/xianvec-cli/src/strategy.rs`
+- Modify: `crates/xvision-cli/Cargo.toml` — add `xvision-engine` dep
+- Modify: `crates/xvision-cli/src/main.rs` — register `strategy` subcommand
+- Create: `crates/xvision-cli/src/strategy.rs`
 
 - [ ] **Step 1: Inspect existing CLI structure**
 
-Run: `head -80 crates/xianvec-cli/src/main.rs`
+Run: `head -80 crates/xvision-cli/src/main.rs`
 Note the `clap` derive style used; match it.
 
 - [ ] **Step 2: Add dep**
 
-In `crates/xianvec-cli/Cargo.toml` `[dependencies]`, add:
+In `crates/xvision-cli/Cargo.toml` `[dependencies]`, add:
 
 ```toml
-xianvec-engine = { path = "../xianvec-engine" }
+xvision-engine = { path = "../xvision-engine" }
 ulid           = "1"
 ```
 
 - [ ] **Step 3: Add `Strategy` subcommand**
 
-In `crates/xianvec-cli/src/main.rs`, find the top-level command enum (likely `enum Command` or similar). Add a `Strategy` variant:
+In `crates/xvision-cli/src/main.rs`, find the top-level command enum (likely `enum Command` or similar). Add a `Strategy` variant:
 
 ```rust
 // in the top-level Subcommand enum
@@ -2125,7 +2125,7 @@ mod strategy;
 
 - [ ] **Step 4: Create the subcommand module**
 
-Create `crates/xianvec-cli/src/strategy.rs`:
+Create `crates/xvision-cli/src/strategy.rs`:
 
 ```rust
 use clap::{Args, Subcommand};
@@ -2177,16 +2177,16 @@ async fn show(_id: &str) -> anyhow::Result<()> { anyhow::bail!("not implemented 
 
 - [ ] **Step 5: Verify it builds**
 
-Run: `cargo build -p xianvec-cli`
+Run: `cargo build -p xvision-cli`
 Expected: clean build. The `xvn strategy --help` should show the subcommands.
 
-Verify: `cargo run -p xianvec-cli -- strategy --help`
+Verify: `cargo run -p xvision-cli -- strategy --help`
 Expected output mentions `new`, `validate`, `ls`, `show`.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/xianvec-cli/Cargo.toml crates/xianvec-cli/src/main.rs crates/xianvec-cli/src/strategy.rs
+git add crates/xvision-cli/Cargo.toml crates/xvision-cli/src/main.rs crates/xvision-cli/src/strategy.rs
 git commit -m "feat(cli): wire xvn strategy subcommand skeleton"
 ```
 
@@ -2195,12 +2195,12 @@ git commit -m "feat(cli): wire xvn strategy subcommand skeleton"
 ### Task 18: Implement `xvn strategy new / validate / ls / show`
 
 **Files:**
-- Modify: `crates/xianvec-cli/src/strategy.rs`
-- Create: `crates/xianvec-cli/tests/strategy_cli.rs`
+- Modify: `crates/xvision-cli/src/strategy.rs`
+- Create: `crates/xvision-cli/tests/strategy_cli.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-Create `crates/xianvec-cli/tests/strategy_cli.rs`:
+Create `crates/xvision-cli/tests/strategy_cli.rs`:
 
 ```rust
 use std::process::Command;
@@ -2238,25 +2238,25 @@ fn new_validate_ls_show_roundtrip() {
 }
 ```
 
-> The `CARGO_BIN_EXE_xvn` env var requires the `xvn` binary target. Confirm by inspecting the existing `[[bin]]` section in `crates/xianvec-cli/Cargo.toml`. If it's named differently (e.g., `xianvec-cli`), substitute that name in the env var.
+> The `CARGO_BIN_EXE_xvn` env var requires the `xvn` binary target. Confirm by inspecting the existing `[[bin]]` section in `crates/xvision-cli/Cargo.toml`. If it's named differently (e.g., `xvision-cli`), substitute that name in the env var.
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p xianvec-cli new_validate_ls_show`
+Run: `cargo test -p xvision-cli new_validate_ls_show`
 Expected: FAIL — handlers panic with "not implemented yet".
 
 - [ ] **Step 3: Implement the handlers**
 
-Replace the stubs in `crates/xianvec-cli/src/strategy.rs` with real impls:
+Replace the stubs in `crates/xvision-cli/src/strategy.rs` with real impls:
 
 ```rust
 use std::env;
 use std::path::PathBuf;
 
 use ulid::Ulid;
-use xianvec_engine::bundle::store::{BundleStore, FilesystemStore};
-use xianvec_engine::bundle::validate::validate_bundle;
-use xianvec_engine::templates::registry;
+use xvision_engine::bundle::store::{BundleStore, FilesystemStore};
+use xvision_engine::bundle::validate::validate_bundle;
+use xvision_engine::templates::registry;
 
 fn home() -> PathBuf {
     if let Ok(p) = env::var("XVN_HOME") {
@@ -2303,17 +2303,17 @@ async fn show(id: &str) -> anyhow::Result<()> {
 }
 ```
 
-Add to `crates/xianvec-cli/Cargo.toml` `[dependencies]`: `dirs = "5"`.
+Add to `crates/xvision-cli/Cargo.toml` `[dependencies]`: `dirs = "5"`.
 
 - [ ] **Step 4: Run test**
 
-Run: `cargo test -p xianvec-cli new_validate_ls_show`
+Run: `cargo test -p xvision-cli new_validate_ls_show`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-cli/src/strategy.rs crates/xianvec-cli/Cargo.toml crates/xianvec-cli/tests/strategy_cli.rs
+git add crates/xvision-cli/src/strategy.rs crates/xvision-cli/Cargo.toml crates/xvision-cli/tests/strategy_cli.rs
 git commit -m "feat(cli): implement xvn strategy new/validate/ls/show"
 ```
 
@@ -2322,8 +2322,8 @@ git commit -m "feat(cli): implement xvn strategy new/validate/ls/show"
 ### Task 19: Add `xvn strategy templates` listing
 
 **Files:**
-- Modify: `crates/xianvec-cli/src/strategy.rs`
-- Modify: `crates/xianvec-cli/tests/strategy_cli.rs`
+- Modify: `crates/xvision-cli/src/strategy.rs`
+- Modify: `crates/xvision-cli/tests/strategy_cli.rs`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2343,12 +2343,12 @@ fn templates_lists_known_templates() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p xianvec-cli templates_lists`
+Run: `cargo test -p xvision-cli templates_lists`
 Expected: FAIL — subcommand not registered.
 
 - [ ] **Step 3: Add the subcommand variant + handler**
 
-In `crates/xianvec-cli/src/strategy.rs`:
+In `crates/xvision-cli/src/strategy.rs`:
 
 ```rust
 // in the StrategyAction enum
@@ -2359,7 +2359,7 @@ StrategyAction::Templates => templates().await,
 
 // new handler
 async fn templates() -> anyhow::Result<()> {
-    use xianvec_engine::templates::registry;
+    use xvision_engine::templates::registry;
     let names = registry::list_template_names();
     for name in names {
         if let Some(tpl) = registry::get(&name) {
@@ -2372,13 +2372,13 @@ async fn templates() -> anyhow::Result<()> {
 
 - [ ] **Step 4: Run test**
 
-Run: `cargo test -p xianvec-cli templates_lists`
+Run: `cargo test -p xvision-cli templates_lists`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-cli/src/strategy.rs crates/xianvec-cli/tests/strategy_cli.rs
+git add crates/xvision-cli/src/strategy.rs crates/xvision-cli/tests/strategy_cli.rs
 git commit -m "feat(cli): xvn strategy templates lists registered templates"
 ```
 
@@ -2387,8 +2387,8 @@ git commit -m "feat(cli): xvn strategy templates lists registered templates"
 ### Task 20: Add `xvn strategy run` for inline pipeline execution
 
 **Files:**
-- Modify: `crates/xianvec-cli/src/strategy.rs`
-- Modify: `crates/xianvec-cli/tests/strategy_cli.rs`
+- Modify: `crates/xvision-cli/src/strategy.rs`
+- Modify: `crates/xvision-cli/tests/strategy_cli.rs`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2419,12 +2419,12 @@ fn run_inline_with_mock_dispatch_succeeds() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p xianvec-cli run_inline_with_mock`
+Run: `cargo test -p xvision-cli run_inline_with_mock`
 Expected: FAIL — subcommand not registered.
 
 - [ ] **Step 3: Implement `Run` subcommand**
 
-In `crates/xianvec-cli/src/strategy.rs`:
+In `crates/xvision-cli/src/strategy.rs`:
 
 ```rust
 // in StrategyAction enum
@@ -2450,10 +2450,10 @@ Add the handler:
 
 ```rust
 use std::sync::Arc;
-use xianvec_engine::agent::llm::{AnthropicDispatch, LlmDispatch, MockDispatch};
-use xianvec_engine::agent::pipeline::{run_pipeline, PipelineInputs};
-use xianvec_engine::tokens::estimate_pipeline_tokens;
-use xianvec_engine::tools::ToolRegistry;
+use xvision_engine::agent::llm::{AnthropicDispatch, LlmDispatch, MockDispatch};
+use xvision_engine::agent::pipeline::{run_pipeline, PipelineInputs};
+use xvision_engine::tokens::estimate_pipeline_tokens;
+use xvision_engine::tools::ToolRegistry;
 
 async fn run_inline(id: &str, fixture: &str, decisions: u32, mock: bool) -> anyhow::Result<()> {
     let bundle = store().load(id).await?;
@@ -2503,13 +2503,13 @@ async fn run_inline(id: &str, fixture: &str, decisions: u32, mock: bool) -> anyh
 
 - [ ] **Step 4: Run test**
 
-Run: `cargo test -p xianvec-cli run_inline_with_mock`
+Run: `cargo test -p xvision-cli run_inline_with_mock`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-cli/src/strategy.rs crates/xianvec-cli/tests/strategy_cli.rs
+git add crates/xvision-cli/src/strategy.rs crates/xvision-cli/tests/strategy_cli.rs
 git commit -m "feat(cli): xvn strategy run for inline pipeline execution"
 ```
 
@@ -2520,15 +2520,15 @@ git commit -m "feat(cli): xvn strategy run for inline pipeline execution"
 ### Task 21: README + smoke-test recipe
 
 **Files:**
-- Create: `crates/xianvec-engine/README.md`
+- Create: `crates/xvision-engine/README.md`
 - Modify: top-level `MANUAL.md` — add a section linking to the new CLI commands
 
 - [ ] **Step 1: Write the engine README**
 
-Create `crates/xianvec-engine/README.md`:
+Create `crates/xvision-engine/README.md`:
 
 ```markdown
-# xianvec-engine
+# xvision-engine
 
 Strategy creation, bundling, and inline agent execution for xvn.
 
@@ -2586,7 +2586,7 @@ Strategies are stored under `$XVN_HOME/strategies/<id>.json` (default `~/.xvn/st
 In `MANUAL.md`, add after the existing CLI section (or at the bottom if no CLI section exists):
 
 ```markdown
-## Strategy authoring (MVP — see crates/xianvec-engine/README.md)
+## Strategy authoring (MVP — see crates/xvision-engine/README.md)
 
 ```bash
 xvn strategy templates                 # list templates
@@ -2607,13 +2607,13 @@ Run:
 
 ```bash
 cargo build --workspace
-cargo run -p xianvec-cli -- strategy templates
-cargo run -p xianvec-cli -- strategy new --template mean_reversion --name smoke-test
+cargo run -p xvision-cli -- strategy templates
+cargo run -p xvision-cli -- strategy new --template mean_reversion --name smoke-test
 # capture id from stdout
-ID=$(cargo run -q -p xianvec-cli -- strategy ls | head -1)
-cargo run -p xianvec-cli -- strategy show $ID | head -20
-cargo run -p xianvec-cli -- strategy validate $ID
-cargo run -p xianvec-cli -- strategy run $ID --fixture test-fixture-btc-2024-01 --decisions 2 --mock
+ID=$(cargo run -q -p xvision-cli -- strategy ls | head -1)
+cargo run -p xvision-cli -- strategy show $ID | head -20
+cargo run -p xvision-cli -- strategy validate $ID
+cargo run -p xvision-cli -- strategy run $ID --fixture test-fixture-btc-2024-01 --decisions 2 --mock
 ```
 
 Expected: every step prints output, exits 0.
@@ -2621,7 +2621,7 @@ Expected: every step prints output, exits 0.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/xianvec-engine/README.md MANUAL.md
+git add crates/xvision-engine/README.md MANUAL.md
 git commit -m "docs(engine): MVP README + manual update"
 ```
 
@@ -2647,10 +2647,10 @@ Expected: no warnings. Fix anything that comes up — usually unused imports, mi
 Run: `cargo fmt --all -- --check`
 Expected: zero output. If not, run `cargo fmt --all` and stage the result.
 
-- [ ] **Step 4: Verify no `xianvec-eval` was modified**
+- [ ] **Step 4: Verify no `xvision-eval` was modified**
 
-Run: `git log --oneline -- crates/xianvec-eval/`
-Expected: no new commits in this plan touched `xianvec-eval`. The migration of baselines is a *new copy* in `xianvec-engine/baselines/`, not a destructive edit. `xianvec-eval` deprecation lands in a later plan.
+Run: `git log --oneline -- crates/xvision-eval/`
+Expected: no new commits in this plan touched `xvision-eval`. The migration of baselines is a *new copy* in `xvision-engine/baselines/`, not a destructive edit. `xvision-eval` deprecation lands in a later plan.
 
 - [ ] **Step 5: Commit any cleanup from steps 2-3**
 
@@ -2684,7 +2684,7 @@ Before declaring this plan complete, walk through:
 - [ ] §11 Live execution — deferred to Plan #2
 - [ ] §12 Durable scheduler — deferred to Plan #2
 - [ ] §13 Marketplace + 8004 — deferred to Plan #2
-- [x] §14 Crate structure — `xianvec-engine` lands in Task 1
+- [x] §14 Crate structure — `xvision-engine` lands in Task 1
 
 **Type consistency check:** `StrategyBundle`, `LLMSlot`, `RiskConfig`, `RiskPreset`, `PublicManifest`, `RegimeFit`, `Template`, `ToolRegistry`, `ToolName`, `Tool`, `LlmDispatch`, `LlmRequest`, `LlmResponse`, `MockDispatch`, `AnthropicDispatch`, `SlotInput`, `PipelineInputs`, `PipelineOutputs`, `TokenEstimate`, `BundleStore`, `FilesystemStore`, `EngineError` — names used consistently across all 22 tasks.
 
@@ -2707,9 +2707,9 @@ Plan #2 — **Strategy Creation Engine: Wizard + Marketplace + MCP**
 - 8004 publish flow
 
 Plan #3 — **Eval Engine**
-- Run/scenario/store types in `xianvec-engine/src/eval/`
+- Run/scenario/store types in `xvision-engine/src/eval/`
 - Backtest fill simulator + paper executor
 - Pre-computed published evals + signed attestations
 - Comparison view + Lightweight Charts UI
 - Findings extractor
-- Migration plan from `xianvec-eval` to deprecation
+- Migration plan from `xvision-eval` to deprecation

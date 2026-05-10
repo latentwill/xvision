@@ -58,6 +58,6 @@ idea
 
 ## References
 
-- `crates/xianvec-core/src/market.rs`
-- `crates/xianvec-eval/src/baselines/ma_crossover.rs`
-- `crates/xianvec-eval/src/baselines/macd_momentum.rs`
+- `crates/xvision-core/src/market.rs`
+- `crates/xvision-eval/src/baselines/ma_crossover.rs`
+- `crates/xvision-eval/src/baselines/macd_momentum.rs`

@@ -15,7 +15,7 @@
 
 **Architecture:** The amendments are organized in seven groups, each modifying a specific phase of the original plan. Group A adds a new Phase -1 (F18 prerequisite). Groups B–G modify Phases 1, 3, 4, 6, 7, 8, 9 in place. Each amendment shows the exact section of the original plan to find, what to remove, and what to replace it with. Order of execution matches the order of the original plan.
 
-**Tech Stack:** New deps beyond the original plan: `zeroize = "1"` (security hygiene per review §12.2), `humantime = "2"` (relative-time CLI parsing per review §3.10), `hkdf = "0.12"` + `sha2 = "0.10"` + `aes-gcm = "0.10"` (encrypted trading key store), and `hex = "0.4"`. The EIP-712 trading-key registration uses `alloy = "2"` which is **already** in workspace deps (see root `Cargo.toml`); no separate `alloy-sol-types` or `ethers` import is needed — use `alloy::sol_types::*` and `alloy::signers::*`. Multi-asset support reuses `xianvec-core`'s existing `AssetSymbol` enum (variants: `Btc`, `Eth`, `Sol`); no new dep.
+**Tech Stack:** New deps beyond the original plan: `zeroize = "1"` (security hygiene per review §12.2), `humantime = "2"` (relative-time CLI parsing per review §3.10), `hkdf = "0.12"` + `sha2 = "0.10"` + `aes-gcm = "0.10"` (encrypted trading key store), and `hex = "0.4"`. The EIP-712 trading-key registration uses `alloy = "2"` which is **already** in workspace deps (see root `Cargo.toml`); no separate `alloy-sol-types` or `ethers` import is needed — use `alloy::sol_types::*` and `alloy::signers::*`. Multi-asset support reuses `xvision-core`'s existing `AssetSymbol` enum (variants: `Btc`, `Eth`, `Sol`); no new dep.
 
 **What is REMOVED from scope (vs. original plan):**
 - Reputation-weighted quota — moved to FOLLOWUPS with discarded-idea note (Group F).
@@ -39,7 +39,7 @@
 
 ```
 crates/
-├── xianvec-data/
+├── xvision-data/
 │   └── src/
 │       ├── trading_keys.rs                              # NEW (Group B) — encrypted key store, AES-256-GCM with HKDF-derived per-user key, Zeroizing wrapper
 │       ├── global_state.rs                              # NEW (Group B) — single-row halt/unhalt module
@@ -49,21 +49,21 @@ crates/
 │           ├── 20260510000009_global_state.sql         # NEW
 │           └── 20260510000010_strategies.sql          # NEW
 │
-├── xianvec-core/
+├── xvision-core/
 │   └── src/
 │       └── trading.rs                                   # MODIFY (Group A) — add `asset: AssetSymbol` to TraderDecision; touches every constructor/test fixture downstream
 │
-├── xianvec-execution/
+├── xvision-execution/
 │   └── src/
 │       ├── orderly.rs                                   # MODIFY (Group C) — generalize submit() over AssetSymbol; add register_trading_key(EIP-712) and delete_orderly_key
 │       └── dispatcher.rs                                # MODIFY (Group C) — wrap-not-replace OrderlyExecutor::submit; reservation released on Err; halt check at top
 │
-├── xianvec-cli/
+├── xvision-cli/
 │   └── src/
 │       └── commands/
 │           ├── key.rs                                   # MODIFY (Group D) — add `verify` subcommand; revoke calls Orderly DELETE
 │
-└── xianvec-data/
+└── xvision-data/
     └── migrations/
         # plus the original plan's seven migrations (positions, funding_attributions, decisions,
         # strategy_status, pending_approvals, policy_changes, pending_reservations) — unchanged
@@ -78,16 +78,16 @@ The original plan defers F18 ("`asset` on `TraderDecision`", from FOLLOWUPS.md) 
 ### Task A.1: Add `asset` field to `TraderDecision`
 
 **Files:**
-- Modify: `crates/xianvec-core/src/trading.rs:114` (the `TraderDecision` struct)
+- Modify: `crates/xvision-core/src/trading.rs:114` (the `TraderDecision` struct)
 - Modify: every fixture / constructor of `TraderDecision` — hit by `cargo check` after the field add
 
 - [ ] **Step 1: Read the current TraderDecision**
 
-Read `crates/xianvec-core/src/trading.rs` lines 114-130. Note the fields: `cycle_id` (renamed from `cycle_id`), `action`, `size_bps`, `direction`, `stop_loss_pct`, `take_profit_pct`, `trader_summary`. There is no `asset` field today.
+Read `crates/xvision-core/src/trading.rs` lines 114-130. Note the fields: `cycle_id` (renamed from `cycle_id`), `action`, `size_bps`, `direction`, `stop_loss_pct`, `take_profit_pct`, `trader_summary`. There is no `asset` field today.
 
 - [ ] **Step 2: Write the failing test (TDD)**
 
-Add to `crates/xianvec-core/src/trading.rs` (under the existing tests module, or create one if absent):
+Add to `crates/xvision-core/src/trading.rs` (under the existing tests module, or create one if absent):
 
 ```rust
 #[cfg(test)]
@@ -114,12 +114,12 @@ mod trader_decision_asset_tests {
 
 - [ ] **Step 3: Run the test to confirm it fails**
 
-Run: `cargo test -p xianvec-core trader_decision_carries_asset`
+Run: `cargo test -p xvision-core trader_decision_carries_asset`
 Expected: FAIL — "missing field `asset`" or similar.
 
 - [ ] **Step 4: Add the field**
 
-In `crates/xianvec-core/src/trading.rs`, modify the `TraderDecision` struct (line 114) to:
+In `crates/xvision-core/src/trading.rs`, modify the `TraderDecision` struct (line 114) to:
 
 ```rust
 pub struct TraderDecision {
@@ -147,7 +147,7 @@ pub struct TraderDecision {
 
 - [ ] **Step 5: Run the test to confirm it passes**
 
-Run: `cargo test -p xianvec-core trader_decision_carries_asset`
+Run: `cargo test -p xvision-core trader_decision_carries_asset`
 Expected: PASS.
 
 - [ ] **Step 6: Build the workspace and identify all downstream call sites**
@@ -162,17 +162,17 @@ grep -E "missing field.*asset" /tmp/xvn-f18-build.log
 - [ ] **Step 7: Fix every call site**
 
 For each error, open the file at the indicated line and add `asset: AssetSymbol::Btc,` (or the contextually appropriate symbol) into the struct literal. Sites likely to need updates:
-- `crates/xianvec-trader/src/parse.rs` — the LLM-output parser. Must extract `asset` from the LLM response or default to the briefing's `asset`. Wire it from `InternBriefing.asset` (which already exists per `crates/xianvec-core/src/trading.rs:76`).
-- `crates/xianvec-eval/src/baselines/*.rs` — baseline strategies. Each baseline should default to `AssetSymbol::Btc` for the v1 demo.
-- `crates/xianvec-eval/src/harness.rs` — test fixtures.
-- `crates/xianvec-core/src/store.rs` — sample data fixtures.
-- `crates/xianvec-execution/src/orderly.rs` — calls to `submit` may need to thread `decision.asset` through.
+- `crates/xvision-trader/src/parse.rs` — the LLM-output parser. Must extract `asset` from the LLM response or default to the briefing's `asset`. Wire it from `InternBriefing.asset` (which already exists per `crates/xvision-core/src/trading.rs:76`).
+- `crates/xvision-eval/src/baselines/*.rs` — baseline strategies. Each baseline should default to `AssetSymbol::Btc` for the v1 demo.
+- `crates/xvision-eval/src/harness.rs` — test fixtures.
+- `crates/xvision-core/src/store.rs` — sample data fixtures.
+- `crates/xvision-execution/src/orderly.rs` — calls to `submit` may need to thread `decision.asset` through.
 
-For each baseline file (e.g. `crates/xianvec-eval/src/baselines/always_long.rs`), the change is mechanical — find every `TraderDecision { ... }` struct literal and add `asset: ctx.asset,` (where `ctx` carries the briefing's asset) or `asset: AssetSymbol::Btc,` if there is no contextual asset.
+For each baseline file (e.g. `crates/xvision-eval/src/baselines/always_long.rs`), the change is mechanical — find every `TraderDecision { ... }` struct literal and add `asset: ctx.asset,` (where `ctx` carries the briefing's asset) or `asset: AssetSymbol::Btc,` if there is no contextual asset.
 
 - [ ] **Step 8: For the LLM trader parse path, extract asset from the JSON response**
 
-In `crates/xianvec-trader/src/parse.rs`, locate the function that parses the LLM's JSON response into `TraderDecision`. It currently reads `cycle_id` (now `cycle_id`), `action`, `size_bps`, etc. Add asset extraction:
+In `crates/xvision-trader/src/parse.rs`, locate the function that parses the LLM's JSON response into `TraderDecision`. It currently reads `cycle_id` (now `cycle_id`), `action`, `size_bps`, etc. Add asset extraction:
 
 ```rust
 let asset = parsed.get("asset")
@@ -185,7 +185,7 @@ let asset = parsed.get("asset")
 
 - [ ] **Step 9: Update the trader prompt to ask for `asset`**
 
-In `crates/xianvec-trader/src/prompt.rs`, the trader prompt instructs the LLM what JSON to return. Add `"asset"` to the schema description and example, telling the LLM to echo the asset from the briefing (so existing single-asset prompts continue to work; multi-asset is a forward extension).
+In `crates/xvision-trader/src/prompt.rs`, the trader prompt instructs the LLM what JSON to return. Add `"asset"` to the schema description and example, telling the LLM to echo the asset from the briefing (so existing single-asset prompts continue to work; multi-asset is a forward extension).
 
 - [ ] **Step 10: Build and run the full workspace test suite**
 
@@ -207,16 +207,16 @@ schema is extended to ask for it explicitly."
 
 **Files:**
 - Modify: original plan Task 3.1 Step 3 ("Pre-trade simulation wrapper") and Task 3.2 Step 2 (the `78_000.0` placeholder in `intended_notional / 78_000.0`).
-- Modify: `crates/xianvec-execution/src/orderly.rs` — extract a `mark_price(asset: AssetSymbol) -> Result<f64>` helper (or its existing equivalent if one exists).
+- Modify: `crates/xvision-execution/src/orderly.rs` — extract a `mark_price(asset: AssetSymbol) -> Result<f64>` helper (or its existing equivalent if one exists).
 
 - [ ] **Step 1: Find any existing mark-price-fetch helper**
 
-Run: `rg -n "fn (mark_price|fetch_mark|get_mark|orderly_mark)" crates/xianvec-execution/src/`
+Run: `rg -n "fn (mark_price|fetch_mark|get_mark|orderly_mark)" crates/xvision-execution/src/`
 Expected: either a hit (reuse it) or no hits (write one).
 
 - [ ] **Step 2: If no helper exists, add one to orderly.rs**
 
-Add to `crates/xianvec-execution/src/orderly.rs`:
+Add to `crates/xvision-execution/src/orderly.rs`:
 
 ```rust
 impl OrderlyExecutor {
@@ -244,7 +244,7 @@ fn orderly_symbol(asset: AssetSymbol) -> &'static str {
 }
 ```
 
-(Inspect `AssetSymbol` in `crates/xianvec-core/src/trading.rs:34` for the actual variant list and update the match arms accordingly.)
+(Inspect `AssetSymbol` in `crates/xvision-core/src/trading.rs:34` for the actual variant list and update the match arms accordingly.)
 
 - [ ] **Step 3: Replace the `78_000.0` placeholder in the dispatcher**
 
@@ -258,7 +258,7 @@ let qty = intended_notional / mark;
 
 - [ ] **Step 4: Add a property test asserting dispatcher rejects when mark price is unavailable**
 
-In `crates/xianvec-execution/src/dispatcher.rs` test module:
+In `crates/xvision-execution/src/dispatcher.rs` test module:
 
 ```rust
 #[tokio::test]
@@ -273,7 +273,7 @@ async fn dispatch_rejects_when_mark_price_unavailable() {
 
 - [ ] **Step 5: Run dispatcher tests and commit**
 
-Run: `cargo test -p xianvec-execution dispatcher`
+Run: `cargo test -p xvision-execution dispatcher`
 Expected: pass.
 
 ```bash
@@ -290,13 +290,13 @@ The original plan calls `ctx.store_trading_key(...)`, `ctx.global_halt(...)`, an
 ### Task B.1: `trading_keys` migration + module (review §1.2 BLOCKER)
 
 **Files:**
-- Create: `crates/xianvec-data/src/migrations/20260510000008_trading_keys.sql`
-- Create: `crates/xianvec-data/src/trading_keys.rs`
-- Modify: `crates/xianvec-data/src/lib.rs` — `pub mod trading_keys;`
+- Create: `crates/xvision-data/src/migrations/20260510000008_trading_keys.sql`
+- Create: `crates/xvision-data/src/trading_keys.rs`
+- Modify: `crates/xvision-data/src/lib.rs` — `pub mod trading_keys;`
 
 - [ ] **Step 1: Write the SQL migration**
 
-Create `crates/xianvec-data/src/migrations/20260510000008_trading_keys.sql`:
+Create `crates/xvision-data/src/migrations/20260510000008_trading_keys.sql`:
 
 ```sql
 -- Per-user encrypted Ed25519 trading key, AES-256-GCM at rest, HKDF-derived
@@ -320,7 +320,7 @@ CREATE INDEX IF NOT EXISTS idx_trading_keys_expires ON trading_keys(expires_at);
 
 - [ ] **Step 2: Write the Rust module — failing test first**
 
-Create `crates/xianvec-data/src/trading_keys.rs` and in the test module:
+Create `crates/xvision-data/src/trading_keys.rs` and in the test module:
 
 ```rust
 #[cfg(test)]
@@ -373,7 +373,7 @@ impl TradingKeyStore {
     fn derive_user_key(&self, user_id: &str) -> Zeroizing<[u8; 32]> {
         let hkdf = Hkdf::<Sha256>::new(Some(user_id.as_bytes()), &self.master_secret);
         let mut okm = Zeroizing::new([0u8; 32]);
-        hkdf.expand(b"xianvec-trading-key-v1", okm.as_mut())
+        hkdf.expand(b"xvision-trading-key-v1", okm.as_mut())
             .expect("HKDF expand");
         okm
     }
@@ -460,7 +460,7 @@ impl TradingKeyStore {
 
 - [ ] **Step 4: Add deps**
 
-In `crates/xianvec-data/Cargo.toml`, ensure these are present (add if missing):
+In `crates/xvision-data/Cargo.toml`, ensure these are present (add if missing):
 
 ```toml
 aes-gcm = "0.10"
@@ -472,13 +472,13 @@ rand = "0.8"
 chrono = "0.4"
 ```
 
-- [ ] **Step 5: Wire into `xianvec-data/src/lib.rs`**
+- [ ] **Step 5: Wire into `xvision-data/src/lib.rs`**
 
 Add `pub mod trading_keys;`.
 
 - [ ] **Step 6: Update `AppContext::from_env` (Task 4.10 of original plan)**
 
-In `crates/xianvec-cli/src/lib.rs` (or wherever `AppContext` lives — see original plan Task 4.10), add a `trading_keys: TradingKeyStore` field and initialize it in `from_env` using the `CREDENTIAL_SECRET` env var:
+In `crates/xvision-cli/src/lib.rs` (or wherever `AppContext` lives — see original plan Task 4.10), add a `trading_keys: TradingKeyStore` field and initialize it in `from_env` using the `CREDENTIAL_SECRET` env var:
 
 ```rust
 let secret_hex = std::env::var("CREDENTIAL_SECRET")
@@ -491,7 +491,7 @@ let trading_keys = TradingKeyStore::new(pool.clone(), &secret_arr);
 
 - [ ] **Step 7: Run tests + commit**
 
-Run: `cargo test -p xianvec-data trading_keys`
+Run: `cargo test -p xvision-data trading_keys`
 Expected: pass.
 
 ```bash
@@ -502,13 +502,13 @@ git commit -m "feat(data): trading_keys store with HKDF-per-user AES-256-GCM (re
 ### Task B.2: `global_state` migration + module (review §1.3 BLOCKER)
 
 **Files:**
-- Create: `crates/xianvec-data/src/migrations/20260510000009_global_state.sql`
-- Create: `crates/xianvec-data/src/global_state.rs`
-- Modify: `crates/xianvec-data/src/lib.rs` — `pub mod global_state;`
+- Create: `crates/xvision-data/src/migrations/20260510000009_global_state.sql`
+- Create: `crates/xvision-data/src/global_state.rs`
+- Modify: `crates/xvision-data/src/lib.rs` — `pub mod global_state;`
 
 - [ ] **Step 1: Write the migration**
 
-Create `crates/xianvec-data/src/migrations/20260510000009_global_state.sql`:
+Create `crates/xvision-data/src/migrations/20260510000009_global_state.sql`:
 
 ```sql
 -- Single-row global halt flag. `xvn kill --all` writes here; OrderDispatcher
@@ -591,7 +591,7 @@ impl GlobalState {
 
 - [ ] **Step 4: Add halt check to dispatcher (modifies original plan Task 3.2)**
 
-In `crates/xianvec-execution/src/dispatcher.rs`, at the very top of `OrderDispatcher::dispatch`, BEFORE the emit-stage audit row:
+In `crates/xvision-execution/src/dispatcher.rs`, at the very top of `OrderDispatcher::dispatch`, BEFORE the emit-stage audit row:
 
 ```rust
 if self.global_state.is_halted().await? {
@@ -644,8 +644,8 @@ git commit -m "feat(data,execution,cli): global_state halt module + dispatcher c
 ### Task B.3: `strategies` (per-agent config) migration + module (review §1.5 HIGH)
 
 **Files:**
-- Create: `crates/xianvec-data/src/migrations/20260510000010_strategies.sql`
-- Create: `crates/xianvec-data/src/strategies.rs`
+- Create: `crates/xvision-data/src/migrations/20260510000010_strategies.sql`
+- Create: `crates/xvision-data/src/strategies.rs`
 - Modify: original plan Task 2.1 to use this store as the dispatcher's source of truth, with TOML kept as a bulk-import seed only.
 
 - [ ] **Step 1: Write the migration**
@@ -688,7 +688,7 @@ async fn config_set_then_get_returns_latest(pool: SqlitePool) {
 ```rust
 use anyhow::Result;
 use sqlx::SqlitePool;
-use xianvec_risk::config::StrategyConfig;  // from original plan Task 2.1
+use xvision_risk::config::StrategyConfig;  // from original plan Task 2.1
 
 pub struct StrategyConfigStore { pool: SqlitePool }
 
@@ -727,7 +727,7 @@ impl StrategyConfigStore {
 
 - [ ] **Step 4: Modify original plan Task 2.1 — `parse_strategies_toml` becomes seed-only**
 
-Update `crates/xianvec-risk/src/config.rs` (created in original plan Task 2.1) so the TOML loader has a clear "seed-import" semantic:
+Update `crates/xvision-risk/src/config.rs` (created in original plan Task 2.1) so the TOML loader has a clear "seed-import" semantic:
 
 ```rust
 /// Bulk-import seed: parse a TOML config and write each agent into the store.
@@ -748,7 +748,7 @@ pub async fn seed_from_toml(
 
 - [ ] **Step 5: Modify dispatcher to read from the store, not from a static reference**
 
-In `crates/xianvec-execution/src/dispatcher.rs`, the dispatcher's constructor takes a `StrategyConfigStore` (not a borrowed `&StrategyConfig`). Each dispatch reads:
+In `crates/xvision-execution/src/dispatcher.rs`, the dispatcher's constructor takes a `StrategyConfigStore` (not a borrowed `&StrategyConfig`). Each dispatch reads:
 
 ```rust
 let cfg = self.strategies.get(&decision.agent_id).await
@@ -792,8 +792,8 @@ The original plan's Task 3.2 introduces an `OrderlyOrderSubmit` trait that throw
 ### Task C.1: Redesign the `OrderlyOrderSubmit` trait surface (replaces original Task 3.2 Step 1)
 
 **Files:**
-- Modify: `crates/xianvec-execution/src/dispatcher.rs` (planned in original Task 3.2)
-- Modify: `crates/xianvec-execution/src/orderly.rs` to expose the right shape
+- Modify: `crates/xvision-execution/src/dispatcher.rs` (planned in original Task 3.2)
+- Modify: `crates/xvision-execution/src/orderly.rs` to expose the right shape
 
 - [ ] **Step 1: Replace the original trait definition**
 
@@ -839,7 +839,7 @@ pub struct SubmitResult {
 
 - [ ] **Step 2: Implement `OrderSink` for the existing `OrderlyExecutor`**
 
-Add to `crates/xianvec-execution/src/orderly.rs`:
+Add to `crates/xvision-execution/src/orderly.rs`:
 
 ```rust
 #[async_trait::async_trait]
@@ -868,7 +868,7 @@ The original `submit_with_audit_payload` is a *small* refactor of the existing `
 
 - [ ] **Step 3: Dispatcher uses `OrderSink` — submit failure releases reservation (review §2.7)**
 
-In `crates/xianvec-execution/src/dispatcher.rs`, replace the original Task 3.2 Stage-6 block with:
+In `crates/xvision-execution/src/dispatcher.rs`, replace the original Task 3.2 Stage-6 block with:
 
 ```rust
 // Stage 6: open ledger row + sign + submit (with rollback on failure)
@@ -937,7 +937,7 @@ The dispatcher passes `quota_inputs` and `hard_cap` to `try_reserve`. The reserv
 
 - [ ] **Step 5: Empty-orderbook guard (review §9.2)**
 
-In `crates/xianvec-execution/src/simulate.rs` (original plan Task 3.1 Step 2), replace:
+In `crates/xvision-execution/src/simulate.rs` (original plan Task 3.1 Step 2), replace:
 
 ```rust
 // OLD - DO NOT USE
@@ -987,7 +987,7 @@ let orders_last_hour = self.audit.submit_count_since(&decision.agent_id, now - 3
 
 - [ ] **Step 7: Stage enum `#[sqlx(rename_all = ...)]` correction (review §2.10)**
 
-In `crates/xianvec-data/src/audit.rs` (original plan Task 1.2 Step 1), the `Stage` enum had `#[sqlx(rename_all = "lowercase")]` which maps `RiskEval` → `riskeval`. The migration's CHECK constraint expects `risk_eval`. Change to:
+In `crates/xvision-data/src/audit.rs` (original plan Task 1.2 Step 1), the `Stage` enum had `#[sqlx(rename_all = "lowercase")]` which maps `RiskEval` → `riskeval`. The migration's CHECK constraint expects `risk_eval`. Change to:
 
 ```rust
 #[derive(Debug, Clone, Copy, sqlx::Type)]
@@ -1047,7 +1047,7 @@ async fn audit_log_rejects_delete(pool: SqlitePool) {
 
 - [ ] **Step 9: Canonicalize the audit content-hash (review §6.5)**
 
-In `crates/xianvec-data/src/audit.rs`, the original plan computes `payload_hash = sha256(serde_json::to_string(&payload))`. JSON output ordering is not stable across versions. Replace with sorted-key canonical JSON:
+In `crates/xvision-data/src/audit.rs`, the original plan computes `payload_hash = sha256(serde_json::to_string(&payload))`. JSON output ordering is not stable across versions. Replace with sorted-key canonical JSON:
 
 ```rust
 fn canonical_json(value: &serde_json::Value) -> String {
@@ -1102,12 +1102,12 @@ git commit -m "feat(execution,data): dispatcher redesign per review §2.1/§2.4/
 ### Task D.1: `xvn key issue` implements EIP-712 + ip_restriction + Zeroizing
 
 **Files:**
-- Modify: `crates/xianvec-cli/src/commands/key.rs` (planned in original Task 4.7)
-- Modify: `crates/xianvec-execution/src/orderly.rs` (add `register_trading_key` and `delete_orderly_key`)
+- Modify: `crates/xvision-cli/src/commands/key.rs` (planned in original Task 4.7)
+- Modify: `crates/xvision-execution/src/orderly.rs` (add `register_trading_key` and `delete_orderly_key`)
 
 - [ ] **Step 1: Add `register_trading_key` (EIP-712) to OrderlyExecutor**
 
-`alloy = "2"` is already in workspace deps. Add `alloy = { workspace = true, features = ["sol-types", "signers"] }` to `crates/xianvec-execution/Cargo.toml` if not already present. The Orderly EIP-712 schema for `add_orderly_key`:
+`alloy = "2"` is already in workspace deps. Add `alloy = { workspace = true, features = ["sol-types", "signers"] }` to `crates/xvision-execution/Cargo.toml` if not already present. The Orderly EIP-712 schema for `add_orderly_key`:
 
 ```rust
 use alloy::primitives::{U256, Address};
@@ -1235,7 +1235,7 @@ impl OrderlyExecutor {
 
 - [ ] **Step 2: `xvn key issue` end-to-end**
 
-In `crates/xianvec-cli/src/commands/key.rs`:
+In `crates/xvision-cli/src/commands/key.rs`:
 
 ```rust
 async fn issue(args: &KeyIssueArgs, ctx: &AppContext) -> anyhow::Result<()> {
@@ -1328,7 +1328,7 @@ async fn revoke(args: &KeyRevokeArgs, ctx: &AppContext) -> anyhow::Result<()> {
 
 - [ ] **Step 5: Dispatcher key-expiry fast-path (review §1.7)**
 
-In `crates/xianvec-execution/src/dispatcher.rs`, after the global-halt check and before risk eval:
+In `crates/xvision-execution/src/dispatcher.rs`, after the global-halt check and before risk eval:
 
 ```rust
 let now = chrono::Utc::now().timestamp_millis();
@@ -1360,7 +1360,7 @@ The original plan's Phase 5 is conditional on the G2 ADR. Two minor tightenings 
 ### Task E.1: Aggregate-margin caching + fail-closed (review §1.9)
 
 **Files:**
-- Modify: `crates/xianvec-risk/src/rules/aggregate_margin.rs` (planned in original Task 5.2)
+- Modify: `crates/xvision-risk/src/rules/aggregate_margin.rs` (planned in original Task 5.2)
 
 - [ ] **Step 1: Specify the cache + fail-closed behavior**
 
@@ -1427,7 +1427,7 @@ git commit -m "feat(risk): aggregate-margin 5s cache + fail-closed (review §1.9
 ### Task F.1: Cold-start formula + drawdown decay (review §1.6, §9.4)
 
 **Files:**
-- Modify: `crates/xianvec-risk/src/quota.rs` (planned in original Task 6.1)
+- Modify: `crates/xvision-risk/src/quota.rs` (planned in original Task 6.1)
 
 - [ ] **Step 1: Resolve the cold-start formula ambiguity (review §1.6, Option A)**
 
@@ -1506,7 +1506,7 @@ fn burned_strategy_returns_floor() {
 
 - [ ] **Step 3: Add ledger queries that the quota computation needs (review §3.5)**
 
-In `crates/xianvec-data/src/ledger.rs`:
+In `crates/xvision-data/src/ledger.rs`:
 
 ```rust
 impl Ledger {
@@ -1552,7 +1552,7 @@ git commit -m "feat(risk,data): quota cold-start formula + ledger drawdown query
 ### Task F.2: Reconciler real implementation + funding ingestion (review §1.1, §3.4)
 
 **Files:**
-- Modify: `crates/xianvec-execution/src/reconcile.rs` (planned in original Task 7.1)
+- Modify: `crates/xvision-execution/src/reconcile.rs` (planned in original Task 7.1)
 
 - [ ] **Step 1: Replace `Reconciler::run` `todo!()` with the real loop**
 
@@ -1624,7 +1624,7 @@ impl Reconciler {
 
 - [ ] **Step 3: Wire funding into `realized_pnl_usdc` at close**
 
-In `crates/xianvec-data/src/ledger.rs`:
+In `crates/xvision-data/src/ledger.rs`:
 
 ```rust
 impl Ledger {
@@ -1741,7 +1741,7 @@ git commit -m "test: adversarial spam-key e2e test (review §6.1)"
 ### Task G.3: ADD N=10+ concurrency test (review §6.3)
 
 **Files:**
-- Add: a property test in `crates/xianvec-risk/tests/`.
+- Add: a property test in `crates/xvision-risk/tests/`.
 
 - [ ] **Step 1: Write the test**
 
@@ -1811,7 +1811,7 @@ git commit -m "test: N-strategy concurrent reservation property test (review §6
 - **Reputation-weighted quota in wallet engine** — proposed 2026-05-10 (research Theme C); discarded same day.
   Rationale: trade-size perception varies wildly between traders ($100 to one is $100k to another), so quota-as-multiple-of-cap is not a meaningful metric to attach to reputation. The broader intent — expand ERC-8004 with viable economic-teeth metrics — is preserved as an open question; specific mechanism TBD.
 - **OFAC sanctions screening in wallet plan** — proposed 2026-05-10 (research Theme D); deferred same day.
-  Rationale: xianvec is open-source; the maintainers do not bear OFAC obligations for self-hosted users. A future hosted-instance plan (xianvec.io marketplace operator) needs OFAC screening at the marketplace contract event handler. Out of scope for the wallet rail.
+  Rationale: xvision is open-source; the maintainers do not bear OFAC obligations for self-hosted users. A future hosted-instance plan (xvision.io marketplace operator) needs OFAC screening at the marketplace contract event handler. Out of scope for the wallet rail.
 - **Public disclosure SLA commitment** — proposed 2026-05-10 (research Theme E); discarded same day.
   Rationale: open-source project; "use at your own risk" README warning is the appropriate disclosure. SLA commitments are inappropriate for unmaintained-by-a-corporation code.
 
@@ -1843,7 +1843,7 @@ In the original plan around line 3154, replace:
 ```markdown
 ## Phase 8 — Strategy Budgets Spreadsheet UI
 
-**Primary path:** `xianvec-dashboard` (Plan 2d). Standalone fallback if 2d slipped past 2026-06-01.
+**Primary path:** `xvision-dashboard` (Plan 2d). Standalone fallback if 2d slipped past 2026-06-01.
 ```
 
 with:
@@ -1851,9 +1851,9 @@ with:
 ```markdown
 ## Phase 8 — Agent Budgets Spreadsheet UI
 
-**Primary path:** standalone Axum crate `xianvec-budget-ui`, launched via `xvn budget serve`. Lift-into-`xianvec-dashboard` (Plan 2d) is a follow-up; not blocking the wallet plan ship.
+**Primary path:** standalone Axum crate `xvision-budget-ui`, launched via `xvn budget serve`. Lift-into-`xvision-dashboard` (Plan 2d) is a follow-up; not blocking the wallet plan ship.
 
-**Why default to standalone:** Plan 2d's `AppState` is intentionally minimal and adding DB + Orderly + ledger access to it forces dependencies on every other dashboard route. Building Phase 8 in its own crate keeps the surface focused. Lifting routes into `xianvec-dashboard` post-hackathon is a mechanical move-and-rewire.
+**Why default to standalone:** Plan 2d's `AppState` is intentionally minimal and adding DB + Orderly + ledger access to it forces dependencies on every other dashboard route. Building Phase 8 in its own crate keeps the surface focused. Lifting routes into `xvision-dashboard` post-hackathon is a mechanical move-and-rewire.
 
 **Local-bind constraint:** `xvn budget serve` MUST bind to 127.0.0.1 by default (review §12.4). Any networking exposure requires explicit `--bind` flag and a `X-XVN-OPERATOR-SECRET` header check.
 ```
@@ -1863,7 +1863,7 @@ with:
 The original Task 8.1 was "Verify Plan 2d's dashboard exists; if not, branch to fallback." Replace with:
 
 ```markdown
-### Task 8.1: Set up the standalone `xianvec-budget-ui` crate
+### Task 8.1: Set up the standalone `xvision-budget-ui` crate
 
 (Original Task 8.1's "verify 2d existence" check is removed; we always build standalone for v1.)
 ```
@@ -1873,7 +1873,7 @@ The original Task 8.1 was "Verify Plan 2d's dashboard exists; if not, branch to 
 The leverage-items plan (`2026-05-10-leverage-items.md`) introduces a runtime agent-rename feature. The Phase 8 routes should reserve `display_name` in their templates so adding the rename is a small follow-up:
 
 ```rust
-// In `xianvec-budget-ui/src/templates.rs`:
+// In `xvision-budget-ui/src/templates.rs`:
 pub struct BudgetRow {
     pub agent_id: String,
     pub display_name: Option<String>,  // populated by leverage-items plan
@@ -1886,7 +1886,7 @@ pub struct BudgetRow {
 
 ```bash
 git add -A
-git commit -m "refactor(plan): Phase 8 default to standalone xianvec-budget-ui (review §5.2)"
+git commit -m "refactor(plan): Phase 8 default to standalone xvision-budget-ui (review §5.2)"
 ```
 
 ---
@@ -1897,7 +1897,7 @@ git commit -m "refactor(plan): Phase 8 default to standalone xianvec-budget-ui (
 
 **Files:**
 - Modify: workspace `Cargo.toml`.
-- Modify: `crates/xianvec-cli/src/commands/audit.rs` (planned in original Task 4.9).
+- Modify: `crates/xvision-cli/src/commands/audit.rs` (planned in original Task 4.9).
 
 - [ ] **Step 1: Add `humantime = "2"` to `[workspace.dependencies]`**
 
@@ -1948,7 +1948,7 @@ git commit -m "perf(data): enable SQLite WAL + synchronous=NORMAL (review §3.8)
 ### Task H.3: Log redaction for trading key (review §7.6)
 
 **Files:**
-- Modify: `crates/xianvec-data/src/trading_keys.rs` (already created in Task B.1)
+- Modify: `crates/xvision-data/src/trading_keys.rs` (already created in Task B.1)
 
 - [ ] **Step 1: Newtype the secret-key bytes with a custom Debug**
 

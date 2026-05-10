@@ -990,5 +990,5 @@ click affordance via `Draft variant from this →`.
 ---
 
 *Document version: 0.2 · 2026-05-09. Lives at
-`/Users/edkennedy/Code/xianvec/docs/design/ui-elements.md`. Cross-references
+`/Users/edkennedy/Code/xvision/docs/design/ui-elements.md`. Cross-references
 listed in the header. v0.1 → v0.2 changelog at top.*

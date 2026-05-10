@@ -9,16 +9,16 @@
 > - **SLF3 — per-strategy NFT mint** (FOLLOWUPS.md). Once shipped, `agent_id` in this plan's ledger resolves to the NFT id; pre-mint we use a local ULID.
 > - **Plan 5 — Marketplace contract surface** (`docs/superpowers/specs/2026-05-08-smart-contract-surface-design.md`, deferred). This plan assumes that contract spec verbatim; the only shared dependency is the `protocolFeeRecipient` settlement wallet address.
 > - **Plan 2c — Durable scheduler** (`docs/superpowers/plans/2026-05-08-strategy-engine-2c-scheduler-live-exec.md`). The reconciliation job in Phase 7 ships as a scheduled job; if 2c is in flight, it lives in 2c's scheduler. Otherwise it ships as a standalone tokio task.
-> - **Plan 2d — Web dashboard** (`docs/superpowers/plans/2026-05-08-strategy-engine-2d-dashboard-wizard.md`). **Assumed complete by the time this plan executes** — Phase 8 ships the Strategy Budgets spreadsheet as a new route inside `crates/xianvec-dashboard`, alongside the existing Wizard / Inspector / Live cockpit archetypes. A standalone Axum server is documented in Phase 8 as a fallback if 2d slips, but the primary path is the dashboard route.
+> - **Plan 2d — Web dashboard** (`docs/superpowers/plans/2026-05-08-strategy-engine-2d-dashboard-wizard.md`). **Assumed complete by the time this plan executes** — Phase 8 ships the Strategy Budgets spreadsheet as a new route inside `crates/xvision-dashboard`, alongside the existing Wizard / Inspector / Live cockpit archetypes. A standalone Axum server is documented in Phase 8 as a fallback if 2d slips, but the primary path is the dashboard route.
 > **Hackathon deadline:** 2026-06-15. Phases 0–9 ship pre-deadline. Step 7 of the spec's migration (multi-tenant per-user keys) is **post-hackathon** and intentionally not in this plan.
 
 ---
 
-**Goal:** Make `xianvec` a non-custodial trading orchestrator: each strategy variant gets enforced per-strategy budgets, all activity is audited, the operator has kill switches and emergency-close, and a spreadsheet UI lets them edit budgets across strategies. After this plan ships: the operator funds their own Orderly account, xianvec signs orders with a trading-only Ed25519 key, every decision is logged, every cap is enforced race-free, and one CLI call (`xvn emergency-close --all`) returns the user's account to flat in seconds.
+**Goal:** Make `xvision` a non-custodial trading orchestrator: each strategy variant gets enforced per-strategy budgets, all activity is audited, the operator has kill switches and emergency-close, and a spreadsheet UI lets them edit budgets across strategies. After this plan ships: the operator funds their own Orderly account, xvision signs orders with a trading-only Ed25519 key, every decision is logged, every cap is enforced race-free, and one CLI call (`xvn emergency-close --all`) returns the user's account to flat in seconds.
 
-**Architecture:** Two rails (trading + marketplace) cleanly separated. The trading rail is fully non-custodial — xianvec holds a scoped Orderly trading key that cannot withdraw, an off-chain SQLite ledger for attribution, and a Risk Engine that enforces per-strategy hard caps × dynamic quotas via a reservation pattern. The marketplace rail is the only smart-contract surface; this plan does not implement those contracts (Plan 5) but reserves a `protocolFeeRecipient` settlement wallet. v1 ships in single-user mode (operator = the only user), with multi-tenant key issuance deferred.
+**Architecture:** Two rails (trading + marketplace) cleanly separated. The trading rail is fully non-custodial — xvision holds a scoped Orderly trading key that cannot withdraw, an off-chain SQLite ledger for attribution, and a Risk Engine that enforces per-strategy hard caps × dynamic quotas via a reservation pattern. The marketplace rail is the only smart-contract surface; this plan does not implement those contracts (Plan 5) but reserves a `protocolFeeRecipient` settlement wallet. v1 ships in single-user mode (operator = the only user), with multi-tenant key issuance deferred.
 
-**Tech Stack:** Rust 2021 (workspace at `Cargo.toml`). New deps: `aes-gcm = "0.10"` (encrypt trading key at rest), `ulid = "1"` (idempotency keys), `dialoguer = "0.11"` (CLI confirm prompts). Phase 8 reuses `xianvec-dashboard`'s existing `axum` + `askama` stack from Plan 2d — no new web deps in this plan. Existing: `sqlx` (sqlite+tokio), `clap`, `tokio`, `tracing`, `ed25519-dalek`, `reqwest`. SQLite event store for ledger + audit log + reservations + status tables; one connection pool per process.
+**Tech Stack:** Rust 2021 (workspace at `Cargo.toml`). New deps: `aes-gcm = "0.10"` (encrypt trading key at rest), `ulid = "1"` (idempotency keys), `dialoguer = "0.11"` (CLI confirm prompts). Phase 8 reuses `xvision-dashboard`'s existing `axum` + `askama` stack from Plan 2d — no new web deps in this plan. Existing: `sqlx` (sqlite+tokio), `clap`, `tokio`, `tracing`, `ed25519-dalek`, `reqwest`. SQLite event store for ledger + audit log + reservations + status tables; one connection pool per process.
 
 **Out of scope (deferred):**
 - Multi-tenant onboarding (Step 7 of spec migration) — single-user mode only in v1.
@@ -35,7 +35,7 @@
 
 ```
 crates/
-├── xianvec-data/
+├── xvision-data/
 │   ├── Cargo.toml                                # add: sqlx workspace dep, ulid, sha2
 │   └── src/
 │       ├── lib.rs                                # MODIFY: pub mod ledger; pub mod audit; pub mod migrations;
@@ -53,7 +53,7 @@ crates/
 │           ├── 20260510000006_policy_changes.sql
 │           └── 20260510000007_pending_reservations.sql
 │
-├── xianvec-risk/
+├── xvision-risk/
 │   ├── Cargo.toml                                # add: workspace deps already present
 │   └── src/
 │       ├── lib.rs                                # MODIFY: pub mod reservations; pub mod quota; pub mod aggregate_margin;
@@ -65,7 +65,7 @@ crates/
 │       │   ├── per_strategy.rs                   # NEW — per-strategy hard cap + scoped permissions
 │       │   └── aggregate_margin.rs               # NEW — cross-margin contagion guard
 │
-├── xianvec-execution/
+├── xvision-execution/
 │   ├── Cargo.toml                                # already has reqwest, ed25519-dalek; add ulid (workspace)
 │   └── src/
 │       ├── lib.rs                                # MODIFY: pub mod dispatcher; pub mod simulate; pub mod reconcile; pub mod approval;
@@ -75,13 +75,13 @@ crates/
 │       ├── reconcile.rs                          # NEW — periodic reconciliation against live Orderly state
 │       └── approval.rs                           # NEW — pending_approvals workflow + TTL handling
 │
-├── xianvec-identity/
+├── xvision-identity/
 │   ├── Cargo.toml                                # add: aes-gcm
 │   └── src/
 │       ├── lib.rs                                # MODIFY: pub mod trading_key;
 │       └── trading_key.rs                        # NEW — AES-256-GCM encrypted key storage; load/store/rotate
 │
-├── xianvec-cli/
+├── xvision-cli/
 │   ├── Cargo.toml                                # add: dialoguer
 │   └── src/
 │       ├── main.rs                               # MODIFY: register new subcommands
@@ -96,7 +96,7 @@ crates/
 │           ├── audit.rs                          # NEW — audit position/strategy/pending
 │           └── reconcile.rs                      # NEW — reconcile --user [--dry-run]
 │
-└── xianvec-dashboard/                           # FROM PLAN 2d (assumed to exist)
+└── xvision-dashboard/                           # FROM PLAN 2d (assumed to exist)
     └── src/
         ├── lib.rs                               # MODIFY: register the new /budgets route
         ├── routes/
@@ -106,8 +106,8 @@ crates/
             └── budgets_confirm_partial.html     # NEW — edit-confirm partial
 
 # Fallback only if Plan 2d hasn't shipped on time:
-#   crates/xianvec-budget-ui/  — standalone Axum server with the same routes/templates,
-#   launched via `xvn budget serve`. Lift the routes module into xianvec-dashboard once 2d lands.
+#   crates/xvision-budget-ui/  — standalone Axum server with the same routes/templates,
+#   launched via `xvn budget serve`. Lift the routes module into xvision-dashboard once 2d lands.
 
 probes/
 ├── m1-orderly-key-scope/                         # NEW — G1 validation probe
@@ -129,7 +129,7 @@ docs/
     └── 2026-05-10-blockchain-1-non-custodial-wallets-plan.md   # this plan
 
 # also: Cargo.toml (workspace) — add aes-gcm, ulid, dialoguer, axum, askama to [workspace.dependencies]
-#       Cargo.toml (workspace) — add xianvec-budget-ui to members + default-members
+#       Cargo.toml (workspace) — add xvision-budget-ui to members + default-members
 ```
 
 ---
@@ -260,7 +260,7 @@ async fn main() -> Result<()> {
     info!(pubkey = ?hex::encode(pubkey.to_bytes()), "generated test trading key");
 
     // Step 1: Register trading-only key via add_orderly_key.
-    // (Use the same EIP-712 sign-and-POST pattern as crates/xianvec-execution/src/orderly.rs:onboard_key.)
+    // (Use the same EIP-712 sign-and-POST pattern as crates/xvision-execution/src/orderly.rs:onboard_key.)
     let registered = register_trading_only_key(&evm_key, &account_id, &pubkey).await?;
     info!(registered_key_id = %registered, "key registered with trading-only scope");
 
@@ -290,7 +290,7 @@ async fn register_trading_only_key(
     pubkey: &VerifyingKey,
 ) -> Result<String> {
     // TODO during execution: copy the EIP-712 + add_orderly_key flow from
-    // crates/xianvec-execution/src/orderly.rs (existing onboarding helper).
+    // crates/xvision-execution/src/orderly.rs (existing onboarding helper).
     // Set permissions to ["trading"] only — explicitly omit "withdraw" and "transfer".
     todo!("EIP-712 + POST /v3/orderly_key — see existing orderly.rs sign_request fn")
 }
@@ -327,7 +327,7 @@ git commit -m "probe(m1): scaffold G1 trading-only key scope validation"
 
 - [ ] **Step 5: Implement the three TODO functions**
 
-Open `crates/xianvec-execution/src/orderly.rs` and locate the existing EIP-712 onboarding flow. Copy the request-signing helper into `m1`, then implement:
+Open `crates/xvision-execution/src/orderly.rs` and locate the existing EIP-712 onboarding flow. Copy the request-signing helper into `m1`, then implement:
 
 - `register_trading_only_key`: `POST /v3/orderly_key` with payload `{ "permissions": ["trading"], "expiration": <unix+90d>, "publicKey": <pubkey> }`. Sign EIP-712 with `evm_key`.
 - `attempt_withdrawal_with_trading_key`: `POST /v3/withdraw_request` with payload `{ "amount": "1", "token": "USDC", "chain_id": 5000 }`. Sign Ed25519 with `signing_key`.
@@ -336,8 +336,8 @@ Open `crates/xianvec-execution/src/orderly.rs` and locate the existing EIP-712 o
 - [ ] **Step 6: Run the probe**
 
 ```bash
-export ORDERLY_EVM_KEY=$(op read 'op://xianvec/orderly-test/private-key')
-export ORDERLY_ACCOUNT_ID=$(op read 'op://xianvec/orderly-test/account-id')
+export ORDERLY_EVM_KEY=$(op read 'op://xvision/orderly-test/private-key')
+export ORDERLY_ACCOUNT_ID=$(op read 'op://xvision/orderly-test/account-id')
 cargo run -p m1-orderly-key-scope
 ```
 
@@ -535,15 +535,15 @@ Build the persistence layer that the rest of the plan writes to. End of phase: S
 ### Task 1.1: SQLite migrations
 
 **Files:**
-- Create: `crates/xianvec-data/src/migrations/20260510000001_positions.sql`
-- Create: `crates/xianvec-data/src/migrations/20260510000002_funding_attributions.sql`
-- Create: `crates/xianvec-data/src/migrations/20260510000003_decisions.sql`
-- Create: `crates/xianvec-data/src/migrations/20260510000004_strategy_status.sql`
-- Create: `crates/xianvec-data/src/migrations/20260510000005_pending_approvals.sql`
-- Create: `crates/xianvec-data/src/migrations/20260510000006_policy_changes.sql`
-- Create: `crates/xianvec-data/src/migrations/20260510000007_pending_reservations.sql`
+- Create: `crates/xvision-data/src/migrations/20260510000001_positions.sql`
+- Create: `crates/xvision-data/src/migrations/20260510000002_funding_attributions.sql`
+- Create: `crates/xvision-data/src/migrations/20260510000003_decisions.sql`
+- Create: `crates/xvision-data/src/migrations/20260510000004_strategy_status.sql`
+- Create: `crates/xvision-data/src/migrations/20260510000005_pending_approvals.sql`
+- Create: `crates/xvision-data/src/migrations/20260510000006_policy_changes.sql`
+- Create: `crates/xvision-data/src/migrations/20260510000007_pending_reservations.sql`
 
-- [ ] **Step 1: Add sqlx + ulid + sha2 to xianvec-data Cargo.toml**
+- [ ] **Step 1: Add sqlx + ulid + sha2 to xvision-data Cargo.toml**
 
 ```toml
 [dependencies]
@@ -688,7 +688,7 @@ CREATE INDEX idx_reservations_strategy_active
 
 - [ ] **Step 9: Verify migrations apply**
 
-Add a smoke test in `crates/xianvec-data/tests/migrations_test.rs`:
+Add a smoke test in `crates/xvision-data/tests/migrations_test.rs`:
 
 ```rust
 use sqlx::sqlite::SqlitePoolOptions;
@@ -715,30 +715,30 @@ async fn migrations_apply_cleanly() {
 }
 ```
 
-Run: `cargo test -p xianvec-data migrations_apply_cleanly`
+Run: `cargo test -p xvision-data migrations_apply_cleanly`
 Expected: PASS
 
 - [ ] **Step 10: Commit**
 
 ```bash
-git add crates/xianvec-data/
+git add crates/xvision-data/
 git commit -m "feat(data): add SQLite migrations for ledger + audit log + status + reservations"
 ```
 
 ### Task 1.2: Audit log writer (append-only, content-hashed)
 
 **Files:**
-- Create: `crates/xianvec-data/src/audit.rs`
-- Modify: `crates/xianvec-data/src/lib.rs`
-- Test: `crates/xianvec-data/tests/audit_test.rs`
+- Create: `crates/xvision-data/src/audit.rs`
+- Modify: `crates/xvision-data/src/lib.rs`
+- Test: `crates/xvision-data/tests/audit_test.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-Create `crates/xianvec-data/tests/audit_test.rs`:
+Create `crates/xvision-data/tests/audit_test.rs`:
 
 ```rust
-use xianvec_data::audit::{AuditLog, Stage};
-use xianvec_data::audit::testkit::pool;
+use xvision_data::audit::{AuditLog, Stage};
+use xvision_data::audit::testkit::pool;
 
 #[tokio::test]
 async fn writes_decision_and_returns_id() {
@@ -782,12 +782,12 @@ async fn no_update_or_delete_methods_compile() {
 
 - [ ] **Step 2: Run, verify it fails (no module yet)**
 
-Run: `cargo test -p xianvec-data --test audit_test`
+Run: `cargo test -p xvision-data --test audit_test`
 Expected: COMPILE FAIL
 
 - [ ] **Step 3: Implement audit.rs**
 
-Create `crates/xianvec-data/src/audit.rs`:
+Create `crates/xvision-data/src/audit.rs`:
 
 ```rust
 use anyhow::Result;
@@ -913,11 +913,11 @@ pub mod testkit {
 }
 ```
 
-Add `hex = "0.4"` to xianvec-data deps (one-line cargo edit).
+Add `hex = "0.4"` to xvision-data deps (one-line cargo edit).
 
 - [ ] **Step 4: Wire module into lib.rs**
 
-Edit `crates/xianvec-data/src/lib.rs`, add:
+Edit `crates/xvision-data/src/lib.rs`, add:
 
 ```rust
 pub mod audit;
@@ -925,30 +925,30 @@ pub mod audit;
 
 - [ ] **Step 5: Run tests**
 
-Run: `cargo test -p xianvec-data --test audit_test`
+Run: `cargo test -p xvision-data --test audit_test`
 Expected: PASS (3 tests)
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/xianvec-data/
+git add crates/xvision-data/
 git commit -m "feat(data): append-only audit log writer with content hashing"
 ```
 
 ### Task 1.3: Ledger (positions + funding) read/write helpers
 
 **Files:**
-- Create: `crates/xianvec-data/src/ledger.rs`
-- Modify: `crates/xianvec-data/src/lib.rs`
-- Test: `crates/xianvec-data/tests/ledger_test.rs`
+- Create: `crates/xvision-data/src/ledger.rs`
+- Modify: `crates/xvision-data/src/lib.rs`
+- Test: `crates/xvision-data/tests/ledger_test.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-Create `crates/xianvec-data/tests/ledger_test.rs`:
+Create `crates/xvision-data/tests/ledger_test.rs`:
 
 ```rust
-use xianvec_data::audit::testkit::pool;
-use xianvec_data::ledger::{Ledger, Position, Side};
+use xvision_data::audit::testkit::pool;
+use xvision_data::ledger::{Ledger, Position, Side};
 
 #[tokio::test]
 async fn open_close_round_trip() {
@@ -996,12 +996,12 @@ async fn in_flight_notional_sums_open_positions_only() {
 
 - [ ] **Step 2: Run, verify it fails**
 
-Run: `cargo test -p xianvec-data --test ledger_test`
+Run: `cargo test -p xvision-data --test ledger_test`
 Expected: COMPILE FAIL
 
 - [ ] **Step 3: Implement ledger.rs**
 
-Create `crates/xianvec-data/src/ledger.rs`:
+Create `crates/xvision-data/src/ledger.rs`:
 
 ```rust
 use anyhow::Result;
@@ -1125,28 +1125,28 @@ impl Ledger {
 
 - [ ] **Step 4: Wire and test**
 
-Edit `crates/xianvec-data/src/lib.rs`, add `pub mod ledger;`.
+Edit `crates/xvision-data/src/lib.rs`, add `pub mod ledger;`.
 
-Run: `cargo test -p xianvec-data --test ledger_test`
+Run: `cargo test -p xvision-data --test ledger_test`
 Expected: PASS (2 tests)
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-data/
+git add crates/xvision-data/
 git commit -m "feat(data): position ledger with in-flight notional + PnL window helpers"
 ```
 
 ### Task 1.4: Strategy status, policy_changes, pending_approvals, pending_reservations modules
 
 **Files:**
-- Create: `crates/xianvec-data/src/status.rs`, `policy.rs`, `pending.rs`
-- Modify: `crates/xianvec-data/src/lib.rs`
-- Test: `crates/xianvec-data/tests/status_test.rs`, `policy_test.rs`, `pending_test.rs`
+- Create: `crates/xvision-data/src/status.rs`, `policy.rs`, `pending.rs`
+- Modify: `crates/xvision-data/src/lib.rs`
+- Test: `crates/xvision-data/tests/status_test.rs`, `policy_test.rs`, `pending_test.rs`
 
 - [ ] **Step 1: Write status module**
 
-Create `crates/xianvec-data/src/status.rs`:
+Create `crates/xvision-data/src/status.rs`:
 
 ```rust
 use anyhow::Result;
@@ -1210,11 +1210,11 @@ impl StatusStore {
 }
 ```
 
-Test in `crates/xianvec-data/tests/status_test.rs`:
+Test in `crates/xvision-data/tests/status_test.rs`:
 
 ```rust
-use xianvec_data::audit::testkit::pool;
-use xianvec_data::status::{State, StatusStore};
+use xvision_data::audit::testkit::pool;
+use xvision_data::status::{State, StatusStore};
 
 #[tokio::test]
 async fn lifecycle_active_halted_unhalted() {
@@ -1233,7 +1233,7 @@ async fn lifecycle_active_halted_unhalted() {
 
 - [ ] **Step 2: Write policy module**
 
-Create `crates/xianvec-data/src/policy.rs`:
+Create `crates/xvision-data/src/policy.rs`:
 
 ```rust
 use anyhow::Result;
@@ -1272,17 +1272,17 @@ impl PolicyJournal {
 }
 ```
 
-Test minimally in `crates/xianvec-data/tests/policy_test.rs` (one round-trip).
+Test minimally in `crates/xvision-data/tests/policy_test.rs` (one round-trip).
 
 - [ ] **Step 3: Write pending module (approvals + reservations)**
 
-Create `crates/xianvec-data/src/pending.rs` covering both `pending_approvals` and `pending_reservations` with: insert, list-not-expired, mark-resolved (approvals), and reap-expired (reservations). Use the same `Ulid::new()` + `Utc::now().timestamp_millis()` patterns. Tests verify TTL semantics.
+Create `crates/xvision-data/src/pending.rs` covering both `pending_approvals` and `pending_reservations` with: insert, list-not-expired, mark-resolved (approvals), and reap-expired (reservations). Use the same `Ulid::new()` + `Utc::now().timestamp_millis()` patterns. Tests verify TTL semantics.
 
 (Implementation: ~120 lines; mirror status.rs and policy.rs structure. Functions: `request_approval`, `list_pending_approvals`, `resolve_approval`, `reserve`, `list_active_reservations`, `release_reservation`, `reap_expired_reservations`.)
 
 - [ ] **Step 4: Wire all three modules into lib.rs**
 
-Edit `crates/xianvec-data/src/lib.rs`:
+Edit `crates/xvision-data/src/lib.rs`:
 
 ```rust
 pub mod audit;
@@ -1292,31 +1292,31 @@ pub mod policy;
 pub mod pending;
 ```
 
-- [ ] **Step 5: Run all xianvec-data tests**
+- [ ] **Step 5: Run all xvision-data tests**
 
-Run: `cargo test -p xianvec-data`
+Run: `cargo test -p xvision-data`
 Expected: PASS (all tests)
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/xianvec-data/
+git add crates/xvision-data/
 git commit -m "feat(data): strategy status, policy journal, pending approvals + reservations"
 ```
 
 ### Task 1.5: Integrate ledger into existing Orderly executor (tag every trade)
 
 **Files:**
-- Modify: `crates/xianvec-execution/src/orderly.rs`
-- Test: `crates/xianvec-execution/tests/orderly_ledger_integration.rs`
+- Modify: `crates/xvision-execution/src/orderly.rs`
+- Test: `crates/xvision-execution/tests/orderly_ledger_integration.rs`
 
 - [ ] **Step 1: Identify the existing trade-emitting call site**
 
-Read `crates/xianvec-execution/src/orderly.rs` and locate the function that submits an order to Orderly. (Likely named `submit_order` or similar; uses `client_order_id = cycle_id.to_string()` per the survey.)
+Read `crates/xvision-execution/src/orderly.rs` and locate the function that submits an order to Orderly. (Likely named `submit_order` or similar; uses `client_order_id = cycle_id.to_string()` per the survey.)
 
 - [ ] **Step 2: Pass agent_id + ledger into the executor**
 
-Modify the executor's constructor to accept `Arc<xianvec_data::ledger::Ledger>` and `Arc<xianvec_data::audit::AuditLog>`. Modify `submit_order` to take an explicit `agent_id: &str` parameter.
+Modify the executor's constructor to accept `Arc<xvision_data::ledger::Ledger>` and `Arc<xvision_data::audit::AuditLog>`. Modify `submit_order` to take an explicit `agent_id: &str` parameter.
 
 After successful submission, call `ledger.open_position(...)` and `audit.write(Stage::Submit, ...)`. After fill confirmation, call `ledger.record_fill(...)` and `audit.write(Stage::Fill, ...)`.
 
@@ -1327,7 +1327,7 @@ After successful submission, call `ledger.open_position(...)` and `audit.write(S
 - [ ] **Step 4: Integration test**
 
 ```rust
-// crates/xianvec-execution/tests/orderly_ledger_integration.rs
+// crates/xvision-execution/tests/orderly_ledger_integration.rs
 // Mock the Orderly HTTP layer; assert that on submit_order success,
 // a positions row appears with the supplied agent_id and a decisions
 // row appears with stage=submit.
@@ -1335,13 +1335,13 @@ After successful submission, call `ledger.open_position(...)` and `audit.write(S
 
 - [ ] **Step 5: Run, verify pass**
 
-Run: `cargo test -p xianvec-execution --test orderly_ledger_integration`
+Run: `cargo test -p xvision-execution --test orderly_ledger_integration`
 Expected: PASS
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/xianvec-execution/
+git add crates/xvision-execution/
 git commit -m "feat(execution): tag every Orderly order with agent_id; persist to ledger + audit"
 ```
 
@@ -1349,19 +1349,19 @@ git commit -m "feat(execution): tag every Orderly order with agent_id; persist t
 
 ## Phase 2 — Per-Strategy Rules + Reservations
 
-End of phase: `xianvec-risk` has per-strategy rules wired in, the Risk Engine evaluates them in the existing `RiskDecision` flow, and a reservation pattern prevents two concurrent trades from collectively exceeding a strategy's hard cap.
+End of phase: `xvision-risk` has per-strategy rules wired in, the Risk Engine evaluates them in the existing `RiskDecision` flow, and a reservation pattern prevents two concurrent trades from collectively exceeding a strategy's hard cap.
 
 ### Task 2.1: Per-strategy config schema
 
 **Files:**
-- Modify: `crates/xianvec-risk/src/config.rs`
-- Test: `crates/xianvec-risk/tests/config_test.rs`
+- Modify: `crates/xvision-risk/src/config.rs`
+- Test: `crates/xvision-risk/tests/config_test.rs`
 
 - [ ] **Step 1: Failing test for TOML round-trip**
 
 ```rust
-// crates/xianvec-risk/tests/config_test.rs
-use xianvec_risk::config::{StrategyConfig, parse_strategies_toml};
+// crates/xvision-risk/tests/config_test.rs
+use xvision_risk::config::{StrategyConfig, parse_strategies_toml};
 
 #[test]
 fn parses_full_strategy_config() {
@@ -1389,7 +1389,7 @@ fn parses_full_strategy_config() {
 
 - [ ] **Step 2: Implement `StrategyConfig`**
 
-Edit `crates/xianvec-risk/src/config.rs`, add:
+Edit `crates/xvision-risk/src/config.rs`, add:
 
 ```rust
 use serde::{Deserialize, Serialize};
@@ -1435,29 +1435,29 @@ pub fn parse_strategies_toml(s: &str) -> anyhow::Result<StrategyConfigSet> {
 
 - [ ] **Step 3: Run test, verify pass**
 
-Run: `cargo test -p xianvec-risk --test config_test`
+Run: `cargo test -p xvision-risk --test config_test`
 Expected: PASS
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/xianvec-risk/
+git add crates/xvision-risk/
 git commit -m "feat(risk): per-strategy config schema (hard caps + scoped permissions)"
 ```
 
 ### Task 2.2: Per-strategy rules
 
 **Files:**
-- Create: `crates/xianvec-risk/src/rules/per_strategy.rs`
-- Modify: `crates/xianvec-risk/src/rules/mod.rs`
-- Test: `crates/xianvec-risk/tests/per_strategy_rules_test.rs`
+- Create: `crates/xvision-risk/src/rules/per_strategy.rs`
+- Modify: `crates/xvision-risk/src/rules/mod.rs`
+- Test: `crates/xvision-risk/tests/per_strategy_rules_test.rs`
 
 - [ ] **Step 1: Write the failing tests covering each rule**
 
 ```rust
-// crates/xianvec-risk/tests/per_strategy_rules_test.rs
-use xianvec_risk::config::StrategyConfig;
-use xianvec_risk::rules::per_strategy::{PerStrategyEvaluator, EvaluationInput, Verdict};
+// crates/xvision-risk/tests/per_strategy_rules_test.rs
+use xvision_risk::config::StrategyConfig;
+use xvision_risk::rules::per_strategy::{PerStrategyEvaluator, EvaluationInput, Verdict};
 
 fn cfg() -> StrategyConfig {
     StrategyConfig {
@@ -1502,7 +1502,7 @@ fn rejects_disallowed_asset() {
 
 - [ ] **Step 2: Implement evaluator**
 
-Create `crates/xianvec-risk/src/rules/per_strategy.rs`:
+Create `crates/xvision-risk/src/rules/per_strategy.rs`:
 
 ```rust
 use crate::config::StrategyConfig;
@@ -1605,31 +1605,31 @@ pub mod per_strategy;
 
 - [ ] **Step 4: Run, verify all 11 tests pass**
 
-Run: `cargo test -p xianvec-risk --test per_strategy_rules_test`
+Run: `cargo test -p xvision-risk --test per_strategy_rules_test`
 Expected: PASS (11 tests)
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-risk/
+git add crates/xvision-risk/
 git commit -m "feat(risk): per-strategy rule evaluator with full scoped-permissions matrix"
 ```
 
 ### Task 2.3: Reservation table + write-locking
 
 **Files:**
-- Create: `crates/xianvec-risk/src/reservations.rs`
-- Modify: `crates/xianvec-risk/src/lib.rs`
-- Test: `crates/xianvec-risk/tests/reservations_test.rs`
+- Create: `crates/xvision-risk/src/reservations.rs`
+- Modify: `crates/xvision-risk/src/lib.rs`
+- Test: `crates/xvision-risk/tests/reservations_test.rs`
 
 - [ ] **Step 1: Failing concurrency test**
 
 ```rust
-// crates/xianvec-risk/tests/reservations_test.rs
+// crates/xvision-risk/tests/reservations_test.rs
 use std::sync::Arc;
-use xianvec_data::audit::testkit::pool;
-use xianvec_data::ledger::Ledger;
-use xianvec_risk::reservations::ReservationManager;
+use xvision_data::audit::testkit::pool;
+use xvision_data::ledger::Ledger;
+use xvision_risk::reservations::ReservationManager;
 
 #[tokio::test]
 async fn concurrent_reservations_respect_cap() {
@@ -1665,7 +1665,7 @@ async fn expired_reservations_are_reaped() {
 - [ ] **Step 2: Implement ReservationManager**
 
 ```rust
-// crates/xianvec-risk/src/reservations.rs
+// crates/xvision-risk/src/reservations.rs
 use anyhow::{anyhow, Result};
 use chrono::Utc;
 use sqlx::SqlitePool;
@@ -1673,7 +1673,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 use ulid::Ulid;
-use xianvec_data::ledger::Ledger;
+use xvision_data::ledger::Ledger;
 
 const DEFAULT_TTL: Duration = Duration::from_secs(30);
 
@@ -1753,15 +1753,15 @@ impl ReservationManager {
 
 - [ ] **Step 3: Wire and test**
 
-Edit `crates/xianvec-risk/src/lib.rs`, add `pub mod reservations;`.
+Edit `crates/xvision-risk/src/lib.rs`, add `pub mod reservations;`.
 
-Run: `cargo test -p xianvec-risk --test reservations_test`
+Run: `cargo test -p xvision-risk --test reservations_test`
 Expected: PASS (2 tests)
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/xianvec-risk/
+git add crates/xvision-risk/
 git commit -m "feat(risk): race-free reservation pattern for per-strategy cap enforcement"
 ```
 
@@ -1774,15 +1774,15 @@ End of phase: every order goes through `OrderDispatcher`, which gates → reserv
 ### Task 3.1: Pre-trade simulation wrapper
 
 **Files:**
-- Create: `crates/xianvec-execution/src/simulate.rs`
-- Modify: `crates/xianvec-execution/src/orderly.rs` (expose order-info call)
-- Test: `crates/xianvec-execution/tests/simulate_test.rs`
+- Create: `crates/xvision-execution/src/simulate.rs`
+- Modify: `crates/xvision-execution/src/orderly.rs` (expose order-info call)
+- Test: `crates/xvision-execution/tests/simulate_test.rs`
 
 - [ ] **Step 1: Failing test using a mock orderbook fetcher**
 
 ```rust
-// crates/xianvec-execution/tests/simulate_test.rs
-use xianvec_execution::simulate::{Simulator, SimulationResult, OrderbookSnapshot};
+// crates/xvision-execution/tests/simulate_test.rs
+use xvision_execution::simulate::{Simulator, SimulationResult, OrderbookSnapshot};
 
 #[tokio::test]
 async fn estimates_slippage_against_static_book() {
@@ -1803,7 +1803,7 @@ async fn estimates_slippage_against_static_book() {
 - [ ] **Step 2: Implement `Simulator`**
 
 ```rust
-// crates/xianvec-execution/src/simulate.rs
+// crates/xvision-execution/src/simulate.rs
 use anyhow::Result;
 
 #[derive(Debug, Clone)]
@@ -1863,27 +1863,27 @@ impl Simulator {
 
 - [ ] **Step 4: Run test, verify pass**
 
-Run: `cargo test -p xianvec-execution --test simulate_test`
+Run: `cargo test -p xvision-execution --test simulate_test`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-execution/
+git add crates/xvision-execution/
 git commit -m "feat(execution): pre-trade simulation against orderbook snapshots"
 ```
 
 ### Task 3.2: OrderDispatcher
 
 **Files:**
-- Create: `crates/xianvec-execution/src/dispatcher.rs`
-- Modify: `crates/xianvec-execution/src/lib.rs`
-- Test: `crates/xianvec-execution/tests/dispatcher_test.rs`
+- Create: `crates/xvision-execution/src/dispatcher.rs`
+- Modify: `crates/xvision-execution/src/lib.rs`
+- Test: `crates/xvision-execution/tests/dispatcher_test.rs`
 
 - [ ] **Step 1: Failing tests covering the gate→reserve→simulate→sign→submit→audit pipeline**
 
 ```rust
-// crates/xianvec-execution/tests/dispatcher_test.rs
+// crates/xvision-execution/tests/dispatcher_test.rs
 // Three tests:
 // 1. happy path: dispatch → position row exists → 5 audit rows (emit, risk_eval, simulate, sign, submit)
 // 2. risk veto: dispatch → no position row → 2 audit rows (emit, risk_eval)
@@ -1893,16 +1893,16 @@ git commit -m "feat(execution): pre-trade simulation against orderbook snapshots
 - [ ] **Step 2: Implement `OrderDispatcher`**
 
 ```rust
-// crates/xianvec-execution/src/dispatcher.rs
+// crates/xvision-execution/src/dispatcher.rs
 use anyhow::Result;
 use std::sync::Arc;
-use xianvec_core::trading::TraderDecision;
-use xianvec_data::audit::{AuditLog, Stage};
-use xianvec_data::ledger::{Ledger, Position, Side};
-use xianvec_data::status::StatusStore;
-use xianvec_risk::config::StrategyConfig;
-use xianvec_risk::reservations::ReservationManager;
-use xianvec_risk::rules::per_strategy::{EvaluationInput, PerStrategyEvaluator, Verdict};
+use xvision_core::trading::TraderDecision;
+use xvision_data::audit::{AuditLog, Stage};
+use xvision_data::ledger::{Ledger, Position, Side};
+use xvision_data::status::StatusStore;
+use xvision_risk::config::StrategyConfig;
+use xvision_risk::reservations::ReservationManager;
+use xvision_risk::rules::per_strategy::{EvaluationInput, PerStrategyEvaluator, Verdict};
 use crate::simulate::Simulator;
 
 pub struct OrderDispatcher {
@@ -2038,19 +2038,19 @@ impl OrderDispatcher {
 
 - [ ] **Step 3: Add helper methods on `TraderDecision`**
 
-Modify `crates/xianvec-core/src/trading.rs` to add `pub fn notional_usdc(&self) -> f64`, `pub fn asset(&self) -> &str`, `pub fn side_str(&self) -> &'static str`. (Mechanical; ~15 lines.)
+Modify `crates/xvision-core/src/trading.rs` to add `pub fn notional_usdc(&self) -> f64`, `pub fn asset(&self) -> &str`, `pub fn side_str(&self) -> &'static str`. (Mechanical; ~15 lines.)
 
 - [ ] **Step 4: Wire module + run tests**
 
-Edit `crates/xianvec-execution/src/lib.rs`, add `pub mod dispatcher; pub mod simulate;`.
+Edit `crates/xvision-execution/src/lib.rs`, add `pub mod dispatcher; pub mod simulate;`.
 
-Run: `cargo test -p xianvec-execution --test dispatcher_test`
+Run: `cargo test -p xvision-execution --test dispatcher_test`
 Expected: PASS (3 tests; the approval-required path is gated behind `unimplemented!` for now and is exercised in Phase 4)
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-execution/ crates/xianvec-core/
+git add crates/xvision-execution/ crates/xvision-core/
 git commit -m "feat(execution): OrderDispatcher with full gate→reserve→simulate→sign→submit→audit pipeline"
 ```
 
@@ -2062,7 +2062,7 @@ git commit -m "feat(execution): OrderDispatcher with full gate→reserve→simul
 - [ ] **Step 1: Identify call sites**
 
 Run: `grep -rn "OrderlyExecutor\|submit_order" crates/ --include='*.rs'`
-List the call sites. Likely in `crates/xianvec-engine/`, `crates/xianvec-cli/src/commands/fire_trade.rs`, and the live-deploy path if Plan 2c has shipped.
+List the call sites. Likely in `crates/xvision-engine/`, `crates/xvision-cli/src/commands/fire_trade.rs`, and the live-deploy path if Plan 2c has shipped.
 
 - [ ] **Step 2: Replace direct executor calls with `OrderDispatcher::dispatch`**
 
@@ -2089,15 +2089,15 @@ End of phase: every CLI command listed in spec §3.9 exists, is registered with 
 ### Task 4.1: Auto-trigger logic for strategy halt
 
 **Files:**
-- Create: `crates/xianvec-risk/src/auto_halt.rs`
-- Modify: `crates/xianvec-risk/src/lib.rs`
-- Test: `crates/xianvec-risk/tests/auto_halt_test.rs`
+- Create: `crates/xvision-risk/src/auto_halt.rs`
+- Modify: `crates/xvision-risk/src/lib.rs`
+- Test: `crates/xvision-risk/tests/auto_halt_test.rs`
 
 - [ ] **Step 1: Failing test for consecutive-losses trigger**
 
 ```rust
-// crates/xianvec-risk/tests/auto_halt_test.rs
-use xianvec_risk::auto_halt::{AutoHalter, AutoHaltConfig};
+// crates/xvision-risk/tests/auto_halt_test.rs
+use xvision_risk::auto_halt::{AutoHalter, AutoHaltConfig};
 
 #[test]
 fn halts_after_n_consecutive_losses() {
@@ -2121,7 +2121,7 @@ fn does_not_halt_with_intermittent_wins() {
 - [ ] **Step 2: Implement `AutoHalter`**
 
 ```rust
-// crates/xianvec-risk/src/auto_halt.rs
+// crates/xvision-risk/src/auto_halt.rs
 #[derive(Debug, Clone)]
 pub struct AutoHaltConfig {
     pub consecutive_losses_kill: u32,
@@ -2159,9 +2159,9 @@ impl AutoHalter {
 
 - [ ] **Step 3: Wire + test**
 
-Edit `crates/xianvec-risk/src/lib.rs`, add `pub mod auto_halt;`.
+Edit `crates/xvision-risk/src/lib.rs`, add `pub mod auto_halt;`.
 
-Run: `cargo test -p xianvec-risk --test auto_halt_test`
+Run: `cargo test -p xvision-risk --test auto_halt_test`
 Expected: PASS
 
 - [ ] **Step 4: Hook auto-halter into close-position flow**
@@ -2171,20 +2171,20 @@ Modify the dispatcher's close path (Phase 3 Task 3.2 `OrderDispatcher` — exten
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-risk/ crates/xianvec-execution/
+git add crates/xvision-risk/ crates/xvision-execution/
 git commit -m "feat(risk): auto-halt on consecutive losses + sharpe floor"
 ```
 
 ### Task 4.2: `xvn kill` CLI command
 
 **Files:**
-- Create: `crates/xianvec-cli/src/commands/kill.rs`
-- Modify: `crates/xianvec-cli/src/main.rs`, `crates/xianvec-cli/src/commands/mod.rs`, `crates/xianvec-cli/Cargo.toml`
-- Test: `crates/xianvec-cli/tests/kill_cli_test.rs`
+- Create: `crates/xvision-cli/src/commands/kill.rs`
+- Modify: `crates/xvision-cli/src/main.rs`, `crates/xvision-cli/src/commands/mod.rs`, `crates/xvision-cli/Cargo.toml`
+- Test: `crates/xvision-cli/tests/kill_cli_test.rs`
 
 - [ ] **Step 1: Add dialoguer dep**
 
-Edit `crates/xianvec-cli/Cargo.toml`:
+Edit `crates/xvision-cli/Cargo.toml`:
 
 ```toml
 dialoguer = { workspace = true }
@@ -2193,7 +2193,7 @@ dialoguer = { workspace = true }
 - [ ] **Step 2: Failing test — `xvn kill --strategy <id>` halts the strategy**
 
 ```rust
-// crates/xianvec-cli/tests/kill_cli_test.rs
+// crates/xvision-cli/tests/kill_cli_test.rs
 use std::process::Command;
 
 #[test]
@@ -2202,7 +2202,7 @@ fn kill_strategy_sets_halted_manual() {
     let tmp = tempfile::tempdir().unwrap();
     let db = tmp.path().join("xvn.db");
 
-    // Seed the DB by running migrations (call into xianvec-data testkit, or
+    // Seed the DB by running migrations (call into xvision-data testkit, or
     // shell out to a helper).
     // ... (omitted; mechanical) ...
 
@@ -2219,7 +2219,7 @@ fn kill_strategy_sets_halted_manual() {
 - [ ] **Step 3: Implement the command**
 
 ```rust
-// crates/xianvec-cli/src/commands/kill.rs
+// crates/xvision-cli/src/commands/kill.rs
 use anyhow::{anyhow, Result};
 use clap::Args;
 use dialoguer::Confirm;
@@ -2286,7 +2286,7 @@ pub async fn run(args: KillArgs) -> Result<()> {
 - [ ] **Step 4: Register subcommand in main.rs**
 
 ```rust
-// crates/xianvec-cli/src/main.rs
+// crates/xvision-cli/src/main.rs
 #[derive(clap::Subcommand)]
 enum Cmd {
     // ...existing...
@@ -2303,20 +2303,20 @@ match cli.command {
 
 - [ ] **Step 5: Run, verify pass**
 
-Run: `cargo test -p xianvec-cli kill_cli`
+Run: `cargo test -p xvision-cli kill_cli`
 Expected: PASS
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/xianvec-cli/
+git add crates/xvision-cli/
 git commit -m "feat(cli): xvn kill --strategy/--user/--all"
 ```
 
 ### Task 4.3: `xvn unhalt` CLI command
 
 **Files:**
-- Create: `crates/xianvec-cli/src/commands/unhalt.rs`
+- Create: `crates/xvision-cli/src/commands/unhalt.rs`
 
 - [ ] **Step 1: Implement** (mirror `kill.rs`; only `--strategy` target; always prompts unless `--yes` + env var; calls `ctx.status.unhalt(...)`)
 
@@ -2329,13 +2329,13 @@ git commit -m "feat(cli): xvn unhalt --strategy"
 ### Task 4.4: `xvn emergency-close` CLI command
 
 **Files:**
-- Create: `crates/xianvec-cli/src/commands/emergency_close.rs`
-- Modify: `crates/xianvec-execution/src/orderly.rs` (add `cancel_all_orders` and `market_close_all_positions` helpers)
-- Test: `crates/xianvec-execution/tests/emergency_close_test.rs`
+- Create: `crates/xvision-cli/src/commands/emergency_close.rs`
+- Modify: `crates/xvision-execution/src/orderly.rs` (add `cancel_all_orders` and `market_close_all_positions` helpers)
+- Test: `crates/xvision-execution/tests/emergency_close_test.rs`
 
 - [ ] **Step 1: Implement Orderly helpers**
 
-In `crates/xianvec-execution/src/orderly.rs`:
+In `crates/xvision-execution/src/orderly.rs`:
 
 ```rust
 impl OrderlyExecutor {
@@ -2360,7 +2360,7 @@ impl OrderlyExecutor {
 - [ ] **Step 2: Implement the CLI command**
 
 ```rust
-// crates/xianvec-cli/src/commands/emergency_close.rs
+// crates/xvision-cli/src/commands/emergency_close.rs
 // Same arg shape as kill.rs (--strategy/--user/--all); always prompts unless --yes + env.
 // Body:
 //   1. Confirm with strong wording: "This will MARKET-CLOSE all positions matching the selector.
@@ -2384,14 +2384,14 @@ git commit -m "feat(execution+cli): xvn emergency-close cancels all open orders 
 ### Task 4.5: Approval gate workflow
 
 **Files:**
-- Create: `crates/xianvec-execution/src/approval.rs`
-- Modify: `crates/xianvec-execution/src/dispatcher.rs` (replace `unimplemented!` in `request_approval`)
-- Test: `crates/xianvec-execution/tests/approval_test.rs`
+- Create: `crates/xvision-execution/src/approval.rs`
+- Modify: `crates/xvision-execution/src/dispatcher.rs` (replace `unimplemented!` in `request_approval`)
+- Test: `crates/xvision-execution/tests/approval_test.rs`
 
 - [ ] **Step 1: Failing test — pending approval expires after TTL**
 
 ```rust
-// crates/xianvec-execution/tests/approval_test.rs
+// crates/xvision-execution/tests/approval_test.rs
 #[tokio::test]
 async fn approval_request_creates_pending_row_and_expires() {
     // Submit decision over threshold → expect AwaitingApproval.
@@ -2403,7 +2403,7 @@ async fn approval_request_creates_pending_row_and_expires() {
 - [ ] **Step 2: Implement `ApprovalWorkflow`**
 
 ```rust
-// crates/xianvec-execution/src/approval.rs
+// crates/xvision-execution/src/approval.rs
 use anyhow::Result;
 use chrono::Utc;
 use sqlx::SqlitePool;
@@ -2499,15 +2499,15 @@ self.approval_workflow.request(user_id, agent_id, &decision_value, notional).awa
 - [ ] **Step 4: Run, verify, commit**
 
 ```bash
-cargo test -p xianvec-execution --test approval_test
-git add crates/xianvec-execution/
+cargo test -p xvision-execution --test approval_test
+git add crates/xvision-execution/
 git commit -m "feat(execution): approval gate workflow with TTL expiry"
 ```
 
 ### Task 4.6: `xvn approve` CLI command
 
 **Files:**
-- Create: `crates/xianvec-cli/src/commands/approve.rs`
+- Create: `crates/xvision-cli/src/commands/approve.rs`
 
 - [ ] **Step 1: Subcommands — list, <id> (approve), <id> --reject**
 
@@ -2557,14 +2557,14 @@ git commit -m "feat(cli): xvn approve list/<id>/--reject"
 ### Task 4.7: `xvn key` CLI commands
 
 **Files:**
-- Create: `crates/xianvec-cli/src/commands/key.rs`
-- Create: `crates/xianvec-identity/src/trading_key.rs`
-- Modify: `crates/xianvec-identity/Cargo.toml` (add `aes-gcm`)
+- Create: `crates/xvision-cli/src/commands/key.rs`
+- Create: `crates/xvision-identity/src/trading_key.rs`
+- Modify: `crates/xvision-identity/Cargo.toml` (add `aes-gcm`)
 
 - [ ] **Step 1: Implement trading_key.rs**
 
 ```rust
-// crates/xianvec-identity/src/trading_key.rs
+// crates/xvision-identity/src/trading_key.rs
 use aes_gcm::{
     aead::{Aead, KeyInit, OsRng, AeadCore},
     Aes256Gcm, Key, Nonce,
@@ -2598,15 +2598,15 @@ pub fn decrypt(blob: &str) -> Result<Vec<u8>> {
 }
 ```
 
-Test in `crates/xianvec-identity/tests/trading_key_test.rs`:
+Test in `crates/xvision-identity/tests/trading_key_test.rs`:
 
 ```rust
 #[test]
 fn round_trip() {
     std::env::set_var("CREDENTIAL_SECRET", "00".repeat(32));
-    let blob = xianvec_identity::trading_key::encrypt(b"hello world").unwrap();
+    let blob = xvision_identity::trading_key::encrypt(b"hello world").unwrap();
     assert_ne!(blob, "hello world");
-    let dec = xianvec_identity::trading_key::decrypt(&blob).unwrap();
+    let dec = xvision_identity::trading_key::decrypt(&blob).unwrap();
     assert_eq!(dec, b"hello world");
 }
 ```
@@ -2614,7 +2614,7 @@ fn round_trip() {
 - [ ] **Step 2: Implement `xvn key` subcommands**
 
 ```rust
-// crates/xianvec-cli/src/commands/key.rs
+// crates/xvision-cli/src/commands/key.rs
 #[derive(clap::Subcommand, Debug)]
 pub enum KeyCmd {
     /// Generate + register a new trading key for the operator user (v1: single user).
@@ -2669,7 +2669,7 @@ async fn issue(user: String, expires_in_days: u32) -> Result<()> {
     // ... prompt user to confirm registration completed ...
 
     // Encrypt + store.
-    let encrypted = xianvec_identity::trading_key::encrypt(signing_key.as_bytes())?;
+    let encrypted = xvision_identity::trading_key::encrypt(signing_key.as_bytes())?;
     let ctx = crate::context::AppContext::from_env().await?;
     ctx.store_trading_key(&user, &pubhex, &encrypted, expires_in_days).await?;
     println!("✓ Stored trading key for {user}.");
@@ -2709,7 +2709,7 @@ git commit -m "feat(identity+cli): xvn key issue/list/rotate/revoke with phishin
 ### Task 4.8: `xvn budget` CLI commands
 
 **Files:**
-- Create: `crates/xianvec-cli/src/commands/budget.rs`
+- Create: `crates/xvision-cli/src/commands/budget.rs`
 
 - [ ] **Step 1: Subcommands**
 
@@ -2745,7 +2745,7 @@ pub enum BudgetCmd {
 
 - [ ] **Step 4: Implement `BulkImport`** — parse TOML, diff against current config, prompt-confirm aggregate, apply.
 
-- [ ] **Step 5: Implement `Serve`** — `xianvec_budget_ui::serve(addr).await` (calls into Phase 8 crate; until that crate exists, returns "Phase 8 UI not built yet — run after Phase 8 ships").
+- [ ] **Step 5: Implement `Serve`** — `xvision_budget_ui::serve(addr).await` (calls into Phase 8 crate; until that crate exists, returns "Phase 8 UI not built yet — run after Phase 8 ships").
 
 - [ ] **Step 6: Test, register, commit**
 
@@ -2756,7 +2756,7 @@ git commit -m "feat(cli): xvn budget show/set/bulk-import/serve"
 ### Task 4.9: `xvn audit` CLI commands
 
 **Files:**
-- Create: `crates/xianvec-cli/src/commands/audit.rs`
+- Create: `crates/xvision-cli/src/commands/audit.rs`
 
 - [ ] **Step 1: Subcommands**
 
@@ -2783,25 +2783,25 @@ git commit -m "feat(cli): xvn audit position/strategy/pending"
 ### Task 4.10: `xvn reconcile` CLI command + AppContext
 
 **Files:**
-- Create: `crates/xianvec-cli/src/context.rs` (shared AppContext used by all commands)
-- Create: `crates/xianvec-cli/src/commands/reconcile.rs`
+- Create: `crates/xvision-cli/src/context.rs` (shared AppContext used by all commands)
+- Create: `crates/xvision-cli/src/commands/reconcile.rs`
 
 - [ ] **Step 1: AppContext**
 
 ```rust
-// crates/xianvec-cli/src/context.rs
+// crates/xvision-cli/src/context.rs
 use anyhow::Result;
 use std::sync::Arc;
 use sqlx::SqlitePool;
 
 pub struct AppContext {
     pub pool: SqlitePool,
-    pub ledger: Arc<xianvec_data::ledger::Ledger>,
-    pub audit:  Arc<xianvec_data::audit::AuditLog>,
-    pub status: Arc<xianvec_data::status::StatusStore>,
-    pub policy: Arc<xianvec_data::policy::PolicyJournal>,
-    pub approvals: Arc<xianvec_execution::approval::ApprovalWorkflow>,
-    pub reconciler: Arc<xianvec_execution::reconcile::Reconciler>,
+    pub ledger: Arc<xvision_data::ledger::Ledger>,
+    pub audit:  Arc<xvision_data::audit::AuditLog>,
+    pub status: Arc<xvision_data::status::StatusStore>,
+    pub policy: Arc<xvision_data::policy::PolicyJournal>,
+    pub approvals: Arc<xvision_execution::approval::ApprovalWorkflow>,
+    pub reconciler: Arc<xvision_execution::reconcile::Reconciler>,
     // ... add more as needed by commands ...
 }
 
@@ -2809,13 +2809,13 @@ impl AppContext {
     pub async fn from_env() -> Result<Self> {
         let db_path = std::env::var("XVN_DB_PATH").unwrap_or_else(|_| "data/xvn.db".to_string());
         let pool = SqlitePool::connect(&format!("sqlite:{db_path}?mode=rwc")).await?;
-        sqlx::migrate!("../xianvec-data/src/migrations").run(&pool).await?;
-        let ledger = Arc::new(xianvec_data::ledger::Ledger::new(pool.clone()));
-        let audit  = Arc::new(xianvec_data::audit::AuditLog::new(pool.clone()));
-        let status = Arc::new(xianvec_data::status::StatusStore::new(pool.clone()));
-        let policy = Arc::new(xianvec_data::policy::PolicyJournal::new(pool.clone()));
-        let approvals = Arc::new(xianvec_execution::approval::ApprovalWorkflow::new(pool.clone()));
-        let reconciler = Arc::new(xianvec_execution::reconcile::Reconciler::new(/*...*/));
+        sqlx::migrate!("../xvision-data/src/migrations").run(&pool).await?;
+        let ledger = Arc::new(xvision_data::ledger::Ledger::new(pool.clone()));
+        let audit  = Arc::new(xvision_data::audit::AuditLog::new(pool.clone()));
+        let status = Arc::new(xvision_data::status::StatusStore::new(pool.clone()));
+        let policy = Arc::new(xvision_data::policy::PolicyJournal::new(pool.clone()));
+        let approvals = Arc::new(xvision_execution::approval::ApprovalWorkflow::new(pool.clone()));
+        let reconciler = Arc::new(xvision_execution::reconcile::Reconciler::new(/*...*/));
         Ok(Self { pool, ledger, audit, status, policy, approvals, reconciler })
     }
 }
@@ -2824,7 +2824,7 @@ impl AppContext {
 - [ ] **Step 2: `xvn reconcile`**
 
 ```rust
-// crates/xianvec-cli/src/commands/reconcile.rs
+// crates/xvision-cli/src/commands/reconcile.rs
 #[derive(clap::Args, Debug)]
 pub struct ReconcileArgs {
     #[arg(long)] pub user: String,
@@ -2849,7 +2849,7 @@ git commit -m "feat(cli): xvn reconcile + shared AppContext"
 
 **Files:**
 - Create: `docs/cli-reference.md`
-- Create: `crates/xianvec-cli/tests/help_test.rs`
+- Create: `crates/xvision-cli/tests/help_test.rs`
 
 - [ ] **Step 1: Write `docs/cli-reference.md`**
 
@@ -2858,7 +2858,7 @@ Mirror the structure from spec §3.9, fully expanded with each subcommand's flag
 - [ ] **Step 2: Help-surface test**
 
 ```rust
-// crates/xianvec-cli/tests/help_test.rs
+// crates/xvision-cli/tests/help_test.rs
 #[test]
 fn help_lists_all_phase4_commands() {
     let out = std::process::Command::new(env!("CARGO_BIN_EXE_xvn"))
@@ -2872,13 +2872,13 @@ fn help_lists_all_phase4_commands() {
 
 - [ ] **Step 3: Run tests, fix any missing**
 
-Run: `cargo test -p xianvec-cli --test help_test`
+Run: `cargo test -p xvision-cli --test help_test`
 Expected: PASS
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add docs/cli-reference.md crates/xianvec-cli/
+git add docs/cli-reference.md crates/xvision-cli/
 git commit -m "docs(cli): full CLI reference + help-surface test asserting discoverability"
 ```
 
@@ -2891,9 +2891,9 @@ This phase forks based on ADR 0013.
 ### Task 5.1 (if G2 = ISOLATED_SUPPORTED): per-strategy margin_mode
 
 **Files:**
-- Modify: `crates/xianvec-execution/src/orderly.rs` (set margin mode at order time)
-- Modify: `crates/xianvec-execution/src/dispatcher.rs` (read `cfg.margin_mode` and pass through)
-- Test: `crates/xianvec-execution/tests/margin_mode_test.rs`
+- Modify: `crates/xvision-execution/src/orderly.rs` (set margin mode at order time)
+- Modify: `crates/xvision-execution/src/dispatcher.rs` (read `cfg.margin_mode` and pass through)
+- Test: `crates/xvision-execution/tests/margin_mode_test.rs`
 
 - [ ] **Step 1: Per-strategy default in config loader: `margin_mode = Some(MarginMode::Isolated)` for new strategies**
 
@@ -2910,10 +2910,10 @@ git commit -m "feat(execution): per-strategy margin_mode (isolated default per A
 ### Task 5.2 (if G2 = CROSS_ONLY): aggregate margin utilization rule
 
 **Files:**
-- Create: `crates/xianvec-risk/src/rules/aggregate_margin.rs`
-- Modify: `crates/xianvec-execution/src/dispatcher.rs` (add aggregate-margin check)
-- Modify: `crates/xianvec-risk/src/config.rs` (add `[risk.global]` section with `max_aggregate_margin_utilization`)
-- Test: `crates/xianvec-risk/tests/aggregate_margin_test.rs`
+- Create: `crates/xvision-risk/src/rules/aggregate_margin.rs`
+- Modify: `crates/xvision-execution/src/dispatcher.rs` (add aggregate-margin check)
+- Modify: `crates/xvision-risk/src/config.rs` (add `[risk.global]` section with `max_aggregate_margin_utilization`)
+- Test: `crates/xvision-risk/tests/aggregate_margin_test.rs`
 
 - [ ] **Step 1: Add global config section**
 
@@ -2930,7 +2930,7 @@ fn default_max_margin() -> f64 { 0.60 }
 - [ ] **Step 2: Implement the rule**
 
 ```rust
-// crates/xianvec-risk/src/rules/aggregate_margin.rs
+// crates/xvision-risk/src/rules/aggregate_margin.rs
 pub struct AggregateMarginGuard { pub max_utilization: f64 }
 
 impl AggregateMarginGuard {
@@ -2959,15 +2959,15 @@ End of phase: `quota_factor` is computed per dispatch and applied multiplicative
 ### Task 6.1: Pure `quota_factor` function
 
 **Files:**
-- Create: `crates/xianvec-risk/src/quota.rs`
-- Modify: `crates/xianvec-risk/src/lib.rs`
-- Test: `crates/xianvec-risk/tests/quota_test.rs`
+- Create: `crates/xvision-risk/src/quota.rs`
+- Modify: `crates/xvision-risk/src/lib.rs`
+- Test: `crates/xvision-risk/tests/quota_test.rs`
 
 - [ ] **Step 1: Failing tests covering cold-start, hot-streak, drawdown decay, kill on full drawdown**
 
 ```rust
-// crates/xianvec-risk/tests/quota_test.rs
-use xianvec_risk::quota::{compute_quota_factor, QuotaInputs};
+// crates/xvision-risk/tests/quota_test.rs
+use xvision_risk::quota::{compute_quota_factor, QuotaInputs};
 
 #[test]
 fn cold_start_returns_floor() {
@@ -3010,7 +3010,7 @@ fn loser_streak_throttles() {
 - [ ] **Step 2: Implement**
 
 ```rust
-// crates/xianvec-risk/src/quota.rs
+// crates/xvision-risk/src/quota.rs
 pub struct QuotaInputs {
     pub closed_pnls_30d: Vec<f64>,
     /// Max-drawdown over last 30d, as fraction (0.20 = 20%).
@@ -3053,10 +3053,10 @@ proptest::proptest! {
 
 In `OrderDispatcher::dispatch`, before `try_reserve(...)`, fetch recent PnLs from ledger and compute `quota_factor`. Pass `cap * quota_factor` as the cap argument to the reservation.
 
-- [ ] **Step 5: Run all xianvec-risk tests + commit**
+- [ ] **Step 5: Run all xvision-risk tests + commit**
 
 ```bash
-cargo test -p xianvec-risk
+cargo test -p xvision-risk
 git commit -m "feat(risk): dynamic quota_factor (sigmoid Sharpe × drawdown decay) applied to hard cap"
 ```
 
@@ -3069,17 +3069,17 @@ End of phase: a tokio task runs every 15 min in active sessions, fetches Orderly
 ### Task 7.1: Reconciler
 
 **Files:**
-- Create: `crates/xianvec-execution/src/reconcile.rs`
-- Test: `crates/xianvec-execution/tests/reconcile_test.rs`
+- Create: `crates/xvision-execution/src/reconcile.rs`
+- Test: `crates/xvision-execution/tests/reconcile_test.rs`
 
 - [ ] **Step 1: Failing test covering orphan / closed-server-side / NAV diff**
 
 ```rust
 #[tokio::test]
-async fn reports_orphan_when_orderly_has_position_xianvec_does_not() { /* ... */ }
+async fn reports_orphan_when_orderly_has_position_xvision_does_not() { /* ... */ }
 
 #[tokio::test]
-async fn marks_closed_when_xianvec_has_open_orderly_does_not() { /* ... */ }
+async fn marks_closed_when_xvision_has_open_orderly_does_not() { /* ... */ }
 
 #[tokio::test]
 async fn computes_nav_diff() { /* ... */ }
@@ -3088,10 +3088,10 @@ async fn computes_nav_diff() { /* ... */ }
 - [ ] **Step 2: Implement**
 
 ```rust
-// crates/xianvec-execution/src/reconcile.rs
+// crates/xvision-execution/src/reconcile.rs
 use anyhow::Result;
 use std::sync::Arc;
-use xianvec_data::ledger::Ledger;
+use xvision_data::ledger::Ledger;
 
 pub struct Reconciler {
     pub ledger: Arc<Ledger>,
@@ -3154,34 +3154,34 @@ git commit -m "feat(execution): periodic reconciliation against live Orderly sta
 
 ## Phase 8 — Strategy Budgets Spreadsheet UI
 
-**Primary path: add `/budgets` route to `crates/xianvec-dashboard` (from Plan 2d).** This plan does NOT build a new dashboard. It adds one route module and one template alongside the Wizard / Inspector / Live cockpit archetypes that 2d ships. The route MUST be registered in 2d's existing `Router` so it appears in the dashboard's navigation.
+**Primary path: add `/budgets` route to `crates/xvision-dashboard` (from Plan 2d).** This plan does NOT build a new dashboard. It adds one route module and one template alongside the Wizard / Inspector / Live cockpit archetypes that 2d ships. The route MUST be registered in 2d's existing `Router` so it appears in the dashboard's navigation.
 
-**Fallback (only if Plan 2d slips past 2026-06-01):** create a standalone `crates/xianvec-budget-ui` crate with the same routes + templates, launched via `xvn budget serve --addr 127.0.0.1:7878`. When 2d ships later, lift the routes module + templates into `xianvec-dashboard` unchanged.
+**Fallback (only if Plan 2d slips past 2026-06-01):** create a standalone `crates/xvision-budget-ui` crate with the same routes + templates, launched via `xvn budget serve --addr 127.0.0.1:7878`. When 2d ships later, lift the routes module + templates into `xvision-dashboard` unchanged.
 
 ### Task 8.1: Verify Plan 2d's dashboard exists; if not, branch to fallback
 
 - [ ] **Step 1: Check dashboard crate**
 
 ```bash
-ls crates/xianvec-dashboard/src/lib.rs
+ls crates/xvision-dashboard/src/lib.rs
 ```
 
 - If present (Plan 2d shipped) → proceed with Tasks 8.2–8.5 as written.
-- If absent → switch to the **fallback flow** documented at the bottom of this phase, then return here when Plan 2d ships and lift the modules into `xianvec-dashboard`.
+- If absent → switch to the **fallback flow** documented at the bottom of this phase, then return here when Plan 2d ships and lift the modules into `xvision-dashboard`.
 
 The rest of Phase 8 is written for the primary path. Differences for the fallback are noted in Task 8.6.
 
-### Task 8.2: Add `/budgets` route to `xianvec-dashboard`
+### Task 8.2: Add `/budgets` route to `xvision-dashboard`
 
 **Files:**
-- Create: `crates/xianvec-dashboard/src/routes/budgets.rs`
-- Modify: `crates/xianvec-dashboard/src/lib.rs` (or wherever 2d defines its `Router::new()...`)
-- Create: `crates/xianvec-dashboard/src/templates/budgets.html`
+- Create: `crates/xvision-dashboard/src/routes/budgets.rs`
+- Modify: `crates/xvision-dashboard/src/lib.rs` (or wherever 2d defines its `Router::new()...`)
+- Create: `crates/xvision-dashboard/src/templates/budgets.html`
 
 - [ ] **Step 1: Read Plan 2d's existing router and locate where to register a new route**
 
 ```bash
-grep -rn "Router::new\|\\.route(" crates/xianvec-dashboard/src/
+grep -rn "Router::new\|\\.route(" crates/xvision-dashboard/src/
 ```
 
 Identify the file where 2d's existing routes (e.g., `/`, `/authoring/:id`, `/live/:deployment_id`) are wired. The new `/budgets` route attaches to that same Router.
@@ -3189,7 +3189,7 @@ Identify the file where 2d's existing routes (e.g., `/`, `/authoring/:id`, `/liv
 - [ ] **Step 2: Implement `routes/budgets.rs`**
 
 ```rust
-// crates/xianvec-dashboard/src/routes/budgets.rs
+// crates/xvision-dashboard/src/routes/budgets.rs
 use askama::Template;
 use axum::{extract::{State, Path}, response::Html, Json};
 use sqlx::SqlitePool;
@@ -3270,7 +3270,7 @@ let app = Router::new()
     .with_state(state);
 ```
 
-Add `pub mod budgets;` to `crates/xianvec-dashboard/src/routes/mod.rs` (create if absent, following 2d's module convention).
+Add `pub mod budgets;` to `crates/xvision-dashboard/src/routes/mod.rs` (create if absent, following 2d's module convention).
 
 - [ ] **Step 4: Add a navigation entry**
 
@@ -3278,7 +3278,7 @@ Plan 2d's dashboard likely renders a nav bar. Add a "Budgets" link pointing at `
 
 ### Task 8.3: Spreadsheet template (budgets.html)
 
-- [ ] **Step 1: budgets.html (the spreadsheet) — lives at `crates/xianvec-dashboard/src/templates/budgets.html`**
+- [ ] **Step 1: budgets.html (the spreadsheet) — lives at `crates/xvision-dashboard/src/templates/budgets.html`**
 
 ```html
 <!DOCTYPE html>
@@ -3350,7 +3350,7 @@ Plan 2d's dashboard likely renders a nav bar. Add a "Budgets" link pointing at `
 - [ ] **Step 2: Test (axum integration with a seeded DB)**
 
 ```rust
-// crates/xianvec-dashboard/tests/budgets_route_test.rs
+// crates/xvision-dashboard/tests/budgets_route_test.rs
 #[tokio::test]
 async fn list_renders_seeded_budgets() {
     // Seed pool with 3 strategy_status rows + 3 fake budget configs.
@@ -3363,15 +3363,15 @@ async fn list_renders_seeded_budgets() {
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/xianvec-dashboard/
+git add crates/xvision-dashboard/
 git commit -m "feat(dashboard): /budgets spreadsheet view route + template"
 ```
 
 ### Task 8.4: Inline edit + confirm modal
 
 **Files:**
-- Modify: `crates/xianvec-dashboard/src/templates/budgets.html` (extend script block)
-- Create: `crates/xianvec-dashboard/src/templates/budgets_confirm_partial.html`
+- Modify: `crates/xvision-dashboard/src/templates/budgets.html` (extend script block)
+- Create: `crates/xvision-dashboard/src/templates/budgets_confirm_partial.html`
 
 - [ ] **Step 1: Inline edit JS**
 
@@ -3421,7 +3421,7 @@ git commit -m "feat(ui): inline-edit cells with confirm + policy_changes journal
 ### Task 8.5: Aggregate-row warning + bulk-edit
 
 **Files:**
-- Modify: `crates/xianvec-dashboard/src/routes/budgets.rs`, `templates/budgets.html`
+- Modify: `crates/xvision-dashboard/src/routes/budgets.rs`, `templates/budgets.html`
 
 - [ ] **Step 1: Pull total user collateral from Orderly account-info; render warning if total committed > 80% of collateral**
 
@@ -3446,8 +3446,8 @@ git commit -m "feat(ui): aggregate-row warning + bulk-edit selection"
 The CLI's `xvn budget serve` is a convenience entry point that launches the existing dashboard (Plan 2d) and prints the `/budgets` URL.
 
 **Files:**
-- Modify: `crates/xianvec-cli/Cargo.toml` (add `xianvec-dashboard` dep)
-- Modify: `crates/xianvec-cli/src/commands/budget.rs` (`Serve` arm)
+- Modify: `crates/xvision-cli/Cargo.toml` (add `xvision-dashboard` dep)
+- Modify: `crates/xvision-cli/src/commands/budget.rs` (`Serve` arm)
 
 - [ ] **Step 1: Replace the placeholder in Task 4.8 Step 5**
 
@@ -3455,14 +3455,14 @@ The CLI's `xvn budget serve` is a convenience entry point that launches the exis
 BudgetCmd::Serve { addr } => {
     let ctx = crate::context::AppContext::from_env().await?;
     println!("Launching dashboard. Open http://{addr}/budgets");
-    xianvec_dashboard::serve(&addr, ctx.into_dashboard_state()).await?;
+    xvision_dashboard::serve(&addr, ctx.into_dashboard_state()).await?;
 }
 ```
 
 - [ ] **Step 2: Manual verification**
 
 ```bash
-cargo run -p xianvec-cli -- budget serve --addr 127.0.0.1:7878
+cargo run -p xvision-cli -- budget serve --addr 127.0.0.1:7878
 # Open http://127.0.0.1:7878/budgets, edit a cell, verify policy_changes row written.
 ```
 
@@ -3476,14 +3476,14 @@ git commit -m "feat(cli): xvn budget serve launches dashboard at /budgets"
 
 ### Fallback flow (only if Plan 2d slipped past 2026-06-01)
 
-If Task 8.1 finds no `crates/xianvec-dashboard`, do this instead:
+If Task 8.1 finds no `crates/xvision-dashboard`, do this instead:
 
-1. Add `crates/xianvec-budget-ui/` to workspace `members` (and append `axum`, `askama`, `tower-http` to workspace deps if not present from Plan 2d).
-2. Create `crates/xianvec-budget-ui/Cargo.toml` with `axum`, `askama`, `tower-http`, `tokio`, `sqlx`, `xianvec-data`, `xianvec-risk` as deps.
-3. Create `crates/xianvec-budget-ui/src/lib.rs` with a `pub async fn serve(addr, pool) -> Result<()>` that builds a `Router::new().route("/budgets", get(routes::list)).route("/budgets/:strategy", post(routes::update))`.
+1. Add `crates/xvision-budget-ui/` to workspace `members` (and append `axum`, `askama`, `tower-http` to workspace deps if not present from Plan 2d).
+2. Create `crates/xvision-budget-ui/Cargo.toml` with `axum`, `askama`, `tower-http`, `tokio`, `sqlx`, `xvision-data`, `xvision-risk` as deps.
+3. Create `crates/xvision-budget-ui/src/lib.rs` with a `pub async fn serve(addr, pool) -> Result<()>` that builds a `Router::new().route("/budgets", get(routes::list)).route("/budgets/:strategy", post(routes::update))`.
 4. Move the same `routes/budgets.rs` and `templates/budgets.html` from Tasks 8.2–8.4 into the standalone crate (under `src/routes.rs` and `src/templates/`).
-5. `xvn budget serve` calls `xianvec_budget_ui::serve(&addr, pool)` instead of the dashboard.
-6. **When Plan 2d ships:** lift `routes/budgets.rs` and `templates/budgets.html` into `crates/xianvec-dashboard/src/routes/` and `crates/xianvec-dashboard/src/templates/` respectively (zero code changes — they're already structured for it). Delete `crates/xianvec-budget-ui/` and remove from workspace `members`. Update `xvn budget serve` to call `xianvec_dashboard::serve` per Task 8.6.
+5. `xvn budget serve` calls `xvision_budget_ui::serve(&addr, pool)` instead of the dashboard.
+6. **When Plan 2d ships:** lift `routes/budgets.rs` and `templates/budgets.html` into `crates/xvision-dashboard/src/routes/` and `crates/xvision-dashboard/src/templates/` respectively (zero code changes — they're already structured for it). Delete `crates/xvision-budget-ui/` and remove from workspace `members`. Update `xvn budget serve` to call `xvision_dashboard::serve` per Task 8.6.
 
 The fallback is intentionally short — it's the same routes + templates wrapped in a tiny `serve()` function, so the eventual lift is mechanical.
 
@@ -3496,12 +3496,12 @@ End of phase: end-to-end story is documented and a single integration test exerc
 ### Task 9.1: End-to-end integration test
 
 **Files:**
-- Create: `crates/xianvec-execution/tests/e2e_orderly_testnet.rs` (gated behind `#[ignore]` so it doesn't run in default CI)
+- Create: `crates/xvision-execution/tests/e2e_orderly_testnet.rs` (gated behind `#[ignore]` so it doesn't run in default CI)
 
 - [ ] **Step 1: Test outline**
 
 ```rust
-//! Run with: cargo test -p xianvec-execution e2e -- --ignored --nocapture
+//! Run with: cargo test -p xvision-execution e2e -- --ignored --nocapture
 //! Requires: ORDERLY_TESTNET_KEY, ORDERLY_TESTNET_ACCOUNT_ID env vars.
 
 #[tokio::test]
@@ -3520,8 +3520,8 @@ async fn end_to_end_full_dispatch_against_testnet() {
 - [ ] **Step 2: Run it manually, capture log to results dir, commit**
 
 ```bash
-cargo test -p xianvec-execution e2e -- --ignored --nocapture 2>&1 | tee tests/e2e_$(date -u +%Y%m%dT%H%M%SZ).log
-git add crates/xianvec-execution/tests/
+cargo test -p xvision-execution e2e -- --ignored --nocapture 2>&1 | tee tests/e2e_$(date -u +%Y%m%dT%H%M%SZ).log
+git add crates/xvision-execution/tests/
 git commit -m "test(e2e): full pipeline against Orderly testnet (ignored by default)"
 ```
 
@@ -3569,7 +3569,7 @@ git commit -m "docs(followups): mark non-custodial wallets v1 shipped; record po
 | §3.4 Risk Engine: dynamic quota | Phase 6 |
 | §3.4 Risk Engine: reservations | Phase 2 Task 2.3 |
 | §3.4 Risk Engine: aggregate margin / margin_mode | Phase 5 Tasks 5.1 / 5.2 (conditional on G2) |
-| §3.4 UI Strategy Budgets spreadsheet | Phase 8 — adds `/budgets` route + spreadsheet template to `xianvec-dashboard` (Plan 2d). Standalone fallback documented if 2d slips. |
+| §3.4 UI Strategy Budgets spreadsheet | Phase 8 — adds `/budgets` route + spreadsheet template to `xvision-dashboard` (Plan 2d). Standalone fallback documented if 2d slips. |
 | §3.5 Attribution ledger + funding attributions | Phase 1 Tasks 1.1, 1.3 |
 | §3.6 Marketplace fee router | Cross-referenced to Plan 5; not implemented here |
 | §3.7 Settlement wallet | Operator-side, manual; documented in Phase 9 Task 9.2 |

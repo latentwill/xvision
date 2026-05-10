@@ -1,13 +1,26 @@
 # Strategy Creation Engine — Plan 2d (Web Dashboard + Agent Wizard) Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-> **Depends on:** Plan #1 + Plan 2a (for wizard's MCP-driven authoring) + Plan 2c (for live cockpit's deployment events). Visual design system locked in `docs/design/gptprompts.md`. UX archetypes defined in `docs/design/ux-field.md`.
+> **Depends on:** Plan #1 + Plan 2a (for wizard's MCP-driven authoring) + Engine API Foundation (CLI/MCP dispatch shape). Plan 2c was originally a dep for live cockpit deployment events — see v1-test cut below. Visual design system locked in `docs/design/gptprompts.md`. UX archetypes defined in `docs/design/ux-field.md`.
 > **Execution-order decision (2026-05-08):** This plan ships **after Plans 3, 2a, and 2c**, in this order: eval first (informs design), then 2a (MCP+templates), then 2c (live exec, in parallel with 2a), then this plan. Plan 2b (skills) ships alongside or after this plan — its skill-attach UI in the Inspector is an opt-in extension.
 > **Marketplace deferral note (2026-05-08):** The marketplace surface is deferred to Plan 5 (blockchain integration). This plan ships the Wizard, Inspector, and Live cockpit archetypes only. The Marketplace tab + Spreadsheet listings grid will be reintroduced in Plan 5.
 
+> **v1-test cut (2026-05-10):** Plan 2c (durable scheduler + live daemon) is out of v1 test scope; only Plan 2c §Task 7 (`BrokerSurface` trait) ships, and that's not a Plan 2d dep. Therefore this plan ships in v1 test with the **live cockpit deferred** alongside marketplace. v1-test routes:
+> - ✅ `/` Wizard (chat + live strategy progress)
+> - ✅ `/authoring/<draft_id>` Inspector
+> - ✅ `/strategies` drafts list
+> - ✅ `/eval/runs`, `/eval/runs/<id>`, `/eval/compare?ids=…` (eval surfaces from Plan 3)
+> - ✅ `/settings/...` (Settings & Onboarding plan extends this)
+> - ⛔ `/live/<deployment_id>` Flight Deck cockpit — defer; needs Plan 2c daemon
+> - ⛔ `/marketplace` listings grid — defer; needs Plan 5
+>
+> Skip every task in this plan that wires the live cockpit route, its SSE endpoint, or its templates. The Wizard, Inspector, drafts list, and eval routes are the v1-test surface. See `v1-shipping-plan.md` §"UI elements — design team handoff list" for the per-route design status.
+
+> **Engine API Foundation pattern (2026-05-10):** Every CLI handler and MCP tool registered by this plan dispatches through `engine::api::<domain>::<fn>(ctx, req)` from the [Engine API Foundation plan](./2026-05-10-engine-api-foundation.md). The Wizard's server-side LLM loop calls api functions directly via `engine::api::*` — no parallel wiring. Routes that read aggregate state (e.g., `/strategies`, `/eval/runs`) build their template context by calling `engine::api::*::list/get` rather than touching the bundle store / DB directly.
+
 **Goal:** The product's face. After this plan ships: `xvn` (no args) opens the dashboard at `http://localhost:7878/`. The default landing is the **Agent Wizard** — chat on the left, live visual strategy progress on the right. The wizard is itself an LLM agent that drives xvn's MCP server (Plan 2a) on the user's behalf. Users without an external AI agent (Claude Code / Hermes) can still author strategies end-to-end.
 
-**Architecture:** New crate `xianvec-dashboard` ships an axum HTTP server + a single-page app. The SPA is hand-written HTML/JS (NO Node build step — keep one binary, one install). TradingView Lightweight Charts is embedded as a CDN-loaded library (single `<script src=...>`). The wizard's LLM loop runs *server-side* in the dashboard — the SPA just streams chat over SSE; the dashboard holds the user's API key in memory and calls Anthropic directly (the same `LlmDispatch` from Plan 2a). Multi-archetype routing in v1: `/` is Wizard (L1 default), `/authoring/<id>` is Inspector form (L3), `/live/<deployment_id>` is the live cockpit (Flight Deck archetype). The `/marketplace` route + Spreadsheet listings grid is deferred to Plan 5.
+**Architecture:** New crate `xvision-dashboard` ships an axum HTTP server + a single-page app. The SPA is hand-written HTML/JS (NO Node build step — keep one binary, one install). TradingView Lightweight Charts is embedded as a CDN-loaded library (single `<script src=...>`). The wizard's LLM loop runs *server-side* in the dashboard — the SPA just streams chat over SSE; the dashboard holds the user's API key in memory and calls Anthropic directly (the same `LlmDispatch` from Plan 2a). Multi-archetype routing in v1: `/` is Wizard (L1 default), `/authoring/<id>` is Inspector form (L3), `/live/<deployment_id>` is the live cockpit (Flight Deck archetype). The `/marketplace` route + Spreadsheet listings grid is deferred to Plan 5.
 
 **Tech Stack:** Rust 2021. New deps: `axum 0.7` (server), `tower-http` (static file serving + tracing), `axum-extra` (SSE), `askama` or `minijinja` (server-side HTML templating). No JS bundler; the SPA is plain HTML + ES modules + Tailwind via CDN. Chart library: TradingView Lightweight Charts via CDN (`https://unpkg.com/lightweight-charts@4.x/dist/lightweight-charts.standalone.production.js`).
 
@@ -24,7 +37,7 @@
 
 ```
 crates/
-├── xianvec-dashboard/                       # NEW
+├── xvision-dashboard/                       # NEW
 │   ├── Cargo.toml
 │   ├── src/
 │   │   ├── lib.rs                           # public API: serve(addr, xvn_home)
@@ -57,7 +70,7 @@ crates/
 │   └── tests/
 │       ├── routes_smoke.rs                  # axum-test harness, GET / returns 200
 │       └── wizard_chat.rs                   # SSE round-trip with mock LLM
-└── xianvec-cli/
+└── xvision-cli/
     └── src/commands/
         └── dashboard.rs                     # NEW: `xvn` (no args) starts dashboard;
                                              # `xvn dashboard --port 7878` explicit
@@ -72,15 +85,15 @@ The default `xvn` invocation (no subcommand) launches the dashboard. Existing CL
 ### Task 1: New crate + axum hello-world
 
 **Files:**
-- Create: `crates/xianvec-dashboard/Cargo.toml`
-- Create: `crates/xianvec-dashboard/src/lib.rs`
-- Modify: `Cargo.toml` (workspace) — add `crates/xianvec-dashboard` to members + default-members
+- Create: `crates/xvision-dashboard/Cargo.toml`
+- Create: `crates/xvision-dashboard/src/lib.rs`
+- Modify: `Cargo.toml` (workspace) — add `crates/xvision-dashboard` to members + default-members
 
 - [ ] **Step 1: Cargo.toml**
 
 ```toml
 [package]
-name        = "xianvec-dashboard"
+name        = "xvision-dashboard"
 description = "Web dashboard + agent wizard for xvn (axum + lightweight charts)"
 version.workspace      = true
 edition.workspace      = true
@@ -89,13 +102,13 @@ license.workspace      = true
 repository.workspace   = true
 
 [lib]
-name = "xianvec_dashboard"
+name = "xvision_dashboard"
 path = "src/lib.rs"
 
 [dependencies]
-xianvec-engine = { path = "../xianvec-engine" }
-xianvec-skills = { path = "../xianvec-skills" }
-# xianvec-marketplace dep is deferred to Plan 5 (blockchain integration)
+xvision-engine = { path = "../xvision-engine" }
+xvision-skills = { path = "../xvision-skills" }
+# xvision-marketplace dep is deferred to Plan 5 (blockchain integration)
 
 axum         = { version = "0.7", features = ["macros"] }
 axum-extra   = { version = "0.9", features = ["typed-routing"] }
@@ -124,7 +137,7 @@ tokio        = { workspace = true, features = ["rt", "macros"] }
 - [ ] **Step 2: lib.rs hello-world**
 
 ```rust
-//! xianvec-dashboard — axum web dashboard for xvn.
+//! xvision-dashboard — axum web dashboard for xvn.
 //!
 //! Surfaces:
 //! - `/` Agent Wizard (default landing)
@@ -182,7 +195,7 @@ pub fn build_router(state: AppState) -> Router {
 use axum::body::Body;
 use axum::http::Request;
 use tower::ServiceExt;
-use xianvec_dashboard::{routes::build_router, AppState};
+use xvision_dashboard::{routes::build_router, AppState};
 use tempfile::tempdir;
 
 #[tokio::test]
@@ -200,9 +213,9 @@ async fn root_returns_scaffold_text() {
 - [ ] **Step 5: Build + test + commit**
 
 ```bash
-cargo test -p xianvec-dashboard 2>&1 | grep "test result"  # 1 passed
-git add crates/xianvec-dashboard Cargo.toml
-git commit -m "feat(dashboard): scaffold xianvec-dashboard crate with axum hello"
+cargo test -p xvision-dashboard 2>&1 | grep "test result"  # 1 passed
+git add crates/xvision-dashboard Cargo.toml
+git commit -m "feat(dashboard): scaffold xvision-dashboard crate with axum hello"
 ```
 
 ---
@@ -210,12 +223,12 @@ git commit -m "feat(dashboard): scaffold xianvec-dashboard crate with axum hello
 ### Task 2: `xvn` (no args) launches dashboard
 
 **Files:**
-- Create: `crates/xianvec-cli/src/commands/dashboard.rs`
-- Modify: `crates/xianvec-cli/src/lib.rs` (default behavior + Dashboard subcommand)
+- Create: `crates/xvision-cli/src/commands/dashboard.rs`
+- Modify: `crates/xvision-cli/src/lib.rs` (default behavior + Dashboard subcommand)
 
 - [ ] **Step 1: Add deps**
 
-In `crates/xianvec-cli/Cargo.toml`: `xianvec-dashboard = { path = "../xianvec-dashboard" }`.
+In `crates/xvision-cli/Cargo.toml`: `xvision-dashboard = { path = "../xvision-dashboard" }`.
 
 - [ ] **Step 2: Add `Dashboard` subcommand**
 
@@ -241,19 +254,19 @@ pub async fn run(cmd: DashboardCmd) -> anyhow::Result<()> {
         let url = format!("http://{}/", cmd.addr);
         let _ = open::that(&url);   // crate `open` for cross-platform browser launch
     }
-    xianvec_dashboard::serve(cmd.addr, xvn_home).await
+    xvision_dashboard::serve(cmd.addr, xvn_home).await
 }
 ```
 
-Add `open = "5"` to xianvec-cli Cargo.toml.
+Add `open = "5"` to xvision-cli Cargo.toml.
 
 - [ ] **Step 3: Make `xvn` (no args) default to `xvn dashboard`**
 
-In `crates/xianvec-cli/src/lib.rs`'s `Cli` struct, change the subcommand to optional:
+In `crates/xvision-cli/src/lib.rs`'s `Cli` struct, change the subcommand to optional:
 
 ```rust
 #[derive(Parser, Debug)]
-#[command(name = "xvn", version, about = "XIANVEC: AI trading agent platform")]
+#[command(name = "xvn", version, about = "XVISION: AI trading agent platform")]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,
@@ -276,7 +289,7 @@ impl Cli {
 - [ ] **Step 4: Smoke**
 
 ```bash
-cargo run -q -p xianvec-cli &
+cargo run -q -p xvision-cli &
 sleep 1
 curl -s http://127.0.0.1:7878/ | head -1
 kill %1
@@ -287,7 +300,7 @@ Expected: scaffold message reachable.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-cli
+git add crates/xvision-cli
 git commit -m "feat(cli): xvn (no args) launches dashboard at localhost:7878"
 ```
 
@@ -297,7 +310,7 @@ git commit -m "feat(cli): xvn (no args) launches dashboard at localhost:7878"
 
 ### Task 3: Tailwind via CDN + design tokens CSS
 
-**File:** `crates/xianvec-dashboard/static/css/theme.css`
+**File:** `crates/xvision-dashboard/static/css/theme.css`
 
 Per `docs/design/gptprompts.md`'s shared design system: deep navy-charcoal palette, mint accent (#5BE0A2), Inter sans + JetBrains Mono. Define CSS custom properties mapping to those values, plus utility classes shared across all archetypes.
 
@@ -410,10 +423,10 @@ Commit `feat(dashboard): static asset mount + design system CSS`.
 ### Task 4: Wizard route + base template
 
 **Files:**
-- Create: `crates/xianvec-dashboard/templates/base.html`
-- Create: `crates/xianvec-dashboard/templates/wizard.html`
-- Create: `crates/xianvec-dashboard/src/routes/wizard.rs`
-- Modify: `crates/xianvec-dashboard/src/routes/mod.rs`
+- Create: `crates/xvision-dashboard/templates/base.html`
+- Create: `crates/xvision-dashboard/templates/wizard.html`
+- Create: `crates/xvision-dashboard/src/routes/wizard.rs`
+- Modify: `crates/xvision-dashboard/src/routes/mod.rs`
 
 - [ ] **Step 1: base.html**
 
@@ -537,7 +550,7 @@ async fn root_renders_wizard_html() {
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-dashboard
+git add crates/xvision-dashboard
 git commit -m "feat(dashboard): Wizard route + base template + visual progress sidecar"
 ```
 
@@ -545,7 +558,7 @@ git commit -m "feat(dashboard): Wizard route + base template + visual progress s
 
 ### Task 5: Wizard SSE chat endpoint
 
-**File:** `crates/xianvec-dashboard/src/routes/wizard.rs`
+**File:** `crates/xvision-dashboard/src/routes/wizard.rs`
 
 The SPA POSTs the user's message to `/api/wizard/chat` (with the LLM key in headers or session); server runs the LLM loop, streams chunks back as SSE.
 
@@ -596,7 +609,7 @@ pub async fn chat(
 }
 ```
 
-> Subagent should add `async-stream = "0.3"` and `futures = "0.3"` to xianvec-dashboard Cargo.toml.
+> Subagent should add `async-stream = "0.3"` and `futures = "0.3"` to xvision-dashboard Cargo.toml.
 
 - [ ] Wire `POST /api/wizard/chat` → `chat` in `routes/mod.rs`.
 - [ ] The `WizardLoop` in `wizard_loop.rs` is the next task. For now, stub it to emit a single Token event + Done.
@@ -607,14 +620,14 @@ Commit `feat(dashboard): wizard SSE chat endpoint with stub loop`.
 
 ### Task 6: WizardLoop — server-side LLM agent that drives MCP
 
-**File:** `crates/xianvec-dashboard/src/wizard_loop.rs`
+**File:** `crates/xvision-dashboard/src/wizard_loop.rs`
 
 The wizard is itself an LLM agent. Server-side, this struct:
 1. Holds conversation state for a session_id
 2. Maintains an `LlmDispatch` instance built from the user's provider+key+model
 3. On `next_event()`:
    - Calls `dispatch.complete(...)` with the wizard's system prompt + conversation
-   - If response has `ContentBlock::ToolUse`, routes to MCP authoring functions (`xianvec_engine::mcp::authoring::*`) and emits ToolCall + ToolResult events
+   - If response has `ContentBlock::ToolUse`, routes to MCP authoring functions (`xvision_engine::mcp::authoring::*`) and emits ToolCall + ToolResult events
    - Streams the assistant's text back as Token events
    - Emits Layer + Ready events when the wizard touches a strategy slot
 4. On Done, emits the final draft_id
@@ -622,10 +635,10 @@ The wizard is itself an LLM agent. Server-side, this struct:
 ```rust
 use std::path::PathBuf;
 
-use xianvec_engine::agent::llm::{
+use xvision_engine::agent::llm::{
     AnthropicDispatch, ContentBlock, LlmDispatch, LlmRequest, Message, ToolDefinition, StopReason,
 };
-use xianvec_engine::mcp::authoring;
+use xvision_engine::mcp::authoring;
 
 use crate::routes::wizard::{ChatRequest, WizardEvent};
 
@@ -719,9 +732,9 @@ async fn run_authoring_tool(
     name: &str,
     input: serde_json::Value,
 ) -> anyhow::Result<serde_json::Value> {
-    // Mirror xianvec_engine::mcp::authoring's dispatch logic, scoped to xvn_home.
+    // Mirror xvision_engine::mcp::authoring's dispatch logic, scoped to xvn_home.
     // This is the same code path as the MCP server's call_tool; consider
-    // extracting a shared dispatcher in xianvec-engine to avoid duplication.
+    // extracting a shared dispatcher in xvision-engine to avoid duplication.
     // For Plan 2d, inline-call the authoring fns directly:
     match name {
         "list_templates" => {
@@ -754,11 +767,11 @@ fn wizard_tool_defs() -> Vec<ToolDefinition> {
 }
 ```
 
-> Note: there's near-duplication between MCP server's `call_tool` and Wizard's `run_authoring_tool`. Strongly consider extracting a `xianvec-engine/src/authoring_dispatcher.rs` that both call into. Subagent should make this refactor and have both surfaces (MCP + Wizard) call it. The plan as written tolerates inline duplication for v1 if the refactor adds too much risk.
+> Note: there's near-duplication between MCP server's `call_tool` and Wizard's `run_authoring_tool`. Strongly consider extracting a `xvision-engine/src/authoring_dispatcher.rs` that both call into. Subagent should make this refactor and have both surfaces (MCP + Wizard) call it. The plan as written tolerates inline duplication for v1 if the refactor adds too much risk.
 
 - [ ] **Step 1: Wizard system prompt**
 
-Create `crates/xianvec-dashboard/prompts/wizard.md`:
+Create `crates/xvision-dashboard/prompts/wizard.md`:
 
 ```markdown
 You are the xvn setup agent. The user is building or selecting an AI trading
@@ -794,7 +807,7 @@ Commit `feat(dashboard): WizardLoop drives MCP authoring tools server-side`.
 
 ### Task 7: Wizard front-end JS (`wizard.js`)
 
-**File:** `crates/xianvec-dashboard/static/js/wizard.js`
+**File:** `crates/xvision-dashboard/static/js/wizard.js`
 
 ```javascript
 const sessionId = crypto.randomUUID();
@@ -918,10 +931,10 @@ Commit `feat(dashboard): wizard.js front-end with SSE + visual progress`.
 Per `docs/design/ui-elements.md` §3.5: `/setup` accepts pre-loaded contexts from elsewhere in the app via the `?seed=…` query param. Each seed mode pins a context chip in the wizard header and pre-seeds the first user-side message. This is the back-edge that closes the Notice→Hypothesize loop (Move I).
 
 **Files:**
-- Create: `crates/xianvec-dashboard/src/seed.rs`
-- Modify: `crates/xianvec-dashboard/src/routes/wizard.rs` (`root` handler accepts `Query<SetupQuery>`)
-- Modify: `crates/xianvec-dashboard/templates/wizard.html` (renders context chip when seeded)
-- Modify: `crates/xianvec-dashboard/static/js/wizard.js` (auto-sends pre-seeded first message on load)
+- Create: `crates/xvision-dashboard/src/seed.rs`
+- Modify: `crates/xvision-dashboard/src/routes/wizard.rs` (`root` handler accepts `Query<SetupQuery>`)
+- Modify: `crates/xvision-dashboard/templates/wizard.html` (renders context chip when seeded)
+- Modify: `crates/xvision-dashboard/static/js/wizard.js` (auto-sends pre-seeded first message on load)
 
 **Seed grammar:**
 
@@ -935,7 +948,7 @@ seed=nudge:<nudge_id>                       // from / Control Tower wizard nudge
 - [ ] **Step 1: Define `SeedContext` + parser**
 
 ```rust
-// crates/xianvec-dashboard/src/seed.rs
+// crates/xvision-dashboard/src/seed.rs
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1102,7 +1115,7 @@ These are template-level edits in the corresponding routes' HTML files. Do them 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add crates/xianvec-dashboard
+git add crates/xvision-dashboard
 git commit -m "feat(dashboard): wizard /setup?seed= context handler for Move I cross-cycle entry"
 ```
 
@@ -1135,19 +1148,19 @@ Commit `feat(dashboard): Inspector form (L3 archetype) for direct authoring`.
 Per `docs/design/ui-elements.md` §4.2.2: LLM slot sections (Regime / Intern / Trader) get a 50/50 split editor — slot form on the left, live preview pane on the right. The preview re-runs the slot against a fixture so the user gets immediate "what does this prompt do?" feedback. Mechanical sections (Manifest, Data, Entry/Exit, Risk, Execution) use the single-column form from Task 8 unchanged.
 
 **Files:**
-- Create: `crates/xianvec-engine/src/fixtures/mod.rs` + `store.rs` — fixture file storage
-- Create: `crates/xianvec-engine/src/fixtures/builtin.rs` — 4 built-in fixtures
-- Create: `crates/xianvec-dashboard/src/routes/preview.rs` — `POST /api/strategy/<id>/slot/<role>/preview` (SSE)
-- Modify: `crates/xianvec-dashboard/templates/authoring.html` — split layout for LLM slot sections
-- Create: `crates/xianvec-dashboard/static/js/inspector_preview.js` — preview pane logic
-- Create: `crates/xianvec-dashboard/static/js/fixture_picker.js` — modal picker
+- Create: `crates/xvision-engine/src/fixtures/mod.rs` + `store.rs` — fixture file storage
+- Create: `crates/xvision-engine/src/fixtures/builtin.rs` — 4 built-in fixtures
+- Create: `crates/xvision-dashboard/src/routes/preview.rs` — `POST /api/strategy/<id>/slot/<role>/preview` (SSE)
+- Modify: `crates/xvision-dashboard/templates/authoring.html` — split layout for LLM slot sections
+- Create: `crates/xvision-dashboard/static/js/inspector_preview.js` — preview pane logic
+- Create: `crates/xvision-dashboard/static/js/fixture_picker.js` — modal picker
 
 **Built-in fixtures:** `BTC bull 2025-01-15 08:00`, `BTC chop 2024-09-10 14:00`, `ETH bear 2024-08-05 10:00`, `Flash crash 2024-08-05 12:00`. Each is a JSON snapshot of the inputs an LLM slot would see (`ohlcv_history`, `indicator_panel`, etc.) frozen at that instant. Ship them in the binary via `include_str!`.
 
 - [ ] **Step 1: Fixture store**
 
 ```rust
-// xianvec-engine/src/fixtures/mod.rs
+// xvision-engine/src/fixtures/mod.rs
 pub mod store;
 pub mod builtin;
 pub use store::FixtureStore;
@@ -1169,7 +1182,7 @@ pub struct Fixture {
 - [ ] **Step 2: Built-in fixtures**
 
 ```rust
-// xianvec-engine/src/fixtures/builtin.rs
+// xvision-engine/src/fixtures/builtin.rs
 const BTC_BULL_2025_01_15: &str = include_str!("data/btc-bull-2025-01-15-0800.json");
 const BTC_CHOP_2024_09_10: &str = include_str!("data/btc-chop-2024-09-10-1400.json");
 const ETH_BEAR_2024_08_05: &str = include_str!("data/eth-bear-2024-08-05-1000.json");
@@ -1183,7 +1196,7 @@ The four `data/*.json` files: pull from real OHLCV at those timestamps (or hand-
 - [ ] **Step 3: Preview SSE endpoint**
 
 ```rust
-// crates/xianvec-dashboard/src/routes/preview.rs
+// crates/xvision-dashboard/src/routes/preview.rs
 #[derive(Deserialize)]
 pub struct PreviewRequest {
     pub prompt: String,                       // raw system prompt for the slot
@@ -1351,7 +1364,7 @@ fn diff_summary_renders_when_action_changes() { /* ... */ }
 - [ ] **Step 8: Commit**
 
 ```bash
-git add crates/xianvec-dashboard crates/xianvec-engine/src/fixtures
+git add crates/xvision-dashboard crates/xvision-engine/src/fixtures
 git commit -m "feat(dashboard): Inspector LLM-slot split editor with live preview pane (Move E)"
 ```
 
@@ -1359,7 +1372,7 @@ git commit -m "feat(dashboard): Inspector LLM-slot split editor with live previe
 
 ### Task 9: Templates browse grid (Spreadsheet archetype)
 
-Per archetype 7a — sortable spreadsheet, but in v1 the rows are **templates** (from `xianvec-engine::templates::registry`), not marketplace listings. The marketplace listings grid lands when Plan 5 ships the marketplace surface.
+Per archetype 7a — sortable spreadsheet, but in v1 the rows are **templates** (from `xvision-engine::templates::registry`), not marketplace listings. The marketplace listings grid lands when Plan 5 ships the marketplace surface.
 
 Route `GET /templates`. JS sorts client-side. Click a row → `/authoring/new?template=<name>`.
 
@@ -1423,19 +1436,19 @@ sleep 2
 kill $DASHBOARD_PID
 ```
 
-Document the smoke procedure in `crates/xianvec-dashboard/README.md`.
+Document the smoke procedure in `crates/xvision-dashboard/README.md`.
 
 Commit `chore: Plan 2d end-to-end smoke verified`.
 
 ### Task 12: README + manual
 
-Update top-level `MANUAL.md` with the dashboard section. Add `crates/xianvec-dashboard/README.md` describing the architecture (Wizard server-side LLM loop, SSE streaming, Lightweight Charts CDN, design system tokens).
+Update top-level `MANUAL.md` with the dashboard section. Add `crates/xvision-dashboard/README.md` describing the architecture (Wizard server-side LLM loop, SSE streaming, Lightweight Charts CDN, design system tokens).
 
 Commit `docs: Plan 2d dashboard README + manual update`.
 
 ### Task 13: Final workspace check
 
-`cargo test --workspace` clean. clippy clean. fmt scoped to plan-touched crates. xianvec-eval still untouched. ~15 commits since Plan 2c's tip (Tasks 1–13 plus 7a + 8a inserts).
+`cargo test --workspace` clean. clippy clean. fmt scoped to plan-touched crates. xvision-eval still untouched. ~15 commits since Plan 2c's tip (Tasks 1–13 plus 7a + 8a inserts).
 
 ---
 

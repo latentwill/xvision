@@ -1,4 +1,4 @@
-# XIANVEC — Architecture
+# XVISION — Architecture
 
 > Multistrategy trading agent with on-chain reputation. Hackathon scope: prove that a population of strategies evaluated through a deterministic loom, with ERC-8004 reputation/validation receipts, produces a credibly auditable ranking of strategy variants.
 
@@ -202,7 +202,7 @@ neutrally, the Trader decides. Both stages are LLM-backed; only the Trader
 emits the final action.
 
 **Model choice:** Backend-agnostic, picked at runtime via config. The
-`TraderBackend` HTTP trait (see `crates/xianvec-trader/src/backend.rs`)
+`TraderBackend` HTTP trait (see `crates/xvision-trader/src/backend.rs`)
 abstracts over OpenAI-compatible endpoints — `OpenAiCompatBackend` is the
 default impl, covering OpenAI, Anthropic, OpenRouter, vLLM, llama.cpp,
 Ollama. Local `candle` inference is an optional path for fully air-gapped
@@ -279,7 +279,7 @@ The risk layer logs every veto with reason. Vetoes are valuable signal — they 
 - **Alpaca paper** is the pre-launch testing path. Validates Stage 1→2→3 plumbing against a battle-tested broker simulator before any on-chain capital is touched.
 - **Orderly Network on Mantle** is the hackathon submission path. Orderly is shared-orderbook infrastructure that 340+ brokers (FusionX, Ranger, Aark, Ascendex, Kai, …) front-end onto; trades execute against Mantle vault `0x816f722424B49Cf1275cc86DA9840Fbd5a6167e9` (chain_id 5000). Capital is pre-funded on Mantle by the user; the agent never bridges. The integration is native Rust via `orderly-connector-rs = "0.4"` — no Node.js dependency, no subprocess shellout.
 
-A `--executor {alpaca,orderly}` flag selects between them at runtime. The Orderly executor (`crates/xianvec-execution/orderly.rs`) holds an `OrderlyService` instance plus signed-request `Credentials` and surfaces the SDK's `create_order` / `cancel_order` / `get_holding` / `get_positions` methods through the `Executor` trait.
+A `--executor {alpaca,orderly}` flag selects between them at runtime. The Orderly executor (`crates/xvision-execution/orderly.rs`) holds an `OrderlyService` instance plus signed-request `Credentials` and surfaces the SDK's `create_order` / `cancel_order` / `get_holding` / `get_positions` methods through the `Executor` trait.
 
 > **Venue history (2026-05-03).** Three iterations in one day:
 > 1. Earliest drafts named "Byreal Perps on Mantle" — wrong on its face: Byreal CLMM is Solana, Byreal Perps CLI is Hyperliquid, the "Byreal-on-Mantle" association is a Mantle Super Portal bridge into Byreal's *Solana* liquidity.
@@ -292,13 +292,13 @@ A `--executor {alpaca,orderly}` flag selects between them at runtime. The Orderl
 
 ### 6.1 ERC-8004 — On-chain agent identity and strategy provenance
 
-ERC-8004 (deployed on Ethereum mainnet and Mantle mainnet, January–February 2026) defines three lightweight on-chain registries for autonomous agents: **Identity**, **Reputation**, and **Validation**. All three are load-bearing for xianvec's Mantle submission, and each maps cleanly onto the multistrategy loom architecture.
+ERC-8004 (deployed on Ethereum mainnet and Mantle mainnet, January–February 2026) defines three lightweight on-chain registries for autonomous agents: **Identity**, **Reputation**, and **Validation**. All three are load-bearing for xvision's Mantle submission, and each maps cleanly onto the multistrategy loom architecture.
 
 **Identity Registry (ERC-721 agent NFT).** Each strategy variant in the loom is minted as an NFT at first run. The token's metadata includes a `strategy_manifest_cid` — an IPFS/Arweave content hash of the strategy manifest (`agent_id`, `strategy_name`, `code_commit`, `strategy_adapter_type`, `risk_preset`). The manifest CID is 32–64 bytes on-chain; the full manifest file lives off-chain. This is exactly the ERC-721 metadata pattern. The NFT is the strategy's permanent identity: swapping the code commit or adapter type means the strategy has forked and starts a fresh reputation trace.
 
 **Reputation Registry.** Feedback records accrue to the strategy NFT after every closed experiment run. Each strategy in the loom receives reputation entries recording its risk-adjusted return, regime context, and code commit. Critically, reputation attaches to a specific `(strategy_id, code_commit)`, not just an address. Two runs of the same strategy at the same commit compound the same reputation. A new commit (mutated parameters, new adapter) starts fresh. This makes strategy variants composable trust primitives: well-performing strategies can be forked and their reputation partially inherited via on-chain lineage.
 
-**Validation Registry.** This is the "prove it" layer and the most important for xianvec's core claim. After every closed Orderly/Mantle trade, Stage 3 constructs and submits a validation proof to the Mantle Validation Registry — same chain as the trade, single-chain audit trail:
+**Validation Registry.** This is the "prove it" layer and the most important for xvision's core claim. After every closed Orderly/Mantle trade, Stage 3 constructs and submits a validation proof to the Mantle Validation Registry — same chain as the trade, single-chain audit trail:
 
 ```json
 {
@@ -326,7 +326,7 @@ ERC-8004 (deployed on Ethereum mainnet and Mantle mainnet, January–February 20
 
 The on-chain artifacts are hashes, commitments, and the tiny per-trade strategy reference. EVM storage at 20K gas per 32-byte slot keeps the loom's per-trade and per-run costs bounded even on Mantle.
 
-**Implementation.** `xianvec-execution` constructs the Validation proof after each closed Orderly position on Mantle and submits via `alloy`. ERC-8004 contract addresses (Identity, Reputation, Validation registries on Mantle mainnet) live in `config/mantle.toml` alongside the Orderly vault address. The agent NFT is minted once per strategy via `xvn setup --mint-agent-nft`; subsequent runs only post to Reputation and Validation. Trades, identity, and reputation all live on the same chain — no cross-chain handoff in the audit trail.
+**Implementation.** `xvision-execution` constructs the Validation proof after each closed Orderly position on Mantle and submits via `alloy`. ERC-8004 contract addresses (Identity, Reputation, Validation registries on Mantle mainnet) live in `config/mantle.toml` alongside the Orderly vault address. The agent NFT is minted once per strategy via `xvn setup --mint-agent-nft`; subsequent runs only post to Reputation and Validation. Trades, identity, and reputation all live on the same chain — no cross-chain handoff in the audit trail.
 
 ---
 
@@ -480,21 +480,21 @@ The runtime is Rust. Plotting and a small offline analysis surface use Python vi
 ### 10.1 Cargo workspace layout
 
 ```
-xianvec/
+xvision/
 ├── Cargo.toml                    # workspace root
 ├── rust-toolchain.toml
 │
 ├── crates/
-│   ├── xianvec-core/             # types, schemas, config, SQLite persistence, manifest types
-│   ├── xianvec-data/             # OHLCV ingest, indicators, onchain signals
-│   ├── xianvec-intern/           # Stage 1 (OpenAI- or Anthropic-compatible HTTP)
-│   ├── xianvec-trader/           # Stage 2 (TraderBackend HTTP trait, optional local candle)
-│   ├── xianvec-risk/             # deterministic risk layer
-│   ├── xianvec-execution/        # Stage 3: Alpaca + Orderly
-│   ├── xianvec-identity/         # ERC-8004 manifest + reputation/validation receipts
-│   ├── xianvec-eval/             # backtest harness, baselines, Δ-Sharpe
-│   ├── xianvec-harness/          # boundary probes (minimal v1 corpus)
-│   └── xianvec-cli/              # clap-based CLI; installed binary is `xvn`
+│   ├── xvision-core/             # types, schemas, config, SQLite persistence, manifest types
+│   ├── xvision-data/             # OHLCV ingest, indicators, onchain signals
+│   ├── xvision-intern/           # Stage 1 (OpenAI- or Anthropic-compatible HTTP)
+│   ├── xvision-trader/           # Stage 2 (TraderBackend HTTP trait, optional local candle)
+│   ├── xvision-risk/             # deterministic risk layer
+│   ├── xvision-execution/        # Stage 3: Alpaca + Orderly
+│   ├── xvision-identity/         # ERC-8004 manifest + reputation/validation receipts
+│   ├── xvision-eval/             # backtest harness, baselines, Δ-Sharpe
+│   ├── xvision-harness/          # boundary probes (minimal v1 corpus)
+│   └── xvision-cli/              # clap-based CLI; installed binary is `xvn`
 │
 ├── config/                       # TOML configs (whitelist, risk)
 ├── data/
@@ -503,7 +503,7 @@ xianvec/
 └── docs/
 ```
 
-The workspace structure makes the contract layer load-bearing: each crate's public API is a typed surface, and cross-crate calls fail to compile if the contract doesn't match. A `xianvec-data` function cannot reach into `xianvec-eval`'s internals.
+The workspace structure makes the contract layer load-bearing: each crate's public API is a typed surface, and cross-crate calls fail to compile if the contract doesn't match. A `xvision-data` function cannot reach into `xvision-eval`'s internals.
 
 ---
 
@@ -535,7 +535,7 @@ For the record, the following were debated and decided:
 
 | Question | Resolution |
 |---|---|
-| CV substrate location? | **Moved to xianvec-play** per ADR 0011. xianvec is multistrategy + marketplace; CV research continues in xianvec-play with the full development trail preserved. |
+| CV substrate location? | **Moved to xvision-play** per ADR 0011. xvision is multistrategy + marketplace; CV research continues in xvision-play with the full development trail preserved. |
 | Stage 2 as decider vs calibrator? | **Decider.** Risk layer compensates for safety; the Trader emits the action. |
 | Stage 2 name? | **Trader** (paired with Stage 1 = **Intern**). Characterological roles: Intern researches neutrally, Trader decides. |
 | Does Intern recommend a candidate decision? | **No.** Intern emits balanced bull/bear/flat cases with parallel evidence inventories. Recommending would prompt-anchor the Trader. |
@@ -583,4 +583,4 @@ For the record, the following were debated and decided:
 
 ---
 
-*Document version: 2026-05-07 (post-ADR-0011 slim-down). Lives at `/Users/edkennedy/Code/xianvec/architecture.md`.*
+*Document version: 2026-05-07 (post-ADR-0011 slim-down). Lives at `/Users/edkennedy/Code/xvision/architecture.md`.*

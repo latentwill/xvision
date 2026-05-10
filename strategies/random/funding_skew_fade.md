@@ -48,7 +48,7 @@ else:
 
 ## Data dependencies
 
-- `xianvec-core` market snapshot fields already present in the repo
+- `xvision-core` market snapshot fields already present in the repo
 - Reliable funding and long-short feeds
 - No extra model inputs required
 
@@ -58,6 +58,6 @@ idea
 
 ## References
 
-- `crates/xianvec-core/src/market.rs`
-- `crates/xianvec-eval/src/baselines/rsi_mean_reversion.rs`
+- `crates/xvision-core/src/market.rs`
+- `crates/xvision-eval/src/baselines/rsi_mean_reversion.rs`
 - `decisions/strategy-choices.md`

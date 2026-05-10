@@ -1,6 +1,6 @@
 # X Strategy
 
-This folder is a working backlog of xianvec strategy ideas, generated using the ideonomy-plain lens.
+This folder is a working backlog of xvision strategy ideas, generated using the ideonomy-plain lens.
 
 The ideonomy pass emphasized five useful axes:
 - homogeneity - do the signals agree, or is the market mixed?
@@ -20,5 +20,5 @@ The ideonomy pass emphasized five useful axes:
 ## Notes
 
 - These are concept specs, not code.
-- Each file uses the xianvec strategy template: Thesis, Inputs, Parameters, Decision rule, Expected regime, Data dependencies, Status, References.
-- The ideas are written to fit the current `MarketSnapshot` surface in `crates/xianvec-core/src/market.rs`.
+- Each file uses the xvision strategy template: Thesis, Inputs, Parameters, Decision rule, Expected regime, Data dependencies, Status, References.
+- The ideas are written to fit the current `MarketSnapshot` surface in `crates/xvision-core/src/market.rs`.

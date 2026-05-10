@@ -7571,7 +7571,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "xianvec-cli"
+name = "xvision-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -7586,19 +7586,19 @@ dependencies = [
  "tracing-subscriber",
  "ulid",
  "uuid",
- "xianvec-core",
- "xianvec-data",
- "xianvec-engine",
- "xianvec-eval",
- "xianvec-execution",
- "xianvec-harness",
- "xianvec-intern",
- "xianvec-risk",
- "xianvec-trader",
+ "xvision-core",
+ "xvision-data",
+ "xvision-engine",
+ "xvision-eval",
+ "xvision-execution",
+ "xvision-harness",
+ "xvision-intern",
+ "xvision-risk",
+ "xvision-trader",
 ]
 
 [[package]]
-name = "xianvec-core"
+name = "xvision-core"
 version = "0.1.0"
 dependencies = [
  "chrono",
@@ -7616,7 +7616,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "xianvec-data"
+name = "xvision-data"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -7627,11 +7627,11 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
  "tracing",
- "xianvec-core",
+ "xvision-core",
 ]
 
 [[package]]
-name = "xianvec-engine"
+name = "xvision-engine"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -7647,12 +7647,12 @@ dependencies = [
  "tracing",
  "ulid",
  "uuid",
- "xianvec-core",
- "xianvec-data",
+ "xvision-core",
+ "xvision-data",
 ]
 
 [[package]]
-name = "xianvec-eval"
+name = "xvision-eval"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -7665,15 +7665,15 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
- "xianvec-core",
- "xianvec-execution",
- "xianvec-intern",
- "xianvec-risk",
- "xianvec-trader",
+ "xvision-core",
+ "xvision-execution",
+ "xvision-intern",
+ "xvision-risk",
+ "xvision-trader",
 ]
 
 [[package]]
-name = "xianvec-execution"
+name = "xvision-execution"
 version = "0.1.0"
 dependencies = [
  "apca",
@@ -7690,22 +7690,22 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "uuid",
- "xianvec-core",
+ "xvision-core",
 ]
 
 [[package]]
-name = "xianvec-harness"
+name = "xvision-harness"
 version = "0.1.0"
 dependencies = [
  "chrono",
  "tracing",
  "uuid",
- "xianvec-core",
- "xianvec-risk",
+ "xvision-core",
+ "xvision-risk",
 ]
 
 [[package]]
-name = "xianvec-identity"
+name = "xvision-identity"
 version = "0.1.0"
 dependencies = [
  "alloy",
@@ -7718,11 +7718,11 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
- "xianvec-core",
+ "xvision-core",
 ]
 
 [[package]]
-name = "xianvec-intern"
+name = "xvision-intern"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -7737,11 +7737,11 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
- "xianvec-core",
+ "xvision-core",
 ]
 
 [[package]]
-name = "xianvec-mcp"
+name = "xvision-mcp"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -7752,11 +7752,11 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
- "xianvec-data",
+ "xvision-data",
 ]
 
 [[package]]
-name = "xianvec-risk"
+name = "xvision-risk"
 version = "0.1.0"
 dependencies = [
  "chrono",
@@ -7765,11 +7765,11 @@ dependencies = [
  "toml",
  "tracing",
  "uuid",
- "xianvec-core",
+ "xvision-core",
 ]
 
 [[package]]
-name = "xianvec-trader"
+name = "xvision-trader"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -7785,8 +7785,8 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
- "xianvec-core",
- "xianvec-intern",
+ "xvision-core",
+ "xvision-intern",
 ]
 
 [[package]]

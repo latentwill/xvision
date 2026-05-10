@@ -5,7 +5,7 @@
 
 ## Pivot context
 
-Xianvec is pivoting fully to: (1) the multi-strategy evaluation engine, then (2) the marketplace + 8004 trading agent strategy. This document captures decisions for (1)'s evaluation engine, the visualization layer half of the pivot.
+Xvision is pivoting fully to: (1) the multi-strategy evaluation engine, then (2) the marketplace + 8004 trading agent strategy. This document captures decisions for (1)'s evaluation engine, the visualization layer half of the pivot.
 
 ## Locked decisions (captured during 2026-05-08 brainstorm)
 
@@ -22,19 +22,19 @@ Xianvec is pivoting fully to: (1) the multi-strategy evaluation engine, then (2)
 
 ## Architectural shape (locked)
 
-**Approach B — greenfield `xianvec-engine` crate, deprecate `xianvec-eval`.**
+**Approach B — greenfield `xvision-engine` crate, deprecate `xvision-eval`.**
 
 - New top-level engine crate owns: runs, scenarios, executor, store, dashboard server, findings extractor.
-- Existing `xianvec-eval` deprecated. ab-compare, baselines, bootstrap, gate logic ported in.
-- Rationale (user's words): start fresh with the new design. The new design's scope (multi-strategy comparison, run-as-artifact, NL findings, tier-gated concurrency) materially exceeds what `xianvec-eval` was built for; layering on top would accumulate archaeological debt.
+- Existing `xvision-eval` deprecated. ab-compare, baselines, bootstrap, gate logic ported in.
+- Rationale (user's words): start fresh with the new design. The new design's scope (multi-strategy comparison, run-as-artifact, NL findings, tier-gated concurrency) materially exceeds what `xvision-eval` was built for; layering on top would accumulate archaeological debt.
 
 ## What still needs to be decided when we resume
 
 - Strategy artifact contract (defined by the strategy creation engine spec — that's why we're pausing).
-- Module layout inside `xianvec-engine` (runs / scenarios / executor / store / dashboard / findings).
+- Module layout inside `xvision-engine` (runs / scenarios / executor / store / dashboard / findings).
 - SSE/WebSocket message schema for live progress.
 - Finding record JSON schema (will be informed by what data the strategy creation engine surfaces).
-- Migration / port plan for ab-compare, baselines, bootstrap, gate from `xianvec-eval`.
+- Migration / port plan for ab-compare, baselines, bootstrap, gate from `xvision-eval`.
 - CLI surface (`xvn eval ...` subcommands).
 - Rate-limit + concurrency policy specifics for the tier-gated model.
 - LLM model + prompt for the findings extractor.

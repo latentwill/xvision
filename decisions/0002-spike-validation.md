@@ -1,5 +1,7 @@
 # ADR 0002 — Vector validation spike outcome
 
+> **2026-05-10:** Project renamed `xianvec` → `xvision`. References below reflect the post-rename name; project history prior to this date used `xianvec`.
+
 **Date:** 2026-05-03
 **Status:** **Substantive PASS** — historical record (preserved per ADR 0011).
 Originally cleared Phase 0.3 strict 8-criterion gate substantively despite
@@ -8,11 +10,11 @@ strict-mode failures on (1)/(3)/(5)/(6); the 1.17-point score swing across
 load-bearing evidence. See "Decision" below.
 **Phase:** 0.3 (was CRITICAL GATE — now historical)
 
-> **2026-05-07 status:** Per ADR 0011, CV substrate moved to xianvec-play.
+> **2026-05-07 status:** Per ADR 0011, CV substrate moved to xvision-play.
 > This ADR is preserved as historical record of the validation spike;
-> the work it documents now continues in xianvec-play. References to
-> Phase 0.3 / Phase 4 in the body are obsolete in xianvec; their
-> equivalents live in xianvec-play.
+> the work it documents now continues in xvision-play. References to
+> Phase 0.3 / Phase 4 in the body are obsolete in xvision; their
+> equivalents live in xvision-play.
 
 ## Question
 

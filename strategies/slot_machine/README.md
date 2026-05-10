@@ -46,7 +46,7 @@ _(empty — add scoped instances below as `<base_thesis>_slot.md` once the engin
 
 1. **Idea** — add a one-line bullet to the idea pool above.
 2. **Queued** — promote to a full `<base_thesis>_slot.md` once the operator subset and variant constraints are scoped.
-3. **Implement** — depends on engine MVP + slot-machine implementation plan landing. The template lives in `crates/xianvec-engine/src/templates/slot_machine.rs`.
+3. **Implement** — depends on engine MVP + slot-machine implementation plan landing. The template lives in `crates/xvision-engine/src/templates/slot_machine.rs`.
 4. **Evaluate** — runs through `xvn ab-compare --slot-machine <id>`, which reports hit rate, diversity score, and per-variant metrics.
 5. **Promote winning variants** — variants that consistently beat baselines get extracted to their own strategy files in the appropriate sibling folder (e.g. `rsi_volume/`, `nansen/`).
 

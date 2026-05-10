@@ -59,6 +59,6 @@ idea
 
 ## References
 
-- `crates/xianvec-core/src/market.rs`
-- `crates/xianvec-eval/src/baselines/buy_and_hold.rs`
-- `crates/xianvec-eval/src/baselines/ma_crossover.rs`
+- `crates/xvision-core/src/market.rs`
+- `crates/xvision-eval/src/baselines/buy_and_hold.rs`
+- `crates/xvision-eval/src/baselines/ma_crossover.rs`

@@ -7,7 +7,7 @@
 
 **Goal:** Make an author's locally-developed strategy run continuously and durably with real broker execution. After this plan ships: `xvn live deploy <strategy-id> --mode paper` starts a long-lived xvn daemon that fires the strategy's agents on its declared cadence, executes resulting decisions through Alpaca paper (or Orderly live with `--mode live`), persists every decision and fill to a SQLite event store, and retries on transient failures. Reputation receipts are *not* written in this plan — that surface ships with Plan 5's marketplace.
 
-**Architecture:** Two new modules + extension of an existing one. (1) `xianvec-engine/src/scheduler/` is the Rust port of SwarmClaw's durable scheduler — heartbeats, cron/event triggers, retry-on-failure, agent-to-agent handoff, all backed by SQLite (`tokio` + `sqlx` already in workspace). (2) `xianvec-engine/src/live/` orchestrates a deployment: spins up the scheduler with one job per strategy, hooks the agent pipeline output to broker tools, and exposes status. (3) `xianvec-execution` (existing) gains a `BrokerSurface` trait abstracting Alpaca paper, Alpaca live, and Orderly live behind one shape so the live daemon picks at runtime.
+**Architecture:** Two new modules + extension of an existing one. (1) `xvision-engine/src/scheduler/` is the Rust port of SwarmClaw's durable scheduler — heartbeats, cron/event triggers, retry-on-failure, agent-to-agent handoff, all backed by SQLite (`tokio` + `sqlx` already in workspace). (2) `xvision-engine/src/live/` orchestrates a deployment: spins up the scheduler with one job per strategy, hooks the agent pipeline output to broker tools, and exposes status. (3) `xvision-execution` (existing) gains a `BrokerSurface` trait abstracting Alpaca paper, Alpaca live, and Orderly live behind one shape so the live daemon picks at runtime.
 
 **Tech Stack:** Rust 2021. New deps: `cron` (cron expression parser), `sqlx` (already workspace dep, `runtime-tokio`, `sqlite`, `macros`, `chrono`, `uuid` features). Reuses `tokio`, `tracing`, `chrono`. The deploy recipe ships a templated Dockerfile + `fly.toml` plus a `deploy/` shell script.
 
@@ -24,7 +24,7 @@
 
 ```
 crates/
-├── xianvec-engine/
+├── xvision-engine/
 │   ├── Cargo.toml                          # add cron, sqlx (already workspace dep)
 │   └── src/
 │       ├── lib.rs                          # `pub mod scheduler; pub mod live;`
@@ -41,11 +41,11 @@ crates/
 │           ├── broker.rs                   # BrokerSurface trait dispatch
 │           ├── decision_handler.rs         # routes pipeline output → broker
 │           └── status.rs                   # status query API
-├── xianvec-execution/
+├── xvision-execution/
 │   └── src/
 │       ├── lib.rs                          # add `pub mod broker_surface;`
 │       └── broker_surface.rs               # BrokerSurface trait + Alpaca/Orderly impls
-└── xianvec-cli/
+└── xvision-cli/
     └── src/commands/
         ├── live.rs                         # NEW: xvn live {deploy | status | stop}
         └── deploy.rs                       # NEW: xvn deploy --target fly
@@ -104,10 +104,10 @@ git commit -m "docs: pre-flight notes for SwarmClaw scheduler port"
 ### Task 2: Scheduler types + SQLite migrations
 
 **Files:**
-- Create: `crates/xianvec-engine/src/scheduler/mod.rs`
-- Create: `crates/xianvec-engine/src/scheduler/store.rs`
-- Create: `crates/xianvec-engine/migrations/001_scheduler.sql`
-- Modify: `crates/xianvec-engine/Cargo.toml`
+- Create: `crates/xvision-engine/src/scheduler/mod.rs`
+- Create: `crates/xvision-engine/src/scheduler/store.rs`
+- Create: `crates/xvision-engine/migrations/001_scheduler.sql`
+- Modify: `crates/xvision-engine/Cargo.toml`
 
 - [ ] **Step 1: Add deps**
 
@@ -170,7 +170,7 @@ pub struct Job {
 
 - [ ] **Step 3: SQLite migration**
 
-Create `crates/xianvec-engine/migrations/001_scheduler.sql`:
+Create `crates/xvision-engine/migrations/001_scheduler.sql`:
 
 ```sql
 CREATE TABLE IF NOT EXISTS scheduler_jobs (
@@ -223,7 +223,7 @@ Use `sqlx::query_as!` macros for compile-time-checked queries. Run migrations on
 
 - [ ] **Step 5: Test the store**
 
-`crates/xianvec-engine/tests/scheduler_store.rs`:
+`crates/xvision-engine/tests/scheduler_store.rs`:
 - enqueue + claim_next round-trip
 - claim_next respects lease expiry (claim → wait → claim again from a "second worker")
 - fail with attempts < max stays Pending
@@ -235,7 +235,7 @@ Tests use a tempfile SQLite database via `sqlx::SqlitePool::connect("sqlite::mem
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/xianvec-engine/src/scheduler/{mod.rs,store.rs} crates/xianvec-engine/migrations crates/xianvec-engine/tests/scheduler_store.rs crates/xianvec-engine/Cargo.toml
+git add crates/xvision-engine/src/scheduler/{mod.rs,store.rs} crates/xvision-engine/migrations crates/xvision-engine/tests/scheduler_store.rs crates/xvision-engine/Cargo.toml
 git commit -m "feat(scheduler): SQLite-backed JobStore with lease + retry semantics"
 ```
 
@@ -243,7 +243,7 @@ git commit -m "feat(scheduler): SQLite-backed JobStore with lease + retry semant
 
 ### Task 3: Cron trigger evaluation
 
-**File:** `crates/xianvec-engine/src/scheduler/trigger.rs`
+**File:** `crates/xvision-engine/src/scheduler/trigger.rs`
 
 ```rust
 use chrono::{DateTime, Utc};
@@ -279,7 +279,7 @@ Commit `feat(scheduler): cron trigger evaluation`.
 
 ### Task 4: Heartbeat + lease recovery
 
-**File:** `crates/xianvec-engine/src/scheduler/heartbeat.rs`
+**File:** `crates/xvision-engine/src/scheduler/heartbeat.rs`
 
 ```rust
 use std::sync::Arc;
@@ -317,7 +317,7 @@ Commit `feat(scheduler): heartbeat task`.
 
 ### Task 5: Retry policy
 
-**File:** `crates/xianvec-engine/src/scheduler/retry.rs`
+**File:** `crates/xvision-engine/src/scheduler/retry.rs`
 
 ```rust
 use std::time::Duration;
@@ -343,7 +343,7 @@ Commit `feat(scheduler): retry policy with exponential backoff + cap`.
 
 ### Task 6: Scheduler runner loop
 
-**File:** `crates/xianvec-engine/src/scheduler/runner.rs`
+**File:** `crates/xvision-engine/src/scheduler/runner.rs`
 
 ```rust
 use std::sync::Arc;
@@ -425,15 +425,15 @@ Commit `feat(scheduler): main runner loop with claim+handle+heartbeat`.
 
 ---
 
-## Phase 2C.B — Broker surface in `xianvec-execution`
+## Phase 2C.B — Broker surface in `xvision-execution`
 
 ### Task 7: `BrokerSurface` trait + dispatch
 
 **Files:**
-- Modify: `crates/xianvec-execution/src/lib.rs` — add `pub mod broker_surface;`
-- Create: `crates/xianvec-execution/src/broker_surface.rs`
+- Modify: `crates/xvision-execution/src/lib.rs` — add `pub mod broker_surface;`
+- Create: `crates/xvision-execution/src/broker_surface.rs`
 
-The existing `xianvec-execution` already has Alpaca + Orderly modules. Wrap them behind one trait.
+The existing `xvision-execution` already has Alpaca + Orderly modules. Wrap them behind one trait.
 
 ```rust
 //! Unified broker surface — pick at runtime by enum.
@@ -501,7 +501,7 @@ Commit `feat(execution): unified BrokerSurface trait with Alpaca + Orderly impls
 
 ### Task 8: Live module types
 
-**File:** `crates/xianvec-engine/src/live/mod.rs`
+**File:** `crates/xvision-engine/src/live/mod.rs`
 
 ```rust
 pub mod broker;
@@ -510,7 +510,7 @@ pub mod decision_handler;
 pub mod status;
 
 use serde::{Deserialize, Serialize};
-use xianvec_execution::broker_surface::BrokerKind;
+use xvision_execution::broker_surface::BrokerKind;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeploymentConfig {
@@ -540,7 +540,7 @@ Commit `feat(live): DeploymentConfig types`.
 
 ### Task 9: Decision handler — pipeline → broker
 
-**File:** `crates/xianvec-engine/src/live/decision_handler.rs`
+**File:** `crates/xvision-engine/src/live/decision_handler.rs`
 
 This is the heart of live execution. For each scheduled "decide" job:
 
@@ -555,9 +555,9 @@ This is the heart of live execution. For each scheduled "decide" job:
 use std::sync::Arc;
 
 use serde::Deserialize;
-use xianvec_engine::agent::pipeline::{run_pipeline, PipelineInputs};
-use xianvec_engine::bundle::StrategyBundle;
-use xianvec_execution::broker_surface::{BrokerSurface, OrderRequest, Side};
+use xvision_engine::agent::pipeline::{run_pipeline, PipelineInputs};
+use xvision_engine::bundle::StrategyBundle;
+use xvision_execution::broker_surface::{BrokerSurface, OrderRequest, Side};
 
 #[derive(Deserialize)]
 struct TraderOutput {
@@ -570,8 +570,8 @@ pub async fn handle_decide(
     bundle: &StrategyBundle,
     capital_usd: f64,
     seed_inputs: serde_json::Value,
-    dispatch: Arc<dyn xianvec_engine::agent::llm::LlmDispatch>,
-    tools: Arc<xianvec_engine::tools::ToolRegistry>,
+    dispatch: Arc<dyn xvision_engine::agent::llm::LlmDispatch>,
+    tools: Arc<xvision_engine::tools::ToolRegistry>,
     broker: Arc<dyn BrokerSurface>,
 ) -> anyhow::Result<DecisionRecord> {
     let outs = run_pipeline(PipelineInputs {
@@ -631,7 +631,7 @@ pub struct DecisionRecord {
     pub conviction: f64,
     pub justification: String,
     pub order_size: f64,
-    pub confirmation: Option<xianvec_execution::broker_surface::OrderConfirmation>,
+    pub confirmation: Option<xvision_execution::broker_surface::OrderConfirmation>,
     pub token_usage_in: u32,
     pub token_usage_out: u32,
 }
@@ -645,7 +645,7 @@ Commit `feat(live): decision_handler — pipeline output → broker submit`.
 
 ### Task 10: Live daemon
 
-**File:** `crates/xianvec-engine/src/live/daemon.rs`
+**File:** `crates/xvision-engine/src/live/daemon.rs`
 
 The daemon is the supervisor that:
 1. Loads the strategy bundle by id
@@ -657,7 +657,7 @@ The daemon is the supervisor that:
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use xianvec_engine::bundle::store::{BundleStore, FilesystemStore};
+use xvision_engine::bundle::store::{BundleStore, FilesystemStore};
 
 use crate::live::DeploymentConfig;
 use crate::scheduler::{Scheduler, Trigger, JobStatus, store::SqliteJobStore};
@@ -720,7 +720,7 @@ pub async fn run(cfg: DeploymentConfig, xvn_home: PathBuf) -> anyhow::Result<()>
 }
 
 async fn decide_job(
-    bundle: &xianvec_engine::bundle::StrategyBundle,
+    bundle: &xvision_engine::bundle::StrategyBundle,
     xvn_home: &std::path::Path,
     payload: serde_json::Value,
 ) -> anyhow::Result<()> {
@@ -732,7 +732,7 @@ async fn decide_job(
 }
 ```
 
-> Subagent should fully implement `decide_job` — read Plan 2a's `run_inline` for the dispatch + tools setup pattern, wrap with the broker surface from `xianvec-execution::broker_surface`, and persist the DecisionRecord via `JobStore::record_event`.
+> Subagent should fully implement `decide_job` — read Plan 2a's `run_inline` for the dispatch + tools setup pattern, wrap with the broker surface from `xvision-execution::broker_surface`, and persist the DecisionRecord via `JobStore::record_event`.
 
 Tests: with a fixture-mode deployment + mock LLM + mock broker, run `daemon::run` for 200ms, signal shutdown, assert one event recorded.
 
@@ -742,7 +742,7 @@ Commit `feat(live): daemon supervises scheduler + executes decide jobs`.
 
 ### Task 11: `xvn live {deploy | status | stop}` CLI
 
-**File:** `crates/xianvec-cli/src/commands/live.rs`
+**File:** `crates/xvision-cli/src/commands/live.rs`
 
 ```rust
 use clap::{Args, Subcommand};
@@ -774,7 +774,7 @@ enum LiveAction {
 }
 ```
 
-`Deploy` builds a `DeploymentConfig` and calls `xianvec_engine::live::daemon::run` (blocking until the user CTRL-Cs).
+`Deploy` builds a `DeploymentConfig` and calls `xvision_engine::live::daemon::run` (blocking until the user CTRL-Cs).
 
 `Status` queries the scheduler_events table for the deployment_id and prints recent decisions, P&L, last heartbeat.
 
@@ -792,7 +792,7 @@ Commit `feat(cli): xvn live deploy/status/stop`.
 
 ### Task 12: News tool integration
 
-**File:** `crates/xianvec-engine/src/tools/news.rs` (new)
+**File:** `crates/xvision-engine/src/tools/news.rs` (new)
 
 The `news_trader` template (Plan 2a Task 18) declared `news_sentiment` as a future required tool. Wire it now.
 
@@ -954,7 +954,7 @@ Commit `feat(deploy): fly.io recipe (Dockerfile, fly.toml template, deploy.sh)`.
 
 ### Task 14: `xvn deploy --target fly`
 
-**File:** `crates/xianvec-cli/src/commands/deploy.rs`
+**File:** `crates/xvision-cli/src/commands/deploy.rs`
 
 ```rust
 //! `xvn deploy --target fly <agent_id>` — orchestrates deploy/fly/deploy.sh.
@@ -1035,7 +1035,7 @@ Commit `chore: Plan 2c end-to-end smoke verified`.
 
 ### Task 17: Final workspace check
 
-`cargo test --workspace`, clippy, fmt — all clean. xianvec-eval still untouched.
+`cargo test --workspace`, clippy, fmt — all clean. xvision-eval still untouched.
 
 Commit `chore: Plan 2c final cleanup` if needed.
 

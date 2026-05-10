@@ -1,0 +1,33 @@
+[package]
+name        = "xvision-eval"
+description = "backtest harness, baselines, Δ-Sharpe"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+
+[lib]
+name = "xvision_eval"
+path = "src/lib.rs"
+
+[dependencies]
+xvision-core      = { path = "../xvision-core" }
+xvision-execution = { path = "../xvision-execution" }
+xvision-risk      = { path = "../xvision-risk" }
+xvision-trader    = { path = "../xvision-trader" }
+xvision-intern    = { path = "../xvision-intern" }
+rand              = { version = "0.8", default-features = false, features = ["std", "std_rng"] }
+
+anyhow      = { workspace = true }
+async-trait = { workspace = true }
+chrono      = { workspace = true, features = ["serde"] }
+serde       = { workspace = true, features = ["derive"] }
+serde_json  = { workspace = true }
+thiserror   = { workspace = true }
+uuid        = { workspace = true, features = ["serde", "v4"] }
+tokio       = { workspace = true }
+tracing     = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros"] }

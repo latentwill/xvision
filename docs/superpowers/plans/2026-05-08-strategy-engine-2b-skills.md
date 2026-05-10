@@ -3,16 +3,16 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 > **Depends on:** Plan #1 + Plan 2a merged.
 > **Scope decision (2026-05-08):** Marketplace + reputation work has been **fully deferred to Plan 5** (blockchain integration). Plan 2b ships only the **skills system** — OSShip-style markdown skills authors can compose into strategy slots. Skills are useful for authoring (e.g., a `news-aware-decision` skill that any trader slot can attach) and stand alone without a marketplace. Discovery + reputation + content-addressed publishing all wait for the blockchain plan to be in place.
-> **Execution-order decision (2026-05-08):** Execute this plan **after Plan 3 (eval engine) AND Plan 2a ship**, in case eval's findings-extractor markdown prompt format or 2a's MCP authoring surface surface design decisions that affect how skills should be structured. Plan 3 ships an inline OSShip-style markdown prompt at `xianvec-engine/src/eval/findings/prompts/extractor-v1.md` — when this plan ships, that prompt becomes a candidate for migration into the formal skill registry as `eval-findings-extractor`. The cross-pollination is real, hence the deferral.
+> **Execution-order decision (2026-05-08):** Execute this plan **after Plan 3 (eval engine) AND Plan 2a ship**, in case eval's findings-extractor markdown prompt format or 2a's MCP authoring surface surface design decisions that affect how skills should be structured. Plan 3 ships an inline OSShip-style markdown prompt at `xvision-engine/src/eval/findings/prompts/extractor-v1.md` — when this plan ships, that prompt becomes a candidate for migration into the formal skill registry as `eval-findings-extractor`. The cross-pollination is real, hence the deferral.
 
 **Goal:** Authors can write reusable OSShip-style skill markdown files, save them locally, and attach them to strategy slots to override prompts + tool allowlists. After this plan ships: an author runs `xvn skill new --from-file my-trader.md` to register a skill, `xvn skill ls` to list saved skills, and `xvn skill attach <agent_id> --slot trader --skill my-trader` to swap a strategy's trader prompt with the skill's body. The same surface is exposed via 3 MCP verbs so external AI agents can compose skills into strategies.
 
-**Architecture:** One new crate. `xianvec-skills` parses + validates OSShip-style skill markdown, supports skill attach to slots, stores skills under `$XVN_HOME/skills/`. The MCP server (Plan 2a) gains 3 new authoring verbs.
+**Architecture:** One new crate. `xvision-skills` parses + validates OSShip-style skill markdown, supports skill attach to slots, stores skills under `$XVN_HOME/skills/`. The MCP server (Plan 2a) gains 3 new authoring verbs.
 
 **Tech Stack:** Rust 2021. New deps: `serde_yaml = "0.9"`, `sha2 = "0.10"`. Reuses everything from Plans #1 and 2a.
 
 **Out of scope (deferred):**
-- Marketplace publish / browse / install / attest — **Plan 5** (blockchain integration). This includes the `xianvec-marketplace` crate, the `License` enum, the `Listing` struct, content-addressed bundle distribution, Ed25519 author identity, local reputation receipts, and the `xvn marketplace ...` CLI surface. All of it ships together when Plan 5 lands, gated on eval + strategy engines being battle-tested in production.
+- Marketplace publish / browse / install / attest — **Plan 5** (blockchain integration). This includes the `xvision-marketplace` crate, the `License` enum, the `Listing` struct, content-addressed bundle distribution, Ed25519 author identity, local reputation receipts, and the `xvn marketplace ...` CLI surface. All of it ships together when Plan 5 lands, gated on eval + strategy engines being battle-tested in production.
 - ALL on-chain work (Plan 5 source spec: `docs/superpowers/specs/2026-05-08-smart-contract-surface-design.md`, deferred status).
 - Tier B sealed-hosted strategies + xvn API server with envelope encryption — Plan 4 (post-hackathon)
 - Skill marketplace / paid skills / skill discovery — bundled into Plan 5
@@ -28,7 +28,7 @@
 
 ```
 crates/
-└── xianvec-skills/                          # NEW
+└── xvision-skills/                          # NEW
     ├── Cargo.toml
     ├── src/
     │   ├── lib.rs                           # Skill type, parse(), validate()
@@ -44,29 +44,29 @@ crates/
 ```
 
 Plus modifications:
-- `crates/xianvec-engine/Cargo.toml` — add `xianvec-skills` dep
-- `crates/xianvec-engine/src/mcp/skill.rs` — NEW: 3 skill MCP verbs
-- `crates/xianvec-cli/Cargo.toml` — add `xianvec-skills` dep
-- `crates/xianvec-cli/src/commands/skill.rs` — NEW: `xvn skill {new | ls | attach}`
-- `Cargo.toml` (workspace) — register xianvec-skills
+- `crates/xvision-engine/Cargo.toml` — add `xvision-skills` dep
+- `crates/xvision-engine/src/mcp/skill.rs` — NEW: 3 skill MCP verbs
+- `crates/xvision-cli/Cargo.toml` — add `xvision-skills` dep
+- `crates/xvision-cli/src/commands/skill.rs` — NEW: `xvn skill {new | ls | attach}`
+- `Cargo.toml` (workspace) — register xvision-skills
 
 ---
 
-## Phase 2B.A — `xianvec-skills` crate
+## Phase 2B.A — `xvision-skills` crate
 
 ### Task 1: Crate scaffolding + `Skill` type + parse
 
 **Files:**
-- Create: `crates/xianvec-skills/Cargo.toml`
-- Create: `crates/xianvec-skills/src/lib.rs`
-- Create: `crates/xianvec-skills/src/frontmatter.rs`
+- Create: `crates/xvision-skills/Cargo.toml`
+- Create: `crates/xvision-skills/src/lib.rs`
+- Create: `crates/xvision-skills/src/frontmatter.rs`
 - Modify: workspace `Cargo.toml` (add to `members` + `default-members`)
 
 - [ ] **Step 1: Cargo.toml**
 
 ```toml
 [package]
-name        = "xianvec-skills"
+name        = "xvision-skills"
 description = "OSShip-style markdown skills for xvn agents"
 version.workspace      = true
 edition.workspace      = true
@@ -75,11 +75,11 @@ license.workspace      = true
 repository.workspace   = true
 
 [lib]
-name = "xianvec_skills"
+name = "xvision_skills"
 path = "src/lib.rs"
 
 [dependencies]
-xianvec-engine = { path = "../xianvec-engine" }
+xvision-engine = { path = "../xvision-engine" }
 
 serde       = { workspace = true }
 serde_json  = { workspace = true }
@@ -208,7 +208,7 @@ pub fn split(markdown: &str) -> Result<(&str, &str), SkillError> {
 
 - [ ] **Step 4: Test fixture + parse roundtrip**
 
-Create `crates/xianvec-skills/tests/fixtures/crypto-trader-base.md`:
+Create `crates/xvision-skills/tests/fixtures/crypto-trader-base.md`:
 
 ```markdown
 ---
@@ -229,10 +229,10 @@ Decide ONE of: long_open | short_open | flat | hold.
 Output JSON: {action, conviction (0-1), justification}.
 ```
 
-Create `crates/xianvec-skills/tests/parse.rs`:
+Create `crates/xvision-skills/tests/parse.rs`:
 
 ```rust
-use xianvec_skills::parse;
+use xvision_skills::parse;
 
 const FIXTURE: &str = include_str!("fixtures/crypto-trader-base.md");
 
@@ -248,23 +248,23 @@ fn parses_valid_skill() {
 #[test]
 fn rejects_missing_frontmatter() {
     let err = parse("just some text").unwrap_err();
-    assert!(matches!(err, xianvec_skills::SkillError::MissingFrontmatter));
+    assert!(matches!(err, xvision_skills::SkillError::MissingFrontmatter));
 }
 
 #[test]
 fn rejects_missing_required_field() {
     let bad = "---\nname: x\n---\nbody\n";
     let err = parse(bad).unwrap_err();
-    assert!(matches!(err, xianvec_skills::SkillError::MissingField(_)));
+    assert!(matches!(err, xvision_skills::SkillError::MissingField(_)));
 }
 ```
 
 - [ ] **Step 5: Build + test + commit**
 
 ```bash
-cargo test -p xianvec-skills 2>&1 | grep "test result"
-git add crates/xianvec-skills Cargo.toml
-git commit -m "feat(skills): scaffold xianvec-skills crate with markdown parser"
+cargo test -p xvision-skills 2>&1 | grep "test result"
+git add crates/xvision-skills Cargo.toml
+git commit -m "feat(skills): scaffold xvision-skills crate with markdown parser"
 ```
 
 ---
@@ -272,8 +272,8 @@ git commit -m "feat(skills): scaffold xianvec-skills crate with markdown parser"
 ### Task 2: `FilesystemSkillStore`
 
 **Files:**
-- Create: `crates/xianvec-skills/src/store.rs`
-- Create: `crates/xianvec-skills/tests/store.rs`
+- Create: `crates/xvision-skills/src/store.rs`
+- Create: `crates/xvision-skills/tests/store.rs`
 
 Pattern matches Plan #1 Task 7 (`FilesystemStore` for bundles). Save-by-name, load-by-name, list. Path: `$XVN_HOME/skills/<name>.md`.
 
@@ -339,7 +339,7 @@ impl SkillStore for FilesystemSkillStore {
 
 ```rust
 // tests/store.rs
-use xianvec_skills::store::{FilesystemSkillStore, SkillStore};
+use xvision_skills::store::{FilesystemSkillStore, SkillStore};
 use tempfile::tempdir;
 
 const FIXTURE: &str = include_str!("fixtures/crypto-trader-base.md");
@@ -367,8 +367,8 @@ async fn list_returns_saved_skills() {
 - [ ] **Step 3: Commit**
 
 ```bash
-cargo test -p xianvec-skills 2>&1 | grep "test result"
-git add crates/xianvec-skills/src/store.rs crates/xianvec-skills/tests/store.rs
+cargo test -p xvision-skills 2>&1 | grep "test result"
+git add crates/xvision-skills/src/store.rs crates/xvision-skills/tests/store.rs
 git commit -m "feat(skills): filesystem-backed SkillStore"
 ```
 
@@ -377,8 +377,8 @@ git commit -m "feat(skills): filesystem-backed SkillStore"
 ### Task 3: `attach_skill_to_agent` helper
 
 **Files:**
-- Create: `crates/xianvec-skills/src/attach.rs`
-- Create: `crates/xianvec-skills/tests/attach.rs`
+- Create: `crates/xvision-skills/src/attach.rs`
+- Create: `crates/xvision-skills/tests/attach.rs`
 
 Mutates a `StrategyBundle`'s named slot (regime/intern/trader): replaces prompt with skill's body, sets model_requirement, unions allowed_tools. Returns error if the slot is empty.
 
@@ -386,7 +386,7 @@ Mutates a `StrategyBundle`'s named slot (regime/intern/trader): replaces prompt 
 
 ```rust
 use crate::Skill;
-use xianvec_engine::bundle::StrategyBundle;
+use xvision_engine::bundle::StrategyBundle;
 
 pub fn attach_skill_to_agent(
     bundle: &mut StrategyBundle,
@@ -415,12 +415,12 @@ pub fn attach_skill_to_agent(
 
 ```rust
 // tests/attach.rs
-use xianvec_skills::Skill;
-use xianvec_skills::attach::attach_skill_to_agent;
-use xianvec_engine::bundle::manifest::{PublicManifest, RegimeFit};
-use xianvec_engine::bundle::risk::RiskPreset;
-use xianvec_engine::bundle::slot::LLMSlot;
-use xianvec_engine::bundle::StrategyBundle;
+use xvision_skills::Skill;
+use xvision_skills::attach::attach_skill_to_agent;
+use xvision_engine::bundle::manifest::{PublicManifest, RegimeFit};
+use xvision_engine::bundle::risk::RiskPreset;
+use xvision_engine::bundle::slot::LLMSlot;
+use xvision_engine::bundle::StrategyBundle;
 
 fn dummy_skill() -> Skill {
     Skill {
@@ -483,8 +483,8 @@ fn unknown_slot_role_fails() {
 - [ ] **Step 3: Commit**
 
 ```bash
-cargo test -p xianvec-skills attach 2>&1 | grep "test result"
-git add crates/xianvec-skills/src/attach.rs crates/xianvec-skills/tests/attach.rs
+cargo test -p xvision-skills attach 2>&1 | grep "test result"
+git add crates/xvision-skills/src/attach.rs crates/xvision-skills/tests/attach.rs
 git commit -m "feat(skills): attach_skill_to_agent helper"
 ```
 
@@ -494,13 +494,13 @@ git commit -m "feat(skills): attach_skill_to_agent helper"
 
 ### Task 4: `create_skill` MCP verb
 
-Pattern matches Plan 2a Task 3. Add file `crates/xianvec-engine/src/mcp/skill.rs`.
+Pattern matches Plan 2a Task 3. Add file `crates/xvision-engine/src/mcp/skill.rs`.
 
 Verb: `create_skill { markdown: String } → { name: String, content_hash: String }`.
 
 - [ ] **Step 1: Test**
 
-Append to `crates/xianvec-engine/tests/mcp_authoring.rs`:
+Append to `crates/xvision-engine/tests/mcp_authoring.rs`:
 
 ```rust
 #[test]
@@ -514,10 +514,10 @@ fn mcp_advertises_create_skill() {
 - [ ] **Step 2: Implement**
 
 ```rust
-// crates/xianvec-engine/src/mcp/skill.rs
+// crates/xvision-engine/src/mcp/skill.rs
 use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
-use xianvec_skills::{parse, store::{FilesystemSkillStore, SkillStore}};
+use xvision_skills::{parse, store::{FilesystemSkillStore, SkillStore}};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CreateSkillArgs { pub markdown: String }
@@ -543,15 +543,15 @@ pub fn create_skill_schema() -> serde_json::Value {
 
 - [ ] **Step 3: Wire into MCP server**
 
-In `crates/xianvec-engine/src/mcp/mod.rs`, register `create_skill` in `list_tools` and `call_tool` dispatch. Add `pub mod skill;`.
+In `crates/xvision-engine/src/mcp/mod.rs`, register `create_skill` in `list_tools` and `call_tool` dispatch. Add `pub mod skill;`.
 
-In `xianvec-engine/Cargo.toml`, add `xianvec-skills = { path = "../xianvec-skills" }`.
+In `xvision-engine/Cargo.toml`, add `xvision-skills = { path = "../xvision-skills" }`.
 
 - [ ] **Step 4: Test passes + commit**
 
 ```bash
-cargo test -p xianvec-engine mcp_advertises_create_skill 2>&1 | tail -5
-git add crates/xianvec-engine
+cargo test -p xvision-engine mcp_advertises_create_skill 2>&1 | tail -5
+git add crates/xvision-engine
 git commit -m "feat(engine): MCP create_skill verb"
 ```
 
@@ -572,10 +572,10 @@ After Task 6, all 10 verbs (7 authoring from Plan 2a + 3 skills from Plan 2b) ap
 ### Task 7: `xvn skill {new | ls | attach}`
 
 **Files:**
-- Create: `crates/xianvec-cli/src/commands/skill.rs`
-- Modify: `crates/xianvec-cli/src/commands/mod.rs`
-- Modify: `crates/xianvec-cli/src/lib.rs` (add `Skill(commands::skill::SkillCmd)` variant + dispatch)
-- Modify: `crates/xianvec-cli/Cargo.toml` (add `xianvec-skills = { path = "../xianvec-skills" }`)
+- Create: `crates/xvision-cli/src/commands/skill.rs`
+- Modify: `crates/xvision-cli/src/commands/mod.rs`
+- Modify: `crates/xvision-cli/src/lib.rs` (add `Skill(commands::skill::SkillCmd)` variant + dispatch)
+- Modify: `crates/xvision-cli/Cargo.toml` (add `xvision-skills = { path = "../xvision-skills" }`)
 
 - [ ] **Step 1: Subcommand module**
 
@@ -586,9 +586,9 @@ use std::env;
 use std::path::PathBuf;
 
 use clap::{Args, Subcommand};
-use xianvec_engine::bundle::store::{BundleStore, FilesystemStore};
-use xianvec_skills::store::{FilesystemSkillStore, SkillStore};
-use xianvec_skills::{attach::attach_skill_to_agent, parse};
+use xvision_engine::bundle::store::{BundleStore, FilesystemStore};
+use xvision_skills::store::{FilesystemSkillStore, SkillStore};
+use xvision_skills::{attach::attach_skill_to_agent, parse};
 
 #[derive(Args, Debug)]
 pub struct SkillCmd {
@@ -660,17 +660,17 @@ async fn attach(agent_id: &str, slot: &str, skill_name: &str) -> anyhow::Result<
 - [ ] **Step 2: Wire into top-level Command enum**
 
 ```rust
-// in xianvec-cli/src/lib.rs
+// in xvision-cli/src/lib.rs
 Skill(commands::skill::SkillCmd),
 // dispatch:
 Command::Skill(cmd) => commands::skill::run(cmd).await,
 ```
 
-Append `pub mod skill;` to `crates/xianvec-cli/src/commands/mod.rs`.
+Append `pub mod skill;` to `crates/xvision-cli/src/commands/mod.rs`.
 
 - [ ] **Step 3: Integration test**
 
-Create `crates/xianvec-cli/tests/skill_cli.rs`:
+Create `crates/xvision-cli/tests/skill_cli.rs`:
 
 ```rust
 use std::process::Command;
@@ -684,7 +684,7 @@ fn xvn(args: &[&str], home: &std::path::Path) -> std::process::Output {
         .expect("xvn invocation")
 }
 
-const FIXTURE: &str = include_str!("../../xianvec-skills/tests/fixtures/crypto-trader-base.md");
+const FIXTURE: &str = include_str!("../../xvision-skills/tests/fixtures/crypto-trader-base.md");
 
 #[test]
 fn new_ls_attach_roundtrip() {
@@ -722,8 +722,8 @@ fn new_ls_attach_roundtrip() {
 - [ ] **Step 4: Test + commit**
 
 ```bash
-cargo test -p xianvec-cli skill 2>&1 | grep "test result"
-git add crates/xianvec-cli
+cargo test -p xvision-cli skill 2>&1 | grep "test result"
+git add crates/xvision-cli
 git commit -m "feat(cli): xvn skill new/ls/attach"
 ```
 
@@ -733,9 +733,9 @@ git commit -m "feat(cli): xvn skill new/ls/attach"
 
 ### Task 8: README + manual
 
-- Update `crates/xianvec-engine/README.md`'s "What ships" section: add the 3 skill MCP verbs; explicitly note that marketplace is deferred to Plan 5.
+- Update `crates/xvision-engine/README.md`'s "What ships" section: add the 3 skill MCP verbs; explicitly note that marketplace is deferred to Plan 5.
 - Update `MANUAL.md`: add `xvn skill {new|ls|attach}` reference. Note that "marketplace publish/browse/install/attest commands are deferred to Plan 5 (blockchain integration)".
-- Add `crates/xianvec-skills/README.md` mirroring the engine README structure.
+- Add `crates/xvision-skills/README.md` mirroring the engine README structure.
 
 End-to-end smoke:
 
@@ -745,7 +745,7 @@ rm -rf $XVN_HOME
 
 # Create a skill from the fixture
 echo "writing skill from fixture..."
-cp crates/xianvec-skills/tests/fixtures/crypto-trader-base.md /tmp/my-trader.md
+cp crates/xvision-skills/tests/fixtures/crypto-trader-base.md /tmp/my-trader.md
 xvn skill new --from-file /tmp/my-trader.md
 xvn skill ls
 
@@ -761,7 +761,7 @@ Each step exits 0. Commit `chore: Plan 2b end-to-end smoke verified`.
 
 ### Task 9: Final workspace check
 
-`cargo test --workspace` clean. clippy clean. fmt scoped to plan-touched crates. `xianvec-eval`, `xianvec-identity`, `xianvec-marketplace` (which doesn't exist yet — Plan 5 territory) all untouched.
+`cargo test --workspace` clean. clippy clean. fmt scoped to plan-touched crates. `xvision-eval`, `xvision-identity`, `xvision-marketplace` (which doesn't exist yet — Plan 5 territory) all untouched.
 
 Commit `chore: Plan 2b final workspace check` if any cleanup landed.
 
@@ -770,7 +770,7 @@ Commit `chore: Plan 2b final workspace check` if any cleanup landed.
 ## Self-review checklist
 
 **Spec coverage (from `2026-05-08-strategy-creation-engine-design.md`):**
-- [x] §6 Skill bundle format (OSShip-style markdown) — `xianvec-skills` crate
+- [x] §6 Skill bundle format (OSShip-style markdown) — `xvision-skills` crate
 - [x] §10 MCP verb groups: skill management (3 verbs)
 - [ ] §10 MCP verb groups: marketplace (5 verbs) — **deferred to Plan 5**
 - [ ] §13 Marketplace + 8004 — **deferred to Plan 5**
@@ -780,7 +780,7 @@ Commit `chore: Plan 2b final workspace check` if any cleanup landed.
 - [ ] §2 Wizard / dashboard — Plan 2d
 - [ ] Eval engine — Plan 3
 
-**Type consistency:** `Skill`, `SkillError`, `SkillStore`, `FilesystemSkillStore`, `attach_skill_to_agent`, `CreateSkillArgs`, `CreateSkillResult` — consistent across all 9 tasks. **No `xianvec-marketplace` references, no Listing / License / ReputationReceipt types, no Ed25519 author identity.** All of that lives in Plan 5.
+**Type consistency:** `Skill`, `SkillError`, `SkillStore`, `FilesystemSkillStore`, `attach_skill_to_agent`, `CreateSkillArgs`, `CreateSkillResult` — consistent across all 9 tasks. **No `xvision-marketplace` references, no Listing / License / ReputationReceipt types, no Ed25519 author identity.** All of that lives in Plan 5.
 
 **No placeholders:** every code block is real Rust. Tests are spelled out.
 
@@ -799,9 +799,9 @@ Plan 4 (post-hackathon) — **Tier B sealing + xvn API server**
 - **Source spec:** `docs/superpowers/specs/2026-05-08-smart-contract-surface-design.md` (deferred status)
 - **Gating:** eval + strategy engines battle-tested in production · marketplace volume signal confirmed · security review on contracts · on-chain costs justified by usage
 - **Surface (folds in everything that this plan deferred):**
-  - **Marketplace crate** (was originally in Plan 2b before deferral): `xianvec-marketplace` with Listing, License, ReputationReceipt; local Ed25519 author identity; SQLite ListingStore + ReputationStore; publish_strategy / browse_listings / install_strategy / attest_run; 5 marketplace MCP verbs; `xvn marketplace` CLI subcommands
+  - **Marketplace crate** (was originally in Plan 2b before deferral): `xvision-marketplace` with Listing, License, ReputationReceipt; local Ed25519 author identity; SQLite ListingStore + ReputationStore; publish_strategy / browse_listings / install_strategy / attest_run; 5 marketplace MCP verbs; `xvn marketplace` CLI subcommands
   - **On-chain registries** (per the smart-contract spec): ListingRegistry, Marketplace, LicenseToken (ERC-1155 soulbound), EvalAttestationRegistry; xvn self-registers as ERC-8004 agent #0
   - **Commerce**: x402 buy-rail via EIP-3009 buyWithAuthorization
   - **Bridges**: `xvn marketplace push-to-chain` batches local listings + receipts to Mantle; `xvn marketplace pull-from-chain` discovers other instances' listings
   - **Deploy**: CREATE2 deterministic deploys for multi-chain mirroring; UUPS proxies behind 7-day timelock + 2-of-3 multisig with progressive admin-burn
-- **Existing crate `xianvec-identity` (deferred per ADR 0008)** is the foundation for Plan 5's chain interaction. Its `IdentityRegistry` + `ReputationRegistry` interfaces are the smaller subset of what the smart-contract-surface spec extends to.
+- **Existing crate `xvision-identity` (deferred per ADR 0008)** is the foundation for Plan 5's chain interaction. Its `IdentityRegistry` + `ReputationRegistry` interfaces are the smaller subset of what the smart-contract-surface spec extends to.

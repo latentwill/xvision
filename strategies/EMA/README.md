@@ -197,4 +197,4 @@ Suggested next tuple: `substitution + abstraction-lift + tree` over
 
 - [`../README.md`](../README.md) — parent strategies compendium.
 - [`../nansen/README.md`](../nansen/README.md) — sibling Nansen compendium (matrix organon, same independent-axis decomposition).
-- `crates/xianvec-eval/src/baselines/ma_crossover.rs` — existing MA-cross baseline; `ema_50_200_golden_cross` should be implemented as a parameterization of this or as a sibling.
+- `crates/xvision-eval/src/baselines/ma_crossover.rs` — existing MA-cross baseline; `ema_50_200_golden_cross` should be implemented as a parameterization of this or as a sibling.

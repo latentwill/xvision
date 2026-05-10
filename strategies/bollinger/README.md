@@ -191,5 +191,5 @@ Suggested next tuple: `tree-finding + abstraction-lift + dictionary` over
 - [`../EMA/ema_squeeze_breakout.md`](../EMA/ema_squeeze_breakout.md) —
   EMA-stack squeeze; same regime as `bb_squeeze_breakout`, different
   detection mechanism. Head-to-head evaluation candidate.
-- `crates/xianvec-eval/src/baselines/` — implementation target;
+- `crates/xvision-eval/src/baselines/` — implementation target;
   Bollinger queued in FOLLOWUPS SLF7 / F15.

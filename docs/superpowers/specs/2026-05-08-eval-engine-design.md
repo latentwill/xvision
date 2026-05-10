@@ -7,7 +7,7 @@
 
 ## 1. Scope and relationship to other engines
 
-The Eval Engine is one of Xianvec's four engines (per the Strategy Creation Engine spec §1):
+The Eval Engine is one of Xvision's four engines (per the Strategy Creation Engine spec §1):
 
 - **Strategy Creation Engine** — produces strategy bundles (the input)
 - **Eval Engine** *(this spec)* — runs strategies against scenarios, produces metrics + findings + receipts (the output)
@@ -28,15 +28,15 @@ The eval engine consumes a strategy bundle (from the creation engine) and a **sc
 | 6 | **NL evaluator v1:** structured-finding extractor only (JSON records). Q&A surface deferred to v2. |
 | 7 | **Concurrency tiering:** free = 1 scenario at a time. Paid = unlocks batch sweeps over parameter grids. |
 | 8 | **Persistence:** SQLite + JSONL trade tapes on disk. ULID run ids. Postgres migration deferred. |
-| 9 | **Architecture:** folded into the greenfield `xianvec-engine` crate as `xianvec-engine/src/eval/`. Old `xianvec-eval` deprecated. |
+| 9 | **Architecture:** folded into the greenfield `xvision-engine` crate as `xvision-engine/src/eval/`. Old `xvision-eval` deprecated. |
 | 10 | **Cost preview:** show estimated **token count** before run (not dollar cost — token usage is deterministic, dollars vary by provider/model). |
 
 ## 3. Architecture
 
-The eval engine is a module inside `xianvec-engine`, sharing the same persistence (SQLite), scheduler (ported from SwarmClaw), and tool registry as the strategy creation engine. This unification means strategies can be authored, evaluated, and published from the same binary state without crossing crate boundaries.
+The eval engine is a module inside `xvision-engine`, sharing the same persistence (SQLite), scheduler (ported from SwarmClaw), and tool registry as the strategy creation engine. This unification means strategies can be authored, evaluated, and published from the same binary state without crossing crate boundaries.
 
 ```
-xianvec-engine/
+xvision-engine/
 └── src/
     ├── strategy/      # bundle, templates, slots (per strategy creation spec)
     ├── skills/        # OSShip-style skill marshaling
@@ -122,7 +122,7 @@ Scenarios are deterministic; same scenario + same strategy + same seed = same re
   "latency": { "decision_to_fill_ms": 250 },
   "data_seed": "alpaca-historical-v1",
   "created_at": "2026-05-08T12:00:00Z",
-  "created_by": "@xianvec_official"
+  "created_by": "@xvision_official"
 }
 ```
 
@@ -247,7 +247,7 @@ Emits structured findings, one JSON line per finding:
 
 **Prompt + model for v1:** the extractor uses the user's LLM key (NOT a xvn-issued key). Default model is the same model the strategy used for its slot agents (rationale: the user has already authorized that model). Override available via `xvn eval extract-findings --model <provider:model>`.
 
-The prompt template lives at `xianvec-engine/src/eval/findings/prompts/extractor-v1.md` and is OSShip-style markdown so it can be versioned, signed, and updated independently of the binary.
+The prompt template lives at `xvision-engine/src/eval/findings/prompts/extractor-v1.md` and is OSShip-style markdown so it can be versioned, signed, and updated independently of the binary.
 
 ## 12. Pre-computed published evals
 
@@ -302,13 +302,13 @@ Mirrors the CLI for external AI agents. Same verb surface as listed in Strategy 
 - `eval_batch(grid | agent_ids[], scenario_id, concurrency?) -> { batch_id, run_ids }`
 - `publish_attestation(run_id) -> SignedAttestation`
 
-## 15. Migration plan from `xianvec-eval`
+## 15. Migration plan from `xvision-eval`
 
-The existing `crates/xianvec-eval/` has working: ab-compare, baselines (always_long, ma_crossover, macd_momentum, rsi_mean_reversion, etc.), bootstrap, gate, harness, metrics, report, result. None of it is wasted.
+The existing `crates/xvision-eval/` has working: ab-compare, baselines (always_long, ma_crossover, macd_momentum, rsi_mean_reversion, etc.), bootstrap, gate, harness, metrics, report, result. None of it is wasted.
 
-**Migration approach:** port modules into `xianvec-engine/src/eval/` rather than rewrite. The Strategy trait surface that the existing baselines implement becomes a thin adapter over the new bundle-based execution path so existing baselines keep working as L1 marketplace seed listings.
+**Migration approach:** port modules into `xvision-engine/src/eval/` rather than rewrite. The Strategy trait surface that the existing baselines implement becomes a thin adapter over the new bundle-based execution path so existing baselines keep working as L1 marketplace seed listings.
 
-| Current `xianvec-eval` module | New home |
+| Current `xvision-eval` module | New home |
 |---|---|
 | `ab_compare.rs` | `eval/compare.rs` (extended for arbitrary run sets, not just A/B) |
 | `backtest.rs` | `eval/executor.rs` (backtest dispatch path) |
@@ -316,7 +316,7 @@ The existing `crates/xianvec-eval/` has working: ab-compare, baselines (always_l
 | `bootstrap.rs` | `eval/metrics.rs` (CI computation) |
 | `gate.rs` | `eval/findings.rs` (gate is one finding kind: "headline_passes_ci") |
 | `harness.rs` | `eval/executor.rs` (per-run loop) |
-| `lib.rs` | dissolved into `xianvec-engine/src/eval/mod.rs` |
+| `lib.rs` | dissolved into `xvision-engine/src/eval/mod.rs` |
 | `metrics.rs` | `eval/metrics.rs` |
 | `report.rs` | `dashboard/` (HTML report generator) |
 | `result.rs` | `eval/run.rs` (RunResult type) |
@@ -340,7 +340,7 @@ The existing `crates/xianvec-eval/` has working: ab-compare, baselines (always_l
 - Q&A surface over findings — v2 per brainstorm.
 - Native desktop wrapper (Tauri/Dioxus) — web dashboard at localhost is the v1 surface.
 - Postgres + object storage migration — deferred until marketplace ships.
-- Multi-tenant eval-as-a-service hosting — Xianvec doesn't run buyers' evals.
+- Multi-tenant eval-as-a-service hosting — Xvision doesn't run buyers' evals.
 - Drawdown overlay, regime-shaded background, NL Q&A box in comparison view — deferred to v2.
 - The Karpathy autoresearcher improvement loop itself (consumes findings, doesn't constrain this spec).
 
@@ -354,7 +354,7 @@ The existing `crates/xianvec-eval/` has working: ab-compare, baselines (always_l
 - **NL evaluator v1:** structured findings extractor only. Q&A v2.
 - **Concurrency tiering:** free = 1 scenario, paid = batch sweeps.
 - **Persistence:** SQLite + JSONL tapes + Parquet equity. ULID run ids.
-- **Architecture:** folded into `xianvec-engine` as `eval/` module. Old `xianvec-eval` deprecated, modules ported.
+- **Architecture:** folded into `xvision-engine` as `eval/` module. Old `xvision-eval` deprecated, modules ported.
 - **Cost preview:** estimated tokens (not dollars).
 - **Findings extractor model:** uses user's LLM key, defaults to same model as strategy slots.
 - **Pre-computed published evals:** sellers run the canonical scenario set at publish time, sign attestations, marketplace surfaces without buyer-token cost.

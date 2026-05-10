@@ -1,0 +1,29 @@
+[package]
+name        = "xvision-identity"
+description = "Phase 6.5 — ERC-8004 identity registration client for Mantle"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+
+[lib]
+name = "xvision_identity"
+path = "src/lib.rs"
+
+[dependencies]
+xvision-core = { path = "../xvision-core" }
+
+alloy      = { workspace = true }
+thiserror  = { workspace = true }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+chrono     = { workspace = true }
+uuid       = { workspace = true }
+tokio      = { workspace = true }
+url        = "2"
+tracing    = { workspace = true }
+
+[dev-dependencies]
+tokio    = { workspace = true, features = ["rt", "macros"] }
+tempfile = "3"

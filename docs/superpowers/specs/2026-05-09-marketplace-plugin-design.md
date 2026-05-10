@@ -1,7 +1,7 @@
 # Marketplace Plugin — Design
 
-> **Status:** Deferred — design accepted, implementation gated on the Strategy Creation Engine + Eval Engine being shipped and battle-tested against Alpaca paper, AND on the Smart Contract Surface spec being picked back up. v1 of Xianvec is Alpaca-eval only with no on-chain function; no marketplace plugin plan is written until then. The "5 weeks to hackathon" budget noted below predates the v1-test deferral and is now superseded — re-plan timing when the chain layer comes off the bench. · originally drafted 2026-05-09; deferral added 2026-05-10
-> **Author:** xianvec hackathon team
+> **Status:** Deferred — design accepted, implementation gated on the Strategy Creation Engine + Eval Engine being shipped and battle-tested against Alpaca paper, AND on the Smart Contract Surface spec being picked back up. v1 of Xvision is Alpaca-eval only with no on-chain function; no marketplace plugin plan is written until then. The "5 weeks to hackathon" budget noted below predates the v1-test deferral and is now superseded — re-plan timing when the chain layer comes off the bench. · originally drafted 2026-05-09; deferral added 2026-05-10
+> **Author:** xvision hackathon team
 > **Companion specs:** [Karpathy Autoresearcher](./2026-05-09-karpathy-autoresearcher-design.md) (the producer of artifacts this plugin consumes) · [Smart Contract Surface](./2026-05-08-smart-contract-surface-design.md) (ERC-8004 registry surface on Mantle — also deferred)
 > **Hackathon deadline (superseded):** 2026-06-15 — see Status line above.
 
@@ -55,10 +55,10 @@ Mantle is cheap; this is a small budget. Pre-fund the operator wallet to 5× est
 
 | # | Decision |
 |---|---|
-| 1 | **Marketplace is part of default xvn build, opt-in at wallet-connect.** Cargo feature `marketplace` in `xianvec-engine` is on by default; available to opt out for minimal builds (`--no-default-features`). User-facing opt-in is the Settings → Marketplace wallet-connect step. |
+| 1 | **Marketplace is part of default xvn build, opt-in at wallet-connect.** Cargo feature `marketplace` in `xvision-engine` is on by default; available to opt out for minimal builds (`--no-default-features`). User-facing opt-in is the Settings → Marketplace wallet-connect step. |
 | 2 | **One NFT per lineage**, not per variant. Variants are referenced inside the lineage manifest by content hash. |
 | 3 | **Lineage-end Merkle anchoring** (or on-demand mid-hackathon) is the default. No per-cycle anchoring in v1. |
-| 4 | **In-house attesters seeded for the demo.** xianvec operates 1–2 ERC-8004 attester agents. Public/external participation is v2. |
+| 4 | **In-house attesters seeded for the demo.** xvision operates 1–2 ERC-8004 attester agents. Public/external participation is v2. |
 | 5 | **Subscribes to CycleSeal events** from autoresearch core; never modifies them. Strict one-way data flow. |
 | 6 | **Mantle mainnet for the submission**, Sepolia for development. Cutover scripted in Wk 5. |
 | 7 | **Operator key separation.** Operator's autoresearch signing key (per autoresearch spec §7) is distinct from the on-chain wallet that holds NFTs. The autoresearch key signs seals; the wallet posts transactions. |
@@ -70,7 +70,7 @@ Mantle is cheap; this is a small budget. Pre-fund the operator wallet to 5× est
 ### 3.1 Module layout
 
 ```
-xianvec-engine/
+xvision-engine/
 └── src/
     ├── autoresearch/            # core (chain-free) — see autoresearcher spec
     └── marketplace/             # THIS SPEC; only compiled with `--features marketplace`
@@ -291,7 +291,7 @@ Marketplace-specific risks. Loop-side risks live in the [autoresearcher spec §1
 | 5 | Judges think 1–2 attesters is too few to be a "marketplace" | Submission write-up explicitly frames v1 as "in-house seeded for demonstration; v2 opens the surface to external participants." Honesty over puffery. |
 | 6 | Merkle root posted, but verification fails (manifest missing, wrong hash) | Anchor is idempotent and the manifest is content-addressed; if verification fails, post the corrected manifest CID and re-anchor. Old anchor is left as historical (signed bytes don't lie). |
 | 7 | Per-tx cost on Mantle mainnet higher than estimated | Conservative pre-fund (5×). Mantle is L2; even worst-case is small. Budget alarm in the dashboard if wallet balance falls below threshold. |
-| 8 | "It's not really decentralized — xianvec runs the attesters" | True for v1; the plugin architecture explicitly enables external participation in v2. The submission write-up calls this out as a design feature, not a hack. |
+| 8 | "It's not really decentralized — xvision runs the attesters" | True for v1; the plugin architecture explicitly enables external participation in v2. The submission write-up calls this out as a design feature, not a hack. |
 | 9 | A lineage's Merkle root differs between local computation and on-chain receipt | Single source of truth: `autoresearch::lineage::compute_merkle_root`. Plugin imports it, never re-implements. Test asserts byte-identical roots between core and plugin. |
 | 10 | Wallet key compromised during hackathon | Wallet is operator-controlled hot wallet with limited balance (just enough for hackathon ops). Cold storage of upgrade keys; v2 work after submission. |
 

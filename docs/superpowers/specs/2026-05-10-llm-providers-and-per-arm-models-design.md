@@ -1,7 +1,7 @@
 # LLM Providers & Per-Arm Models — Design
 
 > **Status:** Draft for user review · 2026-05-10
-> **Author:** xianvec hackathon team
+> **Author:** xvision hackathon team
 > **Companion specs:** [Strategy Creation Engine](./2026-05-08-strategy-creation-engine-design.md) (drafts that this surfaces in `/strategies`) · [Slot Machine](./2026-05-08-slot-machine-design.md) (per-variant model sampling consumer of this surface)
 > **Hackathon deadline:** 2026-06-15
 
@@ -78,25 +78,25 @@ No file is renamed, no field is removed. All migration is additive.
 ### 3.1 Module layout
 
 ```
-crates/xianvec-core/src/config.rs
+crates/xvision-core/src/config.rs
   + struct ProviderEntry { name, kind: ProviderKind, base_url, api_key_env }
   + enum ProviderKind { Anthropic, OpenaiCompat, LocalCandle }   // mirrors today's InternProvider
   + RuntimeConfig.providers: Vec<ProviderEntry>
   + RuntimeConfig::resolve_default_intern_slot(&self) -> SlotRef    // backed by [intern]
   + RuntimeConfig::auto_derive_intern_provider_row()                // mutates self on load if needed
 
-crates/xianvec-core/src/slot.rs    (NEW)
+crates/xvision-core/src/slot.rs    (NEW)
   + struct SlotRef { provider: String, model: String }
   + impl SlotRef { fn parse(&str) -> Result<Self, ParseError> }     // "<provider>/<model>"
   + impl Display for SlotRef                                        // "<provider>/<model>"
 
-crates/xianvec-eval/src/ab_compare.rs
+crates/xvision-eval/src/ab_compare.rs
   - ArmKind::Trader   (unit variant)
   + ArmKind::Trader { intern: Option<SlotRef>, trader: Option<SlotRef> }
   + parse_arm_spec    extended to read intern=…:trader=… kv pairs
   + run_ab_compare    accepts a ProviderRegistry; per-arm slot resolves into a backend Arc
 
-crates/xianvec-eval/src/provider_registry.rs   (NEW)
+crates/xvision-eval/src/provider_registry.rs   (NEW)
   + struct ProviderRegistry { rows: Vec<ProviderEntry>, default_intern: SlotRef, default_trader: SlotRef }
   + impl ProviderRegistry {
         fn intern_backend(&self, slot: &SlotRef) -> Result<Arc<dyn InternBackend>>
@@ -104,12 +104,12 @@ crates/xianvec-eval/src/provider_registry.rs   (NEW)
         // both memoize on (provider_name, model)
     }
 
-crates/xianvec-cli/src/lib.rs
+crates/xvision-cli/src/lib.rs
   + AbCompare gains no new flags  (existing flags become "defaults")
   + AbCompare emits a tracing line per arm:
        arm=<name> intern=<provider>/<model> trader=<provider>/<model>
 
-crates/xianvec-cli/src/commands/ab_compare.rs
+crates/xvision-cli/src/commands/ab_compare.rs
   + builds ProviderRegistry from config + CLI flag fallbacks
   + threads registry into run_ab_compare
 
@@ -184,7 +184,7 @@ The cache is a workspace-level `Arc<BriefingCache>` shared across every TraderAr
 
 This is **already true** today. v1 surfaces it as a UI hint chip on the Intern Provider/Model selects: `Changes here re-run Stage 1 for every setup (cost ↑↑)`. The Trader select gets the inverse hint: `Changes here are cheap — Stage 1 is reused`.
 
-Tested with a new `cache_diverges_on_intern_model_change` test in `xianvec-eval/src/baselines/trader_arm.rs`.
+Tested with a new `cache_diverges_on_intern_model_change` test in `xvision-eval/src/baselines/trader_arm.rs`.
 
 ---
 
@@ -467,11 +467,11 @@ Total estimate: ~5 person-days of work + 2 days slack. Fits comfortably within t
 
 ## 11. References
 
-- `crates/xianvec-eval/src/ab_compare.rs` — current arm-spec grammar and parser; this spec extends it.
-- `crates/xianvec-eval/src/baselines/trader_arm.rs:80-84` — the `BriefingCache` key that already supports per-arm Intern divergence.
-- `crates/xianvec-trader/src/backend.rs:36-45` — `OpenAiCompatBackend` shape (one base_url + model + key).
-- `crates/xianvec-intern/src/backend.rs` — `AnthropicIntern` and `OpenAICompatIntern` constructors used by the registry.
-- `crates/xianvec-core/src/config.rs:76-93` — current `[intern]` block schema; v1 adds `[[providers]]` alongside.
+- `crates/xvision-eval/src/ab_compare.rs` — current arm-spec grammar and parser; this spec extends it.
+- `crates/xvision-eval/src/baselines/trader_arm.rs:80-84` — the `BriefingCache` key that already supports per-arm Intern divergence.
+- `crates/xvision-trader/src/backend.rs:36-45` — `OpenAiCompatBackend` shape (one base_url + model + key).
+- `crates/xvision-intern/src/backend.rs` — `AnthropicIntern` and `OpenAICompatIntern` constructors used by the registry.
+- `crates/xvision-core/src/config.rs:76-93` — current `[intern]` block schema; v1 adds `[[providers]]` alongside.
 - `config/default.toml` — the file v1 extends with `[[providers]]` rows.
 - `docs/design/ui-elements.md` §3.3, §4.2.2, §5, §13.1 — UI design lock targets.
 - `docs/dashboard.md` §A1–A3 — the agent identity / Intern settings / Trader settings cards that this spec makes per-arm in scope.

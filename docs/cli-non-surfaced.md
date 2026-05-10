@@ -12,7 +12,7 @@ silently corrupting the eval substrate.
 
 ## Not surfaced — operator-only / on-chain side effects
 
-### `xianvec-identity` (mint, post_reputation, post_validation)
+### `xvision-identity` (mint, post_reputation, post_validation)
 
 **Reason:** every call costs MNT and is irreversible.
 
@@ -20,18 +20,18 @@ silently corrupting the eval substrate.
 - `IdentityClient::post_reputation` writes to the on-chain Reputation Registry.
 - A future Validation receipt path (SLF5) writes signed-oracle backtest receipts.
 
-Operator memory: **xianvec is non-custodial for trading capital — the smart
+Operator memory: **xvision is non-custodial for trading capital — the smart
 contract surface only routes marketplace fees**. Adding identity calls into the
 ergonomic agent CLI collapses identity into the same surface as paper-trading
 commands and pushes the deployer key onto the agent's hot path.
 
-Workspace also excludes `xianvec-identity` from `default-members` to keep the
+Workspace also excludes `xvision-identity` from `default-members` to keep the
 heavy `alloy v2` stack out of the dev loop. Promoting identity into `xvn` would
 force every `xvn` build to compile alloy.
 
 **Where it lives instead:** `MANUAL.md` §M7 (operator-side runbook), and a
 bespoke driver `examples/mint_identity.rs` invoked through
-`cargo run --release -p xianvec-identity --example mint_identity`.
+`cargo run --release -p xvision-identity --example mint_identity`.
 
 **When this can change:** add a separate `xvn-identity` opt-in binary (its own
 crate target, behind a `--features identity` gate) when SLF3 lands. Never mix
@@ -72,7 +72,7 @@ goes through git on those TOML files.
 
 ### `xvn-mcp` (deprecated)
 
-The MCP indicator server is its own binary (`crates/xianvec-mcp/src/main.rs`,
+The MCP indicator server is its own binary (`crates/xvision-mcp/src/main.rs`,
 installed as `xvn-mcp`). Its original purpose was to be advertised by ACPX —
 which has been removed (2026-05-10). Indicator computation now lives directly
 on the CLI as `xvn indicator <name>`, which is the preferred path for agents
@@ -101,7 +101,7 @@ again it will arrive as a new `InternBackend` impl, not as a subprocess shim.
 
 ## Surfaced as of this audit
 
-See `crates/xianvec-cli/src/lib.rs` for the live list. The current set, in
+See `crates/xvision-cli/src/lib.rs` for the live list. The current set, in
 addition to the pre-existing commands, exposes:
 
 - `xvn intern brief` / `xvn intern preview` — Stage 1 in isolation
@@ -118,6 +118,6 @@ addition to the pre-existing commands, exposes:
 Everything else inside the workspace (engine internals, eval bootstrap helpers,
 backtest sim executor, `tracing-subscriber` config) is library-only. If a real
 agent workflow needs one of those, add the CLI shim in this same pattern: a
-thin wrapper in `crates/xianvec-cli/src/commands/`, no business logic.
+thin wrapper in `crates/xvision-cli/src/commands/`, no business logic.
 
 *Last updated: 2026-05-10.*

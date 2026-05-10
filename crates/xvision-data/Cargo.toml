@@ -1,0 +1,25 @@
+[package]
+name        = "xvision-data"
+description = "OHLCV ingest, indicators, onchain signals"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+
+[lib]
+name = "xvision_data"
+path = "src/lib.rs"
+
+[dependencies]
+xvision-core = { path = "../xvision-core" }
+polars       = { workspace = true }
+anyhow       = { workspace = true }
+serde        = { workspace = true }
+serde_json   = { workspace = true }
+chrono       = { workspace = true, features = ["serde"] }
+thiserror    = { workspace = true }
+tracing      = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }

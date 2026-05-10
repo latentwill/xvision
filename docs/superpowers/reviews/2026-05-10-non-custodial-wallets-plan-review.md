@@ -34,8 +34,8 @@ Severity floor for "blocker" is "would not compile or would silently corrupt saf
 
 ### 1.2 [BLOCKER] No `trading_keys` table or schema, but multiple commands write to / read from one
 - **Location:** plan Task 4.7 Step 2 (`ctx.store_trading_key(...)`, `ctx.list_trading_keys()`, `ctx.revoke_user_trading_key(...)`); plan Task 4.2 Step 3 (`ctx.list_user_strategies(user)`, `ctx.revoke_user_trading_key(user)`); plan Task 4.10 (AppContext does not include a trading-keys repo).
-- **Issue:** The CLI calls these methods but no migration creates a `trading_keys` table, no module under `xianvec-data` defines a writer/reader for it, and no `AppContext` field provides one. The phrase "encrypted at rest using the AES-256-GCM scheme described in §5" appears in the spec but the *persistence layer* for the encrypted blob is missing entirely. `xvn key issue` will fail at runtime.
-- **Fix:** Add Task 1.6 to Phase 1 (or fold into 1.4): migration `008_trading_keys.sql` with `(user_id PK, pubkey_hex, encrypted_blob, scope, registered_at, expires_at, revoked_at, last_used_at)`; module `crates/xianvec-data/src/trading_keys.rs` with insert/list/revoke; wire into `AppContext`. Add a test: round-trip an encrypted blob through `TradingKeyStore::store` → `load` → `decrypt` returns the original Ed25519 bytes.
+- **Issue:** The CLI calls these methods but no migration creates a `trading_keys` table, no module under `xvision-data` defines a writer/reader for it, and no `AppContext` field provides one. The phrase "encrypted at rest using the AES-256-GCM scheme described in §5" appears in the spec but the *persistence layer* for the encrypted blob is missing entirely. `xvn key issue` will fail at runtime.
+- **Fix:** Add Task 1.6 to Phase 1 (or fold into 1.4): migration `008_trading_keys.sql` with `(user_id PK, pubkey_hex, encrypted_blob, scope, registered_at, expires_at, revoked_at, last_used_at)`; module `crates/xvision-data/src/trading_keys.rs` with insert/list/revoke; wire into `AppContext`. Add a test: round-trip an encrypted blob through `TradingKeyStore::store` → `load` → `decrypt` returns the original Ed25519 bytes.
 
 ### 1.3 [BLOCKER] `xvn kill --all` calls undefined `ctx.global_halt(...)`
 - **Location:** plan Task 4.2 Step 3 (`ctx.global_halt(&args.reason, "operator-cli").await?`); the AppContext in Task 4.10 has no `global_halt` field/method; no `global_halt_status` migration; no global-halt check in the dispatcher.
@@ -45,12 +45,12 @@ Severity floor for "blocker" is "would not compile or would silently corrupt saf
 ### 1.4 [HIGH] Phishing-resistant browser flow (spec §3.2) is replaced by `println!` instructions
 - **Location:** spec §3.2 ("Phishing-resistant registration UX (mandatory)"); plan Task 4.7 Step 2 (`xvn key issue`) — the user is asked "Open Orderly registration in browser now?" but the actual EIP-712 signing is left as ellipsis (`// ... open browser to a templated URL ...`).
 - **Issue:** The spec calls out this as "the highest-leverage attack surface." The plan defers the entire registration round-trip — the `add_orderly_key` EIP-712 sign-and-POST path that the m1 probe (Task 0.2 Step 5) will figure out — to "manual operator follows printed steps." That is not a registration UX, that is a stub. The spec also requires a `xvn key verify <pubkey>` independent verification command; this is missing entirely.
-- **Fix:** (a) Add Task 4.7a "implement EIP-712 add_orderly_key sign+POST in `crates/xianvec-execution/src/orderly.rs::register_trading_key(evm_signer, pubkey, scope, expiration_unix) -> Result<KeyId>` and call it from `xvn key issue` once the user has signed. The signing itself should be done by the user's wallet (e.g., MetaMask via WalletConnect or — for v1 single-operator — hardware-wallet path via `cast wallet sign --ledger`). (b) Add `xvn key verify <pubkey>` that re-derives the public key from the locally stored encrypted private key, prints the hex, and compares.
+- **Fix:** (a) Add Task 4.7a "implement EIP-712 add_orderly_key sign+POST in `crates/xvision-execution/src/orderly.rs::register_trading_key(evm_signer, pubkey, scope, expiration_unix) -> Result<KeyId>` and call it from `xvn key issue` once the user has signed. The signing itself should be done by the user's wallet (e.g., MetaMask via WalletConnect or — for v1 single-operator — hardware-wallet path via `cast wallet sign --ledger`). (b) Add `xvn key verify <pubkey>` that re-derives the public key from the locally stored encrypted private key, prints the hex, and compares.
 
 ### 1.5 [HIGH] Policy-change hot-reload is not enforced
 - **Location:** spec §3.4 ("Edits do not auto-apply to in-flight positions" — but DO apply to *future* dispatches); plan Task 4.8 Step 3 ("write to `policy_changes` for each touched field, write the new config back"); Phase 8 Task 8.4 (POST handler "applies the change").
 - **Issue:** "Write the new config back" is hand-waved. There is no specified storage for `StrategyConfig` itself — the plan defines `parse_strategies_toml` (Task 2.1) that loads from a string, but never stores it. Where does the dispatcher read the *current* config from on each dispatch? If it's a TOML file, edits via the UI must rewrite the TOML; if it's a `strategies` table in SQLite, that table is missing. Either way, a config change must be visible to the next `dispatch()` call without a process restart.
-- **Fix:** Add a migration `009_strategies.sql` with `(agent_id PK, config_json, updated_at, updated_by)`; add `xianvec-data::strategies::StrategyConfigStore` with `get`, `set`, `list`. The dispatcher reads from the store on each `dispatch()`. The TOML loader (Task 2.1) becomes the bulk-import seed path only. Tests: `xvn budget set --strategy s1 --hard-cap 1000` then `dispatch(s1, …)` sees the new cap.
+- **Fix:** Add a migration `009_strategies.sql` with `(agent_id PK, config_json, updated_at, updated_by)`; add `xvision-data::strategies::StrategyConfigStore` with `get`, `set`, `list`. The dispatcher reads from the store on each `dispatch()`. The TOML loader (Task 2.1) becomes the bulk-import seed path only. Tests: `xvn budget set --strategy s1 --hard-cap 1000` then `dispatch(s1, …)` sees the new cap.
 
 ### 1.6 [HIGH] Spec §3.4 cold-start floor of "0.25 if < 30 closed positions" — ambiguous and the formula in Phase 6 doesn't match
 - **Location:** spec §3.4 (formula adds `cold_start_floor + sigmoid(...) × (1 - dd/floor)`); plan Phase 6 Task 6.1 implementation does the same, but the cold-start branch returns `COLD_START_FLOOR` *only* when `pnls < 30`. The spec's intent is that the floor is **always added** as a baseline even after 30 samples, but the implementation matches that. **However:** when there are >= 30 samples and Sharpe is mildly positive, the result is `0.25 + ~0.6 × 1.0 = 0.85`. If Sharpe is very high (e.g. mean 100, std 1), `sigmoid(66) ≈ 1.0` and result is `1.25` then clamped to `1.0`. That's fine. The bug is at `Sharpe = 0`: `sigmoid(0) = 0.5`, drawdown 0 → `quota = 0.25 + 0.5 = 0.75`. So a strategy with literally zero Sharpe (mean 0 PnL) gets 75% of cap unlocked. That's not what the spec implies ("Cold strategies start at the floor (0.25). Hot strategies converge toward 1.0. Burned strategies throttle toward 0.")
@@ -61,7 +61,7 @@ Severity floor for "blocker" is "would not compile or would silently corrupt saf
 - **Recommend:** Operator chooses; the plan should encode whichever and add tests for the three named regimes (cold, mean-zero, hot, burned, deep-drawdown).
 
 ### 1.7 [HIGH] No CLI/storage for the **scoped permission set being requested at registration time**
-- **Location:** spec §3.2 enumerates "permissions: trading only (no withdraw, no transfer); ip_restriction (optional): xianvec server IP; expiration: 90 days, rotatable"; plan Task 0.2/4.7 only mentions `permissions: ["trading"]` and 90-day expiration.
+- **Location:** spec §3.2 enumerates "permissions: trading only (no withdraw, no transfer); ip_restriction (optional): xvision server IP; expiration: 90 days, rotatable"; plan Task 0.2/4.7 only mentions `permissions: ["trading"]` and 90-day expiration.
 - **Issue:** `ip_restriction` is silently dropped. For a server-side single-tenant deploy this is the cheapest meaningful defense in depth — Orderly enforces it, the cost is nil. Also there's no test that the registered key actually expires or that the dispatcher refuses to use an expired key.
 - **Fix:** (a) Add `ip_restriction` to the registration payload, defaulted to `XVN_PUBLIC_IP` env var if set, no-op if absent. (b) Dispatcher fast-path check: if `now > key.expires_at - 24h`, write `Reject` audit row with reason `key_expiring_soon` and refuse new opens (existing positions can still be closed). Surface a critical alert.
 
@@ -90,19 +90,19 @@ Severity floor for "blocker" is "would not compile or would silently corrupt saf
 ## 2. Internal inconsistencies in the plan
 
 ### 2.1 [BLOCKER] `OrderDispatcher` and existing `OrderlyExecutor::submit` have incompatible signatures
-- **Location:** existing `crates/xianvec-execution/src/orderly.rs:633` — `submit(&self, decision: &RiskDecision) -> Result<ExecutionReceipt>`; plan Task 3.2 — defines `OrderlyOrderSubmit` trait with `submit_order(&self, client_order_id, asset, side, size_usdc) -> Result<String>`; plan Task 3.3 says "the previous direct submission becomes the `OrderlyOrderSubmit` impl backing the dispatcher."
+- **Location:** existing `crates/xvision-execution/src/orderly.rs:633` — `submit(&self, decision: &RiskDecision) -> Result<ExecutionReceipt>`; plan Task 3.2 — defines `OrderlyOrderSubmit` trait with `submit_order(&self, client_order_id, asset, side, size_usdc) -> Result<String>`; plan Task 3.3 says "the previous direct submission becomes the `OrderlyOrderSubmit` impl backing the dispatcher."
 - **Issue:** `OrderlyExecutor::submit` does dramatically more than place an order — it converts `bps` to USDC notional via live equity, computes BTC qty from mark price, places TP/SL bracket legs, polls for fill, returns an `ExecutionReceipt`. The plan's `OrderlyOrderSubmit` trait throws all of that away. Either (a) the plan must port the bps-to-notional, mark-price, TP/SL bracket logic into `OrderDispatcher` (which would explode the dispatcher's scope), or (b) `OrderlyOrderSubmit` needs a much richer surface than `(client_order_id, asset, side, size_usdc) -> orderly_position_id`. Without that, the dispatcher cannot place a real order against the real Orderly API.
 - **Fix:** Redesign the trait surface. Suggested: `OrderlyOrderSubmit::submit(&self, client_order_id, decision: &TraderDecision, equity: f64) -> Result<ExecutionReceipt>` — pass the decision through, let the executor keep its bracketing logic. Then dispatcher writes the audit/ledger rows around the existing `OrderlyExecutor::submit` as a wrapper, not a replacement.
 
 ### 2.2 [BLOCKER] `TraderDecision` does not have `notional_usdc()`, `asset()`, `side_str()`, and adding them is non-trivial
-- **Location:** plan Task 3.2 Step 3 ("Mechanical; ~15 lines"); existing `crates/xianvec-core/src/trading.rs:114+` — `TraderDecision { cycle_id, action, size_bps, direction, stop_loss_pct, take_profit_pct, trader_summary }`; no `asset` field at all.
-- **Issue:** `size_bps` is a fraction of NAV, not a USDC amount. To compute notional you need the equity. `asset` is *not on `TraderDecision`* in v1 — see FOLLOWUPS F18 ("Add `asset: AssetSymbol` to `TraderDecision` ... mechanical but wide ... blocking for multi-asset"). The dispatcher in Task 3.2 calls `decision.asset()` and `decision.notional_usdc()` as if they exist; the helper would have to (a) take a portfolio-state argument and (b) for asset, return a hardcoded BTC. The "~15 lines" estimate is wrong. F18 estimates it as wide but mechanical — touches xianvec-trader, xianvec-intern, xianvec-risk, xianvec-execution, xianvec-eval.
+- **Location:** plan Task 3.2 Step 3 ("Mechanical; ~15 lines"); existing `crates/xvision-core/src/trading.rs:114+` — `TraderDecision { cycle_id, action, size_bps, direction, stop_loss_pct, take_profit_pct, trader_summary }`; no `asset` field at all.
+- **Issue:** `size_bps` is a fraction of NAV, not a USDC amount. To compute notional you need the equity. `asset` is *not on `TraderDecision`* in v1 — see FOLLOWUPS F18 ("Add `asset: AssetSymbol` to `TraderDecision` ... mechanical but wide ... blocking for multi-asset"). The dispatcher in Task 3.2 calls `decision.asset()` and `decision.notional_usdc()` as if they exist; the helper would have to (a) take a portfolio-state argument and (b) for asset, return a hardcoded BTC. The "~15 lines" estimate is wrong. F18 estimates it as wide but mechanical — touches xvision-trader, xvision-intern, xvision-risk, xvision-execution, xvision-eval.
 - **Fix:** Either (a) execute F18 as Phase 0 prerequisite (estimate: 0.5–1 day), or (b) explicitly accept that v1 dispatcher is BTC-pinned and pass `asset = "PERP_BTC_USDC"` constant + take portfolio state in `dispatch(...)` to compute notional. Document the choice.
 
-### 2.3 [HIGH] `Verdict::Approved` (per_strategy.rs) vs existing `RiskDecision::Approved` (xianvec-core) overlap
-- **Location:** existing `crates/xianvec-core/src/trading.rs:235` defines `RiskDecision { Approved, Modified, Vetoed }`; plan Task 2.2 introduces a parallel `Verdict { Approved, RequiresApproval, Vetoed }`.
+### 2.3 [HIGH] `Verdict::Approved` (per_strategy.rs) vs existing `RiskDecision::Approved` (xvision-core) overlap
+- **Location:** existing `crates/xvision-core/src/trading.rs:235` defines `RiskDecision { Approved, Modified, Vetoed }`; plan Task 2.2 introduces a parallel `Verdict { Approved, RequiresApproval, Vetoed }`.
 - **Issue:** Two enums with overlapping but non-identical variants will create fan-out: existing rules emit `RiskDecision`, new rules emit `Verdict`, dispatcher must reconcile both. Also `Verdict` lacks `Modified`, which is the existing system's primary mechanism for "size cut by max-position rule." If the new per-strategy rules ever need to modify (e.g., "hard cap exceeded by 10% — modify to fit"), the surface is wrong.
-- **Fix:** Either (a) have `PerStrategyEvaluator` return `RiskDecision` and add a `RequiresApproval` variant to it (one new variant; touches the existing match-arms throughout xianvec-risk), or (b) rename `Verdict` → `PerStrategyVerdict` and document explicitly that the dispatcher composes the two. Option (a) is cleaner long-term; option (b) is faster.
+- **Fix:** Either (a) have `PerStrategyEvaluator` return `RiskDecision` and add a `RequiresApproval` variant to it (one new variant; touches the existing match-arms throughout xvision-risk), or (b) rename `Verdict` → `PerStrategyVerdict` and document explicitly that the dispatcher composes the two. Option (a) is cleaner long-term; option (b) is faster.
 
 ### 2.4 [HIGH] Dispatcher writes `Sign` audit stage **before** signing (plan inverts the order)
 - **Location:** plan Task 3.2 Step 2 — Stage 6 "open ledger row + sign + submit" — the audit row `Stage::Sign` is written before `self.orderly.submit_order(...)` is called, so the audit "sign" payload only contains `client_order_id`, not the signed REST payload that spec §3.8 says it should contain.
@@ -125,7 +125,7 @@ Severity floor for "blocker" is "would not compile or would silently corrupt saf
 - **Fix:** Wrap the submit in a `match` that releases the reservation AND deletes the phantom position row on Err. Test: induce submission failure, assert reservation released and position row absent.
 
 ### 2.8 [MEDIUM] `client_order_id = position_id = ULID` collision risk vs Orderly's 36-char limit
-- **Location:** plan Task 1.3 (`Position::new` sets `client_order_id = id` where id is `Ulid::new().to_string()`); existing `crates/xianvec-execution/src/orderly.rs:34` ("max 36 chars").
+- **Location:** plan Task 1.3 (`Position::new` sets `client_order_id = id` where id is `Ulid::new().to_string()`); existing `crates/xvision-execution/src/orderly.rs:34` ("max 36 chars").
 - **Issue:** ULID strings are 26 chars, fits fine. But the existing code uses `td.cycle_id.to_string()` (UUID, 36 chars). The plan replaces this with ULID. Existing TP/SL legs use `format!("tp-{}", td.cycle_id)` and `format!("sl-{}", td.cycle_id)` → 39-char strings now (`tp-` + 26-char ULID = 29, fits). Inconsistency: now there are two id schemes for client_order_id (UUID for legacy in `orderly.rs`, ULID from `Position::new`). The plan's Task 1.5 says to "tag every trade" but doesn't address the existing `cycle_id` pattern.
 - **Fix:** Decide one scheme. Recommend: ULID for new dispatcher path; document that old cycle_id-based paths are gone after Task 3.3.
 
@@ -143,14 +143,14 @@ Severity floor for "blocker" is "would not compile or would silently corrupt saf
 - **Issue:** The 78,000 placeholder is a literal for BTC price. Will silently produce nonsense slippage estimates if BTC price moves materially or for any other asset. Marked as `/* qty proxy; replace with mark */` but that means the plan ships unfinished into Phase 3.
 - **Fix:** Replace the placeholder before merging Phase 3; require the dispatcher to take a mark price or fetch it. Add a property test that the dispatcher rejects when mark_price is unavailable.
 
-### 2.12 [LOW] Files structure section lists `crates/xianvec-execution/src/lib.rs` modify with `pub mod approval` but Task 4.5 Step 3 doesn't mention adding it
+### 2.12 [LOW] Files structure section lists `crates/xvision-execution/src/lib.rs` modify with `pub mod approval` but Task 4.5 Step 3 doesn't mention adding it
 - **Location:** plan File structure (line 70); Task 4.5.
-- **Fix:** Add a Step 3a: "Edit `crates/xianvec-execution/src/lib.rs`: `pub mod approval;`"
+- **Fix:** Add a Step 3a: "Edit `crates/xvision-execution/src/lib.rs`: `pub mod approval;`"
 
 ### 2.13 [LOW] `AppContext::from_env` migration path uses a relative path that breaks under `cargo test`
-- **Location:** plan Task 4.10 Step 1 — `sqlx::migrate!("../xianvec-data/src/migrations").run(&pool).await?;`
-- **Issue:** Relative paths in `sqlx::migrate!` are resolved at compile time relative to `CARGO_MANIFEST_DIR` of the calling crate. From `crates/xianvec-cli`, `../xianvec-data/src/migrations` is correct. From `crates/xianvec-cli/tests/`, also correct (still resolves at compile time from the crate root). OK, not a bug, but fragile if the cli crate moves.
-- **Fix:** Add a comment, or expose a `xianvec_data::migrate(&pool).await?` helper that owns the path internally.
+- **Location:** plan Task 4.10 Step 1 — `sqlx::migrate!("../xvision-data/src/migrations").run(&pool).await?;`
+- **Issue:** Relative paths in `sqlx::migrate!` are resolved at compile time relative to `CARGO_MANIFEST_DIR` of the calling crate. From `crates/xvision-cli`, `../xvision-data/src/migrations` is correct. From `crates/xvision-cli/tests/`, also correct (still resolves at compile time from the crate root). OK, not a bug, but fragile if the cli crate moves.
+- **Fix:** Add a comment, or expose a `xvision_data::migrate(&pool).await?` helper that owns the path internally.
 
 ### 2.14 [LOW] `xvn key list` shows `expires_at` as a raw integer (millis since epoch)
 - **Location:** plan Task 4.7 Step 2 (`println!("{:<20} {:<70} {:<10}", k.user, k.pubkey_hex, k.expires_at);`).
@@ -166,7 +166,7 @@ Severity floor for "blocker" is "would not compile or would silently corrupt saf
 
 ### 3.1 [HIGH] Phase 0 probes ("scaffold + 3 todo!()") understates the EIP-712 + signing-helper extraction
 - **Location:** plan Task 0.2 Step 5.
-- **Issue:** "Open `crates/xianvec-execution/src/orderly.rs` and locate the existing EIP-712 onboarding flow. Copy the request-signing helper into `m1`" — the existing `orderly.rs` does Ed25519 signing for orders but **not** EIP-712 onboarding. Onboarding (registering an Orderly account from an EVM signer) is currently manual (per FOLLOWUPS F5 — "complete brokered onboarding once via `xvn setup --orderly-onboard` per plan §6.3"). The probe needs to implement EIP-712 from scratch — this is non-trivial (typed data hashing, domain separator, struct hashing, secp256k1 signing). 1–2 days, not a 4-hour probe.
+- **Issue:** "Open `crates/xvision-execution/src/orderly.rs` and locate the existing EIP-712 onboarding flow. Copy the request-signing helper into `m1`" — the existing `orderly.rs` does Ed25519 signing for orders but **not** EIP-712 onboarding. Onboarding (registering an Orderly account from an EVM signer) is currently manual (per FOLLOWUPS F5 — "complete brokered onboarding once via `xvn setup --orderly-onboard` per plan §6.3"). The probe needs to implement EIP-712 from scratch — this is non-trivial (typed data hashing, domain separator, struct hashing, secp256k1 signing). 1–2 days, not a 4-hour probe.
 - **Fix:** Acknowledge the EIP-712 implementation as a real subtask. Use `alloy-sol-types` or `ethers-core` for the typed-data hashing. Add deps to the probe Cargo.toml.
 
 ### 3.2 [HIGH] Phase 4 Task 4.4 emergency-close: `cancel_all_orders` and `market_close_all_positions` have correctness traps
@@ -176,7 +176,7 @@ Severity floor for "blocker" is "would not compile or would silently corrupt saf
 
 ### 3.3 [HIGH] Plan 2c (scheduler) integration is unspecified
 - **Location:** plan Phase 7 Task 7.1 Step 3 ("If Plan 2c (durable scheduler) has shipped, register the reconciler as a scheduled job. Otherwise: spawn a tokio task in the live-deploy entry point").
-- **Issue:** Plan 2c's scheduler stores jobs in `crates/xianvec-engine/migrations/001_scheduler.sql` — a different SQLite database (or at least different tables) than this plan's `xianvec-data` migrations. Wiring the reconciler through Plan 2c's `Scheduler` API is nontrivial: needs a shared pool, a job-payload serialization for `Reconcile { user_id }`, and the runner must hold an `AppContext` to do any work. None of this is sketched. The fallback ("spawn a tokio task") works for single-user single-process but not in a deployed `xvn live deploy` flow if the live daemon already owns the runtime.
+- **Issue:** Plan 2c's scheduler stores jobs in `crates/xvision-engine/migrations/001_scheduler.sql` — a different SQLite database (or at least different tables) than this plan's `xvision-data` migrations. Wiring the reconciler through Plan 2c's `Scheduler` API is nontrivial: needs a shared pool, a job-payload serialization for `Reconcile { user_id }`, and the runner must hold an `AppContext` to do any work. None of this is sketched. The fallback ("spawn a tokio task") works for single-user single-process but not in a deployed `xvn live deploy` flow if the live daemon already owns the runtime.
 - **Fix:** Pick one path before Phase 7. If Plan 2c ships first, write the wiring task explicitly; if not, use the tokio-task fallback and document that it doesn't survive process restart between reconciles (the next reconcile will pick up the drift on next run).
 
 ### 3.4 [HIGH] Phase 8 dashboard integration assumes Plan 2d's `AppState` is extensible without conflict
@@ -225,7 +225,7 @@ Severity floor for "blocker" is "would not compile or would silently corrupt saf
 
 ### 4.1 [HIGH] Phase 4 Task 4.7 (`xvn key issue`) lands in Phase 4 but Phase 1 Task 1.5 already needs per-user key plumbing
 - **Location:** Phase 1 Task 1.5 (modify Orderly executor to take per-user key); Phase 4 Task 4.7 (issue/store the key).
-- **Issue:** Task 1.5 says "modify the executor's constructor to accept... `agent_id: &str`" but doesn't mention the trading key — yet the spec explicitly says the dispatcher should use the user's encrypted key. If Phase 1 still uses the env-var key (`ORDERLY_KEY/SECRET`), the test in Task 1.5 passes but the security model is not validated end-to-end until Phase 4. That's OK for an incremental ship (spec §8 step 7 explicitly defers multi-key), but the plan's File structure includes `xianvec-identity/src/trading_key.rs` as new in Phase 4 — and the spec's component map says "needs per-user key parameter (currently single env-var key)" against `orderly.rs`. There's no task that bridges single-env-key → multi-user-key.
+- **Issue:** Task 1.5 says "modify the executor's constructor to accept... `agent_id: &str`" but doesn't mention the trading key — yet the spec explicitly says the dispatcher should use the user's encrypted key. If Phase 1 still uses the env-var key (`ORDERLY_KEY/SECRET`), the test in Task 1.5 passes but the security model is not validated end-to-end until Phase 4. That's OK for an incremental ship (spec §8 step 7 explicitly defers multi-key), but the plan's File structure includes `xvision-identity/src/trading_key.rs` as new in Phase 4 — and the spec's component map says "needs per-user key parameter (currently single env-var key)" against `orderly.rs`. There's no task that bridges single-env-key → multi-user-key.
 - **Fix:** Add a Phase 4 sub-task "Refactor `OrderlyExecutor` constructor to accept a `Box<dyn KeyProvider>` returning the Ed25519 key for a given user_id. v1 default impl: `EnvKeyProvider` (returns the single env-var key for any user). Phase 4 Task 4.7 wires the encrypted-store backed `EncryptedStoreKeyProvider`."
 
 ### 4.2 [HIGH] Phase 0 ADR outcomes drive Phase 5 but also affect Phase 3 dispatcher
@@ -233,24 +233,24 @@ Severity floor for "blocker" is "would not compile or would silently corrupt saf
 - **Issue:** If G2 = ISOLATED_SUPPORTED, the dispatcher must set the margin mode on Orderly *before* placing the first order against a symbol (per Task 5.1 Step 2). That's a dispatcher-side change, not just a Phase 5 add-on. The plan's Phase 3 dispatcher does not have a margin-mode-set hook.
 - **Fix:** In Phase 3 Task 3.2, add a parameter `margin_mode: Option<MarginMode>` to dispatch and an idempotent "ensure margin mode" call before submit. Then Phase 5 Task 5.1 just toggles whether the parameter is non-None.
 
-### 4.3 [HIGH] Phase 8 Task 8.6 makes `xvn budget serve` depend on `xianvec-dashboard`, but Phase 4 Task 4.8 already declares `Serve` arm calling that dep
+### 4.3 [HIGH] Phase 8 Task 8.6 makes `xvn budget serve` depend on `xvision-dashboard`, but Phase 4 Task 4.8 already declares `Serve` arm calling that dep
 - **Location:** Phase 4 Task 4.8 Step 5; Phase 8 Task 8.6.
-- **Issue:** If Phase 4 ships before Phase 8, `xvn budget serve` is a placeholder that says "Phase 8 UI not built yet." If `xianvec-dashboard` isn't a workspace member at Phase 4 time, even adding a dep would fail. The plan has Phase 4 build CLI before Phase 8 builds the route, with no compile-time guard. Either Phase 4 needs a feature flag or the Serve arm must conditionally compile.
+- **Issue:** If Phase 4 ships before Phase 8, `xvn budget serve` is a placeholder that says "Phase 8 UI not built yet." If `xvision-dashboard` isn't a workspace member at Phase 4 time, even adding a dep would fail. The plan has Phase 4 build CLI before Phase 8 builds the route, with no compile-time guard. Either Phase 4 needs a feature flag or the Serve arm must conditionally compile.
 - **Fix:** Phase 4 ships `Serve` returning a "not yet implemented" message. Phase 8 wires it up. Document the order.
 
 ### 4.4 [MEDIUM] Phase 2 Task 2.3 reservations crate-level circular dep
-- **Location:** plan Task 2.3 — `xianvec-risk/src/reservations.rs` imports `xianvec_data::ledger::Ledger`.
-- **Issue:** Currently `xianvec-risk` does NOT depend on `xianvec-data`. Adding the dep is fine, but it's not in the plan's `xianvec-risk/Cargo.toml` modify list.
-- **Fix:** Phase 2 Task 2.1 Step 1 should add `xianvec-data = { path = "../xianvec-data" }` to xianvec-risk's Cargo.toml.
+- **Location:** plan Task 2.3 — `xvision-risk/src/reservations.rs` imports `xvision_data::ledger::Ledger`.
+- **Issue:** Currently `xvision-risk` does NOT depend on `xvision-data`. Adding the dep is fine, but it's not in the plan's `xvision-risk/Cargo.toml` modify list.
+- **Fix:** Phase 2 Task 2.1 Step 1 should add `xvision-data = { path = "../xvision-data" }` to xvision-risk's Cargo.toml.
 
 ### 4.5 [MEDIUM] Phase 1 Task 1.5 integration test "mock the Orderly HTTP layer" — mock infrastructure unspecified
 - **Location:** plan Task 1.5 Step 4.
-- **Issue:** No existing mock pattern in `crates/xianvec-execution/tests/` is named or extended. The existing `submit_buy_with_bracket_constructs_correct_orders` test (line 1064 of `orderly.rs`) presumably uses a `MockOrderlyApi` — but the plan doesn't reference it.
+- **Issue:** No existing mock pattern in `crates/xvision-execution/tests/` is named or extended. The existing `submit_buy_with_bracket_constructs_correct_orders` test (line 1064 of `orderly.rs`) presumably uses a `MockOrderlyApi` — but the plan doesn't reference it.
 - **Fix:** Reference the existing mock pattern explicitly. If it doesn't exist, build one in Phase 1.
 
 ### 4.6 [MEDIUM] Phase 3 Task 3.3 wiring breaks every existing call site of `OrderlyExecutor`
 - **Location:** plan Task 3.3 Step 2.
-- **Issue:** Existing call sites in `xianvec-engine`, `xianvec-cli/src/commands/fire_trade.rs`, harness paths, eval paths — many of them. Each needs a `(agent_id, user_id, cfg)` triple. For backtest paths (`ab_compare`, paper-only flows), there is no real "user" or "agent_id" outside the new schema. The plan says "hardcode `hackathon-baseline` as `agent_id`" — but for `ab_compare` running 10+ strategies, hardcoding one breaks attribution.
+- **Issue:** Existing call sites in `xvision-engine`, `xvision-cli/src/commands/fire_trade.rs`, harness paths, eval paths — many of them. Each needs a `(agent_id, user_id, cfg)` triple. For backtest paths (`ab_compare`, paper-only flows), there is no real "user" or "agent_id" outside the new schema. The plan says "hardcode `hackathon-baseline` as `agent_id`" — but for `ab_compare` running 10+ strategies, hardcoding one breaks attribution.
 - **Fix:** Provide a `default_agent_id_for(arm_name)` helper that maps arm names to deterministic ULID-shaped agent_ids. Document the migration: post-SLF3 (NFT mint), this resolves to the on-chain id. Also: backtest paths should bypass the dispatcher entirely (no risk envelope, no audit log) and only the live path uses dispatch. Add a `BypassDispatcher` mode for backtests.
 
 ### 4.7 [LOW] Phase 9 e2e test depends on Phase 7 reconciler being non-todo
@@ -384,10 +384,10 @@ Severity floor for "blocker" is "would not compile or would silently corrupt saf
 
 ---
 
-## 8. Integration with the rest of xianvec
+## 8. Integration with the rest of xvision
 
 ### 8.1 [HIGH] Plan 2c ships `Plan 2c BrokerSurface` which abstracts Alpaca + Orderly — this plan modifies `OrderlyExecutor` directly, bypassing `BrokerSurface`
-- **Location:** Plan 2c Task 7 — `BrokerSurface` trait in `crates/xianvec-execution/src/broker_surface.rs`; this plan modifies `crates/xianvec-execution/src/orderly.rs` and adds a separate `OrderlyOrderSubmit` trait.
+- **Location:** Plan 2c Task 7 — `BrokerSurface` trait in `crates/xvision-execution/src/broker_surface.rs`; this plan modifies `crates/xvision-execution/src/orderly.rs` and adds a separate `OrderlyOrderSubmit` trait.
 - **Issue:** Two parallel abstractions over Orderly. Plan 2c's `BrokerSurface` is the cross-broker abstraction (Alpaca paper, Alpaca live, Orderly live). This plan's `OrderlyOrderSubmit` is Orderly-specific. The dispatcher in this plan is hard-bound to Orderly. For a hackathon demo against Orderly only this is fine, but the conceptual fit with Plan 2c is wrong: the dispatcher should route through `BrokerSurface`, not bypass it.
 - **Fix:** Either (a) rename `OrderlyOrderSubmit` → reuse `BrokerSurface` from Plan 2c if Plan 2c has shipped, or (b) document that the dispatcher is Orderly-only in v1 and integrating with `BrokerSurface` is a follow-up. Either works; pick.
 

@@ -1,4 +1,4 @@
-# XIANVEC Implementation Plan (Rust)
+# XVISION Implementation Plan (Rust)
 
 > **2026-05-07: Plan reshaped per ADR 0011.** Original CV-driven phases
 > (Phase 0 spike, Phase 4 vector ops, Phase 8 probe runner with
@@ -16,26 +16,26 @@ The runtime is Rust. Plotting and offline analysis use Python notebooks; the pro
 
 ## File structure (Cargo workspace)
 
-**v1 scope decision (2026-05-03):** the workspace is a **single `crates/xianvec-*` tree** for the hackathon. The lodestar / xianvec subtree split documented in earlier drafts is **deferred to v2** (see "Future additions"). The same is true for several other items previously in v1 — see "v1 scope cuts" below the file tree.
+**v1 scope decision (2026-05-03):** the workspace is a **single `crates/xvision-*` tree** for the hackathon. The lodestar / xvision subtree split documented in earlier drafts is **deferred to v2** (see "Future additions"). The same is true for several other items previously in v1 — see "v1 scope cuts" below the file tree.
 
 ```
-xianvec/
+xvision/
 ├── Cargo.toml                    # workspace root
 ├── rust-toolchain.toml
 ├── .pre-commit-config.yaml       # cargo fmt / clippy / test
 ├── Cargo.lock
 │
 ├── crates/
-│   ├── xianvec-core/             # types, schemas, config loader, SQLite persistence
-│   ├── xianvec-data/             # OHLCV ingest, indicators, onchain signals
-│   ├── xianvec-intern/           # Stage 1 (any OpenAI- or Anthropic-compatible endpoint)
-│   ├── xianvec-trader/           # Stage 2 (TraderBackend HTTP trait)
-│   ├── xianvec-risk/             # deterministic risk layer
-│   ├── xianvec-execution/        # Stage 3: alpaca + orderly executors
-│   ├── xianvec-identity/         # ERC-8004 manifest + reputation/validation receipts
-│   ├── xianvec-eval/             # backtest harness, baselines, Δ-Sharpe
-│   ├── xianvec-harness/          # boundary probes (minimal v1 corpus)
-│   └── xianvec-cli/              # clap-based CLI; installed binary is `xvn`
+│   ├── xvision-core/             # types, schemas, config loader, SQLite persistence
+│   ├── xvision-data/             # OHLCV ingest, indicators, onchain signals
+│   ├── xvision-intern/           # Stage 1 (any OpenAI- or Anthropic-compatible endpoint)
+│   ├── xvision-trader/           # Stage 2 (TraderBackend HTTP trait)
+│   ├── xvision-risk/             # deterministic risk layer
+│   ├── xvision-execution/        # Stage 3: alpaca + orderly executors
+│   ├── xvision-identity/         # ERC-8004 manifest + reputation/validation receipts
+│   ├── xvision-eval/             # backtest harness, baselines, Δ-Sharpe
+│   ├── xvision-harness/          # boundary probes (minimal v1 corpus)
+│   └── xvision-cli/              # clap-based CLI; installed binary is `xvn`
 │
 ├── config/
 │   ├── default.toml              # runtime config
@@ -62,7 +62,7 @@ The following items appeared in earlier drafts and are **explicitly out of v1**.
 
 - **Multi-asset basket** — v1 runs on **BTC only** (PERP_BTC_USDC on Mantle via Orderly; BTC-USD on Alpaca paper). ETH/SOL return when the cluster-cap rule needs exercising.
 - **Telemetry crate + OTel/Langfuse** — v1 writes a `traces` table in SQLite (§9.4 flight recorder is sufficient for replay). `tracing` + console output for live dev. OTel export, GenAI semantic conventions, and self-hosted Langfuse return post-v1.
-- **Telegram bot (`xianvec-bot`)** — v1 demo is CLI + report markdown + plots. Telegram is post-v1 polish.
+- **Telegram bot (`xvision-bot`)** — v1 demo is CLI + report markdown + plots. Telegram is post-v1 polish.
 - **xStocks integration** — Mantle tokenized equities are out of v1 entirely. PERP_BTC_USDC on Mantle via Orderly is the on-chain trade artifact; ERC-8004 NFT mint on Mantle is the on-chain identity artifact (same chain).
 - **`mantle-risk-evaluator` LLM pre-flight gate** — v1 trusts the deterministic risk layer for the small forward run. Re-add when Orderly trade volume justifies a second LLM-mediated gate.
 
@@ -139,7 +139,7 @@ Implemented in **Phase 6.5**. Must be in place before any forward Orderly run.
 
 `orderly-connector-rs = "0.4"` (ranger-finance, MIT, last published 2025-06; M0 confirms it works against the current API). Stage 3 gets a *second* executor alongside Alpaca paper — same `RiskDecision → Stage 3` contract, different downstream tool. A `--executor {alpaca,orderly}` CLI flag selects between them.
 
-Implementation in `crates/xianvec-execution/orderly.rs` constructs an `OrderlyService` against `https://api-evm.orderly.org`, holds `Credentials { orderly_key, orderly_secret, orderly_account_id }` for signed calls, and surfaces SDK methods (`create_order`, `cancel_order`, `get_holding`, `get_positions`, `get_account_info`) through the `Executor` trait. No Node.js runtime dependency, no subprocess shellout.
+Implementation in `crates/xvision-execution/orderly.rs` constructs an `OrderlyService` against `https://api-evm.orderly.org`, holds `Credentials { orderly_key, orderly_secret, orderly_account_id }` for signed calls, and surfaces SDK methods (`create_order`, `cancel_order`, `get_holding`, `get_positions`, `get_account_info`) through the `Executor` trait. No Node.js runtime dependency, no subprocess shellout.
 
 Implemented in **Phase 6.3** (parallel to Phase 6.2 Alpaca).
 
@@ -177,11 +177,11 @@ Implemented in **Phase 0.4** (vendor) and consumed by Stage 1 Intern config + Ph
 
 Workspace scaffolding + vendored skill catalogs. Per ADR 0011, the original
 vector validation spike (CRITICAL GATE) is gone — the CV substrate moved to
-xianvec-play.
+xvision-play.
 
 ### Task 0.1: Cargo workspace init (single tree)
 
-Create the workspace from the file structure above as a single `crates/xianvec-*` tree. Each crate starts as a stub with `lib.rs` and one passing test. No lodestar split, no `deny.toml` boundary check — both deferred to v2.
+Create the workspace from the file structure above as a single `crates/xvision-*` tree. Each crate starts as a stub with `lib.rs` and one passing test. No lodestar split, no `deny.toml` boundary check — both deferred to v2.
 
 **Acceptance:**
 - `cargo build --workspace` succeeds on stable Rust
@@ -237,9 +237,9 @@ Add `github.com/mantle-xyz/mantle-skills` as a git submodule under `.claude/skil
 
 ## Phase 1 — Schemas, config, persistence
 
-### Task 1.1: Schema crate (`xianvec-core`)
+### Task 1.1: Schema crate (`xvision-core`)
 
-Trading types live in `xianvec-core::trading` (`Action`, `Direction`, `AssetSymbol`, `Regime`, `EvidenceTag`, `InternBriefing`, `TraderDecision`, `RiskDecision`, `VetoReason`).
+Trading types live in `xvision-core::trading` (`Action`, `Direction`, `AssetSymbol`, `Regime`, `EvidenceTag`, `InternBriefing`, `TraderDecision`, `RiskDecision`, `VetoReason`).
 
 Stage handoff types as `serde` + `garde` structs. Type-level enforcement everywhere it works; runtime validation at the boundaries.
 
@@ -291,7 +291,7 @@ pub enum RiskDecision {
 - `garde` validation rejects out-of-range values with structured errors
 - `proptest` generators for fuzz tests of downstream code
 
-### Task 1.2: Config loader (`crates/xianvec-core/src/config.rs`)
+### Task 1.2: Config loader (`crates/xvision-core/src/config.rs`)
 
 TOML-backed config (we use TOML over YAML — it integrates with Cargo idioms and `serde` parsing is first-class).
 
@@ -334,7 +334,7 @@ horizon = 16
 
 Acceptance: round-trip + validation tests; bad configs produce structured errors not panics.
 
-### Task 1.3: SQLite persistence (`crates/xianvec-core/src/store.rs`)
+### Task 1.3: SQLite persistence (`crates/xvision-core/src/store.rs`)
 
 `sqlx` with compile-time-checked queries. Tables: `setups`, `briefings`, `decisions`, `risk_outcomes`, `executions`, `traces`.
 
@@ -345,7 +345,7 @@ Acceptance: round-trip + validation tests; bad configs produce structured errors
 
 Acceptance: migrations run cleanly, `sqlx::query!` macros compile-check against the schema, round-trip inserts/queries for every type.
 
-### Task 1.4: Technical indicators (`crates/xianvec-data/src/indicators.rs`)
+### Task 1.4: Technical indicators (`crates/xvision-data/src/indicators.rs`)
 
 RSI(14), SMA(20/50/200), EMA(12/26), Bollinger Bands(20, 2σ), ATR(14), MACD(12/26/9), Donchian(20), Fibonacci retracements with rolling-window peak detection.
 
@@ -355,7 +355,7 @@ Acceptance: per-indicator unit tests against canonical fixture data (e.g. RSI on
 
 ---
 
-## Phase 2 — Stage 1 Intern (`crates/xianvec-intern/`)
+## Phase 2 — Stage 1 Intern (`crates/xvision-intern/`)
 
 ### Task 2.1: Intern prompt builder
 
@@ -400,7 +400,7 @@ Acceptance:
 
 ## Phase 3 — Stage 2 Trader
 
-### Task 3.1: Trader backend (`crates/xianvec-trader/`)
+### Task 3.1: Trader backend (`crates/xvision-trader/`)
 
 `TraderBackend` HTTP trait abstracts over OpenAI-compatible endpoints; `OpenAiCompatBackend` is the default impl. Optional local `candle` inference is available as a separate path for fully air-gapped runs.
 
@@ -431,7 +431,7 @@ End-to-end test that runs Stage 1 + Stage 2 on a fixture setup. Confirms plumbin
 
 ---
 
-## Phase 5 — Risk Layer (`crates/xianvec-risk/`)
+## Phase 5 — Risk Layer (`crates/xvision-risk/`)
 
 Deterministic, no LLM. Pure rule evaluation.
 
@@ -481,11 +481,11 @@ pub trait Executor: Send + Sync {
 
 Idempotency: each decision carries `setup_id` used as client order ID.
 
-### Task 6.2: Alpaca executor (`crates/xianvec-execution/alpaca.rs`)
+### Task 6.2: Alpaca executor (`crates/xvision-execution/alpaca.rs`)
 
 `apca` (mature Alpaca client; `alpaca-rs` on crates.io is a 0.1.0 stub). Submit market or bracket orders. Read portfolio state after every action and cache for next Stage-1 input.
 
-### Task 6.3: Orderly executor (`crates/xianvec-execution/orderly.rs`)
+### Task 6.3: Orderly executor (`crates/xvision-execution/orderly.rs`)
 
 Native Rust async via `orderly-connector-rs = "0.4"` (`OrderlyService` + `Credentials`). Same `Executor` trait surface as `AlpacaExecutor`; different downstream tool. No Node.js dependency, no subprocess.
 
@@ -538,7 +538,7 @@ impl Executor for OrderlyExecutor {
 
 ### Task 6.4: Backtest simulator
 
-In-process executor that takes `RiskDecision` and walks forward through historical OHLCV applying realistic slippage and fees. Implements the same `Executor` trait so `xianvec-eval` swaps it in transparently.
+In-process executor that takes `RiskDecision` and walks forward through historical OHLCV applying realistic slippage and fees. Implements the same `Executor` trait so `xvision-eval` swaps it in transparently.
 
 **Tier 1 fix #3:** Stateful portfolio tracker — NAV, open positions, daily PnL window, loss streak, ATR — updated across the test window. The risk layer must actually fire during backtest.
 
@@ -561,7 +561,7 @@ Acceptance: each strategy has its NFT minted; reputation posts succeed for fixtu
 
 ---
 
-## Phase 7 — Baselines (`crates/xianvec-eval/baselines/`)
+## Phase 7 — Baselines (`crates/xvision-eval/baselines/`)
 
 Each baseline implements a simple decision rule that consumes the same `MarketState` the Intern sees and emits a `TraderDecision`-shaped output (action + size + direction + stops). They are evaluated by the same backtest harness.
 
@@ -577,7 +577,7 @@ Each baseline outputs to `data/baselines/{name}.parquet` consumed by the eval fr
 
 ---
 
-## Phase 8 — Eval framework (`crates/xianvec-eval/`)
+## Phase 8 — Eval framework (`crates/xvision-eval/`)
 
 The most important non-obvious piece. Without it, strategy comparisons cannot be measured.
 
@@ -665,14 +665,14 @@ Re-tightening trigger: any v2 work that adds an automated optimizer over strateg
 
 ## Phase 9 — Pipeline orchestration + the A/B experiment
 
-### Task 9.1: Ops (`crates/xianvec-cli/src/ops.rs`)
+### Task 9.1: Ops (`crates/xvision-cli/src/ops.rs`)
 
 Composes Stage 1 (cached briefing per setup) → Stage 2 (paired arms) → Risk → Executor. Logs everything via `tracing` with the GenAI semantic conventions (Phase T.1 telemetry).
 
 ### Task 9.2: A/B comparison runner
 
 ```bash
-cargo run --release -p xianvec-cli -- ab-compare \
+cargo run --release -p xvision-cli -- ab-compare \
   --setups data/setups/2022_2024_paired.parquet \
   --asset BTC-USD \
   --arms trader_arm,buy_hold,rsi_mean_reversion,ma_crossover \
@@ -695,7 +695,7 @@ Output: structured JSON consumed by the Python notebook for plots + summary stat
 - `xvn show-decision --setup-id <uuid> --arm <name>` — pretty-prints the cached decision with arm name and gate metadata.
 - `xvn show-metrics --report <path>` — renders the latest A/B report's headline Δ-Sharpe and dashboard.
 
-Telegram bot (`xianvec-bot`) is deferred to v2 polish — see "Future additions."
+Telegram bot (`xvision-bot`) is deferred to v2 polish — see "Future additions."
 
 ### Task 10.2: Report generator
 
@@ -760,15 +760,15 @@ These are deferred until the headline Δ-Sharpe claim has been validated. Each i
 - **Multi-asset basket (Tier 2 fix #6).** ETH, SOL, xStocks. Re-add trigger: BTC v1 result is positive and the cluster-cap risk rule needs cross-asset exercise. Concatenate paired returns across assets for the bootstrap.
 - **xStocks integration (Mantle tokenized equities).** Re-add trigger: Mantle's xStocks have a programmatic surface that doesn't require a separate executor (current state is unverified for v1; check ecosystem registry).
 - **Telemetry crate + OTel + Langfuse.** Re-add trigger: serving load justifies live observability, OR the Karpathy autoresearch loop ships and needs honest cross-run traces.
-- **Telegram bot (`xianvec-bot`).** Re-add trigger: post-hackathon polish, demo audience extends beyond the judges' README walkthrough.
+- **Telegram bot (`xvision-bot`).** Re-add trigger: post-hackathon polish, demo audience extends beyond the judges' README walkthrough.
 - **`mantle-risk-evaluator` LLM pre-flight.** Re-add trigger: Mantle forward-trade volume justifies a second LLM-mediated gate on top of the deterministic risk layer.
 
 ### Karpathy autoresearch loop (deferred)
 
-The Rust orchestrator proposes strategy mutations from per-strategy trade ledgers, validates the resulting variants against the boundary probe corpus, and admits survivors to the loom. Implementation in `crates/xianvec-harness/src/karpathy_loop.rs`.
+The Rust orchestrator proposes strategy mutations from per-strategy trade ledgers, validates the resulting variants against the boundary probe corpus, and admits survivors to the loom. Implementation in `crates/xvision-harness/src/karpathy_loop.rs`.
 
 Trigger: anti-overfit gate verdict is `PassesBothRegimes` for at least one strategy variant in v1. Goodhart-resistance comes from the harness, not the loop. **The gate must re-tighten to blocking when this loop ships.**
 
 ---
 
-*Document version: 2026-05-07 (post-ADR-0011 reshape). Lives at `/Users/edkennedy/Code/xianvec/implementation-plan.md`.*
+*Document version: 2026-05-07 (post-ADR-0011 reshape). Lives at `/Users/edkennedy/Code/xvision/implementation-plan.md`.*

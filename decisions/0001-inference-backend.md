@@ -1,14 +1,16 @@
 # ADR 0001 — Inference backend + extraction precision
 
+> **2026-05-10:** Project renamed `xianvec` → `xvision`. References below reflect the post-rename name; project history prior to this date used `xianvec`.
+
 **Date:** 2026-05-03
 **Status:** Accepted (revised 2026-05-07 per ADR 0011)
 **Phase:** 0.2 / 0.3 prerequisite
 
-> **2026-05-07 revision:** Per ADR 0011, CV substrate moved to xianvec-play.
+> **2026-05-07 revision:** Per ADR 0011, CV substrate moved to xvision-play.
 > This ADR retains candle as a local-inference option for the Trader, but
 > steering-hook flexibility is no longer the load-bearing justification.
 > The MLX extraction path and `repeng` references below are historical
-> record — the CV pipeline they describe lives in xianvec-play. ADR 0007
+> record — the CV pipeline they describe lives in xvision-play. ADR 0007
 > covers the surviving Trader-only inference throughput considerations.
 
 ## Context
@@ -102,7 +104,7 @@ cost upfront.
 
 ## Phase 3 addendum (2026-05-03): candle Q4 throughput on M4 Metal
 
-After wiring `xianvec-trader::run_trader` against the same `Qwen3Engine` from
+After wiring `xvision-trader::run_trader` against the same `Qwen3Engine` from
 Phase 0.2, end-to-end smoke surfaced a sharp throughput cliff on M4 Max with the
 default `candle-core/metal` backend:
 

@@ -1,7 +1,7 @@
 # Karpathy Autoresearcher — Design
 
 > **Status:** Draft for user review · 2026-05-09 (revised same day to decouple from ERC-8004)
-> **Author:** xianvec hackathon team
+> **Author:** xvision hackathon team
 > **Companion specs:** [Marketplace Plugin](./2026-05-09-marketplace-plugin-design.md) · [Eval Engine](./2026-05-08-eval-engine-design.md) · [Strategy Creation Engine](./2026-05-08-strategy-creation-engine-design.md) · [Smart Contract Surface](./2026-05-08-smart-contract-surface-design.md)
 > **Reference:** github.com/karpathy/autoresearch (March 2026)
 > **Hackathon deadline:** 2026-06-15 (5 weeks)
@@ -10,11 +10,11 @@
 
 ## 1. Purpose, scope, and personas
 
-The Karpathy Autoresearcher is xianvec's evening cycle: an LLM-driven loop that proposes mutations to existing strategy variants, paper-tests them on day-of trades plus a held-out window, and commits surviving children into a content-addressed lineage. The loop runs entirely off-chain. Whether any of its outputs ever reach Mantle is a separate, optional concern handled by the [Marketplace Plugin](./2026-05-09-marketplace-plugin-design.md).
+The Karpathy Autoresearcher is xvision's evening cycle: an LLM-driven loop that proposes mutations to existing strategy variants, paper-tests them on day-of trades plus a held-out window, and commits surviving children into a content-addressed lineage. The loop runs entirely off-chain. Whether any of its outputs ever reach Mantle is a separate, optional concern handled by the [Marketplace Plugin](./2026-05-09-marketplace-plugin-design.md).
 
 ### 1.1 Personas
 
-xianvec serves two user personas. The autoresearcher core is built for **Persona A**; the marketplace plugin extends it for **Persona B**.
+xvision serves two user personas. The autoresearcher core is built for **Persona A**; the marketplace plugin extends it for **Persona B**.
 
 | | **Persona A — trader/researcher** | **Persona B — marketplace participant** |
 |---|---|---|
@@ -42,7 +42,7 @@ The hackathon submission targets Persona B but the foundation must work cleanly 
 ### 1.3 Out of scope (v1)
 
 - Any ERC-8004 / Mantle / on-chain integration → handled by the [Marketplace Plugin spec](./2026-05-09-marketplace-plugin-design.md)
-- Open attestation surface → covered in marketplace spec; v1 is "in-house attesters seeded by xianvec," v2 is public participation
+- Open attestation surface → covered in marketplace spec; v1 is "in-house attesters seeded by xvision," v2 is public participation
 - Slot/template-swap mutations (architectural mutations beyond prose/params/tools)
 - Adaptive cycle budget (per-lineage allocation tied to recent gains)
 - Cross-run memory beyond the strategy ledger
@@ -62,7 +62,7 @@ The hackathon submission targets Persona B but the foundation must work cleanly 
 | 6 | **No chain coupling.** Core emits `CycleSeal` artifacts; the marketplace plugin reads them. The autoresearch module has zero `use` statements pointing at chain code. |
 | 7 | **Pre-commitment:** ε, held-out window, parent-selection seed, and cycle config are sealed and operator-signed locally at session start. Anchoring on-chain is optional and handled by the marketplace plugin. |
 | 8 | **Hard go/no-go on 2026-05-23:** if eval engine paper-test path is not working end-to-end, fall back to "Mutator + lineage UI, run once" branch (no live evening cycle). The go/no-go is purely about the loop; chain readiness is a separate concern. |
-| 9 | **Module location:** new `xianvec-engine/src/autoresearch/` parallel to `eval/`. Reuses eval engine's executor, findings extractor, persistence. |
+| 9 | **Module location:** new `xvision-engine/src/autoresearch/` parallel to `eval/`. Reuses eval engine's executor, findings extractor, persistence. |
 | 10 | **Cheap mutator + expensive judge:** Haiku for proposals (high volume), Sonnet for findings (only on accepted children). Per-cycle token cap with alarm. |
 | 11 | **Marketplace is part of default build, opt-in at wallet-connect.** Cargo feature `marketplace` exists for build-flexibility (minimal / audit builds) but default `cargo build` includes it; user-visible opt-in is the Settings → Marketplace wallet-connect step, not a recompile. Core still compiles and runs without the feature. |
 
@@ -73,7 +73,7 @@ The hackathon submission targets Persona B but the foundation must work cleanly 
 ### 3.1 Module layout
 
 ```
-xianvec-engine/
+xvision-engine/
 └── src/
     ├── eval/                    # existing — paper-test executor, scenario fixtures, findings extractor
     ├── autoresearch/            # THIS SPEC — chain-free
@@ -135,13 +135,13 @@ The cycle ends with `seal.write()`. Anything beyond that — minting NFTs, ancho
 
 | Component | Source | Notes |
 |---|---|---|
-| LLM client | `xianvec-intern` | already wired for Anthropic + OpenAI-compat. Mutator uses Haiku; judge uses Sonnet. |
-| Paper-test executor | `xianvec-engine/src/eval/executor.rs` | reused as-is for both day and held-out windows |
-| Scenario fixtures | `xianvec-engine/src/eval/scenario.rs` | held-out window pinned at session start |
-| Finding extractor | `xianvec-engine/src/eval/findings.rs` | judge.rs wraps it with metrics-blind input filtering |
+| LLM client | `xvision-intern` | already wired for Anthropic + OpenAI-compat. Mutator uses Haiku; judge uses Sonnet. |
+| Paper-test executor | `xvision-engine/src/eval/executor.rs` | reused as-is for both day and held-out windows |
+| Scenario fixtures | `xvision-engine/src/eval/scenario.rs` | held-out window pinned at session start |
+| Finding extractor | `xvision-engine/src/eval/findings.rs` | judge.rs wraps it with metrics-blind input filtering |
 | Persistence | SQLite + JSONL | new tables: `mutations`, `lineage_edges`, `findings`, `canary_runs`, `cycle_seals` |
 | Scheduler | `scheduler/` (ported from SwarmClaw) | new job: `autoresearch.evening_cycle` |
-| MCP | `xianvec-mcp` | tool selection mutations validated against the live tool registry |
+| MCP | `xvision-mcp` | tool selection mutations validated against the live tool registry |
 
 ### 3.4 The CycleSeal artifact (the contract surface)
 
@@ -201,7 +201,7 @@ struct ToolDiff {
 1. All keys in `param_changes` exist in the bundle's typed param schema; values fall in declared ranges.
 2. All tools in `tool_changes.added` are registered in the live MCP tool registry.
 3. `prose_diff` applies cleanly to parent's `program.md` and produces valid markdown.
-4. The candidate bundle, after applying all three diff sections, passes the standard bundle validator (`xianvec-engine/src/strategy/bundle.rs`).
+4. The candidate bundle, after applying all three diff sections, passes the standard bundle validator (`xvision-engine/src/strategy/bundle.rs`).
 
 Hard cap: 2 retries with the validator's error fed back as system context. Beyond that, the candidate is dropped and the rejection is logged (not committed to lineage).
 
@@ -415,7 +415,7 @@ Distilled from the ideonomy adversarial pass; each row is a way the loop could p
 | 2 | Live evening cycle crashes on stage (rate limits, MCP timeouts, sim bugs) | `xvn autoresearch demo` replay fixture; rate-limit-aware retry with backoff; idempotent paper-test runs. |
 | 3 | Mutator hallucinates invalid bundles | JSON-mode + bundle validator; 2-retry cap with error feedback; ungrammatical mutations never enter lineage. |
 | 4 | All lineages converge (mode collapse) | Diversity-decay metric public; ε-greedy parent policy with explicit exploration term. |
-| 5 | "Karpathy" framing reads as hype | Lead pitch with on-chain population evolution; cite Karpathy in references with explicit list of xianvec extensions. |
+| 5 | "Karpathy" framing reads as hype | Lead pitch with on-chain population evolution; cite Karpathy in references with explicit list of xvision extensions. |
 | 6 | LLM judge reverse-engineers the gate | Judge metrics-blinded in code (panic on leak); numeric gate runs first, deterministically. |
 | 7 | Eval engine slips | Wk 2 hard go/no-go; fallback branch ready. |
 | 8 | Genealogy unreadable at >50 nodes | Cluster by lineage; top-K filter; on-demand expand; demo storyboard ≤ 10 visible. |

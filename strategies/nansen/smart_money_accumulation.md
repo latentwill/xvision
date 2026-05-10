@@ -61,7 +61,7 @@ within the entry-lag window.
 
 ## Status
 
-`queued` — implementation goes in `crates/xianvec-eval/src/baselines/onchain/`
+`queued` — implementation goes in `crates/xvision-eval/src/baselines/onchain/`
 per FOLLOWUPS SLF6 / F14. This is the canonical Nansen baseline; ship first.
 
 ## References

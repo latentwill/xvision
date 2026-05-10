@@ -8,4 +8,4 @@ A quick index of the Fibonacci Strategy ideas in this folder.
 - `fibonacci_liquidity_retracement_filter.md`
 - `fibonacci_cycle_alignment.md`
 
-These are backlog specs only. They are meant to be translated into runnable xianvec strategy code later.
+These are backlog specs only. They are meant to be translated into runnable xvision strategy code later.

@@ -1,4 +1,4 @@
-# XIANVEC v1 default runtime configuration.
+# XVISION v1 default runtime configuration.
 #
 # Override per-environment with XVN_CONFIG=path/to/override.toml or
 # XVN_<SECTION>_<KEY>=value (e.g. XVN_TRADER_TEMPERATURE=0.4 for forward paper).

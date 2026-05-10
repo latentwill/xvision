@@ -1,11 +1,13 @@
 # ADR 0010 — Hackathon Pivot: Strategy Loom + ERC-8004 Marketplace
 
+> **2026-05-10:** Project renamed `xianvec` → `xvision`. References below reflect the post-rename name; project history prior to this date used `xianvec`.
+
 **Date:** 2026-05-05
 **Status:** Accepted (partially superseded 2026-05-07 by ADR 0011)
 **Phase:** Hackathon sprint (May 5 → Jun 15, 2026)
 
 > **2026-05-07 partial supersession (ADR 0011):** the `--features control-vectors`
-> cargo gate described below is obsolete — CV substrate moved to xianvec-play
+> cargo gate described below is obsolete — CV substrate moved to xvision-play
 > entirely. TraderArm survives without `VectorConfig`. Strategy Loom +
 > ERC-8004 Marketplace + Karpathy autoresearch framing are otherwise
 > unchanged. Body preserved as historical record.
@@ -20,7 +22,7 @@ Judging panel weights on-chain analytics (Nansen, Allora, Caladan, Hashed),
 AI infra (Z.ai, Elfa AI, Virtuals), ecosystem (Animoca, BGA, DoraHacks), and
 academic (HKU).
 
-The current xianvec stack treats the **control-vector trading arm** —
+The current xvision stack treats the **control-vector trading arm** —
 `TraderArm` with `VectorConfig{Off,On,Random,Orthogonal}` (see `architecture.md`
 §7.1, FOLLOWUPS F3) — as the thesis-defining experiment. This requires:
 
@@ -47,12 +49,12 @@ Three reasons that's the wrong shape to ship as the hackathon submission:
 
 What's already in the repo that the pivot leans on:
 
-- `xianvec-eval::ab_compare` orchestrator + `xvn ab-compare` runner (Phase 9.1/9.2).
-- `xianvec-trader` `Strategy` adapter (TraderArm, F3).
-- `xianvec-intern` `AcpxIntern` subprocess backend (F21) — the LLM operator.
-- `xianvec-identity` scaffolded against ERC-8004 stub registries (ADR 0008).
-- `xianvec-mcp` server exposing indicator tools (F22).
-- 7 baseline strategies in `crates/xianvec-eval/src/baselines/`, plus 4 classical-TA
+- `xvision-eval::ab_compare` orchestrator + `xvn ab-compare` runner (Phase 9.1/9.2).
+- `xvision-trader` `Strategy` adapter (TraderArm, F3).
+- `xvision-intern` `AcpxIntern` subprocess backend (F21) — the LLM operator.
+- `xvision-identity` scaffolded against ERC-8004 stub registries (ADR 0008).
+- `xvision-mcp` server exposing indicator tools (F22).
+- 7 baseline strategies in `crates/xvision-eval/src/baselines/`, plus 4 classical-TA
   queued (F15) and 4 onchain queued (F14).
 
 ## Decision
@@ -66,14 +68,14 @@ feature.**
 
 Multi-strategy evaluation engine. Day cycle runs N strategies through Mantle
 DEX flow (Merchant Moe / Agni / Fluxion). Evening cycle runs a Karpathy-style
-autoresearch loop: `xianvec-intern` reads each strategy's `program.md` plus
+autoresearch loop: `xvision-intern` reads each strategy's `program.md` plus
 the day's trade ledger, proposes a mutation, paper-tests it on the day's data
 plus a held-out window, commits the new variant only if it improves. Variants
 that diverge meaningfully fork into new lineages — producing a public genealogy.
 
 Reuses:
-- `xianvec-eval::ab_compare` for the day cycle.
-- `xianvec-intern` for the evening propose-mutate-evaluate loop.
+- `xvision-eval::ab_compare` for the day cycle.
+- `xvision-intern` for the evening propose-mutate-evaluate loop.
 - The existing baseline + queued strategy library as seed population.
 - **TraderArm (vectors-on) as one strategy in that population.** The
   control-vector experiment competes against everything else on equal
@@ -83,13 +85,13 @@ Reuses:
 ### Surface layer — ERC-8004 Strategy Marketplace
 
 Each strategy variant mints an ERC-8004 NFT (Identity Registry) via
-`xianvec-identity`. End-of-day performance receipts are written to the
+`xvision-identity`. End-of-day performance receipts are written to the
 Reputation Registry, signed by the operator. Held-out backtest results
 are written to the Validation Registry as signed-oracle receipts —
 TEE / zkML attestation deferred to v2. A separate Next.js dashboard reads
 the registries and renders: live ladder, per-lineage genealogy tree,
 one-click delegate with Conservative / Balanced / Aggressive risk presets
-(drawn from `xianvec-risk`).
+(drawn from `xvision-risk`).
 
 The marketplace narrative is **structural** — the system is *capable* of
 hosting external strategies, demonstrated by 5–10 internal strategies
@@ -98,10 +100,10 @@ for the demo.
 
 ### Feature-flag boundary
 
-Today, `xianvec-identity` is opt-in via workspace `default-members` because
+Today, `xvision-identity` is opt-in via workspace `default-members` because
 its alloy v2 stack is heavy. Pre-merge-back, the same pattern is lifted to
-a named cargo feature `control-vectors`, gating `xianvec-introspect` and
-`xianvec-inference`'s steering paths. Hackathon build = `cargo build` (skips
+a named cargo feature `control-vectors`, gating `xvision-introspect` and
+`xvision-inference`'s steering paths. Hackathon build = `cargo build` (skips
 CV crates, light + reproducible for judges and non-technical users). Personal
 build = `cargo build --workspace --features control-vectors` (full TraderArm
 with vectors-on inference path). CI runs both. The `Strategy` trait stays
@@ -152,7 +154,7 @@ Restated for the record:
   week 1.
 - **ADR 0008 ops runbook executes week 1** — Mantle Sepolia deployment
   was deferred to Phase 11.5; pulled forward.
-- `xianvec-identity` needs non-trivial wiring to mint per-strategy NFTs
+- `xvision-identity` needs non-trivial wiring to mint per-strategy NFTs
   and post per-cycle reputation receipts. This is the riskiest seam and
   gets end-to-end smoke first.
 - TraderArm-vectors-off (the existing falsification control) becomes a
@@ -171,7 +173,7 @@ Restated for the record:
   F21 (intern), F22 (mcp), F27/F28 (cvec spike)
 - `architecture.md` §7.1 (control-vector thesis)
 - `vector-strategies.md` (LatentWill notes — vector × strategy pairings)
-- `LatentWill/Xianvec/pivot1-strategyloom.md` (long-form rationale)
+- `LatentWill/Xvision/pivot1-strategyloom.md` (long-form rationale)
 - Turing Test Hackathon 2026 announcement (Chainwire, 2026-04-23)
 - ERC-8004 EIP (eips.ethereum.org/EIPS/eip-8004; mainnet live 2026-01-29)
 - Karpathy autoresearch (github.com/karpathy/autoresearch, March 2026)

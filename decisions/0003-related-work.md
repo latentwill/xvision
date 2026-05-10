@@ -1,11 +1,13 @@
 # 0003 — Related work and differentiation
 
+> **2026-05-10:** Project renamed `xianvec` → `xvision`. References below reflect the post-rename name; project history prior to this date used `xianvec`.
+
 Status: living doc. Update as the field moves and as we encounter new comparables in the wild.
 
-> **2026-05-07 status (ADR 0011):** xianvec's positioning shifted from
+> **2026-05-07 status (ADR 0011):** xvision's positioning shifted from
 > "control-vector trading agent" to "multistrategy trading agent with
 > on-chain reputation via ERC-8004." The CV-vs-prompts framing below is
-> historical record — the CV substrate now lives in xianvec-play. The
+> historical record — the CV substrate now lives in xvision-play. The
 > TradingAgents / FinMem / FinGPT / Freqtrade comparisons remain valid
 > as related-work positioning for the multistrategy + marketplace direction.
 
@@ -84,7 +86,7 @@ This is a real, narrow, testable claim. It's not "ours is better." It's "ours is
 
 ## The one-sentence positioning
 
-> **xianvec is to TradingAgents as control vectors are to prompt instructions: the same question (how does trader disposition affect outcomes?) addressed at the geometric layer rather than the textual layer, in service of an ablatable experiment about whether dispositional knowledge can be encoded into model inference geometry rather than retrieved as text.**
+> **xvision is to TradingAgents as control vectors are to prompt instructions: the same question (how does trader disposition affect outcomes?) addressed at the geometric layer rather than the textual layer, in service of an ablatable experiment about whether dispositional knowledge can be encoded into model inference geometry rather than retrieved as text.**
 
 Memorize this. Be able to deliver it without the qualifications when asked. Add the qualifications only if pushed.
 

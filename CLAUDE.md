@@ -1,12 +1,12 @@
-# xianvec — project guidance
+# xvision — project guidance
 
 Project-specific guidance. The workspace-level `/Users/edkennedy/Code/CLAUDE.md`
-covers shared conventions across projects; the rules here are xianvec-specific
+covers shared conventions across projects; the rules here are xvision-specific
 and override anything in conflict with the workspace file.
 
 ## Terminology
 
-Naming conventions across the xianvec codebase. Locked in 2026-05-10 (terminology
+Naming conventions across the xvision codebase. Locked in 2026-05-10 (terminology
 rename Option B — see `docs/superpowers/plans/2026-05-10-terminology-rename-option-b.md`).
 Diverging from these names should require a written rationale.
 
@@ -15,7 +15,7 @@ Diverging from these names should require a written rationale.
 | Per-decision-cycle id (briefing → decision → outcome) | `cycle_id` | ~~setup_id~~ |
 | Pre-mint local id of a marketplace pipeline | `agent_id` (string ULID, becomes the NFT token id post-mint) | ~~strategy_id~~ |
 | Immutable pipeline configuration (engine bundle artifact) | `StrategyBundle` | (no rename) |
-| Trading-decision producer trait (xianvec-eval baselines) | `Algorithm` | ~~Strategy~~ |
+| Trading-decision producer trait (xvision-eval baselines) | `Algorithm` | ~~Strategy~~ |
 | One experimental arm in A/B compare | `arm` / `Box<dyn Algorithm>` | (no change) |
 | The trader's call (input to risk) | `TraderDecision` | (no change) |
 | The risk gate's verdict (Approved / Modified / Vetoed) | `RiskDecision` | (no change) |

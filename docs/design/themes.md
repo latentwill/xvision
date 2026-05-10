@@ -508,6 +508,6 @@ audience materializes and asks for it, ship as a third theme.
 ---
 
 *Document version: 0.2 · 2026-05-09. Lives at
-`/Users/edkennedy/Code/xianvec/docs/design/themes.md`. Cross-references:
+`/Users/edkennedy/Code/xvision/docs/design/themes.md`. Cross-references:
 `ui-elements.md`, `gptprompts.md`. v0.1 was Folio-only; v0.2 adds Stack as
 peer pending pilot.*

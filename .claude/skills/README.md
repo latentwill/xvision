@@ -1,6 +1,6 @@
 # Skill catalogs
 
-Two upstream skill catalogs vendored as git submodules. Both feed Stage 1 Intern's prompt context (`crates/xianvec-intern/`) and the Mantle on-chain workflow.
+Two upstream skill catalogs vendored as git submodules. Both feed Stage 1 Intern's prompt context (`crates/xvision-intern/`) and the Mantle on-chain workflow.
 
 | Path | Upstream | Used by |
 |---|---|---|

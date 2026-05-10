@@ -1,20 +1,20 @@
 # Strategy Creation Engine — Design
 
 > **Status:** Draft for user review · 2026-05-08
-> **Pivot context:** Xianvec is pivoting fully to (1) the multi-strategy evaluation engine and (2) the marketplace + ERC-8004 trading agent strategy. This spec covers the **Strategy Creation Engine** — the authoring + bundling + sealing layer that produces the artifacts the eval engine evaluates and the marketplace lists. Eval engine has its own paused brainstorm at [`2026-05-08-eval-engine-decisions-so-far.md`](./2026-05-08-eval-engine-decisions-so-far.md); we resume it after this spec is approved.
+> **Pivot context:** Xvision is pivoting fully to (1) the multi-strategy evaluation engine and (2) the marketplace + ERC-8004 trading agent strategy. This spec covers the **Strategy Creation Engine** — the authoring + bundling + sealing layer that produces the artifacts the eval engine evaluates and the marketplace lists. Eval engine has its own paused brainstorm at [`2026-05-08-eval-engine-decisions-so-far.md`](./2026-05-08-eval-engine-decisions-so-far.md); we resume it after this spec is approved.
 
 ---
 
 ## 1. Scope and product positioning
 
-Xianvec is a software + marketplace + identity company for **AI trading agents**, not a broker, not a trade executor, not a custodian. The company operates four engines:
+Xvision is a software + marketplace + identity company for **AI trading agents**, not a broker, not a trade executor, not a custodian. The company operates four engines:
 
 1. **Evaluation Engine** — runs strategies against historical and live data, produces metrics, comparisons, structured findings.
 2. **Strategy Creation Engine** *(this spec)* — authors, validates, bundles, and seals strategy artifacts.
 3. **Marketplace** — lists, licenses, distributes strategy content; handles purchases, license tokens, content rotation.
 4. **Identity** — ERC-8004 reputation, attestations, receipts, license-token issuance.
 
-**Trade execution is buyer-sovereign.** The xvn binary running on the buyer's machine or cloud calls the buyer's broker (Alpaca, Orderly) with the buyer's broker key, and calls the buyer's LLM provider with the buyer's LLM key. Xianvec the company never holds funds, never holds keys, never sees trades. The "broker tool" inside the xvn binary is a buyer-local convenience layer, not a Xianvec-operated service.
+**Trade execution is buyer-sovereign.** The xvn binary running on the buyer's machine or cloud calls the buyer's broker (Alpaca, Orderly) with the buyer's broker key, and calls the buyer's LLM provider with the buyer's LLM key. Xvision the company never holds funds, never holds keys, never sees trades. The "broker tool" inside the xvn binary is a buyer-local convenience layer, not a Xvision-operated service.
 
 **All strategies are LLM-required.** Every strategy has at least one LLM agent in its slot stack. The "mechanical layers" (data, mechanical rules, risk, execution) are deterministic scaffolding around LLM decisions, not a separate agent-free strategy class. Pure rule-based bots belong on TradingView, not xvn.
 
@@ -145,18 +145,18 @@ Two tiers in v1. Seller picks tier per listing; buyer sees the tier ahead of pur
 
 ### Tier A — Open
 
-Full bundle published as plaintext on IPFS or attached to the 8004 listing. Buyer downloads once, runs offline, can fork and republish. 8004 = pure attribution and provenance, not IP protection. Right for community contributions, reference strategies, and "calling card" listings. Zero centralized dependency on Xianvec.
+Full bundle published as plaintext on IPFS or attached to the 8004 listing. Buyer downloads once, runs offline, can fork and republish. 8004 = pure attribution and provenance, not IP protection. Right for community contributions, reference strategies, and "calling card" listings. Zero centralized dependency on Xvision.
 
 ### Tier B — Sealed (OSShip-style centralized hosting)
 
 - Bundle content hosted on the **xvn API server** (modeled on `one-shot-ship-api.onrender.com`).
-- Plaintext stored server-side with access controls + audit logs. Xianvec commits not to exfiltrate via legal terms and signed audit log; this is the OSShip trust-platform model, not envelope encryption.
+- Plaintext stored server-side with access controls + audit logs. Xvision commits not to exfiltrate via legal terms and signed audit log; this is the OSShip trust-platform model, not envelope encryption.
 - **Ed25519 signing** on every fetch — runtime verifies signatures before executing, catches tampering between server and buyer.
 - Auth: API key + device fingerprint per buyer, license token bound to 8004 wallet identity.
 - **Per-execution fetch.** Buyer's runtime fetches strategy content per agent fire from xvn API. Optional local cache with auth-gated re-validation; cache TTL controlled by seller (rotation policy).
 - Seller can rotate strategy content (publish new version), revoke (stop serving), and version (8004 listing pins to a content hash; new version = new hash).
 
-**Tier C (envelope-encrypted such that Xianvec cannot see plaintext) is deferred to v2.** Adds significant complexity (per-buyer envelope keys, key rotation on update) for marginal additional protection beyond Tier B's audit + access controls. Sellers who don't trust Xianvec with plaintext should pick Tier A.
+**Tier C (envelope-encrypted such that Xvision cannot see plaintext) is deferred to v2.** Adds significant complexity (per-buyer envelope keys, key rotation on update) for marginal additional protection beyond Tier B's audit + access controls. Sellers who don't trust Xvision with plaintext should pick Tier A.
 
 ## 6. Skill bundle format — OSShip-style markdown
 
@@ -202,9 +202,9 @@ Tools available to a strategy's LLM agents at execution time. Author declares re
 
 | Category | Tools | Built-in vs author-defined |
 |---|---|---|
-| **Market data** | OHLCV, order book, funding rate, indicator panels (RSI, MACD, Bollinger, Donchian, ATR, MA, EMA, ADX) | Built-in (xianvec-data, xianvec-core) |
-| **Execution** | Alpaca paper (default for paper mode), Orderly (default for live mode, hackathon priority), Alpaca live (optional secondary), position/balance/fill | Built-in (xianvec-execution) — buyer-local only, never xvn-managed |
-| **Onchain / external signals** | Nansen smart-money flows, funding-rate feeds, social sentiment, news API | Built-in (xianvec-data extensions, with author-supplied API keys) |
+| **Market data** | OHLCV, order book, funding rate, indicator panels (RSI, MACD, Bollinger, Donchian, ATR, MA, EMA, ADX) | Built-in (xvision-data, xvision-core) |
+| **Execution** | Alpaca paper (default for paper mode), Orderly (default for live mode, hackathon priority), Alpaca live (optional secondary), position/balance/fill | Built-in (xvision-execution) — buyer-local only, never xvn-managed |
+| **Onchain / external signals** | Nansen smart-money flows, funding-rate feeds, social sentiment, news API | Built-in (xvision-data extensions, with author-supplied API keys) |
 | **Author-defined skills** | OSShip-style skill markdown composed into agent slots | Author-defined; sealed (Tier B) or public (Tier A) |
 
 **Sandboxing for author-defined skills (security model):** v1 ships skills as prompt-only (no executable code). v1.5 adds inline scripts (Python via Pyodide or Rust-WASM sandbox); deferred until prompt-only proves insufficient.
@@ -300,7 +300,7 @@ All MCP tools are typed (JSON Schema), idempotent where reasonable, and return s
 
 ## 11. Live execution and deployment
 
-xvn binary on the buyer's machine or cloud is the executor. Xianvec the company is never in the execution path.
+xvn binary on the buyer's machine or cloud is the executor. Xvision the company is never in the execution path.
 
 ### L1 default — buyer's machine, paper mode (Alpaca)
 
@@ -348,19 +348,19 @@ The Strategy Creation Engine's terminal action is `publish_strategy`, which hand
 3. Tier A: buyer downloads bundle from IPFS.
    Tier B: buyer's xvn runtime authenticates to xvn API with license token + device fingerprint, fetches strategy content per execution.
 
-**Identity / reputation:** every eval run (publish-time or custom) and every live decision can be attested via `xianvec-identity` (per ADR 0008). Receipts accumulate per-strategy, per-creator, per-buyer. Deferred eval-engine work pins down the receipt schema.
+**Identity / reputation:** every eval run (publish-time or custom) and every live decision can be attested via `xvision-identity` (per ADR 0008). Receipts accumulate per-strategy, per-creator, per-buyer. Deferred eval-engine work pins down the receipt schema.
 
 ## 14. Crate structure
 
-Greenfield `xianvec-engine` crate is the strategy-creation home (per Approach B from earlier brainstorm). New sibling crates added:
+Greenfield `xvision-engine` crate is the strategy-creation home (per Approach B from earlier brainstorm). New sibling crates added:
 
 ```
 crates/
-  xianvec-core/                # already exists, types: Strategy, IndicatorPanel, ...
-  xianvec-data/                # already exists, OHLCV + onchain feeds
-  xianvec-execution/           # already exists, broker calls, buyer-local only
-  xianvec-risk/                # already exists, deterministic veto rules
-  xianvec-engine/              # NEW — strategy creation + bundling + sealing + eval orchestration
+  xvision-core/                # already exists, types: Strategy, IndicatorPanel, ...
+  xvision-data/                # already exists, OHLCV + onchain feeds
+  xvision-execution/           # already exists, broker calls, buyer-local only
+  xvision-risk/                # already exists, deterministic veto rules
+  xvision-engine/              # NEW — strategy creation + bundling + sealing + eval orchestration
     src/
       bundle/                  # strategy bundle format, validation, hashing
       templates/               # 8 ship-templates
@@ -370,11 +370,11 @@ crates/
       sealing/                 # Tier A/B publishing, Ed25519 signing
       mcp/                     # MCP server surface
       cli/                     # CLI verbs
-  xianvec-skills/              # NEW — OSShip-style skill markdown parsing, validation, signing
-  xianvec-marketplace/         # NEW — listing, buy, license token, 8004 integration
-  xianvec-identity/            # already exists per ADR 0008, expand for license token issuance
-  xianvec-dashboard/           # NEW — axum server + SPA assets (web UI, marketplace, authoring forms)
-  xianvec-cli/                 # already exists, expanded with new subcommands
+  xvision-skills/              # NEW — OSShip-style skill markdown parsing, validation, signing
+  xvision-marketplace/         # NEW — listing, buy, license token, 8004 integration
+  xvision-identity/            # already exists per ADR 0008, expand for license token issuance
+  xvision-dashboard/           # NEW — axum server + SPA assets (web UI, marketplace, authoring forms)
+  xvision-cli/                 # already exists, expanded with new subcommands
 ```
 
 ## 15. Open questions and what's still TBD
@@ -385,13 +385,13 @@ crates/
 - **L1 default Alpaca paper account model.** Buyer brings their own free Alpaca paper account, vs xvn-issued shared paper credentials. Lean toward "bring your own" to keep xvn off the keys.
 - **Orderly onboarding UX.** What does "connect your Orderly account through xvn" actually look like — wallet signature, API key paste, or hosted onboarding flow?
 - **Eval-time vs publish-time vs live-time metrics format.** Must be unified per the paused eval-engine brainstorm; resolve when we resume that spec.
-- **License token contract ABI on Mantle.** Coordinate with `xianvec-identity` and ADR 0008 on contract surface.
+- **License token contract ABI on Mantle.** Coordinate with `xvision-identity` and ADR 0008 on contract surface.
 - **Exact handoff between Strategy Creation Engine's `publish_strategy` and the Marketplace engine.** Probably a function call within the same Rust binary, but contract surface should be specified.
 - **Wizard agent's default LLM model.** Whatever the user picks at key-paste time? Or pin a default (e.g., Claude Sonnet 4.6 via the user's Anthropic key, OpenRouter Claude via the user's OpenRouter key)?
 
 ## 16. Out of scope
 
-- Trade execution as a Xianvec-the-company offering (it's buyer-sovereign).
+- Trade execution as a Xvision-the-company offering (it's buyer-sovereign).
 - Custody of buyer funds.
 - Hosting buyer LLM keys or broker keys.
 - xvn-issued LLM credits, starter credits, or any subsidized API usage. Buyer brings their own keys.
@@ -421,5 +421,5 @@ crates/
 - **Live execution:** buyer's machine (L1 paper via Alpaca, L2 live via Orderly) + fly.io deploy recipe (L4 only). Modal/Daytona/Railway deferred. Alpaca live optional secondary. xvn-managed compute never.
 - **Templates v1:** 8 (trend, breakout, mean-rev, momentum, range, scalp, news, custom) + optional 9th (onchain). All free Tier-A on the marketplace; authors who fork+customize can sell their forks.
 - **KISS layered surface:** L1 Agent Wizard, L2 web tweaks, L3 web form / CLI / external agent, L4 researcher.
-- **Onboarding:** LLM key on day 1 (no starter credits, buyer brings own); Orderly setup on going live. **No xvn-issued credits or hosting subsidies — Xianvec is not a charity.**
+- **Onboarding:** LLM key on day 1 (no starter credits, buyer brings own); Orderly setup on going live. **No xvn-issued credits or hosting subsidies — Xvision is not a charity.**
 - **CLI is L3+/power-user/agent-focused.** L1 users never touch the CLI.

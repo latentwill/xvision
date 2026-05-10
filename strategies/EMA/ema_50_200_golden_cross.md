@@ -74,5 +74,5 @@ parameterization.
 ## References
 
 - Atlas Page 3 (P2 × R1) and Page 4 (cultural weight of 50/200).
-- `crates/xianvec-eval/src/baselines/ma_crossover.rs` — existing infrastructure.
+- `crates/xvision-eval/src/baselines/ma_crossover.rs` — existing infrastructure.
 - Standard reference: any TA textbook from the last forty years.

@@ -1,38 +1,38 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/xianvec-core",
-    "crates/xianvec-data",
-    "crates/xianvec-intern",
-    "crates/xianvec-trader",
-    "crates/xianvec-risk",
-    "crates/xianvec-execution",
-    "crates/xianvec-eval",
-    "crates/xianvec-engine",
-    "crates/xianvec-harness",
-    "crates/xianvec-cli",
-    "crates/xianvec-identity",
-    "crates/xianvec-mcp",
+    "crates/xvision-core",
+    "crates/xvision-data",
+    "crates/xvision-intern",
+    "crates/xvision-trader",
+    "crates/xvision-risk",
+    "crates/xvision-execution",
+    "crates/xvision-eval",
+    "crates/xvision-engine",
+    "crates/xvision-harness",
+    "crates/xvision-cli",
+    "crates/xvision-identity",
+    "crates/xvision-mcp",
 ]
 
-# `default-members` excludes xianvec-identity from bare `cargo build` /
+# `default-members` excludes xvision-identity from bare `cargo build` /
 # `cargo test` runs (no -p, no --workspace). The crate pulls in the heavy
 # alloy v2 stack which is only needed for the on-chain identity / reputation
 # flow on Mantle; gating it on opt-in keeps the hot dev loop fast for the
-# trading-pipeline core. Explicit `cargo build -p xianvec-identity` and
+# trading-pipeline core. Explicit `cargo build -p xvision-identity` and
 # `cargo test --workspace` still include it.
 default-members = [
-    "crates/xianvec-core",
-    "crates/xianvec-data",
-    "crates/xianvec-intern",
-    "crates/xianvec-trader",
-    "crates/xianvec-risk",
-    "crates/xianvec-execution",
-    "crates/xianvec-eval",
-    "crates/xianvec-engine",
-    "crates/xianvec-harness",
-    "crates/xianvec-cli",
-    "crates/xianvec-mcp",
+    "crates/xvision-core",
+    "crates/xvision-data",
+    "crates/xvision-intern",
+    "crates/xvision-trader",
+    "crates/xvision-risk",
+    "crates/xvision-execution",
+    "crates/xvision-eval",
+    "crates/xvision-engine",
+    "crates/xvision-harness",
+    "crates/xvision-cli",
+    "crates/xvision-mcp",
 ]
 
 [workspace.package]
@@ -40,7 +40,7 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.95"
 license = "Apache-2.0"
-repository = "https://github.com/latentwill/xianvec"
+repository = "https://github.com/latentwill/xvision"
 
 [workspace.dependencies]
 # async / runtime

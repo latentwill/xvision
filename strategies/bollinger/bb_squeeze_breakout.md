@@ -84,4 +84,4 @@ regime, different detection mechanism (BB-bandwidth vs EMA-stack std-dev).
 
 - Compendium README §Combination, B0 column.
 - Sibling: [`bb_squeeze_failure_fade`](bb_squeeze_failure_fade.md) — fades the *first* break expecting it to fail.
-- `crates/xianvec-eval/src/baselines/` — target implementation crate.
+- `crates/xvision-eval/src/baselines/` — target implementation crate.

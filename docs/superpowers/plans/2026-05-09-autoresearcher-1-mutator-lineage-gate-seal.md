@@ -3,14 +3,14 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 > **Spec:** `docs/superpowers/specs/2026-05-09-karpathy-autoresearcher-design.md` — full design context. This plan implements **§3.4 (CycleSeal), §4 (mutation surface), §5.1 (numeric gate), §6 (lineage store), §7 (pre-commitment)**.
 > **Companion plans (do NOT do here):** AR-2 (cycle orchestrator + judge + canary + inversion + diversity), AR-3 (dashboard + SSE + mutator-skill ladder), MP-1 (marketplace plugin).
-> **Hard upstream dependency:** the eval engine plan (`2026-05-08-eval-engine-plan.md`) MUST ship before AR-1 starts. AR-1 imports `xianvec_engine::eval::{Run, RunMode, MetricsSummary, Scenario, executor::BacktestExecutor}` and the SQLite migration scaffolding (`migrations/002_eval.sql` introduces the migration runner). If eval engine slips, AR-1 cannot start. Verify before kickoff: `cargo test -p xianvec-engine eval 2>&1 | grep "test result"` returns at least one passing test.
+> **Hard upstream dependency:** the eval engine plan (`2026-05-08-eval-engine-plan.md`) MUST ship before AR-1 starts. AR-1 imports `xvision_engine::eval::{Run, RunMode, MetricsSummary, Scenario, executor::BacktestExecutor}` and the SQLite migration scaffolding (`migrations/002_eval.sql` introduces the migration runner). If eval engine slips, AR-1 cannot start. Verify before kickoff: `cargo test -p xvision-engine eval 2>&1 | grep "test result"` returns at least one passing test.
 > **Hackathon role:** AR-1 is the substrate for the 2026-05-23 go/no-go (autoresearch spec §10). Wk 2 milestone: "Mutator + lineage store + numeric gate + CycleSeal artifact. Run end-to-end on 2 lineages locally." This plan is exactly that scope.
 
 **Goal:** After this plan ships: `xvn autoresearch session-init` writes an operator-signed pre-commitment; `xvn autoresearch mutate-once <parent_bundle_id>` proposes one mutation, paper-tests it on day + held-out windows, runs the numeric gate, commits the result (Active or Ghost) to the content-addressed lineage, and emits a CycleSeal with Merkle root + operator signature. No LLM judge yet (AR-2). No canary, inversion, diversity (AR-2). No live evening loop (AR-2). No dashboard (AR-3). No chain (MP-1).
 
-**Architecture:** New module `xianvec-engine/src/autoresearch/` parallel to `eval/`. Reuses the eval engine's `BacktestExecutor` for paper-testing both day and held-out windows. Introduces a content-addressed blob store at `~/.xvn/lineage/blobs/<hash>.json` for bundles + diffs + traces, indexed via new SQLite tables in migration `003_autoresearch.sql`. Operator signing key (Ed25519) generated once and persisted at `~/.xvn/keys/operator.ed25519`; key reuse with the eval engine's `attestation::sign` keying (same `ed25519-dalek` crate). The autoresearch module has zero `use` statements pointing at `marketplace/` (CI enforces this in MP-1).
+**Architecture:** New module `xvision-engine/src/autoresearch/` parallel to `eval/`. Reuses the eval engine's `BacktestExecutor` for paper-testing both day and held-out windows. Introduces a content-addressed blob store at `~/.xvn/lineage/blobs/<hash>.json` for bundles + diffs + traces, indexed via new SQLite tables in migration `003_autoresearch.sql`. Operator signing key (Ed25519) generated once and persisted at `~/.xvn/keys/operator.ed25519`; key reuse with the eval engine's `attestation::sign` keying (same `ed25519-dalek` crate). The autoresearch module has zero `use` statements pointing at `marketplace/` (CI enforces this in MP-1).
 
-**Tech Stack:** Rust 2021. New deps in `xianvec-engine/Cargo.toml`: `blake3 = "1"` (content addressing), `similar = "2"` (unified-diff apply / generate), `ed25519-dalek = "2"` (operator signing — already added by eval-engine plan; if missing, add here), `hex = "0.4"` (signature serialization — already added by eval-engine plan), `dirs = "5"` (XDG-style key/blob paths). All other deps already in workspace.
+**Tech Stack:** Rust 2021. New deps in `xvision-engine/Cargo.toml`: `blake3 = "1"` (content addressing), `similar = "2"` (unified-diff apply / generate), `ed25519-dalek = "2"` (operator signing — already added by eval-engine plan; if missing, add here), `hex = "0.4"` (signature serialization — already added by eval-engine plan), `dirs = "5"` (XDG-style key/blob paths). All other deps already in workspace.
 
 **Out of scope (explicitly deferred):**
 - Cycle orchestrator (`autoresearch/cycle.rs`) → AR-2
@@ -30,7 +30,7 @@
 ## File structure
 
 ```
-crates/xianvec-engine/
+crates/xvision-engine/
 ├── Cargo.toml                                       # add blake3, similar, dirs (+ ed25519-dalek/hex if eval-engine plan hasn't added them yet)
 ├── migrations/
 │   ├── 002_eval.sql                                 # already shipped by eval-engine plan
@@ -69,8 +69,8 @@ crates/xianvec-engine/
 ```
 
 Plus modifications:
-- `crates/xianvec-cli/src/lib.rs` — add `Command::Autoresearch(commands::autoresearch::AutoresearchCmd)` to top-level `Command` enum
-- `crates/xianvec-cli/src/commands/autoresearch.rs` — NEW subcommand dispatcher: `xvn autoresearch {session-init | mutate-once | lineage ls | lineage show | seal show}`
+- `crates/xvision-cli/src/lib.rs` — add `Command::Autoresearch(commands::autoresearch::AutoresearchCmd)` to top-level `Command` enum
+- `crates/xvision-cli/src/commands/autoresearch.rs` — NEW subcommand dispatcher: `xvn autoresearch {session-init | mutate-once | lineage ls | lineage show | seal show}`
 - `config/autoresearch.toml.example` — NEW: sample config the operator commits to disk before `session-init`
 
 **Why this decomposition:** each file has one responsibility (content-addressed blob layer, session pre-commitment, mutation proposal, validator, gate, lineage, seal). The mutator is the only LLM-touching file in AR-1. The gate is pure-numeric and deterministic. Lineage owns the genealogy + Merkle computation but doesn't know about mutations themselves. Seal aggregates everything else into one signed artifact. This shape lines up exactly with the spec's §3.1 module layout, modulo files deferred to AR-2.
@@ -82,13 +82,13 @@ Plus modifications:
 ### Task 1: Cargo deps + module wiring
 
 **Files:**
-- Modify: `crates/xianvec-engine/Cargo.toml`
-- Modify: `crates/xianvec-engine/src/lib.rs`
-- Create: `crates/xianvec-engine/src/autoresearch/mod.rs`
+- Modify: `crates/xvision-engine/Cargo.toml`
+- Modify: `crates/xvision-engine/src/lib.rs`
+- Create: `crates/xvision-engine/src/autoresearch/mod.rs`
 
 - [ ] **Step 1: Add deps**
 
-Edit `crates/xianvec-engine/Cargo.toml`. Under `[dependencies]`, add (insert in alphabetical position):
+Edit `crates/xvision-engine/Cargo.toml`. Under `[dependencies]`, add (insert in alphabetical position):
 
 ```toml
 blake3       = "1"
@@ -102,7 +102,7 @@ If `ed25519-dalek` or `hex` is already present (eval-engine landed first), don't
 
 - [ ] **Step 2: Wire module in lib.rs**
 
-Edit `crates/xianvec-engine/src/lib.rs`. After `pub mod tools;`, insert:
+Edit `crates/xvision-engine/src/lib.rs`. After `pub mod tools;`, insert:
 
 ```rust
 pub mod autoresearch;
@@ -110,10 +110,10 @@ pub mod autoresearch;
 
 - [ ] **Step 3: Write the autoresearch module skeleton**
 
-Create `crates/xianvec-engine/src/autoresearch/mod.rs`:
+Create `crates/xvision-engine/src/autoresearch/mod.rs`:
 
 ```rust
-//! xianvec-engine autoresearch — chain-free evening mutation loop.
+//! xvision-engine autoresearch — chain-free evening mutation loop.
 //!
 //! See: docs/superpowers/specs/2026-05-09-karpathy-autoresearcher-design.md
 //!
@@ -143,13 +143,13 @@ pub use session::{OperatorKey, SessionCommitment};
 
 - [ ] **Step 4: Build verifies**
 
-Run: `cargo build -p xianvec-engine`
+Run: `cargo build -p xvision-engine`
 Expected: succeeds (empty modules will be created in subsequent tasks; this step only verifies the module declarations compile once stub files exist — defer this step to after Task 2 if module files are missing).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-engine/Cargo.toml crates/xianvec-engine/src/lib.rs crates/xianvec-engine/src/autoresearch/mod.rs
+git add crates/xvision-engine/Cargo.toml crates/xvision-engine/src/lib.rs crates/xvision-engine/src/autoresearch/mod.rs
 git commit -m "feat(autoresearch): scaffold module + add blake3/similar/dirs deps"
 ```
 
@@ -158,15 +158,15 @@ git commit -m "feat(autoresearch): scaffold module + add blake3/similar/dirs dep
 ### Task 2: Content-hash helpers (BLAKE3 + canonical JSON)
 
 **Files:**
-- Create: `crates/xianvec-engine/src/autoresearch/content_hash.rs`
-- Create: `crates/xianvec-engine/tests/autoresearch_content_hash.rs`
+- Create: `crates/xvision-engine/src/autoresearch/content_hash.rs`
+- Create: `crates/xvision-engine/tests/autoresearch_content_hash.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-Create `crates/xianvec-engine/tests/autoresearch_content_hash.rs`:
+Create `crates/xvision-engine/tests/autoresearch_content_hash.rs`:
 
 ```rust
-use xianvec_engine::autoresearch::content_hash::{canonicalize_json, ContentHash};
+use xvision_engine::autoresearch::content_hash::{canonicalize_json, ContentHash};
 
 #[test]
 fn same_logical_value_same_hash_regardless_of_key_order() {
@@ -208,12 +208,12 @@ fn canonicalize_orders_object_keys() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p xianvec-engine --test autoresearch_content_hash`
-Expected: FAIL with "unresolved import `xianvec_engine::autoresearch::content_hash`"
+Run: `cargo test -p xvision-engine --test autoresearch_content_hash`
+Expected: FAIL with "unresolved import `xvision_engine::autoresearch::content_hash`"
 
 - [ ] **Step 3: Implement content_hash.rs**
 
-Create `crates/xianvec-engine/src/autoresearch/content_hash.rs`:
+Create `crates/xvision-engine/src/autoresearch/content_hash.rs`:
 
 ```rust
 //! Content addressing for autoresearch artifacts.
@@ -293,13 +293,13 @@ pub fn canonicalize_json(v: &serde_json::Value) -> serde_json::Value {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cargo test -p xianvec-engine --test autoresearch_content_hash`
+Run: `cargo test -p xvision-engine --test autoresearch_content_hash`
 Expected: PASS — `5 passed`.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-engine/src/autoresearch/content_hash.rs crates/xianvec-engine/tests/autoresearch_content_hash.rs
+git add crates/xvision-engine/src/autoresearch/content_hash.rs crates/xvision-engine/tests/autoresearch_content_hash.rs
 git commit -m "feat(autoresearch): BLAKE3 content hashing + canonical JSON"
 ```
 
@@ -308,17 +308,17 @@ git commit -m "feat(autoresearch): BLAKE3 content hashing + canonical JSON"
 ### Task 3: Filesystem blob store
 
 **Files:**
-- Create: `crates/xianvec-engine/src/autoresearch/blob_store.rs`
-- Create: `crates/xianvec-engine/tests/autoresearch_blob_store.rs`
+- Create: `crates/xvision-engine/src/autoresearch/blob_store.rs`
+- Create: `crates/xvision-engine/tests/autoresearch_blob_store.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-Create `crates/xianvec-engine/tests/autoresearch_blob_store.rs`:
+Create `crates/xvision-engine/tests/autoresearch_blob_store.rs`:
 
 ```rust
 use tempfile::tempdir;
-use xianvec_engine::autoresearch::blob_store::BlobStore;
-use xianvec_engine::autoresearch::content_hash::ContentHash;
+use xvision_engine::autoresearch::blob_store::BlobStore;
+use xvision_engine::autoresearch::content_hash::ContentHash;
 
 #[tokio::test]
 async fn put_then_get_round_trips_json() {
@@ -362,12 +362,12 @@ async fn put_bytes_and_get_bytes_round_trip() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p xianvec-engine --test autoresearch_blob_store`
-Expected: FAIL with "unresolved import `xianvec_engine::autoresearch::blob_store`"
+Run: `cargo test -p xvision-engine --test autoresearch_blob_store`
+Expected: FAIL with "unresolved import `xvision_engine::autoresearch::blob_store`"
 
 - [ ] **Step 3: Implement blob_store.rs**
 
-Create `crates/xianvec-engine/src/autoresearch/blob_store.rs`:
+Create `crates/xvision-engine/src/autoresearch/blob_store.rs`:
 
 ```rust
 //! Filesystem-backed content-addressed blob store.
@@ -470,13 +470,13 @@ async fn atomic_write(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cargo test -p xianvec-engine --test autoresearch_blob_store`
+Run: `cargo test -p xvision-engine --test autoresearch_blob_store`
 Expected: PASS — `4 passed`.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-engine/src/autoresearch/blob_store.rs crates/xianvec-engine/tests/autoresearch_blob_store.rs
+git add crates/xvision-engine/src/autoresearch/blob_store.rs crates/xvision-engine/tests/autoresearch_blob_store.rs
 git commit -m "feat(autoresearch): filesystem-backed content-addressed blob store"
 ```
 
@@ -484,25 +484,25 @@ git commit -m "feat(autoresearch): filesystem-backed content-addressed blob stor
 
 ### Task 4: Bundle ↔ markdown program-view
 
-The autoresearch spec §4 models the prose mutation as "unified diff over `program.md`." The actual bundle (`xianvec-engine/src/bundle/mod.rs`) doesn't have a `program.md` field — it has up to three `LLMSlot`s (regime / intern / trader), each with its own prompt. We bridge by serializing the slots into a single canonical markdown document, applying the diff, and parsing the result back into per-slot prompts. Non-prose fields (manifest, mechanical_params, risk) are passed through unchanged.
+The autoresearch spec §4 models the prose mutation as "unified diff over `program.md`." The actual bundle (`xvision-engine/src/bundle/mod.rs`) doesn't have a `program.md` field — it has up to three `LLMSlot`s (regime / intern / trader), each with its own prompt. We bridge by serializing the slots into a single canonical markdown document, applying the diff, and parsing the result back into per-slot prompts. Non-prose fields (manifest, mechanical_params, risk) are passed through unchanged.
 
 **Files:**
-- Modify: `crates/xianvec-engine/src/bundle/mod.rs`
-- Create: `crates/xianvec-engine/src/bundle/program_view.rs`
-- Create: `crates/xianvec-engine/tests/autoresearch_program_view.rs`
+- Modify: `crates/xvision-engine/src/bundle/mod.rs`
+- Create: `crates/xvision-engine/src/bundle/program_view.rs`
+- Create: `crates/xvision-engine/tests/autoresearch_program_view.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-Create `crates/xianvec-engine/tests/autoresearch_program_view.rs`:
+Create `crates/xvision-engine/tests/autoresearch_program_view.rs`:
 
 ```rust
-use xianvec_engine::bundle::manifest::{PublicManifest, RegimeFit};
-use xianvec_engine::bundle::program_view::{
+use xvision_engine::bundle::manifest::{PublicManifest, RegimeFit};
+use xvision_engine::bundle::program_view::{
     apply_unified_diff, from_markdown, to_markdown, ProgramViewError,
 };
-use xianvec_engine::bundle::risk::RiskConfig;
-use xianvec_engine::bundle::slot::LLMSlot;
-use xianvec_engine::bundle::StrategyBundle;
+use xvision_engine::bundle::risk::RiskConfig;
+use xvision_engine::bundle::slot::LLMSlot;
+use xvision_engine::bundle::StrategyBundle;
 
 fn sample_bundle() -> StrategyBundle {
     StrategyBundle {
@@ -582,12 +582,12 @@ fn apply_unified_diff_rejects_diff_that_doesnt_match_source() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p xianvec-engine --test autoresearch_program_view`
-Expected: FAIL with "unresolved import `xianvec_engine::bundle::program_view`"
+Run: `cargo test -p xvision-engine --test autoresearch_program_view`
+Expected: FAIL with "unresolved import `xvision_engine::bundle::program_view`"
 
 - [ ] **Step 3: Add module declaration**
 
-Edit `crates/xianvec-engine/src/bundle/mod.rs`. Find the line `pub mod store;` and after it add:
+Edit `crates/xvision-engine/src/bundle/mod.rs`. Find the line `pub mod store;` and after it add:
 
 ```rust
 pub mod program_view;
@@ -595,7 +595,7 @@ pub mod program_view;
 
 - [ ] **Step 4: Implement program_view.rs**
 
-Create `crates/xianvec-engine/src/bundle/program_view.rs`:
+Create `crates/xvision-engine/src/bundle/program_view.rs`:
 
 ```rust
 //! Bundle ↔ markdown serialization for prose mutations.
@@ -864,13 +864,13 @@ fn parse_hunk_src_start(rest: &str) -> Result<usize, ProgramViewError> {
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `cargo test -p xianvec-engine --test autoresearch_program_view`
+Run: `cargo test -p xvision-engine --test autoresearch_program_view`
 Expected: PASS — `3 passed`.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/xianvec-engine/src/bundle/mod.rs crates/xianvec-engine/src/bundle/program_view.rs crates/xianvec-engine/tests/autoresearch_program_view.rs
+git add crates/xvision-engine/src/bundle/mod.rs crates/xvision-engine/src/bundle/program_view.rs crates/xvision-engine/tests/autoresearch_program_view.rs
 git commit -m "feat(bundle): markdown program-view (serialize/parse/patch) for prose mutations"
 ```
 
@@ -879,7 +879,7 @@ git commit -m "feat(bundle): markdown program-view (serialize/parse/patch) for p
 ### Task 5: AutoresearchConfig (autoresearch.toml loader)
 
 **Files:**
-- Create: `crates/xianvec-engine/src/autoresearch/config.rs`
+- Create: `crates/xvision-engine/src/autoresearch/config.rs`
 - Create: `config/autoresearch.toml.example`
 
 - [ ] **Step 1: Sample config**
@@ -933,11 +933,11 @@ seed = 17
 
 - [ ] **Step 2: Add the toml dep if missing**
 
-Check `crates/xianvec-engine/Cargo.toml`. If `toml = "..."` is not present, add `toml = "0.8"` to `[dependencies]`.
+Check `crates/xvision-engine/Cargo.toml`. If `toml = "..."` is not present, add `toml = "0.8"` to `[dependencies]`.
 
 - [ ] **Step 3: Implement config.rs**
 
-Create `crates/xianvec-engine/src/autoresearch/config.rs`:
+Create `crates/xvision-engine/src/autoresearch/config.rs`:
 
 ```rust
 use std::path::Path;
@@ -1067,13 +1067,13 @@ mod tests {
 
 - [ ] **Step 5: Run test**
 
-Run: `cargo test -p xianvec-engine autoresearch::config`
+Run: `cargo test -p xvision-engine autoresearch::config`
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/xianvec-engine/src/autoresearch/config.rs config/autoresearch.toml.example crates/xianvec-engine/Cargo.toml
+git add crates/xvision-engine/src/autoresearch/config.rs config/autoresearch.toml.example crates/xvision-engine/Cargo.toml
 git commit -m "feat(autoresearch): config struct + example TOML + content hash"
 ```
 
@@ -1082,20 +1082,20 @@ git commit -m "feat(autoresearch): config struct + example TOML + content hash"
 ### Task 6: SessionCommitment + operator key
 
 **Files:**
-- Create: `crates/xianvec-engine/src/autoresearch/session.rs`
-- Create: `crates/xianvec-engine/tests/autoresearch_session.rs`
+- Create: `crates/xvision-engine/src/autoresearch/session.rs`
+- Create: `crates/xvision-engine/tests/autoresearch_session.rs`
 
 The SessionCommitment (autoresearch spec §7) is the operator-signed "this is the configuration before any cycles ran" artifact. It seals: ε, holdout window, parent-policy seed, cycle config hash, canary seed, session_id, and the operator's signature.
 
 - [ ] **Step 1: Write the failing test**
 
-Create `crates/xianvec-engine/tests/autoresearch_session.rs`:
+Create `crates/xvision-engine/tests/autoresearch_session.rs`:
 
 ```rust
 use chrono::Utc;
 use tempfile::tempdir;
-use xianvec_engine::autoresearch::content_hash::ContentHash;
-use xianvec_engine::autoresearch::session::{OperatorKey, SessionCommitment};
+use xvision_engine::autoresearch::content_hash::ContentHash;
+use xvision_engine::autoresearch::session::{OperatorKey, SessionCommitment};
 
 #[test]
 fn operator_key_persists_and_round_trips() {
@@ -1157,12 +1157,12 @@ fn commitment_hash_changes_when_any_field_changes() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p xianvec-engine --test autoresearch_session`
+Run: `cargo test -p xvision-engine --test autoresearch_session`
 Expected: FAIL with "unresolved import".
 
 - [ ] **Step 3: Implement session.rs**
 
-Create `crates/xianvec-engine/src/autoresearch/session.rs`:
+Create `crates/xvision-engine/src/autoresearch/session.rs`:
 
 ```rust
 //! Operator key management + SessionCommitment.
@@ -1367,17 +1367,17 @@ fn canonical_payload(
 
 - [ ] **Step 4: Add the getrandom dep**
 
-Edit `crates/xianvec-engine/Cargo.toml`. If `getrandom = "..."` is not in `[dependencies]`, add `getrandom = "0.2"`. (`ed25519-dalek` 2.x doesn't pull rand by default.)
+Edit `crates/xvision-engine/Cargo.toml`. If `getrandom = "..."` is not in `[dependencies]`, add `getrandom = "0.2"`. (`ed25519-dalek` 2.x doesn't pull rand by default.)
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `cargo test -p xianvec-engine --test autoresearch_session`
+Run: `cargo test -p xvision-engine --test autoresearch_session`
 Expected: PASS — `4 passed`.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/xianvec-engine/src/autoresearch/session.rs crates/xianvec-engine/tests/autoresearch_session.rs crates/xianvec-engine/Cargo.toml
+git add crates/xvision-engine/src/autoresearch/session.rs crates/xvision-engine/tests/autoresearch_session.rs crates/xvision-engine/Cargo.toml
 git commit -m "feat(autoresearch): SessionCommitment + persisted operator Ed25519 key"
 ```
 
@@ -1387,15 +1387,15 @@ git commit -m "feat(autoresearch): SessionCommitment + persisted operator Ed2551
 
 ### Task 7: MutationDiff data types
 
-**File:** `crates/xianvec-engine/src/autoresearch/mutator.rs` — first pass: types only, no LLM call yet.
+**File:** `crates/xvision-engine/src/autoresearch/mutator.rs` — first pass: types only, no LLM call yet.
 
 - [ ] **Step 1: Write the failing test**
 
-Create `crates/xianvec-engine/tests/autoresearch_mutator.rs`:
+Create `crates/xvision-engine/tests/autoresearch_mutator.rs`:
 
 ```rust
-use xianvec_engine::autoresearch::content_hash::ContentHash;
-use xianvec_engine::autoresearch::mutator::{MutationDiff, ParamChange, ToolDiff};
+use xvision_engine::autoresearch::content_hash::ContentHash;
+use xvision_engine::autoresearch::mutator::{MutationDiff, ParamChange, ToolDiff};
 
 #[test]
 fn mutation_diff_round_trips_through_json() {
@@ -1442,12 +1442,12 @@ fn empty_diff_is_serializable() {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `cargo test -p xianvec-engine --test autoresearch_mutator`
+Run: `cargo test -p xvision-engine --test autoresearch_mutator`
 Expected: FAIL with unresolved imports.
 
 - [ ] **Step 3: Implement mutator.rs (types only)**
 
-Create `crates/xianvec-engine/src/autoresearch/mutator.rs`:
+Create `crates/xvision-engine/src/autoresearch/mutator.rs`:
 
 ```rust
 use chrono::{DateTime, Utc};
@@ -1494,8 +1494,8 @@ impl MutationDiff {
 - [ ] **Step 4: Run + commit**
 
 ```bash
-cargo test -p xianvec-engine --test autoresearch_mutator
-git add crates/xianvec-engine/src/autoresearch/mutator.rs crates/xianvec-engine/tests/autoresearch_mutator.rs
+cargo test -p xvision-engine --test autoresearch_mutator
+git add crates/xvision-engine/src/autoresearch/mutator.rs crates/xvision-engine/tests/autoresearch_mutator.rs
 git commit -m "feat(autoresearch): MutationDiff + ParamChange + ToolDiff types"
 ```
 
@@ -1504,21 +1504,21 @@ git commit -m "feat(autoresearch): MutationDiff + ParamChange + ToolDiff types"
 ### Task 8: Validator (validate_mutation_diff)
 
 **Files:**
-- Create: `crates/xianvec-engine/src/autoresearch/validator.rs`
-- Create: `crates/xianvec-engine/tests/autoresearch_validator.rs`
+- Create: `crates/xvision-engine/src/autoresearch/validator.rs`
+- Create: `crates/xvision-engine/tests/autoresearch_validator.rs`
 
 The validator (per autoresearch spec §4) enforces four invariants on a candidate diff against a parent bundle. It's invoked twice: once before paper-testing (to reject obviously broken diffs) and once after applying the diff (to confirm the resulting bundle is still valid via `bundle::validate::validate_bundle`).
 
 - [ ] **Step 1: Write the failing test**
 
-Create `crates/xianvec-engine/tests/autoresearch_validator.rs`:
+Create `crates/xvision-engine/tests/autoresearch_validator.rs`:
 
 ```rust
 use std::collections::HashSet;
 
-use xianvec_engine::autoresearch::content_hash::ContentHash;
-use xianvec_engine::autoresearch::mutator::{MutationDiff, ParamChange, ToolDiff};
-use xianvec_engine::autoresearch::validator::{validate_mutation_diff, ValidationFault};
+use xvision_engine::autoresearch::content_hash::ContentHash;
+use xvision_engine::autoresearch::mutator::{MutationDiff, ParamChange, ToolDiff};
+use xvision_engine::autoresearch::validator::{validate_mutation_diff, ValidationFault};
 
 fn empty_diff(parent: ContentHash) -> MutationDiff {
     MutationDiff {
@@ -1592,12 +1592,12 @@ fn rejects_prose_diff_that_doesnt_apply_cleanly() {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `cargo test -p xianvec-engine --test autoresearch_validator`
+Run: `cargo test -p xvision-engine --test autoresearch_validator`
 Expected: FAIL with unresolved imports.
 
 - [ ] **Step 3: Implement validator.rs**
 
-Create `crates/xianvec-engine/src/autoresearch/validator.rs`:
+Create `crates/xvision-engine/src/autoresearch/validator.rs`:
 
 ```rust
 use std::collections::HashSet;
@@ -1710,9 +1710,9 @@ mod inline_tests {
 - [ ] **Step 4: Run + commit**
 
 ```bash
-cargo test -p xianvec-engine --test autoresearch_validator
-cargo test -p xianvec-engine autoresearch::validator
-git add crates/xianvec-engine/src/autoresearch/validator.rs crates/xianvec-engine/tests/autoresearch_validator.rs
+cargo test -p xvision-engine --test autoresearch_validator
+cargo test -p xvision-engine autoresearch::validator
+git add crates/xvision-engine/src/autoresearch/validator.rs crates/xvision-engine/tests/autoresearch_validator.rs
 git commit -m "feat(autoresearch): mutation-diff validator + param-key flattener"
 ```
 
@@ -1723,13 +1723,13 @@ git commit -m "feat(autoresearch): mutation-diff validator + param-key flattener
 Now the LLM-touching half of mutator.rs. The mutator takes a parent bundle + recent ledger context, calls the LLM, parses the response into a `MutationDiff`, runs the validator, and on failure feeds the validator's error back as system context for up to two retries (per spec §4).
 
 **Files:**
-- Modify: `crates/xianvec-engine/src/autoresearch/mutator.rs` — add `Mutator` struct + `propose()` method
-- Create: `crates/xianvec-engine/prompts/autoresearch/mutator-v1.md`
-- Modify: `crates/xianvec-engine/tests/autoresearch_mutator.rs` — add propose tests
+- Modify: `crates/xvision-engine/src/autoresearch/mutator.rs` — add `Mutator` struct + `propose()` method
+- Create: `crates/xvision-engine/prompts/autoresearch/mutator-v1.md`
+- Modify: `crates/xvision-engine/tests/autoresearch_mutator.rs` — add propose tests
 
 - [ ] **Step 1: Write the mutator prompt**
 
-Create `crates/xianvec-engine/prompts/autoresearch/mutator-v1.md`:
+Create `crates/xvision-engine/prompts/autoresearch/mutator-v1.md`:
 
 ```markdown
 ---
@@ -1783,14 +1783,14 @@ Rules:
 
 - [ ] **Step 2: Write the failing test (extend the mutator test file)**
 
-Append to `crates/xianvec-engine/tests/autoresearch_mutator.rs`:
+Append to `crates/xvision-engine/tests/autoresearch_mutator.rs`:
 
 ```rust
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use xianvec_engine::agent::llm::MockDispatch;
-use xianvec_engine::autoresearch::mutator::{Mutator, MutatorContext, MutatorOutcome};
+use xvision_engine::agent::llm::MockDispatch;
+use xvision_engine::autoresearch::mutator::{Mutator, MutatorContext, MutatorOutcome};
 
 #[tokio::test]
 async fn mutator_returns_validated_diff_on_first_try() {
@@ -1801,7 +1801,7 @@ async fn mutator_returns_validated_diff_on_first_try() {
     }"#;
     let dispatch = Arc::new(MockDispatch::echo(canned));
     let parent_md = "## Slot: trader\nfoo\n";
-    let parent_hash = xianvec_engine::autoresearch::content_hash::ContentHash::of_bytes(
+    let parent_hash = xvision_engine::autoresearch::content_hash::ContentHash::of_bytes(
         parent_md.as_bytes(),
     );
     let mutator = Mutator::new(dispatch, "claude-haiku-4-5", 4096);
@@ -1833,7 +1833,7 @@ async fn mutator_gives_up_after_two_retries() {
     }"#;
     let dispatch = Arc::new(MockDispatch::echo(bad));
     let parent_md = "## Slot: trader\nfoo\n";
-    let parent_hash = xianvec_engine::autoresearch::content_hash::ContentHash::of_bytes(
+    let parent_hash = xvision_engine::autoresearch::content_hash::ContentHash::of_bytes(
         parent_md.as_bytes(),
     );
     let mutator = Mutator::new(dispatch, "claude-haiku-4-5", 4096);
@@ -1858,7 +1858,7 @@ async fn mutator_gives_up_after_two_retries() {
 async fn mutator_returns_dropped_when_response_is_unparseable() {
     let dispatch = Arc::new(MockDispatch::echo("not json at all"));
     let parent_md = "## Slot: trader\nfoo\n";
-    let parent_hash = xianvec_engine::autoresearch::content_hash::ContentHash::of_bytes(
+    let parent_hash = xvision_engine::autoresearch::content_hash::ContentHash::of_bytes(
         parent_md.as_bytes(),
     );
     let mutator = Mutator::new(dispatch, "claude-haiku-4-5", 4096);
@@ -1876,7 +1876,7 @@ async fn mutator_returns_dropped_when_response_is_unparseable() {
 
 - [ ] **Step 3: Extend mutator.rs**
 
-Append to `crates/xianvec-engine/src/autoresearch/mutator.rs` (after the existing types):
+Append to `crates/xvision-engine/src/autoresearch/mutator.rs` (after the existing types):
 
 ```rust
 use std::collections::HashSet;
@@ -2029,8 +2029,8 @@ You may also need to add `use serde::Deserialize;` at the top if not already imp
 - [ ] **Step 4: Run + commit**
 
 ```bash
-cargo test -p xianvec-engine --test autoresearch_mutator
-git add crates/xianvec-engine/src/autoresearch/mutator.rs crates/xianvec-engine/tests/autoresearch_mutator.rs crates/xianvec-engine/prompts/autoresearch/mutator-v1.md
+cargo test -p xvision-engine --test autoresearch_mutator
+git add crates/xvision-engine/src/autoresearch/mutator.rs crates/xvision-engine/tests/autoresearch_mutator.rs crates/xvision-engine/prompts/autoresearch/mutator-v1.md
 git commit -m "feat(autoresearch): Mutator — LLM proposer with 2-retry validator-feedback loop"
 ```
 
@@ -2041,17 +2041,17 @@ git commit -m "feat(autoresearch): Mutator — LLM proposer with 2-retry validat
 ### Task 10: Numeric gate (Δ-Sharpe over day + held-out)
 
 **Files:**
-- Create: `crates/xianvec-engine/src/autoresearch/gate.rs`
-- Create: `crates/xianvec-engine/tests/autoresearch_gate.rs`
+- Create: `crates/xvision-engine/src/autoresearch/gate.rs`
+- Create: `crates/xvision-engine/tests/autoresearch_gate.rs`
 
 The gate (autoresearch spec §5.1) is pure-numeric and deterministic. It takes parent and child Sharpe values for both windows and the pre-committed ε. Both Δ values must clear ε independently. Rejection is published in lineage as a Ghost node (committed via lineage.rs in Task 12, not here).
 
 - [ ] **Step 1: Write the failing test**
 
-Create `crates/xianvec-engine/tests/autoresearch_gate.rs`:
+Create `crates/xvision-engine/tests/autoresearch_gate.rs`:
 
 ```rust
-use xianvec_engine::autoresearch::gate::{GateDecision, NumericGate};
+use xvision_engine::autoresearch::gate::{GateDecision, NumericGate};
 
 #[test]
 fn passes_when_both_deltas_clear_epsilon() {
@@ -2099,12 +2099,12 @@ fn negative_parent_sharpe_handled() {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `cargo test -p xianvec-engine --test autoresearch_gate`
+Run: `cargo test -p xvision-engine --test autoresearch_gate`
 Expected: FAIL with unresolved imports.
 
 - [ ] **Step 3: Implement gate.rs**
 
-Create `crates/xianvec-engine/src/autoresearch/gate.rs`:
+Create `crates/xvision-engine/src/autoresearch/gate.rs`:
 
 ```rust
 //! Numeric Δ-Sharpe gate. Per autoresearch spec §5.1: child variant merges
@@ -2158,8 +2158,8 @@ impl NumericGate {
 - [ ] **Step 4: Run + commit**
 
 ```bash
-cargo test -p xianvec-engine --test autoresearch_gate
-git add crates/xianvec-engine/src/autoresearch/gate.rs crates/xianvec-engine/tests/autoresearch_gate.rs
+cargo test -p xvision-engine --test autoresearch_gate
+git add crates/xvision-engine/src/autoresearch/gate.rs crates/xvision-engine/tests/autoresearch_gate.rs
 git commit -m "feat(autoresearch): deterministic Δ-Sharpe gate (day + holdout, both required)"
 ```
 
@@ -2169,11 +2169,11 @@ git commit -m "feat(autoresearch): deterministic Δ-Sharpe gate (day + holdout, 
 
 ### Task 11: 003_autoresearch.sql migration
 
-**File:** `crates/xianvec-engine/migrations/003_autoresearch.sql`
+**File:** `crates/xvision-engine/migrations/003_autoresearch.sql`
 
 - [ ] **Step 1: Write the migration**
 
-Create `crates/xianvec-engine/migrations/003_autoresearch.sql`:
+Create `crates/xvision-engine/migrations/003_autoresearch.sql`:
 
 ```sql
 -- Autoresearch loop tables. Depends on 002_eval.sql (uses eval_runs IDs as
@@ -2250,11 +2250,11 @@ CREATE INDEX IF NOT EXISTS idx_cycle_seals_session
 
 - [ ] **Step 2: Verify migration applies**
 
-Run: `cargo test -p xianvec-engine --test autoresearch_lineage`
-Expected: FAIL (test doesn't exist yet — Task 12 will write it). For now just confirm the migration file is well-formed by running `sqlite3 ":memory:" < crates/xianvec-engine/migrations/003_autoresearch.sql` and checking the exit code is 0.
+Run: `cargo test -p xvision-engine --test autoresearch_lineage`
+Expected: FAIL (test doesn't exist yet — Task 12 will write it). For now just confirm the migration file is well-formed by running `sqlite3 ":memory:" < crates/xvision-engine/migrations/003_autoresearch.sql` and checking the exit code is 0.
 
 ```bash
-sqlite3 ":memory:" < crates/xianvec-engine/migrations/003_autoresearch.sql && echo OK
+sqlite3 ":memory:" < crates/xvision-engine/migrations/003_autoresearch.sql && echo OK
 ```
 
 Expected output: `OK`.
@@ -2262,7 +2262,7 @@ Expected output: `OK`.
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/xianvec-engine/migrations/003_autoresearch.sql
+git add crates/xvision-engine/migrations/003_autoresearch.sql
 git commit -m "feat(autoresearch): SQLite migration 003 (sessions, lineage nodes/edges, paper_tests, seals)"
 ```
 
@@ -2271,22 +2271,22 @@ git commit -m "feat(autoresearch): SQLite migration 003 (sessions, lineage nodes
 ### Task 12: LineageStore + LineageNode + Merkle root
 
 **Files:**
-- Create: `crates/xianvec-engine/src/autoresearch/lineage.rs`
-- Create: `crates/xianvec-engine/tests/autoresearch_lineage.rs`
+- Create: `crates/xvision-engine/src/autoresearch/lineage.rs`
+- Create: `crates/xvision-engine/tests/autoresearch_lineage.rs`
 
 `LineageStore` owns the SQLite tables introduced by migration 003 and the content-addressed blob store. The Merkle root is computed over the chain `parent_hash → child_hash → days_alive → trades_attributed → realized_pnl_attributed` per spec §6.2 — for AR-1, days_alive / trades_attributed / realized_pnl_attributed start at zero (no time has passed) but the schema is ready; the cycle orchestrator in AR-2 will refresh these as the loop runs.
 
 - [ ] **Step 1: Write the failing test**
 
-Create `crates/xianvec-engine/tests/autoresearch_lineage.rs`:
+Create `crates/xvision-engine/tests/autoresearch_lineage.rs`:
 
 ```rust
 use chrono::Utc;
 use sqlx::SqlitePool;
 use tempfile::tempdir;
 
-use xianvec_engine::autoresearch::content_hash::ContentHash;
-use xianvec_engine::autoresearch::lineage::{
+use xvision_engine::autoresearch::content_hash::ContentHash;
+use xvision_engine::autoresearch::lineage::{
     compute_merkle_root, LineageEdge, LineageNode, LineageStatus, LineageStore, MetricsSnapshot,
 };
 
@@ -2422,12 +2422,12 @@ async fn merkle_root_is_deterministic_across_calls() {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `cargo test -p xianvec-engine --test autoresearch_lineage`
+Run: `cargo test -p xvision-engine --test autoresearch_lineage`
 Expected: FAIL — unresolved imports.
 
 - [ ] **Step 3: Implement lineage.rs**
 
-Create `crates/xianvec-engine/src/autoresearch/lineage.rs`:
+Create `crates/xvision-engine/src/autoresearch/lineage.rs`:
 
 ```rust
 //! Lineage store + counterfactual-chain Merkle root.
@@ -2682,8 +2682,8 @@ pub async fn compute_merkle_root(
 - [ ] **Step 4: Run + commit**
 
 ```bash
-cargo test -p xianvec-engine --test autoresearch_lineage
-git add crates/xianvec-engine/src/autoresearch/lineage.rs crates/xianvec-engine/tests/autoresearch_lineage.rs
+cargo test -p xvision-engine --test autoresearch_lineage
+git add crates/xvision-engine/src/autoresearch/lineage.rs crates/xvision-engine/tests/autoresearch_lineage.rs
 git commit -m "feat(autoresearch): LineageStore (SQLite + blobs) + counterfactual-chain Merkle root"
 ```
 
@@ -2694,25 +2694,25 @@ git commit -m "feat(autoresearch): LineageStore (SQLite + blobs) + counterfactua
 ### Task 13: CycleSeal struct + writer
 
 **Files:**
-- Create: `crates/xianvec-engine/src/autoresearch/seal.rs`
-- Create: `crates/xianvec-engine/src/autoresearch/progress.rs`
-- Create: `crates/xianvec-engine/tests/autoresearch_seal.rs`
+- Create: `crates/xvision-engine/src/autoresearch/seal.rs`
+- Create: `crates/xvision-engine/src/autoresearch/progress.rs`
+- Create: `crates/xvision-engine/tests/autoresearch_seal.rs`
 
 The seal (autoresearch spec §3.4) bundles every byte of an evening cycle into one signed manifest. AR-1 ships the type + writer + verifier; the AR-2 cycle orchestrator will be the actual producer that calls `CycleSealWriter::seal_and_commit(...)`.
 
 - [ ] **Step 1: Write the failing test**
 
-Create `crates/xianvec-engine/tests/autoresearch_seal.rs`:
+Create `crates/xvision-engine/tests/autoresearch_seal.rs`:
 
 ```rust
 use chrono::Utc;
 use sqlx::SqlitePool;
 use tempfile::tempdir;
 
-use xianvec_engine::autoresearch::content_hash::ContentHash;
-use xianvec_engine::autoresearch::lineage::LineageStore;
-use xianvec_engine::autoresearch::seal::{CycleSeal, CycleSealWriter};
-use xianvec_engine::autoresearch::session::OperatorKey;
+use xvision_engine::autoresearch::content_hash::ContentHash;
+use xvision_engine::autoresearch::lineage::LineageStore;
+use xvision_engine::autoresearch::seal::{CycleSeal, CycleSealWriter};
+use xvision_engine::autoresearch::session::OperatorKey;
 
 async fn fixture() -> (LineageStore, OperatorKey, tempfile::TempDir) {
     let dir = tempdir().unwrap();
@@ -2807,12 +2807,12 @@ async fn writer_persists_seal_and_blob() {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `cargo test -p xianvec-engine --test autoresearch_seal`
+Run: `cargo test -p xvision-engine --test autoresearch_seal`
 Expected: FAIL — unresolved imports.
 
 - [ ] **Step 3: Implement progress.rs (placeholder types only)**
 
-Create `crates/xianvec-engine/src/autoresearch/progress.rs`:
+Create `crates/xvision-engine/src/autoresearch/progress.rs`:
 
 ```rust
 //! SSE event taxonomy. AR-1 only defines the types; the actual SSE channel
@@ -2836,7 +2836,7 @@ pub enum AutoresearchEvent {
 
 - [ ] **Step 4: Implement seal.rs**
 
-Create `crates/xianvec-engine/src/autoresearch/seal.rs`:
+Create `crates/xvision-engine/src/autoresearch/seal.rs`:
 
 ```rust
 //! CycleSeal — the contract surface between autoresearch core and any
@@ -2952,7 +2952,7 @@ fn canonical_signing_payload(seal: &CycleSeal) -> serde_json::Value {
 
 - [ ] **Step 5: Expose pool() on LineageStore**
 
-Open `crates/xianvec-engine/src/autoresearch/lineage.rs` and add inside `impl LineageStore`:
+Open `crates/xvision-engine/src/autoresearch/lineage.rs` and add inside `impl LineageStore`:
 
 ```rust
 pub fn pool(&self) -> &SqlitePool {
@@ -2963,8 +2963,8 @@ pub fn pool(&self) -> &SqlitePool {
 - [ ] **Step 6: Run + commit**
 
 ```bash
-cargo test -p xianvec-engine --test autoresearch_seal
-git add crates/xianvec-engine/src/autoresearch/seal.rs crates/xianvec-engine/src/autoresearch/progress.rs crates/xianvec-engine/src/autoresearch/lineage.rs crates/xianvec-engine/tests/autoresearch_seal.rs
+cargo test -p xvision-engine --test autoresearch_seal
+git add crates/xvision-engine/src/autoresearch/seal.rs crates/xvision-engine/src/autoresearch/progress.rs crates/xvision-engine/src/autoresearch/lineage.rs crates/xvision-engine/tests/autoresearch_seal.rs
 git commit -m "feat(autoresearch): CycleSeal struct + signed writer + SSE event taxonomy (types only)"
 ```
 
@@ -2977,13 +2977,13 @@ git commit -m "feat(autoresearch): CycleSeal struct + signed writer + SSE event 
 The session-init subcommand (a) loads `autoresearch.toml`, (b) loads-or-generates the operator key, (c) builds + signs a SessionCommitment, (d) inserts it into the SQLite session table, and (e) prints the commitment hash + session_id. This is the hackathon's "before any cycle ran, here's what we pre-committed to" hand-off.
 
 **Files:**
-- Create: `crates/xianvec-cli/src/commands/autoresearch.rs`
-- Modify: `crates/xianvec-cli/src/lib.rs` — add `Autoresearch(...)` arm
-- Modify: `crates/xianvec-cli/Cargo.toml` — add `xianvec-engine` dep if not already present, plus `dirs = "5"` and `sqlx = { version = "...", features = [...] }` if missing.
+- Create: `crates/xvision-cli/src/commands/autoresearch.rs`
+- Modify: `crates/xvision-cli/src/lib.rs` — add `Autoresearch(...)` arm
+- Modify: `crates/xvision-cli/Cargo.toml` — add `xvision-engine` dep if not already present, plus `dirs = "5"` and `sqlx = { version = "...", features = [...] }` if missing.
 
 - [ ] **Step 1: Add the subcommand dispatcher**
 
-Create `crates/xianvec-cli/src/commands/autoresearch.rs`:
+Create `crates/xvision-cli/src/commands/autoresearch.rs`:
 
 ```rust
 use std::path::PathBuf;
@@ -2991,7 +2991,7 @@ use std::path::PathBuf;
 use clap::{Args, Subcommand};
 use sqlx::SqlitePool;
 
-use xianvec_engine::autoresearch::{
+use xvision_engine::autoresearch::{
     config::AutoresearchConfig,
     lineage::{LineageStore},
     seal::CycleSealWriter,
@@ -3062,7 +3062,7 @@ pub async fn run(cmd: AutoresearchCmd) -> anyhow::Result<()> {
             };
             let key = OperatorKey::load_or_generate(&key_path)?;
             let pool = SqlitePool::connect(&format!("sqlite://{}?mode=rwc", db.display())).await?;
-            sqlx::migrate!("../xianvec-engine/migrations").run(&pool).await?;
+            sqlx::migrate!("../xvision-engine/migrations").run(&pool).await?;
             let commit = SessionCommitment::new(
                 cfg.gate.epsilon_initial,
                 cfg.holdout.start_iso,
@@ -3141,7 +3141,7 @@ async fn seal_show(_db: PathBuf, _cycle_id: String) -> anyhow::Result<()> {
 
 - [ ] **Step 2: Wire into top-level CLI**
 
-Open `crates/xianvec-cli/src/lib.rs`. Find the `Command` enum and add a new arm:
+Open `crates/xvision-cli/src/lib.rs`. Find the `Command` enum and add a new arm:
 
 ```rust
 Autoresearch(commands::autoresearch::AutoresearchCmd),
@@ -3153,7 +3153,7 @@ Find the `commands` mod declaration and add:
 pub mod autoresearch;
 ```
 
-(Path: typically `crates/xianvec-cli/src/commands/mod.rs` lists submodules — add the line there.)
+(Path: typically `crates/xvision-cli/src/commands/mod.rs` lists submodules — add the line there.)
 
 Find the `Cli::run()` match statement and add:
 
@@ -3164,9 +3164,9 @@ Command::Autoresearch(cmd) => commands::autoresearch::run(cmd).await,
 - [ ] **Step 3: Smoke-test via the binary**
 
 ```bash
-cargo build -p xianvec-cli
+cargo build -p xvision-cli
 TMPDIR=$(mktemp -d)
-cargo run -p xianvec-cli -- autoresearch session-init \
+cargo run -p xvision-cli -- autoresearch session-init \
     --config config/autoresearch.toml.example \
     --db $TMPDIR/test.db \
     --key-path $TMPDIR/operator.ed25519
@@ -3184,7 +3184,7 @@ config persisted at /tmp/.../test.db
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/xianvec-cli/src/commands/autoresearch.rs crates/xianvec-cli/src/lib.rs crates/xianvec-cli/src/commands/mod.rs crates/xianvec-cli/Cargo.toml
+git add crates/xvision-cli/src/commands/autoresearch.rs crates/xvision-cli/src/lib.rs crates/xvision-cli/src/commands/mod.rs crates/xvision-cli/Cargo.toml
 git commit -m "feat(cli): xvn autoresearch session-init — sign + persist SessionCommitment"
 ```
 
@@ -3195,12 +3195,12 @@ git commit -m "feat(cli): xvn autoresearch session-init — sign + persist Sessi
 End-to-end smoke for AR-1: load a parent bundle, propose one mutation (via mutator with mock or real LLM), apply the diff to produce a candidate, paper-test the candidate on day window + held-out window using the eval engine's `BacktestExecutor`, run the numeric gate, commit the result (Active or Ghost) to lineage, and emit a CycleSeal with one mutation. No cycle loop yet — that's AR-2.
 
 **Files:**
-- Modify: `crates/xianvec-cli/src/commands/autoresearch.rs` — replace the `mutate_once` stub
-- Create: `crates/xianvec-engine/tests/autoresearch_mutate_once_e2e.rs` — black-box test of the full single-mutation flow via library APIs (CLI smoke is manual)
+- Modify: `crates/xvision-cli/src/commands/autoresearch.rs` — replace the `mutate_once` stub
+- Create: `crates/xvision-engine/tests/autoresearch_mutate_once_e2e.rs` — black-box test of the full single-mutation flow via library APIs (CLI smoke is manual)
 
 - [ ] **Step 1: Write the e2e test**
 
-Create `crates/xianvec-engine/tests/autoresearch_mutate_once_e2e.rs`:
+Create `crates/xvision-engine/tests/autoresearch_mutate_once_e2e.rs`:
 
 ```rust
 //! End-to-end test of the single-mutation flow that `xvn autoresearch
@@ -3216,8 +3216,8 @@ use sqlx::SqlitePool;
 use tempfile::tempdir;
 use ulid::Ulid;
 
-use xianvec_engine::agent::llm::MockDispatch;
-use xianvec_engine::autoresearch::{
+use xvision_engine::agent::llm::MockDispatch;
+use xvision_engine::autoresearch::{
     blob_store::BlobStore,
     content_hash::ContentHash,
     gate::{GateDecision, NumericGate},
@@ -3360,14 +3360,14 @@ async fn mutate_once_rejected_path_writes_ghost_node() {
 
 - [ ] **Step 2: Run to verify it fails / passes**
 
-Run: `cargo test -p xianvec-engine --test autoresearch_mutate_once_e2e`
+Run: `cargo test -p xvision-engine --test autoresearch_mutate_once_e2e`
 Expected: PASS — both tests succeed (they only depend on already-implemented APIs).
 
 - [ ] **Step 3: Replace the CLI mutate_once stub**
 
-The CLI subcommand needs to (a) load the parent bundle from the bundle store (use `xianvec-engine`'s `bundle::store::BundleStore`), (b) construct a `MutatorContext`, (c) call `Mutator::propose`, (d) if accepted, apply the diff to the parent (via `bundle::program_view::apply_unified_diff` for prose + JSON-patch the `mechanical_params` for params + edit `allowed_tools` for tool changes), (e) **REAL EVAL CALL**: paper-test the child via `xianvec_engine::eval::executor::backtest::BacktestExecutor` against the day scenario AND the held-out scenario from `AutoresearchConfig::holdout` (we synthesize an ad-hoc `Scenario` with that time window), (f) run the gate, (g) commit lineage + seal.
+The CLI subcommand needs to (a) load the parent bundle from the bundle store (use `xvision-engine`'s `bundle::store::BundleStore`), (b) construct a `MutatorContext`, (c) call `Mutator::propose`, (d) if accepted, apply the diff to the parent (via `bundle::program_view::apply_unified_diff` for prose + JSON-patch the `mechanical_params` for params + edit `allowed_tools` for tool changes), (e) **REAL EVAL CALL**: paper-test the child via `xvision_engine::eval::executor::backtest::BacktestExecutor` against the day scenario AND the held-out scenario from `AutoresearchConfig::holdout` (we synthesize an ad-hoc `Scenario` with that time window), (f) run the gate, (g) commit lineage + seal.
 
-Open `crates/xianvec-cli/src/commands/autoresearch.rs` and replace the `mutate_once` function:
+Open `crates/xvision-cli/src/commands/autoresearch.rs` and replace the `mutate_once` function:
 
 ```rust
 async fn mutate_once(
@@ -3382,8 +3382,8 @@ async fn mutate_once(
     use chrono::Utc;
     use ulid::Ulid;
 
-    use xianvec_engine::agent::llm::{AnthropicDispatch, LlmDispatch, MockDispatch};
-    use xianvec_engine::autoresearch::{
+    use xvision_engine::agent::llm::{AnthropicDispatch, LlmDispatch, MockDispatch};
+    use xvision_engine::autoresearch::{
         config::AutoresearchConfig,
         content_hash::ContentHash,
         gate::{GateDecision, NumericGate},
@@ -3393,12 +3393,12 @@ async fn mutate_once(
         session::OperatorKey,
         validator::flatten_param_keys,
     };
-    use xianvec_engine::bundle::program_view::{apply_unified_diff, to_markdown};
-    use xianvec_engine::bundle::store::BundleStore;
+    use xvision_engine::bundle::program_view::{apply_unified_diff, to_markdown};
+    use xvision_engine::bundle::store::BundleStore;
 
     let cfg = AutoresearchConfig::load(&config)?;
     let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}?mode=rwc", db.display())).await?;
-    sqlx::migrate!("../xianvec-engine/migrations").run(&pool).await?;
+    sqlx::migrate!("../xvision-engine/migrations").run(&pool).await?;
 
     let blob_root = dirs::home_dir()
         .ok_or_else(|| anyhow::anyhow!("no home dir"))?
@@ -3452,7 +3452,7 @@ async fn mutate_once(
         Some(p) => apply_unified_diff(&parent_md, p)?,
         None => parent_md.clone(),
     };
-    let mut child_bundle = xianvec_engine::bundle::program_view::from_markdown(&parent_bundle, &child_md)?;
+    let mut child_bundle = xvision_engine::bundle::program_view::from_markdown(&parent_bundle, &child_md)?;
     for change in &diff.param_changes {
         // Walk the dotted key into mechanical_params and overwrite.
         set_dotted(&mut child_bundle.mechanical_params, &change.key, change.new.clone());
@@ -3471,7 +3471,7 @@ async fn mutate_once(
             }
         }
     }
-    xianvec_engine::bundle::validate::validate_bundle(&child_bundle)?;
+    xvision_engine::bundle::validate::validate_bundle(&child_bundle)?;
 
     let child_value = serde_json::to_value(&child_bundle)?;
     let child_hash = ContentHash::of_json(&child_value);
@@ -3561,12 +3561,12 @@ fn set_dotted(target: &mut serde_json::Value, dotted: &str, value: serde_json::V
 
 async fn paper_test_window(
     _pool: &sqlx::SqlitePool,
-    _bundle: &xianvec_engine::bundle::StrategyBundle,
+    _bundle: &xvision_engine::bundle::StrategyBundle,
     _scenario_id: &str,
-    _dispatch: &Arc<dyn xianvec_engine::agent::llm::LlmDispatch>,
+    _dispatch: &Arc<dyn xvision_engine::agent::llm::LlmDispatch>,
 ) -> anyhow::Result<f64> {
     // TODO (post-AR-1, but inside the dev cycle): plumb through to
-    // `xianvec_engine::eval::executor::backtest::BacktestExecutor::run`. For
+    // `xvision_engine::eval::executor::backtest::BacktestExecutor::run`. For
     // the AR-1 smoke run we shortcut to a deterministic stub that returns
     // 1.0 — the e2e test exercises the gate path explicitly.
     Ok(1.0)
@@ -3574,15 +3574,15 @@ async fn paper_test_window(
 
 async fn paper_test_holdout(
     pool: &sqlx::SqlitePool,
-    bundle: &xianvec_engine::bundle::StrategyBundle,
-    cfg: &xianvec_engine::autoresearch::config::AutoresearchConfig,
-    dispatch: &Arc<dyn xianvec_engine::agent::llm::LlmDispatch>,
+    bundle: &xvision_engine::bundle::StrategyBundle,
+    cfg: &xvision_engine::autoresearch::config::AutoresearchConfig,
+    dispatch: &Arc<dyn xvision_engine::agent::llm::LlmDispatch>,
 ) -> anyhow::Result<f64> {
     paper_test_window(pool, bundle, "holdout", dispatch).await
 }
 
-fn dispatch_for_eval(mock: bool) -> anyhow::Result<Arc<dyn xianvec_engine::agent::llm::LlmDispatch>> {
-    use xianvec_engine::agent::llm::{AnthropicDispatch, MockDispatch};
+fn dispatch_for_eval(mock: bool) -> anyhow::Result<Arc<dyn xvision_engine::agent::llm::LlmDispatch>> {
+    use xvision_engine::agent::llm::{AnthropicDispatch, MockDispatch};
     if mock {
         Ok(Arc::new(MockDispatch::echo(r#"{"action":"flat","conviction":0.0,"justification":"mock"}"#)))
     } else {
@@ -3598,14 +3598,14 @@ Note the two TODO markers on `paper_test_window` / `paper_test_holdout` — the 
 
 ```bash
 TMPDIR=$(mktemp -d)
-cargo run -p xianvec-cli -- autoresearch session-init \
+cargo run -p xvision-cli -- autoresearch session-init \
     --config config/autoresearch.toml.example \
     --db $TMPDIR/test.db \
     --key-path $TMPDIR/op.ed25519 | tee $TMPDIR/init.out
 SESSION=$(grep "session_id" $TMPDIR/init.out | awk '{print $3}')
 # Need a parent bundle in the store; assume `xvn strategy new --template trend_follower` works post-Plan-1.
-PARENT=$(cargo run -p xianvec-cli -- strategy new --template trend_follower --name ar1-smoke 2>&1 | grep -oE '[0-9a-f]{64}' | head -1)
-cargo run -p xianvec-cli -- autoresearch mutate-once \
+PARENT=$(cargo run -p xvision-cli -- strategy new --template trend_follower --name ar1-smoke 2>&1 | grep -oE '[0-9a-f]{64}' | head -1)
+cargo run -p xvision-cli -- autoresearch mutate-once \
     --parent-bundle-hash $PARENT \
     --session-id $SESSION \
     --config config/autoresearch.toml.example \
@@ -3620,7 +3620,7 @@ If `xvn strategy new` doesn't yet emit a content-hash-style ID (depends on strat
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-cli/src/commands/autoresearch.rs crates/xianvec-engine/tests/autoresearch_mutate_once_e2e.rs
+git add crates/xvision-cli/src/commands/autoresearch.rs crates/xvision-engine/tests/autoresearch_mutate_once_e2e.rs
 git commit -m "feat(cli): xvn autoresearch mutate-once — single-mutation E2E (mutator → gate → lineage → seal)"
 ```
 
@@ -3628,7 +3628,7 @@ git commit -m "feat(cli): xvn autoresearch mutate-once — single-mutation E2E (
 
 ### Task 16: Inspection subcommands (`lineage ls`, `lineage show`, `seal show`)
 
-**File:** `crates/xianvec-cli/src/commands/autoresearch.rs` — replace the three remaining stubs.
+**File:** `crates/xvision-cli/src/commands/autoresearch.rs` — replace the three remaining stubs.
 
 - [ ] **Step 1: Implement lineage_ls / lineage_show / seal_show**
 
@@ -3658,7 +3658,7 @@ async fn lineage_ls(db: PathBuf, status: Option<String>) -> anyhow::Result<()> {
 }
 
 async fn lineage_show(db: PathBuf, bundle_hash: String) -> anyhow::Result<()> {
-    use xianvec_engine::autoresearch::{content_hash::ContentHash, lineage::LineageStore};
+    use xvision_engine::autoresearch::{content_hash::ContentHash, lineage::LineageStore};
     let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", db.display())).await?;
     let blob_root = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("no home"))?.join(".xvn/lineage/blobs");
     let store = LineageStore::new(pool, blob_root).await?;
@@ -3674,7 +3674,7 @@ async fn lineage_show(db: PathBuf, bundle_hash: String) -> anyhow::Result<()> {
 }
 
 async fn seal_show(db: PathBuf, cycle_id: String) -> anyhow::Result<()> {
-    use xianvec_engine::autoresearch::{content_hash::ContentHash, lineage::LineageStore, seal::{CycleSeal, CycleSealWriter}};
+    use xvision_engine::autoresearch::{content_hash::ContentHash, lineage::LineageStore, seal::{CycleSeal, CycleSealWriter}};
     let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", db.display())).await?;
     let blob_hex: String = sqlx::query_scalar(
         "SELECT seal_blob_hash FROM autoresearch_cycle_seals WHERE cycle_id = ?",
@@ -3698,9 +3698,9 @@ async fn seal_show(db: PathBuf, cycle_id: String) -> anyhow::Result<()> {
 
 ```bash
 # Continuing from Task 15's smoke session:
-cargo run -p xianvec-cli -- autoresearch lineage ls --db $TMPDIR/test.db
-cargo run -p xianvec-cli -- autoresearch lineage show --db $TMPDIR/test.db --bundle-hash <some-hash-from-ls>
-cargo run -p xianvec-cli -- autoresearch seal show --db $TMPDIR/test.db --cycle-id <cycle-id-from-mutate>
+cargo run -p xvision-cli -- autoresearch lineage ls --db $TMPDIR/test.db
+cargo run -p xvision-cli -- autoresearch lineage show --db $TMPDIR/test.db --bundle-hash <some-hash-from-ls>
+cargo run -p xvision-cli -- autoresearch seal show --db $TMPDIR/test.db --cycle-id <cycle-id-from-mutate>
 ```
 
 Expected: tabular lineage list; pretty-printed JSON for show; verified seal. Each exits 0.
@@ -3708,7 +3708,7 @@ Expected: tabular lineage list; pretty-printed JSON for show; verified seal. Eac
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/xianvec-cli/src/commands/autoresearch.rs
+git add crates/xvision-cli/src/commands/autoresearch.rs
 git commit -m "feat(cli): xvn autoresearch lineage ls/show + seal show (verifies seal signature)"
 ```
 
@@ -3754,7 +3754,7 @@ git tag autoresearch-ar1
 - [x] §6.2 Counterfactual-chain Merkle root → Task 12
 - [x] §7 SessionCommitment with operator signing (epsilon, holdout, parent_seed, config_hash, canary_seed) → Task 6
 - [x] §7 Pre-committed loosening schedule shipped in config + sealed in commitment hash → Task 5 (config), Task 6 (sealed via cycle_config_hash)
-- [x] §3.1 Module layout under `xianvec-engine/src/autoresearch/` parallel to `eval/` → Tasks 1, 13
+- [x] §3.1 Module layout under `xvision-engine/src/autoresearch/` parallel to `eval/` → Tasks 1, 13
 - [x] §3.1 Dependency rule (no `use marketplace::*`) → enforced naturally by AR-1 not introducing such imports; CI check is added in MP-1
 - [x] §3.3 Reused vs new code (LLM dispatch, executor stub, scenario types, persistence) → Tasks 9, 15
 
