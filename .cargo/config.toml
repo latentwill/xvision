@@ -1,0 +1,4 @@
+# Workspace alias for the xtask runner. Run `cargo xtask gen-types` from any
+# subdirectory of the workspace; cargo expands this to `cargo run -p xtask --`.
+[alias]
+xtask = "run --quiet -p xtask --"

@@ -28,8 +28,16 @@ async-trait = { workspace = true }
 tokio       = { workspace = true }
 tracing     = { workspace = true }
 sqlx        = { workspace = true }
+ts-rs       = { version = "9", optional = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
 tempfile = "3"
 tokio    = { workspace = true, features = ["rt", "macros"] }
+
+[features]
+default   = []
+# Emit TypeScript types for every API request/response to
+# `frontend/web/src/api/types.gen/`. Run via `cargo xtask gen-types` (Plan 1
+# Task 4) or directly with `cargo test --features ts-export --tests`.
+ts-export = ["dep:ts-rs"]
