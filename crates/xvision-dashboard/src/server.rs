@@ -1,12 +1,12 @@
 use std::net::SocketAddr;
 
 use axum::{
-    routing::{get, post, put},
+    routing::{delete, get, post, put},
     Router,
 };
 use tower_http::trace::TraceLayer;
 
-use crate::routes::{eval_runs, health::health, settings, static_files, strategies, wizard};
+use crate::routes::{chat_rail, eval_runs, health::health, settings, static_files, strategies, wizard};
 use crate::state::AppState;
 
 pub fn build_router(state: AppState) -> Router {
@@ -29,6 +29,23 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/settings/daemon", get(settings::daemon::get))
         .route("/api/settings/identity", get(settings::identity::get))
         .route("/api/wizard/chat", post(wizard::chat))
+        .route(
+            "/api/chat-rail/sessions",
+            post(chat_rail::create_session),
+        )
+        .route(
+            "/api/chat-rail/sessions/:id/history",
+            get(chat_rail::history),
+        )
+        .route(
+            "/api/chat-rail/sessions/:id/scope",
+            post(chat_rail::update_scope),
+        )
+        .route(
+            "/api/chat-rail/sessions/:id",
+            delete(chat_rail::delete_session),
+        )
+        .route("/api/chat-rail/chat", post(chat_rail::chat))
         .route("/", get(static_files::serve_index))
         .route("/assets/*path", get(static_files::serve_static))
         .fallback(static_files::fallback)

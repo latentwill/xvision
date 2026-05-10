@@ -1,3 +1,4 @@
+pub mod chat_rail;
 pub mod eval_runs;
 pub mod health;
 pub mod settings;
