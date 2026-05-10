@@ -30,6 +30,7 @@ use crate::eval::metrics::{
     annualization_periods_per_year, equity_to_returns, max_drawdown_pct, sharpe_from_returns,
     total_return_pct,
 };
+use crate::eval::progress::{send_event, ProgressEvent, ProgressTx};
 use crate::eval::run::{MetricsSummary, Run, RunStatus};
 use crate::eval::scenario::{Scenario, SlippageModel};
 use crate::eval::store::{DecisionRow, RunStore};
@@ -39,7 +40,38 @@ use crate::tools::ToolRegistry;
 /// any future indicator-panel computation enough lookback.
 const WARMUP_BARS: usize = 200;
 
-pub struct BacktestExecutor;
+#[derive(Default)]
+pub struct BacktestExecutor {
+    /// Optional progress channel. When `None` the executor is silent
+    /// (today's `api::eval::run_with_deps` callers); when `Some`, every
+    /// significant action emits a `ProgressEvent`. Send-when-no-subscribers
+    /// is a no-op via `send_event`. Mirrors PR #35's PaperExecutor wiring
+    /// so SSE / CLI subscribers see both run modes through the same bus.
+    progress: Option<ProgressTx>,
+}
+
+impl BacktestExecutor {
+    /// Constructor without progress wiring. Existing callers
+    /// (`api::eval::run_with_deps` today) keep working unchanged.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Constructor that wires this executor to a `ProgressTx`. New
+    /// callers (CLI progress bar, dashboard SSE endpoint) hand in a
+    /// sender from a shared `ProgressBus`.
+    pub fn with_progress(progress: ProgressTx) -> Self {
+        Self {
+            progress: Some(progress),
+        }
+    }
+
+    fn emit(&self, event: ProgressEvent) {
+        if let Some(tx) = self.progress.as_ref() {
+            send_event(tx, event);
+        }
+    }
+}
 
 #[derive(Debug, Deserialize)]
 struct TraderOutput {
@@ -63,6 +95,50 @@ impl TraderOutput {
 #[async_trait]
 impl Executor for BacktestExecutor {
     async fn run(
+        &self,
+        run: &mut Run,
+        bundle: &StrategyBundle,
+        scenario: &Scenario,
+        dispatch: Arc<dyn LlmDispatch>,
+        tools: Arc<ToolRegistry>,
+        store: &RunStore,
+    ) -> Result<MetricsSummary> {
+        // RunStarted fires before fixture-loading work so subscribers
+        // can show "in flight" even on a slow parquet read.
+        self.emit(ProgressEvent::RunStarted {
+            run_id: run.id.clone(),
+            estimated_tokens: 0,
+        });
+
+        let result = self
+            .run_inner(run, bundle, scenario, dispatch, tools, store)
+            .await;
+
+        match &result {
+            Ok(metrics) => {
+                let tokens_used = run
+                    .actual_input_tokens
+                    .unwrap_or(0)
+                    .saturating_add(run.actual_output_tokens.unwrap_or(0));
+                self.emit(ProgressEvent::RunCompleted {
+                    run_id: run.id.clone(),
+                    metrics: metrics.clone(),
+                    tokens_used,
+                });
+            }
+            Err(e) => {
+                self.emit(ProgressEvent::RunFailed {
+                    run_id: run.id.clone(),
+                    error: e.to_string(),
+                });
+            }
+        }
+        result
+    }
+}
+
+impl BacktestExecutor {
+    async fn run_inner(
         &self,
         run: &mut Run,
         bundle: &StrategyBundle,
@@ -101,6 +177,11 @@ impl Executor for BacktestExecutor {
             );
         }
 
+        // Used by RunTick to report progress as a percentage of bars
+        // post-warmup. The denominator is 1-indexed worth of "decision
+        // bars remaining"; under-reporting on slow fixtures is fine.
+        let total_decision_bars = bars.len().saturating_sub(WARMUP_BARS).max(1) as f64;
+
         let initial = scenario.capital.initial;
         let slip_bps = match &scenario.slippage {
             SlippageModel::Linear { bps } => *bps as f64,
@@ -117,6 +198,9 @@ impl Executor for BacktestExecutor {
         let mut n_trades = 0u32;
         let mut total_input_tokens: u64 = 0;
         let mut total_output_tokens: u64 = 0;
+        // Running peak for drawdown_pct in MetricsUpdated. Start at the
+        // initial capital so the first tick's drawdown is well-defined.
+        let mut peak_equity = initial.max(0.0);
 
         for (i, bar) in bars.iter().enumerate() {
             if i < WARMUP_BARS {
@@ -132,6 +216,18 @@ impl Executor for BacktestExecutor {
             let Some(next_bar) = bars.get(i + 1) else {
                 break;
             };
+
+            // RunTick fires before the per-bar pipeline call so dashboards
+            // can advance progress bars even when an LLM round-trip is slow.
+            let scenario_progress_pct = ((i.saturating_sub(WARMUP_BARS) as f64
+                / total_decision_bars)
+                * 100.0)
+                .clamp(0.0, 100.0);
+            self.emit(ProgressEvent::RunTick {
+                run_id: run.id.clone(),
+                scenario_progress_pct,
+                current_ts: bar.timestamp,
+            });
 
             let seed = serde_json::json!({
                 "decision_index": decision_idx,
@@ -172,9 +268,49 @@ impl Executor for BacktestExecutor {
             position = fill.new_pos;
             entry_price = fill.new_entry;
             realized_total += fill.realized_pnl;
-            if fill.fill_price.is_some() {
+            let fill_happened = fill.fill_price.is_some();
+            if fill_happened {
                 n_trades += 1;
+
+                // FillRecorded — only when an actionable decision actually
+                // crossed the book. Side derives from the new position
+                // direction (long_open + reverse-from-short both buy at
+                // next_open; short_open + reverse-from-long sell). For a
+                // pure-close-to-flat the side is the opposite of the
+                // pre-fill position.
+                let side = if parsed.action == "long_open" {
+                    "buy"
+                } else if parsed.action == "short_open" {
+                    "sell"
+                } else if position == 0.0 && fill.realized_pnl.is_finite() {
+                    // pure-close case
+                    if entry_price == 0.0 {
+                        // we just flattened a long
+                        "sell"
+                    } else {
+                        "buy"
+                    }
+                } else {
+                    "buy"
+                };
+                self.emit(ProgressEvent::FillRecorded {
+                    run_id: run.id.clone(),
+                    side: side.into(),
+                    price: fill.fill_price.unwrap_or(0.0),
+                    qty: fill.fill_size.unwrap_or(0.0),
+                    fee: fill.fee.unwrap_or(0.0),
+                });
             }
+
+            // DecisionEmitted fires for every cycle so subscribers see
+            // flat/hold decisions too.
+            self.emit(ProgressEvent::DecisionEmitted {
+                run_id: run.id.clone(),
+                action: parsed.action.clone(),
+                asset: asset.clone(),
+                size: fill.fill_size.unwrap_or(0.0),
+                conviction: parsed.conviction,
+            });
 
             // Mark equity to the next bar's open.
             equity = initial + realized_total
@@ -202,6 +338,23 @@ impl Executor for BacktestExecutor {
                 .await?;
             store.record_equity(&run.id, bar.timestamp, equity).await?;
             equity_curve.push(equity);
+
+            // Running drawdown — peak updates after each tick so
+            // MetricsUpdated reflects worst-observed-so-far for live UI.
+            if equity > peak_equity {
+                peak_equity = equity;
+            }
+            let drawdown_pct = if peak_equity > 0.0 {
+                ((peak_equity - equity) / peak_equity * 100.0).max(0.0)
+            } else {
+                0.0
+            };
+            self.emit(ProgressEvent::MetricsUpdated {
+                run_id: run.id.clone(),
+                equity,
+                drawdown_pct,
+                n_trades,
+            });
 
             decision_idx += 1;
         }
