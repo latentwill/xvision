@@ -1,0 +1,129 @@
+//! Per-run metadata. One `Run` row per `xvn eval run` invocation. The full
+//! eval engine plan goes through this type for every status transition,
+//! metric finalization, and listing surface (CLI / MCP / dashboard).
+
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use ulid::Ulid;
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RunMode {
+    Backtest,
+    Paper,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RunStatus {
+    Queued,
+    Running,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+impl RunStatus {
+    /// On-disk string form (matches the CHECK-able strings the migration
+    /// describes for the `eval_runs.status` column).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            RunStatus::Queued => "queued",
+            RunStatus::Running => "running",
+            RunStatus::Completed => "completed",
+            RunStatus::Failed => "failed",
+            RunStatus::Cancelled => "cancelled",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "queued" => Some(RunStatus::Queued),
+            "running" => Some(RunStatus::Running),
+            "completed" => Some(RunStatus::Completed),
+            "failed" => Some(RunStatus::Failed),
+            "cancelled" => Some(RunStatus::Cancelled),
+            _ => None,
+        }
+    }
+
+    /// True for the two terminal states. Once a run is terminal it never
+    /// transitions again.
+    pub fn is_terminal(&self) -> bool {
+        matches!(
+            self,
+            RunStatus::Completed | RunStatus::Failed | RunStatus::Cancelled
+        )
+    }
+}
+
+impl RunMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            RunMode::Backtest => "backtest",
+            RunMode::Paper => "paper",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "backtest" => Some(RunMode::Backtest),
+            "paper" => Some(RunMode::Paper),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Run {
+    pub id: String, // ULID
+    pub strategy_bundle_hash: String,
+    pub scenario_id: String,
+    pub params_override: Option<serde_json::Value>,
+    pub mode: RunMode,
+    pub status: RunStatus,
+    pub started_at: DateTime<Utc>,
+    pub completed_at: Option<DateTime<Utc>>,
+    pub metrics: Option<MetricsSummary>,
+    pub error: Option<String>,
+    pub estimated_total_tokens: Option<u64>,
+    pub actual_input_tokens: Option<u64>,
+    pub actual_output_tokens: Option<u64>,
+}
+
+impl Run {
+    /// Construct a fresh `Queued` run with a generated ULID and `started_at = now`.
+    pub fn new_queued(
+        strategy_bundle_hash: String,
+        scenario_id: String,
+        mode: RunMode,
+    ) -> Self {
+        Self {
+            id: Ulid::new().to_string(),
+            strategy_bundle_hash,
+            scenario_id,
+            params_override: None,
+            mode,
+            status: RunStatus::Queued,
+            started_at: Utc::now(),
+            completed_at: None,
+            metrics: None,
+            error: None,
+            estimated_total_tokens: None,
+            actual_input_tokens: None,
+            actual_output_tokens: None,
+        }
+    }
+}
+
+/// Headline metrics the eval engine computes after a run completes.
+/// Persisted as `metrics_json` on the `eval_runs` row by `RunStore::finalize`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MetricsSummary {
+    pub total_return_pct: f64,
+    pub sharpe: f64,
+    pub max_drawdown_pct: f64,
+    pub win_rate: f64,
+    pub n_trades: u32,
+    pub n_decisions: u32,
+}
