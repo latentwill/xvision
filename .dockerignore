@@ -36,8 +36,10 @@ docs
 .env.local
 .env.*.local
 
-# Dockerfiles themselves (copied explicitly when needed)
+# Dockerfiles themselves (copied explicitly when needed). Note: do NOT
+# exclude `docker/` — the runtime stage of `Dockerfile` does
+# `COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh`, so the directory
+# must be present in the build context. README.md inside docker/ is small.
 Dockerfile
 docker-compose.yml
-docker/
 .dockerignore
