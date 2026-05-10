@@ -1,19 +1,21 @@
 name: docker
 
+# Triggers locked down 2026-05-10 to conserve Actions minutes during the v1
+# build-out. The previous config rebuilt on every push to main (incl. doc /
+# chore / team-queue commits) and on every PR with a Cargo.toml touch — at
+# the current cadence (~30 PRs/day) that was burning the budget without
+# producing artifacts anyone consumes. Re-enable broader triggers once v1
+# lands and we want pre-merge image smoke again.
 on:
   push:
-    branches: [main]
     tags: ["v*.*.*"]
-  pull_request:
-    paths:
-      - "Dockerfile"
-      - ".dockerignore"
-      - "docker/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "rust-toolchain.toml"
-      - "crates/**"
-      - ".github/workflows/docker.yml"
+  workflow_dispatch:
+
+# Auto-cancel superseded runs on the same ref. Belt + suspenders against
+# the queue stacking up if multiple tags get pushed in quick succession.
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
