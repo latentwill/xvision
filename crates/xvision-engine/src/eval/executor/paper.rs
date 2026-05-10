@@ -19,6 +19,10 @@ use crate::agent::llm::LlmDispatch;
 use crate::agent::pipeline::{run_pipeline, PipelineInputs};
 use crate::bundle::StrategyBundle;
 use crate::eval::executor::Executor;
+use crate::eval::metrics::{
+    annualization_periods_per_year, equity_to_returns, max_drawdown_pct, sharpe_from_returns,
+    total_return_pct,
+};
 use crate::eval::run::{MetricsSummary, Run, RunStatus};
 use crate::eval::scenario::Scenario;
 use crate::eval::store::{DecisionRow, RunStore};
@@ -98,8 +102,7 @@ impl Executor for PaperExecutor {
         }
 
         let initial_balance = self.broker.balance().await?;
-        let mut peak_equity = initial_balance;
-        let mut max_drawdown = 0.0_f64;
+        let mut equity_samples: Vec<f64> = Vec::new();
         let mut decision_idx = 0u32;
         let mut n_trades = 0u32;
         let mut total_input_tokens: u64 = 0;
@@ -184,33 +187,30 @@ impl Executor for PaperExecutor {
 
             let post_balance = self.broker.balance().await?;
             store.record_equity(&run.id, ts, post_balance).await?;
-
-            peak_equity = peak_equity.max(post_balance);
-            let dd = if peak_equity > 0.0 {
-                (peak_equity - post_balance) / peak_equity
-            } else {
-                0.0
-            };
-            max_drawdown = max_drawdown.max(dd);
+            equity_samples.push(post_balance);
 
             decision_idx += 1;
             ts += cadence;
         }
 
         let final_balance = self.broker.balance().await?;
-        let total_return_pct = if initial_balance > 0.0 {
-            (final_balance - initial_balance) / initial_balance * 100.0
-        } else {
-            0.0
-        };
+        // Prepend the initial balance so equity_to_returns covers the first
+        // tick's drift from the seed balance, not just inter-tick drift.
+        let mut full_curve = Vec::with_capacity(equity_samples.len() + 1);
+        full_curve.push(initial_balance);
+        full_curve.extend_from_slice(&equity_samples);
 
-        // Naive metrics — Sharpe + win-rate are placeholders pending the
-        // Phase 3.C metrics module which computes them properly from
-        // `eval_decisions.pnl_realized` + `eval_equity_samples`.
+        let returns = equity_to_returns(&full_curve);
+        let periods_per_year =
+            annualization_periods_per_year(bundle.manifest.decision_cadence_minutes);
+
+        // Win rate from realized PnL is computed downstream once
+        // PaperExecutor tracks entry/exit pairs. Until then it stays 0.0
+        // — Phase 3.C findings are coming.
         let metrics = MetricsSummary {
-            total_return_pct,
-            sharpe: 0.0,
-            max_drawdown_pct: max_drawdown * 100.0,
+            total_return_pct: total_return_pct(initial_balance, final_balance),
+            sharpe: sharpe_from_returns(&returns, periods_per_year),
+            max_drawdown_pct: max_drawdown_pct(&full_curve),
             win_rate: 0.0,
             n_trades,
             n_decisions: decision_idx,
