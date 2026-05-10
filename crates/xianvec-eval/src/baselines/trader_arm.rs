@@ -7,7 +7,7 @@
 //!
 //! ## Briefing pairing (Tier 1 fix #1)
 //! All arms (this one + the classical baselines) share a `BriefingCache`;
-//! the cache key is `(setup_id, intern_provider, intern_model)`. Decision
+//! the cache key is `(cycle_id, intern_provider, intern_model)`. Decision
 //! divergence reflects strategy difference rather than Intern non-determinism.
 
 use std::sync::Arc;
@@ -78,7 +78,7 @@ impl Strategy for TraderArm {
 
         // 1. Stage 1: cached or fresh briefing (Tier 1 fix #1).
         let key = CacheKey {
-            setup_id: snapshot.setup_id,
+            cycle_id: snapshot.cycle_id,
             provider: self.intern_provider.clone(),
             model: self.intern_model.clone(),
         };
@@ -90,7 +90,7 @@ impl Strategy for TraderArm {
                 .intern
                 .brief(
                     &prompt,
-                    snapshot.setup_id,
+                    snapshot.cycle_id,
                     snapshot.asset,
                     snapshot.regime,
                     snapshot.horizon_hours,
@@ -151,13 +151,13 @@ mod tests {
         async fn brief(
             &self,
             _prompt: &str,
-            setup_id: Uuid,
+            cycle_id: Uuid,
             asset: AssetSymbol,
             regime: Regime,
             horizon_hours: u32,
         ) -> Result<InternBriefing, InternError> {
             Ok(InternBriefing {
-                setup_id,
+                cycle_id,
                 asset,
                 bull_case: "Funding rate compressed; smart money accumulating spot.".into(),
                 bear_case: "Realized vol expanding; long-leverage approaching prior squeeze.".into(),
@@ -175,7 +175,7 @@ mod tests {
 
     fn mk_snapshot() -> MarketSnapshot {
         MarketSnapshot {
-            setup_id: Uuid::new_v4(),
+            cycle_id: Uuid::new_v4(),
             asset: AssetSymbol::Btc,
             timestamp: Utc.timestamp_opt(1_700_000_000, 0).single().unwrap(),
             price: 50_000.0,
@@ -200,12 +200,12 @@ mod tests {
     /// once a real TraderBackend is wired; the pairing-cache contract itself
     /// only depends on the cache key + the Intern's async surface.
     #[tokio::test]
-    async fn cache_key_pairs_arms_for_same_setup_id() {
+    async fn cache_key_pairs_arms_for_same_cycle_id() {
         let cache = Arc::new(BriefingCache::new());
         let snap = mk_snapshot();
 
         let key = CacheKey {
-            setup_id: snap.setup_id,
+            cycle_id: snap.cycle_id,
             provider: "mock".into(),
             model: "mock".into(),
         };
@@ -215,7 +215,7 @@ mod tests {
         let briefing = intern
             .brief(
                 "p",
-                snap.setup_id,
+                snap.cycle_id,
                 snap.asset,
                 snap.regime,
                 snap.horizon_hours,
@@ -224,9 +224,9 @@ mod tests {
             .expect("mock intern always succeeds");
         cache.insert(key.clone(), briefing.clone());
 
-        // Same setup_id → same briefing on lookup (paired arms read it).
+        // Same cycle_id → same briefing on lookup (paired arms read it).
         let again = cache.get(&key).expect("cache hit");
-        assert_eq!(again.setup_id, briefing.setup_id);
+        assert_eq!(again.cycle_id, briefing.cycle_id);
         assert_eq!(again.bull_case, briefing.bull_case);
     }
 }

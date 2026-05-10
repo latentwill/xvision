@@ -25,7 +25,7 @@ pub async fn run_trader(
     let prompt = build_trader_prompt(briefing, portfolio, params, &opts);
 
     let first = backend.complete(&prompt).await?;
-    match parse_trader_response(&first, briefing.setup_id) {
+    match parse_trader_response(&first, briefing.cycle_id) {
         Ok(decision) => Ok(decision),
         Err(TraderError::Validation(report)) => Err(TraderError::Validation(report)),
         Err(first_err) => {
@@ -44,7 +44,7 @@ pub async fn run_trader(
                  markdown fences, prose, or `<think>` blocks. Output JSON only."
             );
             let second = backend.complete(&retry_prompt).await?;
-            parse_trader_response(&second, briefing.setup_id)
+            parse_trader_response(&second, briefing.cycle_id)
         }
     }
 }
@@ -97,7 +97,7 @@ mod tests {
 
     fn fixture_briefing() -> InternBriefing {
         InternBriefing {
-            setup_id: uuid::Uuid::nil(),
+            cycle_id: uuid::Uuid::nil(),
             asset: AssetSymbol::Btc,
             bull_case: "Funding rate compressed; smart money accumulating spot.".into(),
             bear_case: "Realized vol expanding; long-leverage approaching prior squeeze.".into(),
@@ -214,10 +214,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn setup_id_propagates_to_decision() {
-        let setup_id = uuid::Uuid::from_u128(0x1234_5678_90AB_CDEF_1234_5678_90AB_CDEF);
+    async fn cycle_id_propagates_to_decision() {
+        let cycle_id = uuid::Uuid::from_u128(0x1234_5678_90AB_CDEF_1234_5678_90AB_CDEF);
         let mut briefing = fixture_briefing();
-        briefing.setup_id = setup_id;
+        briefing.cycle_id = cycle_id;
         let backend = ScriptedBackend::new(vec![GOLDEN_BUY]);
         let d = run_trader(
             &backend,
@@ -227,7 +227,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(d.setup_id, setup_id);
+        assert_eq!(d.cycle_id, cycle_id);
     }
 
     #[tokio::test]

@@ -72,7 +72,7 @@ impl Strategy for MaCrossover {
 
                 if golden_cross {
                     Some(TraderDecision {
-                        setup_id: snapshot.setup_id,
+                        cycle_id: snapshot.cycle_id,
                         action: Action::Buy,
                         size_bps: 1000,
                         direction: Direction::Long,
@@ -85,7 +85,7 @@ impl Strategy for MaCrossover {
                     })
                 } else if death_cross {
                     Some(TraderDecision {
-                        setup_id: snapshot.setup_id,
+                        cycle_id: snapshot.cycle_id,
                         action: Action::Sell,
                         size_bps: 1000,
                         direction: Direction::Short,
@@ -128,7 +128,7 @@ mod tests {
             })
             .collect();
         MarketSnapshot {
-            setup_id: Uuid::new_v4(),
+            cycle_id: Uuid::new_v4(),
             asset: AssetSymbol::Btc,
             timestamp: Utc::now(),
             price: close_price,
@@ -167,7 +167,7 @@ mod tests {
             volume: 1_000.0,
         }));
         MarketSnapshot {
-            setup_id: Uuid::new_v4(),
+            cycle_id: Uuid::new_v4(),
             asset: AssetSymbol::Btc,
             timestamp: Utc::now(),
             price: 200.0,
@@ -192,7 +192,7 @@ mod tests {
         // Second call: golden cross setup
         let cross_snap = snapshot_golden_cross();
         let dec = strat.decide(&cross_snap).await.expect("golden cross must return Some");
-        assert_eq!(dec.setup_id, cross_snap.setup_id, "setup_id must propagate");
+        assert_eq!(dec.cycle_id, cross_snap.cycle_id, "cycle_id must propagate");
         assert_eq!(dec.action, Action::Buy);
         assert_eq!(dec.direction, Direction::Long);
         assert_eq!(dec.size_bps, 1000);

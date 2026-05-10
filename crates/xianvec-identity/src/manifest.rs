@@ -47,12 +47,12 @@ pub struct StrategyConfigSummary {
     pub params: Vec<String>,
 }
 
-/// A single trade outcome, keyed by `setup_id`, posted to the
+/// A single trade outcome, keyed by `cycle_id`, posted to the
 /// ReputationRegistry via [`crate::IdentityClient::post_reputation`].
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TradeOutcome {
     /// Unique identifier for the trading setup that produced this trade.
-    pub setup_id: Uuid,
+    pub cycle_id: Uuid,
     /// Realised P&L in USD (positive = profit, negative = loss).
     pub realized_pnl_usd: f64,
     /// Trade direction: `"buy"` | `"sell"` | `"close"`.
@@ -64,8 +64,8 @@ pub struct TradeOutcome {
 /// A reputation entry read back from the ReputationRegistry.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ReputationEntry {
-    /// The setup_id this reputation post covers.
-    pub setup_id: Uuid,
+    /// The cycle_id this reputation post covers.
+    pub cycle_id: Uuid,
     /// Transaction hash of the `postReputation` / `giveFeedback` call.
     pub tx_hash: String,
     /// Block number at which the transaction was included.
@@ -124,7 +124,7 @@ mod tests {
     #[test]
     fn trade_outcome_round_trip() {
         let o = TradeOutcome {
-            setup_id: Uuid::nil(),
+            cycle_id: Uuid::nil(),
             realized_pnl_usd: 42.5,
             action: "close".to_string(),
             closed_at: Utc.with_ymd_and_hms(2025, 5, 3, 12, 0, 0).unwrap(),
@@ -137,11 +137,11 @@ mod tests {
     #[test]
     fn reputation_entry_round_trip() {
         let e = ReputationEntry {
-            setup_id: Uuid::nil(),
+            cycle_id: Uuid::nil(),
             tx_hash: "0xdeadbeef".to_string(),
             block_number: 12345,
             outcome: TradeOutcome {
-                setup_id: Uuid::nil(),
+                cycle_id: Uuid::nil(),
                 realized_pnl_usd: -10.0,
                 action: "sell".to_string(),
                 closed_at: Utc.with_ymd_and_hms(2025, 5, 1, 8, 0, 0).unwrap(),

@@ -9,7 +9,7 @@ pub fn run(report_path: PathBuf) -> anyhow::Result<()> {
     let result: BacktestResult = serde_json::from_slice(&bytes)?;
 
     println!("XIANVEC backtest report — {}", report_path.display());
-    println!("  setups evaluated: {}", result.setups_evaluated);
+    println!("  cycles evaluated: {}", result.cycles_evaluated);
     println!("  initial NAV:      ${:.2}", result.initial_nav_usd);
     println!("  started:  {}", result.started_at);
     println!("  finished: {}", result.finished_at);
@@ -56,7 +56,7 @@ mod tests {
                     regimes: vec![],
                 },
             )]),
-            setups_evaluated: 0,
+            cycles_evaluated: 0,
             initial_nav_usd: 100_000.0,
             started_at: Utc::now(),
             finished_at: Utc::now(),

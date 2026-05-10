@@ -180,7 +180,7 @@ pub(crate) mod tests_common {
         take_profit_pct: f32,
     ) -> TraderDecision {
         TraderDecision {
-            setup_id: Uuid::nil(),
+            cycle_id: Uuid::nil(),
             action,
             size_bps,
             direction,

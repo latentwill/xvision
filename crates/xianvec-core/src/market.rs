@@ -29,7 +29,7 @@ pub struct Ohlcv {
 ///   "not available" — the prompt builder skips them rather than printing nulls.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MarketSnapshot {
-    pub setup_id: Uuid,
+    pub cycle_id: Uuid,
     pub asset: AssetSymbol,
     pub timestamp: DateTime<Utc>,
     pub price: f64,
@@ -91,7 +91,7 @@ mod tests {
 
     fn fixture_snapshot() -> MarketSnapshot {
         MarketSnapshot {
-            setup_id: Uuid::nil(),
+            cycle_id: Uuid::nil(),
             asset: AssetSymbol::Btc,
             timestamp: Utc.timestamp_opt(1_700_000_000, 0).single().unwrap(),
             price: 70_000.0,

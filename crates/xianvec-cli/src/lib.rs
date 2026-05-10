@@ -1,11 +1,9 @@
 //! `xvn` — XIANVEC CLI surface.
 //!
-//! Subcommands:
-//! - `show-metrics` — render a `BacktestResult` JSON's headline numbers.
-//! - `show-decision` — pretty-print a cached `TraderDecision` from SQLite.
-//! - `run-setup` — run a single setup through Intern → Risk slice.
-//! - `report` — render a Markdown report from a `BacktestResult`.
-//! - `ab-compare` — run an N-arm backtest A/B over a setups + bars JSON.
+//! All app stages reachable from the binary so an agent can drive the full
+//! pipeline through `xvn` alone. See `docs/cli-non-surfaced.md` for the small
+//! set of capabilities deliberately kept out of the binary (on-chain identity,
+//! arbitrary store writes, the separately-installed `xvn-mcp` server).
 
 pub mod commands;
 
@@ -13,6 +11,8 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use uuid::Uuid;
+
+use crate::commands::venue::Venue;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -32,10 +32,17 @@ pub enum Command {
         #[arg(long)]
         report: PathBuf,
     },
-    /// Pretty-print a cached `TraderDecision` by setup_id (SQLite store).
+    /// Pretty-print a cached `TraderDecision` by cycle_id (SQLite store).
     ShowDecision {
         #[arg(long)]
-        setup_id: Uuid,
+        cycle_id: Uuid,
+        #[arg(long, default_value = "data/store.db")]
+        db: PathBuf,
+    },
+    /// Pretty-print a cached `InternBriefing` by cycle_id.
+    ShowBriefing {
+        #[arg(long)]
+        cycle_id: Uuid,
         #[arg(long, default_value = "data/store.db")]
         db: PathBuf,
     },
@@ -58,10 +65,39 @@ pub enum Command {
         #[arg(long)]
         output: PathBuf,
     },
-    /// Manual single-trade smoke test against Alpaca paper. Builds a synthetic
-    /// `RiskDecision::Approved` from the args and submits via the executor.
-    /// Reads APCA_API_KEY_ID / APCA_API_SECRET_KEY / APCA_API_BASE_URL from env.
+    /// Compute pre-committed metrics (treatment vs baseline) and print as JSON.
+    Metrics {
+        #[arg(long)]
+        report: PathBuf,
+        #[arg(long)]
+        treatment: String,
+        #[arg(long, default_value = "buy_and_hold")]
+        baseline: String,
+        #[arg(long, default_value_t = 1000)]
+        n_resamples: usize,
+        #[arg(long)]
+        block_size: Option<usize>,
+    },
+    /// Print the anti-overfit gate verdict for a treatment vs baseline pair.
+    Gate {
+        #[arg(long)]
+        report: PathBuf,
+        #[arg(long)]
+        treatment: String,
+        #[arg(long, default_value = "buy_and_hold")]
+        baseline: String,
+        #[arg(long, default_value_t = 1000)]
+        n_resamples: usize,
+        #[arg(long)]
+        block_size: Option<usize>,
+    },
+    /// Manual single-trade smoke test against a live venue.
+    /// Builds a synthetic `RiskDecision::Approved` from CLI args and submits
+    /// via the venue executor (idempotent on `cycle_id`).
     FireTrade {
+        /// `alpaca` or `orderly`.
+        #[arg(long, default_value = "alpaca", value_parser = clap::value_parser!(Venue))]
+        venue: Venue,
         /// `buy` (long) or `sell` (short).
         #[arg(long)]
         side: commands::fire_trade::Side,
@@ -78,11 +114,24 @@ pub enum Command {
         #[arg(long, default_value = "manual fire-trade smoke from xvn cli")]
         summary: String,
     },
+    /// Read live portfolio state from a venue.
+    Portfolio {
+        #[arg(long, default_value = "alpaca", value_parser = clap::value_parser!(Venue))]
+        venue: Venue,
+    },
+    /// Close any open position in `--asset` at the given venue.
+    ClosePosition {
+        #[arg(long, default_value = "alpaca", value_parser = clap::value_parser!(Venue))]
+        venue: Venue,
+        /// BTC | ETH | SOL.
+        #[arg(long, default_value = "BTC")]
+        asset: String,
+    },
     /// Run an N-arm backtest A/B comparison and emit `BacktestResult` JSON.
     AbCompare {
         /// Path to a JSON file containing a `Vec<MarketSnapshot>`.
         #[arg(long)]
-        setups: PathBuf,
+        cycles: PathBuf,
         /// Path to a JSON file containing a `Vec<MarketBar>`.
         #[arg(long)]
         bars: PathBuf,
@@ -124,28 +173,58 @@ pub enum Command {
     },
     /// Strategy authoring (create / validate / ls / show / templates / run).
     Strategy(commands::strategy::StrategyCmd),
+    /// Stage 1 (Intern) in isolation — preview prompt or run a backend call.
+    Intern(commands::intern::InternCmd),
+    /// Stage 2 (Trader) in isolation — preview prompt or run a backend call.
+    Trader(commands::trader::TraderCmd),
+    /// Risk layer evaluation + config inspection.
+    Risk(commands::risk::RiskCmd),
+    /// SQLite flight-recorder operations (migrate / stats).
+    Store(commands::store_cmd::StoreCmd),
+    /// Compute one technical indicator from a JSON price/HLC series.
+    Indicator(commands::indicator::IndicatorCmd),
 }
 
 impl Cli {
     pub async fn run(self) -> anyhow::Result<()> {
         match self.command {
             Command::ShowMetrics { report } => commands::show_metrics::run(report),
-            Command::ShowDecision { setup_id, db } => commands::show_decision::run(setup_id, db).await,
+            Command::ShowDecision { cycle_id, db } => commands::show_decision::run(cycle_id, db).await,
+            Command::ShowBriefing { cycle_id, db } => commands::show_briefing::run(cycle_id, db).await,
             Command::RunSetup {
                 snapshot,
                 intern,
                 model,
             } => commands::run_setup::run(snapshot, intern, model).await,
             Command::Report { input, output } => commands::report::run(input, output),
+            Command::Metrics {
+                report,
+                treatment,
+                baseline,
+                n_resamples,
+                block_size,
+            } => commands::metrics::run_metrics(report, treatment, baseline, n_resamples, block_size),
+            Command::Gate {
+                report,
+                treatment,
+                baseline,
+                n_resamples,
+                block_size,
+            } => commands::metrics::run_gate(report, treatment, baseline, n_resamples, block_size),
             Command::FireTrade {
+                venue,
                 side,
                 size_bps,
                 stop_loss_pct,
                 take_profit_pct,
                 summary,
-            } => commands::fire_trade::run(side, size_bps, stop_loss_pct, take_profit_pct, summary).await,
+            } => {
+                commands::fire_trade::run(venue, side, size_bps, stop_loss_pct, take_profit_pct, summary).await
+            }
+            Command::Portfolio { venue } => commands::venue::portfolio(venue).await,
+            Command::ClosePosition { venue, asset } => commands::venue::close_position(venue, asset).await,
             Command::AbCompare {
-                setups,
+                cycles,
                 bars,
                 arms,
                 output,
@@ -161,7 +240,7 @@ impl Cli {
                 trader_api_key_env,
             } => {
                 commands::ab_compare::run(
-                    setups,
+                    cycles,
                     bars,
                     arms,
                     output,
@@ -179,6 +258,12 @@ impl Cli {
                 .await
             }
             Command::Strategy(cmd) => commands::strategy::run(cmd).await,
+            Command::Intern(cmd) => commands::intern::run(cmd).await,
+            Command::Trader(cmd) => commands::trader::run(cmd).await,
+            Command::Risk(cmd) => commands::risk::run(cmd).await,
+            Command::Store(cmd) => commands::store_cmd::run(cmd).await,
+            Command::Indicator(cmd) => commands::indicator::run(cmd),
         }
     }
 }
+

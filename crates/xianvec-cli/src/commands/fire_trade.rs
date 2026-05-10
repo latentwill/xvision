@@ -1,26 +1,23 @@
-//! `xvn fire-trade` — manual single-trade smoke test against Alpaca paper.
+//! `xvn fire-trade` — manual single-trade smoke test against a live venue.
 //!
 //! Builds a synthetic `RiskDecision::Approved` from CLI args and submits via
-//! `AlpacaExecutor::from_env()`. Used to validate the executor wiring without
+//! the venue-specific executor. Used to validate executor wiring without
 //! standing up the full Intern → Risk → Trader pipeline.
 //!
-//! Reads APCA_API_KEY_ID, APCA_API_SECRET_KEY, APCA_API_BASE_URL from the env.
-//! Defaults: BTC/USD, side required, size in basis points of equity (100 bps = 1%).
+//! Venues:
+//! - `alpaca`  — reads APCA_API_KEY_ID, APCA_API_SECRET_KEY, APCA_API_BASE_URL.
+//! - `orderly` — reads ORDERLY_KEY, ORDERLY_SECRET, ORDERLY_ACCOUNT_ID, ORDERLY_BASE_URL.
 //!
-//! # Example
-//! ```text
-//! APCA_API_KEY_ID=PK... APCA_API_SECRET_KEY=... \
-//!   APCA_API_BASE_URL=https://paper-api.alpaca.markets \
-//!   xvn fire-trade --side buy --size-bps 5
-//! ```
-//!
-//! Idempotent on retries: AlpacaExecutor sets client_order_id = setup_id.
+//! Idempotent on retries: every executor uses `cycle_id` as the venue-side
+//! client order id so duplicate retries collapse to a single fill.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use uuid::Uuid;
 
 use xianvec_core::{Action, Direction, RiskDecision, TraderDecision};
-use xianvec_execution::{AlpacaExecutor, Executor};
+use xianvec_execution::{AlpacaExecutor, Executor, OrderlyExecutor};
+
+use crate::commands::venue::Venue;
 
 #[derive(Debug, Clone, Copy)]
 pub enum Side {
@@ -49,6 +46,7 @@ impl std::fmt::Display for Side {
 }
 
 pub async fn run(
+    venue: Venue,
     side: Side,
     size_bps: u32,
     stop_loss_pct: f32,
@@ -60,9 +58,9 @@ pub async fn run(
         Side::Sell => (Action::Sell, Direction::Short),
     };
 
-    let setup_id = Uuid::new_v4();
+    let cycle_id = Uuid::new_v4();
     let decision = TraderDecision {
-        setup_id,
+        cycle_id,
         action,
         size_bps,
         direction,
@@ -73,25 +71,29 @@ pub async fn run(
     let risk = RiskDecision::Approved { decision };
 
     println!(
-        "→ submitting setup_id={setup_id} side={side:?} size_bps={size_bps} \
-         sl={stop_loss_pct}% tp={take_profit_pct}% via Alpaca paper",
+        "→ submitting cycle_id={cycle_id} venue={venue:?} side={side:?} \
+         size_bps={size_bps} sl={stop_loss_pct}% tp={take_profit_pct}%",
     );
 
-    let executor = AlpacaExecutor::from_env().context(
-        "AlpacaExecutor::from_env() failed — check APCA_API_KEY_ID, \
-         APCA_API_SECRET_KEY, APCA_API_BASE_URL",
-    )?;
+    let receipt = match venue {
+        Venue::Alpaca => {
+            let exec = AlpacaExecutor::from_env().map_err(|e| {
+                anyhow::anyhow!(
+                    "AlpacaExecutor::from_env() failed: {e} — check APCA_API_KEY_ID, APCA_API_SECRET_KEY, APCA_API_BASE_URL"
+                )
+            })?;
+            exec.submit(&risk).await?
+        }
+        Venue::Orderly => {
+            let exec = OrderlyExecutor::from_env().map_err(|e| {
+                anyhow::anyhow!(
+                    "OrderlyExecutor::from_env() failed: {e} — check ORDERLY_KEY, ORDERLY_SECRET, ORDERLY_ACCOUNT_ID, ORDERLY_BASE_URL"
+                )
+            })?;
+            exec.submit(&risk).await?
+        }
+    };
 
-    let receipt = executor
-        .submit(&risk)
-        .await
-        .context("submit to Alpaca failed")?;
-
-    // Pretty-print the receipt as JSON so the operator can see venue_order_id,
-    // filled size/price, fees, timestamps without parsing text.
-    let json = serde_json::to_string_pretty(&receipt)
-        .context("serializing ExecutionReceipt to JSON")?;
-    println!("\n--- ExecutionReceipt ---\n{json}");
-
+    println!("\n--- ExecutionReceipt ---\n{}", serde_json::to_string_pretty(&receipt)?);
     Ok(())
 }

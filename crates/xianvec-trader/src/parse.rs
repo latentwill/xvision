@@ -16,7 +16,7 @@ use xianvec_intern::strip_reasoning;
 
 use crate::error::TraderError;
 
-/// What the LLM produces. The runtime fills in `setup_id`.
+/// What the LLM produces. The runtime fills in `cycle_id`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmTraderDecision {
     pub action: Action,
@@ -28,8 +28,8 @@ pub struct LlmTraderDecision {
 }
 
 /// Parse + validate a Trader response. The caller supplies the runtime-owned
-/// `setup_id`.
-pub fn parse_trader_response(body: &str, setup_id: Uuid) -> Result<TraderDecision, TraderError> {
+/// `cycle_id`.
+pub fn parse_trader_response(body: &str, cycle_id: Uuid) -> Result<TraderDecision, TraderError> {
     if body.trim().is_empty() {
         return Err(TraderError::Empty);
     }
@@ -41,7 +41,7 @@ pub fn parse_trader_response(body: &str, setup_id: Uuid) -> Result<TraderDecisio
         .map_err(|e| TraderError::Parse(format!("{e}; body[..200]={}", short(&trimmed, 200))))?;
 
     let decision = TraderDecision {
-        setup_id,
+        cycle_id,
         action: llm.action,
         size_bps: llm.size_bps,
         direction: llm.direction,

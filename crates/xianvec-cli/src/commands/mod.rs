@@ -1,7 +1,16 @@
 pub mod ab_compare;
+pub mod asset;
 pub mod fire_trade;
+pub mod indicator;
+pub mod intern;
+pub mod metrics;
 pub mod report;
+pub mod risk;
 pub mod run_setup;
+pub mod show_briefing;
 pub mod show_decision;
 pub mod show_metrics;
+pub mod store_cmd;
 pub mod strategy;
+pub mod trader;
+pub mod venue;

@@ -17,7 +17,7 @@ impl Strategy for AlwaysShort {
 
     async fn decide(&self, snapshot: &MarketSnapshot) -> Option<TraderDecision> {
         Some(TraderDecision {
-            setup_id: snapshot.setup_id,
+            cycle_id: snapshot.cycle_id,
             action: Action::Sell,
             size_bps: 500,
             direction: Direction::Short,
@@ -38,7 +38,7 @@ mod tests {
 
     fn fixture_snapshot() -> MarketSnapshot {
         MarketSnapshot {
-            setup_id: Uuid::new_v4(),
+            cycle_id: Uuid::new_v4(),
             asset: AssetSymbol::Btc,
             timestamp: Utc::now(),
             price: 70_000.0,
@@ -63,7 +63,7 @@ mod tests {
         let snap = fixture_snapshot();
         let strat = AlwaysShort;
         let dec = strat.decide(&snap).await.expect("must always return Some");
-        assert_eq!(dec.setup_id, snap.setup_id, "setup_id must propagate");
+        assert_eq!(dec.cycle_id, snap.cycle_id, "cycle_id must propagate");
         assert_eq!(dec.action, Action::Sell);
         assert_eq!(dec.direction, Direction::Short);
         assert_eq!(dec.size_bps, 500);

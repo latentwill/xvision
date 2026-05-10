@@ -346,7 +346,7 @@ impl BacktestExecutor {
                     "stop-loss auto-fill"
                 };
                 let receipt = ExecutionReceipt {
-                    setup_id: Uuid::nil(), // auto-fills have no originating setup_id
+                    cycle_id: Uuid::nil(), // auto-fills have no originating cycle_id
                     venue: "backtest".into(),
                     venue_order_id: order_id,
                     asset,
@@ -518,7 +518,7 @@ impl Executor for BacktestExecutor {
         open_pos.mark_price = fill_px;
 
         let receipt = ExecutionReceipt {
-            setup_id: td.setup_id,
+            cycle_id: td.cycle_id,
             venue: "backtest".into(),
             venue_order_id: format!("bt-{}-{}", day_index, fill_seq),
             asset,
@@ -549,7 +549,7 @@ impl Executor for BacktestExecutor {
                 let now = st.now;
                 let order_id = st.next_order_id();
                 let receipt = ExecutionReceipt {
-                    setup_id: Uuid::nil(),
+                    cycle_id: Uuid::nil(),
                     venue: "backtest".into(),
                     venue_order_id: order_id,
                     asset,
@@ -570,7 +570,7 @@ impl Executor for BacktestExecutor {
         let now = st.now;
         let order_id = st.next_order_id();
         let receipt = ExecutionReceipt {
-            setup_id: Uuid::nil(),
+            cycle_id: Uuid::nil(),
             venue: "backtest".into(),
             venue_order_id: order_id,
             asset,
@@ -656,7 +656,7 @@ mod tests {
     ) -> RiskDecision {
         RiskDecision::Approved {
             decision: TraderDecision {
-                setup_id: Uuid::new_v4(),
+                cycle_id: Uuid::new_v4(),
                 action,
                 size_bps,
                 direction,
@@ -764,7 +764,7 @@ mod tests {
 
         let vetoed = RiskDecision::Vetoed {
             original: TraderDecision {
-                setup_id: Uuid::new_v4(),
+                cycle_id: Uuid::new_v4(),
                 action: Action::Buy,
                 size_bps: 500,
                 direction: Direction::Long,

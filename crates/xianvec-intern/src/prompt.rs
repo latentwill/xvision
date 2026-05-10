@@ -35,7 +35,7 @@ pub fn build_intern_prompt(state: &MarketSnapshot, skills: &[SkillRef], opts: &P
     s.push_str(SYSTEM_PREAMBLE);
     s.push_str("\n\n# Market context\n");
     let _ = writeln!(s, "- Asset: {}", state.asset.as_str());
-    let _ = writeln!(s, "- Setup ID: {}", state.setup_id);
+    let _ = writeln!(s, "- Cycle ID: {}", state.cycle_id);
     let _ = writeln!(s, "- Timestamp (UTC): {}", state.timestamp.to_rfc3339());
     let _ = writeln!(s, "- Current price: {:.2}", state.price);
     if let Some(v) = state.volume_24h {
@@ -193,7 +193,7 @@ const SCHEMA_INSTRUCTIONS: &str = "\n\n# Required output (JSON only)\n\
 }\n\
 ```\n\
 \n\
-Emit only the JSON object. The `setup_id`, `asset`, `regime`, and `horizon_hours` fields are filled in by the runtime — do not include them.";
+Emit only the JSON object. The `cycle_id`, `asset`, `regime`, and `horizon_hours` fields are filled in by the runtime — do not include them.";
 
 #[cfg(test)]
 mod tests {
@@ -205,7 +205,7 @@ mod tests {
 
     fn fixture_state() -> MarketSnapshot {
         MarketSnapshot {
-            setup_id: Uuid::nil(),
+            cycle_id: Uuid::nil(),
             asset: AssetSymbol::Btc,
             timestamp: chrono::Utc.timestamp_opt(1_700_000_000, 0).single().unwrap(),
             price: 70_123.45,
@@ -289,9 +289,9 @@ mod tests {
     }
 
     #[test]
-    fn prompt_includes_setup_id_and_asset() {
+    fn prompt_includes_cycle_id_and_asset() {
         let p = build_intern_prompt(&fixture_state(), &[], &PromptOpts::default());
-        assert!(p.contains("Setup ID: 00000000-0000-0000-0000-000000000000"));
+        assert!(p.contains("Cycle ID: 00000000-0000-0000-0000-000000000000"));
         assert!(p.contains("Asset: BTC"));
     }
 

@@ -50,7 +50,7 @@ pub fn render(result: &BacktestResult, cfg: &ReportConfig) -> anyhow::Result<Str
     let mut s = String::with_capacity(4096);
     writeln!(s, "# XIANVEC backtest report")?;
     writeln!(s)?;
-    writeln!(s, "- setups evaluated: {}", result.setups_evaluated)?;
+    writeln!(s, "- cycles evaluated: {}", result.cycles_evaluated)?;
     writeln!(s, "- initial NAV: ${:.2}", result.initial_nav_usd)?;
     writeln!(s, "- started: {}", result.started_at)?;
     writeln!(s, "- finished: {}", result.finished_at)?;
@@ -184,7 +184,7 @@ pub fn render(result: &BacktestResult, cfg: &ReportConfig) -> anyhow::Result<Str
                 writeln!(
                     s,
                     "| {regime:?} | {} | {:+.4} | [{:+.4}, {:+.4}] |",
-                    rm.n_setups,
+                    rm.n_cycles,
                     rm.delta_sharpe.point_estimate,
                     rm.delta_sharpe.ci_low,
                     rm.delta_sharpe.ci_high
@@ -285,7 +285,7 @@ mod tests {
                     },
                 ),
             ]),
-            setups_evaluated: 5,
+            cycles_evaluated: 5,
             initial_nav_usd: 100_000.0,
             started_at: Utc::now(),
             finished_at: Utc::now(),
@@ -320,7 +320,7 @@ mod tests {
     fn render_handles_empty_result() {
         let r = BacktestResult {
             arms: BTreeMap::new(),
-            setups_evaluated: 0,
+            cycles_evaluated: 0,
             initial_nav_usd: 0.0,
             started_at: Utc::now(),
             finished_at: Utc::now(),

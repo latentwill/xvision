@@ -137,7 +137,7 @@ pub fn win_rate(returns: &[f32]) -> f32 {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegimeMetrics {
     /// Number of setup evaluations in this regime stratum.
-    pub n_setups: usize,
+    pub n_cycles: usize,
     /// Bootstrapped Δ-Sharpe (arm_a − arm_b) for this regime.
     pub delta_sharpe: BootstrapResult,
     /// Name of the arm with the higher point-estimate Sharpe within this
@@ -157,7 +157,7 @@ pub struct PreCommittedMetrics {
     pub profit_factor: BTreeMap<String, f32>,
     /// Win rate per arm.
     pub win_rate: BTreeMap<String, f32>,
-    /// Fraction of paired setups where `(action, direction, size_bucket)`
+    /// Fraction of paired cycles where `(action, direction, size_bucket)`
     /// differs between arm_a and arm_b.
     pub decision_divergence_rate: f32,
     /// Δ-Sharpe stratified by regime. Keyed by `Regime` (HashMap because
@@ -221,7 +221,7 @@ pub fn compute_pre_committed(
         wr.insert(name.clone(), win_rate(&arm.returns));
     }
 
-    // Decision divergence rate — paired by setup_id index
+    // Decision divergence rate — paired by cycle_id index
     let divergence_rate = compute_divergence_rate(a, b);
 
     // Regime-stratified Δ-Sharpe
@@ -242,8 +242,8 @@ pub fn compute_pre_committed(
 // ---------------------------------------------------------------------------
 
 /// Decision divergence rate: walks decisions of arm_a and arm_b paired by
-/// index (same setup ordering guaranteed by the harness). Denominator is the
-/// total number of paired setups from arm_a (not union of both arms).
+/// index (same cycle ordering guaranteed by the harness). Denominator is the
+/// total number of paired cycles from arm_a (not union of both arms).
 fn compute_divergence_rate(
     a: &crate::result::ArmResult,
     b: &crate::result::ArmResult,
@@ -284,9 +284,9 @@ fn compute_regime_stratified(
 
     let mut out: HashMap<Regime, RegimeMetrics> = HashMap::new();
     for (regime, (ra, rb)) in buckets {
-        let n_setups = ra.len();
+        let n_cycles = ra.len();
         // Need at least 2 samples for a meaningful bootstrap
-        if n_setups < 2 {
+        if n_cycles < 2 {
             // Build a degenerate result
             let sharpe_a = sharpe_annualized(&ra, periods_per_year);
             let sharpe_b = sharpe_annualized(&rb, periods_per_year);
@@ -301,7 +301,7 @@ fn compute_regime_stratified(
             out.insert(
                 regime,
                 RegimeMetrics {
-                    n_setups,
+                    n_cycles,
                     delta_sharpe: BootstrapResult {
                         point_estimate: pe,
                         ci_low: pe,
@@ -337,7 +337,7 @@ fn compute_regime_stratified(
         out.insert(
             regime,
             RegimeMetrics {
-                n_setups,
+                n_cycles,
                 delta_sharpe: bootstrap,
                 winner,
             },
@@ -494,7 +494,7 @@ mod tests {
 
     fn make_decision(action: Action, direction: Direction, size_bps: u32) -> TraderDecision {
         TraderDecision {
-            setup_id: Uuid::new_v4(),
+            cycle_id: Uuid::new_v4(),
             action,
             size_bps,
             direction,

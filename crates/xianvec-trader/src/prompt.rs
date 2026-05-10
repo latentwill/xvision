@@ -40,7 +40,7 @@ pub fn build_trader_prompt(
 
     s.push_str("\n\n# Intern briefing\n");
     let _ = writeln!(s, "- Asset: {}", briefing.asset.as_str());
-    let _ = writeln!(s, "- Setup ID: {}", briefing.setup_id);
+    let _ = writeln!(s, "- Cycle ID: {}", briefing.cycle_id);
     let _ = writeln!(s, "- Regime: {}", regime_label(briefing.regime));
     let _ = writeln!(s, "- Horizon (hours): {}", briefing.horizon_hours);
     let _ = writeln!(s, "- Signal quality: {:.3}", briefing.signal_quality);
@@ -152,7 +152,7 @@ const SCHEMA_INSTRUCTIONS: &str = "\n\n# Required output (JSON only)\n\
 }\n\
 ```\n\
 \n\
-Emit only the JSON object. The runtime will fill in `setup_id`.";
+Emit only the JSON object. The runtime will fill in `cycle_id`.";
 
 #[cfg(test)]
 mod tests {
@@ -166,7 +166,7 @@ mod tests {
 
     fn fixture_briefing() -> InternBriefing {
         InternBriefing {
-            setup_id: Uuid::nil(),
+            cycle_id: Uuid::nil(),
             asset: AssetSymbol::Btc,
             bull_case: "Funding rate compressed; smart money accumulating spot.".into(),
             bear_case: "Realized vol expanding; long-leverage approaching prior squeeze level.".into(),

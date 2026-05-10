@@ -336,7 +336,7 @@ impl IdentityClient {
         Ok(TokenId(token_id))
     }
 
-    /// Post a reputation update keyed by `setup_id`.
+    /// Post a reputation update keyed by `cycle_id`.
     ///
     /// Encodes `outcome` as JSON, computes keccak256 of that JSON, and calls
     /// `giveFeedback` on the ReputationRegistry.  The P&L value is encoded as
@@ -344,14 +344,14 @@ impl IdentityClient {
     pub async fn post_reputation(
         &self,
         agent: TokenId,
-        setup_id: Uuid,
+        cycle_id: Uuid,
         outcome: TradeOutcome,
         signer: &PrivateKeySigner,
     ) -> Result<TxHash, IdentityError> {
         info!(
             chain_id = self.chain_id,
             %agent,
-            %setup_id,
+            %cycle_id,
             "posting reputation update"
         );
 
@@ -375,7 +375,7 @@ impl IdentityClient {
                 value_raw,
                 6u8,
                 "xianvec".to_string(),
-                setup_id.to_string(),
+                cycle_id.to_string(),
                 String::new(),
                 feedback_json,
                 feedback_hash,
@@ -424,7 +424,7 @@ impl IdentityClient {
             })?;
 
             entries.push(ReputationEntry {
-                setup_id: outcome.setup_id,
+                cycle_id: outcome.cycle_id,
                 // The on-chain getFeedback does not return the original tx hash;
                 // timestamp is the best available block-level anchor until a
                 // subgraph or event-scan layer is added in a later phase.
@@ -573,14 +573,14 @@ mod tests {
         let token_id = client.register(&uri, &signer).await.expect("register");
 
         let outcome = TradeOutcome {
-            setup_id: Uuid::new_v4(),
+            cycle_id: Uuid::new_v4(),
             realized_pnl_usd: 12.34,
             action: "close".to_string(),
             closed_at: Utc::now(),
         };
-        let setup_id = outcome.setup_id;
+        let cycle_id = outcome.cycle_id;
         let tx_hash = client
-            .post_reputation(token_id.clone(), setup_id, outcome.clone(), &signer)
+            .post_reputation(token_id.clone(), cycle_id, outcome.clone(), &signer)
             .await
             .expect("post_reputation");
 
@@ -588,7 +588,7 @@ mod tests {
 
         let entries = client.read_reputation(token_id).await.expect("read_reputation");
         assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].setup_id, setup_id);
+        assert_eq!(entries[0].cycle_id, cycle_id);
         assert_eq!(entries[0].outcome.realized_pnl_usd, outcome.realized_pnl_usd);
     }
 
