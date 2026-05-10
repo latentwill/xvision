@@ -3,22 +3,30 @@
 > Single source of truth for current phase and per-track ownership. Updated
 > whenever a track lands a phase boundary or a new track spawns.
 >
-> Last updated: 2026-05-10 by `docker-image` (added third parallel track)
+> Last updated: 2026-05-10 by `coordinator` (Phase A merged, eval-engine claimed)
 
 ## Current phase
 
-**Phase A — Foundation** (running now)
+**Phase A — Foundation** ✅ **complete**
 
-Goal: land the engine API foundation, broker surface trait, and frontend
-scaffolding so subsequent tracks have stable surfaces to build on.
+All four foundation tracks merged to `main`:
+
+| Track | PR | Merge commit | Notes |
+|---|---|---|---|
+| `engine-api` | [#4](https://github.com/latentwill/xvision/pull/4) | `adc8d4a` | typed engine API + audit + migration 001 |
+| `broker-surface` | [#5](https://github.com/latentwill/xvision/pull/5) | `9cc93cb` | unified BrokerSurface + AlpacaPaper + MockBrokerSurface |
+| `frontend-foundation` | [#7](https://github.com/latentwill/xvision/pull/7) | merged | xvision-dashboard + Vite/Tailwind shell |
+| `docker-image` | [#6](https://github.com/latentwill/xvision/pull/6) | `76b24b5` | slim runtime image + GHCR workflow |
+
+**Phase B — Build-out** (running now)
+
+Phase A unblocked all of Phase B. Pick a row from the build order, claim it via
+`team/queue/<track>__<utc>__claim.md`, edit the row below, and start.
 
 | Track | Worktree | Branch | Owner CLI | Plan | Status |
 |---|---|---|---|---|---|
 | `coordinator` | `xvision/` (main) | `main` | session 1 (this one) | — | active — coordinator + integration |
-| `engine-api` | `.worktrees/engine-api` | `feature/engine-api-foundation` | session 1 (this one) | [#3](../docs/superpowers/plans/2026-05-10-engine-api-foundation.md) | **PR #4 open** — awaiting merge |
-| `broker-surface` | `.worktrees/broker-surface` | `feature/broker-surface-trait` | session 1 (this one) | [Plan 2c §Task 7](../docs/superpowers/plans/2026-05-08-strategy-engine-2c-scheduler-live-exec.md#task-7-brokersurface-trait--dispatch) (extracted) | **PR #5 open** — awaiting merge |
-| `frontend-foundation` | `.worktrees/frontend-foundation` | `feature/frontend-foundation` | session 2 (external CLI) | [Plan 1](../docs/superpowers/plans/2026-05-10-frontend-1-foundation-and-strategies.md) Phases 0–1 (scaffolding only) | active — Tasks 1+2 + Vite/Tailwind/Shell committed; Task 5 (ts-rs) waits on PR #4 |
-| `docker-image` | `.worktrees/docker-image` | `feature/docker-image` | session 3 | [Plan #14](../docs/superpowers/plans/2026-05-10-docker-image.md) | claimed — independent of Phase A; v1 QA distribution channel |
+| `eval-engine` | `.worktrees/eval-engine` | `feature/eval-engine` | session 1 (this one) | [#5 (Eval Engine)](../docs/superpowers/plans/2026-05-08-eval-engine-plan.md) Phase 3.A only (Tasks 1–3) | claiming — Phase 3.A foundation: migration 002 + Run/Scenario types + RunStore |
 
 ## Build order (post-Phase-A)
 
