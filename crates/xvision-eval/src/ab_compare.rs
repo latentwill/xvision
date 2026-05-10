@@ -11,6 +11,7 @@ use std::sync::Arc;
 use anyhow::anyhow;
 
 use xvision_core::market::MarketSnapshot;
+use xvision_core::slot::SlotRef;
 use xvision_intern::{BriefingCache, InternBackend};
 use xvision_risk::RiskLayer;
 use xvision_trader::{TraderBackend, TraderParams};
@@ -33,10 +34,17 @@ pub struct ArmSpec {
 
 /// Which strategy this arm wraps. Post-CV-extraction the only LLM arm is
 /// `TraderArm` (no per-arm vector config); classical baselines are listed
-/// for explicit selection from the CLI.
+/// for explicit selection from the CLI. The `Trader` variant carries optional
+/// `intern` / `trader` slot overrides so a single `xvn ab-compare` run can
+/// pit the same strategy against multiple LLM (provider, model) combinations
+/// — see Plan #7 (LLM providers + per-arm models). When both slots are
+/// `None`, the arm uses the global `[intern]` / `[trader]` config defaults.
 #[derive(Debug, Clone)]
 pub enum ArmKind {
-    Trader,
+    Trader {
+        intern: Option<SlotRef>,
+        trader: Option<SlotRef>,
+    },
     BuyAndHold,
     AlwaysLong,
     AlwaysShort,
@@ -60,7 +68,10 @@ pub fn parse_arm_spec(s: &str) -> anyhow::Result<ArmSpec> {
     match head {
         "trader_arm" => Ok(ArmSpec {
             name: "trader_arm".into(),
-            kind: ArmKind::Trader,
+            kind: ArmKind::Trader {
+                intern: None,
+                trader: None,
+            },
         }),
         "buy_and_hold" => Ok(ArmSpec {
             name: "buy_and_hold".into(),
@@ -120,7 +131,10 @@ pub fn default_arms() -> Vec<ArmSpec> {
     vec![
         ArmSpec {
             name: "trader_arm".into(),
-            kind: ArmKind::Trader,
+            kind: ArmKind::Trader {
+                intern: None,
+                trader: None,
+            },
         },
         ArmSpec {
             name: "buy_and_hold".into(),
@@ -154,7 +168,10 @@ pub async fn run_ab_compare(
             // practice) and the runtime is short-lived.
             let static_name: &'static str = Box::leak(spec.name.clone().into_boxed_str());
             let strategy: Box<dyn Algorithm> = match spec.kind {
-                ArmKind::Trader => Box::new(TraderArm::new(
+                // The slot fields are read-but-ignored at this point in Plan #7
+                // (Phase 3 wires them through ProviderRegistry). Phase 2 just
+                // lands the type plumbing so the parser + CLI can populate them.
+                ArmKind::Trader { intern: _, trader: _ } => Box::new(TraderArm::new(
                     static_name,
                     Arc::clone(&intern),
                     intern_provider.clone(),
@@ -192,7 +209,31 @@ mod tests {
     fn parse_trader_arm() {
         let a = parse_arm_spec("trader_arm").unwrap();
         assert_eq!(a.name, "trader_arm");
-        assert!(matches!(a.kind, ArmKind::Trader));
+        assert!(matches!(
+            a.kind,
+            ArmKind::Trader {
+                intern: None,
+                trader: None
+            }
+        ));
+    }
+
+    #[test]
+    fn trader_arm_kind_carries_optional_slots() {
+        let spec = ArmSpec {
+            name: "trader_arm".into(),
+            kind: ArmKind::Trader {
+                intern: Some(SlotRef::new("anthropic", "claude-opus-4-7")),
+                trader: None,
+            },
+        };
+        match spec.kind {
+            ArmKind::Trader { intern, trader } => {
+                assert_eq!(intern.unwrap().model, "claude-opus-4-7");
+                assert!(trader.is_none());
+            }
+            _ => panic!("wrong variant"),
+        }
     }
 
     #[test]
