@@ -1,14 +1,31 @@
 use std::sync::OnceLock;
 
+use crate::templates::breakout::Breakout;
+use crate::templates::custom::Custom;
 use crate::templates::mean_reversion::MeanReversion;
+use crate::templates::momentum::Momentum;
+use crate::templates::news_trader::NewsTrader;
+use crate::templates::range_trade::RangeTrade;
+use crate::templates::scalping::Scalping;
+use crate::templates::trend_follower::TrendFollower;
 use crate::templates::Template;
 
 static REGISTRY: OnceLock<Vec<Box<dyn Template>>> = OnceLock::new();
 
 fn registry() -> &'static [Box<dyn Template>] {
     REGISTRY.get_or_init(|| {
-        // Templates added via Task 9.
-        vec![Box::new(MeanReversion) as Box<dyn Template>]
+        vec![
+            Box::new(TrendFollower) as Box<dyn Template>,
+            Box::new(Breakout),
+            Box::new(MeanReversion),
+            Box::new(Momentum),
+            Box::new(RangeTrade),
+            Box::new(Scalping),
+            Box::new(NewsTrader),
+            Box::new(Custom),
+            // Baseline registered as a marketplace seed listing.
+            crate::baselines::ma_crossover::ma_crossover_template(),
+        ]
     })
 }
 
