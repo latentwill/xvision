@@ -8024,6 +8024,7 @@ dependencies = [
 name = "xvision-execution"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "apca",
  "async-trait",
  "base64",
