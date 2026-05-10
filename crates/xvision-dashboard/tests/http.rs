@@ -13,13 +13,48 @@ async fn boot() -> (TestServer, TempDir) {
 }
 
 #[tokio::test]
-async fn health_endpoint_returns_ok() {
+async fn health_endpoint_reports_probes() {
     let (server, _tmp) = boot().await;
 
     let response = server.get("/api/health").await;
     response.assert_status_ok();
     let body: serde_json::Value = response.json();
+
+    // The aggregate status mirrors the worst probe — a fresh tempdir with
+    // a freshly migrated db should be "ok" across all probes.
     assert_eq!(body["status"], "ok");
+
+    let probes = body["probes"].as_array().expect("probes array");
+    let names: Vec<_> = probes
+        .iter()
+        .map(|p| p["name"].as_str().unwrap_or("").to_string())
+        .collect();
+    assert!(names.contains(&"data_dir".into()), "data_dir probe present");
+    assert!(names.contains(&"db".into()), "db probe present");
+    assert!(names.contains(&"bundles".into()), "bundles probe present");
+
+    // Every probe carries an explicit status — schema contract.
+    for p in probes {
+        assert!(p["status"].is_string(), "probe.status is string");
+    }
+}
+
+#[tokio::test]
+async fn health_db_probe_records_latency() {
+    let (server, _tmp) = boot().await;
+    let response = server.get("/api/health").await;
+    let body: serde_json::Value = response.json();
+    let db = body["probes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["name"] == "db")
+        .expect("db probe present");
+    assert_eq!(db["status"], "ok");
+    assert!(
+        db["latency_ms"].is_number(),
+        "db probe records latency_ms"
+    );
 }
 
 #[tokio::test]
