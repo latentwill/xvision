@@ -3,7 +3,7 @@
 > Single source of truth for current phase and per-track ownership. Updated
 > whenever a track lands a phase boundary or a new track spawns.
 >
-> Last updated: 2026-05-10 by `coordinator` (initial setup)
+> Last updated: 2026-05-10 by `docker-image` (added third parallel track)
 
 ## Current phase
 
@@ -18,6 +18,7 @@ scaffolding so subsequent tracks have stable surfaces to build on.
 | `engine-api` | `.worktrees/engine-api` | `feature/engine-api-foundation` | session 1 (this one) | [#3](../docs/superpowers/plans/2026-05-10-engine-api-foundation.md) | **PR #4 open** — awaiting merge |
 | `broker-surface` | `.worktrees/broker-surface` | `feature/broker-surface-trait` | session 1 (this one) | [Plan 2c §Task 7](../docs/superpowers/plans/2026-05-08-strategy-engine-2c-scheduler-live-exec.md#task-7-brokersurface-trait--dispatch) (extracted) | **PR #5 open** — awaiting merge |
 | `frontend-foundation` | `.worktrees/frontend-foundation` | `feature/frontend-foundation` | session 2 (external CLI) | [Plan 1](../docs/superpowers/plans/2026-05-10-frontend-1-foundation-and-strategies.md) Phases 0–1 (scaffolding only) | active — Tasks 1+2 + Vite/Tailwind/Shell committed; Task 5 (ts-rs) waits on PR #4 |
+| `docker-image` | `.worktrees/docker-image` | `feature/docker-image` | session 3 | [Plan #14](../docs/superpowers/plans/2026-05-10-docker-image.md) | claimed — independent of Phase A; v1 QA distribution channel |
 
 ## Build order (post-Phase-A)
 
@@ -35,6 +36,7 @@ Phase A unlocks Phase B. See `v1-shipping-plan.md` for the full sequence.
 | B.8 | Command Palette | [#12](../docs/superpowers/plans/2026-05-10-command-palette-plan.md) | engine-api |
 | B.9 | Leverage items | [#13](../docs/superpowers/plans/2026-05-10-leverage-items.md) | none (docs+CLI) |
 | B.10 | Frontend Plan 2–5 | [front-2](../docs/superpowers/plans/2026-05-10-frontend-2-read-only-screens.md) … [front-5](../docs/superpowers/plans/2026-05-10-frontend-5-findings-compare-polish.md) | per-plan deps in their files |
+| B.11 | Docker image | [#14](../docs/superpowers/plans/2026-05-10-docker-image.md) | none (independent — packages whatever is on `main`) |
 
 ## How to spawn a CLI on a track
 

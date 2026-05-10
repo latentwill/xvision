@@ -1,0 +1,47 @@
+# Local-dev convenience for the xvision container.
+#
+# Usage:
+#   cp .env.example .env             # fill in Alpaca / Orderly creds
+#   docker compose build             # builds xvision:dev
+#   docker compose run --rm xvn --help
+#   docker compose run --rm xvn store stats --db /data/store.db
+#
+# The `data` named volume persists store.db across runs.
+
+services:
+  xvn:
+    build:
+      context: .
+      args:
+        WITH_IDENTITY: "0"
+    image: xvision:dev
+    env_file:
+      - .env
+    environment:
+      XVN_AUTOMIGRATE: "1"
+    volumes:
+      - data:/data
+      - ./config:/config:ro
+      - ./strategies:/strategies:ro
+    # Default to --help so `docker compose run --rm xvn` is harmless.
+    command: ["--help"]
+
+  xvn-identity:
+    profiles: ["identity"]
+    build:
+      context: .
+      args:
+        WITH_IDENTITY: "1"
+    image: xvision:dev-identity
+    env_file:
+      - .env
+    environment:
+      XVN_AUTOMIGRATE: "1"
+    volumes:
+      - data:/data
+      - ./config:/config:ro
+      - ./strategies:/strategies:ro
+    command: ["--help"]
+
+volumes:
+  data:
