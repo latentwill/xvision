@@ -11,3 +11,7 @@ pub mod scenario;
 pub mod store;
 
 pub use run::{MetricsSummary, Run, RunMode, RunStatus};
+pub use scenario::{
+    canonical_scenarios, Capital, Fees, LatencyModel, Scenario, ScenarioRisk, SlippageModel,
+    TimeWindow,
+};
