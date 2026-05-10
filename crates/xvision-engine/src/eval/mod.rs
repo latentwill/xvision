@@ -6,11 +6,14 @@
 //! See `docs/superpowers/plans/2026-05-08-eval-engine-plan.md` for the full
 //! roadmap.
 
+pub mod attestation;
 pub mod executor;
 pub mod metrics;
 pub mod run;
 pub mod scenario;
 pub mod store;
+
+pub use attestation::{EvalAttestation, TokensUsed};
 
 pub use run::{MetricsSummary, Run, RunMode, RunStatus};
 pub use scenario::{

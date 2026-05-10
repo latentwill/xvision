@@ -8146,6 +8146,8 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
+ "ed25519-dalek",
+ "hex",
  "proptest",
  "reqwest 0.13.3",
  "serde",
