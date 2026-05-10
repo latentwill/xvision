@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use xvision_engine::agent::execute::{execute_slot, SlotInput};
-use xvision_engine::agent::llm::MockDispatch;
+use xvision_engine::agent::llm::{ContentBlock, LlmResponse, MockDispatch, StopReason};
 use xvision_engine::bundle::slot::LLMSlot;
 use xvision_engine::tools::ToolRegistry;
 
@@ -27,6 +27,50 @@ async fn execute_slot_returns_parsed_output() {
     .unwrap();
     assert!(out.text().contains("long_open"));
     assert!(out.input_tokens > 0);
+}
+
+#[tokio::test]
+async fn execute_slot_loops_through_tool_use_to_final_text() {
+    let slot = LLMSlot {
+        role: "trader".into(),
+        prompt: "decide".into(),
+        model_requirement: "anthropic.claude-sonnet-4.6".into(),
+        allowed_tools: vec!["ohlcv".into()],
+    };
+
+    // Sequence: turn 1 emits tool_use(ohlcv); turn 2 emits final text.
+    let dispatch = Arc::new(MockDispatch::sequence(vec![
+        MockDispatch::tool_use(
+            "tu_001",
+            "ohlcv",
+            serde_json::json!({"asset": "BTC/USD", "fixture": "test-fixture-btc-2024-01"}),
+        ),
+        LlmResponse {
+            content: vec![ContentBlock::Text {
+                text: r#"{"action":"long_open","conviction":0.7,"justification":"oversold"}"#
+                    .into(),
+            }],
+            stop_reason: StopReason::EndTurn,
+            input_tokens: 50,
+            output_tokens: 30,
+        },
+    ]));
+    let tools = Arc::new(ToolRegistry::default_with_builtins());
+
+    let out = execute_slot(SlotInput {
+        slot: &slot,
+        upstream_inputs: serde_json::json!({
+            "asset": "BTC/USD",
+            "fixture": "test-fixture-btc-2024-01"
+        }),
+        dispatch,
+        tools,
+    })
+    .await
+    .unwrap();
+    assert!(out.text().contains("long_open"));
+    // Two LLM calls: tool_use then final text. Tokens accumulate.
+    assert!(out.input_tokens >= 50);
 }
 
 #[tokio::test]
