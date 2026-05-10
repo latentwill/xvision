@@ -19,8 +19,7 @@
 #   MODEL=gguf|q4|q5|q6|q8                Skip the model menu.
 #                                         gguf  = best quant (Q8_0); inference path
 #                                         qN    = pick a specific GGUF quant
-#   INTERN=anthropic|openai|openrouter|together|groq|deepseek|local|acpx|custom|skip
-#   ACPX_AGENT=codex|claude|openclaw|pi   (used when INTERN=acpx)
+#   INTERN=anthropic|openai|openrouter|together|groq|deepseek|local|custom|skip
 #                                         Skip the intern backend menu.
 #   ALPACA=skip                           Skip Alpaca paper credential prompt.
 #   ASSUME_YES=1                          Take all defaults; never prompt.
@@ -401,13 +400,10 @@ Pick the Stage 1 Intern backend:
   6) deepseek    — DeepSeek API                                     [DEEPSEEK_API_KEY]
   7) local       — local OpenAI-compat server (vLLM / Ollama / llama.cpp)
   8) custom      — user-supplied base URL + key env var
-  9) acpx        — agent harness via Agent Client Protocol (F21).
-                   Subprocesses 'acpx <agent> exec' — multi-step tool use.
-                   Non-deterministic: best for forward paper, not backtest.
- 10) skip        — configure later
+  9) skip        — configure later
 
 EOF
-  local sel; sel=$(prompt "Selection [1-10, default 1]:" "1")
+  local sel; sel=$(prompt "Selection [1-9, default 1]:" "1")
   case "$sel" in
     1|"") echo anthropic ;;
     2) echo openai ;;
@@ -417,31 +413,9 @@ EOF
     6) echo deepseek ;;
     7) echo local ;;
     8) echo custom ;;
-    9) echo acpx ;;
-    10) echo skip ;;
+    9) echo skip ;;
     *) fail "unknown intern selection: $sel" ;;
   esac
-}
-
-install_acpx() {
-  # Node + global acpx. Idempotent — `npm i -g` over an existing install
-  # just upgrades. Underlying agent CLI (codex/claude/openclaw/pi) is the
-  # operator's responsibility — too many auth flows to script safely.
-  if ! command -v node >/dev/null 2>&1; then
-    log "installing Node.js (apt nodejs npm)"
-    if command -v apt-get >/dev/null 2>&1; then
-      $SUDO apt-get install -y --no-install-recommends nodejs npm
-    else
-      warn "no apt-get — install Node.js manually, then re-run with INTERN=acpx ONLY=intern"
-      return 1
-    fi
-  fi
-  log "node: $(node --version)  npm: $(npm --version)"
-  if ! command -v acpx >/dev/null 2>&1; then
-    log "installing acpx globally (npm i -g acpx@latest)"
-    $SUDO npm install -g acpx@latest
-  fi
-  ok "acpx: $(acpx --version 2>/dev/null || echo 'installed')"
 }
 
 setup_intern() {
@@ -516,112 +490,6 @@ setup_intern() {
         key=$(prompt "Value for $key_env (paste, blank to skip):" "")
         [[ -n "$key" ]] && env_set "$key_env" "$key"
       fi
-      ;;
-    acpx)
-      install_acpx || warn "acpx install incomplete — re-run after fixing Node/npm"
-      local agent; agent="${ACPX_AGENT:-}"
-      local custom_cmd=""
-      if [[ -z "$agent" ]]; then
-        cat >&2 <<EOAGENT
-
-ACPX delegates Stage 1 to an ACP-speaking agent. Built-in registry:
-
-  1) claude     Claude Code (npm i -g @anthropic-ai/claude-code; ANTHROPIC_API_KEY)
-  2) codex      OpenAI Codex via @zed-industries/codex-acp                [OPENAI_API_KEY]
-  3) gemini     Google Gemini CLI (gemini --acp)                          [GEMINI_API_KEY]
-  4) opencode   OpenCode AI — open-source agent (npx -y opencode-ai acp)
-  5) cursor     Cursor agent (cursor-agent acp)
-  6) copilot    GitHub Copilot CLI (copilot --acp --stdio)
-  7) qwen       Alibaba Qwen Coder (qwen --acp)
-  8) kimi       Moonshot Kimi (kimi acp)
-  9) iflow      iFlow / Aliyun (iflow --experimental-acp)
- 10) trae       ByteDance Trae (traecli acp serve)
- 11) qoder      Qoder (qodercli --acp)
- 12) kilocode   KiloCode (npx -y @kilocode/cli acp)
- 13) kiro       Kiro (kiro-cli-chat acp)
- 14) droid      Factory Droid (droid exec --output-format acp)
- 15) openclaw   OpenClaw ACP bridge — predecessor to Hermes
- 16) pi         Pi Coding Agent (npx pi-acp)
-
-Custom ACP servers (escape hatch — runs as 'acpx --agent <cmd>'):
- 17) hermes     NousResearch Hermes Agent — itself an ACP server. Direct
-                routes to Xiaomi MiMo, Kimi, GLM, MiniMax, Nous Portal.
-                Successor to OpenClaw. Run 'pip install hermes-agent' or the
-                installer at https://hermes-agent.nousresearch.com/docs/.
- 18) custom     Paste your own '--agent <cmd>' invocation.
-
-Underlying agent CLIs are NOT installed by this script — auth flows vary.
-Install separately per the agent's docs.
-
-EOAGENT
-        local sel; sel=$(prompt "Agent [1-18, default 1]:" "1")
-        case "$sel" in
-          1|"") agent=claude ;;
-          2) agent=codex ;;
-          3) agent=gemini ;;
-          4) agent=opencode ;;
-          5) agent=cursor ;;
-          6) agent=copilot ;;
-          7) agent=qwen ;;
-          8) agent=kimi ;;
-          9) agent=iflow ;;
-          10) agent=trae ;;
-          11) agent=qoder ;;
-          12) agent=kilocode ;;
-          13) agent=kiro ;;
-          14) agent=droid ;;
-          15) agent=openclaw ;;
-          16) agent=pi ;;
-          17) agent=hermes; custom_cmd="hermes acp" ;;
-          18) agent=custom; custom_cmd="$(prompt 'Full --agent command (e.g. "node ./my-acp-server.mjs"):' '')" ;;
-          *) fail "unknown acpx agent selection: $sel" ;;
-        esac
-      fi
-      env_set XVN_INTERN_PROVIDER          "acpx"
-      env_set XVN_INTERN_ACPX_AGENT        "$agent"
-      env_set XVN_INTERN_ACPX_TIMEOUT_SECS "${XVN_INTERN_ACPX_TIMEOUT_SECS:-300}"
-      if [[ -n "$custom_cmd" ]]; then
-        env_set XVN_INTERN_ACPX_CUSTOM_CMD "$custom_cmd"
-      fi
-      # Sandbox the agent's fs/* operations to a scratch workspace by
-      # default; operator can repoint if they want the agent in-tree.
-      local ws="${XVN_INTERN_ACPX_WORKSPACE:-$REPO_ROOT/.acpx-workspace}"
-      mkdir -p "$ws"
-      env_set XVN_INTERN_ACPX_WORKSPACE    "$ws"
-
-      # Write acpx.config.json inside the workspace, registering xvn-mcp
-      # as a stdio MCP server. Every ACP-compatible agent ACPX talks to
-      # (Hermes, Claude Code, Codex, OpenCode, ...) will see the xvn_*
-      # tools at session start. The xvn-mcp binary is built later in the
-      # `build` stage; the config just points at where it'll live.
-      local cfg="$ws/acpx.config.json"
-      cat > "$cfg" <<EOJSON
-{
-  "mcpServers": [
-    {
-      "type": "stdio",
-      "name": "xianvec",
-      "command": "$REPO_ROOT/target/release/xvn-mcp",
-      "args": [],
-      "env": []
-    }
-  ]
-}
-EOJSON
-      ok "wrote $cfg"
-
-      # Best-effort key prompts for the most common agents; harmless to skip.
-      case "$agent" in
-        codex)   key=$(prompt "OPENAI_API_KEY (paste, blank if already set):" "")
-                 [[ -n "$key" ]] && env_set OPENAI_API_KEY "$key" ;;
-        claude)  key=$(prompt "ANTHROPIC_API_KEY (paste, blank if using 'claude login'):" "")
-                 [[ -n "$key" ]] && env_set ANTHROPIC_API_KEY "$key" ;;
-        gemini)  key=$(prompt "GEMINI_API_KEY (paste, blank to skip):" "")
-                 [[ -n "$key" ]] && env_set GEMINI_API_KEY "$key" ;;
-        hermes)  log "Hermes is configured via 'hermes model' / 'hermes setup' — provider keys live in Hermes's own config." ;;
-        *) : ;;
-      esac
-      ok "acpx agent: $agent${custom_cmd:+  (--agent \"$custom_cmd\")}  workspace: $ws"
       ;;
     skip)
       log "intern backend not configured — edit $ENV_FILE and config/default.toml later."
@@ -721,10 +589,9 @@ build_xvn() {
   ok "built target/release/xvn"
 
   # xvn-mcp: stdio Model Context Protocol server exposing xianvec-data
-  # indicators as agent-callable tools. Pure CPU; no cuda feature needed.
-  # Advertised to ACPX via acpx.config.json so any ACP-compatible agent
-  # (Hermes, Claude Code, Codex, OpenCode, etc.) gets the xvn_* tools at
-  # session start.
+  # indicators. Optional — agents driving xvn directly via Bash can use
+  # `xvn indicator` instead. Built for callers that want to register the
+  # MCP server in their own client config (Claude Code, etc.).
   log "building xvn-mcp (CPU-only, typically <1 min; reuses target/ from above)"
   cargo build --release -p xianvec-mcp
   ok "built target/release/xvn-mcp"
@@ -793,12 +660,10 @@ $(sed 's/^/    /' "$ENV_FILE" 2>/dev/null || echo "    (none)")
 xvn inference (uses GGUF + tokenizer):
     target/release/xvn run-setup --model "\$XVN_MODEL_PATH" --tokenizer "\$XVN_TOKENIZER" ...
 
-xvn-mcp (Model Context Protocol server — exposes xianvec-data indicators
-as agent-callable tools):
+xvn-mcp (optional Model Context Protocol server — exposes xianvec-data
+indicators as agent-callable tools for MCP-aware clients):
     target/release/xvn-mcp                  # speaks JSON-RPC over stdio
-    # Registered in \$XVN_INTERN_ACPX_WORKSPACE/acpx.config.json. Any ACP-
-    # compatible agent driven through ACPX (Hermes, Claude, Codex, …) will
-    # see xvn_rsi / xvn_macd / xvn_bollinger / etc. at session start.
+    # Agents driving xvn through Bash can use 'xvn indicator <name> …' instead.
 
 Out of v1 scope, do separately if/when you need them: identity / Mantle /
 Orderly / op-vault integration.
