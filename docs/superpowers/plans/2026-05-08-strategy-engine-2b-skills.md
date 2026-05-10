@@ -5,7 +5,7 @@
 > **Scope decision (2026-05-08):** Marketplace + reputation work has been **fully deferred to Plan 5** (blockchain integration). Plan 2b ships only the **skills system** — OSShip-style markdown skills authors can compose into strategy slots. Skills are useful for authoring (e.g., a `news-aware-decision` skill that any trader slot can attach) and stand alone without a marketplace. Discovery + reputation + content-addressed publishing all wait for the blockchain plan to be in place.
 > **Execution-order decision (2026-05-08):** Execute this plan **after Plan 3 (eval engine) AND Plan 2a ship**, in case eval's findings-extractor markdown prompt format or 2a's MCP authoring surface surface design decisions that affect how skills should be structured. Plan 3 ships an inline OSShip-style markdown prompt at `xianvec-engine/src/eval/findings/prompts/extractor-v1.md` — when this plan ships, that prompt becomes a candidate for migration into the formal skill registry as `eval-findings-extractor`. The cross-pollination is real, hence the deferral.
 
-**Goal:** Authors can write reusable OSShip-style skill markdown files, save them locally, and attach them to strategy slots to override prompts + tool allowlists. After this plan ships: an author runs `xvn skill new --from-file my-trader.md` to register a skill, `xvn skill ls` to list saved skills, and `xvn skill attach <strategy_id> --slot trader --skill my-trader` to swap a strategy's trader prompt with the skill's body. The same surface is exposed via 3 MCP verbs so external AI agents can compose skills into strategies.
+**Goal:** Authors can write reusable OSShip-style skill markdown files, save them locally, and attach them to strategy slots to override prompts + tool allowlists. After this plan ships: an author runs `xvn skill new --from-file my-trader.md` to register a skill, `xvn skill ls` to list saved skills, and `xvn skill attach <agent_id> --slot trader --skill my-trader` to swap a strategy's trader prompt with the skill's body. The same surface is exposed via 3 MCP verbs so external AI agents can compose skills into strategies.
 
 **Architecture:** One new crate. `xianvec-skills` parses + validates OSShip-style skill markdown, supports skill attach to slots, stores skills under `$XVN_HOME/skills/`. The MCP server (Plan 2a) gains 3 new authoring verbs.
 
@@ -561,7 +561,7 @@ Args: `{}`. Returns: `Vec<{ name, display_name, description, version }>`. Same p
 
 ### Task 6: `attach_skill_to_agent` MCP verb
 
-Args: `{ strategy_id, slot, skill_name }`. Returns: `{ strategy_id, slot, skill_name }`. Mutates the saved bundle in `$XVN_HOME/strategies/<id>.json` via `FilesystemStore::load → attach_skill_to_agent → FilesystemStore::save`. Commit `feat(engine): MCP attach_skill_to_agent verb`.
+Args: `{ agent_id, slot, skill_name }`. Returns: `{ agent_id, slot, skill_name }`. Mutates the saved bundle in `$XVN_HOME/strategies/<id>.json` via `FilesystemStore::load → attach_skill_to_agent → FilesystemStore::save`. Commit `feat(engine): MCP attach_skill_to_agent verb`.
 
 After Task 6, all 10 verbs (7 authoring from Plan 2a + 3 skills from Plan 2b) appear in `tools/list`. Update `tests/mcp_authoring.rs` to assert the full set.
 
@@ -608,7 +608,7 @@ enum SkillAction {
     Ls,
     /// Attach a skill to a slot in a saved strategy.
     Attach {
-        strategy_id: String,
+        agent_id: String,
         #[arg(long)]
         slot: String,        // regime | intern | trader
         #[arg(long)]
@@ -620,7 +620,7 @@ pub async fn run(cmd: SkillCmd) -> anyhow::Result<()> {
     match cmd.action {
         SkillAction::New { from_file } => new(from_file).await,
         SkillAction::Ls => ls().await,
-        SkillAction::Attach { strategy_id, slot, skill } => attach(&strategy_id, &slot, &skill).await,
+        SkillAction::Attach { agent_id, slot, skill } => attach(&agent_id, &slot, &skill).await,
     }
 }
 
@@ -647,12 +647,12 @@ async fn ls() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn attach(strategy_id: &str, slot: &str, skill_name: &str) -> anyhow::Result<()> {
-    let mut bundle = strategy_store().load(strategy_id).await?;
+async fn attach(agent_id: &str, slot: &str, skill_name: &str) -> anyhow::Result<()> {
+    let mut bundle = strategy_store().load(agent_id).await?;
     let skill = skill_store().load(skill_name).await?;
     attach_skill_to_agent(&mut bundle, slot, &skill)?;
     strategy_store().save(&bundle).await?;
-    println!("attached {skill_name} → {strategy_id}#{slot}");
+    println!("attached {skill_name} → {agent_id}#{slot}");
     Ok(())
 }
 ```

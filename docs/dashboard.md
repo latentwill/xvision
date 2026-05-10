@@ -1,13 +1,26 @@
 # Dashboard — surface inventory
 
-> **2026-05-07: Partially superseded by ADR 0011.** Panels referencing
-> `vectors_on`/`vectors_off`, `active_vectors`, `vector_config_hash`, and
-> the per-axis (Conviction/Patience/Risk/Trend) cuts are obsolete in
-> xianvec — they apply to xianvec-play if/when the CV substrate ships a
-> dashboard there. The strategy-level Δ-Sharpe / leaderboard / per-trade
-> ledger panels (V1, V2, V3 etc. retargeted at `arm_name` not
-> `vector_config_hash`) carry forward as the marketplace dashboard
-> surface.
+> **🗄️ ARCHIVED — 2026-05-10.** This document is preserved for historical
+> reference only. Treat it as design intent, not a live spec. New work on
+> the dashboard surface should refer to the documents below.
+>
+> **Subsumed by:**
+> - **UI design lock:** `docs/design/ui-elements.md` (v0.2 — five archetypes + sitemap, current source of truth for the dashboard surface).
+> - **Eval engine panels:** `docs/superpowers/specs/2026-05-08-eval-engine-design.md` + `docs/superpowers/plans/2026-05-08-eval-engine-plan.md` (the H/T/A/E/R/O panel families from §3 land here).
+> - **Dashboard implementation:** `docs/superpowers/plans/2026-05-08-strategy-engine-2d-dashboard-wizard.md` (Wizard / Inspector / Live cockpit / Templates grid — the v1 routes that replace this v0 panel inventory).
+> - **Marketplace surface:** `docs/superpowers/specs/2026-05-09-marketplace-plugin-design.md` (deferred to Plan 5; the leaderboard / per-trade ledger panels resurface there).
+>
+> **What's still useful here:** the priority-ranked thinking in §1 ("Why this
+> dashboard exists") and the panel-by-panel reasoning in §3–§7 are valuable as
+> design history when picking up post-v1 work — they explain *why* certain
+> panels were chosen.
+>
+> **What's obsolete:** Panels referencing `vectors_on`/`vectors_off`,
+> `active_vectors`, `vector_config_hash`, and the per-axis (Conviction/Patience/
+> Risk/Trend) cuts are obsolete in xianvec per ADR 0011 — the CV substrate moved
+> to xianvec-play. The strategy-level Δ-Sharpe / leaderboard / per-trade ledger
+> panels (V1, V2, V3 retargeted at `arm_name` not `vector_config_hash`) carry
+> forward via the eval engine and marketplace plans linked above.
 
 > Working doc · 2026-05-04 · Draft v0.1
 >
@@ -158,7 +171,7 @@ random and orthogonal control arms when M2 has produced those vectors.
 - *v1:* yes. The four-arm overlay is gated on F2.
 
 **T2 — Price chart with decision overlay.** Per asset, OHLCV with markers
-at every `setup_id`. Marker shape encodes action (`buy = ▲`, `sell = ▼`,
+at every `cycle_id`. Marker shape encodes action (`buy = ▲`, `sell = ▼`,
 `flat = ○`, `close = ✕`); marker color encodes which arm; tooltip shows
 the briefing summary, the trader summary, the active vector alphas, and
 the realized PnL of the closed trade.
@@ -346,7 +359,7 @@ tx. Sortable by timestamp.
   one and standardize.
 
 **O3 — Validation registry trade feed.** Stream of validation proofs as
-they post: setup_id, action, active vector alphas, vector manifest hash,
+they post: cycle_id, action, active vector alphas, vector manifest hash,
 vectors_enabled flag, trade result hash, run_id, on-chain tx hash.
 Reviewer can click any row to verify on Mantle Etherscan.
 

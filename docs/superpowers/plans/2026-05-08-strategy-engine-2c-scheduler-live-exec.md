@@ -53,7 +53,7 @@ crates/
 deploy/
 ├── fly/
 │   ├── Dockerfile                          # multi-stage Rust → distroless image
-│   ├── fly.toml.template                   # filled with strategy_id, name, etc.
+│   ├── fly.toml.template                   # filled with agent_id, name, etc.
 │   └── deploy.sh                           # CLI generates from this template
 ```
 
@@ -156,7 +156,7 @@ pub struct Job {
     pub deployment_id: String,       // groups jobs by deployment
     pub name: String,                // e.g., "trader_decision"
     pub trigger: Trigger,
-    pub payload: serde_json::Value,  // job-specific data (strategy_id, etc.)
+    pub payload: serde_json::Value,  // job-specific data (agent_id, etc.)
     pub status: JobStatus,
     pub attempts: u32,
     pub max_attempts: u32,
@@ -515,7 +515,7 @@ use xianvec_execution::broker_surface::BrokerKind;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeploymentConfig {
     pub deployment_id: String,        // ULID
-    pub strategy_id: String,
+    pub agent_id: String,
     pub broker: BrokerKind,
     pub capital_usd: f64,
     /// Override the strategy bundle's decision_cadence_minutes if set.
@@ -664,7 +664,7 @@ use crate::scheduler::{Scheduler, Trigger, JobStatus, store::SqliteJobStore};
 
 pub async fn run(cfg: DeploymentConfig, xvn_home: PathBuf) -> anyhow::Result<()> {
     let bundle_store = FilesystemStore::new(xvn_home.join("strategies"));
-    let bundle = bundle_store.load(&cfg.strategy_id).await?;
+    let bundle = bundle_store.load(&cfg.agent_id).await?;
     let job_store: Arc<dyn crate::scheduler::store::JobStore> = Arc::new(
         SqliteJobStore::open(xvn_home.join("scheduler.db")).await?
     );
@@ -679,7 +679,7 @@ pub async fn run(cfg: DeploymentConfig, xvn_home: PathBuf) -> anyhow::Result<()>
         name: "decide".into(),
         trigger: Trigger::Cron { expression: cron_expr },
         payload: serde_json::json!({
-            "strategy_id": cfg.strategy_id,
+            "agent_id": cfg.agent_id,
             "capital_usd": cfg.capital_usd,
             "broker": cfg.broker,
             "fixture_mode": cfg.fixture_or_live,
@@ -757,7 +757,7 @@ pub struct LiveCmd {
 enum LiveAction {
     /// Deploy a strategy to a live trading daemon.
     Deploy {
-        strategy_id: String,
+        agent_id: String,
         #[arg(long, default_value = "alpaca-paper")]
         broker: String,           // alpaca-paper | alpaca-live | orderly-live
         #[arg(long, default_value_t = 10_000.0)]
@@ -957,7 +957,7 @@ Commit `feat(deploy): fly.io recipe (Dockerfile, fly.toml template, deploy.sh)`.
 **File:** `crates/xianvec-cli/src/commands/deploy.rs`
 
 ```rust
-//! `xvn deploy --target fly <strategy_id>` — orchestrates deploy/fly/deploy.sh.
+//! `xvn deploy --target fly <agent_id>` — orchestrates deploy/fly/deploy.sh.
 
 use clap::{Args, ValueEnum};
 use std::process::Command;
@@ -965,11 +965,11 @@ use std::process::Command;
 #[derive(Args, Debug)]
 pub struct DeployCmd {
     /// Strategy id (ULID) to deploy.
-    strategy_id: String,
+    agent_id: String,
     /// Cloud target. Only `fly` supported in v1.
     #[arg(long, default_value_t = Target::Fly)]
     target: Target,
-    /// fly.io app name. Defaults to "xvn-<strategy_id_prefix>".
+    /// fly.io app name. Defaults to "xvn-<agent_id_prefix>".
     #[arg(long)]
     app: Option<String>,
     #[arg(long, default_value = "alpaca-paper")]
@@ -983,12 +983,12 @@ enum Target { Fly }
 
 pub async fn run(cmd: DeployCmd) -> anyhow::Result<()> {
     let app = cmd.app.unwrap_or_else(|| {
-        format!("xvn-{}", &cmd.strategy_id[..8.min(cmd.strategy_id.len())].to_lowercase())
+        format!("xvn-{}", &cmd.agent_id[..8.min(cmd.agent_id.len())].to_lowercase())
     });
     let status = Command::new("bash")
         .arg("deploy/fly/deploy.sh")
         .arg(&app)
-        .arg(&cmd.strategy_id)
+        .arg(&cmd.agent_id)
         .arg(&cmd.broker)
         .arg(format!("{}", cmd.capital))
         .status()?;

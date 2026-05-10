@@ -41,7 +41,7 @@ async fn create_then_list_then_show() {
     let (ctx, _dir) = fixture_ctx().await;
     let id = deploy::create(&ctx, deploy::DeploymentConfig {
         deployment_id: None,
-        strategy_id: "sh_t".into(),
+        agent_id: "sh_t".into(),
         broker: "alpaca_paper".into(),
         capital_usd: 1000.0,
         stop_loss_atr_multiple: 1.5,
@@ -62,7 +62,7 @@ async fn create_then_list_then_show() {
 async fn start_then_stop_audit() {
     let (ctx, _dir) = fixture_ctx().await;
     let id = deploy::create(&ctx, deploy::DeploymentConfig {
-        deployment_id: None, strategy_id: "sh_t".into(), broker: "alpaca_paper".into(),
+        deployment_id: None, agent_id: "sh_t".into(), broker: "alpaca_paper".into(),
         capital_usd: 1000.0, stop_loss_atr_multiple: 1.5, position_size_pct: 0.05,
         max_concurrent_positions: 3,
     }, Actor::Cli).await.unwrap();
@@ -84,7 +84,7 @@ async fn start_then_stop_audit() {
 async fn switch_mode_changes_broker() {
     let (ctx, _dir) = fixture_ctx().await;
     let id = deploy::create(&ctx, deploy::DeploymentConfig {
-        deployment_id: None, strategy_id: "sh_t".into(), broker: "alpaca_paper".into(),
+        deployment_id: None, agent_id: "sh_t".into(), broker: "alpaca_paper".into(),
         capital_usd: 1000.0, stop_loss_atr_multiple: 1.5, position_size_pct: 0.05,
         max_concurrent_positions: 3,
     }, Actor::Cli).await.unwrap();
@@ -127,7 +127,7 @@ pub enum StopMode {
 pub struct DeploymentConfig {
     /// If None, generated as ULID at create-time.
     pub deployment_id: Option<String>,
-    pub strategy_id: String,
+    pub agent_id: String,
     pub broker: String,
     pub capital_usd: f64,
     pub stop_loss_atr_multiple: f32,
@@ -138,7 +138,7 @@ pub struct DeploymentConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeploymentSummary {
     pub id: String,
-    pub strategy_id: String,
+    pub agent_id: String,
     pub broker: String,
     pub status: DeploymentStatus,
     pub capital_usd: f64,
@@ -154,7 +154,7 @@ pub struct DeploymentDetail {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredConfig {
     pub deployment_id: String,
-    pub strategy_id: String,
+    pub agent_id: String,
     pub broker: String,
     pub capital_usd: f64,
     pub stop_loss_atr_multiple: f32,
@@ -230,7 +230,7 @@ pub async fn create(ctx: &ApiContext, cfg: DeploymentConfig, actor: Actor) -> Ap
     let id = cfg.deployment_id.unwrap_or_else(|| format!("dep_{}", ulid::Ulid::new()));
     let stored = StoredConfig {
         deployment_id: id.clone(),
-        strategy_id: cfg.strategy_id,
+        agent_id: cfg.agent_id,
         broker: cfg.broker,
         capital_usd: cfg.capital_usd,
         stop_loss_atr_multiple: cfg.stop_loss_atr_multiple,
@@ -257,7 +257,7 @@ pub async fn list(ctx: &ApiContext, filter: DepListFilter) -> ApiResult<Vec<Depl
         if filter.only_running && status != DeploymentStatus::Running { continue; }
         out.push(DeploymentSummary {
             id: id.clone(),
-            strategy_id: cfg.strategy_id,
+            agent_id: cfg.agent_id,
             broker: cfg.broker,
             status,
             capital_usd: cfg.capital_usd,
@@ -367,7 +367,7 @@ async fn ctx_with_deps() -> (ApiContext, TempDir) {
         strategy::record_created(&ctx, sid, Actor::Cli).await.unwrap();
     }
     deploy::create(&ctx, deploy::DeploymentConfig {
-        deployment_id: Some("dep_1".into()), strategy_id: "sh_a".into(), broker: "alpaca_paper".into(),
+        deployment_id: Some("dep_1".into()), agent_id: "sh_a".into(), broker: "alpaca_paper".into(),
         capital_usd: 1000.0, stop_loss_atr_multiple: 1.5, position_size_pct: 0.05,
         max_concurrent_positions: 3,
     }, Actor::Cli).await.unwrap();
@@ -446,7 +446,7 @@ pub async fn strategy_review(ctx: &ApiContext, opts: ReviewOpts) -> ApiResult<St
     for s in strategies {
         if !want_deactivated && s.status != strategy::Status::Active { continue; }
         let dep_ids: Vec<String> = deps.iter()
-            .filter(|d| d.strategy_id == s.id)
+            .filter(|d| d.agent_id == s.id)
             .map(|d| d.id.clone())
             .collect();
         // scheduler_events queries land in Task 6 once the table exists.
@@ -592,7 +592,7 @@ pub struct EodReport {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeploymentEodSummary {
     pub id: String,
-    pub strategy_id: String,
+    pub agent_id: String,
     pub realized_pnl_usd: f64,
     pub unrealized_pnl_usd: f64,
     pub fills: u32,
@@ -621,7 +621,7 @@ pub async fn eod(ctx: &ApiContext, opts: EodOpts) -> ApiResult<EodReport> {
     let summaries: Vec<DeploymentEodSummary> = deps_all.into_iter()
         .filter(|d| target_ids.contains(&d.id))
         .map(|d| DeploymentEodSummary {
-            id: d.id, strategy_id: d.strategy_id,
+            id: d.id, agent_id: d.agent_id,
             realized_pnl_usd: 0.0, unrealized_pnl_usd: 0.0,
             fills: 0, decisions: 0,
         }).collect();
@@ -765,7 +765,7 @@ async fn fixture_ctx() -> (ApiContext, TempDir) {
 #[tokio::test]
 async fn integrity_check_finds_orphaned_audit() {
     let (ctx, _dir) = fixture_ctx().await;
-    sqlx::query("INSERT INTO strategy_audit (strategy_id, transition, actor_kind, occurred_at) VALUES (?,?,?,?)")
+    sqlx::query("INSERT INTO strategy_audit (agent_id, transition, actor_kind, occurred_at) VALUES (?,?,?,?)")
         .bind("sh_orphan").bind("create").bind("cli").bind(ctx.now().to_rfc3339())
         .execute(&ctx.db).await.unwrap();
     let r = maintenance::integrity_check(&ctx, Actor::Cli).await.unwrap();
@@ -775,7 +775,7 @@ async fn integrity_check_finds_orphaned_audit() {
 #[tokio::test]
 async fn compact_strategy_audit_drops_old_rows() {
     let (ctx, _dir) = fixture_ctx().await;
-    sqlx::query("INSERT INTO strategy_audit (strategy_id, transition, actor_kind, occurred_at) VALUES (?,?,?,?)")
+    sqlx::query("INSERT INTO strategy_audit (agent_id, transition, actor_kind, occurred_at) VALUES (?,?,?,?)")
         .bind("sh_old").bind("create").bind("cli")
         .bind("2020-01-01T00:00:00Z")
         .execute(&ctx.db).await.unwrap();
@@ -875,12 +875,12 @@ pub async fn vacuum_db(ctx: &ApiContext, _actor: Actor) -> ApiResult<()> {
 pub async fn integrity_check(ctx: &ApiContext, _actor: Actor) -> ApiResult<IntegrityReport> {
     let mut orphaned_audit = Vec::new();
     let rows: Vec<(String,)> = sqlx::query_as(
-        "SELECT DISTINCT strategy_id FROM strategy_audit"
+        "SELECT DISTINCT agent_id FROM strategy_audit"
     ).fetch_all(&ctx.db).await?;
     for (sid,) in rows {
         let bundle = ctx.xvn_home.join("strategies").join(&sid);
         let row: Option<(String,)> = sqlx::query_as(
-            "SELECT transition FROM strategy_audit WHERE strategy_id=? ORDER BY occurred_at DESC LIMIT 1"
+            "SELECT transition FROM strategy_audit WHERE agent_id=? ORDER BY occurred_at DESC LIMIT 1"
         ).bind(&sid).fetch_optional(&ctx.db).await?;
         let last = row.map(|r| r.0).unwrap_or_default();
         if !bundle.exists() && last != "delete" { orphaned_audit.push(sid); }
@@ -893,7 +893,7 @@ pub async fn integrity_check(ctx: &ApiContext, _actor: Actor) -> ApiResult<Integ
             if !entry.file_type()?.is_dir() { continue; }
             let id = entry.file_name().to_string_lossy().to_string();
             let row: Option<(i64,)> = sqlx::query_as(
-                "SELECT COUNT(*) FROM strategy_audit WHERE strategy_id=?"
+                "SELECT COUNT(*) FROM strategy_audit WHERE agent_id=?"
             ).bind(&id).fetch_optional(&ctx.db).await?;
             let count = row.map(|r| r.0).unwrap_or(0);
             if count == 0 { orphaned_bundles.push(id); }
@@ -1379,7 +1379,7 @@ use crate::api::{ApiContext, ApiError, ApiResult};
 
 #[derive(Debug, Clone, Default)]
 pub struct EveningCycleOpts {
-    pub strategy_id: Option<String>,
+    pub agent_id: Option<String>,
     pub dry_run: bool,
 }
 

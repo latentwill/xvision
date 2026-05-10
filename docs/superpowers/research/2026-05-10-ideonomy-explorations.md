@@ -159,9 +159,9 @@ not surfaced:     "the depositor as a population, not a single person" — atlas
 
 #### Core in-system terms (xianvec usage)
 
-- **agent** *(xianvec sense)* — A unit that produces a `TraderDecision` from a briefing. Currently used interchangeably with "strategy variant" in the codebase (`AgentManifest` vs `strategy_id`), which is a precision shortfall worth fixing.
+- **agent** *(xianvec sense)* — A unit that produces a `TraderDecision` from a briefing. Currently used interchangeably with "strategy variant" in the codebase (`AgentManifest` vs `agent_id`), which is a precision shortfall worth fixing.
 - **strategy** — A configured pipeline of slots (regime detector → intern briefing → trader judgment → risk gate). One strategy can be instantiated as many *variants* with different parameters.
-- **strategy variant** — A specific instantiation of a strategy with concrete parameters (model id, temperature, prompt, asset universe, etc.). The thing that gets a `strategy_id` and (post-SLF3) an ERC-8004 NFT.
+- **strategy variant** — A specific instantiation of a strategy with concrete parameters (model id, temperature, prompt, asset universe, etc.). The thing that gets a `agent_id` and (post-SLF3) an ERC-8004 NFT.
 - **slot** — A position in the pipeline (intern, trader, risk, executor). Slots are filled by *slot-machines* (the LLM-dispatch trait or deterministic implementations).
 - **intern** — A slot that produces a neutral evidence briefing (bull / bear / flat cases) from market data. Does NOT recommend; recommends are forbidden.
 - **trader** — A slot that consumes the intern's briefing and produces a `TraderDecision`. The judgment lives here.
@@ -206,7 +206,7 @@ not surfaced:     "the depositor as a population, not a single person" — atlas
 
 #### The terminology slippage and what it costs
 
-The codebase uses **agent / strategy / variant** interchangeably in different files (`AgentManifest` vs `strategy_id` vs `strategy variant`). This isn't just naming — it conflates three distinct concepts:
+The codebase uses **agent / strategy / variant** interchangeably in different files (`AgentManifest` vs `agent_id` vs `strategy variant`). This isn't just naming — it conflates three distinct concepts:
 
 ```
 Concept layer       Identifier        Lifetime
@@ -216,7 +216,7 @@ Strategy            config hash       changes with mutation
 Variant             ULID + config     ephemeral, per-run
 ```
 
-A clean refactor would: keep `agent` for NFT-bound identity (the legal/emissary sense), use `strategy` for the immutable config-hash-keyed pipeline, use `variant` for a specific run. The wallet plan's `strategy_id` is closest to `agent` in the legal sense — it should probably be renamed `agent_id` and the audit log + ledger should join through it.
+A clean refactor would: keep `agent` for NFT-bound identity (the legal/emissary sense), use `strategy` for the immutable config-hash-keyed pipeline, use `variant` for a specific run. The wallet plan's `agent_id` is closest to `agent` in the legal sense — it should probably be renamed `agent_id` and the audit log + ledger should join through it.
 
 #### Tuple footer
 
@@ -679,7 +679,7 @@ Does reputation accrue automatically from observable behavior, or does the platf
 
 Is this reputation about "trader skill" in general, or "skill in BTC perp markets in low-vol regimes"?
 
-- **xianvec today:** reputation is per-agent. Agents are specialized to specific assets/regimes (the strategy_id encodes the config). So reputation IS context-bound, but the *consumers* of reputation may treat it as universal ("look, 80th percentile Sharpe!" — but only on BTC, only in a bull market).
+- **xianvec today:** reputation is per-agent. Agents are specialized to specific assets/regimes (the agent_id encodes the config). So reputation IS context-bound, but the *consumers* of reputation may treat it as universal ("look, 80th percentile Sharpe!" — but only on BTC, only in a bull market).
 - **Risk:** out-of-context reputation use causes blowups (the BTC funding-fader strategy is rated 5/5; a user deploys it during a crab market; it loses).
 - **Move:** every reputation attestation must include the regime/scope it was earned in. Marketplace listings must surface this prominently. **The spec hints at this via "regime fit" in the bundle manifest** — verify it's actually rendered to buyers.
 
@@ -1937,7 +1937,7 @@ not surfaced:     "the gracious-loser path" — what if xianvec doesn't win? The
 - **strategy** = the immutable config-hash-keyed pipeline configuration
 - **variant** = a specific run instance (ULID)
 
-The wallet plan's `strategy_id` should probably be `agent_id` once SLF3 ships. **Add this rename as a follow-up task; not a hackathon blocker, but should happen before any external user reads the code.**
+The wallet plan's `agent_id` should probably be `agent_id` once SLF3 ships. **Add this rename as a follow-up task; not a hackathon blocker, but should happen before any external user reads the code.**
 
 #### Theme G — Subscription / hosted runtime is the obvious missing revenue line
 
@@ -2039,7 +2039,7 @@ P1         MANUAL.md scale-tier addendum (what changes     Theme E,F     1-2 day
            at N=10/100/1000)
 P1         Public disclosure SLA commitment + incident     Theme E       0.5 day
            response template
-P1         Terminology rename pass: strategy_id to agent_id Theme F      0.5 day
+P1         Terminology rename pass: agent_id to agent_id Theme F      0.5 day
                                                            (pre-rename verification)
 ```
 

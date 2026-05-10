@@ -1,6 +1,7 @@
 # Non-Custodial Agent Wallets — Design
 
 > **Status:** Draft · 2026-05-09
+> **Terminology:** Updated 2026-05-10 — `strategy_id` renamed to `agent_id` per Option B (see [`docs/superpowers/plans/2026-05-10-terminology-rename-option-b.md`](../plans/2026-05-10-terminology-rename-option-b.md)). The id is a local ULID pre-mint, resolves to the NFT token id post-SLF3.
 > **Depends on:** [`docs/superpowers/specs/2026-05-08-smart-contract-surface-design.md`](./2026-05-08-smart-contract-surface-design.md) (the marketplace contract surface this spec assumes), `architecture.md` §6.1 (Orderly executor), `crates/xianvec-risk/` (the engine being extended).
 > **Related:** [`crates/xianvec-execution/src/orderly.rs`](../../../crates/xianvec-execution/src/orderly.rs), [`docs/erc-8004-agent-uses.md`](../../erc-8004-agent-uses.md).
 
@@ -64,7 +65,7 @@ Both gates are checked once during the implementation plan's first probe. Result
 │   ├─ Kill switches (per-strategy auto + manual; per-user; global)               │
 │   ├─ Emergency-close (cancel + market-flat all positions on demand)             │
 │   ├─ Audit log (append-only: emit→eval→sim→sign→submit→fill→close)              │
-│   └─ Attribution ledger (strategy_id → realized PnL + funding)                  │
+│   └─ Attribution ledger (agent_id → realized PnL + funding)                  │
 └────────────────────────────────────────────────────────────────────────────────┘
 
    ────────  MARKETPLACE RAIL  (separate; the only smart contract xianvec owns)  ────────
@@ -149,7 +150,7 @@ Today `xianvec-risk` enforces global rules (position size bps, daily-loss circui
 **Per-strategy scoped permissions (operator-set, full envelope):**
 
 ```toml
-[strategies.<strategy_id>]
+[strategies.<agent_id>]
 # --- existing rules, scoped per-strategy ---
 hard_cap_usdc_notional          = 5000      # max in-flight notional ever
 hard_cap_open_positions         = 2         # max simultaneous positions
@@ -171,7 +172,7 @@ The hard-cap rules are **fixed envelopes**: the strategy cannot exceed them unde
 **Per-strategy dynamic quota (engine-set, inside the hard cap):**
 
 ```
-unlocked_notional(strategy_id, t) = hard_cap_usdc_notional × quota_factor(strategy_id, t)
+unlocked_notional(agent_id, t) = hard_cap_usdc_notional × quota_factor(agent_id, t)
 ```
 
 `quota_factor ∈ [0.0, 1.0]`, computed each session from the attribution ledger:
@@ -202,7 +203,7 @@ Implementation lives in `crates/xianvec-risk/src/rules/per_strategy.rs` (new fil
 Two strategies at 90% of cap can both clear a check-then-submit pattern and both fill, exceeding the cap. To prevent this, the dispatcher uses a reservation:
 
 ```
-1. risk_engine.evaluate(strategy_id, decision) acquires a write-lock on the
+1. risk_engine.evaluate(agent_id, decision) acquires a write-lock on the
    strategy's row in a `pending_reservations` table.
 2. evaluate() re-reads current open notional + already-reserved notional.
 3. if (open + reserved + this_decision_notional) ≤ unlocked_notional → reserve
@@ -253,7 +254,7 @@ This view is the daily working surface for the operator. It belongs in front of 
 
 ### 3.5 Attribution ledger
 
-`strategy_id` throughout this spec is the strategy-variant id — one per strategy NFT minted by `IdentityRegistry` (per FOLLOWUPS SLF3). Pre-mint, the same id is used as a local ULID and resolves to the NFT id at mint time.
+`agent_id` throughout this spec is the strategy-variant id — one per strategy NFT minted by `IdentityRegistry` (per FOLLOWUPS SLF3). Pre-mint, the same id is used as a local ULID and resolves to the NFT id at mint time.
 
 Every order the dispatcher submits is tagged with the originating strategy id and persisted to a SQLite table:
 
@@ -262,7 +263,7 @@ CREATE TABLE positions (
     position_id        TEXT PRIMARY KEY,        -- xianvec-internal ULID
     client_order_id    TEXT NOT NULL UNIQUE,    -- mirrored to Orderly for idempotency
     user_id            TEXT NOT NULL,
-    strategy_id        TEXT NOT NULL,           -- strategy NFT id (or local id pre-mint)
+    agent_id        TEXT NOT NULL,           -- strategy NFT id (or local id pre-mint)
     asset              TEXT NOT NULL,           -- e.g. PERP_BTC_USDC
     side               TEXT NOT NULL,           -- LONG | SHORT
     size_usdc          REAL NOT NULL,
@@ -274,8 +275,8 @@ CREATE TABLE positions (
     orderly_position_id TEXT                    -- Orderly's id, populated on fill
 );
 
-CREATE INDEX idx_positions_strategy ON positions(strategy_id, closed_at);
-CREATE INDEX idx_positions_open ON positions(strategy_id) WHERE closed_at IS NULL;
+CREATE INDEX idx_positions_strategy ON positions(agent_id, closed_at);
+CREATE INDEX idx_positions_open ON positions(agent_id) WHERE closed_at IS NULL;
 ```
 
 **Funding-payment attribution.** Orderly perps charge funding every funding period (typically 8h). A position held across a funding period accrues a funding charge or rebate. The reconciliation job (§4.3) attributes each funding event to the position holding it during that period:
@@ -284,7 +285,7 @@ CREATE INDEX idx_positions_open ON positions(strategy_id) WHERE closed_at IS NUL
 CREATE TABLE funding_attributions (
     funding_id         TEXT PRIMARY KEY,        -- Orderly funding event id
     position_id        TEXT NOT NULL REFERENCES positions(position_id),
-    strategy_id        TEXT NOT NULL,           -- denormalized for fast roll-up
+    agent_id        TEXT NOT NULL,           -- denormalized for fast roll-up
     asset              TEXT NOT NULL,
     funding_rate_bps   REAL NOT NULL,           -- can be negative
     notional_usdc      REAL NOT NULL,
@@ -333,7 +334,7 @@ CREATE TABLE decisions (
     decision_id            TEXT PRIMARY KEY,            -- ULID
     occurred_at            INTEGER NOT NULL,
     user_id                TEXT NOT NULL,
-    strategy_id            TEXT NOT NULL,
+    agent_id            TEXT NOT NULL,
     stage                  TEXT NOT NULL,               -- one of: emit | risk_eval | simulate | sign | submit | response | fill | close | cancel | reject
     related_position_id    TEXT,                        -- nullable; populated once known
     related_decision_id    TEXT,                        -- chain to prior stage in same trade
@@ -342,7 +343,7 @@ CREATE TABLE decisions (
     notes                  TEXT
 );
 
-CREATE INDEX idx_decisions_strategy_time ON decisions(strategy_id, occurred_at);
+CREATE INDEX idx_decisions_strategy_time ON decisions(agent_id, occurred_at);
 CREATE INDEX idx_decisions_position ON decisions(related_position_id);
 ```
 
@@ -378,7 +379,7 @@ Three layers of stop, ordered by blast radius:
 **Layer 1 — per-strategy auto-trigger:**
 
 ```toml
-[strategies.<strategy_id>.kill_triggers]
+[strategies.<agent_id>.kill_triggers]
 daily_loss_kill_usdc            = 250        # already in §3.4 hard caps
 consecutive_losses_kill         = 5          # halt after N losing trades in a row
 sharpe_floor_kill               = -2.0       # halt if rolling 30-trade Sharpe falls below
@@ -471,7 +472,7 @@ Documentation lives in `docs/cli-reference.md` (new). Every subcommand surfaces 
 1.  Strategy variant runs and emits TraderDecision { action: Open, asset: BTC-PERP, size_bps: 100 }
     → audit log: stage=emit
 2.  Check strategy_status: not in halted_auto / halted_manual → proceed; else reject and log
-3.  RiskEngine.evaluate(strategy_id, decision, ledger_snapshot)
+3.  RiskEngine.evaluate(agent_id, decision, ledger_snapshot)
       → checks scoped permissions    (chain/protocol/asset allowlist, active hours, frequency caps)
       → checks per-strategy hard cap (would this exceed hard_cap_usdc_notional?)
       → checks per-strategy dynamic quota (is current notional > unlocked_notional?)
@@ -510,7 +511,7 @@ Idempotency: `client_order_id` is propagated to Orderly (already done in `crates
 6.  Off-chain indexer picks up Sold event → updates xianvec UI / leaderboard
 ```
 
-The marketplace and trading rails do not communicate at runtime. The only shared identifier is `agentNftId` (which is `strategy_id` in the trading rail) — used purely as a foreign key for joining reports.
+The marketplace and trading rails do not communicate at runtime. The only shared identifier is `agentNftId` (which is `agent_id` in the trading rail) — used purely as a foreign key for joining reports.
 
 ### 4.3 Reconciliation
 
@@ -603,7 +604,7 @@ Current state: one shared `ORDERLY_KEY/SECRET/ACCOUNT_ID` from env, used globall
 Migration path (incremental, each step ships independently):
 
 1. **Step 0 — Validation gates.** Probe Orderly testnet to verify G1 (trading-only key scope, §1.1) and G2 (isolated-margin support, §1.1). Record results as ADRs in `decisions/`. Block all subsequent steps until G1 passes — if it fails, redesign first.
-2. **Step 1 — Attribution + audit log.** Add `strategy_id` tag to existing trades. Build `positions`, `decisions` (audit log), `funding_attributions`, `policy_changes`, `strategy_status`, `pending_approvals` tables. Populate from existing single-key flow. Validates the ledger end-to-end without changing order routing or risk.
+2. **Step 1 — Attribution + audit log.** Add `agent_id` tag to existing trades. Build `positions`, `decisions` (audit log), `funding_attributions`, `policy_changes`, `strategy_status`, `pending_approvals` tables. Populate from existing single-key flow. Validates the ledger end-to-end without changing order routing or risk.
 3. **Step 2 — Per-strategy hard caps + scoped permissions + reservations.** Extend Risk Engine with the full per-strategy rule set (hard caps + chain/protocol/asset allowlist + slippage + frequency + active hours). Implement reservation pattern for race-free cap enforcement.
 4. **Step 3 — Dispatcher refactor + pre-trade simulation.** Introduce OrderDispatcher abstraction. Add pre-trade simulation step (Orderly order-info or equivalent). Route all current orders through the dispatcher. Trading key still single (from env).
 5. **Step 4 — Kill switches + approval gates + emergency-close.** Add `xvn kill` and `xvn emergency-close` CLI commands. Implement per-strategy auto-triggers (consecutive-losses, sharpe-floor). Approval-gate workflow with TTL.

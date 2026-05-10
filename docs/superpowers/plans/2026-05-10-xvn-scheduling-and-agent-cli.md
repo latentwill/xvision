@@ -98,14 +98,14 @@ Create `crates/xianvec-engine/migrations/002_api_audit.sql`:
 ```sql
 CREATE TABLE IF NOT EXISTS strategy_audit (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    strategy_id     TEXT NOT NULL,
+    agent_id     TEXT NOT NULL,
     transition      TEXT NOT NULL,        -- "create", "deactivate", "reactivate", "archive", "unarchive", "delete"
     reason          TEXT,
     actor_kind      TEXT NOT NULL,        -- "cli", "schedule", "wizard", "external"
     actor_label     TEXT,                 -- e.g., schedule_id+fire_id, "cli", external label
     occurred_at     TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_strategy_audit_id   ON strategy_audit(strategy_id);
+CREATE INDEX IF NOT EXISTS idx_strategy_audit_id   ON strategy_audit(agent_id);
 CREATE INDEX IF NOT EXISTS idx_strategy_audit_time ON strategy_audit(occurred_at);
 
 CREATE TABLE IF NOT EXISTS risk_audit (
@@ -488,7 +488,7 @@ async fn write_audit(
     let now = ctx.now().to_rfc3339();
     sqlx::query(
         "INSERT INTO strategy_audit
-            (strategy_id, transition, reason, actor_kind, actor_label, occurred_at)
+            (agent_id, transition, reason, actor_kind, actor_label, occurred_at)
          VALUES (?, ?, ?, ?, ?, ?)",
     )
     .bind(id)
@@ -534,7 +534,7 @@ pub async fn show(ctx: &ApiContext, id: &str) -> ApiResult<StrategyDetail> {
     // Maybe deleted (status file persisted with Deleted, bundle gone).
     // Reach for audit log.
     let row: Option<(String,)> = sqlx::query_as(
-        "SELECT transition FROM strategy_audit WHERE strategy_id=? ORDER BY occurred_at DESC LIMIT 1",
+        "SELECT transition FROM strategy_audit WHERE agent_id=? ORDER BY occurred_at DESC LIMIT 1",
     )
     .bind(id)
     .fetch_optional(&ctx.db)
@@ -631,7 +631,7 @@ pub async fn audit_history(ctx: &ApiContext, id: &str) -> ApiResult<Vec<AuditEnt
     let rows: Vec<(String, Option<String>, String, Option<String>, String)> = sqlx::query_as(
         "SELECT transition, reason, actor_kind, actor_label, occurred_at
          FROM strategy_audit
-         WHERE strategy_id = ?
+         WHERE agent_id = ?
          ORDER BY occurred_at ASC",
     )
     .bind(id)
@@ -700,7 +700,7 @@ async fn fixture_ctx() -> (ApiContext, TempDir) {
     std::fs::create_dir_all(&dep_dir).unwrap();
     std::fs::write(dep_dir.join("config.json"), serde_json::to_vec_pretty(&serde_json::json!({
         "deployment_id": "dep_test",
-        "strategy_id": "sh_test",
+        "agent_id": "sh_test",
         "broker": "alpaca_paper",
         "capital_usd": 10000.0,
         "stop_loss_atr_multiple": 1.5,

@@ -50,7 +50,7 @@ Severity floor for "blocker" is "would not compile or would silently corrupt saf
 ### 1.5 [HIGH] Policy-change hot-reload is not enforced
 - **Location:** spec §3.4 ("Edits do not auto-apply to in-flight positions" — but DO apply to *future* dispatches); plan Task 4.8 Step 3 ("write to `policy_changes` for each touched field, write the new config back"); Phase 8 Task 8.4 (POST handler "applies the change").
 - **Issue:** "Write the new config back" is hand-waved. There is no specified storage for `StrategyConfig` itself — the plan defines `parse_strategies_toml` (Task 2.1) that loads from a string, but never stores it. Where does the dispatcher read the *current* config from on each dispatch? If it's a TOML file, edits via the UI must rewrite the TOML; if it's a `strategies` table in SQLite, that table is missing. Either way, a config change must be visible to the next `dispatch()` call without a process restart.
-- **Fix:** Add a migration `009_strategies.sql` with `(strategy_id PK, config_json, updated_at, updated_by)`; add `xianvec-data::strategies::StrategyConfigStore` with `get`, `set`, `list`. The dispatcher reads from the store on each `dispatch()`. The TOML loader (Task 2.1) becomes the bulk-import seed path only. Tests: `xvn budget set --strategy s1 --hard-cap 1000` then `dispatch(s1, …)` sees the new cap.
+- **Fix:** Add a migration `009_strategies.sql` with `(agent_id PK, config_json, updated_at, updated_by)`; add `xianvec-data::strategies::StrategyConfigStore` with `get`, `set`, `list`. The dispatcher reads from the store on each `dispatch()`. The TOML loader (Task 2.1) becomes the bulk-import seed path only. Tests: `xvn budget set --strategy s1 --hard-cap 1000` then `dispatch(s1, …)` sees the new cap.
 
 ### 1.6 [HIGH] Spec §3.4 cold-start floor of "0.25 if < 30 closed positions" — ambiguous and the formula in Phase 6 doesn't match
 - **Location:** spec §3.4 (formula adds `cold_start_floor + sigmoid(...) × (1 - dd/floor)`); plan Phase 6 Task 6.1 implementation does the same, but the cold-start branch returns `COLD_START_FLOOR` *only* when `pnls < 30`. The spec's intent is that the floor is **always added** as a baseline even after 30 samples, but the implementation matches that. **However:** when there are >= 30 samples and Sharpe is mildly positive, the result is `0.25 + ~0.6 × 1.0 = 0.85`. If Sharpe is very high (e.g. mean 100, std 1), `sigmoid(66) ≈ 1.0` and result is `1.25` then clamped to `1.0`. That's fine. The bug is at `Sharpe = 0`: `sigmoid(0) = 0.5`, drawdown 0 → `quota = 0.25 + 0.5 = 0.75`. So a strategy with literally zero Sharpe (mean 0 PnL) gets 75% of cap unlocked. That's not what the spec implies ("Cold strategies start at the floor (0.25). Hot strategies converge toward 1.0. Burned strategies throttle toward 0.")
@@ -95,7 +95,7 @@ Severity floor for "blocker" is "would not compile or would silently corrupt saf
 - **Fix:** Redesign the trait surface. Suggested: `OrderlyOrderSubmit::submit(&self, client_order_id, decision: &TraderDecision, equity: f64) -> Result<ExecutionReceipt>` — pass the decision through, let the executor keep its bracketing logic. Then dispatcher writes the audit/ledger rows around the existing `OrderlyExecutor::submit` as a wrapper, not a replacement.
 
 ### 2.2 [BLOCKER] `TraderDecision` does not have `notional_usdc()`, `asset()`, `side_str()`, and adding them is non-trivial
-- **Location:** plan Task 3.2 Step 3 ("Mechanical; ~15 lines"); existing `crates/xianvec-core/src/trading.rs:114+` — `TraderDecision { setup_id, action, size_bps, direction, stop_loss_pct, take_profit_pct, trader_summary }`; no `asset` field at all.
+- **Location:** plan Task 3.2 Step 3 ("Mechanical; ~15 lines"); existing `crates/xianvec-core/src/trading.rs:114+` — `TraderDecision { cycle_id, action, size_bps, direction, stop_loss_pct, take_profit_pct, trader_summary }`; no `asset` field at all.
 - **Issue:** `size_bps` is a fraction of NAV, not a USDC amount. To compute notional you need the equity. `asset` is *not on `TraderDecision`* in v1 — see FOLLOWUPS F18 ("Add `asset: AssetSymbol` to `TraderDecision` ... mechanical but wide ... blocking for multi-asset"). The dispatcher in Task 3.2 calls `decision.asset()` and `decision.notional_usdc()` as if they exist; the helper would have to (a) take a portfolio-state argument and (b) for asset, return a hardcoded BTC. The "~15 lines" estimate is wrong. F18 estimates it as wide but mechanical — touches xianvec-trader, xianvec-intern, xianvec-risk, xianvec-execution, xianvec-eval.
 - **Fix:** Either (a) execute F18 as Phase 0 prerequisite (estimate: 0.5–1 day), or (b) explicitly accept that v1 dispatcher is BTC-pinned and pass `asset = "PERP_BTC_USDC"` constant + take portfolio state in `dispatch(...)` to compute notional. Document the choice.
 
@@ -115,8 +115,8 @@ Severity floor for "blocker" is "would not compile or would silently corrupt saf
 - **Fix:** Either (a) compute quota_factor *inside* `try_reserve` against the latest ledger snapshot (single source of truth), passing the hard_cap and the quota_inputs, not the post-quota cap; or (b) lock the strategy across the quota read + reservation write. Option (a) is cleaner. Test: two concurrent dispatches with different ledger states must produce a correct combined reservation.
 
 ### 2.6 [HIGH] `ReservationManager` per-strategy locks leak forever
-- **Location:** plan Task 2.3 — `locks: Mutex<HashMap<String, Arc<Mutex<()>>>>` — `lock_for(strategy_id)` does `or_insert_with(|| Arc::new(Mutex::new(())))`.
-- **Issue:** Every strategy_id ever passed creates an entry. After a long-running daemon serves many ephemeral test strategy_ids (e.g. during integration tests, or during the autoresearcher's mutator producing N variants/night), the HashMap grows unbounded. Not catastrophic for v1 single-operator, but the pattern is wrong.
+- **Location:** plan Task 2.3 — `locks: Mutex<HashMap<String, Arc<Mutex<()>>>>` — `lock_for(agent_id)` does `or_insert_with(|| Arc::new(Mutex::new(())))`.
+- **Issue:** Every agent_id ever passed creates an entry. After a long-running daemon serves many ephemeral test agent_ids (e.g. during integration tests, or during the autoresearcher's mutator producing N variants/night), the HashMap grows unbounded. Not catastrophic for v1 single-operator, but the pattern is wrong.
 - **Fix:** Use a `dashmap` or a periodic sweep; or weak-arc + drop-when-zero-refs; or accept it for v1 and add a TODO. At minimum, document the leak.
 
 ### 2.7 [HIGH] `Reservation::release` is best-effort but `submit_order` failure path doesn't release
@@ -126,8 +126,8 @@ Severity floor for "blocker" is "would not compile or would silently corrupt saf
 
 ### 2.8 [MEDIUM] `client_order_id = position_id = ULID` collision risk vs Orderly's 36-char limit
 - **Location:** plan Task 1.3 (`Position::new` sets `client_order_id = id` where id is `Ulid::new().to_string()`); existing `crates/xianvec-execution/src/orderly.rs:34` ("max 36 chars").
-- **Issue:** ULID strings are 26 chars, fits fine. But the existing code uses `td.setup_id.to_string()` (UUID, 36 chars). The plan replaces this with ULID. Existing TP/SL legs use `format!("tp-{}", td.setup_id)` and `format!("sl-{}", td.setup_id)` → 39-char strings now (`tp-` + 26-char ULID = 29, fits). Inconsistency: now there are two id schemes for client_order_id (UUID for legacy in `orderly.rs`, ULID from `Position::new`). The plan's Task 1.5 says to "tag every trade" but doesn't address the existing `setup_id` pattern.
-- **Fix:** Decide one scheme. Recommend: ULID for new dispatcher path; document that old setup_id-based paths are gone after Task 3.3.
+- **Issue:** ULID strings are 26 chars, fits fine. But the existing code uses `td.cycle_id.to_string()` (UUID, 36 chars). The plan replaces this with ULID. Existing TP/SL legs use `format!("tp-{}", td.cycle_id)` and `format!("sl-{}", td.cycle_id)` → 39-char strings now (`tp-` + 26-char ULID = 29, fits). Inconsistency: now there are two id schemes for client_order_id (UUID for legacy in `orderly.rs`, ULID from `Position::new`). The plan's Task 1.5 says to "tag every trade" but doesn't address the existing `cycle_id` pattern.
+- **Fix:** Decide one scheme. Recommend: ULID for new dispatcher path; document that old cycle_id-based paths are gone after Task 3.3.
 
 ### 2.9 [MEDIUM] `Stage::Reject` is used in dispatcher but not in the spec §3.8 stage enumeration
 - **Location:** plan Task 3.2 (`audit.write(Stage::Reject, ...)`); spec §3.8 stage list: `emit | risk_eval | simulate | sign | submit | response | fill | close | cancel | reject` — actually it IS there (lowercase in spec, `Reject` in plan). Migration 003 lists `'reject'`. No issue. Withdrawn — see correction below.
@@ -186,13 +186,13 @@ Severity floor for "blocker" is "would not compile or would silently corrupt saf
 
 ### 3.5 [MEDIUM] Phase 6 dynamic quota's "fetch recent PnLs from ledger" needs a concrete query
 - **Location:** plan Task 6.1 Step 4 ("In `OrderDispatcher::dispatch`, before `try_reserve(...)`, fetch recent PnLs from ledger and compute `quota_factor`").
-- **Issue:** `Ledger::realized_pnl_window(strategy_id, since_ms)` returns a sum, not the per-trade list `closed_pnls_30d` that `compute_quota_factor` expects. Need a new ledger method: `closed_pnls_window(strategy_id, since_ms) -> Vec<f64>`. Same for `rolling_drawdown_30d` — needs a peak-trough computation across the 30-day equity curve, which the ledger doesn't currently expose.
+- **Issue:** `Ledger::realized_pnl_window(agent_id, since_ms)` returns a sum, not the per-trade list `closed_pnls_30d` that `compute_quota_factor` expects. Need a new ledger method: `closed_pnls_window(agent_id, since_ms) -> Vec<f64>`. Same for `rolling_drawdown_30d` — needs a peak-trough computation across the 30-day equity curve, which the ledger doesn't currently expose.
 - **Fix:** Add the missing ledger queries to Phase 1 Task 1.3 (or as a Phase 6 sub-task). Drawdown computation in particular is non-trivial — needs to walk the equity curve, not just sum PnLs.
 
 ### 3.6 [MEDIUM] Bulk-edit (Phase 8 Task 8.5) is a two-bullet "add JS" but interaction model is undefined
 - **Location:** plan Task 8.5 Step 2.
 - **Issue:** Shift-click range select + apply-to-selection across heterogeneous fields (e.g., user shift-clicks 4 cells in the Hard Cap column, then 2 cells in the Active Hours column — what's the semantics?). Atomic transaction or per-cell? Confirm modal shows old→new for all? Server-side bulk endpoint or N parallel POSTs? None specified.
-- **Fix:** Drop bulk-edit from v1 or scope it to "select rows, apply value to one field across all selected." Add a server-side `POST /budgets/bulk` taking `{strategy_ids: [..], field: "...", value: "..."}`.
+- **Fix:** Drop bulk-edit from v1 or scope it to "select rows, apply value to one field across all selected." Add a server-side `POST /budgets/bulk` taking `{agent_ids: [..], field: "...", value: "..."}`.
 
 ### 3.7 [MEDIUM] AES-256-GCM key derivation from `CREDENTIAL_SECRET` env var — no KDF, no rotation
 - **Location:** plan Task 4.7 Step 1 (`secret = hex::decode(env::var("CREDENTIAL_SECRET")?)`).
@@ -225,7 +225,7 @@ Severity floor for "blocker" is "would not compile or would silently corrupt saf
 
 ### 4.1 [HIGH] Phase 4 Task 4.7 (`xvn key issue`) lands in Phase 4 but Phase 1 Task 1.5 already needs per-user key plumbing
 - **Location:** Phase 1 Task 1.5 (modify Orderly executor to take per-user key); Phase 4 Task 4.7 (issue/store the key).
-- **Issue:** Task 1.5 says "modify the executor's constructor to accept... `strategy_id: &str`" but doesn't mention the trading key — yet the spec explicitly says the dispatcher should use the user's encrypted key. If Phase 1 still uses the env-var key (`ORDERLY_KEY/SECRET`), the test in Task 1.5 passes but the security model is not validated end-to-end until Phase 4. That's OK for an incremental ship (spec §8 step 7 explicitly defers multi-key), but the plan's File structure includes `xianvec-identity/src/trading_key.rs` as new in Phase 4 — and the spec's component map says "needs per-user key parameter (currently single env-var key)" against `orderly.rs`. There's no task that bridges single-env-key → multi-user-key.
+- **Issue:** Task 1.5 says "modify the executor's constructor to accept... `agent_id: &str`" but doesn't mention the trading key — yet the spec explicitly says the dispatcher should use the user's encrypted key. If Phase 1 still uses the env-var key (`ORDERLY_KEY/SECRET`), the test in Task 1.5 passes but the security model is not validated end-to-end until Phase 4. That's OK for an incremental ship (spec §8 step 7 explicitly defers multi-key), but the plan's File structure includes `xianvec-identity/src/trading_key.rs` as new in Phase 4 — and the spec's component map says "needs per-user key parameter (currently single env-var key)" against `orderly.rs`. There's no task that bridges single-env-key → multi-user-key.
 - **Fix:** Add a Phase 4 sub-task "Refactor `OrderlyExecutor` constructor to accept a `Box<dyn KeyProvider>` returning the Ed25519 key for a given user_id. v1 default impl: `EnvKeyProvider` (returns the single env-var key for any user). Phase 4 Task 4.7 wires the encrypted-store backed `EncryptedStoreKeyProvider`."
 
 ### 4.2 [HIGH] Phase 0 ADR outcomes drive Phase 5 but also affect Phase 3 dispatcher
@@ -250,8 +250,8 @@ Severity floor for "blocker" is "would not compile or would silently corrupt saf
 
 ### 4.6 [MEDIUM] Phase 3 Task 3.3 wiring breaks every existing call site of `OrderlyExecutor`
 - **Location:** plan Task 3.3 Step 2.
-- **Issue:** Existing call sites in `xianvec-engine`, `xianvec-cli/src/commands/fire_trade.rs`, harness paths, eval paths — many of them. Each needs a `(strategy_id, user_id, cfg)` triple. For backtest paths (`ab_compare`, paper-only flows), there is no real "user" or "strategy_id" outside the new schema. The plan says "hardcode `hackathon-baseline` as `strategy_id`" — but for `ab_compare` running 10+ strategies, hardcoding one breaks attribution.
-- **Fix:** Provide a `default_strategy_id_for(arm_name)` helper that maps arm names to deterministic ULID-shaped strategy_ids. Document the migration: post-SLF3 (NFT mint), this resolves to the on-chain id. Also: backtest paths should bypass the dispatcher entirely (no risk envelope, no audit log) and only the live path uses dispatch. Add a `BypassDispatcher` mode for backtests.
+- **Issue:** Existing call sites in `xianvec-engine`, `xianvec-cli/src/commands/fire_trade.rs`, harness paths, eval paths — many of them. Each needs a `(agent_id, user_id, cfg)` triple. For backtest paths (`ab_compare`, paper-only flows), there is no real "user" or "agent_id" outside the new schema. The plan says "hardcode `hackathon-baseline` as `agent_id`" — but for `ab_compare` running 10+ strategies, hardcoding one breaks attribution.
+- **Fix:** Provide a `default_agent_id_for(arm_name)` helper that maps arm names to deterministic ULID-shaped agent_ids. Document the migration: post-SLF3 (NFT mint), this resolves to the on-chain id. Also: backtest paths should bypass the dispatcher entirely (no risk envelope, no audit log) and only the live path uses dispatch. Add a `BypassDispatcher` mode for backtests.
 
 ### 4.7 [LOW] Phase 9 e2e test depends on Phase 7 reconciler being non-todo
 - **Location:** plan Task 9.1 Step 1 ("Run reconcile, assert no drift").
@@ -391,10 +391,10 @@ Severity floor for "blocker" is "would not compile or would silently corrupt saf
 - **Issue:** Two parallel abstractions over Orderly. Plan 2c's `BrokerSurface` is the cross-broker abstraction (Alpaca paper, Alpaca live, Orderly live). This plan's `OrderlyOrderSubmit` is Orderly-specific. The dispatcher in this plan is hard-bound to Orderly. For a hackathon demo against Orderly only this is fine, but the conceptual fit with Plan 2c is wrong: the dispatcher should route through `BrokerSurface`, not bypass it.
 - **Fix:** Either (a) rename `OrderlyOrderSubmit` → reuse `BrokerSurface` from Plan 2c if Plan 2c has shipped, or (b) document that the dispatcher is Orderly-only in v1 and integrating with `BrokerSurface` is a follow-up. Either works; pick.
 
-### 8.2 [HIGH] SLF3 NFT-mint dependency: pre-mint strategy_id is "local ULID" but the plan never specifies the mapping
+### 8.2 [HIGH] SLF3 NFT-mint dependency: pre-mint agent_id is "local ULID" but the plan never specifies the mapping
 - **Location:** spec §3.5 ("Pre-mint, the same id is used as a local ULID and resolves to the NFT id at mint time"); plan does not specify the resolution mechanism.
 - **Issue:** When SLF3 ships and mints an NFT for an existing strategy, the on-chain `agent_id` (a different number — ERC-721 token id) needs to map back to the existing local ULID in the `positions` and `decisions` tables. Otherwise the historical attribution is broken or requires migration.
-- **Fix:** Add a `strategy_id_aliases` table: `(local_ulid TEXT, onchain_token_id TEXT, mapped_at INTEGER)`. After mint, write a row. Reads of `positions.strategy_id` resolve via this table (or just keep the ULID and reference the NFT by alias).
+- **Fix:** Add a `agent_id_aliases` table: `(local_ulid TEXT, onchain_token_id TEXT, mapped_at INTEGER)`. After mint, write a row. Reads of `positions.agent_id` resolve via this table (or just keep the ULID and reference the NFT by alias).
 
 ### 8.3 [HIGH] FOLLOWUPS F18 (`asset` on `TraderDecision`) is a hard prerequisite per §2.2 above
 - **Location:** FOLLOWUPS F18.
@@ -446,7 +446,7 @@ Severity floor for "blocker" is "would not compile or would silently corrupt saf
 ### 9.6 [MEDIUM] `OrderDispatcher::dispatch` never reads `orders_in_last_minute` / `orders_in_last_hour` — passed in as parameters
 - **Location:** plan Task 3.2 — dispatch takes these as args.
 - **Issue:** Where do they come from? The caller has to track them. There's no helper that queries the audit log "count emit-stage rows for strategy X in last minute" — which is the natural source. Pushing this responsibility to every caller is leaky.
-- **Fix:** Compute internally from the audit log (`SELECT COUNT(*) FROM decisions WHERE strategy_id = ? AND stage = 'submit' AND occurred_at > ?`). Add to ledger or audit module.
+- **Fix:** Compute internally from the audit log (`SELECT COUNT(*) FROM decisions WHERE agent_id = ? AND stage = 'submit' AND occurred_at > ?`). Add to ledger or audit module.
 
 ### 9.7 [MEDIUM] `compute_quota_factor`'s sigmoid arg uses `i.closed_pnls_30d.len() as f64` for division but the spec's Sharpe is over a normalized window
 - **Location:** plan Task 6.1 implementation; spec §3.4 formula.
@@ -460,7 +460,7 @@ Severity floor for "blocker" is "would not compile or would silently corrupt saf
 
 ### 9.9 [LOW] `tokio::sync::Mutex` for the per-strategy lock map is overkill — `std::sync::Mutex` would do (no `.await` inside the critical section is held)
 - **Location:** plan Task 2.3.
-- **Issue:** The `lock_for(strategy_id)` only inserts/clones; no async work. Using `std::sync::Mutex` avoids the dependency on tokio's mutex (which has more overhead).
+- **Issue:** The `lock_for(agent_id)` only inserts/clones; no async work. Using `std::sync::Mutex` avoids the dependency on tokio's mutex (which has more overhead).
 - **Fix:** Cosmetic; use `std::sync::Mutex<HashMap<...>>` for the outer map. Inner mutex must remain `tokio::sync::Mutex` (held across await points).
 
 ---
@@ -543,7 +543,7 @@ Mapping spec §6 failure modes against the plan:
 
 **During Phase 1:**
 
-6. Add `trading_keys` migration and store; add `global_state` migration; add `strategies` migration with config_json; add `strategy_id_aliases` for SLF3 forward-compat.
+6. Add `trading_keys` migration and store; add `global_state` migration; add `strategies` migration with config_json; add `agent_id_aliases` for SLF3 forward-compat.
 7. Use `#[sqlx(rename_all = "snake_case")]` not `lowercase` for Stage (§2.10).
 
 **During Phase 3:**

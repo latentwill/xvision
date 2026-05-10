@@ -1,9 +1,9 @@
 # Marketplace Plugin — Design
 
-> **Status:** Draft for user review · 2026-05-09
+> **Status:** Deferred — design accepted, implementation gated on the Strategy Creation Engine + Eval Engine being shipped and battle-tested against Alpaca paper, AND on the Smart Contract Surface spec being picked back up. v1 of Xianvec is Alpaca-eval only with no on-chain function; no marketplace plugin plan is written until then. The "5 weeks to hackathon" budget noted below predates the v1-test deferral and is now superseded — re-plan timing when the chain layer comes off the bench. · originally drafted 2026-05-09; deferral added 2026-05-10
 > **Author:** xianvec hackathon team
-> **Companion specs:** [Karpathy Autoresearcher](./2026-05-09-karpathy-autoresearcher-design.md) (the producer of artifacts this plugin consumes) · [Smart Contract Surface](./2026-05-08-smart-contract-surface-design.md) (ERC-8004 registry surface on Mantle)
-> **Hackathon deadline:** 2026-06-15 (5 weeks)
+> **Companion specs:** [Karpathy Autoresearcher](./2026-05-09-karpathy-autoresearcher-design.md) (the producer of artifacts this plugin consumes) · [Smart Contract Surface](./2026-05-08-smart-contract-surface-design.md) (ERC-8004 registry surface on Mantle — also deferred)
+> **Hackathon deadline (superseded):** 2026-06-15 — see Status line above.
 
 ---
 

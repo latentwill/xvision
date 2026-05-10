@@ -272,9 +272,9 @@ The Marketplace + Identity engines own the storage, on-chain pinning, and reputa
 ## 13. CLI surface
 
 ```
-xvn eval run <strategy_id> --scenario <scenario_id>          # single run
-xvn eval run <strategy_id> --scenario <scenario_id> --mode paper
-xvn eval run <strategy_id> --scenario <scenario_id> --estimate-only   # token estimate, no run
+xvn eval run <agent_id> --scenario <scenario_id>          # single run
+xvn eval run <agent_id> --scenario <scenario_id> --mode paper
+xvn eval run <agent_id> --scenario <scenario_id> --estimate-only   # token estimate, no run
 xvn eval status <run_id>                                     # status + metrics
 xvn eval ls                                                  # list runs
 xvn eval ls --strategy <id>                                  # filter
@@ -291,7 +291,7 @@ xvn eval publish-attestation <run_id>                        # produce signed at
 
 Mirrors the CLI for external AI agents. Same verb surface as listed in Strategy Creation Engine spec §10 under "Eval lifecycle":
 
-- `run_eval(strategy_id, scenario_id, mode?, params_override?, estimate_only?) -> { run_id | estimate }`
+- `run_eval(agent_id, scenario_id, mode?, params_override?, estimate_only?) -> { run_id | estimate }`
 - `eval_status(run_id) -> { status, progress, metrics_partial }`
 - `eval_metrics(run_id) -> MetricsSummary`
 - `compare_runs(run_ids[]) -> ComparisonReport`
@@ -299,7 +299,7 @@ Mirrors the CLI for external AI agents. Same verb surface as listed in Strategy 
 - `extract_findings(run_id, model_override?) -> Finding[]`
 - `list_scenarios(filter?) -> Scenario[]`
 - `register_scenario(scenario_json) -> { scenario_id }`
-- `eval_batch(grid | strategy_ids[], scenario_id, concurrency?) -> { batch_id, run_ids }`
+- `eval_batch(grid | agent_ids[], scenario_id, concurrency?) -> { batch_id, run_ids }`
 - `publish_attestation(run_id) -> SignedAttestation`
 
 ## 15. Migration plan from `xianvec-eval`
