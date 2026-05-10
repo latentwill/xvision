@@ -25,7 +25,7 @@ use crate::agent::llm::{AnthropicDispatch, LlmDispatch};
 use crate::api::audit::{self, Outcome};
 use crate::api::{strategy as api_strategy, ApiContext, ApiError, ApiResult};
 use crate::eval::compare::{compare_runs, ComparisonReport};
-use crate::eval::executor::{Executor, PaperExecutor};
+use crate::eval::executor::{BacktestExecutor, Executor, PaperExecutor};
 use crate::eval::run::{Run, RunMode, RunStatus};
 use crate::eval::scenario::{canonical_scenarios, Scenario};
 use crate::eval::store::{ListFilter, RunStore};
@@ -380,31 +380,29 @@ pub struct EvalRunRequest {
     pub agent_id: String,
     /// Scenario id from `canonical_scenarios()` (e.g. `crypto-bull-q1-2025`).
     pub scenario_id: String,
-    /// Run mode. `Backtest` is rejected with `ApiError::Validation` until
-    /// `BacktestExecutor` lands (Phase 3.B-backtest, separate PR).
+    /// Run mode. `Paper` drives an `AlpacaPaperSurface` against real Alpaca
+    /// paper credentials; `Backtest` replays the scenario's parquet fixture
+    /// in-process without any broker.
     pub mode: RunMode,
     /// Optional per-run override of bundle.mechanical_params. Persisted as
     /// `eval_runs.params_override_json`.
     pub params_override: Option<serde_json::Value>,
 }
 
-/// Public env-bound entry point: constructs broker / dispatch / tools
-/// from environment variables and dispatches to `run_with_deps`.
+/// Public env-bound entry point: constructs broker (paper mode only) /
+/// dispatch / tools from environment variables and dispatches to
+/// `run_with_deps`.
 ///
-/// Required env for paper mode:
-///   APCA_API_KEY_ID, APCA_API_SECRET_KEY, [APCA_API_BASE_URL]
-///   ANTHROPIC_API_KEY
+/// Required env:
+/// - paper mode: `APCA_API_KEY_ID`, `APCA_API_SECRET_KEY`,
+///   `[APCA_API_BASE_URL]`, `ANTHROPIC_API_KEY`
+/// - backtest mode: `ANTHROPIC_API_KEY` only (no broker constructed)
 ///
-/// Validation that doesn't depend on env (backtest mode, missing strategy,
-/// missing scenario) runs FIRST so the operator sees a clean "backtest not
-/// supported" / "strategy not found" error rather than buried-behind an
-/// `APCA_API_KEY_ID not found` from the broker constructor.
+/// Validation that doesn't depend on env (missing strategy, missing
+/// scenario) runs FIRST so the operator sees a clean "strategy not found"
+/// error rather than buried-behind an `APCA_API_KEY_ID not found` from the
+/// broker constructor.
 pub async fn run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<Run> {
-    if req.mode == RunMode::Backtest {
-        return Err(ApiError::Validation(
-            "backtest mode not yet supported — Phase 3.B-backtest ships BacktestExecutor as a follow-up; use --mode paper".into(),
-        ));
-    }
     // Early NotFound surfaces without env-var noise.
     let _bundle = api_strategy::get(ctx, &req.agent_id).await?;
     if !canonical_scenarios().iter().any(|s| s.id == req.scenario_id) {
@@ -414,25 +412,31 @@ pub async fn run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<Run> {
         )));
     }
 
-    let broker_arc: Arc<dyn BrokerSurface> = Arc::new(
-        AlpacaPaperSurface::from_env()
-            .map_err(|e| ApiError::Internal(format!("alpaca paper from_env: {e}")))?,
-    );
+    let broker: Option<Arc<dyn BrokerSurface>> = match req.mode {
+        RunMode::Paper => Some(Arc::new(
+            AlpacaPaperSurface::from_env()
+                .map_err(|e| ApiError::Internal(format!("alpaca paper from_env: {e}")))?,
+        )),
+        RunMode::Backtest => None,
+    };
     let api_key = std::env::var("ANTHROPIC_API_KEY").map_err(|_| {
-        ApiError::Validation("ANTHROPIC_API_KEY env var is required for paper mode".into())
+        ApiError::Validation("ANTHROPIC_API_KEY env var is required".into())
     })?;
     let dispatch_arc: Arc<dyn LlmDispatch> = Arc::new(AnthropicDispatch::new(api_key));
     let tools_arc = Arc::new(ToolRegistry::default_with_builtins());
-    run_with_deps(ctx, req, broker_arc, dispatch_arc, tools_arc).await
+    run_with_deps(ctx, req, broker, dispatch_arc, tools_arc).await
 }
 
 /// Testable / deps-injecting variant of `run`. Tests pass a
 /// `MockBrokerSurface` + `MockDispatch` so no network is required;
 /// production callers go through `run` which constructs deps from env.
+///
+/// `broker` is `Some` for paper mode and ignored for backtest mode.
+/// Paper mode without a broker returns `ApiError::Validation`.
 pub async fn run_with_deps(
     ctx: &ApiContext,
     req: EvalRunRequest,
-    broker: Arc<dyn BrokerSurface>,
+    broker: Option<Arc<dyn BrokerSurface>>,
     dispatch: Arc<dyn LlmDispatch>,
     tools: Arc<ToolRegistry>,
 ) -> ApiResult<Run> {
@@ -462,16 +466,10 @@ pub async fn run_with_deps(
 async fn run_inner(
     ctx: &ApiContext,
     req: EvalRunRequest,
-    broker: Arc<dyn BrokerSurface>,
+    broker: Option<Arc<dyn BrokerSurface>>,
     dispatch: Arc<dyn LlmDispatch>,
     tools: Arc<ToolRegistry>,
 ) -> ApiResult<Run> {
-    if req.mode == RunMode::Backtest {
-        return Err(ApiError::Validation(
-            "backtest mode not yet supported — Phase 3.B-backtest ships BacktestExecutor as a follow-up; use --mode paper".into(),
-        ));
-    }
-
     // 1. Look up the strategy bundle. Propagates ApiError::NotFound cleanly.
     let bundle = api_strategy::get(ctx, &req.agent_id).await?;
 
@@ -481,7 +479,18 @@ async fn run_inner(
         .find(|s| s.id == req.scenario_id)
         .ok_or_else(|| ApiError::NotFound(format!("scenario '{}'", req.scenario_id)))?;
 
-    // 3. Build a fresh Run, persist, then drive the executor.
+    // 3. Pick the executor for this run mode.
+    let executor: Box<dyn Executor> = match req.mode {
+        RunMode::Paper => {
+            let b = broker.ok_or_else(|| {
+                ApiError::Validation("paper mode requires a broker".into())
+            })?;
+            Box::new(PaperExecutor::new(b))
+        }
+        RunMode::Backtest => Box::new(BacktestExecutor),
+    };
+
+    // 4. Build a fresh Run, persist, then drive the executor.
     let mut run = Run::new_queued(
         req.agent_id.clone(),
         scenario.id.clone(),
@@ -495,7 +504,6 @@ async fn run_inner(
         .await
         .map_err(|e| ApiError::Internal(format!("create run: {e}")))?;
 
-    let executor = PaperExecutor::new(broker);
     if let Err(e) = executor
         .run(&mut run, &bundle, &scenario, dispatch, tools, &store)
         .await

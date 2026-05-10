@@ -1,16 +1,15 @@
 //! Executor trait + concrete impls. Phase 3.B of the Eval Engine plan.
 //!
 //! The Executor abstracts over the two run modes:
-//! - **Backtest** (Task 5, separate PR) — replays a parquet fixture
-//!   in chronological order, simulates fills with slippage + fees.
-//! - **Paper** (this PR) — drives `BrokerSurface::submit_order` against a
-//!   real or mocked broker, suitable for the v1 demo path against
-//!   Alpaca paper.
+//! - **Backtest** — replays a parquet fixture in chronological order,
+//!   simulates fills with slippage + fees. No broker required.
+//! - **Paper** — drives `BrokerSurface::submit_order` against a real or
+//!   mocked broker, suitable for the v1 demo path against Alpaca paper.
 //!
-//! Callers (the future `engine::api::eval::run` function, the eval CLI)
-//! pick an executor by `RunMode` and call `run(...)` once per `xvn eval run`
-//! invocation.
+//! Callers (`engine::api::eval::run`, the eval CLI) pick an executor by
+//! `RunMode` and call `run(...)` once per `xvn eval run` invocation.
 
+pub mod backtest;
 pub mod paper;
 
 use std::sync::Arc;
@@ -24,6 +23,7 @@ use crate::eval::scenario::Scenario;
 use crate::eval::store::RunStore;
 use crate::tools::ToolRegistry;
 
+pub use backtest::BacktestExecutor;
 pub use paper::PaperExecutor;
 
 #[async_trait]
