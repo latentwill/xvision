@@ -52,3 +52,6 @@ target/
 
 # Superpowers brainstorming session content (ephemeral mockups + state)
 .superpowers/
+
+# Git worktrees for parallel team operation (see team/README.md)
+.worktrees/
