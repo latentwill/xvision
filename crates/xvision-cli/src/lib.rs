@@ -185,6 +185,8 @@ pub enum Command {
     Indicator(commands::indicator::IndicatorCmd),
     /// Run the embedded web dashboard (axum + Vite SPA).
     Dashboard(commands::dashboard::DashboardCmd),
+    /// End-of-day operator report (markdown to stdout).
+    Eod(commands::eod::EodArgs),
     /// Browse eval runs and canonical scenarios. (`run` lands in a follow-up.)
     Eval(commands::eval::EvalCmd),
     /// Manage registered LLM providers in config/default.toml.
@@ -270,6 +272,7 @@ impl Cli {
             Command::Store(cmd) => commands::store_cmd::run(cmd).await,
             Command::Indicator(cmd) => commands::indicator::run(cmd),
             Command::Dashboard(cmd) => commands::dashboard::run(cmd).await,
+            Command::Eod(args) => commands::eod::run(args).await,
             Command::Eval(cmd) => commands::eval::run(cmd).await,
             Command::Provider(cmd) => commands::provider::run(cmd).await,
         }
