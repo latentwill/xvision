@@ -23,6 +23,7 @@ use crate::eval::metrics::{
     annualization_periods_per_year, equity_to_returns, max_drawdown_pct, sharpe_from_returns,
     total_return_pct,
 };
+use crate::eval::progress::{send_event, ProgressEvent, ProgressTx};
 use crate::eval::run::{MetricsSummary, Run, RunStatus};
 use crate::eval::scenario::Scenario;
 use crate::eval::store::{DecisionRow, RunStore};
@@ -40,11 +41,37 @@ const BTC_REFERENCE_PRICE_USD: f64 = 70_000.0;
 
 pub struct PaperExecutor {
     broker: Arc<dyn BrokerSurface>,
+    /// Optional progress channel. When `None` the executor is silent
+    /// (today's `eval::run` callers); when `Some`, every significant
+    /// action emits a `ProgressEvent`. Send-when-no-subscribers is a
+    /// no-op via `send_event`.
+    progress: Option<ProgressTx>,
 }
 
 impl PaperExecutor {
+    /// Constructor without progress wiring. Existing callers (and tests
+    /// that don't care about events) keep working unchanged.
     pub fn new(broker: Arc<dyn BrokerSurface>) -> Self {
-        Self { broker }
+        Self {
+            broker,
+            progress: None,
+        }
+    }
+
+    /// Constructor that wires this executor to a `ProgressTx`. New
+    /// callers (CLI progress bar, dashboard SSE endpoint) hand in a
+    /// sender from a shared `ProgressBus`.
+    pub fn with_progress(broker: Arc<dyn BrokerSurface>, progress: ProgressTx) -> Self {
+        Self {
+            broker,
+            progress: Some(progress),
+        }
+    }
+
+    fn emit(&self, event: ProgressEvent) {
+        if let Some(tx) = self.progress.as_ref() {
+            send_event(tx, event);
+        }
     }
 }
 
@@ -82,6 +109,50 @@ impl Executor for PaperExecutor {
         tools: Arc<ToolRegistry>,
         store: &RunStore,
     ) -> Result<MetricsSummary> {
+        // RunStarted fires before any work so subscribers can show the
+        // run as "in flight" even if the first tick is slow.
+        self.emit(ProgressEvent::RunStarted {
+            run_id: run.id.clone(),
+            estimated_tokens: 0,
+        });
+
+        let result = self
+            .run_inner(run, bundle, scenario, dispatch, tools, store)
+            .await;
+
+        match &result {
+            Ok(metrics) => {
+                let tokens_used = run
+                    .actual_input_tokens
+                    .unwrap_or(0)
+                    .saturating_add(run.actual_output_tokens.unwrap_or(0));
+                self.emit(ProgressEvent::RunCompleted {
+                    run_id: run.id.clone(),
+                    metrics: metrics.clone(),
+                    tokens_used,
+                });
+            }
+            Err(e) => {
+                self.emit(ProgressEvent::RunFailed {
+                    run_id: run.id.clone(),
+                    error: e.to_string(),
+                });
+            }
+        }
+        result
+    }
+}
+
+impl PaperExecutor {
+    async fn run_inner(
+        &self,
+        run: &mut Run,
+        bundle: &StrategyBundle,
+        scenario: &Scenario,
+        dispatch: Arc<dyn LlmDispatch>,
+        tools: Arc<ToolRegistry>,
+        store: &RunStore,
+    ) -> Result<MetricsSummary> {
         store
             .update_status(&run.id, RunStatus::Running, None)
             .await?;
@@ -101,15 +172,32 @@ impl Executor for PaperExecutor {
             );
         }
 
+        let total_window = (scenario.time_window.end - scenario.time_window.start)
+            .num_seconds()
+            .max(1) as f64;
+
         let initial_balance = self.broker.balance().await?;
         let mut equity_samples: Vec<f64> = Vec::new();
         let mut decision_idx = 0u32;
         let mut n_trades = 0u32;
         let mut total_input_tokens: u64 = 0;
         let mut total_output_tokens: u64 = 0;
+        // Running peak for drawdown_pct in MetricsUpdated. Start at the
+        // initial balance so the first tick's drawdown is well-defined.
+        let mut peak_equity = initial_balance.max(0.0);
 
         let mut ts = scenario.time_window.start;
         while ts < scenario.time_window.end {
+            // Emit RunTick before pipeline work so dashboard progress
+            // bars can advance even if the LLM call is slow.
+            let elapsed = (ts - scenario.time_window.start).num_seconds() as f64;
+            let scenario_progress_pct = ((elapsed / total_window) * 100.0).clamp(0.0, 100.0);
+            self.emit(ProgressEvent::RunTick {
+                run_id: run.id.clone(),
+                scenario_progress_pct,
+                current_ts: ts,
+            });
+
             let position = self.broker.position(&asset).await?;
             let balance = self.broker.balance().await?;
             let seed = serde_json::json!({
@@ -146,13 +234,14 @@ impl Executor for PaperExecutor {
             if is_actionable(&parsed.action) {
                 let usd_at_risk = balance * bundle.risk.risk_pct_per_trade;
                 let size = (usd_at_risk / BTC_REFERENCE_PRICE_USD).max(0.0);
+                let side = if parsed.action == "long_open" {
+                    Side::Buy
+                } else {
+                    Side::Sell
+                };
                 let req = OrderRequest {
                     asset: asset.clone(),
-                    side: if parsed.action == "long_open" {
-                        Side::Buy
-                    } else {
-                        Side::Sell
-                    },
+                    side,
                     size,
                     stop_loss_pct: Some(
                         (bundle.risk.stop_loss_atr_multiple as f32).max(0.5),
@@ -166,7 +255,31 @@ impl Executor for PaperExecutor {
                 fee = conf.fee;
                 order_size = Some(size);
                 n_trades += 1;
+
+                // FillRecorded fires only when an order actually went
+                // through. Subscribers that draw trade markers on a
+                // chart consume this.
+                self.emit(ProgressEvent::FillRecorded {
+                    run_id: run.id.clone(),
+                    side: match side {
+                        Side::Buy => "buy".into(),
+                        Side::Sell => "sell".into(),
+                    },
+                    price: fill_price.unwrap_or(0.0),
+                    qty: conf.fill_size,
+                    fee: fee.unwrap_or(0.0),
+                });
             }
+
+            // DecisionEmitted fires for every cycle (actionable or not)
+            // so subscribers see flat/hold decisions too.
+            self.emit(ProgressEvent::DecisionEmitted {
+                run_id: run.id.clone(),
+                action: parsed.action.clone(),
+                asset: asset.clone(),
+                size: order_size.unwrap_or(0.0),
+                conviction: parsed.conviction,
+            });
 
             store
                 .record_decision(&DecisionRow {
@@ -188,6 +301,24 @@ impl Executor for PaperExecutor {
             let post_balance = self.broker.balance().await?;
             store.record_equity(&run.id, ts, post_balance).await?;
             equity_samples.push(post_balance);
+
+            // Running drawdown — the running peak is updated after each
+            // tick so MetricsUpdated reflects the worst-observed-so-far
+            // drawdown for live UI.
+            if post_balance > peak_equity {
+                peak_equity = post_balance;
+            }
+            let drawdown_pct = if peak_equity > 0.0 {
+                ((peak_equity - post_balance) / peak_equity * 100.0).max(0.0)
+            } else {
+                0.0
+            };
+            self.emit(ProgressEvent::MetricsUpdated {
+                run_id: run.id.clone(),
+                equity: post_balance,
+                drawdown_pct,
+                n_trades,
+            });
 
             decision_idx += 1;
             ts += cadence;
