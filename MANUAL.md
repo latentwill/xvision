@@ -283,7 +283,7 @@ operator-side prerequisites.
 
 ---
 
-## Strategy authoring (MVP — see crates/xvision-engine/README.md)
+## Strategy authoring (Plan 2a — see crates/xvision-engine/README.md)
 
 ```bash
 xvn strategy templates                 # list templates
@@ -294,8 +294,41 @@ xvn strategy ls
 xvn strategy run <id> --fixture <name> --decisions <N> [--mock]
 ```
 
-End-to-end paths beyond this surface (web Wizard, marketplace publishing, live trading,
-batch eval) land in subsequent plans (#2, #3) — they share this same bundle format.
+### AI agent drives xvn (Plan 2a)
+
+External AI agents (Claude Code, Hermes, Cursor, Codex) can author the
+same `StrategyBundle`s over MCP without the operator-CLI round-trip:
+
+```bash
+cargo build --release -p xvision-mcp        # produces target/release/xvn-mcp
+```
+
+Authoring verbs the server advertises over `tools/list`:
+`xvn_list_templates`, `xvn_create_strategy`, `xvn_get_strategy`,
+`xvn_update_slot`, `xvn_set_mechanical_param`, `xvn_set_risk_config`,
+`xvn_validate_draft` — alongside the indicator surface (`xvn_health`,
+`xvn_sma`, `xvn_rsi`, ...) that has shipped since v0.1. State lives in
+`$XVN_HOME/strategies/<id>.json`, the same path `xvn strategy ls` reads
+from.
+
+In Claude Code, register the binary in `~/.claude/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "xvn": { "command": "/path/to/target/release/xvn-mcp" }
+  }
+}
+```
+
+The web wizard at `/setup` (Plan 2d) drives the same authoring verbs
+internally via `xvision_engine::authoring`, so a draft authored in the
+chat UI is immediately visible to both `xvn strategy ls` and a connected
+MCP agent.
+
+End-to-end paths beyond this surface (marketplace publishing, live
+trading, batch eval) land in subsequent plans (2b, 2c, 3) — they share
+this same bundle format.
 
 ---
 
