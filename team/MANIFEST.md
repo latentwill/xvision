@@ -28,7 +28,8 @@ Phase A unblocked all of Phase B. Pick a row from the build order, claim it via
 | `coordinator` | `xvision/` (main) | `main` | session 1 | — | active — coordinator + integration |
 | `eval-engine-3b` | `.worktrees/eval-engine-3b` | `feature/eval-engine-3b-executors` | session 1 | [Plan #5](../docs/superpowers/plans/2026-05-08-eval-engine-plan.md) Phase 3.B (executors) | active — Phase 3.A merged via PR #10 |
 | `frontend-2-home-and-health` | `.worktrees/frontend-foundation` | `feature/frontend-2-home-and-health` | session 2 | [Frontend Plan 2](../docs/superpowers/plans/2026-05-10-frontend-2-read-only-screens.md) | active — Phase B merged via PR #9 |
-| `llm-providers` | `.worktrees/llm-providers` | `feature/llm-providers-phase-1` | session 3 | [Plan #7](../docs/superpowers/plans/2026-05-10-llm-providers-and-per-arm-models-plan.md) Phase 1 only (config schema) | active — providers config in xvision-core |
+| `llm-providers` | (merged) | `feature/llm-providers-phase-1` | session 3 | [Plan #7](../docs/superpowers/plans/2026-05-10-llm-providers-and-per-arm-models-plan.md) Phase 1 — config schema | ✅ merged via PR #14 |
+| `llm-providers-2` | `.worktrees/llm-providers-2` | `feature/llm-providers-phase-2` | session 3 | [Plan #7](../docs/superpowers/plans/2026-05-10-llm-providers-and-per-arm-models-plan.md) Phase 2 — SlotRef + Arm grammar | active — type plumbing in xvision-core + xvision-eval |
 
 ## Build order (post-Phase-A)
 

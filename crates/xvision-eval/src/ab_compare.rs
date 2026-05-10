@@ -11,6 +11,7 @@ use std::sync::Arc;
 use anyhow::anyhow;
 
 use xvision_core::market::MarketSnapshot;
+use xvision_core::slot::SlotRef;
 use xvision_intern::{BriefingCache, InternBackend};
 use xvision_risk::RiskLayer;
 use xvision_trader::{TraderBackend, TraderParams};
@@ -33,10 +34,17 @@ pub struct ArmSpec {
 
 /// Which strategy this arm wraps. Post-CV-extraction the only LLM arm is
 /// `TraderArm` (no per-arm vector config); classical baselines are listed
-/// for explicit selection from the CLI.
+/// for explicit selection from the CLI. The `Trader` variant carries optional
+/// `intern` / `trader` slot overrides so a single `xvn ab-compare` run can
+/// pit the same strategy against multiple LLM (provider, model) combinations
+/// — see Plan #7 (LLM providers + per-arm models). When both slots are
+/// `None`, the arm uses the global `[intern]` / `[trader]` config defaults.
 #[derive(Debug, Clone)]
 pub enum ArmKind {
-    Trader,
+    Trader {
+        intern: Option<SlotRef>,
+        trader: Option<SlotRef>,
+    },
     BuyAndHold,
     AlwaysLong,
     AlwaysShort,
@@ -58,10 +66,49 @@ pub fn parse_arm_spec(s: &str) -> anyhow::Result<ArmSpec> {
     let head = parts.next().unwrap_or("");
     let rest = parts.next().unwrap_or("");
     match head {
-        "trader_arm" => Ok(ArmSpec {
-            name: "trader_arm".into(),
-            kind: ArmKind::Trader,
-        }),
+        "trader_arm" => {
+            let kv = parse_kv(rest);
+            const ALLOWED: &[&str] = &["intern", "trader", "intern_model", "trader_model"];
+            for k in kv.keys() {
+                if !ALLOWED.contains(&k.as_str()) {
+                    return Err(anyhow!("unknown key `{k}` in trader_arm spec"));
+                }
+            }
+            if kv.contains_key("intern") && kv.contains_key("intern_model") {
+                return Err(anyhow!(
+                    "`intern=` and `intern_model=` are mutually exclusive on trader_arm"
+                ));
+            }
+            if kv.contains_key("trader") && kv.contains_key("trader_model") {
+                return Err(anyhow!(
+                    "`trader=` and `trader_model=` are mutually exclusive on trader_arm"
+                ));
+            }
+            // Empty-provider trick (`SlotRef { provider: "", model: ... }`) is
+            // the marker for "shorthand — fill provider from CLI flag default at
+            // ProviderRegistry resolve time". Only produced by intern_model= /
+            // trader_model= shorthand, only consumed by Phase 3's resolver.
+            let intern = match (kv.get("intern"), kv.get("intern_model")) {
+                (Some(slot), _) => Some(
+                    slot.parse::<SlotRef>()
+                        .map_err(|e| anyhow!("intern slot ref: {e}"))?,
+                ),
+                (_, Some(model)) => Some(SlotRef::new("", model.clone())),
+                _ => None,
+            };
+            let trader = match (kv.get("trader"), kv.get("trader_model")) {
+                (Some(slot), _) => Some(
+                    slot.parse::<SlotRef>()
+                        .map_err(|e| anyhow!("trader slot ref: {e}"))?,
+                ),
+                (_, Some(model)) => Some(SlotRef::new("", model.clone())),
+                _ => None,
+            };
+            Ok(ArmSpec {
+                name: "trader_arm".into(),
+                kind: ArmKind::Trader { intern, trader },
+            })
+        }
         "buy_and_hold" => Ok(ArmSpec {
             name: "buy_and_hold".into(),
             kind: ArmKind::BuyAndHold,
@@ -103,6 +150,66 @@ pub fn parse_arm_spec(s: &str) -> anyhow::Result<ArmSpec> {
     }
 }
 
+/// Mutates `specs` in place so any two `trader_arm` entries with distinct
+/// slot configs end up with distinct names. Bare `trader_arm` (no slot
+/// overrides) keeps its name unchanged so existing scripts/reports keep
+/// working.
+pub fn auto_suffix_arm_names(specs: &mut [ArmSpec]) {
+    // Pass 1: derive the candidate suffix per spec.
+    let mut suffixes: Vec<Option<String>> = specs
+        .iter()
+        .map(|spec| match &spec.kind {
+            ArmKind::Trader { intern, trader } => match (trader, intern) {
+                (None, None) => None, // bare trader_arm — leave alone
+                (Some(t), _) => Some(short_model_segment(&t.model)),
+                (None, Some(i)) => Some(format!("i:{}", short_model_segment(&i.model))),
+            },
+            _ => None,
+        })
+        .collect();
+
+    // Pass 2: detect collisions on the candidate suffix and promote to
+    // `<model>@<provider>` when needed. Only applies among `Trader` specs.
+    let mut by_suffix: std::collections::HashMap<String, Vec<usize>> =
+        std::collections::HashMap::new();
+    for (i, s) in suffixes.iter().enumerate() {
+        if let Some(s) = s {
+            by_suffix.entry(s.clone()).or_default().push(i);
+        }
+    }
+    let mut promotions: Vec<(usize, String)> = vec![];
+    for (_, idxs) in by_suffix.iter().filter(|(_, v)| v.len() > 1) {
+        for &i in idxs {
+            if let ArmKind::Trader { trader, intern } = &specs[i].kind {
+                let (model, provider) = match (trader, intern) {
+                    (Some(t), _) => (&t.model, &t.provider),
+                    (None, Some(j)) => (&j.model, &j.provider),
+                    _ => continue,
+                };
+                let suffix = format!("{}@{}", short_model_segment(model), provider);
+                promotions.push((i, suffix));
+            }
+        }
+    }
+    for (i, suf) in promotions {
+        suffixes[i] = Some(suf);
+    }
+
+    // Pass 3: apply.
+    for (spec, suffix) in specs.iter_mut().zip(suffixes.into_iter()) {
+        if let Some(suf) = suffix {
+            spec.name = format!("{}[{}]", spec.name, suf);
+        }
+    }
+}
+
+/// `meta-llama/Llama-3.3-70B-Instruct-Turbo` → `Llama-3.3-70B-Instruct-Turbo`.
+/// Trims to 32 chars to keep BacktestResult arm names readable.
+fn short_model_segment(model: &str) -> String {
+    let last = model.rsplit('/').next().unwrap_or(model);
+    last.chars().take(32).collect()
+}
+
 fn parse_kv(s: &str) -> std::collections::BTreeMap<String, String> {
     s.split(':')
         .filter_map(|kv| {
@@ -120,7 +227,10 @@ pub fn default_arms() -> Vec<ArmSpec> {
     vec![
         ArmSpec {
             name: "trader_arm".into(),
-            kind: ArmKind::Trader,
+            kind: ArmKind::Trader {
+                intern: None,
+                trader: None,
+            },
         },
         ArmSpec {
             name: "buy_and_hold".into(),
@@ -154,7 +264,10 @@ pub async fn run_ab_compare(
             // practice) and the runtime is short-lived.
             let static_name: &'static str = Box::leak(spec.name.clone().into_boxed_str());
             let strategy: Box<dyn Algorithm> = match spec.kind {
-                ArmKind::Trader => Box::new(TraderArm::new(
+                // The slot fields are read-but-ignored at this point in Plan #7
+                // (Phase 3 wires them through ProviderRegistry). Phase 2 just
+                // lands the type plumbing so the parser + CLI can populate them.
+                ArmKind::Trader { intern: _, trader: _ } => Box::new(TraderArm::new(
                     static_name,
                     Arc::clone(&intern),
                     intern_provider.clone(),
@@ -192,7 +305,167 @@ mod tests {
     fn parse_trader_arm() {
         let a = parse_arm_spec("trader_arm").unwrap();
         assert_eq!(a.name, "trader_arm");
-        assert!(matches!(a.kind, ArmKind::Trader));
+        assert!(matches!(
+            a.kind,
+            ArmKind::Trader {
+                intern: None,
+                trader: None
+            }
+        ));
+    }
+
+    #[test]
+    fn trader_arm_kind_carries_optional_slots() {
+        let spec = ArmSpec {
+            name: "trader_arm".into(),
+            kind: ArmKind::Trader {
+                intern: Some(SlotRef::new("anthropic", "claude-opus-4-7")),
+                trader: None,
+            },
+        };
+        match spec.kind {
+            ArmKind::Trader { intern, trader } => {
+                assert_eq!(intern.unwrap().model, "claude-opus-4-7");
+                assert!(trader.is_none());
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn auto_suffix_uses_last_path_segment_of_model() {
+        let mut specs = vec![
+            parse_arm_spec("trader_arm:trader=anthropic/claude-opus-4-7").unwrap(),
+            parse_arm_spec("trader_arm:trader=openai/gpt-4o").unwrap(),
+        ];
+        auto_suffix_arm_names(&mut specs);
+        assert_eq!(specs[0].name, "trader_arm[claude-opus-4-7]");
+        assert_eq!(specs[1].name, "trader_arm[gpt-4o]");
+    }
+
+    #[test]
+    fn auto_suffix_strips_provider_path_from_model_id() {
+        let mut specs = vec![parse_arm_spec(
+            "trader_arm:trader=together/meta-llama/Llama-3.3-70B-Instruct-Turbo",
+        )
+        .unwrap()];
+        auto_suffix_arm_names(&mut specs);
+        assert_eq!(specs[0].name, "trader_arm[Llama-3.3-70B-Instruct-Turbo]");
+    }
+
+    #[test]
+    fn auto_suffix_appends_provider_when_models_collide() {
+        let mut specs = vec![
+            parse_arm_spec("trader_arm:trader=openai/gpt-4o").unwrap(),
+            parse_arm_spec("trader_arm:trader=together/gpt-4o").unwrap(),
+        ];
+        auto_suffix_arm_names(&mut specs);
+        assert_eq!(specs[0].name, "trader_arm[gpt-4o@openai]");
+        assert_eq!(specs[1].name, "trader_arm[gpt-4o@together]");
+    }
+
+    #[test]
+    fn auto_suffix_leaves_bare_trader_arm_alone() {
+        let mut specs = vec![
+            parse_arm_spec("trader_arm").unwrap(),
+            parse_arm_spec("trader_arm:trader=openai/gpt-4o").unwrap(),
+        ];
+        auto_suffix_arm_names(&mut specs);
+        assert_eq!(specs[0].name, "trader_arm");
+        assert_eq!(specs[1].name, "trader_arm[gpt-4o]");
+    }
+
+    #[test]
+    fn auto_suffix_ignores_non_trader_arms() {
+        let mut specs = vec![
+            parse_arm_spec("buy_and_hold").unwrap(),
+            parse_arm_spec("trader_arm:trader=openai/gpt-4o").unwrap(),
+        ];
+        auto_suffix_arm_names(&mut specs);
+        assert_eq!(specs[0].name, "buy_and_hold");
+        assert_eq!(specs[1].name, "trader_arm[gpt-4o]");
+    }
+
+    #[test]
+    fn auto_suffix_handles_intern_only_override() {
+        let mut specs = vec![
+            parse_arm_spec("trader_arm:intern=anthropic/claude-opus-4-7").unwrap(),
+            parse_arm_spec("trader_arm:intern=anthropic/claude-haiku-4-5").unwrap(),
+        ];
+        auto_suffix_arm_names(&mut specs);
+        // When only intern differs, suffix is the intern model id.
+        assert_eq!(specs[0].name, "trader_arm[i:claude-opus-4-7]");
+        assert_eq!(specs[1].name, "trader_arm[i:claude-haiku-4-5]");
+    }
+
+    #[test]
+    fn parses_trader_arm_with_intern_slot() {
+        let a = parse_arm_spec("trader_arm:intern=anthropic/claude-opus-4-7").unwrap();
+        match a.kind {
+            ArmKind::Trader { intern, trader } => {
+                let s = intern.expect("intern slot must be present");
+                assert_eq!(s.provider, "anthropic");
+                assert_eq!(s.model, "claude-opus-4-7");
+                assert!(trader.is_none());
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn parses_trader_arm_with_trader_slot_only() {
+        let a = parse_arm_spec("trader_arm:trader=openai/gpt-4o").unwrap();
+        match a.kind {
+            ArmKind::Trader { intern, trader } => {
+                assert!(intern.is_none());
+                let s = trader.expect("trader slot must be present");
+                assert_eq!(s.provider, "openai");
+                assert_eq!(s.model, "gpt-4o");
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn parses_trader_arm_with_both_slots() {
+        let a = parse_arm_spec(
+            "trader_arm:intern=anthropic/claude-haiku-4-5:trader=openai/gpt-4o",
+        )
+        .unwrap();
+        match a.kind {
+            ArmKind::Trader { intern, trader } => {
+                assert_eq!(intern.unwrap().model, "claude-haiku-4-5");
+                assert_eq!(trader.unwrap().model, "gpt-4o");
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn parses_trader_model_shorthand() {
+        let a = parse_arm_spec("trader_arm:trader_model=gpt-4o-mini").unwrap();
+        match a.kind {
+            ArmKind::Trader { intern, trader } => {
+                assert!(intern.is_none());
+                let s = trader.expect("trader slot must be present");
+                assert_eq!(s.provider, "");
+                assert_eq!(s.model, "gpt-4o-mini");
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn rejects_intern_and_intern_model_together() {
+        let err =
+            parse_arm_spec("trader_arm:intern=anthropic/x:intern_model=y").unwrap_err();
+        assert!(format!("{err}").contains("mutually exclusive"));
+    }
+
+    #[test]
+    fn rejects_trader_arm_with_unknown_kv() {
+        let err = parse_arm_spec("trader_arm:bogus=x").unwrap_err();
+        assert!(format!("{err}").contains("unknown key"));
     }
 
     #[test]
