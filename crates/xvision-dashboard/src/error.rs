@@ -4,6 +4,8 @@ use axum::Json;
 use serde_json::json;
 use thiserror::Error;
 
+use xvision_engine::api::ApiError;
+
 #[derive(Error, Debug)]
 pub enum DashboardError {
     #[error("not found: {0}")]
@@ -14,6 +16,22 @@ pub enum DashboardError {
     Conflict(String),
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
+}
+
+impl From<ApiError> for DashboardError {
+    fn from(e: ApiError) -> Self {
+        match e {
+            ApiError::NotFound(m) => DashboardError::NotFound(m),
+            ApiError::Validation(m) => DashboardError::Validation {
+                field: "request".into(),
+                msg: m,
+            },
+            ApiError::Conflict(m) => DashboardError::Conflict(m),
+            ApiError::Internal(m) => DashboardError::Internal(anyhow::anyhow!(m)),
+            ApiError::Db(e) => DashboardError::Internal(anyhow::anyhow!(e)),
+            ApiError::Other(e) => DashboardError::Internal(e),
+        }
+    }
 }
 
 impl IntoResponse for DashboardError {

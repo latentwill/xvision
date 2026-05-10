@@ -8,5 +8,7 @@ pub mod embed;
 pub mod error;
 pub mod routes;
 pub mod server;
+pub mod state;
 
 pub use server::serve;
+pub use state::AppState;
