@@ -20,7 +20,9 @@ use std::time::Duration;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::alpaca::{AlpacaApi, OrderRequest as ApacOrderRequest, OrderSide as ApacSide};
+use crate::alpaca::{
+    AlpacaApi, ApacClientApi, OrderRequest as ApacOrderRequest, OrderSide as ApacSide,
+};
 
 // ── Public types ─────────────────────────────────────────────────────────────
 
@@ -89,12 +91,37 @@ pub struct AlpacaPaperSurface {
 }
 
 impl AlpacaPaperSurface {
-    /// Build from any `AlpacaApi` impl. In production: `ApacClientApi`
-    /// constructed from env via `AlpacaExecutor::from_env()` (then peel the
-    /// `api` field off — or add a constructor on `AlpacaExecutor` to expose
-    /// a `BrokerSurface`). In tests: any custom mock.
+    /// Build from any `AlpacaApi` impl. Used by tests with mocks.
     pub fn with_api(api: Arc<dyn AlpacaApi>) -> Self {
         Self { api }
+    }
+
+    /// Build from environment variables (`APCA_API_KEY_ID`,
+    /// `APCA_API_SECRET_KEY`, `APCA_API_BASE_URL`). Falls back to Alpaca
+    /// paper-trading URL if `APCA_API_BASE_URL` is absent. Production entry
+    /// point for eval paper mode.
+    pub fn from_env() -> anyhow::Result<Self> {
+        let api_info = apca::ApiInfo::from_env()
+            .map_err(|e| anyhow::anyhow!("alpaca ApiInfo::from_env: {e}"))?;
+        let client = apca::Client::new(api_info);
+        Ok(Self {
+            api: Arc::new(ApacClientApi::new(client)),
+        })
+    }
+
+    /// Build from explicit credentials. Useful for tests that hit the real
+    /// paper API without relying on the process environment.
+    pub fn from_credentials(
+        key_id: &str,
+        secret: &str,
+        base_url: &str,
+    ) -> anyhow::Result<Self> {
+        let api_info = apca::ApiInfo::from_parts(base_url, key_id, secret)
+            .map_err(|e| anyhow::anyhow!("alpaca ApiInfo::from_parts: {e}"))?;
+        let client = apca::Client::new(api_info);
+        Ok(Self {
+            api: Arc::new(ApacClientApi::new(client)),
+        })
     }
 }
 
