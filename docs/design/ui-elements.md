@@ -851,7 +851,25 @@ real?`, `Should I pause it?`, `Draft a variant from yesterday's vetoes`.
 
 (Unchanged from v0.1 §11.)
 
-### 13.1 LLM keys
+### 13.1 Providers
+
+(Was "LLM keys" in v0.1 — promoted to a first-class registry. v0.1 single-key
+state continues to work via auto-derivation; see spec
+[`2026-05-10-llm-providers-and-per-arm-models-design.md`](../superpowers/specs/2026-05-10-llm-providers-and-per-arm-models-design.md) §1.3.)
+
+| Element | Label / control |
+|---|---|
+| Page header | `Providers` · `+ Add provider` primary button |
+| Table | columns: `Name`, `Kind`, `Base URL`, `API key env`, `Key`, `Used by`, `Actions` |
+| Per row — Key chip | `● set` (green) when `std::env::var(api_key_env).is_ok()`, `○ missing` (amber) otherwise, `n/a` (grey) when the env name is empty |
+| Per row — Used by | count + tooltip listing slot references (e.g. `2 slots: workspace default Intern, draft btc-momentum.trader`) |
+| Per row — Actions | `Edit`, `Delete` (disabled with tooltip when `Used by > 0`), `Test` (calls `xvn provider check`) |
+| Empty state | `No providers yet. Add Anthropic, OpenAI, or any OpenAI-compatible endpoint.` + three quick-link buttons (Anthropic / OpenAI / OpenRouter) carried over from the v0.1 first-run modal |
+| Add modal | fields: `Name` (regex-validated `[a-z0-9-]+`), `Kind` (select: `anthropic` / `openai-compat` / `local-candle`), `Base URL`, `API key env` (with `Detect` ghost button trying common names like `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`), `Test connection` ghost. Submit calls `xvn provider add`. |
+| Synthetic row marker | rows with name starting `_` (e.g. `_default_intern`, `_cli_default_trader`) render with a `synthetic` chip and a tooltip explaining they were auto-derived |
+
+The first-run modal at `/setup` (§3.3) keeps its current shape (single key paste); the saved key materializes as a `[[providers]]` row, not a standalone `[intern]` block.
+
 ### 13.2 Brokers
 ### 13.3 Daemon & runtime
 ### 13.4 Identity (ERC-8004)
