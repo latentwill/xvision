@@ -2,8 +2,7 @@
 //! providers. Reads from / writes to `config/default.toml`.
 //!
 //! `add` and `remove` mutate the file in place via `toml_edit` to preserve
-//! comments and formatting (Plan #7 Phase 4 Task 14, deferred). `list` and
-//! `show` are read-only.
+//! comments and formatting. `list` and `show` are read-only.
 
 use clap::{Args, Subcommand};
 
@@ -132,17 +131,81 @@ async fn check(
 }
 
 fn add(
-    _config_path: &std::path::Path,
-    _name: &str,
-    _kind: &str,
-    _base_url: &str,
-    _api_key_env: &str,
+    config_path: &std::path::Path,
+    name: &str,
+    kind: &str,
+    base_url: &str,
+    api_key_env: &str,
 ) -> anyhow::Result<()> {
-    anyhow::bail!("`xvn provider add` lands in Plan #7 Phase 4 Task 14")
+    use toml_edit::{value, ArrayOfTables, DocumentMut, Table};
+
+    match kind {
+        "anthropic" | "openai-compat" | "local-candle" => {}
+        other => anyhow::bail!(
+            "invalid kind `{other}`; must be one of: anthropic | openai-compat | local-candle"
+        ),
+    }
+    if name.starts_with('_') {
+        anyhow::bail!("provider names starting with '_' are reserved");
+    }
+
+    let raw = std::fs::read_to_string(config_path)?;
+    let mut doc: DocumentMut = raw.parse()?;
+    let providers = match doc
+        .entry("providers")
+        .or_insert_with(|| toml_edit::Item::ArrayOfTables(ArrayOfTables::new()))
+    {
+        toml_edit::Item::ArrayOfTables(arr) => arr,
+        _ => anyhow::bail!("[[providers]] is not an array of tables"),
+    };
+    if providers
+        .iter()
+        .any(|t| t.get("name").and_then(|v| v.as_str()) == Some(name))
+    {
+        anyhow::bail!("provider `{name}` already exists");
+    }
+    let mut row = Table::new();
+    row.insert("name", value(name));
+    row.insert("kind", value(kind));
+    row.insert("base_url", value(base_url));
+    row.insert("api_key_env", value(api_key_env));
+    providers.push(row);
+
+    std::fs::write(config_path, doc.to_string())?;
+    xvision_core::config::load_runtime(config_path)?;
+    Ok(())
 }
 
-fn remove(_config_path: &std::path::Path, _name: &str) -> anyhow::Result<()> {
-    anyhow::bail!("`xvn provider remove` lands in Plan #7 Phase 4 Task 14")
+fn remove(config_path: &std::path::Path, name: &str) -> anyhow::Result<()> {
+    use toml_edit::DocumentMut;
+
+    let cfg = xvision_core::config::load_runtime(config_path)?;
+    let intern_kind: xvision_core::config::ProviderKind = cfg.intern.provider.into();
+    if let Some(p) = cfg.providers.iter().find(|p| p.name == name) {
+        if p.matches_triple(intern_kind, &cfg.intern.base_url, &cfg.intern.api_key_env) {
+            anyhow::bail!(
+                "cannot remove provider `{name}`: referenced by [intern] (workspace default Intern slot). \
+                 Edit [intern] to point at a different provider first."
+            );
+        }
+    } else {
+        anyhow::bail!("provider `{name}` not found");
+    }
+
+    let raw = std::fs::read_to_string(config_path)?;
+    let mut doc: DocumentMut = raw.parse()?;
+    if let Some(toml_edit::Item::ArrayOfTables(arr)) = doc.get_mut("providers") {
+        let before = arr.len();
+        arr.retain(|t| t.get("name").and_then(|v| v.as_str()) != Some(name));
+        if arr.len() == before {
+            anyhow::bail!("provider `{name}` not found in TOML (race / synthetic row)");
+        }
+    } else {
+        anyhow::bail!("no [[providers]] block in {}", config_path.display());
+    }
+    std::fs::write(config_path, doc.to_string())?;
+    xvision_core::config::load_runtime(config_path)?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -174,6 +237,70 @@ mod tests {
         let path = dir.path().join("default.toml");
         std::fs::write(&path, MIN_CONFIG).unwrap();
         list(&path).unwrap();
+    }
+
+    #[test]
+    fn add_appends_provider_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("default.toml");
+        std::fs::write(&path, MIN_CONFIG).unwrap();
+        add(
+            &path,
+            "openai",
+            "openai-compat",
+            "https://api.openai.com/v1",
+            "OPENAI_API_KEY",
+        )
+        .unwrap();
+        let cfg = xvision_core::config::load_runtime(&path).unwrap();
+        assert!(cfg.providers.iter().any(|p| p.name == "openai"));
+    }
+
+    #[test]
+    fn add_rejects_duplicate_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("default.toml");
+        std::fs::write(&path, MIN_CONFIG).unwrap();
+        let err = add(&path, "anthropic", "anthropic", "https://x", "K").unwrap_err();
+        assert!(format!("{err:#}").contains("already exists"));
+    }
+
+    #[test]
+    fn add_rejects_invalid_kind() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("default.toml");
+        std::fs::write(&path, MIN_CONFIG).unwrap();
+        let err = add(&path, "x", "BOGUS", "https://x", "K").unwrap_err();
+        assert!(format!("{err:#}").contains("kind"));
+    }
+
+    #[test]
+    fn remove_drops_provider_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("default.toml");
+        let mut src = MIN_CONFIG.to_string();
+        src.push_str(
+            r#"
+[[providers]]
+name = "ephemeral"
+kind = "openai-compat"
+base_url = "https://x"
+api_key_env = "K"
+"#,
+        );
+        std::fs::write(&path, src).unwrap();
+        remove(&path, "ephemeral").unwrap();
+        let cfg = xvision_core::config::load_runtime(&path).unwrap();
+        assert!(!cfg.providers.iter().any(|p| p.name == "ephemeral"));
+    }
+
+    #[test]
+    fn remove_refuses_when_intern_block_references_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("default.toml");
+        std::fs::write(&path, MIN_CONFIG).unwrap();
+        let err = remove(&path, "anthropic").unwrap_err();
+        assert!(format!("{err:#}").contains("referenced by [intern]"));
     }
 
     const MIN_CONFIG: &str = r#"
