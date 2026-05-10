@@ -107,6 +107,9 @@ fn validate_provider_name(name: &String, _ctx: &()) -> garde::Result {
 pub struct RuntimeConfig {
     #[garde(skip)]
     pub runtime: Runtime,
+    #[serde(default)]
+    #[garde(dive)]
+    pub providers: Vec<ProviderEntry>,
     #[garde(dive)]
     pub intern: Intern,
     #[garde(dive)]
@@ -422,6 +425,66 @@ mod tests {
     }
 
     // --- providers (Plan #7 Phase 1) ----------------------------------------
+
+    #[test]
+    fn runtime_config_round_trips_with_providers() {
+        let toml_src = r#"
+[runtime]
+mode = "backtest"
+executor = "alpaca"
+random_seed = 42
+
+[[providers]]
+name = "anthropic"
+kind = "anthropic"
+base_url = "https://api.anthropic.com"
+api_key_env = "ANTHROPIC_API_KEY"
+
+[[providers]]
+name = "ollama-local"
+kind = "openai-compat"
+base_url = "http://localhost:11434/v1"
+api_key_env = ""
+
+[intern]
+provider = "anthropic"
+base_url = "https://api.anthropic.com"
+model = "claude-haiku-4-5"
+api_key_env = "ANTHROPIC_API_KEY"
+temperature = 0.0
+max_tokens = 1024
+
+[trader]
+model_path = "models/x.gguf"
+temperature = 0.0
+forward_paper_temperature = 0.4
+max_tokens = 512
+[trader.vectors]
+enabled = false
+config = "off"
+
+[backtest]
+step = 24
+horizon = 16
+bootstrap_resamples = 1000
+bootstrap_block_size = 8
+
+[paths]
+data_root = "data"
+vectors = "data/vectors"
+probes = "data/probes"
+sqlite_url = "sqlite://x.db"
+"#;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("with-providers.toml");
+        std::fs::write(&path, toml_src).unwrap();
+        let cfg = load_runtime(&path).unwrap();
+        // Two declared rows must round-trip; auto-derive (Task 3) may add a
+        // synthetic row but cannot remove user-declared ones.
+        assert!(cfg.providers.len() >= 2);
+        assert!(cfg.providers.iter().any(|p| p.name == "anthropic"));
+        assert!(cfg.providers.iter().any(|p| p.name == "ollama-local"));
+    }
 
     #[test]
     fn provider_kind_round_trips_via_serde() {
