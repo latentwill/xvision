@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
@@ -108,14 +109,29 @@ function StrategiesTable({ items }: { items: { agent_id: string; template: strin
             key={row.agent_id}
             className="border-b border-border-soft last:border-b-0 hover:bg-surface-hover transition-colors"
           >
-            <td className="py-3 px-5 font-mono text-text">{row.agent_id}</td>
+            <td className="py-3 px-5 font-mono text-text">
+              <Link
+                to={`/authoring/${encodeURIComponent(row.agent_id)}`}
+                className="text-text hover:underline"
+              >
+                {row.agent_id}
+              </Link>
+            </td>
             <td className="py-3 px-3 text-text-2">{row.template}</td>
             <td className="py-3 px-3">
               <Pill tone="gold">
                 <span className="w-1.5 h-1.5 rounded-full bg-gold" /> validated
               </Pill>
             </td>
-            <td className="py-3 px-5 text-text-3 text-right">⋯</td>
+            <td className="py-3 px-5 text-text-3 text-right">
+              <Link
+                to={`/authoring/${encodeURIComponent(row.agent_id)}`}
+                className="text-text-3 hover:text-text"
+                aria-label={`Edit ${row.agent_id}`}
+              >
+                Edit →
+              </Link>
+            </td>
           </tr>
         ))}
       </tbody>
