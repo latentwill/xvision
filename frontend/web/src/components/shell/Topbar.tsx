@@ -1,4 +1,4 @@
-import { Pill } from "@/components/primitives/Pill";
+import { HealthPill } from "./HealthPill";
 
 export function Topbar({
   title,
@@ -19,10 +19,7 @@ export function Topbar({
       </div>
 
       <div className="flex items-center gap-3">
-        <Pill tone="gold">
-          <span className="w-1.5 h-1.5 rounded-full bg-gold" />
-          paper · localhost
-        </Pill>
+        <HealthPill />
 
         <div className="flex items-center gap-2.5 w-[380px] px-3 py-2 bg-surface-elev border border-border rounded text-text-3 text-[13px]">
           <span className="inline-flex items-center px-1.5 py-px border border-border-strong rounded-sm font-mono text-[11px] text-text-2">
