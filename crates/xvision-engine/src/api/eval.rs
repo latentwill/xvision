@@ -487,7 +487,7 @@ async fn run_inner(
             })?;
             Box::new(PaperExecutor::new(b))
         }
-        RunMode::Backtest => Box::new(BacktestExecutor),
+        RunMode::Backtest => Box::new(BacktestExecutor::new()),
     };
 
     // 4. Build a fresh Run, persist, then drive the executor.
