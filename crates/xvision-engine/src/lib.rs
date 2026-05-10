@@ -4,6 +4,7 @@
 
 pub mod agent;
 pub mod api;
+pub mod authoring;
 pub mod baselines;
 pub mod bundle;
 pub mod error;
