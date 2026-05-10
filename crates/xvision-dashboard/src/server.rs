@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 
 use axum::{
-    routing::{get, post},
+    routing::{get, post, put},
     Router,
 };
 use tower_http::trace::TraceLayer;
@@ -13,6 +13,16 @@ pub fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/api/health", get(health))
         .route("/api/strategies", get(strategies::list))
+        .route("/api/strategy/:id", get(strategies::get))
+        .route(
+            "/api/strategy/:id/slot/:role",
+            put(strategies::put_slot),
+        )
+        .route("/api/strategy/:id/risk", put(strategies::put_risk))
+        .route(
+            "/api/strategy/:id/validate",
+            post(strategies::post_validate),
+        )
         .route("/api/eval/runs", get(eval_runs::list))
         .route("/api/eval/runs/:id", get(eval_runs::get))
         .route("/api/settings/brokers", get(settings::brokers::get))
