@@ -418,3 +418,94 @@ async fn eval_run_detail_returns_summary_decisions_and_equity() {
     assert_eq!(equity[0]["equity_usd"], 100_000.0);
     assert_eq!(equity[1]["equity_usd"], 100_075.0);
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// /api/eval/compare
+
+#[tokio::test]
+async fn eval_compare_rejects_missing_ids() {
+    let (server, _tmp) = boot().await;
+    let response = server.get("/api/eval/compare").await;
+    response.assert_status_bad_request();
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["code"], "validation");
+}
+
+#[tokio::test]
+async fn eval_compare_rejects_single_id() {
+    let (server, _tmp) = boot().await;
+    let response = server.get("/api/eval/compare?ids=01J0ONLYONE0000000000000001").await;
+    response.assert_status_bad_request();
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["code"], "validation");
+}
+
+#[tokio::test]
+async fn eval_compare_returns_404_when_a_run_is_missing() {
+    let (server, _tmp) = boot().await;
+    let response = server
+        .get("/api/eval/compare?ids=01J0MISSING0000000000000001,01J0MISSING0000000000000002")
+        .await;
+    response.assert_status_not_found();
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["code"], "not_found");
+}
+
+#[tokio::test]
+async fn eval_compare_returns_report_for_seeded_runs() {
+    use chrono::Utc;
+    use xvision_engine::eval::{
+        run::{MetricsSummary, Run, RunMode, RunStatus},
+        store::RunStore,
+    };
+
+    let (server, _tmp) = boot().await;
+    let pool = sqlx::SqlitePool::connect(&format!(
+        "sqlite://{}/xvn.db",
+        _tmp.path().display()
+    ))
+    .await
+    .unwrap();
+    let store = RunStore::new(pool);
+
+    // Seed two completed runs against the same canonical scenario so the
+    // report has fully-populated metrics + equity curves.
+    let scenario_id = "crypto-bull-q1-2025";
+    let mut run_a = Run::new_queued("h-A".into(), scenario_id.into(), RunMode::Backtest);
+    run_a.status = RunStatus::Completed;
+    let mut run_b = Run::new_queued("h-B".into(), scenario_id.into(), RunMode::Backtest);
+    run_b.status = RunStatus::Completed;
+    store.create(&run_a).await.unwrap();
+    store.create(&run_b).await.unwrap();
+
+    let now = Utc::now();
+    store.record_equity(&run_a.id, now, 10_000.0).await.unwrap();
+    store.record_equity(&run_b.id, now, 12_000.0).await.unwrap();
+    let metrics = MetricsSummary {
+        total_return_pct: 8.0,
+        sharpe: 1.1,
+        max_drawdown_pct: 4.0,
+        win_rate: 0.55,
+        n_trades: 4,
+        n_decisions: 8,
+    };
+    store.finalize(&run_a.id, &metrics).await.unwrap();
+    store.finalize(&run_b.id, &metrics).await.unwrap();
+
+    let url = format!("/api/eval/compare?ids={},{}", run_a.id, run_b.id);
+    let response = server.get(&url).await;
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+
+    let runs = body["runs"].as_array().expect("runs");
+    assert_eq!(runs.len(), 2);
+    assert_eq!(runs[0]["id"], run_a.id);
+    assert_eq!(runs[1]["id"], run_b.id);
+
+    let curves = body["equity_curves"].as_array().expect("equity_curves");
+    assert_eq!(curves.len(), 2);
+    assert_eq!(curves[0]["run_id"], run_a.id);
+    assert_eq!(curves[0]["samples"].as_array().unwrap().len(), 1);
+
+    assert!(body["findings"].is_array());
+}

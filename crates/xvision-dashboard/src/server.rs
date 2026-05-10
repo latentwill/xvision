@@ -25,6 +25,7 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/api/eval/runs", get(eval_runs::list))
         .route("/api/eval/runs/:id", get(eval_runs::get))
+        .route("/api/eval/compare", get(eval_runs::compare))
         .route("/api/settings/brokers", get(settings::brokers::get))
         .route("/api/settings/daemon", get(settings::daemon::get))
         .route("/api/settings/identity", get(settings::identity::get))

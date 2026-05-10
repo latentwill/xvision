@@ -1,10 +1,13 @@
 //! `GET /api/eval/runs[/:id]` — list + detail.
+//! `GET /api/eval/compare?ids=a,b,c` — N-run comparison report.
 //!
-//! Both handlers are thin wrappers over `engine::api::eval::*`. The detail
+//! All handlers are thin wrappers over `engine::api::eval::*`. The detail
 //! route maps `ApiError::NotFound` to `404 + JSON {code:"not_found"}` via
 //! the existing `DashboardError: From<ApiError>` impl. The list handler
 //! parses the query-string `?status=` into the typed `RunStatus` enum and
-//! returns the slim `RunSummary` shape via `list_summaries`.
+//! returns the slim `RunSummary` shape via `list_summaries`. Compare
+//! parses `?ids=` (comma-separated) and surfaces api validation /
+//! not-found errors transparently.
 
 use axum::{
     extract::{Path, Query, State},
@@ -12,7 +15,10 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
-use xvision_engine::api::eval::{self, ListRunsRequest, RunDetail, RunSummary};
+use xvision_engine::api::eval::{
+    self, CompareRunsRequest, ListRunsRequest, RunDetail, RunSummary,
+};
+use xvision_engine::eval::compare::ComparisonReport;
 use xvision_engine::eval::run::RunStatus;
 
 use crate::error::DashboardError;
@@ -63,4 +69,32 @@ pub async fn get(
 ) -> Result<Json<RunDetail>, DashboardError> {
     let detail = eval::get_run(&state.api_context(), &id).await?;
     Ok(Json(detail))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CompareParams {
+    /// Comma-separated run ids: `?ids=01J…,01K…`. Whitespace around commas
+    /// is tolerated; empty / single-element values surface as
+    /// `ApiError::Validation` from `eval::compare`.
+    pub ids: Option<String>,
+}
+
+pub async fn compare(
+    State(state): State<AppState>,
+    Query(params): Query<CompareParams>,
+) -> Result<Json<ComparisonReport>, DashboardError> {
+    let raw = params.ids.unwrap_or_default();
+    let run_ids: Vec<String> = raw
+        .split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .collect();
+
+    let report = eval::compare(
+        &state.api_context(),
+        CompareRunsRequest { run_ids },
+    )
+    .await?;
+    Ok(Json(report))
 }
