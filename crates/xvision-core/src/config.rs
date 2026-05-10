@@ -35,12 +35,81 @@ pub enum ConfigError {
     CrossField { path: PathBuf, message: String },
 }
 
+// --- providers --------------------------------------------------------------
+
+/// One LLM provider, referenced by name from slot configs and arm specs.
+/// `api_key_env` may be the empty string for endpoints that don't require auth
+/// (local llama.cpp / Ollama / vLLM in --no-auth mode).
+#[derive(Debug, Clone, PartialEq, Validate, Serialize, Deserialize)]
+pub struct ProviderEntry {
+    #[garde(custom(validate_provider_name))]
+    pub name: String,
+    #[garde(skip)]
+    pub kind: ProviderKind,
+    #[garde(length(min = 1, max = 512))]
+    pub base_url: String,
+    #[garde(length(max = 64))]
+    pub api_key_env: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProviderKind {
+    Anthropic,
+    OpenaiCompat,
+    LocalCandle,
+}
+
+impl From<InternProvider> for ProviderKind {
+    fn from(p: InternProvider) -> Self {
+        match p {
+            InternProvider::Anthropic => Self::Anthropic,
+            InternProvider::OpenaiCompat => Self::OpenaiCompat,
+            InternProvider::LocalCandle => Self::LocalCandle,
+        }
+    }
+}
+
+impl ProviderEntry {
+    /// True iff this entry's kind/base_url/api_key_env triple matches the
+    /// supplied tuple. Used by auto-derivation to skip when the user has
+    /// already declared an equivalent row.
+    pub fn matches_triple(&self, kind: ProviderKind, base_url: &str, api_key_env: &str) -> bool {
+        self.kind == kind && self.base_url == base_url && self.api_key_env == api_key_env
+    }
+}
+
+fn validate_provider_name(name: &String, _ctx: &()) -> garde::Result {
+    if name.is_empty() || name.len() > 32 {
+        return Err(garde::Error::new("provider name must be 1..=32 chars"));
+    }
+    if name.starts_with('_') {
+        // The leading-underscore namespace is reserved for synthetic rows
+        // (e.g. _default_intern auto-derived from the [intern] block).
+        return Err(garde::Error::new(
+            "provider names starting with '_' are reserved",
+        ));
+    }
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    {
+        return Err(garde::Error::new(
+            "provider name must match [a-z0-9-]+",
+        ));
+    }
+    Ok(())
+}
+
 // --- runtime ----------------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq, Validate, Serialize, Deserialize)]
 pub struct RuntimeConfig {
     #[garde(skip)]
     pub runtime: Runtime,
+    #[serde(default)]
+    #[garde(dive)]
+    pub providers: Vec<ProviderEntry>,
     #[garde(dive)]
     pub intern: Intern,
     #[garde(dive)]
@@ -267,14 +336,51 @@ fn read_toml<T: for<'de> Deserialize<'de> + Validate<Context = ()>>(path: &Path)
 }
 
 pub fn load_runtime(path: &Path) -> Result<RuntimeConfig, ConfigError> {
-    let cfg: RuntimeConfig = read_toml(path)?;
+    let mut cfg: RuntimeConfig = read_toml(path)?;
     cfg.backtest
         .validate_step_vs_horizon()
         .map_err(|msg| ConfigError::CrossField {
             path: path.to_path_buf(),
             message: msg,
         })?;
+    auto_derive_intern_provider_row(&mut cfg);
+    validate_unique_provider_names(&cfg).map_err(|msg| ConfigError::CrossField {
+        path: path.to_path_buf(),
+        message: msg,
+    })?;
     Ok(cfg)
+}
+
+/// Synthesize a `_default_intern` provider row from the `[intern]` block if no
+/// existing row already matches its (kind, base_url, api_key_env) triple. The
+/// reserved underscore prefix prevents user-declared collisions.
+fn auto_derive_intern_provider_row(cfg: &mut RuntimeConfig) {
+    let kind: ProviderKind = cfg.intern.provider.into();
+    let base_url = cfg.intern.base_url.clone();
+    let api_key_env = cfg.intern.api_key_env.clone();
+    if cfg
+        .providers
+        .iter()
+        .any(|p| p.matches_triple(kind, &base_url, &api_key_env))
+    {
+        return;
+    }
+    cfg.providers.push(ProviderEntry {
+        name: "_default_intern".to_string(),
+        kind,
+        base_url,
+        api_key_env,
+    });
+}
+
+fn validate_unique_provider_names(cfg: &RuntimeConfig) -> Result<(), String> {
+    let mut seen = std::collections::HashSet::new();
+    for p in &cfg.providers {
+        if !seen.insert(p.name.as_str()) {
+            return Err(format!("duplicate provider name `{}`", p.name));
+        }
+    }
+    Ok(())
 }
 
 pub fn load_whitelist(path: &Path) -> Result<WhitelistConfig, ConfigError> {
@@ -353,6 +459,297 @@ mod tests {
             Err(ConfigError::Parse { .. }) => {}
             other => panic!("expected Parse, got {other:?}"),
         }
+    }
+
+    // --- providers (Plan #7 Phase 1) ----------------------------------------
+
+    #[test]
+    fn runtime_config_round_trips_with_providers() {
+        let toml_src = r#"
+[runtime]
+mode = "backtest"
+executor = "alpaca"
+random_seed = 42
+
+[[providers]]
+name = "anthropic"
+kind = "anthropic"
+base_url = "https://api.anthropic.com"
+api_key_env = "ANTHROPIC_API_KEY"
+
+[[providers]]
+name = "ollama-local"
+kind = "openai-compat"
+base_url = "http://localhost:11434/v1"
+api_key_env = ""
+
+[intern]
+provider = "anthropic"
+base_url = "https://api.anthropic.com"
+model = "claude-haiku-4-5"
+api_key_env = "ANTHROPIC_API_KEY"
+temperature = 0.0
+max_tokens = 1024
+
+[trader]
+model_path = "models/x.gguf"
+temperature = 0.0
+forward_paper_temperature = 0.4
+max_tokens = 512
+[trader.vectors]
+enabled = false
+config = "off"
+
+[backtest]
+step = 24
+horizon = 16
+bootstrap_resamples = 1000
+bootstrap_block_size = 8
+
+[paths]
+data_root = "data"
+vectors = "data/vectors"
+probes = "data/probes"
+sqlite_url = "sqlite://x.db"
+"#;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("with-providers.toml");
+        std::fs::write(&path, toml_src).unwrap();
+        let cfg = load_runtime(&path).unwrap();
+        // Two declared rows must round-trip; auto-derive (Task 3) may add a
+        // synthetic row but cannot remove user-declared ones.
+        assert!(cfg.providers.len() >= 2);
+        assert!(cfg.providers.iter().any(|p| p.name == "anthropic"));
+        assert!(cfg.providers.iter().any(|p| p.name == "ollama-local"));
+    }
+
+    #[test]
+    fn repo_default_toml_declares_anthropic_provider() {
+        let cfg = load_runtime(&project_root().join("config/default.toml")).unwrap();
+        let anthropic = cfg
+            .providers
+            .iter()
+            .find(|p| p.name == "anthropic")
+            .expect("repo default.toml must declare an `anthropic` provider row");
+        assert_eq!(anthropic.kind, ProviderKind::Anthropic);
+        assert_eq!(anthropic.api_key_env, "ANTHROPIC_API_KEY");
+        // [intern] points at the same triple → no synthetic row should appear
+        assert!(
+            !cfg.providers.iter().any(|p| p.name == "_default_intern"),
+            "synthetic should be skipped when user-declared match exists"
+        );
+    }
+
+    #[test]
+    fn auto_derives_default_intern_provider() {
+        let cfg = load_runtime(&project_root().join("config/default.toml"))
+            .expect("must load");
+        let synth = cfg
+            .providers
+            .iter()
+            .find(|p| p.name == "_default_intern");
+        // Either the synthetic row exists, OR the user-declared anthropic row
+        // already matches the [intern] triple (Task 4 lands the explicit row).
+        match synth {
+            Some(s) => {
+                assert_eq!(s.base_url, cfg.intern.base_url);
+                assert_eq!(s.api_key_env, cfg.intern.api_key_env);
+            }
+            None => {
+                // Task 4 has landed an explicit row matching the triple.
+                let kind: ProviderKind = cfg.intern.provider.into();
+                assert!(cfg.providers.iter().any(|p| p.matches_triple(
+                    kind,
+                    &cfg.intern.base_url,
+                    &cfg.intern.api_key_env
+                )), "either _default_intern OR a user-declared matching row must be present");
+            }
+        }
+    }
+
+    #[test]
+    fn auto_derive_skips_when_user_already_declared_match() {
+        let toml_src = r#"
+[runtime]
+mode = "backtest"
+executor = "alpaca"
+random_seed = 42
+
+[[providers]]
+name = "anthropic"
+kind = "anthropic"
+base_url = "https://api.anthropic.com"
+api_key_env = "ANTHROPIC_API_KEY"
+
+[intern]
+provider = "anthropic"
+base_url = "https://api.anthropic.com"
+model = "claude-haiku-4-5"
+api_key_env = "ANTHROPIC_API_KEY"
+temperature = 0.0
+max_tokens = 1024
+
+[trader]
+model_path = "models/x.gguf"
+temperature = 0.0
+forward_paper_temperature = 0.4
+max_tokens = 512
+[trader.vectors]
+enabled = false
+config = "off"
+
+[backtest]
+step = 24
+horizon = 16
+bootstrap_resamples = 1000
+bootstrap_block_size = 8
+
+[paths]
+data_root = "data"
+vectors = "data/vectors"
+probes = "data/probes"
+sqlite_url = "sqlite://x.db"
+"#;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("user-already-declared.toml");
+        std::fs::write(&path, toml_src).unwrap();
+        let cfg = load_runtime(&path).unwrap();
+        assert_eq!(cfg.providers.len(), 1, "synthetic must be skipped");
+        assert_eq!(cfg.providers[0].name, "anthropic");
+    }
+
+    #[test]
+    fn rejects_duplicate_provider_names() {
+        let toml_src = r#"
+[runtime]
+mode = "backtest"
+executor = "alpaca"
+random_seed = 42
+
+[[providers]]
+name = "p"
+kind = "anthropic"
+base_url = "https://a.example"
+api_key_env = "A"
+
+[[providers]]
+name = "p"
+kind = "openai-compat"
+base_url = "https://b.example"
+api_key_env = "B"
+
+[intern]
+provider = "anthropic"
+base_url = "https://api.anthropic.com"
+model = "x"
+api_key_env = "K"
+temperature = 0.0
+max_tokens = 1024
+
+[trader]
+model_path = "models/x.gguf"
+temperature = 0.0
+forward_paper_temperature = 0.4
+max_tokens = 512
+[trader.vectors]
+enabled = false
+config = "off"
+
+[backtest]
+step = 24
+horizon = 16
+bootstrap_resamples = 1000
+bootstrap_block_size = 8
+
+[paths]
+data_root = "data"
+vectors = "data/vectors"
+probes = "data/probes"
+sqlite_url = "sqlite://x.db"
+"#;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("dup-names.toml");
+        std::fs::write(&path, toml_src).unwrap();
+        match load_runtime(&path) {
+            Err(ConfigError::CrossField { message, .. }) => {
+                assert!(message.contains("duplicate provider name"), "actual: {message}");
+            }
+            other => panic!("expected CrossField, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_provider_name_with_underscore_prefix() {
+        let toml_src = r#"
+[runtime]
+mode = "backtest"
+executor = "alpaca"
+random_seed = 42
+
+[[providers]]
+name = "_mine"
+kind = "anthropic"
+base_url = "https://a.example"
+api_key_env = "A"
+
+[intern]
+provider = "anthropic"
+base_url = "https://api.anthropic.com"
+model = "x"
+api_key_env = "K"
+temperature = 0.0
+max_tokens = 1024
+
+[trader]
+model_path = "models/x.gguf"
+temperature = 0.0
+forward_paper_temperature = 0.4
+max_tokens = 512
+[trader.vectors]
+enabled = false
+config = "off"
+
+[backtest]
+step = 24
+horizon = 16
+bootstrap_resamples = 1000
+bootstrap_block_size = 8
+
+[paths]
+data_root = "data"
+vectors = "data/vectors"
+probes = "data/probes"
+sqlite_url = "sqlite://x.db"
+"#;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("reserved-name.toml");
+        std::fs::write(&path, toml_src).unwrap();
+        match load_runtime(&path) {
+            Err(ConfigError::Validation { .. }) => {}
+            other => panic!("expected Validation, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn provider_kind_round_trips_via_serde() {
+        use ProviderKind::*;
+        for k in [Anthropic, OpenaiCompat, LocalCandle] {
+            let s = toml::to_string(&ProviderEntry {
+                name: "p".into(),
+                kind: k,
+                base_url: "https://example.com".into(),
+                api_key_env: "X".into(),
+            })
+            .unwrap();
+            let back: ProviderEntry = toml::from_str(&s).unwrap();
+            assert_eq!(back.kind, k, "round trip failed for {:?}", k);
+        }
+    }
+
+    #[test]
+    fn provider_kind_serializes_to_kebab_case() {
+        let v = toml::Value::try_from(ProviderKind::OpenaiCompat).unwrap();
+        assert_eq!(v.as_str(), Some("openai-compat"));
     }
 
     const BAD_STEP_HORIZON: &str = r#"

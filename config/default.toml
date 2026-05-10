@@ -8,6 +8,26 @@ mode        = "backtest"        # backtest | paper | live
 executor    = "alpaca"          # alpaca | orderly
 random_seed = 42
 
+# Registered LLM providers, referenced by name from slot configs and arm specs.
+# api_key_env is the env var NAME — values are read at runtime, never stored.
+[[providers]]
+name        = "anthropic"
+kind        = "anthropic"
+base_url    = "https://api.anthropic.com"
+api_key_env = "ANTHROPIC_API_KEY"
+
+[[providers]]
+name        = "openai"
+kind        = "openai-compat"
+base_url    = "https://api.openai.com/v1"
+api_key_env = "OPENAI_API_KEY"
+
+[[providers]]
+name        = "ollama-local"
+kind        = "openai-compat"
+base_url    = "http://localhost:11434/v1"
+api_key_env = ""
+
 [intern]
 provider          = "anthropic"  # anthropic | openai-compat | local-candle
 base_url          = "https://api.anthropic.com"
