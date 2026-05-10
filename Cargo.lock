@@ -7587,6 +7587,7 @@ dependencies = [
  "ulid",
  "uuid",
  "xianvec-core",
+ "xianvec-data",
  "xianvec-engine",
  "xianvec-eval",
  "xianvec-execution",
