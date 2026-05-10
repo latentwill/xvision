@@ -14,16 +14,24 @@
 //!   inject a `MockBrokerSurface` (e.g., a future "dry-run" mode)
 //! - `compare` — wraps `eval::compare_runs` with audit + typed-error mapping
 //!   for the dashboard's run-comparison view + `xvn eval compare` CLI
+//! - `attest` — sign + persist an `EvalAttestation` for a completed run,
+//!   sourcing the Ed25519 signing key from `$XVN_HOME/identity/signing.key`
+//!   (auto-generated on first use). Wraps `eval::attestation::sign` +
+//!   `RunStore::record_attestation`. Powers `xvn eval attest <run_id>` and
+//!   the (future) `publish_attestation` MCP verb.
 
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
 use chrono::{DateTime, Utc};
+use ed25519_dalek::SigningKey;
 use serde::{Deserialize, Serialize};
 
 use crate::agent::llm::{AnthropicDispatch, LlmDispatch};
 use crate::api::audit::{self, Outcome};
 use crate::api::{strategy as api_strategy, ApiContext, ApiError, ApiResult};
+use crate::eval::attestation::{self, EvalAttestation};
 use crate::eval::compare::{compare_runs, ComparisonReport};
 use crate::eval::executor::{BacktestExecutor, Executor, PaperExecutor};
 use crate::eval::run::{Run, RunMode, RunStatus};
@@ -577,4 +585,109 @@ fn summarise(run: Run) -> RunSummary {
         total_return_pct: total_return,
         error: run.error,
     }
+}
+
+// --- attestation surface (Phase 3.D Task 11) -----------------------------
+
+/// Sign + persist an `EvalAttestation` for a completed run. Loads the
+/// Ed25519 signing key from `$XVN_HOME/identity/signing.key`,
+/// auto-generating one on first use. Returns the signed attestation —
+/// callers (CLI / future MCP verb) can serialize it for marketplace
+/// publishing.
+///
+/// Errors:
+/// - `NotFound` — the run id doesn't exist
+/// - `Validation` — the run hasn't computed metrics yet (still queued /
+///   running / failed) or its scenario id isn't in `canonical_scenarios()`
+/// - `Internal` — key load/generate or signing failure
+pub async fn attest(ctx: &ApiContext, run_id: &str) -> ApiResult<EvalAttestation> {
+    let started = Instant::now();
+    let result = attest_inner(ctx, run_id).await;
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let _ = audit::record(
+        ctx,
+        "eval",
+        "attest",
+        Some(run_id),
+        None,
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    result
+}
+
+async fn attest_inner(ctx: &ApiContext, run_id: &str) -> ApiResult<EvalAttestation> {
+    let store = RunStore::new(ctx.db.clone());
+    let run = store.get(run_id).await.map_err(|e| {
+        let msg = e.to_string();
+        if msg.contains("run not found") {
+            ApiError::NotFound(format!("eval run '{run_id}'"))
+        } else {
+            ApiError::Internal(msg)
+        }
+    })?;
+    if run.metrics.is_none() {
+        return Err(ApiError::Validation(format!(
+            "run '{run_id}' has no metrics — finalize before attesting (status: {})",
+            run.status.as_str()
+        )));
+    }
+    let scenario = canonical_scenarios()
+        .into_iter()
+        .find(|s| s.id == run.scenario_id)
+        .ok_or_else(|| {
+            ApiError::Validation(format!(
+                "run '{run_id}' references unknown scenario '{}'; cannot attest",
+                run.scenario_id
+            ))
+        })?;
+
+    let signing_key = load_or_create_signing_key(&ctx.xvn_home)
+        .map_err(|e| ApiError::Internal(format!("signing key: {e:#}")))?;
+    let attestation = attestation::sign(&run, &scenario, &signing_key)
+        .map_err(|e| ApiError::Internal(format!("sign: {e:#}")))?;
+    store
+        .record_attestation(&run.id, &attestation)
+        .await
+        .map_err(|e| ApiError::Internal(format!("persist attestation: {e:#}")))?;
+    Ok(attestation)
+}
+
+/// Load `$xvn_home/identity/signing.key` (raw 32 bytes) or generate one
+/// if missing. Returns the parsed `SigningKey`. New keys are written
+/// 0o600 on Unix; on creation, the parent directory is created with
+/// `create_dir_all`.
+fn load_or_create_signing_key(xvn_home: &Path) -> anyhow::Result<SigningKey> {
+    let dir = xvn_home.join("identity");
+    let path = dir.join("signing.key");
+    if let Ok(bytes) = std::fs::read(&path) {
+        if bytes.len() == 32 {
+            let arr: [u8; 32] = bytes.as_slice().try_into().expect("len 32 checked");
+            return Ok(SigningKey::from_bytes(&arr));
+        }
+        anyhow::bail!(
+            "signing key at {} has length {}; expected 32 raw bytes",
+            path.display(),
+            bytes.len()
+        );
+    }
+
+    // Generate fresh.
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| anyhow::anyhow!("create {}: {e}", dir.display()))?;
+    let mut rng = rand_core::OsRng;
+    let key = SigningKey::generate(&mut rng);
+    let bytes = key.to_bytes();
+    std::fs::write(&path, bytes)
+        .map_err(|e| anyhow::anyhow!("write {}: {e}", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    }
+    Ok(key)
 }
