@@ -1,5 +1,12 @@
+pub mod breakout;
+pub mod custom;
 pub mod mean_reversion;
+pub mod momentum;
+pub mod news_trader;
+pub mod range_trade;
 pub mod registry;
+pub mod scalping;
+pub mod trend_follower;
 
 use crate::bundle::StrategyBundle;
 
