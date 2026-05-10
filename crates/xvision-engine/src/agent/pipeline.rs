@@ -36,7 +36,7 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
         .await?;
         total_in += out.input_tokens;
         total_out += out.output_tokens;
-        accumulated["regime_output"] = serde_json::Value::String(out.text.clone());
+        accumulated["regime_output"] = serde_json::Value::String(out.text());
         Some(out)
     } else {
         None
@@ -52,7 +52,7 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
         .await?;
         total_in += out.input_tokens;
         total_out += out.output_tokens;
-        accumulated["intern_output"] = serde_json::Value::String(out.text.clone());
+        accumulated["intern_output"] = serde_json::Value::String(out.text());
         Some(out)
     } else {
         None

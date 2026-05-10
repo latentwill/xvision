@@ -135,7 +135,7 @@ impl Executor for PaperExecutor {
             let parsed = outs
                 .trader
                 .as_ref()
-                .and_then(|t| serde_json::from_str::<TraderOutput>(&t.text).ok())
+                .and_then(|t| serde_json::from_str::<TraderOutput>(&t.text()).ok())
                 .unwrap_or_else(TraderOutput::flat);
 
             let mut order_size: Option<f64> = None;

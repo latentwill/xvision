@@ -178,7 +178,7 @@ async fn run_inline(id: &str, fixture: &str, decisions: u32, mock: bool) -> anyh
         total_in += outs.total_input_tokens;
         total_out += outs.total_output_tokens;
         if let Some(t) = &outs.trader {
-            println!("decision[{n}]: {}", t.text.trim());
+            println!("decision[{n}]: {}", t.text().trim());
         }
     }
     println!(
