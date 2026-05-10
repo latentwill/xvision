@@ -19,12 +19,18 @@ use serde::Deserialize;
 use ulid::Ulid;
 
 use xvision_data as xvn;
+use xvision_engine::api::eval::{
+    self as api_eval, CompareRunsRequest, ListRunsRequest,
+};
+use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::bundle::{
     risk::{RiskConfig, RiskPreset},
     slot::LLMSlot,
     store::{BundleStore, FilesystemStore},
     validate::validate_bundle,
 };
+use xvision_engine::eval::run::RunStatus;
+use xvision_engine::eval::store::RunStore;
 use xvision_engine::templates::registry as template_registry;
 
 // ---------------------------------------------------------------------------
@@ -158,6 +164,33 @@ pub struct SetRiskConfigReq {
     ///    daily_loss_kill_pct: f64 }`.
     #[serde(default)]
     pub explicit: Option<serde_json::Value>,
+}
+
+// --- eval-domain request shapes (Phase 3.D Task 12) -------------------------
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct EvalListReq {
+    /// Optional filter: only return runs for this strategy bundle id.
+    #[serde(default)]
+    pub strategy_bundle_hash: Option<String>,
+    /// Optional filter: only return runs against this scenario id.
+    #[serde(default)]
+    pub scenario_id: Option<String>,
+    /// Optional status filter: queued | running | completed | failed | cancelled.
+    #[serde(default)]
+    pub status: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EvalRunIdReq {
+    /// Run id (ULID).
+    pub run_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EvalCompareReq {
+    /// Two or more run ids (ULIDs) to fold into a single ComparisonReport.
+    pub run_ids: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -543,6 +576,191 @@ impl XvisionTools {
         };
         json_or_err(&serde_json::json!({ "id": req.id, "ok": ok, "errors": errors }))
     }
+
+    // --- eval browse / compare verbs (Phase 3.D Task 12) -------------------
+    //
+    // These wrap the existing `engine::api::eval::*` surface so MCP clients
+    // (the dashboard's chat rail, the autoresearcher) can browse runs +
+    // compare without going through the CLI. Each call opens a fresh
+    // `ApiContext` against `$XVN_HOME/store.db` so the sqlite handle is
+    // scoped to the call (no long-lived pool, matching the rest of the
+    // MCP server's stateless handler shape).
+    //
+    // Mutations (`run_eval`, `extract_findings`, `publish_attestation`)
+    // are intentionally deferred — they pull in broker/dispatch
+    // construction from env, which deserves its own integration concern.
+
+    /// List eval runs. Returns the slim `RunSummary` shape (id +
+    /// strategy_bundle_hash + scenario_id + mode + status + started_at +
+    /// completed_at + headline metrics). Optional filters narrow the
+    /// result to a strategy / scenario / status.
+    #[tool(
+        description = "List eval runs (slim shape). Optional filters: strategy_bundle_hash, scenario_id, status."
+    )]
+    async fn xvn_eval_list(
+        &self,
+        Parameters(req): Parameters<EvalListReq>,
+    ) -> Result<String, rmcp::ErrorData> {
+        let ctx = self.api_context().await?;
+        let status = req
+            .status
+            .as_deref()
+            .map(parse_status_for_mcp)
+            .transpose()?;
+        let summaries = api_eval::list_summaries(
+            &ctx,
+            ListRunsRequest {
+                strategy_bundle_hash: req.strategy_bundle_hash,
+                scenario_id: req.scenario_id,
+                status,
+            },
+        )
+        .await
+        .map_err(api_err_to_mcp)?;
+        json_or_err(&summaries)
+    }
+
+    /// Get full detail for a single run — summary + decision rows +
+    /// equity curve. Maps a missing run to MCP `invalid_params` so the
+    /// client sees a clean 404-shaped error.
+    #[tool(
+        description = "Get full RunDetail (summary + decisions + equity curve) by run id. 404-shaped error when the run is unknown."
+    )]
+    async fn xvn_eval_get(
+        &self,
+        Parameters(req): Parameters<EvalRunIdReq>,
+    ) -> Result<String, rmcp::ErrorData> {
+        let ctx = self.api_context().await?;
+        let detail = api_eval::get_run(&ctx, &req.run_id)
+            .await
+            .map_err(api_err_to_mcp)?;
+        json_or_err(&detail)
+    }
+
+    /// Get just the `MetricsSummary` for a completed run. Convenience
+    /// wrapper for callers that only want the headline numbers (the
+    /// dashboard's run cards, the autoresearcher's lineage gate).
+    /// Returns `null` when the run hasn't computed metrics yet
+    /// (still queued / running / failed).
+    #[tool(
+        description = "Get just the MetricsSummary for a run, or null if metrics aren't computed yet. 404-shaped error when the run is unknown."
+    )]
+    async fn xvn_eval_metrics(
+        &self,
+        Parameters(req): Parameters<EvalRunIdReq>,
+    ) -> Result<String, rmcp::ErrorData> {
+        let ctx = self.api_context().await?;
+        let run = api_eval::get(&ctx, &req.run_id)
+            .await
+            .map_err(api_err_to_mcp)?;
+        json_or_err(&run.metrics)
+    }
+
+    /// List the canonical scenarios bundled with this binary. These are
+    /// the same scenarios the CLI's `xvn eval scenarios` shows.
+    #[tool(
+        description = "List canonical scenarios bundled with this binary. Returns id, display_name, asset_universe, regime_tags, time_window_days."
+    )]
+    async fn xvn_eval_scenarios(&self) -> Result<String, rmcp::ErrorData> {
+        let ctx = self.api_context().await?;
+        let scenarios = api_eval::scenarios(&ctx).await.map_err(api_err_to_mcp)?;
+        json_or_err(&scenarios)
+    }
+
+    /// Run-set comparison. Folds 2+ completed runs into a single
+    /// `ComparisonReport` (per-run summary + equity curve + the union
+    /// of all extracted findings). Validates that ≥2 ids are passed
+    /// and that every id resolves; bad ids surface as 404-shaped errors.
+    #[tool(
+        description = "Compare 2+ completed runs side-by-side. Returns a ComparisonReport (runs + equity_curves + findings). At least two run_ids required."
+    )]
+    async fn xvn_eval_compare(
+        &self,
+        Parameters(req): Parameters<EvalCompareReq>,
+    ) -> Result<String, rmcp::ErrorData> {
+        let ctx = self.api_context().await?;
+        let report = api_eval::compare(
+            &ctx,
+            CompareRunsRequest {
+                run_ids: req.run_ids,
+            },
+        )
+        .await
+        .map_err(api_err_to_mcp)?;
+        json_or_err(&report)
+    }
+
+    /// All extracted findings for a single run (empty array when none).
+    /// Read directly from the store rather than going through the api
+    /// layer because findings don't have a dedicated audit-worthy api
+    /// surface — they're a downstream lookup, like equity samples.
+    #[tool(
+        description = "List all extracted findings for a run, ordered by extraction time. Empty array when there are none."
+    )]
+    async fn xvn_eval_findings(
+        &self,
+        Parameters(req): Parameters<EvalRunIdReq>,
+    ) -> Result<String, rmcp::ErrorData> {
+        let ctx = self.api_context().await?;
+        let store = RunStore::new(ctx.db.clone());
+        let findings = store
+            .read_findings(&req.run_id)
+            .await
+            .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))?;
+        json_or_err(&findings)
+    }
+}
+
+impl XvisionTools {
+    /// Open an `ApiContext` rooted at this server's `$XVN_HOME`. Each
+    /// MCP call opens a fresh sqlite pool and migrates if needed. The
+    /// `actor` is `Mcp { session_id }` so audit rows attribute writes
+    /// to the MCP session rather than a CLI user.
+    async fn api_context(&self) -> Result<ApiContext, rmcp::ErrorData> {
+        let xvn_home = self
+            .xvn_home
+            .clone()
+            .unwrap_or_else(resolve_xvn_home);
+        ApiContext::open(
+            &xvn_home,
+            Actor::Mcp {
+                session_id: format!("mcp-{}", Ulid::new()),
+            },
+        )
+        .await
+        .map_err(|e| {
+            rmcp::ErrorData::internal_error(format!("open api context: {e}"), None)
+        })
+    }
+}
+
+fn parse_status_for_mcp(s: &str) -> Result<RunStatus, rmcp::ErrorData> {
+    RunStatus::parse(s).ok_or_else(|| {
+        rmcp::ErrorData::invalid_params(
+            format!(
+                "unknown status {s:?}; expected one of: queued | running | completed | failed | cancelled"
+            ),
+            None,
+        )
+    })
+}
+
+fn api_err_to_mcp(e: xvision_engine::api::ApiError) -> rmcp::ErrorData {
+    use xvision_engine::api::ApiError;
+    match e {
+        ApiError::NotFound(msg) => {
+            rmcp::ErrorData::invalid_params(format!("not found: {msg}"), None)
+        }
+        ApiError::Validation(msg) => {
+            rmcp::ErrorData::invalid_params(format!("validation: {msg}"), None)
+        }
+        ApiError::Conflict(msg) => {
+            rmcp::ErrorData::invalid_params(format!("conflict: {msg}"), None)
+        }
+        ApiError::Internal(msg) => rmcp::ErrorData::internal_error(msg, None),
+        ApiError::Db(e) => rmcp::ErrorData::internal_error(format!("db: {e}"), None),
+        ApiError::Other(e) => rmcp::ErrorData::internal_error(format!("{e:#}"), None),
+    }
 }
 
 #[cfg(test)]
@@ -786,5 +1004,201 @@ mod tests {
         let r = parsed(&v);
         assert_eq!(r["ok"], true);
         assert_eq!(r["errors"], serde_json::json!([]));
+    }
+
+    // --- eval verbs (Phase 3.D Task 12) ----------------------------------
+
+    use chrono::{Duration as ChronoDuration, TimeZone, Utc};
+    use xvision_engine::eval::run::{MetricsSummary, Run, RunMode, RunStatus};
+    use xvision_engine::eval::store::DecisionRow;
+
+    /// Seed a completed run with metrics + a few equity samples + a decision.
+    /// Returns the run id so tests can refer back to it.
+    async fn seed_run(
+        tools: &XvisionTools,
+        bundle_hash: &str,
+        scenario_id: &str,
+        total_return_pct: f64,
+    ) -> String {
+        let ctx = tools.api_context().await.unwrap();
+        let store = RunStore::new(ctx.db.clone());
+        let mut run = Run::new_queued(bundle_hash.into(), scenario_id.into(), RunMode::Backtest);
+        run.status = RunStatus::Completed;
+        store.create(&run).await.unwrap();
+
+        let t0 = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
+        for i in 0..3 {
+            let ts = t0 + ChronoDuration::hours(i);
+            store
+                .record_equity(&run.id, ts, 10_000.0 + (i as f64) * 100.0)
+                .await
+                .unwrap();
+        }
+        store
+            .record_decision(&DecisionRow {
+                run_id: run.id.clone(),
+                decision_index: 0,
+                timestamp: t0,
+                asset: "BTC".into(),
+                action: "long_open".into(),
+                conviction: Some(0.7),
+                justification: Some("seed".into()),
+                order_size: Some(0.1),
+                fill_price: Some(40_000.0),
+                fill_size: Some(0.1),
+                fee: Some(1.0),
+                pnl_realized: None,
+            })
+            .await
+            .unwrap();
+        let metrics = MetricsSummary {
+            total_return_pct,
+            sharpe: 1.0,
+            max_drawdown_pct: 5.0,
+            win_rate: 0.5,
+            n_trades: 1,
+            n_decisions: 1,
+        };
+        store.finalize(&run.id, &metrics).await.unwrap();
+        run.id
+    }
+
+    #[tokio::test]
+    async fn eval_list_returns_seeded_runs() {
+        let (tools, _td) = tools_with_tmp();
+        let id_a = seed_run(&tools, "h-A", "s-A", 12.0).await;
+        let id_b = seed_run(&tools, "h-B", "s-B", 7.5).await;
+
+        let s = tools
+            .xvn_eval_list(Parameters(EvalListReq::default()))
+            .await
+            .unwrap();
+        let v = parsed(&s);
+        let arr = v.as_array().unwrap();
+        let ids: Vec<&str> = arr.iter().map(|r| r["id"].as_str().unwrap()).collect();
+        assert!(ids.contains(&id_a.as_str()), "ids={ids:?}");
+        assert!(ids.contains(&id_b.as_str()));
+    }
+
+    #[tokio::test]
+    async fn eval_list_filters_by_strategy() {
+        let (tools, _td) = tools_with_tmp();
+        let _id_a = seed_run(&tools, "h-A", "s-A", 12.0).await;
+        let id_b = seed_run(&tools, "h-B", "s-B", 7.5).await;
+
+        let s = tools
+            .xvn_eval_list(Parameters(EvalListReq {
+                strategy_bundle_hash: Some("h-B".into()),
+                ..Default::default()
+            }))
+            .await
+            .unwrap();
+        let v = parsed(&s);
+        let arr = v.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["id"].as_str().unwrap(), id_b);
+    }
+
+    #[tokio::test]
+    async fn eval_get_returns_run_detail_for_known_run() {
+        let (tools, _td) = tools_with_tmp();
+        let id = seed_run(&tools, "h-A", "s-A", 4.0).await;
+
+        let s = tools
+            .xvn_eval_get(Parameters(EvalRunIdReq { run_id: id.clone() }))
+            .await
+            .unwrap();
+        let v = parsed(&s);
+        assert_eq!(v["summary"]["id"].as_str().unwrap(), id);
+        assert_eq!(v["decisions"].as_array().unwrap().len(), 1);
+        assert_eq!(v["equity_curve"].as_array().unwrap().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn eval_get_returns_invalid_params_for_unknown_run() {
+        let (tools, _td) = tools_with_tmp();
+        let err = tools
+            .xvn_eval_get(Parameters(EvalRunIdReq {
+                run_id: "no-such-run".into(),
+            }))
+            .await
+            .unwrap_err();
+        let msg = err.to_string().to_lowercase();
+        assert!(msg.contains("not found"), "unexpected msg: {msg}");
+    }
+
+    #[tokio::test]
+    async fn eval_metrics_returns_just_metrics() {
+        let (tools, _td) = tools_with_tmp();
+        let id = seed_run(&tools, "h-A", "s-A", 21.0).await;
+
+        let s = tools
+            .xvn_eval_metrics(Parameters(EvalRunIdReq { run_id: id }))
+            .await
+            .unwrap();
+        let v = parsed(&s);
+        assert_eq!(v["total_return_pct"].as_f64().unwrap(), 21.0);
+        assert_eq!(v["n_trades"].as_i64().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn eval_scenarios_returns_canonical_set() {
+        let (tools, _td) = tools_with_tmp();
+        let s = tools.xvn_eval_scenarios().await.unwrap();
+        let v = parsed(&s);
+        let arr = v.as_array().unwrap();
+        assert!(!arr.is_empty(), "expected at least one canonical scenario");
+        let ids: Vec<&str> = arr.iter().map(|r| r["id"].as_str().unwrap()).collect();
+        assert!(
+            ids.iter().any(|id| id.contains("crypto") || id.contains("crash")),
+            "missing canonical scenarios in {ids:?}",
+        );
+    }
+
+    #[tokio::test]
+    async fn eval_compare_returns_comparison_report() {
+        let (tools, _td) = tools_with_tmp();
+        let id_a = seed_run(&tools, "h-A", "s-A", 10.0).await;
+        let id_b = seed_run(&tools, "h-B", "s-B", 5.0).await;
+
+        let s = tools
+            .xvn_eval_compare(Parameters(EvalCompareReq {
+                run_ids: vec![id_a.clone(), id_b.clone()],
+            }))
+            .await
+            .unwrap();
+        let v = parsed(&s);
+        let runs = v["runs"].as_array().unwrap();
+        assert_eq!(runs.len(), 2);
+        assert_eq!(runs[0]["id"].as_str().unwrap(), id_a);
+        assert_eq!(runs[1]["id"].as_str().unwrap(), id_b);
+        assert_eq!(v["equity_curves"].as_array().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn eval_compare_rejects_single_run() {
+        let (tools, _td) = tools_with_tmp();
+        let id = seed_run(&tools, "h-A", "s-A", 10.0).await;
+        let err = tools
+            .xvn_eval_compare(Parameters(EvalCompareReq {
+                run_ids: vec![id],
+            }))
+            .await
+            .unwrap_err();
+        let msg = err.to_string().to_lowercase();
+        assert!(msg.contains("validation") && msg.contains("at least two"), "msg: {msg}");
+    }
+
+    #[tokio::test]
+    async fn eval_findings_returns_empty_array_when_none() {
+        let (tools, _td) = tools_with_tmp();
+        let id = seed_run(&tools, "h-A", "s-A", 10.0).await;
+        let s = tools
+            .xvn_eval_findings(Parameters(EvalRunIdReq { run_id: id }))
+            .await
+            .unwrap();
+        let v = parsed(&s);
+        let arr = v.as_array().unwrap();
+        assert!(arr.is_empty(), "expected empty findings, got {v}");
     }
 }
