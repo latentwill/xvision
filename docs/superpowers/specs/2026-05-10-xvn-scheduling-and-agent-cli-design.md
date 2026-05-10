@@ -147,7 +147,12 @@ xvn report deployment-health [--id <deployment_id>]
 xvn report pnl --window day|week|month --group-by deployment|strategy|asset
 xvn report token-spend --window day|week|month
 xvn report anomaly-scan
+xvn report eod [--deployment <id>...] [--window market-open-to-now|session]
+               [--baseline buy_and_hold] [--out <path.md>]
+xvn report backtest <result.json> [--out <path.md>]   # wraps xianvec_eval renderer
 ```
+
+`xvn report eod` writes the rendered Markdown to `--out` if specified, else stdout. Same renderer/shape as the existing backtest report (`xianvec_eval::report::render`) — agent gets the structured `EodReport` via the tool call, humans get the Markdown.
 
 **Maintenance:**
 
@@ -274,7 +279,36 @@ pub async fn deployment_health(ctx, dep_id: Option<&DeploymentId>) -> Result<Hea
 pub async fn pnl_summary(ctx, window: Window, group_by: GroupBy) -> Result<PnlSummary>;
 pub async fn token_spend(ctx, window: Window) -> Result<TokenSpendReport>;
 pub async fn anomaly_scan(ctx) -> Result<Vec<Anomaly>>;
+
+pub async fn eod(ctx, opts: EodOpts) -> Result<EodReport>;            // end-of-day report
+pub async fn backtest_report(ctx, result_path: &Path) -> Result<String>;  // wraps existing eval render
 ```
+
+```rust
+pub struct EodOpts {
+    /// Deployments to include. Default: all Active.
+    pub deployments: Option<Vec<DeploymentId>>,
+    /// Time window. Default: market-open today → now (or session-close if past).
+    pub window: Option<Window>,
+    /// Baseline arm for Δ-Sharpe. Default: "buy_and_hold" if a synthetic
+    /// baseline arm is materialized, else None (skips inferential section).
+    pub baseline_arm: Option<String>,
+    /// Render the full Markdown alongside the structured data.
+    pub render_markdown: bool,         // default true
+}
+
+pub struct EodReport {
+    pub window:         Window,
+    pub deployments:    Vec<DeploymentEodSummary>,   // per-deployment fills, decisions, P&L, equity curve
+    pub portfolio:      PortfolioRollup,             // total realized/unrealized P&L, NAV, exposure
+    pub headline:       Option<HeadlineMetrics>,     // Δ-Sharpe + 95% CI when baseline available
+    pub regime_stratified: Option<RegimeBreakdown>,  // Sharpe by regime + gate verdict
+    pub anomalies:      Vec<Anomaly>,                // reuse anomaly_scan
+    pub markdown:       Option<String>,              // rendered if opts.render_markdown
+}
+```
+
+**Implementation note.** `eod` reuses `xianvec_eval::report::render` by assembling a `BacktestResult`-shaped value from live `scheduler_events` + per-deployment fills/equity rather than from a backtest. The same Markdown shape (headline Δ-Sharpe, per-arm dashboard, regime stratification, gate verdict) renders for both backtest and live inputs — the existing report renderer becomes a shared output format. `backtest_report` is a thin pass-through to the existing renderer.
 
 `anomaly_scan` heuristics:
 - Deployment heartbeat older than 2× decision_cadence → stale.
@@ -553,6 +587,7 @@ xvn never holds user trading capital. "Budget" means three distinct things; only
 - **Plan 2d (dashboard):** Adds `/schedule` route + Live cockpit panel. Wizard gains `schedule.*` tools.
 - **Plan 3 (eval engine):** `report.strategy_review` and `maintenance.refresh_eval_cache` are integration points.
 - **AR-1/2/3 (autoresearch):** `autoresearch.run_evening_cycle` is the engine API hook. AR-2's evening cycle becomes a default schedule entry shipped at install (`name='ar-evening-cycle', at='03:00 UTC'`).
+- **`xianvec-eval::report` (existing):** `report.eod` and `report.backtest_report` reuse the existing Markdown renderer. The renderer becomes a shared output format for backtest *and* live data — no duplicate report code. Live data is shaped into a `BacktestResult`-compatible struct from `scheduler_events`/event_store rows.
 
 **Migration:** No existing scheduler code today, so this is greenfield. New SQLite tables; no prior data to migrate.
 
@@ -565,6 +600,34 @@ xvn never holds user trading capital. "Budget" means three distinct things; only
 - Cross-deployment fund movement (non-custodial).
 - Schedule entries triggering schedule entries via DAG/handoff (agent can call `schedule.run_now` if needed).
 - Multi-model agent runs (one model per fire).
+
+## 10a. Default schedules shipped at install
+
+Two schedule entries ship pre-installed but **paused** (`paused=1`). User opts in via `xvn schedule resume <id>` after reviewing prompt + budget:
+
+```
+sch_default_eod_report
+  name:      eod-report
+  schedule:  market-close (NYSE, DST-aware)
+  prompt:    Generate the EOD report for all Active deployments via report.eod.
+             Summarize headline P&L and Δ-Sharpe. Flag anomalies via
+             report.anomaly_scan. Write a 2-paragraph commentary on what worked
+             and what didn't. End with record_outcome including the rendered
+             Markdown in `summary`.
+  allow:     report.*, deploy.show, strategy.show
+  budget:    max-cost-usd=0.50, max-tokens=80000
+
+sch_default_ar_evening_cycle
+  name:      ar-evening-cycle
+  schedule:  daily 03:00 UTC
+  prompt:    Run autoresearch.run_evening_cycle. Summarize accepted mutations,
+             rejections, and any judge anomalies. Cull strategies whose
+             quarantine status changed.
+  allow:     autoresearch.*, strategy.deactivate, report.strategy_review
+  budget:    max-cost-usd=2.00, max-tokens=200000
+```
+
+Pre-paused so install never burns tokens unexpectedly. The dashboard's `/schedule` view highlights any paused-default schedules with a "Resume to enable" prompt.
 
 ## 11. Example end-to-end
 
@@ -599,4 +662,4 @@ At 21:00 UTC the next day:
 - **Cron evaluator:** roll our own with `chrono` + `chrono-tz`, or use `tokio-cron-scheduler` / `cron`? Decide during implementation.
 - **Transcript redaction:** if the agent inadvertently logs API keys via tool args, do we filter? Probably yes via a small regex denylist on transcript-write.
 - **Schedule import/export:** TOML round-trip for git-tracked schedule definitions? Defer to a follow-up unless trivial during implementation.
-- **Default schedules at install:** ship `ar-evening-cycle` opt-in only, or as a pre-paused entry the user must `resume`? Lean toward pre-paused so install doesn't burn tokens unexpectedly.
+- **Default schedules at install:** *resolved* — see Section 10a. Two entries ship pre-paused (`eod-report` at market-close, `ar-evening-cycle` at 03:00 UTC). User runs `xvn schedule resume <id>` to opt in.
