@@ -8,9 +8,9 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
-use xvision_engine::api::eval::{self, ListRunsRequest};
+use xvision_engine::api::eval::{self, EvalRunRequest, ListRunsRequest};
 use xvision_engine::api::{Actor, ApiContext};
-use xvision_engine::eval::run::RunStatus;
+use xvision_engine::eval::run::{RunMode, RunStatus};
 
 #[derive(Args, Debug)]
 pub struct EvalCmd {
@@ -20,12 +20,34 @@ pub struct EvalCmd {
 
 #[derive(Subcommand, Debug)]
 pub enum Op {
+    /// Run an eval — `--mode paper` against Alpaca paper today (backtest
+    /// mode lands when BacktestExecutor ships).
+    Run(RunArgs),
     /// List eval runs (most recent first).
     List(ListArgs),
     /// Show a single run by id.
     Show(ShowArgs),
     /// List canonical scenarios bundled with this binary.
     Scenarios(ScenariosArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct RunArgs {
+    /// Strategy bundle id (the `agent_id` from `xvn strategy ls`).
+    #[arg(long)]
+    pub strategy: String,
+    /// Scenario id from `xvn eval scenarios`.
+    #[arg(long)]
+    pub scenario: String,
+    /// Run mode: `paper` (today) or `backtest` (rejected for now — Phase 3.B-backtest).
+    #[arg(long, default_value = "paper")]
+    pub mode: String,
+    /// Override the xvn home directory.
+    #[arg(long)]
+    pub xvn_home: Option<PathBuf>,
+    /// Output the final Run as JSON.
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Args, Debug)]
@@ -71,10 +93,63 @@ pub struct ScenariosArgs {
 
 pub async fn run(cmd: EvalCmd) -> Result<()> {
     match cmd.op {
+        Op::Run(args) => run_run(args).await,
         Op::List(args) => run_list(args).await,
         Op::Show(args) => run_show(args).await,
         Op::Scenarios(args) => run_scenarios(args).await,
     }
+}
+
+fn parse_mode(s: &str) -> Result<RunMode> {
+    RunMode::parse(s).context(format!(
+        "unknown mode {s:?}; expected one of: paper | backtest",
+    ))
+}
+
+async fn run_run(args: RunArgs) -> Result<()> {
+    let ctx = open_ctx(args.xvn_home.clone()).await?;
+    let mode = parse_mode(&args.mode)?;
+    let req = EvalRunRequest {
+        agent_id: args.strategy.clone(),
+        scenario_id: args.scenario.clone(),
+        mode,
+        params_override: None,
+    };
+
+    println!(
+        "Starting eval run — strategy={} scenario={} mode={}",
+        req.agent_id,
+        req.scenario_id,
+        mode.as_str(),
+    );
+
+    let run = eval::run(&ctx, req)
+        .await
+        .map_err(|e| anyhow::anyhow!("eval run: {e}"))?;
+
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&run)?);
+        return Ok(());
+    }
+
+    println!();
+    println!("Run completed.");
+    println!("  id              {}", run.id);
+    println!("  status          {}", run.status.as_str());
+    if let Some(c) = run.completed_at {
+        println!("  completed_at    {}", c.to_rfc3339());
+    }
+    if let Some(m) = run.metrics.as_ref() {
+        println!();
+        println!("  Metrics");
+        println!("    total_return  {:.2}%", m.total_return_pct);
+        println!("    sharpe        {:.3}", m.sharpe);
+        println!("    max_drawdown  {:.2}%", m.max_drawdown_pct);
+        println!("    win_rate      {:.2}", m.win_rate);
+        println!("    n_trades      {}", m.n_trades);
+        println!("    n_decisions   {}", m.n_decisions);
+    }
+    Ok(())
 }
 
 fn resolve_xvn_home(override_path: Option<PathBuf>) -> Result<PathBuf> {

@@ -1,25 +1,33 @@
 //! Eval-domain api dispatch.
 //!
-//! Phase 3.D shipped the read-only core (`list`, `get`, `scenarios`) returning
-//! the engine's full `Run` shape. This module also exposes a slimmer
-//! `RunSummary` wire shape via `list_summaries` for clients (today: the
-//! dashboard, tomorrow: MCP browse tools) that don't want the full Run, and a
-//! `get_run` fn that returns a `RunDetail` (summary + decisions + equity
-//! curve) for the dashboard's `/eval-runs/:id` page.
-//!
-//! The `run` dispatch (which constructs PaperExecutor + LlmDispatch +
-//! ToolRegistry from env) is still deferred to a follow-up PR.
+//! Public surface:
+//! - `list` / `get` / `scenarios` — read-only browse (PR #23)
+//! - `list_summaries` — slim wire shape for the dashboard's `/api/eval/runs`
+//!   list and (future) MCP browse tools (PR #21)
+//! - `get_run` — `RunDetail` (summary + decisions + equity curve) for the
+//!   dashboard's `/eval-runs/:id` page (PR #24)
+//! - `run` — paper-mode dispatch that constructs `PaperExecutor` +
+//!   `AlpacaPaperSurface::from_env` + `AnthropicDispatch` +
+//!   `ToolRegistry::default_with_builtins` from env vars (PR #26)
+//! - `run_with_deps` — testable variant that takes the broker / dispatch /
+//!   tools as parameters; useful for tests and any caller that wants to
+//!   inject a `MockBrokerSurface` (e.g., a future "dry-run" mode)
 
+use std::sync::Arc;
 use std::time::Instant;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::agent::llm::{AnthropicDispatch, LlmDispatch};
 use crate::api::audit::{self, Outcome};
-use crate::api::{ApiContext, ApiError, ApiResult};
+use crate::api::{strategy as api_strategy, ApiContext, ApiError, ApiResult};
+use crate::eval::executor::{Executor, PaperExecutor};
 use crate::eval::run::{Run, RunMode, RunStatus};
-use crate::eval::scenario::canonical_scenarios;
+use crate::eval::scenario::{canonical_scenarios, Scenario};
 use crate::eval::store::{ListFilter, RunStore};
+use crate::tools::ToolRegistry;
+use xvision_execution::broker_surface::{AlpacaPaperSurface, BrokerSurface};
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct ListRunsRequest {
@@ -283,6 +291,150 @@ async fn get_run_inner(ctx: &ApiContext, id: &str) -> ApiResult<RunDetail> {
         decisions,
         equity_curve,
     })
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvalRunRequest {
+    /// Strategy bundle id (the `agent_id` returned by `api::strategy::list`).
+    pub agent_id: String,
+    /// Scenario id from `canonical_scenarios()` (e.g. `crypto-bull-q1-2025`).
+    pub scenario_id: String,
+    /// Run mode. `Backtest` is rejected with `ApiError::Validation` until
+    /// `BacktestExecutor` lands (Phase 3.B-backtest, separate PR).
+    pub mode: RunMode,
+    /// Optional per-run override of bundle.mechanical_params. Persisted as
+    /// `eval_runs.params_override_json`.
+    pub params_override: Option<serde_json::Value>,
+}
+
+/// Public env-bound entry point: constructs broker / dispatch / tools
+/// from environment variables and dispatches to `run_with_deps`.
+///
+/// Required env for paper mode:
+///   APCA_API_KEY_ID, APCA_API_SECRET_KEY, [APCA_API_BASE_URL]
+///   ANTHROPIC_API_KEY
+///
+/// Validation that doesn't depend on env (backtest mode, missing strategy,
+/// missing scenario) runs FIRST so the operator sees a clean "backtest not
+/// supported" / "strategy not found" error rather than buried-behind an
+/// `APCA_API_KEY_ID not found` from the broker constructor.
+pub async fn run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<Run> {
+    if req.mode == RunMode::Backtest {
+        return Err(ApiError::Validation(
+            "backtest mode not yet supported — Phase 3.B-backtest ships BacktestExecutor as a follow-up; use --mode paper".into(),
+        ));
+    }
+    // Early NotFound surfaces without env-var noise.
+    let _bundle = api_strategy::get(ctx, &req.agent_id).await?;
+    if !canonical_scenarios().iter().any(|s| s.id == req.scenario_id) {
+        return Err(ApiError::NotFound(format!(
+            "scenario '{}'",
+            req.scenario_id
+        )));
+    }
+
+    let broker_arc: Arc<dyn BrokerSurface> = Arc::new(
+        AlpacaPaperSurface::from_env()
+            .map_err(|e| ApiError::Internal(format!("alpaca paper from_env: {e}")))?,
+    );
+    let api_key = std::env::var("ANTHROPIC_API_KEY").map_err(|_| {
+        ApiError::Validation("ANTHROPIC_API_KEY env var is required for paper mode".into())
+    })?;
+    let dispatch_arc: Arc<dyn LlmDispatch> = Arc::new(AnthropicDispatch::new(api_key));
+    let tools_arc = Arc::new(ToolRegistry::default_with_builtins());
+    run_with_deps(ctx, req, broker_arc, dispatch_arc, tools_arc).await
+}
+
+/// Testable / deps-injecting variant of `run`. Tests pass a
+/// `MockBrokerSurface` + `MockDispatch` so no network is required;
+/// production callers go through `run` which constructs deps from env.
+pub async fn run_with_deps(
+    ctx: &ApiContext,
+    req: EvalRunRequest,
+    broker: Arc<dyn BrokerSurface>,
+    dispatch: Arc<dyn LlmDispatch>,
+    tools: Arc<ToolRegistry>,
+) -> ApiResult<Run> {
+    let started = Instant::now();
+    let target_clone = format!("{}@{}", req.agent_id, req.scenario_id);
+    let args_json = serde_json::to_string(&req).ok();
+
+    let result = run_inner(ctx, req, broker, dispatch, tools).await;
+
+    let (outcome, target) = match &result {
+        Ok(run) => (Outcome::Ok, Some(run.id.clone())),
+        Err(e) => (Outcome::Error(e.to_string()), None),
+    };
+    let _ = audit::record(
+        ctx,
+        "eval",
+        "run",
+        target.as_deref().or(Some(target_clone.as_str())),
+        args_json.as_deref(),
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    result
+}
+
+async fn run_inner(
+    ctx: &ApiContext,
+    req: EvalRunRequest,
+    broker: Arc<dyn BrokerSurface>,
+    dispatch: Arc<dyn LlmDispatch>,
+    tools: Arc<ToolRegistry>,
+) -> ApiResult<Run> {
+    if req.mode == RunMode::Backtest {
+        return Err(ApiError::Validation(
+            "backtest mode not yet supported — Phase 3.B-backtest ships BacktestExecutor as a follow-up; use --mode paper".into(),
+        ));
+    }
+
+    // 1. Look up the strategy bundle. Propagates ApiError::NotFound cleanly.
+    let bundle = api_strategy::get(ctx, &req.agent_id).await?;
+
+    // 2. Look up the scenario from the canonical set.
+    let scenario: Scenario = canonical_scenarios()
+        .into_iter()
+        .find(|s| s.id == req.scenario_id)
+        .ok_or_else(|| ApiError::NotFound(format!("scenario '{}'", req.scenario_id)))?;
+
+    // 3. Build a fresh Run, persist, then drive the executor.
+    let mut run = Run::new_queued(
+        req.agent_id.clone(),
+        scenario.id.clone(),
+        req.mode,
+    );
+    run.params_override = req.params_override.clone();
+
+    let store = RunStore::new(ctx.db.clone());
+    store
+        .create(&run)
+        .await
+        .map_err(|e| ApiError::Internal(format!("create run: {e}")))?;
+
+    let executor = PaperExecutor::new(broker);
+    if let Err(e) = executor
+        .run(&mut run, &bundle, &scenario, dispatch, tools, &store)
+        .await
+    {
+        // Persist the failure so downstream callers (CLI, dashboard) can
+        // see why this run is not Completed.
+        let err_msg = e.to_string();
+        let _ = store
+            .update_status(&run.id, RunStatus::Failed, Some(&err_msg))
+            .await;
+        return Err(ApiError::Internal(format!("executor: {err_msg}")));
+    }
+
+    // Re-read from the store so the returned Run reflects the canonical
+    // post-finalize state — completed_at + metrics_json are set inside
+    // RunStore::finalize and we want callers to see them.
+    store
+        .get(&run.id)
+        .await
+        .map_err(|e| ApiError::Internal(format!("re-read finalized run: {e}")))
 }
 
 pub async fn scenarios(ctx: &ApiContext) -> ApiResult<Vec<ScenarioSummary>> {
