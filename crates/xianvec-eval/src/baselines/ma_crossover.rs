@@ -19,7 +19,7 @@ use async_trait::async_trait;
 use xianvec_core::market::MarketSnapshot;
 use xianvec_core::trading::{Action, Direction, TraderDecision};
 
-use crate::strategy::Strategy;
+use crate::algorithm::Algorithm;
 
 pub struct MaCrossover {
     pub fast_window: usize,
@@ -50,7 +50,7 @@ fn sma(bars: &[xianvec_core::market::Ohlcv], window: usize) -> Option<f64> {
 }
 
 #[async_trait]
-impl Strategy for MaCrossover {
+impl Algorithm for MaCrossover {
     fn name(&self) -> &'static str {
         "ma_crossover"
     }

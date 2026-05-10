@@ -1,7 +1,7 @@
 //! Phase 7 baselines — null and classical-technical strategies that consume
 //! `MarketSnapshot` and emit `TraderDecision`-shaped outputs.
 //!
-//! All baselines implement [`crate::strategy::Strategy`] with `cycle_id`
+//! All baselines implement [`crate::algorithm::Algorithm`] with `cycle_id`
 //! propagated from the incoming snapshot.
 //!
 //! ## v1 baseline set (7 strategies)
@@ -43,7 +43,7 @@ pub use random_direction::RandomDirection;
 pub use rsi_mean_reversion::RsiMeanReversion;
 pub use trader_arm::{PortfolioProvider, TraderArm};
 
-use crate::strategy::Strategy;
+use crate::algorithm::Algorithm;
 
 /// Construct the canonical v1 baseline set in evaluation order.
 ///
@@ -53,7 +53,7 @@ use crate::strategy::Strategy;
 ///
 /// `seed` controls the `RandomDirection` RNG — pass a fixed value for
 /// reproducible backtests.
-pub fn default_v1_set(seed: u64) -> Vec<Box<dyn Strategy>> {
+pub fn default_v1_set(seed: u64) -> Vec<Box<dyn Algorithm>> {
     vec![
         Box::new(BuyAndHold::new()),
         Box::new(AlwaysLong),

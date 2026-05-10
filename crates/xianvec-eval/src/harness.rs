@@ -1,4 +1,4 @@
-//! Phase 8.2 — `BacktestRunner` drives multiple `Strategy` arms through a
+//! Phase 8.2 — `BacktestRunner` drives multiple `Algorithm` arms through a
 //! synchronised OHLCV window via independent `BacktestExecutor` instances.
 //!
 //! ## Design notes
@@ -21,7 +21,7 @@ use xianvec_risk::RiskLayer;
 
 use crate::backtest::{BacktestConfig, BacktestExecutor, MarketBar};
 use crate::result::{ArmResult, BacktestResult, EquityPoint};
-use crate::strategy::Strategy;
+use crate::algorithm::Algorithm;
 
 // ---------------------------------------------------------------------------
 // Error
@@ -52,7 +52,7 @@ impl From<xianvec_execution::ExecutorError> for HarnessError {
 /// Per-arm wrapper: name + strategy.
 pub struct ArmConfig {
     pub name: String,
-    pub strategy: Box<dyn Strategy>,
+    pub strategy: Box<dyn Algorithm>,
 }
 
 /// Static configuration for a multi-arm backtest run.
@@ -395,7 +395,7 @@ mod tests {
 
     struct AlwaysBuy;
     #[async_trait::async_trait]
-    impl Strategy for AlwaysBuy {
+    impl Algorithm for AlwaysBuy {
         fn name(&self) -> &'static str {
             "always_buy"
         }
@@ -414,7 +414,7 @@ mod tests {
 
     struct AlwaysFlat;
     #[async_trait::async_trait]
-    impl Strategy for AlwaysFlat {
+    impl Algorithm for AlwaysFlat {
         fn name(&self) -> &'static str {
             "always_flat"
         }

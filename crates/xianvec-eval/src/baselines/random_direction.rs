@@ -14,7 +14,7 @@ use rand::{Rng, SeedableRng};
 use xianvec_core::market::MarketSnapshot;
 use xianvec_core::trading::{Action, Direction, TraderDecision};
 
-use crate::strategy::Strategy;
+use crate::algorithm::Algorithm;
 
 pub struct RandomDirection {
     pub rng_seed: u64,
@@ -31,7 +31,7 @@ impl RandomDirection {
 }
 
 #[async_trait]
-impl Strategy for RandomDirection {
+impl Algorithm for RandomDirection {
     fn name(&self) -> &'static str {
         "random_direction"
     }

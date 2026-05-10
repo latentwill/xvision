@@ -5,12 +5,12 @@ use async_trait::async_trait;
 use xianvec_core::market::MarketSnapshot;
 use xianvec_core::trading::{Action, Direction, TraderDecision};
 
-use crate::strategy::Strategy;
+use crate::algorithm::Algorithm;
 
 pub struct AlwaysShort;
 
 #[async_trait]
-impl Strategy for AlwaysShort {
+impl Algorithm for AlwaysShort {
     fn name(&self) -> &'static str {
         "always_short"
     }

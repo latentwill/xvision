@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use xianvec_core::market::MarketSnapshot;
 use xianvec_core::trading::{Action, Direction, TraderDecision};
 
-use crate::strategy::Strategy;
+use crate::algorithm::Algorithm;
 
 pub struct MacdMomentum {
     prev_hist: Mutex<Option<f64>>,
@@ -35,7 +35,7 @@ impl Default for MacdMomentum {
 }
 
 #[async_trait]
-impl Strategy for MacdMomentum {
+impl Algorithm for MacdMomentum {
     fn name(&self) -> &'static str {
         "macd_momentum"
     }

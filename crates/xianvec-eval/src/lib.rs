@@ -10,10 +10,10 @@ pub mod harness;
 pub mod metrics;
 pub mod report;
 pub mod result;
-pub mod strategy;
+pub mod algorithm;
 
 pub use backtest::{
     BacktestConfig, BacktestExecutor, BacktestState, DailyPnl, MarketBar, TickReport,
 };
 pub use result::{ArmResult, BacktestResult, EquityPoint};
-pub use strategy::Strategy;
+pub use algorithm::Algorithm;

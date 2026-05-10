@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use xianvec_core::market::MarketSnapshot;
 use xianvec_core::trading::{Action, Direction, TraderDecision};
 
-use crate::strategy::Strategy;
+use crate::algorithm::Algorithm;
 
 pub struct RsiMeanReversion {
     pub period: u32,
@@ -33,7 +33,7 @@ impl Default for RsiMeanReversion {
 }
 
 #[async_trait]
-impl Strategy for RsiMeanReversion {
+impl Algorithm for RsiMeanReversion {
     fn name(&self) -> &'static str {
         "rsi_mean_reversion"
     }
