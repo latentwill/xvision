@@ -1,0 +1,34 @@
+{
+  "name": "xvision-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -b --noEmit"
+  },
+  "dependencies": {
+    "@fontsource/cormorant-garamond": "^5.0.0",
+    "@fontsource/inter": "^5.0.0",
+    "@fontsource/jetbrains-mono": "^5.0.0",
+    "@tanstack/react-query": "^5.51.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.26.0",
+    "zustand": "^4.5.5"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@types/node": "^22.7.4",
+    "@vitejs/plugin-react": "^4.3.1",
+    "autoprefixer": "^10.4.19",
+    "postcss": "^8.4.39",
+    "tailwindcss": "^3.4.7",
+    "typescript": "~5.5.4",
+    "vite": "^5.4.1"
+  },
+  "packageManager": "pnpm@9.0.0"
+}
