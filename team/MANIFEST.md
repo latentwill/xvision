@@ -3,7 +3,7 @@
 > Single source of truth for current phase and per-track ownership. Updated
 > whenever a track lands a phase boundary or a new track spawns.
 >
-> Last updated: 2026-05-10 by `coordinator` (Phase A merged, eval-engine claimed)
+> Last updated: 2026-05-10 by `coordinator` (Phase B in flight — 3 PRs open)
 
 ## Current phase
 
@@ -26,7 +26,9 @@ Phase A unblocked all of Phase B. Pick a row from the build order, claim it via
 | Track | Worktree | Branch | Owner CLI | Plan | Status |
 |---|---|---|---|---|---|
 | `coordinator` | `xvision/` (main) | `main` | session 1 (this one) | — | active — coordinator + integration |
-| `eval-engine` | `.worktrees/eval-engine` | `feature/eval-engine` | session 1 (this one) | [#5 (Eval Engine)](../docs/superpowers/plans/2026-05-08-eval-engine-plan.md) Phase 3.A only (Tasks 1–3) | claiming — Phase 3.A foundation: migration 002 + Run/Scenario types + RunStore |
+| `eval-engine` | `.worktrees/eval-engine` | `feature/eval-engine-foundation` | session 1 (this one) | [#5 (Eval Engine)](../docs/superpowers/plans/2026-05-08-eval-engine-plan.md) Phase 3.A only (Tasks 1–3) | **PR #10 open** — awaiting merge |
+| `frontend-foundation-phase-b` | `.worktrees/frontend-foundation` | `feature/frontend-foundation-phase-b` | session 2 (external CLI) | [Frontend Plan 1](../docs/superpowers/plans/2026-05-10-frontend-1-foundation-and-strategies.md) Phase B (ts-rs codegen + `/strategies` wired) | **PR #9 open** — awaiting merge |
+| `leverage-items` | `.worktrees/leverage-items` | `feature/leverage-items` | session 3 (external CLI) | [#13 (Leverage items)](../docs/superpowers/plans/2026-05-10-leverage-items.md) Items A–D (docs) | **PR #8 open** — awaiting merge |
 
 ## Build order (post-Phase-A)
 

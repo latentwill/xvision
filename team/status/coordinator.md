@@ -2,50 +2,59 @@
 track: coordinator
 worktree: /Users/edkennedy/Code/xvision (main)
 branch: main
-phase: phase-a-three-tracks-active
-last_updated: 2026-05-10T07:14:33Z
+phase: phase-b-three-prs-open
+last_updated: 2026-05-10T07:56:17Z
 ---
 
 # What I'm doing right now
 
-All three Phase A tracks are active. State at this snapshot:
+Phase A merged (PRs #4, #5, #6, #7). Phase B is now running with three
+parallel PRs open across three CLI sessions:
 
-- **engine-api** (this CLI, session 1) → **PR #4** open, awaiting merge:
-  https://github.com/latentwill/xvision/pull/4
-- **broker-surface** (this CLI, session 1) → **PR #5** open, awaiting merge:
-  https://github.com/latentwill/xvision/pull/5
-- **frontend-foundation** (session 2, external CLI) → active in
-  `.worktrees/frontend-foundation`. Tasks 1+2 + Vite/Tailwind/Shell committed.
-  Will open PR when Phase A scope is complete.
+- **PR #8** — leverage-items Items A–D (docs): hackathon 1-pager, README,
+  MANUAL.md scale-tier addendum, incident response runbook. Owner:
+  session 3 (external CLI).
+- **PR #9** — frontend-foundation Phase B: ts-rs codegen +
+  `/strategies` page wired to engine api. Owner: session 2 (external CLI).
+- **PR #10** — eval-engine Phase 3.A: migration 002 + Run/Scenario types +
+  RunStore. Owner: session 1 (this CLI).
 
-This CLI is now in standby — most downstream work is blocked on PR #4 (engine
-API) and / or PR #5 (broker surface) merging. Session 2 owns frontend-foundation
-through PR.
+All three PRs are independent (touch different crates / files), so any
+merge order works. After they merge, even more Phase B work unblocks
+(eval-3b executors, eval-3c metrics + findings, strategy-2a-mcp,
+llm-providers, settings-onboarding, chat-rail, command-palette, etc.).
 
 # Blocked on
 
-Operator merge review for PR #4 and PR #5.
+Operator merge review for PR #8, PR #9, PR #10.
 
-# Next up after PR #4 + PR #5 merge
+# Next up after merges
 
-The Phase B critical path opens up. Tracks ready to launch (each is a separate
-CLI candidate):
+Eval Engine Phase 3.B (executors) is the most-impactful next slice — once
+PR #10 merges, Phase 3.B can start. It uses `Arc<dyn BrokerSurface>` from
+PR #5 to wire PaperExecutor.
 
-- **eval-engine** (Plan #5) — needs both PRs merged
-- **strategy-2a-mcp** (Plan #6) — needs PR #4
-- **llm-providers** (Plan #7) — needs PR #4
-- **strategy-2b-skills** (Plan #8) — needs PR #4
-- **strategy-2d-dashboard-wizard** (Plan #9) — needs PR #4 + frontend-foundation merged
-- **settings-onboarding** (Plan #10) — needs PR #4
-- **chat-rail-persistence** (Plan #11) — needs PR #4
-- **command-palette** (Plan #12) — needs PR #4
-
-This is when multi-CLI scale really pays off — 6+ tracks unblock simultaneously.
-The operator can dispatch CLIs into worktrees per the team/briefings/ directory
-(briefings for these new tracks need to be written; coordinator can produce
-them as a batch when PR #4 lands).
+Other immediate options unblocked by Phase A merges (none claimed yet):
+- **strategy-2a-mcp** (Plan #6) — MCP + tool-call + 7 templates
+- **llm-providers** (Plan #7) — `[[providers]]` registry + per-arm SlotRef
+- **strategy-2b-skills** (Plan #8) — local OSShip-style skills
+- **strategy-2d-dashboard-wizard** (Plan #9) — Wizard + Inspector + Strategies + Eval routes
+- **settings-onboarding** (Plan #10) — `/setup` + `/settings/{providers,brokers,daemon,identity,danger}`
+- **chat-rail-persistence** (Plan #11) — owns migration 003
+- **command-palette** (Plan #12) — owns migration 004 (FTS5)
 
 # Tracks ready for external CLI pickup
 
-None right now (all three Phase A tracks are claimed). Phase B tracks become
-available after PR #4 and / or PR #5 merge.
+Any of the unclaimed B-tier tracks above. The pattern for spawning is:
+
+```
+cd /Users/edkennedy/Code/xvision
+git fetch origin && git worktree add .worktrees/<track> -b feature/<track> main
+cd .worktrees/<track>
+claude
+# inside Claude:
+#   1. Read team/MANIFEST.md
+#   2. Write team/briefings/<track>.md (briefing should reference the plan file)
+#   3. Post team/queue/<track>__<utc>__claim.md
+#   4. Begin work
+```
