@@ -30,6 +30,7 @@ tokio       = { workspace = true }
 tracing     = { workspace = true }
 sqlx        = { workspace = true }
 ts-rs       = { version = "9", optional = true }
+statrs      = "0.18"
 
 [dev-dependencies]
 proptest = { workspace = true }

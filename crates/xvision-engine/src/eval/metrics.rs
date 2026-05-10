@@ -1,0 +1,94 @@
+//! Pure-compute metrics over an evaluation run's equity curve.
+//!
+//! The Phase 3.B-paper PaperExecutor records one equity sample per cadence
+//! tick. This module turns that curve into Sharpe ratio, max drawdown, and
+//! total return — replacing the 0.0 placeholders the paper executor used
+//! before this module existed.
+//!
+//! Bootstrap CI helpers + per-decision-driven win-rate computation come
+//! later (Phase 3.C compare + Phase 3.D); they need a real PnL-realized
+//! pipeline that PaperExecutor does not yet emit.
+
+use statrs::statistics::Statistics;
+
+/// Convert a series of equity samples into per-period percentage returns.
+///
+/// `equity[i+1] / equity[i] - 1` for each adjacent pair where `equity[i] > 0`.
+/// Pairs with zero or negative baselines are skipped (rather than producing
+/// garbage `inf` / `-1.0` values that would corrupt downstream Sharpe math).
+pub fn equity_to_returns(equity_samples: &[f64]) -> Vec<f64> {
+    equity_samples
+        .windows(2)
+        .filter_map(|w| {
+            if w[0] > 0.0 {
+                Some((w[1] - w[0]) / w[0])
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// Annualized Sharpe ratio computed from per-period returns.
+///
+/// Sharpe = (mean(r) / std_dev(r)) * sqrt(periods_per_year). Returns `0.0`
+/// when there are no returns or when standard deviation is zero (no
+/// volatility = Sharpe is undefined; we surface 0 by convention so callers
+/// don't have to special-case `NaN`).
+pub fn sharpe_from_returns(returns: &[f64], periods_per_year: f64) -> f64 {
+    if returns.is_empty() {
+        return 0.0;
+    }
+    let mean = returns.mean();
+    let std = returns.std_dev();
+    // Guard against floating-point noise: when every return is mathematically
+    // identical, statrs's sample-variance formula can return a value near
+    // 1e-18 instead of exactly zero. Treat that as no volatility.
+    if !std.is_finite() || std.abs() < 1e-12 {
+        return 0.0;
+    }
+    (mean / std) * periods_per_year.sqrt()
+}
+
+/// Max drawdown across an equity curve, expressed as a percentage of the
+/// running peak. Returns 0.0 for monotone-increasing curves and for curves
+/// with fewer than 2 samples.
+pub fn max_drawdown_pct(equity_samples: &[f64]) -> f64 {
+    if equity_samples.len() < 2 {
+        return 0.0;
+    }
+    let mut peak = f64::MIN;
+    let mut max_dd = 0.0_f64;
+    for &e in equity_samples {
+        if e > peak {
+            peak = e;
+        }
+        if peak > 0.0 {
+            let dd = (peak - e) / peak;
+            if dd > max_dd {
+                max_dd = dd;
+            }
+        }
+    }
+    max_dd * 100.0
+}
+
+/// Total return as a percentage of the initial equity. Returns 0.0 when
+/// `initial <= 0.0` rather than producing an undefined ratio.
+pub fn total_return_pct(initial_equity: f64, final_equity: f64) -> f64 {
+    if initial_equity <= 0.0 {
+        return 0.0;
+    }
+    (final_equity - initial_equity) / initial_equity * 100.0
+}
+
+/// Annualization factor for Sharpe given a per-decision cadence in
+/// minutes. 60-min cadence → 8760 (24 × 365); 15-min → 35040; daily → 365.
+/// Returns 1.0 for non-positive inputs (avoids divide-by-zero downstream).
+pub fn annualization_periods_per_year(cadence_minutes: u32) -> f64 {
+    if cadence_minutes == 0 {
+        return 1.0;
+    }
+    let minutes_per_year = 60.0 * 24.0 * 365.0;
+    minutes_per_year / cadence_minutes as f64
+}
