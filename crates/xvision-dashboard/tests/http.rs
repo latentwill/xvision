@@ -121,3 +121,85 @@ async fn strategies_list_returns_seeded_bundle() {
     assert_eq!(items[0]["agent_id"], bundle_id);
     assert_eq!(items[0]["template"], "mean_reversion");
 }
+
+#[tokio::test]
+async fn eval_runs_list_returns_array_when_empty() {
+    let (server, _tmp) = boot().await;
+
+    let response = server.get("/api/eval/runs").await;
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    assert!(body["items"].is_array(), "items must be array");
+    assert_eq!(body["items"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn eval_runs_list_returns_seeded_run() {
+    use xvision_engine::eval::{
+        run::{Run, RunMode},
+        store::RunStore,
+    };
+
+    let (server, _tmp) = boot().await;
+    // RunStore uses the same SqlitePool the dashboard's AppState owns; both
+    // share the engine's `001_api_audit.sql` migration ran on AppState::new
+    // and the eval `002_eval.sql` that comes from the same migrate! folder.
+    let pool = sqlx::SqlitePool::connect(&format!(
+        "sqlite://{}/xvn.db",
+        _tmp.path().display()
+    ))
+    .await
+    .unwrap();
+    let store = RunStore::new(pool);
+
+    let run = Run::new_queued(
+        "abc12345".into(),
+        "crypto-bull-q1-2025".into(),
+        RunMode::Backtest,
+    );
+    let run_id = run.id.clone();
+    store.create(&run).await.expect("seed run");
+
+    let response = server.get("/api/eval/runs").await;
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    let items = body["items"].as_array().expect("items");
+    assert_eq!(items.len(), 1, "exactly one run seeded");
+    assert_eq!(items[0]["id"], run_id);
+    assert_eq!(items[0]["status"], "queued");
+    assert_eq!(items[0]["mode"], "backtest");
+    assert_eq!(items[0]["scenario_id"], "crypto-bull-q1-2025");
+    // No metrics yet — should be null.
+    assert!(items[0]["sharpe"].is_null());
+    assert!(items[0]["total_return_pct"].is_null());
+}
+
+#[tokio::test]
+async fn eval_runs_filter_by_status_skips_others() {
+    use xvision_engine::eval::{
+        run::{Run, RunMode, RunStatus},
+        store::RunStore,
+    };
+
+    let (server, _tmp) = boot().await;
+    let pool = sqlx::SqlitePool::connect(&format!(
+        "sqlite://{}/xvn.db",
+        _tmp.path().display()
+    ))
+    .await
+    .unwrap();
+    let store = RunStore::new(pool);
+
+    let queued = Run::new_queued("h1".into(), "s1".into(), RunMode::Backtest);
+    store.create(&queued).await.unwrap();
+    let mut other = Run::new_queued("h2".into(), "s2".into(), RunMode::Backtest);
+    other.status = RunStatus::Failed;
+    store.create(&other).await.unwrap();
+
+    let response = server.get("/api/eval/runs?status=queued").await;
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1, "only the queued run matches");
+    assert_eq!(items[0]["status"], "queued");
+}
