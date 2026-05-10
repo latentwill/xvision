@@ -3,13 +3,14 @@ use std::net::SocketAddr;
 use axum::{routing::get, Router};
 use tower_http::trace::TraceLayer;
 
-use crate::routes::{health::health, static_files, strategies};
+use crate::routes::{eval_runs, health::health, static_files, strategies};
 use crate::state::AppState;
 
 pub fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/api/health", get(health))
         .route("/api/strategies", get(strategies::list))
+        .route("/api/eval/runs", get(eval_runs::list))
         .route("/", get(static_files::serve_index))
         .route("/assets/*path", get(static_files::serve_static))
         .fallback(static_files::fallback)
