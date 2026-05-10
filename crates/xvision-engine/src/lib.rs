@@ -7,6 +7,7 @@ pub mod api;
 pub mod authoring;
 pub mod baselines;
 pub mod bundle;
+pub mod chat_session;
 pub mod error;
 pub mod eval;
 pub mod search;
