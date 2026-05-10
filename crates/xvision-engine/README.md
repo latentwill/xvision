@@ -6,26 +6,37 @@ See specs:
 - `docs/superpowers/specs/2026-05-08-strategy-creation-engine-design.md`
 - `docs/superpowers/specs/2026-05-08-eval-engine-design.md`
 
-## What ships in MVP (this crate, v0.1)
+## What ships in v0.2 (Plan 2a)
 
-- Strategy bundle types (manifest + slots + risk + mechanical params)
-- 1 template: `mean_reversion`
-- 1 migrated baseline: `ma_crossover` (LLM-shimmed)
-- `ToolRegistry` with `ohlcv` and `indicator_panel` tools (fixture-mode)
-- 3-slot agent pipeline (regime → intern → trader), inline execution
-- `LlmDispatch` trait + Anthropic + Mock implementations
-- Token estimator
-- CLI: `xvn strategy new | validate | ls | show | templates | run`
+- Strategy bundle types (manifest + slots + risk + mechanical params) **— v0.1 (Plan #1)**
+- 8 templates: `trend_follower`, `breakout`, `mean_reversion`, `momentum`,
+  `range_trade`, `scalping`, `news_trader`, `custom`, plus the
+  `ma_crossover_baseline` seed
+- `ToolRegistry` with `ohlcv` and `indicator_panel` tools (fixture-mode) **— v0.1**
+- 3-slot agent pipeline (regime → intern → trader), inline execution **— v0.1**
+- `LlmDispatch` trait + Anthropic + Mock implementations **— v0.1, extended for tool-use blocks (Plan 2a 2A.C T10)**
+- Multi-turn `LlmRequest` / `LlmResponse` with `Message` + `ContentBlock`
+  (`Text` / `ToolUse` / `ToolResult`) + `ToolDefinition` + `StopReason` —
+  the surface that `WizardLoop` and Stage-1 Intern tool dispatch build on
+- `xvision_engine::authoring` shared dispatcher — `list_templates`,
+  `create_strategy`, `get_strategy`, `update_slot`, `set_mechanical_param`,
+  `set_risk_config`, `validate_draft`. Both the `xvn-mcp` server and the
+  dashboard's `WizardLoop` route through this module.
+- Token estimator **— v0.1**
+- CLI: `xvn strategy {new | validate | ls | show | templates | run}` **— v0.1**
 
-## What does NOT ship in MVP
+## What does NOT ship in v0.2
 
-- Web dashboard / Agent Wizard (Plan #2)
-- MCP server (Plan #2)
-- Tier B sealing + xvn API server (Plan #2)
-- Durable scheduler (Plan #2)
-- Live execution daemon (Plan #2)
-- Eval harness (Plan #3)
-- More than 1 template + 1 baseline (Plan #2)
+- Live execution daemon (Plan 2c)
+- Durable scheduler (Plan 2c)
+- Skill management MCP verbs (Plan 2b)
+- Tier B sealing + xvn API server (Plan 2b)
+- Marketplace + 8004 publish (Plan 2b)
+- Real news/sentiment tool — `news_trader` template ships with a
+  fallback prompt
+- Stage-1 Intern in-loop tool dispatch (Plan 2a T11) — the trait now
+  carries the shape, but `execute_slot` still single-turns; the
+  follow-up wires `tool_use` blocks back through `ToolRegistry`
 
 ## CLI quick-start
 
