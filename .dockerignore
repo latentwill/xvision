@@ -1,0 +1,43 @@
+# VCS
+.git
+.gitignore
+.github
+
+# Rust build outputs
+target
+**/target
+Cargo.lock.bak
+
+# Runtime data (never ship as part of the image)
+data
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Local model weights — too large to bake in; mount at runtime
+models
+
+# Editor / OS noise
+.vscode
+.idea
+.DS_Store
+*.swp
+
+# Notebooks, probes, ad-hoc scratch
+notebooks
+probes/m0-orderly/target
+
+# Existing docs we don't need inside the image
+docs
+
+# Local env files
+.env
+.env.local
+.env.*.local
+
+# Dockerfiles themselves (copied explicitly when needed)
+Dockerfile
+docker-compose.yml
+docker/
+.dockerignore
