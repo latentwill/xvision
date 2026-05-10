@@ -31,6 +31,8 @@ pub enum Op {
     Scenarios(ScenariosArgs),
     /// Compare 2+ completed runs side-by-side (metrics + equity + findings).
     Compare(CompareArgs),
+    /// Sign + persist an EvalAttestation for a completed run.
+    Attest(AttestArgs),
 }
 
 #[derive(Args, Debug)]
@@ -107,6 +109,20 @@ pub struct CompareArgs {
     pub json: bool,
 }
 
+#[derive(Args, Debug)]
+pub struct AttestArgs {
+    /// Run id (ULID) of a completed run with metrics.
+    pub run_id: String,
+    /// Override the xvn home directory. The signing key is read from /
+    /// auto-generated at `<xvn_home>/identity/signing.key`.
+    #[arg(long)]
+    pub xvn_home: Option<PathBuf>,
+    /// Emit the full `EvalAttestation` as JSON (default: a brief
+    /// human-readable summary line with the pubkey + signature prefix).
+    #[arg(long)]
+    pub json: bool,
+}
+
 pub async fn run(cmd: EvalCmd) -> Result<()> {
     match cmd.op {
         Op::Run(args) => run_run(args).await,
@@ -114,6 +130,7 @@ pub async fn run(cmd: EvalCmd) -> Result<()> {
         Op::Show(args) => run_show(args).await,
         Op::Scenarios(args) => run_scenarios(args).await,
         Op::Compare(args) => run_compare(args).await,
+        Op::Attest(args) => run_attest(args).await,
     }
 }
 
@@ -361,6 +378,29 @@ async fn run_scenarios(args: ScenariosArgs) -> Result<()> {
             s.time_window_days,
         );
     }
+    Ok(())
+}
+
+async fn run_attest(args: AttestArgs) -> Result<()> {
+    let ctx = open_ctx(args.xvn_home.clone()).await?;
+    let att = eval::attest(&ctx, &args.run_id)
+        .await
+        .map_err(|e| anyhow::anyhow!("eval attest: {e}"))?;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&att)?);
+        return Ok(());
+    }
+    let sig_prefix: String = att.signature_hex.chars().take(16).collect();
+    let key_prefix: String = att.signing_pubkey_hex.chars().take(16).collect();
+    println!("Attested run {}", args.run_id);
+    println!("  scenario        {}", att.scenario_id);
+    println!("  strategy_hash   {}", att.strategy_bundle_hash);
+    println!("  ran_at          {}", att.ran_at.to_rfc3339());
+    println!("  pubkey          {}…", key_prefix);
+    println!("  signature       {}…", sig_prefix);
+    println!("  total_return    {:.2}%", att.metrics.total_return_pct);
+    println!("  sharpe          {:.3}", att.metrics.sharpe);
+    println!("  tokens (in/out) {} / {}", att.tokens_used.input, att.tokens_used.output);
     Ok(())
 }
 
