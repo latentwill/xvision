@@ -1,6 +1,6 @@
 # Smart Contract Surface — Design
 
-> **Status:** Deferred — design accepted, implementation gated on Strategy Creation Engine + Eval Engine being shipped and battle-tested against Alpaca paper. v1 of Xianvec is Alpaca-eval only with no on-chain function. Pick this spec back up once the engine + eval prove the multistrategy ranking claim end-to-end. · 2026-05-08
+> **Status:** Deferred — design accepted, implementation gated on Strategy Creation Engine + Eval Engine being shipped and battle-tested against Alpaca paper. v1 of Xvision is Alpaca-eval only with no on-chain function. Pick this spec back up once the engine + eval prove the multistrategy ranking claim end-to-end. · 2026-05-08
 > **Depends on:** [`decisions/0008-erc8004-deployment.md`](../../../decisions/0008-erc8004-deployment.md) (status of that ADR likely needs re-scoping under the same deferral), [`docs/superpowers/specs/2026-05-08-strategy-creation-engine-design.md`](./2026-05-08-strategy-creation-engine-design.md), and `architecture.md` §6.1.
 > **Related:** [`docs/erc-8004-agent-uses.md`](../../erc-8004-agent-uses.md).
 
@@ -8,7 +8,7 @@
 
 ## 1. Scope
 
-This spec covers the on-chain contract surface for Xianvec: the marketplace, commerce, licensing, and discoverability layer that sits on top of the three ERC-8004 registries already designed in ADR 0008.
+This spec covers the on-chain contract surface for Xvision: the marketplace, commerce, licensing, and discoverability layer that sits on top of the three ERC-8004 registries already designed in ADR 0008.
 
 **In scope (v1, single canonical chain — Mantle, chain 5000):**
 
@@ -219,8 +219,8 @@ Platform manifest JSON (pinned to IPFS, CID stored in agent NFT metadata):
 
 ```json
 {
-  "schema": "https://xianvec.dev/schemas/platform-agent.v1.json",
-  "name": "Xianvec",
+  "schema": "https://xvision.dev/schemas/platform-agent.v1.json",
+  "name": "Xvision",
   "description": "Marketplace and identity layer for AI trading agents.",
   "endpoints": {
     "marketplace_contract":          "0x…Marketplace",
@@ -372,7 +372,7 @@ Already specified in §3.5. The mint is the GEO play: AI search engines and craw
 
 ### 6.3 Subgraph / indexer schema sketch
 
-Shipped in `crates/xianvec-marketplace/subgraph/`:
+Shipped in `crates/xvision-marketplace/subgraph/`:
 
 ```graphql
 type Strategy @entity {
@@ -423,7 +423,7 @@ Marketplace browse experience reads entirely from the indexer (no centralized DB
 
 When ChatGPT/Claude/Perplexity-style crawlers (or chain-aware variants like Allium AI / Dune AI) index Mantle, they find:
 
-1. An ERC-8004 agent #0 with name "Xianvec" and a manifest declaring marketplace endpoints.
+1. An ERC-8004 agent #0 with name "Xvision" and a manifest declaring marketplace endpoints.
 2. A `Sold` event log with stable topics, queryable by `agentNftId` for any strategy.
 3. `AttestationPosted` events keyed by `listingId` for "what evals exist for this strategy."
 4. `LicenseToken` ERC-1155 transfers giving a public count of licensed users per listing.
@@ -561,13 +561,13 @@ contracts/
 
 | Crate | Role | New or existing |
 |---|---|---|
-| `xianvec-identity` | `alloy::sol!` bindings for **all** on-chain contracts (existing 8004 + four new). Low-level read/write helpers. | Existing — expand |
-| `xianvec-marketplace` | Higher-level orchestration: `publish_listing`, `buy_listing`, `attest_eval`, `revoke_listing`. Wraps `xianvec-identity`. Holds the x402 server-side handler logic. | NEW (per Strategy Engine spec §14) |
-| `xianvec-engine` | `bundle::hash`, `bundle::publish` — produces the `contentHash` + `contentURI` that gets handed to `xianvec-marketplace::publish_listing`. | NEW (already specced) |
-| `xianvec-cli` | Verbs: `xvn admin register-platform-agent`, `xvn strategy publish`, `xvn marketplace buy`, `xvn marketplace attest`, `xvn admin upgrade-queue`. | Existing — extend |
-| `xianvec-execution` | Posts to `ValidationRegistry` after closed Orderly trades (already specced in ADR 0008). Unchanged here. | Existing |
+| `xvision-identity` | `alloy::sol!` bindings for **all** on-chain contracts (existing 8004 + four new). Low-level read/write helpers. | Existing — expand |
+| `xvision-marketplace` | Higher-level orchestration: `publish_listing`, `buy_listing`, `attest_eval`, `revoke_listing`. Wraps `xvision-identity`. Holds the x402 server-side handler logic. | NEW (per Strategy Engine spec §14) |
+| `xvision-engine` | `bundle::hash`, `bundle::publish` — produces the `contentHash` + `contentURI` that gets handed to `xvision-marketplace::publish_listing`. | NEW (already specced) |
+| `xvision-cli` | Verbs: `xvn admin register-platform-agent`, `xvn strategy publish`, `xvn marketplace buy`, `xvn marketplace attest`, `xvn admin upgrade-queue`. | Existing — extend |
+| `xvision-execution` | Posts to `ValidationRegistry` after closed Orderly trades (already specced in ADR 0008). Unchanged here. | Existing |
 
-`xianvec-identity` is the only crate that imports `alloy::sol!`. Everything else goes through it. This isolates ABI changes to a single recompile target.
+`xvision-identity` is the only crate that imports `alloy::sol!`. Everything else goes through it. This isolates ABI changes to a single recompile target.
 
 ### 8.3 Deploy sequence (extends ADR 0008)
 
@@ -627,20 +627,20 @@ decimals                 = 6
 
 Mirror file for Sepolia: `config/mantle-sepolia.toml`. Both checked in. Loading is selected by `XVN_NETWORK` env (`mainnet` | `sepolia`).
 
-### 8.5 ABI handoff — keeping `xianvec-identity` honest across upgrades
+### 8.5 ABI handoff — keeping `xvision-identity` honest across upgrades
 
 When a UUPS implementation upgrades, the **proxy address stays**, but the **function selectors and ABI may change**. Mitigation:
 
-- `xianvec-identity` pins the v1 ABI for each contract under `crates/xianvec-identity/abi/v1/*.json`, committed in-tree.
-- `forge build` in `contracts/` writes ABIs to `contracts/out/`. A small CI check compares the current build output against `crates/xianvec-identity/abi/v1/` and fails if any function selector changes without an explicit version bump.
-- v2 implementations live at `crates/xianvec-identity/abi/v2/`; a feature-flag chooses which version's bindings compile in. Rolling upgrades become explicit at the Rust call site — no silent ABI breakage.
+- `xvision-identity` pins the v1 ABI for each contract under `crates/xvision-identity/abi/v1/*.json`, committed in-tree.
+- `forge build` in `contracts/` writes ABIs to `contracts/out/`. A small CI check compares the current build output against `crates/xvision-identity/abi/v1/` and fails if any function selector changes without an explicit version bump.
+- v2 implementations live at `crates/xvision-identity/abi/v2/`; a feature-flag chooses which version's bindings compile in. Rolling upgrades become explicit at the Rust call site — no silent ABI breakage.
 
 ### 8.6 What this changes elsewhere in the codebase
 
 - **ADR 0008** needs an addendum: add `ValidationRegistry` to the deployable contract list, and reference this new spec for the marketplace contracts.
 - **Strategy Engine spec §13** ("publish flow" + "buy flow") gets cross-references to this spec instead of holding the open question about license token contract ABI.
 - **`config/mantle.toml`** schema extension (above) — small, additive.
-- **No changes needed** to `xianvec-engine`, `xianvec-execution`, `xianvec-eval`, or any of the existing strategy crates — they're consumers of `xianvec-marketplace`, which is the new shim.
+- **No changes needed** to `xvision-engine`, `xvision-execution`, `xvision-eval`, or any of the existing strategy crates — they're consumers of `xvision-marketplace`, which is the new shim.
 
 ---
 
@@ -679,7 +679,7 @@ Run against a Mantle fork (`vm.createFork(MANTLE_RPC)`) before any production up
 
 ### 9.4 Rust integration tests
 
-`crates/xianvec-marketplace/tests/`:
+`crates/xvision-marketplace/tests/`:
 
 - Spin up an Anvil instance with the four new contracts deployed via the deploy script.
 - Drive the full publish → list → x402-buy → fetch flow from Rust.
@@ -743,7 +743,7 @@ Listings can opt into `transferableLicense = true`, but v1 ships no resale UI or
 
 - **EAS on Mantle:** is the canonical Ethereum Attestation Service deployed on Mantle? If yes, prefer EAS over the bespoke `EvalAttestationRegistry` for compatibility with existing EAS tooling. Default v1 plan is bespoke.
 - **Multisig signer set:** the 2-of-3 — who are the three? Founder, ops, community-trustee — but the community-trustee identity is TBD before mainnet deploy.
-- **Platform manifest schema URL:** `https://xianvec.dev/schemas/platform-agent.v1.json` — domain not yet provisioned. Pin to IPFS for v1 if domain ownership isn't ready.
+- **Platform manifest schema URL:** `https://xvision.dev/schemas/platform-agent.v1.json` — domain not yet provisioned. Pin to IPFS for v1 if domain ownership isn't ready.
 - **Fee recipient address at v1 launch:** placeholder until treasury multisig is deployed. Document as TBD-before-mainnet.
 - **Subgraph hosting:** The Graph hosted-service vs decentralized network vs a self-hosted Goldsky / Alchemy indexer. Decision deferred to deployment; affects indexer URL in platform manifest.
 - **EIP-3009 support on USDC.e (Mantle):** verify the bridged USDC on Mantle supports `transferWithAuthorization`. If not, fall back to Permit2 or two-tx approve+buy and document the choice. Action item before contract finalization.

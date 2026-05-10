@@ -48,14 +48,14 @@ README.md                                          # MODIFY (Item B) — first-u
 MANUAL.md                                          # MODIFY (Item C) — append "Scale tiers" section (N=10/100/1000)
 
 crates/
-├── xianvec-cli/src/commands/
+├── xvision-cli/src/commands/
 │   ├── eod.rs                                    # NEW (Item E) — xvn eod report subcommand
 │   └── agent.rs                                  # NEW (Item G) — xvn agent rename / show / list (only the rename arm new; show/list may already exist as renamed strategy command)
 │
-├── xianvec-data/src/migrations/
+├── xvision-data/src/migrations/
 │   └── 20260510000020_strategies_display_name.sql  # NEW (Item G) — adds display_name column
 │
-└── xianvec-data/src/strategies.rs                # MODIFY (Item G) — add set_display_name / get_display_name
+└── xvision-data/src/strategies.rs                # MODIFY (Item G) — add set_display_name / get_display_name
 ```
 
 ---
@@ -74,7 +74,7 @@ crates/
 Create `docs/HACKATHON-1-PAGER.md`:
 
 ```markdown
-# xianvec — Non-custodial AI trading agents that improve themselves
+# xvision — Non-custodial AI trading agents that improve themselves
 
 **For:** Mantle hackathon judges + sponsors + first-100 users.
 **Status:** Draft. The operator iterates this file directly.
@@ -83,9 +83,9 @@ Create `docs/HACKATHON-1-PAGER.md`:
 
 ## The single-sentence pitch
 
-Unlike FTX, Binance, or any custodial trading platform, **xianvec never holds
+Unlike FTX, Binance, or any custodial trading platform, **xvision never holds
 your trading capital — only the authority to trade with it.** You fund your own
-Orderly account, xianvec signs orders with a scoped key it can't withdraw with,
+Orderly account, xvision signs orders with a scoped key it can't withdraw with,
 and every decision is on-chain attestable. An overnight autoresearcher
 generates new strategy variants, evaluates them against a held-out judge, and
 seals the survivors as immutable lineage NFTs.
@@ -93,7 +93,7 @@ seals the survivors as immutable lineage NFTs.
 ## What's running
 
 - **Trading rail:** Orderly Network on Mantle. Non-custodial — your USDC stays
-  in your account, xianvec holds a trading-only Ed25519 key with explicit scope
+  in your account, xvision holds a trading-only Ed25519 key with explicit scope
   enforcement at the broker layer.
 - **Autoresearcher:** mutates a seed strategy across the configuration manifold
   (briefing format, prompt scaffolding, model selection, risk envelope), runs
@@ -175,16 +175,16 @@ Run: `cat README.md | head -50` to remember structure. Preserve any sections tha
 Replace the README.md content with:
 
 ```markdown
-# xianvec
+# xvision
 
-**Non-custodial AI trading agents.** xianvec runs LLM-driven trading strategies
-against your own broker account, with explicit scope enforcement so xianvec
+**Non-custodial AI trading agents.** xvision runs LLM-driven trading strategies
+against your own broker account, with explicit scope enforcement so xvision
 itself never holds your funds. An overnight autoresearcher mutates and
 evaluates new strategy variants automatically.
 
-> ⚠️ **This is alpha software. Use at your own risk.** xianvec executes real
+> ⚠️ **This is alpha software. Use at your own risk.** xvision executes real
 > trades against real money on whatever broker account you connect. The
-> non-custodial design means xianvec can't drain your account, but a buggy
+> non-custodial design means xvision can't drain your account, but a buggy
 > strategy or risk-engine misconfiguration absolutely can lose money. Read the
 > safety section below before connecting a non-trivial balance.
 
@@ -205,7 +205,7 @@ evaluates new strategy variants automatically.
 
 ## What it does NOT do
 
-- Custody trading capital. You fund your own Orderly account; xianvec only
+- Custody trading capital. You fund your own Orderly account; xvision only
   holds the authority to place trades against it.
 - Process withdrawals or transfers. The Orderly trading key is scoped to
   trading only; the broker layer enforces this independently.
@@ -214,17 +214,17 @@ evaluates new strategy variants automatically.
 
 ## Quickstart (for first users)
 
-This walks through running xianvec against Orderly testnet with no real money.
+This walks through running xvision against Orderly testnet with no real money.
 
 ```bash
 # 1. Clone and build
-git clone https://github.com/your-org/xianvec
-cd xianvec
+git clone https://github.com/your-org/xvision
+cd xvision
 cargo build --release
 
 # 2. Generate an EVM signing key (or use an existing one)
 # 3. Set up Orderly testnet account with that key
-# 4. Initialize xianvec
+# 4. Initialize xvision
 export CREDENTIAL_SECRET=$(openssl rand -hex 32)
 ./target/release/xvn setup
 # follow prompts to register Orderly account on testnet
@@ -247,7 +247,7 @@ export CREDENTIAL_SECRET=$(openssl rand -hex 32)
 
 ## Safety
 
-xianvec assumes a single operator who monitors the system and can intervene.
+xvision assumes a single operator who monitors the system and can intervene.
 Critical operator commands:
 
 - `xvn kill --strategy <id>` — halt one agent, in-flight positions stay open
@@ -256,7 +256,7 @@ Critical operator commands:
 - `xvn emergency-close --all` — flatten every position via market orders
 - `xvn audit agent --agent <id> --since 1h` — see every decision in the last hour
 
-The non-custodial design closes one failure mode (xianvec can't drain you) but
+The non-custodial design closes one failure mode (xvision can't drain you) but
 opens others:
 - A buggy strategy can lose its hard-cap allocation. Set caps small at first.
 - The autoresearcher can produce a variant that overfits the judge. Lineage
@@ -271,7 +271,7 @@ opens others:
 - **Trading rail** (this scope): non-custodial, broker-side scope enforcement,
   off-chain SQLite audit log + reservation ledger.
 - **Marketplace rail** (separate scope, Plan 5): on-chain protocol for fees +
-  delegation. xianvec.io would run this; a self-hosted instance does not need
+  delegation. xvision.io would run this; a self-hosted instance does not need
   it.
 - **Autoresearcher** (separate scope, AR-1/AR-2/AR-3): the mutator + judge +
   lineage seal pipeline.
@@ -311,9 +311,9 @@ git commit -m "docs: rewrite README for first-user conversion + alpha-warning"
 Run: `test -f MANUAL.md && echo exists || echo missing`. If missing, create with a top-level header:
 
 ```markdown
-# xianvec Operator Manual
+# xvision Operator Manual
 
-This is the runbook for operating a xianvec instance. For end-user docs, see
+This is the runbook for operating a xvision instance. For end-user docs, see
 `README.md`. For implementation plans, see `docs/superpowers/plans/`.
 ```
 
@@ -324,7 +324,7 @@ Append:
 ```markdown
 ## Scale tiers
 
-xianvec's design assumes a single operator at v1. Several architectural
+xvision's design assumes a single operator at v1. Several architectural
 breakpoints surface at specific user/agent counts; this section documents them
 so capital + ops decisions can be planned, not stumbled into.
 
@@ -350,7 +350,7 @@ Three things break here:
 - **Operator load:** 6 hrs/day becomes 12. **Migrate to:** scheduled `xvn eod`
   reports + alert routing (Item E of this plan); operator-on-call rotation if
   > 1 person.
-- **Compliance:** the moment xianvec's marketplace contract takes fees from
+- **Compliance:** the moment xvision's marketplace contract takes fees from
   10 distinct EVM addresses, OFAC screening becomes load-bearing for the
   hosting entity (not the open-source code itself). **Migrate to:** OFAC
   screening at the marketplace contract event handler. Tracked in FOLLOWUPS.
@@ -472,13 +472,13 @@ git commit -m "docs(manual): incident response checklist"
 ### Task E.1: Implement `xvn eod` command
 
 **Files:**
-- Create: `crates/xianvec-cli/src/commands/eod.rs`
-- Modify: `crates/xianvec-cli/src/commands/mod.rs` — `pub mod eod;`
-- Modify: `crates/xianvec-cli/src/lib.rs` — add `Eod(EodArgs)` to the Command enum and dispatch
+- Create: `crates/xvision-cli/src/commands/eod.rs`
+- Modify: `crates/xvision-cli/src/commands/mod.rs` — `pub mod eod;`
+- Modify: `crates/xvision-cli/src/lib.rs` — add `Eod(EodArgs)` to the Command enum and dispatch
 
 - [ ] **Step 1: Write the failing test**
 
-Create `crates/xianvec-cli/tests/eod_cli.rs`:
+Create `crates/xvision-cli/tests/eod_cli.rs`:
 
 ```rust
 use std::process::Command;
@@ -490,14 +490,14 @@ async fn eod_renders_when_no_activity() {
         .output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("# xianvec EOD report"));
+    assert!(stdout.contains("# xvision EOD report"));
     assert!(stdout.contains("No new positions"));
 }
 ```
 
 - [ ] **Step 2: Implement the command**
 
-Create `crates/xianvec-cli/src/commands/eod.rs`:
+Create `crates/xvision-cli/src/commands/eod.rs`:
 
 ```rust
 use anyhow::Result;
@@ -510,7 +510,7 @@ pub struct EodArgs {
     /// Window length in hours (default 24).
     #[arg(long, default_value_t = 24)]
     pub hours: u64,
-    /// Path to xianvec DB.
+    /// Path to xvision DB.
     #[arg(long)]
     pub db: Option<String>,
     /// Skip Orderly state checks (useful in tests + offline runs).
@@ -525,7 +525,7 @@ pub async fn run(args: EodArgs) -> Result<()> {
     let db_url = args.db.unwrap_or_else(|| std::env::var("XVN_DB_PATH").unwrap_or_else(|_| ":memory:".into()));
     let pool = SqlitePool::connect(&db_url).await?;
 
-    println!("# xianvec EOD report — {}", now.format("%Y-%m-%d %H:%M UTC"));
+    println!("# xvision EOD report — {}", now.format("%Y-%m-%d %H:%M UTC"));
     println!();
     println!("**Window:** last {} hours (since {}).", args.hours,
         DateTime::from_timestamp_millis(since_ms).unwrap().format("%Y-%m-%d %H:%M UTC"));
@@ -633,7 +633,7 @@ pub async fn run(args: EodArgs) -> Result<()> {
 
 - [ ] **Step 3: Wire into CLI**
 
-In `crates/xianvec-cli/src/lib.rs`, add to the `Command` enum:
+In `crates/xvision-cli/src/lib.rs`, add to the `Command` enum:
 
 ```rust
 /// End-of-day operator report.
@@ -646,16 +646,16 @@ And in the dispatch match:
 Command::Eod(args) => commands::eod::run(args).await,
 ```
 
-In `crates/xianvec-cli/src/commands/mod.rs`, add `pub mod eod;`.
+In `crates/xvision-cli/src/commands/mod.rs`, add `pub mod eod;`.
 
 - [ ] **Step 4: Run the test and confirm it passes**
 
-Run: `cargo test -p xianvec-cli eod`
+Run: `cargo test -p xvision-cli eod`
 Expected: pass.
 
 - [ ] **Step 5: Smoke-test against a populated DB**
 
-Run: `cargo run -p xianvec-cli -- eod --hours 168 --db /path/to/xvn.db`
+Run: `cargo run -p xvision-cli -- eod --hours 168 --db /path/to/xvn.db`
 Expected: a markdown report with sensible numbers.
 
 - [ ] **Step 6: Commit**
@@ -672,14 +672,14 @@ git commit -m "feat(cli): xvn eod end-of-day report (research Run 8)"
 
 - [ ] **Step 1: If Plan 2c has shipped, register the EOD job**
 
-Inspect `crates/xianvec-engine/src/scheduler` (or wherever Plan 2c installed its scheduler API). Register:
+Inspect `crates/xvision-engine/src/scheduler` (or wherever Plan 2c installed its scheduler API). Register:
 
 ```rust
 scheduler.register_job(JobSpec {
     id: "xvn-eod".to_string(),
     cron: "0 17 * * *".to_string(),  // 17:00 every day, in the operator's tz
     handler: Box::new(|_ctx| Box::pin(async {
-        xianvec_cli::commands::eod::run(EodArgs::default()).await
+        xvision_cli::commands::eod::run(EodArgs::default()).await
     })),
 }).await?;
 ```
@@ -719,7 +719,7 @@ The "public disclosure SLA" item from research Theme E is intentionally NOT a bi
 ### Task G.1: Migration adds `display_name` to `strategies`
 
 **Files:**
-- Create: `crates/xianvec-data/src/migrations/20260510000020_strategies_display_name.sql`
+- Create: `crates/xvision-data/src/migrations/20260510000020_strategies_display_name.sql`
 
 - [ ] **Step 1: Write the migration**
 
@@ -735,7 +735,7 @@ CREATE INDEX IF NOT EXISTS idx_strategies_display_name ON strategies(display_nam
 - [ ] **Step 2: Apply and verify**
 
 ```bash
-sqlite3 /tmp/xvn-rename-test.db < crates/xianvec-data/src/migrations/20260510000020_strategies_display_name.sql
+sqlite3 /tmp/xvn-rename-test.db < crates/xvision-data/src/migrations/20260510000020_strategies_display_name.sql
 sqlite3 /tmp/xvn-rename-test.db ".schema strategies"
 ```
 
@@ -744,14 +744,14 @@ Expected: schema includes `display_name TEXT`.
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/xianvec-data/src/migrations/20260510000020_strategies_display_name.sql
+git add crates/xvision-data/src/migrations/20260510000020_strategies_display_name.sql
 git commit -m "feat(data): strategies.display_name column (runtime rename support)"
 ```
 
 ### Task G.2: Module API for set/get display name
 
 **Files:**
-- Modify: `crates/xianvec-data/src/strategies.rs` (created in wallet plan Group B.3)
+- Modify: `crates/xvision-data/src/strategies.rs` (created in wallet plan Group B.3)
 
 - [ ] **Step 1: Failing test**
 
@@ -777,7 +777,7 @@ async fn set_display_name_for_unknown_agent_errors(pool: SqlitePool) {
 
 - [ ] **Step 2: Implement**
 
-In `crates/xianvec-data/src/strategies.rs`:
+In `crates/xvision-data/src/strategies.rs`:
 
 ```rust
 impl StrategyConfigStore {
@@ -811,15 +811,15 @@ git commit -m "feat(data): StrategyConfigStore set/get display_name"
 ### Task G.3: CLI `xvn agent rename`
 
 **Files:**
-- Create: `crates/xianvec-cli/src/commands/agent.rs`
-- Modify: `crates/xianvec-cli/src/commands/mod.rs`
-- Modify: `crates/xianvec-cli/src/lib.rs`
+- Create: `crates/xvision-cli/src/commands/agent.rs`
+- Modify: `crates/xvision-cli/src/commands/mod.rs`
+- Modify: `crates/xvision-cli/src/lib.rs`
 
 The existing `xvn strategy` command operates on `StrategyBundle`s (engine pipeline configs). The new `xvn agent` command operates on the deployed-agent identity (the post-rename `agent_id`). They are intentionally separate verbs.
 
 - [ ] **Step 1: Failing CLI test**
 
-In `crates/xianvec-cli/tests/agent_cli.rs`:
+In `crates/xvision-cli/tests/agent_cli.rs`:
 
 ```rust
 #[tokio::test]
@@ -846,7 +846,7 @@ async fn agent_rename_updates_display_name() {
 
 - [ ] **Step 2: Implement**
 
-Create `crates/xianvec-cli/src/commands/agent.rs`:
+Create `crates/xvision-cli/src/commands/agent.rs`:
 
 ```rust
 use anyhow::Result;
@@ -898,9 +898,9 @@ pub async fn run(cmd: AgentCmd) -> Result<()> {
 
 - [ ] **Step 3: Wire into CLI dispatch**
 
-In `crates/xianvec-cli/src/commands/mod.rs`, add `pub mod agent;`.
+In `crates/xvision-cli/src/commands/mod.rs`, add `pub mod agent;`.
 
-In `crates/xianvec-cli/src/lib.rs`, add to `Command`:
+In `crates/xvision-cli/src/lib.rs`, add to `Command`:
 
 ```rust
 /// Agent identity management (rename, show, list).
@@ -923,8 +923,8 @@ git commit -m "feat(cli): xvn agent rename/show/list (runtime display_name)"
 ### Task G.4: Surface `display_name` in `xvn budget` output + dashboard
 
 **Files:**
-- Modify: `crates/xianvec-cli/src/commands/budget.rs` (planned in original wallet plan Task 4.8)
-- Modify: `crates/xianvec-budget-ui/src/templates.rs` (created by wallet plan Group G.5)
+- Modify: `crates/xvision-cli/src/commands/budget.rs` (planned in original wallet plan Task 4.8)
+- Modify: `crates/xvision-budget-ui/src/templates.rs` (created by wallet plan Group G.5)
 
 - [ ] **Step 1: `xvn budget show` includes display_name**
 
@@ -937,11 +937,11 @@ println!("=== {} ({}) ===", display, args.agent);
 
 - [ ] **Step 2: Dashboard template**
 
-In `xianvec-budget-ui`'s `BudgetRow`, populate `display_name`. The template renders the display_name as the row's primary label, with the agent_id as a sub-label or tooltip.
+In `xvision-budget-ui`'s `BudgetRow`, populate `display_name`. The template renders the display_name as the row's primary label, with the agent_id as a sub-label or tooltip.
 
 - [ ] **Step 3: Smoke-test**
 
-Run: `cargo run -p xianvec-cli -- budget show --agent agent-a`
+Run: `cargo run -p xvision-cli -- budget show --agent agent-a`
 Expected: output starts with `=== BTC Momentum (agent-a) ===` (or `(unnamed)` if not yet renamed).
 
 - [ ] **Step 4: Commit**
@@ -971,7 +971,7 @@ OFAC was discarded for self-hosted scope (Triage); not in this plan.
 
 **Placeholder scan** — Item A's "Operator iterates this file directly" is intentional (the 1-pager is operator copy that ships as a draft); not a TBD in the implementation sense. Item E.2's "if Plan 2c has shipped, register the EOD job" is conditional, not placeholder — it has a clear else branch (manual cadence already documented in Item C). All other steps have concrete code or commands.
 
-**Type/name consistency** — uses `agent_id` (post-rename), `cycle_id` (post-rename), `display_name` (new column added in Item G), `StrategyConfigStore` (created in wallet plan Group B.3), `xianvec-budget-ui` (renamed in wallet plan Group G.5).
+**Type/name consistency** — uses `agent_id` (post-rename), `cycle_id` (post-rename), `display_name` (new column added in Item G), `StrategyConfigStore` (created in wallet plan Group B.3), `xvision-budget-ui` (renamed in wallet plan Group G.5).
 
 **Dependencies between items:**
 - A, B, C, D, F: pure docs, no code dependency, can run any order.

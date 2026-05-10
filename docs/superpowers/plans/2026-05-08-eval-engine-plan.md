@@ -5,11 +5,13 @@
 > **Depends on:** Plan #1 only (bundle types, basic agent loop).
 > **Execution-order decision (2026-05-08):** This plan ships **first** after Plan #1, before Plans 2a / 2b / 2c / 2d. The user's intent: eval surfaces real design decisions about strategies, prompts, and tool needs — those decisions then inform Plan 2a (MCP/templates/tool-call dispatch) and Plan 2b (skills). Plan 2c (scheduler+live) can ship in parallel since it's about runtime, not authoring shape. Plan 2d (dashboard) waits because the wizard depends on Plan 2a's MCP server.
 > **Tool-call dispatch note:** Plan 2a was originally listed as a dep here for tool-call loops in the agent pipeline. Reverted — this plan uses Plan #1's basic `execute_slot` (no tool-use). Strategies' agents see flat seeded data instead of fetching via tools mid-decision. When Plan 2a ships afterward, eval automatically picks up tool-call dispatch since both share `execute_slot`. The eval engine's findings still produce useful signal without tool calls.
-> **Marketplace deferral note (2026-05-08):** The marketplace surface is deferred to Plan 5 (blockchain integration). This plan still produces signed Ed25519 eval attestations and persists them to local SQLite (`eval_attestations` table). Plan 5's `xvn marketplace push-to-chain` will batch-publish them to the on-chain `EvalAttestationRegistry`. **No `xianvec-marketplace` dep in this plan.**
+> **Marketplace deferral note (2026-05-08):** The marketplace surface is deferred to Plan 5 (blockchain integration). This plan still produces signed Ed25519 eval attestations and persists them to local SQLite (`eval_attestations` table). Plan 5's `xvn marketplace push-to-chain` will batch-publish them to the on-chain `EvalAttestationRegistry`. **No `xvision-marketplace` dep in this plan.**
+
+> **v1-test cut (2026-05-10):** Two amendments to this plan for v1-test execution. (1) **PaperExecutor** (Task 6) wraps `BrokerSurface` from Plan 2c §Task 7 directly — Plan 2c's daemon is deferred. The standalone Task 7 ships as v1-shipping-plan build-order item #4, ahead of this plan. (2) **CLI handlers and MCP verbs** dispatch through the [Engine API Foundation](./2026-05-10-engine-api-foundation.md) — add `crates/xvision-engine/src/api/eval.rs` with the per-domain functions (`run`, `status`, `compare`, `extract_findings`, `scenarios`, `publish_attestation`, `batch`), and have both `crates/xvision-cli/src/commands/eval.rs` and `crates/xvision-engine/src/mcp/eval.rs` call those functions instead of touching the eval module's internals directly. The pattern is documented in `crates/xvision-engine/src/api/README.md`. (3) **Migration** is `002_eval.sql` per the registry in `v1-shipping-plan.md` §"Migration reservations".
 
 **Goal:** Make every strategy evaluable. After this plan ships: `xvn eval run <agent_id> --scenario <scenario_id>` runs a backtest (or paper) execution, persists every decision + fill + metric to a SQLite event store, computes summary metrics (Sharpe, max drawdown, win rate, total return), extracts structured findings via LLM, and emits a signed attestation suitable for marketplace publishing. `xvn eval compare <run_a> <run_b> ...` opens a comparison view rendering equity curves, trade markers, and findings side-by-side.
 
-**Architecture:** New module `xianvec-engine/src/eval/` (per spec §3 — folded into engine, NOT a separate crate). Reuses Plan 2c's scheduler types for run lifecycle. Shares the SQLite database with the scheduler (one `xvn.db` file under `$XVN_HOME`, multiple migrations). Eval loop is in-process for backtest mode (replays a fixture parquet); for paper mode, drives the same execute_slot pipeline against the live broker (Alpaca paper). Findings extractor is its own LLM call after run completion.
+**Architecture:** New module `xvision-engine/src/eval/` (per spec §3 — folded into engine, NOT a separate crate). Reuses Plan 2c's scheduler types for run lifecycle. Shares the SQLite database with the scheduler (one `xvn.db` file under `$XVN_HOME`, multiple migrations). Eval loop is in-process for backtest mode (replays a fixture parquet); for paper mode, drives the same execute_slot pipeline against the live broker (Alpaca paper). Findings extractor is its own LLM call after run completion.
 
 **Tech Stack:** Rust 2021. New deps: `polars` (already workspace) for fixture replay + metrics computation, `statrs = "0.17"` for Sharpe + bootstrap CIs. Reuses everything from Plans #1 / 2a / 2c.
 
@@ -26,7 +28,7 @@
 ## File structure
 
 ```
-crates/xianvec-engine/
+crates/xvision-engine/
 ├── Cargo.toml                              # add statrs
 ├── migrations/
 │   └── 002_eval.sql                        # NEW
@@ -59,10 +61,10 @@ crates/xianvec-engine/
 ```
 
 Plus modifications:
-- `crates/xianvec-cli/src/commands/eval.rs` — NEW: `xvn eval {run | status | compare | extract-findings | scenarios | publish-attestation | batch}`
-- `crates/xianvec-engine/src/mcp/eval.rs` — NEW: 6 eval MCP verbs
-- (Plan 5 will extend `crates/xianvec-marketplace/src/publish.rs` to attach eval attestations to listings — that crate doesn't exist in v1; this plan writes attestations to the local SQLite store only)
-- `crates/xianvec-dashboard/src/routes/eval.rs` (Plan 2d) — NEW route: comparison view at `/eval/compare?ids=...`
+- `crates/xvision-cli/src/commands/eval.rs` — NEW: `xvn eval {run | status | compare | extract-findings | scenarios | publish-attestation | batch}`
+- `crates/xvision-engine/src/mcp/eval.rs` — NEW: 6 eval MCP verbs
+- (Plan 5 will extend `crates/xvision-marketplace/src/publish.rs` to attach eval attestations to listings — that crate doesn't exist in v1; this plan writes attestations to the local SQLite store only)
+- `crates/xvision-dashboard/src/routes/eval.rs` (Plan 2d) — NEW route: comparison view at `/eval/compare?ids=...`
 - `data/probes/scenarios/` — NEW: 4 canonical scenario definitions (JSON)
 
 ---
@@ -72,11 +74,11 @@ Plus modifications:
 ### Task 1: SQLite migration + Run type
 
 **Files:**
-- Create: `crates/xianvec-engine/migrations/002_eval.sql`
-- Create: `crates/xianvec-engine/src/eval/mod.rs`
-- Create: `crates/xianvec-engine/src/eval/run.rs`
-- Modify: `crates/xianvec-engine/src/lib.rs` (add `pub mod eval;`)
-- Modify: `crates/xianvec-engine/Cargo.toml` (add statrs)
+- Create: `crates/xvision-engine/migrations/002_eval.sql`
+- Create: `crates/xvision-engine/src/eval/mod.rs`
+- Create: `crates/xvision-engine/src/eval/run.rs`
+- Modify: `crates/xvision-engine/src/lib.rs` (add `pub mod eval;`)
+- Modify: `crates/xvision-engine/Cargo.toml` (add statrs)
 
 - [ ] **Step 1: Migration**
 
@@ -263,7 +265,7 @@ Add `pub mod eval;` to `src/lib.rs`.
 
 ```rust
 // tests/eval_run_backtest.rs (basic — full executor lands later)
-use xianvec_engine::eval::{Run, RunMode, RunStatus};
+use xvision_engine::eval::{Run, RunMode, RunStatus};
 
 #[test]
 fn run_new_queued_starts_with_correct_state() {
@@ -277,8 +279,8 @@ fn run_new_queued_starts_with_correct_state() {
 - [ ] **Step 5: Build + test + commit**
 
 ```bash
-cargo test -p xianvec-engine eval 2>&1 | grep "test result"
-git add crates/xianvec-engine
+cargo test -p xvision-engine eval 2>&1 | grep "test result"
+git add crates/xvision-engine
 git commit -m "feat(eval): SQLite migration + Run + MetricsSummary types"
 ```
 
@@ -287,7 +289,7 @@ git commit -m "feat(eval): SQLite migration + Run + MetricsSummary types"
 ### Task 2: Scenario type + canonical scenario set
 
 **Files:**
-- Create: `crates/xianvec-engine/src/eval/scenario.rs`
+- Create: `crates/xvision-engine/src/eval/scenario.rs`
 - Create: `data/probes/scenarios/crypto-bull-q1-2025.json`
 - Create: `data/probes/scenarios/crypto-bear-q3-2024.json`
 - Create: `data/probes/scenarios/crypto-chop-q2-2025.json`
@@ -374,7 +376,7 @@ Each scenario references a parquet fixture under `data/probes/`. For hackathon, 
   "latency": { "decision_to_fill_ms": 250 },
   "data_seed": "scenario-bull-q1-2025",
   "created_at": "2026-05-08T12:00:00Z",
-  "created_by": "@xianvec_official"
+  "created_by": "@xvision_official"
 }
 ```
 
@@ -410,7 +412,7 @@ async fn loads_canonical_bull_scenario() {
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-engine/src/eval/scenario.rs data/probes/scenarios
+git add crates/xvision-engine/src/eval/scenario.rs data/probes/scenarios
 git commit -m "feat(eval): Scenario type + 4 canonical scenario JSON fixtures"
 ```
 
@@ -418,7 +420,7 @@ git commit -m "feat(eval): Scenario type + 4 canonical scenario JSON fixtures"
 
 ### Task 3: RunStore + decision/equity persistence
 
-**File:** `crates/xianvec-engine/src/eval/store.rs`
+**File:** `crates/xvision-engine/src/eval/store.rs`
 
 ```rust
 use std::path::PathBuf;
@@ -465,7 +467,7 @@ Commit `feat(eval): SQLite-backed RunStore with decisions + equity samples`.
 
 ### Task 4: Executor trait
 
-**File:** `crates/xianvec-engine/src/eval/executor/mod.rs`
+**File:** `crates/xvision-engine/src/eval/executor/mod.rs`
 
 ```rust
 pub mod backtest;
@@ -508,7 +510,7 @@ Commit `feat(eval): Executor trait + dispatch by mode`.
 
 ### Task 5: BacktestExecutor — fixture replay
 
-**File:** `crates/xianvec-engine/src/eval/executor/backtest.rs`
+**File:** `crates/xvision-engine/src/eval/executor/backtest.rs`
 
 The backtest replays the scenario's parquet fixture in chronological order. At each decision point (per the bundle's `decision_cadence_minutes`):
 1. Slice OHLCV history (preceding bars only — no lookahead!)
@@ -548,7 +550,7 @@ impl Executor for BacktestExecutor {
         // Load all bars for the scenario.
         let asset = scenario.asset_universe.first()
             .ok_or_else(|| anyhow::anyhow!("scenario has empty asset_universe"))?;
-        let all_bars = xianvec_data::fixtures::load_ohlcv_fixture(
+        let all_bars = xvision_data::fixtures::load_ohlcv_fixture(
             &scenario.data_seed, asset, usize::MAX,
         )?;
 
@@ -569,7 +571,7 @@ impl Executor for BacktestExecutor {
             // Need preceding history.
             if i < 200 { continue; }
             let history = &all_bars[i.saturating_sub(200)..i];
-            let panel = compute_panel(history);  // helper using xianvec_data indicators
+            let panel = compute_panel(history);  // helper using xvision_data indicators
 
             let seed = serde_json::json!({
                 "decision_index": decision_idx,
@@ -665,8 +667,8 @@ async fn sharpe_from_equity_samples(/* ... */) -> anyhow::Result<f64> {
     unimplemented!()
 }
 
-fn compute_panel(history: &[xianvec_core::market::Ohlcv]) -> xianvec_core::market::IndicatorPanel {
-    // Reuse xianvec_data::indicators sma/ema/rsi/bollinger/atr helpers.
+fn compute_panel(history: &[xvision_core::market::Ohlcv]) -> xvision_core::market::IndicatorPanel {
+    // Reuse xvision_data::indicators sma/ema/rsi/bollinger/atr helpers.
     unimplemented!()
 }
 ```
@@ -677,33 +679,47 @@ Commit `feat(eval): backtest executor — fixture replay with slippage + fees`.
 
 ---
 
-### Task 6: PaperExecutor — drives Plan 2c live daemon
+### Task 6: PaperExecutor — drives BrokerSurface directly
 
-**File:** `crates/xianvec-engine/src/eval/executor/paper.rs`
+> **v1-test cut (2026-05-10):** Plan 2c's live daemon is out of v1 test scope, but Plan 2c §Task 7 — `BrokerSurface` trait + Alpaca/Orderly impls in `xvision-execution` — is **in** scope as a standalone task (see `v1-shipping-plan.md` build-order item #4). PaperExecutor calls `BrokerSurface` directly; it does not spawn a daemon.
 
-Paper mode reuses Plan 2c's `live::daemon` with:
-- Mode = paper (Alpaca paper broker)
-- A capped run duration (e.g., scenario time_window or N decisions)
-- Records to eval tables instead of scheduler events
+**File:** `crates/xvision-engine/src/eval/executor/paper.rs`
+
+Paper mode drives the same `execute_slot` pipeline as backtest mode, but routes resulting decisions through `BrokerSurface::submit_order` against Alpaca paper. The eval loop owns the time-window cap and termination — no daemon, no scheduler, no event store separation.
 
 ```rust
-pub struct PaperExecutor;
+use xvision_execution::broker_surface::BrokerSurface;
+
+pub struct PaperExecutor {
+    broker: Arc<dyn BrokerSurface>,
+}
+
+impl PaperExecutor {
+    pub fn new(broker: Arc<dyn BrokerSurface>) -> Self {
+        Self { broker }
+    }
+}
 
 #[async_trait]
 impl Executor for PaperExecutor {
-    async fn run(/* same signature */) -> anyhow::Result<MetricsSummary> {
-        // 1. Spawn live daemon in fixture-or-Live mode = Live
-        // 2. Hook into the daemon's decision_handler outputs
-        // 3. After scenario.time_window.end OR max_decisions exceeded, stop daemon
-        // 4. Aggregate metrics from collected events
-        unimplemented!("paper executor wraps Plan 2c's live daemon")
+    async fn run(/* same signature as BacktestExecutor */) -> anyhow::Result<MetricsSummary> {
+        // 1. For each tick in scenario.time_window (or until max_decisions):
+        //    a. Build market context from live Alpaca data
+        //    b. Call execute_slot(...) on the strategy's pipeline
+        //    c. If the decision is actionable, broker.submit_order(...)
+        //    d. Record the decision + receipt to eval_events
+        // 2. At end, compute metrics from eval_events. Same metrics module as backtest.
+        // 3. No daemon lifecycle to manage.
+        todo!("wire BrokerSurface; symmetric with backtest.rs except for the broker call")
     }
 }
 ```
 
-Tests: `#[ignore]` since paper mode hits Alpaca paper API.
+**v1 test constraint:** `BrokerSurface`'s Alpaca impl is BTC-only (the existing `AlpacaExecutor` hardcodes `BTC/USD`). Eval scenarios used with paper mode MUST be BTC-only. See `v1-shipping-plan.md` §Preconditions.
 
-Commit `feat(eval): paper executor wraps Plan 2c live daemon`.
+Tests: `#[ignore]` since paper mode hits Alpaca paper API. Add a `MockBrokerSurface` test that verifies the eval loop calls `submit_order` once per actionable decision and writes the receipt to `eval_events`.
+
+Commit `feat(eval): paper executor wraps BrokerSurface (replaces deferred Plan 2c daemon path)`.
 
 ---
 
@@ -711,7 +727,7 @@ Commit `feat(eval): paper executor wraps Plan 2c live daemon`.
 
 ### Task 7: Metrics computation
 
-**File:** `crates/xianvec-engine/src/eval/metrics.rs`
+**File:** `crates/xvision-engine/src/eval/metrics.rs`
 
 ```rust
 use statrs::statistics::Statistics;
@@ -765,10 +781,12 @@ Commit `feat(eval): Sharpe + max drawdown + bootstrap CI metrics`.
 
 ### Task 8: Findings extractor
 
+> **v1-test cut (2026-05-10):** The findings extractor LLM call uses the `default = true` provider from the `[[providers]]` registry (LLM-Providers plan, build-order #7). Eval CLI accepts an optional `--findings-provider <name>` flag to override per-run. Read the provider via `engine::api::settings::get_default_provider(ctx)` (added by Settings + LLM-Providers plans). The `model_requirement: "anthropic.claude-sonnet-4.6+"` line in the prompt below is a soft hint surfaced in CLI output if the resolved provider/model doesn't match — it is NOT enforced. Operators can run findings on any provider; the prompt is robust to model variation.
+
 **Files:**
-- Create: `crates/xianvec-engine/src/eval/findings/mod.rs`
-- Create: `crates/xianvec-engine/src/eval/findings/extractor.rs`
-- Create: `crates/xianvec-engine/src/eval/findings/prompts/extractor-v1.md`
+- Create: `crates/xvision-engine/src/eval/findings/mod.rs`
+- Create: `crates/xvision-engine/src/eval/findings/extractor.rs`
+- Create: `crates/xvision-engine/src/eval/findings/prompts/extractor-v1.md`
 
 `mod.rs`:
 
@@ -904,7 +922,7 @@ Commit `feat(eval): findings extractor (OSShip-style prompt + LLM-driven)`.
 
 ### Task 9: Signed attestation for marketplace
 
-**File:** `crates/xianvec-engine/src/eval/attestation.rs`
+**File:** `crates/xvision-engine/src/eval/attestation.rs`
 
 ```rust
 use chrono::Utc;
@@ -984,7 +1002,7 @@ pub fn verify(att: &EvalAttestation) -> anyhow::Result<()> {
 }
 
 fn canonicalize_json(v: &serde_json::Value) -> serde_json::Value {
-    // Same shape as xianvec-marketplace::content_hash::canonicalize.
+    // Same shape as xvision-marketplace::content_hash::canonicalize.
     match v {
         serde_json::Value::Object(map) => {
             let mut keys: Vec<&String> = map.keys().collect();
@@ -1001,7 +1019,7 @@ fn canonicalize_json(v: &serde_json::Value) -> serde_json::Value {
 }
 ```
 
-> Add `ed25519-dalek = "2"` and `hex = "0.4"` to xianvec-engine deps.
+> Add `ed25519-dalek = "2"` and `hex = "0.4"` to xvision-engine deps.
 
 Tests: sign + verify round-trip; tampered metrics fail verification.
 
@@ -1013,7 +1031,7 @@ Commit `feat(eval): signed Ed25519 attestations for marketplace publishing`.
 
 ### Task 10: Run-set comparison
 
-**File:** `crates/xianvec-engine/src/eval/compare.rs`
+**File:** `crates/xvision-engine/src/eval/compare.rs`
 
 Loads N runs from the store, normalizes their equity curves to a shared time axis, returns a `ComparisonReport` ready for the dashboard's chart code.
 
@@ -1075,7 +1093,7 @@ Commit `feat(eval): run-set comparison report`.
 
 ### Task 11: `xvn eval` CLI subcommands
 
-**File:** `crates/xianvec-cli/src/commands/eval.rs`
+**File:** `crates/xvision-cli/src/commands/eval.rs`
 
 Subcommands:
 - `xvn eval run <agent_id> --scenario <id> [--mode paper|backtest] [--mock] [--estimate-only]`
@@ -1088,7 +1106,7 @@ Subcommands:
 - `xvn eval batch --grid <params.json>` (paid-tier; skip permission check for hackathon)
 - `xvn eval publish-attestation <run_id>` — sign + insert into eval_attestations + return JSON
 
-Wire into top-level Command enum. Each subcommand has a thin handler that calls into `xianvec_engine::eval::*`.
+Wire into top-level Command enum. Each subcommand has a thin handler that calls into `xvision_engine::eval::*`.
 
 Integration tests: full flow with mock LLM — `eval run --mock → eval status → eval extract-findings → eval publish-attestation` round-trip.
 
@@ -1098,7 +1116,7 @@ Commit `feat(cli): xvn eval run/status/ls/compare/extract-findings/scenarios/bat
 
 ### Task 12: Eval MCP verbs
 
-**File:** `crates/xianvec-engine/src/mcp/eval.rs`
+**File:** `crates/xvision-engine/src/mcp/eval.rs`
 
 Six verbs (per spec §14):
 - `run_eval(agent_id, scenario_id, mode?, params_override?, estimate_only?)` → `{run_id} | {estimate}`
@@ -1123,7 +1141,7 @@ Commit `feat(engine): MCP verb group for eval lifecycle`.
 
 ### Task 13: SSE progress endpoint
 
-**File:** `crates/xianvec-engine/src/eval/progress.rs`
+**File:** `crates/xvision-engine/src/eval/progress.rs`
 
 Emit one SSE event per scheduler_event during a live run. Used by the dashboard's comparison view + Wizard for in-page progress.
 
@@ -1145,7 +1163,7 @@ pub enum ProgressEvent {
 
 Wire into the BacktestExecutor + PaperExecutor — they call a `tx.send(event)` after each significant action. The CLI / dashboard subscribes via the engine's progress channel.
 
-Add `GET /api/eval/<run_id>/events` to `xianvec-dashboard` (Plan 2d) that subscribes to this channel and re-emits as SSE.
+Add `GET /api/eval/<run_id>/events` to `xvision-dashboard` (Plan 2d) that subscribes to this channel and re-emits as SSE.
 
 Tests: in-process, run a backtest, assert at least one of each event type fires.
 
@@ -1155,31 +1173,31 @@ Commit `feat(eval): SSE progress events from executor`.
 
 ## Phase 3.E — Migration + polish
 
-### Task 14: Migrate `xianvec-eval` baselines to LLM-shim templates
+### Task 14: Migrate `xvision-eval` baselines to LLM-shim templates
 
 Plan #1 already wrapped `ma_crossover` as an LLM-shim template. The remaining baselines (`always_long`, `always_short`, `buy_and_hold`, `random_direction`, `rsi_mean_reversion`, `macd_momentum`, `trader_arm`) need the same treatment to be runnable through the new eval engine.
 
-Each is ~10 lines of code wrapping the existing baseline's deterministic rule in a single LLM trader slot, mirroring `crates/xianvec-engine/src/baselines/ma_crossover.rs`.
+Each is ~10 lines of code wrapping the existing baseline's deterministic rule in a single LLM trader slot, mirroring `crates/xvision-engine/src/baselines/ma_crossover.rs`.
 
-After all 7 are migrated, register them all in `templates/registry.rs` so they appear in `xvn marketplace browse`. The original `xianvec-eval` crate is now dead code per the spec — schedule its deprecation by adding a deprecation notice to its `lib.rs`:
+After all 7 are migrated, register them all in `templates/registry.rs` so they appear in `xvn marketplace browse`. The original `xvision-eval` crate is now dead code per the spec — schedule its deprecation by adding a deprecation notice to its `lib.rs`:
 
 ```rust
 //! # DEPRECATED: this crate is being phased out.
 //!
-//! The eval harness lives at `xianvec-engine/src/eval/` (per
+//! The eval harness lives at `xvision-engine/src/eval/` (per
 //! `docs/superpowers/specs/2026-05-08-eval-engine-design.md`). All
 //! baselines in this crate have been re-implemented as LLM-shim
-//! templates in `xianvec-engine/src/baselines/`. New code should not
-//! import `xianvec-eval`; this crate will be removed in v0.3.
+//! templates in `xvision-engine/src/baselines/`. New code should not
+//! import `xvision-eval`; this crate will be removed in v0.3.
 
-#![deprecated(note = "use xianvec-engine::eval and xianvec-engine::baselines instead")]
+#![deprecated(note = "use xvision-engine::eval and xvision-engine::baselines instead")]
 ```
 
-Commit `feat(eval): migrate remaining xianvec-eval baselines to LLM-shim templates`.
+Commit `feat(eval): migrate remaining xvision-eval baselines to LLM-shim templates`.
 
 ### Task 15: README + manual + final smoke
 
-Update `crates/xianvec-engine/README.md` with the eval section. Update `MANUAL.md` with the `xvn eval *` commands.
+Update `crates/xvision-engine/README.md` with the eval section. Update `MANUAL.md` with the `xvn eval *` commands.
 
 End-to-end smoke:
 
@@ -1197,14 +1215,14 @@ Commit `chore: Plan 3 end-to-end smoke verified`.
 
 ### Task 16: Final workspace check
 
-`cargo test --workspace`, clippy, fmt — clean. xianvec-eval still untouched apart from the deprecation notice. ~16 commits since Plan 2d's tip.
+`cargo test --workspace`, clippy, fmt — clean. xvision-eval still untouched apart from the deprecation notice. ~16 commits since Plan 2d's tip.
 
 ---
 
 ## Self-review checklist
 
 **Spec coverage from `2026-05-08-eval-engine-design.md`:**
-- [x] §3 Architecture — `xianvec-engine/src/eval/`
+- [x] §3 Architecture — `xvision-engine/src/eval/`
 - [x] §4 Run model — Run, RunStatus, RunMode, MetricsSummary
 - [x] §5 Scenario format — Scenario type + 4 canonical scenarios
 - [x] §6 Modes — Backtest + Paper executors
@@ -1216,7 +1234,7 @@ Commit `chore: Plan 3 end-to-end smoke verified`.
 - [x] §12 Pre-computed published evals — signed attestations via `attestation::sign`
 - [x] §13 CLI surface — full set of `xvn eval *` subcommands
 - [x] §14 MCP surface — 9 verbs
-- [x] §15 Migration plan — baselines re-implemented as LLM-shims; xianvec-eval marked deprecated
+- [x] §15 Migration plan — baselines re-implemented as LLM-shims; xvision-eval marked deprecated
 
 **Frequent commits:** 16 tasks → ~16 commits.
 

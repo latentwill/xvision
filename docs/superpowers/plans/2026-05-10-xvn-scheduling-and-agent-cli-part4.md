@@ -7,19 +7,19 @@
 ### Task 14: ScheduleExpr parser
 
 **Files:**
-- Create: `crates/xianvec-engine/src/scheduler/mod.rs`
-- Create: `crates/xianvec-engine/src/scheduler/expr.rs`
-- Modify: `crates/xianvec-engine/src/lib.rs`
-- Create: `crates/xianvec-engine/tests/schedule_expr.rs`
+- Create: `crates/xvision-engine/src/scheduler/mod.rs`
+- Create: `crates/xvision-engine/src/scheduler/expr.rs`
+- Modify: `crates/xvision-engine/src/lib.rs`
+- Create: `crates/xvision-engine/tests/schedule_expr.rs`
 
 > **Context.** Friendly inputs (`--every 5m`, `--at "21:00 UTC"`, `--at "market-close"`) get normalized to a 6-field cron + IANA timezone. The parser is pure; cron evaluation lives in the next task.
 
 - [ ] **Step 1: Failing tests**
 
-Create `crates/xianvec-engine/tests/schedule_expr.rs`:
+Create `crates/xvision-engine/tests/schedule_expr.rs`:
 
 ```rust
-use xianvec_engine::scheduler::expr::{parse, Normalized};
+use xvision_engine::scheduler::expr::{parse, Normalized};
 
 #[test]
 fn every_5_minutes() {
@@ -74,7 +74,7 @@ fn invalid_returns_error() {
 
 - [ ] **Step 3: Implement `scheduler/mod.rs`**
 
-Create `crates/xianvec-engine/src/scheduler/mod.rs`:
+Create `crates/xvision-engine/src/scheduler/mod.rs`:
 
 ```rust
 pub mod daemon;
@@ -87,7 +87,7 @@ pub use expr::{parse, Normalized};
 
 - [ ] **Step 4: Implement parser**
 
-Create `crates/xianvec-engine/src/scheduler/expr.rs`:
+Create `crates/xvision-engine/src/scheduler/expr.rs`:
 
 ```rust
 //! Friendly schedule expression parser. Normalizes to (cron, tz).
@@ -204,7 +204,7 @@ fn preset(s: &str) -> Option<Normalized> {
 
 - [ ] **Step 5: Wire scheduler into engine `lib.rs`**
 
-Add to `crates/xianvec-engine/src/lib.rs`:
+Add to `crates/xvision-engine/src/lib.rs`:
 
 ```rust
 pub mod scheduler;
@@ -213,7 +213,7 @@ pub mod scheduler;
 - [ ] **Step 6: Run — expect pass**
 
 ```bash
-cargo test -p xianvec-engine --test schedule_expr
+cargo test -p xvision-engine --test schedule_expr
 ```
 
 Expected: 7 passed.
@@ -221,10 +221,10 @@ Expected: 7 passed.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add crates/xianvec-engine/src/scheduler/mod.rs \
-        crates/xianvec-engine/src/scheduler/expr.rs \
-        crates/xianvec-engine/src/lib.rs \
-        crates/xianvec-engine/tests/schedule_expr.rs
+git add crates/xvision-engine/src/scheduler/mod.rs \
+        crates/xvision-engine/src/scheduler/expr.rs \
+        crates/xvision-engine/src/lib.rs \
+        crates/xvision-engine/tests/schedule_expr.rs
 git commit -m "feat(scheduler): friendly expression parser → (cron, tz)"
 ```
 
@@ -233,13 +233,13 @@ git commit -m "feat(scheduler): friendly expression parser → (cron, tz)"
 ### Task 15: Scheduler store + runner loop
 
 **Files:**
-- Create: `crates/xianvec-engine/src/scheduler/store.rs`
-- Create: `crates/xianvec-engine/src/scheduler/daemon.rs`
-- Create: `crates/xianvec-engine/tests/scheduler_runner.rs`
+- Create: `crates/xvision-engine/src/scheduler/store.rs`
+- Create: `crates/xvision-engine/src/scheduler/daemon.rs`
+- Create: `crates/xvision-engine/tests/scheduler_runner.rs`
 
 - [ ] **Step 1: Failing test**
 
-Create `crates/xianvec-engine/tests/scheduler_runner.rs`:
+Create `crates/xvision-engine/tests/scheduler_runner.rs`:
 
 ```rust
 use std::sync::{Arc, Mutex};
@@ -249,10 +249,10 @@ use async_trait::async_trait;
 use chrono::Utc;
 use sqlx::SqlitePool;
 use tempfile::TempDir;
-use xianvec_engine::agent_runner::registry::ToolRegistry;
-use xianvec_engine::api::{schedule, Actor, ApiContext};
-use xianvec_engine::scheduler::{store, Scheduler};
-use xianvec_intern::tool_dispatch::{AssistantTurn, LlmToolDispatch, ToolCall, ToolDispatchRequest};
+use xvision_engine::agent_runner::registry::ToolRegistry;
+use xvision_engine::api::{schedule, Actor, ApiContext};
+use xvision_engine::scheduler::{store, Scheduler};
+use xvision_intern::tool_dispatch::{AssistantTurn, LlmToolDispatch, ToolCall, ToolDispatchRequest};
 
 struct OneShotDispatch { used: Mutex<bool> }
 
@@ -357,7 +357,7 @@ async fn cron_due_at_now_claims_pending() {
 
 - [ ] **Step 3: Implement scheduler store**
 
-Create `crates/xianvec-engine/src/scheduler/store.rs`:
+Create `crates/xvision-engine/src/scheduler/store.rs`:
 
 ```rust
 use chrono::{DateTime, Utc};
@@ -510,14 +510,14 @@ pub async fn heartbeat_fire(ctx: &ApiContext, fire_id: &str) -> ApiResult<()> {
 
 - [ ] **Step 4: Implement daemon**
 
-Create `crates/xianvec-engine/src/scheduler/daemon.rs`:
+Create `crates/xvision-engine/src/scheduler/daemon.rs`:
 
 ```rust
 use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::time;
-use xianvec_intern::tool_dispatch::LlmToolDispatch;
+use xvision_intern::tool_dispatch::LlmToolDispatch;
 
 use crate::agent_runner::{registry::ToolRegistry, AgentRunner, FireStatus, RunRequest};
 use crate::api::{ApiContext, Actor};
@@ -639,7 +639,7 @@ impl Scheduler {
 - [ ] **Step 5: Run — expect pass**
 
 ```bash
-cargo test -p xianvec-engine --test scheduler_runner
+cargo test -p xvision-engine --test scheduler_runner
 ```
 
 Expected: 2 passed.
@@ -647,9 +647,9 @@ Expected: 2 passed.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/xianvec-engine/src/scheduler/store.rs \
-        crates/xianvec-engine/src/scheduler/daemon.rs \
-        crates/xianvec-engine/tests/scheduler_runner.rs
+git add crates/xvision-engine/src/scheduler/store.rs \
+        crates/xvision-engine/src/scheduler/daemon.rs \
+        crates/xvision-engine/tests/scheduler_runner.rs
 git commit -m "feat(scheduler): runner loop, cron claim, run_now, heartbeat, crash recovery"
 ```
 
@@ -658,21 +658,21 @@ git commit -m "feat(scheduler): runner loop, cron claim, run_now, heartbeat, cra
 ### Task 16: `xvn schedule` CLI subcommands
 
 **Files:**
-- Create: `crates/xianvec-cli/src/commands/schedule.rs`
-- Modify: `crates/xianvec-cli/src/commands/mod.rs`
-- Modify: `crates/xianvec-cli/src/lib.rs`
+- Create: `crates/xvision-cli/src/commands/schedule.rs`
+- Modify: `crates/xvision-cli/src/commands/mod.rs`
+- Modify: `crates/xvision-cli/src/lib.rs`
 
 - [ ] **Step 1: Implement command**
 
-Create `crates/xianvec-cli/src/commands/schedule.rs`:
+Create `crates/xvision-cli/src/commands/schedule.rs`:
 
 ```rust
 use std::sync::Arc;
 
 use clap::{Args, Subcommand};
 use sqlx::SqlitePool;
-use xianvec_engine::api::{schedule, Actor, ApiContext};
-use xianvec_engine::scheduler::expr::parse as parse_expr;
+use xvision_engine::api::{schedule, Actor, ApiContext};
+use xvision_engine::scheduler::expr::parse as parse_expr;
 
 #[derive(Args, Debug)]
 pub struct ScheduleCmd {
@@ -712,7 +712,7 @@ async fn ctx() -> anyhow::Result<Arc<ApiContext>> {
     std::fs::create_dir_all(&xvn_home)?;
     let url = format!("sqlite://{}?mode=rwc", xvn_home.join("xvn.db").display());
     let db = SqlitePool::connect(&url).await?;
-    sqlx::migrate!("../xianvec-engine/migrations").run(&db).await?;
+    sqlx::migrate!("../xvision-engine/migrations").run(&db).await?;
     Ok(Arc::new(ApiContext::new(xvn_home, db)))
 }
 
@@ -780,13 +780,13 @@ pub async fn run(cmd: ScheduleCmd) -> anyhow::Result<()> {
 
 - [ ] **Step 2: Wire into top-level CLI**
 
-In `crates/xianvec-cli/src/commands/mod.rs`:
+In `crates/xvision-cli/src/commands/mod.rs`:
 
 ```rust
 pub mod schedule;
 ```
 
-In the `Command` enum + dispatch in `crates/xianvec-cli/src/lib.rs`:
+In the `Command` enum + dispatch in `crates/xvision-cli/src/lib.rs`:
 
 ```rust
 Schedule(commands::schedule::ScheduleCmd),
@@ -799,8 +799,8 @@ Command::Schedule(cmd) => commands::schedule::run(cmd).await?,
 ```bash
 export XVN_HOME=/tmp/xvn-sched-smoke
 rm -rf $XVN_HOME && mkdir -p $XVN_HOME
-cargo run -p xianvec-cli -- schedule create --name daily-test --schedule "at 21:00 UTC" --prompt "test" --allow "report.*"
-cargo run -p xianvec-cli -- schedule list
+cargo run -p xvision-cli -- schedule create --name daily-test --schedule "at 21:00 UTC" --prompt "test" --allow "report.*"
+cargo run -p xvision-cli -- schedule list
 ```
 
 Expected: ID printed; list shows the new entry.
@@ -808,9 +808,9 @@ Expected: ID printed; list shows the new entry.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/xianvec-cli/src/commands/schedule.rs \
-        crates/xianvec-cli/src/commands/mod.rs \
-        crates/xianvec-cli/src/lib.rs
+git add crates/xvision-cli/src/commands/schedule.rs \
+        crates/xvision-cli/src/commands/mod.rs \
+        crates/xvision-cli/src/lib.rs
 git commit -m "feat(cli): xvn schedule {create, list, show, pause, resume, delete, run-now, history, transcript}"
 ```
 
@@ -819,13 +819,13 @@ git commit -m "feat(cli): xvn schedule {create, list, show, pause, resume, delet
 ### Task 17: `xvn agent run` daemon
 
 **Files:**
-- Modify: `crates/xianvec-cli/src/commands/agent.rs` (add `Run` subcommand)
+- Modify: `crates/xvision-cli/src/commands/agent.rs` (add `Run` subcommand)
 
 > **Context.** `xvn agent run` starts the long-lived scheduler daemon. Until a real LLM dispatch lands, the daemon requires `--mock` (same env-var-driven scripted dispatch as `xvn agent ask`). When real dispatch ships, `--mock` becomes optional.
 
 - [ ] **Step 1: Extend `AgentAction` enum**
 
-Replace `crates/xianvec-cli/src/commands/agent.rs` `AgentAction` enum to add `Run`:
+Replace `crates/xvision-cli/src/commands/agent.rs` `AgentAction` enum to add `Run`:
 
 ```rust
 #[derive(Subcommand, Debug)]
@@ -851,13 +851,13 @@ Add `Run` to the run-dispatch match:
 
 ```rust
 AgentAction::Run { poll_secs: _, mock } => {
-    use xianvec_engine::scheduler::Scheduler;
+    use xvision_engine::scheduler::Scheduler;
     let xvn_home = std::env::var("XVN_HOME").map(std::path::PathBuf::from)
         .unwrap_or_else(|_| dirs::home_dir().unwrap().join(".xvn"));
     std::fs::create_dir_all(&xvn_home)?;
     let url = format!("sqlite://{}?mode=rwc", xvn_home.join("xvn.db").display());
     let db = SqlitePool::connect(&url).await?;
-    sqlx::migrate!("../xianvec-engine/migrations").run(&db).await?;
+    sqlx::migrate!("../xvision-engine/migrations").run(&db).await?;
     let ctx = Arc::new(ApiContext::new(xvn_home, db));
 
     if !mock {
@@ -868,7 +868,7 @@ AgentAction::Run { poll_secs: _, mock } => {
 
     let scheduler = Scheduler::new(
         ctx.clone(),
-        Arc::new(xianvec_engine::agent_runner::registry::ToolRegistry::with_builtins()),
+        Arc::new(xvision_engine::agent_runner::registry::ToolRegistry::with_builtins()),
         dispatch,
     );
     let (tx, rx) = tokio::sync::watch::channel(false);
@@ -888,13 +888,13 @@ AgentAction::Run { poll_secs: _, mock } => {
 export XVN_HOME=/tmp/xvn-daemon-smoke
 rm -rf $XVN_HOME
 export XVN_MOCK_TURN='{"text":null,"tool_calls":[{"tool_call_id":"x","name":"record_outcome","arguments":{"summary":"daemon-ok","actions_taken":[],"anomalies":[]}}],"stop_reason":"tool_use","tokens_in":10,"tokens_out":5,"cache_read_tokens":0,"cache_write_tokens":0}'
-cargo run -p xianvec-cli -- schedule create --name d --schedule "every 1m" --prompt "x" --allow "record_outcome"
-cargo run -p xianvec-cli -- schedule run-now $(cargo run -q -p xianvec-cli -- schedule list | tail -1 | awk '{print $1}')
-cargo run -p xianvec-cli -- agent run --mock &
+cargo run -p xvision-cli -- schedule create --name d --schedule "every 1m" --prompt "x" --allow "record_outcome"
+cargo run -p xvision-cli -- schedule run-now $(cargo run -q -p xvision-cli -- schedule list | tail -1 | awk '{print $1}')
+cargo run -p xvision-cli -- agent run --mock &
 DAEMON=$!
 sleep 4
 kill $DAEMON
-cargo run -p xianvec-cli -- schedule history
+cargo run -p xvision-cli -- schedule history
 ```
 
 Expected: history shows at least one fire with `status=ok` and `summary=daemon-ok`.
@@ -902,7 +902,7 @@ Expected: history shows at least one fire with `status=ok` and `summary=daemon-o
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/xianvec-cli/src/commands/agent.rs
+git add crates/xvision-cli/src/commands/agent.rs
 git commit -m "feat(cli): xvn agent run — long-lived scheduler daemon"
 ```
 
@@ -911,13 +911,13 @@ git commit -m "feat(cli): xvn agent run — long-lived scheduler daemon"
 ### Task 18: Default schedules at install
 
 **Files:**
-- Create: `crates/xianvec-engine/src/scheduler/defaults.rs`
-- Modify: `crates/xianvec-engine/src/scheduler/mod.rs`
-- Modify: `crates/xianvec-cli/src/commands/agent.rs` (call `ensure_defaults` on daemon startup)
+- Create: `crates/xvision-engine/src/scheduler/defaults.rs`
+- Modify: `crates/xvision-engine/src/scheduler/mod.rs`
+- Modify: `crates/xvision-cli/src/commands/agent.rs` (call `ensure_defaults` on daemon startup)
 
 - [ ] **Step 1: Implement defaults**
 
-Create `crates/xianvec-engine/src/scheduler/defaults.rs`:
+Create `crates/xvision-engine/src/scheduler/defaults.rs`:
 
 ```rust
 //! Default schedules shipped at install. All ship paused — operator must
@@ -991,7 +991,7 @@ struct DefaultSchedule {
 
 - [ ] **Step 2: Re-export**
 
-In `crates/xianvec-engine/src/scheduler/mod.rs`:
+In `crates/xvision-engine/src/scheduler/mod.rs`:
 
 ```rust
 pub mod defaults;
@@ -999,10 +999,10 @@ pub mod defaults;
 
 - [ ] **Step 3: Call from daemon startup**
 
-In `crates/xianvec-cli/src/commands/agent.rs`, inside the `AgentAction::Run` branch, before constructing the scheduler:
+In `crates/xvision-cli/src/commands/agent.rs`, inside the `AgentAction::Run` branch, before constructing the scheduler:
 
 ```rust
-xianvec_engine::scheduler::defaults::ensure_defaults(&ctx).await?;
+xvision_engine::scheduler::defaults::ensure_defaults(&ctx).await?;
 ```
 
 - [ ] **Step 4: Smoke test**
@@ -1011,10 +1011,10 @@ xianvec_engine::scheduler::defaults::ensure_defaults(&ctx).await?;
 export XVN_HOME=/tmp/xvn-defaults-smoke
 rm -rf $XVN_HOME
 export XVN_MOCK_TURN='{"text":null,"tool_calls":[{"tool_call_id":"x","name":"record_outcome","arguments":{"summary":"x","actions_taken":[],"anomalies":[]}}],"stop_reason":"tool_use","tokens_in":1,"tokens_out":1,"cache_read_tokens":0,"cache_write_tokens":0}'
-cargo run -p xianvec-cli -- agent run --mock &
+cargo run -p xvision-cli -- agent run --mock &
 sleep 1
 kill %1 2>/dev/null || true
-cargo run -p xianvec-cli -- schedule list
+cargo run -p xvision-cli -- schedule list
 ```
 
 Expected: `eod-report` and `ar-evening-cycle` appear with `paused=true`.
@@ -1022,9 +1022,9 @@ Expected: `eod-report` and `ar-evening-cycle` appear with `paused=true`.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-engine/src/scheduler/defaults.rs \
-        crates/xianvec-engine/src/scheduler/mod.rs \
-        crates/xianvec-cli/src/commands/agent.rs
+git add crates/xvision-engine/src/scheduler/defaults.rs \
+        crates/xvision-engine/src/scheduler/mod.rs \
+        crates/xvision-cli/src/commands/agent.rs
 git commit -m "feat(scheduler): pre-paused default schedules (eod-report, ar-evening-cycle)"
 ```
 

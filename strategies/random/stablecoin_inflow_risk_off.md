@@ -55,6 +55,6 @@ idea
 
 ## References
 
-- `crates/xianvec-core/src/market.rs`
+- `crates/xvision-core/src/market.rs`
 - `decisions/0010-hackathon-pivot-strategy-loom.md`
-- `crates/xianvec-eval/src/backtest.rs`
+- `crates/xvision-eval/src/backtest.rs`

@@ -24,7 +24,7 @@
 
 ```
 crates/
-├── xianvec-engine/
+├── xvision-engine/
 │   └── src/
 │       ├── journal/
 │       │   ├── mod.rs                          # NEW: pub use; module docs
@@ -32,7 +32,7 @@ crates/
 │       │   ├── entry.rs                        # NEW: JournalEntry + JournalKind enums
 │       │   └── auto_pin.rs                     # NEW: hooks that subscribe to event streams
 │       └── lib.rs                              # MODIFY: pub mod journal;
-├── xianvec-dashboard/
+├── xvision-dashboard/
 │   ├── src/routes/
 │   │   └── journal.rs                          # NEW: GET /journal, REST handlers, SSE for new entries
 │   ├── templates/
@@ -40,7 +40,7 @@ crates/
 │   │   └── base.html                           # MODIFY: add Journal nav link (already in v0.2)
 │   └── static/js/
 │       └── journal.js                          # NEW: composer + filter + entry rendering
-└── xianvec-cli/
+└── xvision-cli/
     └── src/commands/
         └── journal.rs                          # NEW: `xvn journal {list, add, export}` for terminal users
 ```
@@ -52,9 +52,9 @@ crates/
 ### Task 1: `JournalEntry` + `JournalKind` enum
 
 **Files:**
-- Create: `crates/xianvec-engine/src/journal/entry.rs`
-- Create: `crates/xianvec-engine/src/journal/mod.rs`
-- Modify: `crates/xianvec-engine/src/lib.rs`
+- Create: `crates/xvision-engine/src/journal/entry.rs`
+- Create: `crates/xvision-engine/src/journal/mod.rs`
+- Modify: `crates/xvision-engine/src/lib.rs`
 
 Per ui-elements.md §9.2 — six kinds.
 
@@ -164,8 +164,8 @@ git commit -am "feat(engine): journal entry types + serde wiring"
 ### Task 2: `JournalStore` (rusqlite-backed)
 
 **Files:**
-- Create: `crates/xianvec-engine/src/journal/store.rs`
-- Modify: `crates/xianvec-engine/Cargo.toml` (add rusqlite)
+- Create: `crates/xvision-engine/src/journal/store.rs`
+- Modify: `crates/xvision-engine/Cargo.toml` (add rusqlite)
 
 Schema:
 
@@ -280,7 +280,7 @@ git commit -am "feat(engine): JournalStore with rusqlite + filter/pin/mark-read"
 
 ### Task 3: Auto-pin hooks
 
-**File:** `crates/xianvec-engine/src/journal/auto_pin.rs`
+**File:** `crates/xvision-engine/src/journal/auto_pin.rs`
 
 Per ui-elements.md §9.2 auto-pinning rules:
 - All `critical` findings auto-pin.
@@ -404,8 +404,8 @@ git commit -am "feat(engine): auto-pin service for journal entries"
 ### Task 4: GET /journal — page + filtered list endpoint
 
 **Files:**
-- Create: `crates/xianvec-dashboard/src/routes/journal.rs`
-- Create: `crates/xianvec-dashboard/templates/journal.html`
+- Create: `crates/xvision-dashboard/src/routes/journal.rs`
+- Create: `crates/xvision-dashboard/templates/journal.html`
 
 - [ ] **Step 1: Template (per ui-elements.md §9 layout)**
 
@@ -505,7 +505,7 @@ git commit -am "feat(dashboard): /journal page + REST + SSE stream"
 
 ### Task 5: Frontend `journal.js`
 
-**File:** `crates/xianvec-dashboard/static/js/journal.js`
+**File:** `crates/xvision-dashboard/static/js/journal.js`
 
 - [ ] **Step 1: Render entries**
 
@@ -608,14 +608,14 @@ git commit -am "feat(dashboard): journal.js with composer, templates, SSE auto-p
 ### Task 6: Wire eval engine + scheduler to AutoPinService
 
 **Files:**
-- Modify: `crates/xianvec-eval/src/finding_extractor.rs` (call `AutoPinService::on_finding_extracted`)
-- Modify: `crates/xianvec-engine/src/scheduler.rs` (call `AutoPinService::on_deployment_event`)
+- Modify: `crates/xvision-eval/src/finding_extractor.rs` (call `AutoPinService::on_finding_extracted`)
+- Modify: `crates/xvision-engine/src/scheduler.rs` (call `AutoPinService::on_deployment_event`)
 
 The two emit-sites need a shared handle to `AutoPinService`. v1 wiring: a process-wide `Arc<AutoPinService>` registered on dashboard startup, accessed via a global `OnceCell` or by threading through existing daemon state. The latter is cleaner — thread it.
 
 - [ ] **Step 1: Daemon state extension**
 
-Add `AutoPinService` to whatever process-wide context the daemon already holds (`xianvec-engine::DaemonCtx` or equivalent). Eval and scheduler call sites pull it from `&ctx`.
+Add `AutoPinService` to whatever process-wide context the daemon already holds (`xvision-engine::DaemonCtx` or equivalent). Eval and scheduler call sites pull it from `&ctx`.
 
 - [ ] **Step 2: Tests** — exercise the integration with a fake event source.
 
@@ -629,7 +629,7 @@ git commit -am "feat(engine): wire eval + scheduler to AutoPinService for auto-p
 
 ### Task 7: `xvn journal` CLI
 
-**File:** `crates/xianvec-cli/src/commands/journal.rs`
+**File:** `crates/xvision-cli/src/commands/journal.rs`
 
 ```
 xvn journal list [--kind <k>] [--limit N] [--pinned-only]

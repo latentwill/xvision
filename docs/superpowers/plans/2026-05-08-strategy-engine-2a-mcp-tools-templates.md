@@ -1,12 +1,12 @@
 # Strategy Creation Engine — Plan 2a (MCP + Tool-Call Dispatch + 7 Templates) Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-> **Depends on:** Plan #1 (`docs/superpowers/plans/2026-05-08-strategy-creation-engine-mvp.md`) merged. PR: https://github.com/latentwill/xianvec/pull/3.
+> **Depends on:** Plan #1 (`docs/superpowers/plans/2026-05-08-strategy-creation-engine-mvp.md`) merged. PR: https://github.com/latentwill/xvision/pull/3.
 > **Execution-order decision (2026-05-08):** Execute this plan **after Plan 3 (eval engine) ships**, in case eval surfaces design decisions affecting MCP authoring verbs, the 7 templates, or the tool-call dispatch shape. Eval's findings extractor (Plan 3 Task 8) uses inline OSShip-style markdown prompts; that prompt-loading pattern may inform how skills (Plan 2b) and tool-use loops (this plan) should be structured. The plan's *technical* deps remain Plan #1 only — only the execution timing is deferred.
 
 **Goal:** Make xvn fully driveable by an external AI agent (Claude Code, Hermes, Cursor) over MCP — and make the agent loop actually use tools during decisions instead of operating on stub inputs. After this plan ships, an external agent can connect to xvn via `xvn agent serve --mcp`, list templates, create + customize a strategy bundle, and run it inline against a fixture where the LLM *itself* requests OHLCV/indicator data via tool-use mid-decision. All 7 remaining v1 templates are registered (trend_follower, breakout, momentum, range_trade, scalping, news_trader, custom).
 
-**Architecture:** Three pieces sit on top of Plan #1's foundation. (1) An MCP server in `xianvec-engine/src/mcp/` exposes the authoring verb group as MCP tools over stdio JSON-RPC. (2) `LlmDispatch` and `execute_slot` extend to support Anthropic-style tool-use loops — request includes tool definitions; LLM emits tool_use blocks; runtime routes to `ToolRegistry.invoke`; result loops back into the conversation until the LLM emits a final content-only response. (3) Seven new template files register through the existing `Template` trait + registry pattern.
+**Architecture:** Three pieces sit on top of Plan #1's foundation. (1) An MCP server in `xvision-engine/src/mcp/` exposes the authoring verb group as MCP tools over stdio JSON-RPC. (2) `LlmDispatch` and `execute_slot` extend to support Anthropic-style tool-use loops — request includes tool definitions; LLM emits tool_use blocks; runtime routes to `ToolRegistry.invoke`; result loops back into the conversation until the LLM emits a final content-only response. (3) Seven new template files register through the existing `Template` trait + registry pattern.
 
 **Tech Stack:** Rust 2021. New deps: `rmcp` (model context protocol Rust impl) for MCP server. Reuses everything from Plan #1: anyhow, serde, serde_json, tokio, async-trait, reqwest. Tests use the existing `MockDispatch` extended with tool-use-aware variants.
 
@@ -24,7 +24,7 @@
 ## File structure
 
 ```
-crates/xianvec-engine/
+crates/xvision-engine/
 ├── Cargo.toml                              # add rmcp + jsonschema deps
 ├── src/
 │   ├── lib.rs                              # add `pub mod mcp;`
@@ -53,9 +53,9 @@ crates/xianvec-engine/
 ```
 
 Plus modifications:
-- `crates/xianvec-cli/src/lib.rs` — add `Agent { #[command(subcommand)] action: AgentAction }` top-level command
-- `crates/xianvec-cli/src/commands/agent.rs` — new module: `xvn agent serve --mcp` subcommand
-- `crates/xianvec-cli/src/commands/strategy.rs` — update `run_inline` to populate seed_inputs with real OHLCV + indicator data fetched via the tool registry, so the trader slot sees actual data
+- `crates/xvision-cli/src/lib.rs` — add `Agent { #[command(subcommand)] action: AgentAction }` top-level command
+- `crates/xvision-cli/src/commands/agent.rs` — new module: `xvn agent serve --mcp` subcommand
+- `crates/xvision-cli/src/commands/strategy.rs` — update `run_inline` to populate seed_inputs with real OHLCV + indicator data fetched via the tool registry, so the trader slot sees actual data
 
 ---
 
@@ -64,13 +64,13 @@ Plus modifications:
 ### Task 1: Add `rmcp` dep + `mcp` module skeleton
 
 **Files:**
-- Modify: `crates/xianvec-engine/Cargo.toml`
-- Create: `crates/xianvec-engine/src/mcp/mod.rs`
-- Modify: `crates/xianvec-engine/src/lib.rs`
+- Modify: `crates/xvision-engine/Cargo.toml`
+- Create: `crates/xvision-engine/src/mcp/mod.rs`
+- Modify: `crates/xvision-engine/src/lib.rs`
 
 - [ ] **Step 1: Add deps**
 
-In `crates/xianvec-engine/Cargo.toml` `[dependencies]`, add:
+In `crates/xvision-engine/Cargo.toml` `[dependencies]`, add:
 
 ```toml
 rmcp        = { version = "0.2", features = ["server", "transport-io"] }
@@ -82,7 +82,7 @@ Run: `cargo search rmcp --limit 3` to confirm the latest stable. If `rmcp` isn't
 - [ ] **Step 2: Create `mcp/mod.rs` skeleton**
 
 ```rust
-//! MCP server surface — exposes xianvec-engine authoring verbs as MCP tools.
+//! MCP server surface — exposes xvision-engine authoring verbs as MCP tools.
 //!
 //! Wire format: stdio JSON-RPC per the Model Context Protocol spec.
 //! Verbs implemented in this plan: list_templates, create_strategy,
@@ -111,17 +111,17 @@ impl McpServer {
 
 - [ ] **Step 3: Wire into lib.rs**
 
-Add `pub mod mcp;` to `crates/xianvec-engine/src/lib.rs` (preserve existing modules + re-exports).
+Add `pub mod mcp;` to `crates/xvision-engine/src/lib.rs` (preserve existing modules + re-exports).
 
 - [ ] **Step 4: Stub authoring/schema modules**
 
-Create `crates/xianvec-engine/src/mcp/authoring.rs`:
+Create `crates/xvision-engine/src/mcp/authoring.rs`:
 
 ```rust
 //! MCP authoring verbs (T2-T8 will fill these in).
 ```
 
-Create `crates/xianvec-engine/src/mcp/schema.rs`:
+Create `crates/xvision-engine/src/mcp/schema.rs`:
 
 ```rust
 //! JSON schemas for MCP authoring verb arguments.
@@ -129,13 +129,13 @@ Create `crates/xianvec-engine/src/mcp/schema.rs`:
 
 - [ ] **Step 5: Build**
 
-Run: `cargo build -p xianvec-engine 2>&1 | tail -3`
+Run: `cargo build -p xvision-engine 2>&1 | tail -3`
 Expected: clean.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/xianvec-engine/Cargo.toml crates/xianvec-engine/src/mcp crates/xianvec-engine/src/lib.rs
+git add crates/xvision-engine/Cargo.toml crates/xvision-engine/src/mcp crates/xvision-engine/src/lib.rs
 git commit -m "feat(engine): scaffold MCP server module"
 ```
 
@@ -144,9 +144,9 @@ git commit -m "feat(engine): scaffold MCP server module"
 ### Task 2: `xvn agent serve --mcp` CLI subcommand
 
 **Files:**
-- Create: `crates/xianvec-cli/src/commands/agent.rs`
-- Modify: `crates/xianvec-cli/src/commands/mod.rs`
-- Modify: `crates/xianvec-cli/src/lib.rs`
+- Create: `crates/xvision-cli/src/commands/agent.rs`
+- Modify: `crates/xvision-cli/src/commands/mod.rs`
+- Modify: `crates/xvision-cli/src/lib.rs`
 
 - [ ] **Step 1: Create the agent subcommand module**
 
@@ -191,11 +191,11 @@ async fn serve_mcp() -> anyhow::Result<()> {
 
 - [ ] **Step 2: Register module**
 
-Append `pub mod agent;` to `crates/xianvec-cli/src/commands/mod.rs`.
+Append `pub mod agent;` to `crates/xvision-cli/src/commands/mod.rs`.
 
 - [ ] **Step 3: Wire into top-level Command enum**
 
-In `crates/xianvec-cli/src/lib.rs`:
+In `crates/xvision-cli/src/lib.rs`:
 
 In the `Command` enum, add (alphabetically near `Strategy` is fine):
 
@@ -214,8 +214,8 @@ In `Cli::run()` match:
 
 ```bash
 export PATH=$HOME/.cargo/bin:$PATH
-cargo build -p xianvec-cli 2>&1 | tail -3
-cargo run -q -p xianvec-cli -- agent serve --mcp 2>&1 | head -3
+cargo build -p xvision-cli 2>&1 | tail -3
+cargo run -q -p xvision-cli -- agent serve --mcp 2>&1 | head -3
 ```
 
 Expected: build clean. `xvn agent serve --mcp` exits with "not implemented yet — Task 3" — that's the placeholder.
@@ -223,7 +223,7 @@ Expected: build clean. `xvn agent serve --mcp` exits with "not implemented yet �
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-cli/src/commands/agent.rs crates/xianvec-cli/src/commands/mod.rs crates/xianvec-cli/src/lib.rs
+git add crates/xvision-cli/src/commands/agent.rs crates/xvision-cli/src/commands/mod.rs crates/xvision-cli/src/lib.rs
 git commit -m "feat(cli): xvn agent serve --mcp subcommand skeleton"
 ```
 
@@ -234,14 +234,14 @@ git commit -m "feat(cli): xvn agent serve --mcp subcommand skeleton"
 **Goal:** Get the round-trip working end-to-end with one verb. Subsequent tasks add verbs incrementally.
 
 **Files:**
-- Modify: `crates/xianvec-engine/src/mcp/mod.rs`
-- Modify: `crates/xianvec-engine/src/mcp/authoring.rs`
-- Modify: `crates/xianvec-cli/src/commands/agent.rs`
-- Create: `crates/xianvec-engine/tests/mcp_authoring.rs`
+- Modify: `crates/xvision-engine/src/mcp/mod.rs`
+- Modify: `crates/xvision-engine/src/mcp/authoring.rs`
+- Modify: `crates/xvision-cli/src/commands/agent.rs`
+- Create: `crates/xvision-engine/tests/mcp_authoring.rs`
 
 - [ ] **Step 1: Write failing integration test**
 
-Create `crates/xianvec-engine/tests/mcp_authoring.rs`:
+Create `crates/xvision-engine/tests/mcp_authoring.rs`:
 
 ```rust
 //! End-to-end test: spin up the MCP server in a child process, send a
@@ -284,11 +284,11 @@ fn mcp_server_advertises_list_templates_tool() {
 
 - [ ] **Step 2: Verify failure**
 
-`cargo test -p xianvec-engine mcp_server_advertises 2>&1 | tail -10` → FAIL (server bails with "not implemented yet — Task 3").
+`cargo test -p xvision-engine mcp_server_advertises 2>&1 | tail -10` → FAIL (server bails with "not implemented yet — Task 3").
 
 - [ ] **Step 3: Implement `list_templates` MCP tool**
 
-In `crates/xianvec-engine/src/mcp/authoring.rs`, define a single tool:
+In `crates/xvision-engine/src/mcp/authoring.rs`, define a single tool:
 
 ```rust
 use serde::{Deserialize, Serialize};
@@ -333,7 +333,7 @@ pub fn list_templates_schema() -> Value {
 
 This step depends on the chosen MCP library. With `rmcp` 0.2:
 
-In `crates/xianvec-engine/src/mcp/mod.rs`:
+In `crates/xvision-engine/src/mcp/mod.rs`:
 
 ```rust
 use rmcp::{ServerHandler, model::{Tool, CallToolResult, Content}};
@@ -379,24 +379,24 @@ pub async fn run_stdio() -> anyhow::Result<()> {
 
 - [ ] **Step 5: Wire CLI to the runtime**
 
-In `crates/xianvec-cli/src/commands/agent.rs`, replace the `serve_mcp` body:
+In `crates/xvision-cli/src/commands/agent.rs`, replace the `serve_mcp` body:
 
 ```rust
 async fn serve_mcp() -> anyhow::Result<()> {
-    xianvec_engine::mcp::run_stdio().await
+    xvision_engine::mcp::run_stdio().await
 }
 ```
 
-Add `xianvec-engine` to xianvec-cli deps (already there from Plan #1).
+Add `xvision-engine` to xvision-cli deps (already there from Plan #1).
 
 - [ ] **Step 6: Test passes**
 
-`cargo test -p xianvec-engine mcp_server_advertises 2>&1 | tail -5` → PASS.
+`cargo test -p xvision-engine mcp_server_advertises 2>&1 | tail -5` → PASS.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add crates/xianvec-engine/src/mcp crates/xianvec-cli/src/commands/agent.rs crates/xianvec-engine/tests/mcp_authoring.rs
+git add crates/xvision-engine/src/mcp crates/xvision-cli/src/commands/agent.rs crates/xvision-engine/tests/mcp_authoring.rs
 git commit -m "feat(engine): MCP server with list_templates verb"
 ```
 
@@ -446,8 +446,8 @@ Each task is ~10 minutes (the pattern is repetitive once Task 3 lands). All test
 ### Task 10: Extend `LlmRequest` / `LlmResponse` with tool-use shape
 
 **Files:**
-- Modify: `crates/xianvec-engine/src/agent/llm.rs`
-- Modify: `crates/xianvec-engine/tests/llm_dispatch.rs` (extend tests)
+- Modify: `crates/xvision-engine/src/agent/llm.rs`
+- Modify: `crates/xvision-engine/tests/llm_dispatch.rs` (extend tests)
 
 - [ ] **Step 1: Add types to `llm.rs`**
 
@@ -686,7 +686,7 @@ Same minimal patch in `tests/agent_slot.rs` and `tests/pipeline_inline.rs` — t
 - [ ] **Step 7: Commit**
 
 ```bash
-git add crates/xianvec-engine
+git add crates/xvision-engine
 git commit -m "feat(engine): extend LlmRequest/Response with tool-use content blocks"
 ```
 
@@ -695,23 +695,23 @@ git commit -m "feat(engine): extend LlmRequest/Response with tool-use content bl
 ### Task 11: Tool-call loop in `execute_slot`
 
 **Files:**
-- Modify: `crates/xianvec-engine/src/agent/execute.rs`
-- Create: `crates/xianvec-engine/src/agent/tool_call.rs`
-- Modify: `crates/xianvec-engine/src/agent/mod.rs`
-- Modify: `crates/xianvec-engine/tests/agent_slot.rs`
+- Modify: `crates/xvision-engine/src/agent/execute.rs`
+- Create: `crates/xvision-engine/src/agent/tool_call.rs`
+- Modify: `crates/xvision-engine/src/agent/mod.rs`
+- Modify: `crates/xvision-engine/tests/agent_slot.rs`
 
 - [ ] **Step 1: Write failing test for the loop**
 
 Append to `tests/agent_slot.rs`:
 
 ```rust
-use xianvec_engine::agent::llm::{ContentBlock, LlmResponse, MockDispatch, StopReason};
+use xvision_engine::agent::llm::{ContentBlock, LlmResponse, MockDispatch, StopReason};
 
 #[tokio::test]
 async fn execute_slot_loops_through_tool_use_to_final_text() {
-    use xianvec_engine::agent::execute::{execute_slot, SlotInput};
-    use xianvec_engine::bundle::slot::LLMSlot;
-    use xianvec_engine::tools::ToolRegistry;
+    use xvision_engine::agent::execute::{execute_slot, SlotInput};
+    use xvision_engine::bundle::slot::LLMSlot;
+    use xvision_engine::tools::ToolRegistry;
     use std::sync::Arc;
 
     let slot = LLMSlot {
@@ -751,11 +751,11 @@ async fn execute_slot_loops_through_tool_use_to_final_text() {
 
 - [ ] **Step 2: Verify failure**
 
-`cargo test -p xianvec-engine execute_slot_loops_through 2>&1 | tail -10` → FAIL — current execute_slot doesn't loop.
+`cargo test -p xvision-engine execute_slot_loops_through 2>&1 | tail -10` → FAIL — current execute_slot doesn't loop.
 
 - [ ] **Step 3: Implement the loop**
 
-Create `crates/xianvec-engine/src/agent/tool_call.rs`:
+Create `crates/xvision-engine/src/agent/tool_call.rs`:
 
 ```rust
 use std::sync::Arc;
@@ -811,7 +811,7 @@ pub(crate) fn tool_uses(content: &[ContentBlock]) -> Vec<(String, String, serde_
 }
 ```
 
-Update `crates/xianvec-engine/src/agent/mod.rs`:
+Update `crates/xvision-engine/src/agent/mod.rs`:
 
 ```rust
 pub mod execute;
@@ -820,7 +820,7 @@ pub mod pipeline;
 pub mod tool_call;
 ```
 
-REPLACE `crates/xianvec-engine/src/agent/execute.rs`:
+REPLACE `crates/xvision-engine/src/agent/execute.rs`:
 
 ```rust
 use std::sync::Arc;
@@ -908,8 +908,8 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
 
 - [ ] **Step 4: Tests pass**
 
-`cargo test -p xianvec-engine execute_slot 2>&1 | tail -10` → all execute_slot tests pass.
-`cargo test -p xianvec-engine pipeline 2>&1 | tail -5` → pipeline tests still pass (they use MockDispatch::echo which now returns end_turn immediately, so no tool loop runs).
+`cargo test -p xvision-engine execute_slot 2>&1 | tail -10` → all execute_slot tests pass.
+`cargo test -p xvision-engine pipeline 2>&1 | tail -5` → pipeline tests still pass (they use MockDispatch::echo which now returns end_turn immediately, so no tool loop runs).
 
 - [ ] **Step 5: Update execute_slot test that asserts undeclared-tool behavior**
 
@@ -918,7 +918,7 @@ The existing `execute_slot_succeeds_even_when_caller_passes_extra_inputs` test (
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/xianvec-engine/src/agent
+git add crates/xvision-engine/src/agent
 git commit -m "feat(engine): tool-use loop in execute_slot — LLM can call tools mid-decision"
 ```
 
@@ -927,11 +927,11 @@ git commit -m "feat(engine): tool-use loop in execute_slot — LLM can call tool
 ### Task 12: Real OHLCV + IndicatorPanel in `xvn strategy run`
 
 **Files:**
-- Modify: `crates/xianvec-cli/src/commands/strategy.rs`
+- Modify: `crates/xvision-cli/src/commands/strategy.rs`
 
 - [ ] **Step 1: Write failing test**
 
-Append to `crates/xianvec-cli/tests/strategy_cli.rs`:
+Append to `crates/xvision-cli/tests/strategy_cli.rs`:
 
 ```rust
 #[test]
@@ -958,19 +958,19 @@ fn run_inline_seeds_with_real_ohlcv_and_indicators() {
 
 - [ ] **Step 2: Verify fail**
 
-`cargo test -p xianvec-cli run_inline_seeds_with_real_ohlcv` → FAIL.
+`cargo test -p xvision-cli run_inline_seeds_with_real_ohlcv` → FAIL.
 
 - [ ] **Step 3: Update `run_inline` to fetch via tools**
 
-In `crates/xianvec-cli/src/commands/strategy.rs`, replace the `for n in 0..decisions` block:
+In `crates/xvision-cli/src/commands/strategy.rs`, replace the `for n in 0..decisions` block:
 
 ```rust
 for n in 0..decisions {
     let ohlcv_tool = tools
-        .get(&xianvec_engine::tools::ToolName::new("ohlcv".to_string()))
+        .get(&xvision_engine::tools::ToolName::new("ohlcv".to_string()))
         .ok_or_else(|| anyhow::anyhow!("ohlcv tool not registered"))?;
     let panel_tool = tools
-        .get(&xianvec_engine::tools::ToolName::new("indicator_panel".to_string()))
+        .get(&xvision_engine::tools::ToolName::new("indicator_panel".to_string()))
         .ok_or_else(|| anyhow::anyhow!("indicator_panel tool not registered"))?;
 
     let ohlcv = ohlcv_tool.invoke(serde_json::json!({
@@ -1013,13 +1013,13 @@ for n in 0..decisions {
 
 - [ ] **Step 4: Test passes**
 
-`cargo test -p xianvec-cli run_inline_seeds_with_real_ohlcv 2>&1 | tail -5` → PASS.
+`cargo test -p xvision-cli run_inline_seeds_with_real_ohlcv 2>&1 | tail -5` → PASS.
 `cargo test --workspace 2>&1 | grep -E "test result.*FAIL"` → no output.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-cli/src/commands/strategy.rs crates/xianvec-cli/tests/strategy_cli.rs
+git add crates/xvision-cli/src/commands/strategy.rs crates/xvision-cli/tests/strategy_cli.rs
 git commit -m "feat(cli): xvn strategy run seeds pipeline with real OHLCV + indicators"
 ```
 
@@ -1141,13 +1141,13 @@ Use Plan #1 Task 9 as the implementation reference.
 ### Task 20: Register all 7 templates + ma_crossover_baseline; integration test
 
 **Files:**
-- Modify: `crates/xianvec-engine/src/templates/mod.rs` (add 7 mod declarations)
-- Modify: `crates/xianvec-engine/src/templates/registry.rs` (add 8 entries — 7 new + ma_crossover_baseline now registered)
-- Create: `crates/xianvec-engine/tests/seven_templates.rs`
+- Modify: `crates/xvision-engine/src/templates/mod.rs` (add 7 mod declarations)
+- Modify: `crates/xvision-engine/src/templates/registry.rs` (add 8 entries — 7 new + ma_crossover_baseline now registered)
+- Create: `crates/xvision-engine/tests/seven_templates.rs`
 
 - [ ] **Step 1: Module declarations**
 
-In `crates/xianvec-engine/src/templates/mod.rs`:
+In `crates/xvision-engine/src/templates/mod.rs`:
 
 ```rust
 pub mod breakout;
@@ -1185,11 +1185,11 @@ fn registry() -> &'static [Box<dyn Template>] {
 
 - [ ] **Step 3: Integration test**
 
-Create `crates/xianvec-engine/tests/seven_templates.rs`:
+Create `crates/xvision-engine/tests/seven_templates.rs`:
 
 ```rust
-use xianvec_engine::bundle::validate::validate_bundle;
-use xianvec_engine::templates::{registry, Template};
+use xvision_engine::bundle::validate::validate_bundle;
+use xvision_engine::templates::{registry, Template};
 
 const EXPECTED_TEMPLATES: &[&str] = &[
     "trend_follower", "breakout", "mean_reversion", "momentum",
@@ -1230,13 +1230,13 @@ fn templates_have_unique_names() {
 
 - [ ] **Step 4: Tests pass**
 
-`cargo test -p xianvec-engine seven_templates 2>&1 | tail -10` → PASS for all 3 tests.
+`cargo test -p xvision-engine seven_templates 2>&1 | tail -10` → PASS for all 3 tests.
 `cargo test --workspace` → no failures.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-engine/src/templates crates/xianvec-engine/tests/seven_templates.rs
+git add crates/xvision-engine/src/templates crates/xvision-engine/tests/seven_templates.rs
 git commit -m "feat(engine): register 7 v1 templates + ma_crossover baseline in marketplace"
 ```
 
@@ -1247,10 +1247,10 @@ git commit -m "feat(engine): register 7 v1 templates + ma_crossover baseline in 
 ### Task 21: Update README + smoke recipe
 
 **Files:**
-- Modify: `crates/xianvec-engine/README.md`
+- Modify: `crates/xvision-engine/README.md`
 - Modify: `MANUAL.md`
 
-- [ ] **Step 1: Update `crates/xianvec-engine/README.md`**
+- [ ] **Step 1: Update `crates/xvision-engine/README.md`**
 
 Replace the "What ships in MVP" section with:
 
@@ -1315,19 +1315,19 @@ export XVN_HOME=/tmp/xvn-2a-smoke
 rm -rf $XVN_HOME
 
 # Templates round-trip
-cargo run -q -p xianvec-cli -- strategy templates
+cargo run -q -p xvision-cli -- strategy templates
 
 # CLI authoring with the new templates
-cargo run -q -p xianvec-cli -- strategy new --template trend_follower --name tf-smoke
-cargo run -q -p xianvec-cli -- strategy new --template breakout --name br-smoke
-cargo run -q -p xianvec-cli -- strategy ls
+cargo run -q -p xvision-cli -- strategy new --template trend_follower --name tf-smoke
+cargo run -q -p xvision-cli -- strategy new --template breakout --name br-smoke
+cargo run -q -p xvision-cli -- strategy ls
 
 # Run with real OHLCV via tools
-ID=$(cargo run -q -p xianvec-cli -- strategy ls | head -1)
-cargo run -q -p xianvec-cli -- strategy run "$ID" --fixture test-fixture-btc-2024-01 --decisions 2 --mock
+ID=$(cargo run -q -p xvision-cli -- strategy ls | head -1)
+cargo run -q -p xvision-cli -- strategy run "$ID" --fixture test-fixture-btc-2024-01 --decisions 2 --mock
 
 # MCP server smoke (send tools/list, expect 7 authoring verbs)
-echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}' | cargo run -q -p xianvec-cli -- agent serve --mcp &
+echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}' | cargo run -q -p xvision-cli -- agent serve --mcp &
 sleep 1
 # Manual: send tools/list and inspect output, or use mcp-inspector
 ```
@@ -1335,7 +1335,7 @@ sleep 1
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/xianvec-engine/README.md MANUAL.md
+git add crates/xvision-engine/README.md MANUAL.md
 git commit -m "docs(engine): Plan 2a README + manual update"
 ```
 
@@ -1356,11 +1356,11 @@ git commit -m "docs(engine): Plan 2a README + manual update"
 
 - [ ] **Step 3: Fmt scoped to plan-touched crates**
 
-`cargo fmt -p xianvec-engine -p xianvec-cli -- --check 2>&1 | head -20` → no diff. If diff: run `cargo fmt -p xianvec-engine -p xianvec-cli` and commit as `chore(engine): cargo fmt cleanup for Plan 2a files`.
+`cargo fmt -p xvision-engine -p xvision-cli -- --check 2>&1 | head -20` → no diff. If diff: run `cargo fmt -p xvision-engine -p xvision-cli` and commit as `chore(engine): cargo fmt cleanup for Plan 2a files`.
 
 - [ ] **Step 4: Verify scope discipline**
 
-`git diff main..HEAD -- crates/xianvec-eval/ | wc -l` → 0 (xianvec-eval untouched, per Plan #1's deferral).
+`git diff main..HEAD -- crates/xvision-eval/ | wc -l` → 0 (xvision-eval untouched, per Plan #1's deferral).
 `git log --oneline main..HEAD | wc -l` → roughly 22 plan commits (+ any docs commits).
 
 - [ ] **Step 5: Final commit (if cleanup landed)**

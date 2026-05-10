@@ -1,4 +1,4 @@
-# Ideonomy Explorations of the xianvec Idea Space
+# Ideonomy Explorations of the xvision Idea Space
 
 > **Date:** 2026-05-10 (autonomous overnight run)
 > **Method:** 12 invocations of `ideonomy-plain`, one per question, each with a fresh random tuple drawn from the operators × organons × dimensions catalog.
@@ -9,11 +9,11 @@
 
 ## Index
 
-1. [Who actually deposits money to xianvec?](#run-1--who-actually-deposits-money-to-xianvec)
+1. [Who actually deposits money to xvision?](#run-1--who-actually-deposits-money-to-xvision)
 2. [What is an "agent" really, in this system?](#run-2--what-is-an-agent-really-in-this-system)
 3. [Where does platform revenue come from?](#run-3--where-does-platform-revenue-come-from)
 4. [What are the failure modes of the autoresearcher's mutation loop?](#run-4--what-are-the-failure-modes-of-the-autoresearchers-mutation-loop)
-5. [Why would strategy creators bring work to xianvec vs. Numerai/Composer/eToro?](#run-5--why-would-strategy-creators-bring-work-to-xianvec-vs-numericomposeretoro)
+5. [Why would strategy creators bring work to xvision vs. Numerai/Composer/eToro?](#run-5--why-would-strategy-creators-bring-work-to-xvision-vs-numericomposeretoro)
 6. [Is on-chain reputation (ERC-8004) actually valuable, or a checkbox?](#run-6--is-on-chain-reputation-erc-8004-actually-valuable-or-a-checkbox)
 7. [What's the worst-case "first big loss" story?](#run-7--whats-the-worst-case-first-big-loss-story)
 8. [What's the operator's daily job?](#run-8--whats-the-operators-daily-job)
@@ -26,7 +26,7 @@ A [final synthesis](#cross-run-synthesis) sits at the bottom.
 
 ---
 
-## Run 1 — Who actually deposits money to xianvec?
+## Run 1 — Who actually deposits money to xvision?
 
 ### Atlas of the depositor
 
@@ -79,7 +79,7 @@ The story matters because it determines which features the depositor will defend
 
 The literal actions a depositor takes between "interested" and "deposited," in order:
 
-1. Hears about xianvec (Twitter / podcast / hackathon demo / Karpathy retweet).
+1. Hears about xvision (Twitter / podcast / hackathon demo / Karpathy retweet).
 2. Visits the landing page.
 3. Decides whether to install a CLI or open a hosted dashboard.
 4. Connects a wallet (or doesn't have one — full stop).
@@ -94,7 +94,7 @@ The literal actions a depositor takes between "interested" and "deposited," in o
 
 #### Page 5 — Information-flow perspective
 
-Who tells whom about xianvec, and what they say:
+Who tells whom about xvision, and what they say:
 
 - **Karpathy-watcher → Karpathy-watcher:** "look at this insane thing"  → growth via curiosity, slow but loyal
 - **Crypto-native → crypto-native:** "let me show you my P&L"  → growth via screenshot, fast and lossy
@@ -114,7 +114,7 @@ What time-horizon the depositor cares about:
 - HNW: months-to-years. Wants steady drip of small wins, no blowups.
 - DAO manager: quarters-to-years. Wants quarterly board-presentable returns.
 
-**xianvec's current architecture (Alpaca paper today, Orderly live trading) optimizes for the days-to-weeks crowd.** The HNW / DAO crowds are the *largest* tickets but the *worst* match for a hackathon-deadline product. Sequence accordingly: build for crypto-natives + tinkerers in v0; HNW/DAO is a v2 sales motion.
+**xvision's current architecture (Alpaca paper today, Orderly live trading) optimizes for the days-to-weeks crowd.** The HNW / DAO crowds are the *largest* tickets but the *worst* match for a hackathon-deadline product. Sequence accordingly: build for crypto-natives + tinkerers in v0; HNW/DAO is a v2 sales motion.
 
 #### Back-page — Negation: who does NOT deposit, and why
 
@@ -132,7 +132,7 @@ Wallet noob                     doesn't have USDC, doesn't have wallet, gives up
 Anyone in a sanctioned jx       can't legally onboard at Orderly
 ```
 
-The non-depositors are a *much larger market* than the depositors. The wallet-noob row in particular is several orders of magnitude larger than every other row combined. **The biggest growth lever for xianvec isn't a feature — it's reducing the wallet-noob conversion friction.** This points at: embedded-wallet onboarding (Privy/Dynamic) as a higher-leverage future investment than any Phase 5+ feature in the wallet plan.
+The non-depositors are a *much larger market* than the depositors. The wallet-noob row in particular is several orders of magnitude larger than every other row combined. **The biggest growth lever for xvision isn't a feature — it's reducing the wallet-noob conversion friction.** This points at: embedded-wallet onboarding (Privy/Dynamic) as a higher-leverage future investment than any Phase 5+ feature in the wallet plan.
 
 #### What the cross-perspective comparisons reveal
 
@@ -157,9 +157,9 @@ not surfaced:     "the depositor as a population, not a single person" — atlas
 
 ### Dictionary of "agent" and its in-system / cross-domain neighbors
 
-#### Core in-system terms (xianvec usage)
+#### Core in-system terms (xvision usage)
 
-- **agent** *(xianvec sense)* — A unit that produces a `TraderDecision` from a briefing. Currently used interchangeably with "strategy variant" in the codebase (`AgentManifest` vs `agent_id`), which is a precision shortfall worth fixing.
+- **agent** *(xvision sense)* — A unit that produces a `TraderDecision` from a briefing. Currently used interchangeably with "strategy variant" in the codebase (`AgentManifest` vs `agent_id`), which is a precision shortfall worth fixing.
 - **strategy** — A configured pipeline of slots (regime detector → intern briefing → trader judgment → risk gate). One strategy can be instantiated as many *variants* with different parameters.
 - **strategy variant** — A specific instantiation of a strategy with concrete parameters (model id, temperature, prompt, asset universe, etc.). The thing that gets a `agent_id` and (post-SLF3) an ERC-8004 NFT.
 - **slot** — A position in the pipeline (intern, trader, risk, executor). Slots are filled by *slot-machines* (the LLM-dispatch trait or deterministic implementations).
@@ -168,25 +168,25 @@ not surfaced:     "the depositor as a population, not a single person" — atlas
 - **risk** — A slot that vetoes / modifies the trader's decision via deterministic rules (caps, allowlists, daily-loss kill).
 - **briefing** — The intern's output: a structured neutral packet of evidence with bull / bear / flat cases tagged.
 - **decision** — The trader's output: a `TraderDecision` carrying action / side / size / stops / summary.
-- **manifest** — `AgentManifest` (xianvec-identity): the metadata that pins an agent's NFT identity. Fields: name, description, model id, strategy config hash, code commit, contact, created_at.
+- **manifest** — `AgentManifest` (xvision-identity): the metadata that pins an agent's NFT identity. Fields: name, description, model id, strategy config hash, code commit, contact, created_at.
 - **persona** — Currently absent in code. Sometimes used colloquially for "the trader's voice / style." If the project formalizes this, it would sit on the trader slot, not the agent.
 - **loom** — The selection-pressure mechanism that runs many variants in parallel and ranks them. Variants ARE the loom's output.
 
 #### Cross-domain re-instantiations of "agent"
 
-- **agent** *(legal/common-law sense)* — A party authorized to act on behalf of a *principal* under a fiduciary duty. Two important properties: (a) the agent's actions bind the principal, (b) the agent owes loyalty / care / disclosure. **xianvec's "agent" matches this almost perfectly except no fiduciary duty is articulated.** That's a gap.
-- **agent** *(insurance/sales sense)* — An intermediary who sells products on commission. Duty is split between the principal and the customer; agency law calls this "dual agency" and it's regulated. **xianvec's marketplace splits 95/5 like this; the platform is in dual-agency-like position.**
-- **agent** *(AI/ML sense)* — A system that perceives state, takes actions, has goals, and adapts. Sutton-Barto definition. **xianvec's strategies aren't agents in this sense — they don't adapt; the adaptation lives one level above on the loom.**
+- **agent** *(legal/common-law sense)* — A party authorized to act on behalf of a *principal* under a fiduciary duty. Two important properties: (a) the agent's actions bind the principal, (b) the agent owes loyalty / care / disclosure. **xvision's "agent" matches this almost perfectly except no fiduciary duty is articulated.** That's a gap.
+- **agent** *(insurance/sales sense)* — An intermediary who sells products on commission. Duty is split between the principal and the customer; agency law calls this "dual agency" and it's regulated. **xvision's marketplace splits 95/5 like this; the platform is in dual-agency-like position.**
+- **agent** *(AI/ML sense)* — A system that perceives state, takes actions, has goals, and adapts. Sutton-Barto definition. **xvision's strategies aren't agents in this sense — they don't adapt; the adaptation lives one level above on the loom.**
 - **agent** *(espionage sense)* — A person collecting intelligence under cover, reporting to a handler. **Map: trader = agent, intern = source, operator = handler, marketplace = case officer's network.** The "agent gets burned" failure mode is exactly the trust-collapse story for a strategy that loses public money.
-- **agent** *(biology — organism)* — A self-maintaining bounded entity. **xianvec strategies are not organisms — they don't self-maintain, they're maintained by the runtime.**
+- **agent** *(biology — organism)* — A self-maintaining bounded entity. **xvision strategies are not organisms — they don't self-maintain, they're maintained by the runtime.**
 - **agent** *(biology — pathogen / "infectious agent")* — A causal entity that produces an effect on a host. Neutral about valence. **A bad strategy is a pathogenic agent: the host is the user's account.** The aggregate-margin contagion risk in spec §3.4 is literally a contagion story.
-- **agent** *(chemistry — "active agent")* — The compound that produces the effect, distinguished from inert excipients. **xianvec's trader slot is the active agent; everything else (intern, risk, executor) is excipient that delivers the trader to the market.**
+- **agent** *(chemistry — "active agent")* — The compound that produces the effect, distinguished from inert excipients. **xvision's trader slot is the active agent; everything else (intern, risk, executor) is excipient that delivers the trader to the market.**
 - **agent** *(theology — emissary)* — One who carries a message from a sender to a receiver and is identified-with the sender. ERC-8004 NFT identity has this flavor: the strategy is the visible carrier of the creator's judgment.
-- **bot** *(software sense)* — Automated process running on a schedule. Most of what xianvec calls "agent" is, in software terms, a bot. The "agent" framing imports the AI/ML connotations (autonomy, goals) that the system doesn't actually have yet.
+- **bot** *(software sense)* — Automated process running on a schedule. Most of what xvision calls "agent" is, in software terms, a bot. The "agent" framing imports the AI/ML connotations (autonomy, goals) that the system doesn't actually have yet.
 
 #### Near-relatives (clarifying overlaps)
 
-- **persona vs agent vs strategy** — three words used in xianvec planning docs for similar things. Working distinction:
+- **persona vs agent vs strategy** — three words used in xvision planning docs for similar things. Working distinction:
   - persona = the *voice* / prompt style (cosmetic)
   - agent = the *registered identity* (NFT-bound)
   - strategy = the *pipeline configuration* (functional)
@@ -200,9 +200,9 @@ not surfaced:     "the depositor as a population, not a single person" — atlas
 
 #### Dimensions surfaced by writing the dictionary
 
-- **Symmetry** — agency is asymmetric in xianvec (system acts for user; user does not act for system). A symmetric variant: a user could *judge briefings* and the system would learn; a user could *grade trades* and the system would update the trader's prompt. Currently nothing closes that loop. **The Karpathy autoresearcher (autoresearcher-1 plan) is the asymmetry-breaker** — it's the loop that makes the system jointly self-modifying.
-- **Source** — agents in xianvec arrive from three sources today: (1) hand-authored templates, (2) marketplace purchase, (3) autoresearcher mutation. A fourth source would be **environmental selection in the wild** — agents that survive paying users keep running, others get auto-decommissioned. Currently this is not modeled.
-- **Autonomy** — strategies in xianvec are *mostly-autonomous*: the trader produces a decision freely; the risk engine can only veto. A *fully-autonomous* variant: no risk engine, the trader controls its own caps. A *mostly-controlled* variant: every trade requires operator confirm. The hybrid quota model in the wallet spec puts xianvec exactly in the "mostly-autonomous" sweet spot, with operator-tunable autonomy via budgets.
+- **Symmetry** — agency is asymmetric in xvision (system acts for user; user does not act for system). A symmetric variant: a user could *judge briefings* and the system would learn; a user could *grade trades* and the system would update the trader's prompt. Currently nothing closes that loop. **The Karpathy autoresearcher (autoresearcher-1 plan) is the asymmetry-breaker** — it's the loop that makes the system jointly self-modifying.
+- **Source** — agents in xvision arrive from three sources today: (1) hand-authored templates, (2) marketplace purchase, (3) autoresearcher mutation. A fourth source would be **environmental selection in the wild** — agents that survive paying users keep running, others get auto-decommissioned. Currently this is not modeled.
+- **Autonomy** — strategies in xvision are *mostly-autonomous*: the trader produces a decision freely; the risk engine can only veto. A *fully-autonomous* variant: no risk engine, the trader controls its own caps. A *mostly-controlled* variant: every trade requires operator confirm. The hybrid quota model in the wallet spec puts xvision exactly in the "mostly-autonomous" sweet spot, with operator-tunable autonomy via budgets.
 
 #### The terminology slippage and what it costs
 
@@ -228,7 +228,7 @@ not surfaced:     "agent" in *political-economy* (workers as agents of capital);
                   "agent" in *game theory* (rational utility-maximizer);
                   these would surface different gaps. The fiduciary-duty point from
                   the legal-sense entry is the highest-leverage finding — currently
-                  no spec articulates xianvec's duty of care to depositors.
+                  no spec articulates xvision's duty of care to depositors.
 ```
 
 ---
@@ -238,7 +238,7 @@ not surfaced:     "agent" in *political-economy* (workers as agents of capital);
 ### Scale of value capture (axis: % of user value the platform extracts)
 
 ```
-% extracted   Position name                Canonical exemplar                xianvec fit
+% extracted   Position name                Canonical exemplar                xvision fit
 -----------   --------------------------   ------------------------------    ---------------------------------
 0%            pure freeware / OSS          Bitcoin Core, Linux               not viable as a business
 ~0.1%         ad-supported                 free-to-play games                wrong audience (financial)
@@ -247,29 +247,29 @@ not surfaced:     "agent" in *political-economy* (workers as agents of capital);
 ~5%           marketplace cut              Apple App Store, Etsy             current spec — license sales
 ~10%          subscription per seat        Substack creator → reader         fit for hosted runtime
 ~15%          performance fee w/ HWM       hedge fund "2 and 20" (perf)      future option in spec §10
-~20%          performance + management     classic 2/20                      not a fit (xianvec ≠ fund)
+~20%          performance + management     classic 2/20                      not a fit (xvision ≠ fund)
 ~30%          marketplace + perf combo     Bookmaker / sportsbook            aggressive but legible
 ~50%          house edge                   casinos, lotteries                anti-pattern for trust
 100%          full extraction              ponzi, bucket shop                criminal
 ```
 
-**Current xianvec position is the ~5% marketplace-cut anchor.** That's the only place the spec captures revenue today. Several adjacent positions are richer; several are wrong.
+**Current xvision position is the ~5% marketplace-cut anchor.** That's the only place the spec captures revenue today. Several adjacent positions are richer; several are wrong.
 
 #### What sits adjacent to the 5% position (most-actionable expansions)
 
-- **3% transaction commission + free runtime** — undercut competitors on price; no subscription friction; works only if marketplace volume is high enough to fund infra. **Risk:** xianvec runs LLMs server-side, which costs money per fire — a 3% cut that doesn't include compute will lose money on every trade.
+- **3% transaction commission + free runtime** — undercut competitors on price; no subscription friction; works only if marketplace volume is high enough to fund infra. **Risk:** xvision runs LLMs server-side, which costs money per fire — a 3% cut that doesn't include compute will lose money on every trade.
 - **5% marketplace cut + 10% subscription for hosted runtime** — the hybrid most modern SaaS does. Subscription pays for the LLM compute; marketplace cut pays for the platform. **This is probably the right v2 position;** the wallet spec's hint at "performance fee on withdrawal" is in this neighborhood.
 - **5% cut + 15% performance fee on PnL above HWM** — high-alignment incentive. Creators only earn when users earn. Fits the marketplace ethos. **Risk:** complex to implement (HWM bookkeeping requires a withdrawal helper contract per spec §10), and performance fees are tax-disadvantaged for users in many jurisdictions.
 
 #### What lies *below* current position (the unattractive future to avoid)
 
-- **0% (pure OSS, no revenue):** xianvec becomes a hobby project. Karpathy's autoresearcher concept needs ongoing LLM compute funded by *someone*; without revenue, that someone is the operator, indefinitely.
+- **0% (pure OSS, no revenue):** xvision becomes a hobby project. Karpathy's autoresearcher concept needs ongoing LLM compute funded by *someone*; without revenue, that someone is the operator, indefinitely.
 - **1% data-resale:** the data product (decisions / briefings / regime classifications) is genuinely valuable to other quants — but selling it without consent from the strategy creators is a fast trust-collapse.
 
 #### What lies *above* current position (the slippery slope)
 
 - **30% bookmaker-style:** charging both creators and users a cut. Each side accepts a normal fee; charging both feels predatory. Fast brand damage even if math works.
-- **50% casino:** xianvec runs the strategies *itself*, takes the PnL, gives users a flat yield. This is not xianvec — it's a hedge fund. Different regulatory regime, different product, different team.
+- **50% casino:** xvision runs the strategies *itself*, takes the PnL, gives users a flat yield. This is not xvision — it's a hedge fund. Different regulatory regime, different product, different team.
 
 ### Tree of value-capture mechanisms (walked from "platform monetization")
 
@@ -303,11 +303,11 @@ Platform monetization (root)
 +-- Indirect (revenue from non-customers)
     +-- Grants / hackathon prizes
     +-- VC investment
-    +-- Token launch (the option xianvec hasn't taken yet)
+    +-- Token launch (the option xvision hasn't taken yet)
     +-- Reputation-driven consulting (operator's time)
 ```
 
-**The tree exposes that xianvec is currently using exactly ONE leaf** (transaction-cut commission), with two acknowledged but deferred (performance fee, x402 micropayments). **Five entire branches are unused** — toll-based, rent-based, information-based, float-based (deliberately), indirect. Most platforms eventually run on a *combination* across branches; running on one leaf is fragile.
+**The tree exposes that xvision is currently using exactly ONE leaf** (transaction-cut commission), with two acknowledged but deferred (performance fee, x402 micropayments). **Five entire branches are unused** — toll-based, rent-based, information-based, float-based (deliberately), indirect. Most platforms eventually run on a *combination* across branches; running on one leaf is fragile.
 
 ### Dimensions surfaced
 
@@ -316,13 +316,13 @@ Platform monetization (root)
   - Subscription: smooth, monthly; fits "drip" cash flow.
   - Performance fee: lumpy, withdrawal-triggered; fits "harvest" cash flow.
   - x402: smooth, per-trade; fits "stream" cash flow.
-  - **A healthy platform usually has at least one drip and one harvest.** xianvec has only spike. That's risky.
+  - **A healthy platform usually has at least one drip and one harvest.** xvision has only spike. That's risky.
 
 - **Purpose** — what's the revenue *for*?
   - Survival: keep the lights on, pay LLM bills, fund the operator's time.
   - Mission: fund the autoresearcher, ERC-8004 deployment, future plans.
   - Extraction: returns to the operator / future investors.
-  - **Spec is silent on this.** Worth declaring: is xianvec a non-profit-spirited public good with revenue floor for survival, or a startup with revenue ceiling unbounded? Different revenue-mix optimal for each.
+  - **Spec is silent on this.** Worth declaring: is xvision a non-profit-spirited public good with revenue floor for survival, or a startup with revenue ceiling unbounded? Different revenue-mix optimal for each.
 
 - **Distribution** — concentrated vs distributed payers?
   - Concentrated (a few DAOs / HNWs fund most revenue): high renewal risk per-account; fewer relationships to manage; classic enterprise pattern.
@@ -332,8 +332,8 @@ Platform monetization (root)
 ### What the scale + tree together reveal
 
 - **The biggest unfunded thing is LLM compute.** The current spec's 5% marketplace cut on license sales doesn't fund per-trade LLM inference. Either: (a) creators pay for the compute their strategy uses, (b) users pay subscription, (c) operator absorbs the cost. **Today the operator absorbs.** That's a hidden subsidy that won't survive scale.
-- **The biggest *easy* revenue line not used: subscription for hosted runtime.** Most depositors will not run their own xianvec node. Charging $20-100/month for hosted runtime is the simplest revenue line that aligns the platform's costs with its receipts.
-- **The biggest *high-leverage* revenue line not used: data resale.** xianvec accumulates decision streams across strategies; aggregated and anonymized, this is genuinely useful market microstructure data to other quants. Could be sold without harming the marketplace.
+- **The biggest *easy* revenue line not used: subscription for hosted runtime.** Most depositors will not run their own xvision node. Charging $20-100/month for hosted runtime is the simplest revenue line that aligns the platform's costs with its receipts.
+- **The biggest *high-leverage* revenue line not used: data resale.** xvision accumulates decision streams across strategies; aggregated and anonymized, this is genuinely useful market microstructure data to other quants. Could be sold without harming the marketplace.
 
 #### Tuple footer
 
@@ -353,11 +353,11 @@ not surfaced:     "non-monetary revenue" — reputation, attention, recruiting l
 
 ### Lifted shape
 
-xianvec's autoresearcher is concretely: an LLM-driven mutator that perturbs strategy parameters, runs candidates through an eval engine, and promotes survivors based on a fitness score (Δ-Sharpe). Strip the surface:
+xvision's autoresearcher is concretely: an LLM-driven mutator that perturbs strategy parameters, runs candidates through an eval engine, and promotes survivors based on a fitness score (Δ-Sharpe). Strip the surface:
 
 > *A guided search over a high-dimensional configuration space, with a noisy and possibly misleading fitness signal, where each evaluation is expensive and each generation depends on the last.*
 
-That shape exists in: drug discovery (compound search), neural architecture search, evolutionary biology, hyperparameter optimization, A/B-test culture in product teams, cultural evolution of memes, and quant fund strategy R&D. **All of those have decades of literature on failure modes.** xianvec inherits every one.
+That shape exists in: drug discovery (compound search), neural architecture search, evolutionary biology, hyperparameter optimization, A/B-test culture in product teams, cultural evolution of memes, and quant fund strategy R&D. **All of those have decades of literature on failure modes.** xvision inherits every one.
 
 ### Chart: failure mode × earliest detectable signal
 
@@ -418,15 +418,15 @@ Each domain has already worked out countermeasures for the shape. Borrow them:
 
 #### Drug discovery (compound mutation + assay)
 - **Counter to reward hacking:** orthogonal assays — measure the *same* strategy on a *different* eval (Sharpe AND Sortino AND CAGR; in-sample AND walk-forward; multiple market regimes). If a winner only wins on one metric, suspect hacking.
-- **Counter to overfitting:** held-out validation set never seen during mutation. xianvec analog: an eval-window the autoresearcher *cannot* run against, used only at promotion time.
+- **Counter to overfitting:** held-out validation set never seen during mutation. xvision analog: an eval-window the autoresearcher *cannot* run against, used only at promotion time.
 
 #### Evolutionary biology (genetic algorithms)
 - **Counter to mode collapse:** speciation pressure — penalize candidates that are too similar to existing surviving strategies (cosine-distance on prompt embeddings).
-- **Counter to catastrophic forgetting:** elitism — always keep the top-K ancestors permanently, never let mutation overwrite them. xianvec analog: a "champions league" of strategies that never get overwritten, only joined.
+- **Counter to catastrophic forgetting:** elitism — always keep the top-K ancestors permanently, never let mutation overwrite them. xvision analog: a "champions league" of strategies that never get overwritten, only joined.
 
 #### Neural architecture search
 - **Counter to compute exhaustion:** budget per generation, hard-stop wall-clock, early-stopping on plateaus.
-- **Counter to selection-pressure mismatch:** multi-objective NSGA-style Pareto fronts instead of single fitness scalar. xianvec analog: surface the Pareto front of (Sharpe, max-drawdown, turnover) instead of ranking on one number.
+- **Counter to selection-pressure mismatch:** multi-objective NSGA-style Pareto fronts instead of single fitness scalar. xvision analog: surface the Pareto front of (Sharpe, max-drawdown, turnover) instead of ranking on one number.
 
 #### Quant fund strategy R&D
 - **Counter to survivorship bias:** preserve the dead. Every killed strategy stays on disk with its full eval history; periodic post-mortem reviews surface patterns in *what dies*, not just what survives.
@@ -439,12 +439,12 @@ Each domain has already worked out countermeasures for the shape. Borrow them:
 
 - **Hierarchicalness** — currently flat (one population). Substitute *hierarchical*: tiered league with promotion / relegation. Junior strategies prove themselves in a low-stakes pool before being promoted to a high-stakes pool. Many failures (mode collapse, overfitting, survivorship bias) are reduced because the promotion gate is harder than the survival gate.
 - **Intentionality** — currently fully automated mutation. Substitute *deliberately designed*: every mutation comes from a human-written hypothesis ("I think this strategy will work better if it weights funding-rate more heavily"). Slower, but every winner is interpretable and the lineage graph becomes a *research notebook* rather than a *forest*.
-- **Side-effect** — the mutation loop's *intended* output is better strategies; its *side-effect* is a corpus of dead-or-alive strategy code, eval data, and lineage. **If the side-effect were treated as the main effect, xianvec would be: a published research dataset of LLM-driven trading experiments, where the *trading* is incidental.** That's potentially worth more than the trading itself — and may be the answer to "what does xianvec sell?" (Run 3).
+- **Side-effect** — the mutation loop's *intended* output is better strategies; its *side-effect* is a corpus of dead-or-alive strategy code, eval data, and lineage. **If the side-effect were treated as the main effect, xvision would be: a published research dataset of LLM-driven trading experiments, where the *trading* is incidental.** That's potentially worth more than the trading itself — and may be the answer to "what does xvision sell?" (Run 3).
 
 ### What the chart + lifts together reveal
 
 - **The lineage graph is load-bearing.** It catches 7/11 failure modes alone. Build it first, robustly. The autoresearcher-1 plan should treat the lineage-graph as a first-class output artifact, not telemetry.
-- **The killed strategies are the underexploited asset.** Every domain that has lived through this loop says: keep the dead. xianvec currently has no plan for storing eliminated strategies long-term.
+- **The killed strategies are the underexploited asset.** Every domain that has lived through this loop says: keep the dead. xvision currently has no plan for storing eliminated strategies long-term.
 - **Multi-objective evaluation almost certainly belongs in v1 of autoresearcher.** Single-scalar fitness invites reward hacking and mismatch. The eval engine spec already mentions Δ-Sharpe; pair it with at least one drawdown metric and one turnover metric.
 - **Briefing-format randomization is a 1-day implementation that prevents an entire class of failures.** Add to autoresearcher plan.
 
@@ -463,14 +463,14 @@ not surfaced:     "what does the autoresearcher OPTIMIZE FOR?" — assumed Δ-Sh
 
 ---
 
-## Run 5 — Why would strategy creators bring work to xianvec vs. Numerai/Composer/eToro?
+## Run 5 — Why would strategy creators bring work to xvision vs. Numerai/Composer/eToro?
 
 ### What creators of trading strategies actually want (master list)
 
-The list, with each item rated for how well xianvec delivers vs. the obvious comparators. Scale: ✓ delivers / ~ partial / ✗ doesn't deliver / ? unclear.
+The list, with each item rated for how well xvision delivers vs. the obvious comparators. Scale: ✓ delivers / ~ partial / ✗ doesn't deliver / ? unclear.
 
 ```
-Creator wants                              Numerai  Composer  eToro  TradingView  HyperLiq  xianvec
+Creator wants                              Numerai  Composer  eToro  TradingView  HyperLiq  xvision
 ----------------------------------------   -------  --------  -----  -----------  --------  -------
 1. Money — share of trading PnL            ✓ (NMR)  ~ (sub)   ✓      ✗            ~          ~ (license)
 2. Money — predictable subscription        ✗        ✓         ~      ✗            ✗          ~ (planned)
@@ -504,7 +504,7 @@ Creator wants                              Numerai  Composer  eToro  TradingView
                                                                                                 eval)
 ```
 
-**Reading the matrix:** xianvec's distinctive ✓-only column is **#4 (portable reputation), #12 (composability), #13 (mutation loop)**. Two competitors win on #3 (audience) and #16 (regulatory) — both of which xianvec has no near-term path to win.
+**Reading the matrix:** xvision's distinctive ✓-only column is **#4 (portable reputation), #12 (composability), #13 (mutation loop)**. Two competitors win on #3 (audience) and #16 (regulatory) — both of which xvision has no near-term path to win.
 
 ### Lifted shape (so the comparison generalizes beyond crypto)
 
@@ -525,32 +525,32 @@ Pattern recognized in:
 
 ### Combination — creator wants × platform's strongest pull
 
-Cross "what creators want" (the master list) with "what's actually a moat" for the platform. Each composite is a candidate positioning for xianvec.
+Cross "what creators want" (the master list) with "what's actually a moat" for the platform. Each composite is a candidate positioning for xvision.
 
-#### Reach × portability (xianvec is currently weak on reach, strong on portability)
-- **Composite:** "build your reputation here; carry it anywhere." If a creator builds an ERC-8004-attested track record on xianvec, that record is theirs forever — they can take it to a CEX, a fund, another DEX. **This is the only positioning where being early on xianvec is *better* than being later somewhere bigger.** Lean in.
+#### Reach × portability (xvision is currently weak on reach, strong on portability)
+- **Composite:** "build your reputation here; carry it anywhere." If a creator builds an ERC-8004-attested track record on xvision, that record is theirs forever — they can take it to a CEX, a fund, another DEX. **This is the only positioning where being early on xvision is *better* than being later somewhere bigger.** Lean in.
 
 #### Mutation loop × composability
-- **Composite:** "submit a strategy seed; the autoresearcher evolves it; you keep ownership." Most creators don't have an autoresearcher. Numerai trains models on user submissions — but the submitter doesn't get the trained model back. xianvec could let creators *retain ownership* of all evolved descendants of their seed. That's a unique value prop.
+- **Composite:** "submit a strategy seed; the autoresearcher evolves it; you keep ownership." Most creators don't have an autoresearcher. Numerai trains models on user submissions — but the submitter doesn't get the trained model back. xvision could let creators *retain ownership* of all evolved descendants of their seed. That's a unique value prop.
 
 #### Backtest infra × edge interpretability
-- **Composite:** "free backtest of your hypothesis, with full audit log of why every trade fired." Other platforms either give you the score (Numerai) or the trade (eToro). xianvec can give you the *reasoning chain* (intern briefing → trader decision → risk eval). For a quant evaluating their own edge, this is gold.
+- **Composite:** "free backtest of your hypothesis, with full audit log of why every trade fired." Other platforms either give you the score (Numerai) or the trade (eToro). xvision can give you the *reasoning chain* (intern briefing → trader decision → risk eval). For a quant evaluating their own edge, this is gold.
 
 #### IP protection × anti-extraction
 - **Composite:** "open-source the framework, soulbound-license the strategy." Creators worry that publishing a strategy makes it instantly copyable. The smart-contract-surface spec already handles this (ERC-1155 soulbound by default). **This needs to be loud in the marketing** — most creators don't realize soulbound exists.
 
-### What competitors do that xianvec should explicitly NOT try to match
+### What competitors do that xvision should explicitly NOT try to match
 
-- **Numerai's tokenomic incentive:** xianvec doesn't have a token (yet), and shouldn't. The reputation NFT plus marketplace USDC is enough; adding a token adds regulatory and volatility friction.
-- **eToro's massive consumer base:** xianvec is a developer / quant tool. Competing for retail consumer eyeballs is a losing fight against billion-dollar marketing budgets.
-- **Composer's no-code editor:** xianvec is intentionally Rust-heavy. The wizard archetype in Plan 2d is the closest analog; it should be promoted as "AI-assisted authoring" rather than "no-code."
-- **TradingView's free script-share:** xianvec's strategies have on-chain identity and licensing; making them free is incompatible with the marketplace.
+- **Numerai's tokenomic incentive:** xvision doesn't have a token (yet), and shouldn't. The reputation NFT plus marketplace USDC is enough; adding a token adds regulatory and volatility friction.
+- **eToro's massive consumer base:** xvision is a developer / quant tool. Competing for retail consumer eyeballs is a losing fight against billion-dollar marketing budgets.
+- **Composer's no-code editor:** xvision is intentionally Rust-heavy. The wizard archetype in Plan 2d is the closest analog; it should be promoted as "AI-assisted authoring" rather than "no-code."
+- **TradingView's free script-share:** xvision's strategies have on-chain identity and licensing; making them free is incompatible with the marketplace.
 
-### What competitors do that xianvec should LEARN from
+### What competitors do that xvision should LEARN from
 
-- **Spotify's playlist economy:** the most successful artists on Spotify are those who land on big playlists. xianvec analog: curated *strategy bundles* (e.g., "BTC Funding-Fader Pack") could be marketplace-level products, not just individual strategies. A strategy creator earns when their strategy is included in a popular bundle.
-- **Substack's creator-first UX:** the writer's tools matter. xianvec's strategy authoring (Plan 2a + 2d Wizard) needs to be obviously better than the alternatives, or reach beats craft every time.
-- **AngelList's regulatory wrapper:** xianvec should research whether the marketplace is operating as a securities exchange under any jurisdiction. The non-custodial design helps; explicit regulatory positioning would help more.
+- **Spotify's playlist economy:** the most successful artists on Spotify are those who land on big playlists. xvision analog: curated *strategy bundles* (e.g., "BTC Funding-Fader Pack") could be marketplace-level products, not just individual strategies. A strategy creator earns when their strategy is included in a popular bundle.
+- **Substack's creator-first UX:** the writer's tools matter. xvision's strategy authoring (Plan 2a + 2d Wizard) needs to be obviously better than the alternatives, or reach beats craft every time.
+- **AngelList's regulatory wrapper:** xvision should research whether the marketplace is operating as a securities exchange under any jurisdiction. The non-custodial design helps; explicit regulatory positioning would help more.
 - **Numerai's pseudonymity:** strategy creators should be able to publish under wallet pseudonyms, not real names. This is essentially free given the wallet-NFT model — the spec just needs to never demand real identity.
 
 ### Dimensions surfaced
@@ -560,21 +560,21 @@ Cross "what creators want" (the master list) with "what's actually a moat" for t
   - Subscription: as long as buyer subscribes (medium).
   - Performance fee: as long as the strategy makes money (long, but volatile).
   - Reputation NFT value: lasts forever (longest, but indirect).
-  - **xianvec earnings asymmetry:** the on-chain pieces (NFT, attestations) are the most-durable; the marketplace cash flows are the most-immediate. Both matter but for different creator profiles.
+  - **xvision earnings asymmetry:** the on-chain pieces (NFT, attestations) are the most-durable; the marketplace cash flows are the most-immediate. Both matter but for different creator profiles.
 
 - **Materiality** — what does the creator *actually have* after publishing?
   - Numerai: a leaderboard rank + NMR tokens (informational).
   - Composer: published page + recurring fees (informational + cash).
   - eToro: follower count + recurring fees (informational + cash).
-  - **xianvec: an NFT, an audit trail, a license token economy, and a public lineage graph** (informational, on-chain, plus cash). The most "thing-like" of any competitor.
+  - **xvision: an NFT, an audit trail, a license token economy, and a public lineage graph** (informational, on-chain, plus cash). The most "thing-like" of any competitor.
 
 - **Decomposability** — can a strategy be broken into reusable pieces?
-  - All competitors except xianvec ship monolithic strategies.
-  - **xianvec's slot architecture (intern / trader / risk) is uniquely decomposable** — a creator could ship just an intern slot, or just a trader slot, and earn royalties from every strategy that composes it. **This is a marketplace innovation no competitor has — and it's currently underexploited in the spec.**
+  - All competitors except xvision ship monolithic strategies.
+  - **xvision's slot architecture (intern / trader / risk) is uniquely decomposable** — a creator could ship just an intern slot, or just a trader slot, and earn royalties from every strategy that composes it. **This is a marketplace innovation no competitor has — and it's currently underexploited in the spec.**
 
 ### What the matrix + lifts together reveal — the positioning
 
-xianvec's *defensible* creator pitch is **NOT** "we have the most users" (we don't), or "we pay the most" (we can't promise), or "we're the easiest" (we're Rust). It's:
+xvision's *defensible* creator pitch is **NOT** "we have the most users" (we don't), or "we pay the most" (we can't promise), or "we're the easiest" (we're Rust). It's:
 
 > **"Bring your edge here. We'll evolve it, attest it, package it, and you keep the lineage NFT forever."**
 
@@ -626,9 +626,9 @@ Continuous axis from "pure vanity" to "fully slashable stake." The spectrum runs
          (current position is the leftmost edge of this band)
 ```
 
-**ERC-8004 today sits at ~3%.** It's a signal — visible, queryable, immutable — but no economic decision in xianvec currently *gates on it*. A user with 10 USDC can deposit to a strategy with reputation 0.0; a marketplace listing with reputation 5.0 doesn't cost more than one with reputation 0.5; nothing is at risk if the reputation falls.
+**ERC-8004 today sits at ~3%.** It's a signal — visible, queryable, immutable — but no economic decision in xvision currently *gates on it*. A user with 10 USDC can deposit to a strategy with reputation 0.0; a marketplace listing with reputation 5.0 doesn't cost more than one with reputation 0.5; nothing is at risk if the reputation falls.
 
-**The realistic upper bound is ~50%, not 100%.** xianvec is non-custodial; full slashing requires custody. But there are ways to push the dial right.
+**The realistic upper bound is ~50%, not 100%.** xvision is non-custodial; full slashing requires custody. But there are ways to push the dial right.
 
 ### Negation — siblings of "valuable on-chain reputation"
 
@@ -663,7 +663,7 @@ Single-dimension                Multi-dimensional reputation         FICO is one
 
 A reputation can be one scalar (FICO 712) or a vector (Sharpe, drawdown, consistency, style, volume, asset universe, regime fit). The vector form is more honest but harder to gate on.
 
-- **xianvec today:** the ERC-8004 reputation registry per spec is a feedback list with optional tags — closer to vector. Good.
+- **xvision today:** the ERC-8004 reputation registry per spec is a feedback list with optional tags — closer to vector. Good.
 - **Risk:** the marketplace UI may collapse this into one star-rating-like number, losing the dimensional information that makes reputation portable across contexts.
 - **Move:** publish reputation as a structured vector (Sharpe, max-drawdown, days-in-market, etc.), let consumers compose their own scalar from the vector. This is the AngelList "founder fit" approach vs the FICO approach.
 
@@ -671,41 +671,41 @@ A reputation can be one scalar (FICO 712) or a vector (Sharpe, drawdown, consist
 
 Does reputation accrue automatically from observable behavior, or does the platform decide what counts?
 
-- **xianvec today:** spec says reputation is written via the ERC-8004 ReputationRegistry per-run by xianvec itself. **xianvec is the only writer.** That's a centralization point.
-- **Risk:** if xianvec is the only attestor, "on-chain" gives portability but not censorship-resistance — xianvec can decline to attest a run.
-- **Move:** allow third-party attestors (other vault operators, independent eval engines) to write reputation events for the same agent. The agent's reputation becomes the *aggregate of attestations*, not just xianvec's view. This is what the AT Protocol does with social signals.
+- **xvision today:** spec says reputation is written via the ERC-8004 ReputationRegistry per-run by xvision itself. **xvision is the only writer.** That's a centralization point.
+- **Risk:** if xvision is the only attestor, "on-chain" gives portability but not censorship-resistance — xvision can decline to attest a run.
+- **Move:** allow third-party attestors (other vault operators, independent eval engines) to write reputation events for the same agent. The agent's reputation becomes the *aggregate of attestations*, not just xvision's view. This is what the AT Protocol does with social signals.
 
 #### Dimension 3 — Scope (universal vs context-bound)
 
 Is this reputation about "trader skill" in general, or "skill in BTC perp markets in low-vol regimes"?
 
-- **xianvec today:** reputation is per-agent. Agents are specialized to specific assets/regimes (the agent_id encodes the config). So reputation IS context-bound, but the *consumers* of reputation may treat it as universal ("look, 80th percentile Sharpe!" — but only on BTC, only in a bull market).
+- **xvision today:** reputation is per-agent. Agents are specialized to specific assets/regimes (the agent_id encodes the config). So reputation IS context-bound, but the *consumers* of reputation may treat it as universal ("look, 80th percentile Sharpe!" — but only on BTC, only in a bull market).
 - **Risk:** out-of-context reputation use causes blowups (the BTC funding-fader strategy is rated 5/5; a user deploys it during a crab market; it loses).
 - **Move:** every reputation attestation must include the regime/scope it was earned in. Marketplace listings must surface this prominently. **The spec hints at this via "regime fit" in the bundle manifest** — verify it's actually rendered to buyers.
 
 ### Where ERC-8004 has REAL teeth (the 25-50% range)
 
-If xianvec wants reputation to do more than be a checkbox:
+If xvision wants reputation to do more than be a checkbox:
 
 1. **Gate on minimum reputation for marketplace listings.** A strategy with reputation < threshold can't be sold. Forces creators to backtest before publishing.
 2. **Tier marketplace fees by reputation.** Top-decile reputation gets a 97/3 split instead of 95/5. Bottom-decile pays 90/10. **Rewards quality, finances bad-actor handling.**
-3. **Reputation-weighted quota allocation.** When a user runs many strategies, xianvec's quota_factor (wallet spec §3.4) could be weighted by reputation: high-rep strategies get more of the cap, low-rep less. **This is the cleanest integration with the wallet plan.**
+3. **Reputation-weighted quota allocation.** When a user runs many strategies, xvision's quota_factor (wallet spec §3.4) could be weighted by reputation: high-rep strategies get more of the cap, low-rep less. **This is the cleanest integration with the wallet plan.**
 4. **Reputation-required for autoresearcher seeding.** Strategies entering the autoresearcher's mutation pool must have minimum reputation. Prevents the loop from polluting itself.
 5. **Reputation as collateral.** A creator stakes their NFT as collateral against future losses; if their strategy loses > X%, the NFT is slashed (transferred to a community pool, locked, etc.). **This pushes reputation to the 95% end of the spectrum.** Hard to design right — slashing rules are notoriously gameable — but real teeth.
 
-None of these are in the current spec. **Without at least 2-3 of them, ERC-8004 in xianvec is at the 3% checkbox end of the spectrum.**
+None of these are in the current spec. **Without at least 2-3 of them, ERC-8004 in xvision is at the 3% checkbox end of the spectrum.**
 
 ### The "checkbox" risk in detail
 
-If xianvec ships ERC-8004 without economic teeth:
+If xvision ships ERC-8004 without economic teeth:
 - Users won't read it (no decision depends on it).
 - Creators won't optimize for it (no payment depends on it).
-- Other platforms won't import it (xianvec is the only attestor; nobody else trusts it).
+- Other platforms won't import it (xvision is the only attestor; nobody else trusts it).
 - It becomes a marketing line ("we use ERC-8004!") with zero behavioral effect.
 
 This is what most "Web3 reputation" projects have looked like to date. Avoiding it requires *gating something on the reputation* — making the reputation answer a question some user, somewhere, has to ask.
 
-### What xianvec should ship to push past checkbox status (priority order)
+### What xvision should ship to push past checkbox status (priority order)
 
 ```
 Priority   Feature                                                  Effort     Spectrum movement
@@ -767,7 +767,7 @@ S3  High-rep marketplace strategy loses money for many users at once
     cause: strategic                | visibility: very high | blast: many users
     | recoverability: very low      | requires: transparency + reform + reputation rebuild
 
-S4  Trading-key compromise (xianvec server breach)
+S4  Trading-key compromise (xvision server breach)
     cause: adversarial + operational | visibility: high  | blast: per-user (bounded by caps)
     | recoverability: medium (caps held; reputation hit) | requires: transparency + reform
 
@@ -777,7 +777,7 @@ S5  Platform bug: dispatcher submits N duplicate orders
 
 S6  Orderly outage during high volatility, can't close
     cause: external                 | visibility: high  | blast: many users
-    | recoverability: medium (xianvec not at fault) | requires: transparency
+    | recoverability: medium (xvision not at fault) | requires: transparency
 
 S7  LLM provider outage / model regression mid-session
     cause: external                 | visibility: low   | blast: per-user
@@ -811,37 +811,37 @@ The lattice maps the structure; the response-playbook comes from domains that al
 #### Tylenol cyanide poisonings (1982) — the gold-standard transparency response
 - **Story:** Someone laced Tylenol capsules with cyanide; 7 dead.
 - **J&J response:** voluntary recall of all Tylenol nationwide ($100M cost), full press transparency, pioneered tamper-evident packaging. Brand recovered fully within 18 months.
-- **xianvec parallel for S1/S2/S5:** when a strategy or platform bug causes a loss, the response should be (a) immediate full disclosure with the audit-log evidence, (b) voluntary action that exceeds what's strictly required, (c) ship a structural change (tamper-evident packaging analog: aggregate margin guard, additional kill-switch, mandatory simulation).
+- **xvision parallel for S1/S2/S5:** when a strategy or platform bug causes a loss, the response should be (a) immediate full disclosure with the audit-log evidence, (b) voluntary action that exceeds what's strictly required, (c) ship a structural change (tamper-evident packaging analog: aggregate margin guard, additional kill-switch, mandatory simulation).
 - **Lesson:** the *cost* of overreaction is finite; the *cost* of being seen to underreact is infinite.
 
 #### Lloyd's "London Spiral" (1980s) — the un-survivable response
 - **Story:** Lloyd's syndicate Names took on hidden interconnected reinsurance exposure; asbestos and pollution claims compounded; many Names lost their houses.
 - **Lloyd's response:** initially obscured the depth of the problem, dragged out compensation. Litigation lasted 15+ years. Lloyd's brand permanently degraded as "not what your grandfather's Lloyd's was."
-- **xianvec parallel for S2/S3/S11:** if cross-margin contagion or autoresearcher convergence creates *interconnected hidden exposures*, the failure mode is exactly Lloyd's — one bad strategy reveals the whole house was exposed. The response of choice is the OPPOSITE of Lloyd's: name the exposure publicly *before* it triggers.
+- **xvision parallel for S2/S3/S11:** if cross-margin contagion or autoresearcher convergence creates *interconnected hidden exposures*, the failure mode is exactly Lloyd's — one bad strategy reveals the whole house was exposed. The response of choice is the OPPOSITE of Lloyd's: name the exposure publicly *before* it triggers.
 - **Lesson:** hidden interconnections compound; un-hide them as the platform's daily discipline.
 
 #### FTX collapse (2022) — the catastrophic comingling
 - **Story:** Customer funds were comingled with the trading firm's positions. When the trading firm lost, customer funds were gone.
 - **FTX response:** denial → cover-up → bankruptcy → criminal conviction.
-- **xianvec parallel for S8:** the non-custodial design *prevents this scenario by construction*. Even if the platform commits operational fraud at the platform level, user trading capital is unreachable. **This is the single biggest design win xianvec has and should be loud about.**
+- **xvision parallel for S8:** the non-custodial design *prevents this scenario by construction*. Even if the platform commits operational fraud at the platform level, user trading capital is unreachable. **This is the single biggest design win xvision has and should be loud about.**
 - **Lesson:** the architecture itself is the strongest possible response — design out the failure modes that other platforms had to apologize for.
 
 #### Boeing 737 MAX (2018-2019) — the slow strategic-error reveal
 - **Story:** MCAS system was added to compensate for engine placement; pilots weren't trained on it; two crashes killed 346.
 - **Boeing response:** initial deflection ("pilot error") → grounded fleet → multi-year fix → loss of trust still reverberating.
-- **xianvec parallel for S1/S11:** when the autoresearcher produces a strategy that wins eval but fails live, the temptation is to blame "pilot error" (the user picked a bad strategy). The right response is to acknowledge the system-level failure (the eval didn't catch it) and structurally reform.
+- **xvision parallel for S1/S11:** when the autoresearcher produces a strategy that wins eval but fails live, the temptation is to blame "pilot error" (the user picked a bad strategy). The right response is to acknowledge the system-level failure (the eval didn't catch it) and structurally reform.
 - **Lesson:** if the system was designed to abstract away a complexity, the system owns the failures arising from that abstraction.
 
 #### Knight Capital (2012) — the operational-error 30-minute extinction
 - **Story:** Bad deployment caused a trading algo to spam orders; lost $440M in 30 minutes; the firm folded.
 - **Knight response:** there wasn't time. The market killed Knight before any response.
-- **xianvec parallel for S5/S11:** kill-switch latency MATTERS. The wallet plan's `xvn kill --all` must take effect within seconds, not minutes. The Knight precedent says: if you can't kill in under a minute, you might not have a company anymore.
+- **xvision parallel for S5/S11:** kill-switch latency MATTERS. The wallet plan's `xvn kill --all` must take effect within seconds, not minutes. The Knight precedent says: if you can't kill in under a minute, you might not have a company anymore.
 - **Lesson:** the kill-switch is the most-important code in the system; it's the line of defense that limits all other failures' blast radius.
 
 #### Equifax breach (2017) — the personal-data disclosure delay
 - **Story:** 147M users' data leaked; Equifax delayed disclosure by 6 weeks while executives sold stock.
 - **Equifax response:** widely seen as guilty; CEO fired; ongoing litigation; brand permanently degraded.
-- **xianvec parallel for S4/S12:** the platform must have a *publicly committed disclosure SLA* — "any incident affecting users is disclosed within X hours." The wallet plan's audit log makes this technically possible; the policy commitment makes it credible.
+- **xvision parallel for S4/S12:** the platform must have a *publicly committed disclosure SLA* — "any incident affecting users is disclosed within X hours." The wallet plan's audit log makes this technically possible; the policy commitment makes it credible.
 - **Lesson:** the *time-to-disclosure* is itself a public number; commit to it before you need it.
 
 ### Substitution across dimensions — what changes the survivability?
@@ -850,7 +850,7 @@ The lattice maps the structure; the response-playbook comes from domains that al
 
 - **S7 (LLM regression, low visibility):** survivable with minimal disclosure; users barely notice.
 - **S5 (duplicate orders, medium visibility):** survivable with transparency + comp; one news cycle.
-- **S2 (cross-margin contagion, high visibility):** existential if narrative coheres ("xianvec liquidated my account"); the spec's mitigation MUST be visible *before* the event, not afterwards.
+- **S2 (cross-margin contagion, high visibility):** existential if narrative coheres ("xvision liquidated my account"); the spec's mitigation MUST be visible *before* the event, not afterwards.
 - **Move:** publish the cross-margin / aggregate-margin guard story prominently in marketing materials *before* the first incident. Pre-positioning a defense.
 
 #### Cyclicity (one-shot → periodic)
@@ -863,10 +863,10 @@ The lattice maps the structure; the response-playbook comes from domains that al
 
 #### Age (era-substitution)
 
-- **xianvec in 2010** (pre-DeFi, pre-LLM): impossible to build.
-- **xianvec in 2025** (now): possible, novel, no incumbent moats.
-- **xianvec in 2030** (after the next crypto regulatory cycle): legacy; the regulatory wrapper will be the moat.
-- **Move:** the era-substitution suggests xianvec's window for "novel" is short. The window for "legacy with regulatory clarity" is longer but requires deliberate compliance work now. **Spec a separate working stream on regulatory positioning.**
+- **xvision in 2010** (pre-DeFi, pre-LLM): impossible to build.
+- **xvision in 2025** (now): possible, novel, no incumbent moats.
+- **xvision in 2030** (after the next crypto regulatory cycle): legacy; the regulatory wrapper will be the moat.
+- **Move:** the era-substitution suggests xvision's window for "novel" is short. The window for "legacy with regulatory clarity" is longer but requires deliberate compliance work now. **Spec a separate working stream on regulatory positioning.**
 
 ### What the lattice + cross-domain analysis produce
 
@@ -878,7 +878,7 @@ S2 (cross-margin contagion), S3 (high-rep strategy mass loss), S9 (creator exit-
 
 S1, S4, S5, S6 — single-incident, bounded blast, audit log evidence available. The non-custodial design + audit log + kill switches handle these well IF the disclosure SLA is committed and met.
 
-#### The two scenarios xianvec ALREADY DESIGNED OUT
+#### The two scenarios xvision ALREADY DESIGNED OUT
 
 S8 (settlement wallet compromise — non-custodial), S5 partial (idempotent client_order_id prevents most duplicate-submission damage). Make these explicit in marketing.
 
@@ -913,7 +913,7 @@ not surfaced:     "the *positive* first big event" — what's the failure scenar
 05:30  US futures wake; overnight Asian session reviewed
        - check audit log: any pending_approvals, halts, anomalous decision counts
        - check ledger: overnight P&L vs expectation, drawdown alerts
-       - check Orderly account state vs xianvec ledger (manual reconciliation)
+       - check Orderly account state vs xvision ledger (manual reconciliation)
        - check settlement wallet balance (if commissions accrued overnight)
 
 08:00  Pre-US-open windowing
@@ -1020,16 +1020,16 @@ Greenhouse operator       monitor temp/humidity/water, trim,    catastrophic fai
                           harvest                               (one bad night = whole crop)
 ```
 
-**Pattern recognized:** xianvec's operator role most closely resembles the *algo trader at a prop shop* hybridized with *SRE on-call*. Both involve continuous attention with discrete interventions, where the cost of a missed alert can be ruinous.
+**Pattern recognized:** xvision's operator role most closely resembles the *algo trader at a prop shop* hybridized with *SRE on-call*. Both involve continuous attention with discrete interventions, where the cost of a missed alert can be ruinous.
 
 ### Lessons each domain has worked out
 
-- **From SRE:** rotate the on-call burden among multiple operators; never let one person be permanently on-call. **xianvec implication:** a 1-operator deployment is fragile. Multi-tenant means multi-operator; even the single-operator hackathon version should plan a fallback contact.
-- **From algo trading:** keep a "trading journal" — a daily written record of decisions and their outcomes. **xianvec implication:** the operator runbook in MANUAL.md should evolve into a journaled artifact, not just instructions.
-- **From pilots:** "automation surprise" — when the autopilot does something unexpected, the human needs *immediate clarity* on what mode it's in. **xianvec implication:** the dashboard MUST surface "what is each strategy doing right now" in one glance. The Phase 8 spreadsheet covers this.
-- **From hospital nurses:** alarm fatigue — too many alerts and operators stop noticing real ones. **xianvec implication:** alert thresholds need careful tuning; default to fewer-but-louder rather than many-quiet.
-- **From beekeepers:** seasonal awareness — there are calendar events that require pre-positioning. **xianvec implication:** Fed days, options expiry, halving events, exchange maintenance windows — these are predictable and the operator should pre-position quota / kill-switches around them.
-- **From lighthouse keepers:** isolation is the hardest part. **xianvec implication:** the operator role can be lonely; building a community of operators (Discord? Telegram?) is itself part of the platform.
+- **From SRE:** rotate the on-call burden among multiple operators; never let one person be permanently on-call. **xvision implication:** a 1-operator deployment is fragile. Multi-tenant means multi-operator; even the single-operator hackathon version should plan a fallback contact.
+- **From algo trading:** keep a "trading journal" — a daily written record of decisions and their outcomes. **xvision implication:** the operator runbook in MANUAL.md should evolve into a journaled artifact, not just instructions.
+- **From pilots:** "automation surprise" — when the autopilot does something unexpected, the human needs *immediate clarity* on what mode it's in. **xvision implication:** the dashboard MUST surface "what is each strategy doing right now" in one glance. The Phase 8 spreadsheet covers this.
+- **From hospital nurses:** alarm fatigue — too many alerts and operators stop noticing real ones. **xvision implication:** alert thresholds need careful tuning; default to fewer-but-louder rather than many-quiet.
+- **From beekeepers:** seasonal awareness — there are calendar events that require pre-positioning. **xvision implication:** Fed days, options expiry, halving events, exchange maintenance windows — these are predictable and the operator should pre-position quota / kill-switches around them.
+- **From lighthouse keepers:** isolation is the hardest part. **xvision implication:** the operator role can be lonely; building a community of operators (Discord? Telegram?) is itself part of the platform.
 
 ### Substitute size — how the role transforms
 
@@ -1056,7 +1056,7 @@ User count     Operator role                        Daily hours    Critical skil
 
 ### Substitute naturalness — what does "no operator" look like?
 
-- **Fully synthetic:** the operator role is itself an LLM agent. xianvec already has the building blocks (Claude can read the audit log, decide on kill switches, etc.). **A "Claude-as-on-call" agent is plausibly a v2 feature.** It would handle the 80% of operator tasks that are routine, escalating only the 20% that need human judgment.
+- **Fully synthetic:** the operator role is itself an LLM agent. xvision already has the building blocks (Claude can read the audit log, decide on kill switches, etc.). **A "Claude-as-on-call" agent is plausibly a v2 feature.** It would handle the 80% of operator tasks that are routine, escalating only the 20% that need human judgment.
 - **Fully manual (no automation):** the system requires 1 operator-second per trade. Doesn't scale past 10 trades/day. Approximates "Karpathy doing it himself."
 - **Current hybrid:** automation handles dispatch; human handles judgment. Probably the right balance for v1, but the autoresearcher could shift more decisions to the human (which mutations to keep) just as it removes others (no manual mutation).
 
@@ -1176,7 +1176,7 @@ Trading keys                 1 (env)     1 (file)    N (multi)   N + MPC
 Strategies                   1-3         1-10        10-100      100-1000+
 Users                        1           1           10-100      100-10000+
 Audit log retention          forever     forever     forever     + archival
-Reputation attestors         1 (xianvec) 1           N           N + indexers
+Reputation attestors         1 (xvision) 1           N           N + indexers
 Marketplace listings         0           0           1-10        10-100
 Settlement wallets           0           1           1-2         operator-defined
 LLM providers                1 (Claude)  1-2         2-3         N
@@ -1268,7 +1268,7 @@ The irreducible v0 is roughly Phase 0 + half of Phase 1 + selected pieces of Pha
 ### What v0 implies for the hackathon submission
 
 - **Demo what's there; defer what isn't.** The pitch is: "non-custodial wallet design + audit log + kill switches + one marketplace transaction." Not: "comprehensive risk + dynamic quota + reconciliation + UI."
-- **The autoresearcher might be the more important hackathon demo.** Per Run 4, it's the loop that makes xianvec novel. If forced to choose between fully-shipping wallets and shipping autoresearcher, the latter is the differentiator.
+- **The autoresearcher might be the more important hackathon demo.** Per Run 4, it's the loop that makes xvision novel. If forced to choose between fully-shipping wallets and shipping autoresearcher, the latter is the differentiator.
 - **The wallet plan's Phase 0 (validation gates G1, G2) is non-negotiable** — without G1 the security model is broken. With G1, even the partial v0 is a real demonstration of non-custodial trading.
 
 ### Substitution exercises on the v0
@@ -1337,12 +1337,12 @@ not surfaced:     "v0 success criteria" — the grid shows WHAT v0 is; the missi
                                   |                                 |   |
                                   v                                 |   |
                               locked-in   -------> (alternative     +---+
-                              (sunk cost                matures + xianvec
+                              (sunk cost                matures + xvision
                                + switching                  stagnates)
                                cost grow)
 ```
 
-xianvec is currently at `integrating` for Orderly + Mantle (the M0 probe passed; the executor is built but not yet live with real capital). The next state (`integrated`) requires the wallet plan to ship.
+xvision is currently at `integrating` for Orderly + Mantle (the M0 probe passed; the executor is built but not yet live with real capital). The next state (`integrated`) requires the wallet plan to ship.
 
 #### State markers and triggers
 
@@ -1362,7 +1362,7 @@ regret             switching cost < net benefit  switching cost > net benefit
 migrating          new infra integrated          stuck mid-migration
 ```
 
-### Why xianvec ended at "Orderly + Mantle" specifically — the path that won
+### Why xvision ended at "Orderly + Mantle" specifically — the path that won
 
 Reading the existing docs (`architecture.md`, FOLLOWUPS, M0 probe, smart-contract-surface spec), the implicit reasoning was:
 
@@ -1374,7 +1374,7 @@ Reading the existing docs (`architecture.md`, FOLLOWUPS, M0 probe, smart-contrac
 
 These five constraints intersect at **Orderly + Mantle**. The choice was *forced* by the constraints, not selected from a free list.
 
-### Tree of alternatives (siblings xianvec didn't pick)
+### Tree of alternatives (siblings xvision didn't pick)
 
 ```
 Perp DEX root
@@ -1400,11 +1400,11 @@ Perp DEX root
 
 Each unselected sibling forecloses something:
 
-- **Hyperliquid:** custom L1 means xianvec's Mantle-built ERC-8004 NFTs don't compose; would need to deploy elsewhere.
+- **Hyperliquid:** custom L1 means xvision's Mantle-built ERC-8004 NFTs don't compose; would need to deploy elsewhere.
 - **dYdX v4:** Cosmos VM means rewriting the entire Solidity / alloy stack; abandons EVM ecosystem.
 - **GMX:** AMM-style execution means no granular order types (no scaled limits, no maker rebates); breaks slot-architecture's market-flavor flexibility.
 - **Drift:** Solana means SVM rewrite; splits team focus between Mantle and Solana ecosystems.
-- **CEX:** custody disqualifies; xianvec's non-custodial design is incompatible.
+- **CEX:** custody disqualifies; xvision's non-custodial design is incompatible.
 
 ### Negation — what does the opposite of each property look like?
 
@@ -1427,17 +1427,17 @@ Pre-funded by user              Bridged at-time-of-trade                  cross-
                                 Borrowed (e.g. via Aave)                  leverage layer; new dependency
 ```
 
-**The most-interesting negation: "off-chain orderbook → on-chain orderbook."** Hyperliquid's HYPE token + native marketplace is the closest competitor to xianvec's combined wallet+marketplace ambitions. The choice to NOT go there means xianvec is implicitly betting that Mantle + ERC-8004 + Orderly's professional-grade execution beats Hyperliquid's all-in-one ecosystem.
+**The most-interesting negation: "off-chain orderbook → on-chain orderbook."** Hyperliquid's HYPE token + native marketplace is the closest competitor to xvision's combined wallet+marketplace ambitions. The choice to NOT go there means xvision is implicitly betting that Mantle + ERC-8004 + Orderly's professional-grade execution beats Hyperliquid's all-in-one ecosystem.
 
 ### Dimensions
 
 #### Animacy — is the chain alive, mechanical, or informational?
 
-- **Mechanical chain (Mantle today):** xianvec deploys; Mantle deals with its own roadmap; the relationship is technical.
+- **Mechanical chain (Mantle today):** xvision deploys; Mantle deals with its own roadmap; the relationship is technical.
 - **Alive chain (e.g., Hyperliquid where the native ecosystem courts builders):** the chain itself promotes you, partners with you. Higher-leverage if the courtship works.
 - **Informational chain (Mantle as substrate):** you treat it as bytes-and-execution; portable to any other L2 if needed.
 
-**xianvec's current relationship with Mantle is "mechanical with hackathon-courtship overlay."** Worth deciding deliberately whether to lean into the partnership (alive — more support, more visibility, more lock-in) or treat as substrate (informational — keep options open, less help).
+**xvision's current relationship with Mantle is "mechanical with hackathon-courtship overlay."** Worth deciding deliberately whether to lean into the partnership (alive — more support, more visibility, more lock-in) or treat as substrate (informational — keep options open, less help).
 
 #### Direction — does the choice's quality accumulate, decay, or oscillate?
 
@@ -1445,7 +1445,7 @@ Pre-funded by user              Bridged at-time-of-trade                  cross-
 - **Decaying:** the longer you stay, the worse — better alternatives mature elsewhere, ecosystem stagnates.
 - **Steady:** stays the same.
 
-**For Orderly + Mantle:** likely *accumulating in 2026* (Mantle TVL growing, Orderly adding markets), *uncertain in 2027+* (alternatives like Hyperliquid + Sei perps are accumulating faster). xianvec's lock-in window is the next 12-18 months; revisit deliberately at month 18.
+**For Orderly + Mantle:** likely *accumulating in 2026* (Mantle TVL growing, Orderly adding markets), *uncertain in 2027+* (alternatives like Hyperliquid + Sei perps are accumulating faster). xvision's lock-in window is the next 12-18 months; revisit deliberately at month 18.
 
 #### Purpose — what's this infrastructure FOR?
 
@@ -1461,25 +1461,25 @@ Pre-funded by user              Bridged at-time-of-trade                  cross-
 
 #### The infrastructure choice is good for now and reversible later
 
-- Orderly + Mantle is the right answer for the constraints xianvec has *today* (perp + on-chain settlement + EVM + hackathon partner).
+- Orderly + Mantle is the right answer for the constraints xvision has *today* (perp + on-chain settlement + EVM + hackathon partner).
 - The choice is in the `integrating` state, where switching cost is still low. **Now is the time to make the choice deliberately rather than by inertia.**
 - A scheduled review at month 18 (revisit Hyperliquid, dYdX, alternatives) is warranted. Add to FOLLOWUPS as a calendar-driven action.
 
 #### The lock-in trajectory should be planned, not stumbled into
 
-- **What should xianvec deliberately lock-in to Mantle:** ERC-8004 NFT identity, on-chain reputation events. These need permanence; switching means accepting reputation discontinuity.
-- **What should xianvec deliberately keep portable:** strategy code (Rust), risk engine, audit log, dispatcher abstraction. These can run against any DEX.
+- **What should xvision deliberately lock-in to Mantle:** ERC-8004 NFT identity, on-chain reputation events. These need permanence; switching means accepting reputation discontinuity.
+- **What should xvision deliberately keep portable:** strategy code (Rust), risk engine, audit log, dispatcher abstraction. These can run against any DEX.
 - **What's currently entangled but shouldn't be:** the OrderlyExecutor is hardcoded into the dispatcher. The plan's `OrderlyOrderSubmit` trait was a step toward portability; **make it explicit that "BrokerSurface" (Plan 2c) and "OrderlyOrderSubmit" should converge** as a single Broker abstraction.
 
 #### The regret-state risk to plan for
 
 - Hyperliquid's HYPE marketplace ships in mid-2026 (rumored).
-- If it ships with strong creator economics + native trading, xianvec may face the regret state.
+- If it ships with strong creator economics + native trading, xvision may face the regret state.
 - **Pre-positioning move:** keep the dispatcher abstraction strict; verify quarterly that switching cost is bounded. If switching to Hyperliquid becomes a 1-month project rather than a 6-month one, the lock-in risk is acceptable.
 
 #### The decision to NOT go on-chain orderbook
 
-- Off-chain orderbook (Orderly) means xianvec's audit log is the *only* off-chain truth.
+- Off-chain orderbook (Orderly) means xvision's audit log is the *only* off-chain truth.
 - On-chain orderbook (Hyperliquid) would let third parties verify execution independently.
 - **For the "valuable on-chain reputation" thesis (Run 6), an on-chain orderbook would be more credible.**
 - This is a real cost of the Orderly choice. Worth acknowledging in marketing: "we publish the audit log because the orderbook isn't on-chain — here's the verification path."
@@ -1493,7 +1493,7 @@ organon:          state-machine (8 states + 12 transitions of infrastructure-cho
 dim prompts:      animacy · direction · purpose
 not surfaced:     "infrastructure choice as a *bet on a future*" — every infrastructure
                   bet implicitly bets on which ecosystem grows. Mantle bet = bet that
-                  Mantle grows. Worth a tuple specifically on which futures xianvec is
+                  Mantle grows. Worth a tuple specifically on which futures xvision is
                   implicitly betting on (via every dependency choice).
 ```
 
@@ -1702,7 +1702,7 @@ operators:        combination · dimension-identification
 organon:          tree (8 main branches with sub-branches; N-thresholds at each leaf)
                   + N x component combination chart (10 components x 5 N-tiers)
 dim prompts:      complexity · homogeneity · animacy
-not surfaced:     "scaling DOWN" — what if xianvec deliberately caps at N=10 forever?
+not surfaced:     "scaling DOWN" — what if xvision deliberately caps at N=10 forever?
                   Could it be a viable boutique product? Worth its own tuple on
                   intentional-smallness as a strategy.
 ```
@@ -1820,12 +1820,12 @@ Recruiting leverage                            indefinite              public vi
 
 - **Homogeneous version of "win":** the prize check. Optimizes single-metric (judge votes).
 - **Differentiated version:** prize + sponsor + first users + recruiting + thesis = compound win.
-- **Implication:** strategies that optimize for the prize at the cost of the others are common (slick demos with no real product). xianvec should optimize for the differentiated win — every artifact (demo, repo, narrative) does double-duty for sponsor + audience + future users.
+- **Implication:** strategies that optimize for the prize at the cost of the others are common (slick demos with no real product). xvision should optimize for the differentiated win — every artifact (demo, repo, narrative) does double-duty for sponsor + audience + future users.
 
 #### Distribution — who benefits from the win?
 
 - **Concentrated:** operator (edkennedy) gets the prize and the recruiting boost.
-- **Distributed:** the wider xianvec ecosystem (early users, marketplace creators, sponsor) all gain from a high-visibility demo.
+- **Distributed:** the wider xvision ecosystem (early users, marketplace creators, sponsor) all gain from a high-visibility demo.
 - **Implication:** structuring the hackathon submission to *include* early creators (mention them, demo their strategies, credit them) distributes the win and creates a narrative of "we're already a community" — which itself reads as a stronger signal than "I built this alone."
 
 ### What the graph + dimensions + investment-cost reveal
@@ -1833,7 +1833,7 @@ Recruiting leverage                            indefinite              public vi
 #### The three highest-leverage moves before submission
 
 1. **Cultivate sponsor relationships before the deadline.** Sponsors influence judges, attend demos, and amplify the win on their channels. The 3-5 day investment yields disproportionate return. **Sponsors care about: technical fit (are you actually using their tech), aesthetic fit (does the demo look good on their feed), ecosystem fit (does this make their ecosystem look richer).** Talk to Mantle DevRel, Orderly partnerships team, before May 25.
-2. **Write the narrative first; everything else is downstream.** A 1-pager that answers "what is xianvec, why does it matter, why now, why you" — used to brief the demo, the judges, the press, and the first users. Cheapest, highest-leverage. **One day of writing.**
+2. **Write the narrative first; everything else is downstream.** A 1-pager that answers "what is xvision, why does it matter, why now, why you" — used to brief the demo, the judges, the press, and the first users. Cheapest, highest-leverage. **One day of writing.**
 3. **Make the demo bulletproof against the live-trade-fails scenario.** A pre-recorded backup, a clearly-bracketed "this is a live demo against Orderly testnet" caveat, an alternate plan if the network is congested. The Knight Capital lesson (Run 7) applies: if the live trade fails on stage, the prize is forfeit.
 
 #### Three things to NOT optimize
@@ -1851,15 +1851,15 @@ Recruiting leverage                            indefinite              public vi
 #### Edge cases the graph surfaces
 
 - **Disconnected component: code repo → first users.** Without the narrative bridging them, judges who read the code don't become users. **The README is the bridge — invest in it like marketing copy, not technical documentation.**
-- **Edge that doesn't exist yet: SPONSOR → ECOSYSTEM amplification.** Sponsors normally amplify their winners on their official channels. xianvec should *ask for that amplification explicitly* in pre-event sponsor conversations — a commitment to retweet, blog, or co-promote post-win is worth more than the prize money.
+- **Edge that doesn't exist yet: SPONSOR → ECOSYSTEM amplification.** Sponsors normally amplify their winners on their official channels. xvision should *ask for that amplification explicitly* in pre-event sponsor conversations — a commitment to retweet, blog, or co-promote post-win is worth more than the prize money.
 
 #### The win condition the spec hasn't articulated
 
-If forced to write a single sentence post-hackathon describing what was won, what does xianvec want it to say?
+If forced to write a single sentence post-hackathon describing what was won, what does xvision want it to say?
 
-- **Bad:** "xianvec won the Mantle hackathon trading prize."
-- **Better:** "xianvec demonstrated the first non-custodial autoresearcher-mutated trading-strategy marketplace on Mantle, with N users live-trading at the time of judging."
-- **Best:** "xianvec proved that LLM-driven strategy creation, evaluation, and on-chain reputation can produce a trading platform users trust enough to deposit real money to."
+- **Bad:** "xvision won the Mantle hackathon trading prize."
+- **Better:** "xvision demonstrated the first non-custodial autoresearcher-mutated trading-strategy marketplace on Mantle, with N users live-trading at the time of judging."
+- **Best:** "xvision proved that LLM-driven strategy creation, evaluation, and on-chain reputation can produce a trading platform users trust enough to deposit real money to."
 
 The third version is the long-game win. **All hackathon decisions should optimize for this sentence.**
 
@@ -1869,7 +1869,7 @@ The third version is the long-game win. **All hackathon decisions should optimiz
 operators:        dimension-identification · organon-construction
 organon:          graph (10 nodes + ~15 labeled edges)
 dim prompts:      longevity · homogeneity · distribution
-not surfaced:     "the gracious-loser path" — what if xianvec doesn't win? The hackathon
+not surfaced:     "the gracious-loser path" — what if xvision doesn't win? The hackathon
                   is one tournament; the project is the long arc. Designing the post-event
                   follow-up (independent of placement) is itself a strategic question
                   worth its own tuple.
@@ -1885,7 +1885,7 @@ not surfaced:     "the gracious-loser path" — what if xianvec doesn't win? The
 
 #### Theme A — The wallet plan is necessary infrastructure, NOT the differentiator
 
-- **Run 4** (autoresearcher) — the mutation loop is the only entirely-novel thing xianvec does
+- **Run 4** (autoresearcher) — the mutation loop is the only entirely-novel thing xvision does
 - **Run 9** (irreducible v0) — the v0 demonstration is autoresearcher + minimum wallet, not full wallet plan
 - **Run 12** (hackathon) — recommended demo lead is the autoresearcher; wallet design is the trust story
 
@@ -1901,7 +1901,7 @@ not surfaced:     "the gracious-loser path" — what if xianvec doesn't win? The
 
 #### Theme C — On-chain reputation needs economic teeth or it's a checkbox
 
-- **Run 5** (creator pitch) — reputation portability is xianvec's distinctive creator value prop
+- **Run 5** (creator pitch) — reputation portability is xvision's distinctive creator value prop
 - **Run 6** (ERC-8004 spectrum) — without something gating on reputation, it's at the 3% checkbox end
 - **Run 4** (autoresearcher) — reputation-weighted quota allocation would solve multiple mutation-loop problems at once
 
@@ -1946,13 +1946,13 @@ The wallet plan's `agent_id` should probably be `agent_id` once SLF3 ships. **Ad
 
 **Convergent recommendation: spec the subscription tier before launching the marketplace.** Even if not implemented for hackathon, the marketing materials should articulate "free tier + hosted-runtime subscription" so users know the future shape.
 
-#### Theme H — Non-custodial design is an asset xianvec underuses in marketing
+#### Theme H — Non-custodial design is an asset xvision underuses in marketing
 
 - **Run 7** (FTX comparison — designs-out the failure other platforms had to apologize for)
 - **Run 5** (anti-extraction is a creator value prop)
 - **Run 12** (trust narrative is the hackathon's load-bearing artifact)
 
-**Convergent recommendation: lead the hackathon narrative with non-custodial design.** The opening sentence of the demo / 1-pager should reference it. "Unlike FTX / Binance / etc., xianvec never holds your trading capital — only the authority to trade with it."
+**Convergent recommendation: lead the hackathon narrative with non-custodial design.** The opening sentence of the demo / 1-pager should reference it. "Unlike FTX / Binance / etc., xvision never holds your trading capital — only the authority to trade with it."
 
 #### Theme I — Pre-position defenses before they're needed
 

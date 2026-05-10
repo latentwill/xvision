@@ -1,11 +1,11 @@
 # Strategies
 
-A living compendium of trading strategies to test in xianvec — both
+A living compendium of trading strategies to test in xvision — both
 already-implemented and candidates queued for future evaluation.
 
 This folder is the **strategy backlog**. It is not a code directory; the
 runnable `Strategy` trait implementations live in
-`crates/xianvec-eval/src/baselines/` and `crates/xianvec-trader/`. Use this
+`crates/xvision-eval/src/baselines/` and `crates/xvision-trader/`. Use this
 folder to capture *intent*: thesis, parameters, data dependencies, and
 expected behaviour before any code is written.
 
@@ -27,7 +27,7 @@ Each strategy gets its own markdown file: `<slug>.md`. Required sections:
 
 ## Index
 
-### Implemented (in `crates/xianvec-eval/src/baselines/`)
+### Implemented (in `crates/xvision-eval/src/baselines/`)
 
 - `always_long` — sanity floor, always buy.
 - `always_short` — sanity floor, always sell.
@@ -36,7 +36,7 @@ Each strategy gets its own markdown file: `<slug>.md`. Required sections:
 - `macd_momentum` — MACD signal-line crossover.
 - `random_direction` — control arm, deterministic-seeded coin flip.
 - `rsi_mean_reversion` — RSI oversold/overbought reversion.
-- `trader_arm` — LLM-driven (xianvec-trader, see ADR 0010 / 0011).
+- `trader_arm` — LLM-driven (xvision-trader, see ADR 0010 / 0011).
 
 ### Queued — Classical TA (FOLLOWUPS SLF7 / F15)
 
@@ -73,10 +73,10 @@ when ready to scope.)
 
 1. **Idea** → add a one-line bullet in the idea pool above.
 2. **Queue** → write a full `<slug>.md` using the format above. Status: `queued`.
-3. **Implement** → land a `Strategy` impl in `xianvec-eval` or `xianvec-trader`.
+3. **Implement** → land a `Strategy` impl in `xvision-eval` or `xvision-trader`.
    Update status to `implemented` and link the crate path.
 4. **Evaluate** → run through `xvn ab-compare` and the Strategy Loom evening
-   cycle. Record receipts via `xianvec-identity` (ADR 0008).
+   cycle. Record receipts via `xvision-identity` (ADR 0008).
 5. **Deprecate** → if a strategy is consistently dominated, mark `deprecated`
    with a short post-mortem; do not delete the file.
 

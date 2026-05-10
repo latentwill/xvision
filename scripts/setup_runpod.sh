@@ -5,10 +5,10 @@
 # only needed if the Trader runs local candle inference — for Trader
 # inference + Alpaca paper trading. CV vector extraction setup
 # (repeng, tools/extract_vectors/, FP16 weights) has moved to
-# xianvec-play.
+# xvision-play.
 #
 # One-time setup for a CUDA Linux GPU server (RunPod / Vast.ai). Scoped to v1
-# testing: xianvec local-candle Trader inference + Alpaca paper trading.
+# testing: xvision local-candle Trader inference + Alpaca paper trading.
 # Out of scope: identity (ERC-8004), Orderly, Mantle, web3, 1Password.
 #
 # Prerequisites — export BEFORE running:
@@ -316,7 +316,7 @@ hf_login() {
 choose_model() {
   # Prints a quant key (q4|q5|q6|q8) on stdout. MODEL= override accepts those
   # plus `gguf` as a synonym for the best quant (q8). fp16 path is no longer
-  # offered — CV extraction moved to xianvec-play per ADR 0011.
+  # offered — CV extraction moved to xvision-play per ADR 0011.
   if [[ -n "${MODEL:-}" ]]; then
     case "$MODEL" in
       gguf) echo q8 ;;          # "gguf" → best quant
@@ -530,19 +530,19 @@ setup_alpaca() {
 # 9. patch + build xvn (--features cuda)
 # ---------------------------------------------------------------------------
 patch_build_for_cuda() {
-  # GAP fix: xianvec-inference defaults to [metal] (Apple). On Linux any crate
-  # in the workspace that depends on it (xianvec-cli/eval/trader/gating/...)
+  # GAP fix: xvision-inference defaults to [metal] (Apple). On Linux any crate
+  # in the workspace that depends on it (xvision-cli/eval/trader/gating/...)
   # transitively pulls candle-metal-kernels → objc2 → compile_error! on Linux.
   # Cargo unifies features across the workspace, so disabling defaults on a
   # single dep doesn't help — we have to neutralize the default at the source.
   # We do two patches:
-  #   (1) crates/xianvec-cli/Cargo.toml — add a `cuda` passthrough so the cli
+  #   (1) crates/xvision-cli/Cargo.toml — add a `cuda` passthrough so the cli
   #       can be built with --features cuda.
-  #   (2) crates/xianvec-inference/Cargo.toml — flip `default = ["metal"]` to
+  #   (2) crates/xvision-inference/Cargo.toml — flip `default = ["metal"]` to
   #       `default = []`. Apple users opt back in via `--features metal`.
-  local cli_toml="$REPO_ROOT/crates/xianvec-cli/Cargo.toml"
-  local inf_toml="$REPO_ROOT/crates/xianvec-inference/Cargo.toml"
-  if grep -q '^cuda = \["xianvec-inference/cuda"\]' "$cli_toml" \
+  local cli_toml="$REPO_ROOT/crates/xvision-cli/Cargo.toml"
+  local inf_toml="$REPO_ROOT/crates/xvision-inference/Cargo.toml"
+  if grep -q '^cuda = \["xvision-inference/cuda"\]' "$cli_toml" \
      && grep -q '^default = \[\]' "$inf_toml"; then
     return
   fi
@@ -552,14 +552,14 @@ import pathlib, re
 p = pathlib.Path("$cli_toml")
 src = p.read_text()
 src = re.sub(
-    r'^xianvec-inference = \{ path = "\.\./xianvec-inference" \}',
-    'xianvec-inference = { path = "../xianvec-inference", default-features = false }',
+    r'^xvision-inference = \{ path = "\.\./xvision-inference" \}',
+    'xvision-inference = { path = "../xvision-inference", default-features = false }',
     src, count=1, flags=re.MULTILINE,
 )
 if "\n[features]\n" not in src:
-    src += '\n[features]\ndefault = []\ncuda = ["xianvec-inference/cuda"]\n'
-elif 'cuda = ["xianvec-inference/cuda"]' not in src:
-    src = src.replace("[features]\n", '[features]\ncuda = ["xianvec-inference/cuda"]\n', 1)
+    src += '\n[features]\ndefault = []\ncuda = ["xvision-inference/cuda"]\n'
+elif 'cuda = ["xvision-inference/cuda"]' not in src:
+    src = src.replace("[features]\n", '[features]\ncuda = ["xvision-inference/cuda"]\n', 1)
 p.write_text(src)
 PY
   log "patching $inf_toml — drop metal from default features (Linux can't build candle-metal-kernels)"
@@ -583,17 +583,17 @@ build_xvn() {
   # shellcheck disable=SC1091
   [[ -d "$VENV_DIR" ]] && source "$VENV_DIR/bin/activate"
   patch_build_for_cuda
-  log "compiling xianvec-cli (release + cuda — ~150 crates, 5–15 min on small pods; first build only)"
+  log "compiling xvision-cli (release + cuda — ~150 crates, 5–15 min on small pods; first build only)"
   log "  cargo can sit on cudarc/candle-cuda for 60–120s with no output between 'Compiling X' lines — not frozen."
-  cargo build --release -p xianvec-cli --features cuda
+  cargo build --release -p xvision-cli --features cuda
   ok "built target/release/xvn"
 
-  # xvn-mcp: stdio Model Context Protocol server exposing xianvec-data
+  # xvn-mcp: stdio Model Context Protocol server exposing xvision-data
   # indicators. Optional — agents driving xvn directly via Bash can use
   # `xvn indicator` instead. Built for callers that want to register the
   # MCP server in their own client config (Claude Code, etc.).
   log "building xvn-mcp (CPU-only, typically <1 min; reuses target/ from above)"
-  cargo build --release -p xianvec-mcp
+  cargo build --release -p xvision-mcp
   ok "built target/release/xvn-mcp"
 }
 
@@ -660,7 +660,7 @@ $(sed 's/^/    /' "$ENV_FILE" 2>/dev/null || echo "    (none)")
 xvn inference (uses GGUF + tokenizer):
     target/release/xvn run-setup --model "\$XVN_MODEL_PATH" --tokenizer "\$XVN_TOKENIZER" ...
 
-xvn-mcp (optional Model Context Protocol server — exposes xianvec-data
+xvn-mcp (optional Model Context Protocol server — exposes xvision-data
 indicators as agent-callable tools for MCP-aware clients):
     target/release/xvn-mcp                  # speaks JSON-RPC over stdio
     # Agents driving xvn through Bash can use 'xvn indicator <name> …' instead.

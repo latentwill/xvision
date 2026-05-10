@@ -1,9 +1,11 @@
 # ADR 0008 — ERC-8004 Registry Deployment on Mantle
 
+> **2026-05-10:** Project renamed `xianvec` → `xvision`. References below reflect the post-rename name; project history prior to this date used `xianvec`.
+
 ## Status: Accepted, deferred (2026-05-08)
 
 > **Deferral note (2026-05-08):** Operator execution of this ADR is paused.
-> v1 of Xianvec ships as Alpaca-paper eval only with no on-chain function.
+> v1 of Xvision ships as Alpaca-paper eval only with no on-chain function.
 > The deployment runbook below stays valid as-is; it gets picked back up
 > after the Strategy Creation Engine and Eval Engine are shipped and
 > battle-tested end-to-end. The broader marketplace + commerce contract
@@ -13,7 +15,7 @@
 
 ## Context
 
-Phase 6.5 ships the `xianvec-identity` client crate.  It uses stub `sol!`
+Phase 6.5 ships the `xvision-identity` client crate.  It uses stub `sol!`
 interfaces for the ERC-8004 IdentityRegistry and ReputationRegistry because:
 
 1. **ERC-8004 is Draft** (EIP repo, 2025-05).  No canonical ABI has been
@@ -37,7 +39,7 @@ Phase 9 eval clears.
 ### Prerequisites
 - Foundry installed (`curl -L https://foundry.paradigm.xyz | bash && foundryup`)
 - Funded operator wallet on Mantle Sepolia (faucet: `https://faucet.sepolia.mantle.xyz`)
-- 1Password entry `op://xianvec/mantle-operator/private-key` provisioned
+- 1Password entry `op://xvision/mantle-operator/private-key` provisioned
 
 ### Contracts to deploy
 
@@ -53,7 +55,7 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 contract IdentityRegistry is ERC721URIStorage, Ownable {
     uint256 private _nextTokenId;
 
-    constructor() ERC721("XianvecAgent", "XVNA") Ownable(msg.sender) {}
+    constructor() ERC721("XvisionAgent", "XVNA") Ownable(msg.sender) {}
 
     function register(string calldata agentURI) external returns (uint256 agentId) {
         agentId = _nextTokenId++;
@@ -130,7 +132,7 @@ contract ReputationRegistry {
 ### Deploy commands (Mantle Sepolia, chain 5003)
 
 ```sh
-PRIVATE_KEY=$(op read op://xianvec/mantle-operator/private-key)
+PRIVATE_KEY=$(op read op://xvision/mantle-operator/private-key)
 
 forge create IdentityRegistry \
   --rpc-url https://rpc.sepolia.mantle.xyz \
@@ -146,7 +148,7 @@ forge create ReputationRegistry \
 ### After deployment: update `RegistryAddresses`
 
 Replace the `None` returns in `RegistryAddresses::mantle_testnet()` in
-`crates/xianvec-identity/src/client.rs`:
+`crates/xvision-identity/src/client.rs`:
 
 ```rust
 pub fn mantle_testnet() -> Option<Self> {

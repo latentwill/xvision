@@ -1,7 +1,7 @@
 # Manual operator tasks
 
 > **2026-05-07 status (ADR 0011):** CV vector-extraction operator tasks
-> (M1–M4) have been removed. They moved to xianvec-play with the rest of
+> (M1–M4) have been removed. They moved to xvision-play with the rest of
 > the CV substrate. The surviving tasks below are Tier 2 (forward-paper
 > + on-chain identity) and Tier 3 (one-time setup) only.
 
@@ -22,11 +22,11 @@ operator-side prerequisites.
 - **What:**
   1. Sign up at <https://alpaca.markets>; switch to Paper Trading.
   2. Generate API key + secret.
-  3. Store in 1Password under entry `xianvec/alpaca-paper`.
+  3. Store in 1Password under entry `xvision/alpaca-paper`.
   4. Export at runtime:
      ```bash
-     export APCA_API_KEY_ID=$(op read 'op://Personal/xianvec-alpaca-paper/api_key_id')
-     export APCA_API_SECRET_KEY=$(op read 'op://Personal/xianvec-alpaca-paper/api_secret_key')
+     export APCA_API_KEY_ID=$(op read 'op://Personal/xvision-alpaca-paper/api_key_id')
+     export APCA_API_SECRET_KEY=$(op read 'op://Personal/xvision-alpaca-paper/api_secret_key')
      export APCA_API_BASE_URL=https://paper-api.alpaca.markets
      ```
   5. Smoke the credentials with a read-only `/v2/account` round-trip
@@ -50,16 +50,16 @@ operator-side prerequisites.
      subcommand specced in implementation-plan §6.3 is **not yet shipped**;
      onboarding is currently manual.
   2. Save `(orderly_key, orderly_secret, orderly_account_id)` in 1Password
-     under `xianvec/orderly-testnet`.
+     under `xvision/orderly-testnet`.
   3. Export at runtime:
      ```bash
-     export ORDERLY_KEY=$(op read 'op://Personal/xianvec-orderly-testnet/key')
-     export ORDERLY_SECRET=$(op read 'op://Personal/xianvec-orderly-testnet/secret')
-     export ORDERLY_ACCOUNT_ID=$(op read 'op://Personal/xianvec-orderly-testnet/account_id')
+     export ORDERLY_KEY=$(op read 'op://Personal/xvision-orderly-testnet/key')
+     export ORDERLY_SECRET=$(op read 'op://Personal/xvision-orderly-testnet/secret')
+     export ORDERLY_ACCOUNT_ID=$(op read 'op://Personal/xvision-orderly-testnet/account_id')
      export ORDERLY_BASE_URL=https://testnet-api-evm.orderly.org
      ```
   4. Smoke against testnet via the existing M0 probe — it exercises the
-     full signed-request path used by `xianvec-execution`:
+     full signed-request path used by `xvision-execution`:
      ```bash
      cargo run --release --manifest-path probes/m0-orderly/Cargo.toml
      ```
@@ -88,9 +88,9 @@ operator-side prerequisites.
      - `risk_preset`: matches `config/risk.toml`
      - `contact`: email or GitHub URL
   4. Set `identity.enabled = true` in `config/default.toml` (or per-env override).
-  5. Mint. **`xianvec-identity` ships as a library only today** — no
+  5. Mint. **`xvision-identity` ships as a library only today** — no
      `mint-identity` binary. Until one lands, write a thin driver against
-     `crates/xianvec-identity/src/client.rs`:
+     `crates/xvision-identity/src/client.rs`:
      - `RegistryAddresses::custom(identity, reputation)` — pass the
        deployed-on-Mantle contract addresses.
      - `IdentityClient::connect(rpc_url, addrs, chain_id).await?`
@@ -99,9 +99,9 @@ operator-side prerequisites.
      Then:
      ```bash
      export MANTLE_RPC_URL=https://rpc.sepolia.mantle.xyz   # testnet
-     export MANTLE_DEPLOYER_KEY=$(op read 'op://Personal/xianvec-mantle/deployer_pk')
+     export MANTLE_DEPLOYER_KEY=$(op read 'op://Personal/xvision-mantle/deployer_pk')
      for manifest in identity/*.agent.json; do
-       cargo run --release -p xianvec-identity \
+       cargo run --release -p xvision-identity \
          --example mint_identity -- "$manifest"
      done
      ```
@@ -113,8 +113,8 @@ operator-side prerequisites.
   manifests have populated identity fields; `xvn` runs without `Mantle creds
   missing` errors when `identity.enabled = true`.
 - **Unblocks:** Phase 11.5.
-- **FOLLOWUPS:** SLF3. **xianvec-identity is opt-in** — keep it excluded from
-  `default-members` in `Cargo.toml`; explicit `cargo build -p xianvec-identity`
+- **FOLLOWUPS:** SLF3. **xvision-identity is opt-in** — keep it excluded from
+  `default-members` in `Cargo.toml`; explicit `cargo build -p xvision-identity`
   to compile.
 
 ---
@@ -124,10 +124,10 @@ operator-side prerequisites.
 ### M8. Anthropic API key (or alternative)
 
 - **What:** sign up at <https://console.anthropic.com>; create a key.
-- **Save:** `op://Personal/xianvec-anthropic/api_key`.
+- **Save:** `op://Personal/xvision-anthropic/api_key`.
 - **Export:**
   ```bash
-  export ANTHROPIC_API_KEY=$(op read 'op://Personal/xianvec-anthropic/api_key')
+  export ANTHROPIC_API_KEY=$(op read 'op://Personal/xvision-anthropic/api_key')
   ```
 - **Cost rough estimate:** Phase 9 backtest = 100–300 setups × 1 brief ≈
   $1–5 with Haiku; with Opus reasoning, $20–60. Prefer Haiku in CI.
@@ -136,10 +136,10 @@ operator-side prerequisites.
 
 - **What:** any OpenAI-compat endpoint works. OpenRouter recommended for
   multi-model evaluation.
-- **Save:** `op://Personal/xianvec-openai/api_key`.
+- **Save:** `op://Personal/xvision-openai/api_key`.
 - **Export:**
   ```bash
-  export OPENAI_API_KEY=$(op read 'op://Personal/xianvec-openai/api_key')
+  export OPENAI_API_KEY=$(op read 'op://Personal/xvision-openai/api_key')
   export OPENAI_BASE_URL=https://openrouter.ai/api/v1   # or stay on api.openai.com/v1
   ```
 
@@ -155,7 +155,7 @@ operator-side prerequisites.
     --local-dir qwen3-32b-q8-gguf --local-dir-use-symlinks False
   ```
 - **Disk:** Q4 ≈ 17 GB, Q8 ≈ 32 GB.
-- **Verify:** `cargo run --release -p xianvec-trader --bin smoke-trader` loads
+- **Verify:** `cargo run --release -p xvision-trader --bin smoke-trader` loads
   the model and emits a `TraderDecision` JSON.
 
 ### M11. Download tokenizer.json
@@ -178,14 +178,14 @@ operator-side prerequisites.
   indicators at parameter sets the snapshot doesn't pre-bake (e.g. RSI(7)
   when the snapshot only carries RSI(14)). Skip otherwise — the MCP server
   is irrelevant to the OpenAI-compat / Anthropic Intern paths.
-- **What:** `crates/xianvec-mcp/` builds a stateless stdio MCP server,
-  `xvn-mcp`, that exposes `xianvec-data`'s indicator surface (rsi · sma ·
+- **What:** `crates/xvision-mcp/` builds a stateless stdio MCP server,
+  `xvn-mcp`, that exposes `xvision-data`'s indicator surface (rsi · sma ·
   ema · bollinger · atr · macd · donchian · fib_retracements · health) as
   agent-callable tools. ACPX advertises it to every agent session via
   `mcpServers: [...]` in `acpx.config.json`.
 - **Setup steps** (auto-run by `scripts/setup_runpod.sh` when
   `INTERN=acpx`):
-  1. `cargo build --release -p xianvec-mcp` (produces `target/release/xvn-mcp`).
+  1. `cargo build --release -p xvision-mcp` (produces `target/release/xvn-mcp`).
   2. Write `<acpx-workspace>/acpx.config.json` registering the binary as a
      stdio MCP server. The setup script does this for you; otherwise
      install ACPX (`npm install -g acpx@latest`) and add the stanza by
@@ -194,7 +194,7 @@ operator-side prerequisites.
      CLI for those.
 - **Verify:** from inside the chosen ACPX agent session, ask it to call
   the `xvn_health` tool. Expected response: `{"ok": true, "name":
-  "xianvec-mcp", "version": "<x.y.z>"}`. Any other indicator (`xvn_rsi` on
+  "xvision-mcp", "version": "<x.y.z>"}`. Any other indicator (`xvn_rsi` on
   a small synthetic price series) is a fine smoke too.
 - **Exit:** `xvn_health` returns `ok: true` from the agent's tool channel.
 - **Unblocks:** F21 (ACPX-driven Intern), and any future agent-harness
@@ -212,7 +212,7 @@ operator-side prerequisites.
     span and granularity that the setups reference.
 - **Sourcing options:**
   - Binance public data → polars Parquet → JSON via the existing
-    `xianvec-data` pipeline.
+    `xvision-data` pipeline.
   - Coinbase pro CSV → same.
   - The repo's `data/baselines/` may already have a starter dataset; check
     `data/` before sourcing fresh.
@@ -250,7 +250,7 @@ operator-side prerequisites.
   1. Pull candidate setups from a 4-year BTC history (2021–2024).
   2. Hand-tag each as one of the 5 buckets above.
   3. Save under `data/probes/<bucket>/<uuid>.json` as `MarketSnapshot`.
-  4. Wire `ProbeRunner` in `xianvec-eval` per implementation-plan §8.5.
+  4. Wire `ProbeRunner` in `xvision-eval` per implementation-plan §8.5.
 - **Trigger:** Phase 9.2 A/B runner stable + want a regression-detection net
   for strategy / prompt / model changes.
 - **FOLLOWUPS:** F13.
@@ -274,7 +274,7 @@ operator-side prerequisites.
   re-measure.
 - **Workflow:**
   1. Cold start; close all non-test apps.
-  2. Run `cargo run --release -p xianvec-inference --bin smoke-qwen3` 10×
+  2. Run `cargo run --release -p xvision-inference --bin smoke-qwen3` 10×
      with default `RUSTFLAGS`.
   3. Cool box; repeat 10× with `RUSTFLAGS="-C target-cpu=native"`.
   4. Compare median + p95 decode/prefill tok/s.
@@ -283,7 +283,7 @@ operator-side prerequisites.
 
 ---
 
-## Strategy authoring (MVP — see crates/xianvec-engine/README.md)
+## Strategy authoring (MVP — see crates/xvision-engine/README.md)
 
 ```bash
 xvn strategy templates                 # list templates

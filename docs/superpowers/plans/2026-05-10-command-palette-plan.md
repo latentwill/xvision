@@ -21,14 +21,14 @@
 
 ```
 crates/
-├── xianvec-engine/
+├── xvision-engine/
 │   └── src/
 │       └── search/
 │           ├── mod.rs                          # NEW: re-exports
 │           ├── index.rs                        # NEW: FTS5 schema + writer
 │           ├── query.rs                        # NEW: search() + result types
 │           └── indexers.rs                     # NEW: per-artifact indexer hooks
-├── xianvec-dashboard/
+├── xvision-dashboard/
 │   ├── src/routes/
 │   │   └── search.rs                           # NEW: GET /api/search
 │   ├── templates/
@@ -44,8 +44,8 @@ crates/
 ### Task 1: FTS5 schema + writer
 
 **Files:**
-- Create: `crates/xianvec-engine/src/search/mod.rs`
-- Create: `crates/xianvec-engine/src/search/index.rs`
+- Create: `crates/xvision-engine/src/search/mod.rs`
+- Create: `crates/xvision-engine/src/search/index.rs`
 
 Schema:
 
@@ -160,7 +160,7 @@ git commit -am "feat(engine): SearchIndex with FTS5 backing"
 
 ### Task 2: `search()` query function
 
-**File:** `crates/xianvec-engine/src/search/query.rs`
+**File:** `crates/xvision-engine/src/search/query.rs`
 
 - [ ] **Step 1: Types + query**
 
@@ -250,7 +250,7 @@ git commit -am "feat(engine): search() with prefix + kind filtering"
 
 ### Task 3: Per-artifact indexers
 
-**File:** `crates/xianvec-engine/src/search/indexers.rs`
+**File:** `crates/xvision-engine/src/search/indexers.rs`
 
 Wire indexer calls into the existing artifact create/update paths. Each indexer is a small adapter that maps an artifact to an `IndexEntry`.
 
@@ -270,7 +270,7 @@ pub fn index_strategy(idx: &SearchIndex, draft: &StrategyDraft) -> anyhow::Resul
 }
 ```
 
-Call this from `xianvec-engine::mcp::authoring::create_strategy` and `update_slot`.
+Call this from `xvision-engine::mcp::authoring::create_strategy` and `update_slot`.
 
 - [ ] **Step 2: Run indexer**
 
@@ -288,7 +288,7 @@ pub fn index_run(idx: &SearchIndex, run: &RunSummary) -> anyhow::Result<()> {
 }
 ```
 
-Call from `xianvec-eval::run_completed` hook.
+Call from `xvision-eval::run_completed` hook.
 
 - [ ] **Step 3: Finding, Scenario, Deployment, JournalEntry indexers**
 
@@ -336,7 +336,7 @@ git commit -am "feat(engine): per-artifact search indexers + bootstrap reindex"
 
 ### Task 4: GET /api/search endpoint
 
-**File:** `crates/xianvec-dashboard/src/routes/search.rs`
+**File:** `crates/xvision-dashboard/src/routes/search.rs`
 
 - [ ] **Step 1: Handler**
 
@@ -344,7 +344,7 @@ git commit -am "feat(engine): per-artifact search indexers + bootstrap reindex"
 use axum::extract::{Query, State};
 use axum::Json;
 use serde::Deserialize;
-use xianvec_engine::search::{self, SearchHit, SearchKind, SearchOpts};
+use xvision_engine::search::{self, SearchHit, SearchKind, SearchOpts};
 
 #[derive(Deserialize)]
 pub struct SearchQuery {
@@ -395,7 +395,7 @@ git commit -am "feat(dashboard): GET /api/search wired to FTS index"
 
 ### Task 5: Modal markup in `base.html`
 
-**File:** `crates/xianvec-dashboard/templates/base.html`
+**File:** `crates/xvision-dashboard/templates/base.html`
 
 Add the `<dialog>` markup to `base.html` so it's available on every authenticated route. Per ui-elements.md §1.5: 640px wide, centered, search input at top, results grouped by kind.
 
@@ -448,7 +448,7 @@ git commit -am "feat(dashboard): command palette modal markup in base template"
 
 ### Task 6: `command_palette.js` — bind ⌘K + render results
 
-**File:** `crates/xianvec-dashboard/static/js/command_palette.js`
+**File:** `crates/xvision-dashboard/static/js/command_palette.js`
 
 - [ ] **Step 1: Open / close binding**
 
@@ -574,7 +574,7 @@ git commit -am "feat(dashboard): command palette frontend with ⌘K binding"
 
 ### Task 7: Bootstrap reindex on dashboard startup
 
-Modify `xianvec-dashboard::serve()` to:
+Modify `xvision-dashboard::serve()` to:
 1. Open `SearchIndex` and stash in `AppState`.
 2. Call `reindex_all(&idx, &xvn_home)` once.
 3. Call `seed_actions(&idx)`.
@@ -611,7 +611,7 @@ Manual flow:
 4. Type `new strat` → Actions group with `New strategy from template…`. Enter → navigates to `/setup?seed=template-picker`.
 5. Type `journ` → if Lab Notebook is shipped, the most recent journal entries appear under Journal. If not, no Journal group surfaces.
 
-Document in `crates/xianvec-dashboard/README.md` under "Command Palette".
+Document in `crates/xvision-dashboard/README.md` under "Command Palette".
 
 Commit `chore: command palette smoke verified`.
 

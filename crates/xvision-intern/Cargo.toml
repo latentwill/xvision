@@ -1,0 +1,30 @@
+[package]
+name        = "xvision-intern"
+description = "Stage 1 — OpenAI/Anthropic-compatible briefing backend"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+
+[lib]
+name = "xvision_intern"
+path = "src/lib.rs"
+
+[dependencies]
+xvision-core = { path = "../xvision-core" }
+serde       = { workspace = true }
+serde_json  = { workspace = true }
+garde       = { workspace = true }
+tokio       = { workspace = true }
+async-trait = { workspace = true }
+reqwest     = { workspace = true }
+chrono      = { workspace = true }
+uuid        = { workspace = true }
+thiserror   = { workspace = true }
+anyhow      = { workspace = true }
+tracing     = { workspace = true }
+regex       = "1"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros"] }

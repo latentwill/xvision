@@ -6,9 +6,9 @@
 
 **Goal:** A working `/settings` page with sidebar nav and five sections that v1 actually needs: **Providers** (LLM keys), **Brokers**, **Daemon**, **Identity** (read-only stub in v1), **Danger zone**. Plus a wired first-run flow at `/setup` so a user with no LLM key can paste one and land on the Wizard with that key persisted as a `[[providers]]` row in `config/default.toml`.
 
-**Architecture:** New `/settings/...` route family inside `xianvec-dashboard`. The sidebar layout is one `base.html` template that every settings sub-page extends. Each sub-page is its own askama template + JS module. Mutations go through a small REST surface (`POST /api/settings/...`) that delegates to a new `xianvec-core::settings` module — the only crate that knows how to read and rewrite `config/default.toml`. The first-run flow at `/setup` reuses the same provider-add path so there's exactly one code path that creates a `[[providers]]` row.
+**Architecture:** New `/settings/...` route family inside `xvision-dashboard`. The sidebar layout is one `base.html` template that every settings sub-page extends. Each sub-page is its own askama template + JS module. Mutations go through a small REST surface (`POST /api/settings/...`) that delegates to a new `xvision-core::settings` module — the only crate that knows how to read and rewrite `config/default.toml`. The first-run flow at `/setup` reuses the same provider-add path so there's exactly one code path that creates a `[[providers]]` row.
 
-**Tech Stack:** Rust 2021. Reuses Plan 2d's axum + askama + rust-embed setup. New deps: `toml_edit = "0.22"` in `xianvec-core` (so we can rewrite `config/default.toml` while preserving comments and field ordering). No new frontend deps — plain HTML/JS modules + Tailwind via CDN.
+**Tech Stack:** Rust 2021. Reuses Plan 2d's axum + askama + rust-embed setup. New deps: `toml_edit = "0.22"` in `xvision-core` (so we can rewrite `config/default.toml` while preserving comments and field ordering). No new frontend deps — plain HTML/JS modules + Tailwind via CDN.
 
 **Out of scope (deferred):**
 - Marketplace settings sub-page (§18) — ships with Plan 5 (blockchain integration). v1 shows a placeholder card.
@@ -24,11 +24,11 @@
 
 ```
 crates/
-├── xianvec-core/
+├── xvision-core/
 │   └── src/
 │       ├── settings.rs                            # NEW: read/write config/default.toml safely
 │       └── config.rs                              # MODIFY: pub fn config_path(home: &Path) -> PathBuf
-├── xianvec-dashboard/
+├── xvision-dashboard/
 │   ├── src/routes/
 │   │   ├── settings.rs                            # NEW: settings shell + sub-page handlers
 │   │   ├── settings_providers.rs                  # NEW: GET + REST for /settings/providers
@@ -50,7 +50,7 @@ crates/
 │       ├── settings_brokers.js                    # NEW
 │       ├── settings_danger.js                     # NEW
 │       └── setup_first_run.js                     # NEW: provider paste form
-└── xianvec-cli/
+└── xvision-cli/
     └── src/commands/
         └── (no new files — settings is dashboard-only in v1; CLI uses existing `xvn provider`)
 ```
@@ -59,19 +59,19 @@ crates/
 
 ## Phase A — Settings shell + sidebar nav
 
-### Task 1: `xianvec-core::settings` module + `toml_edit` dep
+### Task 1: `xvision-core::settings` module + `toml_edit` dep
 
 **Files:**
-- Create: `crates/xianvec-core/src/settings.rs`
-- Modify: `crates/xianvec-core/Cargo.toml` (add `toml_edit`)
-- Modify: `crates/xianvec-core/src/lib.rs` (re-export `settings`)
-- Modify: `crates/xianvec-core/src/config.rs` (add `pub fn config_path(home: &Path) -> PathBuf`)
-- Test: `crates/xianvec-core/tests/settings_roundtrip.rs`
+- Create: `crates/xvision-core/src/settings.rs`
+- Modify: `crates/xvision-core/Cargo.toml` (add `toml_edit`)
+- Modify: `crates/xvision-core/src/lib.rs` (re-export `settings`)
+- Modify: `crates/xvision-core/src/config.rs` (add `pub fn config_path(home: &Path) -> PathBuf`)
+- Test: `crates/xvision-core/tests/settings_roundtrip.rs`
 
 - [ ] **Step 1: Add `toml_edit` to Cargo.toml**
 
 ```toml
-# crates/xianvec-core/Cargo.toml
+# crates/xvision-core/Cargo.toml
 [dependencies]
 # ...existing deps
 toml_edit = "0.22"
@@ -167,7 +167,7 @@ pub fn update_provider(
 - [ ] **Step 3: Add `config_path` helper**
 
 ```rust
-// crates/xianvec-core/src/config.rs
+// crates/xvision-core/src/config.rs
 pub fn config_path(home: &std::path::Path) -> std::path::PathBuf {
     home.join("config").join("default.toml")
 }
@@ -176,9 +176,9 @@ pub fn config_path(home: &std::path::Path) -> std::path::PathBuf {
 - [ ] **Step 4: Roundtrip test**
 
 ```rust
-// crates/xianvec-core/tests/settings_roundtrip.rs
-use xianvec_core::config::{ProviderEntry, ProviderKind};
-use xianvec_core::settings::{add_provider, read_doc, remove_provider, write_doc};
+// crates/xvision-core/tests/settings_roundtrip.rs
+use xvision_core::config::{ProviderEntry, ProviderKind};
+use xvision_core::settings::{add_provider, read_doc, remove_provider, write_doc};
 
 #[test]
 fn add_then_remove_preserves_comments() {
@@ -235,12 +235,12 @@ fn rejects_underscore_prefix_name() {
 }
 ```
 
-Run: `cargo test -p xianvec-core --test settings_roundtrip` — expect 2 passed.
+Run: `cargo test -p xvision-core --test settings_roundtrip` — expect 2 passed.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-core
+git add crates/xvision-core
 git commit -m "feat(core): settings module with toml_edit roundtrip for [[providers]] rows"
 ```
 
@@ -249,9 +249,9 @@ git commit -m "feat(core): settings module with toml_edit roundtrip for [[provid
 ### Task 2: Settings shell — sidebar template + base route
 
 **Files:**
-- Create: `crates/xianvec-dashboard/templates/settings_base.html`
-- Create: `crates/xianvec-dashboard/src/routes/settings.rs`
-- Modify: `crates/xianvec-dashboard/src/routes/mod.rs` (mount `/settings/...`)
+- Create: `crates/xvision-dashboard/templates/settings_base.html`
+- Create: `crates/xvision-dashboard/src/routes/settings.rs`
+- Modify: `crates/xvision-dashboard/src/routes/mod.rs` (mount `/settings/...`)
 
 - [ ] **Step 1: settings_base.html — sidebar layout**
 
@@ -370,7 +370,7 @@ async fn settings_index_redirects_to_providers() {
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-dashboard
+git add crates/xvision-dashboard
 git commit -m "feat(dashboard): /settings shell with sidebar nav + section routing"
 ```
 
@@ -381,9 +381,9 @@ git commit -m "feat(dashboard): /settings shell with sidebar nav + section routi
 ### Task 3: GET /settings/providers — list view
 
 **Files:**
-- Create: `crates/xianvec-dashboard/src/routes/settings_providers.rs`
-- Create: `crates/xianvec-dashboard/templates/settings_providers.html`
-- Create: `crates/xianvec-dashboard/static/js/settings_providers.js`
+- Create: `crates/xvision-dashboard/src/routes/settings_providers.rs`
+- Create: `crates/xvision-dashboard/templates/settings_providers.html`
+- Create: `crates/xvision-dashboard/static/js/settings_providers.js`
 
 Per LLM-providers spec §7.1: sortable table, columns `Name`, `Kind`, `Base URL`, `API key env`, `Key`, `Used by`, `Actions`. Empty state has the same three quick-link buttons (Get an Anthropic key / Get an OpenAI key / Get an OpenRouter key) as the first-run modal.
 
@@ -455,8 +455,8 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse as AxumIntoResponse, Json, Response};
 use serde::{Deserialize, Serialize};
-use xianvec_core::config::{ProviderEntry, ProviderKind};
-use xianvec_core::settings;
+use xvision_core::config::{ProviderEntry, ProviderKind};
+use xvision_core::settings;
 
 use crate::AppState;
 
@@ -493,8 +493,8 @@ pub struct ProviderRow {
 pub enum KeyStatus { Set, Missing, NotApplicable }
 
 pub async fn list(State(state): State<AppState>) -> Json<Vec<ProviderRow>> {
-    let cfg_path = xianvec_core::config::config_path(&state.xvn_home);
-    let cfg = xianvec_core::config::RuntimeConfig::load(&cfg_path).unwrap_or_default();
+    let cfg_path = xvision_core::config::config_path(&state.xvn_home);
+    let cfg = xvision_core::config::RuntimeConfig::load(&cfg_path).unwrap_or_default();
     let mut rows = Vec::with_capacity(cfg.providers.len());
     for p in &cfg.providers {
         let key_status = if p.api_key_env.is_empty() {
@@ -517,7 +517,7 @@ pub async fn list(State(state): State<AppState>) -> Json<Vec<ProviderRow>> {
     Json(rows)
 }
 
-fn collect_slot_refs(cfg: &xianvec_core::config::RuntimeConfig, name: &str) -> Vec<String> {
+fn collect_slot_refs(cfg: &xvision_core::config::RuntimeConfig, name: &str) -> Vec<String> {
     let mut out = vec![];
     if cfg.intern.provider.as_str() == cfg.intern_kind_name(name) {
         out.push("workspace default Intern".into());
@@ -602,7 +602,7 @@ refresh();
 - [ ] **Step 4: Test — list endpoint returns rows**
 
 ```rust
-// crates/xianvec-dashboard/tests/settings_providers.rs
+// crates/xvision-dashboard/tests/settings_providers.rs
 #[tokio::test]
 async fn list_returns_seeded_providers() {
     let dir = tempfile::tempdir().unwrap();
@@ -636,7 +636,7 @@ max_tokens = 1024
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-dashboard
+git add crates/xvision-dashboard
 git commit -m "feat(dashboard): /settings/providers list view + GET endpoint"
 ```
 
@@ -644,7 +644,7 @@ git commit -m "feat(dashboard): /settings/providers list view + GET endpoint"
 
 ### Task 4: POST/PUT/DELETE provider endpoints
 
-**File:** `crates/xianvec-dashboard/src/routes/settings_providers.rs`
+**File:** `crates/xvision-dashboard/src/routes/settings_providers.rs`
 
 - [ ] **Step 1: AddRequest + handler**
 
@@ -662,7 +662,7 @@ pub async fn add(
     Json(req): Json<AddProviderRequest>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     let entry = build_entry(&req).map_err(bad_req)?;
-    let cfg_path = xianvec_core::config::config_path(&state.xvn_home);
+    let cfg_path = xvision_core::config::config_path(&state.xvn_home);
     let mut doc = settings::read_doc(&cfg_path).map_err(internal)?;
     settings::add_provider(&mut doc, &entry).map_err(bad_req)?;
     settings::write_doc(&cfg_path, &doc).map_err(internal)?;
@@ -675,7 +675,7 @@ pub async fn update(
     Json(req): Json<AddProviderRequest>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     let entry = build_entry(&req).map_err(bad_req)?;
-    let cfg_path = xianvec_core::config::config_path(&state.xvn_home);
+    let cfg_path = xvision_core::config::config_path(&state.xvn_home);
     let mut doc = settings::read_doc(&cfg_path).map_err(internal)?;
     settings::update_provider(&mut doc, &name, &entry).map_err(bad_req)?;
     settings::write_doc(&cfg_path, &doc).map_err(internal)?;
@@ -686,8 +686,8 @@ pub async fn delete(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    let cfg_path = xianvec_core::config::config_path(&state.xvn_home);
-    let cfg = xianvec_core::config::RuntimeConfig::load(&cfg_path).map_err(internal)?;
+    let cfg_path = xvision_core::config::config_path(&state.xvn_home);
+    let cfg = xvision_core::config::RuntimeConfig::load(&cfg_path).map_err(internal)?;
     if cfg.intern_references(&name) {
         return Err((StatusCode::CONFLICT, format!(
             "cannot remove provider {name}: referenced by [intern]. Change the workspace default Intern slot first."
@@ -753,7 +753,7 @@ async fn delete_refuses_provider_referenced_by_intern() {
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/xianvec-dashboard
+git add crates/xvision-dashboard
 git commit -m "feat(dashboard): provider add/update/delete endpoints with intern-ref guard"
 ```
 
@@ -761,7 +761,7 @@ git commit -m "feat(dashboard): provider add/update/delete endpoints with intern
 
 ### Task 5: Test connection endpoint
 
-**File:** `crates/xianvec-dashboard/src/routes/settings_providers.rs`
+**File:** `crates/xvision-dashboard/src/routes/settings_providers.rs`
 
 Per LLM-providers spec §10 open question: TCP-connect by default. v1 implementation: try `reqwest::get(base_url)` with 3-second timeout, surface OK / err string. (Real `/models` ping is a `--probe` flag in the CLI; the UI sticks with TCP-level.)
 
@@ -772,8 +772,8 @@ pub async fn test(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    let cfg = xianvec_core::config::RuntimeConfig::load(
-        &xianvec_core::config::config_path(&state.xvn_home)
+    let cfg = xvision_core::config::RuntimeConfig::load(
+        &xvision_core::config::config_path(&state.xvn_home)
     ).map_err(internal)?;
     let p = cfg.providers.iter().find(|p| p.name == name)
         .ok_or_else(|| (StatusCode::NOT_FOUND, format!("provider {name} not found")))?;
@@ -805,11 +805,11 @@ git commit -am "feat(dashboard): provider test-connection endpoint (TCP-level)"
 ### Task 6: `/setup` first-run-key card
 
 **Files:**
-- Create: `crates/xianvec-dashboard/templates/setup_first_run.html`
-- Create: `crates/xianvec-dashboard/src/routes/setup.rs`
-- Create: `crates/xianvec-dashboard/static/js/setup_first_run.js`
-- Modify: `crates/xianvec-dashboard/src/routes/wizard.rs` (redirect to `/setup` when no provider with set key)
-- Modify: `crates/xianvec-dashboard/static/js/wizard.js` (remove the inline `prompt()` from Plan 2d Task 7 — provider+key is now persisted server-side)
+- Create: `crates/xvision-dashboard/templates/setup_first_run.html`
+- Create: `crates/xvision-dashboard/src/routes/setup.rs`
+- Create: `crates/xvision-dashboard/static/js/setup_first_run.js`
+- Modify: `crates/xvision-dashboard/src/routes/wizard.rs` (redirect to `/setup` when no provider with set key)
+- Modify: `crates/xvision-dashboard/static/js/wizard.js` (remove the inline `prompt()` from Plan 2d Task 7 — provider+key is now persisted server-side)
 
 This task replaces Plan 2d's `localStorage.getItem('xvn_anthropic_key') || prompt(...)` hack with a real first-run page that writes a `[[providers]]` row and a `[intern]` block.
 
@@ -818,8 +818,8 @@ This task replaces Plan 2d's `localStorage.getItem('xvn_anthropic_key') || promp
 ```rust
 // routes/wizard.rs — modify root()
 pub async fn root(State(state): State<AppState>) -> Response {
-    let cfg = xianvec_core::config::RuntimeConfig::load(
-        &xianvec_core::config::config_path(&state.xvn_home)
+    let cfg = xvision_core::config::RuntimeConfig::load(
+        &xvision_core::config::config_path(&state.xvn_home)
     ).unwrap_or_default();
     let has_set_key = cfg.providers.iter().any(|p|
         !p.api_key_env.is_empty() && std::env::var(&p.api_key_env).is_ok()
@@ -884,8 +884,8 @@ use axum::extract::{Json, State};
 use axum::http::StatusCode;
 use serde::Deserialize;
 
-use xianvec_core::config::{ProviderEntry, ProviderKind};
-use xianvec_core::settings;
+use xvision_core::config::{ProviderEntry, ProviderKind};
+use xvision_core::settings;
 
 #[derive(Deserialize)]
 pub struct FirstRunRequest {
@@ -899,7 +899,7 @@ pub async fn first_run(
 ) -> Result<StatusCode, (StatusCode, String)> {
     let preset = preset_for(&req.provider).ok_or((StatusCode::BAD_REQUEST, format!("unknown provider {}", req.provider)))?;
     write_secret(&state.xvn_home, &preset.env_var, &req.key)?;
-    let cfg_path = xianvec_core::config::config_path(&state.xvn_home);
+    let cfg_path = xvision_core::config::config_path(&state.xvn_home);
     let mut doc = settings::read_doc(&cfg_path).unwrap_or_else(|_| settings::default_doc());
     let entry = ProviderEntry {
         name: preset.name.into(),
@@ -964,7 +964,7 @@ document.getElementById('first-run-form').addEventListener('submit', async e => 
 
 - [ ] **Step 5: Daemon reads `secrets.env` on startup**
 
-The dashboard `serve()` entry point should `dotenvy::from_path(xvn_home.join("secrets.env"))?` before reading any provider env vars. Add `dotenvy = "0.15"` to xianvec-dashboard.
+The dashboard `serve()` entry point should `dotenvy::from_path(xvn_home.join("secrets.env"))?` before reading any provider env vars. Add `dotenvy = "0.15"` to xvision-dashboard.
 
 ```rust
 // lib.rs serve()
@@ -997,7 +997,7 @@ async fn first_run_writes_provider_and_secret() {
 - [ ] **Step 7: Commit**
 
 ```bash
-git add crates/xianvec-dashboard
+git add crates/xvision-dashboard
 git commit -m "feat(dashboard): /setup first-run flow writes provider + secrets.env + redirects"
 ```
 
@@ -1008,16 +1008,16 @@ git commit -m "feat(dashboard): /setup first-run flow writes provider + secrets.
 ### Task 7: `/settings/brokers` (Alpaca + Orderly)
 
 **Files:**
-- Create: `crates/xianvec-dashboard/templates/settings_brokers.html`
-- Create: `crates/xianvec-dashboard/src/routes/settings_brokers.rs`
-- Create: `crates/xianvec-dashboard/static/js/settings_brokers.js`
+- Create: `crates/xvision-dashboard/templates/settings_brokers.html`
+- Create: `crates/xvision-dashboard/src/routes/settings_brokers.rs`
+- Create: `crates/xvision-dashboard/static/js/settings_brokers.js`
 
 V1 scope: **Alpaca** (paper + live key paste) and **Orderly** (registration stub — actual wallet flow ships with non-custodial-wallets plan). Same TOML-edit pattern as providers, but writes `[[brokers]]` rows.
 
-- [ ] **Step 1: Define `[[brokers]]` schema in `xianvec-core::config`**
+- [ ] **Step 1: Define `[[brokers]]` schema in `xvision-core::config`**
 
 ```rust
-// crates/xianvec-core/src/config.rs
+// crates/xvision-core/src/config.rs
 #[derive(Debug, Clone, Serialize, Deserialize, garde::Validate)]
 pub struct BrokerEntry {
     #[garde(length(min=1, max=32), pattern(r"^[a-z0-9-]+$"))]
@@ -1085,7 +1085,7 @@ These three are smaller — each is one page with a fixed body (no modals).
 
 - [ ] **Step 1: `/settings/daemon` — read-only display + restart action**
 
-Body shows: daemon PID (from `xianvec-core::daemon_pidfile`), uptime, log level (read from `XVN_LOG`), heartbeat status. Single action: `Restart daemon` button calling `POST /api/daemon/restart`. The actual restart endpoint can be a v1.1 follow-up — for now stub returns 501 with a "use `xvn daemon restart` from the CLI" message.
+Body shows: daemon PID (from `xvision-core::daemon_pidfile`), uptime, log level (read from `XVN_LOG`), heartbeat status. Single action: `Restart daemon` button calling `POST /api/daemon/restart`. The actual restart endpoint can be a v1.1 follow-up — for now stub returns 501 with a "use `xvn daemon restart` from the CLI" message.
 
 - [ ] **Step 2: `/settings/identity` — read-only ERC-8004 display**
 
@@ -1143,7 +1143,7 @@ git commit -am "feat(dashboard): /settings/{daemon,identity,danger} pages + dang
 ### Task 9: Placeholder pages for deferred sub-sections
 
 **Files:**
-- Modify: `crates/xianvec-dashboard/src/routes/settings.rs`
+- Modify: `crates/xvision-dashboard/src/routes/settings.rs`
 
 Five placeholders needed: `/settings/account`, `/settings/appearance`, `/settings/autoresearch`, `/settings/marketplace`, `/settings/telemetry`. Each renders `settings_base.html` with a body of one card explaining the deferral.
 
@@ -1178,8 +1178,8 @@ git commit -am "feat(dashboard): placeholder cards for deferred /settings sub-se
 ### Task 10: Provider chip on top nav reflects real state
 
 **Files:**
-- Modify: `crates/xianvec-dashboard/templates/base.html` (replace static pill with dynamic include)
-- Modify: `crates/xianvec-dashboard/src/routes/api.rs` (add `GET /api/llm-status`)
+- Modify: `crates/xvision-dashboard/templates/base.html` (replace static pill with dynamic include)
+- Modify: `crates/xvision-dashboard/src/routes/api.rs` (add `GET /api/llm-status`)
 
 The top nav (per ui-elements.md §1.2) shows `● Anthropic` / `● OpenAI` / `● No key` based on which provider's key is set. In Plan 2d this was a hardcoded chip; this task makes it reflect reality.
 
@@ -1187,8 +1187,8 @@ The top nav (per ui-elements.md §1.2) shows `● Anthropic` / `● OpenAI` / `�
 
 ```rust
 pub async fn llm_status(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let cfg = xianvec_core::config::RuntimeConfig::load(
-        &xianvec_core::config::config_path(&state.xvn_home)
+    let cfg = xvision_core::config::RuntimeConfig::load(
+        &xvision_core::config::config_path(&state.xvn_home)
     ).unwrap_or_default();
     let active = cfg.providers.iter().find(|p|
         !p.api_key_env.is_empty() && std::env::var(&p.api_key_env).is_ok()
@@ -1231,7 +1231,7 @@ sleep 2
 kill $DASHBOARD_PID
 ```
 
-Document the smoke procedure in `crates/xianvec-dashboard/README.md` under a "Settings & Onboarding" section.
+Document the smoke procedure in `crates/xvision-dashboard/README.md` under a "Settings & Onboarding" section.
 
 Commit `chore: settings & onboarding smoke verified`.
 

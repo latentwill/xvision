@@ -1,8 +1,8 @@
-# XIANVEC v1 — Step-by-Step Build
+# XVISION v1 — Step-by-Step Build
 
 > **2026-05-07: CV build steps removed per ADR 0011.** Phase 0 vector
 > validation spike, Phase 4 vector extraction, and Task 4.4.1 introspection
-> hook installation are gone. xianvec is now a CV-free multistrategy +
+> hook installation are gone. xvision is now a CV-free multistrategy +
 > ERC-8004 marketplace codebase.
 
 Sequential build order distilled from `implementation-plan.md`. Each step links back to its phase/task for full context.
@@ -16,26 +16,26 @@ Sequential build order distilled from `implementation-plan.md`. Each step links 
 ---
 
 ## Phase 0 — Foundation
-1. **0.1** `cargo new` workspace; stub all `crates/xianvec-*` with one passing test each.
+1. **0.1** `cargo new` workspace; stub all `crates/xvision-*` with one passing test each.
 2. **0.4** Vendor `byreal-agent-skills` and `mantle-skills` as submodules under `.claude/skills/`.
 
 ## Phase 1 — Schemas, config, persistence
-1. **1.1** Schema crate (`xianvec-core`): types + `serde + garde` validation.
+1. **1.1** Schema crate (`xvision-core`): types + `serde + garde` validation.
 2. **1.2** Config loader (`config/default.toml`, `whitelist.toml`, `risk.toml`).
 3. **1.3** SQLite persistence (`store.rs`) — decisions, briefings, traces. Decisions keyed on `(setup_id, arm_name)`.
-4. **1.4** Technical indicators (`xianvec-data/indicators.rs`).
+4. **1.4** Technical indicators (`xvision-data/indicators.rs`).
 
 ## Phase 2 — Stage 1 Intern
 1. **2.1** Intern prompt builder.
 2. **2.2** Intern via Anthropic SDK or any OpenAI-compatible HTTP backend; **`temperature=0`**; cache briefings keyed by `setup_id` (Tier 1 fix #1).
 
 ## Phase 3 — Stage 2 Trader
-1. **3.1** Trader backend (`xianvec-trader`): `TraderBackend` HTTP trait + `OpenAiCompatBackend` impl. Optional local candle inference for air-gapped runs.
+1. **3.1** Trader backend (`xvision-trader`): `TraderBackend` HTTP trait + `OpenAiCompatBackend` impl. Optional local candle inference for air-gapped runs.
 2. **3.2** Trader prompt + JSON-constrained generation.
 3. **3.3** Smoke pipeline: Intern → Trader.
 
 ## Phase 5 — Risk Layer
-- Deterministic rules in `xianvec-risk`. Pipeline owns risk; harness trusts the decision (Tier 3 cleanup).
+- Deterministic rules in `xvision-risk`. Pipeline owns risk; harness trusts the decision (Tier 3 cleanup).
 
 ## Phase 6 — Stage 3 Execution
 1. **6.1** `Executor` trait.
@@ -47,7 +47,7 @@ Sequential build order distilled from `implementation-plan.md`. Each step links 
 - Mint per-strategy NFTs via Identity Registry on Mantle mainnet using `alloy`. One manifest per Strategy variant in `identity/`.
 
 ## Phase 7 — Baselines
-- Buy-and-hold, momentum, etc. in `xianvec-eval/baselines/`.
+- Buy-and-hold, momentum, etc. in `xvision-eval/baselines/`.
 
 ## Phase 8 — Eval framework
 1. **8.1** Returns + Sharpe; use `pnl_i / nav_initial` (constant denominator) (Tier 2 fix #5).
@@ -56,7 +56,7 @@ Sequential build order distilled from `implementation-plan.md`. Each step links 
 4. **8.4** Anti-overfitting gate (reportable, not blocking).
 
 ## Phase 9 — A/B experiment
-1. **9.1** Ops (`xianvec-cli/src/ops.rs`).
+1. **9.1** Ops (`xvision-cli/src/ops.rs`).
 2. **9.2** A/B runner: paired strategy arms (e.g., `trader_arm`, `buy_hold`, classical TA, onchain), **`temperature=0`** for LLM-driven arms (Tier 1 fix #2), divergence on `(action, direction, size_bucket)`. BTC-only v1.
 
 ## Phase 10 — Demo polish

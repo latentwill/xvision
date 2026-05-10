@@ -2,27 +2,27 @@
 
 > **Status:** Draft · 2026-05-09
 > **Terminology:** Updated 2026-05-10 — `strategy_id` renamed to `agent_id` per Option B (see [`docs/superpowers/plans/2026-05-10-terminology-rename-option-b.md`](../plans/2026-05-10-terminology-rename-option-b.md)). The id is a local ULID pre-mint, resolves to the NFT token id post-SLF3.
-> **Depends on:** [`docs/superpowers/specs/2026-05-08-smart-contract-surface-design.md`](./2026-05-08-smart-contract-surface-design.md) (the marketplace contract surface this spec assumes), `architecture.md` §6.1 (Orderly executor), `crates/xianvec-risk/` (the engine being extended).
-> **Related:** [`crates/xianvec-execution/src/orderly.rs`](../../../crates/xianvec-execution/src/orderly.rs), [`docs/erc-8004-agent-uses.md`](../../erc-8004-agent-uses.md).
+> **Depends on:** [`docs/superpowers/specs/2026-05-08-smart-contract-surface-design.md`](./2026-05-08-smart-contract-surface-design.md) (the marketplace contract surface this spec assumes), `architecture.md` §6.1 (Orderly executor), `crates/xvision-risk/` (the engine being extended).
+> **Related:** [`crates/xvision-execution/src/orderly.rs`](../../../crates/xvision-execution/src/orderly.rs), [`docs/erc-8004-agent-uses.md`](../../erc-8004-agent-uses.md).
 
 ---
 
 ## 1. Scope
 
-This spec defines how xianvec gives strategy variants the authority to trade *without ever holding user trading capital*. It also defines per-strategy spending controls (the "agent budgets" question) and the relationship between the trading-rail and the marketplace-rail.
+This spec defines how xvision gives strategy variants the authority to trade *without ever holding user trading capital*. It also defines per-strategy spending controls (the "agent budgets" question) and the relationship between the trading-rail and the marketplace-rail.
 
 **In scope:**
 
 - The two-rail architecture: trading rail (non-custodial) vs marketplace rail (narrow custody for fee routing only).
-- How a user connects their Orderly account to xianvec via a scoped Ed25519 trading key.
-- How xianvec stores, scopes, and uses that key per-strategy.
+- How a user connects their Orderly account to xvision via a scoped Ed25519 trading key.
+- How xvision stores, scopes, and uses that key per-strategy.
 - The hybrid per-agent budget model (hard USDC cap + dynamic quota inside it) and how the Risk Analysis Engine enforces it.
 - The off-chain attribution ledger that maps Orderly positions → strategy variants for reporting and marketplace settlement.
 - The settlement wallet that receives commission drips from the Marketplace contract.
 
 **Explicitly out of scope:**
 
-- Custody of user trading funds. **xianvec never holds user trading capital.** Any design that drifts toward this is rejected by construction.
+- Custody of user trading funds. **xvision never holds user trading capital.** Any design that drifts toward this is rejected by construction.
 - The Marketplace / LicenseToken / EvalAttestationRegistry contract internals — those are specified in [`2026-05-08-smart-contract-surface-design.md`](./2026-05-08-smart-contract-surface-design.md). This spec assumes that contract surface and only describes how the trading rail interacts with it.
 - Multi-user scaling for the hackathon. v1 supports one operator-as-user; multi-tenant onboarding is a Plan 5 concern.
 - Withdrawal-time performance fees. Recorded as a future option in §10.
@@ -51,11 +51,11 @@ Both gates are checked once during the implementation plan's first probe. Result
 └────────────────────────────────────────────────────────────────────────────────┘
         ▲ trade orders                                       ▲ withdrawals
         │ (scoped Ed25519 trading key,                       │ (user-signed,
-        │  cannot withdraw)                                  │  no xianvec
+        │  cannot withdraw)                                  │  no xvision
         │                                                    │  involvement)
         │
 ┌───────┴────────────────────────────────────────────────────────────────────────┐
-│  XIANVEC ORCHESTRATOR  (no custody)                                             │
+│  XVISION ORCHESTRATOR  (no custody)                                             │
 │   ├─ strategy variants → produce trade intents                                  │
 │   ├─ Risk Analysis Engine → scoped-permission gate + hard cap × dynamic quota   │
 │   │                        + reservation lock + aggregate-margin guard          │
@@ -68,7 +68,7 @@ Both gates are checked once during the implementation plan's first probe. Result
 │   └─ Attribution ledger (agent_id → realized PnL + funding)                  │
 └────────────────────────────────────────────────────────────────────────────────┘
 
-   ────────  MARKETPLACE RAIL  (separate; the only smart contract xianvec owns)  ────────
+   ────────  MARKETPLACE RAIL  (separate; the only smart contract xvision owns)  ────────
 
 ┌────────────────────────────────────────────────────────────────────────────────┐
 │  MARKETPLACE FEE ROUTER  (per smart-contract-surface spec, §3)                  │
@@ -77,7 +77,7 @@ Both gates are checked once during the implementation plan's first probe. Result
 └────────────────────────────────────────────────────────────────────────────────┘
                               ↓ 5%
 ┌────────────────────────────────────────────────────────────────────────────────┐
-│  XIANVEC SETTLEMENT WALLET  (operator-owned EOA / multi-sig)                    │
+│  XVISION SETTLEMENT WALLET  (operator-owned EOA / multi-sig)                    │
 │   accumulates 5% drips; operator sweeps periodically                            │
 │   compromise loss = unswept fees only, NEVER user trading capital               │
 └────────────────────────────────────────────────────────────────────────────────┘
@@ -86,10 +86,10 @@ Both gates are checked once during the implementation plan's first probe. Result
 **Key principles:**
 
 - **Two rails, no crossover.** Trading capital moves only between user wallet ↔ user Orderly account. Marketplace fees move only between buyer ↔ creator + settlement wallet. The two rails do not share contracts, do not share custody, and do not share state beyond the strategy-id reference (a marketplace listing references a strategy NFT; that NFT also tags positions in the off-chain attribution ledger).
-- **"xianvec never holds user trading capital" is a precise claim.** The Marketplace contract briefly holds USDC during the atomic body of a `buy()` call (pull, split, forward — all in one transaction). That USDC is *marketplace fee capital* (a buyer's payment for a license), never *trading capital* (a user's collateral or PnL on Orderly). The two are physically separate funds in physically separate places.
+- **"xvision never holds user trading capital" is a precise claim.** The Marketplace contract briefly holds USDC during the atomic body of a `buy()` call (pull, split, forward — all in one transaction). That USDC is *marketplace fee capital* (a buyer's payment for a license), never *trading capital* (a user's collateral or PnL on Orderly). The two are physically separate funds in physically separate places.
 - **The trading key is scoped to orders, not withdrawals.** Orderly's API key model permits this: a registered Ed25519 key signs REST orders against the account but cannot initiate vault withdrawals (those require the EVM signer the user retains).
-- **Per-agent budgets are off-chain.** They live in `xianvec-risk` and are enforced at order-submission time. No on-chain accounting contract holds collateral on behalf of strategies.
-- **The smart-contract surface stays the same as the existing marketplace spec.** This spec adds no new contracts. The novelty is the *constraint*: the Marketplace contract is the only place xianvec ever holds funds, and only atomically during a license sale.
+- **Per-agent budgets are off-chain.** They live in `xvision-risk` and are enforced at order-submission time. No on-chain accounting contract holds collateral on behalf of strategies.
+- **The smart-contract surface stays the same as the existing marketplace spec.** This spec adds no new contracts. The novelty is the *constraint*: the Marketplace contract is the only place xvision ever holds funds, and only atomically during a license sale.
 
 ---
 
@@ -99,24 +99,24 @@ Both gates are checked once during the implementation plan's first probe. Result
 
 The user retains a normal Mantle EVM wallet (any signer they prefer — MetaMask, Privy embedded, hardware wallet). They onboard to Orderly via Orderly's standard registration flow: sign a registration message that creates an Orderly sub-account bound to their EVM address, and deposit USDC into the Orderly Vault contract on Mantle (`0x816f722424B49Cf1275cc86DA9840Fbd5a6167e9`).
 
-xianvec is not in this loop. The user could do all of this without xianvec ever being installed.
+xvision is not in this loop. The user could do all of this without xvision ever being installed.
 
 ### 3.2 Trading-key issuance
 
-After Orderly onboarding, the user authorizes xianvec to trade on their behalf by:
+After Orderly onboarding, the user authorizes xvision to trade on their behalf by:
 
-1. xianvec generates an Ed25519 keypair locally (in the operator's environment for v1; in the user's browser for multi-tenant v2).
-2. xianvec presents the public key to the user and asks them to sign an Orderly `add_orderly_key` request from their EVM wallet, scoping the key to:
+1. xvision generates an Ed25519 keypair locally (in the operator's environment for v1; in the user's browser for multi-tenant v2).
+2. xvision presents the public key to the user and asks them to sign an Orderly `add_orderly_key` request from their EVM wallet, scoping the key to:
    - account_id: the user's Orderly account
    - permissions: `trading` only (no `withdraw`, no `transfer`)
-   - ip_restriction (optional): xianvec server IP
+   - ip_restriction (optional): xvision server IP
    - expiration: 90 days, rotatable
 3. The signed registration goes to Orderly. Orderly returns the registered key id.
-4. xianvec stores the Ed25519 *private* key encrypted at rest using the AES-256-GCM scheme described in §5.
+4. xvision stores the Ed25519 *private* key encrypted at rest using the AES-256-GCM scheme described in §5.
 
-The user's EVM private key never touches xianvec. The trading key xianvec holds is bounded by Orderly's permission system: worst case (xianvec server compromise), an attacker can place trades up to the user's risk limits but cannot drain funds, cannot transfer, cannot rotate the key.
+The user's EVM private key never touches xvision. The trading key xvision holds is bounded by Orderly's permission system: worst case (xvision server compromise), an attacker can place trades up to the user's risk limits but cannot drain funds, cannot transfer, cannot rotate the key.
 
-**Phishing-resistant registration UX (mandatory).** The registration step is the highest-leverage attack surface — if the user signs a message that registers an attacker's key instead of xianvec's, the security model fails on day zero. The UX MUST:
+**Phishing-resistant registration UX (mandatory).** The registration step is the highest-leverage attack surface — if the user signs a message that registers an attacker's key instead of xvision's, the security model fails on day zero. The UX MUST:
 
 - Display the full Ed25519 public key (hex) prominently, in monospace, before the user signs.
 - Display the permission scope being requested (`trading` only, no withdraw/transfer) in plain text.
@@ -128,7 +128,7 @@ After signing, the user can independently confirm registration via Orderly's web
 
 ### 3.3 Strategy variants and the dispatcher
 
-Strategy variants are unchanged from the Strategy Creation Engine spec. They produce `TraderDecision` values (`crates/xianvec-core/src/trading.rs:114+`) carrying `{action, size_bps, direction, stops, summary}`.
+Strategy variants are unchanged from the Strategy Creation Engine spec. They produce `TraderDecision` values (`crates/xvision-core/src/trading.rs:114+`) carrying `{action, size_bps, direction, stops, summary}`.
 
 A new component, `OrderDispatcher`, sits between the strategy and the Orderly executor:
 
@@ -145,7 +145,7 @@ The dispatcher is the only code path that uses the Ed25519 trading key. Strategi
 
 ### 3.4 Risk Analysis Engine — per-strategy budgets (hybrid model)
 
-Today `xianvec-risk` enforces global rules (position size bps, daily-loss circuit breaker, max open positions, correlation cluster cap, asset whitelist). This spec extends each rule to also accept a per-strategy override, adds the full set of scoped-permission rules required by 2026 agent-wallet best practice (chain · protocol · token · notional · slippage · frequency · time window), and introduces the hybrid hard-cap × dynamic-quota model.
+Today `xvision-risk` enforces global rules (position size bps, daily-loss circuit breaker, max open positions, correlation cluster cap, asset whitelist). This spec extends each rule to also accept a per-strategy override, adds the full set of scoped-permission rules required by 2026 agent-wallet best practice (chain · protocol · token · notional · slippage · frequency · time window), and introduces the hybrid hard-cap × dynamic-quota model.
 
 **Per-strategy scoped permissions (operator-set, full envelope):**
 
@@ -196,7 +196,7 @@ constants (v1, tune from observation):
 
 Cold strategies start at the floor (0.25). Hot strategies converge toward 1.0. Burned strategies throttle toward 0. The hard cap is never exceeded; the *unlocked fraction* is what changes.
 
-Implementation lives in `crates/xianvec-risk/src/rules/per_strategy.rs` (new file). The quota function is a pure function of the attribution ledger's recent history — easy to unit-test with synthetic histories.
+Implementation lives in `crates/xvision-risk/src/rules/per_strategy.rs` (new file). The quota function is a pure function of the attribution ledger's recent history — easy to unit-test with synthetic histories.
 
 **Race-free cap enforcement (reservation pattern):**
 
@@ -260,7 +260,7 @@ Every order the dispatcher submits is tagged with the originating strategy id an
 
 ```sql
 CREATE TABLE positions (
-    position_id        TEXT PRIMARY KEY,        -- xianvec-internal ULID
+    position_id        TEXT PRIMARY KEY,        -- xvision-internal ULID
     client_order_id    TEXT NOT NULL UNIQUE,    -- mirrored to Orderly for idempotency
     user_id            TEXT NOT NULL,
     agent_id        TEXT NOT NULL,           -- strategy NFT id (or local id pre-mint)
@@ -308,7 +308,7 @@ The ledger is **reporting-only** — no settlement contract reads from it. Its p
 
 Specified entirely in [`2026-05-08-smart-contract-surface-design.md`](./2026-05-08-smart-contract-surface-design.md). This spec only adds the constraint:
 
-**This is the only smart contract xianvec ever owns or upgrades.** The contract holds funds atomically during a `buy(listingId)` call (USDC pulled from buyer, split, forwarded) and never across transactions. There is no `withdraw` from the marketplace contract — the 95% creator share goes directly to the seller wallet recorded on the listing, and the 5% protocol fee goes directly to the settlement wallet (§3.7).
+**This is the only smart contract xvision ever owns or upgrades.** The contract holds funds atomically during a `buy(listingId)` call (USDC pulled from buyer, split, forwarded) and never across transactions. There is no `withdraw` from the marketplace contract — the 95% creator share goes directly to the seller wallet recorded on the listing, and the 5% protocol fee goes directly to the settlement wallet (§3.7).
 
 ### 3.7 Settlement wallet
 
@@ -318,7 +318,7 @@ The wallet:
 
 - Holds USDC.e accumulated from commissions.
 - Is swept manually by the operator on whatever cadence they prefer.
-- Has no programmatic outflows xianvec controls.
+- Has no programmatic outflows xvision controls.
 - Is recorded on the Marketplace contract as `protocolFeeRecipient`. Changing it is a privileged op behind the existing 7-day timelock + 2-of-3 multi-sig pattern from the smart-contract-surface spec.
 
 If the wallet is compromised, the loss is bounded to unswept fees. User trading capital is unreachable from this wallet — they are not connected.
@@ -404,7 +404,7 @@ xvn emergency-close --user <id>   # cancels all open orders + market-closes all 
 xvn emergency-close --strategy <id>
 ```
 
-Emergency-close is the analog of "drain funding back to treasury" from the research playbook. xianvec doesn't hold a treasury, so the analog is: rapidly return the user's Orderly account to a flat (no-position) state so they can withdraw freely.
+Emergency-close is the analog of "drain funding back to treasury" from the research playbook. xvision doesn't hold a treasury, so the analog is: rapidly return the user's Orderly account to a flat (no-position) state so they can withdraw freely.
 
 Emergency-close is a privileged operator action. It uses the user's existing trading key (which has order-placement authority). It does NOT trigger withdrawal — the user still does that themselves from their EVM wallet, after positions are flat.
 
@@ -496,7 +496,7 @@ Documentation lives in `docs/cli-reference.md` (new). Every subcommand surfaces 
     → audit log: stage=close
 ```
 
-Idempotency: `client_order_id` is propagated to Orderly (already done in `crates/xianvec-execution/src/orderly.rs:34`). If xianvec crashes between (c) and (d), retry uses the same id and Orderly deduplicates. Reservations have TTL so a crashed dispatcher doesn't permanently freeze a strategy's quota.
+Idempotency: `client_order_id` is propagated to Orderly (already done in `crates/xvision-execution/src/orderly.rs:34`). If xvision crashes between (c) and (d), retry uses the same id and Orderly deduplicates. Reservations have TTL so a crashed dispatcher doesn't permanently freeze a strategy's quota.
 
 ### 4.2 Marketplace rail — license sale
 
@@ -505,10 +505,10 @@ Idempotency: `client_order_id` is propagated to Orderly (already done in `crates
 2.  Marketplace contract pulls USDC from buyer
 3.  Marketplace contract atomically splits:
       - 95% → seller wallet (from listing)
-      - 5%  → settlement wallet (xianvec)
+      - 5%  → settlement wallet (xvision)
 4.  Marketplace mints LicenseToken (ERC-1155, soulbound) to buyer
 5.  Sold(buyer, seller, listingId, agentNftId, price) event emitted
-6.  Off-chain indexer picks up Sold event → updates xianvec UI / leaderboard
+6.  Off-chain indexer picks up Sold event → updates xvision UI / leaderboard
 ```
 
 The marketplace and trading rails do not communicate at runtime. The only shared identifier is `agentNftId` (which is `agent_id` in the trading rail) — used purely as a foreign key for joining reports.
@@ -519,40 +519,40 @@ A scheduled job (cadence: every 15 minutes during active sessions) does:
 
 1. Fetch live Orderly account state via `GET /v3/positions` and `GET /v3/account`.
 2. For each open Orderly position, find the matching `positions` row (by `orderly_position_id`).
-3. If a position exists in Orderly but not in xianvec ledger → flag as "orphan" (manual investigation; could indicate user manually traded outside xianvec, which is fine, just not attributable).
-4. If a position exists in xianvec ledger but not in Orderly → mark as closed (Orderly closed it server-side, e.g. liquidation) and surface to operator.
+3. If a position exists in Orderly but not in xvision ledger → flag as "orphan" (manual investigation; could indicate user manually traded outside xvision, which is fine, just not attributable).
+4. If a position exists in xvision ledger but not in Orderly → mark as closed (Orderly closed it server-side, e.g. liquidation) and surface to operator.
 5. Compute account-level NAV vs sum of attributed PnL → diff is "untracked PnL" (manual user trades, funding payments, etc.).
 
-Reconciliation is observability, not enforcement. The Orderly account state is canonical for funds; xianvec ledger is canonical for attribution.
+Reconciliation is observability, not enforcement. The Orderly account state is canonical for funds; xvision ledger is canonical for attribution.
 
 ---
 
 ## 5. Security model
 
-**Cryptographic surface area xianvec controls:**
+**Cryptographic surface area xvision controls:**
 
 1. The Ed25519 trading key per user — encrypted at rest with AES-256-GCM, key derived from `CREDENTIAL_SECRET` env var. Decrypted only in process memory, only inside the OrderDispatcher. Never logged. Never sent over the wire (used to sign locally, signature is sent).
 2. The Mantle EOA / multi-sig that owns the Marketplace contract upgrade rights — held in 1Password / hardware wallet by the operator, used only for upgrades behind the existing 7-day timelock.
 3. The settlement wallet private key — held by the operator, used only to sweep accumulated fees.
 
-**Cryptographic surface area xianvec does NOT control:**
+**Cryptographic surface area xvision does NOT control:**
 
 - The user's Mantle EVM signer (their wallet).
 - The user's Orderly EVM signer (same as above, used for vault deposits and key registration).
 - Any direct ability to withdraw from the Orderly Vault contract.
-- Any allowance setting on the user's USDC token (the user approves the Orderly Vault directly; xianvec never touches `approve()` on the user's behalf).
+- Any allowance setting on the user's USDC token (the user approves the Orderly Vault directly; xvision never touches `approve()` on the user's behalf).
 
 **Threat scenarios:**
 
 | Compromise | Worst-case impact | Mitigation |
 |---|---|---|
-| xianvec server (Ed25519 key extracted from disk OR memory dump during signing window) | Attacker can place trades up to user's risk-engine limits. Cannot withdraw. | Per-strategy hard caps; daily-loss circuit breaker; frequency caps; anomaly alerts; user can revoke key on Orderly side instantly (`delete_orderly_key` from their EVM wallet); operator can `xvn kill --user <id>` and `xvn emergency-close --user <id>`. v2 mitigation: MPC self-hosted signer (§10) eliminates the in-memory window entirely. |
+| xvision server (Ed25519 key extracted from disk OR memory dump during signing window) | Attacker can place trades up to user's risk-engine limits. Cannot withdraw. | Per-strategy hard caps; daily-loss circuit breaker; frequency caps; anomaly alerts; user can revoke key on Orderly side instantly (`delete_orderly_key` from their EVM wallet); operator can `xvn kill --user <id>` and `xvn emergency-close --user <id>`. v2 mitigation: MPC self-hosted signer (§10) eliminates the in-memory window entirely. |
 | Settlement wallet | Loss of unswept commission fees only. | Periodic sweeping; multi-sig optional. |
 | Marketplace contract (worst case: malicious upgrade redirects fees) | Loss of in-flight USDC during a `buy()` call + redirected future fees until reverted. **Cannot reach user trading capital** — the trading rail does not read from or trust the marketplace contract. | UUPS proxy + 7-day timelock + 2-of-3 multi-sig per existing spec; the timelock window is the operator's response budget. |
-| User EVM wallet | User's full Orderly account drained — but this is the user's responsibility, not xianvec's. | N/A (user-owned). |
-| Phishing during key registration (user signs malicious `add_orderly_key` thinking it's xianvec's) | Attacker controls trading key from day zero. | §3.2 mandates pubkey display, scope display, hardware-wallet recommendation, independent verification path via Orderly's web UI. |
+| User EVM wallet | User's full Orderly account drained — but this is the user's responsibility, not xvision's. | N/A (user-owned). |
+| Phishing during key registration (user signs malicious `add_orderly_key` thinking it's xvision's) | Attacker controls trading key from day zero. | §3.2 mandates pubkey display, scope display, hardware-wallet recommendation, independent verification path via Orderly's web UI. |
 
-**The deliberate property:** no compromise of *any* xianvec-controlled key or contract can result in loss of user trading capital. This is the design constraint the spec exists to satisfy.
+**The deliberate property:** no compromise of *any* xvision-controlled key or contract can result in loss of user trading capital. This is the design constraint the spec exists to satisfy.
 
 **Acknowledged residual risk: in-memory key during signing.** Even with AES-256-GCM at rest, the Ed25519 trading key sits in process memory while the dispatcher signs each order. A memory-extraction attack (e.g. via a kernel exploit on the host) could exfiltrate the key. This is the same single-point-of-compromise pattern swarmclaw has, and is the strongest argument for migrating to MPC signing in v2 (recorded in §10). For v1, the mitigation is that the *blast radius* is bounded by the trading-only scope (no withdrawal possible regardless of key compromise) and by the kill-switch + emergency-close path (§3.9).
 
@@ -577,21 +577,21 @@ Reconciliation is observability, not enforcement. The Orderly account state is c
 
 | Concern | Crate / location | Status |
 |---|---|---|
-| Strategy variants | `crates/xianvec-engine/`, `crates/xianvec-trader/` | exists |
-| Order signing (Orderly) | `crates/xianvec-execution/src/orderly.rs` | exists; needs per-user key parameter (currently single env-var key) |
-| Order dispatcher | `crates/xianvec-execution/src/dispatcher.rs` | **new** — sits between engine and orderly executor |
-| Pre-trade simulation | `crates/xianvec-execution/src/simulate.rs` | **new** — Orderly order-info wrapper |
-| Risk Engine global rules | `crates/xianvec-risk/src/rules/` | exists |
-| Risk Engine per-strategy rules | `crates/xianvec-risk/src/rules/per_strategy.rs` | **new** |
-| Reservation table + locking | `crates/xianvec-risk/src/reservations.rs` | **new** — race-free quota enforcement |
-| Aggregate margin guard | `crates/xianvec-risk/src/rules/aggregate_margin.rs` | **new** — cross-margin contagion mitigation |
-| Attribution ledger schema | `crates/xianvec-data/` (or new `crates/xianvec-ledger/`) | **new** — SQLite migrations (positions, funding_attributions, decisions, policy_changes, strategy_status, pending_approvals) |
-| Reconciliation job | `crates/xianvec-execution/src/reconcile.rs` | **new** |
-| Audit log writer | `crates/xianvec-data/src/audit.rs` | **new** — append-only decisions table |
-| Kill switch + emergency-close CLI | `crates/xianvec-cli/src/commands/kill.rs`, `emergency_close.rs` | **new** |
-| Approval gate workflow | `crates/xianvec-execution/src/approval.rs` | **new** |
-| Trading-key storage | `crates/xianvec-identity/src/trading_key.rs` | **new** — AES-256-GCM at rest |
-| Trading-key registration UX | `crates/xianvec-cli/src/commands/key.rs` | **new** — phishing-resistant pubkey display |
+| Strategy variants | `crates/xvision-engine/`, `crates/xvision-trader/` | exists |
+| Order signing (Orderly) | `crates/xvision-execution/src/orderly.rs` | exists; needs per-user key parameter (currently single env-var key) |
+| Order dispatcher | `crates/xvision-execution/src/dispatcher.rs` | **new** — sits between engine and orderly executor |
+| Pre-trade simulation | `crates/xvision-execution/src/simulate.rs` | **new** — Orderly order-info wrapper |
+| Risk Engine global rules | `crates/xvision-risk/src/rules/` | exists |
+| Risk Engine per-strategy rules | `crates/xvision-risk/src/rules/per_strategy.rs` | **new** |
+| Reservation table + locking | `crates/xvision-risk/src/reservations.rs` | **new** — race-free quota enforcement |
+| Aggregate margin guard | `crates/xvision-risk/src/rules/aggregate_margin.rs` | **new** — cross-margin contagion mitigation |
+| Attribution ledger schema | `crates/xvision-data/` (or new `crates/xvision-ledger/`) | **new** — SQLite migrations (positions, funding_attributions, decisions, policy_changes, strategy_status, pending_approvals) |
+| Reconciliation job | `crates/xvision-execution/src/reconcile.rs` | **new** |
+| Audit log writer | `crates/xvision-data/src/audit.rs` | **new** — append-only decisions table |
+| Kill switch + emergency-close CLI | `crates/xvision-cli/src/commands/kill.rs`, `emergency_close.rs` | **new** |
+| Approval gate workflow | `crates/xvision-execution/src/approval.rs` | **new** |
+| Trading-key storage | `crates/xvision-identity/src/trading_key.rs` | **new** — AES-256-GCM at rest |
+| Trading-key registration UX | `crates/xvision-cli/src/commands/key.rs` | **new** — phishing-resistant pubkey display |
 | Marketplace contract | `contracts/Marketplace.sol` (per smart-contract-surface spec) | spec'd, not implemented |
 | Settlement wallet management | operator-side (1Password / hardware) | manual |
 
@@ -632,7 +632,7 @@ Steps 0–6 ship in single-user mode (operator is the only "user"). Step 7 unloc
 ## 10. Open questions / deferred
 
 - **Multi-tenant onboarding UX.** v1 assumes operator-as-user. Browser-side Ed25519 keypair generation + Orderly registration flow is needed for multi-tenant. Defer to Plan 2d (dashboard) or later.
-- **Performance fee on withdrawal.** Recorded as a future fee model: when a user withdraws from their Orderly account through xianvec's withdrawal helper, an off-chain calculator computes realized PnL since deposit, and the user is offered the choice to pay an X% performance fee to creators of the strategies that contributed to that PnL. Strictly opt-in (user can always withdraw directly via Orderly's UI). Adds a helper contract and a UI flow; not required for hackathon. **Operator's note:** this is a "fun" idea — keep on the table for v2.
+- **Performance fee on withdrawal.** Recorded as a future fee model: when a user withdraws from their Orderly account through xvision's withdrawal helper, an off-chain calculator computes realized PnL since deposit, and the user is offered the choice to pay an X% performance fee to creators of the strategies that contributed to that PnL. Strictly opt-in (user can always withdraw directly via Orderly's UI). Adds a helper contract and a UI flow; not required for hackathon. **Operator's note:** this is a "fun" idea — keep on the table for v2.
 - **Per-trade x402 micropayments.** Recorded as a future fee model alongside license purchases. Adds pre-authorization UX and per-fire fee accounting. Out of v1 scope.
 - **Trading-key auto-rotation.** Currently 90-day expiry with manual rotation. Auto-rotation requires the user to be online to sign the new registration; not a hackathon priority.
 - **Stake bonds / costly signaling for strategies.** Not surfaced in the brainstorm but adjacent: strategies could be required to lock a USDC bond (slashed on poor performance) to be eligible for high-quota allocation. Could be added as an optional layer in the quota function. v2.
@@ -640,7 +640,7 @@ Steps 0–6 ship in single-user mode (operator is the only "user"). Step 7 unloc
 - **MPC migration for trading-key signing.** v1 stores the Ed25519 trading key encrypted at rest with AES-256-GCM, decrypted in process memory at signing time. The 2026 agent-wallet research consensus (Fystack, Kite Passport, etc.) is that the in-memory window is the strongest remaining attack surface for this class of system. v2 should evaluate self-hosted MPC signers (e.g. Fystack-style) that keep no full key in any single process. Migration should be transparent to dispatchers — the OrderDispatcher abstraction already isolates signing behind a trait.
 - **Smart-account migration for trading scope.** Even with MPC signing, the authority model is "off-chain key with API-level scope." A v2+ migration could use a Safe / ERC-4337 smart account on Mantle with on-chain session-key permissions — same trading-only scope but enforced at the contract level rather than at Orderly's API. Requires Orderly to accept smart-account signatures (currently does not without a relayer); not a near-term path.
 - **Browser-issued ephemeral session keys.** When the multi-tenant dashboard ships, consider issuing short-lived (hours-scoped) trading keys per active dashboard session, in addition to (or instead of) the 90-day per-user key. Limits exposure window further. Adds rotation complexity.
-- **Comparison with OKX Agentic Wallet + Kite Passport.** OKX recently shipped an "agentic wallet" model with Kite Passport-style scoped permissions. Worth a deeper evaluation: do they offer primitives we should adopt (e.g. a permission grammar more expressive than Orderly's binary trading/withdraw scope)? Are there integration points that would let xianvec ride on their custody primitives instead of building our own trading-key issuance flow? Time-box: 1 day of research before v2 planning.
+- **Comparison with OKX Agentic Wallet + Kite Passport.** OKX recently shipped an "agentic wallet" model with Kite Passport-style scoped permissions. Worth a deeper evaluation: do they offer primitives we should adopt (e.g. a permission grammar more expressive than Orderly's binary trading/withdraw scope)? Are there integration points that would let xvision ride on their custody primitives instead of building our own trading-key issuance flow? Time-box: 1 day of research before v2 planning.
 - **Comparison with Fystack self-hosted MPC.** Fystack's blog post on "Who controls the key when your AI agent signs" makes the case for MPC over single-server custody. Worth piloting their open-source signer (or equivalent: Sodot, Lit Protocol) as the v2 trading-key backend. Time-box: 2 days of integration spike.
 
 ---
@@ -651,9 +651,9 @@ Steps 0–6 ship in single-user mode (operator is the only "user"). Step 7 unloc
 
 - [`docs/superpowers/specs/2026-05-08-smart-contract-surface-design.md`](./2026-05-08-smart-contract-surface-design.md) — Marketplace contract surface (95/5 split, license tokens, fee routing). This spec assumes that one verbatim.
 - [`docs/superpowers/specs/2026-05-08-strategy-creation-engine-design.md`](./2026-05-08-strategy-creation-engine-design.md) — Strategy variants and TraderDecision.
-- [`crates/xianvec-execution/src/orderly.rs`](../../../crates/xianvec-execution/src/orderly.rs) — current Orderly executor (raw reqwest + Ed25519 signing).
-- [`crates/xianvec-risk/`](../../../crates/xianvec-risk/) — Risk Analysis Engine being extended.
-- [`crates/xianvec-identity/src/manifest.rs`](../../../crates/xianvec-identity/src/manifest.rs) — agent / strategy NFT manifest.
+- [`crates/xvision-execution/src/orderly.rs`](../../../crates/xvision-execution/src/orderly.rs) — current Orderly executor (raw reqwest + Ed25519 signing).
+- [`crates/xvision-risk/`](../../../crates/xvision-risk/) — Risk Analysis Engine being extended.
+- [`crates/xvision-identity/src/manifest.rs`](../../../crates/xvision-identity/src/manifest.rs) — agent / strategy NFT manifest.
 - ERC-8004 v0.1-draft — strategy-as-agent identity model.
 - Orderly Network API key permissions docs — for trading vs withdrawal scope split.
 

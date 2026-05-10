@@ -7,7 +7,7 @@
 
 **Goal:** Ship the foundation that makes "daily at 4pm EST review all strategies and deactivate any with rolling-30d Sharpe below 0.5" runnable end-to-end: typed engine API across 7 domains, CLI surface mirroring it, internal tool-use agent runner, SQLite-backed cron scheduler firing scheduled prompts, EOD report integration, and pre-paused default schedules.
 
-**Architecture:** Engine API in `xianvec-engine/src/api/` is the single source of truth — typed async functions per domain (strategy, risk, deploy, report, maintenance, schedule, autoresearch). CLI handlers in `xianvec-cli/src/commands/` thin-wrap them. `xianvec-engine/src/agent_runner/` is a generic tool-use loop using `xianvec-intern`'s LLM dispatch; tools are thin shims around engine API functions. `xianvec-engine/src/scheduler/` is a SQLite-backed cron daemon that spawns AgentRunner invocations on schedule. EOD report reuses `xianvec_eval::report::render` over live `scheduler_events` data.
+**Architecture:** Engine API in `xvision-engine/src/api/` is the single source of truth — typed async functions per domain (strategy, risk, deploy, report, maintenance, schedule, autoresearch). CLI handlers in `xvision-cli/src/commands/` thin-wrap them. `xvision-engine/src/agent_runner/` is a generic tool-use loop using `xvision-intern`'s LLM dispatch; tools are thin shims around engine API functions. `xvision-engine/src/scheduler/` is a SQLite-backed cron daemon that spawns AgentRunner invocations on schedule. EOD report reuses `xvision_eval::report::render` over live `scheduler_events` data.
 
 **Tech Stack:** Rust 2021. New deps: `cron 0.13` (cron parser), `chrono-tz 0.10` (IANA timezone DST), `glob 0.3` (tool-pattern matching). Reuses `tokio`, `sqlx` (workspace), `chrono`, `serde`, `tracing`, `anyhow`, `thiserror`, `async-trait`, `ulid`, `tempfile` (dev).
 
@@ -17,7 +17,7 @@
 
 ```
 crates/
-├── xianvec-engine/
+├── xvision-engine/
 │   ├── Cargo.toml                                  # add cron, chrono-tz, glob
 │   ├── migrations/
 │   │   ├── 002_api_audit.sql                       # NEW: strategy_audit, risk_audit, deploy_audit
@@ -46,11 +46,11 @@ crates/
 │           ├── expr.rs                             # ScheduleExpr → cron + tz
 │           ├── store.rs                            # schedule + fire DB CRUD
 │           └── daemon.rs                           # the run loop
-├── xianvec-intern/
+├── xvision-intern/
 │   └── src/
 │       ├── lib.rs                                  # re-export new tool-dispatch trait
 │       └── tool_dispatch.rs                        # NEW: LlmToolDispatch trait
-├── xianvec-cli/
+├── xvision-cli/
 │   └── src/commands/
 │       ├── mod.rs                                  # add new subcommands
 │       ├── strategy.rs                             # MODIFY: add deactivate/reactivate/archive/unarchive/delete
@@ -71,14 +71,14 @@ crates/
 ### Task 1: ApiContext, Actor, ApiError, audit schema
 
 **Files:**
-- Create: `crates/xianvec-engine/migrations/002_api_audit.sql`
-- Create: `crates/xianvec-engine/src/api/mod.rs`
-- Modify: `crates/xianvec-engine/src/lib.rs`
-- Modify: `crates/xianvec-engine/Cargo.toml`
+- Create: `crates/xvision-engine/migrations/002_api_audit.sql`
+- Create: `crates/xvision-engine/src/api/mod.rs`
+- Modify: `crates/xvision-engine/src/lib.rs`
+- Modify: `crates/xvision-engine/Cargo.toml`
 
 - [ ] **Step 1: Add deps**
 
-In `crates/xianvec-engine/Cargo.toml` `[dependencies]`:
+In `crates/xvision-engine/Cargo.toml` `[dependencies]`:
 
 ```toml
 cron       = "0.13"
@@ -93,7 +93,7 @@ async-trait = { workspace = true }
 
 - [ ] **Step 2: Audit migration**
 
-Create `crates/xianvec-engine/migrations/002_api_audit.sql`:
+Create `crates/xvision-engine/migrations/002_api_audit.sql`:
 
 ```sql
 CREATE TABLE IF NOT EXISTS strategy_audit (
@@ -137,7 +137,7 @@ CREATE INDEX IF NOT EXISTS idx_deploy_audit_time ON deploy_audit(occurred_at);
 
 - [ ] **Step 3: ApiContext, Actor, ApiError types**
 
-Create `crates/xianvec-engine/src/api/mod.rs`:
+Create `crates/xvision-engine/src/api/mod.rs`:
 
 ```rust
 //! Engine API — typed action surface used by both the CLI and the internal
@@ -244,7 +244,7 @@ impl ApiContext {
 
 - [ ] **Step 4: Wire into engine `lib.rs`**
 
-In `crates/xianvec-engine/src/lib.rs`, add:
+In `crates/xvision-engine/src/lib.rs`, add:
 
 ```rust
 pub mod api;
@@ -255,7 +255,7 @@ pub mod api;
 - [ ] **Step 5: Verify it compiles**
 
 ```bash
-cargo check -p xianvec-engine
+cargo check -p xvision-engine
 ```
 
 Expected: warnings about unused mods are fine; **no errors**.
@@ -263,10 +263,10 @@ Expected: warnings about unused mods are fine; **no errors**.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/xianvec-engine/Cargo.toml \
-        crates/xianvec-engine/migrations/002_api_audit.sql \
-        crates/xianvec-engine/src/api/mod.rs \
-        crates/xianvec-engine/src/lib.rs
+git add crates/xvision-engine/Cargo.toml \
+        crates/xvision-engine/migrations/002_api_audit.sql \
+        crates/xvision-engine/src/api/mod.rs \
+        crates/xvision-engine/src/lib.rs
 git commit -m "feat(engine/api): ApiContext, Actor, ApiError, audit schema"
 ```
 
@@ -275,14 +275,14 @@ git commit -m "feat(engine/api): ApiContext, Actor, ApiError, audit schema"
 ### Task 2: Strategy module — types and tests
 
 **Files:**
-- Create: `crates/xianvec-engine/src/api/strategy.rs`
-- Create: `crates/xianvec-engine/tests/api_strategy.rs`
+- Create: `crates/xvision-engine/src/api/strategy.rs`
+- Create: `crates/xvision-engine/tests/api_strategy.rs`
 
 > **Context for engineer.** Strategy bundles already exist on disk under `$XVN_HOME/strategies/<ulid>/`. The CLI command `xvn strategy new` (existing) already handles bundle creation. This task adds **lifecycle status** alongside the bundle: a sidecar `status.json` per strategy plus audit-log writes. The bundle dir itself is untouched.
 
 - [ ] **Step 1: Write the failing tests first**
 
-Create `crates/xianvec-engine/tests/api_strategy.rs`:
+Create `crates/xvision-engine/tests/api_strategy.rs`:
 
 ```rust
 use std::sync::Arc;
@@ -290,7 +290,7 @@ use std::sync::Arc;
 use chrono::{TimeZone, Utc};
 use sqlx::SqlitePool;
 use tempfile::TempDir;
-use xianvec_engine::api::{strategy, Actor, ApiContext};
+use xvision_engine::api::{strategy, Actor, ApiContext};
 
 async fn fixture_ctx() -> (ApiContext, TempDir) {
     let dir = TempDir::new().unwrap();
@@ -380,21 +380,21 @@ async fn audit_log_records_every_transition() {
 - [ ] **Step 2: Run the tests — expect failure**
 
 ```bash
-cargo test -p xianvec-engine --test api_strategy
+cargo test -p xvision-engine --test api_strategy
 ```
 
 Expected: "module `strategy` not found" or unresolved imports. **Compile failure is OK** for this step.
 
 - [ ] **Step 3: Implement `api/strategy.rs`**
 
-Create `crates/xianvec-engine/src/api/strategy.rs`:
+Create `crates/xvision-engine/src/api/strategy.rs`:
 
 ```rust
 //! Strategy lifecycle: create, list, show, deactivate/reactivate, archive/unarchive, delete.
 //!
 //! Status lives in a `status.json` sidecar inside the bundle dir; audit log
 //! lives in `strategy_audit`. The bundle's `manifest.toml` and other files
-//! are owned by the existing `xianvec-engine::bundle` module.
+//! are owned by the existing `xvision-engine::bundle` module.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -657,7 +657,7 @@ pub async fn audit_history(ctx: &ApiContext, id: &str) -> ApiResult<Vec<AuditEnt
 - [ ] **Step 4: Run the tests — expect pass**
 
 ```bash
-cargo test -p xianvec-engine --test api_strategy
+cargo test -p xvision-engine --test api_strategy
 ```
 
 Expected: 5 passed, 0 failed.
@@ -665,8 +665,8 @@ Expected: 5 passed, 0 failed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-engine/src/api/strategy.rs \
-        crates/xianvec-engine/tests/api_strategy.rs
+git add crates/xvision-engine/src/api/strategy.rs \
+        crates/xvision-engine/tests/api_strategy.rs
 git commit -m "feat(engine/api): strategy lifecycle with status sidecar + audit log"
 ```
 
@@ -675,14 +675,14 @@ git commit -m "feat(engine/api): strategy lifecycle with status sidecar + audit 
 ### Task 3: Risk module
 
 **Files:**
-- Create: `crates/xianvec-engine/src/api/risk.rs`
-- Create: `crates/xianvec-engine/tests/api_risk.rs`
+- Create: `crates/xvision-engine/src/api/risk.rs`
+- Create: `crates/xvision-engine/tests/api_risk.rs`
 
 > **Context.** A "deployment" is a strategy bundled with broker/capital config, persisted under `$XVN_HOME/deployments/<id>/config.json`. The full deploy module lands in Task 5; for now, risk operates on a minimal `DeploymentConfig` already-on-disk. Tests write the config file directly.
 
 - [ ] **Step 1: Failing tests**
 
-Create `crates/xianvec-engine/tests/api_risk.rs`:
+Create `crates/xvision-engine/tests/api_risk.rs`:
 
 ```rust
 use std::sync::Arc;
@@ -690,7 +690,7 @@ use std::sync::Arc;
 use chrono::{TimeZone, Utc};
 use sqlx::SqlitePool;
 use tempfile::TempDir;
-use xianvec_engine::api::{risk, Actor, ApiContext};
+use xvision_engine::api::{risk, Actor, ApiContext};
 
 async fn fixture_ctx() -> (ApiContext, TempDir) {
     let dir = TempDir::new().unwrap();
@@ -751,15 +751,15 @@ async fn circuit_breaker_round_trip() {
 async fn invalid_position_size_rejected() {
     let (ctx, _dir) = fixture_ctx().await;
     let err = risk::set_position_size_pct(&ctx, "dep_test", 1.5, "bad", Actor::Cli).await;
-    assert!(matches!(err, Err(xianvec_engine::api::ApiError::InvalidArgument(_))));
+    assert!(matches!(err, Err(xvision_engine::api::ApiError::InvalidArgument(_))));
 }
 ```
 
-- [ ] **Step 2: Run — expect failure** (`cargo test -p xianvec-engine --test api_risk` → unresolved `risk`)
+- [ ] **Step 2: Run — expect failure** (`cargo test -p xvision-engine --test api_risk` → unresolved `risk`)
 
 - [ ] **Step 3: Implement `api/risk.rs`**
 
-Create `crates/xianvec-engine/src/api/risk.rs`:
+Create `crates/xvision-engine/src/api/risk.rs`:
 
 ```rust
 //! Per-deployment risk knobs. Mutates xvn-side `DeploymentConfig` only.
@@ -927,7 +927,7 @@ pub async fn reset_circuit_breaker(ctx: &ApiContext, dep_id: &str, actor: Actor)
 - [ ] **Step 4: Run tests — expect pass**
 
 ```bash
-cargo test -p xianvec-engine --test api_risk
+cargo test -p xvision-engine --test api_risk
 ```
 
 Expected: 4 passed.
@@ -935,8 +935,8 @@ Expected: 4 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-engine/src/api/risk.rs \
-        crates/xianvec-engine/tests/api_risk.rs
+git add crates/xvision-engine/src/api/risk.rs \
+        crates/xvision-engine/tests/api_risk.rs
 git commit -m "feat(engine/api): risk module — per-deployment knobs + audit"
 ```
 

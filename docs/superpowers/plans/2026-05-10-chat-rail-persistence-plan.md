@@ -1,7 +1,7 @@
 # Chat Rail Persistence Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-> **Depends on:** Plan 2d (`xianvec-dashboard` scaffold + `WizardLoop` server-side agent loop). Settings & Onboarding plan (because the chat rail's empty state links to `/settings/providers`).
+> **Depends on:** Plan 2d (`xvision-dashboard` scaffold + `WizardLoop` server-side agent loop). Settings & Onboarding plan (because the chat rail's empty state links to `/settings/providers`).
 > **Sequencing:** Lands after Plan 2d ships the standalone `/setup` Wizard. This plan promotes that wizard from a single page into a persistent rail across every authenticated route — Move B from `docs/design/ui-elements.md` v0.2.
 
 **Goal:** A right-side chat rail (Move B) on every authenticated route. Width 360px expanded, 40px icon-strip collapsed. The rail is open by default only on `/setup`; elsewhere it starts collapsed. Per-route open/closed state is remembered in localStorage. The wizard's conversation persists across route changes for the session, so the user can navigate freely without losing context.
@@ -22,13 +22,13 @@
 
 ```
 crates/
-├── xianvec-engine/
+├── xvision-engine/
 │   └── src/
 │       └── chat_session/
 │           ├── mod.rs                          # NEW
 │           ├── store.rs                        # NEW: rusqlite-backed session + message tables
 │           └── context.rs                      # NEW: ContextScope enum + route → context mapping
-├── xianvec-dashboard/
+├── xvision-dashboard/
 │   ├── src/
 │   │   ├── routes/
 │   │   │   ├── chat_rail.rs                    # NEW: /api/chat-rail/* endpoints
@@ -48,7 +48,7 @@ crates/
 
 ### Task 1: `chat_sessions` + `chat_messages` tables
 
-**File:** `crates/xianvec-engine/src/chat_session/store.rs`
+**File:** `crates/xvision-engine/src/chat_session/store.rs`
 
 ```sql
 CREATE TABLE IF NOT EXISTS chat_sessions (
@@ -122,7 +122,7 @@ git commit -am "feat(engine): chat_session store with rusqlite + monotonic seq"
 
 ### Task 2: `ContextScope` enum
 
-**File:** `crates/xianvec-engine/src/chat_session/context.rs`
+**File:** `crates/xvision-engine/src/chat_session/context.rs`
 
 The "Change context ▾" dropdown (`ui-elements.md` §1.4) and the per-route auto-context need a shared type.
 
@@ -187,7 +187,7 @@ git commit -am "feat(engine): ContextScope with per-scope replies + placeholders
 
 ### Task 3: WizardLoop accepts `ContextScope` + persists to store
 
-**File:** `crates/xianvec-dashboard/src/wizard_loop.rs` (modifies Plan 2d Task 6)
+**File:** `crates/xvision-dashboard/src/wizard_loop.rs` (modifies Plan 2d Task 6)
 
 - [ ] **Step 1: Accept `Arc<ChatSessionStore>` and `session_id`**
 
@@ -274,7 +274,7 @@ git commit -am "refactor(dashboard): WizardLoop persists chat history + accepts 
 
 ### Task 4: `/api/chat-rail/*` endpoints
 
-**File:** `crates/xianvec-dashboard/src/routes/chat_rail.rs`
+**File:** `crates/xvision-dashboard/src/routes/chat_rail.rs`
 
 ```
 POST /api/chat-rail/sessions           -> creates session with given scope; returns {session_id}
@@ -346,8 +346,8 @@ git commit -am "feat(dashboard): /api/chat-rail/* endpoints for session-aware ch
 ### Task 5: `_chat_rail.html` partial + base.html include
 
 **Files:**
-- Create: `crates/xianvec-dashboard/templates/_chat_rail.html`
-- Modify: `crates/xianvec-dashboard/templates/base.html`
+- Create: `crates/xvision-dashboard/templates/_chat_rail.html`
+- Modify: `crates/xvision-dashboard/templates/base.html`
 
 - [ ] **Step 1: Markup**
 
@@ -447,7 +447,7 @@ git commit -am "feat(dashboard): _chat_rail.html partial included from base"
 
 ### Task 6: `chat_rail.js` — collapse + per-route state + chat plumbing
 
-**File:** `crates/xianvec-dashboard/static/js/chat_rail.js`
+**File:** `crates/xvision-dashboard/static/js/chat_rail.js`
 
 - [ ] **Step 1: Collapse toggle + per-route persistence**
 
@@ -651,7 +651,7 @@ xvn  # opens dashboard
 # 7. With no key set (export -n ANTHROPIC_API_KEY), reload → rail body shows "Add an LLM key to begin".
 ```
 
-Document in `crates/xianvec-dashboard/README.md` under "Chat Rail".
+Document in `crates/xvision-dashboard/README.md` under "Chat Rail".
 
 Commit `chore: chat rail persistence smoke verified`.
 

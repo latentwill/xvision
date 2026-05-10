@@ -7,14 +7,14 @@
 ### Task 4: Deploy module
 
 **Files:**
-- Create: `crates/xianvec-engine/src/api/deploy.rs`
-- Create: `crates/xianvec-engine/tests/api_deploy.rs`
+- Create: `crates/xvision-engine/src/api/deploy.rs`
+- Create: `crates/xvision-engine/tests/api_deploy.rs`
 
 > **Context.** "Daemon supervision" (actually starting/stopping the long-lived process from Plan 2c) is intentionally **not** in this module yet. Plan 2c's `xvn live deploy/start/stop` already exists. This module manages the **deployment record** (config + status + audit), and exposes typed functions the future supervisor will call. `start`/`stop` here mark the record `running`/`stopped` and write audit rows; the actual process supervision is wired in Task 19 when we add `xvn agent run`.
 
 - [ ] **Step 1: Failing tests**
 
-Create `crates/xianvec-engine/tests/api_deploy.rs`:
+Create `crates/xvision-engine/tests/api_deploy.rs`:
 
 ```rust
 use std::sync::Arc;
@@ -22,7 +22,7 @@ use std::sync::Arc;
 use chrono::{TimeZone, Utc};
 use sqlx::SqlitePool;
 use tempfile::TempDir;
-use xianvec_engine::api::{deploy, Actor, ApiContext};
+use xvision_engine::api::{deploy, Actor, ApiContext};
 
 async fn fixture_ctx() -> (ApiContext, TempDir) {
     let dir = TempDir::new().unwrap();
@@ -93,11 +93,11 @@ async fn switch_mode_changes_broker() {
 }
 ```
 
-- [ ] **Step 2: Run tests — expect failure** (`cargo test -p xianvec-engine --test api_deploy`)
+- [ ] **Step 2: Run tests — expect failure** (`cargo test -p xvision-engine --test api_deploy`)
 
 - [ ] **Step 3: Implement `api/deploy.rs`**
 
-Create `crates/xianvec-engine/src/api/deploy.rs`:
+Create `crates/xvision-engine/src/api/deploy.rs`:
 
 ```rust
 //! Deployment records: config + status + audit. Process supervision (the
@@ -319,7 +319,7 @@ pub async fn switch_mode(ctx: &ApiContext, id: &str, new_broker: &str, actor: Ac
 - [ ] **Step 4: Run tests — expect pass**
 
 ```bash
-cargo test -p xianvec-engine --test api_deploy
+cargo test -p xvision-engine --test api_deploy
 ```
 
 Expected: 3 passed.
@@ -327,8 +327,8 @@ Expected: 3 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-engine/src/api/deploy.rs \
-        crates/xianvec-engine/tests/api_deploy.rs
+git add crates/xvision-engine/src/api/deploy.rs \
+        crates/xvision-engine/tests/api_deploy.rs
 git commit -m "feat(engine/api): deploy module — record + status + audit"
 ```
 
@@ -337,14 +337,14 @@ git commit -m "feat(engine/api): deploy module — record + status + audit"
 ### Task 5: Report module — basics
 
 **Files:**
-- Create: `crates/xianvec-engine/src/api/report.rs`
-- Create: `crates/xianvec-engine/tests/api_report.rs`
+- Create: `crates/xvision-engine/src/api/report.rs`
+- Create: `crates/xvision-engine/tests/api_report.rs`
 
 > **Context.** Reports are read-only. Most pull from the deployment-config files (Task 4), strategy status sidecars (Task 2), and `scheduler_events` (Plan 2c table). Where data isn't available yet (anomaly_scan against missing `scheduler_events`), the function returns an empty/None result rather than failing. EOD report lands in Task 6.
 
 - [ ] **Step 1: Failing tests**
 
-Create `crates/xianvec-engine/tests/api_report.rs`:
+Create `crates/xvision-engine/tests/api_report.rs`:
 
 ```rust
 use std::sync::Arc;
@@ -352,7 +352,7 @@ use std::sync::Arc;
 use chrono::{Duration, TimeZone, Utc};
 use sqlx::SqlitePool;
 use tempfile::TempDir;
-use xianvec_engine::api::{deploy, report, strategy, Actor, ApiContext};
+use xvision_engine::api::{deploy, report, strategy, Actor, ApiContext};
 
 async fn ctx_with_deps() -> (ApiContext, TempDir) {
     let dir = TempDir::new().unwrap();
@@ -402,12 +402,12 @@ async fn anomaly_scan_returns_empty_with_clean_state() {
 
 - [ ] **Step 3: Implement `api/report.rs`**
 
-Create `crates/xianvec-engine/src/api/report.rs`:
+Create `crates/xvision-engine/src/api/report.rs`:
 
 ```rust
 //! Read-only analytics. Pulls from deployment configs, strategy status
 //! sidecars, and `scheduler_events` (Plan 2c). EOD report (Task 6) extends
-//! this module and reuses `xianvec_eval::report::render`.
+//! this module and reuses `xvision_eval::report::render`.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -534,12 +534,12 @@ pub async fn anomaly_scan(_ctx: &ApiContext) -> ApiResult<Vec<Anomaly>> {
 }
 ```
 
-- [ ] **Step 4: Run — expect pass** (`cargo test -p xianvec-engine --test api_report` → 3 passed)
+- [ ] **Step 4: Run — expect pass** (`cargo test -p xvision-engine --test api_report` → 3 passed)
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-engine/src/api/report.rs crates/xianvec-engine/tests/api_report.rs
+git add crates/xvision-engine/src/api/report.rs crates/xvision-engine/tests/api_report.rs
 git commit -m "feat(engine/api): report module — strategy_review, health, pnl, token spend, anomaly scaffolds"
 ```
 
@@ -548,21 +548,21 @@ git commit -m "feat(engine/api): report module — strategy_review, health, pnl,
 ### Task 6: Report — EOD + backtest renderer pass-through
 
 **Files:**
-- Modify: `crates/xianvec-engine/src/api/report.rs` (append `eod` and `backtest_report`)
-- Modify: `crates/xianvec-engine/Cargo.toml` (add `xianvec-eval` path dep)
-- Modify: `crates/xianvec-engine/tests/api_report.rs` (add EOD tests)
+- Modify: `crates/xvision-engine/src/api/report.rs` (append `eod` and `backtest_report`)
+- Modify: `crates/xvision-engine/Cargo.toml` (add `xvision-eval` path dep)
+- Modify: `crates/xvision-engine/tests/api_report.rs` (add EOD tests)
 
 - [ ] **Step 1: Add eval dep**
 
-In `crates/xianvec-engine/Cargo.toml` under `[dependencies]`, add:
+In `crates/xvision-engine/Cargo.toml` under `[dependencies]`, add:
 
 ```toml
-xianvec-eval = { path = "../xianvec-eval" }
+xvision-eval = { path = "../xvision-eval" }
 ```
 
 - [ ] **Step 2: Append EOD types + functions to `api/report.rs`**
 
-At the end of `crates/xianvec-engine/src/api/report.rs`:
+At the end of `crates/xvision-engine/src/api/report.rs`:
 
 ```rust
 // ---------------- EOD report ----------------
@@ -570,9 +570,9 @@ At the end of `crates/xianvec-engine/src/api/report.rs`:
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use xianvec_core::trading::Regime;
-use xianvec_eval::report::{render as render_md, ReportConfig};
-use xianvec_eval::result::{ArmResult, BacktestResult};
+use xvision_core::trading::Regime;
+use xvision_eval::report::{render as render_md, ReportConfig};
+use xvision_eval::result::{ArmResult, BacktestResult};
 
 #[derive(Debug, Clone, Default)]
 pub struct EodOpts {
@@ -609,7 +609,7 @@ pub struct PortfolioRollup {
 /// Compute the EOD report.
 ///
 /// In this task we materialize **stub** per-deployment summaries (zeros) and
-/// render Markdown via the existing `xianvec_eval::report::render` over a
+/// render Markdown via the existing `xvision_eval::report::render` over a
 /// synthetic `BacktestResult`. The wiring to live `scheduler_events` data
 /// lands in a follow-up after the events table is producing rows in production.
 pub async fn eod(ctx: &ApiContext, opts: EodOpts) -> ApiResult<EodReport> {
@@ -698,7 +698,7 @@ pub async fn backtest_report(_ctx: &ApiContext, result_path: &Path) -> ApiResult
 
 - [ ] **Step 3: Add tests**
 
-Append to `crates/xianvec-engine/tests/api_report.rs`:
+Append to `crates/xvision-engine/tests/api_report.rs`:
 
 ```rust
 #[tokio::test]
@@ -720,15 +720,15 @@ async fn eod_no_markdown_when_disabled() {
 }
 ```
 
-- [ ] **Step 4: Run — expect pass** (`cargo test -p xianvec-engine --test api_report` → 5 passed)
+- [ ] **Step 4: Run — expect pass** (`cargo test -p xvision-engine --test api_report` → 5 passed)
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-engine/src/api/report.rs \
-        crates/xianvec-engine/tests/api_report.rs \
-        crates/xianvec-engine/Cargo.toml
-git commit -m "feat(engine/api): EOD report + backtest renderer pass-through (reuses xianvec_eval)"
+git add crates/xvision-engine/src/api/report.rs \
+        crates/xvision-engine/tests/api_report.rs \
+        crates/xvision-engine/Cargo.toml
+git commit -m "feat(engine/api): EOD report + backtest renderer pass-through (reuses xvision_eval)"
 ```
 
 ---
@@ -736,12 +736,12 @@ git commit -m "feat(engine/api): EOD report + backtest renderer pass-through (re
 ### Task 7: Maintenance module
 
 **Files:**
-- Create: `crates/xianvec-engine/src/api/maintenance.rs`
-- Create: `crates/xianvec-engine/tests/api_maintenance.rs`
+- Create: `crates/xvision-engine/src/api/maintenance.rs`
+- Create: `crates/xvision-engine/tests/api_maintenance.rs`
 
 - [ ] **Step 1: Failing tests**
 
-Create `crates/xianvec-engine/tests/api_maintenance.rs`:
+Create `crates/xvision-engine/tests/api_maintenance.rs`:
 
 ```rust
 use std::sync::Arc;
@@ -749,7 +749,7 @@ use std::sync::Arc;
 use chrono::{TimeZone, Utc};
 use sqlx::SqlitePool;
 use tempfile::TempDir;
-use xianvec_engine::api::{maintenance, Actor, ApiContext};
+use xvision_engine::api::{maintenance, Actor, ApiContext};
 
 async fn fixture_ctx() -> (ApiContext, TempDir) {
     let dir = TempDir::new().unwrap();
@@ -906,7 +906,7 @@ pub async fn integrity_check(ctx: &ApiContext, _actor: Actor) -> ApiResult<Integ
 - [ ] **Step 4: Run — expect pass**
 
 ```bash
-cargo test -p xianvec-engine --test api_maintenance
+cargo test -p xvision-engine --test api_maintenance
 ```
 
 Expected: 3 passed.
@@ -914,8 +914,8 @@ Expected: 3 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-engine/src/api/maintenance.rs \
-        crates/xianvec-engine/tests/api_maintenance.rs
+git add crates/xvision-engine/src/api/maintenance.rs \
+        crates/xvision-engine/tests/api_maintenance.rs
 git commit -m "feat(engine/api): maintenance module — rotate, compact, vacuum, integrity"
 ```
 
@@ -924,15 +924,15 @@ git commit -m "feat(engine/api): maintenance module — rotate, compact, vacuum,
 ### Task 8: Schedule module — engine API skeleton
 
 **Files:**
-- Create: `crates/xianvec-engine/migrations/003_scheduler.sql`
-- Create: `crates/xianvec-engine/src/api/schedule.rs`
-- Create: `crates/xianvec-engine/tests/api_schedule.rs`
+- Create: `crates/xvision-engine/migrations/003_scheduler.sql`
+- Create: `crates/xvision-engine/src/api/schedule.rs`
+- Create: `crates/xvision-engine/tests/api_schedule.rs`
 
 > **Context.** This task ships the `schedules` + `schedule_fires` tables and the **CRUD** layer of `schedule.*` (create / list / show / update / pause / resume / delete / history / transcript). The cron-evaluation + daemon loop land in Task 16 and beyond. `run_now` is implemented as "insert a fire row with status='pending' and triggered_by='run_now'" — the actual execution comes when the scheduler picks up pending fires.
 
 - [ ] **Step 1: Scheduler migration**
 
-Create `crates/xianvec-engine/migrations/003_scheduler.sql`:
+Create `crates/xvision-engine/migrations/003_scheduler.sql`:
 
 ```sql
 CREATE TABLE IF NOT EXISTS schedules (
@@ -976,7 +976,7 @@ CREATE INDEX IF NOT EXISTS idx_schedules_next_fire ON schedules(next_fire_at) WH
 
 - [ ] **Step 2: Failing tests**
 
-Create `crates/xianvec-engine/tests/api_schedule.rs`:
+Create `crates/xvision-engine/tests/api_schedule.rs`:
 
 ```rust
 use std::sync::Arc;
@@ -984,7 +984,7 @@ use std::sync::Arc;
 use chrono::{TimeZone, Utc};
 use sqlx::SqlitePool;
 use tempfile::TempDir;
-use xianvec_engine::api::{schedule, Actor, ApiContext};
+use xvision_engine::api::{schedule, Actor, ApiContext};
 
 async fn fixture_ctx() -> (ApiContext, TempDir) {
     let dir = TempDir::new().unwrap();
@@ -1056,7 +1056,7 @@ async fn delete_removes_schedule() {
     let (ctx, _dir) = fixture_ctx().await;
     let id = schedule::create(&ctx, spec("d"), Actor::Cli).await.unwrap();
     schedule::delete(&ctx, &id, Actor::Cli).await.unwrap();
-    assert!(matches!(schedule::show(&ctx, &id).await, Err(xianvec_engine::api::ApiError::NotFound(_))));
+    assert!(matches!(schedule::show(&ctx, &id).await, Err(xvision_engine::api::ApiError::NotFound(_))));
 }
 ```
 
@@ -1064,11 +1064,11 @@ async fn delete_removes_schedule() {
 
 - [ ] **Step 4: Implement `api/schedule.rs`**
 
-Create `crates/xianvec-engine/src/api/schedule.rs`:
+Create `crates/xvision-engine/src/api/schedule.rs`:
 
 ```rust
 //! Schedule CRUD. Cron evaluation + the daemon loop live in
-//! `xianvec-engine::scheduler` (Task 16+). This module just persists
+//! `xvision-engine::scheduler` (Task 16+). This module just persists
 //! schedule rows and surfaces fire history.
 
 use chrono::{DateTime, Utc};
@@ -1342,7 +1342,7 @@ pub async fn transcript(_ctx: &ApiContext, _fire_id: &str) -> ApiResult<String> 
 - [ ] **Step 5: Run — expect pass**
 
 ```bash
-cargo test -p xianvec-engine --test api_schedule
+cargo test -p xvision-engine --test api_schedule
 ```
 
 Expected: 5 passed.
@@ -1350,9 +1350,9 @@ Expected: 5 passed.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/xianvec-engine/migrations/003_scheduler.sql \
-        crates/xianvec-engine/src/api/schedule.rs \
-        crates/xianvec-engine/tests/api_schedule.rs
+git add crates/xvision-engine/migrations/003_scheduler.sql \
+        crates/xvision-engine/src/api/schedule.rs \
+        crates/xvision-engine/tests/api_schedule.rs
 git commit -m "feat(engine/api): schedule CRUD + scheduler/fire SQLite tables"
 ```
 
@@ -1361,13 +1361,13 @@ git commit -m "feat(engine/api): schedule CRUD + scheduler/fire SQLite tables"
 ### Task 9: Autoresearch stub module
 
 **Files:**
-- Create: `crates/xianvec-engine/src/api/autoresearch.rs`
+- Create: `crates/xvision-engine/src/api/autoresearch.rs`
 
 > **Context.** AR-1/AR-2 aren't built yet. This module exposes the API shape so the tool registry and CLI can reference it; functions return `ApiError::Internal("not implemented")` until AR-2 lands. Tests verify the shape compiles and returns the expected error.
 
 - [ ] **Step 1: Implement stub**
 
-Create `crates/xianvec-engine/src/api/autoresearch.rs`:
+Create `crates/xvision-engine/src/api/autoresearch.rs`:
 
 ```rust
 //! AR-2 evening cycle hook. Functions return NotImplemented until AR-2 ships.
@@ -1412,13 +1412,13 @@ pub async fn show_cycle(_ctx: &ApiContext, cycle_id: &str) -> ApiResult<CycleDet
 - [ ] **Step 2: Verify it compiles**
 
 ```bash
-cargo check -p xianvec-engine
+cargo check -p xvision-engine
 ```
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/xianvec-engine/src/api/autoresearch.rs
+git add crates/xvision-engine/src/api/autoresearch.rs
 git commit -m "feat(engine/api): autoresearch stub (AR-2 hook)"
 ```
 

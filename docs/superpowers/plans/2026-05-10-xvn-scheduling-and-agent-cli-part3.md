@@ -4,24 +4,24 @@
 
 ---
 
-### Task 10: xianvec-intern — LlmToolDispatch trait
+### Task 10: xvision-intern — LlmToolDispatch trait
 
 **Files:**
-- Create: `crates/xianvec-intern/src/tool_dispatch.rs`
-- Modify: `crates/xianvec-intern/src/lib.rs`
-- Create: `crates/xianvec-intern/tests/tool_dispatch_mock.rs`
+- Create: `crates/xvision-intern/src/tool_dispatch.rs`
+- Modify: `crates/xvision-intern/src/lib.rs`
+- Create: `crates/xvision-intern/tests/tool_dispatch_mock.rs`
 
 > **Context.** Existing intern backend (`AnthropicIntern`, `OpenAICompatIntern`) is hard-wired to one shape — the briefing prompt — and produces a single typed JSON response. The agent runner needs a more general loop: send messages, receive assistant turns that may include tool calls, send tool results back, repeat. This task adds a small `LlmToolDispatch` trait + a mock impl for tests. Anthropic + OpenAI-compat real impls land as follow-up — for v1 we ship the trait + mock so the AgentRunner is testable.
 
 - [ ] **Step 1: Failing test against a mock**
 
-Create `crates/xianvec-intern/tests/tool_dispatch_mock.rs`:
+Create `crates/xvision-intern/tests/tool_dispatch_mock.rs`:
 
 ```rust
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use xianvec_intern::tool_dispatch::{
+use xvision_intern::tool_dispatch::{
     AssistantTurn, LlmToolDispatch, Message, ToolCall, ToolDispatchRequest, ToolSchema,
 };
 
@@ -69,7 +69,7 @@ async fn mock_returns_canned_assistant_turn() {
 
 - [ ] **Step 3: Implement `tool_dispatch.rs`**
 
-Create `crates/xianvec-intern/src/tool_dispatch.rs`:
+Create `crates/xvision-intern/src/tool_dispatch.rs`:
 
 ```rust
 //! Generic LLM tool-use dispatch trait. Used by the AgentRunner to send a
@@ -143,7 +143,7 @@ pub trait LlmToolDispatch: Send + Sync {
 
 - [ ] **Step 4: Re-export from `lib.rs`**
 
-In `crates/xianvec-intern/src/lib.rs`, add:
+In `crates/xvision-intern/src/lib.rs`, add:
 
 ```rust
 pub mod tool_dispatch;
@@ -155,7 +155,7 @@ pub use tool_dispatch::{
 - [ ] **Step 5: Run — expect pass**
 
 ```bash
-cargo test -p xianvec-intern --test tool_dispatch_mock
+cargo test -p xvision-intern --test tool_dispatch_mock
 ```
 
 Expected: 1 passed.
@@ -163,9 +163,9 @@ Expected: 1 passed.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/xianvec-intern/src/tool_dispatch.rs \
-        crates/xianvec-intern/src/lib.rs \
-        crates/xianvec-intern/tests/tool_dispatch_mock.rs
+git add crates/xvision-intern/src/tool_dispatch.rs \
+        crates/xvision-intern/src/lib.rs \
+        crates/xvision-intern/tests/tool_dispatch_mock.rs
 git commit -m "feat(intern): LlmToolDispatch trait + Message/ToolCall/AssistantTurn shapes"
 ```
 
@@ -174,15 +174,15 @@ git commit -m "feat(intern): LlmToolDispatch trait + Message/ToolCall/AssistantT
 ### Task 11: ToolRegistry + ToolHandler + glob matching
 
 **Files:**
-- Create: `crates/xianvec-engine/src/agent_runner/mod.rs`
-- Create: `crates/xianvec-engine/src/agent_runner/registry.rs`
-- Create: `crates/xianvec-engine/src/agent_runner/builtins.rs`
-- Modify: `crates/xianvec-engine/src/lib.rs`
-- Create: `crates/xianvec-engine/tests/tool_registry.rs`
+- Create: `crates/xvision-engine/src/agent_runner/mod.rs`
+- Create: `crates/xvision-engine/src/agent_runner/registry.rs`
+- Create: `crates/xvision-engine/src/agent_runner/builtins.rs`
+- Modify: `crates/xvision-engine/src/lib.rs`
+- Create: `crates/xvision-engine/tests/tool_registry.rs`
 
 - [ ] **Step 1: Failing tests**
 
-Create `crates/xianvec-engine/tests/tool_registry.rs`:
+Create `crates/xvision-engine/tests/tool_registry.rs`:
 
 ```rust
 use std::sync::Arc;
@@ -190,8 +190,8 @@ use std::sync::Arc;
 use chrono::{TimeZone, Utc};
 use sqlx::SqlitePool;
 use tempfile::TempDir;
-use xianvec_engine::agent_runner::registry::{filter_tools, ToolRegistry};
-use xianvec_engine::api::{Actor, ApiContext};
+use xvision_engine::agent_runner::registry::{filter_tools, ToolRegistry};
+use xvision_engine::api::{Actor, ApiContext};
 
 async fn fixture() -> (Arc<ApiContext>, ToolRegistry, TempDir) {
     let dir = TempDir::new().unwrap();
@@ -234,7 +234,7 @@ async fn filter_strategy_glob() {
 #[tokio::test]
 async fn invoke_strategy_show_via_registry() {
     let (ctx, reg, _dir) = fixture().await;
-    xianvec_engine::api::strategy::record_created(&ctx, "sh_t", Actor::Cli).await.unwrap();
+    xvision_engine::api::strategy::record_created(&ctx, "sh_t", Actor::Cli).await.unwrap();
     let handler = reg.tools().iter().find(|t| t.schema().name == "strategy.show").unwrap();
     let result = handler.invoke(&ctx, serde_json::json!({"id":"sh_t"}), Actor::Cli).await.unwrap();
     assert_eq!(result["status"], "active");
@@ -254,7 +254,7 @@ async fn record_outcome_returns_arguments_unchanged() {
 
 - [ ] **Step 3: Implement registry types**
 
-Create `crates/xianvec-engine/src/agent_runner/mod.rs`:
+Create `crates/xvision-engine/src/agent_runner/mod.rs`:
 
 ```rust
 //! Generic tool-use agent runner. The runner is invoked by the scheduler at
@@ -265,7 +265,7 @@ pub mod builtins;
 pub mod registry;
 ```
 
-Create `crates/xianvec-engine/src/agent_runner/registry.rs`:
+Create `crates/xvision-engine/src/agent_runner/registry.rs`:
 
 ```rust
 use std::sync::Arc;
@@ -276,7 +276,7 @@ use serde_json::Value;
 use crate::agent_runner::builtins;
 use crate::api::{ApiContext, ApiError, ApiResult, Actor};
 
-pub use xianvec_intern::tool_dispatch::ToolSchema;
+pub use xvision_intern::tool_dispatch::ToolSchema;
 
 #[async_trait]
 pub trait ToolHandler: Send + Sync {
@@ -358,7 +358,7 @@ pub fn optional<T: serde::de::DeserializeOwned>(args: &Value, key: &str) -> ApiR
 
 - [ ] **Step 4: Implement builtins**
 
-Create `crates/xianvec-engine/src/agent_runner/builtins.rs`:
+Create `crates/xvision-engine/src/agent_runner/builtins.rs`:
 
 ```rust
 //! Wire every engine API function as a ToolHandler. Each handler is a thin
@@ -772,7 +772,7 @@ fn register_record_outcome(reg: &mut ToolRegistry) {
 
 - [ ] **Step 5: Wire into engine `lib.rs`**
 
-Add to `crates/xianvec-engine/src/lib.rs`:
+Add to `crates/xvision-engine/src/lib.rs`:
 
 ```rust
 pub mod agent_runner;
@@ -780,18 +780,18 @@ pub mod agent_runner;
 
 - [ ] **Step 6: Add `futures` to engine deps**
 
-In `crates/xianvec-engine/Cargo.toml`:
+In `crates/xvision-engine/Cargo.toml`:
 
 ```toml
 futures = "0.3"
 glob    = "0.3"
-xianvec-intern = { path = "../xianvec-intern" }
+xvision-intern = { path = "../xvision-intern" }
 ```
 
 - [ ] **Step 7: Run — expect pass**
 
 ```bash
-cargo test -p xianvec-engine --test tool_registry
+cargo test -p xvision-engine --test tool_registry
 ```
 
 Expected: 4 passed.
@@ -799,10 +799,10 @@ Expected: 4 passed.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add crates/xianvec-engine/src/agent_runner \
-        crates/xianvec-engine/src/lib.rs \
-        crates/xianvec-engine/Cargo.toml \
-        crates/xianvec-engine/tests/tool_registry.rs
+git add crates/xvision-engine/src/agent_runner \
+        crates/xvision-engine/src/lib.rs \
+        crates/xvision-engine/Cargo.toml \
+        crates/xvision-engine/tests/tool_registry.rs
 git commit -m "feat(engine/agent_runner): ToolRegistry + glob filtering + 30+ builtin handlers"
 ```
 
@@ -811,16 +811,16 @@ git commit -m "feat(engine/agent_runner): ToolRegistry + glob filtering + 30+ bu
 ### Task 12: AgentRunner core loop + transcript
 
 **Files:**
-- Create: `crates/xianvec-engine/src/agent_runner/loop_.rs`
-- Create: `crates/xianvec-engine/src/agent_runner/transcript.rs`
-- Create: `crates/xianvec-engine/src/agent_runner/pricing.rs`
-- Create: `crates/xianvec-engine/src/agent_runner/budget.rs`
-- Modify: `crates/xianvec-engine/src/agent_runner/mod.rs`
-- Create: `crates/xianvec-engine/tests/agent_runner.rs`
+- Create: `crates/xvision-engine/src/agent_runner/loop_.rs`
+- Create: `crates/xvision-engine/src/agent_runner/transcript.rs`
+- Create: `crates/xvision-engine/src/agent_runner/pricing.rs`
+- Create: `crates/xvision-engine/src/agent_runner/budget.rs`
+- Modify: `crates/xvision-engine/src/agent_runner/mod.rs`
+- Create: `crates/xvision-engine/tests/agent_runner.rs`
 
 - [ ] **Step 1: Failing test against mock dispatch**
 
-Create `crates/xianvec-engine/tests/agent_runner.rs`:
+Create `crates/xvision-engine/tests/agent_runner.rs`:
 
 ```rust
 use std::sync::{Arc, Mutex};
@@ -829,9 +829,9 @@ use async_trait::async_trait;
 use chrono::{TimeZone, Utc};
 use sqlx::SqlitePool;
 use tempfile::TempDir;
-use xianvec_engine::agent_runner::{registry::ToolRegistry, AgentRunner, FireStatus, RunRequest};
-use xianvec_engine::api::{strategy, Actor, ApiContext};
-use xianvec_intern::tool_dispatch::{
+use xvision_engine::agent_runner::{registry::ToolRegistry, AgentRunner, FireStatus, RunRequest};
+use xvision_engine::api::{strategy, Actor, ApiContext};
+use xvision_intern::tool_dispatch::{
     AssistantTurn, LlmToolDispatch, Message, ToolCall, ToolDispatchRequest,
 };
 
@@ -944,7 +944,7 @@ async fn budget_enforced_when_max_tokens_exceeded() {
 
 - [ ] **Step 3: Implement pricing**
 
-Create `crates/xianvec-engine/src/agent_runner/pricing.rs`:
+Create `crates/xvision-engine/src/agent_runner/pricing.rs`:
 
 ```rust
 //! Per-model token pricing in USD per 1M tokens. Cache reads charged at the
@@ -978,7 +978,7 @@ pub fn turn_cost(p: &ModelPricing, tokens_in: u32, tokens_out: u32, cache_read: 
 
 - [ ] **Step 4: Implement budget**
 
-Create `crates/xianvec-engine/src/agent_runner/budget.rs`:
+Create `crates/xvision-engine/src/agent_runner/budget.rs`:
 
 ```rust
 use crate::agent_runner::pricing::{lookup, turn_cost, ModelPricing};
@@ -1036,7 +1036,7 @@ impl BudgetTracker {
 
 - [ ] **Step 5: Implement transcript**
 
-Create `crates/xianvec-engine/src/agent_runner/transcript.rs`:
+Create `crates/xvision-engine/src/agent_runner/transcript.rs`:
 
 ```rust
 use std::io::Write;
@@ -1082,7 +1082,7 @@ impl TranscriptWriter {
 
 - [ ] **Step 6: Implement loop_ + AgentRunner**
 
-Create `crates/xianvec-engine/src/agent_runner/loop_.rs`:
+Create `crates/xvision-engine/src/agent_runner/loop_.rs`:
 
 ```rust
 use std::sync::Arc;
@@ -1092,7 +1092,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::time::Duration;
 
-use xianvec_intern::tool_dispatch::{
+use xvision_intern::tool_dispatch::{
     AssistantTurn, LlmToolDispatch, Message, ToolCall, ToolDispatchRequest,
 };
 
@@ -1272,7 +1272,7 @@ impl AgentRunner {
     }
 }
 
-fn build_system_prompt(tools: &[xianvec_intern::tool_dispatch::ToolSchema]) -> String {
+fn build_system_prompt(tools: &[xvision_intern::tool_dispatch::ToolSchema]) -> String {
     let mut s = String::new();
     s.push_str("You are an xvn agent invoked by a scheduled job. Follow the user's prompt.\n");
     s.push_str("Use tools to inspect and act on xvn state. Never invent data — if a tool fails, report the failure in record_outcome.\n");
@@ -1327,7 +1327,7 @@ pub use loop_::{ActionRecord, AgentRunner, FireStatus, RunOutcome, RunRequest};
 - [ ] **Step 8: Run — expect pass**
 
 ```bash
-cargo test -p xianvec-engine --test agent_runner
+cargo test -p xvision-engine --test agent_runner
 ```
 
 Expected: 2 passed.
@@ -1335,8 +1335,8 @@ Expected: 2 passed.
 - [ ] **Step 9: Commit**
 
 ```bash
-git add crates/xianvec-engine/src/agent_runner \
-        crates/xianvec-engine/tests/agent_runner.rs
+git add crates/xvision-engine/src/agent_runner \
+        crates/xvision-engine/tests/agent_runner.rs
 git commit -m "feat(engine/agent_runner): tool-use loop, transcript JSONL, budget enforcement"
 ```
 
@@ -1345,15 +1345,15 @@ git commit -m "feat(engine/agent_runner): tool-use loop, transcript JSONL, budge
 ### Task 13: `xvn agent ask` CLI — interactive single-shot agent
 
 **Files:**
-- Create: `crates/xianvec-cli/src/commands/agent.rs`
-- Modify: `crates/xianvec-cli/src/commands/mod.rs`
-- Modify: `crates/xianvec-cli/src/lib.rs`
+- Create: `crates/xvision-cli/src/commands/agent.rs`
+- Modify: `crates/xvision-cli/src/commands/mod.rs`
+- Modify: `crates/xvision-cli/src/lib.rs`
 
 > **Context.** `xvn agent run` (the long-lived daemon) lands in Task 19. `xvn agent ask "<prompt>"` ships now as a one-shot agent invocation against the engine — useful for testing the runner without the scheduler. Until a real `LlmToolDispatch` is wired, `xvn agent ask` requires a `--mock` flag that uses an env-var-driven scripted dispatch (one assistant turn per `XVN_MOCK_TURN_<N>` env var, or a single turn from `XVN_MOCK_TURN`).
 
 - [ ] **Step 1: Implement command**
 
-Create `crates/xianvec-cli/src/commands/agent.rs`:
+Create `crates/xvision-cli/src/commands/agent.rs`:
 
 ```rust
 use std::sync::{Arc, Mutex};
@@ -1361,9 +1361,9 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use clap::{Args, Subcommand};
 use sqlx::SqlitePool;
-use xianvec_engine::agent_runner::{registry::ToolRegistry, AgentRunner, RunRequest};
-use xianvec_engine::api::{Actor, ApiContext};
-use xianvec_intern::tool_dispatch::{AssistantTurn, LlmToolDispatch, ToolDispatchRequest};
+use xvision_engine::agent_runner::{registry::ToolRegistry, AgentRunner, RunRequest};
+use xvision_engine::api::{Actor, ApiContext};
+use xvision_intern::tool_dispatch::{AssistantTurn, LlmToolDispatch, ToolDispatchRequest};
 
 #[derive(Args, Debug)]
 pub struct AgentCmd {
@@ -1429,7 +1429,7 @@ pub async fn run(cmd: AgentCmd) -> anyhow::Result<()> {
             std::fs::create_dir_all(&xvn_home)?;
             let url = format!("sqlite://{}?mode=rwc", db_path.display());
             let db = SqlitePool::connect(&url).await?;
-            sqlx::migrate!("../xianvec-engine/migrations").run(&db).await?;
+            sqlx::migrate!("../xvision-engine/migrations").run(&db).await?;
             let ctx = Arc::new(ApiContext::new(xvn_home, db));
 
             if !mock {
@@ -1468,13 +1468,13 @@ pub async fn run(cmd: AgentCmd) -> anyhow::Result<()> {
 
 - [ ] **Step 2: Wire into top-level CLI**
 
-In `crates/xianvec-cli/src/commands/mod.rs`:
+In `crates/xvision-cli/src/commands/mod.rs`:
 
 ```rust
 pub mod agent;
 ```
 
-In `crates/xianvec-cli/src/lib.rs` (the `Command` enum and `Cli::run` dispatch — the exact location depends on existing layout; locate the enum that lists `Strategy`, `Live`, etc., and add):
+In `crates/xvision-cli/src/lib.rs` (the `Command` enum and `Cli::run` dispatch — the exact location depends on existing layout; locate the enum that lists `Strategy`, `Live`, etc., and add):
 
 ```rust
 Agent(commands::agent::AgentCmd),
@@ -1491,7 +1491,7 @@ Command::Agent(cmd) => commands::agent::run(cmd).await?,
 ```bash
 export XVN_HOME=/tmp/xvn-agent-smoke
 export XVN_MOCK_TURN='{"text":null,"tool_calls":[{"tool_call_id":"x","name":"record_outcome","arguments":{"summary":"hi","actions_taken":[],"anomalies":[]}}],"stop_reason":"tool_use","tokens_in":10,"tokens_out":5,"cache_read_tokens":0,"cache_write_tokens":0}'
-cargo run -p xianvec-cli -- agent ask "hi" --mock
+cargo run -p xvision-cli -- agent ask "hi" --mock
 ```
 
 Expected: JSON output with `"status":"ok"` and `"summary":"hi"`.
@@ -1499,9 +1499,9 @@ Expected: JSON output with `"status":"ok"` and `"summary":"hi"`.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/xianvec-cli/src/commands/agent.rs \
-        crates/xianvec-cli/src/commands/mod.rs \
-        crates/xianvec-cli/src/lib.rs
+git add crates/xvision-cli/src/commands/agent.rs \
+        crates/xvision-cli/src/commands/mod.rs \
+        crates/xvision-cli/src/lib.rs
 git commit -m "feat(cli): xvn agent ask — single-shot agent invocation (mock dispatch)"
 ```
 

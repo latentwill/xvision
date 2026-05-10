@@ -1,4 +1,4 @@
-# XIANVEC v1 — Shipping Plan
+# XVISION v1 — Shipping Plan
 
 > **Scope of this doc:** the v1 *test* slice — what we are actually putting in front of users to validate the eval and strategy engines on Alpaca paper. This is narrower than the legacy `v1-build-steps.md` (which still describes the full Phase 0–12 program). When the two conflict, this file wins for v1 test.
 >
@@ -33,9 +33,9 @@ Each row links to its plan. Plans are agentic-executable; this table is the orde
 |---|---|---|
 | 0 | **Working tree precondition** | Land or revert the in-flight working-tree changes (see "Preconditions" below) before any plan starts. Plan execution against a dirty tree is the fastest way to scramble migration numbers and module wiring. |
 | 1 | [Strategy Engine MVP](docs/superpowers/plans/2026-05-08-strategy-creation-engine-mvp.md) | Foundation. Bundle / template / inline agent loop. Already merged. |
-| 2 | [Terminology rename — Option B](docs/superpowers/plans/2026-05-10-terminology-rename-option-b.md) | Mechanical; run before any plan that uses post-rename names. SQL migration already in tree (`xianvec-core/migrations/0002_rename_setup_to_cycle.sql`); finish the Rust rename if not yet committed. |
-| 3 | **[Engine API Foundation](docs/superpowers/plans/2026-05-10-engine-api-foundation.md)** | **NEW.** Lifts `xianvec-engine/src/api/` skeleton from xvn-scheduling-and-agent-cli spec. Every subsequent CLI handler / MCP tool dispatches through `engine::api::<domain>::<fn>(ctx, req)` — no business logic in CLI or MCP wrappers. ~1 day. Owns migration `001_api_audit.sql`. |
-| 4 | **Plan 2c §Task 7 — `BrokerSurface` trait (extracted)** | **NEW partial.** Pull only Task 7 of [Plan 2c](docs/superpowers/plans/2026-05-08-strategy-engine-2c-scheduler-live-exec.md#task-7-brokersurface-trait--dispatch) into v1 test scope: the `BrokerSurface` trait + Alpaca/Orderly impls in `xianvec-execution`. Skip every other task in Plan 2c (scheduler, live daemon, deploy CLI). Required because Eval's paper mode wraps this trait. |
+| 2 | [Terminology rename — Option B](docs/superpowers/plans/2026-05-10-terminology-rename-option-b.md) | Mechanical; run before any plan that uses post-rename names. SQL migration already in tree (`xvision-core/migrations/0002_rename_setup_to_cycle.sql`); finish the Rust rename if not yet committed. |
+| 3 | **[Engine API Foundation](docs/superpowers/plans/2026-05-10-engine-api-foundation.md)** | **NEW.** Lifts `xvision-engine/src/api/` skeleton from xvn-scheduling-and-agent-cli spec. Every subsequent CLI handler / MCP tool dispatches through `engine::api::<domain>::<fn>(ctx, req)` — no business logic in CLI or MCP wrappers. ~1 day. Owns migration `001_api_audit.sql`. |
+| 4 | **Plan 2c §Task 7 — `BrokerSurface` trait (extracted)** | **NEW partial.** Pull only Task 7 of [Plan 2c](docs/superpowers/plans/2026-05-08-strategy-engine-2c-scheduler-live-exec.md#task-7-brokersurface-trait--dispatch) into v1 test scope: the `BrokerSurface` trait + Alpaca/Orderly impls in `xvision-execution`. Skip every other task in Plan 2c (scheduler, live daemon, deploy CLI). Required because Eval's paper mode wraps this trait. |
 | 5 | [Eval Engine](docs/superpowers/plans/2026-05-08-eval-engine-plan.md) | Backtest + Alpaca paper mode. Paper executor wraps the `BrokerSurface` from #4. Owns migration `002_eval.sql`. CLI handlers + MCP verbs both dispatch through `engine::api::eval::*`. |
 | 6 | [Strategy 2a — MCP + tool-call + 7 templates](docs/superpowers/plans/2026-05-08-strategy-engine-2a-mcp-tools-templates.md) | Tool-use loop, full template set. MCP server registers `engine::api::*` functions as tools (Foundation pattern). Eval auto-picks up tool-calls (shared `execute_slot`). |
 | 7 | [LLM Providers & Per-Arm Models](docs/superpowers/plans/2026-05-10-llm-providers-and-per-arm-models-plan.md) | `[[providers]]` registry + per-arm `SlotRef`. Needed before settings UI ships. CLI dispatches through `engine::api::settings::*` (added by this plan + Settings). |
@@ -117,13 +117,13 @@ Below is the cut of `ui-elements.md` that ships for the v1 test, and what design
 
 ### Theme
 
-Removed from v1 — see "Themeing" under Build order. Design handoff produces one final treatment.
+Removed from v1. The design handoff delivers a single final visual treatment for every route + chrome element listed above. No theme switcher, no light/dark toggle, no theme pilot in v1. The candidate PNGs in `docs/design/themes/` are reference material for the design team's selection and don't ship as user-facing options.
 
 ---
 
 ## Migration reservations
 
-Single owner: `xianvec-engine/migrations/`. Every plan that touches `xvn.db` claims its number from this table **before** writing any SQL. The wallet plan's `xianvec-data/src/migrations/` (timestamp-prefixed `20260510000001…`) targets a different DB file and stays out of this registry.
+Single owner: `xvision-engine/migrations/`. Every plan that touches `xvn.db` claims its number from this table **before** writing any SQL. The wallet plan's `xvision-data/src/migrations/` (timestamp-prefixed `20260510000001…`) targets a different DB file and stays out of this registry.
 
 | Number | Owner plan | Tables | v1 test? |
 |---|---|---|---|
@@ -141,15 +141,15 @@ Notes:
 - AR-1's original `003_autoresearch.sql` and AR-2's `004_autoresearch_evals.sql` need renumbering when those plans are picked up — call this table out in the plan files at pickup time.
 - Chat Rail and Command Palette plans currently reference inline rusqlite schemas; convert to numbered `.sql` migrations during integration so the registry stays authoritative.
 - Settings & Onboarding has **no** SQLite migration (rewrites `config/default.toml` via `toml_edit` only).
-- Plan 2c §Task 7 (BrokerSurface, item #4) has no migration — it's a trait + impls in `xianvec-execution`.
+- Plan 2c §Task 7 (BrokerSurface, item #4) has no migration — it's a trait + impls in `xvision-execution`.
 
 ## Decisions resolved
 
 | Decision | Resolution |
 |---|---|
 | **Eval paper mode dependency** | Pull Plan 2c §Task 7 (`BrokerSurface` trait + Alpaca/Orderly impls) into v1 test scope as item #4. Skip the rest of Plan 2c (scheduler, live daemon, deploy CLI). Eval's paper executor calls `BrokerSurface` directly. |
-| **Typed engine API** | Adopted as item #3 (Engine API Foundation). Every CLI handler / MCP tool dispatches through `engine::api::<domain>::<fn>(ctx, req)`. Pattern documented in `crates/xianvec-engine/src/api/README.md` (created by the foundation plan). |
-| **Migration numbering** | See "Migration reservations" above. Single owner: `xianvec-engine/migrations/`. |
+| **Typed engine API** | Adopted as item #3 (Engine API Foundation). Every CLI handler / MCP tool dispatches through `engine::api::<domain>::<fn>(ctx, req)`. Pattern documented in `crates/xvision-engine/src/api/README.md` (created by the foundation plan). |
+| **Migration numbering** | See "Migration reservations" above. Single owner: `xvision-engine/migrations/`. |
 | **Themeing** | Removed from v1. Design handoff delivers one final treatment. |
 | **Findings extractor LLM provider** | Use the `default = true` provider from the `[[providers]]` registry (LLM-Providers plan, item #7). CLI accepts an optional `--findings-provider <name>` override. Eval plan's findings extractor reads provider via `engine::api::settings::get_default_provider(ctx)`. |
 | **Alpaca asset coverage** | BTC-only for v1 test. The 4 canonical eval scenarios MUST be BTC-only; verify before plan #5 starts. Multi-asset Alpaca (loading symbol map from `config/whitelist.toml`) is a v1.1 follow-up tracked in `FOLLOWUPS.md`. |
@@ -159,9 +159,9 @@ Notes:
 
 Before plan execution starts:
 
-1. **Working tree** — uncommitted changes touch CLI command files (`asset.rs`, `indicator.rs`, `intern.rs`, `metrics.rs`, `risk.rs`, `show_briefing.rs`, `store_cmd.rs`, `trader.rs`, `venue.rs`) and `xianvec-core/{store.rs,config.rs}`. Looks like the terminology rename + early CLI surfacing is mid-flight. **Land or revert these before starting plan #3.** Plan execution against a moving codebase will create migration-number races and module-wiring conflicts.
-2. **Plan #1 baseline green** — `cargo test -p xianvec-engine` must pass before #3 starts. Terminology rename Phase 0 already requires this.
-3. **Eval scenarios are BTC-only** — verify before plan #5 starts. If any scenario references non-BTC assets, either subset to BTC or extend Alpaca's symbol map (currently hardcoded BTC/USD at `crates/xianvec-execution/src/alpaca.rs`) as a prereq.
+1. **Working tree** — uncommitted changes touch CLI command files (`asset.rs`, `indicator.rs`, `intern.rs`, `metrics.rs`, `risk.rs`, `show_briefing.rs`, `store_cmd.rs`, `trader.rs`, `venue.rs`) and `xvision-core/{store.rs,config.rs}`. Looks like the terminology rename + early CLI surfacing is mid-flight. **Land or revert these before starting plan #3.** Plan execution against a moving codebase will create migration-number races and module-wiring conflicts.
+2. **Plan #1 baseline green** — `cargo test -p xvision-engine` must pass before #3 starts. Terminology rename Phase 0 already requires this.
+3. **Eval scenarios are BTC-only** — verify before plan #5 starts. If any scenario references non-BTC assets, either subset to BTC or extend Alpaca's symbol map (currently hardcoded BTC/USD at `crates/xvision-execution/src/alpaca.rs`) as a prereq.
 
 ---
 

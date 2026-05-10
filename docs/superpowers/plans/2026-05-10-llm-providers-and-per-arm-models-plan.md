@@ -14,14 +14,14 @@
 
 ## Phase 1 — Config schema (Day 1)
 
-### Task 1: ProviderEntry + ProviderKind types in xianvec-core
+### Task 1: ProviderEntry + ProviderKind types in xvision-core
 
 **Files:**
-- Modify: `crates/xianvec-core/src/config.rs` (top of file region around line 38, add after `ConfigError`)
+- Modify: `crates/xvision-core/src/config.rs` (top of file region around line 38, add after `ConfigError`)
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `crates/xianvec-core/src/config.rs` `mod tests`:
+Append to `crates/xvision-core/src/config.rs` `mod tests`:
 
 ```rust
 #[test]
@@ -49,12 +49,12 @@ fn provider_kind_serializes_to_kebab_case() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p xianvec-core provider_kind_round_trips_via_serde provider_kind_serializes_to_kebab_case`
+Run: `cargo test -p xvision-core provider_kind_round_trips_via_serde provider_kind_serializes_to_kebab_case`
 Expected: FAIL with `cannot find type 'ProviderEntry'` / `cannot find type 'ProviderKind'`.
 
 - [ ] **Step 3: Add ProviderKind + ProviderEntry**
 
-Add to `crates/xianvec-core/src/config.rs` after the `ConfigError` enum (~line 38) and before the `// --- runtime ---` divider:
+Add to `crates/xvision-core/src/config.rs` after the `ConfigError` enum (~line 38) and before the `// --- runtime ---` divider:
 
 ```rust
 // --- providers --------------------------------------------------------------
@@ -126,13 +126,13 @@ fn validate_provider_name(name: &String, _ctx: &()) -> garde::Result {
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cargo test -p xianvec-core provider_kind_round_trips_via_serde provider_kind_serializes_to_kebab_case`
+Run: `cargo test -p xvision-core provider_kind_round_trips_via_serde provider_kind_serializes_to_kebab_case`
 Expected: PASS, both tests.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-core/src/config.rs
+git add crates/xvision-core/src/config.rs
 git commit -m "feat(core): add ProviderEntry + ProviderKind config types"
 ```
 
@@ -141,7 +141,7 @@ git commit -m "feat(core): add ProviderEntry + ProviderKind config types"
 ### Task 2: Add `providers` vec to RuntimeConfig
 
 **Files:**
-- Modify: `crates/xianvec-core/src/config.rs` (RuntimeConfig struct, ~line 40)
+- Modify: `crates/xvision-core/src/config.rs` (RuntimeConfig struct, ~line 40)
 
 - [ ] **Step 1: Write the failing test**
 
@@ -220,7 +220,7 @@ Note: Task 3 lands `auto_derive_intern_provider_row`. To keep this task green st
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p xianvec-core runtime_config_round_trips_with_providers`
+Run: `cargo test -p xvision-core runtime_config_round_trips_with_providers`
 Expected: FAIL with `no field 'providers' on type 'RuntimeConfig'`.
 
 - [ ] **Step 3: Add `providers` field**
@@ -248,13 +248,13 @@ pub struct RuntimeConfig {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cargo test -p xianvec-core runtime_config_round_trips_with_providers`
+Run: `cargo test -p xvision-core runtime_config_round_trips_with_providers`
 Expected: PASS (the round-trip test only — second test waits for Task 3).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-core/src/config.rs
+git add crates/xvision-core/src/config.rs
 git commit -m "feat(core): add providers vec to RuntimeConfig"
 ```
 
@@ -263,7 +263,7 @@ git commit -m "feat(core): add providers vec to RuntimeConfig"
 ### Task 3: Auto-derive synthetic provider from `[intern]` block + uniqueness validation
 
 **Files:**
-- Modify: `crates/xianvec-core/src/config.rs` (`load_runtime`, ~line 269)
+- Modify: `crates/xvision-core/src/config.rs` (`load_runtime`, ~line 269)
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -449,7 +449,7 @@ sqlite_url = "sqlite://x.db"
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cargo test -p xianvec-core auto_derives_default_intern_provider auto_derive_skips_when_user_already_declared_match rejects_duplicate_provider_names rejects_provider_name_with_underscore_prefix`
+Run: `cargo test -p xvision-core auto_derives_default_intern_provider auto_derive_skips_when_user_already_declared_match rejects_duplicate_provider_names rejects_provider_name_with_underscore_prefix`
 Expected: FAIL — first two assert on a synthetic row not yet generated; third fails on `expected CrossField`; fourth depends on the `validate_provider_name` from Task 1 (already in place — passes).
 
 - [ ] **Step 3: Implement auto-derivation + uniqueness check**
@@ -506,15 +506,15 @@ fn validate_unique_provider_names(cfg: &RuntimeConfig) -> Result<(), String> {
 }
 ```
 
-- [ ] **Step 4: Run all xianvec-core tests**
+- [ ] **Step 4: Run all xvision-core tests**
 
-Run: `cargo test -p xianvec-core`
+Run: `cargo test -p xvision-core`
 Expected: PASS — all tests including the four new ones.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-core/src/config.rs
+git add crates/xvision-core/src/config.rs
 git commit -m "feat(core): auto-derive synthetic intern provider + uniqueness check"
 ```
 
@@ -527,7 +527,7 @@ git commit -m "feat(core): auto-derive synthetic intern provider + uniqueness ch
 
 - [ ] **Step 1: Write the failing test**
 
-Add to `crates/xianvec-core/src/config.rs` `mod tests`:
+Add to `crates/xvision-core/src/config.rs` `mod tests`:
 
 ```rust
 #[test]
@@ -550,7 +550,7 @@ fn repo_default_toml_declares_anthropic_provider() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p xianvec-core repo_default_toml_declares_anthropic_provider`
+Run: `cargo test -p xvision-core repo_default_toml_declares_anthropic_provider`
 Expected: FAIL with `repo default.toml must declare an 'anthropic' provider row`.
 
 - [ ] **Step 3: Edit `config/default.toml`**
@@ -579,15 +579,15 @@ base_url    = "http://localhost:11434/v1"
 api_key_env = ""
 ```
 
-- [ ] **Step 4: Run all xianvec-core tests**
+- [ ] **Step 4: Run all xvision-core tests**
 
-Run: `cargo test -p xianvec-core`
+Run: `cargo test -p xvision-core`
 Expected: PASS — Task 4 test now finds the row, Task 3's auto-derive-skip test also still passes (the `anthropic` row matches the `[intern]` triple).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add config/default.toml crates/xianvec-core/src/config.rs
+git add config/default.toml crates/xvision-core/src/config.rs
 git commit -m "feat(config): declare anthropic/openai/ollama-local providers in default.toml"
 ```
 
@@ -598,12 +598,12 @@ git commit -m "feat(config): declare anthropic/openai/ollama-local providers in 
 ### Task 5: SlotRef newtype with parse + Display
 
 **Files:**
-- Create: `crates/xianvec-core/src/slot.rs`
-- Modify: `crates/xianvec-core/src/lib.rs`
+- Create: `crates/xvision-core/src/slot.rs`
+- Modify: `crates/xvision-core/src/lib.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-Create `crates/xianvec-core/src/slot.rs`:
+Create `crates/xvision-core/src/slot.rs`:
 
 ```rust
 //! `SlotRef` — `<provider>/<model>` reference used to resolve a backend at run
@@ -720,26 +720,26 @@ mod tests {
 
 - [ ] **Step 2: Wire the module + run tests, verify they fail**
 
-Add to `crates/xianvec-core/src/lib.rs`:
+Add to `crates/xvision-core/src/lib.rs`:
 
 ```rust
 pub mod slot;
 ```
 
-Run: `cargo test -p xianvec-core slot::`
+Run: `cargo test -p xvision-core slot::`
 Expected: FAIL initially if module isn't wired — once `pub mod slot;` is added, all tests should compile and PASS first try (the implementation is in Step 1 alongside the tests).
 
 If you prefer strict TDD red-then-green: write only the tests in `slot.rs` first, run them (compile fails), then add the impl below the test module. The end state is identical.
 
 - [ ] **Step 3: Run tests to verify they pass**
 
-Run: `cargo test -p xianvec-core slot::`
+Run: `cargo test -p xvision-core slot::`
 Expected: PASS — six tests.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/xianvec-core/src/slot.rs crates/xianvec-core/src/lib.rs
+git add crates/xvision-core/src/slot.rs crates/xvision-core/src/lib.rs
 git commit -m "feat(core): add SlotRef newtype with <provider>/<model> parse + Display"
 ```
 
@@ -748,16 +748,16 @@ git commit -m "feat(core): add SlotRef newtype with <provider>/<model> parse + D
 ### Task 6: Extend `ArmKind::Trader` to a struct variant with optional slots
 
 **Files:**
-- Modify: `crates/xianvec-eval/src/ab_compare.rs` (~line 38)
+- Modify: `crates/xvision-eval/src/ab_compare.rs` (~line 38)
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `crates/xianvec-eval/src/ab_compare.rs` `mod tests`:
+Append to `crates/xvision-eval/src/ab_compare.rs` `mod tests`:
 
 ```rust
 #[test]
 fn trader_arm_kind_carries_optional_slots() {
-    use xianvec_core::slot::SlotRef;
+    use xvision_core::slot::SlotRef;
     let spec = ArmSpec {
         name: "trader_arm".into(),
         kind: ArmKind::Trader {
@@ -777,20 +777,20 @@ fn trader_arm_kind_carries_optional_slots() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p xianvec-eval trader_arm_kind_carries_optional_slots`
+Run: `cargo test -p xvision-eval trader_arm_kind_carries_optional_slots`
 Expected: FAIL with `expected unit variant 'ArmKind::Trader'` or similar.
 
-- [ ] **Step 3: Add `xianvec-core` import**
+- [ ] **Step 3: Add `xvision-core` import**
 
-`crates/xianvec-eval/src/ab_compare.rs` already depends on `xianvec_core` for `MarketSnapshot`. Add the slot import near the top:
+`crates/xvision-eval/src/ab_compare.rs` already depends on `xvision_core` for `MarketSnapshot`. Add the slot import near the top:
 
 ```rust
-use xianvec_core::slot::SlotRef;
+use xvision_core::slot::SlotRef;
 ```
 
 - [ ] **Step 4: Convert `ArmKind::Trader` to struct variant**
 
-In `crates/xianvec-eval/src/ab_compare.rs`, change `ArmKind`:
+In `crates/xvision-eval/src/ab_compare.rs`, change `ArmKind`:
 
 ```rust
 #[derive(Debug, Clone)]
@@ -833,7 +833,7 @@ fn parse_trader_arm() {
 
 Update the `default_arms_includes_trader_and_buy_and_hold` test — no shape change needed; it only inspects names.
 
-Update the `run_ab_compare` `match spec.kind` block in `crates/xianvec-eval/src/ab_compare.rs` (~line 156):
+Update the `run_ab_compare` `match spec.kind` block in `crates/xvision-eval/src/ab_compare.rs` (~line 156):
 
 ```rust
 ArmKind::Trader { intern: _, trader: _ } => Box::new(TraderArm::new(
@@ -850,15 +850,15 @@ ArmKind::Trader { intern: _, trader: _ } => Box::new(TraderArm::new(
 
 The actual per-arm slot resolution lands in Task 11; for now the new fields are read-but-ignored so the type plumbing compiles cleanly.
 
-- [ ] **Step 5: Run all xianvec-eval tests**
+- [ ] **Step 5: Run all xvision-eval tests**
 
-Run: `cargo test -p xianvec-eval`
+Run: `cargo test -p xvision-eval`
 Expected: PASS — all existing tests + the new `trader_arm_kind_carries_optional_slots`.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/xianvec-eval/src/ab_compare.rs
+git add crates/xvision-eval/src/ab_compare.rs
 git commit -m "refactor(eval): make ArmKind::Trader carry optional Intern/Trader slots"
 ```
 
@@ -867,7 +867,7 @@ git commit -m "refactor(eval): make ArmKind::Trader carry optional Intern/Trader
 ### Task 7: Extend `parse_arm_spec` to accept `intern=` / `trader=` / `intern_model=` / `trader_model=`
 
 **Files:**
-- Modify: `crates/xianvec-eval/src/ab_compare.rs` (`parse_arm_spec`, ~line 56)
+- Modify: `crates/xvision-eval/src/ab_compare.rs` (`parse_arm_spec`, ~line 56)
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -951,7 +951,7 @@ Note: the empty-provider trick (`SlotRef { provider: "", model: "..." }`) is the
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cargo test -p xianvec-eval parses_trader_arm_with parses_trader_model_shorthand rejects_intern_and rejects_trader_arm_with_unknown`
+Run: `cargo test -p xvision-eval parses_trader_arm_with parses_trader_model_shorthand rejects_intern_and rejects_trader_arm_with_unknown`
 Expected: all six FAIL.
 
 - [ ] **Step 3: Rewrite the `"trader_arm"` arm of `parse_arm_spec`**
@@ -1005,13 +1005,13 @@ Important: `parse_kv` uses `:` as separator (already true today). A slot like `a
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cargo test -p xianvec-eval`
+Run: `cargo test -p xvision-eval`
 Expected: PASS — all existing tests + the six new ones.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-eval/src/ab_compare.rs
+git add crates/xvision-eval/src/ab_compare.rs
 git commit -m "feat(eval): parse intern=/trader= slot overrides on trader_arm spec"
 ```
 
@@ -1020,7 +1020,7 @@ git commit -m "feat(eval): parse intern=/trader= slot overrides on trader_arm sp
 ### Task 8: Auto-suffix arm-naming logic for distinct-model arms
 
 **Files:**
-- Modify: `crates/xianvec-eval/src/ab_compare.rs` (after `parse_arm_spec`)
+- Modify: `crates/xvision-eval/src/ab_compare.rs` (after `parse_arm_spec`)
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1098,12 +1098,12 @@ fn auto_suffix_handles_intern_only_override() {
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cargo test -p xianvec-eval auto_suffix_`
+Run: `cargo test -p xvision-eval auto_suffix_`
 Expected: all six FAIL with `cannot find function 'auto_suffix_arm_names'`.
 
 - [ ] **Step 3: Implement the suffix function**
 
-Add to `crates/xianvec-eval/src/ab_compare.rs` after `parse_kv`:
+Add to `crates/xvision-eval/src/ab_compare.rs` after `parse_kv`:
 
 ```rust
 /// Mutates `specs` in place so any two `trader_arm` entries with distinct
@@ -1168,7 +1168,7 @@ fn short_model_segment(model: &str) -> String {
 }
 ```
 
-Then wire it into the CLI flow — modify `crates/xianvec-cli/src/commands/ab_compare.rs` after the `parse_arm_spec` loop (~line 44):
+Then wire it into the CLI flow — modify `crates/xvision-cli/src/commands/ab_compare.rs` after the `parse_arm_spec` loop (~line 44):
 
 ```rust
 let mut arm_specs: Vec<_> = if arms.trim().is_empty() {
@@ -1178,18 +1178,18 @@ let mut arm_specs: Vec<_> = if arms.trim().is_empty() {
         .map(|s| parse_arm_spec(s.trim()))
         .collect::<anyhow::Result<Vec<_>>>()?
 };
-xianvec_eval::ab_compare::auto_suffix_arm_names(&mut arm_specs);
+xvision_eval::ab_compare::auto_suffix_arm_names(&mut arm_specs);
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cargo test -p xianvec-eval`
-Expected: PASS — all existing tests + the six new ones. Build the CLI to make sure the wiring compiles: `cargo build -p xianvec-cli`.
+Run: `cargo test -p xvision-eval`
+Expected: PASS — all existing tests + the six new ones. Build the CLI to make sure the wiring compiles: `cargo build -p xvision-cli`.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-eval/src/ab_compare.rs crates/xianvec-cli/src/commands/ab_compare.rs
+git add crates/xvision-eval/src/ab_compare.rs crates/xvision-cli/src/commands/ab_compare.rs
 git commit -m "feat(eval): auto-suffix trader_arm names when slot overrides differ"
 ```
 
@@ -1200,12 +1200,12 @@ git commit -m "feat(eval): auto-suffix trader_arm names when slot overrides diff
 ### Task 9: ProviderRegistry — struct + intern_backend memoizer
 
 **Files:**
-- Create: `crates/xianvec-eval/src/provider_registry.rs`
-- Modify: `crates/xianvec-eval/src/lib.rs`
+- Create: `crates/xvision-eval/src/provider_registry.rs`
+- Modify: `crates/xvision-eval/src/lib.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-Create `crates/xianvec-eval/src/provider_registry.rs`:
+Create `crates/xvision-eval/src/provider_registry.rs`:
 
 ```rust
 //! `ProviderRegistry` — resolves `SlotRef` to backend `Arc`s, memoizing one
@@ -1217,10 +1217,10 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{anyhow, Result};
 
-use xianvec_core::config::{ProviderEntry, ProviderKind};
-use xianvec_core::slot::SlotRef;
-use xianvec_intern::backend::{AnthropicIntern, InternBackend, OpenAICompatIntern};
-use xianvec_trader::{OpenAiCompatBackend, TraderBackend};
+use xvision_core::config::{ProviderEntry, ProviderKind};
+use xvision_core::slot::SlotRef;
+use xvision_intern::backend::{AnthropicIntern, InternBackend, OpenAICompatIntern};
+use xvision_trader::{OpenAiCompatBackend, TraderBackend};
 
 pub struct ProviderRegistry {
     rows: Vec<ProviderEntry>,
@@ -1350,19 +1350,19 @@ mod tests {
 
 - [ ] **Step 2: Wire the module + run tests**
 
-Add to `crates/xianvec-eval/src/lib.rs`:
+Add to `crates/xvision-eval/src/lib.rs`:
 
 ```rust
 pub mod provider_registry;
 ```
 
-Run: `cargo test -p xianvec-eval provider_registry::`
+Run: `cargo test -p xvision-eval provider_registry::`
 Expected: tests compile and PASS — both run real instantiation paths that don't hit the network. (`AnthropicIntern::from_env` is only called for the missing-key happy path, which we don't exercise in this task; the failure paths above are covered.)
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/xianvec-eval/src/provider_registry.rs crates/xianvec-eval/src/lib.rs
+git add crates/xvision-eval/src/provider_registry.rs crates/xvision-eval/src/lib.rs
 git commit -m "feat(eval): ProviderRegistry skeleton with intern_backend resolver"
 ```
 
@@ -1371,7 +1371,7 @@ git commit -m "feat(eval): ProviderRegistry skeleton with intern_backend resolve
 ### Task 10: ProviderRegistry — trader_backend memoizer + memoization test
 
 **Files:**
-- Modify: `crates/xianvec-eval/src/provider_registry.rs`
+- Modify: `crates/xvision-eval/src/provider_registry.rs`
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1460,7 +1460,7 @@ fn empty_provider_in_slot_falls_back_to_default() {
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cargo test -p xianvec-eval provider_registry::tests::intern_backend_memoizes provider_registry::tests::trader_backend_memoizes provider_registry::tests::empty_provider_in_slot`
+Run: `cargo test -p xvision-eval provider_registry::tests::intern_backend_memoizes provider_registry::tests::trader_backend_memoizes provider_registry::tests::empty_provider_in_slot`
 Expected: FAIL — `trader_backend` doesn't exist yet, intern_backend works for the first test but trader/empty-provider tests need new code.
 
 - [ ] **Step 3: Add `trader_backend` method**
@@ -1510,13 +1510,13 @@ pub fn trader_backend(&self, slot: &SlotRef) -> Result<Arc<dyn TraderBackend>> {
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cargo test -p xianvec-eval provider_registry::`
+Run: `cargo test -p xvision-eval provider_registry::`
 Expected: PASS — all tests including the three new memoization tests.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-eval/src/provider_registry.rs
+git add crates/xvision-eval/src/provider_registry.rs
 git commit -m "feat(eval): trader_backend resolver with per-slot memoization"
 ```
 
@@ -1525,26 +1525,26 @@ git commit -m "feat(eval): trader_backend resolver with per-slot memoization"
 ### Task 11: Wire ProviderRegistry into `run_ab_compare`
 
 **Files:**
-- Modify: `crates/xianvec-eval/src/ab_compare.rs` (`run_ab_compare`, ~line 134)
+- Modify: `crates/xvision-eval/src/ab_compare.rs` (`run_ab_compare`, ~line 134)
 
 - [ ] **Step 1: Write the failing test**
 
-Add to `crates/xianvec-eval/src/ab_compare.rs` `mod tests`:
+Add to `crates/xvision-eval/src/ab_compare.rs` `mod tests`:
 
 ```rust
 // MockBackend imports — same shape as the existing MockBackend in
-// xianvec-trader/src/backend.rs tests, but accessible from the eval crate
+// xvision-trader/src/backend.rs tests, but accessible from the eval crate
 // via dependency. We rebuild a minimal one here to keep the test isolated.
 #[cfg(test)]
 mod registry_wiring {
     use super::*;
     use std::sync::{Arc, Mutex};
-    use xianvec_core::slot::SlotRef;
+    use xvision_core::slot::SlotRef;
 
-    use xianvec_intern::backend::InternBackend;
-    use xianvec_trader::backend::TraderBackend;
-    use xianvec_trader::error::TraderError;
-    use xianvec_intern::backend::InternError;
+    use xvision_intern::backend::InternBackend;
+    use xvision_trader::backend::TraderBackend;
+    use xvision_trader::error::TraderError;
+    use xvision_intern::backend::InternError;
 
     struct MockTrader { calls: Mutex<Vec<String>> }
     #[async_trait::async_trait]
@@ -1563,9 +1563,9 @@ mod registry_wiring {
     fn resolve_uses_registry_with_per_arm_override_when_present() {
         std::env::set_var("DUMMY_KEY", "k");
         let rows = vec![
-            xianvec_core::config::ProviderEntry {
+            xvision_core::config::ProviderEntry {
                 name: "openai".into(),
-                kind: xianvec_core::config::ProviderKind::OpenaiCompat,
+                kind: xvision_core::config::ProviderKind::OpenaiCompat,
                 base_url: "https://api.openai.com/v1".into(),
                 api_key_env: "DUMMY_KEY".into(),
             },
@@ -1584,7 +1584,7 @@ mod registry_wiring {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p xianvec-eval registry_wiring::`
+Run: `cargo test -p xvision-eval registry_wiring::`
 Expected: FAIL (compile fails — registry-wiring is purely a sanity check that the resolver is reachable from `ab_compare.rs`; it should compile and pass once the import is in place. If your strict-TDD discipline insists on a red, omit `#[cfg(test)]` and the inner `mod registry_wiring {}` for one cycle and watch the compile error.)
 
 - [ ] **Step 3: Rewrite `run_ab_compare` to take a `ProviderRegistry`**
@@ -1678,13 +1678,13 @@ Keep the old `run_ab_compare` function intact for one task — it's still called
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cargo test -p xianvec-eval`
+Run: `cargo test -p xvision-eval`
 Expected: PASS — existing tests + the new `registry_wiring::resolve_uses_registry_with_per_arm_override_when_present`.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-eval/src/ab_compare.rs
+git add crates/xvision-eval/src/ab_compare.rs
 git commit -m "feat(eval): run_ab_compare_v2 dispatches per-arm slots via ProviderRegistry"
 ```
 
@@ -1693,12 +1693,12 @@ git commit -m "feat(eval): run_ab_compare_v2 dispatches per-arm slots via Provid
 ### Task 12: Swap CLI `commands/ab_compare.rs` to `run_ab_compare_v2`
 
 **Files:**
-- Modify: `crates/xianvec-cli/src/commands/ab_compare.rs`
-- Modify: `crates/xianvec-eval/src/ab_compare.rs` (delete deprecated `run_ab_compare`)
+- Modify: `crates/xvision-cli/src/commands/ab_compare.rs`
+- Modify: `crates/xvision-eval/src/ab_compare.rs` (delete deprecated `run_ab_compare`)
 
 - [ ] **Step 1: Rewrite the CLI command**
 
-Replace `crates/xianvec-cli/src/commands/ab_compare.rs` body with:
+Replace `crates/xvision-cli/src/commands/ab_compare.rs` body with:
 
 ```rust
 //! `xvn ab-compare` — N-arm backtest A/B runner.
@@ -1710,18 +1710,18 @@ Replace `crates/xianvec-cli/src/commands/ab_compare.rs` body with:
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use xianvec_core::config::{ProviderEntry, ProviderKind};
-use xianvec_core::market::MarketSnapshot;
-use xianvec_core::slot::SlotRef;
-use xianvec_core::trading::{AssetSymbol, PortfolioState};
-use xianvec_eval::ab_compare::{
+use xvision_core::config::{ProviderEntry, ProviderKind};
+use xvision_core::market::MarketSnapshot;
+use xvision_core::slot::SlotRef;
+use xvision_core::trading::{AssetSymbol, PortfolioState};
+use xvision_eval::ab_compare::{
     auto_suffix_arm_names, default_arms, parse_arm_spec, run_ab_compare_v2,
 };
-use xianvec_eval::backtest::MarketBar;
-use xianvec_eval::baselines::PortfolioProvider;
-use xianvec_eval::harness::BacktestRunConfig;
-use xianvec_eval::provider_registry::ProviderRegistry;
-use xianvec_trader::TraderParams;
+use xvision_eval::backtest::MarketBar;
+use xvision_eval::baselines::PortfolioProvider;
+use xvision_eval::harness::BacktestRunConfig;
+use xvision_eval::provider_registry::ProviderRegistry;
+use xvision_trader::TraderParams;
 
 #[allow(clippy::too_many_arguments)]
 pub async fn run(
@@ -1761,7 +1761,7 @@ pub async fn run(
     // Build the registry from config + CLI flag fallbacks.
     let workspace_root = std::env::current_dir()?;
     let runtime_cfg =
-        xianvec_core::config::load_runtime(&workspace_root.join("config/default.toml"))?;
+        xvision_core::config::load_runtime(&workspace_root.join("config/default.toml"))?;
     let mut rows = runtime_cfg.providers;
 
     // Synthesize a CLI-default-trader row if the trader_base_url+key isn't
@@ -1806,7 +1806,7 @@ pub async fn run(
         SlotRef::new(cli_trader_provider_name, trader_model),
     ));
 
-    let risk = xianvec_harness::load_risk_layer(&workspace_root)?;
+    let risk = xvision_harness::load_risk_layer(&workspace_root)?;
     let cfg = BacktestRunConfig {
         initial_nav_usd,
         fee_bps,
@@ -1857,11 +1857,11 @@ pub async fn run(
 
 - [ ] **Step 2: Delete the deprecated `run_ab_compare`**
 
-In `crates/xianvec-eval/src/ab_compare.rs`, remove the function marked `**DEPRECATED**` from Task 11 and rename `run_ab_compare_v2` → `run_ab_compare` (keep the rename to preserve the public API name). Update the call site in `commands/ab_compare.rs` to call `run_ab_compare` instead of `run_ab_compare_v2`.
+In `crates/xvision-eval/src/ab_compare.rs`, remove the function marked `**DEPRECATED**` from Task 11 and rename `run_ab_compare_v2` → `run_ab_compare` (keep the rename to preserve the public API name). Update the call site in `commands/ab_compare.rs` to call `run_ab_compare` instead of `run_ab_compare_v2`.
 
 - [ ] **Step 3: Build and run all tests**
 
-Run: `cargo build -p xianvec-cli && cargo test --workspace`
+Run: `cargo build -p xvision-cli && cargo test --workspace`
 Expected: PASS — full workspace builds; all tests pass.
 
 - [ ] **Step 4: Smoke test against mock fixtures (optional but recommended)**
@@ -1869,7 +1869,7 @@ Expected: PASS — full workspace builds; all tests pass.
 If `data/probes/` already has a small setup+bars fixture, run:
 
 ```bash
-cargo run -p xianvec-cli -- ab-compare \
+cargo run -p xvision-cli -- ab-compare \
   --setups data/probes/<setups>.json \
   --bars data/probes/<bars>.json \
   --arms 'trader_arm:trader=openai/gpt-4o,trader_arm:trader=openai/gpt-4o-mini' \
@@ -1881,7 +1881,7 @@ Expected: tracing emits two `arm dispatch` lines with `arm=trader_arm[gpt-4o]` a
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-cli/src/commands/ab_compare.rs crates/xianvec-eval/src/ab_compare.rs
+git add crates/xvision-cli/src/commands/ab_compare.rs crates/xvision-eval/src/ab_compare.rs
 git commit -m "feat(cli): xvn ab-compare resolves per-arm slots via ProviderRegistry"
 ```
 
@@ -1892,13 +1892,13 @@ git commit -m "feat(cli): xvn ab-compare resolves per-arm slots via ProviderRegi
 ### Task 13: `xvn provider list` + `xvn provider show`
 
 **Files:**
-- Create: `crates/xianvec-cli/src/commands/provider.rs`
-- Modify: `crates/xianvec-cli/src/commands/mod.rs`
-- Modify: `crates/xianvec-cli/src/lib.rs`
+- Create: `crates/xvision-cli/src/commands/provider.rs`
+- Modify: `crates/xvision-cli/src/commands/mod.rs`
+- Modify: `crates/xvision-cli/src/lib.rs`
 
 - [ ] **Step 1: Stub the subcommand**
 
-Create `crates/xianvec-cli/src/commands/provider.rs`:
+Create `crates/xvision-cli/src/commands/provider.rs`:
 
 ```rust
 //! `xvn provider …` — list / show / check / add / remove registered LLM
@@ -1970,7 +1970,7 @@ pub async fn run(cmd: ProviderCmd) -> anyhow::Result<()> {
 }
 
 fn list(config_path: &std::path::Path) -> anyhow::Result<()> {
-    let cfg = xianvec_core::config::load_runtime(config_path)?;
+    let cfg = xvision_core::config::load_runtime(config_path)?;
     println!(
         "{:<18} {:<14} {:<42} {:<22} {}",
         "NAME", "KIND", "BASE_URL", "API_KEY_ENV", "KEY"
@@ -1984,9 +1984,9 @@ fn list(config_path: &std::path::Path) -> anyhow::Result<()> {
             "○ missing".to_string()
         };
         let kind = match p.kind {
-            xianvec_core::config::ProviderKind::Anthropic => "anthropic",
-            xianvec_core::config::ProviderKind::OpenaiCompat => "openai-compat",
-            xianvec_core::config::ProviderKind::LocalCandle => "local-candle",
+            xvision_core::config::ProviderKind::Anthropic => "anthropic",
+            xvision_core::config::ProviderKind::OpenaiCompat => "openai-compat",
+            xvision_core::config::ProviderKind::LocalCandle => "local-candle",
         };
         let env_display = if p.api_key_env.is_empty() {
             "(none)".to_string()
@@ -2003,7 +2003,7 @@ fn list(config_path: &std::path::Path) -> anyhow::Result<()> {
 }
 
 fn show(config_path: &std::path::Path, name: &str) -> anyhow::Result<()> {
-    let cfg = xianvec_core::config::load_runtime(config_path)?;
+    let cfg = xvision_core::config::load_runtime(config_path)?;
     let p = cfg
         .providers
         .iter()
@@ -2047,13 +2047,13 @@ fn remove(_config_path: &std::path::Path, _name: &str) -> anyhow::Result<()> {
 
 - [ ] **Step 2: Wire the module**
 
-Add to `crates/xianvec-cli/src/commands/mod.rs`:
+Add to `crates/xvision-cli/src/commands/mod.rs`:
 
 ```rust
 pub mod provider;
 ```
 
-Add to `crates/xianvec-cli/src/lib.rs` `Command` enum:
+Add to `crates/xvision-cli/src/lib.rs` `Command` enum:
 
 ```rust
 /// Manage registered LLM providers in config/default.toml.
@@ -2068,7 +2068,7 @@ Command::Provider(cmd) => commands::provider::run(cmd).await,
 
 - [ ] **Step 3: Build and smoke-test**
 
-Run: `cargo build -p xianvec-cli && cargo run -p xianvec-cli -- provider list`
+Run: `cargo build -p xvision-cli && cargo run -p xvision-cli -- provider list`
 Expected: prints a table including `anthropic`, `openai`, `ollama-local` rows. Each row's `KEY` column reflects whether the named env var is currently set.
 
 Add a `mod tests` to `provider.rs`:
@@ -2131,15 +2131,15 @@ sqlite_url = "sqlite://x.db"
 }
 ```
 
-Add `tempfile = "3"` to `xianvec-cli`'s `[dev-dependencies]` if not already present.
+Add `tempfile = "3"` to `xvision-cli`'s `[dev-dependencies]` if not already present.
 
-Run: `cargo test -p xianvec-cli provider::tests`
+Run: `cargo test -p xvision-cli provider::tests`
 Expected: PASS.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/xianvec-cli/src/commands/provider.rs crates/xianvec-cli/src/commands/mod.rs crates/xianvec-cli/src/lib.rs crates/xianvec-cli/Cargo.toml
+git add crates/xvision-cli/src/commands/provider.rs crates/xvision-cli/src/commands/mod.rs crates/xvision-cli/src/lib.rs crates/xvision-cli/Cargo.toml
 git commit -m "feat(cli): xvn provider list + show subcommands"
 ```
 
@@ -2148,8 +2148,8 @@ git commit -m "feat(cli): xvn provider list + show subcommands"
 ### Task 14: `xvn provider add` + `xvn provider remove` (in-place TOML mutation)
 
 **Files:**
-- Modify: `crates/xianvec-cli/src/commands/provider.rs`
-- Modify: `crates/xianvec-cli/Cargo.toml` — add `toml_edit = "0.22"` to `[dependencies]`
+- Modify: `crates/xvision-cli/src/commands/provider.rs`
+- Modify: `crates/xvision-cli/Cargo.toml` — add `toml_edit = "0.22"` to `[dependencies]`
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -2163,7 +2163,7 @@ fn add_appends_provider_row() {
     std::fs::write(&path, MIN_CONFIG).unwrap();
     add(&path, "openai", "openai-compat", "https://api.openai.com/v1", "OPENAI_API_KEY")
         .unwrap();
-    let cfg = xianvec_core::config::load_runtime(&path).unwrap();
+    let cfg = xvision_core::config::load_runtime(&path).unwrap();
     assert!(cfg.providers.iter().any(|p| p.name == "openai"));
 }
 
@@ -2201,7 +2201,7 @@ api_key_env = "K"
     );
     std::fs::write(&path, src).unwrap();
     remove(&path, "ephemeral").unwrap();
-    let cfg = xianvec_core::config::load_runtime(&path).unwrap();
+    let cfg = xvision_core::config::load_runtime(&path).unwrap();
     assert!(!cfg.providers.iter().any(|p| p.name == "ephemeral"));
 }
 
@@ -2219,7 +2219,7 @@ fn remove_refuses_when_intern_block_references_it() {
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cargo test -p xianvec-cli provider::tests::add_ provider::tests::remove_`
+Run: `cargo test -p xvision-cli provider::tests::add_ provider::tests::remove_`
 Expected: FAIL — current `add`/`remove` are `bail!` stubs.
 
 - [ ] **Step 3: Implement `add` and `remove`**
@@ -2270,16 +2270,16 @@ fn add(
 
     std::fs::write(config_path, doc.to_string())?;
     // Validate by reloading.
-    xianvec_core::config::load_runtime(config_path)?;
+    xvision_core::config::load_runtime(config_path)?;
     Ok(())
 }
 
 fn remove(config_path: &std::path::Path, name: &str) -> anyhow::Result<()> {
     use toml_edit::DocumentMut;
 
-    let cfg = xianvec_core::config::load_runtime(config_path)?;
+    let cfg = xvision_core::config::load_runtime(config_path)?;
     // If the [intern] block points at the same triple as this provider, refuse.
-    let intern_kind: xianvec_core::config::ProviderKind = cfg.intern.provider.into();
+    let intern_kind: xvision_core::config::ProviderKind = cfg.intern.provider.into();
     if let Some(p) = cfg.providers.iter().find(|p| p.name == name) {
         if p.matches_triple(intern_kind, &cfg.intern.base_url, &cfg.intern.api_key_env) {
             anyhow::bail!(
@@ -2303,14 +2303,14 @@ fn remove(config_path: &std::path::Path, name: &str) -> anyhow::Result<()> {
         anyhow::bail!("no [[providers]] block in {}", config_path.display());
     }
     std::fs::write(config_path, doc.to_string())?;
-    xianvec_core::config::load_runtime(config_path)?;
+    xvision_core::config::load_runtime(config_path)?;
     Ok(())
 }
 ```
 
 - [ ] **Step 4: Add `toml_edit` dependency**
 
-Add to `crates/xianvec-cli/Cargo.toml` `[dependencies]`:
+Add to `crates/xvision-cli/Cargo.toml` `[dependencies]`:
 
 ```toml
 toml_edit = "0.22"
@@ -2318,21 +2318,21 @@ toml_edit = "0.22"
 
 - [ ] **Step 5: Run tests + smoke**
 
-Run: `cargo test -p xianvec-cli provider::tests`
+Run: `cargo test -p xvision-cli provider::tests`
 Expected: PASS — all five new tests + the show test from Task 13.
 
 Smoke:
 ```bash
-cargo run -p xianvec-cli -- provider add --name groq --kind openai-compat --base-url https://api.groq.com/openai/v1 --api-key-env GROQ_API_KEY
-cargo run -p xianvec-cli -- provider list
-cargo run -p xianvec-cli -- provider remove --name groq
+cargo run -p xvision-cli -- provider add --name groq --kind openai-compat --base-url https://api.groq.com/openai/v1 --api-key-env GROQ_API_KEY
+cargo run -p xvision-cli -- provider list
+cargo run -p xvision-cli -- provider remove --name groq
 ```
 Expected: row appears, then disappears. The `config/default.toml` file is updated in place — inspect with `git diff config/default.toml` to confirm the formatting was preserved.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/xianvec-cli/src/commands/provider.rs crates/xianvec-cli/Cargo.toml
+git add crates/xvision-cli/src/commands/provider.rs crates/xvision-cli/Cargo.toml
 git commit -m "feat(cli): xvn provider add/remove with toml_edit in-place mutation"
 ```
 
@@ -2341,7 +2341,7 @@ git commit -m "feat(cli): xvn provider add/remove with toml_edit in-place mutati
 ### Task 15: `xvn provider check` (TCP-connect + optional `--probe`)
 
 **Files:**
-- Modify: `crates/xianvec-cli/src/commands/provider.rs`
+- Modify: `crates/xvision-cli/src/commands/provider.rs`
 
 - [ ] **Step 1: Implement `check`**
 
@@ -2353,7 +2353,7 @@ async fn check(
     name: &str,
     probe: bool,
 ) -> anyhow::Result<()> {
-    let cfg = xianvec_core::config::load_runtime(config_path)?;
+    let cfg = xvision_core::config::load_runtime(config_path)?;
     let p = cfg
         .providers
         .iter()
@@ -2422,9 +2422,9 @@ fn url_parse_minimal(s: &str) -> anyhow::Result<MinimalUrl> {
 }
 ```
 
-- [ ] **Step 2: Add tokio + reqwest to xianvec-cli if not already**
+- [ ] **Step 2: Add tokio + reqwest to xvision-cli if not already**
 
-`xianvec-cli` already depends on tokio (workspace) via other commands. Verify by checking `Cargo.toml`. Add to `[dependencies]` if missing:
+`xvision-cli` already depends on tokio (workspace) via other commands. Verify by checking `Cargo.toml`. Add to `[dependencies]` if missing:
 
 ```toml
 tokio   = { workspace = true }
@@ -2458,19 +2458,19 @@ fn url_parse_rejects_no_scheme() {
 
 - [ ] **Step 4: Run tests + smoke**
 
-Run: `cargo test -p xianvec-cli provider::tests::url_parse`
+Run: `cargo test -p xvision-cli provider::tests::url_parse`
 Expected: PASS — three tests.
 
 Smoke (no real probe — TCP connect only):
 ```bash
-cargo run -p xianvec-cli -- provider check --name anthropic
+cargo run -p xvision-cli -- provider check --name anthropic
 ```
 Expected: prints `● env ANTHROPIC_API_KEY …` (set or missing) and `● tcp api.anthropic.com:443 reachable` (or `○ …` if offline).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-cli/src/commands/provider.rs crates/xianvec-cli/Cargo.toml
+git add crates/xvision-cli/src/commands/provider.rs crates/xvision-cli/Cargo.toml
 git commit -m "feat(cli): xvn provider check (TCP-connect smoke + optional --probe)"
 ```
 
@@ -2479,11 +2479,11 @@ git commit -m "feat(cli): xvn provider check (TCP-connect smoke + optional --pro
 ### Task 16: `cache_diverges_on_intern_model_change` test in `trader_arm.rs`
 
 **Files:**
-- Modify: `crates/xianvec-eval/src/baselines/trader_arm.rs` (`mod tests`)
+- Modify: `crates/xvision-eval/src/baselines/trader_arm.rs` (`mod tests`)
 
 - [ ] **Step 1: Add the test**
 
-Append to `crates/xianvec-eval/src/baselines/trader_arm.rs` `mod tests`:
+Append to `crates/xvision-eval/src/baselines/trader_arm.rs` `mod tests`:
 
 ```rust
 #[tokio::test]
@@ -2525,13 +2525,13 @@ async fn cache_diverges_on_intern_model_change() {
 
 - [ ] **Step 2: Run test**
 
-Run: `cargo test -p xianvec-eval cache_diverges_on_intern_model_change`
+Run: `cargo test -p xvision-eval cache_diverges_on_intern_model_change`
 Expected: PASS — confirms the existing `BriefingCache` already gives us per-Intern-model divergence (no code change needed; this is a regression-locking test for the spec §3.5 promise).
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/xianvec-eval/src/baselines/trader_arm.rs
+git add crates/xvision-eval/src/baselines/trader_arm.rs
 git commit -m "test(eval): lock BriefingCache divergence semantics on intern_model change"
 ```
 

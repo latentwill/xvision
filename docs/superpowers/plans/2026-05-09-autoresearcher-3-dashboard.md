@@ -4,13 +4,13 @@
 > **Spec:** `docs/superpowers/specs/2026-05-09-karpathy-autoresearcher-design.md` — full design context. This plan implements **§9 (dashboard surfaces)** end-to-end.
 > **Companion plans:** AR-1 (mutator + lineage + gate + seal — must ship), AR-2 (cycle orchestrator + judge + canary + inversion + diversity — must ship), MP-1 (marketplace plugin; adds a sixth tab post-AR-3).
 > **Hard upstream dependencies:**
->   1. **AR-1 + AR-2 must be on `main`.** AR-3 consumes `xianvec_engine::autoresearch::progress::{ProgressChannel, AutoresearchEvent}` and reads from the SQLite tables introduced by migrations 003/004. Verify before starting: `git log autoresearch-ar2..HEAD --oneline` shows the AR-2 tag is reachable.
+>   1. **AR-1 + AR-2 must be on `main`.** AR-3 consumes `xvision_engine::autoresearch::progress::{ProgressChannel, AutoresearchEvent}` and reads from the SQLite tables introduced by migrations 003/004. Verify before starting: `git log autoresearch-ar2..HEAD --oneline` shows the AR-2 tag is reachable.
 >   2. **A live `evening-cycle` invocation drives the live view.** The dashboard tails the `ProgressChannel` shared with whichever process is running the cycle — typically the same `xvn autoresearch evening-cycle` daemon, but for development we run them in two terminals against the same SQLite + blob root.
 > **Hackathon role:** Wk 4 milestone (autoresearch spec §10): "Dashboard: all 5 core views. SSE event flow. Mutator-skill ladder. Dashboard renders live cycle in real time." This plan is exactly that scope.
 
 **Goal:** After this plan ships, `xvn dashboard serve` boots a local axum server at `http://localhost:7777` that renders the five core autoresearch views (live cycle viewer, genealogy tree, mutation diff inspector, mutator-skill ladder, ladder-with-provenance) with real-time SSE updates from `ProgressChannel`. Clicking a node in the genealogy tree opens the diff inspector. The page reads on a projector at five meters (autoresearch spec §9). The marketplace plugin's tab is *not* added here — MP-1 adds it as the sixth tab.
 
-**Architecture:** New crate `crates/xianvec-dashboard/` with `axum` for the server + `tower-http` for static asset serving. Frontend is a single static SPA (vanilla HTML + JS + D3 v7 + minimal CSS); no React, no Next.js, no build step beyond `cargo build`. SSE events arrive on `/api/events` and are dispatched into client-side handlers per event type. REST endpoints (`/api/lineage`, `/api/lineage/<hash>`, `/api/seals/<cycle_id>`, `/api/ladder/snapshots`, `/api/diversity/samples`, `/api/findings/<bundle_hash>`) read from SQLite. The dashboard process opens the same SQLite database file and the same `ProgressChannel` as the orchestrator — for in-process operation we provide a "combined" mode (`xvn dashboard serve --with-cycle`) that runs both in the same Tokio runtime; for two-process operation we add a Unix domain socket bridge that proxies events into the dashboard's channel.
+**Architecture:** New crate `crates/xvision-dashboard/` with `axum` for the server + `tower-http` for static asset serving. Frontend is a single static SPA (vanilla HTML + JS + D3 v7 + minimal CSS); no React, no Next.js, no build step beyond `cargo build`. SSE events arrive on `/api/events` and are dispatched into client-side handlers per event type. REST endpoints (`/api/lineage`, `/api/lineage/<hash>`, `/api/seals/<cycle_id>`, `/api/ladder/snapshots`, `/api/diversity/samples`, `/api/findings/<bundle_hash>`) read from SQLite. The dashboard process opens the same SQLite database file and the same `ProgressChannel` as the orchestrator — for in-process operation we provide a "combined" mode (`xvn dashboard serve --with-cycle`) that runs both in the same Tokio runtime; for two-process operation we add a Unix domain socket bridge that proxies events into the dashboard's channel.
 
 **Tech Stack:** Rust 2021 + axum 0.7 + tower-http 0.5 + tokio (already workspace-pinned). Frontend: vanilla HTML, vanilla JS (no bundler), D3 v7 (loaded from a CDN with SRI hash, plus a vendored fallback in `static/vendor/d3.v7.min.js` so demos work offline), simple CSS (custom design tokens; no Tailwind to keep zero build deps).
 
@@ -28,7 +28,7 @@
 
 ```
 crates/
-└── xianvec-dashboard/                              # NEW CRATE
+└── xvision-dashboard/                              # NEW CRATE
     ├── Cargo.toml
     ├── src/
     │   ├── lib.rs                                  # public: serve(opts) -> Result
@@ -72,22 +72,22 @@ crates/
 ```
 
 Plus modifications:
-- `Cargo.toml` workspace — add `crates/xianvec-dashboard` to `members`
-- `crates/xianvec-cli/src/lib.rs` — add `Command::Dashboard(commands::dashboard::DashboardCmd)`
-- `crates/xianvec-cli/src/commands/dashboard.rs` — NEW: thin CLI wrapper around `xianvec_dashboard::serve`
-- `crates/xianvec-cli/src/commands/autoresearch.rs` — extend `EveningCycle` to optionally bind a Unix socket so the dashboard can subscribe (`--ipc-socket /tmp/xvn-events.sock`)
+- `Cargo.toml` workspace — add `crates/xvision-dashboard` to `members`
+- `crates/xvision-cli/src/lib.rs` — add `Command::Dashboard(commands::dashboard::DashboardCmd)`
+- `crates/xvision-cli/src/commands/dashboard.rs` — NEW: thin CLI wrapper around `xvision_dashboard::serve`
+- `crates/xvision-cli/src/commands/autoresearch.rs` — extend `EveningCycle` to optionally bind a Unix socket so the dashboard can subscribe (`--ipc-socket /tmp/xvn-events.sock`)
 
 ---
 
-## Phase A — Scaffold the `xianvec-dashboard` crate
+## Phase A — Scaffold the `xvision-dashboard` crate
 
 ### Task 1: Create the crate, register in workspace
 
 **Files:**
-- Create: `crates/xianvec-dashboard/Cargo.toml`
-- Create: `crates/xianvec-dashboard/src/lib.rs`
-- Create: `crates/xianvec-dashboard/src/server.rs`
-- Create: `crates/xianvec-dashboard/src/state.rs`
+- Create: `crates/xvision-dashboard/Cargo.toml`
+- Create: `crates/xvision-dashboard/src/lib.rs`
+- Create: `crates/xvision-dashboard/src/server.rs`
+- Create: `crates/xvision-dashboard/src/state.rs`
 - Modify: `Cargo.toml` (workspace root) — add member
 
 - [ ] **Step 1: Workspace member**
@@ -95,16 +95,16 @@ Plus modifications:
 Open `Cargo.toml` at the repo root. Find the `members = [...]` array under `[workspace]` and append:
 
 ```toml
-"crates/xianvec-dashboard",
+"crates/xvision-dashboard",
 ```
 
 - [ ] **Step 2: Crate manifest**
 
-Create `crates/xianvec-dashboard/Cargo.toml`:
+Create `crates/xvision-dashboard/Cargo.toml`:
 
 ```toml
 [package]
-name        = "xianvec-dashboard"
+name        = "xvision-dashboard"
 description = "Autoresearch dashboard — axum server + static SPA"
 version.workspace      = true
 edition.workspace      = true
@@ -113,11 +113,11 @@ license.workspace      = true
 repository.workspace   = true
 
 [lib]
-name = "xianvec_dashboard"
+name = "xvision_dashboard"
 path = "src/lib.rs"
 
 [dependencies]
-xianvec-engine = { path = "../xianvec-engine" }
+xvision-engine = { path = "../xvision-engine" }
 
 axum         = { version = "0.7", features = ["macros"] }
 tower-http   = { version = "0.5", features = ["fs", "cors", "trace"] }
@@ -144,10 +144,10 @@ ulid     = "1"
 
 - [ ] **Step 3: lib.rs**
 
-Create `crates/xianvec-dashboard/src/lib.rs`:
+Create `crates/xvision-dashboard/src/lib.rs`:
 
 ```rust
-//! xianvec-dashboard — axum server + static SPA for the autoresearch
+//! xvision-dashboard — axum server + static SPA for the autoresearch
 //! evening cycle.
 //!
 //! Public entry point: [`serve`]. Loads SQLite + blob store, attaches an
@@ -165,7 +165,7 @@ pub use server::{serve, ServeOpts};
 
 - [ ] **Step 4: Skeleton server.rs + state.rs**
 
-Create `crates/xianvec-dashboard/src/state.rs`:
+Create `crates/xvision-dashboard/src/state.rs`:
 
 ```rust
 use std::path::PathBuf;
@@ -173,8 +173,8 @@ use std::sync::Arc;
 
 use sqlx::SqlitePool;
 
-use xianvec_engine::autoresearch::lineage::LineageStore;
-use xianvec_engine::autoresearch::progress::ProgressChannel;
+use xvision_engine::autoresearch::lineage::LineageStore;
+use xvision_engine::autoresearch::progress::ProgressChannel;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -185,7 +185,7 @@ pub struct AppState {
 }
 ```
 
-Create `crates/xianvec-dashboard/src/server.rs`:
+Create `crates/xvision-dashboard/src/server.rs`:
 
 ```rust
 use std::net::SocketAddr;
@@ -198,8 +198,8 @@ use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 
-use xianvec_engine::autoresearch::lineage::LineageStore;
-use xianvec_engine::autoresearch::progress::ProgressChannel;
+use xvision_engine::autoresearch::lineage::LineageStore;
+use xvision_engine::autoresearch::progress::ProgressChannel;
 
 use crate::api;
 use crate::ipc;
@@ -242,7 +242,7 @@ pub async fn serve(opts: ServeOpts) -> anyhow::Result<()> {
         .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::new().allow_origin(Any).allow_methods(Any));
 
-    tracing::info!("xianvec-dashboard listening on http://{}", opts.bind);
+    tracing::info!("xvision-dashboard listening on http://{}", opts.bind);
     let listener = tokio::net::TcpListener::bind(opts.bind).await?;
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
@@ -272,15 +272,15 @@ async fn shutdown_signal() {
 
 - [ ] **Step 5: Build verifies the scaffold**
 
-Run: `cargo build -p xianvec-dashboard` — fails because `api`, `ipc`, `sse` modules are missing. That's expected; subsequent tasks introduce them. For this commit we add empty stubs:
+Run: `cargo build -p xvision-dashboard` — fails because `api`, `ipc`, `sse` modules are missing. That's expected; subsequent tasks introduce them. For this commit we add empty stubs:
 
 ```bash
-mkdir -p crates/xianvec-dashboard/src/api crates/xianvec-dashboard/static/{css,js/views,js/shared,vendor} crates/xianvec-dashboard/tests
-touch crates/xianvec-dashboard/src/{ipc.rs,sse.rs}
-touch crates/xianvec-dashboard/src/api/mod.rs
+mkdir -p crates/xvision-dashboard/src/api crates/xvision-dashboard/static/{css,js/views,js/shared,vendor} crates/xvision-dashboard/tests
+touch crates/xvision-dashboard/src/{ipc.rs,sse.rs}
+touch crates/xvision-dashboard/src/api/mod.rs
 ```
 
-Add to `crates/xianvec-dashboard/src/api/mod.rs`:
+Add to `crates/xvision-dashboard/src/api/mod.rs`:
 
 ```rust
 use axum::Router;
@@ -290,7 +290,7 @@ pub fn router() -> Router<crate::state::AppState> {
 }
 ```
 
-Add to `crates/xianvec-dashboard/src/sse.rs`:
+Add to `crates/xvision-dashboard/src/sse.rs`:
 
 ```rust
 use axum::extract::State;
@@ -308,12 +308,12 @@ pub async fn events_handler(
 }
 ```
 
-Add to `crates/xianvec-dashboard/src/ipc.rs`:
+Add to `crates/xvision-dashboard/src/ipc.rs`:
 
 ```rust
 use std::path::PathBuf;
 
-use xianvec_engine::autoresearch::progress::ProgressChannel;
+use xvision_engine::autoresearch::progress::ProgressChannel;
 
 pub async fn spawn_subscriber(_path: PathBuf, _channel: ProgressChannel) -> anyhow::Result<()> {
     // Real implementation in Task 4.
@@ -321,13 +321,13 @@ pub async fn spawn_subscriber(_path: PathBuf, _channel: ProgressChannel) -> anyh
 }
 ```
 
-Now run: `cargo build -p xianvec-dashboard` → success.
+Now run: `cargo build -p xvision-dashboard` → success.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add Cargo.toml crates/xianvec-dashboard/
-git commit -m "feat(dashboard): scaffold xianvec-dashboard crate (axum + static SPA shell)"
+git add Cargo.toml crates/xvision-dashboard/
+git commit -m "feat(dashboard): scaffold xvision-dashboard crate (axum + static SPA shell)"
 ```
 
 ---
@@ -335,14 +335,14 @@ git commit -m "feat(dashboard): scaffold xianvec-dashboard crate (axum + static 
 ### Task 2: `xvn dashboard serve` CLI wrapper
 
 **Files:**
-- Create: `crates/xianvec-cli/src/commands/dashboard.rs`
-- Modify: `crates/xianvec-cli/src/lib.rs`
-- Modify: `crates/xianvec-cli/src/commands/mod.rs`
-- Modify: `crates/xianvec-cli/Cargo.toml` — add `xianvec-dashboard = { path = "../xianvec-dashboard" }`
+- Create: `crates/xvision-cli/src/commands/dashboard.rs`
+- Modify: `crates/xvision-cli/src/lib.rs`
+- Modify: `crates/xvision-cli/src/commands/mod.rs`
+- Modify: `crates/xvision-cli/Cargo.toml` — add `xvision-dashboard = { path = "../xvision-dashboard" }`
 
 - [ ] **Step 1: Subcommand**
 
-Create `crates/xianvec-cli/src/commands/dashboard.rs`:
+Create `crates/xvision-cli/src/commands/dashboard.rs`:
 
 ```rust
 use std::net::SocketAddr;
@@ -350,7 +350,7 @@ use std::path::PathBuf;
 
 use clap::Args;
 
-use xianvec_dashboard::{serve, ServeOpts};
+use xvision_dashboard::{serve, ServeOpts};
 
 #[derive(Debug, Args)]
 pub struct DashboardCmd {
@@ -363,7 +363,7 @@ pub struct DashboardCmd {
     #[arg(long)]
     pub blob_root: Option<PathBuf>,
 
-    #[arg(long, default_value = "crates/xianvec-dashboard/static")]
+    #[arg(long, default_value = "crates/xvision-dashboard/static")]
     pub static_dir: PathBuf,
 
     #[arg(long)]
@@ -387,19 +387,19 @@ pub async fn run(cmd: DashboardCmd) -> anyhow::Result<()> {
 
 - [ ] **Step 2: Wire into top-level CLI**
 
-In `crates/xianvec-cli/src/commands/mod.rs`, add: `pub mod dashboard;`.
+In `crates/xvision-cli/src/commands/mod.rs`, add: `pub mod dashboard;`.
 
-In `crates/xianvec-cli/src/lib.rs`, add to `Command` enum: `Dashboard(commands::dashboard::DashboardCmd),`. Add to `Cli::run()` match: `Command::Dashboard(cmd) => commands::dashboard::run(cmd).await,`.
+In `crates/xvision-cli/src/lib.rs`, add to `Command` enum: `Dashboard(commands::dashboard::DashboardCmd),`. Add to `Cli::run()` match: `Command::Dashboard(cmd) => commands::dashboard::run(cmd).await,`.
 
 - [ ] **Step 3: Smoke**
 
 ```bash
 TMPDIR=$(mktemp -d)
-sqlite3 $TMPDIR/test.db < crates/xianvec-engine/migrations/001_init.sql 2>/dev/null
-sqlite3 $TMPDIR/test.db < crates/xianvec-engine/migrations/002_eval.sql
-sqlite3 $TMPDIR/test.db < crates/xianvec-engine/migrations/003_autoresearch.sql
-sqlite3 $TMPDIR/test.db < crates/xianvec-engine/migrations/004_autoresearch_evals.sql
-cargo run -p xianvec-cli -- dashboard serve --db $TMPDIR/test.db --blob-root $TMPDIR/blobs &
+sqlite3 $TMPDIR/test.db < crates/xvision-engine/migrations/001_init.sql 2>/dev/null
+sqlite3 $TMPDIR/test.db < crates/xvision-engine/migrations/002_eval.sql
+sqlite3 $TMPDIR/test.db < crates/xvision-engine/migrations/003_autoresearch.sql
+sqlite3 $TMPDIR/test.db < crates/xvision-engine/migrations/004_autoresearch_evals.sql
+cargo run -p xvision-cli -- dashboard serve --db $TMPDIR/test.db --blob-root $TMPDIR/blobs &
 DASH_PID=$!
 sleep 1
 curl -s http://127.0.0.1:7777/api/events --max-time 1 | head -5
@@ -411,7 +411,7 @@ Expected: server boots, `/api/events` opens an SSE stream (immediately empty sin
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/xianvec-cli/
+git add crates/xvision-cli/
 git commit -m "feat(cli): xvn dashboard serve — boots axum + static SPA"
 ```
 
@@ -422,9 +422,9 @@ git commit -m "feat(cli): xvn dashboard serve — boots axum + static SPA"
 ### Task 3: `/api/lineage` + `/api/lineage/:bundle_hash`
 
 **Files:**
-- Create: `crates/xianvec-dashboard/src/api/lineage.rs`
-- Modify: `crates/xianvec-dashboard/src/api/mod.rs`
-- Create: `crates/xianvec-dashboard/tests/api_lineage.rs`
+- Create: `crates/xvision-dashboard/src/api/lineage.rs`
+- Modify: `crates/xvision-dashboard/src/api/mod.rs`
+- Create: `crates/xvision-dashboard/tests/api_lineage.rs`
 
 - [ ] **Step 1: Failing test**
 
@@ -438,15 +438,15 @@ use chrono::Utc;
 use sqlx::SqlitePool;
 use tempfile::tempdir;
 
-use xianvec_dashboard::server::{serve, ServeOpts};
-use xianvec_engine::autoresearch::content_hash::ContentHash;
-use xianvec_engine::autoresearch::lineage::{LineageNode, LineageStatus, LineageStore, MetricsSnapshot};
+use xvision_dashboard::server::{serve, ServeOpts};
+use xvision_engine::autoresearch::content_hash::ContentHash;
+use xvision_engine::autoresearch::lineage::{LineageNode, LineageStatus, LineageStore, MetricsSnapshot};
 
 async fn boot_with_seed() -> (SocketAddr, tempfile::TempDir) {
     let dir = tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let pool = SqlitePool::connect(&format!("sqlite://{}?mode=rwc", db_path.display())).await.unwrap();
-    sqlx::migrate!("../xianvec-engine/migrations").run(&pool).await.unwrap();
+    sqlx::migrate!("../xvision-engine/migrations").run(&pool).await.unwrap();
     let store = Arc::new(LineageStore::new(pool, dir.path().join("blobs")).await.unwrap());
     for i in 0..3u32 {
         let h = ContentHash::of_bytes(format!("b{i}").as_bytes());
@@ -520,7 +520,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
 use crate::state::AppState;
-use xianvec_engine::autoresearch::content_hash::ContentHash;
+use xvision_engine::autoresearch::content_hash::ContentHash;
 
 #[derive(Debug, Default, Deserialize)]
 pub struct ListQuery {
@@ -629,8 +629,8 @@ pub fn router() -> Router<crate::state::AppState> {
 - [ ] **Step 3: Run + commit**
 
 ```bash
-cargo test -p xianvec-dashboard --test api_lineage
-git add crates/xianvec-dashboard/
+cargo test -p xvision-dashboard --test api_lineage
+git add crates/xvision-dashboard/
 git commit -m "feat(dashboard): GET /api/lineage + /api/lineage/:hash"
 ```
 
@@ -641,9 +641,9 @@ git commit -m "feat(dashboard): GET /api/lineage + /api/lineage/:hash"
 The orchestrator writes events to its own `ProgressChannel`. The dashboard runs in a separate process. Without an IPC bridge, the dashboard's channel has no events. We add a Unix-socket subscriber: the orchestrator binds the socket and writes JSON-serialized events line by line; the dashboard subscribes, parses each line, and re-emits into its own channel.
 
 **Files:**
-- Replace stub: `crates/xianvec-dashboard/src/ipc.rs`
-- Modify: `crates/xianvec-cli/src/commands/autoresearch.rs` — add `--ipc-socket` to `EveningCycle` and start a UDS sender alongside the stdout subscriber
-- Create: `crates/xianvec-dashboard/tests/ipc_bridge.rs`
+- Replace stub: `crates/xvision-dashboard/src/ipc.rs`
+- Modify: `crates/xvision-cli/src/commands/autoresearch.rs` — add `--ipc-socket` to `EveningCycle` and start a UDS sender alongside the stdout subscriber
+- Create: `crates/xvision-dashboard/tests/ipc_bridge.rs`
 
 - [ ] **Step 1: Failing test**
 
@@ -656,8 +656,8 @@ use tempfile::tempdir;
 use tokio::io::AsyncWriteExt;
 use tokio::net::UnixStream;
 
-use xianvec_dashboard::ipc::spawn_subscriber;
-use xianvec_engine::autoresearch::progress::{AutoresearchEvent, ProgressChannel};
+use xvision_dashboard::ipc::spawn_subscriber;
+use xvision_engine::autoresearch::progress::{AutoresearchEvent, ProgressChannel};
 
 #[tokio::test]
 async fn ipc_bridge_re_emits_events_into_dashboard_channel() {
@@ -700,7 +700,7 @@ use std::path::PathBuf;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::UnixListener;
 
-use xianvec_engine::autoresearch::progress::{AutoresearchEvent, ProgressChannel};
+use xvision_engine::autoresearch::progress::{AutoresearchEvent, ProgressChannel};
 
 pub async fn spawn_subscriber(path: PathBuf, channel: ProgressChannel) -> anyhow::Result<()> {
     if path.exists() {
@@ -736,7 +736,7 @@ pub async fn spawn_subscriber(path: PathBuf, channel: ProgressChannel) -> anyhow
 
 - [ ] **Step 3: Orchestrator-side sender**
 
-Modify `crates/xianvec-cli/src/commands/autoresearch.rs`. In the `EveningCycle` action, add `--ipc-socket: Option<PathBuf>`, and in the handler (right after `let progress = ProgressChannel::default();`), spawn:
+Modify `crates/xvision-cli/src/commands/autoresearch.rs`. In the `EveningCycle` action, add `--ipc-socket: Option<PathBuf>`, and in the handler (right after `let progress = ProgressChannel::default();`), spawn:
 
 ```rust
 if let Some(sock) = &ipc_socket {
@@ -745,7 +745,7 @@ if let Some(sock) = &ipc_socket {
 
 async fn spawn_uds_sender(
     path: std::path::PathBuf,
-    mut rx: tokio::sync::broadcast::Receiver<xianvec_engine::autoresearch::progress::AutoresearchEvent>,
+    mut rx: tokio::sync::broadcast::Receiver<xvision_engine::autoresearch::progress::AutoresearchEvent>,
 ) -> anyhow::Result<()> {
     use tokio::io::AsyncWriteExt;
     use tokio::net::UnixStream;
@@ -776,8 +776,8 @@ async fn spawn_uds_sender(
 - [ ] **Step 4: Run + commit**
 
 ```bash
-cargo test -p xianvec-dashboard --test ipc_bridge
-git add crates/xianvec-dashboard/src/ipc.rs crates/xianvec-dashboard/tests/ipc_bridge.rs crates/xianvec-cli/src/commands/autoresearch.rs
+cargo test -p xvision-dashboard --test ipc_bridge
+git add crates/xvision-dashboard/src/ipc.rs crates/xvision-dashboard/tests/ipc_bridge.rs crates/xvision-cli/src/commands/autoresearch.rs
 git commit -m "feat(dashboard): UDS ipc bridge — orchestrator events flow into dashboard channel"
 ```
 
@@ -786,8 +786,8 @@ git commit -m "feat(dashboard): UDS ipc bridge — orchestrator events flow into
 ### Task 5: SSE endpoint `/api/events`
 
 **Files:**
-- Replace `crates/xianvec-dashboard/src/sse.rs`
-- Create: `crates/xianvec-dashboard/tests/sse_smoke.rs`
+- Replace `crates/xvision-dashboard/src/sse.rs`
+- Create: `crates/xvision-dashboard/tests/sse_smoke.rs`
 
 - [ ] **Step 1: Failing test**
 
@@ -802,8 +802,8 @@ use sqlx::SqlitePool;
 use tempfile::tempdir;
 use tokio::time::timeout;
 
-use xianvec_dashboard::server::{serve, ServeOpts};
-use xianvec_engine::autoresearch::progress::AutoresearchEvent;
+use xvision_dashboard::server::{serve, ServeOpts};
+use xvision_engine::autoresearch::progress::AutoresearchEvent;
 
 #[tokio::test]
 async fn sse_endpoint_streams_events_emitted_into_progress_channel() {
@@ -812,7 +812,7 @@ async fn sse_endpoint_streams_events_emitted_into_progress_channel() {
     let dir = tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let pool = SqlitePool::connect(&format!("sqlite://{}?mode=rwc", db_path.display())).await.unwrap();
-    sqlx::migrate!("../xianvec-engine/migrations").run(&pool).await.unwrap();
+    sqlx::migrate!("../xvision-engine/migrations").run(&pool).await.unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let bind = listener.local_addr().unwrap();
     drop(listener);
@@ -870,19 +870,19 @@ pub async fn events_handler(
             let json = serde_json::to_string(&event).unwrap_or_else(|_| "{}".to_string());
             // Use event-type as SSE event name; payload as data.
             let kind = match &event {
-                xianvec_engine::autoresearch::progress::AutoresearchEvent::CycleStarted { .. } => "cycle_started",
-                xianvec_engine::autoresearch::progress::AutoresearchEvent::MutationProposed { .. } => "mutation_proposed",
-                xianvec_engine::autoresearch::progress::AutoresearchEvent::MutationEvaluating { .. } => "mutation_evaluating",
-                xianvec_engine::autoresearch::progress::AutoresearchEvent::MutationCommitted { .. } => "mutation_committed",
-                xianvec_engine::autoresearch::progress::AutoresearchEvent::MutationRejected { .. } => "mutation_rejected",
-                xianvec_engine::autoresearch::progress::AutoresearchEvent::MutationQuarantined { .. } => "mutation_quarantined",
-                xianvec_engine::autoresearch::progress::AutoresearchEvent::LineageForked { .. } => "lineage_forked",
-                xianvec_engine::autoresearch::progress::AutoresearchEvent::JudgeWroteFinding { .. } => "judge_wrote_finding",
-                xianvec_engine::autoresearch::progress::AutoresearchEvent::CanaryOutcome { .. } => "canary_outcome",
-                xianvec_engine::autoresearch::progress::AutoresearchEvent::DiversityUpdated { .. } => "diversity_updated",
-                xianvec_engine::autoresearch::progress::AutoresearchEvent::LadderSnapshot { .. } => "ladder_snapshot",
-                xianvec_engine::autoresearch::progress::AutoresearchEvent::CycleSealed { .. } => "cycle_sealed",
-                xianvec_engine::autoresearch::progress::AutoresearchEvent::CycleFailed { .. } => "cycle_failed",
+                xvision_engine::autoresearch::progress::AutoresearchEvent::CycleStarted { .. } => "cycle_started",
+                xvision_engine::autoresearch::progress::AutoresearchEvent::MutationProposed { .. } => "mutation_proposed",
+                xvision_engine::autoresearch::progress::AutoresearchEvent::MutationEvaluating { .. } => "mutation_evaluating",
+                xvision_engine::autoresearch::progress::AutoresearchEvent::MutationCommitted { .. } => "mutation_committed",
+                xvision_engine::autoresearch::progress::AutoresearchEvent::MutationRejected { .. } => "mutation_rejected",
+                xvision_engine::autoresearch::progress::AutoresearchEvent::MutationQuarantined { .. } => "mutation_quarantined",
+                xvision_engine::autoresearch::progress::AutoresearchEvent::LineageForked { .. } => "lineage_forked",
+                xvision_engine::autoresearch::progress::AutoresearchEvent::JudgeWroteFinding { .. } => "judge_wrote_finding",
+                xvision_engine::autoresearch::progress::AutoresearchEvent::CanaryOutcome { .. } => "canary_outcome",
+                xvision_engine::autoresearch::progress::AutoresearchEvent::DiversityUpdated { .. } => "diversity_updated",
+                xvision_engine::autoresearch::progress::AutoresearchEvent::LadderSnapshot { .. } => "ladder_snapshot",
+                xvision_engine::autoresearch::progress::AutoresearchEvent::CycleSealed { .. } => "cycle_sealed",
+                xvision_engine::autoresearch::progress::AutoresearchEvent::CycleFailed { .. } => "cycle_failed",
             };
             Some(Ok::<Event, Infallible>(Event::default().event(kind).data(json)))
         }
@@ -895,8 +895,8 @@ pub async fn events_handler(
 - [ ] **Step 3: Run + commit**
 
 ```bash
-cargo test -p xianvec-dashboard --test sse_smoke
-git add crates/xianvec-dashboard/src/sse.rs crates/xianvec-dashboard/tests/sse_smoke.rs
+cargo test -p xvision-dashboard --test sse_smoke
+git add crates/xvision-dashboard/src/sse.rs crates/xvision-dashboard/tests/sse_smoke.rs
 git commit -m "feat(dashboard): SSE /api/events bridges ProgressChannel to clients"
 ```
 
@@ -907,9 +907,9 @@ git commit -m "feat(dashboard): SSE /api/events bridges ProgressChannel to clien
 Returns a list of CycleSeal index rows; the detail endpoint fetches the full seal blob from the blob store.
 
 **Files:**
-- Create: `crates/xianvec-dashboard/src/api/seals.rs`
-- Modify: `crates/xianvec-dashboard/src/api/mod.rs`
-- Create: `crates/xianvec-dashboard/tests/api_seals.rs`
+- Create: `crates/xvision-dashboard/src/api/seals.rs`
+- Modify: `crates/xvision-dashboard/src/api/mod.rs`
+- Create: `crates/xvision-dashboard/tests/api_seals.rs`
 
 - [ ] **Step 1: Failing test**
 
@@ -935,8 +935,8 @@ use serde::Serialize;
 use sqlx::Row;
 
 use crate::state::AppState;
-use xianvec_engine::autoresearch::content_hash::ContentHash;
-use xianvec_engine::autoresearch::seal::{CycleSeal, CycleSealWriter};
+use xvision_engine::autoresearch::content_hash::ContentHash;
+use xvision_engine::autoresearch::seal::{CycleSeal, CycleSealWriter};
 
 #[derive(Debug, Serialize)]
 pub struct SealRow {
@@ -1009,8 +1009,8 @@ pub mod seals;
 - [ ] **Step 3: Run + commit**
 
 ```bash
-cargo test -p xianvec-dashboard --test api_seals
-git add crates/xianvec-dashboard/src/api/seals.rs crates/xianvec-dashboard/src/api/mod.rs crates/xianvec-dashboard/tests/api_seals.rs
+cargo test -p xvision-dashboard --test api_seals
+git add crates/xvision-dashboard/src/api/seals.rs crates/xvision-dashboard/src/api/mod.rs crates/xvision-dashboard/tests/api_seals.rs
 git commit -m "feat(dashboard): GET /api/seals + /api/seals/:cycle_id (verifies signature)"
 ```
 
@@ -1021,11 +1021,11 @@ git commit -m "feat(dashboard): GET /api/seals + /api/seals/:cycle_id (verifies 
 Four small endpoints; one task. Each is a SELECT and a serde::Serialize struct.
 
 **Files:**
-- Create: `crates/xianvec-dashboard/src/api/ladder.rs`
-- Create: `crates/xianvec-dashboard/src/api/diversity.rs`
-- Create: `crates/xianvec-dashboard/src/api/canary.rs`
-- Create: `crates/xianvec-dashboard/src/api/findings.rs`
-- Modify: `crates/xianvec-dashboard/src/api/mod.rs`
+- Create: `crates/xvision-dashboard/src/api/ladder.rs`
+- Create: `crates/xvision-dashboard/src/api/diversity.rs`
+- Create: `crates/xvision-dashboard/src/api/canary.rs`
+- Create: `crates/xvision-dashboard/src/api/findings.rs`
+- Modify: `crates/xvision-dashboard/src/api/mod.rs`
 - Create: tests/api_ladder.rs, tests/api_diversity.rs, tests/api_findings.rs
 
 - [ ] **Step 1: Implement four endpoints**
@@ -1039,7 +1039,7 @@ use serde::Serialize;
 use sqlx::Row;
 
 use crate::state::AppState;
-use xianvec_engine::autoresearch::content_hash::ContentHash;
+use xvision_engine::autoresearch::content_hash::ContentHash;
 
 #[derive(Debug, Serialize)]
 pub struct LadderRow {
@@ -1152,7 +1152,7 @@ use axum::Json;
 use serde::Serialize;
 
 use crate::state::AppState;
-use xianvec_engine::autoresearch::content_hash::ContentHash;
+use xvision_engine::autoresearch::content_hash::ContentHash;
 
 #[derive(Debug, Serialize)]
 pub struct FindingDetail {
@@ -1200,8 +1200,8 @@ pub mod ladder;
 - [ ] **Step 3: Run + commit**
 
 ```bash
-cargo test -p xianvec-dashboard
-git add crates/xianvec-dashboard/
+cargo test -p xvision-dashboard
+git add crates/xvision-dashboard/
 git commit -m "feat(dashboard): GET /api/ladder/snapshots, /api/diversity/samples, /api/canary/runs, /api/findings/:hash"
 ```
 
@@ -1214,12 +1214,12 @@ git commit -m "feat(dashboard): GET /api/ladder/snapshots, /api/diversity/sample
 The SPA is one HTML page with five tab buttons and five view containers. Tab switching is client-side; the bus.js subscribes to SSE and dispatches events to the active view's handler.
 
 **Files:**
-- Create: `crates/xianvec-dashboard/static/index.html`
-- Create: `crates/xianvec-dashboard/static/css/tokens.css`
-- Create: `crates/xianvec-dashboard/static/js/bus.js`
-- Create: `crates/xianvec-dashboard/static/js/shared/api.js`
-- Create: `crates/xianvec-dashboard/static/js/shared/format.js`
-- Vendor: `crates/xianvec-dashboard/static/vendor/d3.v7.min.js` (download once, commit)
+- Create: `crates/xvision-dashboard/static/index.html`
+- Create: `crates/xvision-dashboard/static/css/tokens.css`
+- Create: `crates/xvision-dashboard/static/js/bus.js`
+- Create: `crates/xvision-dashboard/static/js/shared/api.js`
+- Create: `crates/xvision-dashboard/static/js/shared/format.js`
+- Vendor: `crates/xvision-dashboard/static/vendor/d3.v7.min.js` (download once, commit)
 
 - [ ] **Step 1: index.html**
 
@@ -1229,12 +1229,12 @@ The SPA is one HTML page with five tab buttons and five view containers. Tab swi
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>xianvec autoresearch</title>
+<title>xvision autoresearch</title>
 <link rel="stylesheet" href="/static/css/tokens.css">
 </head>
 <body>
 <header class="app-header">
-  <h1>xianvec · autoresearch</h1>
+  <h1>xvision · autoresearch</h1>
   <div class="meta">
     <span id="meta-session">session: —</span>
     <span id="meta-cycle">cycle: —</span>
@@ -1393,15 +1393,15 @@ export function fmtDateShort(s) { return s ? s.replace("T", " ").slice(0, 19) : 
 - [ ] **Step 5: Vendor D3**
 
 ```bash
-mkdir -p crates/xianvec-dashboard/static/vendor
-curl -sSL https://d3js.org/d3.v7.min.js -o crates/xianvec-dashboard/static/vendor/d3.v7.min.js
-echo "$(shasum -a 256 crates/xianvec-dashboard/static/vendor/d3.v7.min.js) (committed offline copy)"
+mkdir -p crates/xvision-dashboard/static/vendor
+curl -sSL https://d3js.org/d3.v7.min.js -o crates/xvision-dashboard/static/vendor/d3.v7.min.js
+echo "$(shasum -a 256 crates/xvision-dashboard/static/vendor/d3.v7.min.js) (committed offline copy)"
 ```
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/xianvec-dashboard/static/
+git add crates/xvision-dashboard/static/
 git commit -m "feat(dashboard): SPA shell + tokens + SSE bus + D3 v7 vendor"
 ```
 
@@ -1413,7 +1413,7 @@ git commit -m "feat(dashboard): SPA shell + tokens + SSE bus + D3 v7 vendor"
 
 The headline view (autoresearch spec §9 #1). Vertical lineage column on the left listing parents being processed; mutation timeline scrolls right; ghost branches faded. Token meter at the top updates from `mutation_proposed` events.
 
-**File:** `crates/xianvec-dashboard/static/js/views/live_cycle.js`
+**File:** `crates/xvision-dashboard/static/js/views/live_cycle.js`
 
 - [ ] **Step 1: Implement live_cycle.js**
 
@@ -1501,15 +1501,15 @@ on("cycle_failed", (d) =>
 
 ```bash
 TMPDIR=$(mktemp -d)
-sqlite3 $TMPDIR/test.db < crates/xianvec-engine/migrations/001_init.sql 2>/dev/null
-sqlite3 $TMPDIR/test.db < crates/xianvec-engine/migrations/002_eval.sql
-sqlite3 $TMPDIR/test.db < crates/xianvec-engine/migrations/003_autoresearch.sql
-sqlite3 $TMPDIR/test.db < crates/xianvec-engine/migrations/004_autoresearch_evals.sql
-cargo run -p xianvec-cli -- dashboard serve --db $TMPDIR/test.db --blob-root $TMPDIR/blobs --ipc-socket /tmp/xvn-events.sock &
+sqlite3 $TMPDIR/test.db < crates/xvision-engine/migrations/001_init.sql 2>/dev/null
+sqlite3 $TMPDIR/test.db < crates/xvision-engine/migrations/002_eval.sql
+sqlite3 $TMPDIR/test.db < crates/xvision-engine/migrations/003_autoresearch.sql
+sqlite3 $TMPDIR/test.db < crates/xvision-engine/migrations/004_autoresearch_evals.sql
+cargo run -p xvision-cli -- dashboard serve --db $TMPDIR/test.db --blob-root $TMPDIR/blobs --ipc-socket /tmp/xvn-events.sock &
 
 # Separate terminal:
-cargo run -p xianvec-cli -- autoresearch session-init --config config/autoresearch.toml.example --db $TMPDIR/test.db
-cargo run -p xianvec-cli -- autoresearch evening-cycle --session-id <id-from-init> --config config/autoresearch.toml.example --db $TMPDIR/test.db --mock --ipc-socket /tmp/xvn-events.sock
+cargo run -p xvision-cli -- autoresearch session-init --config config/autoresearch.toml.example --db $TMPDIR/test.db
+cargo run -p xvision-cli -- autoresearch evening-cycle --session-id <id-from-init> --config config/autoresearch.toml.example --db $TMPDIR/test.db --mock --ipc-socket /tmp/xvn-events.sock
 ```
 
 Open `http://127.0.0.1:7777/`. Live tab should fill with mutation/eval/seal events as the cycle runs.
@@ -1517,7 +1517,7 @@ Open `http://127.0.0.1:7777/`. Live tab should fill with mutation/eval/seal even
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/xianvec-dashboard/static/js/views/live_cycle.js
+git add crates/xvision-dashboard/static/js/views/live_cycle.js
 git commit -m "feat(dashboard): live evening-cycle viewer (event stream + KPIs)"
 ```
 
@@ -1529,7 +1529,7 @@ git commit -m "feat(dashboard): live evening-cycle viewer (event stream + KPIs)"
 
 D3 force-directed graph (or radial when N > 20 lineages — for v1 we use force-directed for everything). Nodes sized by trade count; colored by lineage; edges encode mutation kind via stroke style. Click → selects the node and switches to the diff inspector tab pre-filled.
 
-**File:** `crates/xianvec-dashboard/static/js/views/genealogy.js`
+**File:** `crates/xvision-dashboard/static/js/views/genealogy.js`
 
 - [ ] **Step 1: Implement genealogy.js**
 
@@ -1633,7 +1633,7 @@ Same as Task 9; switch to the Genealogy tab. Refresh once a mutation commits —
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/xianvec-dashboard/static/js/views/genealogy.js
+git add crates/xvision-dashboard/static/js/views/genealogy.js
 git commit -m "feat(dashboard): genealogy view (D3 force-directed, status-coloured)"
 ```
 
@@ -1645,7 +1645,7 @@ git commit -m "feat(dashboard): genealogy view (D3 force-directed, status-colour
 
 Three-pane layout: prose diff (markdown red/green via simple line-by-line rendering), param diff table, tool diff chips. Below: the LLM finding's summary + regime affinity + failure modes + confidence chip.
 
-**File:** `crates/xianvec-dashboard/static/js/views/diff_inspector.js`
+**File:** `crates/xvision-dashboard/static/js/views/diff_inspector.js`
 
 - [ ] **Step 1: Implement diff_inspector.js**
 
@@ -1752,7 +1752,7 @@ use axum::http::StatusCode;
 use axum::Json;
 
 use crate::state::AppState;
-use xianvec_engine::autoresearch::content_hash::ContentHash;
+use xvision_engine::autoresearch::content_hash::ContentHash;
 
 pub async fn get(
     Path(hash): Path<String>,
@@ -1773,7 +1773,7 @@ In the dashboard, click a node in the Genealogy view; the Diff inspector tab sho
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/xianvec-dashboard/static/js/views/diff_inspector.js crates/xianvec-dashboard/src/api/
+git add crates/xvision-dashboard/static/js/views/diff_inspector.js crates/xvision-dashboard/src/api/
 git commit -m "feat(dashboard): mutation diff inspector + /api/blobs/:hash"
 ```
 
@@ -1785,7 +1785,7 @@ git commit -m "feat(dashboard): mutation diff inspector + /api/blobs/:hash"
 
 Side-by-side with the strategy ladder (which lives in view 5). Shows acceptance rate over time, calibration scaffold, regime bias if present.
 
-**File:** `crates/xianvec-dashboard/static/js/views/mutator_ladder.js`
+**File:** `crates/xvision-dashboard/static/js/views/mutator_ladder.js`
 
 - [ ] **Step 1: Implement mutator_ladder.js**
 
@@ -1852,7 +1852,7 @@ on("ladder_snapshot", () => refresh());
 - [ ] **Step 2: Commit**
 
 ```bash
-git add crates/xianvec-dashboard/static/js/views/mutator_ladder.js
+git add crates/xvision-dashboard/static/js/views/mutator_ladder.js
 git commit -m "feat(dashboard): mutator-skill ladder (acceptance trend + proposal volume)"
 ```
 
@@ -1864,7 +1864,7 @@ git commit -m "feat(dashboard): mutator-skill ladder (acceptance trend + proposa
 
 Existing strategy ladder, augmented with lineage depth + parent hash + one-line mutation summary. Click row → switches to the Genealogy tab zoomed to that node.
 
-**File:** `crates/xianvec-dashboard/static/js/views/ladder_provenance.js`
+**File:** `crates/xvision-dashboard/static/js/views/ladder_provenance.js`
 
 - [ ] **Step 1: Implement ladder_provenance.js**
 
@@ -1936,7 +1936,7 @@ refresh().catch(console.error);
 - [ ] **Step 2: Commit**
 
 ```bash
-git add crates/xianvec-dashboard/static/js/views/ladder_provenance.js
+git add crates/xvision-dashboard/static/js/views/ladder_provenance.js
 git commit -m "feat(dashboard): ladder-with-provenance (lineage depth + click-to-inspect)"
 ```
 
@@ -1951,16 +1951,16 @@ git commit -m "feat(dashboard): ladder-with-provenance (lineage depth + click-to
 ```bash
 # Term 1: dashboard
 TMPDIR=$(mktemp -d); export TMPDIR
-sqlite3 $TMPDIR/test.db < crates/xianvec-engine/migrations/001_init.sql 2>/dev/null
-sqlite3 $TMPDIR/test.db < crates/xianvec-engine/migrations/002_eval.sql
-sqlite3 $TMPDIR/test.db < crates/xianvec-engine/migrations/003_autoresearch.sql
-sqlite3 $TMPDIR/test.db < crates/xianvec-engine/migrations/004_autoresearch_evals.sql
-cargo run -p xianvec-cli -- dashboard serve --db $TMPDIR/test.db --blob-root $TMPDIR/blobs --ipc-socket /tmp/xvn-events.sock
+sqlite3 $TMPDIR/test.db < crates/xvision-engine/migrations/001_init.sql 2>/dev/null
+sqlite3 $TMPDIR/test.db < crates/xvision-engine/migrations/002_eval.sql
+sqlite3 $TMPDIR/test.db < crates/xvision-engine/migrations/003_autoresearch.sql
+sqlite3 $TMPDIR/test.db < crates/xvision-engine/migrations/004_autoresearch_evals.sql
+cargo run -p xvision-cli -- dashboard serve --db $TMPDIR/test.db --blob-root $TMPDIR/blobs --ipc-socket /tmp/xvn-events.sock
 
 # Term 2: orchestrator
-cargo run -p xianvec-cli -- autoresearch session-init --config config/autoresearch.toml.example --db $TMPDIR/test.db --key-path $TMPDIR/op.ed25519
+cargo run -p xvision-cli -- autoresearch session-init --config config/autoresearch.toml.example --db $TMPDIR/test.db --key-path $TMPDIR/op.ed25519
 SESSION=<from above>
-cargo run -p xianvec-cli -- autoresearch evening-cycle --session-id $SESSION --config config/autoresearch.toml.example --db $TMPDIR/test.db --mock --ipc-socket /tmp/xvn-events.sock
+cargo run -p xvision-cli -- autoresearch evening-cycle --session-id $SESSION --config config/autoresearch.toml.example --db $TMPDIR/test.db --mock --ipc-socket /tmp/xvn-events.sock
 ```
 
 Open `http://127.0.0.1:7777/`. Verify:
@@ -1994,7 +1994,7 @@ git commit --allow-empty -m "chore(dashboard): AR-3 cross-browser + projector sm
 cargo test --workspace 2>&1 | tail -40
 ```
 
-Expected: all tests pass (eval engine + autoresearch AR-1 + AR-2 + dashboard AR-3 + everything else). New tests: 7 in `crates/xianvec-dashboard/tests/` (api_lineage, api_seals, api_ladder, api_diversity, api_findings, sse_smoke, ipc_bridge).
+Expected: all tests pass (eval engine + autoresearch AR-1 + AR-2 + dashboard AR-3 + everything else). New tests: 7 in `crates/xvision-dashboard/tests/` (api_lineage, api_seals, api_ladder, api_diversity, api_findings, sse_smoke, ipc_bridge).
 
 - [ ] **Step 2: Fmt + clippy**
 

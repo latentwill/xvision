@@ -7,11 +7,11 @@
 
 ---
 
-**Goal:** Land the typed engine API skeleton (`xianvec-engine/src/api/`) so all subsequent v1-test plans can write CLI/MCP handlers as 5–10 line dispatchers with zero business logic. This plan ships the framework + audit migration + 2 representative functions; downstream plans add their own per-domain modules (`api/eval.rs`, `api/settings.rs`, etc.) following the established pattern.
+**Goal:** Land the typed engine API skeleton (`xvision-engine/src/api/`) so all subsequent v1-test plans can write CLI/MCP handlers as 5–10 line dispatchers with zero business logic. This plan ships the framework + audit migration + 2 representative functions; downstream plans add their own per-domain modules (`api/eval.rs`, `api/settings.rs`, etc.) following the established pattern.
 
-**Architecture:** One module under `xianvec-engine/src/api/`. `ApiContext` carries the DB pool, actor identity, and `$XVN_HOME` path. `Actor` is an enum with all four caller variants (`Cli`, `Mcp`, `AgentRunner`, `Scheduler`) defined now even though only the first two are used in v1 test — keeps the enum stable across the eventual scheduler land. `ApiError` is the canonical error type all api functions return. `api::audit::record` is called by every api function entry/exit to persist an append-only operations log to `api_audit`. Migration `001_api_audit.sql` creates the table.
+**Architecture:** One module under `xvision-engine/src/api/`. `ApiContext` carries the DB pool, actor identity, and `$XVN_HOME` path. `Actor` is an enum with all four caller variants (`Cli`, `Mcp`, `AgentRunner`, `Scheduler`) defined now even though only the first two are used in v1 test — keeps the enum stable across the eventual scheduler land. `ApiError` is the canonical error type all api functions return. `api::audit::record` is called by every api function entry/exit to persist an append-only operations log to `api_audit`. Migration `001_api_audit.sql` creates the table.
 
-**Tech Stack:** Rust 2021. New deps in `xianvec-engine`: `sqlx = { workspace = true, features = ["sqlite", "runtime-tokio", "macros", "chrono"] }`, `ulid = { version = "1", features = ["serde"] }` (already present), `chrono` (already present), `thiserror` (already present).
+**Tech Stack:** Rust 2021. New deps in `xvision-engine`: `sqlx = { workspace = true, features = ["sqlite", "runtime-tokio", "macros", "chrono"] }`, `ulid = { version = "1", features = ["serde"] }` (already present), `chrono` (already present), `thiserror` (already present).
 
 **Out of scope (deferred to xvn-scheduling-and-agent-cli):**
 - Agent runner / tool-use loop
@@ -25,7 +25,7 @@
 ## File structure
 
 ```
-crates/xianvec-engine/
+crates/xvision-engine/
 ├── Cargo.toml                              # add sqlx
 ├── migrations/                             # NEW DIRECTORY
 │   └── 001_api_audit.sql                   # NEW
@@ -48,12 +48,12 @@ crates/xianvec-engine/
 ### Task 1: Add sqlx + create migrations directory + ship migration 001
 
 **Files:**
-- Modify: `crates/xianvec-engine/Cargo.toml`
-- Create: `crates/xianvec-engine/migrations/001_api_audit.sql`
+- Modify: `crates/xvision-engine/Cargo.toml`
+- Create: `crates/xvision-engine/migrations/001_api_audit.sql`
 
 - [ ] **Step 1: Add sqlx to engine Cargo.toml**
 
-In `crates/xianvec-engine/Cargo.toml`, in `[dependencies]`:
+In `crates/xvision-engine/Cargo.toml`, in `[dependencies]`:
 
 ```toml
 sqlx = { workspace = true, features = ["sqlite", "runtime-tokio", "macros", "chrono"] }
@@ -63,7 +63,7 @@ sqlx = { workspace = true, features = ["sqlite", "runtime-tokio", "macros", "chr
 
 - [ ] **Step 2: Write migration 001**
 
-Create `crates/xianvec-engine/migrations/001_api_audit.sql`:
+Create `crates/xvision-engine/migrations/001_api_audit.sql`:
 
 ```sql
 -- Append-only log of every engine::api::* invocation.
@@ -91,7 +91,7 @@ CREATE INDEX IF NOT EXISTS idx_api_audit_target ON api_audit(target);
 - [ ] **Step 3: Verify migration applies cleanly**
 
 ```bash
-sqlite3 ":memory:" < crates/xianvec-engine/migrations/001_api_audit.sql && echo OK
+sqlite3 ":memory:" < crates/xvision-engine/migrations/001_api_audit.sql && echo OK
 ```
 
 Expected: `OK`.
@@ -99,7 +99,7 @@ Expected: `OK`.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/xianvec-engine/Cargo.toml crates/xianvec-engine/migrations/001_api_audit.sql
+git add crates/xvision-engine/Cargo.toml crates/xvision-engine/migrations/001_api_audit.sql
 git commit -m "feat(engine): add sqlx + migration 001 (api_audit table)"
 ```
 
@@ -110,17 +110,17 @@ git commit -m "feat(engine): add sqlx + migration 001 (api_audit table)"
 ### Task 2: ApiContext, Actor, ApiError, ApiResult
 
 **Files:**
-- Create: `crates/xianvec-engine/src/api/mod.rs`
-- Modify: `crates/xianvec-engine/src/lib.rs` (`pub mod api;`)
-- Create: `crates/xianvec-engine/tests/api_context.rs`
+- Create: `crates/xvision-engine/src/api/mod.rs`
+- Modify: `crates/xvision-engine/src/lib.rs` (`pub mod api;`)
+- Create: `crates/xvision-engine/tests/api_context.rs`
 
 - [ ] **Step 1: Failing test**
 
-Create `crates/xianvec-engine/tests/api_context.rs`:
+Create `crates/xvision-engine/tests/api_context.rs`:
 
 ```rust
 use sqlx::SqlitePool;
-use xianvec_engine::api::{ApiContext, Actor};
+use xvision_engine::api::{ApiContext, Actor};
 
 #[tokio::test]
 async fn api_context_constructs_with_actor() {
@@ -146,11 +146,11 @@ fn actor_enum_covers_all_callers() {
 }
 ```
 
-Run: `cargo test -p xianvec-engine api_context`. Expected: compile failure (api module doesn't exist yet).
+Run: `cargo test -p xvision-engine api_context`. Expected: compile failure (api module doesn't exist yet).
 
 - [ ] **Step 2: Implement `api/mod.rs`**
 
-Create `crates/xianvec-engine/src/api/mod.rs`:
+Create `crates/xvision-engine/src/api/mod.rs`:
 
 ```rust
 //! Typed engine API. Single source of truth for every operation an external
@@ -223,7 +223,7 @@ pub type ApiResult<T> = Result<T, ApiError>;
 
 - [ ] **Step 3: Wire into lib.rs**
 
-In `crates/xianvec-engine/src/lib.rs`:
+In `crates/xvision-engine/src/lib.rs`:
 
 ```rust
 pub mod api;
@@ -232,7 +232,7 @@ pub mod api;
 - [ ] **Step 4: Run tests + commit**
 
 ```bash
-cargo test -p xianvec-engine api_context
+cargo test -p xvision-engine api_context
 git add -A
 git commit -m "feat(engine): api module — ApiContext, Actor, ApiError"
 ```
@@ -244,16 +244,16 @@ git commit -m "feat(engine): api module — ApiContext, Actor, ApiError"
 ### Task 3: audit::record() with Outcome enum
 
 **Files:**
-- Create: `crates/xianvec-engine/src/api/audit.rs`
-- Create: `crates/xianvec-engine/tests/api_audit.rs`
+- Create: `crates/xvision-engine/src/api/audit.rs`
+- Create: `crates/xvision-engine/tests/api_audit.rs`
 
 - [ ] **Step 1: Failing test**
 
-Create `crates/xianvec-engine/tests/api_audit.rs`:
+Create `crates/xvision-engine/tests/api_audit.rs`:
 
 ```rust
 use sqlx::SqlitePool;
-use xianvec_engine::api::{ApiContext, Actor, audit::{record, Outcome}};
+use xvision_engine::api::{ApiContext, Actor, audit::{record, Outcome}};
 
 async fn pool_with_migration() -> SqlitePool {
     let pool = SqlitePool::connect(":memory:").await.unwrap();
@@ -307,7 +307,7 @@ async fn audit_records_error_outcome() {
 
 - [ ] **Step 2: Implement**
 
-Create `crates/xianvec-engine/src/api/audit.rs`:
+Create `crates/xvision-engine/src/api/audit.rs`:
 
 ```rust
 use crate::api::{ApiContext, ApiResult};
@@ -361,7 +361,7 @@ pub async fn record(
 - [ ] **Step 3: Run tests + commit**
 
 ```bash
-cargo test -p xianvec-engine api_audit
+cargo test -p xvision-engine api_audit
 git add -A
 git commit -m "feat(engine): api::audit::record + Outcome"
 ```
@@ -372,19 +372,19 @@ git commit -m "feat(engine): api::audit::record + Outcome"
 
 ### Task 4: list() + get() against existing bundle store
 
-This task validates the api shape end-to-end against the **existing** Plan #1 filesystem bundle store. It does not introduce new persistence — `xianvec-engine/src/bundle/store.rs` from Plan #1 is the backing store.
+This task validates the api shape end-to-end against the **existing** Plan #1 filesystem bundle store. It does not introduce new persistence — `xvision-engine/src/bundle/store.rs` from Plan #1 is the backing store.
 
 **Files:**
-- Create: `crates/xianvec-engine/src/api/strategy.rs`
-- Create: `crates/xianvec-engine/tests/api_strategy.rs`
+- Create: `crates/xvision-engine/src/api/strategy.rs`
+- Create: `crates/xvision-engine/tests/api_strategy.rs`
 
 - [ ] **Step 1: Failing test**
 
-Create `crates/xianvec-engine/tests/api_strategy.rs`:
+Create `crates/xvision-engine/tests/api_strategy.rs`:
 
 ```rust
 use sqlx::SqlitePool;
-use xianvec_engine::api::{ApiContext, Actor, strategy};
+use xvision_engine::api::{ApiContext, Actor, strategy};
 
 async fn ctx_with_bundles_dir() -> (ApiContext, tempfile::TempDir) {
     let pool = SqlitePool::connect(":memory:").await.unwrap();
@@ -411,13 +411,13 @@ async fn list_returns_empty_for_fresh_home() {
 async fn get_returns_not_found_for_unknown_id() {
     let (ctx, _d) = ctx_with_bundles_dir().await;
     let r = strategy::get(&ctx, "missing").await;
-    assert!(matches!(r, Err(xianvec_engine::api::ApiError::NotFound(_))));
+    assert!(matches!(r, Err(xvision_engine::api::ApiError::NotFound(_))));
 }
 ```
 
 - [ ] **Step 2: Implement**
 
-Create `crates/xianvec-engine/src/api/strategy.rs`:
+Create `crates/xvision-engine/src/api/strategy.rs`:
 
 ```rust
 use crate::api::{ApiContext, ApiError, ApiResult, audit::{self, Outcome}};
@@ -503,7 +503,7 @@ pub async fn get(ctx: &ApiContext, agent_id: &str) -> ApiResult<StrategyBundle> 
 - [ ] **Step 3: Run tests + commit**
 
 ```bash
-cargo test -p xianvec-engine api_strategy
+cargo test -p xvision-engine api_strategy
 git add -A
 git commit -m "feat(engine): api::strategy::{list,get} representative ops"
 ```
@@ -515,17 +515,17 @@ git commit -m "feat(engine): api::strategy::{list,get} representative ops"
 ### Task 5: README in `api/` documenting the pattern for downstream plans
 
 **Files:**
-- Create: `crates/xianvec-engine/src/api/README.md`
+- Create: `crates/xvision-engine/src/api/README.md`
 
 - [ ] **Step 1: Write the README**
 
-Create `crates/xianvec-engine/src/api/README.md`:
+Create `crates/xvision-engine/src/api/README.md`:
 
 ````markdown
-# `xianvec_engine::api`
+# `xvision_engine::api`
 
 Single source of truth for every operation an external caller can invoke. CLI
-handlers (in `xianvec-cli`), MCP tools (in `xianvec-engine/src/mcp/`), and the
+handlers (in `xvision-cli`), MCP tools (in `xvision-engine/src/mcp/`), and the
 future agent runner / scheduler all dispatch through this module. **Business
 logic lives here, nowhere else.**
 
@@ -559,7 +559,7 @@ of existing handlers required.
 - [ ] **Step 2: Commit**
 
 ```bash
-git add crates/xianvec-engine/src/api/README.md
+git add crates/xvision-engine/src/api/README.md
 git commit -m "docs(engine): README for api module pattern"
 ```
 
@@ -583,10 +583,10 @@ git commit -m "docs(engine): README for api module pattern"
   it lands
 
 **Pattern downstream plans MUST follow:**
-- CLI handlers in `xianvec-cli/src/commands/<X>.rs` are thin: parse clap args
+- CLI handlers in `xvision-cli/src/commands/<X>.rs` are thin: parse clap args
   → build ApiContext → call `engine::api::<domain>::<fn>` → render result.
   Target: ≤15 lines per handler.
-- MCP tool handlers in `xianvec-engine/src/mcp/` register `engine::api::*`
+- MCP tool handlers in `xvision-engine/src/mcp/` register `engine::api::*`
   functions directly as tools — no wrapper layer.
 - New api functions always call `audit::record` on completion (ok and error
   paths both).

@@ -59,6 +59,6 @@ idea
 
 ## References
 
-- `crates/xianvec-core/src/market.rs`
+- `crates/xvision-core/src/market.rs`
 - `decisions/strategy-choices.md`
 - `strategies/x strategy/fibonacci_pullback_reentry.md`

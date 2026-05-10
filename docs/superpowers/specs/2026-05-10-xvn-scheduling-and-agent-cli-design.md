@@ -26,7 +26,7 @@ Two parallel surfaces over one engine API. The engine is the source of truth; CL
 
 ```
                   ┌──────────────────────────────┐
-                  │   xianvec-engine (core API)  │
+                  │   xvision-engine (core API)  │
                   │   strategy, risk, deploy,    │
                   │   reports, maintenance       │
                   └──────────┬───────────────────┘
@@ -34,18 +34,18 @@ Two parallel surfaces over one engine API. The engine is the source of truth; CL
               ┌──────────────┴──────────────┐
               │                             │
    ┌──────────▼─────────┐         ┌─────────▼──────────┐
-   │ xianvec-cli        │         │ xianvec-engine/    │
+   │ xvision-cli        │         │ xvision-engine/    │
    │   (external surf.) │         │   agent_runner     │
    │                    │         │   (internal surf.) │
    │ xvn strategy ...   │         │                    │
    │ xvn risk ...       │         │ tool-use loop over │
    │ xvn deploy ...     │         │ Anthropic /        │
    │ xvn report ...     │         │ OpenAI-compat      │
-   │ xvn schedule ...   │         │ via xianvec-intern │
+   │ xvn schedule ...   │         │ via xvision-intern │
    └────────────────────┘         └─────────┬──────────┘
                                             │
                                   ┌─────────▼──────────┐
-                                  │ xianvec-engine/    │
+                                  │ xvision-engine/    │
                                   │   scheduler        │
                                   │   (SQLite cron)    │
                                   │   fires schedules  │
@@ -53,15 +53,15 @@ Two parallel surfaces over one engine API. The engine is the source of truth; CL
                                   └────────────────────┘
 ```
 
-**Key invariant.** Every action exists exactly once in `xianvec-engine` as a typed function. CLI subcommand handlers and agent tool-handler both call the same function. No business logic in the CLI or in tool wrappers — they are dispatch only.
+**Key invariant.** Every action exists exactly once in `xvision-engine` as a typed function. CLI subcommand handlers and agent tool-handler both call the same function. No business logic in the CLI or in tool wrappers — they are dispatch only.
 
 **Crate layout.**
 
-- `xianvec-engine/src/api/` — new module. Typed engine functions grouped by domain.
-- `xianvec-engine/src/agent_runner/` — new module. Generic tool-use loop. Pluggable LLM dispatch.
-- `xianvec-engine/src/scheduler/` — new module. SQLite-backed cron daemon.
-- `xianvec-cli/src/commands/` — handlers thin-wrap engine API. Adds `schedule`, `risk`, `report`, `maintenance` command groups + finishes `strategy` (deactivate/archive/delete/restore).
-- `xianvec-intern` — extended with a thin trait for tool-call requests (currently briefing-only).
+- `xvision-engine/src/api/` — new module. Typed engine functions grouped by domain.
+- `xvision-engine/src/agent_runner/` — new module. Generic tool-use loop. Pluggable LLM dispatch.
+- `xvision-engine/src/scheduler/` — new module. SQLite-backed cron daemon.
+- `xvision-cli/src/commands/` — handlers thin-wrap engine API. Adds `schedule`, `risk`, `report`, `maintenance` command groups + finishes `strategy` (deactivate/archive/delete/restore).
+- `xvision-intern` — extended with a thin trait for tool-call requests (currently briefing-only).
 
 **SwarmClaw fit.** Don't port. SwarmClaw's value is multi-tenant + multi-worker + agent-handoff-DAG semantics. We have none of those needs. We keep one idea — heartbeat-based crash recovery. ~400 LOC for our scheduler vs. ~2000 to port SwarmClaw.
 
@@ -149,10 +149,10 @@ xvn report token-spend --window day|week|month
 xvn report anomaly-scan
 xvn report eod [--deployment <id>...] [--window market-open-to-now|session]
                [--baseline buy_and_hold] [--out <path.md>]
-xvn report backtest <result.json> [--out <path.md>]   # wraps xianvec_eval renderer
+xvn report backtest <result.json> [--out <path.md>]   # wraps xvision_eval renderer
 ```
 
-`xvn report eod` writes the rendered Markdown to `--out` if specified, else stdout. Same renderer/shape as the existing backtest report (`xianvec_eval::report::render`) — agent gets the structured `EodReport` via the tool call, humans get the Markdown.
+`xvn report eod` writes the rendered Markdown to `--out` if specified, else stdout. Same renderer/shape as the existing backtest report (`xvision_eval::report::render`) — agent gets the structured `EodReport` via the tool call, humans get the Markdown.
 
 **Maintenance:**
 
@@ -217,7 +217,7 @@ Surfaces as the `STATUS` column in `xvn schedule list` and the line summary in d
 
 ## 4. Engine API: action catalog
 
-All API modules live in `xianvec-engine/src/api/`. Functions take `&ApiContext { xvn_home, db_pool, bundle_store, event_store, now }`. All return `Result<T, ApiError>`.
+All API modules live in `xvision-engine/src/api/`. Functions take `&ApiContext { xvn_home, db_pool, bundle_store, event_store, now }`. All return `Result<T, ApiError>`.
 
 ### 4.1 `strategy`
 
@@ -308,7 +308,7 @@ pub struct EodReport {
 }
 ```
 
-**Implementation note.** `eod` reuses `xianvec_eval::report::render` by assembling a `BacktestResult`-shaped value from live `scheduler_events` + per-deployment fills/equity rather than from a backtest. The same Markdown shape (headline Δ-Sharpe, per-arm dashboard, regime stratification, gate verdict) renders for both backtest and live inputs — the existing report renderer becomes a shared output format. `backtest_report` is a thin pass-through to the existing renderer.
+**Implementation note.** `eod` reuses `xvision_eval::report::render` by assembling a `BacktestResult`-shaped value from live `scheduler_events` + per-deployment fills/equity rather than from a backtest. The same Markdown shape (headline Δ-Sharpe, per-arm dashboard, regime stratification, gate verdict) renders for both backtest and live inputs — the existing report renderer becomes a shared output format. `backtest_report` is a thin pass-through to the existing renderer.
 
 `anomaly_scan` heuristics:
 - Deployment heartbeat older than 2× decision_cadence → stale.
@@ -374,13 +374,13 @@ Tools mirror the engine API namespace one-to-one: `strategy.create`, `strategy.d
 
 ## 5. Internal agent runner
 
-Lives in `xianvec-engine/src/agent_runner/`. Invoked by the scheduler at fire-time. Also reusable for non-scheduled one-shot invocations (dashboard wizard, `xvn agent ask`).
+Lives in `xvision-engine/src/agent_runner/`. Invoked by the scheduler at fire-time. Also reusable for non-scheduled one-shot invocations (dashboard wizard, `xvn agent ask`).
 
 ### 5.1 Shape
 
 ```rust
 pub struct AgentRunner {
-    dispatch:         Arc<dyn LlmDispatch>,    // from xianvec-intern
+    dispatch:         Arc<dyn LlmDispatch>,    // from xvision-intern
     tool_registry:    Arc<ToolRegistry>,
     api_ctx:          Arc<ApiContext>,
     transcript_store: Arc<dyn TranscriptStore>,
@@ -455,7 +455,7 @@ Each handler is a thin shim wrapping one engine API function. `Actor` is recorde
 
 ### 5.5 Budget enforcement
 
-Cost computed per turn using the model's published rate (table in `xianvec-intern::pricing`). Anthropic prompt-cache reads charged at lower rate — dispatch records read/write cache token counts; runner accumulates cost. If pricing unavailable, falls back to `max_tokens` enforcement only with a warning at startup.
+Cost computed per turn using the model's published rate (table in `xvision-intern::pricing`). Anthropic prompt-cache reads charged at lower rate — dispatch records read/write cache token counts; runner accumulates cost. If pricing unavailable, falls back to `max_tokens` enforcement only with a warning at startup.
 
 ### 5.6 Failure modes
 
@@ -476,7 +476,7 @@ Same registry, same engine API. Only `Actor` differs.
 
 ### 6.1 Shape
 
-Single-tenant cron daemon, SQLite-backed, in `xianvec-engine/src/scheduler/`. Spawns `AgentRunner` invocations on schedule. Smaller than Plan 2c proposed: no agent-handoff DAG, no multi-worker leases, no broker dispatch.
+Single-tenant cron daemon, SQLite-backed, in `xvision-engine/src/scheduler/`. Spawns `AgentRunner` invocations on schedule. Smaller than Plan 2c proposed: no agent-handoff DAG, no multi-worker leases, no broker dispatch.
 
 ### 6.2 Schema
 
@@ -587,7 +587,7 @@ xvn never holds user trading capital. "Budget" means three distinct things; only
 - **Plan 2d (dashboard):** Adds `/schedule` route + Live cockpit panel. Wizard gains `schedule.*` tools.
 - **Plan 3 (eval engine):** `report.strategy_review` and `maintenance.refresh_eval_cache` are integration points.
 - **AR-1/2/3 (autoresearch):** `autoresearch.run_evening_cycle` is the engine API hook. AR-2's evening cycle becomes a default schedule entry shipped at install (`name='ar-evening-cycle', at='03:00 UTC'`).
-- **`xianvec-eval::report` (existing):** `report.eod` and `report.backtest_report` reuse the existing Markdown renderer. The renderer becomes a shared output format for backtest *and* live data — no duplicate report code. Live data is shaped into a `BacktestResult`-compatible struct from `scheduler_events`/event_store rows.
+- **`xvision-eval::report` (existing):** `report.eod` and `report.backtest_report` reuse the existing Markdown renderer. The renderer becomes a shared output format for backtest *and* live data — no duplicate report code. Live data is shaped into a `BacktestResult`-compatible struct from `scheduler_events`/event_store rows.
 
 **Migration:** No existing scheduler code today, so this is greenfield. New SQLite tables; no prior data to migrate.
 
@@ -650,7 +650,7 @@ At 21:00 UTC the next day:
 2. Inserts `schedule_fires` row, spawns `AgentRunner::run`.
 3. Runner builds system prompt with filtered tool catalog (`strategy.deactivate`, `report.strategy_review`, `record_outcome`).
 4. First LLM turn: model calls `report.strategy_review({window:"30d"})`.
-5. Tool registry dispatches to `xianvec_engine::api::report::strategy_review`. Returns structured `StrategyReview` with per-strategy Sharpe.
+5. Tool registry dispatches to `xvision_engine::api::report::strategy_review`. Returns structured `StrategyReview` with per-strategy Sharpe.
 6. Model reasons over results, calls `strategy.deactivate({id:"sh_X", reason:"Sharpe 0.32 < 0.5 over 30d"})` for each below-threshold strategy.
 7. Each deactivation writes to `strategy_audit` with `actor=Schedule{...}`.
 8. Model calls `record_outcome({summary:"Deactivated 3 of 12 strategies for low Sharpe", actions_taken:[...], anomalies:[]})`.

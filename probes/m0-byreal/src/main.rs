@@ -1,4 +1,4 @@
-//! M0 — pre-skeleton verification that xianvec's Rust runtime can drive
+//! M0 — pre-skeleton verification that xvision's Rust runtime can drive
 //! `@byreal-io/byreal-perps-cli` via `tokio::process::Command` and parse its
 //! JSON output. This is the exact integration shape Phase 6.3 will use, just
 //! reduced to a read-only `catalog` call (no auth, no funds, no writes).

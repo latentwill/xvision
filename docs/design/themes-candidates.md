@@ -856,5 +856,5 @@ half-day pilot of the top 1–2 themes from this set. Best candidates to slot in
 without LARP risk), **Onyx** (highest distinctiveness if execution craft is there).
 
 *Document version: 0.1 · 2026-05-10. Lives at
-`/Users/edkennedy/Code/xianvec/docs/design/themes-candidates.md`. Cross-references:
+`/Users/edkennedy/Code/xvision/docs/design/themes-candidates.md`. Cross-references:
 `themes.md`, `gptprompts.md`, `quant1.png`, `folio1.png`.*

@@ -6,17 +6,17 @@
 
 ---
 
-**Goal:** Apply Option B terminology cleanup across the xianvec codebase: `setup_id` → `cycle_id` (203 occurrences + DB schema), `Strategy` trait → `Algorithm` trait (xianvec-eval baselines), and establish naming policy for new code (`agent_id` for marketplace identity, `PerStrategyVerdict` for the wallet plan's planned per-rule verdict enum).
+**Goal:** Apply Option B terminology cleanup across the xvision codebase: `setup_id` → `cycle_id` (203 occurrences + DB schema), `Strategy` trait → `Algorithm` trait (xvision-eval baselines), and establish naming policy for new code (`agent_id` for marketplace identity, `PerStrategyVerdict` for the wallet plan's planned per-rule verdict enum).
 
 **Architecture:** Five-phase mechanical rename. Phase 0 establishes a green baseline (full workspace builds, all tests pass) so post-rename regressions are attributable. Phase 1 adds SQL migration 0002 that renames the `setups` table to `cycles` and the `setup_id` column to `cycle_id` across all six referencing tables. Phase 2 renames the Rust identifiers via `cargo check`-driven replace. Phase 3 renames the `Strategy` trait to `Algorithm`. Phase 4 documents the naming policy (no code changes; CLAUDE.md addition). Phase 5 does the verification pass (full build, full test suite, grep for stragglers).
 
-**Tech Stack:** Rust 2021 workspace; sqlx migrations under `crates/xianvec-core/migrations/`; SQLite 3.25+ (`ALTER TABLE … RENAME COLUMN` is required and is supported on every macOS/Linux toolchain shipped since 2019).
+**Tech Stack:** Rust 2021 workspace; sqlx migrations under `crates/xvision-core/migrations/`; SQLite 3.25+ (`ALTER TABLE … RENAME COLUMN` is required and is supported on every macOS/Linux toolchain shipped since 2019).
 
 **Out of scope (deferred):**
-- Renaming any of the 12 crate names (`xianvec-intern`, `xianvec-trader`, etc.) — out of scope per Option B.
+- Renaming any of the 12 crate names (`xvision-intern`, `xvision-trader`, etc.) — out of scope per Option B.
 - Renaming the `xvn strategy` CLI verb — it manages `StrategyBundle`s (engine pipeline configs); the verb-noun fit is correct.
 - Renaming `StrategyBundle`, `StrategyConfigSummary`, `StrategyAction`, `StrategyCmd` — these refer to the immutable pipeline-config concept, which Option B explicitly preserves (the dictionary-cleanup recommendation is to keep `strategy` for *that* meaning and rename the conflicting trait).
-- Renaming `arm` (the experimental-arm concept in xianvec-eval) — well-bounded, no overlap.
+- Renaming `arm` (the experimental-arm concept in xvision-eval) — well-bounded, no overlap.
 - Renaming any field that's also a JSON key in persisted artifacts (none currently — `setup_id` lives only in DB columns and Rust, not in serialized JSON).
 
 ---
@@ -25,7 +25,7 @@
 
 ```
 crates/
-├── xianvec-core/
+├── xvision-core/
 │   ├── migrations/
 │   │   ├── 0001_init.sql                                # UNCHANGED (creates pre-rename schema)
 │   │   └── 0002_rename_setup_to_cycle.sql               # NEW — renames setups→cycles, setup_id→cycle_id everywhere
@@ -34,20 +34,20 @@ crates/
 │       ├── store.rs                                     # MODIFY: 31 occurrences (struct fields, query strings, helper methods)
 │       └── market.rs                                    # MODIFY: 2 occurrences
 │
-├── xianvec-execution/
+├── xvision-execution/
 │   └── src/
 │       ├── orderly.rs                                   # MODIFY: 22 occurrences (client_order_id derivation kept; just field rename)
 │       ├── alpaca.rs                                    # MODIFY: 21 occurrences (same pattern)
 │       └── executor.rs                                  # MODIFY: 4 occurrences
 │
-├── xianvec-eval/
+├── xvision-eval/
 │   ├── src/
 │   │   ├── strategy.rs → algorithm.rs                   # RENAME FILE: trait Strategy → Algorithm
 │   │   ├── lib.rs                                       # MODIFY: pub mod algorithm; pub use ...
 │   │   ├── ab_compare.rs                                # MODIFY: Box<dyn Strategy> → Box<dyn Algorithm>
 │   │   ├── harness.rs                                   # MODIFY: 2 trait refs + 2 internal test impls
 │   │   ├── backtest.rs                                  # MODIFY: 6 setup_id occurrences
-│   │   ├── strategy.rs (the eval one is the file we're renaming; do not confuse with xianvec-engine/bundle::StrategyBundle)
+│   │   ├── strategy.rs (the eval one is the file we're renaming; do not confuse with xvision-engine/bundle::StrategyBundle)
 │   │   ├── metrics.rs                                   # MODIFY: 2 setup_id
 │   │   └── baselines/
 │   │       ├── mod.rs                                   # MODIFY: Box<dyn Strategy> → Box<dyn Algorithm>
@@ -60,25 +60,25 @@ crates/
 │   │       ├── always_short.rs                          # MODIFY: same shape
 │   │       └── buy_and_hold.rs                          # MODIFY: same shape
 │
-├── xianvec-intern/
+├── xvision-intern/
 │   └── src/
 │       ├── backend.rs                                   # MODIFY: 9 setup_id
 │       ├── cache.rs                                     # MODIFY: 6 setup_id
 │       ├── prompt.rs                                    # MODIFY: 3 setup_id
 │       ├── lib.rs                                       # MODIFY: 1 setup_id
 │
-├── xianvec-trader/
+├── xvision-trader/
 │   └── src/
 │       ├── run.rs                                       # MODIFY: 8 setup_id
 │       ├── parse.rs                                     # MODIFY: 4 setup_id
 │       └── prompt.rs                                    # MODIFY: 3 setup_id
 │
-├── xianvec-identity/
+├── xvision-identity/
 │   └── src/
 │       ├── client.rs                                    # MODIFY: 12 setup_id
 │       └── manifest.rs                                  # MODIFY: 7 setup_id (do NOT touch StrategyConfigSummary)
 │
-├── xianvec-cli/
+├── xvision-cli/
 │   └── src/
 │       ├── lib.rs                                       # MODIFY: 7 setup_id (CLI arg names + command dispatch)
 │       └── commands/
@@ -88,11 +88,11 @@ crates/
 │           ├── run_setup.rs                             # MODIFY: 2 setup_id (NOTE: filename "run_setup" is the verb — leave the file name; only the field/arg renames)
 │           └── intern.rs                                # MODIFY: 1 setup_id
 │
-├── xianvec-risk/
+├── xvision-risk/
 │   └── src/
 │       └── lib.rs                                       # MODIFY: 1 setup_id
 │
-└── xianvec-harness/
+└── xvision-harness/
     └── src/
         └── lib.rs                                       # MODIFY: 1 setup_id
 
@@ -150,11 +150,11 @@ This tag is the rollback target if Phase 2 goes sideways.
 ### Task 1.1: Write migration 0002
 
 **Files:**
-- Create: `crates/xianvec-core/migrations/0002_rename_setup_to_cycle.sql`
+- Create: `crates/xvision-core/migrations/0002_rename_setup_to_cycle.sql`
 
 - [ ] **Step 1: Write the migration**
 
-Create `crates/xianvec-core/migrations/0002_rename_setup_to_cycle.sql` with exactly:
+Create `crates/xvision-core/migrations/0002_rename_setup_to_cycle.sql` with exactly:
 
 ```sql
 -- 0002: Rename setup_id → cycle_id and setups → cycles.
@@ -198,8 +198,8 @@ CREATE INDEX IF NOT EXISTS idx_traces_run_cycle   ON traces(run_id, cycle_id);
 Run:
 ```bash
 rm -f /tmp/xvn-rename-test.db
-sqlite3 /tmp/xvn-rename-test.db < crates/xianvec-core/migrations/0001_init.sql
-sqlite3 /tmp/xvn-rename-test.db < crates/xianvec-core/migrations/0002_rename_setup_to_cycle.sql
+sqlite3 /tmp/xvn-rename-test.db < crates/xvision-core/migrations/0001_init.sql
+sqlite3 /tmp/xvn-rename-test.db < crates/xvision-core/migrations/0002_rename_setup_to_cycle.sql
 sqlite3 /tmp/xvn-rename-test.db ".schema cycles"
 sqlite3 /tmp/xvn-rename-test.db ".schema decisions"
 ```
@@ -236,18 +236,18 @@ If `ALTER TABLE … RENAME COLUMN` did not propagate the FK reference, replace t
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/xianvec-core/migrations/0002_rename_setup_to_cycle.sql
+git add crates/xvision-core/migrations/0002_rename_setup_to_cycle.sql
 git commit -m "feat(db): migration 0002 renames setup_id → cycle_id"
 ```
 
 ### Task 1.2: Update Store::migrate to apply 0002 automatically
 
 **Files:**
-- Modify: `crates/xianvec-core/src/store.rs` (the `Store::migrate` method)
+- Modify: `crates/xvision-core/src/store.rs` (the `Store::migrate` method)
 
 - [ ] **Step 1: Locate the migrate method**
 
-Run: `rg -n "fn migrate" crates/xianvec-core/src/store.rs`
+Run: `rg -n "fn migrate" crates/xvision-core/src/store.rs`
 Expected: a method that runs the migrations dir in lexical order. If it uses `sqlx::migrate!("./migrations")`, no code change is needed — sqlx picks up the new file automatically; skip steps 2-3.
 
 - [ ] **Step 2: If migrate uses an explicit list, append the new migration**
@@ -256,13 +256,13 @@ If the migrate method explicitly enumerates each migration file (rather than rel
 
 - [ ] **Step 3: Run the existing migration test**
 
-Run: `cargo test -p xianvec-core --lib migrate`
+Run: `cargo test -p xvision-core --lib migrate`
 Expected: all migration tests pass.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/xianvec-core/src/store.rs
+git add crates/xvision-core/src/store.rs
 git commit -m "feat(db): wire migration 0002 into Store::migrate"
 ```
 
@@ -274,19 +274,19 @@ git commit -m "feat(db): wire migration 0002 into Store::migrate"
 
 This is the wide mechanical change. ~203 occurrences across ~30 files. Do it in one commit per crate so each crate's tests pass independently after its commit.
 
-### Task 2.1: Rename in `xianvec-core`
+### Task 2.1: Rename in `xvision-core`
 
 **Files:**
-- Modify: `crates/xianvec-core/src/store.rs` (31 occurrences)
-- Modify: `crates/xianvec-core/src/trading.rs` (5 occurrences — `TraderDecision.setup_id`, `InternBriefing.setup_id`, `OpenPosition.setup_id`, etc.)
-- Modify: `crates/xianvec-core/src/market.rs` (2 occurrences)
+- Modify: `crates/xvision-core/src/store.rs` (31 occurrences)
+- Modify: `crates/xvision-core/src/trading.rs` (5 occurrences — `TraderDecision.setup_id`, `InternBriefing.setup_id`, `OpenPosition.setup_id`, etc.)
+- Modify: `crates/xvision-core/src/market.rs` (2 occurrences)
 
-- [ ] **Step 1: Apply the substitution in xianvec-core only**
+- [ ] **Step 1: Apply the substitution in xvision-core only**
 
 Run:
 ```bash
-find crates/xianvec-core -name '*.rs' -exec sed -i.bak 's/\bsetup_id\b/cycle_id/g' {} \;
-find crates/xianvec-core -name '*.rs.bak' -delete
+find crates/xvision-core -name '*.rs' -exec sed -i.bak 's/\bsetup_id\b/cycle_id/g' {} \;
+find crates/xvision-core -name '*.rs.bak' -delete
 ```
 
 - [ ] **Step 2: Update SQL query strings inside store.rs**
@@ -294,207 +294,207 @@ find crates/xianvec-core -name '*.rs.bak' -delete
 The sed pass already handled the literal `setup_id` inside the SQL strings (since they're raw text). But the table name `setups` also needs updating to `cycles` inside SQL strings. Search:
 
 ```bash
-rg -n '\bFROM setups\b|\bUPDATE setups\b|\bINTO setups\b|\bsetups\b' crates/xianvec-core/src/store.rs
+rg -n '\bFROM setups\b|\bUPDATE setups\b|\bINTO setups\b|\bsetups\b' crates/xvision-core/src/store.rs
 ```
 
 For each match, replace `setups` with `cycles`. Verify no remaining lowercase `setups` references in `.rs` files:
 
 ```bash
-rg -n '"[^"]*\bsetups\b[^"]*"' crates/xianvec-core/src/ 2>/dev/null
+rg -n '"[^"]*\bsetups\b[^"]*"' crates/xvision-core/src/ 2>/dev/null
 ```
 Expected: no matches.
 
 - [ ] **Step 3: Build the crate**
 
-Run: `cargo build -p xianvec-core`
+Run: `cargo build -p xvision-core`
 Expected: success. If failures, they are likely SQL string mismatches the sed missed; fix and retry.
 
 - [ ] **Step 4: Run the crate's tests**
 
-Run: `cargo test -p xianvec-core`
+Run: `cargo test -p xvision-core`
 Expected: all pass.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-core
+git add crates/xvision-core
 git commit -m "refactor(core): rename setup_id → cycle_id and setups → cycles"
 ```
 
-### Task 2.2: Rename in `xianvec-intern`
+### Task 2.2: Rename in `xvision-intern`
 
 **Files:**
-- Modify: `crates/xianvec-intern/src/backend.rs` (9 occurrences)
-- Modify: `crates/xianvec-intern/src/cache.rs` (6 occurrences)
-- Modify: `crates/xianvec-intern/src/prompt.rs` (3 occurrences)
-- Modify: `crates/xianvec-intern/src/lib.rs` (1 occurrence)
+- Modify: `crates/xvision-intern/src/backend.rs` (9 occurrences)
+- Modify: `crates/xvision-intern/src/cache.rs` (6 occurrences)
+- Modify: `crates/xvision-intern/src/prompt.rs` (3 occurrences)
+- Modify: `crates/xvision-intern/src/lib.rs` (1 occurrence)
 
 - [ ] **Step 1: Apply substitution**
 
 ```bash
-find crates/xianvec-intern -name '*.rs' -exec sed -i.bak 's/\bsetup_id\b/cycle_id/g' {} \;
-find crates/xianvec-intern -name '*.rs.bak' -delete
+find crates/xvision-intern -name '*.rs' -exec sed -i.bak 's/\bsetup_id\b/cycle_id/g' {} \;
+find crates/xvision-intern -name '*.rs.bak' -delete
 ```
 
 - [ ] **Step 2: Build and test**
 
-Run: `cargo build -p xianvec-intern && cargo test -p xianvec-intern`
+Run: `cargo build -p xvision-intern && cargo test -p xvision-intern`
 Expected: success.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/xianvec-intern
+git add crates/xvision-intern
 git commit -m "refactor(intern): rename setup_id → cycle_id"
 ```
 
-### Task 2.3: Rename in `xianvec-trader`
+### Task 2.3: Rename in `xvision-trader`
 
 **Files:**
-- Modify: `crates/xianvec-trader/src/run.rs` (8 occurrences)
-- Modify: `crates/xianvec-trader/src/parse.rs` (4 occurrences)
-- Modify: `crates/xianvec-trader/src/prompt.rs` (3 occurrences)
+- Modify: `crates/xvision-trader/src/run.rs` (8 occurrences)
+- Modify: `crates/xvision-trader/src/parse.rs` (4 occurrences)
+- Modify: `crates/xvision-trader/src/prompt.rs` (3 occurrences)
 
 - [ ] **Step 1: Apply substitution**
 
 ```bash
-find crates/xianvec-trader -name '*.rs' -exec sed -i.bak 's/\bsetup_id\b/cycle_id/g' {} \;
-find crates/xianvec-trader -name '*.rs.bak' -delete
+find crates/xvision-trader -name '*.rs' -exec sed -i.bak 's/\bsetup_id\b/cycle_id/g' {} \;
+find crates/xvision-trader -name '*.rs.bak' -delete
 ```
 
 - [ ] **Step 2: Build and test**
 
-Run: `cargo build -p xianvec-trader && cargo test -p xianvec-trader`
+Run: `cargo build -p xvision-trader && cargo test -p xvision-trader`
 Expected: success.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/xianvec-trader
+git add crates/xvision-trader
 git commit -m "refactor(trader): rename setup_id → cycle_id"
 ```
 
-### Task 2.4: Rename in `xianvec-identity`
+### Task 2.4: Rename in `xvision-identity`
 
 **Files:**
-- Modify: `crates/xianvec-identity/src/client.rs` (12 occurrences)
-- Modify: `crates/xianvec-identity/src/manifest.rs` (7 occurrences — do NOT touch `StrategyConfigSummary`, `strategy_config`, or any `Strategy*` identifier; only `setup_id`)
+- Modify: `crates/xvision-identity/src/client.rs` (12 occurrences)
+- Modify: `crates/xvision-identity/src/manifest.rs` (7 occurrences — do NOT touch `StrategyConfigSummary`, `strategy_config`, or any `Strategy*` identifier; only `setup_id`)
 
 - [ ] **Step 1: Apply substitution**
 
 ```bash
-find crates/xianvec-identity -name '*.rs' -exec sed -i.bak 's/\bsetup_id\b/cycle_id/g' {} \;
-find crates/xianvec-identity -name '*.rs.bak' -delete
+find crates/xvision-identity -name '*.rs' -exec sed -i.bak 's/\bsetup_id\b/cycle_id/g' {} \;
+find crates/xvision-identity -name '*.rs.bak' -delete
 ```
 
 - [ ] **Step 2: Verify no Strategy* identifiers were touched**
 
 ```bash
-rg -n 'Strategy' crates/xianvec-identity/src/ | head -10
+rg -n 'Strategy' crates/xvision-identity/src/ | head -10
 ```
 Expected: still see `StrategyConfigSummary`, `strategy_config` (unchanged).
 
 - [ ] **Step 3: Build and test**
 
-Run: `cargo build -p xianvec-identity && cargo test -p xianvec-identity`
+Run: `cargo build -p xvision-identity && cargo test -p xvision-identity`
 Expected: success.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/xianvec-identity
+git add crates/xvision-identity
 git commit -m "refactor(identity): rename setup_id → cycle_id"
 ```
 
-### Task 2.5: Rename in `xianvec-execution`
+### Task 2.5: Rename in `xvision-execution`
 
 **Files:**
-- Modify: `crates/xianvec-execution/src/orderly.rs` (22 occurrences)
-- Modify: `crates/xianvec-execution/src/alpaca.rs` (21 occurrences)
-- Modify: `crates/xianvec-execution/src/executor.rs` (4 occurrences)
+- Modify: `crates/xvision-execution/src/orderly.rs` (22 occurrences)
+- Modify: `crates/xvision-execution/src/alpaca.rs` (21 occurrences)
+- Modify: `crates/xvision-execution/src/executor.rs` (4 occurrences)
 
 Important: `client_order_id` derivation (`format!("tp-{}", td.setup_id)` etc.) must be updated to use the renamed field.
 
 - [ ] **Step 1: Apply substitution**
 
 ```bash
-find crates/xianvec-execution -name '*.rs' -exec sed -i.bak 's/\bsetup_id\b/cycle_id/g' {} \;
-find crates/xianvec-execution -name '*.rs.bak' -delete
+find crates/xvision-execution -name '*.rs' -exec sed -i.bak 's/\bsetup_id\b/cycle_id/g' {} \;
+find crates/xvision-execution -name '*.rs.bak' -delete
 ```
 
 - [ ] **Step 2: Verify the client_order_id format strings still compile**
 
 Run:
 ```bash
-rg -n 'format!\("(tp|sl)-\{\}' crates/xianvec-execution/src/orderly.rs
+rg -n 'format!\("(tp|sl)-\{\}' crates/xvision-execution/src/orderly.rs
 ```
 Expected: any matches show `td.cycle_id` (or whatever the surrounding variable was) — confirm the field rename propagated into the format args.
 
 - [ ] **Step 3: Build and test**
 
-Run: `cargo build -p xianvec-execution && cargo test -p xianvec-execution`
+Run: `cargo build -p xvision-execution && cargo test -p xvision-execution`
 Expected: success.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/xianvec-execution
+git add crates/xvision-execution
 git commit -m "refactor(execution): rename setup_id → cycle_id"
 ```
 
-### Task 2.6: Rename in `xianvec-eval`
+### Task 2.6: Rename in `xvision-eval`
 
 **Files:**
-- Modify: `crates/xianvec-eval/src/baselines/trader_arm.rs` (10 setup_id occurrences — do NOT change `impl Strategy for TraderArm` here; that's Task 3.x)
-- Modify: `crates/xianvec-eval/src/baselines/ma_crossover.rs` (5 setup_id)
-- Modify: `crates/xianvec-eval/src/baselines/macd_momentum.rs` (4)
-- Modify: `crates/xianvec-eval/src/baselines/buy_and_hold.rs` (4)
-- Modify: `crates/xianvec-eval/src/baselines/rsi_mean_reversion.rs` (3)
-- Modify: `crates/xianvec-eval/src/baselines/random_direction.rs` (3)
-- Modify: `crates/xianvec-eval/src/baselines/always_long.rs` (3)
-- Modify: `crates/xianvec-eval/src/baselines/always_short.rs` (3)
-- Modify: `crates/xianvec-eval/src/baselines/mod.rs` (1)
-- Modify: `crates/xianvec-eval/src/backtest.rs` (6)
-- Modify: `crates/xianvec-eval/src/strategy.rs` (2 — soon to be renamed in Phase 3, but rename setup_id first)
-- Modify: `crates/xianvec-eval/src/metrics.rs` (2)
-- Modify: `crates/xianvec-eval/src/harness.rs` (2)
+- Modify: `crates/xvision-eval/src/baselines/trader_arm.rs` (10 setup_id occurrences — do NOT change `impl Strategy for TraderArm` here; that's Task 3.x)
+- Modify: `crates/xvision-eval/src/baselines/ma_crossover.rs` (5 setup_id)
+- Modify: `crates/xvision-eval/src/baselines/macd_momentum.rs` (4)
+- Modify: `crates/xvision-eval/src/baselines/buy_and_hold.rs` (4)
+- Modify: `crates/xvision-eval/src/baselines/rsi_mean_reversion.rs` (3)
+- Modify: `crates/xvision-eval/src/baselines/random_direction.rs` (3)
+- Modify: `crates/xvision-eval/src/baselines/always_long.rs` (3)
+- Modify: `crates/xvision-eval/src/baselines/always_short.rs` (3)
+- Modify: `crates/xvision-eval/src/baselines/mod.rs` (1)
+- Modify: `crates/xvision-eval/src/backtest.rs` (6)
+- Modify: `crates/xvision-eval/src/strategy.rs` (2 — soon to be renamed in Phase 3, but rename setup_id first)
+- Modify: `crates/xvision-eval/src/metrics.rs` (2)
+- Modify: `crates/xvision-eval/src/harness.rs` (2)
 
 - [ ] **Step 1: Apply substitution**
 
 ```bash
-find crates/xianvec-eval -name '*.rs' -exec sed -i.bak 's/\bsetup_id\b/cycle_id/g' {} \;
-find crates/xianvec-eval -name '*.rs.bak' -delete
+find crates/xvision-eval -name '*.rs' -exec sed -i.bak 's/\bsetup_id\b/cycle_id/g' {} \;
+find crates/xvision-eval -name '*.rs.bak' -delete
 ```
 
 - [ ] **Step 2: Build and test**
 
-Run: `cargo build -p xianvec-eval && cargo test -p xianvec-eval`
+Run: `cargo build -p xvision-eval && cargo test -p xvision-eval`
 Expected: success.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/xianvec-eval
+git add crates/xvision-eval
 git commit -m "refactor(eval): rename setup_id → cycle_id"
 ```
 
-### Task 2.7: Rename in `xianvec-cli`
+### Task 2.7: Rename in `xvision-cli`
 
 **Files:**
-- Modify: `crates/xianvec-cli/src/lib.rs` (7 occurrences — includes CLI argument names like `setup_id` in `Command::ShowDecision { setup_id, .. }`)
-- Modify: `crates/xianvec-cli/src/commands/show_decision.rs` (8)
-- Modify: `crates/xianvec-cli/src/commands/show_briefing.rs` (3)
-- Modify: `crates/xianvec-cli/src/commands/fire_trade.rs` (4)
-- Modify: `crates/xianvec-cli/src/commands/run_setup.rs` (2 — only the field; the file itself stays `run_setup.rs`)
-- Modify: `crates/xianvec-cli/src/commands/intern.rs` (1)
+- Modify: `crates/xvision-cli/src/lib.rs` (7 occurrences — includes CLI argument names like `setup_id` in `Command::ShowDecision { setup_id, .. }`)
+- Modify: `crates/xvision-cli/src/commands/show_decision.rs` (8)
+- Modify: `crates/xvision-cli/src/commands/show_briefing.rs` (3)
+- Modify: `crates/xvision-cli/src/commands/fire_trade.rs` (4)
+- Modify: `crates/xvision-cli/src/commands/run_setup.rs` (2 — only the field; the file itself stays `run_setup.rs`)
+- Modify: `crates/xvision-cli/src/commands/intern.rs` (1)
 
 Important: CLI argument names visible to operators change here. `xvn show-decision --setup-id <id>` becomes `xvn show-decision --cycle-id <id>`. This is a breaking CLI change for the operator. There is one operator (the user); this is acceptable. Document in commit message.
 
 - [ ] **Step 1: Apply substitution**
 
 ```bash
-find crates/xianvec-cli -name '*.rs' -exec sed -i.bak 's/\bsetup_id\b/cycle_id/g' {} \;
-find crates/xianvec-cli -name '*.rs.bak' -delete
+find crates/xvision-cli -name '*.rs' -exec sed -i.bak 's/\bsetup_id\b/cycle_id/g' {} \;
+find crates/xvision-cli -name '*.rs.bak' -delete
 ```
 
 - [ ] **Step 2: Verify CLI arg attribute spellings**
@@ -502,25 +502,25 @@ find crates/xianvec-cli -name '*.rs.bak' -delete
 The sed handles `setup_id` but CLI args may use `--setup-id` (kebab-case in the CLI). Search:
 
 ```bash
-rg -n '"setup-id"|"setup_id"|setup-id' crates/xianvec-cli/src/
+rg -n '"setup-id"|"setup_id"|setup-id' crates/xvision-cli/src/
 ```
 
 For any match, replace with the cycle equivalent (`cycle-id` for kebab-case, `cycle_id` for snake_case). If clap derives the CLI arg from the field name automatically, no manual change needed; clap will now expose `--cycle-id`.
 
 - [ ] **Step 3: Build and test**
 
-Run: `cargo build -p xianvec-cli && cargo test -p xianvec-cli`
+Run: `cargo build -p xvision-cli && cargo test -p xvision-cli`
 Expected: success. Test fixtures may need their argument strings updated if they pass `--setup-id` literally.
 
 - [ ] **Step 4: Smoke-test the CLI**
 
-Run: `cargo run -p xianvec-cli -- show-decision --help 2>&1 | head -20`
+Run: `cargo run -p xvision-cli -- show-decision --help 2>&1 | head -20`
 Expected: usage shows `--cycle-id` (not `--setup-id`).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/xianvec-cli
+git add crates/xvision-cli
 git commit -m "refactor(cli)!: rename --setup-id arg → --cycle-id
 
 BREAKING: CLI argument --setup-id is now --cycle-id. Single-operator project pre-launch; no external users."
@@ -529,14 +529,14 @@ BREAKING: CLI argument --setup-id is now --cycle-id. Single-operator project pre
 ### Task 2.8: Rename in remaining crates (risk, harness, engine if any)
 
 **Files:**
-- Modify: `crates/xianvec-risk/src/lib.rs` (1)
-- Modify: `crates/xianvec-harness/src/lib.rs` (1)
-- Plus any `setup_id` still found in xianvec-engine, xianvec-mcp, xianvec-data (likely none; verify)
+- Modify: `crates/xvision-risk/src/lib.rs` (1)
+- Modify: `crates/xvision-harness/src/lib.rs` (1)
+- Plus any `setup_id` still found in xvision-engine, xvision-mcp, xvision-data (likely none; verify)
 
 - [ ] **Step 1: Apply substitution**
 
 ```bash
-find crates/xianvec-risk crates/xianvec-harness crates/xianvec-engine crates/xianvec-mcp crates/xianvec-data -name '*.rs' -exec sed -i.bak 's/\bsetup_id\b/cycle_id/g' {} \;
+find crates/xvision-risk crates/xvision-harness crates/xvision-engine crates/xvision-mcp crates/xvision-data -name '*.rs' -exec sed -i.bak 's/\bsetup_id\b/cycle_id/g' {} \;
 find crates -name '*.rs.bak' -delete
 ```
 
@@ -572,32 +572,32 @@ git commit -m "refactor: rename setup_id → cycle_id in remaining crates"
 
 ## Phase 3 — `Strategy` trait → `Algorithm` trait
 
-The `Strategy` trait lives in `xianvec-eval` and is implemented by 8 baselines + a test impl. The trait's purpose is "an executable trading-decision producer that runs against a fixed input and emits an `Action`-like output." `Algorithm` captures that role without colliding with the marketplace `strategy` concept (i.e., `StrategyBundle`).
+The `Strategy` trait lives in `xvision-eval` and is implemented by 8 baselines + a test impl. The trait's purpose is "an executable trading-decision producer that runs against a fixed input and emits an `Action`-like output." `Algorithm` captures that role without colliding with the marketplace `strategy` concept (i.e., `StrategyBundle`).
 
 ### Task 3.1: Rename `strategy.rs` → `algorithm.rs`
 
 **Files:**
-- Rename: `crates/xianvec-eval/src/strategy.rs` → `crates/xianvec-eval/src/algorithm.rs`
-- Modify: `crates/xianvec-eval/src/lib.rs`
+- Rename: `crates/xvision-eval/src/strategy.rs` → `crates/xvision-eval/src/algorithm.rs`
+- Modify: `crates/xvision-eval/src/lib.rs`
 
 - [ ] **Step 1: Move the file**
 
 ```bash
-git mv crates/xianvec-eval/src/strategy.rs crates/xianvec-eval/src/algorithm.rs
+git mv crates/xvision-eval/src/strategy.rs crates/xvision-eval/src/algorithm.rs
 ```
 
 - [ ] **Step 2: Rename the trait inside the file**
 
-In `crates/xianvec-eval/src/algorithm.rs`, replace `pub trait Strategy` with `pub trait Algorithm`. Verify with:
+In `crates/xvision-eval/src/algorithm.rs`, replace `pub trait Strategy` with `pub trait Algorithm`. Verify with:
 
 ```bash
-rg -n 'trait (Strategy|Algorithm)' crates/xianvec-eval/src/algorithm.rs
+rg -n 'trait (Strategy|Algorithm)' crates/xvision-eval/src/algorithm.rs
 ```
 Expected: one line, `pub trait Algorithm: Send + Sync {`.
 
 - [ ] **Step 3: Update lib.rs**
 
-In `crates/xianvec-eval/src/lib.rs`, find:
+In `crates/xvision-eval/src/lib.rs`, find:
 
 ```rust
 pub mod strategy;
@@ -617,11 +617,11 @@ pub use algorithm::Algorithm;
 
 - [ ] **Step 4: Build the crate (will fail; that's expected)**
 
-Run: `cargo build -p xianvec-eval`
+Run: `cargo build -p xvision-eval`
 Expected: failures of the form `cannot find trait 'Strategy'` in baselines/* and other places. Capture the file list:
 
 ```bash
-cargo build -p xianvec-eval 2>&1 | grep "cannot find trait" | head
+cargo build -p xvision-eval 2>&1 | grep "cannot find trait" | head
 ```
 
 This is the input to Task 3.2.
@@ -629,35 +629,35 @@ This is the input to Task 3.2.
 ### Task 3.2: Update all `impl Strategy` and `dyn Strategy` references
 
 **Files:**
-- Modify: `crates/xianvec-eval/src/baselines/trader_arm.rs`
-- Modify: `crates/xianvec-eval/src/baselines/ma_crossover.rs`
-- Modify: `crates/xianvec-eval/src/baselines/macd_momentum.rs`
-- Modify: `crates/xianvec-eval/src/baselines/rsi_mean_reversion.rs`
-- Modify: `crates/xianvec-eval/src/baselines/random_direction.rs`
-- Modify: `crates/xianvec-eval/src/baselines/always_long.rs`
-- Modify: `crates/xianvec-eval/src/baselines/always_short.rs`
-- Modify: `crates/xianvec-eval/src/baselines/buy_and_hold.rs`
-- Modify: `crates/xianvec-eval/src/baselines/mod.rs`
-- Modify: `crates/xianvec-eval/src/ab_compare.rs`
-- Modify: `crates/xianvec-eval/src/harness.rs` (also the two test impls inside)
+- Modify: `crates/xvision-eval/src/baselines/trader_arm.rs`
+- Modify: `crates/xvision-eval/src/baselines/ma_crossover.rs`
+- Modify: `crates/xvision-eval/src/baselines/macd_momentum.rs`
+- Modify: `crates/xvision-eval/src/baselines/rsi_mean_reversion.rs`
+- Modify: `crates/xvision-eval/src/baselines/random_direction.rs`
+- Modify: `crates/xvision-eval/src/baselines/always_long.rs`
+- Modify: `crates/xvision-eval/src/baselines/always_short.rs`
+- Modify: `crates/xvision-eval/src/baselines/buy_and_hold.rs`
+- Modify: `crates/xvision-eval/src/baselines/mod.rs`
+- Modify: `crates/xvision-eval/src/ab_compare.rs`
+- Modify: `crates/xvision-eval/src/harness.rs` (also the two test impls inside)
 
 - [ ] **Step 1: Apply targeted replacements**
 
-These replacements are word-bounded but limited to `xianvec-eval` to avoid touching `StrategyBundle`, `StrategyConfigSummary`, etc. in other crates:
+These replacements are word-bounded but limited to `xvision-eval` to avoid touching `StrategyBundle`, `StrategyConfigSummary`, etc. in other crates:
 
 ```bash
-find crates/xianvec-eval -name '*.rs' -exec sed -i.bak 's/\bimpl Strategy\b/impl Algorithm/g' {} \;
-find crates/xianvec-eval -name '*.rs' -exec sed -i.bak 's/\bdyn Strategy\b/dyn Algorithm/g' {} \;
-find crates/xianvec-eval -name '*.rs' -exec sed -i.bak 's/\buse crate::strategy::Strategy\b/use crate::algorithm::Algorithm/g' {} \;
-find crates/xianvec-eval -name '*.rs' -exec sed -i.bak 's/\buse crate::Strategy\b/use crate::Algorithm/g' {} \;
-find crates/xianvec-eval -name '*.rs' -exec sed -i.bak 's/\bxianvec_eval::Strategy\b/xianvec_eval::Algorithm/g' {} \;
-find crates/xianvec-eval -name '*.rs.bak' -delete
+find crates/xvision-eval -name '*.rs' -exec sed -i.bak 's/\bimpl Strategy\b/impl Algorithm/g' {} \;
+find crates/xvision-eval -name '*.rs' -exec sed -i.bak 's/\bdyn Strategy\b/dyn Algorithm/g' {} \;
+find crates/xvision-eval -name '*.rs' -exec sed -i.bak 's/\buse crate::strategy::Strategy\b/use crate::algorithm::Algorithm/g' {} \;
+find crates/xvision-eval -name '*.rs' -exec sed -i.bak 's/\buse crate::Strategy\b/use crate::Algorithm/g' {} \;
+find crates/xvision-eval -name '*.rs' -exec sed -i.bak 's/\bxvision_eval::Strategy\b/xvision_eval::Algorithm/g' {} \;
+find crates/xvision-eval -name '*.rs.bak' -delete
 ```
 
-- [ ] **Step 2: Inspect any remaining `Strategy` reference in xianvec-eval**
+- [ ] **Step 2: Inspect any remaining `Strategy` reference in xvision-eval**
 
 ```bash
-rg -n '\bStrategy\b' crates/xianvec-eval/src/
+rg -n '\bStrategy\b' crates/xvision-eval/src/
 ```
 Expected: zero matches. If matches remain, they are likely:
 - A `Strategy` argument-type in a function signature: replace with `Algorithm`.
@@ -666,18 +666,18 @@ Expected: zero matches. If matches remain, they are likely:
 
 - [ ] **Step 3: Build the crate**
 
-Run: `cargo build -p xianvec-eval`
+Run: `cargo build -p xvision-eval`
 Expected: success.
 
 - [ ] **Step 4: Run the crate's tests**
 
-Run: `cargo test -p xianvec-eval`
+Run: `cargo test -p xvision-eval`
 Expected: success.
 
 - [ ] **Step 5: Build and test the workspace (catches downstream consumers)**
 
 Run: `cargo build --workspace && cargo test --workspace`
-Expected: success. If a downstream crate (e.g., xianvec-cli, xianvec-engine) imports `xianvec_eval::Strategy`, that import fails and the build error names the file. Replace with `xianvec_eval::Algorithm`.
+Expected: success. If a downstream crate (e.g., xvision-cli, xvision-engine) imports `xvision_eval::Strategy`, that import fails and the build error names the file. Replace with `xvision_eval::Algorithm`.
 
 - [ ] **Step 6: Commit**
 
@@ -695,13 +695,13 @@ No code changes here — only documentation that locks in the policy decisions f
 ### Task 4.1: Add a "Terminology" section to CLAUDE.md
 
 **Files:**
-- Modify: `/Users/edkennedy/Code/xianvec/CLAUDE.md` (project-level CLAUDE.md if it exists; or create the project section in the parent)
+- Modify: `/Users/edkennedy/Code/xvision/CLAUDE.md` (project-level CLAUDE.md if it exists; or create the project section in the parent)
 
 - [ ] **Step 1: Locate the project-level CLAUDE.md**
 
-Run: `ls /Users/edkennedy/Code/xianvec/CLAUDE.md /Users/edkennedy/Code/xianvec/.claude/CLAUDE.md 2>/dev/null`
+Run: `ls /Users/edkennedy/Code/xvision/CLAUDE.md /Users/edkennedy/Code/xvision/.claude/CLAUDE.md 2>/dev/null`
 
-If neither exists, create `/Users/edkennedy/Code/xianvec/CLAUDE.md`. Otherwise, modify the existing one.
+If neither exists, create `/Users/edkennedy/Code/xvision/CLAUDE.md`. Otherwise, modify the existing one.
 
 - [ ] **Step 2: Append the Terminology section**
 
@@ -710,7 +710,7 @@ Add the following section. If the file already has a `## Terminology` section, r
 ```markdown
 ## Terminology
 
-Naming conventions across the xianvec codebase. Lock in 2026-05-10 (terminology
+Naming conventions across the xvision codebase. Lock in 2026-05-10 (terminology
 rename Option B). Diverging from these names should require a written rationale.
 
 | Concept | Use this name | Don't use |
@@ -718,7 +718,7 @@ rename Option B). Diverging from these names should require a written rationale.
 | Per-decision-cycle id (briefing → decision → outcome) | `cycle_id` | ~~setup_id~~ |
 | Pre-mint local id of a marketplace pipeline | `agent_id` (string ULID, becomes the NFT token id post-mint) | ~~strategy_id~~ |
 | Immutable pipeline configuration (Phase-1 engine artifact) | `StrategyBundle` (existing type) | (no rename) |
-| Trading-decision producer trait (xianvec-eval baselines) | `Algorithm` | ~~Strategy~~ |
+| Trading-decision producer trait (xvision-eval baselines) | `Algorithm` | ~~Strategy~~ |
 | One experimental arm in A/B compare | `arm` / `Box<dyn Algorithm>` | (no change) |
 | The trader's call (input to risk) | `TraderDecision` | (no change) |
 | The risk gate's verdict (Approved / Modified / Vetoed) | `RiskDecision` | (no change) |
@@ -811,8 +811,8 @@ Expected: pass count matches `/tmp/xvn-tests-pre-rename.txt`. If pass count chan
 echo "setup_id remaining (should be 0):"
 rg -c '\bsetup_id\b' --type rust 2>/dev/null | awk -F: '{s+=$2} END {print s+0}'
 
-echo "Strategy in xianvec-eval (should be 0 — only Algorithm):"
-rg -c '\bStrategy\b' crates/xianvec-eval/src/ 2>/dev/null | awk -F: '{s+=$2} END {print s+0}'
+echo "Strategy in xvision-eval (should be 0 — only Algorithm):"
+rg -c '\bStrategy\b' crates/xvision-eval/src/ 2>/dev/null | awk -F: '{s+=$2} END {print s+0}'
 ```
 Expected: both 0.
 
@@ -821,11 +821,11 @@ Expected: both 0.
 ```bash
 rg -l 'StrategyBundle|StrategyConfigSummary' crates/ --type rust
 ```
-Expected: matches in xianvec-engine and xianvec-identity (not zero, not in xianvec-eval).
+Expected: matches in xvision-engine and xvision-identity (not zero, not in xvision-eval).
 
 - [ ] **Step 5: Smoke-test a CLI command end-to-end**
 
-Run: `cargo run -p xianvec-cli -- --help 2>&1 | head -30`
+Run: `cargo run -p xvision-cli -- --help 2>&1 | head -30`
 Expected: success, no `setup` references in arg names.
 
 - [ ] **Step 6: Smoke-test the migration on an existing (pre-migration) database, if one exists**
@@ -836,7 +836,7 @@ If a developer DB exists at `xvn.db` or similar, point the migration at it:
 DB_PATH=$(find . -name "xvn*.db" -maxdepth 3 2>/dev/null | head -1)
 if [ -n "$DB_PATH" ]; then
   echo "Running migration on $DB_PATH"
-  sqlite3 "$DB_PATH" < crates/xianvec-core/migrations/0002_rename_setup_to_cycle.sql
+  sqlite3 "$DB_PATH" < crates/xvision-core/migrations/0002_rename_setup_to_cycle.sql
   sqlite3 "$DB_PATH" "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;"
 fi
 ```
