@@ -356,5 +356,120 @@ secrets inline. The setup script writes `$REPO_ROOT/.env.local`
 
 ---
 
+## Scale tiers
+
+xvision's design assumes a single operator at v1. Several architectural
+breakpoints surface at specific user/agent counts; this section documents them
+so capital + ops decisions can be planned, not stumbled into.
+
+### N = 1 (single-operator, today)
+
+- **Custody:** single env-var `CREDENTIAL_SECRET` encrypts the operator's
+  trading key. Acceptable.
+- **Operations:** operator runs `tail -f` on tracing, fires `xvn` commands
+  manually. Acceptable; ~2-6 hrs/day.
+- **Compliance:** open-source code, self-hosted. No OFAC screening obligation
+  on the maintainers (operator's jurisdiction is operator's responsibility).
+- **Storage:** single SQLite file. Backups via `sqlite3 .backup` once a day if
+  trades > $0.
+
+### N = 10 (multiple users on one operator-managed instance)
+
+Three things break here:
+
+- **Custody:** the env-var-derived single secret encrypts every user's trading
+  key. One env var compromise → 10 keys lost. **Migrate to:** per-user HKDF-
+  derived key (already implemented in `TradingKeyStore`); rotate the master
+  secret quarterly.
+- **Operator load:** 6 hrs/day becomes 12. **Migrate to:** scheduled `xvn eod`
+  reports + alert routing (Item E of this plan); operator-on-call rotation if
+  > 1 person.
+- **Compliance:** the moment xvision's marketplace contract takes fees from
+  10 distinct EVM addresses, OFAC screening becomes load-bearing for the
+  hosting entity (not the open-source code itself). **Migrate to:** OFAC
+  screening at the marketplace contract event handler. Tracked in FOLLOWUPS.
+
+### N = 100
+
+- **Storage:** SQLite write throughput hits its ceiling around hundreds of
+  concurrent writes/sec. Reservations + audit-log + ledger all serialize. WAL
+  mode helps to ~thousands; beyond that, evaluate Postgres.
+- **Autoresearcher cost:** at N=100 with each agent generating 100 mutator
+  variants/night × 50K-token briefings × Sonnet-class evaluation, the LLM bill
+  is ~$15K/month. **Migrate to:** subscription tier or hosted-runtime line
+  (research Theme G).
+- **Reputation governance:** when 100+ agents have attestations, the question
+  "who can attest?" becomes load-bearing. v1 gates attestations to operator +
+  judges. **Migrate to:** explicit governance ladder before this scale.
+- **Custody (continued):** at N=100, single-process key custody becomes a real
+  concentration risk. **Migrate to:** MPC or smart-account paths (FOLLOWUPS).
+
+### N = 1000
+
+- **Storage:** Postgres mandatory.
+- **Operations:** 24/7 on-call. Incident-response runbook required (see
+  `## Incident response` below).
+- **Distribution:** one operator/instance no longer scales; multi-tenant
+  deployment with per-tenant isolation. Effectively a v3 architecture.
+
+### Where the breakpoints come from
+
+- N=1 → N=10 ops break: research Run 8 (operator daily journal — daily review
+  becomes full-time at N=10).
+- N=10 → N=100 storage + autoresearcher cost: research Run 11 (scaling tree).
+- N=100 → N=1000 distribution: research Run 11 + Run 4 (mutation-loop cost).
+
+### Default cadence
+
+- Run `xvn eod` daily (scheduled via Plan 2c when it lands; manual until then).
+- Read MANUAL.md once a quarter to confirm the scale tier still matches reality.
+- Review FOLLOWUPS.md monthly for items that have become load-bearing.
+
+---
+
+## Incident response
+
+Use this checklist when something is wrong or might be wrong. The order is
+fixed: contain first, diagnose second, communicate third, post-mortem fourth.
+
+### 1. Contain (≤ 5 min)
+
+- [ ] Run `xvn kill --all` to halt every dispatcher. New orders blocked.
+- [ ] Decide whether to also `xvn emergency-close --all`. Defaults: YES if
+      "wrong direction" exposure is suspected, NO if you're investigating a
+      tooling glitch with no exposure component.
+- [ ] Post a one-line status to wherever your status channel is: "Halt at
+      <UTC time>; investigating <one-line>." Don't wait for completeness.
+
+### 2. Diagnose (≤ 30 min)
+
+- [ ] Pull the last hour of audit log: `xvn audit agent --since 1h --all`.
+- [ ] Cross-check positions: `xvn reconcile --user op --dry-run` — server
+      state vs ledger.
+- [ ] Identify whether the issue is:
+      - **Strategy bug** (specific agent producing wrong decisions)
+      - **Risk engine miss** (decision passed risk that shouldn't have)
+      - **Execution glitch** (signed payload mismatched, fill mismatched)
+      - **Broker outage** (Orderly returned 5xx)
+      - **Operator error** (wrong CLI command run)
+- [ ] If the issue is constrained to one agent, halt that agent specifically
+      and unhalt the others: `xvn kill --strategy <id>; xvn unhalt --all`.
+
+### 3. Communicate (≤ 60 min after detection)
+
+- [ ] Update status channel with what you've found.
+- [ ] If user funds are or were at risk, the open-source disclosure SLA is:
+      a public summary within 7 days of containment (not 30 — sooner is more
+      credible). Post-launch, this can be a `SECURITY.md` policy.
+
+### 4. Post-mortem (within 7 days)
+
+- [ ] Write up: timeline, root cause, what worked, what didn't, what changes.
+- [ ] If the post-mortem identifies a missing safety check, add a task to a
+      plan that addresses it. Don't leave the gap open.
+- [ ] If the post-mortem reveals a policy or runbook gap, update MANUAL.md.
+
+---
+
 *Last updated: 2026-05-04. Cross-references: `FOLLOWUPS.md`,
 `implementation-plan.md` Phases 9–12.*
