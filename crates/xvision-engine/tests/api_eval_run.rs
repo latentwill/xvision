@@ -7,6 +7,7 @@
 use std::sync::Arc;
 
 use sqlx::SqlitePool;
+use xvision_data::fixtures::ensure_test_fixture;
 use xvision_engine::agent::llm::{LlmDispatch, MockDispatch};
 use xvision_engine::api::eval::{self, EvalRunRequest};
 use xvision_engine::api::{Actor, ApiContext, ApiError};
@@ -93,7 +94,7 @@ async fn run_with_deps_completes_paper_run_with_mocks() {
     let scenario_id = "flash-crash-2024-08";
 
     let mock_broker = Arc::new(MockBrokerSurface::new(100_000.0));
-    let broker: Arc<dyn BrokerSurface> = mock_broker.clone();
+    let broker: Option<Arc<dyn BrokerSurface>> = Some(mock_broker.clone());
     let dispatch = hold_dispatch();
     let tools = Arc::new(ToolRegistry::empty());
 
@@ -126,7 +127,7 @@ async fn run_returns_not_found_for_unknown_strategy() {
     let (ctx, _d) = ctx_with_tables().await;
 
     let mock_broker = Arc::new(MockBrokerSurface::new(100_000.0));
-    let broker: Arc<dyn BrokerSurface> = mock_broker;
+    let broker: Option<Arc<dyn BrokerSurface>> = Some(mock_broker);
     let dispatch = hold_dispatch();
     let tools = Arc::new(ToolRegistry::empty());
 
@@ -156,7 +157,7 @@ async fn run_returns_not_found_for_unknown_scenario() {
     save_test_bundle(&ctx, agent_id).await;
 
     let mock_broker = Arc::new(MockBrokerSurface::new(100_000.0));
-    let broker: Arc<dyn BrokerSurface> = mock_broker;
+    let broker: Option<Arc<dyn BrokerSurface>> = Some(mock_broker);
     let dispatch = hold_dispatch();
     let tools = Arc::new(ToolRegistry::empty());
 
@@ -180,13 +181,57 @@ async fn run_returns_not_found_for_unknown_scenario() {
 }
 
 #[tokio::test]
-async fn run_rejects_backtest_mode_until_executor_lands() {
+async fn run_with_deps_completes_backtest_run_with_mocks() {
     let (ctx, _d) = ctx_with_tables().await;
     let agent_id = "01TESTBUNDLE0000000000000C";
     save_test_bundle(&ctx, agent_id).await;
 
-    let mock_broker = Arc::new(MockBrokerSurface::new(100_000.0));
-    let broker: Arc<dyn BrokerSurface> = mock_broker;
+    // Generate the synthetic fixture the flash-crash scenario points at.
+    // ensure_test_fixture is idempotent so this is safe to call repeatedly.
+    ensure_test_fixture("scenario-flash-crash-2024-08").unwrap();
+
+    let dispatch: Arc<dyn LlmDispatch> = Arc::new(MockDispatch::echo(
+        r#"{"action":"long_open","conviction":0.5,"justification":"test"}"#,
+    ));
+    let tools = Arc::new(ToolRegistry::empty());
+
+    let run = eval::run_with_deps(
+        &ctx,
+        EvalRunRequest {
+            agent_id: agent_id.into(),
+            scenario_id: "flash-crash-2024-08".into(),
+            mode: RunMode::Backtest,
+            params_override: None,
+        },
+        None, // backtest mode doesn't need a broker
+        dispatch,
+        tools,
+    )
+    .await
+    .expect("backtest run should succeed against the synthetic fixture");
+
+    assert_eq!(run.status, RunStatus::Completed);
+    let metrics = run.metrics.expect("metrics computed on completion");
+    assert!(
+        metrics.n_decisions > 0,
+        "fixture should produce at least one decision, got {}",
+        metrics.n_decisions,
+    );
+    // Decisions persist through RunStore.
+    let decisions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM eval_decisions WHERE run_id = ?1")
+        .bind(&run.id)
+        .fetch_one(&ctx.db)
+        .await
+        .unwrap();
+    assert_eq!(decisions as u32, metrics.n_decisions);
+}
+
+#[tokio::test]
+async fn run_rejects_paper_mode_without_broker() {
+    let (ctx, _d) = ctx_with_tables().await;
+    let agent_id = "01TESTBUNDLE000000000000PAP";
+    save_test_bundle(&ctx, agent_id).await;
+
     let dispatch = hold_dispatch();
     let tools = Arc::new(ToolRegistry::empty());
 
@@ -194,18 +239,18 @@ async fn run_rejects_backtest_mode_until_executor_lands() {
         &ctx,
         EvalRunRequest {
             agent_id: agent_id.into(),
-            scenario_id: canonical_scenarios()[0].id.clone(),
-            mode: RunMode::Backtest,
+            scenario_id: "flash-crash-2024-08".into(),
+            mode: RunMode::Paper,
             params_override: None,
         },
-        broker,
+        None,
         dispatch,
         tools,
     )
     .await;
     assert!(
         matches!(r, Err(ApiError::Validation(_))),
-        "expected Validation for backtest mode, got {r:?}",
+        "paper mode without a broker must reject as Validation, got {r:?}",
     );
 }
 
@@ -216,7 +261,7 @@ async fn run_writes_audit_row_on_completion() {
     save_test_bundle(&ctx, agent_id).await;
 
     let mock_broker = Arc::new(MockBrokerSurface::new(50_000.0));
-    let broker: Arc<dyn BrokerSurface> = mock_broker;
+    let broker: Option<Arc<dyn BrokerSurface>> = Some(mock_broker);
     let dispatch = hold_dispatch();
     let tools = Arc::new(ToolRegistry::empty());
 
@@ -253,7 +298,7 @@ async fn run_persists_run_to_runstore_so_get_finds_it() {
     save_test_bundle(&ctx, agent_id).await;
 
     let mock_broker = Arc::new(MockBrokerSurface::new(100_000.0));
-    let broker: Arc<dyn BrokerSurface> = mock_broker;
+    let broker: Option<Arc<dyn BrokerSurface>> = Some(mock_broker);
     let dispatch = hold_dispatch();
     let tools = Arc::new(ToolRegistry::empty());
 
