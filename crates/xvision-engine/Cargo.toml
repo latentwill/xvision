@@ -31,8 +31,9 @@ tracing     = { workspace = true }
 sqlx        = { workspace = true }
 ts-rs       = { version = "9", optional = true }
 statrs      = "0.18"
-ed25519-dalek = "2"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
 hex         = "0.4"
+rand_core   = { version = "0.6", features = ["getrandom"] }
 
 [dev-dependencies]
 proptest = { workspace = true }
