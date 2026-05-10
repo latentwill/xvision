@@ -183,6 +183,8 @@ pub enum Command {
     Store(commands::store_cmd::StoreCmd),
     /// Compute one technical indicator from a JSON price/HLC series.
     Indicator(commands::indicator::IndicatorCmd),
+    /// Run the embedded web dashboard (axum + Vite SPA).
+    Dashboard(commands::dashboard::DashboardCmd),
 }
 
 impl Cli {
@@ -263,6 +265,7 @@ impl Cli {
             Command::Risk(cmd) => commands::risk::run(cmd).await,
             Command::Store(cmd) => commands::store_cmd::run(cmd).await,
             Command::Indicator(cmd) => commands::indicator::run(cmd),
+            Command::Dashboard(cmd) => commands::dashboard::run(cmd).await,
         }
     }
 }
