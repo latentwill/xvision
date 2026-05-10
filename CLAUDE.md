@@ -45,6 +45,21 @@ cargo test --workspace
 
 The workspace expects `cargo` on PATH from `~/.cargo/bin`.
 
+## Docker
+
+Slim runtime image of the `xvn` CLI lives at `ghcr.io/latentwill/xvision`.
+Two tags: `:latest` (default-members; no on-chain identity stack) and
+`:identity` (workspace build including `xvision-identity`).
+
+Local builds:
+
+```bash
+DOCKER_BUILDKIT=1 docker build -t xvision:dev .
+docker compose run --rm xvn --version
+```
+
+See `docker/README.md` for env vars and mounts.
+
 ## Active plans
 
 See `docs/superpowers/plans/` for executable implementation plans:
