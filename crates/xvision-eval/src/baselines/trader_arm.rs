@@ -229,4 +229,49 @@ mod tests {
         assert_eq!(again.cycle_id, briefing.cycle_id);
         assert_eq!(again.bull_case, briefing.bull_case);
     }
+
+    /// Plan #7 §3.5 contract: per-arm Intern model variation must split the
+    /// cache. Two arms paired on the same `cycle_id` but pointing at different
+    /// Intern models must not share a cached briefing — Stage 1 re-runs.
+    /// Locks the existing `CacheKey` shape; no production change is required.
+    #[tokio::test]
+    async fn cache_diverges_on_intern_model_change() {
+        let cache = Arc::new(BriefingCache::new());
+        let snap = mk_snapshot();
+
+        let key_haiku = CacheKey {
+            cycle_id: snap.cycle_id,
+            provider: "anthropic".into(),
+            model: "claude-haiku-4-5".into(),
+        };
+        let key_opus = CacheKey {
+            cycle_id: snap.cycle_id,
+            provider: "anthropic".into(),
+            model: "claude-opus-4-7".into(),
+        };
+        assert_eq!(key_haiku.cycle_id, key_opus.cycle_id);
+        assert_ne!(
+            format!("{:?}", key_haiku),
+            format!("{:?}", key_opus),
+            "key changes when intern model differs"
+        );
+
+        let intern = MockIntern;
+        let briefing = intern
+            .brief(
+                "p",
+                snap.cycle_id,
+                snap.asset,
+                snap.regime,
+                snap.horizon_hours,
+            )
+            .await
+            .unwrap();
+        cache.insert(key_haiku.clone(), briefing.clone());
+        assert!(cache.get(&key_haiku).is_some());
+        assert!(
+            cache.get(&key_opus).is_none(),
+            "different intern model must miss the cache → Stage 1 re-runs"
+        );
+    }
 }
