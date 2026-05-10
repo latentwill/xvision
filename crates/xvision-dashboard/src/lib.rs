@@ -9,6 +9,7 @@ pub mod error;
 pub mod routes;
 pub mod server;
 pub mod state;
+pub mod wizard_loop;
 
 pub use server::serve;
 pub use state::AppState;
