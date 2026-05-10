@@ -12,9 +12,9 @@ use anyhow::anyhow;
 
 use xvision_core::market::MarketSnapshot;
 use xvision_core::slot::SlotRef;
-use xvision_intern::{BriefingCache, InternBackend};
+use xvision_intern::BriefingCache;
 use xvision_risk::RiskLayer;
-use xvision_trader::{TraderBackend, TraderParams};
+use xvision_trader::TraderParams;
 
 use crate::backtest::MarketBar;
 use crate::baselines::{
@@ -22,6 +22,7 @@ use crate::baselines::{
     RandomDirection, RsiMeanReversion, TraderArm,
 };
 use crate::harness::{ArmConfig, BacktestRunConfig, BacktestRunner};
+use crate::provider_registry::ProviderRegistry;
 use crate::result::BacktestResult;
 use crate::algorithm::Algorithm;
 
@@ -240,16 +241,19 @@ pub fn default_arms() -> Vec<ArmSpec> {
 }
 
 /// Run an N-arm A/B comparison. Returns the `BacktestResult` for serialisation.
+///
+/// Per-arm `ArmKind::Trader` entries may carry inline `intern` / `trader`
+/// `SlotRef` overrides; `None` falls back to the registry's
+/// `default_intern` / `default_trader`. Two arms that resolve to the same
+/// `(provider, model)` share a backend `Arc` via `ProviderRegistry`'s
+/// memoization so they reuse one HTTP client.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_ab_compare(
     snapshots: Vec<MarketSnapshot>,
     bars: Vec<MarketBar>,
     arms: Vec<ArmSpec>,
     config: BacktestRunConfig,
-    intern: Arc<dyn InternBackend>,
-    intern_provider: String,
-    intern_model: String,
-    trader: Arc<dyn TraderBackend>,
+    registry: Arc<ProviderRegistry>,
     trader_params: TraderParams,
     portfolio_provider: PortfolioProvider,
     risk: &RiskLayer,
@@ -258,25 +262,48 @@ pub async fn run_ab_compare(
 
     let arm_configs: Vec<ArmConfig> = arms
         .into_iter()
-        .map(|spec| {
+        .map(|spec| -> anyhow::Result<ArmConfig> {
             // Leak the arm name into a 'static str — harness wants &'static str.
             // The leak is bounded (one per arm per process invocation, ≤8 in
             // practice) and the runtime is short-lived.
             let static_name: &'static str = Box::leak(spec.name.clone().into_boxed_str());
             let strategy: Box<dyn Algorithm> = match spec.kind {
-                // The slot fields are read-but-ignored at this point in Plan #7
-                // (Phase 3 wires them through ProviderRegistry). Phase 2 just
-                // lands the type plumbing so the parser + CLI can populate them.
-                ArmKind::Trader { intern: _, trader: _ } => Box::new(TraderArm::new(
-                    static_name,
-                    Arc::clone(&intern),
-                    intern_provider.clone(),
-                    intern_model.clone(),
-                    Arc::clone(&cache),
-                    Arc::clone(&trader),
-                    trader_params.clone(),
-                    Arc::clone(&portfolio_provider),
-                )),
+                ArmKind::Trader { intern, trader } => {
+                    let intern_slot =
+                        intern.unwrap_or_else(|| registry.default_intern.clone());
+                    let trader_slot =
+                        trader.unwrap_or_else(|| registry.default_trader.clone());
+                    let intern_backend = registry.intern_backend(&intern_slot)?;
+                    let trader_backend = registry.trader_backend(&trader_slot)?;
+                    // Resolve the empty-provider sentinel (from `intern_model=` /
+                    // `trader_model=` shorthand) to the registry default so the
+                    // briefing cache key sees the explicit provider.
+                    let resolved_intern = if intern_slot.provider.is_empty() {
+                        SlotRef::new(
+                            registry.default_intern.provider.clone(),
+                            intern_slot.model.clone(),
+                        )
+                    } else {
+                        intern_slot
+                    };
+                    tracing::info!(
+                        target: "ab_compare",
+                        arm = %spec.name,
+                        intern = %resolved_intern,
+                        trader = %trader_slot,
+                        "arm dispatch"
+                    );
+                    Box::new(TraderArm::new(
+                        static_name,
+                        intern_backend,
+                        resolved_intern.provider.clone(),
+                        resolved_intern.model.clone(),
+                        Arc::clone(&cache),
+                        trader_backend,
+                        trader_params.clone(),
+                        Arc::clone(&portfolio_provider),
+                    ))
+                }
                 ArmKind::BuyAndHold => Box::new(BuyAndHold::new()),
                 ArmKind::AlwaysLong => Box::new(AlwaysLong),
                 ArmKind::AlwaysShort => Box::new(AlwaysShort),
@@ -285,12 +312,12 @@ pub async fn run_ab_compare(
                 ArmKind::MaCrossover { fast, slow } => Box::new(MaCrossover::new(fast, slow)),
                 ArmKind::MacdMomentum => Box::new(MacdMomentum::new()),
             };
-            ArmConfig {
+            Ok(ArmConfig {
                 name: spec.name,
                 strategy,
-            }
+            })
         })
-        .collect();
+        .collect::<anyhow::Result<Vec<_>>>()?;
 
     let mut runner = BacktestRunner::new(config, arm_configs)?;
     let result = runner.run(&snapshots, &bars, risk).await?;
