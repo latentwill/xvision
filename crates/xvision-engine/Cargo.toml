@@ -12,8 +12,9 @@ name = "xvision_engine"
 path = "src/lib.rs"
 
 [dependencies]
-xvision-core   = { path = "../xvision-core" }
-xvision-data   = { path = "../xvision-data" }
+xvision-core      = { path = "../xvision-core" }
+xvision-data      = { path = "../xvision-data" }
+xvision-execution = { path = "../xvision-execution" }
 
 reqwest     = { workspace = true }
 
