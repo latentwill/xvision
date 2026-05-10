@@ -7,6 +7,7 @@
 //! roadmap.
 
 pub mod executor;
+pub mod metrics;
 pub mod run;
 pub mod scenario;
 pub mod store;
