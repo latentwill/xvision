@@ -16,7 +16,7 @@ scaffolding so subsequent tracks have stable surfaces to build on.
 |---|---|---|---|---|---|
 | `coordinator` | `xvision/` (main) | `main` | session 1 (this one) | — | active — coordinator + integration |
 | `engine-api` | `.worktrees/engine-api` | `feature/engine-api-foundation` | session 1 (this one) | [#3](../docs/superpowers/plans/2026-05-10-engine-api-foundation.md) | **PR #4 open** — awaiting merge |
-| `broker-surface` | `.worktrees/broker-surface` | `feature/broker-surface-trait` | unassigned | [Plan 2c §Task 7](../docs/superpowers/plans/2026-05-08-strategy-engine-2c-scheduler-live-exec.md#task-7-brokersurface-trait--dispatch) (extracted) | ready for pickup |
+| `broker-surface` | `.worktrees/broker-surface` | `feature/broker-surface-trait` | session 1 (this one) | [Plan 2c §Task 7](../docs/superpowers/plans/2026-05-08-strategy-engine-2c-scheduler-live-exec.md#task-7-brokersurface-trait--dispatch) (extracted) | **PR #5 open** — awaiting merge |
 | `frontend-foundation` | `.worktrees/frontend-foundation` | `feature/frontend-foundation` | unassigned | [Plan 1](../docs/superpowers/plans/2026-05-10-frontend-1-foundation-and-strategies.md) Phases 0–1 (scaffolding only) | ready for pickup — depends on engine-api for API integration but scaffolding can start now |
 
 ## Build order (post-Phase-A)
