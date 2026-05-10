@@ -14,6 +14,7 @@ members = [
     "crates/xvision-identity",
     "crates/xvision-mcp",
     "crates/xvision-dashboard",
+    "xtask",
 ]
 
 # `default-members` excludes xvision-identity from bare `cargo build` /

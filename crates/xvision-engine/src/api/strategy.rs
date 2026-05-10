@@ -12,6 +12,11 @@ use crate::bundle::{
 };
 use std::time::Instant;
 
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct StrategySummary {
     pub agent_id: String,
