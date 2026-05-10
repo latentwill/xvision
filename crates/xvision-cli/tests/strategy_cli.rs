@@ -57,6 +57,55 @@ fn templates_lists_known_templates() {
 }
 
 #[test]
+fn run_inline_seeds_with_real_ohlcv_and_indicators() {
+    let dir = tempdir().unwrap();
+
+    let out = xvn(
+        &[
+            "strategy",
+            "new",
+            "--template",
+            "mean_reversion",
+            "--name",
+            "real-data",
+        ],
+        dir.path(),
+    );
+    assert!(out.status.success());
+    let id = String::from_utf8(out.stdout).unwrap().trim().to_string();
+
+    let out = xvn(
+        &[
+            "strategy",
+            "run",
+            &id,
+            "--fixture",
+            "test-fixture-btc-2024-01",
+            "--decisions",
+            "1",
+            "--mock",
+        ],
+        dir.path(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    // The new code path logs `seed_summary: bars=… asset=… fixture=…`
+    // before each decision; presence of that line proves the OHLCV
+    // tool actually ran and the seed was populated from real fixture
+    // bars, not the placeholder strings.
+    assert!(
+        stdout.contains("seed_summary:"),
+        "stdout: {stdout}"
+    );
+    assert!(stdout.contains("bars="), "stdout: {stdout}");
+    assert!(stdout.contains("decision[0]:"));
+}
+
+#[test]
 fn run_inline_with_mock_dispatch_succeeds() {
     let dir = tempdir().unwrap();
 

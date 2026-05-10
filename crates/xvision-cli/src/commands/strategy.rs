@@ -158,15 +158,49 @@ async fn run_inline(id: &str, fixture: &str, decisions: u32, mock: bool) -> anyh
         .first()
         .cloned()
         .ok_or_else(|| anyhow::anyhow!("bundle has empty asset_universe"))?;
+
+    // Fetch the OHLCV + indicator_panel tools once; both are stateless and
+    // safe to re-invoke per decision. The lookback (200 bars) matches the
+    // window the templates' default mechanical params expect.
+    let ohlcv_tool = tools
+        .get(&xvision_engine::tools::ToolName::new("ohlcv".to_string()))
+        .ok_or_else(|| anyhow::anyhow!("ohlcv tool not registered"))?;
+    let panel_tool = tools
+        .get(&xvision_engine::tools::ToolName::new(
+            "indicator_panel".to_string(),
+        ))
+        .ok_or_else(|| anyhow::anyhow!("indicator_panel tool not registered"))?;
+
     let mut total_in = 0u32;
     let mut total_out = 0u32;
     for n in 0..decisions {
+        let ohlcv = ohlcv_tool
+            .invoke(serde_json::json!({
+                "asset": asset,
+                "fixture": fixture,
+                "lookback_bars": 200,
+            }))
+            .await?;
+        let panel = panel_tool
+            .invoke(serde_json::json!({
+                "asset": asset,
+                "fixture": fixture,
+                "lookback_bars": 200,
+            }))
+            .await?;
+        let bar_count = ohlcv
+            .get("bars")
+            .and_then(|b| b.as_array())
+            .map(|a| a.len())
+            .unwrap_or(0);
+        println!("seed_summary: bars={bar_count} asset={asset} fixture={fixture}");
+
         let seed = serde_json::json!({
             "decision_index": n,
             "asset": asset,
             "fixture": fixture,
-            "ohlcv_history": "<fetch via tool — Plan #2 wires this>",
-            "indicator_panel": "<fetch via tool — Plan #2 wires this>",
+            "ohlcv_history": ohlcv,
+            "indicator_panel": panel,
         });
         let outs = run_pipeline(PipelineInputs {
             bundle: &bundle,
