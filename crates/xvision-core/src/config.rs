@@ -35,6 +35,72 @@ pub enum ConfigError {
     CrossField { path: PathBuf, message: String },
 }
 
+// --- providers --------------------------------------------------------------
+
+/// One LLM provider, referenced by name from slot configs and arm specs.
+/// `api_key_env` may be the empty string for endpoints that don't require auth
+/// (local llama.cpp / Ollama / vLLM in --no-auth mode).
+#[derive(Debug, Clone, PartialEq, Validate, Serialize, Deserialize)]
+pub struct ProviderEntry {
+    #[garde(custom(validate_provider_name))]
+    pub name: String,
+    #[garde(skip)]
+    pub kind: ProviderKind,
+    #[garde(length(min = 1, max = 512))]
+    pub base_url: String,
+    #[garde(length(max = 64))]
+    pub api_key_env: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProviderKind {
+    Anthropic,
+    OpenaiCompat,
+    LocalCandle,
+}
+
+impl From<InternProvider> for ProviderKind {
+    fn from(p: InternProvider) -> Self {
+        match p {
+            InternProvider::Anthropic => Self::Anthropic,
+            InternProvider::OpenaiCompat => Self::OpenaiCompat,
+            InternProvider::LocalCandle => Self::LocalCandle,
+        }
+    }
+}
+
+impl ProviderEntry {
+    /// True iff this entry's kind/base_url/api_key_env triple matches the
+    /// supplied tuple. Used by auto-derivation to skip when the user has
+    /// already declared an equivalent row.
+    pub fn matches_triple(&self, kind: ProviderKind, base_url: &str, api_key_env: &str) -> bool {
+        self.kind == kind && self.base_url == base_url && self.api_key_env == api_key_env
+    }
+}
+
+fn validate_provider_name(name: &String, _ctx: &()) -> garde::Result {
+    if name.is_empty() || name.len() > 32 {
+        return Err(garde::Error::new("provider name must be 1..=32 chars"));
+    }
+    if name.starts_with('_') {
+        // The leading-underscore namespace is reserved for synthetic rows
+        // (e.g. _default_intern auto-derived from the [intern] block).
+        return Err(garde::Error::new(
+            "provider names starting with '_' are reserved",
+        ));
+    }
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    {
+        return Err(garde::Error::new(
+            "provider name must match [a-z0-9-]+",
+        ));
+    }
+    Ok(())
+}
+
 // --- runtime ----------------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq, Validate, Serialize, Deserialize)]
@@ -353,6 +419,30 @@ mod tests {
             Err(ConfigError::Parse { .. }) => {}
             other => panic!("expected Parse, got {other:?}"),
         }
+    }
+
+    // --- providers (Plan #7 Phase 1) ----------------------------------------
+
+    #[test]
+    fn provider_kind_round_trips_via_serde() {
+        use ProviderKind::*;
+        for k in [Anthropic, OpenaiCompat, LocalCandle] {
+            let s = toml::to_string(&ProviderEntry {
+                name: "p".into(),
+                kind: k,
+                base_url: "https://example.com".into(),
+                api_key_env: "X".into(),
+            })
+            .unwrap();
+            let back: ProviderEntry = toml::from_str(&s).unwrap();
+            assert_eq!(back.kind, k, "round trip failed for {:?}", k);
+        }
+    }
+
+    #[test]
+    fn provider_kind_serializes_to_kebab_case() {
+        let v = toml::Value::try_from(ProviderKind::OpenaiCompat).unwrap();
+        assert_eq!(v.as_str(), Some("openai-compat"));
     }
 
     const BAD_STEP_HORIZON: &str = r#"
