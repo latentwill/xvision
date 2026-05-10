@@ -6,7 +6,7 @@
 //! - `xianvec_eval::backtest::BacktestExecutor` — stateful in-process simulator
 //!
 //! Idempotency: every `submit` call carries the `RiskDecision`'s underlying
-//! `setup_id` (via `RiskDecision::effective().setup_id`); executors must use
+//! `cycle_id` (via `RiskDecision::effective().cycle_id`); executors must use
 //! that as their venue-side client order id so duplicate retries collapse to a
 //! single fill.
 
@@ -21,9 +21,9 @@ use xianvec_core::{AssetSymbol, PortfolioState, RiskDecision};
 /// table for reconciliation between trader intent and venue fill.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ExecutionReceipt {
-    /// The setup_id that drove this submit. Mirrored from the RiskDecision's
+    /// The cycle_id that drove this submit. Mirrored from the RiskDecision's
     /// effective TraderDecision; used as venue-side client order id.
-    pub setup_id: Uuid,
+    pub cycle_id: Uuid,
     /// `"alpaca"`, `"orderly"`, or `"backtest"`.
     pub venue: String,
     /// Venue-assigned id (server order id, sim sequence number, etc.).

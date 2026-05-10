@@ -3,7 +3,7 @@
 //! vector influence rather than Intern non-determinism.
 //!
 //! v1 cache is in-memory + write-through to SQLite via `xianvec_core::store`.
-//! The cache key is `(setup_id, provider, model)` — swapping the Intern
+//! The cache key is `(cycle_id, provider, model)` — swapping the Intern
 //! backend invalidates cleanly.
 
 use std::collections::HashMap;
@@ -14,7 +14,7 @@ use xianvec_core::trading::InternBriefing;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CacheKey {
-    pub setup_id: Uuid,
+    pub cycle_id: Uuid,
     pub provider: String,
     pub model: String,
 }
@@ -61,7 +61,7 @@ mod tests {
 
     fn fixture_briefing() -> InternBriefing {
         InternBriefing {
-            setup_id: Uuid::nil(),
+            cycle_id: Uuid::nil(),
             asset: AssetSymbol::Btc,
             bull_case: "Funding compressed; smart money accumulating spot.".into(),
             bear_case: "Realized vol expanding; long-leverage near squeeze.".into(),
@@ -80,7 +80,7 @@ mod tests {
     fn round_trip_get() {
         let c = BriefingCache::new();
         let k = CacheKey {
-            setup_id: Uuid::nil(),
+            cycle_id: Uuid::nil(),
             provider: "anthropic".into(),
             model: "claude".into(),
         };
@@ -94,12 +94,12 @@ mod tests {
     fn provider_change_invalidates() {
         let c = BriefingCache::new();
         let k_anthropic = CacheKey {
-            setup_id: Uuid::nil(),
+            cycle_id: Uuid::nil(),
             provider: "anthropic".into(),
             model: "claude".into(),
         };
         let k_openai = CacheKey {
-            setup_id: Uuid::nil(),
+            cycle_id: Uuid::nil(),
             provider: "openai-compat".into(),
             model: "gpt-5".into(),
         };

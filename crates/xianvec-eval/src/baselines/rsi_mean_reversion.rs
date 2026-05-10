@@ -58,7 +58,7 @@ impl Strategy for RsiMeanReversion {
         };
 
         Some(TraderDecision {
-            setup_id: snapshot.setup_id,
+            cycle_id: snapshot.cycle_id,
             action,
             size_bps: 800,
             direction,
@@ -79,7 +79,7 @@ mod tests {
 
     fn fixture_snapshot_with_rsi(rsi: Option<f64>) -> MarketSnapshot {
         MarketSnapshot {
-            setup_id: Uuid::new_v4(),
+            cycle_id: Uuid::new_v4(),
             asset: AssetSymbol::Btc,
             timestamp: Utc::now(),
             price: 70_000.0,
@@ -107,7 +107,7 @@ mod tests {
         let snap = fixture_snapshot_with_rsi(Some(25.0));
         let strat = RsiMeanReversion::new();
         let dec = strat.decide(&snap).await.expect("oversold must return Some");
-        assert_eq!(dec.setup_id, snap.setup_id, "setup_id must propagate");
+        assert_eq!(dec.cycle_id, snap.cycle_id, "cycle_id must propagate");
         assert_eq!(dec.action, Action::Buy);
         assert_eq!(dec.direction, Direction::Long);
         assert_eq!(dec.size_bps, 800);

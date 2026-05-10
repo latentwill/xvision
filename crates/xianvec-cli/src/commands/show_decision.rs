@@ -5,17 +5,17 @@ use std::path::PathBuf;
 use uuid::Uuid;
 use xianvec_core::store::Store;
 
-pub async fn run(setup_id: Uuid, db: PathBuf) -> anyhow::Result<()> {
+pub async fn run(cycle_id: Uuid, db: PathBuf) -> anyhow::Result<()> {
     let url = format!("sqlite://{}", db.display());
     let store = Store::open(&url).await?;
-    let decisions = store.get_decisions_for_setup(&setup_id).await?;
+    let decisions = store.get_decisions_for_setup(&cycle_id).await?;
 
     if decisions.is_empty() {
-        println!("no decisions found for setup_id={setup_id}");
+        println!("no decisions found for cycle_id={cycle_id}");
         return Ok(());
     }
     println!(
-        "XIANVEC decisions for setup_id={setup_id} ({} arm(s)):",
+        "XIANVEC decisions for cycle_id={cycle_id} ({} arm(s)):",
         decisions.len()
     );
     for (arm, decision) in decisions {
@@ -40,9 +40,9 @@ mod tests {
             .await
             .expect("open in-memory store");
 
-        let setup_id = Uuid::new_v4();
+        let cycle_id = Uuid::new_v4();
         let decision = TraderDecision {
-            setup_id,
+            cycle_id,
             action: Action::Buy,
             size_bps: 800,
             direction: Direction::Long,
@@ -51,8 +51,8 @@ mod tests {
             trader_summary: "show-decision smoke fixture decision.".into(),
         };
         store
-            .upsert_setup(
-                &setup_id,
+            .upsert_cycle(
+                &cycle_id,
                 AssetSymbol::Btc.as_str(),
                 24,
                 &serde_json::json!({}),
@@ -66,7 +66,7 @@ mod tests {
 
         // Hit the read path directly (run() takes a PathBuf, but in-memory
         // sqlite needs the string form — we exercise the same fetch logic).
-        let fetched = store.get_decisions_for_setup(&setup_id).await.unwrap();
+        let fetched = store.get_decisions_for_setup(&cycle_id).await.unwrap();
         assert_eq!(fetched.len(), 1);
         assert_eq!(fetched[0].0, "trader_arm");
         assert_eq!(fetched[0].1.action, Action::Buy);

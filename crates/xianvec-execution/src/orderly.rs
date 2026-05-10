@@ -31,7 +31,7 @@
 //! can be driven from a mockito `Server`.
 //!
 //! # Idempotency
-//! `client_order_id = td.setup_id.to_string()` always (max 36 chars). Orderly
+//! `client_order_id = td.cycle_id.to_string()` always (max 36 chars). Orderly
 //! deduplicates open orders on `client_order_id`.
 //!
 //! # Onboarding
@@ -603,7 +603,7 @@ impl<A: OrderlyApi> OrderlyExecutor<A> {
         )))
     }
 
-    fn build_receipt(setup_id: Uuid, order: &OrderlyOrder, equity_usd: f64) -> ExecutionReceipt {
+    fn build_receipt(cycle_id: Uuid, order: &OrderlyOrder, equity_usd: f64) -> ExecutionReceipt {
         let qty = order.executed_quantity.unwrap_or(0.0);
         let price = order.average_executed_price.unwrap_or(0.0);
         let notional = qty * price;
@@ -614,7 +614,7 @@ impl<A: OrderlyApi> OrderlyExecutor<A> {
         };
 
         ExecutionReceipt {
-            setup_id,
+            cycle_id,
             venue: "orderly".to_string(),
             venue_order_id: order.order_id.to_string(),
             asset: AssetSymbol::Btc,
@@ -692,14 +692,14 @@ impl<A: OrderlyApi + 'static> Executor for OrderlyExecutor<A> {
             _ => OrderSide::Sell,
         };
 
-        // 5. Place entry order (client_order_id = setup_id for idempotency).
+        // 5. Place entry order (client_order_id = cycle_id for idempotency).
         let entry = self
             .api
             .create_order(
                 &self.symbol,
                 side,
                 qty,
-                Some(td.setup_id.to_string()),
+                Some(td.cycle_id.to_string()),
                 None,
             )
             .await?;
@@ -734,7 +734,7 @@ impl<A: OrderlyApi + 'static> Executor for OrderlyExecutor<A> {
                     close_side,
                     fill_qty,
                     tp_trigger,
-                    Some(format!("tp-{}", td.setup_id)),
+                    Some(format!("tp-{}", td.cycle_id)),
                     Some(true),
                 )
                 .await;
@@ -747,7 +747,7 @@ impl<A: OrderlyApi + 'static> Executor for OrderlyExecutor<A> {
                     close_side,
                     fill_qty,
                     sl_trigger,
-                    Some(format!("sl-{}", td.setup_id)),
+                    Some(format!("sl-{}", td.cycle_id)),
                     Some(true),
                 )
                 .await;
@@ -761,7 +761,7 @@ impl<A: OrderlyApi + 'static> Executor for OrderlyExecutor<A> {
         };
 
         Ok(ExecutionReceipt {
-            setup_id: td.setup_id,
+            cycle_id: td.cycle_id,
             venue: "orderly".to_string(),
             venue_order_id: entry.order_id.to_string(),
             asset: AssetSymbol::Btc,
@@ -780,7 +780,7 @@ impl<A: OrderlyApi + 'static> Executor for OrderlyExecutor<A> {
 
         let Some(pos) = btc_pos else {
             return Ok(ExecutionReceipt {
-                setup_id: Uuid::nil(),
+                cycle_id: Uuid::nil(),
                 venue: "orderly".to_string(),
                 venue_order_id: String::new(),
                 asset: AssetSymbol::Btc,
@@ -795,7 +795,7 @@ impl<A: OrderlyApi + 'static> Executor for OrderlyExecutor<A> {
 
         if pos.position_qty == 0.0 {
             return Ok(ExecutionReceipt {
-                setup_id: Uuid::nil(),
+                cycle_id: Uuid::nil(),
                 venue: "orderly".to_string(),
                 venue_order_id: String::new(),
                 asset: AssetSymbol::Btc,
@@ -1039,10 +1039,10 @@ mod tests {
         }
     }
 
-    fn fixture_buy_decision(setup_id: Uuid) -> RiskDecision {
+    fn fixture_buy_decision(cycle_id: Uuid) -> RiskDecision {
         RiskDecision::Approved {
             decision: TraderDecision {
-                setup_id,
+                cycle_id,
                 action: Action::Buy,
                 size_bps: 1000,
                 direction: Direction::Long,
@@ -1056,14 +1056,14 @@ mod tests {
     // ── Test 1 ───────────────────────────────────────────────────────────────
 
     /// `submit_buy_with_bracket_constructs_correct_orders`:
-    /// - `client_order_id` == `setup_id` (idempotency)
+    /// - `client_order_id` == `cycle_id` (idempotency)
     /// - TP and SL algo orders are placed
     /// - TP trigger > entry, SL trigger < entry (long direction)
     /// - Closing side is Sell (opposite of Buy entry)
     #[tokio::test]
     async fn submit_buy_with_bracket_constructs_correct_orders() {
-        let setup_id = Uuid::new_v4();
-        let filled = fixture_filled_order(42, Some(&setup_id.to_string()));
+        let cycle_id = Uuid::new_v4();
+        let filled = fixture_filled_order(42, Some(&cycle_id.to_string()));
 
         let api = MockOrderlyApi::new(
             fixture_account(),
@@ -1076,19 +1076,19 @@ mod tests {
 
         let executor = OrderlyExecutor::with_api(api);
         let receipt = executor
-            .submit(&fixture_buy_decision(setup_id))
+            .submit(&fixture_buy_decision(cycle_id))
             .await
             .expect("submit must succeed");
 
         // Receipt basics.
-        assert_eq!(receipt.setup_id, setup_id);
+        assert_eq!(receipt.cycle_id, cycle_id);
         assert_eq!(receipt.venue, "orderly");
 
-        // client_order_id == setup_id.
+        // client_order_id == cycle_id.
         let call = captured_create.lock().unwrap().clone().unwrap();
         assert_eq!(
             call.client_order_id.as_deref(),
-            Some(setup_id.to_string().as_str()),
+            Some(cycle_id.to_string().as_str()),
         );
         assert_eq!(call.side, OrderSide::Buy);
 
@@ -1146,7 +1146,7 @@ mod tests {
         let executor = OrderlyExecutor::with_api(PanicApi);
         let decision = RiskDecision::Vetoed {
             original: TraderDecision {
-                setup_id: Uuid::nil(),
+                cycle_id: Uuid::nil(),
                 action: Action::Buy,
                 size_bps: 500,
                 direction: Direction::Long,

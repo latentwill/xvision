@@ -1,7 +1,7 @@
 //! Phase 7 baselines — null and classical-technical strategies that consume
 //! `MarketSnapshot` and emit `TraderDecision`-shaped outputs.
 //!
-//! All baselines implement [`crate::strategy::Strategy`] with `setup_id`
+//! All baselines implement [`crate::strategy::Strategy`] with `cycle_id`
 //! propagated from the incoming snapshot.
 //!
 //! ## v1 baseline set (7 strategies)

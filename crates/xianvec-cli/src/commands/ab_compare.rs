@@ -13,12 +13,12 @@ use xianvec_eval::ab_compare::{default_arms, parse_arm_spec, run_ab_compare};
 use xianvec_eval::backtest::MarketBar;
 use xianvec_eval::baselines::PortfolioProvider;
 use xianvec_eval::harness::BacktestRunConfig;
-use xianvec_intern::backend::{AcpxIntern, AnthropicIntern, InternBackend, OpenAICompatIntern};
+use xianvec_intern::backend::{AnthropicIntern, InternBackend, OpenAICompatIntern};
 use xianvec_trader::{OpenAiCompatBackend, TraderBackend, TraderParams};
 
 #[allow(clippy::too_many_arguments)]
 pub async fn run(
-    setups: PathBuf,
+    cycles: PathBuf,
     bars: PathBuf,
     arms: String,
     output: PathBuf,
@@ -33,7 +33,7 @@ pub async fn run(
     trader_model: String,
     trader_api_key_env: String,
 ) -> anyhow::Result<()> {
-    let snapshots: Vec<MarketSnapshot> = serde_json::from_slice(&std::fs::read(&setups)?)?;
+    let snapshots: Vec<MarketSnapshot> = serde_json::from_slice(&std::fs::read(&cycles)?)?;
     let bars_vec: Vec<MarketBar> = serde_json::from_slice(&std::fs::read(&bars)?)?;
     let arm_specs: Vec<_> = if arms.trim().is_empty() {
         default_arms()
@@ -56,9 +56,6 @@ pub async fn run(
         &trader_api_key_env,
     )?);
 
-    // ACPX is non-deterministic by design — F21 calls out that backtest
-    // pairing (Tier 1 fix #1) likely needs single-shot. We allow it here
-    // for parity with run_setup, but the operator owns the choice.
     let intern: Arc<dyn InternBackend> = match intern_provider.as_str() {
         "anthropic" => Arc::new(AnthropicIntern::from_env(
             "https://api.anthropic.com",
@@ -70,16 +67,6 @@ pub async fn run(
             &intern_model,
             "OPENAI_API_KEY",
         )?),
-        p if p == "acpx" || p.starts_with("acpx:") => {
-            let agent = p
-                .strip_prefix("acpx:")
-                .map(str::to_string)
-                .or_else(|| std::env::var("XVN_INTERN_ACPX_AGENT").ok())
-                .ok_or_else(|| anyhow::anyhow!(
-                    "acpx provider requires an agent: pass `acpx:<agent>` or set XVN_INTERN_ACPX_AGENT"
-                ))?;
-            Arc::new(AcpxIntern::from_env(agent)?)
-        }
         other => anyhow::bail!("unknown intern provider: {other}"),
     };
 

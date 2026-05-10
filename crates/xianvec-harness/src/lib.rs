@@ -59,7 +59,7 @@ mod tests {
 
     fn fixture_decision() -> TraderDecision {
         TraderDecision {
-            setup_id: Uuid::nil(),
+            cycle_id: Uuid::nil(),
             action: Action::Buy,
             size_bps: 1000,
             direction: Direction::Long,

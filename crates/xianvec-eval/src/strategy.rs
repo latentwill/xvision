@@ -6,7 +6,7 @@
 //! `None` means "no setup at this bar"; the harness advances time without
 //! submitting.
 //!
-//! `TraderDecision::setup_id` MUST be copied from `snapshot.setup_id` so the
+//! `TraderDecision::cycle_id` MUST be copied from `snapshot.cycle_id` so the
 //! harness can pair (setup, decision, fill) records across arms.
 
 use async_trait::async_trait;

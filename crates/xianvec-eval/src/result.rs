@@ -36,7 +36,7 @@ pub struct ArmResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BacktestResult {
     pub arms: BTreeMap<String, ArmResult>,
-    pub setups_evaluated: usize,
+    pub cycles_evaluated: usize,
     pub initial_nav_usd: f64,
     pub started_at: DateTime<Utc>,
     pub finished_at: DateTime<Utc>,

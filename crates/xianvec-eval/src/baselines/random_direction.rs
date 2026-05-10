@@ -49,7 +49,7 @@ impl Strategy for RandomDirection {
         };
 
         Some(TraderDecision {
-            setup_id: snapshot.setup_id,
+            cycle_id: snapshot.cycle_id,
             action,
             size_bps: 100,
             direction,
@@ -70,7 +70,7 @@ mod tests {
 
     fn fixture_snapshot() -> MarketSnapshot {
         MarketSnapshot {
-            setup_id: Uuid::new_v4(),
+            cycle_id: Uuid::new_v4(),
             asset: AssetSymbol::Btc,
             timestamp: Utc::now(),
             price: 70_000.0,
@@ -95,7 +95,7 @@ mod tests {
         let snap = fixture_snapshot();
         let strat = RandomDirection::new(42);
         let dec = strat.decide(&snap).await.expect("must always return Some");
-        assert_eq!(dec.setup_id, snap.setup_id, "setup_id must propagate");
+        assert_eq!(dec.cycle_id, snap.cycle_id, "cycle_id must propagate");
         assert_eq!(dec.size_bps, 100);
         assert!((dec.stop_loss_pct - 2.0).abs() < f32::EPSILON);
         assert!((dec.take_profit_pct - 3.0).abs() < f32::EPSILON);

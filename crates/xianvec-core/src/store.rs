@@ -6,9 +6,9 @@
 //! at the cost of one extra parse per call; performance is irrelevant for this
 //! workload (≤100 rows per backtest run).
 //!
-//! Tier 1 fix #1: `briefings` is keyed on `setup_id` alone — every arm reads
+//! Tier 1 fix #1: `briefings` is keyed on `cycle_id` alone — every arm reads
 //! the same briefing. `decisions` and `risk_outcomes` are keyed on
-//! `(setup_id, arm_name)` so multiple strategy arms persist independently.
+//! `(cycle_id, arm_name)` so multiple strategy arms persist independently.
 
 use std::path::Path;
 
@@ -85,20 +85,20 @@ impl Store {
         Ok(out)
     }
 
-    // --- setups ----------------------------------------------------------
+    // --- cycles ----------------------------------------------------------
 
-    pub async fn upsert_setup(
+    pub async fn upsert_cycle(
         &self,
-        setup_id: &Uuid,
+        cycle_id: &Uuid,
         asset: &str,
         horizon_h: u32,
         market_state: &serde_json::Value,
     ) -> Result<(), StoreError> {
         sqlx::query(
-            "INSERT OR REPLACE INTO setups (setup_id, asset, horizon_h, market_state_json, created_at) \
+            "INSERT OR REPLACE INTO cycles (cycle_id, asset, horizon_h, market_state_json, created_at) \
              VALUES (?, ?, ?, ?, ?)",
         )
-        .bind(setup_id.to_string())
+        .bind(cycle_id.to_string())
         .bind(asset)
         .bind(horizon_h as i64)
         .bind(market_state.to_string())
@@ -110,7 +110,7 @@ impl Store {
 
     // --- briefings -------------------------------------------------------
 
-    /// Insert or replace the briefing for `setup_id`. All arms read
+    /// Insert or replace the briefing for `cycle_id`. All arms read
     /// the same row (Tier 1 fix #1).
     pub async fn upsert_briefing(
         &self,
@@ -120,10 +120,10 @@ impl Store {
     ) -> Result<(), StoreError> {
         let json = serde_json::to_string(briefing)?;
         sqlx::query(
-            "INSERT OR REPLACE INTO briefings (setup_id, provider, model, briefing_json, created_at) \
+            "INSERT OR REPLACE INTO briefings (cycle_id, provider, model, briefing_json, created_at) \
              VALUES (?, ?, ?, ?, ?)",
         )
-        .bind(briefing.setup_id.to_string())
+        .bind(briefing.cycle_id.to_string())
         .bind(provider)
         .bind(model)
         .bind(json)
@@ -133,9 +133,9 @@ impl Store {
         Ok(())
     }
 
-    pub async fn get_briefing(&self, setup_id: &Uuid) -> Result<Option<InternBriefing>, StoreError> {
-        let row = sqlx::query("SELECT briefing_json FROM briefings WHERE setup_id = ?")
-            .bind(setup_id.to_string())
+    pub async fn get_briefing(&self, cycle_id: &Uuid) -> Result<Option<InternBriefing>, StoreError> {
+        let row = sqlx::query("SELECT briefing_json FROM briefings WHERE cycle_id = ?")
+            .bind(cycle_id.to_string())
             .fetch_optional(&self.pool)
             .await?;
         row.map(|r| {
@@ -150,10 +150,10 @@ impl Store {
     pub async fn insert_decision(&self, arm_name: &str, decision: &TraderDecision) -> Result<(), StoreError> {
         let json = serde_json::to_string(decision)?;
         sqlx::query(
-            "INSERT OR REPLACE INTO decisions (setup_id, arm_name, decision_json, created_at) \
+            "INSERT OR REPLACE INTO decisions (cycle_id, arm_name, decision_json, created_at) \
              VALUES (?, ?, ?, ?)",
         )
-        .bind(decision.setup_id.to_string())
+        .bind(decision.cycle_id.to_string())
         .bind(arm_name)
         .bind(json)
         .bind(Utc::now().to_rfc3339())
@@ -164,11 +164,11 @@ impl Store {
 
     pub async fn get_decisions_for_setup(
         &self,
-        setup_id: &Uuid,
+        cycle_id: &Uuid,
     ) -> Result<Vec<(String, TraderDecision)>, StoreError> {
         let rows =
-            sqlx::query("SELECT arm_name, decision_json FROM decisions WHERE setup_id = ? ORDER BY arm_name")
-                .bind(setup_id.to_string())
+            sqlx::query("SELECT arm_name, decision_json FROM decisions WHERE cycle_id = ? ORDER BY arm_name")
+                .bind(cycle_id.to_string())
                 .fetch_all(&self.pool)
                 .await?;
         rows.into_iter()
@@ -188,20 +188,20 @@ impl Store {
         arm_name: &str,
         decision: &RiskDecision,
     ) -> Result<(), StoreError> {
-        let setup_id = decision
+        let cycle_id = decision
             .effective()
-            .map(|d| d.setup_id)
+            .map(|d| d.cycle_id)
             .or(match decision {
-                RiskDecision::Vetoed { original, .. } => Some(original.setup_id),
+                RiskDecision::Vetoed { original, .. } => Some(original.cycle_id),
                 _ => None,
             })
             .expect("RiskDecision must reference a TraderDecision");
         let json = serde_json::to_string(decision)?;
         sqlx::query(
-            "INSERT OR REPLACE INTO risk_outcomes (setup_id, arm_name, risk_decision_json, created_at) \
+            "INSERT OR REPLACE INTO risk_outcomes (cycle_id, arm_name, risk_decision_json, created_at) \
              VALUES (?, ?, ?, ?)",
         )
-        .bind(setup_id.to_string())
+        .bind(cycle_id.to_string())
         .bind(arm_name)
         .bind(json)
         .bind(Utc::now().to_rfc3339())
@@ -215,14 +215,14 @@ impl Store {
     pub async fn insert_trace(&self, span: &TraceSpan) -> Result<(), StoreError> {
         sqlx::query(
             "INSERT OR REPLACE INTO traces \
-             (trace_id, span_id, parent_id, run_id, setup_id, stage, name, attrs_json, started_at, ended_at) \
+             (trace_id, span_id, parent_id, run_id, cycle_id, stage, name, attrs_json, started_at, ended_at) \
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&span.trace_id)
         .bind(&span.span_id)
         .bind(span.parent_id.as_deref())
         .bind(&span.run_id)
-        .bind(span.setup_id.map(|u| u.to_string()))
+        .bind(span.cycle_id.map(|u| u.to_string()))
         .bind(&span.stage)
         .bind(&span.name)
         .bind(serde_json::to_string(&span.attrs)?)
@@ -240,7 +240,7 @@ pub struct TraceSpan {
     pub span_id: String,
     pub parent_id: Option<String>,
     pub run_id: String,
-    pub setup_id: Option<Uuid>,
+    pub cycle_id: Option<Uuid>,
     pub stage: String,
     pub name: String,
     pub attrs: serde_json::Value,
@@ -256,7 +256,7 @@ mod tests {
 
     fn fixture_briefing() -> InternBriefing {
         InternBriefing {
-            setup_id: Uuid::nil(),
+            cycle_id: Uuid::nil(),
             asset: AssetSymbol::Btc,
             bull_case: "Funding rate compressed; smart money accumulating spot.".into(),
             bear_case: "Realized vol expanding; long-leverage near prior squeeze.".into(),
@@ -273,7 +273,7 @@ mod tests {
 
     fn make_decision() -> TraderDecision {
         TraderDecision {
-            setup_id: Uuid::nil(),
+            cycle_id: Uuid::nil(),
             action: Action::Buy,
             size_bps: 1000,
             direction: Direction::Long,
@@ -286,7 +286,7 @@ mod tests {
     async fn fresh_store() -> Store {
         let s = Store::open("sqlite::memory:").await.expect("memory db must open");
         // All test rows reference setup nil; insert it once so FK constraints hold.
-        s.upsert_setup(&Uuid::nil(), "BTC", 24, &serde_json::json!({"price": 70000.0}))
+        s.upsert_cycle(&Uuid::nil(), "BTC", 24, &serde_json::json!({"price": 70000.0}))
             .await
             .expect("seed setup row");
         s
@@ -299,12 +299,12 @@ mod tests {
         s.upsert_briefing("anthropic", "claude-haiku-4-5", &b)
             .await
             .unwrap();
-        let back = s.get_briefing(&b.setup_id).await.unwrap().expect("present");
+        let back = s.get_briefing(&b.cycle_id).await.unwrap().expect("present");
         assert_eq!(b, back);
     }
 
     #[tokio::test]
-    async fn upsert_briefing_replaces_same_setup() {
+    async fn upsert_briefing_replaces_same_cycle() {
         let s = fresh_store().await;
         let mut b = fixture_briefing();
         s.upsert_briefing("anthropic", "claude-haiku-4-5", &b)
@@ -314,13 +314,13 @@ mod tests {
         s.upsert_briefing("anthropic", "claude-haiku-4-5", &b)
             .await
             .unwrap();
-        let back = s.get_briefing(&b.setup_id).await.unwrap().expect("present");
+        let back = s.get_briefing(&b.cycle_id).await.unwrap().expect("present");
         assert_eq!(back.bull_case, b.bull_case);
     }
 
     #[tokio::test]
     async fn paired_decisions_persist_independently() {
-        // Tier 1 fix #1 corollary: same setup_id, different arm_name → both
+        // Tier 1 fix #1 corollary: same cycle_id, different arm_name → both
         // rows exist.
         let s = fresh_store().await;
         let d = make_decision();
@@ -344,7 +344,7 @@ mod tests {
         s.insert_risk_outcome("trader_arm", &approved).await.unwrap();
         s.insert_risk_outcome("buy_and_hold", &vetoed).await.unwrap();
         // Both rows must exist.
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM risk_outcomes WHERE setup_id = ?")
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM risk_outcomes WHERE cycle_id = ?")
             .bind(Uuid::nil().to_string())
             .fetch_one(s.pool())
             .await
@@ -360,7 +360,7 @@ mod tests {
             span_id: "s1".into(),
             parent_id: None,
             run_id: "r1".into(),
-            setup_id: Some(Uuid::nil()),
+            cycle_id: Some(Uuid::nil()),
             stage: "intern".into(),
             name: "brief".into(),
             attrs: serde_json::json!({"provider": "anthropic"}),

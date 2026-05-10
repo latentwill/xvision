@@ -42,7 +42,7 @@ impl Strategy for BuyAndHold {
             .is_ok()
         {
             Some(TraderDecision {
-                setup_id: snapshot.setup_id,
+                cycle_id: snapshot.cycle_id,
                 action: Action::Buy,
                 size_bps: 1500,
                 direction: Direction::Long,
@@ -65,9 +65,9 @@ mod tests {
     use xianvec_core::trading::{AssetSymbol, Regime};
 
     fn fixture_snapshot() -> MarketSnapshot {
-        let setup_id = Uuid::new_v4();
+        let cycle_id = Uuid::new_v4();
         MarketSnapshot {
-            setup_id,
+            cycle_id,
             asset: AssetSymbol::Btc,
             timestamp: Utc::now(),
             price: 70_000.0,
@@ -95,7 +95,7 @@ mod tests {
         let snap = fixture_snapshot();
         let strat = BuyAndHold::new();
         let dec = strat.decide(&snap).await.expect("first call must return Some");
-        assert_eq!(dec.setup_id, snap.setup_id, "setup_id must propagate");
+        assert_eq!(dec.cycle_id, snap.cycle_id, "cycle_id must propagate");
         assert_eq!(dec.action, Action::Buy);
         assert_eq!(dec.direction, Direction::Long);
         assert_eq!(dec.size_bps, 1500);

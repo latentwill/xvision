@@ -159,7 +159,7 @@ impl BacktestRunner {
                 .collect();
             return Ok(BacktestResult {
                 arms: arm_results,
-                setups_evaluated: 0,
+                cycles_evaluated: 0,
                 initial_nav_usd: nav_initial,
                 started_at,
                 finished_at: Utc::now(),
@@ -336,7 +336,7 @@ impl BacktestRunner {
 
         Ok(BacktestResult {
             arms: arm_results,
-            setups_evaluated: snapshots.len(),
+            cycles_evaluated: snapshots.len(),
             initial_nav_usd: nav_initial,
             started_at,
             finished_at: Utc::now(),
@@ -373,7 +373,7 @@ mod tests {
 
     fn snapshot_at(secs: i64, price: f64) -> MarketSnapshot {
         MarketSnapshot {
-            setup_id: Uuid::new_v4(),
+            cycle_id: Uuid::new_v4(),
             asset: AssetSymbol::Btc,
             timestamp: Utc.timestamp_opt(secs, 0).single().unwrap(),
             price,
@@ -401,7 +401,7 @@ mod tests {
         }
         async fn decide(&self, snapshot: &MarketSnapshot) -> Option<TraderDecision> {
             Some(TraderDecision {
-                setup_id: snapshot.setup_id,
+                cycle_id: snapshot.cycle_id,
                 action: Action::Buy,
                 size_bps: 100,
                 direction: Direction::Long,
@@ -501,7 +501,7 @@ mod tests {
         let mut runner = BacktestRunner::new(cfg, arms).expect("valid config");
         let result = runner.run(&snapshots, &bars, &risk).await.expect("run must succeed");
 
-        assert_eq!(result.setups_evaluated, 2);
+        assert_eq!(result.cycles_evaluated, 2);
         assert!(result.arms.contains_key("buy_arm"));
         assert!(result.arms.contains_key("flat_arm"));
 

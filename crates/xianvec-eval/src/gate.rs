@@ -126,7 +126,7 @@ mod tests {
 
     fn make_regime_metrics(pe: f32, ci_low: f32, ci_high: f32) -> RegimeMetrics {
         RegimeMetrics {
-            n_setups: 10,
+            n_cycles: 10,
             delta_sharpe: make_bootstrap(pe, ci_low, ci_high),
             winner: Some("arm_a".into()),
         }

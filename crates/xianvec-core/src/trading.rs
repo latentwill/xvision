@@ -75,7 +75,7 @@ pub enum EvidenceTag {
 #[derive(Debug, Clone, PartialEq, Validate, Serialize, Deserialize)]
 pub struct InternBriefing {
     #[garde(skip)]
-    pub setup_id: Uuid,
+    pub cycle_id: Uuid,
     #[garde(skip)]
     pub asset: AssetSymbol,
 
@@ -109,11 +109,11 @@ pub struct InternBriefing {
 /// Stage 2 output: a concrete trade decision. Multiple arms (e.g.
 /// trader_arm + baselines) each emit one of these against the same cached
 /// briefing (Tier 1 fix #1) — arm identity is carried by the storage key
-/// `(setup_id, arm_name)`, not by a field on the decision itself.
+/// `(cycle_id, arm_name)`, not by a field on the decision itself.
 #[derive(Debug, Clone, PartialEq, Validate, Serialize, Deserialize)]
 pub struct TraderDecision {
     #[garde(skip)]
-    pub setup_id: Uuid,
+    pub cycle_id: Uuid,
     #[garde(skip)]
     pub action: Action,
     /// Position size in basis points of NAV (max 20% = 2000bps).
@@ -267,7 +267,7 @@ mod tests {
 
     fn fixture_briefing() -> InternBriefing {
         InternBriefing {
-            setup_id: Uuid::nil(),
+            cycle_id: Uuid::nil(),
             asset: AssetSymbol::Btc,
             bull_case: "Funding rate compressed; smart money accumulating spot.".into(),
             bear_case: "Realized vol expanding; long-leverage approaching prior squeeze level.".into(),
@@ -307,7 +307,7 @@ mod tests {
 
     fn fixture_decision() -> TraderDecision {
         TraderDecision {
-            setup_id: Uuid::nil(),
+            cycle_id: Uuid::nil(),
             action: Action::Buy,
             size_bps: 1000,
             direction: Direction::Long,

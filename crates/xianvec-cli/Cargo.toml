@@ -20,6 +20,7 @@ clap   = { workspace = true }
 anyhow = { workspace = true }
 
 xianvec-core      = { path = "../xianvec-core" }
+xianvec-data      = { path = "../xianvec-data" }
 xianvec-eval      = { path = "../xianvec-eval" }
 xianvec-intern    = { path = "../xianvec-intern" }
 xianvec-trader    = { path = "../xianvec-trader" }

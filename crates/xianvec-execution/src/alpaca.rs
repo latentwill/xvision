@@ -7,7 +7,7 @@
 //! symbol map from that file (tracked as a post-Phase-8 cleanup).
 //!
 //! # Idempotency
-//! Every `submit` call sets `client_order_id = td.setup_id.to_string()`.
+//! Every `submit` call sets `client_order_id = td.cycle_id.to_string()`.
 //! Alpaca deduplicates on `client_order_id`, so duplicate retries collapse
 //! to a single fill.
 //!
@@ -418,7 +418,7 @@ impl<A: AlpacaApi> AlpacaExecutor<A> {
     }
 
     fn build_receipt(
-        setup_id: Uuid,
+        cycle_id: Uuid,
         asset: AssetSymbol,
         order: &AlpacaOrder,
         equity_usd: f64,
@@ -431,7 +431,7 @@ impl<A: AlpacaApi> AlpacaExecutor<A> {
         };
 
         ExecutionReceipt {
-            setup_id,
+            cycle_id,
             venue: "alpaca".to_string(),
             venue_order_id: order.id.clone(),
             asset,
@@ -513,7 +513,7 @@ impl<A: AlpacaApi + 'static> Executor for AlpacaExecutor<A> {
             side,
             take_profit_price,
             stop_loss_price,
-            client_order_id: td.setup_id.to_string(),
+            client_order_id: td.cycle_id.to_string(),
         };
 
         // 6. Submit the order.
@@ -524,7 +524,7 @@ impl<A: AlpacaApi + 'static> Executor for AlpacaExecutor<A> {
         let filled = self.await_fill(&order_id).await?;
 
         Ok(Self::build_receipt(
-            td.setup_id,
+            td.cycle_id,
             AssetSymbol::Btc,
             &filled,
             account.equity,
@@ -548,7 +548,7 @@ impl<A: AlpacaApi + 'static> Executor for AlpacaExecutor<A> {
         let Some(pos) = position else {
             // No open position — return a zero-fill receipt per the trait spec.
             return Ok(ExecutionReceipt {
-                setup_id: Uuid::nil(),
+                cycle_id: Uuid::nil(),
                 venue: "alpaca".to_string(),
                 venue_order_id: String::new(),
                 asset,
@@ -777,10 +777,10 @@ mod tests {
         }
     }
 
-    fn fixture_buy_decision(setup_id: Uuid) -> RiskDecision {
+    fn fixture_buy_decision(cycle_id: Uuid) -> RiskDecision {
         RiskDecision::Approved {
             decision: TraderDecision {
-                setup_id,
+                cycle_id,
                 action: Action::Buy,
                 size_bps: 1000,
                 direction: Direction::Long,
@@ -794,15 +794,15 @@ mod tests {
     // ── Test 1: submit_buy_with_bracket ──────────────────────────────────────
 
     /// Submits an Approved Buy decision and asserts that:
-    /// - `client_order_id` in the captured request matches `setup_id`
+    /// - `client_order_id` in the captured request matches `cycle_id`
     /// - bracket legs are present (both `take_profit_price` and `stop_loss_price`)
     /// - returned receipt has `filled_size_bps > 0`
     #[tokio::test]
     async fn submit_buy_with_bracket() {
-        let setup_id = Uuid::new_v4();
+        let cycle_id = Uuid::new_v4();
         let pending = fixture_pending_order();
         let pending_id = pending.id.clone();
-        let filled = fixture_filled_order(&pending_id, &setup_id.to_string());
+        let filled = fixture_filled_order(&pending_id, &cycle_id.to_string());
 
         let api = MockAlpacaApi::new(
             fixture_account(),
@@ -813,15 +813,15 @@ mod tests {
         let captured_request = Arc::clone(&api.captured_request);
 
         let executor = AlpacaExecutor::with_api(api);
-        let decision = fixture_buy_decision(setup_id);
+        let decision = fixture_buy_decision(cycle_id);
         let receipt = executor.submit(&decision).await.expect("submit should succeed");
 
-        // Assert client_order_id matches setup_id.
+        // Assert client_order_id matches cycle_id.
         let req = captured_request.lock().unwrap().clone().unwrap();
         assert_eq!(
             req.client_order_id,
-            setup_id.to_string(),
-            "client_order_id must match setup_id for idempotency"
+            cycle_id.to_string(),
+            "client_order_id must match cycle_id for idempotency"
         );
 
         // Assert bracket legs are present (price was derivable from the mock position).
@@ -835,7 +835,7 @@ mod tests {
         );
 
         // Assert receipt is well-formed.
-        assert_eq!(receipt.setup_id, setup_id);
+        assert_eq!(receipt.cycle_id, cycle_id);
         assert_eq!(receipt.venue, "alpaca");
         assert!(receipt.filled_size_bps > 0, "filled_size_bps must be > 0");
     }
@@ -871,7 +871,7 @@ mod tests {
         let executor = AlpacaExecutor::with_api(PanicApi);
         let decision = RiskDecision::Vetoed {
             original: TraderDecision {
-                setup_id: Uuid::nil(),
+                cycle_id: Uuid::nil(),
                 action: Action::Buy,
                 size_bps: 500,
                 direction: Direction::Long,
@@ -958,18 +958,18 @@ mod tests {
     // directly, which is the same data path.
     #[test]
     fn order_request_serialises_client_order_id() {
-        let setup_id = Uuid::new_v4();
+        let cycle_id = Uuid::new_v4();
         let req = OrderRequest {
             symbol: "BTC/USD".to_string(),
             notional: 10_000.0,
             side: OrderSide::Buy,
             take_profit_price: Some(74_550.0),
             stop_loss_price: Some(68_250.0),
-            client_order_id: setup_id.to_string(),
+            client_order_id: cycle_id.to_string(),
         };
         let json = serde_json::to_string(&req).expect("must serialise");
         assert!(
-            json.contains(&setup_id.to_string()),
+            json.contains(&cycle_id.to_string()),
             "serialised OrderRequest must contain client_order_id"
         );
         assert!(

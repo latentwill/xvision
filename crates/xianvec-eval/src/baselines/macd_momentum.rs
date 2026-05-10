@@ -58,7 +58,7 @@ impl Strategy for MacdMomentum {
 
         if bullish_cross {
             Some(TraderDecision {
-                setup_id: snapshot.setup_id,
+                cycle_id: snapshot.cycle_id,
                 action: Action::Buy,
                 size_bps: 800,
                 direction: Direction::Long,
@@ -68,7 +68,7 @@ impl Strategy for MacdMomentum {
             })
         } else if bearish_cross {
             Some(TraderDecision {
-                setup_id: snapshot.setup_id,
+                cycle_id: snapshot.cycle_id,
                 action: Action::Sell,
                 size_bps: 800,
                 direction: Direction::Short,
@@ -96,7 +96,7 @@ mod tests {
         macd_hist: Option<f64>,
     ) -> MarketSnapshot {
         MarketSnapshot {
-            setup_id: Uuid::new_v4(),
+            cycle_id: Uuid::new_v4(),
             asset: AssetSymbol::Btc,
             timestamp: Utc::now(),
             price: 70_000.0,
@@ -135,7 +135,7 @@ mod tests {
             .decide(&bull_snap)
             .await
             .expect("bullish cross must return Some");
-        assert_eq!(dec.setup_id, bull_snap.setup_id, "setup_id must propagate");
+        assert_eq!(dec.cycle_id, bull_snap.cycle_id, "cycle_id must propagate");
         assert_eq!(dec.action, Action::Buy);
         assert_eq!(dec.direction, Direction::Long);
         assert_eq!(dec.size_bps, 800);

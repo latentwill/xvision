@@ -67,7 +67,7 @@ mod tests {
                     },
                 ),
             ]),
-            setups_evaluated: 5,
+            cycles_evaluated: 5,
             initial_nav_usd: 100_000.0,
             started_at: Utc::now(),
             finished_at: Utc::now(),
