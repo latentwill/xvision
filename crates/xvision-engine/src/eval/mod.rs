@@ -11,6 +11,7 @@ pub mod compare;
 pub mod executor;
 pub mod findings;
 pub mod metrics;
+pub mod progress;
 pub mod run;
 pub mod scenario;
 pub mod store;
@@ -21,6 +22,7 @@ pub use compare::{
     ComparisonRunSummary,
 };
 pub use findings::{Finding, Severity};
+pub use progress::{send_event, ProgressBus, ProgressEvent, ProgressRx, ProgressTx};
 
 pub use run::{MetricsSummary, Run, RunMode, RunStatus};
 pub use scenario::{
