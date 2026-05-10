@@ -6,9 +6,14 @@
 //! lives in `xvision-eval` and implements this same trait.
 
 pub mod alpaca;
+pub mod broker_surface;
 pub mod executor;
 pub mod orderly;
 
 pub use alpaca::AlpacaExecutor;
+pub use broker_surface::{
+    AlpacaLiveSurface, AlpacaPaperSurface, BrokerKind, BrokerSurface, MockBrokerSurface,
+    OrderConfirmation, OrderRequest as BrokerOrderRequest, OrderlyLiveSurface, Side,
+};
 pub use executor::{ExecutionReceipt, Executor, ExecutorError};
 pub use orderly::OrderlyExecutor;
