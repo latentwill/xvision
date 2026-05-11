@@ -68,14 +68,18 @@ async fn unknown_api_route_404s() {
 }
 
 #[tokio::test]
-async fn strategies_list_returns_array_when_empty() {
+async fn strategies_list_returns_canonical_defaults_on_fresh_home() {
     let (server, _tmp) = boot().await;
 
     let response = server.get("/api/strategies").await;
     response.assert_status_ok();
     let body: serde_json::Value = response.json();
-    assert!(body["items"].is_array(), "items must be array");
-    assert_eq!(body["items"].as_array().unwrap().len(), 0);
+    let items = body["items"].as_array().expect("items must be array");
+    // `AppState::new` seeds `bundle-canonical-defaults` alongside the
+    // four canonical scenarios. The list should contain just that bundle
+    // on a fresh xvn_home.
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["agent_id"], "bundle-canonical-defaults");
 }
 
 #[tokio::test]
@@ -119,9 +123,14 @@ async fn strategies_list_returns_seeded_bundle() {
     response.assert_status_ok();
     let body: serde_json::Value = response.json();
     let items = body["items"].as_array().expect("items array");
-    assert_eq!(items.len(), 1, "exactly one bundle seeded");
-    assert_eq!(items[0]["agent_id"], bundle_id);
-    assert_eq!(items[0]["template"], "mean_reversion");
+    // Canonical-defaults bundle is seeded by `AppState::new`; this test
+    // adds one more, so the list now contains two entries. We assert
+    // that our test bundle is present rather than asserting list size.
+    let test_bundle = items
+        .iter()
+        .find(|i| i["agent_id"] == bundle_id)
+        .expect("test bundle must be present");
+    assert_eq!(test_bundle["template"], "mean_reversion");
 }
 
 #[tokio::test]
@@ -188,9 +197,17 @@ async fn eval_runs_filter_by_status_skips_others() {
     .unwrap();
     let store = RunStore::new(pool);
 
-    let queued = Run::new_queued("h1".into(), "s1".into(), RunMode::Backtest);
+    let queued = Run::new_queued(
+        "h1".into(),
+        "crypto-bull-q1-2025".into(),
+        RunMode::Backtest,
+    );
     store.create(&queued).await.unwrap();
-    let mut other = Run::new_queued("h2".into(), "s2".into(), RunMode::Backtest);
+    let mut other = Run::new_queued(
+        "h2".into(),
+        "crypto-bear-q3-2024".into(),
+        RunMode::Backtest,
+    );
     other.status = RunStatus::Failed;
     store.create(&other).await.unwrap();
 

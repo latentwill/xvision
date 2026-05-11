@@ -36,6 +36,19 @@ impl AppState {
             .await
             .context("run xvision-engine migrations")?;
 
+        // First-run seed: canonical scenarios + bundle-canonical-defaults.
+        // Mirrors `ApiContext::open` so dashboard-only bootstrap paths
+        // (xvn dashboard serve + integration tests) hit the same baseline
+        // state. Idempotent — short-circuits when canonical rows exist.
+        let seed_ctx = ApiContext::new(
+            pool.clone(),
+            Actor::Cli { user: "dashboard-bootstrap".into() },
+            xvn_home.clone(),
+        );
+        xvision_engine::eval::scenario_seed::run_seed_if_needed(&seed_ctx)
+            .await
+            .context("seed canonical scenarios")?;
+
         // Hydrate the process env with persisted provider API keys so backend
         // constructors that call std::env::var(api_key_env) see the keys the
         // operator pasted via Settings → Providers. Env vars set in the shell
