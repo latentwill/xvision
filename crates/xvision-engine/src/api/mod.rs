@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+use xvision_core::config::AlpacaData;
 use xvision_data::alpaca::AlpacaBarsFetcher;
 
 pub mod audit;
@@ -108,16 +109,18 @@ impl ApiContext {
     /// New fields added after the original three-field public struct
     /// literal (alpaca, bars_singleflight) get sensible defaults here —
     /// callers that need a non-default Alpaca fetcher chain
-    /// `.with_alpaca_fetcher(...)`.
+    /// `.with_alpaca_fetcher(...)`. The default fetcher uses
+    /// `AlpacaData::DEFAULT_RATE_LIMIT_RPM` to match `config/default.toml`.
     pub fn new(db: SqlitePool, actor: Actor, xvn_home: PathBuf) -> Self {
         Self {
             db,
             actor,
             xvn_home,
-            alpaca: Arc::new(AlpacaBarsFetcher::new(
+            alpaca: Arc::new(AlpacaBarsFetcher::with_rate_limit(
                 DEFAULT_ALPACA_BARS_URL.into(),
                 String::new(),
                 String::new(),
+                AlpacaData::DEFAULT_RATE_LIMIT_RPM,
             )),
             bars_singleflight: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -128,6 +131,20 @@ impl ApiContext {
     /// to inject a credentialed fetcher built from `secrets/brokers.toml`.
     pub fn with_alpaca_fetcher(mut self, alpaca: Arc<AlpacaBarsFetcher>) -> Self {
         self.alpaca = alpaca;
+        self
+    }
+
+    /// Builder override for the Alpaca fetcher's rate limit. Replaces the
+    /// default (200 rpm) fetcher with one tuned per `config.data.alpaca`.
+    /// Production CLI/MCP paths chain this after `open` once they've loaded
+    /// `config/default.toml`.
+    pub fn with_alpaca_rate_limit_rpm(mut self, rpm: u32) -> Self {
+        self.alpaca = Arc::new(AlpacaBarsFetcher::with_rate_limit(
+            DEFAULT_ALPACA_BARS_URL.into(),
+            String::new(),
+            String::new(),
+            rpm,
+        ));
         self
     }
 

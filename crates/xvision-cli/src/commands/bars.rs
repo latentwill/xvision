@@ -99,9 +99,22 @@ async fn open_ctx(override_path: Option<PathBuf>) -> Result<ApiContext> {
     let user = std::env::var("USER")
         .or_else(|_| std::env::var("USERNAME"))
         .unwrap_or_else(|_| "operator".to_string());
-    ApiContext::open(&xvn_home, Actor::Cli { user })
+    let ctx = ApiContext::open(&xvn_home, Actor::Cli { user })
         .await
-        .map_err(|e| anyhow::anyhow!("open ApiContext: {e}"))
+        .map_err(|e| anyhow::anyhow!("open ApiContext: {e}"))?;
+    // Thread the rate-limit knob from `config/default.toml` if present.
+    // Missing/unreadable config falls back to the default `AlpacaBarsFetcher`
+    // constructed inside `ApiContext::open` (200 rpm) — `xvn bars` never
+    // wants to fail boot on a missing config file.
+    let cfg_path = std::env::current_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join("config/default.toml");
+    if cfg_path.is_file() {
+        if let Ok(cfg) = xvision_core::config::load_runtime(&cfg_path) {
+            return Ok(ctx.with_alpaca_rate_limit_rpm(cfg.data.alpaca.rate_limit_rpm));
+        }
+    }
+    Ok(ctx)
 }
 
 async fn run_fetch(ctx: &ApiContext, a: FetchArgs) -> CliResult<()> {
