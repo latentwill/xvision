@@ -24,7 +24,7 @@ use clap::{Args, Subcommand};
 use xvision_core::AssetSymbol;
 use xvision_data::alpaca::BarGranularity;
 use xvision_engine::api::{Actor, ApiContext};
-use xvision_engine::eval::bars::{self, BarCacheArgs};
+use xvision_engine::eval::bars::{self, compute_cache_key, BarCacheArgs};
 
 use crate::exit::{CliError, CliResult};
 
@@ -147,22 +147,6 @@ async fn run_fetch(ctx: &ApiContext, a: FetchArgs) -> CliResult<()> {
         .map_err(|e| CliError::upstream(anyhow::anyhow!("{e}")))?;
     println!("Fetched {} bars (cache_key={cache_key})", out.len());
     Ok(())
-}
-
-fn compute_cache_key(
-    asset: &str,
-    g: BarGranularity,
-    start: DateTime<Utc>,
-    end: DateTime<Utc>,
-    src: &str,
-) -> String {
-    let mut h = blake3::Hasher::new();
-    h.update(asset.as_bytes());
-    h.update(g.as_alpaca_str().as_bytes());
-    h.update(start.to_rfc3339().as_bytes());
-    h.update(end.to_rfc3339().as_bytes());
-    h.update(src.as_bytes());
-    h.finalize().to_hex().to_string()
 }
 
 async fn run_ls(ctx: &ApiContext) -> CliResult<()> {

@@ -42,6 +42,28 @@ pub struct BarCacheArgs {
     pub data_source_tag: String,
 }
 
+/// Deterministic cache key for a `(asset_pair, granularity, window,
+/// data_source_tag)` tuple. Lifted here so both the `xvn bars fetch`
+/// CLI command and the cache-backed `xvn ab-compare` path produce the
+/// same blake3 hash for the same inputs — guaranteeing one window is
+/// stored under one key regardless of which entry point warms the
+/// cache. blake3 hex (64 chars).
+pub fn compute_cache_key(
+    asset_pair: &str,
+    granularity: BarGranularity,
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+    data_source_tag: &str,
+) -> String {
+    let mut h = blake3::Hasher::new();
+    h.update(asset_pair.as_bytes());
+    h.update(granularity.as_alpaca_str().as_bytes());
+    h.update(start.to_rfc3339().as_bytes());
+    h.update(end.to_rfc3339().as_bytes());
+    h.update(data_source_tag.as_bytes());
+    h.finalize().to_hex().to_string()
+}
+
 /// Read bars for the window described by `args`, going through the
 /// `bars_cache` table. On miss, calls the Alpaca fetcher on the context
 /// and back-fills the cache before returning. Concurrent misses for the

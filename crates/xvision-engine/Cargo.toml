@@ -32,6 +32,7 @@ tokio       = { workspace = true }
 tracing     = { workspace = true }
 sqlx        = { workspace = true }
 flate2      = "1.0"
+blake3      = "1.5"
 ts-rs       = { version = "9", optional = true }
 statrs      = "0.18"
 ed25519-dalek = { version = "2", features = ["rand_core"] }

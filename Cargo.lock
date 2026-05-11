@@ -8325,6 +8325,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "blake3",
  "chrono",
  "ed25519-dalek",
  "flate2",
