@@ -25,7 +25,10 @@ const TABS = [
 export function SettingsLayout() {
   return (
     <>
-      <Topbar title="Settings" sub="LLM keys · brokers" />
+      <Topbar
+        title="Settings"
+        sub="Connect LLM providers and broker accounts xvision uses to run agents"
+      />
       <nav className="flex gap-1 mb-5 border-b border-border-soft">
         {TABS.map((t) => (
           <NavLink
@@ -244,18 +247,6 @@ function AlpacaBrokerCard({ entry }: { entry: BrokerEntry }) {
               </button>
             </div>
           </div>
-          <details className="text-[12px] text-text-3">
-            <summary className="cursor-pointer hover:text-text-2">
-              Env-var fallback status
-            </summary>
-            <table className="w-full mt-2">
-              <tbody>
-                {entry.credentials.map((c) => (
-                  <CredentialRow key={c.env_var} cred={c} />
-                ))}
-              </tbody>
-            </table>
-          </details>
         </div>
       ) : null}
 
@@ -269,11 +260,7 @@ function AlpacaBrokerCard({ entry }: { entry: BrokerEntry }) {
               </code>{" "}
               (owner-only) and used by{" "}
               <code className="font-mono text-text-2">--mode paper</code>{" "}
-              eval runs. Env vars{" "}
-              <code className="font-mono text-text-2">APCA_API_KEY_ID</code>{" "}
-              and{" "}
-              <code className="font-mono text-text-2">APCA_API_SECRET_KEY</code>{" "}
-              still work as a fallback.
+              eval runs.
             </p>
           ) : null}
           <div>

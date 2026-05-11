@@ -46,6 +46,10 @@ pub fn build_router(state: AppState) -> Router {
             "/api/settings/providers/:name",
             get(settings::providers::show).delete(settings::providers::remove),
         )
+        .route(
+            "/api/settings/providers/:name/set-default",
+            post(settings::providers::set_default),
+        )
         .route("/api/settings/danger/wipe-db", post(settings::danger::wipe_db))
         .route(
             "/api/settings/danger/regen-identity",
