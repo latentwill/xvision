@@ -143,3 +143,32 @@ async fn corrupted_cache_blob_treated_as_miss_and_self_heals() {
     let requests = server.received_requests().await.unwrap();
     assert_eq!(requests.len(), 1, "second call hits cleaned cache");
 }
+
+#[tokio::test]
+async fn concurrent_misses_serialize_through_singleflight() {
+    let (ctx, server) = test_ctx_with_mock_alpaca().await;
+    let args = std::sync::Arc::new(BarCacheArgs {
+        cache_key: "singleflight_key".into(),
+        asset_pair: "ETH/USD".into(),
+        granularity: BarGranularity::Hour1,
+        start: Utc.with_ymd_and_hms(2024, 2, 3, 0, 0, 0).unwrap(),
+        end: Utc.with_ymd_and_hms(2024, 2, 3, 4, 0, 0).unwrap(),
+        data_source_tag: "alpaca-historical-v1".into(),
+    });
+
+    let ctx = std::sync::Arc::new(ctx);
+    let ctx_a = ctx.clone();
+    let ctx_b = ctx.clone();
+    let args_a = args.clone();
+    let args_b = args.clone();
+
+    let (a, b) = tokio::join!(
+        async move { load_bars(&ctx_a, &args_a).await },
+        async move { load_bars(&ctx_b, &args_b).await },
+    );
+    a.unwrap();
+    b.unwrap();
+
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 1, "single-flight should de-dupe concurrent fetches");
+}
