@@ -3,6 +3,7 @@ import { Layout } from "@/components/shell/Layout";
 import { HomeRoute } from "./routes/home";
 import { StrategiesRoute } from "./routes/strategies";
 import { AgentsRoute } from "./routes/agents";
+import { AgentsEditRoute } from "./routes/agents-edit";
 import { AuthoringRoute } from "./routes/authoring";
 import { EvalRunsRoute } from "./routes/eval-runs";
 import { EvalRunDetailRoute } from "./routes/eval-runs-detail";
@@ -23,6 +24,8 @@ export const router = createBrowserRouter([
       { index: true, element: <HomeRoute /> },
       { path: "strategies", element: <StrategiesRoute /> },
       { path: "agents", element: <AgentsRoute /> },
+      { path: "agents/new", element: <AgentsEditRoute /> },
+      { path: "agents/:id", element: <AgentsEditRoute /> },
       { path: "authoring", element: <AuthoringRoute /> },
       { path: "authoring/:id", element: <AuthoringRoute /> },
       { path: "eval-runs", element: <EvalRunsRoute /> },
