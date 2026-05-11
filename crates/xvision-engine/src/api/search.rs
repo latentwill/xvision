@@ -99,17 +99,26 @@ pub async fn upsert_finding(ctx: &ApiContext, finding: &Finding) {
 /// this is just a fixed list iteration — no separate "incremental" hook.
 pub async fn upsert_scenarios(ctx: &ApiContext) {
     for s in canonical_scenarios() {
+        let asset_universe: Vec<String> =
+            s.asset.iter().map(|a| a.venue_symbol.clone()).collect();
+        // Extract legacy regime tags off the new combined `tags` field so the
+        // ⌘K palette text stays consistent during the refactor.
+        let regime_tags: Vec<String> = s
+            .tags
+            .iter()
+            .filter_map(|t| t.strip_prefix("regime:").map(|r| r.to_string()))
+            .collect();
         let entry = IndexEntry {
             artifact_id: s.id.clone(),
             kind: SearchKind::Scenario,
             title: s.display_name.clone(),
             summary: format!(
                 "{} · {} days · regimes: {}",
-                s.asset_universe.join(", "),
+                asset_universe.join(", "),
                 (s.time_window.end - s.time_window.start).num_days(),
-                s.regime_tags.join(", ")
+                regime_tags.join(", ")
             ),
-            tags: s.regime_tags.clone(),
+            tags: regime_tags,
             updated_at: chrono::Utc::now(),
             href: format!("/eval-runs?scenario={}", s.id),
         };

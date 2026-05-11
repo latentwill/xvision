@@ -158,11 +158,14 @@ impl PaperExecutor {
             .await?;
         run.status = RunStatus::Running;
 
+        // TODO(Task 5): pull from StrategyBundle. For now we read the first
+        // venue_symbol off the scenario's asset list — preserves v1 BTC-only
+        // semantics (canonical scenarios all have asset[0].venue_symbol = "BTC/USD").
         let asset = scenario
-            .asset_universe
+            .asset
             .first()
-            .ok_or_else(|| anyhow::anyhow!("scenario {} has empty asset_universe", scenario.id))?
-            .clone();
+            .map(|a| a.venue_symbol.clone())
+            .ok_or_else(|| anyhow::anyhow!("scenario {} has empty asset list", scenario.id))?;
 
         let cadence = Duration::minutes(bundle.manifest.decision_cadence_minutes as i64);
         if cadence.num_seconds() <= 0 {

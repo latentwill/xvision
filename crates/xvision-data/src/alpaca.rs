@@ -11,11 +11,11 @@ use governor::{
 };
 use nonzero_ext::nonzero;
 use reqwest::{Client, StatusCode};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::warn;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BarGranularity {
     Minute1,
     Minute5,

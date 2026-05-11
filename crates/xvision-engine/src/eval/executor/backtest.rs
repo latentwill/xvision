@@ -33,6 +33,8 @@ use crate::eval::metrics::{
 use crate::eval::progress::{send_event, ProgressEvent, ProgressTx};
 use crate::eval::run::{MetricsSummary, Run, RunStatus};
 use crate::eval::scenario::{Scenario, SlippageModel};
+// TODO(Task 5): replace placeholder_capital() with the bundle's capital.
+use crate::eval::scenario::placeholder_capital;
 use crate::eval::store::{DecisionRow, RunStore};
 use crate::tools::ToolRegistry;
 
@@ -152,11 +154,13 @@ impl BacktestExecutor {
             .await?;
         run.status = RunStatus::Running;
 
+        // TODO(Task 5): pull from StrategyBundle. For v1 we read the first
+        // venue_symbol off the scenario's asset list (BTC/USD for canonicals).
         let asset = scenario
-            .asset_universe
+            .asset
             .first()
-            .ok_or_else(|| anyhow!("scenario {} has empty asset_universe", scenario.id))?
-            .clone();
+            .map(|a| a.venue_symbol.clone())
+            .ok_or_else(|| anyhow!("scenario {} has empty asset list", scenario.id))?;
 
         let cadence_min = bundle.manifest.decision_cadence_minutes as i64;
         if cadence_min <= 0 {
@@ -166,12 +170,15 @@ impl BacktestExecutor {
             );
         }
 
-        let bars = load_ohlcv_fixture(&scenario.data_seed, &asset, usize::MAX)
-            .map_err(|e| anyhow!("load fixture {}: {e}", scenario.data_seed))?;
+        // The cache_key plays the role of the old `data_seed` field — it
+        // identifies the parquet fixture / cached-bars artifact.
+        let data_seed = &scenario.bar_cache_policy.cache_key;
+        let bars = load_ohlcv_fixture(data_seed, &asset, usize::MAX)
+            .map_err(|e| anyhow!("load fixture {}: {e}", data_seed))?;
         if bars.len() <= WARMUP_BARS + 1 {
             anyhow::bail!(
                 "fixture {} has only {} bars; need > {}",
-                scenario.data_seed,
+                data_seed,
                 bars.len(),
                 WARMUP_BARS + 1
             );
@@ -182,12 +189,13 @@ impl BacktestExecutor {
         // bars remaining"; under-reporting on slow fixtures is fine.
         let total_decision_bars = bars.len().saturating_sub(WARMUP_BARS).max(1) as f64;
 
-        let initial = scenario.capital.initial;
-        let slip_bps = match &scenario.slippage {
+        // TODO(Task 5): pull from the StrategyBundle.
+        let initial = placeholder_capital().initial;
+        let slip_bps = match &scenario.venue.slippage {
             SlippageModel::Linear { bps } => *bps as f64,
             SlippageModel::None => 0.0,
         };
-        let taker_bps = scenario.fees.taker_bps as f64;
+        let taker_bps = scenario.venue.fees.taker_bps as f64;
 
         let mut equity = initial;
         let mut equity_curve: Vec<f64> = vec![initial];

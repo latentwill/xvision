@@ -604,12 +604,24 @@ pub async fn scenarios(ctx: &ApiContext) -> ApiResult<Vec<ScenarioSummary>> {
     let started = Instant::now();
     let summaries: Vec<ScenarioSummary> = canonical_scenarios()
         .into_iter()
-        .map(|s| ScenarioSummary {
-            id: s.id,
-            display_name: s.display_name,
-            asset_universe: s.asset_universe,
-            regime_tags: s.regime_tags,
-            time_window_days: (s.time_window.end - s.time_window.start).num_days(),
+        .map(|s| {
+            let asset_universe: Vec<String> =
+                s.asset.iter().map(|a| a.venue_symbol.clone()).collect();
+            // Old `regime_tags` shape — extract the "regime:*" prefix off the
+            // new combined `tags` field. Will go away with Task 6's seed
+            // rewrite.
+            let regime_tags: Vec<String> = s
+                .tags
+                .iter()
+                .filter_map(|t| t.strip_prefix("regime:").map(|r| r.to_string()))
+                .collect();
+            ScenarioSummary {
+                id: s.id,
+                display_name: s.display_name,
+                asset_universe,
+                regime_tags,
+                time_window_days: (s.time_window.end - s.time_window.start).num_days(),
+            }
         })
         .collect();
 
