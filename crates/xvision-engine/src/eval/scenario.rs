@@ -15,6 +15,11 @@ use serde::{Deserialize, Serialize};
 // Re-export from xvision-data so consumers don't need a second import.
 pub use xvision_data::alpaca::BarGranularity;
 
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Scenario {
     pub id: String,
@@ -29,6 +34,7 @@ pub struct Scenario {
     pub asset: Vec<AssetRef>,
     pub quote_currency: QuoteCurrency,
     pub time_window: TimeWindow,
+    #[cfg_attr(feature = "ts-export", ts(type = "string"))]
     pub granularity: BarGranularity,
     pub timezone: String,
     pub calendar: CalendarRef,
@@ -39,11 +45,18 @@ pub struct Scenario {
 
     pub bar_cache_policy: BarCachePolicy,
 
+    #[cfg_attr(feature = "ts-export", ts(type = "string"))]
     pub created_at: DateTime<Utc>,
     pub created_by: String,
+    #[cfg_attr(feature = "ts-export", ts(type = "string | null"))]
     pub archived_at: Option<DateTime<Utc>>,
 }
 
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum ScenarioSource {
     Canonical,
@@ -52,6 +65,11 @@ pub enum ScenarioSource {
     Generated,
 }
 
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum AssetClass {
     Crypto,
@@ -60,6 +78,11 @@ pub enum AssetClass {
     Future,
 }
 
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AssetRef {
     pub class: AssetClass,
@@ -67,6 +90,11 @@ pub struct AssetRef {
     pub venue_symbol: String,
 }
 
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum QuoteCurrency {
     Usd,
@@ -74,12 +102,24 @@ pub enum QuoteCurrency {
     Usdc,
 }
 
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TimeWindow {
+    #[cfg_attr(feature = "ts-export", ts(type = "string"))]
     pub start: DateTime<Utc>,
+    #[cfg_attr(feature = "ts-export", ts(type = "string"))]
     pub end: DateTime<Utc>,
 }
 
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum CalendarRef {
     Continuous24x7,
@@ -87,6 +127,11 @@ pub enum CalendarRef {
     Custom(String),
 }
 
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum DataSource {
@@ -100,6 +145,11 @@ pub enum DataSource {
     },
 }
 
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum AdjustmentMode {
     Raw,
@@ -107,12 +157,22 @@ pub enum AdjustmentMode {
     SplitDividendAdjusted,
 }
 
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum WalkModel {
     GeometricBrownian,
     RandomWalk,
 }
 
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VenueSettings {
     pub venue: Venue,
@@ -122,17 +182,32 @@ pub struct VenueSettings {
     pub fill_model: FillModel,
 }
 
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum Venue {
     Alpaca,
 }
 
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Fees {
     pub maker_bps: u32,
     pub taker_bps: u32,
 }
 
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "model", rename_all = "snake_case")]
 pub enum SlippageModel {
@@ -140,11 +215,21 @@ pub enum SlippageModel {
     None,
 }
 
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LatencyModel {
     pub decision_to_fill_ms: u32,
 }
 
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FillModel {
     pub market_order_fill: MarketOrderFill,
@@ -153,23 +238,43 @@ pub struct FillModel {
     pub volume_constraints: Option<VolumeConstraint>,
 }
 
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum MarketOrderFill {
     FullAtClose,
     NextBarOpen,
 }
 
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum LimitOrderFill {
     NeverFills,
     FillIfTouched,
 }
 
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VolumeConstraint {
     pub max_fraction_of_bar_volume: f64,
 }
 
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "mode")]
 pub enum ReplayMode {
@@ -179,13 +284,24 @@ pub enum ReplayMode {
     Realtime,
 }
 
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BarCachePolicy {
     pub cache_key: String,
     pub refresh_policy: RefreshPolicy,
+    #[cfg_attr(feature = "ts-export", ts(type = "string | null"))]
     pub data_fetched_at: Option<DateTime<Utc>>,
 }
 
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "policy")]
 pub enum RefreshPolicy {

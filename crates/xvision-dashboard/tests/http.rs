@@ -530,6 +530,153 @@ async fn eval_compare_returns_report_for_seeded_runs() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// /api/scenarios
+
+#[tokio::test]
+async fn list_scenarios_returns_seeded_rows() {
+    let (server, _tmp) = boot().await;
+    let response = server.get("/api/scenarios").await;
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    let items = body["items"].as_array().expect("items array");
+    assert_eq!(items.len(), 4); // 4 canonical scenarios seeded by AppState::new
+    assert!(items.iter().any(|i| i["id"] == "crypto-bull-q1-2025"));
+}
+
+#[tokio::test]
+async fn get_scenario_returns_canonical() {
+    let (server, _tmp) = boot().await;
+    let response = server.get("/api/scenarios/crypto-bull-q1-2025").await;
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["id"], "crypto-bull-q1-2025");
+    assert_eq!(body["source"], "Canonical");
+}
+
+#[tokio::test]
+async fn get_scenario_returns_404_for_unknown() {
+    let (server, _tmp) = boot().await;
+    let response = server.get("/api/scenarios/no-such-scenario").await;
+    response.assert_status_not_found();
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["code"], "not_found");
+}
+
+fn minimal_create_request() -> serde_json::Value {
+    serde_json::json!({
+        "display_name": "Test BTC 1h scenario",
+        "description": "Integration test scenario",
+        "asset_class": "Crypto",
+        "asset": [{ "class": "Crypto", "symbol": "BTC", "venue_symbol": "BTC/USD" }],
+        "quote_currency": "Usd",
+        "time_window": {
+            "start": "2025-01-01T00:00:00Z",
+            "end": "2025-04-01T00:00:00Z"
+        },
+        "granularity": "Hour1",
+        "timezone": "UTC",
+        "calendar": "Continuous24x7",
+        "venue": {
+            "venue": "Alpaca",
+            "fees": { "maker_bps": 10, "taker_bps": 25 },
+            "slippage": { "model": "linear", "bps": 5 },
+            "latency": { "decision_to_fill_ms": 250 },
+            "fill_model": {
+                "market_order_fill": "NextBarOpen",
+                "limit_order_fill": "NeverFills",
+                "partial_fills": false,
+                "volume_constraints": null
+            }
+        },
+        "data_source": { "type": "AlpacaHistorical", "feed": null, "adjustment": "Raw" },
+        "replay_mode": { "mode": "Continuous" },
+        "tags": ["test"],
+        "notes": null,
+        "parent_scenario_id": null,
+        "source": "User"
+    })
+}
+
+#[tokio::test]
+async fn create_scenario_then_archive() {
+    let (server, _tmp) = boot().await;
+
+    // Create a new scenario.
+    let create_resp = server
+        .post("/api/scenarios")
+        .json(&minimal_create_request())
+        .await;
+    create_resp.assert_status(axum::http::StatusCode::CREATED);
+    let created: serde_json::Value = create_resp.json();
+    let id = created["id"].as_str().expect("id present");
+    assert!(id.starts_with("sc_"), "id has sc_ prefix");
+
+    // Archive it.
+    let archive_resp = server
+        .post(&format!("/api/scenarios/{id}/archive"))
+        .await;
+    archive_resp.assert_status(axum::http::StatusCode::NO_CONTENT);
+
+    // List with include_archived=true — it should show up.
+    let list_resp = server
+        .get("/api/scenarios?include_archived=true")
+        .await;
+    list_resp.assert_status_ok();
+    let body: serde_json::Value = list_resp.json();
+    let items = body["items"].as_array().expect("items");
+    assert!(
+        items.iter().any(|i| i["id"] == id),
+        "archived scenario visible with include_archived=true"
+    );
+    let archived = items.iter().find(|i| i["id"] == id).unwrap();
+    assert!(archived["archived_at"].is_string(), "archived_at is set");
+}
+
+#[tokio::test]
+async fn create_scenario_then_delete() {
+    let (server, _tmp) = boot().await;
+
+    // Create.
+    let create_resp = server
+        .post("/api/scenarios")
+        .json(&minimal_create_request())
+        .await;
+    create_resp.assert_status(axum::http::StatusCode::CREATED);
+    let created: serde_json::Value = create_resp.json();
+    let id = created["id"].as_str().expect("id present");
+
+    // Hard-delete.
+    let del_resp = server.delete(&format!("/api/scenarios/{id}")).await;
+    del_resp.assert_status(axum::http::StatusCode::NO_CONTENT);
+
+    // GET should now 404.
+    let get_resp = server.get(&format!("/api/scenarios/{id}")).await;
+    get_resp.assert_status_not_found();
+}
+
+#[tokio::test]
+async fn clone_scenario_inherits_parent() {
+    let (server, _tmp) = boot().await;
+
+    // Clone one of the canonical scenarios with no overrides.
+    let clone_resp = server
+        .post("/api/scenarios/crypto-bull-q1-2025/clone")
+        .await;
+    clone_resp.assert_status(axum::http::StatusCode::CREATED);
+    let cloned: serde_json::Value = clone_resp.json();
+    let id = cloned["id"].as_str().expect("id");
+    assert!(id.starts_with("sc_"));
+    assert_eq!(cloned["parent_scenario_id"], "crypto-bull-q1-2025");
+    assert_eq!(cloned["source"], "Clone");
+
+    // Verify it appears in the list.
+    let list_resp = server.get("/api/scenarios").await;
+    let body: serde_json::Value = list_resp.json();
+    let items = body["items"].as_array().unwrap();
+    assert!(items.iter().any(|i| i["id"] == id));
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // /api/settings/providers
 //
 // All providers tests set $XVN_CONFIG_PATH to a tempfile and write a

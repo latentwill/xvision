@@ -24,6 +24,11 @@ use xvision_data::asset_whitelist::{alpaca_crypto_history_start, is_alpaca_crypt
 
 /// Request to create a new scenario. Caller fills in every field; the
 /// engine assigns `id`, `created_at`, `created_by`, and `bar_cache_policy`.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CreateScenarioRequest {
     pub display_name: String,
@@ -32,6 +37,7 @@ pub struct CreateScenarioRequest {
     pub asset: Vec<AssetRef>,
     pub quote_currency: QuoteCurrency,
     pub time_window: TimeWindow,
+    #[cfg_attr(feature = "ts-export", ts(type = "string"))]
     pub granularity: BarGranularity,
     pub timezone: String,
     pub calendar: CalendarRef,
@@ -46,6 +52,11 @@ pub struct CreateScenarioRequest {
 
 /// Filter for `list`. All fields are AND-composed; `Default` means "no
 /// filter on any dimension" (and excludes archived rows).
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct ListScenariosFilter {
     pub source: Option<ScenarioSource>,
@@ -57,12 +68,18 @@ pub struct ListScenariosFilter {
 /// Mutations applied on top of a parent scenario when cloning. `None`
 /// means "inherit from parent". `notes` is intentionally a bare
 /// `Option<String>` so the clone starts with empty notes by default.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct ScenarioMutations {
     pub display_name: Option<String>,
     pub description: Option<String>,
     pub time_window: Option<TimeWindow>,
     pub asset: Option<Vec<AssetRef>>,
+    #[cfg_attr(feature = "ts-export", ts(type = "string | null"))]
     pub granularity: Option<BarGranularity>,
     pub venue: Option<VenueSettings>,
     pub tags: Option<Vec<String>>,
