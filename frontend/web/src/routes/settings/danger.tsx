@@ -4,12 +4,10 @@ import { Card } from "@/components/primitives/Card";
 import { ApiError } from "@/api/client";
 import {
   dangerFactoryReset,
-  dangerRegenIdentity,
   dangerWipeDb,
 } from "@/api/settings";
 import type {
   FactoryResetReport,
-  RegenIdentityReport,
   WipeDbReport,
 } from "@/api/types.gen";
 
@@ -59,27 +57,6 @@ export function SettingsDangerRoute() {
               </li>
             ))}
           </ul>
-        )}
-      />
-
-      <DangerSection<RegenIdentityReport>
-        title="Regenerate signing identity"
-        description={
-          <>
-            Replaces the on-disk Ed25519 signing key with a freshly-generated
-            one. v1 ships without the <code className="font-mono">xvision-identity</code>{" "}
-            feature compiled in, so this currently returns a conflict — the
-            intent is still audit-logged. Re-enable in the wallet plan.
-          </>
-        }
-        actionLabel="Regenerate key"
-        mutationFn={dangerRegenIdentity}
-        renderSuccess={(r) => (
-          <div className="text-[12px] text-text-2">
-            New pubkey:{" "}
-            <code className="font-mono text-text break-all">{r.pubkey_hex}</code>
-            <div className="mt-1 text-text-3">at {r.key_path}</div>
-          </div>
         )}
       />
 

@@ -36,6 +36,18 @@ impl AppState {
             .await
             .context("run xvision-engine migrations")?;
 
+        // Hydrate the process env with persisted provider API keys so backend
+        // constructors that call std::env::var(api_key_env) see the keys the
+        // operator pasted via Settings → Providers. Env vars set in the shell
+        // win — we don't clobber them.
+        if let Err(e) = xvision_engine::api::settings::providers::load_providers_secrets_into_env(
+            &xvn_home,
+        )
+        .await
+        {
+            tracing::warn!(error = %e, "could not hydrate provider secrets into env");
+        }
+
         Ok(Self { pool, xvn_home })
     }
 

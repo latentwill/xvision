@@ -524,19 +524,26 @@ sqlite_url = "sqlite://x.db"
     }
 
     #[test]
-    fn repo_default_toml_declares_anthropic_provider() {
+    fn repo_default_toml_ships_with_no_user_providers() {
+        // The repo's default config no longer seeds [[providers]]; users add
+        // their own via Settings → Providers (or `xvn provider add`). The
+        // `[intern]` block stays so `auto_derive_intern_provider_row` can
+        // synthesize a `_default_intern` row, keeping the runtime valid.
         let cfg = load_runtime(&project_root().join("config/default.toml")).unwrap();
-        let anthropic = cfg
+        let user_rows: Vec<&str> = cfg
             .providers
             .iter()
-            .find(|p| p.name == "anthropic")
-            .expect("repo default.toml must declare an `anthropic` provider row");
-        assert_eq!(anthropic.kind, ProviderKind::Anthropic);
-        assert_eq!(anthropic.api_key_env, "ANTHROPIC_API_KEY");
-        // [intern] points at the same triple → no synthetic row should appear
+            .map(|p| p.name.as_str())
+            .filter(|n| !n.starts_with('_'))
+            .collect();
         assert!(
-            !cfg.providers.iter().any(|p| p.name == "_default_intern"),
-            "synthetic should be skipped when user-declared match exists"
+            user_rows.is_empty(),
+            "default.toml should ship without user provider rows, got {user_rows:?}"
+        );
+        // The synthetic intern row must still exist so backends can resolve.
+        assert!(
+            cfg.providers.iter().any(|p| p.name == "_default_intern"),
+            "synthetic `_default_intern` row must be auto-derived from [intern]"
         );
     }
 

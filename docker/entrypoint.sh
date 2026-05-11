@@ -22,6 +22,20 @@ CONFIG_DIR="${XVN_CONFIG_DIR:-/config}"
 
 mkdir -p "$DATA_DIR"
 
+# The image bakes a read-only seed config under $CONFIG_DIR (mounted :ro in
+# docker-compose). Provider mutations from Settings → Providers must write
+# back, so on first boot we copy the seed into a writable location under
+# $DATA_DIR and re-point XVN_CONFIG_PATH there. Subsequent boots see the
+# already-seeded file and leave it alone.
+WRITABLE_CONFIG_DIR="$DATA_DIR/config"
+WRITABLE_CONFIG_PATH="$WRITABLE_CONFIG_DIR/default.toml"
+mkdir -p "$WRITABLE_CONFIG_DIR"
+if [[ ! -f "$WRITABLE_CONFIG_PATH" && -f "$CONFIG_DIR/default.toml" ]]; then
+  cp "$CONFIG_DIR/default.toml" "$WRITABLE_CONFIG_PATH"
+  echo "[entrypoint] seeded $WRITABLE_CONFIG_PATH from $CONFIG_DIR/default.toml" >&2
+fi
+export XVN_CONFIG_PATH="$WRITABLE_CONFIG_PATH"
+
 if [[ "${XVN_AUTOMIGRATE:-0}" == "1" ]]; then
   echo "[entrypoint] running store migrate against $DATA_DIR/store.db" >&2
   xvn store migrate --db "$DATA_DIR/store.db"
