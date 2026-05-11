@@ -29,6 +29,20 @@ serve` binds to `127.0.0.1:8788` by default.
 The `crates/xvision-dashboard/static/` directory is `.gitignore`d; CI / Docker
 builds must run `pnpm build` before `cargo build`.
 
+### Remote access (Tailscale, LAN)
+
+The dev server (`pnpm dev`) binds `0.0.0.0:5180` and accepts Tailscale MagicDNS
+names (`*.ts.net`) — see `vite.config.ts`. The production dashboard binary still
+defaults to loopback; override with `xvn dashboard serve --bind 0.0.0.0:8788`
+(or narrower, the tailnet IP) to reach it from a phone or another device.
+
+> ⚠ **Security caveat — no auth on the API.** The dashboard's trust model
+> (DESIGN.md §8.4) assumes same-origin localhost. Binding wider than loopback
+> exposes the engine API to anyone who can reach the interface. Safe behind a
+> Tailscale ACL or on a trusted home network; **do not** expose `0.0.0.0` on a
+> shared network (coffee shop, conference Wi-Fi, hotel) without adding auth.
+> Tracked as a follow-up — see FOLLOWUPS F35.
+
 ## Routes shipping in v1
 
 Implemented in `web/src/routes/`:
