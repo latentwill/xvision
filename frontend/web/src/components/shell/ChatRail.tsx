@@ -454,7 +454,10 @@ function ModelPicker({
         {groupByProvider(options).map((g) => (
           <optgroup key={g.provider} label={g.provider}>
             {g.items.map((o) => (
-              <option key={o.model} value={`${o.provider}::${o.model}`}>
+              <option
+                key={`${o.provider}::${o.model}`}
+                value={`${o.provider}::${o.model}`}
+              >
                 {o.model}
               </option>
             ))}
