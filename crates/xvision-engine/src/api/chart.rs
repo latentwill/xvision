@@ -618,6 +618,288 @@ fn split_markers(
     ChartMarkers { trades, vetoes, holds }
 }
 
+// ── Task 5 — ScenarioChartPayload + CacheStatus ────────────────────────────
+
+/// Cache status for a scenario's bar window.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum CacheStatus {
+    FullyCached {
+        bar_count: u32,
+        #[cfg_attr(feature = "ts-export", ts(type = "string"))]
+        fetched_at: chrono::DateTime<chrono::Utc>,
+    },
+    PartiallyCached {
+        fetched_count: u32,
+        expected_count: u32,
+    },
+    NotCached {
+        expected_count: u32,
+    },
+}
+
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScenarioChartPayload {
+    pub scenario: crate::eval::scenario::Scenario,
+    pub bars: Vec<ChartBar>,
+    pub cache_status: CacheStatus,
+}
+
+/// Build a `ScenarioChartPayload` for the given scenario id.
+///
+/// Computes the expected bar count from (end - start) and granularity,
+/// checks the `bars_cache` table for the scenario's `cache_key`, and
+/// loads bars (cache-hit returns immediately; cache-miss fetches from
+/// Alpaca and back-fills — which will fail in tests without credentials,
+/// so `NotCached` is returned directly when no cached row exists).
+pub async fn build_scenario_payload(
+    ctx: &ApiContext,
+    id: &str,
+) -> ApiResult<ScenarioChartPayload> {
+    use crate::api::scenario as api_scenario;
+    use xvision_data::alpaca::BarGranularity;
+
+    let scenario = api_scenario::get(ctx, id).await?;
+
+    // Compute expected bar count from the window and granularity.
+    let window_secs = (scenario.time_window.end - scenario.time_window.start)
+        .num_seconds()
+        .max(0) as u64;
+    let bar_secs: u64 = match scenario.granularity {
+        BarGranularity::Hour1 => 3600,
+        BarGranularity::Day1 => 86_400,
+        // Fallback for future granularities — treat as hourly.
+        _ => 3600,
+    };
+    let expected_count = (window_secs / bar_secs) as u32;
+
+    // Query bars_cache for cache status metadata — don't go through
+    // load_bars (which would trigger a live Alpaca fetch on miss).
+    let cache_row = query_bars_cache_meta(ctx, &scenario.bar_cache_policy.cache_key).await?;
+
+    let cache_status = match cache_row {
+        None => CacheStatus::NotCached { expected_count },
+        Some((bar_count, fetched_at)) => {
+            if bar_count >= expected_count {
+                CacheStatus::FullyCached { bar_count, fetched_at }
+            } else {
+                CacheStatus::PartiallyCached {
+                    fetched_count: bar_count,
+                    expected_count,
+                }
+            }
+        }
+    };
+
+    // Load bars only if cached; otherwise return empty vec.
+    let bars = if matches!(cache_status, CacheStatus::FullyCached { .. } | CacheStatus::PartiallyCached { .. }) {
+        let asset_ref = scenario.asset.first().ok_or_else(|| {
+            ApiError::Internal(format!(
+                "scenario '{}' has empty asset list",
+                scenario.id
+            ))
+        })?;
+        crate::eval::bars::load_bars(
+            ctx,
+            &crate::eval::bars::BarCacheArgs {
+                cache_key: scenario.bar_cache_policy.cache_key.clone(),
+                asset_pair: asset_ref.venue_symbol.clone(),
+                granularity: scenario.granularity,
+                start: scenario.time_window.start,
+                end: scenario.time_window.end,
+                data_source_tag: "alpaca-historical-v1".into(),
+            },
+        )
+        .await
+        .map(|bs| bs.iter().map(bar_to_chart_bar).collect())?
+    } else {
+        vec![]
+    };
+
+    Ok(ScenarioChartPayload {
+        scenario,
+        bars,
+        cache_status,
+    })
+}
+
+/// Query just the metadata columns from `bars_cache` (bar_count + fetched_at)
+/// without loading the blob. Returns `None` when no cached row exists.
+async fn query_bars_cache_meta(
+    ctx: &ApiContext,
+    cache_key: &str,
+) -> ApiResult<Option<(u32, chrono::DateTime<chrono::Utc>)>> {
+    let row: Option<(i64, String)> = sqlx::query_as(
+        "SELECT bar_count, fetched_at FROM bars_cache WHERE cache_key = ?",
+    )
+    .bind(cache_key)
+    .fetch_optional(&ctx.db)
+    .await
+    .map_err(|e| ApiError::Internal(format!("query_bars_cache_meta: {e}")))?;
+
+    match row {
+        None => Ok(None),
+        Some((count, ts_str)) => {
+            let fetched_at = chrono::DateTime::parse_from_rfc3339(&ts_str)
+                .map_err(|e| ApiError::Internal(format!("parse fetched_at: {e}")))?
+                .with_timezone(&chrono::Utc);
+            Ok(Some((count as u32, fetched_at)))
+        }
+    }
+}
+
+// ── Task 6 — StrategyChartPayload ───────────────────────────────────────────
+
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunEquitySeries {
+    pub run_id: String,
+    pub label: String,
+    pub scenario_id: String,
+    pub final_pnl_usd: f64,
+    pub max_drawdown_pct: f64,
+    pub sharpe: Option<f64>,
+    pub equity_normalised: Vec<ChartEquityPoint>,
+}
+
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StrategyChartPayload {
+    pub strategy_id: String,
+    pub run_series: Vec<RunEquitySeries>,
+    /// `(scenario_id, display_name)` pairs for every scenario referenced by
+    /// the runs. Deduplicated and sorted by scenario_id.
+    pub scenarios: Vec<(String, String)>,
+}
+
+/// Build a `StrategyChartPayload` for the given strategy bundle id.
+///
+/// Lists all runs for the bundle, loads each run's equity curve, normalises
+/// the time axis so `time = 0` at run start, and computes headline metrics
+/// (final PnL, max drawdown, Sharpe from `metrics_json`).
+/// Runs with empty equity curves are included as zero-series rather than
+/// omitted, so the frontend always gets a row per run.
+pub async fn build_strategy_payload(
+    ctx: &ApiContext,
+    strategy_id: &str,
+) -> ApiResult<StrategyChartPayload> {
+    use crate::eval::store::{ListFilter, RunStore};
+
+    let store = RunStore::new(ctx.db.clone());
+
+    let runs = store
+        .list(ListFilter {
+            strategy_bundle_hash: Some(strategy_id.to_string()),
+            ..Default::default()
+        })
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let mut run_series: Vec<RunEquitySeries> = Vec::with_capacity(runs.len());
+    let mut scenario_ids: std::collections::HashMap<String, Option<String>> =
+        std::collections::HashMap::new();
+
+    for r in &runs {
+        // Track scenario ids for name resolution.
+        scenario_ids.entry(r.scenario_id.clone()).or_insert(None);
+
+        let raw_equity: Vec<ChartEquityPoint> = store
+            .read_equity_curve(&r.id)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?
+            .into_iter()
+            .map(|(ts, equity_usd)| ChartEquityPoint {
+                time: ts.timestamp(),
+                equity_usd,
+            })
+            .collect();
+
+        // Normalise time axis to relative offset from first point.
+        let time_origin = raw_equity.first().map(|p| p.time).unwrap_or(0);
+        let equity_normalised: Vec<ChartEquityPoint> = raw_equity
+            .iter()
+            .map(|p| ChartEquityPoint {
+                time: p.time - time_origin,
+                equity_usd: p.equity_usd,
+            })
+            .collect();
+
+        // Final PnL = last equity − first equity (or 0 if curve is empty).
+        let final_pnl_usd = match (raw_equity.first(), raw_equity.last()) {
+            (Some(first), Some(last)) => last.equity_usd - first.equity_usd,
+            _ => 0.0,
+        };
+
+        // Peak-to-trough max drawdown from the normalised equity curve.
+        let max_drawdown_pct = compute_max_drawdown_pct(&equity_normalised);
+
+        // Sharpe from run metrics if present.
+        let sharpe = r.metrics.as_ref().map(|m| m.sharpe);
+
+        run_series.push(RunEquitySeries {
+            run_id: r.id.clone(),
+            label: r.id.clone(),
+            scenario_id: r.scenario_id.clone(),
+            final_pnl_usd,
+            max_drawdown_pct,
+            sharpe,
+            equity_normalised,
+        });
+    }
+
+    // Resolve scenario display names (best-effort — if the scenario is gone,
+    // use the id as fallback).
+    for (sid, name_slot) in scenario_ids.iter_mut() {
+        if let Ok(s) = crate::api::scenario::get(ctx, sid).await {
+            *name_slot = Some(s.display_name);
+        }
+    }
+
+    let mut scenarios: Vec<(String, String)> = scenario_ids
+        .into_iter()
+        .map(|(sid, name)| (sid.clone(), name.unwrap_or_else(|| sid.clone())))
+        .collect();
+    scenarios.sort_by(|a, b| a.0.cmp(&b.0));
+
+    Ok(StrategyChartPayload {
+        strategy_id: strategy_id.to_string(),
+        run_series,
+        scenarios,
+    })
+}
+
+/// Compute peak-to-trough max drawdown as a percentage from an equity curve.
+fn compute_max_drawdown_pct(equity: &[ChartEquityPoint]) -> f64 {
+    let mut peak = f64::NEG_INFINITY;
+    let mut max_dd: f64 = 0.0;
+    for p in equity {
+        peak = peak.max(p.equity_usd);
+        if peak > 0.0 {
+            let dd = (peak - p.equity_usd) / peak * 100.0;
+            max_dd = max_dd.max(dd);
+        }
+    }
+    max_dd
+}
+
 // ── Task 4 — build_compare_payload ─────────────────────────────────────────
 
 /// Build a `CompareChartPayload` for the given set of run ids.

@@ -65,6 +65,58 @@ async fn build_compare_payload_caps_at_10_runs() {
     );
 }
 
+// ── Task 1 — build_scenario_payload tests ───────────────────────────────────
+
+/// Canonical scenarios have no cached bars in a fresh xvn_home — the cache
+/// is only populated when `xvn bars fetch` runs. So `build_scenario_payload`
+/// must return `CacheStatus::NotCached`.
+#[tokio::test]
+async fn build_scenario_payload_returns_not_cached_for_seeded_scenario() {
+    use xvision_engine::api::chart::{build_scenario_payload, CacheStatus};
+    let ctx = test_ctx().await;
+    let payload = build_scenario_payload(&ctx, "crypto-bull-q1-2025")
+        .await
+        .unwrap();
+    assert_eq!(payload.scenario.id, "crypto-bull-q1-2025");
+    assert!(
+        matches!(payload.cache_status, CacheStatus::NotCached { .. }),
+        "expected NotCached on fresh DB, got: {:?}",
+        payload.cache_status
+    );
+    assert!(payload.bars.is_empty(), "bars should be empty for NotCached");
+}
+
+/// `build_scenario_payload` must return `ApiError::NotFound` for an id that
+/// does not exist in the scenarios table.
+#[tokio::test]
+async fn build_scenario_payload_returns_not_found_for_unknown() {
+    use xvision_engine::api::chart::build_scenario_payload;
+    let ctx = test_ctx().await;
+    let err = build_scenario_payload(&ctx, "no-such-scenario")
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, xvision_engine::api::ApiError::NotFound(_)),
+        "expected NotFound, got: {err:?}"
+    );
+}
+
+// ── Task 2 — build_strategy_payload tests ───────────────────────────────────
+
+/// A strategy id with no runs must return an empty `run_series`.
+#[tokio::test]
+async fn build_strategy_payload_empty_for_unused_strategy() {
+    use xvision_engine::api::chart::build_strategy_payload;
+    let ctx = test_ctx().await;
+    let payload = build_strategy_payload(&ctx, "unused-strategy")
+        .await
+        .unwrap();
+    assert!(
+        payload.run_series.is_empty(),
+        "expected no runs for unused strategy"
+    );
+}
+
 /// With 0 runs in the DB, the first missing id should return NotFound.
 #[tokio::test]
 async fn build_compare_payload_returns_not_found_for_missing_run() {
