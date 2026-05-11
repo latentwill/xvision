@@ -1,0 +1,125 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  ColorType,
+  CrosshairMode,
+  createChart,
+  type UTCTimestamp,
+} from "lightweight-charts";
+import type { StrategyChartPayload } from "@/api/types.gen/StrategyChartPayload";
+import { chartTheme } from "./chart-theme";
+import { ChartContainer, type RangePreset } from "./ChartContainer";
+
+const SCENARIO_PALETTE = [
+  "#22d3ee",
+  "#a78bfa",
+  "#34d399",
+  "#fbbf24",
+  "#f87171",
+  "#60a5fa",
+  "#fb923c",
+  "#10b981",
+];
+
+export function StrategyChart({
+  payload,
+  themeMode = "dark",
+}: {
+  payload: StrategyChartPayload;
+  themeMode?: "dark" | "light";
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [range, setRange] = useState<RangePreset>("All");
+
+  // Stable color per scenario_id (deterministic across re-renders)
+  const scenarioColors = useMemo(() => {
+    const m = new Map<string, string>();
+    payload.scenarios.forEach(([id], i) =>
+      m.set(id, SCENARIO_PALETTE[i % SCENARIO_PALETTE.length]),
+    );
+    return m;
+  }, [payload.scenarios]);
+
+  useEffect(() => {
+    if (!ref.current) return;
+    const theme = chartTheme(themeMode);
+    const c = createChart(ref.current, {
+      layout: {
+        background: { type: ColorType.Solid, color: theme.background },
+        textColor: theme.text,
+      },
+      grid: {
+        vertLines: { color: theme.grid },
+        horzLines: { color: theme.grid },
+      },
+      crosshair: { mode: CrosshairMode.Normal },
+      timeScale: { timeVisible: false, secondsVisible: false },
+    });
+
+    for (const r of payload.run_series) {
+      const color = scenarioColors.get(r.scenario_id) ?? "#94a3b8";
+      if (r.equity_normalised.length === 0) continue;
+      const line = c.addLineSeries({ color, lineWidth: 1, title: r.label });
+      line.setData(
+        r.equity_normalised.map((p) => ({
+          time: p.time as UTCTimestamp,
+          value: p.equity_usd,
+        })),
+      );
+    }
+
+    return () => c.remove();
+  }, [payload, themeMode, scenarioColors]);
+
+  if (payload.run_series.length === 0) {
+    return (
+      <div className="px-4 py-8 text-text-3 text-[13px] text-center">
+        This strategy has no completed runs yet. Launch one from{" "}
+        <code className="font-mono text-text-2">/eval-runs</code>.
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <Legend payload={payload} scenarioColors={scenarioColors} />
+      <ChartContainer
+        range={range}
+        onRange={setRange}
+        layersPanel={
+          <div className="text-text-3 text-[12px]">No layers in v1.</div>
+        }
+      >
+        <div ref={ref} style={{ height: 420 }} />
+      </ChartContainer>
+    </div>
+  );
+}
+
+function Legend({
+  payload,
+  scenarioColors,
+}: {
+  payload: StrategyChartPayload;
+  scenarioColors: Map<string, string>;
+}) {
+  // Count runs per scenario
+  const counts = new Map<string, number>();
+  for (const r of payload.run_series) {
+    counts.set(r.scenario_id, (counts.get(r.scenario_id) ?? 0) + 1);
+  }
+
+  return (
+    <div className="flex flex-wrap gap-3 text-[12px] mb-2">
+      {payload.scenarios.map(([sid, name]) => (
+        <span key={sid} className="inline-flex items-center gap-1.5">
+          <span
+            className="inline-block w-3 h-1.5 rounded-sm"
+            style={{ background: scenarioColors.get(sid) }}
+          />
+          <span className="text-text-2">{name}</span>
+          <span className="text-text-3">({counts.get(sid) ?? 0} runs)</span>
+        </span>
+      ))}
+    </div>
+  );
+}
