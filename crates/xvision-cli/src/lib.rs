@@ -173,6 +173,8 @@ pub enum Command {
     },
     /// Strategy authoring (create / validate / ls / show / templates / run).
     Strategy(commands::strategy::StrategyCmd),
+    /// Skill authoring — register markdown skills and attach them to strategy slots.
+    Skill(commands::skill::SkillCmd),
     /// Stage 1 (Intern) in isolation — preview prompt or run a backend call.
     Intern(commands::intern::InternCmd),
     /// Stage 2 (Trader) in isolation — preview prompt or run a backend call.
@@ -266,6 +268,7 @@ impl Cli {
                 .await
             }
             Command::Strategy(cmd) => commands::strategy::run(cmd).await,
+            Command::Skill(cmd) => commands::skill::run(cmd).await,
             Command::Intern(cmd) => commands::intern::run(cmd).await,
             Command::Trader(cmd) => commands::trader::run(cmd).await,
             Command::Risk(cmd) => commands::risk::run(cmd).await,
