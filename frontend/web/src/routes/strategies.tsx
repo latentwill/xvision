@@ -50,38 +50,41 @@ function FilterBar() {
   return (
     <div className="flex items-center justify-between mb-4 gap-3">
       <div className="flex items-center gap-2.5">
-        <div className="flex items-center gap-2 px-3 py-2 bg-surface-elev border border-border rounded w-[280px] text-text-3">
+        <div className="flex items-center gap-2 px-3 py-2 bg-surface-elev border border-border rounded w-[280px] text-text-3 opacity-50">
           <Icon name="search" size={14} />
           <input
-            className="bg-transparent border-0 outline-0 flex-1 text-[13px] text-text placeholder:text-text-3"
+            className="bg-transparent border-0 outline-0 flex-1 text-[13px] text-text placeholder:text-text-3 disabled:cursor-not-allowed"
             placeholder="Filter by name…"
             disabled
             aria-label="Filter strategies (coming soon)"
+            title="Filtering ships with Plan 5 (Findings + Polish)"
           />
         </div>
         <select
-          className="bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text-2"
+          className="bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text-2 disabled:opacity-50 disabled:cursor-not-allowed"
           disabled
+          title="Status filter ships with Plan 5 (Findings + Polish)"
         >
           <option>All status</option>
         </select>
         <select
-          className="bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text-2"
+          className="bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text-2 disabled:opacity-50 disabled:cursor-not-allowed"
           disabled
+          title="Template filter ships with Plan 5 (Findings + Polish)"
         >
           <option>All templates</option>
         </select>
       </div>
       <div className="flex items-center gap-2">
         <button
-          className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium border border-border text-text-2 hover:text-text hover:border-text-3 transition-colors"
+          className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium border border-border text-text-2 hover:text-text hover:border-text-3 transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:text-text-2 disabled:hover:border-border"
           disabled
           title="Coming in Plan 3 (Authoring)"
         >
           <Icon name="plus" size={13} /> New from template
         </button>
         <button
-          className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft transition-colors"
+          className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-gold"
           disabled
           title="Coming in Plan 4 (Wizard)"
         >
