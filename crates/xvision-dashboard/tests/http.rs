@@ -712,3 +712,103 @@ async fn providers_remove_drops_row_and_returns_204() {
     let items = body["providers"].as_array().unwrap();
     assert!(items.iter().all(|p| p["name"] != "openai"));
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// /api/settings/danger/*
+
+#[tokio::test]
+async fn danger_wipe_db_rejects_missing_confirm() {
+    let (server, _tmp) = boot().await;
+    let response = server
+        .post("/api/settings/danger/wipe-db")
+        .json(&serde_json::json!({}))
+        .await;
+    response.assert_status_bad_request();
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["code"], "validation");
+}
+
+#[tokio::test]
+async fn danger_wipe_db_rejects_wrong_confirm() {
+    let (server, _tmp) = boot().await;
+    let response = server
+        .post("/api/settings/danger/wipe-db")
+        .json(&serde_json::json!({ "confirm": "nope" }))
+        .await;
+    response.assert_status_bad_request();
+}
+
+#[tokio::test]
+async fn danger_wipe_db_clears_tables_with_confirm() {
+    let (server, _tmp) = boot().await;
+    let response = server
+        .post("/api/settings/danger/wipe-db")
+        .json(&serde_json::json!({ "confirm": "yes-i-am-sure" }))
+        .await;
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    assert!(body["tables"].is_array());
+    assert!(body["total_rows_deleted"].is_number());
+    // api_audit must be excluded from the wipe by construction.
+    let names: Vec<&str> = body["tables"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["table"].as_str().unwrap())
+        .collect();
+    assert!(!names.contains(&"api_audit"));
+}
+
+#[tokio::test]
+async fn danger_regen_identity_returns_409_in_v1() {
+    let (server, _tmp) = boot().await;
+    let response = server
+        .post("/api/settings/danger/regen-identity")
+        .json(&serde_json::json!({ "confirm": "yes-i-am-sure" }))
+        .await;
+    response.assert_status(axum::http::StatusCode::CONFLICT);
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["code"], "conflict");
+    assert!(body["message"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("xvision-identity"));
+}
+
+#[tokio::test]
+async fn danger_factory_reset_rejects_missing_confirm() {
+    let (server, _tmp) = boot().await;
+    let response = server
+        .post("/api/settings/danger/factory-reset")
+        .json(&serde_json::json!({}))
+        .await;
+    response.assert_status_bad_request();
+}
+
+#[tokio::test]
+async fn danger_factory_reset_clears_xvn_home_with_confirm() {
+    let (server, tmp) = boot().await;
+    // Seed a marker file under xvn_home.
+    std::fs::write(tmp.path().join("marker"), b"hi").unwrap();
+    assert!(tmp.path().join("marker").exists());
+
+    let response = server
+        .post("/api/settings/danger/factory-reset")
+        .json(&serde_json::json!({ "confirm": "yes-i-am-sure" }))
+        .await;
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    assert!(body["xvn_home"].is_string());
+    assert!(body["audit_log_path"].is_string());
+
+    // Marker is gone; xvn_home re-created empty.
+    assert!(tmp.path().exists(), "xvn_home recreated");
+    assert!(
+        !tmp.path().join("marker").exists(),
+        "marker should be wiped"
+    );
+
+    // Sibling log written.
+    let log_path = std::path::PathBuf::from(body["audit_log_path"].as_str().unwrap());
+    assert!(log_path.exists(), "sibling audit log written");
+}

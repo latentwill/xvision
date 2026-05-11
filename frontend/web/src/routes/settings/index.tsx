@@ -112,14 +112,7 @@ export function SettingsIdentityRoute() {
   );
 }
 
-export function SettingsDangerRoute() {
-  return (
-    <PlaceholderTab
-      hint="Wipe + reset operations are deferred until eval and strategy stores stabilise."
-      doc="(out-of-scope for v1)"
-    />
-  );
-}
+export { SettingsDangerRoute } from "./danger";
 
 // ────────────────────────────────────────────────────────────────────────────
 // helpers
@@ -171,17 +164,6 @@ function FetchStates<T>({
   return <>{children(query.data)}</>;
 }
 
-function PlaceholderTab({ hint, doc }: { hint: string; doc: string }) {
-  return (
-    <Card className="px-6 py-12 text-center text-text-2">
-      <div className="font-serif italic text-[24px] text-text-3 mb-3">
-        coming soon
-      </div>
-      <p className="m-0 mb-2 max-w-md mx-auto leading-snug">{hint}</p>
-      <p className="m-0 text-[12px] text-text-3 font-mono">{doc}</p>
-    </Card>
-  );
-}
 
 function BrokerCard({ entry }: { entry: BrokerEntry }) {
   return (
