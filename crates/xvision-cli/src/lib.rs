@@ -271,8 +271,8 @@ impl Cli {
                 .await
                 .map_err(Into::into)
             }
-            Command::Strategy(cmd) => commands::strategy::run(cmd).await.map_err(Into::into),
-            Command::Skill(cmd) => commands::skill::run(cmd).await.map_err(Into::into),
+            Command::Strategy(cmd) => commands::strategy::run(cmd).await,
+            Command::Skill(cmd) => commands::skill::run(cmd).await,
             Command::Intern(cmd) => commands::intern::run(cmd).await.map_err(Into::into),
             Command::Trader(cmd) => commands::trader::run(cmd).await.map_err(Into::into),
             Command::Risk(cmd) => commands::risk::run(cmd).await.map_err(Into::into),
@@ -280,7 +280,7 @@ impl Cli {
             Command::Indicator(cmd) => commands::indicator::run(cmd).map_err(Into::into),
             Command::Dashboard(cmd) => commands::dashboard::run(cmd).await.map_err(Into::into),
             Command::Eod(args) => commands::eod::run(args).await.map_err(Into::into),
-            Command::Eval(cmd) => commands::eval::run(cmd).await.map_err(Into::into),
+            Command::Eval(cmd) => commands::eval::run(cmd).await,
             Command::Provider(cmd) => commands::provider::run(cmd).await.map_err(Into::into),
         }
     }
