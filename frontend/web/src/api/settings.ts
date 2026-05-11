@@ -7,10 +7,17 @@ import type {
   AddProviderRequest,
   BrokersReport,
   DaemonReport,
+  FactoryResetReport,
   IdentityReport,
   ProviderRow,
   ProvidersReport,
+  RegenIdentityReport,
+  WipeDbReport,
 } from "./types.gen";
+
+// Confirm string the engine expects. Mirrored from
+// `xvision_engine::api::settings::danger::CONFIRM_TOKEN`.
+const DANGER_CONFIRM_TOKEN = "yes-i-am-sure";
 
 export const settingsKeys = {
   all: ["settings"] as const,
@@ -52,4 +59,30 @@ export function removeProvider(name: string): Promise<void> {
     `/api/settings/providers/${encodeURIComponent(name)}`,
     { method: "DELETE" },
   );
+}
+
+// ─── Danger ops ────────────────────────────────────────────────────────────
+
+export function dangerWipeDb(): Promise<WipeDbReport> {
+  return apiFetch<WipeDbReport>("/api/settings/danger/wipe-db", {
+    method: "POST",
+    body: JSON.stringify({ confirm: DANGER_CONFIRM_TOKEN }),
+  });
+}
+
+export function dangerRegenIdentity(): Promise<RegenIdentityReport> {
+  return apiFetch<RegenIdentityReport>(
+    "/api/settings/danger/regen-identity",
+    {
+      method: "POST",
+      body: JSON.stringify({ confirm: DANGER_CONFIRM_TOKEN }),
+    },
+  );
+}
+
+export function dangerFactoryReset(): Promise<FactoryResetReport> {
+  return apiFetch<FactoryResetReport>("/api/settings/danger/factory-reset", {
+    method: "POST",
+    body: JSON.stringify({ confirm: DANGER_CONFIRM_TOKEN }),
+  });
 }
