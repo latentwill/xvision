@@ -4,6 +4,8 @@
 //! full lifecycle: bundle lookup + scenario lookup + executor invocation
 //! + run persistence + audit.
 
+#![allow(deprecated)] // canonical_scenarios() — see Task 8 (M2) deprecation note.
+
 use std::sync::Arc;
 
 use sqlx::SqlitePool;

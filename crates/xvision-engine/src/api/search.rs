@@ -20,6 +20,7 @@ use crate::bundle::store::{BundleStore, FilesystemStore};
 use crate::bundle::StrategyBundle;
 use crate::eval::findings::Finding;
 use crate::eval::run::{Run, RunMode, RunStatus};
+#[allow(deprecated)]
 use crate::eval::scenario::canonical_scenarios;
 use crate::eval::store::{ListFilter, RunStore};
 use crate::search::{IndexEntry, SearchHit, SearchIndex, SearchKind, SearchQuery};
@@ -98,7 +99,9 @@ pub async fn upsert_finding(ctx: &ApiContext, finding: &Finding) {
 /// Index every canonical scenario. Scenarios are static at build time so
 /// this is just a fixed list iteration — no separate "incremental" hook.
 pub async fn upsert_scenarios(ctx: &ApiContext) {
-    for s in canonical_scenarios() {
+    #[allow(deprecated)]
+    let scenarios = canonical_scenarios();
+    for s in scenarios {
         let asset_universe: Vec<String> =
             s.asset.iter().map(|a| a.venue_symbol.clone()).collect();
         // Extract legacy regime tags off the new combined `tags` field so the
@@ -396,7 +399,9 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(hits.len(), canonical_scenarios().len());
+        #[allow(deprecated)]
+        let expected = canonical_scenarios().len();
+        assert_eq!(hits.len(), expected);
     }
 
     #[tokio::test]

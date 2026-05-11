@@ -20,6 +20,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use serde::Deserialize;
+use xvision_core::market::Ohlcv;
 use xvision_data::fixtures::load_ohlcv_fixture;
 
 use crate::agent::llm::LlmDispatch;
@@ -48,11 +49,21 @@ pub struct BacktestExecutor {
     /// is a no-op via `send_event`. Mirrors PR #35's PaperExecutor wiring
     /// so SSE / CLI subscribers see both run modes through the same bus.
     progress: Option<ProgressTx>,
+    /// Optional pre-loaded bars. When `Some`, the executor skips the
+    /// `load_ohlcv_fixture` path and replays the provided bars directly.
+    /// Populated by Task 8's DB-resolved path in `api::eval::run_inner`
+    /// (bars come from the `eval::bars::load_bars` cache wrapper). When
+    /// `None` (the legacy / canonical-scenario fallback), bars are loaded
+    /// from `data/probes/<scenario.bar_cache_policy.cache_key>.parquet`
+    /// via `load_ohlcv_fixture`.
+    injected_bars: Option<Vec<Ohlcv>>,
 }
 
 impl BacktestExecutor {
     /// Constructor without progress wiring. Existing callers
-    /// (`api::eval::run_with_deps` today) keep working unchanged.
+    /// (`api::eval::run_with_deps` today, plus tests against legacy
+    /// `canonical_scenarios()` ids) keep working unchanged — bars get
+    /// loaded from `data/probes/<cache_key>.parquet`.
     pub fn new() -> Self {
         Self::default()
     }
@@ -63,6 +74,29 @@ impl BacktestExecutor {
     pub fn with_progress(progress: ProgressTx) -> Self {
         Self {
             progress: Some(progress),
+            injected_bars: None,
+        }
+    }
+
+    /// Constructor that injects bars directly, bypassing the fixture
+    /// loader. Used by `api::eval::run_inner` when the scenario comes
+    /// from the new DB-backed registry: bars are fetched / cached via
+    /// `eval::bars::load_bars` and handed to the executor pre-loaded.
+    ///
+    /// Bars must be in chronological order and contain enough lookback
+    /// for the warm-up window (`WARMUP_BARS` + 1).
+    pub fn with_bars(bars: Vec<Ohlcv>) -> Self {
+        Self {
+            progress: None,
+            injected_bars: Some(bars),
+        }
+    }
+
+    /// Both bars + progress.
+    pub fn with_bars_and_progress(bars: Vec<Ohlcv>, progress: ProgressTx) -> Self {
+        Self {
+            progress: Some(progress),
+            injected_bars: Some(bars),
         }
     }
 
@@ -168,15 +202,25 @@ impl BacktestExecutor {
             );
         }
 
-        // The cache_key plays the role of the old `data_seed` field — it
-        // identifies the parquet fixture / cached-bars artifact.
-        let data_seed = &scenario.bar_cache_policy.cache_key;
-        let bars = load_ohlcv_fixture(data_seed, &asset, usize::MAX)
-            .map_err(|e| anyhow!("load fixture {}: {e}", data_seed))?;
+        // Bars come from one of two sources:
+        // 1. Injected via `with_bars` — Task 8's DB-resolved path goes
+        //    through `eval::bars::load_bars` and hands a pre-loaded
+        //    `Vec<Ohlcv>` to the executor. This is the path the new
+        //    `api::scenario::get`-based eval::run uses.
+        // 2. Legacy fixture loader — the canonical-scenarios fallback
+        //    still reads from `data/probes/<cache_key>.parquet`. Keeps
+        //    pre-Task-8 tests working without a DB / Alpaca creds.
+        let bars: Vec<Ohlcv> = if let Some(injected) = self.injected_bars.clone() {
+            injected
+        } else {
+            let data_seed = &scenario.bar_cache_policy.cache_key;
+            load_ohlcv_fixture(data_seed, &asset, usize::MAX)
+                .map_err(|e| anyhow!("load fixture {}: {e}", data_seed))?
+        };
         if bars.len() <= WARMUP_BARS + 1 {
             anyhow::bail!(
-                "fixture {} has only {} bars; need > {}",
-                data_seed,
+                "scenario {} has only {} bars; need > {}",
+                scenario.id,
                 bars.len(),
                 WARMUP_BARS + 1
             );

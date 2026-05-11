@@ -1,5 +1,11 @@
 //! Invariants on the canonical scenario set. The struct shape itself is
 //! locked by `tests/scenario_shape.rs`.
+//!
+//! `canonical_scenarios()` is deprecated as of Task 8 (M2) in favor of
+//! the DB-backed `api::scenario` registry; these invariants still ride
+//! the legacy compiled-in set until the M3 cleanup that deletes it.
+
+#![allow(deprecated)]
 
 use xvision_engine::eval::scenario::canonical_scenarios;
 

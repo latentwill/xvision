@@ -31,12 +31,15 @@ use serde::{Deserialize, Serialize};
 use crate::agent::llm::{AnthropicDispatch, LlmDispatch};
 use crate::api::audit::{self, Outcome};
 use crate::api::settings::brokers as api_brokers;
+use crate::api::scenario as api_scenario;
 use crate::api::{search as api_search, strategy as api_strategy, ApiContext, ApiError, ApiResult};
 use crate::eval::attestation::{self, EvalAttestation};
 use crate::eval::compare::{compare_runs, ComparisonReport};
+#[allow(deprecated)]
+use crate::eval::scenario::canonical_scenarios;
 use crate::eval::executor::{BacktestExecutor, Executor, PaperExecutor};
 use crate::eval::run::{Run, RunMode, RunStatus};
-use crate::eval::scenario::{canonical_scenarios, Scenario};
+use crate::eval::scenario::Scenario;
 use crate::eval::store::{ListFilter, RunStore};
 use crate::tools::ToolRegistry;
 use xvision_execution::broker_surface::{AlpacaPaperSurface, BrokerSurface};
@@ -412,14 +415,11 @@ pub struct EvalRunRequest {
 /// error rather than buried-behind an `APCA_API_KEY_ID not found` from the
 /// broker constructor.
 pub async fn run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<Run> {
-    // Early NotFound surfaces without env-var noise.
+    // Early NotFound surfaces without env-var noise. Resolve the scenario
+    // via the DB-backed registry (with a legacy `canonical_scenarios()`
+    // fallback for test contexts that haven't applied migration 006).
     let _bundle = api_strategy::get(ctx, &req.agent_id).await?;
-    if !canonical_scenarios().iter().any(|s| s.id == req.scenario_id) {
-        return Err(ApiError::NotFound(format!(
-            "scenario '{}'",
-            req.scenario_id
-        )));
-    }
+    let _scenario = resolve_scenario(ctx, &req.scenario_id).await?;
 
     let broker: Option<Arc<dyn BrokerSurface>> = match req.mode {
         RunMode::Paper => Some(build_alpaca_paper_broker(ctx).await?),
@@ -522,13 +522,17 @@ async fn run_inner(
     // 1. Look up the strategy bundle. Propagates ApiError::NotFound cleanly.
     let bundle = api_strategy::get(ctx, &req.agent_id).await?;
 
-    // 2. Look up the scenario from the canonical set.
-    let scenario: Scenario = canonical_scenarios()
-        .into_iter()
-        .find(|s| s.id == req.scenario_id)
-        .ok_or_else(|| ApiError::NotFound(format!("scenario '{}'", req.scenario_id)))?;
+    // 2. Look up the scenario. Primary path is the DB-backed registry
+    //    (`api::scenario::get`); legacy path falls back to the compiled-in
+    //    `canonical_scenarios()` for test contexts that haven't applied
+    //    migration 006 yet (and for un-migrated legacy ids).
+    let (scenario, from_db) = resolve_scenario_with_source(ctx, &req.scenario_id).await?;
 
-    // 3. Pick the executor for this run mode.
+    // 3. Pick the executor for this run mode. For backtest mode, when the
+    //    scenario came from the DB we try to source bars through the
+    //    cache wrapper (`eval::bars::load_bars`); on miss / fetch error
+    //    we fall back to the legacy `data/probes/<cache_key>.parquet`
+    //    loader so existing test fixtures keep working.
     let executor: Box<dyn Executor> = match req.mode {
         RunMode::Paper => {
             let b = broker.ok_or_else(|| {
@@ -536,7 +540,40 @@ async fn run_inner(
             })?;
             Box::new(PaperExecutor::new(b))
         }
-        RunMode::Backtest => Box::new(BacktestExecutor::new()),
+        RunMode::Backtest => {
+            if from_db {
+                match load_bars_for_scenario(ctx, &scenario).await {
+                    Ok(bars) => {
+                        let ohlcv: Vec<xvision_core::market::Ohlcv> = bars
+                            .into_iter()
+                            .map(|b| xvision_core::market::Ohlcv {
+                                timestamp: b.timestamp,
+                                open: b.open,
+                                high: b.high,
+                                low: b.low,
+                                close: b.close,
+                                volume: b.volume,
+                            })
+                            .collect();
+                        Box::new(BacktestExecutor::with_bars(ohlcv))
+                    }
+                    Err(e) => {
+                        // load_bars failed (no Alpaca creds in tests, or
+                        // network error). Fall back to the fixture loader
+                        // — the executor reads from the cache_key-named
+                        // parquet under `data/probes/`.
+                        tracing::warn!(
+                            scenario_id = %scenario.id,
+                            error = %e,
+                            "load_bars failed; falling back to fixture loader",
+                        );
+                        Box::new(BacktestExecutor::new())
+                    }
+                }
+            } else {
+                Box::new(BacktestExecutor::new())
+            }
+        }
     };
 
     // 4. Build a fresh Run, persist, then drive the executor.
@@ -600,9 +637,91 @@ async fn run_inner(
     Ok(finalized)
 }
 
+/// Resolve a scenario id to a `Scenario`. Tries the DB-backed registry
+/// first (`api::scenario::get`); on `NotFound` (or on store errors —
+/// typically a test context without migration 006 applied), falls back
+/// to the compiled-in legacy `canonical_scenarios()` set so existing
+/// tests and pre-Task-6 caches keep working.
+async fn resolve_scenario(ctx: &ApiContext, id: &str) -> ApiResult<Scenario> {
+    let (s, _from_db) = resolve_scenario_with_source(ctx, id).await?;
+    Ok(s)
+}
+
+/// Same as `resolve_scenario` but also reports whether the row came from
+/// the DB (primary path) or from the compiled-in legacy fallback. The
+/// caller uses this to decide between routing bars through
+/// `eval::bars::load_bars` (DB path) or the legacy fixture loader.
+async fn resolve_scenario_with_source(
+    ctx: &ApiContext,
+    id: &str,
+) -> ApiResult<(Scenario, bool)> {
+    match api_scenario::get(ctx, id).await {
+        Ok(s) => Ok((s, true)),
+        Err(_) => {
+            #[allow(deprecated)]
+            let legacy = canonical_scenarios()
+                .into_iter()
+                .find(|s| s.id == id)
+                .ok_or_else(|| ApiError::NotFound(format!("scenario '{id}'")))?;
+            Ok((legacy, false))
+        }
+    }
+}
+
+/// Source bars for a DB-resolved scenario via the cache wrapper. The
+/// returned bars feed `BacktestExecutor::with_bars`. Errors surface
+/// fetch / cache failures so the caller can decide whether to fall
+/// back to the legacy fixture loader.
+async fn load_bars_for_scenario(
+    ctx: &ApiContext,
+    scenario: &Scenario,
+) -> ApiResult<Vec<xvision_data::alpaca::MarketBar>> {
+    let asset = scenario
+        .asset
+        .first()
+        .ok_or_else(|| {
+            ApiError::Validation(format!(
+                "scenario '{}' has empty asset list",
+                scenario.id
+            ))
+        })?
+        .venue_symbol
+        .clone();
+    crate::eval::bars::load_bars(
+        ctx,
+        &crate::eval::bars::BarCacheArgs {
+            cache_key: scenario.bar_cache_policy.cache_key.clone(),
+            asset_pair: asset,
+            granularity: scenario.granularity,
+            start: scenario.time_window.start,
+            end: scenario.time_window.end,
+            data_source_tag: "alpaca-historical-v1".into(),
+        },
+    )
+    .await
+}
+
 pub async fn scenarios(ctx: &ApiContext) -> ApiResult<Vec<ScenarioSummary>> {
     let started = Instant::now();
-    let summaries: Vec<ScenarioSummary> = canonical_scenarios()
+    // Pull the live set from the DB (seeded canonical rows + any
+    // user-created ones, non-archived). Fall back to the compiled-in
+    // legacy set when the scenarios table is unavailable (test contexts
+    // without migration 006).
+    let rows: Vec<Scenario> = match api_scenario::list(
+        ctx,
+        api_scenario::ListScenariosFilter::default(),
+    )
+    .await
+    {
+        Ok(v) if !v.is_empty() => v,
+        _ => {
+            #[allow(deprecated)]
+            {
+                canonical_scenarios()
+            }
+        }
+    };
+    let summaries: Vec<ScenarioSummary> = rows
         .into_iter()
         .map(|s| {
             let asset_universe: Vec<String> =
@@ -714,10 +833,9 @@ async fn attest_inner(ctx: &ApiContext, run_id: &str) -> ApiResult<EvalAttestati
             run.status.as_str()
         )));
     }
-    let scenario = canonical_scenarios()
-        .into_iter()
-        .find(|s| s.id == run.scenario_id)
-        .ok_or_else(|| {
+    let scenario = resolve_scenario(ctx, &run.scenario_id)
+        .await
+        .map_err(|_| {
             ApiError::Validation(format!(
                 "run '{run_id}' references unknown scenario '{}'; cannot attest",
                 run.scenario_id

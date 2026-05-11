@@ -223,6 +223,19 @@ fn default_fill_model() -> FillModel {
 /// v1 constraint: BTC-only because the existing `AlpacaExecutor` hardcodes
 /// `BTC/USD` (per `v1-shipping-plan.md` §Preconditions). Multi-asset
 /// scenarios are a v1.1 follow-up tracked in FOLLOWUPS.md.
+///
+/// DEPRECATED (Task 8, M2): the source of truth is now the `scenarios`
+/// table (seeded via `scenario_seed::canonical_seed_rows` on first run).
+/// New code should call `api::scenario::list` / `api::scenario::get` (or
+/// for seed-rebuild use cases, `scenario_seed::canonical_seed_rows`).
+/// This function is retained for one milestone so existing callsites
+/// (test suites that don't apply migration 006, the `api::search`
+/// indexer hook, and downstream tests in `tests/eval_*.rs`) keep
+/// compiling. Slated for removal in M3.
+#[deprecated(
+    since = "M2",
+    note = "use `api::scenario::list` / `api::scenario::get` (DB-backed) or `scenario_seed::canonical_seed_rows` (seed rebuild)"
+)]
 pub fn canonical_scenarios() -> Vec<Scenario> {
     let creator = "@xvision_official".to_string();
     let created_at = Utc.with_ymd_and_hms(2026, 5, 8, 12, 0, 0).unwrap();

@@ -3,6 +3,8 @@
 //! not-yet-finalized runs, signing-key bootstrap (auto-generate on
 //! first call, reuse on second), and audit-row write.
 
+#![allow(deprecated)] // canonical_scenarios() — see Task 8 (M2) deprecation note.
+
 use chrono::{Duration, TimeZone, Utc};
 use sqlx::SqlitePool;
 use xvision_engine::api::eval::{self};

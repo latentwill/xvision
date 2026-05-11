@@ -1,5 +1,7 @@
 //! Tests for the Phase 3.C signed-attestation surface.
 
+#![allow(deprecated)] // canonical_scenarios() — see Task 8 (M2) deprecation note.
+
 use chrono::{TimeZone, Utc};
 use ed25519_dalek::SigningKey;
 use sqlx::SqlitePool;
