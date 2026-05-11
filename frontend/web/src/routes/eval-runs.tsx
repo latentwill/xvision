@@ -1,3 +1,5 @@
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
@@ -48,54 +50,137 @@ function subtitleFor(q: ReturnType<typeof useQuery>) {
 }
 
 function RunsTable({ items }: { items: RunSummary[] }) {
+  const navigate = useNavigate();
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  function toggle(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function openRun(id: string) {
+    navigate(`/eval-runs/${id}`);
+  }
+
+  function openCompare() {
+    if (selected.size < 2) return;
+    const ids = [...selected].join(",");
+    navigate(`/eval-runs/compare?ids=${ids}`);
+  }
+
   return (
-    <table className="w-full">
-      <thead>
-        <tr className="text-left text-text-2 text-[12px] border-b border-border-soft">
-          <th className="font-normal py-2.5 px-5">ID</th>
-          <th className="font-normal py-2.5 px-3">Strategy</th>
-          <th className="font-normal py-2.5 px-3">Scenario</th>
-          <th className="font-normal py-2.5 px-3">Mode</th>
-          <th className="font-normal py-2.5 px-3">Status</th>
-          <th className="font-normal py-2.5 px-3 text-right">Sharpe</th>
-          <th className="font-normal py-2.5 px-3 text-right">Max DD</th>
-          <th className="font-normal py-2.5 px-3 text-right">Return</th>
-          <th className="font-normal py-2.5 px-5">Started</th>
-        </tr>
-      </thead>
-      <tbody>
-        {items.map((row) => (
-          <tr
-            key={row.id}
-            className="border-b border-border-soft last:border-b-0 hover:bg-surface-hover transition-colors"
-          >
-            <td className="py-3 px-5 font-mono text-text text-[12px]">
-              {row.id.slice(0, 12)}…
-            </td>
-            <td className="py-3 px-3 font-mono text-text-2 text-[12px]">
-              {row.strategy_bundle_hash.slice(0, 8)}
-            </td>
-            <td className="py-3 px-3 text-text-2">{row.scenario_id}</td>
-            <td className="py-3 px-3 text-text-2">{row.mode}</td>
-            <td className="py-3 px-3">
-              <StatusPill status={row.status} />
-            </td>
-            <td className="py-3 px-3 text-right font-mono">
-              {fmtNumber(row.sharpe)}
-            </td>
-            <td className="py-3 px-3 text-right font-mono">
-              {fmtPct(row.max_drawdown_pct)}
-            </td>
-            <td className="py-3 px-3 text-right font-mono">
-              {fmtPct(row.total_return_pct)}
-            </td>
-            <td className="py-3 px-5 text-text-3 text-[12px]">
-              {fmtTime(row.started_at)}
-            </td>
+    <>
+      <div className="flex items-center justify-between px-5 py-3 border-b border-border-soft">
+        <div className="text-[12px] text-text-3">
+          {selected.size === 0
+            ? "Tip: select two or more runs to compare them side-by-side."
+            : `${selected.size} selected`}
+        </div>
+        <button
+          type="button"
+          onClick={openCompare}
+          disabled={selected.size < 2}
+          className="inline-flex items-center gap-2 px-3 py-1.5 rounded text-[12px] border border-border text-text hover:border-text-3 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-border"
+        >
+          Compare ({selected.size})
+        </button>
+      </div>
+      <table className="w-full">
+        <thead>
+          <tr className="text-left text-text-2 text-[12px] border-b border-border-soft">
+            <th className="font-normal py-2.5 pl-5 pr-2 w-8" aria-label="Select" />
+            <th className="font-normal py-2.5 px-3">ID</th>
+            <th className="font-normal py-2.5 px-3">Strategy</th>
+            <th className="font-normal py-2.5 px-3">Scenario</th>
+            <th className="font-normal py-2.5 px-3">Mode</th>
+            <th className="font-normal py-2.5 px-3">Status</th>
+            <th className="font-normal py-2.5 px-3 text-right">Sharpe</th>
+            <th className="font-normal py-2.5 px-3 text-right">Max DD</th>
+            <th className="font-normal py-2.5 px-3 text-right">Return</th>
+            <th className="font-normal py-2.5 px-5">Started</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {items.map((row) => (
+            <RunRow
+              key={row.id}
+              row={row}
+              checked={selected.has(row.id)}
+              onToggle={() => toggle(row.id)}
+              onOpen={() => openRun(row.id)}
+            />
+          ))}
+        </tbody>
+      </table>
+    </>
+  );
+}
+
+function RunRow({
+  row,
+  checked,
+  onToggle,
+  onOpen,
+}: {
+  row: RunSummary;
+  checked: boolean;
+  onToggle: () => void;
+  onOpen: () => void;
+}) {
+  return (
+    <tr
+      role="link"
+      tabIndex={0}
+      aria-label={`Open run ${row.id}`}
+      onClick={onOpen}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onOpen();
+        }
+      }}
+      className="border-b border-border-soft last:border-b-0 hover:bg-surface-hover cursor-pointer transition-colors focus:outline-none focus:bg-surface-hover"
+    >
+      <td
+        className="py-3 pl-5 pr-2 w-8"
+        // Clicks on the checkbox cell must not also navigate.
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => e.stopPropagation()}
+      >
+        <input
+          type="checkbox"
+          aria-label={`Select run ${row.id}`}
+          checked={checked}
+          onChange={onToggle}
+          className="accent-gold cursor-pointer"
+        />
+      </td>
+      <td className="py-3 px-3 font-mono text-text text-[12px]">
+        {row.id.slice(0, 12)}…
+      </td>
+      <td className="py-3 px-3 font-mono text-text-2 text-[12px]">
+        {row.strategy_bundle_hash.slice(0, 8)}
+      </td>
+      <td className="py-3 px-3 text-text-2">{row.scenario_id}</td>
+      <td className="py-3 px-3 text-text-2">{row.mode}</td>
+      <td className="py-3 px-3">
+        <StatusPill status={row.status} />
+      </td>
+      <td className="py-3 px-3 text-right font-mono">{fmtNumber(row.sharpe)}</td>
+      <td className="py-3 px-3 text-right font-mono">
+        {fmtPct(row.max_drawdown_pct)}
+      </td>
+      <td className="py-3 px-3 text-right font-mono">
+        {fmtPct(row.total_return_pct)}
+      </td>
+      <td className="py-3 px-5 text-text-3 text-[12px]">
+        {fmtTime(row.started_at)}
+      </td>
+    </tr>
   );
 }
 
