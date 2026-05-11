@@ -10,7 +10,6 @@ import { SetupRoute } from "./routes/setup";
 import {
   SettingsLayout,
   SettingsBrokersRoute,
-  SettingsDaemonRoute,
   SettingsDangerRoute,
   SettingsIdentityRoute,
   SettingsProvidersRoute,
@@ -36,7 +35,6 @@ export const router = createBrowserRouter([
           { index: true, element: <Navigate to="providers" replace /> },
           { path: "providers", element: <SettingsProvidersRoute /> },
           { path: "brokers", element: <SettingsBrokersRoute /> },
-          { path: "daemon", element: <SettingsDaemonRoute /> },
           { path: "identity", element: <SettingsIdentityRoute /> },
           { path: "danger", element: <SettingsDangerRoute /> },
         ],

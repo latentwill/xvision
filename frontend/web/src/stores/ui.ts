@@ -7,10 +7,16 @@ type UiState = {
   chatRailOpen: boolean;
   setChatRailOpen: (open: boolean) => void;
   toggleChatRail: () => void;
+  cmdkOpen: boolean;
+  setCmdkOpen: (open: boolean) => void;
+  toggleCmdk: () => void;
 };
 
 export const useUi = create<UiState>((set) => ({
   chatRailOpen: false,
   setChatRailOpen: (open) => set({ chatRailOpen: open }),
   toggleChatRail: () => set((s) => ({ chatRailOpen: !s.chatRailOpen })),
+  cmdkOpen: false,
+  setCmdkOpen: (open) => set({ cmdkOpen: open }),
+  toggleCmdk: () => set((s) => ({ cmdkOpen: !s.cmdkOpen })),
 }));

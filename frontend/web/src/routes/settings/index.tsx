@@ -8,7 +8,6 @@ import { ApiError } from "@/api/client";
 import {
   clearAlpacaCredentials,
   getBrokers,
-  getDaemon,
   getIdentity,
   setAlpacaCredentials,
   settingsKeys,
@@ -16,14 +15,12 @@ import {
 import type {
   BrokerEntry,
   CredentialRef,
-  DaemonStatus,
   IdentityReport,
 } from "@/api/types.gen";
 
 const TABS = [
   { to: "providers", label: "Providers" },
   { to: "brokers", label: "Brokers" },
-  { to: "daemon", label: "Daemon" },
   { to: "identity", label: "Identity" },
   { to: "danger", label: "Danger zone" },
 ];
@@ -31,7 +28,7 @@ const TABS = [
 export function SettingsLayout() {
   return (
     <>
-      <Topbar title="Settings" sub="LLM keys · brokers · daemon · identity" />
+      <Topbar title="Settings" sub="LLM keys · brokers · identity" />
       <nav className="flex gap-1 mb-5 border-b border-border-soft">
         {TABS.map((t) => (
           <NavLink
@@ -69,35 +66,6 @@ export function SettingsBrokersRoute() {
           <AlpacaBrokerCard entry={data.alpaca} />
           <BrokerCard entry={data.orderly} />
         </div>
-      )}
-    </FetchStates>
-  );
-}
-
-export function SettingsDaemonRoute() {
-  const q = useQuery({
-    queryKey: settingsKeys.daemon(),
-    queryFn: getDaemon,
-  });
-  return (
-    <FetchStates query={q} empty={false}>
-      {(data) => (
-        <Card className="p-6">
-          <div className="flex items-center gap-3 mb-4">
-            <DaemonPill status={data.status} />
-            <span className="text-text-2 text-[12px]">live deploy daemon</span>
-          </div>
-          <p className="m-0 mb-3 text-text leading-snug">{data.note}</p>
-          {data.deferred_to_plan ? (
-            <p className="m-0 text-[12px] text-text-3">
-              Lands with{" "}
-              <code className="text-text-2 font-mono">
-                {data.deferred_to_plan}
-              </code>
-              .
-            </p>
-          ) : null}
-        </Card>
       )}
     </FetchStates>
   );
@@ -456,28 +424,6 @@ function CredentialRow({ cred }: { cred: CredentialRef }) {
         )}
       </td>
     </tr>
-  );
-}
-
-function DaemonPill({ status }: { status: DaemonStatus }) {
-  if (status === "running") {
-    return (
-      <Pill tone="gold">
-        <span className="w-1.5 h-1.5 rounded-full bg-gold" /> running
-      </Pill>
-    );
-  }
-  if (status === "stopped") {
-    return (
-      <Pill tone="warn">
-        <span className="w-1.5 h-1.5 rounded-full bg-warn" /> stopped
-      </Pill>
-    );
-  }
-  return (
-    <Pill>
-      <span className="w-1.5 h-1.5 rounded-full bg-text-3" /> not in v1
-    </Pill>
   );
 }
 

@@ -1,4 +1,6 @@
 import { HealthPill } from "./HealthPill";
+import { useUi } from "@/stores/ui";
+import { modKeyLabel } from "@/lib/platform";
 
 export function Topbar({
   title,
@@ -9,6 +11,7 @@ export function Topbar({
   sub?: string;
   cmdkPlaceholder?: string;
 }) {
+  const setCmdkOpen = useUi((s) => s.setCmdkOpen);
   return (
     <div className="flex items-start justify-between gap-8 mb-7">
       <div className="min-w-0">
@@ -21,12 +24,17 @@ export function Topbar({
       <div className="flex items-center gap-3">
         <HealthPill />
 
-        <div className="flex items-center gap-2.5 w-[380px] px-3 py-2 bg-surface-elev border border-border rounded text-text-3 text-[13px]">
+        <button
+          type="button"
+          onClick={() => setCmdkOpen(true)}
+          aria-label="Open command palette"
+          className="flex items-center gap-2.5 w-[380px] px-3 py-2 bg-surface-elev border border-border rounded text-text-3 text-[13px] hover:border-text-3 hover:text-text-2 transition-colors text-left"
+        >
           <span className="inline-flex items-center px-1.5 py-px border border-border-strong rounded-sm font-mono text-[11px] text-text-2">
-            ⌘K
+            {modKeyLabel()} K
           </span>
           <span className="flex-1 truncate">{cmdkPlaceholder}</span>
-        </div>
+        </button>
       </div>
     </div>
   );
