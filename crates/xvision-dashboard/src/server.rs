@@ -20,6 +20,7 @@ pub fn build_router(state: AppState) -> Router {
             "/api/agents",
             get(agents::list).post(agents::create),
         )
+        .route("/api/agents/templates", get(agents::templates))
         .route(
             "/api/agents/:id",
             get(agents::get).put(agents::update).delete(agents::archive),

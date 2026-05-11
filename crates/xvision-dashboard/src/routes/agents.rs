@@ -9,7 +9,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
-use xvision_engine::agents::{Agent, ValidationDiagnostic};
+use xvision_engine::agents::{Agent, AgentTemplate, ValidationDiagnostic};
 use xvision_engine::api::agents::{
     self, CreateAgentRequest, ListAgentsRequest, RunRef, StrategyRef, UpdateAgentRequest,
 };
@@ -35,6 +35,11 @@ pub struct StrategyRefsResponse {
 #[derive(Serialize)]
 pub struct RunRefsResponse {
     pub items: Vec<RunRef>,
+}
+
+#[derive(Serialize)]
+pub struct TemplatesResponse {
+    pub items: Vec<AgentTemplate>,
 }
 
 #[derive(Deserialize, Default)]
@@ -123,4 +128,11 @@ pub async fn recent_runs(
     let limit = q.limit.unwrap_or(5);
     let items = agents::recent_runs(&state.api_context(), &id, limit).await?;
     Ok(Json(RunRefsResponse { items }))
+}
+
+pub async fn templates(
+    State(state): State<AppState>,
+) -> Result<Json<TemplatesResponse>, DashboardError> {
+    let items = agents::templates(&state.api_context()).await?;
+    Ok(Json(TemplatesResponse { items }))
 }

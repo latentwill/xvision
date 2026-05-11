@@ -10,8 +10,10 @@
 
 pub mod model;
 pub mod store;
+pub mod templates;
 pub mod validate;
 
 pub use model::{Agent, AgentSlot};
 pub use store::{AgentStore, ListFilter, NewAgent, UpdateAgent};
+pub use templates::{builtin_templates, AgentTemplate};
 pub use validate::{validate_agent, Severity, ValidationDiagnostic};

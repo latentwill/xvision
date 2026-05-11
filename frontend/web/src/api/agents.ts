@@ -138,6 +138,20 @@ export async function recentRuns(
   return res.items;
 }
 
+export type AgentTemplate = {
+  id: string;
+  name: string;
+  description: string;
+  slots: AgentSlot[];
+};
+
+export async function listAgentTemplates(): Promise<AgentTemplate[]> {
+  const res = await apiFetch<{ items: AgentTemplate[] }>(
+    "/api/agents/templates",
+  );
+  return res.items;
+}
+
 // Computed status — Draft / Validated / In use / Archived.
 // v1 simplified vocabulary per the plan; "In use" is computed from
 // `deployed_in`, which is always empty in v1, so this resolves to
@@ -154,4 +168,5 @@ export const agentKeys = {
     [...agentKeys.all, "deployed-in", id] as const,
   recentRuns: (id: string) =>
     [...agentKeys.all, "recent-runs", id] as const,
+  templates: () => [...agentKeys.all, "templates"] as const,
 };

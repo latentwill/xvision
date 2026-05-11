@@ -47,7 +47,13 @@ const BLANK_AGENT_DRAFT = {
 
 type AgentDraft = typeof BLANK_AGENT_DRAFT;
 
-export function AgentForm({ agentId }: { agentId?: string }) {
+export function AgentForm({
+  agentId,
+  initialSlots,
+}: {
+  agentId?: string;
+  initialSlots?: AgentSlot[];
+}) {
   const isEdit = Boolean(agentId);
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -58,7 +64,11 @@ export function AgentForm({ agentId }: { agentId?: string }) {
     enabled: isEdit,
   });
 
-  const [draft, setDraft] = useState<AgentDraft>(BLANK_AGENT_DRAFT);
+  const [draft, setDraft] = useState<AgentDraft>(() =>
+    initialSlots && initialSlots.length > 0
+      ? { ...BLANK_AGENT_DRAFT, slots: initialSlots }
+      : BLANK_AGENT_DRAFT,
+  );
   const [diagnostics, setDiagnostics] = useState<ValidationDiagnostic[]>([]);
   const [saveError, setSaveError] = useState<string | null>(null);
 

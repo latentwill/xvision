@@ -11,8 +11,8 @@ use std::time::Instant;
 use serde::{Deserialize, Serialize};
 
 use crate::agents::{
-    validate_agent, Agent, AgentSlot, AgentStore, ListFilter, NewAgent, UpdateAgent,
-    ValidationDiagnostic,
+    builtin_templates, validate_agent, Agent, AgentSlot, AgentStore, AgentTemplate, ListFilter,
+    NewAgent, UpdateAgent, ValidationDiagnostic,
 };
 use crate::api::audit::{self, Outcome};
 use crate::api::{ApiContext, ApiError, ApiResult};
@@ -325,6 +325,13 @@ async fn validate_inner(
 /// strategies start referencing agents.
 pub async fn deployed_in(_ctx: &ApiContext, _agent_id: &str) -> ApiResult<Vec<StrategyRef>> {
     Ok(Vec::new())
+}
+
+/// Starter templates for the `/agents/new` picker. Hardcoded for v1;
+/// user-authored templates land later when the strategies refactor
+/// makes promote-from-strategy a real flow.
+pub async fn templates(_ctx: &ApiContext) -> ApiResult<Vec<AgentTemplate>> {
+    Ok(builtin_templates())
 }
 
 /// V1 stub — returns empty until eval-runs are attributed to agents.
