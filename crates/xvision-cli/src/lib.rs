@@ -6,6 +6,7 @@
 //! arbitrary store writes, the separately-installed `xvn-mcp` server).
 
 pub mod commands;
+pub mod exit;
 
 use std::path::PathBuf;
 
