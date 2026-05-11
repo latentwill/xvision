@@ -14,6 +14,7 @@ use std::path::PathBuf;
 
 use xvision_engine::api::settings::providers::{
     self, AddProviderRequest, ProviderModelsReport, ProviderRow, ProvidersReport,
+    TestConnectionReport,
 };
 
 use crate::error::DashboardError;
@@ -120,4 +121,16 @@ pub async fn put_enabled_models(
     )
     .await?;
     Ok(Json(row))
+}
+
+/// POST `/api/settings/providers/:name/test-connection` — connectivity
+/// probe. Always 200 with `{ ok, latency_ms, model_count, error? }`;
+/// network/auth failures surface in the body so the UI renders a pill.
+pub async fn test_connection(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<TestConnectionReport>, DashboardError> {
+    let report =
+        providers::test_connection(&state.api_context(), &config_path(), &name).await?;
+    Ok(Json(report))
 }
