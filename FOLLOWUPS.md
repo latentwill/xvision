@@ -244,6 +244,13 @@ Hermes Agent (NousResearch) is the OpenClaw successor — its own README documen
 - **What we'd actually have to build to drive DeepSeek-TUI as an *agent* (not just the API):** either (a) ~2–3 days for an external `deepseek-tui-acp-shim` binary that translates ACP ↔ DeepSeek-TUI's existing one-shot mode (plugged in via `XVN_INTERN_ACPX_CUSTOM_CMD`), or (b) ~5–10 days upstreaming an `acp` subcommand into DeepSeek-TUI itself. Skip both unless the agent loop (file I/O, multi-step tool use) starts paying for itself in briefing quality — for Stage 1 it doesn't.
 - **Blocking:** non-blocking. Short-term path is zero-code.
 
+### F26 [Shared]. Bump GitHub Actions off Node 20 before the runner deprecation
+
+- **Trigger:** GHA warning surfaced on the 2026-05-11 `docker.yml` workflow_dispatch run (25654716433). Hard deadlines: Node 20 forced to Node 24 by **2026-06-02**; Node 20 binary removed from the runner image **2026-09-16**.
+- **Scope:** `.github/workflows/docker.yml` pins five Node-20-based actions: `actions/checkout@v4`, `docker/setup-buildx-action@v3`, `docker/login-action@v3`, `docker/metadata-action@v5`, `docker/build-push-action@v6`. Audit each upstream for a Node-24 / next-major release and bump in lockstep. As a short-term escape hatch we can set `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true` at the workflow level to opt in early, or `ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true` to defer after the forced flip — both are stopgaps, not the fix.
+- **Validation:** trigger `gh workflow run docker.yml --ref main -f dockerfile=Dockerfile.deploy` post-bump, confirm the deprecation annotation is gone and `smoke` still passes.
+- **Blocking:** non-blocking until 2026-06-02; becomes deploy-blocking on 2026-09-16 (no Node 20 on the runner → workflow won't start at all).
+
 ### F25 [Shared]. Author a `xvision` Claude Code skill
 
 - **Trigger:** after the GPU headline run lands and the operator surface stops moving every other session. Post-hackathon is also a natural trigger — the SLF surface is fresh tribal knowledge worth capturing.
