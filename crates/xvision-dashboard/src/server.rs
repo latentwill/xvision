@@ -7,8 +7,8 @@ use axum::{
 use tower_http::trace::TraceLayer;
 
 use crate::routes::{
-    chat_rail, eval_runs, health::health, search as search_route, settings, static_files,
-    strategies, wizard,
+    agents, chat_rail, eval_runs, health::health, search as search_route, settings,
+    static_files, strategies, wizard,
 };
 use crate::state::AppState;
 use xvision_engine::api::search as api_search;
@@ -16,6 +16,18 @@ use xvision_engine::api::search as api_search;
 pub fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/api/health", get(health))
+        .route(
+            "/api/agents",
+            get(agents::list).post(agents::create),
+        )
+        .route("/api/agents/templates", get(agents::templates))
+        .route(
+            "/api/agents/:id",
+            get(agents::get).put(agents::update).delete(agents::archive),
+        )
+        .route("/api/agents/:id/validate", post(agents::validate))
+        .route("/api/agents/:id/strategies", get(agents::deployed_in))
+        .route("/api/agents/:id/runs", get(agents::recent_runs))
         .route("/api/strategies", get(strategies::list))
         .route("/api/strategy/:id", get(strategies::get))
         .route(
