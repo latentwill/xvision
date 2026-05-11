@@ -26,7 +26,7 @@ use xvision_engine::agent::llm::{
     ContentBlock, LlmDispatch, LlmRequest, LlmResponse, Message, StopReason, ToolDefinition,
 };
 use xvision_engine::authoring;
-use xvision_engine::bundle::store::FilesystemStore;
+use xvision_engine::bundle::store::{strategy_store_dir, FilesystemStore};
 use xvision_engine::chat_session::{ChatSessionStore, ContextScope};
 
 const WIZARD_SYSTEM_PROMPT_BASE: &str = include_str!("../prompts/wizard.md");
@@ -292,7 +292,7 @@ impl WizardLoop {
         name: &str,
         input: serde_json::Value,
     ) -> anyhow::Result<serde_json::Value> {
-        let store = FilesystemStore::new(self.xvn_home.join("strategies"));
+        let store = FilesystemStore::new(strategy_store_dir(&self.xvn_home));
         match name {
             "list_templates" => {
                 let out = authoring::list_templates();

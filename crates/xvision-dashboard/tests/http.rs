@@ -31,7 +31,7 @@ async fn health_endpoint_reports_probes() {
         .collect();
     assert!(names.contains(&"data_dir".into()), "data_dir probe present");
     assert!(names.contains(&"db".into()), "db probe present");
-    assert!(names.contains(&"bundles".into()), "bundles probe present");
+    assert!(names.contains(&"strategies".into()), "strategies probe present");
 
     // Every probe carries an explicit status — schema contract.
     for p in probes {
@@ -86,7 +86,7 @@ async fn strategies_list_returns_seeded_bundle() {
     };
 
     let (server, tmp) = boot().await;
-    let store = FilesystemStore::new(tmp.path().join("bundles"));
+    let store = FilesystemStore::new(tmp.path().join("strategies"));
     let bundle_id = "01J0DASHTEST00000000000001";
     store
         .save(&StrategyBundle {

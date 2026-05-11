@@ -1,14 +1,14 @@
 use sqlx::SqlitePool;
 use xvision_engine::api::{strategy, Actor, ApiContext};
 
-async fn ctx_with_bundles_dir() -> (ApiContext, tempfile::TempDir) {
+async fn ctx_with_strategies_dir() -> (ApiContext, tempfile::TempDir) {
     let pool = SqlitePool::connect(":memory:").await.unwrap();
     sqlx::query(include_str!("../migrations/001_api_audit.sql"))
         .execute(&pool)
         .await
         .unwrap();
     let dir = tempfile::tempdir().unwrap();
-    std::fs::create_dir_all(dir.path().join("bundles")).unwrap();
+    std::fs::create_dir_all(dir.path().join("strategies")).unwrap();
     let ctx = ApiContext {
         db: pool,
         actor: Actor::Cli {
@@ -21,14 +21,14 @@ async fn ctx_with_bundles_dir() -> (ApiContext, tempfile::TempDir) {
 
 #[tokio::test]
 async fn list_returns_empty_for_fresh_home() {
-    let (ctx, _d) = ctx_with_bundles_dir().await;
+    let (ctx, _d) = ctx_with_strategies_dir().await;
     let out = strategy::list(&ctx).await.unwrap();
     assert!(out.is_empty());
 }
 
 #[tokio::test]
 async fn get_returns_not_found_for_unknown_id() {
-    let (ctx, _d) = ctx_with_bundles_dir().await;
+    let (ctx, _d) = ctx_with_strategies_dir().await;
     let r = strategy::get(&ctx, "missing").await;
     assert!(
         matches!(r, Err(xvision_engine::api::ApiError::NotFound(_))),
@@ -43,8 +43,8 @@ async fn list_returns_summaries_for_existing_bundles() {
         StrategyBundle,
     };
 
-    let (ctx, _d) = ctx_with_bundles_dir().await;
-    let store = FilesystemStore::new(ctx.xvn_home.join("bundles"));
+    let (ctx, _d) = ctx_with_strategies_dir().await;
+    let store = FilesystemStore::new(ctx.xvn_home.join("strategies"));
     let bundle = StrategyBundle {
         manifest: PublicManifest {
             id: "01J0TESTSTRAT00000000000001".into(),
@@ -76,7 +76,7 @@ async fn list_returns_summaries_for_existing_bundles() {
 
 #[tokio::test]
 async fn list_writes_audit_row() {
-    let (ctx, _d) = ctx_with_bundles_dir().await;
+    let (ctx, _d) = ctx_with_strategies_dir().await;
     let _ = strategy::list(&ctx).await.unwrap();
     let (domain, op, outcome): (String, String, String) =
         sqlx::query_as("SELECT domain, operation, outcome FROM api_audit")

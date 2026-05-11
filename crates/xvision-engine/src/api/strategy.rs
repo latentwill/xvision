@@ -17,7 +17,7 @@ use crate::authoring::{
     UpdateSlotOut, UpdateSlotReq, ValidateDraftOut,
 };
 use crate::bundle::{
-    store::{BundleStore, FilesystemStore},
+    store::{strategy_store_dir, BundleStore, FilesystemStore},
     StrategyBundle,
 };
 use std::time::Instant;
@@ -55,7 +55,7 @@ pub async fn list(ctx: &ApiContext) -> ApiResult<Vec<StrategySummary>> {
 }
 
 async fn list_inner(ctx: &ApiContext) -> ApiResult<Vec<StrategySummary>> {
-    let store = FilesystemStore::new(ctx.xvn_home.join("bundles"));
+    let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
     let ids = store
         .list()
         .await
@@ -96,7 +96,7 @@ pub async fn get(ctx: &ApiContext, agent_id: &str) -> ApiResult<StrategyBundle> 
 }
 
 async fn get_inner(ctx: &ApiContext, agent_id: &str) -> ApiResult<StrategyBundle> {
-    let store = FilesystemStore::new(ctx.xvn_home.join("bundles"));
+    let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
     store.load(agent_id).await.map_err(|e| {
         if is_not_found(&e) {
             ApiError::NotFound(format!("strategy '{agent_id}'"))
@@ -155,7 +155,7 @@ pub async fn create_strategy(
 ) -> ApiResult<CreateStrategyOut> {
     let started = Instant::now();
     let args_json = serde_json::to_string(&req).ok();
-    let store = FilesystemStore::new(ctx.xvn_home.join("bundles"));
+    let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
     let result = authoring::create_strategy(&store, req)
         .await
         .map_err(|e| map_authoring_error(e, None));
@@ -185,7 +185,7 @@ pub async fn update_slot(ctx: &ApiContext, req: UpdateSlotReq) -> ApiResult<Upda
     let started = Instant::now();
     let agent_id = req.id.clone();
     let args_json = serde_json::to_string(&req).ok();
-    let store = FilesystemStore::new(ctx.xvn_home.join("bundles"));
+    let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
     let result = authoring::update_slot(&store, req)
         .await
         .map_err(|e| map_authoring_error(e, Some(&agent_id)));
@@ -219,7 +219,7 @@ pub async fn set_risk_config(
     let started = Instant::now();
     let agent_id = req.id.clone();
     let args_json = serde_json::to_string(&req).ok();
-    let store = FilesystemStore::new(ctx.xvn_home.join("bundles"));
+    let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
     let result = authoring::set_risk_config(&store, req)
         .await
         .map_err(|e| map_authoring_error(e, Some(&agent_id)));
@@ -265,7 +265,7 @@ async fn index_strategy_after_mutation(
 /// failure round-trips as `Ok(ValidateDraftOut { ok: false, errors })`.
 pub async fn validate_draft(ctx: &ApiContext, agent_id: &str) -> ApiResult<ValidateDraftOut> {
     let started = Instant::now();
-    let store = FilesystemStore::new(ctx.xvn_home.join("bundles"));
+    let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
     let result = authoring::validate_draft(&store, agent_id)
         .await
         .map_err(|e| map_authoring_error(e, Some(agent_id)));
@@ -300,7 +300,7 @@ mod tests {
             .await
             .unwrap();
         let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(dir.path().join("bundles")).unwrap();
+        std::fs::create_dir_all(strategy_store_dir(dir.path())).unwrap();
         let ctx = ApiContext {
             db: pool,
             actor: Actor::Cli {
