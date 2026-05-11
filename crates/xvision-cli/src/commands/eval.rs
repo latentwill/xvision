@@ -9,8 +9,28 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 use xvision_engine::api::eval::{self, CompareRunsRequest, EvalRunRequest, ListRunsRequest};
-use xvision_engine::api::{Actor, ApiContext};
+use xvision_engine::api::{Actor, ApiContext, ApiError};
 use xvision_engine::eval::run::{RunMode, RunStatus};
+
+use crate::exit::{CliError, CliResult, ResultExt, XvnExit};
+
+/// Map an engine ApiError to our exit-code-bearing CliError. Variants
+/// carry meaning that's worth preserving on the wire, so we don't fall
+/// back to the default Upstream coercion.
+fn api_to_cli(prefix: &str, e: ApiError) -> CliError {
+    let exit = match &e {
+        ApiError::NotFound(_)   => XvnExit::NotFound,
+        ApiError::Validation(_) => XvnExit::Usage,
+        ApiError::Conflict(_)   => XvnExit::Conflict,
+        ApiError::Internal(_)
+        | ApiError::Db(_)
+        | ApiError::Other(_)    => XvnExit::Upstream,
+    };
+    CliError {
+        exit,
+        source: anyhow::anyhow!("{prefix}: {e}"),
+    }
+}
 
 #[derive(Args, Debug)]
 pub struct EvalCmd {
@@ -123,7 +143,7 @@ pub struct AttestArgs {
     pub json: bool,
 }
 
-pub async fn run(cmd: EvalCmd) -> Result<()> {
+pub async fn run(cmd: EvalCmd) -> CliResult<()> {
     match cmd.op {
         Op::Run(args) => run_run(args).await,
         Op::List(args) => run_list(args).await,
@@ -138,9 +158,9 @@ fn parse_mode(s: &str) -> Result<RunMode> {
     RunMode::parse(s).context(format!("unknown mode {s:?}; expected one of: paper | backtest",))
 }
 
-async fn run_run(args: RunArgs) -> Result<()> {
-    let ctx = open_ctx(args.xvn_home.clone()).await?;
-    let mode = parse_mode(&args.mode)?;
+async fn run_run(args: RunArgs) -> CliResult<()> {
+    let ctx = open_ctx(args.xvn_home.clone()).await.exit_with(XvnExit::Upstream)?;
+    let mode = parse_mode(&args.mode).exit_with(XvnExit::Usage)?;
     let req = EvalRunRequest {
         agent_id: args.strategy.clone(),
         scenario_id: args.scenario.clone(),
@@ -157,10 +177,10 @@ async fn run_run(args: RunArgs) -> Result<()> {
 
     let run = eval::run(&ctx, req)
         .await
-        .map_err(|e| anyhow::anyhow!("eval run: {e}"))?;
+        .map_err(|e| api_to_cli("eval run", e))?;
 
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&run)?);
+        println!("{}", serde_json::to_string_pretty(&run).exit_with(XvnExit::Upstream)?);
         return Ok(());
     }
 
@@ -211,18 +231,18 @@ fn parse_status(s: &str) -> Result<RunStatus> {
     ))
 }
 
-async fn run_list(args: ListArgs) -> Result<()> {
-    let ctx = open_ctx(args.xvn_home.clone()).await?;
+async fn run_list(args: ListArgs) -> CliResult<()> {
+    let ctx = open_ctx(args.xvn_home.clone()).await.exit_with(XvnExit::Upstream)?;
     let req = ListRunsRequest {
         strategy_bundle_hash: args.strategy,
         scenario_id: args.scenario,
-        status: args.status.as_deref().map(parse_status).transpose()?,
+        status: args.status.as_deref().map(parse_status).transpose().exit_with(XvnExit::Usage)?,
     };
     let runs = eval::list(&ctx, req)
         .await
-        .map_err(|e| anyhow::anyhow!("eval list: {e}"))?;
+        .map_err(|e| api_to_cli("eval list", e))?;
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&runs)?);
+        println!("{}", serde_json::to_string_pretty(&runs).exit_with(XvnExit::Upstream)?);
         return Ok(());
     }
     if runs.is_empty() {
@@ -244,13 +264,13 @@ async fn run_list(args: ListArgs) -> Result<()> {
     Ok(())
 }
 
-async fn run_show(args: ShowArgs) -> Result<()> {
-    let ctx = open_ctx(args.xvn_home.clone()).await?;
+async fn run_show(args: ShowArgs) -> CliResult<()> {
+    let ctx = open_ctx(args.xvn_home.clone()).await.exit_with(XvnExit::Upstream)?;
     let run = eval::get(&ctx, &args.run_id)
         .await
-        .map_err(|e| anyhow::anyhow!("eval get: {e}"))?;
+        .map_err(|e| api_to_cli("eval get", e))?;
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&run)?);
+        println!("{}", serde_json::to_string_pretty(&run).exit_with(XvnExit::Upstream)?);
         return Ok(());
     }
     println!("id              {}", run.id);
@@ -277,8 +297,8 @@ async fn run_show(args: ShowArgs) -> Result<()> {
     Ok(())
 }
 
-async fn run_compare(args: CompareArgs) -> Result<()> {
-    let ctx = open_ctx(args.xvn_home.clone()).await?;
+async fn run_compare(args: CompareArgs) -> CliResult<()> {
+    let ctx = open_ctx(args.xvn_home.clone()).await.exit_with(XvnExit::Upstream)?;
     let report = eval::compare(
         &ctx,
         CompareRunsRequest {
@@ -286,10 +306,10 @@ async fn run_compare(args: CompareArgs) -> Result<()> {
         },
     )
     .await
-    .map_err(|e| anyhow::anyhow!("eval compare: {e}"))?;
+    .map_err(|e| api_to_cli("eval compare", e))?;
 
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&report)?);
+        println!("{}", serde_json::to_string_pretty(&report).exit_with(XvnExit::Upstream)?);
         return Ok(());
     }
 
@@ -352,13 +372,13 @@ async fn run_compare(args: CompareArgs) -> Result<()> {
     Ok(())
 }
 
-async fn run_scenarios(args: ScenariosArgs) -> Result<()> {
-    let ctx = open_ctx(args.xvn_home.clone()).await?;
+async fn run_scenarios(args: ScenariosArgs) -> CliResult<()> {
+    let ctx = open_ctx(args.xvn_home.clone()).await.exit_with(XvnExit::Upstream)?;
     let summaries = eval::scenarios(&ctx)
         .await
-        .map_err(|e| anyhow::anyhow!("eval scenarios: {e}"))?;
+        .map_err(|e| api_to_cli("eval scenarios", e))?;
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&summaries)?);
+        println!("{}", serde_json::to_string_pretty(&summaries).exit_with(XvnExit::Upstream)?);
         return Ok(());
     }
     println!("ID\tDISPLAY_NAME\tASSETS\tREGIME_TAGS\tWINDOW_DAYS");
@@ -375,13 +395,13 @@ async fn run_scenarios(args: ScenariosArgs) -> Result<()> {
     Ok(())
 }
 
-async fn run_attest(args: AttestArgs) -> Result<()> {
-    let ctx = open_ctx(args.xvn_home.clone()).await?;
+async fn run_attest(args: AttestArgs) -> CliResult<()> {
+    let ctx = open_ctx(args.xvn_home.clone()).await.exit_with(XvnExit::Upstream)?;
     let att = eval::attest(&ctx, &args.run_id)
         .await
-        .map_err(|e| anyhow::anyhow!("eval attest: {e}"))?;
+        .map_err(|e| api_to_cli("eval attest", e))?;
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&att)?);
+        println!("{}", serde_json::to_string_pretty(&att).exit_with(XvnExit::Upstream)?);
         return Ok(());
     }
     let sig_prefix: String = att.signature_hex.chars().take(16).collect();

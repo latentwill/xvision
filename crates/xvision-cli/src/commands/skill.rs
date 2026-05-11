@@ -9,6 +9,8 @@ use xvision_skills::attach::attach_skill_to_agent;
 use xvision_skills::parse;
 use xvision_skills::store::{FilesystemSkillStore, SkillStore};
 
+use crate::exit::{CliError, CliResult, ResultExt, XvnExit};
+
 #[derive(Args, Debug)]
 pub struct SkillCmd {
     #[command(subcommand)]
@@ -38,7 +40,7 @@ enum SkillAction {
     },
 }
 
-pub async fn run(cmd: SkillCmd) -> anyhow::Result<()> {
+pub async fn run(cmd: SkillCmd) -> CliResult<()> {
     match cmd.action {
         SkillAction::New { from_file } => new(from_file).await,
         SkillAction::Ls => ls().await,
@@ -65,27 +67,54 @@ fn strategy_store() -> FilesystemStore {
     FilesystemStore::new(xvn_home().join("strategies"))
 }
 
-async fn new(from_file: PathBuf) -> anyhow::Result<()> {
-    let markdown = tokio::fs::read_to_string(&from_file).await?;
-    let parsed = parse(&markdown)?;
-    skill_store().save(&parsed.name, &markdown).await?;
+async fn new(from_file: PathBuf) -> CliResult<()> {
+    let markdown = tokio::fs::read_to_string(&from_file)
+        .await
+        .exit_with(XvnExit::Usage)?; // file path came from the caller
+    let parsed = parse(&markdown).exit_with(XvnExit::Usage)?; // input is caller's
+    skill_store()
+        .save(&parsed.name, &markdown)
+        .await
+        .exit_with(XvnExit::Upstream)?; // disk write
     println!("{}", parsed.name);
     Ok(())
 }
 
-async fn ls() -> anyhow::Result<()> {
-    for name in skill_store().list().await? {
+async fn ls() -> CliResult<()> {
+    for name in skill_store().list().await.exit_with(XvnExit::Upstream)? {
         println!("{name}");
     }
     Ok(())
 }
 
-async fn attach(agent_id: &str, slot: &str, skill_name: &str) -> anyhow::Result<()> {
+async fn attach(agent_id: &str, slot: &str, skill_name: &str) -> CliResult<()> {
     let strategies = strategy_store();
-    let mut bundle = strategies.load(agent_id).await?;
-    let skill = skill_store().load(skill_name).await?;
-    attach_skill_to_agent(&mut bundle, slot, &skill)?;
-    strategies.save(&bundle).await?;
+    let mut bundle = strategies
+        .load(agent_id)
+        .await
+        .exit_with(XvnExit::NotFound)?; // missing strategy id
+    let skill = skill_store()
+        .load(skill_name)
+        .await
+        .exit_with(XvnExit::NotFound)?; // missing skill name
+
+    // attach_skill_to_agent returns anyhow::Error with two distinct messages:
+    // "unknown slot role: ..." (caller typo → Usage)
+    // "slot 'X' is empty — fill it before attaching" (state conflict → Conflict)
+    if let Err(e) = attach_skill_to_agent(&mut bundle, slot, &skill) {
+        let msg = e.to_string();
+        let exit = if msg.contains("unknown slot role") {
+            XvnExit::Usage
+        } else {
+            XvnExit::Conflict
+        };
+        return Err(CliError { exit, source: e });
+    }
+
+    strategies
+        .save(&bundle)
+        .await
+        .exit_with(XvnExit::Upstream)?;
     println!("attached {skill_name} → {agent_id}#{slot}");
     Ok(())
 }

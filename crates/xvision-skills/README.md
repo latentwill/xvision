@@ -67,3 +67,9 @@ Same surface, exposed over MCP for AI agents:
 - `xvn_create_skill { markdown } → { name, content_hash }`
 - `xvn_list_skills {} → [{ name, display_name, description, version }]`
 - `xvn_attach_skill_to_agent { agent_id, slot, skill_name } → { agent_id, slot, skill_name }`
+
+## Exit codes
+
+`xvn skill {new | ls | attach}` returns Printing-Press-style typed exit codes
+(0 / 2 / 3 / 4 / 5 / 7). See the **Exit codes** section in `MANUAL.md`
+for the full contract.
