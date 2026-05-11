@@ -70,3 +70,4 @@ support / etc.)
 - Implementation: `docs/superpowers/plans/2026-05-10-blockchain-1-non-custodial-wallets-plan.md`
   + amendments
 - Research lineage: `docs/superpowers/research/2026-05-10-ideonomy-explorations.md`
+- Marketing follow-ups: `docs/marketing-followups.md`
