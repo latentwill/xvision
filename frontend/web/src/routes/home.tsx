@@ -19,9 +19,9 @@ import type {
   HealthReport,
   HealthStatus,
   Probe,
+  ProviderRow,
   RunSummary,
 } from "@/api/types.gen";
-import type { ProviderRow } from "@/api/types.providers";
 
 const STATUS_TONE: Record<string, "gold" | "warn" | "danger" | "default" | "info"> = {
   completed: "gold",

@@ -1,8 +1,7 @@
 // Eval API — typed fetchers against `engine::api::eval::*`.
 
 import { apiFetch } from "./client";
-import type { RunDetail, RunSummary } from "./types.gen";
-import type { ComparisonReport } from "./types.compare";
+import type { ComparisonReport, RunDetail, RunSummary } from "./types.gen";
 
 export type RunsListResponse = {
   items: RunSummary[];

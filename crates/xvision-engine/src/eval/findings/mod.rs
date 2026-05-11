@@ -7,6 +7,11 @@ pub mod extractor;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Finding {
     pub id: String,
@@ -18,11 +23,20 @@ pub struct Finding {
     pub kind: String,
     pub severity: Severity,
     pub summary: String,
+    /// LLM-extracted evidence blob — open-ended JSON. Typed as `unknown` on
+    /// the wire so consumers narrow with a runtime guard if they need fields.
+    #[cfg_attr(feature = "ts-export", ts(type = "unknown"))]
     pub evidence: serde_json::Value,
+    #[cfg_attr(feature = "ts-export", ts(type = "string"))]
     pub extracted_at: DateTime<Utc>,
     pub schema_version: String,
 }
 
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Severity {
