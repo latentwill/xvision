@@ -24,6 +24,7 @@ impl Algorithm for AlwaysLong {
             stop_loss_pct: 2.0,
             take_profit_pct: 4.0,
             trader_summary: "AlwaysLong: unconditional long entry at 500 bps.".into(),
+            asset: None,
         })
     }
 }

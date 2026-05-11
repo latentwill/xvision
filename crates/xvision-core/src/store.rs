@@ -280,6 +280,7 @@ mod tests {
             stop_loss_pct: 2.5,
             take_profit_pct: 5.0,
             trader_summary: "Long entry on confirmed range break with 2:1 R:R.".into(),
+            asset: None,
         }
     }
 

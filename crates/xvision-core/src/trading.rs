@@ -197,6 +197,14 @@ pub struct TraderDecision {
     pub take_profit_pct: f32,
     #[garde(length(min = 10, max = 500))]
     pub trader_summary: String,
+    /// F18 partial: defaulted to None and resolved from the active scenario's
+    /// single asset at downstream consumer sites. Full multi-asset cascade
+    /// (Trader prompt, Risk param drop, Eval BacktestConfig.instrument drop)
+    /// is tracked in F18 proper. `#[serde(default)]` keeps older serialized
+    /// blobs without this field deserializing cleanly as `None`.
+    #[garde(skip)]
+    #[serde(default)]
+    pub asset: Option<AssetSymbol>,
 }
 
 impl TraderDecision {
@@ -384,6 +392,7 @@ mod tests {
             stop_loss_pct: 2.5,
             take_profit_pct: 5.0,
             trader_summary: "Long entry on confirmed range break with 2:1 R:R.".into(),
+            asset: None,
         }
     }
 
