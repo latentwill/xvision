@@ -46,6 +46,7 @@ pub struct RunChartPayload {
 )]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChartBar {
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub time: i64,
     pub open: f64,
     pub high: f64,
@@ -61,6 +62,7 @@ pub struct ChartBar {
 )]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndicatorPoint {
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub time: i64,
     pub value: f64,
 }
@@ -129,6 +131,7 @@ pub struct MacdSeries {
 )]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChartEquityPoint {
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub time: i64,
     pub equity_usd: f64,
 }
@@ -140,6 +143,7 @@ pub struct ChartEquityPoint {
 )]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DrawdownPoint {
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub time: i64,
     pub drawdown_pct: f64,
 }
@@ -151,6 +155,7 @@ pub struct DrawdownPoint {
 )]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PositionPoint {
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub time: i64,
     pub size: f64,
     pub side: PositionSide,
@@ -187,6 +192,7 @@ pub struct ChartMarkers {
 )]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TradeMarker {
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub time: i64,
     pub side: TradeSide,
     pub price: f64,
@@ -215,6 +221,7 @@ pub enum TradeSide {
 )]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VetoMarker {
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub time: i64,
     pub price: f64,
     pub reason: String,
@@ -228,6 +235,7 @@ pub struct VetoMarker {
 )]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HoldMarker {
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub time: i64,
     pub price: f64,
     pub conviction: Option<f64>,
