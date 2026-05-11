@@ -2,40 +2,40 @@
 track: findings-orchestration
 worktree: /Users/edkennedy/Code/xvision (main worktree)
 branch: feature/findings-orchestration
-phase: phase-a-implementation
-last_updated: 2026-05-11T00:59:23Z
+phase: phase-b-pr-open
+last_updated: 2026-05-11T01:08:33Z
 owner: claude-opus-4-7 (1M ctx) — v1-gaps Track A
 ---
 
 # What I'm doing right now
 
-Track A of `docs/superpowers/plans/2026-05-11-v1-gaps-multi-agent.md` —
-wiring findings extraction into the executor finalize path so backtest
-and paper runs persist findings (today they don't).
+PR [#62](https://github.com/latentwill/xvision/pull/62) open — Track A of
+`docs/superpowers/plans/2026-05-11-v1-gaps-multi-agent.md` complete.
+Findings extraction is now wired into the run-finalize path.
 
 ## Plan task progress
 
 - [x] Claim posted to `team/queue/`
-- [ ] Branch `feature/findings-orchestration` from `origin/main` @ `0fff672`
-- [ ] A.1 — `eval/postprocess::extract_and_record(ctx, run_id)` module
-- [ ] A.2 — `BacktestExecutor::run` calls postprocess after finalize
-- [ ] A.3 — `PaperExecutor::run` calls postprocess after finalize
-- [ ] A.4 — Tests: unit + executor-driven + extractor-error regression
-- [ ] A.5 — `cargo test -p xvision-engine eval` green; workspace build clean
-- [ ] A.6 — Commit + PR + post pr-open queue note
+- [x] Branch `feature/findings-orchestration` from `origin/main` @ `0fff672`
+- [x] A.1 — `eval/postprocess::extract_and_record(ctx, run_id, dispatch, model)`
+- [x] A.2/A.3 — orchestrated from `api::eval::run_inner` (chose composition
+  over Executor-trait modification; rationale in pr-open queue note)
+- [x] A.4 — 6 unit tests in `eval::postprocess::tests`
+- [x] A.5 — `cargo test -p xvision-engine` 60/60 green; workspace build clean
+- [x] A.6 — Commit + PR + pr-open queue note
 
 # Blocked on
 
-Nothing.
+Operator review + merge of PR #62.
 
 # Followup available
 
-After this PR lands:
-- Frontend Tracks B/C/D (eval-runs row drill-in + Compare entry + error-state)
-- Backend Track G (audit + health test coverage)
-- Inspector Track E (Run-eval CTA)
-- Settings Track F (Danger zone real impl)
-- Strategies Track H (disabled-button affordance)
+This track is done modulo merge. Operator can pick up any other v1-gap
+track now — none touch this track's files.
 
-All independent of this track. F has its own engine + dashboard surface
-to add; G is pure test addition. None touch executor code.
+## Live smoke (after merge)
+
+```sh
+xvn eval run --strategy <id> --scenario crypto-bull-q1-2025 --mode backtest
+xvn eval show <run_id>   # findings section should be non-empty
+```
