@@ -16,6 +16,8 @@ import {
   type UpdateSlotBody,
   type ValidateDraftOut,
 } from "@/api/strategies";
+import { getStrategyChart, strategyChartKeys } from "@/api/chart";
+import { StrategyChart } from "@/components/chart/StrategyChart";
 
 const RISK_PRESETS: { key: string; label: string }[] = [
   { key: "conservative", label: "Conservative" },
@@ -91,6 +93,7 @@ function InspectorPage({ id }: { id: string }) {
           ) : bundleQ.data ? (
             <BundleEditor bundle={bundleQ.data} />
           ) : null}
+          <PerformanceHistoryCard strategyId={id} />
         </div>
 
         <aside className="space-y-5">
@@ -100,6 +103,33 @@ function InspectorPage({ id }: { id: string }) {
         </aside>
       </div>
     </>
+  );
+}
+
+function PerformanceHistoryCard({ strategyId }: { strategyId: string }) {
+  const chart = useQuery({
+    queryKey: strategyChartKeys.strategy(strategyId),
+    queryFn: () => getStrategyChart(strategyId),
+  });
+
+  return (
+    <Card>
+      <SectionHeader
+        label="Performance history"
+        hint="Equity curves from all completed eval runs, colour-coded by scenario."
+      />
+      <div className="px-5 pb-5">
+        {chart.isPending && (
+          <div className="text-text-3 text-[13px] py-4">Loading history…</div>
+        )}
+        {chart.isError && (
+          <div className="text-danger text-[13px] py-4">
+            Could not load chart.
+          </div>
+        )}
+        {chart.data && <StrategyChart payload={chart.data} />}
+      </div>
+    </Card>
   );
 }
 
