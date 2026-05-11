@@ -2,6 +2,9 @@ import { createBrowserRouter, Navigate } from "react-router-dom";
 import { Layout } from "@/components/shell/Layout";
 import { HomeRoute } from "./routes/home";
 import { StrategiesRoute } from "./routes/strategies";
+import { ScenariosRoute } from "./routes/scenarios";
+import { ScenariosNewRoute } from "./routes/scenarios-new";
+import { ScenariosDetailRoute } from "./routes/scenarios-detail";
 import { AuthoringRoute } from "./routes/authoring";
 import { EvalRunsRoute } from "./routes/eval-runs";
 import { EvalRunDetailRoute } from "./routes/eval-runs-detail";
@@ -21,6 +24,9 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <HomeRoute /> },
       { path: "strategies", element: <StrategiesRoute /> },
+      { path: "scenarios", element: <ScenariosRoute /> },
+      { path: "scenarios/new", element: <ScenariosNewRoute /> },
+      { path: "scenarios/:id", element: <ScenariosDetailRoute /> },
       { path: "authoring", element: <AuthoringRoute /> },
       { path: "authoring/:id", element: <AuthoringRoute /> },
       { path: "eval-runs", element: <EvalRunsRoute /> },

@@ -296,7 +296,7 @@ function AddProviderForm({
           kind: meta.wireKind,
           base_url: trimmedBaseUrl,
           api_key_env: "",
-          api_key: apiKey.trim() === "" ? undefined : apiKey,
+          api_key: apiKey.trim() === "" ? null : apiKey,
         });
       }}
       className="border border-border-soft rounded-md p-4 mb-4 bg-surface-elev/30 space-y-3"
