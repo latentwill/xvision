@@ -73,6 +73,8 @@ function InspectorPage({ id }: { id: string }) {
         }
       />
 
+      <InspectorActions strategyId={id} />
+
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-5">
         <div className="space-y-5">
           {bundleQ.isPending ? (
@@ -502,6 +504,24 @@ function SectionHeader({ label, hint }: { label: string; hint?: string }) {
         <div className="text-[12px] text-text-2 mt-0.5">{hint}</div>
       ) : null}
     </header>
+  );
+}
+
+function InspectorActions({ strategyId }: { strategyId: string }) {
+  // Discoverable CTA for "now that you've edited this bundle, run it."
+  // Deep-links the strategy id via `?strategy=<id>` so a future
+  // run-form on `/eval-runs` can pre-select it without an extra
+  // round-trip. Until that form exists the param is benign — the
+  // route just ignores it.
+  return (
+    <div className="flex items-center justify-end gap-3 mb-5">
+      <Link
+        to={`/eval-runs?strategy=${encodeURIComponent(strategyId)}`}
+        className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft transition-colors"
+      >
+        Run eval →
+      </Link>
+    </div>
   );
 }
 
