@@ -1,5 +1,6 @@
-// Settings API — read-only fetchers for the v1 Settings tabs (brokers,
-// daemon, identity). Providers and danger-zone CRUD live elsewhere.
+// Settings API — fetchers for the v1 Settings tabs. Brokers / daemon /
+// identity are read-only snapshots; providers is the only CRUD surface
+// in this module.
 
 import { apiFetch } from "./client";
 import type {
@@ -7,12 +8,18 @@ import type {
   DaemonReport,
   IdentityReport,
 } from "./types.gen";
+import type {
+  AddProviderRequest,
+  ProviderRow,
+  ProvidersReport,
+} from "./types.providers";
 
 export const settingsKeys = {
   all: ["settings"] as const,
   brokers: () => [...settingsKeys.all, "brokers"] as const,
   daemon: () => [...settingsKeys.all, "daemon"] as const,
   identity: () => [...settingsKeys.all, "identity"] as const,
+  providers: () => [...settingsKeys.all, "providers"] as const,
 };
 
 export function getBrokers(): Promise<BrokersReport> {
@@ -25,4 +32,26 @@ export function getDaemon(): Promise<DaemonReport> {
 
 export function getIdentity(): Promise<IdentityReport> {
   return apiFetch<IdentityReport>("/api/settings/identity");
+}
+
+// ─── Providers CRUD ────────────────────────────────────────────────────────
+
+export function listProviders(): Promise<ProvidersReport> {
+  return apiFetch<ProvidersReport>("/api/settings/providers");
+}
+
+export function addProvider(
+  body: AddProviderRequest,
+): Promise<ProviderRow> {
+  return apiFetch<ProviderRow>("/api/settings/providers", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function removeProvider(name: string): Promise<void> {
+  return apiFetch<void>(
+    `/api/settings/providers/${encodeURIComponent(name)}`,
+    { method: "DELETE" },
+  );
 }

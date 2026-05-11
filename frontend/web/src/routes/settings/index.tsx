@@ -52,14 +52,7 @@ export function SettingsLayout() {
   );
 }
 
-export function SettingsProvidersRoute() {
-  return (
-    <PlaceholderTab
-      hint="LLM provider key management lands with the llm-providers Phase 2 plan."
-      doc="docs/superpowers/plans/2026-05-10-llm-providers-and-per-arm-models-plan.md"
-    />
-  );
-}
+export { SettingsProvidersRoute } from "./providers";
 
 export function SettingsBrokersRoute() {
   const q = useQuery({
