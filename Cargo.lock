@@ -8236,6 +8236,7 @@ dependencies = [
  "sqlx",
  "tempfile",
  "tokio",
+ "toml",
  "tracing",
  "tracing-subscriber",
  "ulid",

@@ -12,6 +12,7 @@ pub mod provider;
 pub mod report;
 pub mod risk;
 pub mod run_setup;
+pub mod scenario;
 pub mod show_briefing;
 pub mod show_decision;
 pub mod show_metrics;
