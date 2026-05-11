@@ -169,3 +169,130 @@ fn aggregate(probes: &[Probe]) -> HealthStatus {
 // a special case.
 #[allow(dead_code)]
 fn _api_error_anchor(_e: ApiError) {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::Actor;
+
+    async fn fresh_ctx() -> (ApiContext, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = ApiContext::open(
+            dir.path(),
+            Actor::Cli {
+                user: "operator".into(),
+            },
+        )
+        .await
+        .unwrap();
+        (ctx, dir)
+    }
+
+    /// Spec G.2 (v1 gaps Track G): a fresh `xvn_home` with the migrations
+    /// applied passes every probe — `data_dir` exists (we just created it),
+    /// `db` answers `SELECT 1`, `bundles` is absent and that's reported as
+    /// the empty-but-ok shape. The aggregate rolls up to `Ok`.
+    #[tokio::test]
+    async fn check_returns_ok_on_fresh_xvn_home() {
+        let (ctx, _dir) = fresh_ctx().await;
+        let report = check(&ctx).await.unwrap();
+        assert_eq!(report.status, HealthStatus::Ok);
+        assert_eq!(report.probes.len(), 3);
+        for p in &report.probes {
+            assert_eq!(
+                p.status,
+                HealthStatus::Ok,
+                "probe {} should be Ok, got {:?} ({:?})",
+                p.name,
+                p.status,
+                p.detail,
+            );
+        }
+    }
+
+    /// Spec G.2: when the sqlite pool is unusable, the `db` probe must
+    /// surface as `Down` (not error out the whole report). Closing the pool
+    /// is the cleanest way to simulate "db can't be opened" without leaking
+    /// the test env onto a real path. Aggregate falls to `Down`.
+    #[tokio::test]
+    async fn check_flags_db_when_pool_closed() {
+        let (ctx, _dir) = fresh_ctx().await;
+        ctx.db.close().await;
+
+        let report = check(&ctx).await.unwrap();
+        let db = report
+            .probes
+            .iter()
+            .find(|p| p.name == "db")
+            .expect("db probe present");
+        assert_eq!(db.status, HealthStatus::Down, "detail: {:?}", db.detail);
+        assert_eq!(report.status, HealthStatus::Down);
+    }
+
+    /// Spec G.2: a fresh install has no `bundles/` directory; that case
+    /// is *not* an error — it's the empty-but-ok shape `"0 (no bundles dir
+    /// yet)"`. Catches the regression where someone "fixes" the missing-dir
+    /// branch to return Degraded.
+    #[tokio::test]
+    async fn check_flags_missing_bundles_dir_renders_zero_count_ok() {
+        let (ctx, _dir) = fresh_ctx().await;
+        let report = check(&ctx).await.unwrap();
+        let bundles = report
+            .probes
+            .iter()
+            .find(|p| p.name == "bundles")
+            .expect("bundles probe present");
+        assert_eq!(bundles.status, HealthStatus::Ok);
+        assert_eq!(
+            bundles.detail.as_deref(),
+            Some("0 (no bundles dir yet)"),
+            "expected the missing-dir empty shape, got {:?}",
+            bundles.detail,
+        );
+    }
+
+    /// Spec G.2: `HealthReport` is the wire shape served by the dashboard's
+    /// `/api/health`; the round-trip guards against a future field rename
+    /// breaking the JSON contract. Asserts every variant of `HealthStatus`
+    /// + every `Probe` field survives serialize → deserialize.
+    #[test]
+    fn health_report_serialization_round_trip() {
+        let report = HealthReport {
+            status: HealthStatus::Degraded,
+            probes: vec![
+                Probe {
+                    name: "data_dir".into(),
+                    status: HealthStatus::Ok,
+                    detail: Some("/tmp/xvn".into()),
+                    latency_ms: None,
+                },
+                Probe {
+                    name: "db".into(),
+                    status: HealthStatus::Degraded,
+                    detail: Some("slow".into()),
+                    latency_ms: Some(420),
+                },
+                Probe {
+                    name: "bundles".into(),
+                    status: HealthStatus::Down,
+                    detail: None,
+                    latency_ms: None,
+                },
+            ],
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        let parsed: HealthReport = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.status, report.status);
+        assert_eq!(parsed.probes.len(), report.probes.len());
+        for (a, b) in parsed.probes.iter().zip(report.probes.iter()) {
+            assert_eq!(a.name, b.name);
+            assert_eq!(a.status, b.status);
+            assert_eq!(a.detail, b.detail);
+            assert_eq!(a.latency_ms, b.latency_ms);
+        }
+        // serde rename_all = "snake_case" — assert the wire form too.
+        assert!(json.contains("\"degraded\""));
+        assert!(json.contains("\"ok\""));
+        assert!(json.contains("\"down\""));
+    }
+}

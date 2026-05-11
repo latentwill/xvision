@@ -13,6 +13,16 @@ async fn pool_with_migration() -> SqlitePool {
     pool
 }
 
+fn ctx_with(pool: SqlitePool, dir: &std::path::Path) -> ApiContext {
+    ApiContext {
+        db: pool,
+        actor: Actor::Cli {
+            user: "operator".into(),
+        },
+        xvn_home: dir.to_path_buf(),
+    }
+}
+
 #[tokio::test]
 async fn audit_records_ok_outcome() {
     let pool = pool_with_migration().await;
@@ -113,4 +123,74 @@ async fn audit_records_target_and_args_json() {
     assert_eq!(duration_ms, 100);
     assert_eq!(actor, "agent_runner");
     assert_eq!(actor_id.as_deref(), Some("run-42"));
+}
+
+/// Spec G.1 (v1 gaps Track G): when both target and args_json are passed
+/// as None, they must round-trip as SQL NULL — not as the literal string
+/// "None" or an empty string. This is load-bearing because consumers query
+/// `WHERE target IS NULL` to filter call-site-less records.
+#[tokio::test]
+async fn audit_records_null_target_and_args() {
+    let pool = pool_with_migration().await;
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = ctx_with(pool.clone(), dir.path());
+    record(&ctx, "health", "check", None, None, Outcome::Ok, 3)
+        .await
+        .unwrap();
+
+    let (target, args_json): (Option<String>, Option<String>) =
+        sqlx::query_as("SELECT target, args_json FROM api_audit")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(target.is_none(), "target should be NULL, got {target:?}");
+    assert!(args_json.is_none(), "args_json should be NULL, got {args_json:?}");
+}
+
+/// Spec G.1: 10 concurrent record calls against the same pool must produce
+/// 10 distinct rows with 10 distinct ULIDs. Catches a regression where
+/// `record` could share state across calls (e.g. a global `Ulid::new()`
+/// mutex with an off-by-one) that wouldn't surface in serial tests.
+#[tokio::test]
+async fn audit_records_concurrent_writes_yield_distinct_ulids() {
+    let pool = pool_with_migration().await;
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = ctx_with(pool.clone(), dir.path());
+
+    let mut handles = Vec::with_capacity(10);
+    for i in 0..10 {
+        let ctx = ctx.clone();
+        handles.push(tokio::spawn(async move {
+            record(
+                &ctx,
+                "concurrent",
+                "write",
+                Some(&format!("target-{i}")),
+                None,
+                Outcome::Ok,
+                i,
+            )
+            .await
+            .unwrap();
+        }));
+    }
+    for h in handles {
+        h.await.unwrap();
+    }
+
+    let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM api_audit")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 10, "expected 10 rows, got {count}");
+
+    let (distinct_ids,): (i64,) =
+        sqlx::query_as("SELECT COUNT(DISTINCT id) FROM api_audit")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        distinct_ids, 10,
+        "expected 10 distinct ULIDs, got {distinct_ids}"
+    );
 }
