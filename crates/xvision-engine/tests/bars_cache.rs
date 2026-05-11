@@ -98,3 +98,48 @@ async fn cache_miss_then_hit_returns_same_bars() {
         "second call should hit the cache (no second upstream fetch)"
     );
 }
+
+#[tokio::test]
+async fn corrupted_cache_blob_treated_as_miss_and_self_heals() {
+    let (ctx, server) = test_ctx_with_mock_alpaca().await;
+    let args = BarCacheArgs {
+        cache_key: "corrupt_key".into(),
+        asset_pair: "ETH/USD".into(),
+        granularity: BarGranularity::Hour1,
+        start: Utc.with_ymd_and_hms(2024, 2, 3, 0, 0, 0).unwrap(),
+        end: Utc.with_ymd_and_hms(2024, 2, 3, 4, 0, 0).unwrap(),
+        data_source_tag: "alpaca-historical-v1".into(),
+    };
+
+    // Plant a garbage row — `compression='none'` so the deserialiser
+    // tries to parse `DEADBEEF` as ndjson and trips its error path.
+    sqlx::query(
+        "INSERT INTO bars_cache \
+         (cache_key, asset, granularity, window_start, window_end, \
+          data_source, fetched_at, bar_count, bars_blob, compression) \
+         VALUES ('corrupt_key', 'ETH/USD', '1Hour', \
+         '2024-02-03T00:00:00+00:00', '2024-02-03T04:00:00+00:00', \
+         'alpaca-historical-v1', '2024-02-03T00:00:00+00:00', 4, \
+         X'DEADBEEF', 'none')",
+    )
+    .execute(&ctx.db)
+    .await
+    .unwrap();
+
+    // First call: hits corrupt row -> falls through to fetcher -> repopulates.
+    let bars = load_bars(&ctx, &args).await.unwrap();
+    assert!(!bars.is_empty());
+
+    // The bad row should have been evicted and replaced; fetcher hit once.
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(
+        requests.len(),
+        1,
+        "fetcher invoked once after corrupt-row eviction"
+    );
+
+    // Second call: hits the newly-cached good row, no extra fetch.
+    let _ = load_bars(&ctx, &args).await.unwrap();
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 1, "second call hits cleaned cache");
+}

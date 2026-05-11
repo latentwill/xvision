@@ -101,7 +101,26 @@ async fn read_bars_cache(
     .fetch_optional(&ctx.db)
     .await
     .map_err(|e| ApiError::Internal(format!("read_bars_cache: {e}")))?;
-    Ok(row.map(|(blob, compression)| deserialise_bars(&blob, &compression)))
+    let Some((blob, compression)) = row else {
+        return Ok(None);
+    };
+    match deserialise_bars(&blob, &compression) {
+        Ok(bars) => Ok(Some(bars)),
+        Err(e) => {
+            tracing::warn!(
+                cache_key = %cache_key,
+                error = %e,
+                "evicting corrupted bars_cache row"
+            );
+            // Best-effort eviction; if the DELETE fails, the next call
+            // will hit the same row and try again.
+            let _ = sqlx::query("DELETE FROM bars_cache WHERE cache_key = ?")
+                .bind(cache_key)
+                .execute(&ctx.db)
+                .await;
+            Ok(None)
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -167,29 +186,55 @@ fn gzip(input: &[u8]) -> Vec<u8> {
     enc.finish().expect("gzip finish cannot fail on Vec<u8>")
 }
 
-fn deserialise_bars(blob: &[u8], compression: &str) -> Vec<MarketBar> {
+fn deserialise_bars(blob: &[u8], compression: &str) -> Result<Vec<MarketBar>, ApiError> {
     let raw = if compression == "gzip" {
         let mut dec = GzDecoder::new(blob);
         let mut out = Vec::new();
-        dec.read_to_end(&mut out).expect("gzip blob decodes");
+        dec.read_to_end(&mut out)
+            .map_err(|e| ApiError::Internal(format!("deserialise: gzip decode: {e}")))?;
         out
     } else {
         blob.to_vec()
     };
-    raw.split(|b| *b == b'\n')
-        .filter(|l| !l.is_empty())
-        .map(|l| {
-            let v: serde_json::Value = serde_json::from_slice(l).expect("ndjson line");
-            MarketBar {
-                timestamp: chrono::DateTime::parse_from_rfc3339(v["t"].as_str().unwrap())
-                    .unwrap()
-                    .with_timezone(&Utc),
-                open: v["o"].as_f64().unwrap(),
-                high: v["h"].as_f64().unwrap(),
-                low: v["l"].as_f64().unwrap(),
-                close: v["c"].as_f64().unwrap(),
-                volume: v["v"].as_f64().unwrap(),
-            }
-        })
-        .collect()
+    let mut bars = Vec::new();
+    for line in raw.split(|b| *b == b'\n').filter(|l| !l.is_empty()) {
+        let v: serde_json::Value = serde_json::from_slice(line)
+            .map_err(|e| ApiError::Internal(format!("deserialise: ndjson parse: {e}")))?;
+        let ts_str = v
+            .get("t")
+            .and_then(|x| x.as_str())
+            .ok_or_else(|| ApiError::Internal("deserialise: missing 't' field".into()))?;
+        let timestamp = chrono::DateTime::parse_from_rfc3339(ts_str)
+            .map_err(|e| ApiError::Internal(format!("deserialise: bad timestamp: {e}")))?
+            .with_timezone(&Utc);
+        let open = v
+            .get("o")
+            .and_then(|x| x.as_f64())
+            .ok_or_else(|| ApiError::Internal("deserialise: missing 'o'".into()))?;
+        let high = v
+            .get("h")
+            .and_then(|x| x.as_f64())
+            .ok_or_else(|| ApiError::Internal("deserialise: missing 'h'".into()))?;
+        let low = v
+            .get("l")
+            .and_then(|x| x.as_f64())
+            .ok_or_else(|| ApiError::Internal("deserialise: missing 'l'".into()))?;
+        let close = v
+            .get("c")
+            .and_then(|x| x.as_f64())
+            .ok_or_else(|| ApiError::Internal("deserialise: missing 'c'".into()))?;
+        let volume = v
+            .get("v")
+            .and_then(|x| x.as_f64())
+            .ok_or_else(|| ApiError::Internal("deserialise: missing 'v'".into()))?;
+        bars.push(MarketBar {
+            timestamp,
+            open,
+            high,
+            low,
+            close,
+            volume,
+        });
+    }
+    Ok(bars)
 }
