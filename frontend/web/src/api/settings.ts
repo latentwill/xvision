@@ -5,6 +5,7 @@
 import { apiFetch } from "./client";
 import type {
   AddProviderRequest,
+  AlpacaTestReport,
   BrokersReport,
   DaemonReport,
   FactoryResetReport,
@@ -66,6 +67,16 @@ export function clearAlpacaCredentials(): Promise<void> {
   return apiFetch<void>("/api/settings/brokers/alpaca", {
     method: "DELETE",
   });
+}
+
+/// Connectivity probe for Alpaca — calls `/v2/account` with the stored
+/// (or env-var fallback) credentials. Network/auth failures surface in
+/// `error` rather than as HTTP errors so the UI renders an inline pill.
+export function testAlpacaConnection(): Promise<AlpacaTestReport> {
+  return apiFetch<AlpacaTestReport>(
+    "/api/settings/brokers/alpaca/test-connection",
+    { method: "POST" },
+  );
 }
 
 export function getDaemon(): Promise<DaemonReport> {

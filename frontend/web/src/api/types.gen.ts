@@ -1,4 +1,5 @@
 export type { AddProviderRequest } from "./types.gen/AddProviderRequest";
+export type { AlpacaTestReport } from "./types.gen/AlpacaTestReport";
 export type { BrokerEntry } from "./types.gen/BrokerEntry";
 export type { BrokersReport } from "./types.gen/BrokersReport";
 export type { ComparisonEquityCurve } from "./types.gen/ComparisonEquityCurve";
