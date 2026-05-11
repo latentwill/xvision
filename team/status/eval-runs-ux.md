@@ -2,37 +2,34 @@
 track: eval-runs-ux
 worktree: /Users/edkennedy/Code/xvision (main worktree)
 branch: feature/eval-runs-ux
-phase: phase-a-implementation
-last_updated: 2026-05-11T02:02:59Z
-owner: claude-opus-4-7 (1M ctx) — v1-gaps Tracks B+C+D bundle
+phase: phase-b-pr-open
+last_updated: 2026-05-11T02:06:11Z
+owner: claude-opus-4-7 (1M ctx) — v1-gaps Tracks B+C
 ---
 
 # What I'm doing right now
 
-Bundling Tracks B (row drill-in), C (Compare selection), D (error state)
-into one PR. All three modify `frontend/web/src/routes/eval-runs.tsx`;
-spec recommends the bundle.
+PR [#65](https://github.com/latentwill/xvision/pull/65) open — Tracks B
+and C of `docs/superpowers/plans/2026-05-11-v1-gaps-multi-agent.md`
+complete. Track D was a false-positive in the audit; already correct
+on-disk.
 
 ## Plan task progress
 
 - [x] Claim posted to `team/queue/`
 - [x] Branch `feature/eval-runs-ux` from `origin/main` @ `0fff672`
-- [ ] Read full `routes/eval-runs.tsx`
-- [ ] B: rows navigate to `/eval-runs/:runId`
-- [ ] C: per-row checkboxes + Compare(n) button
-- [ ] D: render-order fix (loading / error / empty / table)
-- [ ] `tsc -b` + `vite build` green
-- [ ] Live smoke: `/api/eval/runs` returns clean shape against booted dashboard
-- [ ] Commit + PR + pr-open queue note
+- [x] Read full `routes/eval-runs.tsx`; confirmed D was a false positive
+- [x] B: rows navigate to `/eval-runs/:runId` (whole-row click + keyboard)
+- [x] C: per-row checkboxes + Compare(n) toolbar
+- [x] `tsc -b` + `vite build` green
+- [x] Commit + PR + pr-open queue note
 
 # Blocked on
 
-Nothing.
+Operator review + merge of PR #65. Browser smoke also operator's call
+(session can't drive a browser).
 
 # Followup available
 
-After this PR lands:
-- Track E (Inspector "Run eval" CTA) — independent
-- Track F (Settings → Danger real impl) — independent
-- Track G (audit + health test coverage) — independent
-- Track H (Strategies disabled-button affordance) — independent
+This track is done modulo merge. Remaining v1-gap tracks (E, F, G, H)
+are all independent of this PR's files.
