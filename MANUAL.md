@@ -349,6 +349,31 @@ End-to-end paths beyond this surface (marketplace publishing, live
 trading, batch eval) land in subsequent plans (2c, 3, 5) — they share
 this same bundle format.
 
+### Exit codes (Plan 2b-followup)
+
+`xvn skill *`, `xvn strategy *`, and `xvn eval *` follow Printing-Press-style
+typed exit codes so AI agents can dispatch on the *number*, not the error
+text:
+
+| Code | Meaning | Agent should |
+|------|---------|--------------|
+| 0 | Success | continue |
+| 2 | Usage / malformed input / unknown enum variant | re-read `--help`, fix the invocation |
+| 3 | Auth (missing or invalid credential) | prompt operator for `ANTHROPIC_API_KEY` or `--mock` |
+| 4 | Resource not found (strategy id, skill name, run id) | re-fetch with `xvn <verb> ls`; the id is stale |
+| 5 | Upstream / network / disk / database error | retry with backoff |
+| 7 | State conflict (e.g. attaching skill to empty slot) | inspect the resource and reconcile state |
+
+Other verbs (`fire-trade`, `venue`, `ab-compare`, `dashboard`, `eod`, …)
+default to exit 5 on any error pending per-command opt-in.
+
+```bash
+xvn strategy show 01BAD; echo $?      # 4
+xvn skill new --from-file /no/such; echo $?    # 2
+xvn eval show 01BAD; echo $?          # 4
+xvn skill attach <id> --slot intern --skill x; echo $?   # 7 (slot empty)
+```
+
 ---
 
 ## Quick env-var checklist (remote GPU box)
