@@ -18,6 +18,7 @@ use crate::api::audit::{self, Outcome};
 use crate::api::{ApiContext, ApiError, ApiResult};
 use crate::bundle::store::{BundleStore, FilesystemStore};
 use crate::bundle::StrategyBundle;
+use crate::eval::findings::Finding;
 use crate::eval::run::{Run, RunMode, RunStatus};
 use crate::eval::scenario::canonical_scenarios;
 use crate::eval::store::{ListFilter, RunStore};
@@ -76,6 +77,21 @@ pub async fn upsert_run(ctx: &ApiContext, run: &Run) {
     let entry = run_entry(run);
     if let Err(e) = SearchIndex::upsert(&ctx.db, &entry).await {
         tracing::warn!(error = %e, run_id = %run.id, "search index upsert (run) failed");
+    }
+}
+
+/// Upsert an eval finding into the index. Best-effort.
+///
+/// No production callsite calls this yet — `RunStore::record_finding`
+/// has no orchestrator wired in v1. The hook is exposed so the future
+/// findings-extraction path (Phase 3.C orchestration) can call it as a
+/// one-liner when finalizing a finding. The cold-start `reindex_all`
+/// walker already picks up any findings persisted directly via tests
+/// or a future orchestrator without further coordination.
+pub async fn upsert_finding(ctx: &ApiContext, finding: &Finding) {
+    let entry = finding_entry(finding);
+    if let Err(e) = SearchIndex::upsert(&ctx.db, &entry).await {
+        tracing::warn!(error = %e, finding_id = %finding.id, "search index upsert (finding) failed");
     }
 }
 
@@ -183,12 +199,23 @@ pub async fn reindex_all(ctx: &ApiContext) {
         Err(e) => tracing::warn!(error = %e, "reindex: list bundles failed"),
     }
 
-    // 2. Runs — paginate via RunStore::list with no filter.
+    // 2. Runs (+ their findings) — paginate via RunStore::list with no
+    // filter, then walk per-run findings so the palette can resolve a
+    // finding row by keyword even though there's no incremental hook
+    // wired into the (not-yet-orchestrated) extraction path.
     let run_store = RunStore::new(ctx.db.clone());
     match run_store.list(ListFilter::default()).await {
         Ok(runs) => {
             for run in runs {
                 upsert_run(ctx, &run).await;
+                match run_store.read_findings(&run.id).await {
+                    Ok(findings) => {
+                        for f in findings {
+                            upsert_finding(ctx, &f).await;
+                        }
+                    }
+                    Err(e) => tracing::warn!(error = %e, run_id = %run.id, "reindex: read findings failed"),
+                }
             }
         }
         Err(e) => tracing::warn!(error = %e, "reindex: list runs failed"),
@@ -235,6 +262,33 @@ fn strategy_entry(bundle: &StrategyBundle) -> IndexEntry {
         tags,
         updated_at: m.published_at.unwrap_or_else(chrono::Utc::now),
         href: format!("/authoring/{}", m.id),
+    }
+}
+
+fn finding_entry(f: &Finding) -> IndexEntry {
+    let id_prefix: String = f.id.chars().take(8).collect();
+    let summary = format!(
+        "{} · severity {} · run {}",
+        f.kind,
+        f.severity.as_str(),
+        f.run_id.chars().take(8).collect::<String>()
+    );
+    let title = if f.summary.is_empty() {
+        format!("Finding {} ({})", id_prefix, f.kind)
+    } else {
+        f.summary.clone()
+    };
+    IndexEntry {
+        artifact_id: f.id.clone(),
+        kind: SearchKind::Finding,
+        title,
+        summary,
+        tags: vec![f.kind.clone(), f.severity.as_str().to_string()],
+        updated_at: f.extracted_at,
+        // Findings are surfaced inside their owning run's detail page;
+        // a fragment id is the cheapest deep-link until the dashboard
+        // grows a dedicated finding view.
+        href: format!("/eval-runs/{}#finding-{}", f.run_id, f.id),
     }
 }
 
@@ -334,6 +388,44 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(hits.len(), canonical_scenarios().len());
+    }
+
+    #[tokio::test]
+    async fn upsert_finding_indexes_by_summary_and_kind() {
+        use crate::eval::findings::{Finding, Severity};
+
+        let (ctx, _dir) = fresh_ctx().await;
+        let f = Finding {
+            id: "01F1NDING0000000000000000".into(),
+            run_id: "01RUN0000000000000000000".into(),
+            kind: "drawdown_concentration".into(),
+            severity: Severity::Warning,
+            summary: "Two of the worst three drawdowns happened in March 2025".into(),
+            evidence: serde_json::json!({}),
+            extracted_at: chrono::Utc::now(),
+            schema_version: "v1".into(),
+        };
+        upsert_finding(&ctx, &f).await;
+
+        // By summary token
+        let by_summary = search(&ctx, "drawdowns", &SearchQuery::default())
+            .await
+            .unwrap();
+        assert!(by_summary.iter().any(|h| h.kind == SearchKind::Finding));
+
+        // By kind tag
+        let by_kind = search(
+            &ctx,
+            "drawdown_concentration",
+            &SearchQuery {
+                kind: Some(SearchKind::Finding),
+                limit: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(by_kind.len(), 1);
+        assert_eq!(by_kind[0].artifact_id, f.id);
     }
 
     #[tokio::test]
