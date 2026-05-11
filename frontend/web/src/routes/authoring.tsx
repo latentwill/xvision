@@ -93,6 +93,7 @@ function InspectorPage({ id }: { id: string }) {
 
         <aside className="space-y-5">
           <ValidationCard query={validateQ} />
+          <RunEvalCard agentId={id} />
           <BackLinkCard />
         </aside>
       </div>
@@ -430,6 +431,61 @@ function BackLinkCard() {
       <div className="px-5 py-4 text-[13px] text-text-2">
         <Link to="/strategies" className="text-text hover:underline">
           ← Back to strategies
+        </Link>
+      </div>
+    </Card>
+  );
+}
+
+function RunEvalCard({ agentId }: { agentId: string }) {
+  // v1 launches eval runs via CLI; the dashboard surfaces results. This
+  // card gives the operator a copy-pasteable command + a direct link to
+  // the runs list so the loop "edit → eval → inspect" is reachable from
+  // inside the Inspector instead of requiring a route hop.
+  const cliCommand = `xvn eval run --strategy ${agentId} --scenario crypto-bull-q1-2025 --mode backtest`;
+  const [copied, setCopied] = useState(false);
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(cliCommand);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1400);
+    } catch {
+      // Clipboard API can fail in non-secure contexts; silently no-op.
+      // The user can still triple-click to select the command text.
+    }
+  }
+
+  return (
+    <Card>
+      <SectionHeader
+        label="Run eval"
+        hint="Launch via CLI; results render in /eval-runs."
+      />
+      <div className="px-5 py-4 space-y-3">
+        <div className="relative">
+          <pre className="m-0 px-3 py-2 bg-surface-elev border border-border-soft rounded text-[11.5px] font-mono text-text overflow-x-auto whitespace-pre">
+{cliCommand}
+          </pre>
+          <button
+            type="button"
+            onClick={copy}
+            className="absolute top-1.5 right-1.5 px-2 py-0.5 text-[11px] text-text-3 hover:text-text bg-surface-card border border-border rounded"
+            title="Copy command"
+          >
+            {copied ? "copied" : "copy"}
+          </button>
+        </div>
+        <p className="m-0 text-[12px] text-text-3 leading-snug">
+          Swap <code className="font-mono text-text-2">crypto-bull-q1-2025</code> for any{" "}
+          <code className="font-mono text-text-2">xvn eval scenarios</code> id. Use{" "}
+          <code className="font-mono text-text-2">--mode paper</code> for Alpaca paper trading.
+        </p>
+        <Link
+          to="/eval-runs"
+          className="inline-flex items-center gap-1 text-[13px] text-text hover:text-gold"
+        >
+          Browse eval runs →
         </Link>
       </div>
     </Card>
