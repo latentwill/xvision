@@ -373,26 +373,17 @@ async fn run_compare(args: CompareArgs) -> CliResult<()> {
 }
 
 async fn run_scenarios(args: ScenariosArgs) -> CliResult<()> {
-    let ctx = open_ctx(args.xvn_home.clone()).await.exit_with(XvnExit::Upstream)?;
-    let summaries = eval::scenarios(&ctx)
-        .await
-        .map_err(|e| api_to_cli("eval scenarios", e))?;
-    if args.json {
-        println!("{}", serde_json::to_string_pretty(&summaries).exit_with(XvnExit::Upstream)?);
-        return Ok(());
-    }
-    println!("ID\tDISPLAY_NAME\tASSETS\tREGIME_TAGS\tWINDOW_DAYS");
-    for s in &summaries {
-        println!(
-            "{}\t{}\t{}\t{}\t{}",
-            s.id,
-            s.display_name,
-            s.asset_universe.join(","),
-            s.regime_tags.join(","),
-            s.time_window_days,
-        );
-    }
-    Ok(())
+    eprintln!("warning: 'xvn eval scenarios' is deprecated. Use 'xvn scenario ls' instead.");
+    crate::commands::scenario::run(crate::commands::scenario::ScenarioCmd {
+        op: crate::commands::scenario::ScenarioOp::Ls(crate::commands::scenario::LsArgs {
+            source: None,
+            tag: vec![],
+            archived: false,
+            json: args.json,
+        }),
+        xvn_home: args.xvn_home,
+    })
+    .await
 }
 
 async fn run_attest(args: AttestArgs) -> CliResult<()> {
