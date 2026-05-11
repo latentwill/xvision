@@ -457,7 +457,7 @@ async fn run_clone(ctx: &ApiContext, a: CloneArgs) -> CliResult<()> {
     let s = api_scenario::clone(ctx, &a.id, mutations)
         .await
         .map_err(|e| api_to_cli("scenario clone", e))?;
-    println!("cloned {} → {} ({})", a.id, s.id, s.display_name);
+    println!("cloned to {} (parent: {})", s.id, a.id);
     Ok(())
 }
 
