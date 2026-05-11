@@ -10,6 +10,18 @@ on:
   push:
     tags: ["v*.*.*"]
   workflow_dispatch:
+    inputs:
+      dockerfile:
+        description: "Which Dockerfile to build (deploy = SPA baked in; default = CLI only)"
+        type: choice
+        default: Dockerfile.deploy
+        options:
+          - Dockerfile.deploy
+          - Dockerfile
+      build_identity:
+        description: "Also build the WITH_IDENTITY=1 (Mantle alloy) image"
+        type: boolean
+        default: false
 
 # Auto-cancel superseded runs on the same ref. Belt + suspenders against
 # the queue stacking up if multiple tags get pushed in quick succession.
@@ -56,6 +68,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          file: ${{ github.event.inputs.dockerfile || 'Dockerfile' }}
           push: ${{ github.event_name != 'pull_request' }}
           build-args: |
             WITH_IDENTITY=0
@@ -67,7 +80,9 @@ jobs:
   build-identity:
     runs-on: ubuntu-latest
     needs: build-default
-    if: github.event_name != 'pull_request'
+    if: |
+      github.event_name != 'pull_request' &&
+      (github.event_name != 'workflow_dispatch' || github.event.inputs.build_identity == 'true')
     steps:
       - uses: actions/checkout@v4
 
@@ -95,6 +110,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          file: ${{ github.event.inputs.dockerfile || 'Dockerfile' }}
           push: true
           build-args: |
             WITH_IDENTITY=1
