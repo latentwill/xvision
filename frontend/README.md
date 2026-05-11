@@ -1,15 +1,53 @@
 # frontend
 
-Reserved for the xvision web UI. **No production frontend exists yet** — this directory currently holds the design handoff bundle that will become the visual source of truth when frontend work begins.
+The xvision web UI. Two subdirectories:
 
-## Layout
+- `web/` — **the production frontend.** Vite + React + Tailwind SPA, built into
+  `crates/xvision-dashboard/static/` and embedded into the `xvn` binary at
+  compile time via `rust-embed`. This is what `xvn dashboard serve` actually
+  ships.
+- `prototype/` — original Claude Design handoff mockup (HTML/JSX, six screens
+  on a 1440×900 canvas). Retained as visual reference; not built, not shipped.
 
-- `prototype/` — runnable HTML/CSS/JSX mockup of the v1 dashboard, exported from Claude Design (claude.ai/design). Six screens on a 1440×900 design canvas. **Read this directory directly; do not screenshot.**
-- `prototype/_handoff/` — original handoff README, chat transcript, and upload assets (folio reference images). Provided for context, not implementation.
+See `DESIGN.md` for the synthesis between the prototype's screens and the real
+engine API surface.
 
-## Viewing the prototype
+## Building `web/`
 
-The prototype is plain HTML/JSX served by Babel-in-the-browser, so no build step is required.
+```sh
+cd frontend/web
+pnpm install
+pnpm dev          # local Vite dev server on http://localhost:5173 (proxies /api to dashboard)
+pnpm build        # emits to crates/xvision-dashboard/static/, ready to bake into the binary
+pnpm typecheck    # tsc -b
+```
+
+After `pnpm build`, rebuild the dashboard crate (`cargo build -p xvision-dashboard`
+or `cargo build -p xvn`) so `rust-embed` picks up the new assets. `xvn dashboard
+serve` binds to `127.0.0.1:8788` by default.
+
+The `crates/xvision-dashboard/static/` directory is `.gitignore`d; CI / Docker
+builds must run `pnpm build` before `cargo build`.
+
+## Routes shipping in v1
+
+Implemented in `web/src/routes/`:
+
+| Route | File | Purpose |
+|---|---|---|
+| `/` Home | `home.tsx` | Control Tower — KPI tiles, recent runs |
+| `/setup` | `setup.tsx` | Wizard (chat-driven onboarding + drafting) |
+| `/strategies` | `strategies.tsx` | Drafts list, lineage column |
+| `/authoring/:id` | `authoring.tsx` | Inspector: bundle tree + slot editor |
+| `/eval-runs` | `eval-runs.tsx` | Leaderboard with filters + Compare select |
+| `/eval-runs/:id` | `eval-runs-detail.tsx` | Run detail (equity, findings, ledger) |
+| `/eval/compare` | `eval-compare.tsx` | Side-by-side run comparison |
+| `/settings/{providers,brokers,danger}` | `settings/*.tsx` | LLM/broker config |
+
+Out of v1: marketplace, autoresearcher dashboard, journal/lab notebook,
+`/live/<id>` flight deck. See `v1-shipping-plan.md` for the cut list.
+
+## Viewing the prototype (reference only)
 
 ```sh
 cd frontend/prototype
@@ -17,26 +55,13 @@ python3 -m http.server 8000
 # open http://localhost:8000/
 ```
 
-`index-print.html` is a print-friendly stack of all six artboards (Cmd+P → Save as PDF, landscape, 1440×900).
-
-## V1 scope
-
-Six screens, all in Folio dark theme:
-
-| Screen | Path in prototype | Purpose |
-|---|---|---|
-| Home — Control Tower | `screen-home.jsx` | KPI tiles, equity curve, top strategies, recent runs, open positions, agent rail |
-| Setup wizard | `screen-setup.jsx` | Chat-driven first-run + on-demand strategy drafting |
-| Strategies list | `screen-strategies.jsx` | Drafts/Validated/Archived with template + lineage columns |
-| Inspector / Authoring | `screen-inspector.jsx` | Bundle outline tree + LLM slot split editor (form ↔ live preview) + validation rail |
-| Eval runs | `screen-eval-runs.jsx` | Leaderboard with filters and Sharpe/Return/DD/Win-rate columns |
-| Run detail | `screen-run-detail.jsx` | KPI tiles, equity vs buy-and-hold, findings list with "Draft variant from this →", trade ledger |
-
-Out of v1 scope: marketplace, autoresearch, journal.
+`index-print.html` is a print-friendly stack of all six artboards (Cmd+P →
+Save as PDF, landscape, 1440×900). The prototype uses Babel-in-the-browser, no
+build step. Treat it as visual source-of-truth, not as code to copy.
 
 ## Visual tokens (Folio dark)
 
-Defined in `prototype/styles.css`:
+Defined in `prototype/styles.css` and mirrored in `web/src/styles/`:
 
 - **Surfaces** — warm-black ink (`#0F0E0C` bg → `#221E14` deepest panel)
 - **Borders** — warm slate (`#2A2618`, `#3A3322`, `#221F15`)
@@ -53,10 +78,4 @@ Per `CLAUDE.md` terminology (`cycle_id`, `agent_id`, `StrategyBundle`):
 - "Strategy" in prototype copy = `StrategyBundle` in code
 - Inspector "Layers" (Data / Regime / Intern / Trader / Entry-Exit / Risk / Execution) map to the pipeline crates: `xvision-data`, `xvision-intern`, `xvision-trader`, `xvision-risk`, `xvision-execution`
 - "Run ID" (e.g. `01H8N7Z`) is a ULID; one run produces many `cycle_id`s (briefing → decision → outcome) — see `docs/superpowers/plans/2026-05-10-terminology-rename-option-b.md`
-- The Setup wizard's "Drafting" panel is the user-facing surface of the engine API foundation work tracked in `docs/superpowers/plans/`
-
-## When real frontend work begins
-
-Recreate the screens **pixel-perfectly** in whatever stack fits (likely Vite + React + Tailwind, given the prototype is React/JSX). Match the visual output; do not copy the prototype's internal structure unless it happens to fit. The prototype's hardcoded mock data should be replaced with calls into the xvision engine API.
-
-The handoff README in `prototype/_handoff/HANDOFF-README.md` is the original instructions from the design tool — read it once for context, then ignore (it's frozen at handoff time).
+- The Setup wizard's "Drafting" panel is the user-facing surface of the engine API foundation work in `docs/superpowers/plans/`

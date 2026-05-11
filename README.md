@@ -81,6 +81,32 @@ docker run --rm \
   store stats --db /data/store.db
 ```
 
+## Web dashboard
+
+`xvn` also ships a single-binary web dashboard. The Vite-built SPA in
+`frontend/web/` is baked into the binary at compile time (via `rust-embed`),
+so `xvn dashboard serve` boots a full UI with no separate frontend process.
+
+```bash
+# locally, after cargo build
+xvn dashboard serve --bind 127.0.0.1:8788
+# open http://localhost:8788
+
+# in the docker image (the published `:latest` defaults to this)
+docker run --rm -p 8788:8788 -e XVN_AUTOMIGRATE=1 \
+  ghcr.io/latentwill/xvision:latest
+```
+
+V1 routes: `/` Control Tower, `/setup` Wizard, `/strategies`, `/authoring/:id`
+Inspector, `/eval-runs` + `/eval-runs/:id` + `/eval/compare`, `/settings/*`.
+See `frontend/README.md` for the full route table and `frontend/DESIGN.md` for
+the design synthesis.
+
+> Building from source? `frontend/web/` is a pnpm workspace and must be built
+> (`cd frontend/web && pnpm install && pnpm build`) before `cargo build` if
+> you want the SPA embedded. The image published from `Dockerfile.deploy`
+> does this automatically.
+
 ## Safety
 
 xvision assumes a single operator who monitors the system and can intervene.

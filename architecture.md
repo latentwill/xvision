@@ -516,7 +516,6 @@ Explicit non-goals for hackathon. Each is a real follow-on but not v1:
 - Options Greeks, derivatives strategy
 - Multi-model evaluation tournament
 - **Cross-run memory system (MemPalace):** Deferred — strategy ledgers are the v1 substitute for cross-run learning.
-- Dashboard with historical data UI
 - Multi-asset basket — v1 is BTC only
 - xStocks / Mantle tokenized equities
 - Telegram demo bot
