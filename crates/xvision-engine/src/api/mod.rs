@@ -18,6 +18,7 @@ use xvision_core::config::AlpacaData;
 use xvision_data::alpaca::AlpacaBarsFetcher;
 
 pub mod audit;
+pub mod chart;
 pub mod eval;
 pub mod health;
 pub mod scenario;
