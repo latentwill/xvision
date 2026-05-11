@@ -50,6 +50,14 @@ pub fn build_router(state: AppState) -> Router {
             "/api/settings/providers/:name/set-default",
             post(settings::providers::set_default),
         )
+        .route(
+            "/api/settings/providers/:name/models",
+            get(settings::providers::list_models),
+        )
+        .route(
+            "/api/settings/providers/:name/enabled-models",
+            axum::routing::put(settings::providers::put_enabled_models),
+        )
         .route("/api/settings/danger/wipe-db", post(settings::danger::wipe_db))
         .route(
             "/api/settings/danger/regen-identity",

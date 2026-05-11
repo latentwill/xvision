@@ -17,6 +17,8 @@ export type { HealthStatus } from "./types.gen/HealthStatus";
 export type { IdentityReport } from "./types.gen/IdentityReport";
 export type { MetricsSummary } from "./types.gen/MetricsSummary";
 export type { Probe } from "./types.gen/Probe";
+export type { ProviderModelEntry } from "./types.gen/ProviderModelEntry";
+export type { ProviderModelsReport } from "./types.gen/ProviderModelsReport";
 export type { ProviderRow } from "./types.gen/ProviderRow";
 export type { ProvidersReport } from "./types.gen/ProvidersReport";
 export type { RegenIdentityReport } from "./types.gen/RegenIdentityReport";

@@ -84,19 +84,30 @@ export function ChatRail() {
     queryFn: listProviders,
     enabled: open,
   });
-  // Auto-pick the intern's default the first time the rail loads — keeps
-  // existing users unaware of the new selector if they don't want it.
+  // Auto-pick the first enabled (provider, model) from the intern's
+  // default once the catalog loads, so users who configured a provider
+  // can chat without diving into the picker. If the operator hasn't
+  // enabled any models yet, the picker shows a "visit Settings" hint.
   useEffect(() => {
-    if (providerName !== null) return;
+    if (providerName && modelId) return;
     const rows = providers.data?.providers ?? [];
-    const intern = rows.find((p) => p.referenced_by_intern && p.api_key_set);
-    const firstReady = rows.find((p) => p.api_key_set);
-    const pick = intern ?? firstReady;
-    if (pick) {
-      setProviderName(pick.name);
-      localStorage.setItem(RAIL_PROVIDER_LS, pick.name);
-    }
-  }, [providerName, providers.data]);
+    const candidates = rows
+      .filter((p) => p.api_key_set && !p.synthetic && p.enabled_models.length > 0)
+      .sort((a, b) =>
+        a.referenced_by_intern === b.referenced_by_intern
+          ? 0
+          : a.referenced_by_intern
+            ? -1
+            : 1,
+      );
+    const pick = candidates[0];
+    if (!pick) return;
+    const m = pick.enabled_models[0];
+    setProviderName(pick.name);
+    setModelId(m);
+    localStorage.setItem(RAIL_PROVIDER_LS, pick.name);
+    localStorage.setItem(RAIL_MODEL_LS, m);
+  }, [providerName, modelId, providers.data]);
 
   // Persist open/close so the rail stays in the user's chosen state across
   // route changes (and reloads).
@@ -268,13 +279,11 @@ export function ChatRail() {
         loading={providers.isPending}
         provider={providerName}
         model={modelId}
-        onChangeProvider={(p) => {
+        onChange={(p, m) => {
           setProviderName(p);
+          setModelId(m);
           if (p) localStorage.setItem(RAIL_PROVIDER_LS, p);
           else localStorage.removeItem(RAIL_PROVIDER_LS);
-        }}
-        onChangeModel={(m) => {
-          setModelId(m);
           if (m) localStorage.setItem(RAIL_MODEL_LS, m);
           else localStorage.removeItem(RAIL_MODEL_LS);
         }}
@@ -396,66 +405,79 @@ function ModelPicker({
   loading,
   provider,
   model,
-  onChangeProvider,
-  onChangeModel,
+  onChange,
 }: {
   rows: ProviderRow[];
   loading: boolean;
   provider: string | null;
   model: string;
-  onChangeProvider: (p: string | null) => void;
-  onChangeModel: (m: string) => void;
+  onChange: (provider: string | null, model: string) => void;
 }) {
-  const ready = rows.filter((r) => r.api_key_set);
-  const selected = provider ? rows.find((r) => r.name === provider) : undefined;
+  // Flat list of (provider, model) options drawn from each ready
+  // provider's curated `enabled_models`. The dropdown is a real model
+  // picker — the provider is inferred from the selected row, not
+  // chosen independently.
+  const options = rows
+    .filter((r) => r.api_key_set && !r.synthetic)
+    .flatMap((r) =>
+      r.enabled_models.map((m) => ({ provider: r.name, model: m })),
+    );
+  const value =
+    provider && model
+      ? options.find((o) => o.provider === provider && o.model === model)
+        ? `${provider}::${model}`
+        : ""
+      : "";
   return (
     <div className="border-b border-border-soft px-4 py-2 bg-surface-2/30 flex items-center gap-2">
       <label className="text-[11px] text-text-3 uppercase tracking-wider">
-        Provider
+        Model
       </label>
       <select
-        value={provider ?? ""}
-        onChange={(e) => onChangeProvider(e.target.value || null)}
+        value={value}
+        onChange={(e) => {
+          if (!e.target.value) {
+            onChange(null, "");
+            return;
+          }
+          const [p, ...rest] = e.target.value.split("::");
+          onChange(p, rest.join("::"));
+        }}
         disabled={loading}
-        className="text-[12px] bg-transparent border border-border-soft rounded-sm px-1.5 py-0.5 text-text"
+        className="flex-1 min-w-0 text-[12px] bg-transparent border border-border-soft rounded-sm px-1.5 py-0.5 text-text font-mono"
       >
-        {ready.length === 0 ? (
-          <option value="">no provider configured</option>
-        ) : null}
-        {rows.map((r) => (
-          <option key={r.name} value={r.name} disabled={!r.api_key_set}>
-            {r.name}
-            {!r.api_key_set ? " (no key)" : ""}
-          </option>
+        {options.length === 0 ? (
+          <option value="">no models picked — visit Settings → Providers</option>
+        ) : (
+          <option value="">— pick a model —</option>
+        )}
+        {groupByProvider(options).map((g) => (
+          <optgroup key={g.provider} label={g.provider}>
+            {g.items.map((o) => (
+              <option key={o.model} value={`${o.provider}::${o.model}`}>
+                {o.model}
+              </option>
+            ))}
+          </optgroup>
         ))}
       </select>
-      <input
-        type="text"
-        value={model}
-        onChange={(e) => onChangeModel(e.target.value)}
-        placeholder={selected ? defaultModelHint(selected) : "model id"}
-        className="flex-1 min-w-0 text-[12px] bg-transparent border border-border-soft rounded-sm px-1.5 py-0.5 text-text placeholder:text-text-3 font-mono"
-      />
     </div>
   );
 }
 
-function defaultModelHint(row: ProviderRow): string {
-  switch (row.kind) {
-    case "anthropic":
-      return "claude-sonnet-4-6";
-    case "openai-compat":
-      // V4 names per https://api-docs.deepseek.com — deepseek-chat retires
-      // 2026-07-24, so default the placeholder to the new id.
-      if (/deepseek/i.test(row.base_url)) return "deepseek-v4-flash";
-      if (/groq/i.test(row.base_url)) return "llama-3.3-70b-versatile";
-      if (/openrouter/i.test(row.base_url))
-        return "anthropic/claude-3.5-sonnet";
-      if (/openai\.com/i.test(row.base_url)) return "gpt-4o-mini";
-      return "model id";
-    default:
-      return "model id";
+function groupByProvider(
+  options: { provider: string; model: string }[],
+): { provider: string; items: { provider: string; model: string }[] }[] {
+  const map = new Map<string, { provider: string; model: string }[]>();
+  for (const o of options) {
+    const arr = map.get(o.provider) ?? [];
+    arr.push(o);
+    map.set(o.provider, arr);
   }
+  return Array.from(map.entries()).map(([provider, items]) => ({
+    provider,
+    items,
+  }));
 }
 
 function Composer({

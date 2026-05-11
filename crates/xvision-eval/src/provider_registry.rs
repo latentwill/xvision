@@ -176,6 +176,7 @@ mod tests {
             kind: ProviderKind::LocalCandle,
             base_url: "models/x.gguf".into(),
             api_key_env: "".into(),
+            enabled_models: Vec::new(),
         };
         let reg = registry_with(vec![row]);
         let msg = err_msg(reg.intern_backend(&SlotRef::new("local", "x")));
@@ -190,6 +191,7 @@ mod tests {
             kind: ProviderKind::OpenaiCompat,
             base_url: "https://api.openai.com/v1".into(),
             api_key_env: "DUMMY_KEY".into(),
+            enabled_models: Vec::new(),
         };
         let reg = ProviderRegistry::new(
             vec![row],
@@ -220,6 +222,7 @@ mod tests {
             kind: ProviderKind::OpenaiCompat,
             base_url: "https://api.openai.com/v1".into(),
             api_key_env: "DUMMY_KEY".into(),
+            enabled_models: Vec::new(),
         };
         let reg = ProviderRegistry::new(
             vec![row],
@@ -250,6 +253,7 @@ mod tests {
             kind: ProviderKind::OpenaiCompat,
             base_url: "https://api.openai.com/v1".into(),
             api_key_env: "DUMMY_KEY".into(),
+            enabled_models: Vec::new(),
         };
         let reg = ProviderRegistry::new(
             vec![row],

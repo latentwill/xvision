@@ -13,7 +13,7 @@ use serde::Deserialize;
 use std::path::PathBuf;
 
 use xvision_engine::api::settings::providers::{
-    self, AddProviderRequest, ProviderRow, ProvidersReport,
+    self, AddProviderRequest, ProviderModelsReport, ProviderRow, ProvidersReport,
 };
 
 use crate::error::DashboardError;
@@ -82,4 +82,42 @@ pub async fn set_default(
     )
     .await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// GET `/api/settings/providers/:name/models` — fetch the provider's
+/// model catalog from upstream. Result is cached in-process for a few
+/// minutes to keep the chat-rail dropdown snappy.
+pub async fn list_models(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<ProviderModelsReport>, DashboardError> {
+    if let Some(cached) = state.models_cache_get(&name) {
+        return Ok(Json(cached));
+    }
+    let report =
+        providers::fetch_models(&state.api_context(), &config_path(), &name).await?;
+    state.models_cache_put(name, report.clone());
+    Ok(Json(report))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EnabledModelsBody {
+    pub models: Vec<String>,
+}
+
+/// PUT `/api/settings/providers/:name/enabled-models` — persist the
+/// operator's curated subset of models for this provider.
+pub async fn put_enabled_models(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Json(body): Json<EnabledModelsBody>,
+) -> Result<Json<ProviderRow>, DashboardError> {
+    let row = providers::set_enabled_models(
+        &state.api_context(),
+        &config_path(),
+        &name,
+        body.models,
+    )
+    .await?;
+    Ok(Json(row))
 }
