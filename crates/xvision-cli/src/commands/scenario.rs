@@ -132,9 +132,6 @@ pub struct LsArgs {
 pub struct ShowArgs {
     /// Scenario id.
     pub id: String,
-    /// Emit as JSON (default).
-    #[arg(long)]
-    pub json: bool,
     /// Emit as TOML (CreateScenarioRequest shape, suitable for `--from-file`).
     #[arg(long)]
     pub toml: bool,
@@ -234,13 +231,24 @@ fn parse_slippage(s: &str) -> CliResult<SlippageModel> {
     }
 }
 
-fn parse_source(s: &str) -> Option<ScenarioSource> {
+fn parse_source(s: &str) -> CliResult<ScenarioSource> {
     match s.to_lowercase().as_str() {
-        "canonical" => Some(ScenarioSource::Canonical),
-        "user" => Some(ScenarioSource::User),
-        "clone" => Some(ScenarioSource::Clone),
-        "generated" => Some(ScenarioSource::Generated),
-        _ => None,
+        "canonical" => Ok(ScenarioSource::Canonical),
+        "user" => Ok(ScenarioSource::User),
+        "clone" => Ok(ScenarioSource::Clone),
+        "generated" => Ok(ScenarioSource::Generated),
+        other => Err(CliError::usage(anyhow::anyhow!(
+            "unknown source '{other}'; expected one of: canonical | user | clone | generated"
+        ))),
+    }
+}
+
+fn parse_venue(s: &str) -> CliResult<Venue> {
+    match s.to_lowercase().as_str() {
+        "alpaca" => Ok(Venue::Alpaca),
+        other => Err(CliError::usage(anyhow::anyhow!(
+            "unknown venue '{other}'; only 'alpaca' is supported in v1"
+        ))),
     }
 }
 
@@ -293,6 +301,7 @@ async fn run_create(ctx: &ApiContext, a: CreateArgs) -> CliResult<()> {
         .map_err(|e| CliError::usage(anyhow::anyhow!("{e}")))?;
     let granularity = parse_granularity(&a.granularity)?;
     let slippage = parse_slippage(&a.slippage)?;
+    let venue = parse_venue(&a.venue)?;
 
     let req = api_scenario::CreateScenarioRequest {
         display_name: a.name,
@@ -316,7 +325,7 @@ async fn run_create(ctx: &ApiContext, a: CreateArgs) -> CliResult<()> {
         timezone: "UTC".into(),
         calendar: CalendarRef::Continuous24x7,
         venue: VenueSettings {
-            venue: Venue::Alpaca,
+            venue,
             fees: Fees {
                 maker_bps: a.fees_maker,
                 taker_bps: a.fees_taker,
@@ -351,8 +360,9 @@ async fn run_create(ctx: &ApiContext, a: CreateArgs) -> CliResult<()> {
 }
 
 async fn run_ls(ctx: &ApiContext, a: LsArgs) -> CliResult<()> {
+    let source = a.source.as_deref().map(parse_source).transpose()?;
     let filter = api_scenario::ListScenariosFilter {
-        source: a.source.as_deref().and_then(parse_source),
+        source,
         tags: a.tag,
         include_archived: a.archived,
         parent_scenario_id: None,
@@ -402,7 +412,7 @@ async fn run_show(ctx: &ApiContext, a: ShowArgs) -> CliResult<()> {
             .map_err(|e| CliError::upstream(anyhow::anyhow!("serialize TOML: {e}")))?;
         println!("{out}");
     } else {
-        // Default and --json both emit pretty JSON.
+        // Default: emit pretty JSON.
         println!(
             "{}",
             serde_json::to_string_pretty(&s)
@@ -481,7 +491,12 @@ async fn run_tree(ctx: &ApiContext, id: String) -> CliResult<()> {
     // Print the ancestor chain (indented by depth).
     for (i, node) in chain.iter().enumerate() {
         let marker = if node.id == id { " ← (this)" } else { "" };
-        println!("{}{} ({}){}", "  ".repeat(i), node.id, node.display_name, marker);
+        let archived = if node.archived_at.is_some() {
+            " (archived)"
+        } else {
+            ""
+        };
+        println!("{}{} ({}){}{}", "  ".repeat(i), node.id, node.display_name, archived, marker);
     }
 
     // Print immediate children one level down.
@@ -490,7 +505,12 @@ async fn run_tree(ctx: &ApiContext, id: String) -> CliResult<()> {
         .map_err(|e| api_to_cli("scenario tree (children)", e))?;
     let child_indent = "  ".repeat(chain.len());
     for child in &children {
-        println!("{}{} ({})", child_indent, child.id, child.display_name);
+        let archived = if child.archived_at.is_some() {
+            " (archived)"
+        } else {
+            ""
+        };
+        println!("{}{} ({}){}", child_indent, child.id, child.display_name, archived);
     }
 
     if chain.len() == 1 && children.is_empty() {
