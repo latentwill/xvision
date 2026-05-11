@@ -4,15 +4,13 @@
 
 import { apiFetch } from "./client";
 import type {
+  AddProviderRequest,
   BrokersReport,
   DaemonReport,
   IdentityReport,
-} from "./types.gen";
-import type {
-  AddProviderRequest,
   ProviderRow,
   ProvidersReport,
-} from "./types.providers";
+} from "./types.gen";
 
 export const settingsKeys = {
   all: ["settings"] as const,

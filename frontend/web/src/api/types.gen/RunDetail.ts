@@ -3,4 +3,8 @@ import type { DecisionRowDto } from "./DecisionRowDto";
 import type { EquityPoint } from "./EquityPoint";
 import type { RunSummary } from "./RunSummary";
 
+/**
+ * Full run detail — `RunSummary` plus the decision rows and equity samples.
+ * Used by `/api/eval/runs/:id`.
+ */
 export type RunDetail = { summary: RunSummary, decisions: Array<DecisionRowDto>, equity_curve: Array<EquityPoint>, };

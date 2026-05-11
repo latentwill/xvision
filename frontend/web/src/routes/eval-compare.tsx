@@ -9,9 +9,9 @@ import { compareRuns, evalKeys } from "@/api/eval";
 import type {
   ComparisonEquityCurve,
   ComparisonRunSummary,
-  CompareFinding,
+  Finding,
   MetricsSummary,
-} from "@/api/types.compare";
+} from "@/api/types.gen";
 
 const STATUS_TONE: Record<string, "gold" | "warn" | "danger" | "default" | "info"> = {
   completed: "gold",
@@ -295,7 +295,7 @@ function FindingsTable({
   findings,
   runs,
 }: {
-  findings: CompareFinding[];
+  findings: Finding[];
   runs: ComparisonRunSummary[];
 }) {
   const idToIndex = new Map(runs.map((r, i) => [r.id, i] as const));
