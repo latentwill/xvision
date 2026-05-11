@@ -19,9 +19,7 @@ use serde::Deserialize;
 use ulid::Ulid;
 
 use xvision_data as xvn;
-use xvision_engine::api::eval::{
-    self as api_eval, CompareRunsRequest, ListRunsRequest,
-};
+use xvision_engine::api::eval::{self as api_eval, CompareRunsRequest, ListRunsRequest};
 use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::authoring;
 use xvision_engine::bundle::{
@@ -248,9 +246,7 @@ impl XvisionTools {
     /// Test-only constructor that pins `$XVN_HOME` to a known directory.
     /// Production callers use `XvisionTools::new()` and rely on the env var.
     pub fn with_xvn_home(home: PathBuf) -> Self {
-        Self {
-            xvn_home: Some(home),
-        }
+        Self { xvn_home: Some(home) }
     }
 
     fn store(&self) -> FilesystemStore {
@@ -286,13 +282,17 @@ impl XvisionTools {
     /// Simple moving average. Returns a same-length series; warmup
     /// positions are JSON null. The latest SMA value is the last
     /// non-null element.
-    #[tool(description = "Simple moving average over a closing-price series. Returns a same-length array; warmup positions are null.")]
+    #[tool(
+        description = "Simple moving average over a closing-price series. Returns a same-length array; warmup positions are null."
+    )]
     fn xvn_sma(&self, Parameters(req): Parameters<PricesPeriod>) -> Result<String, rmcp::ErrorData> {
         json_or_err(&nan_to_null(xvn::sma(&req.prices, req.period)))
     }
 
     /// Exponential moving average. Same shape as SMA.
-    #[tool(description = "Exponential moving average over a closing-price series. EMA seeded with the SMA of the first `period` bars.")]
+    #[tool(
+        description = "Exponential moving average over a closing-price series. EMA seeded with the SMA of the first `period` bars."
+    )]
     fn xvn_ema(&self, Parameters(req): Parameters<PricesPeriod>) -> Result<String, rmcp::ErrorData> {
         json_or_err(&nan_to_null(xvn::ema(&req.prices, req.period)))
     }
@@ -304,7 +304,9 @@ impl XvisionTools {
     }
 
     /// Bollinger Bands. Returns `{ middle: [...], upper: [...], lower: [...] }`.
-    #[tool(description = "Bollinger Bands. Returns middle/upper/lower same-length arrays; warmup positions are null.")]
+    #[tool(
+        description = "Bollinger Bands. Returns middle/upper/lower same-length arrays; warmup positions are null."
+    )]
     fn xvn_bollinger(&self, Parameters(req): Parameters<BollingerReq>) -> Result<String, rmcp::ErrorData> {
         let bb = xvn::bollinger(&req.prices, req.period, req.k);
         json_or_err(&serde_json::json!({
@@ -315,7 +317,9 @@ impl XvisionTools {
     }
 
     /// Wilder ATR. Inputs must be equal-length OHLC series.
-    #[tool(description = "Wilder-smoothed Average True Range. Inputs (high/low/close) must be equal-length series.")]
+    #[tool(
+        description = "Wilder-smoothed Average True Range. Inputs (high/low/close) must be equal-length series."
+    )]
     fn xvn_atr(&self, Parameters(req): Parameters<AtrReq>) -> Result<String, rmcp::ErrorData> {
         if req.high.len() != req.low.len() || req.low.len() != req.close.len() {
             return Err(rmcp::ErrorData::invalid_params(
@@ -323,11 +327,15 @@ impl XvisionTools {
                 None,
             ));
         }
-        json_or_err(&nan_to_null(xvn::atr(&req.high, &req.low, &req.close, req.period)))
+        json_or_err(&nan_to_null(xvn::atr(
+            &req.high, &req.low, &req.close, req.period,
+        )))
     }
 
     /// MACD. Returns `{ macd: [...], signal: [...], histogram: [...] }`.
-    #[tool(description = "MACD. Standard parameters fast=12, slow=26, signal=9. Returns macd/signal/histogram arrays.")]
+    #[tool(
+        description = "MACD. Standard parameters fast=12, slow=26, signal=9. Returns macd/signal/histogram arrays."
+    )]
     fn xvn_macd(&self, Parameters(req): Parameters<MacdReq>) -> Result<String, rmcp::ErrorData> {
         let m = xvn::macd(&req.prices, req.fast, req.slow, req.signal);
         json_or_err(&serde_json::json!({
@@ -414,9 +422,7 @@ impl XvisionTools {
     }
 
     /// Get a strategy bundle by id. Returns the full `StrategyBundle` JSON.
-    #[tool(
-        description = "Get a strategy bundle by id. Returns the full StrategyBundle JSON."
-    )]
+    #[tool(description = "Get a strategy bundle by id. Returns the full StrategyBundle JSON.")]
     async fn xvn_get_strategy(
         &self,
         Parameters(req): Parameters<StrategyId>,
@@ -489,12 +495,13 @@ impl XvisionTools {
         // The MCP wire shape carries `explicit` as `serde_json::Value` so the
         // emitted schema doesn't require RiskConfig to derive `JsonSchema`.
         // Deserialize at the boundary; engine takes a typed `RiskConfig`.
-        let explicit_typed = match req.explicit {
-            Some(v) => Some(serde_json::from_value::<RiskConfig>(v).map_err(|e| {
-                rmcp::ErrorData::invalid_params(format!("explicit risk config: {e}"), None)
-            })?),
-            None => None,
-        };
+        let explicit_typed =
+            match req.explicit {
+                Some(v) => Some(serde_json::from_value::<RiskConfig>(v).map_err(|e| {
+                    rmcp::ErrorData::invalid_params(format!("explicit risk config: {e}"), None)
+                })?),
+                None => None,
+            };
         let out = authoring::set_risk_config(
             &self.store(),
             authoring::SetRiskConfigReq {
@@ -535,9 +542,7 @@ impl XvisionTools {
     /// frontmatter becomes the on-disk filename (`<name>.md`). Returns the
     /// parsed `name` and the SHA-256 of the supplied markdown for
     /// content-addressable bookkeeping.
-    #[tool(
-        description = "Create / overwrite a skill from raw markdown. Returns { name, content_hash }."
-    )]
+    #[tool(description = "Create / overwrite a skill from raw markdown. Returns { name, content_hash }.")]
     async fn xvn_create_skill(
         &self,
         Parameters(req): Parameters<CreateSkillReq>,
@@ -596,12 +601,15 @@ impl XvisionTools {
         Parameters(req): Parameters<AttachSkillReq>,
     ) -> Result<String, rmcp::ErrorData> {
         let strategies = self.store();
-        let mut bundle = strategies.load(&req.agent_id).await.map_err(|e| {
-            rmcp::ErrorData::invalid_params(format!("load strategy: {e:#}"), None)
-        })?;
-        let skill = self.skill_store().load(&req.skill_name).await.map_err(|e| {
-            rmcp::ErrorData::invalid_params(format!("load skill: {e:#}"), None)
-        })?;
+        let mut bundle = strategies
+            .load(&req.agent_id)
+            .await
+            .map_err(|e| rmcp::ErrorData::invalid_params(format!("load strategy: {e:#}"), None))?;
+        let skill = self
+            .skill_store()
+            .load(&req.skill_name)
+            .await
+            .map_err(|e| rmcp::ErrorData::invalid_params(format!("load skill: {e:#}"), None))?;
         attach_skill_to_agent(&mut bundle, &req.slot, &skill)
             .map_err(|e| rmcp::ErrorData::invalid_params(format!("{e:#}"), None))?;
         strategies
@@ -640,11 +648,7 @@ impl XvisionTools {
         Parameters(req): Parameters<EvalListReq>,
     ) -> Result<String, rmcp::ErrorData> {
         let ctx = self.api_context().await?;
-        let status = req
-            .status
-            .as_deref()
-            .map(parse_status_for_mcp)
-            .transpose()?;
+        let status = req.status.as_deref().map(parse_status_for_mcp).transpose()?;
         let summaries = api_eval::list_summaries(
             &ctx,
             ListRunsRequest {
@@ -688,9 +692,7 @@ impl XvisionTools {
         Parameters(req): Parameters<EvalRunIdReq>,
     ) -> Result<String, rmcp::ErrorData> {
         let ctx = self.api_context().await?;
-        let run = api_eval::get(&ctx, &req.run_id)
-            .await
-            .map_err(api_err_to_mcp)?;
+        let run = api_eval::get(&ctx, &req.run_id).await.map_err(api_err_to_mcp)?;
         json_or_err(&run.metrics)
     }
 
@@ -717,14 +719,9 @@ impl XvisionTools {
         Parameters(req): Parameters<EvalCompareReq>,
     ) -> Result<String, rmcp::ErrorData> {
         let ctx = self.api_context().await?;
-        let report = api_eval::compare(
-            &ctx,
-            CompareRunsRequest {
-                run_ids: req.run_ids,
-            },
-        )
-        .await
-        .map_err(api_err_to_mcp)?;
+        let report = api_eval::compare(&ctx, CompareRunsRequest { run_ids: req.run_ids })
+            .await
+            .map_err(api_err_to_mcp)?;
         json_or_err(&report)
     }
 
@@ -755,10 +752,7 @@ impl XvisionTools {
     /// `actor` is `Mcp { session_id }` so audit rows attribute writes
     /// to the MCP session rather than a CLI user.
     async fn api_context(&self) -> Result<ApiContext, rmcp::ErrorData> {
-        let xvn_home = self
-            .xvn_home
-            .clone()
-            .unwrap_or_else(resolve_xvn_home);
+        let xvn_home = self.xvn_home.clone().unwrap_or_else(resolve_xvn_home);
         ApiContext::open(
             &xvn_home,
             Actor::Mcp {
@@ -766,9 +760,7 @@ impl XvisionTools {
             },
         )
         .await
-        .map_err(|e| {
-            rmcp::ErrorData::internal_error(format!("open api context: {e}"), None)
-        })
+        .map_err(|e| rmcp::ErrorData::internal_error(format!("open api context: {e}"), None))
     }
 }
 
@@ -786,15 +778,9 @@ fn parse_status_for_mcp(s: &str) -> Result<RunStatus, rmcp::ErrorData> {
 fn api_err_to_mcp(e: xvision_engine::api::ApiError) -> rmcp::ErrorData {
     use xvision_engine::api::ApiError;
     match e {
-        ApiError::NotFound(msg) => {
-            rmcp::ErrorData::invalid_params(format!("not found: {msg}"), None)
-        }
-        ApiError::Validation(msg) => {
-            rmcp::ErrorData::invalid_params(format!("validation: {msg}"), None)
-        }
-        ApiError::Conflict(msg) => {
-            rmcp::ErrorData::invalid_params(format!("conflict: {msg}"), None)
-        }
+        ApiError::NotFound(msg) => rmcp::ErrorData::invalid_params(format!("not found: {msg}"), None),
+        ApiError::Validation(msg) => rmcp::ErrorData::invalid_params(format!("validation: {msg}"), None),
+        ApiError::Conflict(msg) => rmcp::ErrorData::invalid_params(format!("conflict: {msg}"), None),
         ApiError::Internal(msg) => rmcp::ErrorData::internal_error(msg, None),
         ApiError::Db(e) => rmcp::ErrorData::internal_error(format!("db: {e}"), None),
         ApiError::Other(e) => rmcp::ErrorData::internal_error(format!("{e:#}"), None),
@@ -1218,13 +1204,14 @@ mod tests {
         let (tools, _td) = tools_with_tmp();
         let id = seed_run(&tools, "h-A", "s-A", 10.0).await;
         let err = tools
-            .xvn_eval_compare(Parameters(EvalCompareReq {
-                run_ids: vec![id],
-            }))
+            .xvn_eval_compare(Parameters(EvalCompareReq { run_ids: vec![id] }))
             .await
             .unwrap_err();
         let msg = err.to_string().to_lowercase();
-        assert!(msg.contains("validation") && msg.contains("at least two"), "msg: {msg}");
+        assert!(
+            msg.contains("validation") && msg.contains("at least two"),
+            "msg: {msg}"
+        );
     }
 
     #[tokio::test]
@@ -1242,9 +1229,7 @@ mod tests {
 
     // --- skill verbs (Plan 2b Phase B) -----------------------------------
 
-    const SKILL_FIXTURE: &str = include_str!(
-        "../../xvision-skills/tests/fixtures/crypto-trader-base.md"
-    );
+    const SKILL_FIXTURE: &str = include_str!("../../xvision-skills/tests/fixtures/crypto-trader-base.md");
 
     #[tokio::test]
     async fn create_skill_persists_and_returns_name_and_hash() {
@@ -1265,7 +1250,10 @@ mod tests {
         let arr = v.as_array().unwrap();
         assert_eq!(arr.len(), 1);
         assert_eq!(arr[0]["name"].as_str().unwrap(), "crypto-trader-base");
-        assert_eq!(arr[0]["display_name"].as_str().unwrap(), "Generalist crypto trader");
+        assert_eq!(
+            arr[0]["display_name"].as_str().unwrap(),
+            "Generalist crypto trader"
+        );
     }
 
     #[tokio::test]

@@ -16,13 +16,10 @@ pub fn attach_skill_to_agent(
         "regime" => bundle.regime_slot.as_mut(),
         "intern" => bundle.intern_slot.as_mut(),
         "trader" => bundle.trader_slot.as_mut(),
-        other => anyhow::bail!(
-            "unknown slot role: {other} (must be regime, intern, or trader)"
-        ),
+        other => anyhow::bail!("unknown slot role: {other} (must be regime, intern, or trader)"),
     };
-    let slot = slot.ok_or_else(|| {
-        anyhow::anyhow!("slot '{slot_role}' is empty — fill it before attaching")
-    })?;
+    let slot =
+        slot.ok_or_else(|| anyhow::anyhow!("slot '{slot_role}' is empty — fill it before attaching"))?;
     slot.prompt = skill.body.clone();
     slot.model_requirement = skill.model_requirement.clone();
     let mut tools = slot.allowed_tools.clone();

@@ -30,9 +30,7 @@ pub async fn run(cycle_id: Uuid, db: PathBuf) -> anyhow::Result<()> {
 mod tests {
     use super::*;
 
-    use xvision_core::trading::{
-        Action, AssetSymbol, Direction, TraderDecision,
-    };
+    use xvision_core::trading::{Action, AssetSymbol, Direction, TraderDecision};
 
     #[tokio::test]
     async fn show_decision_round_trips_an_inserted_row() {
@@ -51,18 +49,10 @@ mod tests {
             trader_summary: "show-decision smoke fixture decision.".into(),
         };
         store
-            .upsert_cycle(
-                &cycle_id,
-                AssetSymbol::Btc.as_str(),
-                24,
-                &serde_json::json!({}),
-            )
+            .upsert_cycle(&cycle_id, AssetSymbol::Btc.as_str(), 24, &serde_json::json!({}))
             .await
             .unwrap();
-        store
-            .insert_decision("trader_arm", &decision)
-            .await
-            .unwrap();
+        store.insert_decision("trader_arm", &decision).await.unwrap();
 
         // Hit the read path directly (run() takes a PathBuf, but in-memory
         // sqlite needs the string form — we exercise the same fetch logic).

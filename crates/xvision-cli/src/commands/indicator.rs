@@ -145,11 +145,7 @@ pub fn run(cmd: IndicatorCmd) -> anyhow::Result<()> {
             let p = read_prices(&prices)?;
             print_json(&data::rsi(&p, period))
         }
-        IndicatorAction::Bollinger {
-            prices,
-            period,
-            k,
-        } => {
+        IndicatorAction::Bollinger { prices, period, k } => {
             let p = read_prices(&prices)?;
             let bb = data::bollinger(&p, period, k);
             print_json(&BollingerOut {

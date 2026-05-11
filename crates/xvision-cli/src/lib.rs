@@ -229,7 +229,8 @@ impl Cli {
                 take_profit_pct,
                 summary,
             } => {
-                commands::fire_trade::run(venue, side, size_bps, stop_loss_pct, take_profit_pct, summary).await
+                commands::fire_trade::run(venue, side, size_bps, stop_loss_pct, take_profit_pct, summary)
+                    .await
             }
             Command::Portfolio { venue } => commands::venue::portfolio(venue).await,
             Command::ClosePosition { venue, asset } => commands::venue::close_position(venue, asset).await,
@@ -281,4 +282,3 @@ impl Cli {
         }
     }
 }
-

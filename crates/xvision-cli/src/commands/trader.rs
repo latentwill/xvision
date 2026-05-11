@@ -12,9 +12,7 @@ use std::path::PathBuf;
 
 use clap::{Args, Subcommand};
 use xvision_core::trading::{InternBriefing, PortfolioState};
-use xvision_trader::{
-    preview_prompt, run_trader, OpenAiCompatBackend, TraderBackend, TraderParams,
-};
+use xvision_trader::{preview_prompt, run_trader, OpenAiCompatBackend, TraderBackend, TraderParams};
 
 #[derive(Args, Debug)]
 pub struct TraderCmd {
@@ -60,10 +58,7 @@ enum TraderAction {
 
 pub async fn run(cmd: TraderCmd) -> anyhow::Result<()> {
     match cmd.action {
-        TraderAction::Preview {
-            briefing,
-            portfolio,
-        } => preview(briefing, portfolio).await,
+        TraderAction::Preview { briefing, portfolio } => preview(briefing, portfolio).await,
         TraderAction::Run {
             briefing,
             portfolio,

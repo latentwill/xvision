@@ -122,11 +122,7 @@ fn show(config_path: &std::path::Path, name: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn check(
-    config_path: &std::path::Path,
-    name: &str,
-    probe: bool,
-) -> anyhow::Result<()> {
+async fn check(config_path: &std::path::Path, name: &str, probe: bool) -> anyhow::Result<()> {
     let cfg = xvision_core::config::load_runtime(config_path)?;
     let p = cfg
         .providers
@@ -183,8 +179,7 @@ fn url_parse_minimal(s: &str) -> anyhow::Result<MinimalUrl> {
     let (host, port) = match host_port_path.split_once(':') {
         Some((h, p)) => (
             h.to_string(),
-            p.parse::<u16>()
-                .map_err(|e| anyhow::anyhow!("port parse: {e}"))?,
+            p.parse::<u16>().map_err(|e| anyhow::anyhow!("port parse: {e}"))?,
         ),
         None => (
             host_port_path.to_string(),
@@ -205,9 +200,9 @@ fn add(
 
     match kind {
         "anthropic" | "openai-compat" | "local-candle" => {}
-        other => anyhow::bail!(
-            "invalid kind `{other}`; must be one of: anthropic | openai-compat | local-candle"
-        ),
+        other => {
+            anyhow::bail!("invalid kind `{other}`; must be one of: anthropic | openai-compat | local-candle")
+        }
     }
     if name.starts_with('_') {
         anyhow::bail!("provider names starting with '_' are reserved");

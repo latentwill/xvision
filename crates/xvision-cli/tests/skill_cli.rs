@@ -1,8 +1,7 @@
 use std::process::Command;
 use tempfile::tempdir;
 
-const FIXTURE: &str =
-    include_str!("../../xvision-skills/tests/fixtures/crypto-trader-base.md");
+const FIXTURE: &str = include_str!("../../xvision-skills/tests/fixtures/crypto-trader-base.md");
 
 fn xvn(args: &[&str], home: &std::path::Path) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_xvn"))
@@ -59,7 +58,13 @@ fn new_ls_attach_roundtrip() {
 
     let out = xvn(
         &[
-            "skill", "attach", &id, "--slot", "trader", "--skill", "crypto-trader-base",
+            "skill",
+            "attach",
+            &id,
+            "--slot",
+            "trader",
+            "--skill",
+            "crypto-trader-base",
         ],
         dir.path(),
     );
@@ -98,21 +103,11 @@ fn skill_attach_unknown_slot_fails() {
     // Register skill + strategy first.
     let p = dir.path().join("crypto-trader-base.md");
     std::fs::write(&p, FIXTURE).unwrap();
-    let out = xvn(
-        &["skill", "new", "--from-file", p.to_str().unwrap()],
-        dir.path(),
-    );
+    let out = xvn(&["skill", "new", "--from-file", p.to_str().unwrap()], dir.path());
     assert!(out.status.success());
 
     let out = xvn(
-        &[
-            "strategy",
-            "new",
-            "--template",
-            "mean_reversion",
-            "--name",
-            "x",
-        ],
+        &["strategy", "new", "--template", "mean_reversion", "--name", "x"],
         dir.path(),
     );
     assert!(out.status.success());
