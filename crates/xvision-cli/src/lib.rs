@@ -212,6 +212,8 @@ pub enum Command {
     Provider(commands::provider::ProviderCmd),
     /// SQLite-cached historical bars: fetch / ls / rm / gc.
     Bars(commands::bars::BarsCmd),
+    /// Apply pending migrations + seed, or report state with --dry-run.
+    Migrate(commands::migrate::MigrateCmd),
 }
 
 impl Cli {
@@ -308,6 +310,7 @@ impl Cli {
             Command::Scenario(cmd) => commands::scenario::run(cmd).await,
             Command::Provider(cmd) => commands::provider::run(cmd).await.map_err(Into::into),
             Command::Bars(cmd) => commands::bars::run(cmd).await,
+            Command::Migrate(cmd) => commands::migrate::run(cmd).await,
         }
     }
 }
