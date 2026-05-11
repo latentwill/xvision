@@ -251,6 +251,35 @@ Hermes Agent (NousResearch) is the OpenClaw successor — its own README documen
 - **Validation:** trigger `gh workflow run docker.yml --ref main -f dockerfile=Dockerfile.deploy` post-bump, confirm the deprecation annotation is gone and `smoke` still passes.
 - **Blocking:** non-blocking until 2026-06-02; becomes deploy-blocking on 2026-09-16 (no Node 20 on the runner → workflow won't start at all).
 
+### F27 [Shared]. Install customizer — interactive module selection on install / upgrade
+
+- **Trigger:** F28 (plugin architecture) lands. Without a plugin contract there is nothing for the customizer to drive.
+- **Scope:** `xvn install` / `xvn install --customize` TUI wizard + non-interactive flags + `~/.xvn/install.toml` manifest, per [install-customizer design spec](docs/superpowers/specs/2026-05-11-install-customizer-design.md). Re-entrant add/remove/reconfigure. Generates `.cargo/xvn-features` and `docker-compose.override.yml` from the manifest. Initial registered modules: marketplace, memory (cortex sidecar), autoresearcher. Future plugins auto-appear via the F28 registry — no customizer code change required.
+- **Why deferred:** the v1-test surface ships full-default-build; module-selection friction isn't on the critical path until operators start running multiple deployments with different module sets, or the marketplace acquires third-party plugins (see F28).
+- **Open extension (spitballed 2026-05-11):** third-party plugins on the marketplace could ship with monetisation wrappers — monthly subscription or streamed-payment (Superfluid / Sablier style) gates that the customizer enforces at install / runtime. Out of scope for v1 of the customizer; capture in F28's plugin manifest schema so payment-gated plugins are representable from day one without a schema break.
+- **Blocking:** non-blocking; quality-of-life for fleet operators and a prerequisite for any future plugin marketplace.
+
+### F28 [Shared]. Plugin architecture for xvn — make optional modules pluggable
+
+- **Trigger:** post-v1-test, before the marketplace plugin acquires any third-party participants and before F27 (install customizer) starts.
+- **Scope:** define a first-class plugin contract for xvn so optional capabilities (marketplace, memory, autoresearcher, and future modules) plug into the engine through a uniform surface instead of ad-hoc cargo features + bespoke wiring. Likely shape:
+  - `PluginManifest` — declarative metadata (id, name, description, category, cargo features, sidecars, config template, env prompts, deps, conflicts, resource cost, monetisation hints).
+  - `Plugin` trait (or trait family) — lifecycle hooks: `register(&mut Engine)`, `install(&InstallContext) -> Result<()>`, `uninstall(...)`, `health(&Engine) -> HealthReport`, and the existing per-domain extension surfaces (CLI subcommands, scheduler hooks, dashboard panes, engine API extensions).
+  - `PluginRegistry` — discovery (compile-time builtins for v1; filesystem / remote registry in v2), conflict resolution, dependency ordering.
+  - Migration of existing optional code into plugin form: marketplace (already has a cargo feature — re-shape into a manifest + plugin impl), memory (per cortex-integration plan — the new `xvision-memory` crate becomes a plugin from the start), autoresearcher (AR-1/2/3 program becomes a plugin so it can be enabled/disabled per deployment).
+  - Plugin distribution shape — in v1 plugins live in-tree under `crates/xvision-plugin-*/`. v2 may add out-of-tree plugins discovered at runtime or installed from a remote registry (see monetisation note below).
+- **Why now-ish:** the engine has accreted three "optional but real" modules (marketplace, memory, autoresearcher) without a shared contract. Each new one re-litigates the same wiring questions. Lock the shape before a fourth lands.
+- **Open extension (spitballed 2026-05-11):** plugins distributed via the marketplace plugin itself, with monetisation envelopes — monthly subscription, streamed payment (e.g. Superfluid / Sablier on Mantle), one-time mint-to-unlock, or per-cycle metered usage. The plugin manifest should carry an optional `monetisation` field from v1 (even if unused by builtins) so payment-gated plugins are representable without a schema break. The marketplace plugin's existing ERC-8004 surface is the natural enforcement point — receipts that gate plugin activation.
+- **Blocking:** YES for F27 (install customizer). Non-blocking otherwise; current ad-hoc wiring works for the three in-tree modules.
+
+### F29 [Shared]. Agent social feed — identity-based comms for strategies
+
+- **Trigger:** after F28 (plugin architecture) lands and the marketplace plugin is live with multiple registered strategy identities (ERC-8004 NFTs). Could ship as its own plugin.
+- **Scope:** a social-feed surface where each strategy / agent identity posts in-character commentary tied to its actual activity — trade reasoning excerpts, mutation diffs from autoresearch cycles, Reputation Registry receipts, "the funding-rate fader is mad about the funding flip at 04:00 UTC" style takes. Personality / voice driven by a per-identity prompt + the strategy's recent ledger. Feed items are signed by the agent's wallet so the social layer inherits the ERC-8004 trust model — provenance for free, no anonymous trolls. Likely lives as a new plugin (`xvision-plugin-social` or similar) so deployments can run it off; pairs naturally with the marketplace + memory plugins.
+- **Why it's interesting beyond the lulz:** identity-bound, on-chain-anchored posts make the strategy population legible as *characters* rather than rows in a table. That's a real product wedge for Persona B (marketplace participants picking strategies to delegate to) — "this lineage has 30 days of consistent vibes + an audit trail" is a stronger sell than a Sharpe number. Also a natural surface for cross-pollination signals (SLF13) — agents publicly reacting to each other's posts.
+- **Open questions:** post cadence (per-cycle? per-trade? per-mutation? hand-rolled rate limits to avoid spam) · moderation surface (slashable on toxic / off-spec output? operator override?) · whether posts go on-chain (Reputation Registry with `tag1="social"`) or stay off-chain with hash-anchoring · UI shape (timeline tab in dashboard? standalone web view? RSS / ActivityPub bridge?).
+- **Blocking:** non-blocking; pure narrative / community surface. Park here as a "would be funny + actually useful" lane.
+
 ### F25 [Shared]. Author a `xvision` Claude Code skill
 
 - **Trigger:** after the GPU headline run lands and the operator surface stops moving every other session. Post-hackathon is also a natural trigger — the SLF surface is fresh tribal knowledge worth capturing.
