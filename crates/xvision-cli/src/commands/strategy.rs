@@ -14,6 +14,8 @@ use xvision_engine::templates::registry;
 use xvision_engine::tokens::estimate_pipeline_tokens;
 use xvision_engine::tools::ToolRegistry;
 
+use crate::exit::{CliError, CliResult, ResultExt, XvnExit};
+
 #[derive(Args, Debug)]
 pub struct StrategyCmd {
     #[command(subcommand)]
@@ -55,23 +57,16 @@ enum StrategyAction {
     },
 }
 
-pub async fn run(cmd: StrategyCmd) -> anyhow::Result<()> {
+pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
     match cmd.action {
-        StrategyAction::New {
-            template,
-            name,
-            creator,
-        } => new(&template, &name, creator).await,
+        StrategyAction::New { template, name, creator } => new(&template, &name, creator).await,
         StrategyAction::Validate { id } => validate(&id).await,
         StrategyAction::Ls => ls().await,
         StrategyAction::Show { id } => show(&id).await,
         StrategyAction::Templates => templates().await,
-        StrategyAction::Run {
-            id,
-            fixture,
-            decisions,
-            mock,
-        } => run_inline(&id, &fixture, decisions, mock).await,
+        StrategyAction::Run { id, fixture, decisions, mock } => {
+            run_inline(&id, &fixture, decisions, mock).await
+        }
     }
 }
 
@@ -87,43 +82,46 @@ fn store() -> FilesystemStore {
     FilesystemStore::new(home().join("strategies"))
 }
 
-async fn new(template: &str, name: &str, creator: Option<String>) -> anyhow::Result<()> {
-    let tpl = registry::get(template)
-        .ok_or_else(|| anyhow::anyhow!("unknown template '{template}' — try `xvn strategy templates`"))?;
+async fn new(template: &str, name: &str, creator: Option<String>) -> CliResult<()> {
+    let tpl = registry::get(template).ok_or_else(|| {
+        CliError::usage(anyhow::anyhow!(
+            "unknown template '{template}' — try `xvn strategy templates`"
+        ))
+    })?;
     let id = Ulid::new().to_string();
     let creator = creator
         .or_else(|| env::var("XVN_CREATOR").ok())
         .unwrap_or_else(|| "@anonymous".to_string());
     let draft = tpl.new_draft(id.clone(), name.to_string(), creator);
-    validate_bundle(&draft)?;
-    store().save(&draft).await?;
+    validate_bundle(&draft).exit_with(XvnExit::Usage)?;
+    store().save(&draft).await.exit_with(XvnExit::Upstream)?;
     println!("{id}");
     Ok(())
 }
 
-async fn validate(id: &str) -> anyhow::Result<()> {
-    let bundle = store().load(id).await?;
-    validate_bundle(&bundle)?;
+async fn validate(id: &str) -> CliResult<()> {
+    let bundle = store().load(id).await.exit_with(XvnExit::NotFound)?;
+    validate_bundle(&bundle).exit_with(XvnExit::Usage)?;
     println!("ok");
     Ok(())
 }
 
-async fn ls() -> anyhow::Result<()> {
-    let ids = store().list().await?;
+async fn ls() -> CliResult<()> {
+    let ids = store().list().await.exit_with(XvnExit::Upstream)?;
     for id in ids {
         println!("{id}");
     }
     Ok(())
 }
 
-async fn show(id: &str) -> anyhow::Result<()> {
-    let bundle = store().load(id).await?;
-    let json = serde_json::to_string_pretty(&bundle)?;
+async fn show(id: &str) -> CliResult<()> {
+    let bundle = store().load(id).await.exit_with(XvnExit::NotFound)?;
+    let json = serde_json::to_string_pretty(&bundle).exit_with(XvnExit::Upstream)?;
     println!("{json}");
     Ok(())
 }
 
-async fn templates() -> anyhow::Result<()> {
+async fn templates() -> CliResult<()> {
     let names = registry::list_template_names();
     for name in names {
         if let Some(tpl) = registry::get(&name) {
@@ -133,8 +131,8 @@ async fn templates() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn run_inline(id: &str, fixture: &str, decisions: u32, mock: bool) -> anyhow::Result<()> {
-    let bundle = store().load(id).await?;
+async fn run_inline(id: &str, fixture: &str, decisions: u32, mock: bool) -> CliResult<()> {
+    let bundle = store().load(id).await.exit_with(XvnExit::NotFound)?;
     let est = estimate_pipeline_tokens(&bundle, decisions as u64);
     println!(
         "estimate: input={} output={} total={} (decisions={})",
@@ -147,7 +145,7 @@ async fn run_inline(id: &str, fixture: &str, decisions: u32, mock: bool) -> anyh
         ))
     } else {
         let key = std::env::var("ANTHROPIC_API_KEY")
-            .map_err(|_| anyhow::anyhow!("set ANTHROPIC_API_KEY or pass --mock"))?;
+            .map_err(|_| CliError::auth(anyhow::anyhow!("set ANTHROPIC_API_KEY or pass --mock")))?;
         Arc::new(AnthropicDispatch::new(key))
     };
     let tools = Arc::new(ToolRegistry::default_with_builtins());
@@ -157,19 +155,19 @@ async fn run_inline(id: &str, fixture: &str, decisions: u32, mock: bool) -> anyh
         .asset_universe
         .first()
         .cloned()
-        .ok_or_else(|| anyhow::anyhow!("bundle has empty asset_universe"))?;
+        .ok_or_else(|| CliError::usage(anyhow::anyhow!("bundle has empty asset_universe")))?;
 
     // Fetch the OHLCV + indicator_panel tools once; both are stateless and
     // safe to re-invoke per decision. The lookback (200 bars) matches the
     // window the templates' default mechanical params expect.
     let ohlcv_tool = tools
         .get(&xvision_engine::tools::ToolName::new("ohlcv".to_string()))
-        .ok_or_else(|| anyhow::anyhow!("ohlcv tool not registered"))?;
+        .ok_or_else(|| CliError::upstream(anyhow::anyhow!("ohlcv tool not registered")))?;
     let panel_tool = tools
         .get(&xvision_engine::tools::ToolName::new(
             "indicator_panel".to_string(),
         ))
-        .ok_or_else(|| anyhow::anyhow!("indicator_panel tool not registered"))?;
+        .ok_or_else(|| CliError::upstream(anyhow::anyhow!("indicator_panel tool not registered")))?;
 
     let mut total_in = 0u32;
     let mut total_out = 0u32;
@@ -180,14 +178,16 @@ async fn run_inline(id: &str, fixture: &str, decisions: u32, mock: bool) -> anyh
                 "fixture": fixture,
                 "lookback_bars": 200,
             }))
-            .await?;
+            .await
+            .exit_with(XvnExit::Upstream)?;
         let panel = panel_tool
             .invoke(serde_json::json!({
                 "asset": asset,
                 "fixture": fixture,
                 "lookback_bars": 200,
             }))
-            .await?;
+            .await
+            .exit_with(XvnExit::Upstream)?;
         let bar_count = ohlcv
             .get("bars")
             .and_then(|b| b.as_array())
@@ -208,7 +208,8 @@ async fn run_inline(id: &str, fixture: &str, decisions: u32, mock: bool) -> anyh
             dispatch: dispatch.clone(),
             tools: tools.clone(),
         })
-        .await?;
+        .await
+        .exit_with(XvnExit::Upstream)?;
         total_in += outs.total_input_tokens;
         total_out += outs.total_output_tokens;
         if let Some(t) = &outs.trader {
