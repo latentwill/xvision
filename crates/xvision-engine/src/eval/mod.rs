@@ -16,6 +16,7 @@ pub mod postprocess;
 pub mod progress;
 pub mod run;
 pub mod scenario;
+pub mod scenario_seed;
 pub mod scenario_store;
 pub mod store;
 

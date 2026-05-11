@@ -105,7 +105,14 @@ impl ApiContext {
         sqlx::query(MIGRATION_005).execute(&pool).await?;
         sqlx::query(MIGRATION_006).execute(&pool).await?;
 
-        Ok(Self::new(pool, actor, xvn_home.to_path_buf()))
+        let ctx = Self::new(pool, actor, xvn_home.to_path_buf());
+
+        // First-run seed: 4 canonical scenarios + `bundle-canonical-defaults`
+        // StrategyBundle. Idempotent — short-circuits when canonical rows
+        // already exist, so re-opening the same `xvn_home` is a no-op.
+        crate::eval::scenario_seed::run_seed_if_needed(&ctx).await?;
+
+        Ok(ctx)
     }
 
     /// Construct an `ApiContext` from an already-prepared pool and actor.

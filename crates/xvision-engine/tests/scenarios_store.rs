@@ -124,6 +124,9 @@ async fn archive_succeeds() {
 
 #[tokio::test]
 async fn list_scenarios_filters_by_source_and_tags() {
+    // Note: CS-M2 Task 6 seeds 4 canonical scenarios on every fresh
+    // `ApiContext::open`, so the default (unfiltered) list has 4 + the rows
+    // this test inserts. Source/tag filters still discriminate correctly.
     let ctx = test_ctx().await;
     let mut a = make_test_scenario("sc_a");
     a.tags = vec!["regression".into(), "crypto".into()];
@@ -136,7 +139,8 @@ async fn list_scenarios_filters_by_source_and_tags() {
     let all = store::list_scenarios(&ctx, &store::ListScenariosFilter::default())
         .await
         .unwrap();
-    assert_eq!(all.len(), 2);
+    // 4 canonical seeds + 2 inserts above.
+    assert_eq!(all.len(), 6);
 
     let user_only = store::list_scenarios(
         &ctx,

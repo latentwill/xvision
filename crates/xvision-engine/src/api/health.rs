@@ -229,13 +229,22 @@ mod tests {
         assert_eq!(report.status, HealthStatus::Down);
     }
 
-    /// Spec G.2: a fresh install has no `bundles/` directory; that case
-    /// is *not* an error — it's the empty-but-ok shape `"0 (no bundles dir
-    /// yet)"`. Catches the regression where someone "fixes" the missing-dir
-    /// branch to return Degraded.
+    /// Spec G.2: when `bundles/` is absent the probe reports the empty-but-ok
+    /// shape `"0 (no bundles dir yet)"` — not an error. CS-M2 Task 6 changed
+    /// `ApiContext::open` to seed a `bundle-canonical-defaults.json` on every
+    /// fresh `xvn_home`, so to exercise the missing-dir branch we construct
+    /// the context manually (skipping seed) instead of going through `open`.
     #[tokio::test]
     async fn check_flags_missing_bundles_dir_renders_zero_count_ok() {
-        let (ctx, _dir) = fresh_ctx().await;
+        let dir = tempfile::tempdir().unwrap();
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let ctx = ApiContext::new(
+            pool,
+            Actor::Cli {
+                user: "operator".into(),
+            },
+            dir.path().to_path_buf(),
+        );
         let report = check(&ctx).await.unwrap();
         let bundles = report
             .probes
@@ -247,6 +256,28 @@ mod tests {
             bundles.detail.as_deref(),
             Some("0 (no bundles dir yet)"),
             "expected the missing-dir empty shape, got {:?}",
+            bundles.detail,
+        );
+    }
+
+    /// CS-M2 Task 6: after `ApiContext::open` against a fresh `xvn_home`, the
+    /// canonical-defaults bundle is seeded into `xvn_home/bundles/`, so the
+    /// probe should count exactly one bundle (not the missing-dir empty
+    /// shape). This locks in the seed-on-open contract.
+    #[tokio::test]
+    async fn check_counts_seeded_canonical_defaults_bundle_after_open() {
+        let (ctx, _dir) = fresh_ctx().await;
+        let report = check(&ctx).await.unwrap();
+        let bundles = report
+            .probes
+            .iter()
+            .find(|p| p.name == "bundles")
+            .expect("bundles probe present");
+        assert_eq!(bundles.status, HealthStatus::Ok);
+        assert_eq!(
+            bundles.detail.as_deref(),
+            Some("1"),
+            "expected 1 seeded bundle, got {:?}",
             bundles.detail,
         );
     }
