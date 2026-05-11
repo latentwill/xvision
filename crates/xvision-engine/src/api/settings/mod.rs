@@ -1,13 +1,15 @@
-//! Settings — read-only surfaces in v1.
+//! `/api/settings/*` — Settings tabs in v1.
 //!
-//! This module exposes "what's configured?" for the dashboard's Settings tabs.
-//! The Provider CRUD surface (and the danger-zone wipe) are intentionally
-//! deferred — they live with the llm-providers Phase 2+ track and a follow-up
-//! cleanup plan respectively.
+//! Brokers / daemon / identity are read-only snapshots. `providers` is the
+//! only CRUD surface in this module — single source of truth for the
+//! workspace's registered LLM providers, dispatched through by both the
+//! `xvn provider` CLI and the dashboard's Settings/Providers route.
 //!
-//! No mutations here. No secrets in responses (env vars are surfaced as
-//! "set" / "unset" flags, never values).
+//! The danger-zone wipe lives elsewhere (deferred per a follow-up cleanup
+//! plan). No secrets in responses: env-var values are never returned,
+//! only "set" / "unset" presence flags.
 
 pub mod brokers;
 pub mod daemon;
 pub mod identity;
+pub mod providers;
