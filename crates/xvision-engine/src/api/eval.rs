@@ -30,6 +30,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::agent::llm::{AnthropicDispatch, LlmDispatch};
 use crate::api::audit::{self, Outcome};
+use crate::api::settings::brokers as api_brokers;
 use crate::api::{search as api_search, strategy as api_strategy, ApiContext, ApiError, ApiResult};
 use crate::eval::attestation::{self, EvalAttestation};
 use crate::eval::compare::{compare_runs, ComparisonReport};
@@ -421,10 +422,7 @@ pub async fn run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<Run> {
     }
 
     let broker: Option<Arc<dyn BrokerSurface>> = match req.mode {
-        RunMode::Paper => Some(Arc::new(
-            AlpacaPaperSurface::from_env()
-                .map_err(|e| ApiError::Internal(format!("alpaca paper from_env: {e}")))?,
-        )),
+        RunMode::Paper => Some(build_alpaca_paper_broker(ctx).await?),
         RunMode::Backtest => None,
     };
     let api_key = std::env::var("ANTHROPIC_API_KEY").map_err(|_| {
@@ -433,6 +431,49 @@ pub async fn run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<Run> {
     let dispatch_arc: Arc<dyn LlmDispatch> = Arc::new(AnthropicDispatch::new(api_key));
     let tools_arc = Arc::new(ToolRegistry::default_with_builtins());
     run_with_deps(ctx, req, broker, dispatch_arc, tools_arc).await
+}
+
+/// Build an Alpaca paper broker, preferring credentials stored via the
+/// settings UI (`$XVN_HOME/secrets/brokers.toml`) over `APCA_*` env
+/// vars. Env-var fallback keeps CI scripts working without migration.
+/// Returns `ApiError::Validation` with a user-actionable message if
+/// neither source has credentials — the dashboard wires this into
+/// "Configure Alpaca → Settings" copy.
+async fn build_alpaca_paper_broker(
+    ctx: &ApiContext,
+) -> ApiResult<Arc<dyn BrokerSurface>> {
+    const DEFAULT_PAPER_URL: &str = "https://paper-api.alpaca.markets";
+    if let Some(creds) = api_brokers::load_alpaca_credentials(&ctx.xvn_home).await? {
+        let base = creds
+            .base_url
+            .as_deref()
+            .unwrap_or(DEFAULT_PAPER_URL);
+        return AlpacaPaperSurface::from_credentials(
+            &creds.api_key_id,
+            &creds.api_secret_key,
+            base,
+        )
+        .map(|s| Arc::new(s) as Arc<dyn BrokerSurface>)
+        .map_err(|e| {
+            ApiError::Internal(format!("alpaca paper from stored creds: {e}"))
+        });
+    }
+    // Env-var fallback.
+    match AlpacaPaperSurface::from_env() {
+        Ok(s) => Ok(Arc::new(s)),
+        Err(e) => {
+            let msg = e.to_string();
+            // Missing env vars is operator-actionable; bubble the
+            // "where to set" hint into the validation message.
+            if msg.contains("APCA_API_KEY_ID") || msg.contains("APCA_API_SECRET_KEY") {
+                Err(ApiError::Validation(format!(
+                    "Alpaca paper credentials not configured. Set them in Settings → Brokers, or export APCA_API_KEY_ID + APCA_API_SECRET_KEY before running."
+                )))
+            } else {
+                Err(ApiError::Internal(format!("alpaca paper from env: {e}")))
+            }
+        }
+    }
 }
 
 /// Testable / deps-injecting variant of `run`. Tests pass a

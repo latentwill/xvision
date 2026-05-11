@@ -32,6 +32,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/eval/compare", get(eval_runs::compare))
         .route("/api/search", get(search_route::handler))
         .route("/api/settings/brokers", get(settings::brokers::get))
+        .route(
+            "/api/settings/brokers/alpaca",
+            post(settings::brokers::set_alpaca).delete(settings::brokers::delete_alpaca),
+        )
         .route("/api/settings/daemon", get(settings::daemon::get))
         .route("/api/settings/identity", get(settings::identity::get))
         .route(
