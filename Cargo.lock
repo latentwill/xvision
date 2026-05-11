@@ -8207,6 +8207,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "toml",
  "toml_edit 0.22.27",
  "tracing",
  "ts-rs",

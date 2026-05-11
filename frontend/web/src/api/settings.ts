@@ -31,6 +31,39 @@ export function getBrokers(): Promise<BrokersReport> {
   return apiFetch<BrokersReport>("/api/settings/brokers");
 }
 
+// ─── Brokers (Alpaca) CRUD ─────────────────────────────────────────────────
+
+// Hand-written wire shapes for the Alpaca-credentials surface. The
+// engine-side `AlpacaStored` and `SetAlpacaReq` types don't carry
+// `derive(TS)` (secrets shouldn't accidentally leak into the generated
+// surface); mirror them here.
+export type SetAlpacaRequest = {
+  api_key_id: string;
+  api_secret_key: string;
+  base_url: string | null;
+};
+
+export type AlpacaStored = {
+  stored: boolean;
+  stored_key_id_suffix: string | null;
+  base_url: string | null;
+};
+
+export function setAlpacaCredentials(
+  body: SetAlpacaRequest,
+): Promise<AlpacaStored> {
+  return apiFetch<AlpacaStored>("/api/settings/brokers/alpaca", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function clearAlpacaCredentials(): Promise<void> {
+  return apiFetch<void>("/api/settings/brokers/alpaca", {
+    method: "DELETE",
+  });
+}
+
 export function getDaemon(): Promise<DaemonReport> {
   return apiFetch<DaemonReport>("/api/settings/daemon");
 }

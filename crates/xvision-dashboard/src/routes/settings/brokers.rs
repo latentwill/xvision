@@ -1,6 +1,22 @@
-use axum::{extract::State, Json};
+//! `/api/settings/brokers` routes.
+//!
+//! - `GET  /api/settings/brokers`               — env + stored snapshot
+//! - `POST /api/settings/brokers/alpaca`        — persist Alpaca creds
+//! - `DELETE /api/settings/brokers/alpaca`      — drop stored Alpaca creds
+//!
+//! Mutation routes write to `$XVN_HOME/secrets/brokers.toml` (mode 0600).
+//! Secrets never come back through `GET` — only a redacted key-id suffix.
 
-use xvision_engine::api::settings::brokers::{self, BrokersReport};
+use axum::{
+    extract::State,
+    http::StatusCode,
+    response::IntoResponse,
+    Json,
+};
+
+use xvision_engine::api::settings::brokers::{
+    self, AlpacaStored, BrokersReport, SetAlpacaReq,
+};
 
 use crate::error::DashboardError;
 use crate::state::AppState;
@@ -10,4 +26,19 @@ pub async fn get(
 ) -> Result<Json<BrokersReport>, DashboardError> {
     let report = brokers::get(&state.api_context()).await?;
     Ok(Json(report))
+}
+
+pub async fn set_alpaca(
+    State(state): State<AppState>,
+    Json(req): Json<SetAlpacaReq>,
+) -> Result<(StatusCode, Json<AlpacaStored>), DashboardError> {
+    let stored = brokers::set_alpaca(&state.api_context(), req).await?;
+    Ok((StatusCode::CREATED, Json(stored)))
+}
+
+pub async fn delete_alpaca(
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, DashboardError> {
+    brokers::clear_alpaca(&state.api_context()).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
