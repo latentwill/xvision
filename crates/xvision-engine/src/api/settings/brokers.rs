@@ -118,6 +118,31 @@ pub struct AlpacaStored {
     pub base_url: Option<String>,
 }
 
+/// Result of a `POST /brokers/alpaca/test-connection` call. Reports
+/// whether `/v2/account` responded and surfaces a couple of harmless
+/// account fields as a sanity-check signal.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlpacaTestReport {
+    pub ok: bool,
+    pub latency_ms: u32,
+    /// Account status as reported by `/v2/account` (e.g. "ACTIVE").
+    /// None on failure or when the field is missing from the response.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_status: Option<String>,
+    /// Account equity as reported by Alpaca (USD, plain decimal string).
+    /// None on failure or when the field is missing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub equity: Option<String>,
+    /// Failure message when `ok` is false. None on success.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 pub async fn get(ctx: &ApiContext) -> ApiResult<BrokersReport> {
     let started = Instant::now();
     let result = get_inner(&ctx.xvn_home).await;
@@ -370,6 +395,111 @@ async fn clear_alpaca_inner(xvn_home: &Path) -> ApiResult<AlpacaStored> {
         stored_key_id_suffix: None,
         base_url: None,
     })
+}
+
+/// Connectivity probe — calls Alpaca `/v2/account` with the stored (or
+/// env-var fallback) credentials and reports whether it responded. The
+/// outer function always returns `Ok(report)`; network/auth failures
+/// land in `report.error` so the UI can render a pill rather than a
+/// top-level HTTP error.
+pub async fn test_alpaca(ctx: &ApiContext) -> ApiResult<AlpacaTestReport> {
+    let started = Instant::now();
+    let inner_result = test_alpaca_inner(&ctx.xvn_home).await;
+    let elapsed_ms = started.elapsed().as_millis() as u32;
+
+    let report = match &inner_result {
+        Ok((account_status, equity)) => AlpacaTestReport {
+            ok: true,
+            latency_ms: elapsed_ms,
+            account_status: account_status.clone(),
+            equity: equity.clone(),
+            error: None,
+        },
+        Err(e) => AlpacaTestReport {
+            ok: false,
+            latency_ms: elapsed_ms,
+            account_status: None,
+            equity: None,
+            error: Some(e.to_string()),
+        },
+    };
+
+    let outcome = match &inner_result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let _ = audit::record(
+        ctx,
+        "settings",
+        "brokers.test_alpaca",
+        Some("alpaca"),
+        None,
+        outcome,
+        elapsed_ms as i64,
+    )
+    .await;
+
+    Ok(report)
+}
+
+async fn test_alpaca_inner(
+    xvn_home: &Path,
+) -> ApiResult<(Option<String>, Option<String>)> {
+    // Resolve credentials: stored wins; env vars are the fallback.
+    let stored = load_alpaca_credentials(xvn_home).await?;
+    let (key_id, secret, base_url) = if let Some(c) = stored {
+        let base = c
+            .base_url
+            .clone()
+            .or_else(|| env::var("APCA_API_BASE_URL").ok().filter(|s| !s.is_empty()))
+            .unwrap_or_else(|| "https://paper-api.alpaca.markets".to_string());
+        (c.api_key_id, c.api_secret_key, base)
+    } else {
+        let key_id = env::var("APCA_API_KEY_ID").map_err(|_| {
+            ApiError::Validation(
+                "no Alpaca credentials configured (set them in Settings → Brokers or export APCA_API_KEY_ID/APCA_API_SECRET_KEY)".into(),
+            )
+        })?;
+        let secret = env::var("APCA_API_SECRET_KEY").map_err(|_| {
+            ApiError::Validation(
+                "no Alpaca credentials configured (APCA_API_SECRET_KEY unset)".into(),
+            )
+        })?;
+        let base = env::var("APCA_API_BASE_URL")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "https://paper-api.alpaca.markets".to_string());
+        (key_id, secret, base)
+    };
+
+    let url = format!("{}/v2/account", base_url.trim_end_matches('/'));
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| ApiError::Internal(format!("build http client: {e}")))?;
+
+    let resp = client
+        .get(&url)
+        .header("APCA-API-KEY-ID", &key_id)
+        .header("APCA-API-SECRET-KEY", &secret)
+        .send()
+        .await
+        .map_err(|e| ApiError::Internal(format!("alpaca /v2/account: {e}")))?;
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(ApiError::Validation(format!(
+            "alpaca /v2/account {status}: {body}"
+        )));
+    }
+
+    let v: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| ApiError::Internal(format!("parse alpaca account: {e}")))?;
+    let account_status = v["status"].as_str().map(String::from);
+    let equity = v["equity"].as_str().map(String::from);
+    Ok((account_status, equity))
 }
 
 #[cfg(test)]
