@@ -91,6 +91,27 @@ pub struct ProviderModelsReport {
     pub models: Vec<ProviderModelEntry>,
 }
 
+/// Result of a `POST /providers/:name/test-connection` call. Reports
+/// whether the provider's catalog endpoint responded, how long it took,
+/// and how many models were returned (a secondary success signal — a
+/// "200 with 0 models" usually means a misconfigured base URL).
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TestConnectionReport {
+    pub ok: bool,
+    pub latency_ms: u32,
+    /// Number of models the catalog returned. 0 on error or when the
+    /// provider's catalog endpoint genuinely returned nothing.
+    pub model_count: u32,
+    /// Failure message when `ok` is false. None on success.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(
     feature = "ts-export",
@@ -251,6 +272,50 @@ pub async fn fetch_models(
     )
     .await;
     result
+}
+
+/// Connectivity probe: call the provider's catalog endpoint and report
+/// success, latency, and model count. Wraps the same dispatch as
+/// `fetch_models` but always returns `Ok(report)` — a network/auth
+/// failure becomes `report.ok == false` so the UI can render an error
+/// pill instead of a top-level HTTP error.
+pub async fn test_connection(
+    ctx: &ApiContext,
+    config_path: &Path,
+    name: &str,
+) -> ApiResult<TestConnectionReport> {
+    let started = Instant::now();
+    let inner_result = fetch_models_inner(config_path, name).await;
+    let elapsed_ms = started.elapsed().as_millis() as u32;
+
+    let report = match &inner_result {
+        Ok(catalog) => TestConnectionReport {
+            ok: true,
+            latency_ms: elapsed_ms,
+            model_count: catalog.models.len() as u32,
+            error: None,
+        },
+        Err(e) => TestConnectionReport {
+            ok: false,
+            latency_ms: elapsed_ms,
+            model_count: 0,
+            error: Some(e.to_string()),
+        },
+    };
+
+    let outcome = audit_outcome(&inner_result);
+    let _ = audit::record(
+        ctx,
+        "settings",
+        "providers.test_connection",
+        Some(name),
+        None,
+        outcome,
+        elapsed_ms as i64,
+    )
+    .await;
+
+    Ok(report)
 }
 
 async fn fetch_models_inner(
