@@ -13,7 +13,6 @@
 //! - `DELETE /api/chat-rail/sessions/:id`           → 204
 //! - `POST   /api/chat-rail/chat` (SSE)             → `WizardEvent`s
 
-use std::sync::Arc;
 use std::time::Duration;
 
 use axum::extract::{Json, Path, State};
@@ -24,10 +23,10 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::StreamExt;
 
-use xvision_engine::agent::llm::{AnthropicDispatch, LlmDispatch};
 use xvision_engine::chat_session::{ChatMessage, ChatSessionStore, ContextScope};
 
 use crate::error::DashboardError;
+use crate::llm_dispatch;
 use crate::state::AppState;
 use crate::wizard_loop::{WizardEvent, WizardLoop};
 
@@ -93,12 +92,19 @@ pub async fn delete_session(
 pub struct ChatBody {
     pub session_id: String,
     pub message: String,
-    #[serde(default = "default_model")]
-    pub model: String,
+    /// Explicit model id. When `None`, the resolver falls back to the
+    /// `[intern]` model for the default provider, or the dashboard's
+    /// hard-coded sonnet fallback for non-default providers.
+    #[serde(default)]
+    pub model: Option<String>,
+    /// Explicit provider name. When `None`, the `[intern]`-referenced
+    /// default provider is used (which is what existing clients expect).
+    #[serde(default)]
+    pub provider: Option<String>,
 }
 
-fn default_model() -> String {
-    "claude-sonnet-4-6".to_string()
+fn default_model() -> &'static str {
+    "claude-sonnet-4-6"
 }
 
 pub async fn chat(
@@ -108,11 +114,21 @@ pub async fn chat(
     Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>>,
     DashboardError,
 > {
-    let api_key = std::env::var("ANTHROPIC_API_KEY").map_err(|_| {
-        DashboardError::Internal(anyhow::anyhow!(
-            "ANTHROPIC_API_KEY not set on the server — set it before launching `xvn dashboard serve`"
-        ))
-    })?;
+    tracing::info!(
+        target: "xvision::dashboard::chat_rail",
+        session_id = %body.session_id,
+        provider = ?body.provider,
+        model = ?body.model,
+        message_len = body.message.len(),
+        "POST /api/chat-rail/chat"
+    );
+
+    let resolved = llm_dispatch::resolve(
+        body.provider.as_deref(),
+        body.model.as_deref(),
+        default_model(),
+    )
+    .await?;
 
     // Read the session's persisted scope so the system prompt is always
     // in sync with whatever the most recent /scope POST set, even if the
@@ -123,11 +139,11 @@ pub async fn chat(
 
     let (tx, rx) = mpsc::channel::<WizardEvent>(16);
 
-    let dispatch: Arc<dyn LlmDispatch> = Arc::new(AnthropicDispatch::new(api_key));
+    let dispatch = resolved.dispatch;
     let xvn_home = state.xvn_home.clone();
     let pool = state.pool.clone();
     let session_id = body.session_id;
-    let model = body.model;
+    let model = resolved.model;
     let message = body.message;
 
     tokio::spawn(async move {

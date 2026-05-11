@@ -16,6 +16,8 @@ import {
 } from "react";
 import { useLocation } from "react-router-dom";
 
+import { useQuery } from "@tanstack/react-query";
+
 import { Icon } from "@/components/primitives/Icon";
 import { Pill } from "@/components/primitives/Pill";
 import { ApiError } from "@/api/client";
@@ -35,9 +37,13 @@ import {
   streamChat,
   updateScope,
 } from "@/api/chat_rail";
+import { listProviders, settingsKeys } from "@/api/settings";
+import type { ProviderRow } from "@/api/types.gen";
 
 const SESSION_LS_PREFIX = "xvn.chat_rail.session.";
 const RAIL_OPEN_LS = "xvn.chat_rail.open";
+const RAIL_PROVIDER_LS = "xvn.chat_rail.provider";
+const RAIL_MODEL_LS = "xvn.chat_rail.model";
 
 type Tool = { call: string; ok: boolean; summary: string };
 type AssistantBubble = {
@@ -64,8 +70,33 @@ export function ChatRail() {
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [providerName, setProviderName] = useState<string | null>(
+    () => localStorage.getItem(RAIL_PROVIDER_LS),
+  );
+  const [modelId, setModelId] = useState<string>(
+    () => localStorage.getItem(RAIL_MODEL_LS) ?? "",
+  );
   const abortRef = useRef<AbortController | null>(null);
   const lastScopeKeyRef = useRef<string | null>(null);
+
+  const providers = useQuery({
+    queryKey: settingsKeys.providers(),
+    queryFn: listProviders,
+    enabled: open,
+  });
+  // Auto-pick the intern's default the first time the rail loads — keeps
+  // existing users unaware of the new selector if they don't want it.
+  useEffect(() => {
+    if (providerName !== null) return;
+    const rows = providers.data?.providers ?? [];
+    const intern = rows.find((p) => p.referenced_by_intern && p.api_key_set);
+    const firstReady = rows.find((p) => p.api_key_set);
+    const pick = intern ?? firstReady;
+    if (pick) {
+      setProviderName(pick.name);
+      localStorage.setItem(RAIL_PROVIDER_LS, pick.name);
+    }
+  }, [providerName, providers.data]);
 
   // Persist open/close so the rail stays in the user's chosen state across
   // route changes (and reloads).
@@ -151,7 +182,12 @@ export function ChatRail() {
       abortRef.current = ctrl;
       try {
         for await (const ev of streamChat(
-          { session_id: sessionId, message: userText },
+          {
+            session_id: sessionId,
+            message: userText,
+            provider: providerName ?? undefined,
+            model: modelId.trim() || undefined,
+          },
           ctrl.signal,
         )) {
           applyEvent(setBubbles, ev);
@@ -164,7 +200,7 @@ export function ChatRail() {
         abortRef.current = null;
       }
     },
-    [sessionId, isStreaming],
+    [sessionId, isStreaming, providerName, modelId],
   );
 
   const startFresh = useCallback(async () => {
@@ -226,6 +262,23 @@ export function ChatRail() {
           </button>
         </div>
       </header>
+
+      <ModelPicker
+        rows={providers.data?.providers ?? []}
+        loading={providers.isPending}
+        provider={providerName}
+        model={modelId}
+        onChangeProvider={(p) => {
+          setProviderName(p);
+          if (p) localStorage.setItem(RAIL_PROVIDER_LS, p);
+          else localStorage.removeItem(RAIL_PROVIDER_LS);
+        }}
+        onChangeModel={(m) => {
+          setModelId(m);
+          if (m) localStorage.setItem(RAIL_MODEL_LS, m);
+          else localStorage.removeItem(RAIL_MODEL_LS);
+        }}
+      />
 
       <Thread bubbles={bubbles} />
 
@@ -336,6 +389,73 @@ function QuickReplies({
       ))}
     </div>
   );
+}
+
+function ModelPicker({
+  rows,
+  loading,
+  provider,
+  model,
+  onChangeProvider,
+  onChangeModel,
+}: {
+  rows: ProviderRow[];
+  loading: boolean;
+  provider: string | null;
+  model: string;
+  onChangeProvider: (p: string | null) => void;
+  onChangeModel: (m: string) => void;
+}) {
+  const ready = rows.filter((r) => r.api_key_set);
+  const selected = provider ? rows.find((r) => r.name === provider) : undefined;
+  return (
+    <div className="border-b border-border-soft px-4 py-2 bg-surface-2/30 flex items-center gap-2">
+      <label className="text-[11px] text-text-3 uppercase tracking-wider">
+        Provider
+      </label>
+      <select
+        value={provider ?? ""}
+        onChange={(e) => onChangeProvider(e.target.value || null)}
+        disabled={loading}
+        className="text-[12px] bg-transparent border border-border-soft rounded-sm px-1.5 py-0.5 text-text"
+      >
+        {ready.length === 0 ? (
+          <option value="">no provider configured</option>
+        ) : null}
+        {rows.map((r) => (
+          <option key={r.name} value={r.name} disabled={!r.api_key_set}>
+            {r.name}
+            {!r.api_key_set ? " (no key)" : ""}
+          </option>
+        ))}
+      </select>
+      <input
+        type="text"
+        value={model}
+        onChange={(e) => onChangeModel(e.target.value)}
+        placeholder={selected ? defaultModelHint(selected) : "model id"}
+        className="flex-1 min-w-0 text-[12px] bg-transparent border border-border-soft rounded-sm px-1.5 py-0.5 text-text placeholder:text-text-3 font-mono"
+      />
+    </div>
+  );
+}
+
+function defaultModelHint(row: ProviderRow): string {
+  switch (row.kind) {
+    case "anthropic":
+      return "claude-sonnet-4-6";
+    case "openai-compat":
+      // V4 names per https://api-docs.deepseek.com — deepseek-chat retires
+      // 2026-07-24, so default the placeholder to the new id.
+      if (/deepseek/i.test(row.base_url)) return "deepseek-v4-flash";
+      if (/groq/i.test(row.base_url)) return "llama-3.3-70b-versatile";
+      if (/openrouter/i.test(row.base_url))
+        return "anthropic/claude-3.5-sonnet";
+      if (/openai\.com/i.test(row.base_url)) return "gpt-4o-mini";
+      return "model id";
+    default:
+      return "model id";
+  }
 }
 
 function Composer({

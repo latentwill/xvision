@@ -94,6 +94,22 @@ export function removeProvider(name: string): Promise<void> {
   );
 }
 
+/// Point `[intern]` at this provider so the previous default becomes
+/// deletable. `model` is optional; when omitted the existing
+/// `intern.model` is kept (the operator decides whether to update it).
+export function setDefaultProvider(
+  name: string,
+  body: { model?: string } = {},
+): Promise<void> {
+  return apiFetch<void>(
+    `/api/settings/providers/${encodeURIComponent(name)}/set-default`,
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    },
+  );
+}
+
 // ─── Danger ops ────────────────────────────────────────────────────────────
 
 export function dangerWipeDb(): Promise<WipeDbReport> {

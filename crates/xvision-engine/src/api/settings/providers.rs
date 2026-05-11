@@ -192,6 +192,32 @@ pub async fn remove(
     result
 }
 
+/// Point `[intern]` at a different provider so the previous default
+/// becomes deletable. Optional `model` overrides `intern.model`; when
+/// omitted, the existing model is kept (operator's choice if it's
+/// incompatible with the new provider).
+pub async fn set_default(
+    ctx: &ApiContext,
+    config_path: &Path,
+    name: &str,
+    model: Option<&str>,
+) -> ApiResult<()> {
+    let started = Instant::now();
+    let result = set_default_inner(config_path, name, model).await;
+    let outcome = audit_outcome(&result);
+    let _ = audit::record(
+        ctx,
+        "settings",
+        "providers.set_default",
+        Some(name),
+        model.map(|m| format!(r#"{{"model":"{m}"}}"#)).as_deref(),
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    result
+}
+
 // --- inner impls (no auditing) ---------------------------------------------
 
 async fn list_inner(config_path: &Path, xvn_home: &Path) -> ApiResult<ProvidersReport> {
@@ -246,6 +272,40 @@ async fn add_inner(
         return Err(ApiError::Validation(
             "provider names starting with '_' are reserved".into(),
         ));
+    }
+    // Require an API key for auth-bearing kinds, but only when the
+    // operator hasn't already exported one via the env var (the CLI
+    // `xvn provider add` flow assumes the env was set before the
+    // command ran). Without this guard the route silently persisted
+    // a row that surfaced in Settings → Providers as "missing key".
+    let trimmed_key = api_key.as_deref().map(str::trim).unwrap_or("");
+    if trimmed_key.is_empty() && parsed_kind != ProviderKind::LocalCandle {
+        // Compute the env var we'd use for this provider so the env
+        // pre-set check matches what the daemon will read.
+        let env_var = if api_key_env.trim().is_empty() {
+            default_api_key_env_for(parsed_kind, &name)
+        } else {
+            api_key_env.clone()
+        };
+        let env_set = std::env::var(&env_var)
+            .map(|v| !v.is_empty())
+            .unwrap_or(false);
+        if !env_set {
+            return Err(ApiError::Validation(format!(
+                "api_key is required for `{name}` — paste a key or export {env_var} before adding"
+            )));
+        }
+    }
+    // Cheap base-URL sanity check so a typo like "api.deepseek.com" (no
+    // scheme) doesn't silently land in the config and 500 every subsequent
+    // chat request.
+    if !base_url.trim().is_empty() {
+        let bu = base_url.trim();
+        if !(bu.starts_with("http://") || bu.starts_with("https://")) {
+            return Err(ApiError::Validation(format!(
+                "base_url must start with http:// or https:// (got `{bu}`)"
+            )));
+        }
     }
     // Sensible defaults when the request omits these — the UI sends just
     // (name, kind, api_key) for the common case.
@@ -326,7 +386,38 @@ async fn add_inner(
 
     // Re-validate the resulting config; bubble up a validation error if the
     // file is no longer well-formed (eg. a hand-edit clashed with our row).
-    let _ = load_cfg(config_path).await?;
+    let cfg = load_cfg(config_path).await?;
+
+    // First-time setup ergonomics: if the current intern default has no
+    // key set but we just added one *with* a key, auto-promote the new
+    // row. Without this the user would add DeepSeek with a key, then see
+    // a "broken default" warning until they explicitly hit "Set as
+    // default" — a step that's invisible until they go looking for it.
+    let intern_kind: ProviderKind = cfg.intern.provider.into();
+    let intern_entry = cfg.providers.iter().find(|p| {
+        p.matches_triple(intern_kind, &cfg.intern.base_url, &cfg.intern.api_key_env)
+    });
+    let intern_has_key = intern_entry
+        .map(|e| {
+            !e.api_key_env.is_empty()
+                && std::env::var(&e.api_key_env)
+                    .map(|v| !v.is_empty())
+                    .unwrap_or(false)
+        })
+        .unwrap_or(false);
+    let new_has_key = !api_key_env.is_empty()
+        && std::env::var(&api_key_env)
+            .map(|v| !v.is_empty())
+            .unwrap_or(false);
+    if !intern_has_key && new_has_key {
+        // Best-effort — failure here doesn't undo the add. Pick a sane
+        // default model for the wire kind so the wizard (which has no
+        // model picker yet) doesn't hit a 404 for the old default's
+        // model id on the new provider.
+        let default_model = sensible_default_model(parsed_kind, &name);
+        let _ = set_default_inner(config_path, &name, default_model).await;
+    }
+
     show_inner(config_path, xvn_home, &name).await
 }
 
@@ -391,6 +482,63 @@ async fn remove_inner(config_path: &Path, xvn_home: &Path, name: &str) -> ApiRes
     Ok(())
 }
 
+async fn set_default_inner(
+    config_path: &Path,
+    name: &str,
+    model: Option<&str>,
+) -> ApiResult<()> {
+    let cfg = load_cfg(config_path).await?;
+    let entry = cfg
+        .providers
+        .iter()
+        .find(|p| p.name == name)
+        .ok_or_else(|| ApiError::NotFound(format!("provider `{name}` not found")))?;
+    if entry.name.starts_with('_') {
+        return Err(ApiError::Validation(format!(
+            "cannot set default to synthetic provider `{name}`"
+        )));
+    }
+    let new_kind = entry.kind;
+    let new_base = entry.base_url.clone();
+    let new_env = entry.api_key_env.clone();
+
+    let kind_str = kind_to_str(new_kind).to_string();
+    let model_owned = model.map(str::to_string);
+    let path: PathBuf = config_path.to_path_buf();
+    task::spawn_blocking(move || -> ApiResult<()> {
+        use toml_edit::{value, DocumentMut, Item};
+        let raw = std::fs::read_to_string(&path).map_err(|e| {
+            ApiError::Internal(format!("read {}: {e}", path.display()))
+        })?;
+        let mut doc: DocumentMut = raw.parse().map_err(|e| {
+            ApiError::Internal(format!("parse {}: {e}", path.display()))
+        })?;
+        let intern = doc
+            .entry("intern")
+            .or_insert(Item::Table(Default::default()))
+            .as_table_mut()
+            .ok_or_else(|| {
+                ApiError::Validation("[intern] is not a table".into())
+            })?;
+        intern.insert("provider", value(kind_str));
+        intern.insert("base_url", value(new_base));
+        intern.insert("api_key_env", value(new_env));
+        if let Some(m) = model_owned {
+            intern.insert("model", value(m));
+        }
+        std::fs::write(&path, doc.to_string()).map_err(|e| {
+            ApiError::Internal(format!("write {}: {e}", path.display()))
+        })?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| ApiError::Internal(format!("spawn_blocking: {e}")))??;
+
+    // Re-validate the resulting config.
+    let _ = load_cfg(config_path).await?;
+    Ok(())
+}
+
 // --- helpers ---------------------------------------------------------------
 
 async fn load_cfg(config_path: &Path) -> ApiResult<RuntimeConfig> {
@@ -441,6 +589,25 @@ fn default_api_key_env_for(kind: ProviderKind, name: &str) -> String {
             name.to_ascii_uppercase().replace('-', "_")
         ),
         ProviderKind::LocalCandle => String::new(),
+    }
+}
+
+/// Best-effort model id for a `(kind, name)` provider — mirrors the
+/// fallbacks the dashboard chat-rail dropdown uses so the wizard
+/// (which lacks a model picker) gets a working model out of the box.
+fn sensible_default_model(kind: ProviderKind, name: &str) -> Option<&'static str> {
+    match kind {
+        ProviderKind::Anthropic => Some("claude-sonnet-4-6"),
+        ProviderKind::OpenaiCompat => match name {
+            // V4 names per https://api-docs.deepseek.com — `deepseek-chat`
+            // retires 2026-07-24, so auto-promote points at the new id.
+            "deepseek" => Some("deepseek-v4-flash"),
+            "groq" => Some("llama-3.3-70b-versatile"),
+            "openrouter" => Some("anthropic/claude-3.5-sonnet"),
+            "openai" => Some("gpt-4o-mini"),
+            _ => None,
+        },
+        ProviderKind::LocalCandle => None,
     }
 }
 
@@ -686,7 +853,7 @@ sqlite_url = "sqlite://x.db"
                 kind: "openai-compat".into(),
                 base_url: "https://api.openai.com/v1".into(),
                 api_key_env: "OPENAI_API_KEY".into(),
-                api_key: None,
+                api_key: Some("sk-test".into()),
             },
         )
         .await
@@ -710,7 +877,7 @@ sqlite_url = "sqlite://x.db"
                 kind: "BOGUS".into(),
                 base_url: "https://x".into(),
                 api_key_env: "K".into(),
-                api_key: None,
+                api_key: Some("k".into()),
             },
         )
         .await
@@ -731,7 +898,7 @@ sqlite_url = "sqlite://x.db"
                 kind: "anthropic".into(),
                 base_url: "https://x".into(),
                 api_key_env: "K".into(),
-                api_key: None,
+                api_key: Some("k".into()),
             },
         )
         .await
@@ -752,7 +919,49 @@ sqlite_url = "sqlite://x.db"
                 kind: "openai-compat".into(),
                 base_url: "https://x".into(),
                 api_key_env: "K".into(),
+                api_key: Some("k".into()),
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, ApiError::Validation(_)), "got {err:?}");
+    }
+
+    #[tokio::test]
+    async fn add_rejects_empty_api_key_for_auth_kind() {
+        let dir = TempDir::new().unwrap();
+        let path = write_min_config(&dir);
+        let ctx = ctx_in(&dir).await;
+        let err = add(
+            &ctx,
+            &path,
+            AddProviderRequest {
+                name: "groq".into(),
+                kind: "openai-compat".into(),
+                base_url: "https://api.groq.com/openai/v1".into(),
+                api_key_env: "GROQ_API_KEY".into(),
                 api_key: None,
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, ApiError::Validation(_)), "got {err:?}");
+    }
+
+    #[tokio::test]
+    async fn add_rejects_base_url_without_scheme() {
+        let dir = TempDir::new().unwrap();
+        let path = write_min_config(&dir);
+        let ctx = ctx_in(&dir).await;
+        let err = add(
+            &ctx,
+            &path,
+            AddProviderRequest {
+                name: "deepseek".into(),
+                kind: "openai-compat".into(),
+                base_url: "api.deepseek.com/v1".into(),
+                api_key_env: "DEEPSEEK_API_KEY".into(),
+                api_key: Some("sk-test".into()),
             },
         )
         .await

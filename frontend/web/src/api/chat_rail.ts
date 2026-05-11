@@ -80,9 +80,25 @@ export async function deleteSession(sessionId: string): Promise<void> {
 }
 
 export async function* streamChat(
-  req: { session_id: string; message: string; model?: string },
+  req: {
+    session_id: string;
+    message: string;
+    /// Explicit provider name (must exist in Settings → Providers).
+    /// When omitted, the dashboard falls back to the intern's default
+    /// provider.
+    provider?: string;
+    /// Explicit model id. When omitted, the dashboard falls back to
+    /// [intern].model for the default provider.
+    model?: string;
+  },
   signal?: AbortSignal,
 ): AsyncGenerator<WizardEvent> {
+  console.info("[chat-rail] streamChat", {
+    session_id: req.session_id,
+    provider: req.provider,
+    model: req.model,
+    message_len: req.message.length,
+  });
   const res = await fetch("/api/chat-rail/chat", {
     method: "POST",
     headers: {
@@ -99,6 +115,11 @@ export async function* streamChat(
     } catch {
       // not JSON
     }
+    console.error("[chat-rail] streamChat failed", {
+      status: res.status,
+      code: body?.code,
+      message: body?.message,
+    });
     throw new ApiError(
       res.status,
       body?.code ?? "http_error",

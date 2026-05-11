@@ -9,6 +9,7 @@ use axum::{
     http::StatusCode,
     Json,
 };
+use serde::Deserialize;
 use std::path::PathBuf;
 
 use xvision_engine::api::settings::providers::{
@@ -57,5 +58,28 @@ pub async fn remove(
     Path(name): Path<String>,
 ) -> Result<StatusCode, DashboardError> {
     providers::remove(&state.api_context(), &config_path(), &name).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetDefaultBody {
+    #[serde(default)]
+    pub model: Option<String>,
+}
+
+/// POST `/api/settings/providers/:name/set-default` — point `[intern]` at
+/// the named provider so the previous default becomes deletable.
+pub async fn set_default(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Json(body): Json<SetDefaultBody>,
+) -> Result<StatusCode, DashboardError> {
+    providers::set_default(
+        &state.api_context(),
+        &config_path(),
+        &name,
+        body.model.as_deref(),
+    )
+    .await?;
     Ok(StatusCode::NO_CONTENT)
 }

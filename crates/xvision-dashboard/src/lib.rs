@@ -6,6 +6,7 @@
 
 pub mod embed;
 pub mod error;
+pub mod llm_dispatch;
 pub mod routes;
 pub mod server;
 pub mod state;

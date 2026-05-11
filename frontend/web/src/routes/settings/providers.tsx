@@ -7,6 +7,7 @@ import {
   addProvider,
   listProviders,
   removeProvider,
+  setDefaultProvider,
   settingsKeys,
 } from "@/api/settings";
 import type {
@@ -52,7 +53,9 @@ const KIND_OPTIONS: ReadonlyArray<KindOption> = [
     label: "DeepSeek",
     wireKind: "openai-compat",
     defaultName: "deepseek",
-    defaultBaseUrl: "https://api.deepseek.com/v1",
+    // DeepSeek's OpenAI-compat root, per https://api-docs.deepseek.com.
+    // We POST to `{base}/chat/completions` — no /v1 segment.
+    defaultBaseUrl: "https://api.deepseek.com",
     isCustom: false,
     keyHelp: "Starts with sk-…",
   },
@@ -85,6 +88,18 @@ const KIND_OPTIONS: ReadonlyArray<KindOption> = [
   },
 ];
 
+// Local-Ollama style endpoints don't need a key. Anything else does.
+function keyRequired(meta: KindOption, baseUrl: string): boolean {
+  if (meta.value === "custom" && /localhost|127\.0\.0\.1/.test(baseUrl)) {
+    return false;
+  }
+  return true;
+}
+
+function isHttpUrl(s: string): boolean {
+  return /^https?:\/\/.+/i.test(s);
+}
+
 export function SettingsProvidersRoute() {
   const qc = useQueryClient();
   const [adding, setAdding] = useState(false);
@@ -95,6 +110,11 @@ export function SettingsProvidersRoute() {
 
   const remove = useMutation({
     mutationFn: (name: string) => removeProvider(name),
+    onSuccess: () => qc.invalidateQueries({ queryKey: settingsKeys.providers() }),
+  });
+
+  const promote = useMutation({
+    mutationFn: (name: string) => setDefaultProvider(name),
     onSuccess: () => qc.invalidateQueries({ queryKey: settingsKeys.providers() }),
   });
 
@@ -133,9 +153,15 @@ export function SettingsProvidersRoute() {
     <div className="space-y-5">
       <Card className="p-5">
         <div className="flex items-center justify-between mb-3">
-          <h3 className="m-0 font-serif font-medium text-[20px] tracking-tight">
-            LLM providers
-          </h3>
+          <div>
+            <h3 className="m-0 font-serif font-medium text-[20px] tracking-tight">
+              LLM providers
+            </h3>
+            <p className="m-0 mt-1 text-text-3 text-[12px]">
+              Models xvision can call for the intern, agent rail, and
+              authoring wizard.
+            </p>
+          </div>
           {!adding ? (
             <button
               onClick={() => setAdding(true)}
@@ -181,7 +207,16 @@ export function SettingsProvidersRoute() {
                 <ProviderRowView
                   key={p.name}
                   row={p}
+                  canPromote={
+                    rows.some(
+                      (r) =>
+                        r.name !== p.name &&
+                        r.api_key_set &&
+                        !r.synthetic,
+                    )
+                  }
                   onRemove={() => remove.mutate(p.name)}
+                  onPromote={() => promote.mutate(p.name)}
                   removeError={
                     remove.variables === p.name && remove.isError
                       ? errorMessage(remove.error)
@@ -189,6 +224,14 @@ export function SettingsProvidersRoute() {
                   }
                   removeBusy={
                     remove.variables === p.name && remove.isPending
+                  }
+                  promoteBusy={
+                    promote.variables === p.name && promote.isPending
+                  }
+                  promoteError={
+                    promote.variables === p.name && promote.isError
+                      ? errorMessage(promote.error)
+                      : null
                   }
                 />
               ))}
@@ -202,19 +245,31 @@ export function SettingsProvidersRoute() {
 
 function ProviderRowView({
   row,
+  canPromote,
   onRemove,
+  onPromote,
   removeError,
   removeBusy,
+  promoteBusy,
+  promoteError,
 }: {
   row: ProviderRow;
+  canPromote: boolean;
   onRemove: () => void;
+  onPromote: () => void;
   removeError: string | null;
   removeBusy: boolean;
+  promoteBusy: boolean;
+  promoteError: string | null;
 }) {
-  const lockReason = row.referenced_by_intern
-    ? "default LLM for the workspace — remove the intern reference before deleting"
-    : null;
+  // Default rows are locked from deletion because the intern slot needs
+  // a target. Operators can switch the default to another configured
+  // provider first (the "set as default" button below); that unlocks the
+  // old default for removal.
   const locked = row.referenced_by_intern;
+  const lockReason = locked
+    ? "Workspace default — promote another provider first, then come back to remove this one."
+    : null;
   return (
     <>
       <tr className="border-t border-border-soft align-middle">
@@ -242,20 +297,47 @@ function ProviderRowView({
           )}
         </td>
         <td className="py-2 pr-0 text-right">
-          <button
-            onClick={onRemove}
-            disabled={locked || removeBusy}
-            title={lockReason ?? undefined}
-            className="px-2 py-1 rounded text-[12px] border border-border text-text-2 hover:text-danger hover:border-danger disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:text-text-2 disabled:hover:border-border"
-          >
-            {removeBusy ? "Removing…" : "Remove"}
-          </button>
+          <div className="inline-flex items-center gap-2">
+            {!row.referenced_by_intern && row.api_key_set ? (
+              <button
+                onClick={onPromote}
+                disabled={promoteBusy}
+                title="Make this the workspace default (intern provider)"
+                className="px-2 py-1 rounded text-[12px] border border-border text-text-2 hover:text-gold hover:border-gold disabled:opacity-30"
+              >
+                {promoteBusy ? "Switching…" : "Set as default"}
+              </button>
+            ) : null}
+            <button
+              onClick={onRemove}
+              disabled={locked || removeBusy}
+              title={lockReason ?? undefined}
+              className="px-2 py-1 rounded text-[12px] border border-border text-text-2 hover:text-danger hover:border-danger disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:text-text-2 disabled:hover:border-border"
+            >
+              {removeBusy ? "Removing…" : "Remove"}
+            </button>
+          </div>
         </td>
       </tr>
       {removeError ? (
         <tr className="border-t border-border-soft/40">
           <td colSpan={5} className="py-2 pr-0 text-[12px] text-danger">
             {removeError}
+          </td>
+        </tr>
+      ) : null}
+      {promoteError ? (
+        <tr className="border-t border-border-soft/40">
+          <td colSpan={5} className="py-2 pr-0 text-[12px] text-danger">
+            {promoteError}
+          </td>
+        </tr>
+      ) : null}
+      {locked && !canPromote ? (
+        <tr className="border-t border-border-soft/40">
+          <td colSpan={5} className="py-2 pr-0 text-[12px] text-text-3">
+            Add another provider with an API key, then you can demote this
+            one and remove it.
           </td>
         </tr>
       ) : null}
@@ -284,19 +366,37 @@ function AddProviderForm({
 
   const trimmedName = name.trim();
   const trimmedBaseUrl = baseUrl.trim();
-  const submittable = trimmedName !== "" && trimmedBaseUrl !== "";
+  const trimmedKey = apiKey.trim();
+  const needsKey = keyRequired(meta, trimmedBaseUrl);
+  const errors: string[] = [];
+  if (trimmedName === "") errors.push("name is required");
+  if (trimmedBaseUrl === "") {
+    errors.push("base URL is required");
+  } else if (!isHttpUrl(trimmedBaseUrl)) {
+    errors.push("base URL must start with http:// or https://");
+  }
+  if (needsKey && trimmedKey === "") errors.push("API key is required");
+  const submittable = errors.length === 0;
 
   return (
     <form
       onSubmit={(e) => {
         e.preventDefault();
         if (!submittable) return;
+        // Surface client-side console logs so the user can see what was sent
+        // when reporting issues — the previous flow was a black box.
+        console.info("[providers] add", {
+          name: trimmedName,
+          kind: meta.wireKind,
+          base_url: trimmedBaseUrl,
+          api_key_set: trimmedKey !== "",
+        });
         add.mutate({
           name: trimmedName,
           kind: meta.wireKind,
           base_url: trimmedBaseUrl,
           api_key_env: "",
-          api_key: apiKey.trim() === "" ? undefined : apiKey,
+          api_key: trimmedKey === "" ? undefined : apiKey,
         });
       }}
       className="border border-border-soft rounded-md p-4 mb-4 bg-surface-elev/30 space-y-3"
@@ -333,7 +433,7 @@ function AddProviderForm({
       </Field>
 
       <Field
-        label="API key"
+        label={needsKey ? "API key (required)" : "API key"}
         hint={meta.keyHelp}
       >
         <input
@@ -345,6 +445,7 @@ function AddProviderForm({
           onChange={(e) => setApiKey(e.target.value)}
           placeholder="paste key here"
           className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
+          required={needsKey}
         />
       </Field>
 
@@ -378,10 +479,18 @@ function AddProviderForm({
         />
       </Field>
 
+      {errors.length > 0 ? (
+        <ul className="m-0 pl-4 text-[12px] text-danger list-disc">
+          {errors.map((e) => (
+            <li key={e}>{e}</li>
+          ))}
+        </ul>
+      ) : null}
       <div className="flex items-center gap-3 pt-1">
         <button
           type="submit"
           disabled={!submittable || add.isPending}
+          title={submittable ? "" : errors.join("; ")}
           className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft disabled:opacity-40 disabled:hover:bg-gold transition-colors"
         >
           {add.isPending ? "Saving…" : "Save provider"}

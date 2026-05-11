@@ -13,8 +13,12 @@ export type WizardEvent =
 
 export type ChatRequest = {
   message: string;
-  /// Anthropic model id; defaults to claude-sonnet-4-6 server-side.
+  /// Optional model id. When omitted, the dashboard falls back to
+  /// [intern].model for the default provider.
   model?: string;
+  /// Optional provider name. When omitted, the dashboard falls back to
+  /// the [intern]-referenced default.
+  provider?: string;
 };
 
 /// Async generator that yields one `WizardEvent` per server SSE frame.
@@ -24,6 +28,11 @@ export async function* streamChat(
   req: ChatRequest,
   signal?: AbortSignal,
 ): AsyncGenerator<WizardEvent> {
+  console.info("[wizard] streamChat", {
+    provider: req.provider,
+    model: req.model,
+    message_len: req.message.length,
+  });
   const res = await fetch("/api/wizard/chat", {
     method: "POST",
     headers: {
@@ -40,6 +49,11 @@ export async function* streamChat(
     } catch {
       // not JSON
     }
+    console.error("[wizard] streamChat failed", {
+      status: res.status,
+      code: body?.code,
+      message: body?.message,
+    });
     throw new ApiError(
       res.status,
       body?.code ?? "http_error",

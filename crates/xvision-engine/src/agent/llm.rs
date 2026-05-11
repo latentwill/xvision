@@ -209,7 +209,15 @@ impl LlmDispatch for AnthropicDispatch {
             body["tools"] = serde_json::to_value(&req.tools)?;
         }
 
-        let resp = self
+        tracing::debug!(
+            target: "xvision::llm",
+            provider = "anthropic",
+            model = %req.model,
+            tools = req.tools.len(),
+            "dispatching LLM request"
+        );
+
+        let http_resp = self
             .client
             .post("https://api.anthropic.com/v1/messages")
             .header("x-api-key", &self.api_key)
@@ -217,10 +225,21 @@ impl LlmDispatch for AnthropicDispatch {
             .header("content-type", "application/json")
             .json(&body)
             .send()
-            .await?
-            .error_for_status()?
-            .json::<serde_json::Value>()
             .await?;
+
+        let status = http_resp.status();
+        if !status.is_success() {
+            let text = http_resp.text().await.unwrap_or_default();
+            tracing::warn!(
+                target: "xvision::llm",
+                provider = "anthropic",
+                status = %status,
+                body = %text,
+                "Anthropic API returned non-success"
+            );
+            anyhow::bail!("Anthropic API error {}: {}", status, text);
+        }
+        let resp: serde_json::Value = http_resp.json().await?;
 
         let raw_content = resp["content"].as_array().cloned().unwrap_or_default();
         let mut content = Vec::with_capacity(raw_content.len());
@@ -247,6 +266,184 @@ impl LlmDispatch for AnthropicDispatch {
         let output_tokens = resp["usage"]["output_tokens"].as_u64().unwrap_or(0) as u32;
         Ok(LlmResponse {
             content,
+            stop_reason,
+            input_tokens,
+            output_tokens,
+        })
+    }
+}
+
+// ---- OpenaiCompatDispatch (DeepSeek / OpenAI / Groq / OpenRouter / Together /
+// Ollama / vLLM / any /v1/chat/completions endpoint) ------------------------
+
+/// Translates our Anthropic-style `LlmRequest` to and from the OpenAI
+/// /chat/completions wire shape. The `base_url` is the OpenAI-compat root
+/// (e.g. `https://api.deepseek.com/v1`); we POST to `{base_url}/chat/completions`.
+/// Tool-use round-trips translate Anthropic's `tool_use` / `tool_result`
+/// blocks to OpenAI's `tool_calls` array + `role: "tool"` reply messages.
+pub struct OpenaiCompatDispatch {
+    base_url: String,
+    api_key: String,
+    client: reqwest::Client,
+}
+
+impl OpenaiCompatDispatch {
+    pub fn new(base_url: String, api_key: String) -> Self {
+        Self {
+            base_url,
+            api_key,
+            client: reqwest::Client::new(),
+        }
+    }
+}
+
+#[async_trait]
+impl LlmDispatch for OpenaiCompatDispatch {
+    async fn complete(&self, req: LlmRequest) -> anyhow::Result<LlmResponse> {
+        // Translate Anthropic-style messages into OpenAI chat-completions format.
+        // System prompt rides as the first message (role=system).
+        let mut messages: Vec<serde_json::Value> = Vec::with_capacity(req.messages.len() + 1);
+        if !req.system_prompt.is_empty() {
+            messages.push(serde_json::json!({
+                "role": "system",
+                "content": req.system_prompt,
+            }));
+        }
+        for m in &req.messages {
+            // Split each Anthropic message by ContentBlock type. text/tool_use
+            // belong to "assistant" messages; tool_result blocks each become
+            // their own "tool" message in OpenAI's shape.
+            let mut text_parts: Vec<&str> = Vec::new();
+            let mut tool_calls: Vec<serde_json::Value> = Vec::new();
+            let mut tool_results: Vec<(&str, &str)> = Vec::new();
+            for c in &m.content {
+                match c {
+                    ContentBlock::Text { text } => text_parts.push(text.as_str()),
+                    ContentBlock::ToolUse { id, name, input } => {
+                        tool_calls.push(serde_json::json!({
+                            "id": id,
+                            "type": "function",
+                            "function": {
+                                "name": name,
+                                "arguments": serde_json::to_string(input).unwrap_or_else(|_| "{}".to_string()),
+                            },
+                        }));
+                    }
+                    ContentBlock::ToolResult { tool_use_id, content } => {
+                        tool_results.push((tool_use_id.as_str(), content.as_str()));
+                    }
+                }
+            }
+            if !text_parts.is_empty() || !tool_calls.is_empty() {
+                let mut obj = serde_json::Map::new();
+                obj.insert("role".into(), serde_json::Value::String(m.role.clone()));
+                obj.insert(
+                    "content".into(),
+                    serde_json::Value::String(text_parts.concat()),
+                );
+                if !tool_calls.is_empty() {
+                    obj.insert("tool_calls".into(), serde_json::Value::Array(tool_calls));
+                }
+                messages.push(serde_json::Value::Object(obj));
+            }
+            for (id, content) in tool_results {
+                messages.push(serde_json::json!({
+                    "role": "tool",
+                    "tool_call_id": id,
+                    "content": content,
+                }));
+            }
+        }
+
+        let mut body = serde_json::json!({
+            "model": req.model,
+            "messages": messages,
+            "max_tokens": req.max_tokens,
+        });
+        if !req.tools.is_empty() {
+            let mapped: Vec<serde_json::Value> = req
+                .tools
+                .iter()
+                .map(|t| {
+                    serde_json::json!({
+                        "type": "function",
+                        "function": {
+                            "name": t.name,
+                            "description": t.description,
+                            "parameters": t.input_schema,
+                        },
+                    })
+                })
+                .collect();
+            body["tools"] = serde_json::Value::Array(mapped);
+        }
+
+        let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
+        tracing::debug!(
+            target: "xvision::llm",
+            provider = "openai-compat",
+            base_url = %self.base_url,
+            url = %url,
+            model = %req.model,
+            tools = req.tools.len(),
+            "dispatching LLM request"
+        );
+
+        let mut request = self.client.post(&url).header("content-type", "application/json");
+        if !self.api_key.is_empty() {
+            request = request.header("authorization", format!("Bearer {}", self.api_key));
+        }
+        let http_resp = request.json(&body).send().await?;
+        let status = http_resp.status();
+        if !status.is_success() {
+            let text = http_resp.text().await.unwrap_or_default();
+            tracing::warn!(
+                target: "xvision::llm",
+                provider = "openai-compat",
+                url = %url,
+                status = %status,
+                body = %text,
+                "OpenAI-compat API returned non-success"
+            );
+            anyhow::bail!("OpenAI-compat API error {} at {}: {}", status, url, text);
+        }
+        let resp: serde_json::Value = http_resp.json().await?;
+
+        let choice = resp["choices"]
+            .get(0)
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        let msg = &choice["message"];
+        let mut content_blocks: Vec<ContentBlock> = Vec::new();
+        if let Some(text) = msg["content"].as_str() {
+            if !text.is_empty() {
+                content_blocks.push(ContentBlock::Text {
+                    text: text.to_string(),
+                });
+            }
+        }
+        if let Some(calls) = msg["tool_calls"].as_array() {
+            for call in calls {
+                let id = call["id"].as_str().unwrap_or("").to_string();
+                let name = call["function"]["name"].as_str().unwrap_or("").to_string();
+                let raw_args = call["function"]["arguments"].as_str().unwrap_or("{}");
+                let input: serde_json::Value =
+                    serde_json::from_str(raw_args).unwrap_or(serde_json::Value::Object(
+                        serde_json::Map::new(),
+                    ));
+                content_blocks.push(ContentBlock::ToolUse { id, name, input });
+            }
+        }
+        let stop_reason = match choice["finish_reason"].as_str() {
+            Some("stop") => StopReason::EndTurn,
+            Some("tool_calls") => StopReason::ToolUse,
+            Some("length") => StopReason::MaxTokens,
+            _ => StopReason::EndTurn,
+        };
+        let input_tokens = resp["usage"]["prompt_tokens"].as_u64().unwrap_or(0) as u32;
+        let output_tokens = resp["usage"]["completion_tokens"].as_u64().unwrap_or(0) as u32;
+        Ok(LlmResponse {
+            content: content_blocks,
             stop_reason,
             input_tokens,
             output_tokens,
