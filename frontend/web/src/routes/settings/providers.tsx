@@ -11,11 +11,13 @@ import {
   setDefaultProvider,
   setEnabledModels,
   settingsKeys,
+  testProviderConnection,
 } from "@/api/settings";
 import type {
   AddProviderRequest,
   ProviderModelEntry,
   ProviderRow,
+  TestConnectionReport,
 } from "@/api/types.gen";
 
 // Provider presets the form recognises. Each preset fills in a sensible
@@ -271,6 +273,9 @@ function ProviderRowView({
     ? "Workspace default — promote another provider first, then come back to remove this one."
     : null;
   const [managing, setManaging] = useState(false);
+  const test = useMutation<TestConnectionReport, unknown, void>({
+    mutationFn: () => testProviderConnection(row.name),
+  });
   return (
     <>
       <tr className="border-t border-border-soft align-middle">
@@ -299,6 +304,16 @@ function ProviderRowView({
         </td>
         <td className="py-2 pr-0 text-right">
           <div className="inline-flex items-center gap-2">
+            {row.api_key_set ? (
+              <button
+                onClick={() => test.mutate()}
+                disabled={test.isPending}
+                title="Hit the provider's catalog endpoint to verify the key + base URL"
+                className="px-2 py-1 rounded text-[12px] border border-border text-text-2 hover:text-text hover:border-text-3 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {test.isPending ? "Testing…" : "Test"}
+              </button>
+            ) : null}
             {row.api_key_set ? (
               <button
                 onClick={() => setManaging((m) => !m)}
@@ -331,6 +346,16 @@ function ProviderRowView({
           </div>
         </td>
       </tr>
+      {test.data || test.isError ? (
+        <tr className="border-t border-border-soft/40">
+          <td colSpan={5} className="py-1.5 pr-0 text-[12px]">
+            <ConnectionResult
+              data={test.data ?? null}
+              error={test.isError ? test.error : null}
+            />
+          </td>
+        </tr>
+      ) : null}
       {managing ? (
         <tr className="border-t border-border-soft/40 bg-surface-elev/20">
           <td colSpan={5} className="py-3 pr-0">
@@ -361,6 +386,43 @@ function ProviderRowView({
         </tr>
       ) : null}
     </>
+  );
+}
+
+function ConnectionResult({
+  data,
+  error,
+}: {
+  data: TestConnectionReport | null;
+  error: unknown;
+}) {
+  if (error) {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-rose-300">
+        <span aria-hidden>✗</span>
+        <span className="font-mono text-text-2">{errorMessage(error)}</span>
+      </span>
+    );
+  }
+  if (!data) return null;
+  if (data.ok) {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-emerald-300">
+        <span aria-hidden>✓</span>
+        <span>
+          connected · {data.latency_ms}ms
+          {data.model_count > 0 ? ` · ${data.model_count} models` : ""}
+        </span>
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1.5 text-rose-300">
+      <span aria-hidden>✗</span>
+      <span className="font-mono text-text-2">
+        {data.error ?? "connection failed"}
+      </span>
+    </span>
   );
 }
 
