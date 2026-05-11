@@ -29,6 +29,14 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/settings/brokers", get(settings::brokers::get))
         .route("/api/settings/daemon", get(settings::daemon::get))
         .route("/api/settings/identity", get(settings::identity::get))
+        .route(
+            "/api/settings/providers",
+            get(settings::providers::list).post(settings::providers::add),
+        )
+        .route(
+            "/api/settings/providers/:name",
+            get(settings::providers::show).delete(settings::providers::remove),
+        )
         .route("/api/wizard/chat", post(wizard::chat))
         .route(
             "/api/chat-rail/sessions",

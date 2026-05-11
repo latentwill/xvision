@@ -509,3 +509,206 @@ async fn eval_compare_returns_report_for_seeded_runs() {
 
     assert!(body["findings"].is_array());
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// /api/settings/providers
+//
+// All providers tests set $XVN_CONFIG_PATH to a tempfile and write a
+// minimal config the route handler reads. They share ENV_LOCK with the
+// other env-touching tests.
+
+const MIN_CONFIG_TOML: &str = r#"
+[runtime]
+mode = "backtest"
+executor = "alpaca"
+random_seed = 42
+
+[[providers]]
+name = "anthropic"
+kind = "anthropic"
+base_url = "https://api.anthropic.com"
+api_key_env = "ANTHROPIC_API_KEY"
+
+[intern]
+provider = "anthropic"
+base_url = "https://api.anthropic.com"
+model = "x"
+api_key_env = "ANTHROPIC_API_KEY"
+temperature = 0.0
+max_tokens = 1024
+
+[trader]
+model_path = "models/x.gguf"
+temperature = 0.0
+forward_paper_temperature = 0.4
+max_tokens = 512
+[trader.vectors]
+enabled = false
+config = "off"
+
+[backtest]
+step = 24
+horizon = 16
+bootstrap_resamples = 1000
+bootstrap_block_size = 8
+
+[paths]
+data_root = "data"
+vectors = "data/vectors"
+probes = "data/probes"
+sqlite_url = "sqlite://x.db"
+"#;
+
+fn write_config(tmp: &TempDir) -> std::path::PathBuf {
+    let path = tmp.path().join("default.toml");
+    std::fs::write(&path, MIN_CONFIG_TOML).unwrap();
+    path
+}
+
+#[tokio::test]
+async fn providers_list_returns_seeded_anthropic() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let (server, tmp) = boot().await;
+    let cfg = write_config(&tmp);
+    let _g = scoped_set("XVN_CONFIG_PATH", cfg.to_str().unwrap());
+
+    let response = server.get("/api/settings/providers").await;
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    let items = body["providers"].as_array().expect("providers array");
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["name"], "anthropic");
+    assert_eq!(items[0]["kind"], "anthropic");
+    assert_eq!(items[0]["referenced_by_intern"], true);
+    assert_eq!(items[0]["synthetic"], false);
+}
+
+#[tokio::test]
+async fn providers_show_returns_404_for_unknown() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let (server, tmp) = boot().await;
+    let cfg = write_config(&tmp);
+    let _g = scoped_set("XVN_CONFIG_PATH", cfg.to_str().unwrap());
+
+    let response = server.get("/api/settings/providers/nope").await;
+    response.assert_status_not_found();
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["code"], "not_found");
+}
+
+#[tokio::test]
+async fn providers_add_creates_and_persists_row() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let (server, tmp) = boot().await;
+    let cfg = write_config(&tmp);
+    let _g = scoped_set("XVN_CONFIG_PATH", cfg.to_str().unwrap());
+
+    let response = server
+        .post("/api/settings/providers")
+        .json(&serde_json::json!({
+            "name": "openai",
+            "kind": "openai-compat",
+            "base_url": "https://api.openai.com/v1",
+            "api_key_env": "OPENAI_API_KEY",
+        }))
+        .await;
+    response.assert_status(axum::http::StatusCode::CREATED);
+    let row: serde_json::Value = response.json();
+    assert_eq!(row["name"], "openai");
+    assert_eq!(row["kind"], "openai-compat");
+    assert_eq!(row["referenced_by_intern"], false);
+
+    // Round-trip: GET list reflects the addition.
+    let list = server.get("/api/settings/providers").await;
+    let body: serde_json::Value = list.json();
+    let items = body["providers"].as_array().unwrap();
+    assert_eq!(items.len(), 2);
+    assert!(items.iter().any(|p| p["name"] == "openai"));
+
+    // File on disk still parses.
+    let raw = std::fs::read_to_string(&cfg).unwrap();
+    assert!(raw.contains("name = \"openai\""));
+}
+
+#[tokio::test]
+async fn providers_add_rejects_duplicate_with_409() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let (server, tmp) = boot().await;
+    let cfg = write_config(&tmp);
+    let _g = scoped_set("XVN_CONFIG_PATH", cfg.to_str().unwrap());
+
+    let response = server
+        .post("/api/settings/providers")
+        .json(&serde_json::json!({
+            "name": "anthropic",
+            "kind": "anthropic",
+            "base_url": "https://x",
+            "api_key_env": "K",
+        }))
+        .await;
+    response.assert_status(axum::http::StatusCode::CONFLICT);
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["code"], "conflict");
+}
+
+#[tokio::test]
+async fn providers_add_rejects_invalid_kind_with_400() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let (server, tmp) = boot().await;
+    let cfg = write_config(&tmp);
+    let _g = scoped_set("XVN_CONFIG_PATH", cfg.to_str().unwrap());
+
+    let response = server
+        .post("/api/settings/providers")
+        .json(&serde_json::json!({
+            "name": "x",
+            "kind": "BOGUS",
+            "base_url": "https://x",
+            "api_key_env": "K",
+        }))
+        .await;
+    response.assert_status_bad_request();
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["code"], "validation");
+}
+
+#[tokio::test]
+async fn providers_remove_refuses_intern_referenced_with_409() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let (server, tmp) = boot().await;
+    let cfg = write_config(&tmp);
+    let _g = scoped_set("XVN_CONFIG_PATH", cfg.to_str().unwrap());
+
+    let response = server.delete("/api/settings/providers/anthropic").await;
+    response.assert_status(axum::http::StatusCode::CONFLICT);
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["code"], "conflict");
+}
+
+#[tokio::test]
+async fn providers_remove_drops_row_and_returns_204() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let (server, tmp) = boot().await;
+    let cfg = write_config(&tmp);
+    let _g = scoped_set("XVN_CONFIG_PATH", cfg.to_str().unwrap());
+
+    // Seed an extra non-intern-referenced provider so we can delete it.
+    server
+        .post("/api/settings/providers")
+        .json(&serde_json::json!({
+            "name": "openai",
+            "kind": "openai-compat",
+            "base_url": "https://api.openai.com/v1",
+            "api_key_env": "OPENAI_API_KEY",
+        }))
+        .await
+        .assert_status(axum::http::StatusCode::CREATED);
+
+    let response = server.delete("/api/settings/providers/openai").await;
+    response.assert_status(axum::http::StatusCode::NO_CONTENT);
+
+    let list = server.get("/api/settings/providers").await;
+    let body: serde_json::Value = list.json();
+    let items = body["providers"].as_array().unwrap();
+    assert!(items.iter().all(|p| p["name"] != "openai"));
+}
