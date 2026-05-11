@@ -16,6 +16,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
+use xvision_engine::api::chart::{self as chart_api, CompareChartPayload, RunChartPayload};
 use xvision_engine::api::eval::{
     self, CompareRunsRequest, EvalRunRequest, ListRunsRequest, RunDetail, RunSummary,
 };
@@ -98,6 +99,46 @@ pub async fn compare(
     )
     .await?;
     Ok(Json(report))
+}
+
+/// `GET /api/eval/runs/:id/chart` — build the chart payload for a single run.
+///
+/// Delegates to `chart_api::build_run_payload`. Returns `200 JSON RunChartPayload`
+/// or `404 { code: "not_found" }` when the run id is unknown.
+pub async fn chart(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<RunChartPayload>, DashboardError> {
+    let payload = chart_api::build_run_payload(&state.api_context(), &id).await?;
+    Ok(Json(payload))
+}
+
+/// `GET /api/eval/runs/compare/chart?ids=a,b,c` — build the compare chart payload.
+///
+/// Parses `?ids=` (comma-separated run ids) and delegates to
+/// `chart_api::build_compare_payload`. Returns `200 JSON CompareChartPayload`,
+/// `400` when more than 10 ids are given or the list is empty.
+pub async fn compare_chart(
+    State(state): State<AppState>,
+    Query(params): Query<CompareParams>,
+) -> Result<Json<CompareChartPayload>, DashboardError> {
+    let raw = params.ids.unwrap_or_default();
+    let run_ids: Vec<String> = raw
+        .split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .collect();
+
+    if run_ids.is_empty() {
+        return Err(DashboardError::Validation {
+            field: "ids".into(),
+            msg: "must provide at least one run id".into(),
+        });
+    }
+
+    let payload = chart_api::build_compare_payload(&state.api_context(), &run_ids).await?;
+    Ok(Json(payload))
 }
 
 /// `POST /api/eval/runs` — launch a new eval run.

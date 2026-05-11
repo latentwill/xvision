@@ -904,6 +904,40 @@ async fn providers_remove_drops_row_and_returns_204() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// /api/eval/runs/:id/chart and /api/eval/runs/compare/chart
+
+#[tokio::test]
+async fn chart_returns_404_for_unknown_run() {
+    let (server, _tmp) = boot().await;
+    let response = server.get("/api/eval/runs/r_unknown/chart").await;
+    response.assert_status_not_found();
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["code"], "not_found");
+}
+
+#[tokio::test]
+async fn compare_chart_returns_400_for_empty_ids() {
+    let (server, _tmp) = boot().await;
+    // Empty ids= param → validation error.
+    let response = server.get("/api/eval/runs/compare/chart?ids=").await;
+    response.assert_status_bad_request();
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["code"], "validation");
+}
+
+#[tokio::test]
+async fn compare_chart_returns_400_for_more_than_10_ids() {
+    let (server, _tmp) = boot().await;
+    // 11 dummy ids → build_compare_payload returns Validation which becomes 400.
+    let ids: String = (0..11).map(|i| format!("r_{i}")).collect::<Vec<_>>().join(",");
+    let url = format!("/api/eval/runs/compare/chart?ids={ids}");
+    let response = server.get(&url).await;
+    response.assert_status_bad_request();
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["code"], "validation");
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // /api/settings/danger/*
 
 #[tokio::test]
