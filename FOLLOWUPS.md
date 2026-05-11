@@ -280,6 +280,36 @@ Hermes Agent (NousResearch) is the OpenClaw successor — its own README documen
 - **Open questions:** post cadence (per-cycle? per-trade? per-mutation? hand-rolled rate limits to avoid spam) · moderation surface (slashable on toxic / off-spec output? operator override?) · whether posts go on-chain (Reputation Registry with `tag1="social"`) or stay off-chain with hash-anchoring · UI shape (timeline tab in dashboard? standalone web view? RSS / ActivityPub bridge?).
 - **Blocking:** non-blocking; pure narrative / community surface. Park here as a "would be funny + actually useful" lane.
 
+### F30 [Shared]. Custom-scenario eval — operator-authored scenarios + Alpaca crypto unlock
+
+- **Trigger:** v1-test surface stabilises; multi-asset eval is the gating gap for credible Persona-B framing.
+- **Scope:** see [custom-scenario eval design spec](docs/superpowers/specs/2026-05-11-custom-scenario-eval-design.md). Three milestones: M1 bar cache + Alpaca fetcher + asset unlock (drops the BTC-only wall in `xvision-execution/alpaca.rs`); M2 immutable scenarios table + CLI + capital/risk move-off-scenario + canonical seed; M3 dashboard wizard at `/scenarios/new` + inline-form on `/eval-runs` + run launcher. F18 partial pull-in (`TraderDecision.asset`) lands in M1.
+- **Blocking:** YES for F31 (replay modes — those extend the scenario `ReplayMode` enum). YES for F32 M1 (chart needs bars in cache). Non-blocking otherwise.
+
+### F31 [Shared]. Scenario replay modes — Stepped, Accelerated, Realtime
+
+- **Trigger:** F30 M2 (scenario table) landed. Stepped + Accelerated can ship anytime after; Realtime is gated on live-paper mirror.
+- **Scope:** extend `ReplayMode` enum (already shaped in F30 spec §5) past `Continuous`. Priority order:
+  1. **Stepped** — halt after each bar, operator advances. Highest debug value ("why did the strategy do the dumb thing on this bar?"). Adds a per-bar pause channel to the harness.
+  2. **Accelerated { speed: f64 }** — N× wall-clock pacing. Useful for demos and watching behaviour without waiting wall-clock time.
+  3. **Realtime** — 1× wall-clock pacing. Mostly matters for paper-mirror parity testing. **Gated on live-paper mirror landing** (otherwise unclear what we'd compare against).
+- **Why deferred:** the harness already processes bar-by-bar in `Continuous`; the pause/channel + pacing machinery is real work and v1 doesn't need it for scenario-replay correctness.
+- **Blocking:** non-blocking individually; collectively they round out the "test like a trader" surface.
+
+### F32 [Shared]. TradingView Lightweight Charts — real charts across six surfaces
+
+- **Trigger:** F30 M1 landed (bar cache populated; chart endpoint can read from it).
+- **Scope:** see [TradingView charts design spec](docs/superpowers/specs/2026-05-11-tradingview-charts-design.md). Drops `lightweight-charts@4.x` via npm, ships six chart surfaces (run detail / compare / scenario detail / strategy detail / live cockpit / wizard preview), kitchen-sink server-computed indicator set (SMA/EMA/Bollinger/Donchian/RSI/MACD/ATR — same math the `xvn-mcp` server exposes to agents), multi-pane stack (price + indicators + equity + drawdown + volume), localStorage layer prefs, SSE-streamed live cockpit. Deletes the existing 30-line SVG sparklines (`eval-runs-detail.tsx:221`, `eval-compare.tsx:194`).
+- **Why pulled forward:** the operator's "see what my strategy did" surface is currently a glorified sparkline; trader-tool framing requires real charts. Pairs naturally with F30 — F30 makes scenarios runnable on any asset / window; F32 makes the results legible.
+- **Blocking:** non-blocking for F30 (F30 ships with the existing SVG charts intact until F32 M1 replaces them).
+
+### F33 [Shared]. TradingView Advanced Charts upgrade — Pine studies + drawing tools
+
+- **Trigger:** post-F32. Requires application/license from TradingView (Lightweight Charts is Apache 2.0; Advanced is free-but-licensed).
+- **Scope:** swap `lightweight-charts` for the Advanced Charts library. Unlocks Pine-script studies, manual drawing tools (trend lines, fib drags, channels), multi-chart layouts, custom indicators. The data API + payload shape from F32 mostly carries over (Advanced Charts has a different ingestion shape — UDF or datafeed adapter — but our payload data is the same).
+- **Why deferred:** the licensing flow + bundle weight + integration work is meaningfully larger; F32's Lightweight surface already covers 90% of the trader-tool need.
+- **Blocking:** non-blocking; pure capability lift.
+
 ### F25 [Shared]. Author a `xvision` Claude Code skill
 
 - **Trigger:** after the GPU headline run lands and the operator surface stops moving every other session. Post-hackathon is also a natural trigger — the SLF surface is fresh tribal knowledge worth capturing.
