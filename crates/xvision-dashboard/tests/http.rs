@@ -938,6 +938,50 @@ async fn compare_chart_returns_400_for_more_than_10_ids() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// /api/scenarios/:id/chart and /api/strategies/:id/chart
+
+#[tokio::test]
+async fn scenario_chart_returns_cache_status_for_canonical() {
+    let (server, _tmp) = boot().await;
+    // crypto-bull-q1-2025 is seeded by AppState::new but has no cached bars.
+    let response = server.get("/api/scenarios/crypto-bull-q1-2025/chart").await;
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    // cache_status must be present and type-tagged (NotCached on fresh db).
+    assert!(
+        body["cache_status"].is_object(),
+        "cache_status must be an object"
+    );
+    assert!(
+        body["cache_status"]["type"].is_string(),
+        "cache_status.type must be a string"
+    );
+    assert!(body["bars"].is_array(), "bars must be array");
+}
+
+#[tokio::test]
+async fn scenario_chart_returns_404_for_unknown() {
+    let (server, _tmp) = boot().await;
+    let response = server.get("/api/scenarios/no-such-scenario/chart").await;
+    response.assert_status_not_found();
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["code"], "not_found");
+}
+
+#[tokio::test]
+async fn strategy_chart_returns_empty_run_series_for_unused_strategy() {
+    let (server, _tmp) = boot().await;
+    let response = server.get("/api/strategies/bundle-canonical-defaults/chart").await;
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    // bundle-canonical-defaults exists but has no runs against it on a fresh db.
+    assert!(
+        body["run_series"].is_array(),
+        "run_series must be array"
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // /api/settings/danger/*
 
 #[tokio::test]

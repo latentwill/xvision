@@ -8,6 +8,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
+use xvision_engine::api::chart::{self as chart_api, StrategyChartPayload};
 use xvision_engine::api::strategy::{
     self, set_risk_config, update_slot, validate_draft, StrategySummary,
 };
@@ -103,4 +104,19 @@ pub async fn post_validate(
 ) -> Result<Json<ValidateDraftOut>, DashboardError> {
     let out = validate_draft(&state.api_context(), &id).await?;
     Ok(Json(out))
+}
+
+/// `GET /api/strategies/:id/chart` — strategy chart payload.
+///
+/// Lists all runs for the strategy bundle, computes per-run normalised
+/// equity curves and headline metrics (final PnL, max drawdown, Sharpe),
+/// and returns the grouped result. An unknown or unused strategy id
+/// returns 200 with an empty `run_series` (not 404 — the bundle may exist
+/// even if no runs reference it yet).
+pub async fn chart(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> Result<Json<StrategyChartPayload>, DashboardError> {
+    let payload = chart_api::build_strategy_payload(&state.api_context(), &id).await?;
+    Ok(Json(payload))
 }

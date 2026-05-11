@@ -27,8 +27,10 @@ pub fn build_router(state: AppState) -> Router {
             "/api/strategy/:id/validate",
             post(strategies::post_validate),
         )
+        .route("/api/strategies/:id/chart", get(strategies::chart))
         .route("/api/scenarios", get(scenarios::list).post(scenarios::create))
         .route("/api/scenarios/:id", get(scenarios::get).delete(scenarios::delete))
+        .route("/api/scenarios/:id/chart", get(scenarios::chart))
         .route("/api/scenarios/:id/clone", post(scenarios::clone))
         .route("/api/scenarios/:id/archive", post(scenarios::archive))
         .route("/api/eval/runs", get(eval_runs::list).post(eval_runs::launch))

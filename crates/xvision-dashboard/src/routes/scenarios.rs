@@ -1,5 +1,6 @@
 //! `GET /api/scenarios` — list scenarios (filterable).
 //! `GET /api/scenarios/:id` — fetch one scenario.
+//! `GET /api/scenarios/:id/chart` — scenario chart payload (bars + cache status).
 //! `POST /api/scenarios` — create a new scenario.
 //! `POST /api/scenarios/:id/clone` — derive a new scenario from an existing one.
 //! `POST /api/scenarios/:id/archive` — soft-delete (sets archived_at).
@@ -16,6 +17,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
+use xvision_engine::api::chart::{self as chart_api, ScenarioChartPayload};
 use xvision_engine::api::scenario::{
     self as api_scenario, CreateScenarioRequest, ListScenariosFilter, ScenarioMutations,
 };
@@ -98,4 +100,17 @@ pub async fn delete(
 ) -> Result<StatusCode, DashboardError> {
     api_scenario::delete(&state.api_context(), &id).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// `GET /api/scenarios/:id/chart` — scenario chart payload.
+///
+/// Returns the OHLCV bars for the scenario (if cached) together with
+/// the `CacheStatus` (FullyCached / PartiallyCached / NotCached).
+/// Returns 404 when the scenario id is not found.
+pub async fn chart(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<ScenarioChartPayload>, DashboardError> {
+    let payload = chart_api::build_scenario_payload(&state.api_context(), &id).await?;
+    Ok(Json(payload))
 }
