@@ -83,13 +83,12 @@ function FilterBar() {
         >
           <Icon name="plus" size={13} /> New from template
         </button>
-        <button
-          className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-gold"
-          disabled
-          title="Coming in Plan 4 (Wizard)"
+        <Link
+          to="/setup"
+          className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft transition-colors"
         >
           <Icon name="plus" size={13} /> New strategy
-        </button>
+        </Link>
       </div>
     </div>
   );

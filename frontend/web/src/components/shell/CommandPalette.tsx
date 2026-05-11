@@ -25,9 +25,34 @@ import {
   type SearchHit,
   type SearchKind,
 } from "@/api/search";
+import { useUi } from "@/stores/ui";
+import { isMacPlatform, modKeyLabel } from "@/lib/platform";
 
 const DEBOUNCE_MS = 80;
 const MAX_RESULTS = 40;
+
+// Static page-navigation entries. Always present; filtered client-side by the
+// current query so "strategies" reliably resolves even before the backend
+// index returns any artifact-level hits.
+const STATIC_ACTIONS: SearchHit[] = [
+  { kind: "action", artifact_id: "nav:home", title: "Home", summary: "Control Tower", tags: ["nav"], href: "/", updated_at: "", bm25_score: 0 },
+  { kind: "action", artifact_id: "nav:strategies", title: "Strategies", summary: "Manage strategy bundles", tags: ["nav"], href: "/strategies", updated_at: "", bm25_score: 0 },
+  { kind: "action", artifact_id: "nav:setup", title: "New strategy", summary: "Launch the setup wizard", tags: ["nav", "create"], href: "/setup", updated_at: "", bm25_score: 0 },
+  { kind: "action", artifact_id: "nav:eval-runs", title: "Eval runs", summary: "Backtests and paper-trade runs", tags: ["nav"], href: "/eval-runs", updated_at: "", bm25_score: 0 },
+  { kind: "action", artifact_id: "nav:settings-providers", title: "Settings · Providers", summary: "LLM keys & providers", tags: ["nav", "settings"], href: "/settings/providers", updated_at: "", bm25_score: 0 },
+  { kind: "action", artifact_id: "nav:settings-brokers", title: "Settings · Brokers", summary: "Alpaca / Orderly credentials", tags: ["nav", "settings"], href: "/settings/brokers", updated_at: "", bm25_score: 0 },
+  { kind: "action", artifact_id: "nav:settings-identity", title: "Settings · Identity", summary: "On-chain identity", tags: ["nav", "settings"], href: "/settings/identity", updated_at: "", bm25_score: 0 },
+  { kind: "action", artifact_id: "nav:settings-danger", title: "Settings · Danger zone", summary: "Reset / destructive ops", tags: ["nav", "settings"], href: "/settings/danger", updated_at: "", bm25_score: 0 },
+];
+
+function filterStatic(q: string): SearchHit[] {
+  const needle = q.trim().toLowerCase();
+  if (!needle) return STATIC_ACTIONS;
+  return STATIC_ACTIONS.filter((a) => {
+    const hay = `${a.title} ${a.summary} ${a.tags.join(" ")}`.toLowerCase();
+    return hay.includes(needle);
+  });
+}
 
 const KIND_ORDER: SearchKind[] = [
   "action",
@@ -56,7 +81,10 @@ export function CommandPalette() {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const navigate = useNavigate();
 
-  const [open, setOpen] = useState(false);
+  const open = useUi((s) => s.cmdkOpen);
+  const setOpen = useUi((s) => s.setCmdkOpen);
+  const toggle = useUi((s) => s.toggleCmdk);
+
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [activeIdx, setActiveIdx] = useState(0);
@@ -66,17 +94,15 @@ export function CommandPalette() {
   // exactly once for the lifetime of the component.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      const meta = navigator.platform.toLowerCase().includes("mac")
-        ? e.metaKey
-        : e.ctrlKey;
+      const meta = isMacPlatform() ? e.metaKey : e.ctrlKey;
       if (meta && e.key.toLowerCase() === "k") {
         e.preventDefault();
-        setOpen((prev) => !prev);
+        toggle();
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [toggle]);
 
   // Sync open state with the <dialog> element. `showModal` traps focus +
   // renders the backdrop natively; `close` is fired by Esc and our own
@@ -113,6 +139,8 @@ export function CommandPalette() {
 
   // Debounced fetch. Fires on every keystroke; the previous timer is
   // cleared so only the last keystroke in a 80ms window hits the server.
+  // If the backend search is unavailable, we silently fall back to the
+  // static actions so navigation still works.
   useEffect(() => {
     if (!open) return;
     const controller = new AbortController();
@@ -129,6 +157,7 @@ export function CommandPalette() {
         }
       } catch (e) {
         if (!controller.signal.aborted) {
+          // Static actions still render — degrade gracefully.
           const msg = e instanceof Error ? e.message : "search failed";
           setError(msg);
           setHits([]);
@@ -142,15 +171,32 @@ export function CommandPalette() {
   }, [query, open]);
 
   const groups: Group[] = useMemo(() => {
-    const buckets = new Map<SearchKind, SearchHit[]>();
+    // Always merge static actions with server hits so page nav resolves even
+    // before the backend index is warm. Dedupe by artifact_id.
+    const actions = filterStatic(query);
+    const seen = new Set<string>();
+    const merged: SearchHit[] = [];
+    for (const a of actions) {
+      if (!seen.has(a.artifact_id)) {
+        seen.add(a.artifact_id);
+        merged.push(a);
+      }
+    }
     for (const h of hits) {
+      if (!seen.has(h.artifact_id)) {
+        seen.add(h.artifact_id);
+        merged.push(h);
+      }
+    }
+    const buckets = new Map<SearchKind, SearchHit[]>();
+    for (const h of merged) {
       const list = buckets.get(h.kind);
       if (list) list.push(h);
       else buckets.set(h.kind, [h]);
     }
     return KIND_ORDER.map((kind) => ({ kind, rows: buckets.get(kind) ?? [] }))
       .filter((g) => g.rows.length > 0);
-  }, [hits]);
+  }, [hits, query]);
 
   // Flat order matches what arrow keys cycle through. Re-derived whenever
   // `groups` changes so activeIdx always points at a real row.
@@ -159,7 +205,7 @@ export function CommandPalette() {
     [groups],
   );
 
-  const close = useCallback(() => setOpen(false), []);
+  const close = useCallback(() => setOpen(false), [setOpen]);
 
   const navigateTo = useCallback(
     (hit: SearchHit) => {
@@ -219,11 +265,7 @@ export function CommandPalette() {
           className="w-full bg-transparent text-text px-4 py-3 text-[15px] border-0 border-b border-border-soft outline-none placeholder:text-text-3"
         />
         <div className="max-h-[60vh] overflow-y-auto">
-          {error ? (
-            <div className="px-4 py-3 text-text-3 text-xs">
-              search failed: {error}
-            </div>
-          ) : flatRows.length === 0 ? (
+          {flatRows.length === 0 ? (
             <div className="px-4 py-3 text-text-3 text-xs">
               {query ? "No results." : "Start typing to search…"}
             </div>
@@ -236,8 +278,14 @@ export function CommandPalette() {
               onHover={setActiveIdx}
             />
           )}
+          {error ? (
+            <div className="px-4 py-2 text-text-3 text-[11px] border-t border-border-soft">
+              backend search degraded: {error}
+            </div>
+          ) : null}
         </div>
         <footer className="flex items-center gap-3 px-4 py-2 text-text-3 text-[11px] font-mono border-t border-border-soft">
+          <span>{modKeyLabel()} K toggle</span>
           <span>↑↓ navigate</span>
           <span>↵ open</span>
           <span>esc close</span>

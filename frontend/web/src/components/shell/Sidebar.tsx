@@ -1,4 +1,4 @@
-import { NavLink } from "react-router-dom";
+import { NavLink, useNavigate } from "react-router-dom";
 import { Icon, type IconName } from "@/components/primitives/Icon";
 
 type Item = { to: string; label: string; icon: IconName };
@@ -6,13 +6,12 @@ type Item = { to: string; label: string; icon: IconName };
 const PRIMARY: Item[] = [
   { to: "/", label: "Home", icon: "home" },
   { to: "/strategies", label: "Strategies", icon: "chart" },
-  { to: "/authoring", label: "Authoring", icon: "code" },
   { to: "/eval-runs", label: "Eval", icon: "bars" },
-  { to: "/setup", label: "Setup", icon: "sliders" },
   { to: "/settings", label: "Settings", icon: "cog" },
 ];
 
 export function Sidebar() {
+  const navigate = useNavigate();
   return (
     <aside className="bg-surface-sidebar border-r border-border-soft flex flex-col w-[200px] pt-6 pb-4">
       <div className="px-6 pb-8">
@@ -53,7 +52,11 @@ export function Sidebar() {
         <p className="m-0 mb-3 text-text-2 text-[12px] leading-snug">
           Add an LLM key to begin building strategies with xvn.
         </p>
-        <button className="w-full flex items-center justify-center px-3 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft transition-colors">
+        <button
+          type="button"
+          onClick={() => navigate("/settings/providers")}
+          className="w-full flex items-center justify-center px-3 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft transition-colors"
+        >
           Add LLM key
         </button>
       </div>
