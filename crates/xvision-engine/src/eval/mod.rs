@@ -11,6 +11,7 @@ pub mod compare;
 pub mod executor;
 pub mod findings;
 pub mod metrics;
+pub mod postprocess;
 pub mod progress;
 pub mod run;
 pub mod scenario;
