@@ -17,6 +17,7 @@ export type { DaemonStatus } from "./types.gen/DaemonStatus";
 export type { DataSource } from "./types.gen/DataSource";
 export type { DecisionRowDto } from "./types.gen/DecisionRowDto";
 export type { EquityPoint } from "./types.gen/EquityPoint";
+export type { EvalRunRequest } from "./types.gen/EvalRunRequest";
 export type { FactoryResetReport } from "./types.gen/FactoryResetReport";
 export type { Fees } from "./types.gen/Fees";
 export type { FillModel } from "./types.gen/FillModel";

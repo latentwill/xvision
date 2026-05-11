@@ -439,6 +439,30 @@ async fn eval_run_detail_returns_summary_decisions_and_equity() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// POST /api/eval/runs — launch
+//
+// NOTE: We cannot test a successful launch here because it requires
+// ANTHROPIC_API_KEY + (for paper mode) Alpaca credentials. Instead we
+// assert that submitting an unknown strategy returns a clean 404 — the
+// early validation in `eval::run` fires before any env-var construction.
+
+#[tokio::test]
+async fn launch_eval_run_rejects_unknown_strategy() {
+    let (server, _tmp) = boot().await;
+    let body = serde_json::json!({
+        "agent_id": "does-not-exist",
+        "scenario_id": "crypto-bull-q1-2025",
+        "mode": "backtest",
+        "params_override": null,
+    });
+    let response = server.post("/api/eval/runs").json(&body).await;
+    // "does-not-exist" is not in the bundle store → 404 not_found.
+    response.assert_status(axum::http::StatusCode::NOT_FOUND);
+    let resp_body: serde_json::Value = response.json();
+    assert_eq!(resp_body["code"], "not_found");
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // /api/eval/compare
 
 #[tokio::test]

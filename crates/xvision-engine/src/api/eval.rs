@@ -386,6 +386,11 @@ async fn get_run_inner(ctx: &ApiContext, id: &str) -> ApiResult<RunDetail> {
     })
 }
 
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvalRunRequest {
     /// Strategy bundle id (the `agent_id` returned by `api::strategy::list`).
@@ -398,6 +403,7 @@ pub struct EvalRunRequest {
     pub mode: RunMode,
     /// Optional per-run override of bundle.mechanical_params. Persisted as
     /// `eval_runs.params_override_json`.
+    #[cfg_attr(feature = "ts-export", ts(type = "Record<string, unknown> | null"))]
     pub params_override: Option<serde_json::Value>,
 }
 
@@ -755,6 +761,13 @@ pub async fn scenarios(ctx: &ApiContext) -> ApiResult<Vec<ScenarioSummary>> {
     )
     .await;
     Ok(summaries)
+}
+
+/// Convert a `Run` to the slim `RunSummary` wire shape. Public so the
+/// dashboard's `launch` handler can build the 201 response directly
+/// without re-fetching from the store.
+pub fn summarise_run(run: Run) -> RunSummary {
+    summarise(run)
 }
 
 fn summarise(run: Run) -> RunSummary {

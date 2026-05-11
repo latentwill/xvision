@@ -1,11 +1,15 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
 import { ApiError } from "@/api/client";
-import { evalKeys, listRuns } from "@/api/eval";
+import { evalKeys, listRuns, runEval } from "@/api/eval";
+import { createScenario, listScenarios, scenarioKeys } from "@/api/scenarios";
+import { listStrategies, strategyKeys } from "@/api/strategies";
+import { ScenarioForm } from "@/components/scenario/ScenarioForm";
+import type { RunMode } from "@/api/types.gen/RunMode";
 import type { RunSummary } from "@/api/types.gen";
 
 const STATUS_TONE: Record<string, "gold" | "warn" | "danger" | "default" | "info"> = {
@@ -22,9 +26,14 @@ export function EvalRunsRoute() {
     queryFn: listRuns,
   });
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+
   // Selection state for the Compare flow. Lifted here so the Topbar can
   // render the action button next to the run count.
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
+
+  // "+ New scenario" toggle
+  const [showScenarioForm, setShowScenarioForm] = useState(false);
 
   function toggleSelected(id: string) {
     setSelected((prev) => {
@@ -45,9 +54,61 @@ export function EvalRunsRoute() {
     navigate(`/eval-runs/compare?ids=${ids}`);
   }
 
+  // Mutation: create scenario via the inline form.
+  const createMut = useMutation({
+    mutationFn: createScenario,
+    onSuccess: () => {
+      setShowScenarioForm(false);
+      queryClient.invalidateQueries({ queryKey: scenarioKeys.all });
+    },
+  });
+
   return (
     <>
       <Topbar title="Eval" sub={subtitleFor(q)} />
+
+      {/* Header strip: "+ New scenario" toggle + Run Launcher */}
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <button
+          type="button"
+          onClick={() => setShowScenarioForm((v) => !v)}
+          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-[13px] font-medium border transition-colors ${
+            showScenarioForm
+              ? "border-text-3 text-text bg-surface-elev"
+              : "border-border text-text-2 hover:border-text-3 hover:text-text"
+          }`}
+        >
+          {showScenarioForm ? "✕ Cancel" : "+ New scenario"}
+        </button>
+
+        <RunLauncher
+          onLaunched={(run) => {
+            queryClient.invalidateQueries({ queryKey: evalKeys.runs() });
+            navigate(`/eval-runs/${run.id}`);
+          }}
+        />
+      </div>
+
+      {/* Inline scenario form */}
+      {showScenarioForm && (
+        <Card className="mb-3 p-4">
+          <ScenarioForm
+            layout="inline"
+            submitting={createMut.isPending}
+            error={
+              createMut.isError
+                ? createMut.error instanceof ApiError
+                  ? `${createMut.error.code}: ${createMut.error.message}`
+                  : String(createMut.error)
+                : undefined
+            }
+            onSubmit={(req) => createMut.mutate(req)}
+            onCancel={() => setShowScenarioForm(false)}
+          />
+        </Card>
+      )}
+
+      {/* Compare toolbar (shown when rows are checked) */}
       {selected.size > 0 ? (
         <div className="mb-3 flex justify-end">
           <CompareToolbar
@@ -57,6 +118,7 @@ export function EvalRunsRoute() {
           />
         </div>
       ) : null}
+
       <Card>
         {q.isPending ? (
           <LoadingSkeleton />
@@ -75,6 +137,130 @@ export function EvalRunsRoute() {
     </>
   );
 }
+
+// ── RunLauncher ────────────────────────────────────────────────────────────
+
+function RunLauncher({ onLaunched }: { onLaunched: (run: RunSummary) => void }) {
+  const strategiesQ = useQuery({
+    queryKey: strategyKeys.list(),
+    queryFn: listStrategies,
+  });
+  const scenariosQ = useQuery({
+    queryKey: scenarioKeys.list(),
+    queryFn: () => listScenarios(),
+  });
+
+  const [agentId, setAgentId] = useState("bundle-canonical-defaults");
+  const [scenarioId, setScenarioId] = useState("crypto-bull-q1-2025");
+  const [mode, setMode] = useState<RunMode>("backtest");
+  const [launchError, setLaunchError] = useState<string | null>(null);
+
+  const launchMut = useMutation({
+    mutationFn: runEval,
+    onSuccess: (run) => {
+      setLaunchError(null);
+      onLaunched(run);
+    },
+    onError: (err) => {
+      const msg =
+        err instanceof ApiError
+          ? `${err.code}: ${err.message}`
+          : err instanceof Error
+            ? err.message
+            : String(err);
+      setLaunchError(msg);
+    },
+  });
+
+  // Update agentId default once strategies are loaded.
+  const strategies = strategiesQ.data ?? [];
+  const scenarios = scenariosQ.data ?? [];
+
+  function handleLaunch() {
+    setLaunchError(null);
+    launchMut.mutate({ agent_id: agentId, scenario_id: scenarioId, mode, params_override: null });
+  }
+
+  return (
+    <div className="flex flex-col items-end gap-1.5">
+      <div className="flex items-center gap-2">
+        {/* Strategy picker */}
+        <select
+          className="input text-[13px] py-1 px-2 min-w-[160px]"
+          value={agentId}
+          onChange={(e) => setAgentId(e.target.value)}
+          disabled={launchMut.isPending}
+        >
+          {strategies.length === 0 ? (
+            <option value="bundle-canonical-defaults">bundle-canonical-defaults</option>
+          ) : (
+            strategies.map((s) => (
+              <option key={s.agent_id} value={s.agent_id}>
+                {s.agent_id}
+              </option>
+            ))
+          )}
+        </select>
+
+        {/* Scenario picker */}
+        <select
+          className="input text-[13px] py-1 px-2 min-w-[180px]"
+          value={scenarioId}
+          onChange={(e) => setScenarioId(e.target.value)}
+          disabled={launchMut.isPending}
+        >
+          {scenarios.length === 0 ? (
+            <option value="crypto-bull-q1-2025">crypto-bull-q1-2025</option>
+          ) : (
+            scenarios.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.display_name || s.id}
+              </option>
+            ))
+          )}
+        </select>
+
+        {/* Mode toggle */}
+        <div className="flex rounded border border-border overflow-hidden text-[12px]">
+          {(["backtest", "paper"] as RunMode[]).map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setMode(m)}
+              disabled={launchMut.isPending}
+              className={`px-3 py-1 transition-colors ${
+                mode === m
+                  ? "bg-surface-elev text-text font-medium"
+                  : "text-text-3 hover:text-text hover:bg-surface-elev/50"
+              }`}
+            >
+              {m}
+            </button>
+          ))}
+        </div>
+
+        {/* Launch button */}
+        <button
+          type="button"
+          onClick={handleLaunch}
+          disabled={launchMut.isPending}
+          className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded text-[13px] font-medium border border-gold text-gold hover:bg-gold/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        >
+          {launchMut.isPending ? "Launching…" : "Launch →"}
+        </button>
+      </div>
+
+      {/* Inline error banner */}
+      {launchError && (
+        <div className="text-[11px] text-danger font-mono max-w-[480px] text-right truncate">
+          {launchError}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Existing helpers ───────────────────────────────────────────────────────
 
 function subtitleFor(q: ReturnType<typeof useQuery>) {
   if (q.isPending) return "Loading…";
@@ -287,9 +473,8 @@ function EmptyState() {
         no runs yet
       </div>
       <p className="m-0 max-w-md mx-auto leading-snug">
-        Eval runs created via{" "}
-        <code className="text-text font-mono">xvn ab-compare</code> or the
-        eval engine will appear here. Run something to get started.
+        Use the launcher above to start a run, or trigger one via{" "}
+        <code className="text-text font-mono">xvn ab-compare</code>.
       </p>
     </div>
   );

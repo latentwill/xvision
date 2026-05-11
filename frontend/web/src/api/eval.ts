@@ -1,7 +1,7 @@
 // Eval API — typed fetchers against `engine::api::eval::*`.
 
 import { apiFetch } from "./client";
-import type { ComparisonReport, RunDetail, RunSummary } from "./types.gen";
+import type { ComparisonReport, EvalRunRequest, RunDetail, RunSummary } from "./types.gen";
 
 export type RunsListResponse = {
   items: RunSummary[];
@@ -25,4 +25,11 @@ export function getRun(id: string): Promise<RunDetail> {
 export function compareRuns(ids: string[]): Promise<ComparisonReport> {
   const qs = ids.map(encodeURIComponent).join(",");
   return apiFetch<ComparisonReport>(`/api/eval/compare?ids=${qs}`);
+}
+
+export function runEval(req: EvalRunRequest): Promise<RunSummary> {
+  return apiFetch<RunSummary>("/api/eval/runs", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
 }

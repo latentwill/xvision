@@ -31,7 +31,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/scenarios/:id", get(scenarios::get).delete(scenarios::delete))
         .route("/api/scenarios/:id/clone", post(scenarios::clone))
         .route("/api/scenarios/:id/archive", post(scenarios::archive))
-        .route("/api/eval/runs", get(eval_runs::list))
+        .route("/api/eval/runs", get(eval_runs::list).post(eval_runs::launch))
         .route("/api/eval/runs/:id", get(eval_runs::get))
         .route("/api/eval/compare", get(eval_runs::compare))
         .route("/api/search", get(search_route::handler))

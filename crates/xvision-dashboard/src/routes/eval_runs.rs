@@ -11,12 +11,13 @@
 
 use axum::{
     extract::{Path, Query, State},
+    http::StatusCode,
     Json,
 };
 use serde::{Deserialize, Serialize};
 
 use xvision_engine::api::eval::{
-    self, CompareRunsRequest, ListRunsRequest, RunDetail, RunSummary,
+    self, CompareRunsRequest, EvalRunRequest, ListRunsRequest, RunDetail, RunSummary,
 };
 use xvision_engine::eval::compare::ComparisonReport;
 use xvision_engine::eval::run::RunStatus;
@@ -97,4 +98,20 @@ pub async fn compare(
     )
     .await?;
     Ok(Json(report))
+}
+
+/// `POST /api/eval/runs` — launch a new eval run.
+///
+/// Constructs broker / dispatch / tools from environment variables (via
+/// `eval::run`). Returns `201 Created` with the slim `RunSummary` on
+/// success. Returns `400` for validation errors (unknown strategy /
+/// scenario, missing env vars) and `500` for executor failures. The
+/// Launch button in the dashboard wires these into an inline error banner.
+pub async fn launch(
+    State(state): State<AppState>,
+    Json(req): Json<EvalRunRequest>,
+) -> Result<(StatusCode, Json<RunSummary>), DashboardError> {
+    let run = eval::run(&state.api_context(), req).await?;
+    let summary = eval::summarise_run(run);
+    Ok((StatusCode::CREATED, Json(summary)))
 }
