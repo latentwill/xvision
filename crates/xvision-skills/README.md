@@ -52,8 +52,16 @@ defaults to an empty list.
 xvn skill new --from-file my-trader.md
 # → my-trader
 
+# pipe LLM output straight in (no tmpfile)
+my-llm-tool render-skill | xvn skill new --from-file -
+# → my-trader
+
 # list
 xvn skill ls
+
+# preview an attach without writing the bundle back
+xvn skill attach 01H8N7ZAB... --slot trader --skill my-trader --dry-run
+# → JSON { dry_run: true, would_change: { before, after } }
 
 # attach to a slot of a saved strategy bundle
 xvn skill attach 01H8N7ZAB... --slot trader --skill my-trader
