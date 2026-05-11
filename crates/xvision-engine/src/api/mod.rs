@@ -20,6 +20,7 @@ use xvision_data::alpaca::AlpacaBarsFetcher;
 pub mod audit;
 pub mod eval;
 pub mod health;
+pub mod scenario;
 pub mod search;
 pub mod settings;
 pub mod strategy;
