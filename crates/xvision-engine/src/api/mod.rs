@@ -11,6 +11,7 @@
 use sqlx::SqlitePool;
 use std::path::{Path, PathBuf};
 
+pub mod agents;
 pub mod audit;
 pub mod eval;
 pub mod health;

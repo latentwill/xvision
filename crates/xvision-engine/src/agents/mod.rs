@@ -9,5 +9,9 @@
 //! *execution* during a cycle. This module handles agent *records*.
 
 pub mod model;
+pub mod store;
+pub mod validate;
 
 pub use model::{Agent, AgentSlot};
+pub use store::{AgentStore, ListFilter, NewAgent, UpdateAgent};
+pub use validate::{validate_agent, Severity, ValidationDiagnostic};
