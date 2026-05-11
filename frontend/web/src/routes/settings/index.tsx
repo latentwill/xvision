@@ -10,8 +10,10 @@ import {
   getBrokers,
   setAlpacaCredentials,
   settingsKeys,
+  testAlpacaConnection,
 } from "@/api/settings";
 import type {
+  AlpacaTestReport,
   BrokerEntry,
   CredentialRef,
 } from "@/api/types.gen";
@@ -134,6 +136,10 @@ function AlpacaBrokerCard({ entry }: { entry: BrokerEntry }) {
   const [baseUrl, setBaseUrl] = useState("");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  const test = useMutation<AlpacaTestReport, unknown, void>({
+    mutationFn: testAlpacaConnection,
+  });
+
   const save = useMutation({
     mutationFn: () =>
       setAlpacaCredentials({
@@ -201,16 +207,38 @@ function AlpacaBrokerCard({ entry }: { entry: BrokerEntry }) {
             <p className="m-0 mt-1 text-text-3 text-[12px]">{entry.note}</p>
           ) : null}
         </div>
-        {entry.configured ? (
-          <Pill tone="gold">
-            <span className="w-1.5 h-1.5 rounded-full bg-gold" /> configured
-          </Pill>
-        ) : (
-          <Pill tone="warn">
-            <span className="w-1.5 h-1.5 rounded-full bg-warn" /> not configured
-          </Pill>
-        )}
+        <div className="flex items-center gap-2">
+          {entry.configured ? (
+            <button
+              type="button"
+              onClick={() => test.mutate()}
+              disabled={test.isPending}
+              title="Call /v2/account to verify the stored credentials"
+              className="px-2 py-1 rounded text-[12px] border border-border text-text-2 hover:text-text hover:border-text-3 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {test.isPending ? "Testing…" : "Test"}
+            </button>
+          ) : null}
+          {entry.configured ? (
+            <Pill tone="gold">
+              <span className="w-1.5 h-1.5 rounded-full bg-gold" /> configured
+            </Pill>
+          ) : (
+            <Pill tone="warn">
+              <span className="w-1.5 h-1.5 rounded-full bg-warn" /> not configured
+            </Pill>
+          )}
+        </div>
       </div>
+
+      {test.data || test.isError ? (
+        <div className="mb-3 px-3 py-2 bg-surface-elev/50 border border-border-soft rounded text-[12px]">
+          <AlpacaConnectionResult
+            data={test.data ?? null}
+            error={test.isError ? test.error : null}
+          />
+        </div>
+      ) : null}
 
       {showStored ? (
         <div className="mt-2 space-y-3">
@@ -337,6 +365,50 @@ function AlpacaBrokerCard({ entry }: { entry: BrokerEntry }) {
         </form>
       ) : null}
     </Card>
+  );
+}
+
+function AlpacaConnectionResult({
+  data,
+  error,
+}: {
+  data: AlpacaTestReport | null;
+  error: unknown;
+}) {
+  if (error) {
+    const detail =
+      error instanceof ApiError
+        ? `${error.code}: ${error.message}`
+        : error instanceof Error
+          ? error.message
+          : String(error);
+    return (
+      <span className="inline-flex items-center gap-1.5 text-rose-300">
+        <span aria-hidden>✗</span>
+        <span className="font-mono text-text-2">{detail}</span>
+      </span>
+    );
+  }
+  if (!data) return null;
+  if (data.ok) {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-emerald-300">
+        <span aria-hidden>✓</span>
+        <span>
+          connected · {data.latency_ms}ms
+          {data.account_status ? ` · ${data.account_status}` : ""}
+          {data.equity ? ` · equity $${data.equity}` : ""}
+        </span>
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1.5 text-rose-300">
+      <span aria-hidden>✗</span>
+      <span className="font-mono text-text-2">
+        {data.error ?? "connection failed"}
+      </span>
+    </span>
   );
 }
 
