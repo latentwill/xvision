@@ -1,7 +1,7 @@
 use chrono::{TimeZone, Utc};
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
-use xvision_data::alpaca::{AlpacaBarsFetcher, BarGranularity};
+use xvision_data::alpaca::{AlpacaBarsFetcher, BarGranularity, FetchError};
 
 #[tokio::test]
 async fn fetch_crypto_bars_single_page() {
@@ -73,4 +73,43 @@ async fn fetch_crypto_bars_paginated() {
     assert_eq!(bars.len(), 2);
     assert_eq!(bars[0].open, 1.0);
     assert_eq!(bars[1].open, 2.0);
+}
+
+#[tokio::test]
+async fn fetch_returns_unauthorized_on_401() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET")).and(path("/v1beta3/crypto/us/bars"))
+        .respond_with(ResponseTemplate::new(401))
+        .mount(&server).await;
+    let err = AlpacaBarsFetcher::new(server.uri(), "k".into(), "s".into())
+        .fetch_crypto_bars("ETH/USD", BarGranularity::Hour1,
+            Utc.with_ymd_and_hms(2024,2,3,0,0,0).unwrap(),
+            Utc.with_ymd_and_hms(2024,2,3,1,0,0).unwrap()).await.unwrap_err();
+    assert!(matches!(err, FetchError::Unauthorized));
+}
+
+#[tokio::test]
+async fn fetch_returns_asset_not_found_on_404() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET")).and(path("/v1beta3/crypto/us/bars"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&server).await;
+    let err = AlpacaBarsFetcher::new(server.uri(), "k".into(), "s".into())
+        .fetch_crypto_bars("FOO/USD", BarGranularity::Hour1,
+            Utc.with_ymd_and_hms(2024,2,3,0,0,0).unwrap(),
+            Utc.with_ymd_and_hms(2024,2,3,1,0,0).unwrap()).await.unwrap_err();
+    assert!(matches!(err, FetchError::AssetNotFound(_)));
+}
+
+#[tokio::test]
+async fn fetch_returns_rate_limited_on_429() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET")).and(path("/v1beta3/crypto/us/bars"))
+        .respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "30"))
+        .mount(&server).await;
+    let err = AlpacaBarsFetcher::new(server.uri(), "k".into(), "s".into())
+        .fetch_crypto_bars("ETH/USD", BarGranularity::Hour1,
+            Utc.with_ymd_and_hms(2024,2,3,0,0,0).unwrap(),
+            Utc.with_ymd_and_hms(2024,2,3,1,0,0).unwrap()).await.unwrap_err();
+    assert!(matches!(err, FetchError::RateLimited { retry_after_secs: 30 }));
 }
