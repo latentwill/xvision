@@ -14,29 +14,76 @@ import type {
   ProviderRow,
 } from "@/api/types.gen";
 
-// `ProviderKind` lives in `xvision-core` without ts-rs wiring; the engine
-// API surfaces it as a plain `string`. We narrow it to the registered
-// kebab-case set in the form UI so the dropdown stays type-safe locally.
-const KIND_OPTIONS = [
+// Provider presets the form recognises. Each preset fills in a sensible
+// (wire kind, name, base URL) tuple; the user only has to paste an API key.
+// Pick "Custom" for anything else — DeepSeek/Groq/Together-style endpoints
+// that don't have a preset, or self-hosted Ollama / vLLM / llama.cpp.
+type KindOption = {
+  value: string;
+  label: string;
+  wireKind: "anthropic" | "openai-compat";
+  defaultName: string;
+  defaultBaseUrl: string;
+  isCustom: boolean;
+  keyHelp: string;
+};
+
+const KIND_OPTIONS: ReadonlyArray<KindOption> = [
   {
     value: "anthropic",
-    label: "Anthropic",
-    hint: "First-party Claude API. Set `ANTHROPIC_API_KEY`.",
+    label: "Anthropic (Claude)",
+    wireKind: "anthropic",
+    defaultName: "anthropic",
+    defaultBaseUrl: "https://api.anthropic.com",
+    isCustom: false,
+    keyHelp: "Starts with sk-ant-…",
   },
   {
-    value: "openai-compat",
-    label: "OpenAI-compatible",
-    hint:
-      "Any /v1/chat/completions endpoint — OpenAI, Together, vLLM, Ollama, llama.cpp.",
+    value: "openai",
+    label: "OpenAI",
+    wireKind: "openai-compat",
+    defaultName: "openai",
+    defaultBaseUrl: "https://api.openai.com/v1",
+    isCustom: false,
+    keyHelp: "Starts with sk-…",
   },
   {
-    value: "local-candle",
-    label: "Local (candle)",
-    hint: "In-process candle model. No HTTP, no api_key_env.",
+    value: "deepseek",
+    label: "DeepSeek",
+    wireKind: "openai-compat",
+    defaultName: "deepseek",
+    defaultBaseUrl: "https://api.deepseek.com/v1",
+    isCustom: false,
+    keyHelp: "Starts with sk-…",
   },
-] as const satisfies ReadonlyArray<{ value: string; label: string; hint: string }>;
-
-type ProviderKindStr = (typeof KIND_OPTIONS)[number]["value"];
+  {
+    value: "groq",
+    label: "Groq",
+    wireKind: "openai-compat",
+    defaultName: "groq",
+    defaultBaseUrl: "https://api.groq.com/openai/v1",
+    isCustom: false,
+    keyHelp: "Starts with gsk_…",
+  },
+  {
+    value: "openrouter",
+    label: "OpenRouter",
+    wireKind: "openai-compat",
+    defaultName: "openrouter",
+    defaultBaseUrl: "https://openrouter.ai/api/v1",
+    isCustom: false,
+    keyHelp: "Starts with sk-or-…",
+  },
+  {
+    value: "custom",
+    label: "Custom (Ollama, Together, vLLM, self-hosted, …)",
+    wireKind: "openai-compat",
+    defaultName: "",
+    defaultBaseUrl: "",
+    isCustom: true,
+    keyHelp: "Leave blank for no-auth endpoints (local Ollama).",
+  },
+];
 
 export function SettingsProvidersRoute() {
   const qc = useQueryClient();
@@ -99,10 +146,9 @@ export function SettingsProvidersRoute() {
           ) : null}
         </div>
         <p className="m-0 mb-4 text-text-3 text-[12px] leading-snug">
-          Workspace providers registered in <code className="font-mono">config/default.toml</code>.
-          API key values are never returned — only env-var presence. Synthetic
-          rows (auto-derived) and providers referenced by the <code className="font-mono">[intern]</code>
-          {" "}default Intern slot are read-only.
+          Paste a provider's API key to enable it. Keys are stored on disk
+          under <code className="font-mono">~/.xvn/secrets/providers.toml</code>{" "}
+          (owner-only) — they never round-trip through this UI again.
         </p>
 
         {adding ? (
@@ -117,7 +163,7 @@ export function SettingsProvidersRoute() {
 
         {rows.length === 0 ? (
           <div className="text-text-2 text-[13px] py-6 text-center">
-            no providers registered
+            no providers yet — click <span className="text-text">+ Add provider</span> to start
           </div>
         ) : (
           <table className="w-full mt-2">
@@ -126,8 +172,7 @@ export function SettingsProvidersRoute() {
                 <th className="py-2 pr-3 font-normal">Name</th>
                 <th className="py-2 pr-3 font-normal">Kind</th>
                 <th className="py-2 pr-3 font-normal">Base URL</th>
-                <th className="py-2 pr-3 font-normal">API key env</th>
-                <th className="py-2 pr-3 font-normal text-right">Status</th>
+                <th className="py-2 pr-3 font-normal text-right">Key</th>
                 <th className="py-2 pr-0 font-normal text-right" />
               </tr>
             </thead>
@@ -166,20 +211,17 @@ function ProviderRowView({
   removeError: string | null;
   removeBusy: boolean;
 }) {
-  const locked = row.synthetic || row.referenced_by_intern;
-  const lockReason = row.synthetic
-    ? "synthetic (auto-derived) — read-only"
-    : row.referenced_by_intern
-      ? "backs the [intern] default Intern slot — edit [intern] first"
-      : null;
+  const lockReason = row.referenced_by_intern
+    ? "default LLM for the workspace — remove the intern reference before deleting"
+    : null;
+  const locked = row.referenced_by_intern;
   return (
     <>
       <tr className="border-t border-border-soft align-middle">
         <td className="py-2 pr-3">
           <div className="flex items-center gap-2">
             <code className="font-mono text-[13px] text-text">{row.name}</code>
-            {row.synthetic ? <Pill>synthetic</Pill> : null}
-            {row.referenced_by_intern ? <Pill tone="gold">intern</Pill> : null}
+            {row.referenced_by_intern ? <Pill tone="gold">default</Pill> : null}
           </div>
         </td>
         <td className="py-2 pr-3 text-text-2 text-[12px] font-mono">
@@ -190,22 +232,13 @@ function ProviderRowView({
             {row.base_url}
           </code>
         </td>
-        <td className="py-2 pr-3">
-          {row.api_key_env ? (
-            <code className="font-mono text-[12px] text-text-2">
-              {row.api_key_env}
-            </code>
-          ) : (
-            <span className="text-text-3 text-[12px]">(none)</span>
-          )}
-        </td>
         <td className="py-2 pr-3 text-right">
           {!row.api_key_env ? (
-            <span className="text-text-3 text-[12px]">n/a</span>
+            <span className="text-text-3 text-[12px]">no auth</span>
           ) : row.api_key_set ? (
             <span className="text-gold text-[12px]">● set</span>
           ) : (
-            <span className="text-warn text-[12px]">○ unset</span>
+            <span className="text-warn text-[12px]">○ missing</span>
           )}
         </td>
         <td className="py-2 pr-0 text-right">
@@ -221,7 +254,7 @@ function ProviderRowView({
       </tr>
       {removeError ? (
         <tr className="border-t border-border-soft/40">
-          <td colSpan={6} className="py-2 pr-0 text-[12px] text-danger">
+          <td colSpan={5} className="py-2 pr-0 text-[12px] text-danger">
             {removeError}
           </td>
         </tr>
@@ -237,20 +270,21 @@ function AddProviderForm({
   onCancel: () => void;
   onAdded: () => void;
 }) {
-  const [name, setName] = useState("");
-  const [kind, setKind] = useState<ProviderKindStr>("openai-compat");
-  const [baseUrl, setBaseUrl] = useState("");
-  const [apiKeyEnv, setApiKeyEnv] = useState("");
+  const [kindOption, setKindOption] = useState<string>(KIND_OPTIONS[0].value);
+  const [name, setName] = useState<string>(KIND_OPTIONS[0].defaultName);
+  const [baseUrl, setBaseUrl] = useState<string>(KIND_OPTIONS[0].defaultBaseUrl);
+  const [apiKey, setApiKey] = useState("");
+
+  const meta = KIND_OPTIONS.find((k) => k.value === kindOption) ?? KIND_OPTIONS[0];
 
   const add = useMutation({
     mutationFn: (req: AddProviderRequest) => addProvider(req),
-    onSuccess: () => {
-      onAdded();
-    },
+    onSuccess: () => onAdded(),
   });
 
-  const kindMeta = KIND_OPTIONS.find((k) => k.value === kind)!;
-  const submittable = name.trim() !== "" && baseUrl.trim() !== "";
+  const trimmedName = name.trim();
+  const trimmedBaseUrl = baseUrl.trim();
+  const submittable = trimmedName !== "" && trimmedBaseUrl !== "";
 
   return (
     <form
@@ -258,10 +292,11 @@ function AddProviderForm({
         e.preventDefault();
         if (!submittable) return;
         add.mutate({
-          name: name.trim(),
-          kind,
-          base_url: baseUrl.trim(),
-          api_key_env: apiKeyEnv.trim(),
+          name: trimmedName,
+          kind: meta.wireKind,
+          base_url: trimmedBaseUrl,
+          api_key_env: "",
+          api_key: apiKey.trim() === "" ? undefined : apiKey,
         });
       }}
       className="border border-border-soft rounded-md p-4 mb-4 bg-surface-elev/30 space-y-3"
@@ -276,20 +311,18 @@ function AddProviderForm({
           Cancel
         </button>
       </div>
-      <Field label="Name" hint="lowercase, digits, hyphens. e.g. openai, ollama-local.">
-        <input
-          autoFocus
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="e.g. openai"
-          className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
-        />
-      </Field>
-      <Field label="Kind">
+
+      <Field label="Provider">
         <select
-          value={kind}
-          onChange={(e) => setKind(e.target.value as ProviderKindStr)}
-          className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
+          value={kindOption}
+          onChange={(e) => {
+            const next = KIND_OPTIONS.find((k) => k.value === e.target.value);
+            if (!next) return;
+            setKindOption(next.value);
+            setName(next.defaultName);
+            setBaseUrl(next.defaultBaseUrl);
+          }}
+          className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text"
         >
           {KIND_OPTIONS.map((k) => (
             <option key={k.value} value={k.value}>
@@ -297,34 +330,61 @@ function AddProviderForm({
             </option>
           ))}
         </select>
-        <span className="text-[11px] text-text-3 mt-1 block">{kindMeta.hint}</span>
       </Field>
-      <Field label="Base URL">
+
+      <Field
+        label="API key"
+        hint={meta.keyHelp}
+      >
+        <input
+          type="password"
+          autoFocus
+          autoComplete="off"
+          spellCheck={false}
+          value={apiKey}
+          onChange={(e) => setApiKey(e.target.value)}
+          placeholder="paste key here"
+          className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
+        />
+      </Field>
+
+      {meta.isCustom ? (
+        <Field
+          label="Name"
+          hint="lowercase, digits, hyphens. e.g. ollama, together."
+        >
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="e.g. ollama"
+            className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
+          />
+        </Field>
+      ) : null}
+
+      <Field
+        label="Base URL"
+        hint={
+          meta.isCustom
+            ? "The /v1 endpoint root."
+            : "Pre-filled for this provider — override only for proxies or self-hosted gateways."
+        }
+      >
         <input
           value={baseUrl}
           onChange={(e) => setBaseUrl(e.target.value)}
-          placeholder="https://api.openai.com/v1"
+          placeholder="https://api.example.com/v1"
           className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
         />
       </Field>
-      <Field
-        label="API key env var"
-        hint="Env var the workspace will read for auth. Leave blank for no-auth endpoints (local llama.cpp / Ollama)."
-      >
-        <input
-          value={apiKeyEnv}
-          onChange={(e) => setApiKeyEnv(e.target.value)}
-          placeholder="OPENAI_API_KEY"
-          className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
-        />
-      </Field>
+
       <div className="flex items-center gap-3 pt-1">
         <button
           type="submit"
           disabled={!submittable || add.isPending}
           className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft disabled:opacity-40 disabled:hover:bg-gold transition-colors"
         >
-          {add.isPending ? "Adding…" : "Add provider"}
+          {add.isPending ? "Saving…" : "Save provider"}
         </button>
         {add.isError ? (
           <span className="text-[12px] text-danger">

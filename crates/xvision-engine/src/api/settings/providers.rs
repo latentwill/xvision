@@ -63,14 +63,43 @@ pub struct ProviderRow {
 pub struct AddProviderRequest {
     pub name: String,
     pub kind: String,
+    /// Optional — when blank, a kind-aware default is used
+    /// ("https://api.anthropic.com" for anthropic, "https://api.openai.com/v1"
+    /// for the canonical "openai" openai-compat, "" for local-candle).
+    #[serde(default)]
     pub base_url: String,
+    /// Optional override for the env var that holds the API key. Defaults to
+    /// a kind-aware convention so users don't have to pick one.
     #[serde(default)]
     pub api_key_env: String,
+    /// The actual API key (cleartext over the API). When set, persisted to
+    /// `$XVN_HOME/secrets/providers.toml` (mode 0600) and exported into the
+    /// daemon process env under `api_key_env` so the provider works right away.
+    /// Never logged or returned.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
+}
+
+/// Persisted provider secrets. Lives in `$XVN_HOME/secrets/providers.toml`,
+/// keyed by provider name → `[provider]` table. Never returned through the
+/// read API — only `ProviderRow::api_key_set` (a presence flag) surfaces.
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct ProvidersSecretsFile {
+    #[serde(default)]
+    provider: std::collections::BTreeMap<String, ProviderSecret>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ProviderSecret {
+    /// Env var name the daemon exports this secret under.
+    env_var: String,
+    /// Plaintext API key. Treat the file like an SSH private key.
+    api_key: String,
 }
 
 pub async fn list(ctx: &ApiContext, config_path: &Path) -> ApiResult<ProvidersReport> {
     let started = Instant::now();
-    let result = list_inner(config_path).await;
+    let result = list_inner(config_path, &ctx.xvn_home).await;
 
     let outcome = audit_outcome(&result);
     let _ = audit::record(
@@ -92,7 +121,7 @@ pub async fn show(
     name: &str,
 ) -> ApiResult<ProviderRow> {
     let started = Instant::now();
-    let result = show_inner(config_path, name).await;
+    let result = show_inner(config_path, &ctx.xvn_home, name).await;
 
     let outcome = audit_outcome(&result);
     let _ = audit::record(
@@ -114,9 +143,18 @@ pub async fn add(
     req: AddProviderRequest,
 ) -> ApiResult<ProviderRow> {
     let started = Instant::now();
-    let args = serde_json::to_string(&req).ok();
+    // Strip the api_key from the audited args — the secret never lands in
+    // api_audit. Everything else is fair game.
+    let args = serde_json::to_string(&serde_json::json!({
+        "name": req.name,
+        "kind": req.kind,
+        "base_url": req.base_url,
+        "api_key_env": req.api_key_env,
+        "api_key_provided": req.api_key.as_ref().is_some_and(|k| !k.is_empty()),
+    }))
+    .ok();
     let target = req.name.clone();
-    let result = add_inner(config_path, req).await;
+    let result = add_inner(config_path, &ctx.xvn_home, req).await;
 
     let outcome = audit_outcome(&result);
     let _ = audit::record(
@@ -138,7 +176,7 @@ pub async fn remove(
     name: &str,
 ) -> ApiResult<()> {
     let started = Instant::now();
-    let result = remove_inner(config_path, name).await;
+    let result = remove_inner(config_path, &ctx.xvn_home, name).await;
 
     let outcome = audit_outcome(&result);
     let _ = audit::record(
@@ -156,30 +194,40 @@ pub async fn remove(
 
 // --- inner impls (no auditing) ---------------------------------------------
 
-async fn list_inner(config_path: &Path) -> ApiResult<ProvidersReport> {
+async fn list_inner(config_path: &Path, xvn_home: &Path) -> ApiResult<ProvidersReport> {
     let cfg = load_cfg(config_path).await?;
     let intern_kind: ProviderKind = cfg.intern.provider.into();
+    let secrets = load_providers_secrets(xvn_home).await?;
     let providers = cfg
         .providers
         .iter()
-        .map(|p| row_from_entry(p, &cfg, intern_kind))
+        // Synthetic rows (auto-derived from [intern] / names with `_` prefix)
+        // are plumbing — hide them from the UI so the empty-state is honest.
+        .filter(|p| !p.name.starts_with('_'))
+        .map(|p| row_from_entry(p, &cfg, intern_kind, &secrets))
         .collect();
     Ok(ProvidersReport { providers })
 }
 
-async fn show_inner(config_path: &Path, name: &str) -> ApiResult<ProviderRow> {
+async fn show_inner(
+    config_path: &Path,
+    xvn_home: &Path,
+    name: &str,
+) -> ApiResult<ProviderRow> {
     let cfg = load_cfg(config_path).await?;
     let intern_kind: ProviderKind = cfg.intern.provider.into();
+    let secrets = load_providers_secrets(xvn_home).await?;
     let entry = cfg
         .providers
         .iter()
         .find(|p| p.name == name)
         .ok_or_else(|| ApiError::NotFound(format!("provider `{name}` not found")))?;
-    Ok(row_from_entry(entry, &cfg, intern_kind))
+    Ok(row_from_entry(entry, &cfg, intern_kind, &secrets))
 }
 
 async fn add_inner(
     config_path: &Path,
+    xvn_home: &Path,
     req: AddProviderRequest,
 ) -> ApiResult<ProviderRow> {
     let AddProviderRequest {
@@ -187,14 +235,30 @@ async fn add_inner(
         kind,
         base_url,
         api_key_env,
+        api_key,
     } = req;
 
-    parse_kind(&kind)?;
+    let parsed_kind = parse_kind(&kind)?;
+    if name.trim().is_empty() {
+        return Err(ApiError::Validation("name is empty".into()));
+    }
     if name.starts_with('_') {
         return Err(ApiError::Validation(
             "provider names starting with '_' are reserved".into(),
         ));
     }
+    // Sensible defaults when the request omits these — the UI sends just
+    // (name, kind, api_key) for the common case.
+    let base_url = if base_url.trim().is_empty() {
+        default_base_url_for(parsed_kind, &name).to_string()
+    } else {
+        base_url
+    };
+    let api_key_env = if api_key_env.trim().is_empty() {
+        default_api_key_env_for(parsed_kind, &name)
+    } else {
+        api_key_env
+    };
 
     let path = config_path.to_path_buf();
     let n = name.clone();
@@ -244,13 +308,29 @@ async fn add_inner(
     .await
     .map_err(|e| ApiError::Internal(format!("spawn_blocking: {e}")))??;
 
+    // Persist the secret if the caller supplied one. Empty keys are
+    // treated as "no key" — local-candle / no-auth endpoints take this path.
+    if let Some(key) = api_key.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        if api_key_env.is_empty() {
+            return Err(ApiError::Validation(
+                "cannot store an api_key for a provider with no api_key_env".into(),
+            ));
+        }
+        upsert_provider_secret(xvn_home, &name, &api_key_env, key).await?;
+        // Inject into the live process env so the new provider is immediately
+        // usable without restarting the daemon.
+        // Safe in 2021 edition; we serialize all secret writes through this
+        // function so there's no concurrent set_var contention.
+        std::env::set_var(&api_key_env, key);
+    }
+
     // Re-validate the resulting config; bubble up a validation error if the
     // file is no longer well-formed (eg. a hand-edit clashed with our row).
     let _ = load_cfg(config_path).await?;
-    show_inner(config_path, &name).await
+    show_inner(config_path, xvn_home, &name).await
 }
 
-async fn remove_inner(config_path: &Path, name: &str) -> ApiResult<()> {
+async fn remove_inner(config_path: &Path, xvn_home: &Path, name: &str) -> ApiResult<()> {
     let cfg = load_cfg(config_path).await?;
     let intern_kind: ProviderKind = cfg.intern.provider.into();
     let entry = cfg
@@ -302,6 +382,10 @@ async fn remove_inner(config_path: &Path, name: &str) -> ApiResult<()> {
     .await
     .map_err(|e| ApiError::Internal(format!("spawn_blocking: {e}")))??;
 
+    // Drop the stored secret too. Forgive a missing file — the user may
+    // have added the provider without a key.
+    forget_provider_secret(xvn_home, name).await?;
+
     // Re-validate.
     let _ = load_cfg(config_path).await?;
     Ok(())
@@ -321,13 +405,17 @@ fn row_from_entry(
     entry: &ProviderEntry,
     cfg: &RuntimeConfig,
     intern_kind: ProviderKind,
+    secrets: &ProvidersSecretsFile,
 ) -> ProviderRow {
     let api_key_set = if entry.api_key_env.is_empty() {
         false
     } else {
-        std::env::var(&entry.api_key_env)
-            .map(|v| !v.is_empty())
-            .unwrap_or(false)
+        // Counts as set if EITHER a stored secret exists OR the env var is
+        // already populated (CI / one-shot scripts).
+        secrets.provider.contains_key(&entry.name)
+            || std::env::var(&entry.api_key_env)
+                .map(|v| !v.is_empty())
+                .unwrap_or(false)
     };
     let referenced_by_intern =
         entry.matches_triple(intern_kind, &cfg.intern.base_url, &cfg.intern.api_key_env);
@@ -340,6 +428,129 @@ fn row_from_entry(
         synthetic: entry.name.starts_with('_'),
         referenced_by_intern,
     }
+}
+
+/// Conventional env var name for a (kind, name) tuple. Matches the names
+/// most SDKs / docs use so existing shell setups still work.
+fn default_api_key_env_for(kind: ProviderKind, name: &str) -> String {
+    match kind {
+        ProviderKind::Anthropic => "ANTHROPIC_API_KEY".to_string(),
+        ProviderKind::OpenaiCompat if name == "openai" => "OPENAI_API_KEY".to_string(),
+        ProviderKind::OpenaiCompat => format!(
+            "XVN_PROVIDER_{}_KEY",
+            name.to_ascii_uppercase().replace('-', "_")
+        ),
+        ProviderKind::LocalCandle => String::new(),
+    }
+}
+
+fn default_base_url_for(kind: ProviderKind, name: &str) -> &'static str {
+    match kind {
+        ProviderKind::Anthropic => "https://api.anthropic.com",
+        ProviderKind::OpenaiCompat if name == "openai" => "https://api.openai.com/v1",
+        ProviderKind::OpenaiCompat => "http://localhost:11434/v1",
+        ProviderKind::LocalCandle => "",
+    }
+}
+
+// --- secrets persistence ---------------------------------------------------
+
+fn providers_secrets_path(xvn_home: &Path) -> PathBuf {
+    xvn_home.join("secrets").join("providers.toml")
+}
+
+async fn load_providers_secrets(xvn_home: &Path) -> ApiResult<ProvidersSecretsFile> {
+    let path = providers_secrets_path(xvn_home);
+    match tokio::fs::read_to_string(&path).await {
+        Ok(s) => toml::from_str::<ProvidersSecretsFile>(&s)
+            .map_err(|e| ApiError::Internal(format!("parse {}: {e}", path.display()))),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            Ok(ProvidersSecretsFile::default())
+        }
+        Err(e) => Err(ApiError::Internal(format!(
+            "read {}: {e}",
+            path.display()
+        ))),
+    }
+}
+
+async fn save_providers_secrets(
+    xvn_home: &Path,
+    file: &ProvidersSecretsFile,
+) -> ApiResult<()> {
+    let path = providers_secrets_path(xvn_home);
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await.map_err(|e| {
+            ApiError::Internal(format!("mkdir {}: {e}", parent.display()))
+        })?;
+    }
+    let serialized = toml::to_string_pretty(file)
+        .map_err(|e| ApiError::Internal(format!("serialize providers secrets: {e}")))?;
+    tokio::fs::write(&path, serialized)
+        .await
+        .map_err(|e| ApiError::Internal(format!("write {}: {e}", path.display())))?;
+    set_owner_only(&path)?;
+    Ok(())
+}
+
+async fn upsert_provider_secret(
+    xvn_home: &Path,
+    name: &str,
+    env_var: &str,
+    api_key: &str,
+) -> ApiResult<()> {
+    let mut file = load_providers_secrets(xvn_home).await?;
+    file.provider.insert(
+        name.to_string(),
+        ProviderSecret {
+            env_var: env_var.to_string(),
+            api_key: api_key.to_string(),
+        },
+    );
+    save_providers_secrets(xvn_home, &file).await
+}
+
+async fn forget_provider_secret(xvn_home: &Path, name: &str) -> ApiResult<()> {
+    let mut file = load_providers_secrets(xvn_home).await?;
+    if file.provider.remove(name).is_some() {
+        save_providers_secrets(xvn_home, &file).await?;
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn set_owner_only(path: &Path) -> ApiResult<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let perms = std::fs::Permissions::from_mode(0o600);
+    std::fs::set_permissions(path, perms).map_err(|e| {
+        ApiError::Internal(format!("chmod 600 {}: {e}", path.display()))
+    })
+}
+
+#[cfg(not(unix))]
+fn set_owner_only(_path: &Path) -> ApiResult<()> {
+    Ok(())
+}
+
+/// Inject every stored provider secret into the process env. Called once at
+/// daemon startup so backend constructors that read `std::env::var(env_var)`
+/// pick up persisted keys without the user having to re-export them.
+pub async fn load_providers_secrets_into_env(xvn_home: &Path) -> ApiResult<usize> {
+    let file = load_providers_secrets(xvn_home).await?;
+    let mut applied = 0usize;
+    for (_name, secret) in file.provider.iter() {
+        if secret.env_var.is_empty() || secret.api_key.is_empty() {
+            continue;
+        }
+        // Don't clobber a key the operator already exported — env wins so
+        // CI / one-shot scripts stay deterministic.
+        if std::env::var_os(&secret.env_var).is_some() {
+            continue;
+        }
+        std::env::set_var(&secret.env_var, &secret.api_key);
+        applied += 1;
+    }
+    Ok(applied)
 }
 
 fn kind_to_str(k: ProviderKind) -> &'static str {
@@ -475,6 +686,7 @@ sqlite_url = "sqlite://x.db"
                 kind: "openai-compat".into(),
                 base_url: "https://api.openai.com/v1".into(),
                 api_key_env: "OPENAI_API_KEY".into(),
+                api_key: None,
             },
         )
         .await
@@ -498,6 +710,7 @@ sqlite_url = "sqlite://x.db"
                 kind: "BOGUS".into(),
                 base_url: "https://x".into(),
                 api_key_env: "K".into(),
+                api_key: None,
             },
         )
         .await
@@ -518,6 +731,7 @@ sqlite_url = "sqlite://x.db"
                 kind: "anthropic".into(),
                 base_url: "https://x".into(),
                 api_key_env: "K".into(),
+                api_key: None,
             },
         )
         .await
@@ -538,6 +752,7 @@ sqlite_url = "sqlite://x.db"
                 kind: "openai-compat".into(),
                 base_url: "https://x".into(),
                 api_key_env: "K".into(),
+                api_key: None,
             },
         )
         .await

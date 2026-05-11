@@ -41,7 +41,6 @@ const STATIC_ACTIONS: SearchHit[] = [
   { kind: "action", artifact_id: "nav:eval-runs", title: "Eval runs", summary: "Backtests and paper-trade runs", tags: ["nav"], href: "/eval-runs", updated_at: "", bm25_score: 0 },
   { kind: "action", artifact_id: "nav:settings-providers", title: "Settings · Providers", summary: "LLM keys & providers", tags: ["nav", "settings"], href: "/settings/providers", updated_at: "", bm25_score: 0 },
   { kind: "action", artifact_id: "nav:settings-brokers", title: "Settings · Brokers", summary: "Alpaca / Orderly credentials", tags: ["nav", "settings"], href: "/settings/brokers", updated_at: "", bm25_score: 0 },
-  { kind: "action", artifact_id: "nav:settings-identity", title: "Settings · Identity", summary: "On-chain identity", tags: ["nav", "settings"], href: "/settings/identity", updated_at: "", bm25_score: 0 },
   { kind: "action", artifact_id: "nav:settings-danger", title: "Settings · Danger zone", summary: "Reset / destructive ops", tags: ["nav", "settings"], href: "/settings/danger", updated_at: "", bm25_score: 0 },
 ];
 

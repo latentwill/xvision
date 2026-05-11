@@ -23,6 +23,12 @@
   ::selection {
     background: var(--gold-bg-strong);
   }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--text-4);
+    opacity: 1;
+  }
 }
 
 @layer components {

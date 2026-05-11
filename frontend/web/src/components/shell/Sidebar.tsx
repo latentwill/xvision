@@ -7,7 +7,7 @@ const PRIMARY: Item[] = [
   { to: "/", label: "Home", icon: "home" },
   { to: "/strategies", label: "Strategies", icon: "chart" },
   { to: "/eval-runs", label: "Eval", icon: "bars" },
-  { to: "/settings", label: "Settings", icon: "cog" },
+  { to: "/settings", label: "Settings", icon: "sliders" },
 ];
 
 export function Sidebar() {

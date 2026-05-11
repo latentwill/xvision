@@ -226,6 +226,7 @@ async fn add(
             kind,
             base_url,
             api_key_env,
+            api_key: None,
         },
     )
     .await

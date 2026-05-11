@@ -8,27 +8,24 @@ import { ApiError } from "@/api/client";
 import {
   clearAlpacaCredentials,
   getBrokers,
-  getIdentity,
   setAlpacaCredentials,
   settingsKeys,
 } from "@/api/settings";
 import type {
   BrokerEntry,
   CredentialRef,
-  IdentityReport,
 } from "@/api/types.gen";
 
 const TABS = [
   { to: "providers", label: "Providers" },
   { to: "brokers", label: "Brokers" },
-  { to: "identity", label: "Identity" },
   { to: "danger", label: "Danger zone" },
 ];
 
 export function SettingsLayout() {
   return (
     <>
-      <Topbar title="Settings" sub="LLM keys · brokers · identity" />
+      <Topbar title="Settings" sub="LLM keys · brokers" />
       <nav className="flex gap-1 mb-5 border-b border-border-soft">
         {TABS.map((t) => (
           <NavLink
@@ -67,18 +64,6 @@ export function SettingsBrokersRoute() {
           <BrokerCard entry={data.orderly} />
         </div>
       )}
-    </FetchStates>
-  );
-}
-
-export function SettingsIdentityRoute() {
-  const q = useQuery({
-    queryKey: settingsKeys.identity(),
-    queryFn: getIdentity,
-  });
-  return (
-    <FetchStates query={q} empty={false}>
-      {(data) => <IdentityCard data={data} />}
     </FetchStates>
   );
 }
@@ -427,49 +412,3 @@ function CredentialRow({ cred }: { cred: CredentialRef }) {
   );
 }
 
-function IdentityCard({ data }: { data: IdentityReport }) {
-  return (
-    <Card className="p-5">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="m-0 font-serif font-medium text-[20px] tracking-tight">
-          On-chain identity
-        </h3>
-        {data.feature_compiled_in ? (
-          <Pill tone="gold">
-            <span className="w-1.5 h-1.5 rounded-full bg-gold" /> compiled in
-          </Pill>
-        ) : (
-          <Pill>
-            <span className="w-1.5 h-1.5 rounded-full bg-text-3" /> not compiled
-          </Pill>
-        )}
-      </div>
-      <p className="m-0 mb-4 text-text-2 text-[13px]">{data.note}</p>
-
-      <table className="w-full">
-        <tbody>
-          <tr className="border-t border-border-soft">
-            <td className="py-2 text-text-2 text-[12px]">MANTLE_RPC_URL</td>
-            <td className="py-2 text-right">
-              {data.wallet.rpc_url_set ? (
-                <span className="text-gold text-[12px]">● set</span>
-              ) : (
-                <span className="text-text-3 text-[12px]">○ unset</span>
-              )}
-            </td>
-          </tr>
-          <tr className="border-t border-border-soft">
-            <td className="py-2 text-text-2 text-[12px]">XVN_WALLET_KEY</td>
-            <td className="py-2 text-right">
-              {data.wallet.wallet_key_set ? (
-                <span className="text-gold text-[12px]">● set</span>
-              ) : (
-                <span className="text-text-3 text-[12px]">○ unset</span>
-              )}
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </Card>
-  );
-}
