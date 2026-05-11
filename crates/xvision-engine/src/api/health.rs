@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
 use crate::api::{ApiContext, ApiError, ApiResult};
+use crate::bundle::store::strategy_store_dir;
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(
@@ -57,7 +58,7 @@ pub async fn check(ctx: &ApiContext) -> ApiResult<HealthReport> {
     let mut probes = Vec::with_capacity(3);
     probes.push(probe_data_dir(ctx));
     probes.push(probe_db(ctx).await);
-    probes.push(probe_bundles(ctx));
+    probes.push(probe_strategies(ctx));
 
     Ok(HealthReport {
         status: aggregate(&probes),
@@ -108,18 +109,17 @@ async fn probe_db(ctx: &ApiContext) -> Probe {
     }
 }
 
-fn probe_bundles(ctx: &ApiContext) -> Probe {
-    let bundles = ctx.xvn_home.join("bundles");
-    if !bundles.exists() {
-        // Fresh install: not an error, just empty.
+fn probe_strategies(ctx: &ApiContext) -> Probe {
+    let dir = strategy_store_dir(&ctx.xvn_home);
+    if !dir.exists() {
         return Probe {
-            name: "bundles".into(),
+            name: "strategies".into(),
             status: HealthStatus::Ok,
-            detail: Some("0 (no bundles dir yet)".into()),
+            detail: Some("0 (no strategies dir yet)".into()),
             latency_ms: None,
         };
     }
-    match std::fs::read_dir(&bundles) {
+    match std::fs::read_dir(&dir) {
         Ok(rd) => {
             let count = rd
                 .filter_map(|e| e.ok())
@@ -131,14 +131,14 @@ fn probe_bundles(ctx: &ApiContext) -> Probe {
                 })
                 .count();
             Probe {
-                name: "bundles".into(),
+                name: "strategies".into(),
                 status: HealthStatus::Ok,
                 detail: Some(format!("{count}")),
                 latency_ms: None,
             }
         }
         Err(e) => Probe {
-            name: "bundles".into(),
+            name: "strategies".into(),
             status: HealthStatus::Degraded,
             detail: Some(e.to_string()),
             latency_ms: None,
@@ -190,7 +190,7 @@ mod tests {
 
     /// Spec G.2 (v1 gaps Track G): a fresh `xvn_home` with the migrations
     /// applied passes every probe — `data_dir` exists (we just created it),
-    /// `db` answers `SELECT 1`, `bundles` is absent and that's reported as
+    /// `db` answers `SELECT 1`, `strategies` is absent and that's reported as
     /// the empty-but-ok shape. The aggregate rolls up to `Ok`.
     #[tokio::test]
     async fn check_returns_ok_on_fresh_xvn_home() {
@@ -229,25 +229,25 @@ mod tests {
         assert_eq!(report.status, HealthStatus::Down);
     }
 
-    /// Spec G.2: a fresh install has no `bundles/` directory; that case
-    /// is *not* an error — it's the empty-but-ok shape `"0 (no bundles dir
+    /// Spec G.2: a fresh install has no `strategies/` directory; that case
+    /// is *not* an error — it's the empty-but-ok shape `"0 (no strategies dir
     /// yet)"`. Catches the regression where someone "fixes" the missing-dir
     /// branch to return Degraded.
     #[tokio::test]
-    async fn check_flags_missing_bundles_dir_renders_zero_count_ok() {
+    async fn check_flags_missing_strategies_dir_renders_zero_count_ok() {
         let (ctx, _dir) = fresh_ctx().await;
         let report = check(&ctx).await.unwrap();
-        let bundles = report
+        let probe = report
             .probes
             .iter()
-            .find(|p| p.name == "bundles")
-            .expect("bundles probe present");
-        assert_eq!(bundles.status, HealthStatus::Ok);
+            .find(|p| p.name == "strategies")
+            .expect("strategies probe present");
+        assert_eq!(probe.status, HealthStatus::Ok);
         assert_eq!(
-            bundles.detail.as_deref(),
-            Some("0 (no bundles dir yet)"),
+            probe.detail.as_deref(),
+            Some("0 (no strategies dir yet)"),
             "expected the missing-dir empty shape, got {:?}",
-            bundles.detail,
+            probe.detail,
         );
     }
 
@@ -273,7 +273,7 @@ mod tests {
                     latency_ms: Some(420),
                 },
                 Probe {
-                    name: "bundles".into(),
+                    name: "strategies".into(),
                     status: HealthStatus::Down,
                     detail: None,
                     latency_ms: None,

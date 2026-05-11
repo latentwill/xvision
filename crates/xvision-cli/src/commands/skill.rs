@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use clap::{Args, Subcommand};
 use tokio::io::AsyncReadExt;
-use xvision_engine::bundle::store::{BundleStore, FilesystemStore};
+use xvision_engine::bundle::store::{strategy_store_dir, BundleStore, FilesystemStore};
 use xvision_skills::attach::attach_skill_to_agent;
 use xvision_skills::parse;
 use xvision_skills::store::{FilesystemSkillStore, SkillStore};
@@ -71,7 +71,7 @@ fn skill_store() -> FilesystemSkillStore {
 }
 
 fn strategy_store() -> FilesystemStore {
-    FilesystemStore::new(xvn_home().join("strategies"))
+    FilesystemStore::new(strategy_store_dir(&xvn_home()))
 }
 
 /// Read skill markdown from `from_file`. The literal path `-` reads

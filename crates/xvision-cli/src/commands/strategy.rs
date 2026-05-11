@@ -8,7 +8,7 @@ use clap::{Args, Subcommand};
 use ulid::Ulid;
 use xvision_engine::agent::llm::{AnthropicDispatch, LlmDispatch, MockDispatch};
 use xvision_engine::agent::pipeline::{run_pipeline, PipelineInputs};
-use xvision_engine::bundle::store::{BundleStore, FilesystemStore};
+use xvision_engine::bundle::store::{strategy_store_dir, BundleStore, FilesystemStore};
 use xvision_engine::bundle::validate::validate_bundle;
 use xvision_engine::templates::registry;
 use xvision_engine::tokens::estimate_pipeline_tokens;
@@ -79,7 +79,7 @@ fn home() -> PathBuf {
 }
 
 fn store() -> FilesystemStore {
-    FilesystemStore::new(home().join("strategies"))
+    FilesystemStore::new(strategy_store_dir(&home()))
 }
 
 async fn new(template: &str, name: &str, creator: Option<String>) -> CliResult<()> {

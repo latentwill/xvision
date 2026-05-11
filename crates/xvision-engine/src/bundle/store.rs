@@ -1,9 +1,16 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use async_trait::async_trait;
 
 use crate::bundle::StrategyBundle;
+
+/// Canonical on-disk directory for `StrategyBundle` JSON files, relative to
+/// `$XVN_HOME`. Single source of truth so the CLI and dashboard never drift
+/// onto different paths.
+pub fn strategy_store_dir(xvn_home: &Path) -> PathBuf {
+    xvn_home.join("strategies")
+}
 
 #[async_trait]
 pub trait BundleStore: Send + Sync {
