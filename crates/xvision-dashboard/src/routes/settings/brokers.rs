@@ -15,7 +15,7 @@ use axum::{
 };
 
 use xvision_engine::api::settings::brokers::{
-    self, AlpacaStored, BrokersReport, SetAlpacaReq,
+    self, AlpacaStored, AlpacaTestReport, BrokersReport, SetAlpacaReq,
 };
 
 use crate::error::DashboardError;
@@ -41,4 +41,14 @@ pub async fn delete_alpaca(
 ) -> Result<impl IntoResponse, DashboardError> {
     brokers::clear_alpaca(&state.api_context()).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// POST `/api/settings/brokers/alpaca/test-connection` — connectivity
+/// probe against `/v2/account`. Always 200 with the test report body;
+/// auth/network failures surface in `error` so the UI renders a pill.
+pub async fn test_alpaca(
+    State(state): State<AppState>,
+) -> Result<Json<AlpacaTestReport>, DashboardError> {
+    let report = brokers::test_alpaca(&state.api_context()).await?;
+    Ok(Json(report))
 }
