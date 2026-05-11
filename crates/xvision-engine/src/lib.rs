@@ -3,6 +3,7 @@
 //! See: docs/superpowers/specs/2026-05-08-strategy-creation-engine-design.md
 
 pub mod agent;
+pub mod agents;
 pub mod api;
 pub mod authoring;
 pub mod baselines;
