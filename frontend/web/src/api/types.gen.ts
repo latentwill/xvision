@@ -29,5 +29,6 @@ export type { RunSummary } from "./types.gen/RunSummary";
 export type { Severity } from "./types.gen/Severity";
 export type { StrategySummary } from "./types.gen/StrategySummary";
 export type { TableWipe } from "./types.gen/TableWipe";
+export type { TestConnectionReport } from "./types.gen/TestConnectionReport";
 export type { WalletStatus } from "./types.gen/WalletStatus";
 export type { WipeDbReport } from "./types.gen/WipeDbReport";

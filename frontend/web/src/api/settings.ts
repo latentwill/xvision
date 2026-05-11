@@ -13,6 +13,7 @@ import type {
   ProviderRow,
   ProvidersReport,
   RegenIdentityReport,
+  TestConnectionReport,
   WipeDbReport,
 } from "./types.gen";
 
@@ -137,6 +138,19 @@ export function setEnabledModels(
       method: "PUT",
       body: JSON.stringify({ models }),
     },
+  );
+}
+
+/// Connectivity probe — POST that calls the provider's catalog endpoint
+/// and returns `{ ok, latency_ms, model_count, error? }`. Network/auth
+/// failures land in `error` (with `ok = false`) rather than as HTTP
+/// errors, so the UI renders an inline pill either way.
+export function testProviderConnection(
+  name: string,
+): Promise<TestConnectionReport> {
+  return apiFetch<TestConnectionReport>(
+    `/api/settings/providers/${encodeURIComponent(name)}/test-connection`,
+    { method: "POST" },
   );
 }
 
