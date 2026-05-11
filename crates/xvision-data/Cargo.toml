@@ -15,7 +15,7 @@ path = "src/lib.rs"
 xvision-core = { path = "../xvision-core" }
 polars       = { workspace = true }
 anyhow       = { workspace = true }
-reqwest      = { workspace = true, features = ["json"] }
+reqwest      = { workspace = true, features = ["json", "query"] }
 serde        = { workspace = true, features = ["derive"] }
 serde_json   = { workspace = true }
 chrono       = { workspace = true, features = ["serde"] }
