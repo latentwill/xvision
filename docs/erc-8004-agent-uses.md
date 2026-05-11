@@ -28,3 +28,91 @@ In other words: ERC-8004 is showing up as the coordination and trust layer for a
 - [8004.org](https://www.8004.org/)
 - [Ethereum Foundation dAI Team intro](https://ai.ethereum.foundation/blog/intro-erc-8004)
 - [Forbes - AI Agents Gain Trust Via Ethereum: ERC-8004 On Mainnet](https://www.forbes.com/sites/digital-assets/2026/02/05/ai-agents-gain-trust-via-ethereum-erc-8004-on-mainnet/)
+
+## Adjacent ecosystems — how other agent stacks treat identity
+
+ERC-8004 isn't the only place agent identity is being defined. Several adjacent
+stacks are converging on the same primitive (wallet-linked identity + trust
+signals + permissions) but emphasizing different layers of the stack. Worth
+watching as we decide how `xvision` agents present themselves on-chain.
+
+### Olas — identity as a monetizable role layer
+
+Olas treats agent identity as a brand and a revenue surface. The homepage
+pitches "enables everyone to own and monetize their AI agents," and the
+rotating role carousel includes "AI Influencer," "Stock Trader," and "Crypto
+Trader." That reads less like a bot framework and more like a directory of
+agent personas people can own, brand, and monetize. See
+[Olas](https://olas.network/).
+
+### ElizaOS — identity as trust, permissions, and receipts
+
+Recent ElizaOS repo discussions are pushing identity toward cryptographic trust
+and on-chain provenance:
+
+- [AgentID](https://github.com/elizaOS/eliza/issues/6688) — cryptographic
+  identity layer with wallet-linked keys, trust levels, challenge-response,
+  and blockchain receipts.
+- [AgentFolio](https://github.com/elizaOS/eliza/issues/6635) — verified
+  on-chain identity, trust scores, and discoverable profiles.
+- [SafeAgent](https://github.com/elizaOS/eliza/issues/6706) — pre-trade token
+  safety checks that block risky swaps; identity gates trading rights.
+
+In practice, the identity layer is being used to decide whether an agent is
+legitimate enough to trade, delegate to, or interact with. The dominant
+pattern: *prove who you are, prove you behaved safely, then earn the right to
+trade*.
+
+### Trading is the destination, not a side example
+
+The Eliza repo now lists on-chain trading examples as first-class: `polyagent`,
+`polymarket`, `trader`, and `lp-manager` (see the
+[Eliza README](https://github.com/elizaOS/eliza/blob/main/README.md)). A recent
+plugin proposal,
+[plugin-hiveexchange](https://github.com/elizaOS/eliza/pull/6963), goes further
+by giving agents access to live prediction markets and autonomous Genesis
+agents already trading on-chain. The identity layer is being used to route
+capital and market access — not just to decorate a bot profile.
+
+### Bittensor — identity as protocol credentials, not branding
+
+Bittensor is more protocol-native and less persona-heavy. The identity docs
+focus on coldkeys, hotkeys, SS58 addresses, and subnet registration rather
+than public-facing agent brands; the docs frame Bittensor as producing
+commodities including financial-markets prediction. See
+[Bittensor Accounts & Identity](https://subtensor.com/learn/core/accounts-identity)
+and [Bittensor docs](https://docs.bittensor.com/). The clearest public trading
+example is
+[Subnet 8 :: Proprietary Trading Network](https://www.youtube.com/watch?v=qUEZfGT8LnY),
+where identity is mostly wallet/key roles inside a subnet, not a social
+profile.
+
+### Cross-ecosystem patterns
+
+1. **Identity is becoming a trust primitive** — wallet-linked keys, trust
+   scores, and receipts decide whether an agent can be trusted to trade or be
+   delegated to. See
+   [AgentID](https://github.com/elizaOS/eliza/issues/6688) and
+   [AgentFolio](https://github.com/elizaOS/eliza/issues/6635).
+2. **Trading agents are being wrapped in safety rails** — pre-trade risk
+   checks and token safety filters are part of the identity/permission story.
+   See [SafeAgent](https://github.com/elizaOS/eliza/issues/6706).
+3. **Agent-native markets are the real destination** — prediction markets, LP
+   management, and on-chain trading are not side examples anymore. See
+   [plugin-hiveexchange](https://github.com/elizaOS/eliza/pull/6963) and the
+   [Eliza README](https://github.com/elizaOS/eliza/blob/main/README.md).
+4. **Bittensor uses identity more like protocol credentials than branding** —
+   focus on keys, roles, and subnet registration. See
+   [Bittensor Accounts & Identity](https://subtensor.com/learn/core/accounts-identity).
+
+### Implications for xvision
+
+The convergence across Olas / ElizaOS / Bittensor / ERC-8004 says the same
+thing from four directions: an agent that wants to *trade* or *be delegated
+to* needs (a) a wallet-linked identity, (b) a trust signal someone else can
+read, and (c) a permission gate that blocks unsafe actions before they
+execute. ERC-8004 covers (a) and (b); SafeAgent-style pre-trade checks cover
+(c). The wallet plan v1.1 + risk-gate + agent-card stack we're building maps
+cleanly onto this — the open question is whether `xvision` wants the
+*persona/monetization* surface (Olas-style) or just the *protocol credential*
+surface (Bittensor-style).
