@@ -15,9 +15,20 @@ kind: string,
  */
 credentials: Array<CredentialRef>, 
 /**
- * Roll-up: are *all* required credentials set?
+ * Roll-up: env vars OR stored creds are sufficient to connect.
  */
 configured: boolean, 
+/**
+ * True when this broker has stored credentials under
+ * `$XVN_HOME/secrets/brokers.toml`. Independent of env-var state —
+ * stored creds win at runtime, but env state is still surfaced for
+ * debuggability.
+ */
+stored: boolean, 
+/**
+ * Last 4 of the stored key id, if stored. Safe to display.
+ */
+stored_key_id_suffix: string | null, 
 /**
  * Optional base URL; surfaces the override if set, else default.
  */

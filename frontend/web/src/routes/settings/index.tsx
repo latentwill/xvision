@@ -1,13 +1,16 @@
+import { useState } from "react";
 import { Outlet, NavLink } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
 import { ApiError } from "@/api/client";
 import {
+  clearAlpacaCredentials,
   getBrokers,
   getDaemon,
   getIdentity,
+  setAlpacaCredentials,
   settingsKeys,
 } from "@/api/settings";
 import type {
@@ -63,7 +66,7 @@ export function SettingsBrokersRoute() {
     <FetchStates query={q} empty={false}>
       {(data) => (
         <div className="space-y-5">
-          <BrokerCard entry={data.alpaca} />
+          <AlpacaBrokerCard entry={data.alpaca} />
           <BrokerCard entry={data.orderly} />
         </div>
       )}
@@ -164,6 +167,236 @@ function FetchStates<T>({
   return <>{children(query.data)}</>;
 }
 
+
+function AlpacaBrokerCard({ entry }: { entry: BrokerEntry }) {
+  const qc = useQueryClient();
+  const [editing, setEditing] = useState(!entry.stored);
+  const [apiKeyId, setApiKeyId] = useState("");
+  const [apiSecretKey, setApiSecretKey] = useState("");
+  const [baseUrl, setBaseUrl] = useState("");
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const save = useMutation({
+    mutationFn: () =>
+      setAlpacaCredentials({
+        api_key_id: apiKeyId.trim(),
+        api_secret_key: apiSecretKey.trim(),
+        base_url: baseUrl.trim() ? baseUrl.trim() : null,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: settingsKeys.brokers() });
+      setApiKeyId("");
+      setApiSecretKey("");
+      setBaseUrl("");
+      setErrorMsg(null);
+      setEditing(false);
+    },
+    onError: (err) => {
+      const detail =
+        err instanceof ApiError
+          ? `${err.code}: ${err.message}`
+          : err instanceof Error
+            ? err.message
+            : String(err);
+      setErrorMsg(detail);
+    },
+  });
+
+  const clear = useMutation({
+    mutationFn: clearAlpacaCredentials,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: settingsKeys.brokers() });
+      setErrorMsg(null);
+      setEditing(true);
+    },
+    onError: (err) => {
+      const detail =
+        err instanceof ApiError
+          ? `${err.code}: ${err.message}`
+          : err instanceof Error
+            ? err.message
+            : String(err);
+      setErrorMsg(detail);
+    },
+  });
+
+  const onSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!apiKeyId.trim() || !apiSecretKey.trim()) {
+      setErrorMsg("Both API key id and secret are required");
+      return;
+    }
+    save.mutate();
+  };
+
+  const showForm = editing || !entry.stored;
+  const showStored = entry.stored && !editing;
+
+  return (
+    <Card className="p-5">
+      <div className="flex items-center justify-between mb-3">
+        <div>
+          <h3 className="m-0 font-serif font-medium text-[20px] tracking-tight">
+            {entry.name}
+          </h3>
+          {entry.note ? (
+            <p className="m-0 mt-1 text-text-3 text-[12px]">{entry.note}</p>
+          ) : null}
+        </div>
+        {entry.configured ? (
+          <Pill tone="gold">
+            <span className="w-1.5 h-1.5 rounded-full bg-gold" /> configured
+          </Pill>
+        ) : (
+          <Pill tone="warn">
+            <span className="w-1.5 h-1.5 rounded-full bg-warn" /> not configured
+          </Pill>
+        )}
+      </div>
+
+      {showStored ? (
+        <div className="mt-2 space-y-3">
+          <div className="flex items-center justify-between gap-3 px-3 py-2 bg-surface-elev border border-border-soft rounded">
+            <div className="text-[13px] text-text-2">
+              Stored key id ending in{" "}
+              <code className="font-mono text-text">
+                ••••{entry.stored_key_id_suffix ?? "····"}
+              </code>
+              {entry.base_url ? (
+                <>
+                  {" "}
+                  · base url{" "}
+                  <code className="font-mono text-text-3">{entry.base_url}</code>
+                </>
+              ) : null}
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setEditing(true);
+                  setErrorMsg(null);
+                }}
+                className="text-[12px] text-text-2 hover:text-text underline-offset-2 hover:underline"
+              >
+                replace
+              </button>
+              <button
+                type="button"
+                onClick={() => clear.mutate()}
+                disabled={clear.isPending}
+                className="text-[12px] text-danger hover:underline disabled:opacity-50"
+              >
+                {clear.isPending ? "clearing…" : "clear"}
+              </button>
+            </div>
+          </div>
+          <details className="text-[12px] text-text-3">
+            <summary className="cursor-pointer hover:text-text-2">
+              Env-var fallback status
+            </summary>
+            <table className="w-full mt-2">
+              <tbody>
+                {entry.credentials.map((c) => (
+                  <CredentialRow key={c.env_var} cred={c} />
+                ))}
+              </tbody>
+            </table>
+          </details>
+        </div>
+      ) : null}
+
+      {showForm ? (
+        <form onSubmit={onSubmit} className="space-y-3">
+          {!entry.stored ? (
+            <p className="m-0 text-[12px] text-text-3 leading-snug">
+              Paste your Alpaca paper-trading credentials. They're saved to{" "}
+              <code className="font-mono text-text-2">
+                ~/.xvn/secrets/brokers.toml
+              </code>{" "}
+              (owner-only) and used by{" "}
+              <code className="font-mono text-text-2">--mode paper</code>{" "}
+              eval runs. Env vars{" "}
+              <code className="font-mono text-text-2">APCA_API_KEY_ID</code>{" "}
+              and{" "}
+              <code className="font-mono text-text-2">APCA_API_SECRET_KEY</code>{" "}
+              still work as a fallback.
+            </p>
+          ) : null}
+          <div>
+            <label className="block text-[12px] text-text-2 mb-1">
+              API key id
+            </label>
+            <input
+              type="text"
+              autoComplete="off"
+              spellCheck={false}
+              value={apiKeyId}
+              onChange={(e) => setApiKeyId(e.target.value)}
+              placeholder="PK…"
+              className="w-full px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono placeholder:text-text-3 focus:outline-none focus:border-text-3"
+            />
+          </div>
+          <div>
+            <label className="block text-[12px] text-text-2 mb-1">
+              API secret key
+            </label>
+            <input
+              type="password"
+              autoComplete="off"
+              spellCheck={false}
+              value={apiSecretKey}
+              onChange={(e) => setApiSecretKey(e.target.value)}
+              placeholder="••••••••••••••••"
+              className="w-full px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono placeholder:text-text-3 focus:outline-none focus:border-text-3"
+            />
+          </div>
+          <div>
+            <label className="block text-[12px] text-text-2 mb-1">
+              Base URL{" "}
+              <span className="text-text-3">
+                (optional — defaults to paper-api.alpaca.markets)
+              </span>
+            </label>
+            <input
+              type="text"
+              autoComplete="off"
+              spellCheck={false}
+              value={baseUrl}
+              onChange={(e) => setBaseUrl(e.target.value)}
+              placeholder="https://paper-api.alpaca.markets"
+              className="w-full px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono placeholder:text-text-3 focus:outline-none focus:border-text-3"
+            />
+          </div>
+          {errorMsg ? (
+            <p className="m-0 text-[12px] text-danger font-mono">{errorMsg}</p>
+          ) : null}
+          <div className="flex items-center gap-2 pt-1">
+            <button
+              type="submit"
+              disabled={save.isPending}
+              className="px-3 py-1.5 rounded text-[13px] font-medium border border-gold text-gold hover:bg-gold/10 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {save.isPending ? "Saving…" : entry.stored ? "Replace" : "Save"}
+            </button>
+            {entry.stored ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setEditing(false);
+                  setErrorMsg(null);
+                }}
+                className="px-3 py-1.5 rounded text-[13px] text-text-2 hover:text-text"
+              >
+                Cancel
+              </button>
+            ) : null}
+          </div>
+        </form>
+      ) : null}
+    </Card>
+  );
+}
 
 function BrokerCard({ entry }: { entry: BrokerEntry }) {
   return (

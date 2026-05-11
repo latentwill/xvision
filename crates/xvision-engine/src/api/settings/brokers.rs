@@ -1,8 +1,23 @@
-//! `/api/settings/brokers` — read-only env / config snapshot for the two
-//! brokers v1 actually wires (Alpaca paper, Orderly live). No mutation here;
-//! credential editing is part of the onboarding flow.
+//! `/api/settings/brokers` — broker credential management.
+//!
+//! Read path (`get`) returns a presence snapshot: which env vars are set,
+//! whether the dashboard has stored credentials for each broker, and a
+//! safe-to-display key id suffix when stored. Values themselves are
+//! never returned.
+//!
+//! Write path (`set_alpaca` / `clear_alpaca`) persists credentials to
+//! `$XVN_HOME/secrets/brokers.toml` with file mode 0600. This is the
+//! same security posture as the existing `$XVN_HOME/identity/signing.key`:
+//! plaintext-on-disk, owner-only, treat the file like an SSH private key.
+//! It buys "I don't have to re-`export` env vars every shell session"
+//! without committing to OS-keychain plumbing in v1.
+//!
+//! Eval paper mode prefers stored creds over env vars (see
+//! `api::eval::run`); the env fallback stays so CI / one-shot scripts
+//! that already set `APCA_API_KEY_ID` keep working.
 
 use std::env;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
@@ -36,8 +51,17 @@ pub struct BrokerEntry {
     pub kind: String,
     /// Per-required-env-var presence; values are never returned.
     pub credentials: Vec<CredentialRef>,
-    /// Roll-up: are *all* required credentials set?
+    /// Roll-up: env vars OR stored creds are sufficient to connect.
     pub configured: bool,
+    /// True when this broker has stored credentials under
+    /// `$XVN_HOME/secrets/brokers.toml`. Independent of env-var state —
+    /// stored creds win at runtime, but env state is still surfaced for
+    /// debuggability.
+    #[serde(default)]
+    pub stored: bool,
+    /// Last 4 of the stored key id, if stored. Safe to display.
+    #[serde(default)]
+    pub stored_key_id_suffix: Option<String>,
     /// Optional base URL; surfaces the override if set, else default.
     pub base_url: Option<String>,
     /// Short note for v1 ("paper trading", "live only — post-v1", etc.).
@@ -57,9 +81,46 @@ pub struct CredentialRef {
     pub is_set: bool,
 }
 
+/// Persisted Alpaca credentials. Lives in
+/// `$XVN_HOME/secrets/brokers.toml` under the `[alpaca]` table. Never
+/// returned through the read API — `BrokerEntry::stored_key_id_suffix`
+/// is the only redacted form that surfaces to callers.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlpacaCredentials {
+    pub api_key_id: String,
+    pub api_secret_key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+}
+
+/// On-disk file containing optional `[alpaca]` section.
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct BrokersSecretsFile {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    alpaca: Option<AlpacaCredentials>,
+}
+
+/// Request body for `set_alpaca`. Mirrors `AlpacaCredentials` but is
+/// declared separately so the wire shape can evolve without touching
+/// the on-disk schema.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SetAlpacaReq {
+    pub api_key_id: String,
+    pub api_secret_key: String,
+    pub base_url: Option<String>,
+}
+
+/// Successful set/clear response — just the redacted summary.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlpacaStored {
+    pub stored: bool,
+    pub stored_key_id_suffix: Option<String>,
+    pub base_url: Option<String>,
+}
+
 pub async fn get(ctx: &ApiContext) -> ApiResult<BrokersReport> {
     let started = Instant::now();
-    let result = get_inner();
+    let result = get_inner(&ctx.xvn_home).await;
 
     let outcome = match &result {
         Ok(_) => Outcome::Ok,
@@ -78,25 +139,33 @@ pub async fn get(ctx: &ApiContext) -> ApiResult<BrokersReport> {
     result
 }
 
-fn get_inner() -> ApiResult<BrokersReport> {
+async fn get_inner(xvn_home: &Path) -> ApiResult<BrokersReport> {
+    let stored = load_brokers_secrets(xvn_home).await?;
     Ok(BrokersReport {
-        alpaca: alpaca_entry(),
+        alpaca: alpaca_entry(stored.alpaca.as_ref()),
         orderly: orderly_entry(),
     })
 }
 
-fn alpaca_entry() -> BrokerEntry {
+fn alpaca_entry(stored: Option<&AlpacaCredentials>) -> BrokerEntry {
     let credentials = vec![
         cred("APCA_API_KEY_ID"),
         cred("APCA_API_SECRET_KEY"),
     ];
-    let configured = credentials.iter().all(|c| c.is_set);
+    let env_configured = credentials.iter().all(|c| c.is_set);
+    let stored_present = stored.is_some();
+    let stored_key_id_suffix = stored.map(|c| last4(&c.api_key_id));
+    let base_url = stored
+        .and_then(|c| c.base_url.clone())
+        .or_else(|| env::var("APCA_API_BASE_URL").ok().filter(|s| !s.is_empty()));
     BrokerEntry {
         name: "Alpaca".into(),
         kind: "alpaca".into(),
         credentials,
-        configured,
-        base_url: env::var("APCA_API_BASE_URL").ok().filter(|s| !s.is_empty()),
+        configured: env_configured || stored_present,
+        stored: stored_present,
+        stored_key_id_suffix,
+        base_url,
         note: Some("paper trading (v1 default)".into()),
     }
 }
@@ -113,6 +182,8 @@ fn orderly_entry() -> BrokerEntry {
         kind: "orderly".into(),
         credentials,
         configured,
+        stored: false,
+        stored_key_id_suffix: None,
         base_url: env::var("ORDERLY_BASE_URL").ok().filter(|s| !s.is_empty()),
         note: Some("live only — disabled in v1 paper mode".into()),
     }
@@ -125,5 +196,303 @@ fn cred(env_var: &str) -> CredentialRef {
     }
 }
 
-#[allow(dead_code)]
-fn _api_error_anchor(_e: ApiError) {}
+fn last4(s: &str) -> String {
+    let trimmed = s.trim();
+    if trimmed.len() <= 4 {
+        return "·".repeat(trimmed.len());
+    }
+    trimmed.chars().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect()
+}
+
+// ---------------------------------------------------------------------------
+// Persistence
+// ---------------------------------------------------------------------------
+
+/// Resolve `$XVN_HOME/secrets/brokers.toml` for a given xvn_home.
+fn brokers_secrets_path(xvn_home: &Path) -> PathBuf {
+    xvn_home.join("secrets").join("brokers.toml")
+}
+
+/// Load the full secrets file. Missing file → `Default` (no sections).
+async fn load_brokers_secrets(xvn_home: &Path) -> ApiResult<BrokersSecretsFile> {
+    let path = brokers_secrets_path(xvn_home);
+    match tokio::fs::read_to_string(&path).await {
+        Ok(s) => toml::from_str::<BrokersSecretsFile>(&s)
+            .map_err(|e| ApiError::Internal(format!("parse {}: {e}", path.display()))),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            Ok(BrokersSecretsFile::default())
+        }
+        Err(e) => Err(ApiError::Internal(format!(
+            "read {}: {e}",
+            path.display()
+        ))),
+    }
+}
+
+async fn save_brokers_secrets(
+    xvn_home: &Path,
+    file: &BrokersSecretsFile,
+) -> ApiResult<()> {
+    let path = brokers_secrets_path(xvn_home);
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await.map_err(|e| {
+            ApiError::Internal(format!("mkdir {}: {e}", parent.display()))
+        })?;
+    }
+    let serialized = toml::to_string_pretty(file)
+        .map_err(|e| ApiError::Internal(format!("serialize brokers secrets: {e}")))?;
+    tokio::fs::write(&path, serialized)
+        .await
+        .map_err(|e| ApiError::Internal(format!("write {}: {e}", path.display())))?;
+    set_owner_only(&path)?;
+    Ok(())
+}
+
+/// Apply mode 0600 to a freshly-written secrets file on Unix. On
+/// non-Unix platforms this is a no-op — Windows ACLs require a
+/// different approach and v1 paper mode is Unix-targeted.
+#[cfg(unix)]
+fn set_owner_only(path: &Path) -> ApiResult<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let perms = std::fs::Permissions::from_mode(0o600);
+    std::fs::set_permissions(path, perms).map_err(|e| {
+        ApiError::Internal(format!("chmod 600 {}: {e}", path.display()))
+    })
+}
+
+#[cfg(not(unix))]
+fn set_owner_only(_path: &Path) -> ApiResult<()> {
+    Ok(())
+}
+
+/// Read the persisted Alpaca credentials, if any. Used by
+/// `api::eval::run` to construct a paper broker without env vars.
+pub async fn load_alpaca_credentials(
+    xvn_home: &Path,
+) -> ApiResult<Option<AlpacaCredentials>> {
+    let file = load_brokers_secrets(xvn_home).await?;
+    Ok(file.alpaca)
+}
+
+/// Persist a new set of Alpaca credentials, overwriting any existing
+/// entry. Validates that key id and secret are non-empty before
+/// writing — empty strings are a footgun for downstream consumers.
+pub async fn set_alpaca(
+    ctx: &ApiContext,
+    req: SetAlpacaReq,
+) -> ApiResult<AlpacaStored> {
+    let started = Instant::now();
+    let result = set_alpaca_inner(&ctx.xvn_home, req.clone()).await;
+
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    // Audit-log without the secret — only the redacted suffix lands.
+    let args_json = serde_json::json!({
+        "api_key_id_suffix": last4(&req.api_key_id),
+        "base_url": req.base_url,
+    })
+    .to_string();
+    let _ = audit::record(
+        ctx,
+        "settings",
+        "brokers.set_alpaca",
+        Some("alpaca"),
+        Some(&args_json),
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    result
+}
+
+async fn set_alpaca_inner(
+    xvn_home: &Path,
+    req: SetAlpacaReq,
+) -> ApiResult<AlpacaStored> {
+    if req.api_key_id.trim().is_empty() {
+        return Err(ApiError::Validation("api_key_id is empty".into()));
+    }
+    if req.api_secret_key.trim().is_empty() {
+        return Err(ApiError::Validation("api_secret_key is empty".into()));
+    }
+    let base_url = req
+        .base_url
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
+    let mut file = load_brokers_secrets(xvn_home).await?;
+    let creds = AlpacaCredentials {
+        api_key_id: req.api_key_id.trim().to_string(),
+        api_secret_key: req.api_secret_key.trim().to_string(),
+        base_url: base_url.clone(),
+    };
+    file.alpaca = Some(creds.clone());
+    save_brokers_secrets(xvn_home, &file).await?;
+
+    Ok(AlpacaStored {
+        stored: true,
+        stored_key_id_suffix: Some(last4(&creds.api_key_id)),
+        base_url,
+    })
+}
+
+/// Remove the stored Alpaca credentials. No-op if none were stored.
+pub async fn clear_alpaca(ctx: &ApiContext) -> ApiResult<AlpacaStored> {
+    let started = Instant::now();
+    let result = clear_alpaca_inner(&ctx.xvn_home).await;
+
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let _ = audit::record(
+        ctx,
+        "settings",
+        "brokers.clear_alpaca",
+        Some("alpaca"),
+        None,
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    result
+}
+
+async fn clear_alpaca_inner(xvn_home: &Path) -> ApiResult<AlpacaStored> {
+    let mut file = load_brokers_secrets(xvn_home).await?;
+    file.alpaca = None;
+    save_brokers_secrets(xvn_home, &file).await?;
+    Ok(AlpacaStored {
+        stored: false,
+        stored_key_id_suffix: None,
+        base_url: None,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::Actor;
+    use tempfile::TempDir;
+
+    async fn fresh_ctx() -> (ApiContext, TempDir) {
+        let dir = TempDir::new().unwrap();
+        let ctx = ApiContext::open(
+            dir.path(),
+            Actor::Cli {
+                user: "test".into(),
+            },
+        )
+        .await
+        .unwrap();
+        (ctx, dir)
+    }
+
+    fn req(key: &str, secret: &str, base_url: Option<&str>) -> SetAlpacaReq {
+        SetAlpacaReq {
+            api_key_id: key.into(),
+            api_secret_key: secret.into(),
+            base_url: base_url.map(String::from),
+        }
+    }
+
+    #[tokio::test]
+    async fn set_and_load_alpaca_round_trips() {
+        let (ctx, _dir) = fresh_ctx().await;
+        let out = set_alpaca(
+            &ctx,
+            req("AKIAEXAMPLE0001", "secretsecretsecret", None),
+        )
+        .await
+        .unwrap();
+        assert!(out.stored);
+        assert_eq!(out.stored_key_id_suffix.as_deref(), Some("0001"));
+
+        let loaded = load_alpaca_credentials(&ctx.xvn_home).await.unwrap();
+        let creds = loaded.expect("credentials must load");
+        assert_eq!(creds.api_key_id, "AKIAEXAMPLE0001");
+        assert_eq!(creds.api_secret_key, "secretsecretsecret");
+        assert_eq!(creds.base_url, None);
+    }
+
+    #[tokio::test]
+    async fn set_alpaca_rejects_empty_key_or_secret() {
+        let (ctx, _dir) = fresh_ctx().await;
+        let bad_key = set_alpaca(&ctx, req("", "secret", None)).await;
+        assert!(matches!(bad_key, Err(ApiError::Validation(_))));
+        let bad_secret = set_alpaca(&ctx, req("key", "", None)).await;
+        assert!(matches!(bad_secret, Err(ApiError::Validation(_))));
+    }
+
+    #[tokio::test]
+    async fn set_alpaca_overwrites_previous() {
+        let (ctx, _dir) = fresh_ctx().await;
+        set_alpaca(&ctx, req("FIRST00000000000", "s1", None))
+            .await
+            .unwrap();
+        set_alpaca(
+            &ctx,
+            req("SECOND0000000000", "s2", Some("https://example.com")),
+        )
+        .await
+        .unwrap();
+        let creds = load_alpaca_credentials(&ctx.xvn_home)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(creds.api_key_id, "SECOND0000000000");
+        assert_eq!(creds.api_secret_key, "s2");
+        assert_eq!(creds.base_url.as_deref(), Some("https://example.com"));
+    }
+
+    #[tokio::test]
+    async fn clear_alpaca_removes_stored_creds() {
+        let (ctx, _dir) = fresh_ctx().await;
+        set_alpaca(&ctx, req("ANY00000000000000", "secret", None))
+            .await
+            .unwrap();
+        let cleared = clear_alpaca(&ctx).await.unwrap();
+        assert!(!cleared.stored);
+        let loaded = load_alpaca_credentials(&ctx.xvn_home).await.unwrap();
+        assert!(loaded.is_none());
+    }
+
+    #[tokio::test]
+    async fn clear_alpaca_is_idempotent_on_fresh_home() {
+        let (ctx, _dir) = fresh_ctx().await;
+        let cleared = clear_alpaca(&ctx).await.unwrap();
+        assert!(!cleared.stored);
+    }
+
+    #[tokio::test]
+    async fn get_reports_stored_alpaca() {
+        let (ctx, _dir) = fresh_ctx().await;
+        set_alpaca(&ctx, req("STOREDKEY00000000", "secret", None))
+            .await
+            .unwrap();
+        let report = get(&ctx).await.unwrap();
+        assert!(report.alpaca.stored);
+        assert!(report.alpaca.configured);
+        assert_eq!(
+            report.alpaca.stored_key_id_suffix.as_deref(),
+            Some("0000")
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn secrets_file_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let (ctx, _dir) = fresh_ctx().await;
+        set_alpaca(&ctx, req("KEY00000000000000", "secret", None))
+            .await
+            .unwrap();
+        let path = brokers_secrets_path(&ctx.xvn_home);
+        let meta = tokio::fs::metadata(&path).await.unwrap();
+        let mode = meta.permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "expected mode 0600, got {mode:o}");
+    }
+}
