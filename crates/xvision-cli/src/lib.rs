@@ -197,31 +197,31 @@ pub enum Command {
 }
 
 impl Cli {
-    pub async fn run(self) -> anyhow::Result<()> {
+    pub async fn run(self) -> Result<(), crate::exit::CliError> {
         match self.command {
-            Command::ShowMetrics { report } => commands::show_metrics::run(report),
-            Command::ShowDecision { cycle_id, db } => commands::show_decision::run(cycle_id, db).await,
-            Command::ShowBriefing { cycle_id, db } => commands::show_briefing::run(cycle_id, db).await,
+            Command::ShowMetrics { report } => commands::show_metrics::run(report).map_err(Into::into),
+            Command::ShowDecision { cycle_id, db } => commands::show_decision::run(cycle_id, db).await.map_err(Into::into),
+            Command::ShowBriefing { cycle_id, db } => commands::show_briefing::run(cycle_id, db).await.map_err(Into::into),
             Command::RunSetup {
                 snapshot,
                 intern,
                 model,
-            } => commands::run_setup::run(snapshot, intern, model).await,
-            Command::Report { input, output } => commands::report::run(input, output),
+            } => commands::run_setup::run(snapshot, intern, model).await.map_err(Into::into),
+            Command::Report { input, output } => commands::report::run(input, output).map_err(Into::into),
             Command::Metrics {
                 report,
                 treatment,
                 baseline,
                 n_resamples,
                 block_size,
-            } => commands::metrics::run_metrics(report, treatment, baseline, n_resamples, block_size),
+            } => commands::metrics::run_metrics(report, treatment, baseline, n_resamples, block_size).map_err(Into::into),
             Command::Gate {
                 report,
                 treatment,
                 baseline,
                 n_resamples,
                 block_size,
-            } => commands::metrics::run_gate(report, treatment, baseline, n_resamples, block_size),
+            } => commands::metrics::run_gate(report, treatment, baseline, n_resamples, block_size).map_err(Into::into),
             Command::FireTrade {
                 venue,
                 side,
@@ -232,9 +232,10 @@ impl Cli {
             } => {
                 commands::fire_trade::run(venue, side, size_bps, stop_loss_pct, take_profit_pct, summary)
                     .await
+                    .map_err(Into::into)
             }
-            Command::Portfolio { venue } => commands::venue::portfolio(venue).await,
-            Command::ClosePosition { venue, asset } => commands::venue::close_position(venue, asset).await,
+            Command::Portfolio { venue } => commands::venue::portfolio(venue).await.map_err(Into::into),
+            Command::ClosePosition { venue, asset } => commands::venue::close_position(venue, asset).await.map_err(Into::into),
             Command::AbCompare {
                 cycles,
                 bars,
@@ -268,18 +269,19 @@ impl Cli {
                     trader_api_key_env,
                 )
                 .await
+                .map_err(Into::into)
             }
-            Command::Strategy(cmd) => commands::strategy::run(cmd).await,
-            Command::Skill(cmd) => commands::skill::run(cmd).await,
-            Command::Intern(cmd) => commands::intern::run(cmd).await,
-            Command::Trader(cmd) => commands::trader::run(cmd).await,
-            Command::Risk(cmd) => commands::risk::run(cmd).await,
-            Command::Store(cmd) => commands::store_cmd::run(cmd).await,
-            Command::Indicator(cmd) => commands::indicator::run(cmd),
-            Command::Dashboard(cmd) => commands::dashboard::run(cmd).await,
-            Command::Eod(args) => commands::eod::run(args).await,
-            Command::Eval(cmd) => commands::eval::run(cmd).await,
-            Command::Provider(cmd) => commands::provider::run(cmd).await,
+            Command::Strategy(cmd) => commands::strategy::run(cmd).await.map_err(Into::into),
+            Command::Skill(cmd) => commands::skill::run(cmd).await.map_err(Into::into),
+            Command::Intern(cmd) => commands::intern::run(cmd).await.map_err(Into::into),
+            Command::Trader(cmd) => commands::trader::run(cmd).await.map_err(Into::into),
+            Command::Risk(cmd) => commands::risk::run(cmd).await.map_err(Into::into),
+            Command::Store(cmd) => commands::store_cmd::run(cmd).await.map_err(Into::into),
+            Command::Indicator(cmd) => commands::indicator::run(cmd).map_err(Into::into),
+            Command::Dashboard(cmd) => commands::dashboard::run(cmd).await.map_err(Into::into),
+            Command::Eod(args) => commands::eod::run(args).await.map_err(Into::into),
+            Command::Eval(cmd) => commands::eval::run(cmd).await.map_err(Into::into),
+            Command::Provider(cmd) => commands::provider::run(cmd).await.map_err(Into::into),
         }
     }
 }
