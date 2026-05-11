@@ -30,7 +30,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::agent::llm::{AnthropicDispatch, LlmDispatch};
 use crate::api::audit::{self, Outcome};
-use crate::api::{strategy as api_strategy, ApiContext, ApiError, ApiResult};
+use crate::api::{search as api_search, strategy as api_strategy, ApiContext, ApiError, ApiResult};
 use crate::eval::attestation::{self, EvalAttestation};
 use crate::eval::compare::{compare_runs, ComparisonReport};
 use crate::eval::executor::{BacktestExecutor, Executor, PaperExecutor};
@@ -522,16 +522,24 @@ async fn run_inner(
         let _ = store
             .update_status(&run.id, RunStatus::Failed, Some(&err_msg))
             .await;
+        // Index the failed run so it shows up in ⌘K with its current status
+        // — operators frequently want to find a recently-failed run by id
+        // prefix without leaving the palette.
+        if let Ok(failed) = store.get(&run.id).await {
+            api_search::upsert_run(ctx, &failed).await;
+        }
         return Err(ApiError::Internal(format!("executor: {err_msg}")));
     }
 
     // Re-read from the store so the returned Run reflects the canonical
     // post-finalize state — completed_at + metrics_json are set inside
     // RunStore::finalize and we want callers to see them.
-    store
+    let finalized = store
         .get(&run.id)
         .await
-        .map_err(|e| ApiError::Internal(format!("re-read finalized run: {e}")))
+        .map_err(|e| ApiError::Internal(format!("re-read finalized run: {e}")))?;
+    api_search::upsert_run(ctx, &finalized).await;
+    Ok(finalized)
 }
 
 pub async fn scenarios(ctx: &ApiContext) -> ApiResult<Vec<ScenarioSummary>> {

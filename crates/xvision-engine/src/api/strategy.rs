@@ -10,7 +10,7 @@
 
 use crate::api::{
     audit::{self, Outcome},
-    ApiContext, ApiError, ApiResult,
+    search as api_search, ApiContext, ApiError, ApiResult,
 };
 use crate::authoring::{
     self, CreateStrategyOut, CreateStrategyReq, SetRiskConfigOut, SetRiskConfigReq,
@@ -174,6 +174,9 @@ pub async fn create_strategy(
         started.elapsed().as_millis() as i64,
     )
     .await;
+    if let Some(id) = target.as_deref() {
+        index_strategy_after_mutation(ctx, &store, id).await;
+    }
     result
 }
 
@@ -201,6 +204,9 @@ pub async fn update_slot(ctx: &ApiContext, req: UpdateSlotReq) -> ApiResult<Upda
         started.elapsed().as_millis() as i64,
     )
     .await;
+    if result.is_ok() {
+        index_strategy_after_mutation(ctx, &store, &agent_id).await;
+    }
     result
 }
 
@@ -232,7 +238,25 @@ pub async fn set_risk_config(
         started.elapsed().as_millis() as i64,
     )
     .await;
+    if result.is_ok() {
+        index_strategy_after_mutation(ctx, &store, &agent_id).await;
+    }
     result
+}
+
+/// Re-load the bundle after a successful mutation and refresh its row in
+/// the search index. Best-effort: a failure here is logged inside
+/// `api::search::upsert_strategy` and never bubbled up — the mutation has
+/// already succeeded and the audit row is already written.
+async fn index_strategy_after_mutation(
+    ctx: &ApiContext,
+    store: &FilesystemStore,
+    agent_id: &str,
+) {
+    match store.load(agent_id).await {
+        Ok(bundle) => api_search::upsert_strategy(ctx, &bundle).await,
+        Err(e) => tracing::warn!(error = %e, agent_id, "post-mutation reload for indexer failed"),
+    }
 }
 
 /// Run the bundle through the validator. The result type carries the

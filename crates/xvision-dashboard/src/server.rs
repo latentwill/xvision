@@ -6,8 +6,12 @@ use axum::{
 };
 use tower_http::trace::TraceLayer;
 
-use crate::routes::{chat_rail, eval_runs, health::health, settings, static_files, strategies, wizard};
+use crate::routes::{
+    chat_rail, eval_runs, health::health, search as search_route, settings, static_files,
+    strategies, wizard,
+};
 use crate::state::AppState;
+use xvision_engine::api::search as api_search;
 
 pub fn build_router(state: AppState) -> Router {
     Router::new()
@@ -26,6 +30,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/eval/runs", get(eval_runs::list))
         .route("/api/eval/runs/:id", get(eval_runs::get))
         .route("/api/eval/compare", get(eval_runs::compare))
+        .route("/api/search", get(search_route::handler))
         .route("/api/settings/brokers", get(settings::brokers::get))
         .route("/api/settings/daemon", get(settings::daemon::get))
         .route("/api/settings/identity", get(settings::identity::get))
@@ -55,6 +60,11 @@ pub fn build_router(state: AppState) -> Router {
 }
 
 pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
+    // Cold-start the ⌘K index: walk the bundle store + run table, re-seed
+    // the static action set + canonical scenarios. Idempotent — every
+    // subsequent indexer hook just refreshes the row in place.
+    api_search::reindex_all(&state.api_context()).await;
+
     let app = build_router(state);
     tracing::info!(%addr, "xvision-dashboard listening");
     let listener = tokio::net::TcpListener::bind(addr).await?;
