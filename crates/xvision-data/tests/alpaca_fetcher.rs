@@ -44,3 +44,33 @@ async fn fetch_crypto_bars_single_page() {
     assert_eq!(bars[0].open, 2300.0);
     assert_eq!(bars[1].close, 2325.0);
 }
+
+#[tokio::test]
+async fn fetch_crypto_bars_paginated() {
+    let server = MockServer::start().await;
+
+    let page1 = serde_json::json!({
+        "bars": {"ETH/USD": [{"t": "2024-02-03T00:00:00Z", "o": 1.0, "h": 1.0, "l": 1.0, "c": 1.0, "v": 1.0}]},
+        "next_page_token": "TOKEN_2"
+    });
+    let page2 = serde_json::json!({
+        "bars": {"ETH/USD": [{"t": "2024-02-03T01:00:00Z", "o": 2.0, "h": 2.0, "l": 2.0, "c": 2.0, "v": 2.0}]},
+        "next_page_token": null
+    });
+
+    Mock::given(method("GET")).and(path("/v1beta3/crypto/us/bars")).and(query_param("page_token", ""))
+        .respond_with(ResponseTemplate::new(200).set_body_json(page1))
+        .mount(&server).await;
+    Mock::given(method("GET")).and(path("/v1beta3/crypto/us/bars")).and(query_param("page_token", "TOKEN_2"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(page2))
+        .mount(&server).await;
+
+    let bars = AlpacaBarsFetcher::new(server.uri(), "k".into(), "s".into())
+        .fetch_crypto_bars("ETH/USD", BarGranularity::Hour1,
+            Utc.with_ymd_and_hms(2024,2,3,0,0,0).unwrap(),
+            Utc.with_ymd_and_hms(2024,2,3,2,0,0).unwrap()).await.unwrap();
+
+    assert_eq!(bars.len(), 2);
+    assert_eq!(bars[0].open, 1.0);
+    assert_eq!(bars[1].open, 2.0);
+}

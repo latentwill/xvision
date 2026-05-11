@@ -75,7 +75,6 @@ pub struct AlpacaBarsFetcher {
 #[derive(Debug, Deserialize)]
 struct BarsResponse {
     bars: std::collections::HashMap<String, Vec<RawBar>>,
-    #[allow(dead_code)]
     next_page_token: Option<String>,
 }
 
@@ -119,61 +118,65 @@ impl AlpacaBarsFetcher {
         start: DateTime<Utc>,
         end: DateTime<Utc>,
     ) -> Result<Vec<MarketBar>, FetchError> {
-        self.rate_limiter.until_ready().await;
-        let url = format!("{}/v1beta3/crypto/us/bars", self.base_url);
-        let resp = self
-            .client
-            .get(&url)
-            .header("APCA-API-KEY-ID", &self.api_key)
-            .header("APCA-API-SECRET-KEY", &self.api_secret)
-            .query(&[
-                ("symbols", asset_pair),
-                ("timeframe", granularity.as_alpaca_str()),
-                ("start", &start.to_rfc3339()),
-                ("end", &end.to_rfc3339()),
-                ("limit", "10000"),
-            ])
-            .send()
-            .await?;
-
-        match resp.status() {
-            StatusCode::OK => {}
-            StatusCode::UNAUTHORIZED => return Err(FetchError::Unauthorized),
-            StatusCode::NOT_FOUND => return Err(FetchError::AssetNotFound(asset_pair.into())),
-            StatusCode::TOO_MANY_REQUESTS => {
-                let retry = resp
-                    .headers()
-                    .get("Retry-After")
-                    .and_then(|v| v.to_str().ok())
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(60);
-                return Err(FetchError::RateLimited {
-                    retry_after_secs: retry,
-                });
+        let mut out = Vec::new();
+        let mut page_token: Option<String> = None;
+        loop {
+            self.rate_limiter.until_ready().await;
+            let url = format!("{}/v1beta3/crypto/us/bars", self.base_url);
+            let req = self
+                .client
+                .get(&url)
+                .header("APCA-API-KEY-ID", &self.api_key)
+                .header("APCA-API-SECRET-KEY", &self.api_secret)
+                .query(&[
+                    ("symbols", asset_pair),
+                    ("timeframe", granularity.as_alpaca_str()),
+                    ("start", &start.to_rfc3339()),
+                    ("end", &end.to_rfc3339()),
+                    ("limit", "10000"),
+                    ("page_token", page_token.as_deref().unwrap_or("")),
+                ]);
+            let resp = req.send().await?;
+            match resp.status() {
+                StatusCode::OK => {}
+                StatusCode::UNAUTHORIZED => return Err(FetchError::Unauthorized),
+                StatusCode::NOT_FOUND => return Err(FetchError::AssetNotFound(asset_pair.into())),
+                StatusCode::TOO_MANY_REQUESTS => {
+                    let retry = resp
+                        .headers()
+                        .get("Retry-After")
+                        .and_then(|v| v.to_str().ok())
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(60);
+                    return Err(FetchError::RateLimited {
+                        retry_after_secs: retry,
+                    });
+                }
+                other => {
+                    warn!(status=?other, "unexpected Alpaca response");
+                    return Err(FetchError::Network(resp.error_for_status().unwrap_err()));
+                }
             }
-            other => {
-                warn!(status=?other, "unexpected Alpaca response");
-                return Err(FetchError::Network(resp.error_for_status().unwrap_err()));
-            }
-        }
-
-        let payload: BarsResponse = resp.json().await?;
-        let raw = payload
-            .bars
-            .into_iter()
-            .next()
-            .map(|(_, v)| v)
-            .unwrap_or_default();
-        Ok(raw
-            .into_iter()
-            .map(|b| MarketBar {
+            let payload: BarsResponse = resp.json().await?;
+            let raw = payload
+                .bars
+                .into_iter()
+                .next()
+                .map(|(_, v)| v)
+                .unwrap_or_default();
+            out.extend(raw.into_iter().map(|b| MarketBar {
                 timestamp: b.t,
                 open: b.o,
                 high: b.h,
                 low: b.l,
                 close: b.c,
                 volume: b.v,
-            })
-            .collect())
+            }));
+            match payload.next_page_token {
+                Some(t) if !t.is_empty() => page_token = Some(t),
+                _ => break,
+            }
+        }
+        Ok(out)
     }
 }
