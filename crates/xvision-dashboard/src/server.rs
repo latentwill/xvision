@@ -56,6 +56,10 @@ pub fn build_router(state: AppState) -> Router {
             "/api/settings/brokers/alpaca",
             post(settings::brokers::set_alpaca).delete(settings::brokers::delete_alpaca),
         )
+        .route(
+            "/api/settings/brokers/alpaca/test-connection",
+            post(settings::brokers::test_alpaca),
+        )
         .route("/api/settings/daemon", get(settings::daemon::get))
         .route("/api/settings/identity", get(settings::identity::get))
         .route(
