@@ -1,5 +1,6 @@
 pub mod ab_compare;
 pub mod asset;
+pub mod bars;
 pub mod dashboard;
 pub mod eod;
 pub mod eval;
