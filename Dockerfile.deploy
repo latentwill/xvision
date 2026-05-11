@@ -76,6 +76,12 @@ COPY . .
 # Drop in the built SPA so rust-embed picks it up during the cargo build.
 COPY --from=frontend /xvision/crates/xvision-dashboard/static/ crates/xvision-dashboard/static/
 
+# Bust cargo-chef cache for the dashboard crate. The `cook` stage above ran
+# against an empty static/ dir, so rust-embed's build script captured "no
+# files." Without nudging the crate as dirty, cargo skips recompilation and
+# the binary ships referencing index.html but with none of /assets/ embedded.
+RUN touch crates/xvision-dashboard/src/embed.rs
+
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     if [ "$WITH_IDENTITY" = "1" ]; then \

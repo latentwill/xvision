@@ -68,7 +68,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ${{ github.event.inputs.dockerfile || 'Dockerfile' }}
+          file: ${{ github.event.inputs.dockerfile || 'Dockerfile.deploy' }}
           push: ${{ github.event_name != 'pull_request' }}
           build-args: |
             WITH_IDENTITY=0
@@ -110,7 +110,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ${{ github.event.inputs.dockerfile || 'Dockerfile' }}
+          file: ${{ github.event.inputs.dockerfile || 'Dockerfile.deploy' }}
           push: true
           build-args: |
             WITH_IDENTITY=1
