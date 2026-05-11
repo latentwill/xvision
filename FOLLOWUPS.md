@@ -328,3 +328,43 @@ Hermes Agent (NousResearch) is the OpenClaw successor — its own README documen
   - User-installable vs project-local (`.claude/skills/xvision/` checked in)? Project-local survives across machines + onboards collaborators; user-installable stays light. Probably both — minimal user skill that points at the project copy.
   - Auto-trigger heuristics: filename patterns (`crates/xvision-*/`), workspace-root marker (`Cargo.toml` containing `xvision-core`)? Description-based discovery is usually enough.
 - **Blocking:** non-blocking. Quality-of-life for future sessions; deferred until phase 9 headline + GPU experiment land OR until post-hackathon merge so the contents stop churning.
+
+### F34 [SLF]. ERC-8004 reputation leaderboards — gamification surface
+
+- **Trigger:** SLF4 done (per-cycle Reputation Registry writes available) AND SLF10 dashboard rendering at least one ladder view. Without those there's nothing to rank.
+- **Scope:** explore the leaderboard product layer on top of ERC-8004 reputation. Brainstorm seed (2026-05-11):
+  - **"Most strategies sold"** ranking — counts NFT marketplace sales per agent / per author. Pulls from the per-strategy NFT mint flow (SLF3) + secondary-market events on Mantle.
+  - **Other rank axes worth prototyping** — cumulative on-chain PnL (weighted by capital actually deployed, not paper notional), live Sharpe / Calmar, drawdown survival streaks, validation-receipt count (SLF5), genealogy fan-out (SLF8 — "strategies forked from me"), cross-pollination citations (SLF13 — "agents that read my Reputation before mutating"), feedback-velocity (how fast a mutation converges on a positive Reputation score).
+  - **Gamification knobs** — seasonal resets vs all-time, capital-tier brackets (sub-1k / 1k–10k / 10k+), risk-bucket brackets (low-vol / mid / high-vol), badge issuance via Reputation Registry `tag1` field (e.g. `tag1="badge:first-100-trades"`), decay curves so dormant agents drop off, sybil-resistance (one author → many agents inflates "most strategies sold" — needs author-id binding via IdentityRegistry).
+  - **Optimisation moves** — incentive design (does "most sold" reward novelty or quality? a cheap copy can outsell a winner), anti-gaming guards (wash-trade detection on secondary sales), reputation portability (can an agent move its rep to a new wallet without losing the leaderboard slot?).
+- **Why noted:** the ERC-8004 substrate (SLF2/4/5/8/13) gives us the *data*, but the leaderboard / gamification layer is what makes the substrate a *product* people care about. Risk of building the rails and having nothing on them.
+- **Blocking:** non-blocking exploration. Pure ideation lane until SLF4 + SLF10 are real. Capture more axes here as they come up.
+
+### F35 [Shared]. Auth on the dashboard API — required before non-Tailscale wide-bind
+
+- **Trigger:** any deployment that needs to bind the dashboard wider than loopback on a network that isn't Tailscale-gated (LAN-only, public cloud, shared Wi-Fi). Also a prerequisite for the mobile PWA + Web Push work in `frontend/MOBILE.md` §9 Phase 5 if that ever ships outside a private tailnet.
+- **Scope:** the dashboard currently has no auth on `/api/*` (DESIGN.md §8.4 — same-origin localhost assumption). Vite dev now binds `0.0.0.0` and accepts `*.ts.net` (2026-05-11, so a phone over Tailscale loads the SPA); the production `xvn dashboard serve` still defaults to `127.0.0.1:8788` but the `--bind` flag is documented for wider exposure. As long as the only wider-bind path is Tailscale, the tailnet ACL is the auth layer. If we ever expose past Tailscale, add a real auth layer:
+  - Bearer-token middleware on the axum router (`xvision-dashboard/src/server.rs`), tokens issued via `xvn` CLI and stored in `~/.xvn/`.
+  - Session cookie + CSRF for browser flows; `same-origin` fetches keep their current shape.
+  - Settings page surface to rotate / revoke tokens.
+  - Per-route auth scopes once the surface stops being one-user-one-machine.
+- **Why noted:** the mobile work and the Tailscale convenience widen the failure-mode surface — easy to forget the trust model when the phone "just works" from anywhere on the tailnet. Document the assumption *and* gate the wide-bind path on auth before the assumption ever stops holding.
+- **Blocking:** non-blocking today (Tailscale ACL is the gate). BLOCKING for any non-Tailscale wide-bind deployment.
+
+### F36 [Shared]. driver.js guided tours — in-app onboarding for the dense surfaces
+
+- **Trigger:** after the v1 vertical slice (Phase 1+2 in DESIGN.md §10) is reachable end-to-end and the UI stops moving in big ways. Earliest sensible moment: once Inspector and Eval-runs stop changing weekly.
+- **Scope:** add [driver.js](https://driverjs.com/) (~5KB, vanilla, has a thin React wrapper) and ship one tour per dense surface. Candidate tours, ranked by payoff:
+  - **Inspector (`/authoring/:id`)** — the densest screen (4-column on desktop, 3-tab on mobile per `frontend/MOBILE.md` §3.3). Walk through: bundle outline → slot editor → live preview → validation rail. Highest payoff; the cost-of-confusion peak.
+  - **Run detail (`/eval/runs/:id`)** — what equity / findings / trade ledger actually mean. Especially the "Draft variant from this finding →" affordance, which is non-obvious.
+  - **Compare (`/eval/compare`)** — overlay chart + paired KPIs; the comparison semantics aren't visible from the layout.
+  - **Setup wizard** — probably *doesn't* need a tour (the wizard already self-explains via chat), unless we add a "what does this Strategy in progress panel mean" first-pass.
+  - **Home Control Tower** — short tour pointing at the KPI tiles and the chat composer; low-cost.
+- **Implementation knobs:**
+  - **Triggering** — first-visit-per-route via a localStorage flag; or always-available via a small `[?]` help button in the topbar that re-opens the current page's tour.
+  - **Persistence axis** — localStorage is fine for single-machine; if we later want "I already saw the Inspector tour on my laptop, don't show it on my phone", move the flag into `engine::api::settings` and key it per-user / per-bundle.
+  - **Content authoring** — keep tour JSON/TS colocated with the route (e.g. `routes/authoring.$id.tour.ts`) so it doesn't drift from the screen it describes. Lint rule: every tour step references a `data-tour="…"` attribute that must exist in the matching route component.
+  - **Mobile** — driver.js works on touch but the spotlight + tooltip pattern needs testing at 390×844. May need to use a "bottom sheet hint" pattern on mobile and the classic popover only on desktop.
+  - **Tours vs the chat rail** — the chat rail (DESIGN.md §7) is the long-tail Q&A surface; tours are the up-front "here's what's on this screen" surface. They complement, don't overlap.
+- **Why noted:** DESIGN.md Appendix C explicitly ruled out "In-app onboarding tour beyond the first-run wizard" for v1. That's correct for the v1 cut, but the Inspector + Eval surfaces are dense enough that anyone past the user himself will need a guided pass on first encounter, and "go read DESIGN.md" doesn't scale. Cheap to add (driver.js is one of the most lightweight tour libs), incremental (one tour at a time), and removable (a flag-toggle disables all tours if they get in the way).
+- **Blocking:** non-blocking. Quality-of-life / onboarding polish.

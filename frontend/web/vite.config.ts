@@ -23,6 +23,14 @@ export default defineConfig({
   server: {
     port: 5180,
     strictPort: true,
+    // host: true binds 0.0.0.0 so the dev server is reachable from other
+    // devices (e.g. a phone over Tailscale, or another machine on the LAN).
+    // allowedHosts adds Tailscale MagicDNS names (*.ts.net) past Vite's
+    // DNS-rebinding protection; loopback and private-IP access remain
+    // implicitly allowed. See frontend/MOBILE.md §6 for the rationale and
+    // frontend/README.md for the security caveat (no auth on the API).
+    host: true,
+    allowedHosts: [".ts.net"],
     proxy: {
       "/api": "http://127.0.0.1:8788",
     },
