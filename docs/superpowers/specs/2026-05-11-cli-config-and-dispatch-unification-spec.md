@@ -60,19 +60,66 @@ CLI single-shot verbs that hit LLMs (`xvn intern`, `xvn trader`, `xvn eval run`,
 
 Every `xvn indicator <name>` verb's `--help` documents `--prices` as a JSON array literal. Implementation in `crates/xvision-cli/src/commands/indicator.rs:131` is `serde_json::from_slice(&std::fs::read(path)?)` — it's a path. Inline JSON fails with the generic `No such file or directory (os error 2)` (no path in the message). Same misleading-help pattern in `risk evaluate`, `trader preview`, `ab-compare`.
 
-### 6. Smaller observed CLI inconsistencies (catalog, not load-bearing)
+### 6. QA bugs — independent of the refactor, tracked here for visibility
 
-- `xvn eval show --id <ULID>` — rejects `--id`; expects positional `<RUN_ID>`. Inconsistent with `eval run --strategy/--scenario`.
-- `xvn close-position --asset BTC` returned `"no open position"` immediately after `xvn fire-trade --side buy --size-bps 10` filled, while `xvn portfolio` continued to show an open BTC long. Position-source mismatch between the two reads.
-- `xvn risk show-config` (no args) → `No such file or directory (os error 2)` with no path in the message.
+These three are real bugs surfaced during the same probe but are **not** fixed by Batches A–D. They live in different code paths and need their own attention. Logged here so they don't get lost; either roll into the refactor's PRs opportunistically or file as standalone follow-ups.
 
-These three are doc / wiring issues, not architectural. Tracked here for visibility; they fall out of the broader refactor for free if the migration touches the affected files.
+#### QA-1 — `xvn eval show --id <X>` rejects `--id`
+
+- **Repro:** `xvn eval show --id 01ABC...` → `error: unexpected argument '--id' found`
+- **Cause:** clap defines `<RUN_ID>` as positional; every other `eval` subcommand uses flags (`eval run --strategy --scenario`). Inconsistent.
+- **Fix surface:** clap derive in `crates/xvision-cli/src/commands/eval.rs`. Pick one — flags everywhere or positional everywhere — and apply across the verb. Likely one-liner per arg.
+- **Owner:** CLI ergonomics. Could be bundled into Batch D's plan.
+
+#### QA-2 — `close-position` and `portfolio` disagree on open positions
+
+- **Repro:** with `APCA_*` env set, `xvn fire-trade --side buy --size-bps 10` fills (ExecutionReceipt confirms). Immediately after, `xvn portfolio --venue alpaca` shows the BTC long; `xvn close-position --venue alpaca --asset BTC` returns `{"note": "no open position"}`.
+- **Cause:** the two verbs read position state from different sources. One hits Alpaca's `/v2/positions`; the other reads from an internal cache / store that wasn't updated by the fire-trade write path. Needs tracing; this spec doesn't fix it.
+- **Fix surface:** `crates/xvision-execution/src/alpaca.rs` + the venue-command wiring in `crates/xvision-cli/src/commands/venue.rs` and `commands/fire_trade.rs`. Either close-position should hit the live venue read (same as portfolio), or fire-trade should write through to whatever store close-position reads.
+- **Severity:** medium — quietly lets a position pile up because the close operator thinks the position doesn't exist.
+
+#### QA-3 — Cryptic file errors across the CLI
+
+- **Repro:** `xvn risk show-config` (no args) → `No such file or directory (os error 2)` — no path.
+- **Repro:** `xvn indicator macd --prices "[100,101,...]"` → same; the JSON-vs-path issue surfaces here too (Batch D), but the error message itself is the bug.
+- **Repro:** `xvn trader preview --briefing /dev/null` → `EOF while parsing a value at line 1 column 0` — no file path, no hint that the file was empty.
+- **Cause:** raw `?` propagation from `std::fs::read` / `serde_json::from_slice` with no `.with_context()` wrappers. Pattern repeats across most JSON-file-reading CLI verbs.
+- **Fix surface:** drop in `anyhow::Context` / a small `read_json_file(path) -> Result<T>` helper across `commands/indicator.rs`, `commands/risk.rs`, `commands/trader.rs`, `commands/intern.rs`, `commands/ab_compare.rs`. Trivial per call site; high QoL win.
+- **Severity:** low individually, but it adds up — every operator hits this within 5 minutes of using the CLI.
+
+---
+
+## Batch D — CLI hygiene
+
+Three items below — small, mostly mechanical, but they're the difference between a CLI an operator can use and one they have to grep the source for. The refactor in Batches A–C touches enough of these files that landing D in the same wave is cheap.
+
+### D.1 — Pick one I/O convention for JSON inputs
+
+The current state: `--prices` / `--briefing` / `--snapshot` / `--portfolio` / `--cycles` / `--bars` / `--hlc` / `--hl` are all documented as "JSON" in `--help` and implemented as "path to JSON file." Pick one of:
+
+- **(a) Path only** — rewrite all help text to say "path to JSON file." Cheapest; matches today's impl.
+- **(b) Inline only** — change every reader to parse the literal. Verbose at the shell.
+- **(c) Both, via `@` prefix** — `--prices [1,2,3]` parses as JSON; `--prices @file.json` reads from disk. The standard CLI convention (`curl`, `gh`).
+
+Recommend **(c)** for `--prices` / single-value args and **(a)** for multi-megabyte args like `--cycles` / `--bars`. Plan-writer picks final, applies consistently across `indicator`, `risk evaluate`, `trader preview`, `intern preview`, `ab-compare`, `run-setup`.
+
+### D.2 — `xvn fire-trade --dry-run`
+
+`fire-trade` today submits a live paper order with no confirmation step. The operator pattern is: synthesize the `RiskDecision::Approved`, *print it*, and exit zero — without calling the venue executor. Mirror in `close-position` for symmetry. Default behavior unchanged.
+
+### D.3 — Flag-vs-positional consistency
+
+`eval show <RUN_ID>` vs `eval run --strategy --scenario` is the visible one (QA-1). Audit all `eval`, `strategy`, `skill`, `provider`, `store` subcommands and pick one convention per verb-family. Flag-style is more discoverable; positional is shorter for the common case. Either is fine — consistency is the point.
+
+### Scope boundary
+
+QA-2 (`close-position` vs `portfolio` position-source mismatch) is **explicitly out of Batch D** — it's a venue-layer bug, not CLI hygiene. File separately.
 
 ---
 
 ## Recommended sequencing
 
-Three batches, each landable independently.
+Four batches, each landable independently. A–C are the architectural drift fix; D is CLI hygiene riding the same wave.
 
 ### Batch A — Single config-path resolver
 
@@ -171,10 +218,10 @@ The `[intern]` → "default agent" rework (`2026-05-11-qa-pass-2-spec.md` Batch 
 
 ## Open questions for plan-write
 
-1. **Separator for `model_requirement`.** Today: `<provider>.<model>` via first-dot split. The split-on-first-dot pattern works only because no provider name contains a dot. A `:` separator (`openrouter:deepseek/deepseek-v4-flash`) is more conventional and unambiguous. Worth a one-time rename of every template string + a compat shim for in-flight bundles? Or punt.
-2. **Indicator/risk/trader I/O convention.** Either accept both inline JSON and `@path` (cli convention), or pick one and rewrite help text. The current "help says inline, impl reads path" is the worst of both. Whichever path is chosen, apply it consistently across `indicator`, `risk evaluate`, `trader preview`, `intern preview`, `ab-compare`.
-3. **`fire-trade` dry-run flag.** Today `fire-trade` submits a live paper order with no confirmation. The operator pattern is to want a `--dry-run` that prints the synthesized `RiskDecision::Approved` without calling the venue executor. Worth adding while we're touching the venue commands? (Out of refactor scope but in the same probe.)
-4. **Test surface.** Each batch's plan should state which existing tests can stay (they cover the *behavior* the resolver/bootstrap/dispatch now provide) and which need new fixtures (config-path resolution under different env permutations).
+1. **Separator for `model_requirement`.** Today: `<provider>.<model>` via first-dot split. Works only because no provider name contains a dot. A `:` separator (`openrouter:deepseek/deepseek-v4-flash`) is more conventional and unambiguous. Plan-writer decides: one-time rename of every template string + a compat shim for in-flight bundles, or punt and document the brittle invariant.
+2. **Test surface.** Each batch's plan should state which existing tests can stay (they cover the *behavior* the resolver/bootstrap/dispatch now provide) and which need new fixtures (config-path resolution under different env permutations).
+
+Batch D's three items (I/O convention, dry-run flag, flag-vs-positional) have recommendations in place and are not "open" — they're decisions for the D plan-writer to confirm and apply consistently.
 
 ---
 
@@ -189,9 +236,27 @@ The `[intern]` → "default agent" rework (`2026-05-11-qa-pass-2-spec.md` Batch 
 
 ## Acceptance criteria
 
-When all three batches land, the following hold:
+When all four batches land, the following hold:
 
+**Batch A — Config resolver**
 - `xvn provider list` and the dashboard's `/api/settings/providers` return the same rows from any cwd, given any combination of `XVN_CONFIG_PATH` / `XVN_CONFIG_DIR` / `XVN_HOME` env vars.
-- A strategy bundle declaring `trader_slot.model_requirement = "openrouter.deepseek/deepseek-v4-flash"` causes `xvn eval run` to dispatch against openrouter, not Anthropic.
-- `xvn intern brief …` succeeds when `providers.toml` has a saved key for the configured provider, without the operator exporting `XVN_PROVIDER_*_KEY`.
 - The drift between `crates/xvision-dashboard/src/llm_dispatch.rs:123`, `crates/xvision-dashboard/src/routes/settings/providers.rs:22`, `crates/xvision-cli/src/commands/provider.rs:73`, `crates/xvision-cli/src/commands/ab_compare.rs:65`, and `crates/xvision-cli/src/commands/risk.rs` clap defaults is collapsed into one `xvision_core::config::resolver` call.
+- The container's two-file split is resolved (compose-file fix or dual-write).
+
+**Batch B — Bootstrap preamble**
+- `xvn intern brief …` succeeds when `providers.toml` has a saved key for the configured provider, without the operator exporting `XVN_PROVIDER_*_KEY`.
+- Same for `xvn trader run`, `xvn eval run`, `xvn provider check`.
+
+**Batch C — Dispatch resolver**
+- A strategy bundle declaring `trader_slot.model_requirement = "openrouter.deepseek/deepseek-v4-flash"` causes `xvn eval run` to dispatch against openrouter, not Anthropic.
+- A bundle declaring `anthropic.claude-…` still works with `ANTHROPIC_API_KEY` even with no registered `anthropic` provider row (legacy fallback).
+
+**Batch D — CLI hygiene**
+- Every JSON-input flag across `indicator`, `risk evaluate`, `trader preview`, `intern preview`, `ab-compare`, `run-setup` uses the chosen convention consistently, and `--help` matches impl.
+- `xvn fire-trade --dry-run` and `xvn close-position --dry-run` print the synthesized decision and exit zero without calling the venue.
+- Flag-vs-positional convention is consistent within each verb family (audit complete; chosen convention applied).
+
+**Out of scope (filed separately)**
+- QA-1: `eval show --id <X>` rejected — single clap arg fix, bundle into D if convenient or file as own follow-up.
+- QA-2: `close-position` vs `portfolio` position-source mismatch — venue-layer bug, separate ticket.
+- QA-3: cryptic file-error messages across CLI verbs — file as own ticket; touches enough files that it can ride D's wave opportunistically but isn't gated on it.
