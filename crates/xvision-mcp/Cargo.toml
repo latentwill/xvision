@@ -18,6 +18,7 @@ path = "src/main.rs"
 [dependencies]
 xvision-data   = { path = "../xvision-data" }
 xvision-engine = { path = "../xvision-engine" }
+xvision-skills = { path = "../xvision-skills" }
 
 # rmcp 1.6: official Rust MCP SDK. Default features = base64 + macros + server.
 # transport-io enables `rmcp::transport::stdio()` for MCP-over-stdin/stdout.

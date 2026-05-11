@@ -97,10 +97,7 @@ fn run_inline_seeds_with_real_ohlcv_and_indicators() {
     // before each decision; presence of that line proves the OHLCV
     // tool actually ran and the seed was populated from real fixture
     // bars, not the placeholder strings.
-    assert!(
-        stdout.contains("seed_summary:"),
-        "stdout: {stdout}"
-    );
+    assert!(stdout.contains("seed_summary:"), "stdout: {stdout}");
     assert!(stdout.contains("bars="), "stdout: {stdout}");
     assert!(stdout.contains("decision[0]:"));
 }

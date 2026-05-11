@@ -62,8 +62,7 @@ pub async fn run(
     // existing provider's `(base_url, api_key_env)` is used for the Intern
     // default — matching by `ProviderKind`.
     let workspace_root = std::env::current_dir()?;
-    let runtime_cfg =
-        xvision_core::config::load_runtime(&workspace_root.join("config/default.toml"))?;
+    let runtime_cfg = xvision_core::config::load_runtime(&workspace_root.join("config/default.toml"))?;
     let mut rows = runtime_cfg.providers;
 
     let cli_trader_kind = ProviderKind::OpenaiCompat;
@@ -145,10 +144,6 @@ pub async fn run(
     .await?;
 
     std::fs::write(&output, serde_json::to_vec_pretty(&result)?)?;
-    println!(
-        "wrote {} arm result(s) → {}",
-        result.arms.len(),
-        output.display()
-    );
+    println!("wrote {} arm result(s) → {}", result.arms.len(), output.display());
     Ok(())
 }

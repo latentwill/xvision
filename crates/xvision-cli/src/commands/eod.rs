@@ -81,13 +81,11 @@ pub async fn render_report(pool: &SqlitePool, hours: u64) -> Result<String> {
 async fn render_eval_runs(pool: &SqlitePool, since_rfc: &str) -> Result<String> {
     let mut s = String::from("## Eval runs\n\n");
 
-    let total: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM eval_runs WHERE started_at >= ?1",
-    )
-    .bind(since_rfc)
-    .fetch_one(pool)
-    .await
-    .unwrap_or(0);
+    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM eval_runs WHERE started_at >= ?1")
+        .bind(since_rfc)
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
 
     if total == 0 {
         s.push_str("No eval runs in the window.\n\n");
@@ -159,7 +157,8 @@ async fn render_per_strategy(pool: &SqlitePool, since_rfc: &str) -> Result<Strin
     s.push_str("| Strategy | Runs | Completed | Best Sharpe | Best return % |\n");
     s.push_str("|---|---|---|---|---|\n");
     for (bundle, runs, completed, sample_metrics) in rows {
-        let (best_sharpe, best_return) = best_metrics_for_bundle(pool, &bundle, since_rfc, sample_metrics).await;
+        let (best_sharpe, best_return) =
+            best_metrics_for_bundle(pool, &bundle, since_rfc, sample_metrics).await;
         s.push_str(&format!(
             "| `{bundle}` | {runs} | {completed} | {best_sharpe} | {best_return} |\n",
         ));
@@ -217,13 +216,11 @@ async fn best_metrics_for_bundle(
 async fn render_audit_activity(pool: &SqlitePool, since_rfc: &str) -> Result<String> {
     let mut s = String::from("## Audit activity\n\n");
 
-    let total: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM api_audit WHERE occurred_at >= ?1",
-    )
-    .bind(since_rfc)
-    .fetch_one(pool)
-    .await
-    .unwrap_or(0);
+    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM api_audit WHERE occurred_at >= ?1")
+        .bind(since_rfc)
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
 
     if total == 0 {
         s.push_str("No engine API calls in the window.\n\n");
@@ -254,13 +251,12 @@ async fn render_audit_activity(pool: &SqlitePool, since_rfc: &str) -> Result<Str
 async fn render_errors(pool: &SqlitePool, since_rfc: &str) -> Result<String> {
     let mut s = String::from("## Errors\n\n");
 
-    let total: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM api_audit WHERE occurred_at >= ?1 AND outcome = 'error'",
-    )
-    .bind(since_rfc)
-    .fetch_one(pool)
-    .await
-    .unwrap_or(0);
+    let total: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM api_audit WHERE occurred_at >= ?1 AND outcome = 'error'")
+            .bind(since_rfc)
+            .fetch_one(pool)
+            .await
+            .unwrap_or(0);
 
     if total == 0 {
         s.push_str("Zero errors — clean window.\n\n");
@@ -319,12 +315,10 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
-        sqlx::query(include_str!(
-            "../../../xvision-engine/migrations/002_eval.sql"
-        ))
-        .execute(&pool)
-        .await
-        .unwrap();
+        sqlx::query(include_str!("../../../xvision-engine/migrations/002_eval.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
         pool
     }
 
@@ -390,12 +384,10 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
-        sqlx::query(
-            "UPDATE api_audit SET error = 'boom' WHERE id = 'a2'",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
+        sqlx::query("UPDATE api_audit SET error = 'boom' WHERE id = 'a2'")
+            .execute(&pool)
+            .await
+            .unwrap();
 
         let report = render_report(&pool, 24).await.unwrap();
         assert!(report.contains("- Total: 1"));
