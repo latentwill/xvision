@@ -68,6 +68,8 @@ async fn save_test_bundle(ctx: &ApiContext, agent_id: &str) -> StrategyBundle {
             allowed_tools: vec![],
         }),
         risk: RiskPreset::Balanced.expand(),
+        capital: xvision_core::Capital::default(),
+        risk_caps: xvision_core::RiskCaps::default(),
         mechanical_params: serde_json::json!({}),
     };
     let store = FilesystemStore::new(ctx.xvn_home.join("bundles"));

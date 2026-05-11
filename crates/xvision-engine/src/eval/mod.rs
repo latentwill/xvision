@@ -30,8 +30,8 @@ pub use progress::{send_event, ProgressBus, ProgressEvent, ProgressRx, ProgressT
 pub use run::{MetricsSummary, Run, RunMode, RunStatus};
 pub use scenario::{
     canonical_scenarios, AdjustmentMode, AssetClass, AssetRef, BarCachePolicy, BarGranularity,
-    CalendarRef, Capital, DataSource, Fees, FillModel, LatencyModel, LimitOrderFill,
-    MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode, Scenario, ScenarioRisk,
-    ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings, VolumeConstraint, WalkModel,
+    CalendarRef, DataSource, Fees, FillModel, LatencyModel, LimitOrderFill, MarketOrderFill,
+    QuoteCurrency, RefreshPolicy, ReplayMode, Scenario, ScenarioSource, SlippageModel, TimeWindow,
+    Venue, VenueSettings, VolumeConstraint, WalkModel,
 };
 pub use store::{DecisionRow, ListFilter, RunStore};

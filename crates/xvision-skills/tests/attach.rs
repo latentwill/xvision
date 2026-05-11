@@ -43,6 +43,8 @@ fn dummy_bundle() -> StrategyBundle {
             allowed_tools: vec!["ohlcv".into()],
         }),
         risk: RiskPreset::Balanced.expand(),
+        capital: xvision_engine::Capital::default(),
+        risk_caps: xvision_engine::RiskCaps::default(),
         mechanical_params: serde_json::json!({}),
     }
 }

@@ -64,6 +64,8 @@ async fn list_returns_summaries_for_existing_bundles() {
         intern_slot: None,
         trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
+        capital: xvision_core::Capital::default(),
+        risk_caps: xvision_core::RiskCaps::default(),
         mechanical_params: serde_json::json!({}),
     };
     store.save(&bundle).await.unwrap();

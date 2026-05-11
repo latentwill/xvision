@@ -33,8 +33,6 @@ use crate::eval::metrics::{
 use crate::eval::progress::{send_event, ProgressEvent, ProgressTx};
 use crate::eval::run::{MetricsSummary, Run, RunStatus};
 use crate::eval::scenario::{Scenario, SlippageModel};
-// TODO(Task 5): replace placeholder_capital() with the bundle's capital.
-use crate::eval::scenario::placeholder_capital;
 use crate::eval::store::{DecisionRow, RunStore};
 use crate::tools::ToolRegistry;
 
@@ -189,8 +187,7 @@ impl BacktestExecutor {
         // bars remaining"; under-reporting on slow fixtures is fine.
         let total_decision_bars = bars.len().saturating_sub(WARMUP_BARS).max(1) as f64;
 
-        // TODO(Task 5): pull from the StrategyBundle.
-        let initial = placeholder_capital().initial;
+        let initial = bundle.capital.initial;
         let slip_bps = match &scenario.venue.slippage {
             SlippageModel::Linear { bps } => *bps as f64,
             SlippageModel::None => 0.0,

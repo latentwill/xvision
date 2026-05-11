@@ -66,6 +66,8 @@ impl Template for MaCrossover {
                 allowed_tools: vec!["ohlcv".into(), "indicator_panel".into()],
             }),
             risk: RiskPreset::Conservative.expand(),
+            capital: xvision_core::Capital::default(),
+            risk_caps: xvision_core::RiskCaps::default(),
             mechanical_params: serde_json::json!({
                 "fast_ma_period": 20,
                 "slow_ma_period": 50

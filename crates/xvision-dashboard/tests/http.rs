@@ -108,6 +108,8 @@ async fn strategies_list_returns_seeded_bundle() {
             intern_slot: None,
             trader_slot: None,
             risk: RiskPreset::Balanced.expand(),
+            capital: xvision_core::Capital::default(),
+            risk_caps: xvision_core::RiskCaps::default(),
             mechanical_params: serde_json::json!({}),
         })
         .await

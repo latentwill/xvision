@@ -1,6 +1,7 @@
 //! Scenario — a frozen evaluation context (asset window, venue settings,
 //! replay mode, lineage). Properties of the world, not the agent — capital
-//! and risk now live on `StrategyBundle` (Task 5).
+//! and risk live on `StrategyBundle` (see `bundle/mod.rs` `capital` +
+//! `risk_caps` fields, types in `xvision_core::risk`).
 //!
 //! The seeding logic for canonical scenarios will move to a separate
 //! `scenario_seed.rs` in Task 6. Until then, `canonical_scenarios()` here
@@ -190,47 +191,6 @@ pub struct BarCachePolicy {
 pub enum RefreshPolicy {
     NeverRefresh,
     RefreshIfOlderThan { duration_secs: u64 },
-}
-
-// ---------------------------------------------------------------------------
-// Compile-only placeholders — these types move to `xvision-core` /
-// `StrategyBundle` in Task 5. Existing readers that touch `scenario.capital`
-// or `scenario.risk` are stubbed against these placeholder constructors so
-// the workspace keeps building during the refactor.
-// ---------------------------------------------------------------------------
-
-/// TODO(Task 5): move to xvision-core `StrategyBundle`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Capital {
-    pub initial: f64,
-    pub currency: String,
-}
-
-/// TODO(Task 5): move to xvision-core `StrategyBundle`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ScenarioRisk {
-    pub max_concurrent_positions: u32,
-    pub max_leverage: f64,
-    pub daily_loss_kill_switch_pct: f64,
-}
-
-/// Compile-only placeholder used by executors that still expect
-/// `scenario.capital` semantics. Replaced in Task 5 by `StrategyBundle`.
-pub fn placeholder_capital() -> Capital {
-    Capital {
-        initial: 100_000.0,
-        currency: "USD".into(),
-    }
-}
-
-/// Compile-only placeholder used by executors that still expect
-/// `scenario.risk` semantics. Replaced in Task 5 by `StrategyBundle`.
-pub fn placeholder_risk() -> ScenarioRisk {
-    ScenarioRisk {
-        max_concurrent_positions: 1,
-        max_leverage: 1.0,
-        daily_loss_kill_switch_pct: 0.05,
-    }
 }
 
 // ---------------------------------------------------------------------------

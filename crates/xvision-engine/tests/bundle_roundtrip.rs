@@ -35,6 +35,8 @@ fn sample_bundle() -> StrategyBundle {
             allowed_tools: vec!["ohlcv".into()],
         }),
         risk: RiskPreset::Balanced.expand(),
+        capital: xvision_core::Capital::default(),
+        risk_caps: xvision_core::RiskCaps::default(),
         mechanical_params: serde_json::json!({"rsi_oversold": 30, "rsi_overbought": 70}),
     }
 }
@@ -144,6 +146,56 @@ fn bundle_without_trader_slot_fails() {
     b.trader_slot = None; // regime_slot still Some, so NoLlmSlots wouldn't fire
     let err = validate_bundle(&b).unwrap_err();
     assert!(matches!(err, ValidationError::MissingTraderSlot));
+}
+
+#[test]
+fn bundle_carries_capital_and_risk_caps() {
+    // CS-M2 Task 5: capital + risk caps moved off Scenario, onto bundle.
+    let b = sample_bundle();
+    assert_eq!(b.capital.initial, 100_000.0);
+    assert_eq!(b.capital.currency, "USD");
+    assert_eq!(b.risk_caps.max_concurrent_positions, 1);
+    assert_eq!(b.risk_caps.max_leverage, 1.0);
+}
+
+#[test]
+fn bundle_with_missing_capital_still_deserializes() {
+    // Old serialized bundles (pre-Task-5) didn't have capital/risk_caps. The
+    // #[serde(default)] guard means they still round-trip with the default
+    // values populated.
+    let pre_task5_json = serde_json::json!({
+        "manifest": {
+            "id": "01H8OLDB",
+            "display_name": "Legacy",
+            "plain_summary": "x",
+            "creator": "@t",
+            "template": "mean_reversion",
+            "regime_fit": ["range_bound"],
+            "asset_universe": ["BTC/USD"],
+            "decision_cadence_minutes": 15,
+            "required_models": ["mock"],
+            "required_tools": ["ohlcv"],
+            "risk_preset_or_config": "balanced",
+            "published_at": null
+        },
+        "trader_slot": {
+            "role": "trader",
+            "prompt": "decide",
+            "model_requirement": "mock",
+            "allowed_tools": ["ohlcv"]
+        },
+        "risk": {
+            "risk_pct_per_trade": 0.015,
+            "max_concurrent_positions": 2,
+            "max_leverage": 3.0,
+            "stop_loss_atr_multiple": 2.0,
+            "daily_loss_kill_pct": 0.05
+        },
+        "mechanical_params": {}
+    });
+    let parsed: StrategyBundle = serde_json::from_value(pre_task5_json).unwrap();
+    assert_eq!(parsed.capital.initial, 100_000.0);
+    assert_eq!(parsed.risk_caps.max_concurrent_positions, 1);
 }
 
 #[test]

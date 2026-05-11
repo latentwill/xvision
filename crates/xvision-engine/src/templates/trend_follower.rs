@@ -58,6 +58,8 @@ impl Template for TrendFollower {
                 allowed_tools: vec!["ohlcv".into(), "indicator_panel".into()],
             }),
             risk: RiskPreset::Balanced.expand(),
+            capital: xvision_core::Capital::default(),
+            risk_caps: xvision_core::RiskCaps::default(),
             mechanical_params: serde_json::json!({
                 "ema_fast": 12,
                 "ema_mid": 26,

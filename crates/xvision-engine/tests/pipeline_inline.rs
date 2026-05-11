@@ -42,6 +42,8 @@ fn fixture_bundle() -> StrategyBundle {
             allowed_tools: vec!["ohlcv".into()],
         }),
         risk: RiskPreset::Balanced.expand(),
+        capital: xvision_core::Capital::default(),
+        risk_caps: xvision_core::RiskCaps::default(),
         mechanical_params: serde_json::json!({}),
     }
 }

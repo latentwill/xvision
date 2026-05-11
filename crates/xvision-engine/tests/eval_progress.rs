@@ -69,6 +69,8 @@ fn build_bundle(agent_id: &str) -> StrategyBundle {
             allowed_tools: vec![],
         }),
         risk: RiskPreset::Balanced.expand(),
+        capital: xvision_core::Capital::default(),
+        risk_caps: xvision_core::RiskCaps::default(),
         mechanical_params: serde_json::json!({}),
     }
 }
