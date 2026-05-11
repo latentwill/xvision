@@ -9,7 +9,12 @@
 //! plans must follow.
 
 use sqlx::SqlitePool;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use tokio::sync::Mutex;
+
+use xvision_data::alpaca::AlpacaBarsFetcher;
 
 pub mod audit;
 pub mod eval;
@@ -27,12 +32,44 @@ const MIGRATION_003: &str = include_str!("../../migrations/003_chat_sessions.sql
 const MIGRATION_004: &str = include_str!("../../migrations/004_search_index.sql");
 const MIGRATION_005: &str = include_str!("../../migrations/005_bars_cache.sql");
 
-#[derive(Clone, Debug)]
+/// Map of cache_key → per-key mutex used by `eval::bars::load_bars` to
+/// serialize concurrent misses for the same window. Kept inside an outer
+/// `Mutex` so the entry-or-insert step is itself atomic.
+type SingleflightMap = Mutex<HashMap<String, Arc<Mutex<()>>>>;
+
+#[derive(Clone)]
 pub struct ApiContext {
     pub db: SqlitePool,
     pub actor: Actor,
     pub xvn_home: PathBuf,
+    /// Alpaca historical bars fetcher used by `eval::bars::load_bars` on
+    /// cache miss. Default is a fetcher with empty credentials pointing at
+    /// the real Alpaca URL — tests inject a wiremock-backed fetcher via
+    /// `with_alpaca_fetcher`. Production paths should rebuild this from
+    /// stored credentials before any code path that touches `load_bars`.
+    pub(crate) alpaca: Arc<AlpacaBarsFetcher>,
+    /// Singleflight map: concurrent `load_bars` calls for the same
+    /// `cache_key` serialize on the per-key mutex so only one upstream
+    /// fetch happens.
+    pub(crate) bars_singleflight: Arc<SingleflightMap>,
 }
+
+// `AlpacaBarsFetcher` doesn't derive Debug (it holds a reqwest::Client
+// and a rate limiter, neither of which are Debug). We hide it from the
+// derived impl rather than push a Debug impl into xvision-data.
+impl std::fmt::Debug for ApiContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ApiContext")
+            .field("db", &self.db)
+            .field("actor", &self.actor)
+            .field("xvn_home", &self.xvn_home)
+            .field("alpaca", &"<AlpacaBarsFetcher>")
+            .field("bars_singleflight", &"<SingleflightMap>")
+            .finish()
+    }
+}
+
+const DEFAULT_ALPACA_BARS_URL: &str = "https://data.alpaca.markets";
 
 impl ApiContext {
     /// Open (or create) `xvn.db` under `xvn_home` and apply every embedded
@@ -64,11 +101,50 @@ impl ApiContext {
         sqlx::query(MIGRATION_004).execute(&pool).await?;
         sqlx::query(MIGRATION_005).execute(&pool).await?;
 
-        Ok(Self {
-            db: pool,
+        Ok(Self::new(pool, actor, xvn_home.to_path_buf()))
+    }
+
+    /// Construct an `ApiContext` from an already-prepared pool and actor.
+    /// New fields added after the original three-field public struct
+    /// literal (alpaca, bars_singleflight) get sensible defaults here —
+    /// callers that need a non-default Alpaca fetcher chain
+    /// `.with_alpaca_fetcher(...)`.
+    pub fn new(db: SqlitePool, actor: Actor, xvn_home: PathBuf) -> Self {
+        Self {
+            db,
             actor,
-            xvn_home: xvn_home.to_path_buf(),
-        })
+            xvn_home,
+            alpaca: Arc::new(AlpacaBarsFetcher::new(
+                DEFAULT_ALPACA_BARS_URL.into(),
+                String::new(),
+                String::new(),
+            )),
+            bars_singleflight: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    /// Builder override for the Alpaca fetcher. Used by tests to point
+    /// `load_bars` at a wiremock server, and by future production wiring
+    /// to inject a credentialed fetcher built from `secrets/brokers.toml`.
+    pub fn with_alpaca_fetcher(mut self, alpaca: Arc<AlpacaBarsFetcher>) -> Self {
+        self.alpaca = alpaca;
+        self
+    }
+
+    /// Internal accessor used by `eval::bars::load_bars` on cache miss.
+    pub(crate) fn alpaca_fetcher(&self) -> &AlpacaBarsFetcher {
+        &self.alpaca
+    }
+
+    /// Returns the per-key singleflight mutex for `cache_key`, creating
+    /// one on first request. The returned `Arc<Mutex<()>>` is what the
+    /// caller `.lock().await`s before doing the cache lookup + fetch +
+    /// write sequence.
+    pub(crate) async fn bars_singleflight_lock(&self, cache_key: &str) -> Arc<Mutex<()>> {
+        let mut map = self.bars_singleflight.lock().await;
+        map.entry(cache_key.to_string())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
     }
 }
 

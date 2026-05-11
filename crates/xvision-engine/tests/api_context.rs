@@ -5,13 +5,13 @@ use xvision_engine::api::{Actor, ApiContext};
 async fn api_context_constructs_with_actor() {
     let pool = SqlitePool::connect(":memory:").await.unwrap();
     let dir = tempfile::tempdir().unwrap();
-    let ctx = ApiContext {
-        db: pool,
-        actor: Actor::Cli {
+    let ctx = ApiContext::new(
+        pool,
+        Actor::Cli {
             user: "operator".into(),
         },
-        xvn_home: dir.path().to_path_buf(),
-    };
+        dir.path().to_path_buf(),
+    );
     assert!(matches!(ctx.actor, Actor::Cli { .. }));
 }
 

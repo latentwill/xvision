@@ -33,13 +33,13 @@ async fn ctx_with_tables() -> (ApiContext, tempfile::TempDir) {
         .unwrap();
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("bundles")).unwrap();
-    let ctx = ApiContext {
-        db: pool,
-        actor: Actor::Cli {
+    let ctx = ApiContext::new(
+        pool,
+        Actor::Cli {
             user: "operator".into(),
         },
-        xvn_home: dir.path().to_path_buf(),
-    };
+        dir.path().to_path_buf(),
+    );
     (ctx, dir)
 }
 

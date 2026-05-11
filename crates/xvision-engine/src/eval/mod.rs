@@ -7,6 +7,7 @@
 //! roadmap.
 
 pub mod attestation;
+pub mod bars;
 pub mod compare;
 pub mod executor;
 pub mod findings;
