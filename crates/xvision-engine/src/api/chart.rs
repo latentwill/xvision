@@ -610,14 +610,103 @@ fn split_markers(
     ChartMarkers { trades, vetoes, holds }
 }
 
-// ── suppress dead-code warnings on types not yet consumed by HTTP handlers ──
+// ── Task 4 — build_compare_payload ─────────────────────────────────────────
 
-// `CompareChartPayload` and `CompareRunSeries` are defined for Task 4's HTTP
-// handler; mark them used so the compiler doesn't warn during Task 3.
-const _: () = {
-    fn _assert_compile() {
-        let _ = std::mem::size_of::<CompareChartPayload>();
-        let _ = std::mem::size_of::<CompareRunSeries>();
-        let _ = std::mem::size_of::<VetoMarker>();
+/// Build a `CompareChartPayload` for the given set of run ids.
+///
+/// Validates that at most 10 runs are requested. Fetches each run's equity
+/// curve and assembles a `CompareRunSeries` per run. When all runs share the
+/// same scenario, populates `shared_scenario` with the scenario id and
+/// `price_backdrop` with the OHLCV bars for that scenario; otherwise both
+/// fields are `None`.
+///
+/// Returns `ApiError::Validation` if more than 10 ids are provided.
+/// Returns `ApiError::NotFound` for the first id not found in the store.
+pub async fn build_compare_payload(
+    ctx: &ApiContext,
+    run_ids: &[String],
+) -> ApiResult<CompareChartPayload> {
+    if run_ids.len() > 10 {
+        return Err(ApiError::Validation(format!(
+            "compare view caps at 10 runs (got {}); narrow your filter",
+            run_ids.len()
+        )));
     }
-};
+
+    let store = RunStore::new(ctx.db.clone());
+    let mut series: Vec<CompareRunSeries> = Vec::new();
+    let mut scenario_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for id in run_ids {
+        let run = store.get(id).await.map_err(|e| {
+            let msg = e.to_string();
+            if msg.contains("run not found") {
+                ApiError::NotFound(format!("run '{id}'"))
+            } else {
+                ApiError::Internal(msg)
+            }
+        })?;
+
+        scenario_ids.insert(run.scenario_id.clone());
+
+        let equity: Vec<ChartEquityPoint> = store
+            .read_equity_curve(id)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?
+            .into_iter()
+            .map(|(ts, equity_usd)| ChartEquityPoint {
+                time: ts.timestamp(),
+                equity_usd,
+            })
+            .collect();
+
+        series.push(CompareRunSeries {
+            run_id: run.id.clone(),
+            label: run.id.clone(),
+            scenario_id: run.scenario_id.clone(),
+            equity,
+        });
+    }
+
+    // Shared-scenario detection: populate price_backdrop only when every run
+    // is from the same scenario.
+    let (shared_scenario, price_backdrop) = if scenario_ids.len() == 1 {
+        let sid = scenario_ids.into_iter().next().unwrap();
+        let scenario = crate::api::scenario::get(ctx, &sid)
+            .await
+            .map_err(|e| match e {
+                ApiError::NotFound(_) => {
+                    ApiError::NotFound(format!("scenario '{sid}' referenced by compared runs"))
+                }
+                other => other,
+            })?;
+
+        let asset_ref = scenario.asset.first().ok_or_else(|| {
+            ApiError::Internal(format!("scenario '{sid}' has empty asset list"))
+        })?;
+
+        let bars = crate::eval::bars::load_bars(
+            ctx,
+            &crate::eval::bars::BarCacheArgs {
+                cache_key: scenario.bar_cache_policy.cache_key.clone(),
+                asset_pair: asset_ref.venue_symbol.clone(),
+                granularity: scenario.granularity,
+                start: scenario.time_window.start,
+                end: scenario.time_window.end,
+                data_source_tag: "alpaca-historical-v1".into(),
+            },
+        )
+        .await?;
+
+        let chart_bars: Vec<ChartBar> = bars.iter().map(bar_to_chart_bar).collect();
+        (Some(sid), Some(chart_bars))
+    } else {
+        (None, None)
+    };
+
+    Ok(CompareChartPayload {
+        runs: series,
+        shared_scenario,
+        price_backdrop,
+    })
+}
