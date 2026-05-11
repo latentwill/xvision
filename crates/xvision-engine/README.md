@@ -82,8 +82,14 @@ Strategies are stored under `$XVN_HOME/strategies/<id>.json` (default `~/.xvn/st
 xvn skill new --from-file my-trader.md
 # → my-trader
 
+# pipe LLM output straight in (no tmpfile)
+my-llm-tool render-skill | xvn skill new --from-file -
+
 # list saved skills
 xvn skill ls
+
+# preview an attach without writing
+xvn skill attach 01H8N7ZAB... --slot trader --skill my-trader --dry-run
 
 # attach a skill to a slot of a saved strategy
 xvn skill attach 01H8N7ZAB... --slot trader --skill my-trader

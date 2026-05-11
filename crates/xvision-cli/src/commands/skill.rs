@@ -1,9 +1,10 @@
 //! `xvn skill ...` — author and attach OSShip-style markdown skills.
 
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::{Args, Subcommand};
+use tokio::io::AsyncReadExt;
 use xvision_engine::bundle::store::{BundleStore, FilesystemStore};
 use xvision_skills::attach::attach_skill_to_agent;
 use xvision_skills::parse;
@@ -19,9 +20,10 @@ pub struct SkillCmd {
 
 #[derive(Subcommand, Debug)]
 enum SkillAction {
-    /// Register (or overwrite) a skill from a markdown file.
+    /// Register (or overwrite) a skill from a markdown file. Pass `-` as
+    /// the path to read from stdin (e.g. `cat my-trader.md | xvn skill new --from-file -`).
     New {
-        /// Path to the skill markdown file.
+        /// Path to the skill markdown file. Use `-` for stdin.
         #[arg(long)]
         from_file: PathBuf,
     },
@@ -37,6 +39,10 @@ enum SkillAction {
         slot: String,
         #[arg(long)]
         skill: String,
+        /// Print what would change to stdout and exit 0 without writing
+        /// the bundle back to disk.
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
     },
 }
 
@@ -48,7 +54,8 @@ pub async fn run(cmd: SkillCmd) -> CliResult<()> {
             agent_id,
             slot,
             skill,
-        } => attach(&agent_id, &slot, &skill).await,
+            dry_run,
+        } => attach(&agent_id, &slot, &skill, dry_run).await,
     }
 }
 
@@ -67,10 +74,28 @@ fn strategy_store() -> FilesystemStore {
     FilesystemStore::new(xvn_home().join("strategies"))
 }
 
-async fn new(from_file: PathBuf) -> CliResult<()> {
-    let markdown = tokio::fs::read_to_string(&from_file)
+/// Read skill markdown from `from_file`. The literal path `-` reads
+/// from stdin so callers can pipe LLM output straight in:
+///
+/// ```text
+/// my-llm-tool render-skill | xvn skill new --from-file -
+/// ```
+async fn read_source(from_file: &Path) -> CliResult<String> {
+    if from_file.as_os_str() == "-" {
+        let mut buf = String::new();
+        tokio::io::stdin()
+            .read_to_string(&mut buf)
+            .await
+            .exit_with(XvnExit::Upstream)?;
+        return Ok(buf);
+    }
+    tokio::fs::read_to_string(from_file)
         .await
-        .exit_with(XvnExit::Usage)?; // file path came from the caller
+        .exit_with(XvnExit::Usage) // file path came from the caller
+}
+
+async fn new(from_file: PathBuf) -> CliResult<()> {
+    let markdown = read_source(&from_file).await?;
     let parsed = parse(&markdown).exit_with(XvnExit::Usage)?; // input is caller's
     skill_store()
         .save(&parsed.name, &markdown)
@@ -87,7 +112,12 @@ async fn ls() -> CliResult<()> {
     Ok(())
 }
 
-async fn attach(agent_id: &str, slot: &str, skill_name: &str) -> CliResult<()> {
+async fn attach(
+    agent_id: &str,
+    slot: &str,
+    skill_name: &str,
+    dry_run: bool,
+) -> CliResult<()> {
     let strategies = strategy_store();
     let mut bundle = strategies
         .load(agent_id)
@@ -97,6 +127,15 @@ async fn attach(agent_id: &str, slot: &str, skill_name: &str) -> CliResult<()> {
         .load(skill_name)
         .await
         .exit_with(XvnExit::NotFound)?; // missing skill name
+
+    // Snapshot the slot's BEFORE state so dry-run can render a diff. We do
+    // this before the mutate call so we don't have to re-load.
+    let before = match slot {
+        "regime" => bundle.regime_slot.clone(),
+        "intern" => bundle.intern_slot.clone(),
+        "trader" => bundle.trader_slot.clone(),
+        _ => None, // attach_skill_to_agent below will surface the Usage error
+    };
 
     // attach_skill_to_agent returns anyhow::Error with two distinct messages:
     // "unknown slot role: ..." (caller typo → Usage)
@@ -109,6 +148,32 @@ async fn attach(agent_id: &str, slot: &str, skill_name: &str) -> CliResult<()> {
             XvnExit::Conflict
         };
         return Err(CliError { exit, source: e });
+    }
+
+    if dry_run {
+        // Pull the AFTER slot from the mutated bundle for the diff.
+        let after = match slot {
+            "regime" => bundle.regime_slot.as_ref(),
+            "intern" => bundle.intern_slot.as_ref(),
+            "trader" => bundle.trader_slot.as_ref(),
+            _ => None,
+        }
+        .expect("attach_skill_to_agent returned Ok so the slot is populated");
+        let diff = serde_json::json!({
+            "agent_id": agent_id,
+            "slot": slot,
+            "skill_name": skill_name,
+            "dry_run": true,
+            "would_change": {
+                "before": before,
+                "after": after,
+            },
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&diff).exit_with(XvnExit::Upstream)?
+        );
+        return Ok(());
     }
 
     strategies
