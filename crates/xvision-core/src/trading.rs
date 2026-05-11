@@ -27,22 +27,92 @@ pub enum Direction {
     Flat,
 }
 
-/// Whitelisted tradeable assets. v1 ships BTC only — `Eth` and `Sol` declared
-/// for the BTreeMap keying surface but not enabled in `whitelist.toml`.
+/// Whitelisted tradeable assets — full Alpaca crypto whitelist.
+///
+/// Wire format is the upper-case ticker (`"BTC"`, `"ETH"`, …) via serde
+/// `rename_all = "UPPERCASE"`. `FromStr` additionally accepts `"BTC/USD"`,
+/// `"BTCUSD"`, and lower-case forms so CLI/config inputs are forgiving.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum AssetSymbol {
     Btc,
     Eth,
+    Ltc,
     Sol,
+    Avax,
+    Link,
+    Aave,
+    Uni,
+    Dot,
+    Doge,
+    Shib,
+    Matic,
+    Bch,
+    Usdt,
+    Usdc,
 }
 
 impl AssetSymbol {
+    /// Short upper-case ticker (`"BTC"`, `"ETH"`, …). Stable across the
+    /// codebase — JSON, logs, prompt rendering, and report column headers
+    /// all assume this form.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Btc => "BTC",
             Self::Eth => "ETH",
+            Self::Ltc => "LTC",
             Self::Sol => "SOL",
+            Self::Avax => "AVAX",
+            Self::Link => "LINK",
+            Self::Aave => "AAVE",
+            Self::Uni => "UNI",
+            Self::Dot => "DOT",
+            Self::Doge => "DOGE",
+            Self::Shib => "SHIB",
+            Self::Matic => "MATIC",
+            Self::Bch => "BCH",
+            Self::Usdt => "USDT",
+            Self::Usdc => "USDC",
+        }
+    }
+
+    /// Alias for `as_str` (spec name from the asset-unlock plan).
+    pub fn as_short(self) -> &'static str {
+        self.as_str()
+    }
+
+    /// Alpaca-style trading pair (`"BTC/USD"`, `"ETH/USD"`, …).
+    pub fn as_alpaca_pair(self) -> String {
+        format!("{}/USD", self.as_short())
+    }
+}
+
+impl std::fmt::Display for AssetSymbol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for AssetSymbol {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_uppercase().as_str() {
+            "BTC" | "BTC/USD" | "BTCUSD" => Ok(Self::Btc),
+            "ETH" | "ETH/USD" | "ETHUSD" => Ok(Self::Eth),
+            "LTC" | "LTC/USD" | "LTCUSD" => Ok(Self::Ltc),
+            "SOL" | "SOL/USD" | "SOLUSD" => Ok(Self::Sol),
+            "AVAX" | "AVAX/USD" | "AVAXUSD" => Ok(Self::Avax),
+            "LINK" | "LINK/USD" | "LINKUSD" => Ok(Self::Link),
+            "AAVE" | "AAVE/USD" | "AAVEUSD" => Ok(Self::Aave),
+            "UNI" | "UNI/USD" | "UNIUSD" => Ok(Self::Uni),
+            "DOT" | "DOT/USD" | "DOTUSD" => Ok(Self::Dot),
+            "DOGE" | "DOGE/USD" | "DOGEUSD" => Ok(Self::Doge),
+            "SHIB" | "SHIB/USD" | "SHIBUSD" => Ok(Self::Shib),
+            "MATIC" | "MATIC/USD" | "MATICUSD" => Ok(Self::Matic),
+            "BCH" | "BCH/USD" | "BCHUSD" => Ok(Self::Bch),
+            "USDT" | "USDT/USD" | "USDTUSD" => Ok(Self::Usdt),
+            "USDC" | "USDC/USD" | "USDCUSD" => Ok(Self::Usdc),
+            other => Err(format!("unknown asset '{other}'")),
         }
     }
 }
@@ -460,6 +530,20 @@ mod tests {
         let mut op = fixture_open_position();
         op.size_bps = 2500;
         op.validate().expect_err("size_bps > 2000 must fail");
+    }
+
+    #[test]
+    fn asset_symbol_covers_alpaca_crypto_whitelist() {
+        use std::str::FromStr;
+        for sym in &[
+            "BTC", "ETH", "LTC", "SOL", "AVAX", "LINK", "AAVE", "UNI", "DOT", "DOGE", "SHIB",
+            "MATIC", "BCH", "USDT", "USDC",
+        ] {
+            assert!(
+                AssetSymbol::from_str(sym).is_ok(),
+                "missing variant: {sym}"
+            );
+        }
     }
 
     proptest::proptest! {
