@@ -8112,7 +8112,6 @@ dependencies = [
  "sqlx",
  "tempfile",
  "tokio",
- "toml_edit 0.22.27",
  "tracing",
  "tracing-subscriber",
  "ulid",
