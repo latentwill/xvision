@@ -165,7 +165,7 @@ export function SettingsProvidersRoute() {
               authoring wizard.
             </p>
           </div>
-          {!adding ? (
+          {!adding && rows.length > 0 ? (
             <button
               onClick={() => setAdding(true)}
               className="inline-flex items-center gap-2 px-3 py-1.5 rounded text-[12px] border border-border text-text hover:border-text-3"
@@ -180,8 +180,9 @@ export function SettingsProvidersRoute() {
           (owner-only) — they never round-trip through this UI again.
         </p>
 
-        {adding ? (
+        {adding || rows.length === 0 ? (
           <AddProviderForm
+            allowCancel={rows.length > 0}
             onCancel={() => setAdding(false)}
             onAdded={() => {
               setAdding(false);
@@ -190,11 +191,7 @@ export function SettingsProvidersRoute() {
           />
         ) : null}
 
-        {rows.length === 0 ? (
-          <div className="text-text-2 text-[13px] py-6 text-center">
-            no providers yet — click <span className="text-text">+ Add provider</span> to start
-          </div>
-        ) : (
+        {rows.length > 0 && (
           <table className="w-full mt-2">
             <thead>
               <tr className="text-text-3 text-[11px] uppercase tracking-wider text-left">
@@ -585,9 +582,11 @@ function setsDiffer<T>(a: Set<T>, b: Set<T>): boolean {
 }
 
 function AddProviderForm({
+  allowCancel = true,
   onCancel,
   onAdded,
 }: {
+  allowCancel?: boolean;
   onCancel: () => void;
   onAdded: () => void;
 }) {
@@ -642,13 +641,15 @@ function AddProviderForm({
     >
       <div className="flex items-center justify-between">
         <span className="text-[13px] text-text">New provider</span>
-        <button
-          type="button"
-          onClick={onCancel}
-          className="text-[12px] text-text-3 hover:text-text"
-        >
-          Cancel
-        </button>
+        {allowCancel ? (
+          <button
+            type="button"
+            onClick={onCancel}
+            className="text-[12px] text-text-3 hover:text-text"
+          >
+            Cancel
+          </button>
+        ) : null}
       </div>
 
       <Field label="Provider">
