@@ -512,6 +512,10 @@ async fn run_inner(
         .await
         .map_err(|e| ApiError::Internal(format!("create run: {e}")))?;
 
+    // Clone the dispatch Arc so we can reuse it for the post-finalize
+    // findings extraction below without re-paying client setup.
+    let dispatch_for_postprocess = dispatch.clone();
+
     if let Err(e) = executor
         .run(&mut run, &bundle, &scenario, dispatch, tools, &store)
         .await
@@ -539,6 +543,19 @@ async fn run_inner(
         .await
         .map_err(|e| ApiError::Internal(format!("re-read finalized run: {e}")))?;
     api_search::upsert_run(ctx, &finalized).await;
+
+    // Postprocess: drive the findings extractor against the finalized run,
+    // persist + index any findings. Best-effort — extractor failures
+    // (LLM timeout, parse error) log + audit but never fail the run.
+    // Reuses the same dispatch instance so we don't re-pay client setup.
+    crate::eval::postprocess::extract_and_record(
+        ctx,
+        &finalized.id,
+        dispatch_for_postprocess,
+        crate::eval::postprocess::DEFAULT_FINDINGS_MODEL,
+    )
+    .await;
+
     Ok(finalized)
 }
 
