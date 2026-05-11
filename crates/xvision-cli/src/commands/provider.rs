@@ -1,10 +1,25 @@
 //! `xvn provider …` — list / show / check / add / remove registered LLM
-//! providers. Reads from / writes to `config/default.toml`.
+//! providers.
 //!
-//! `add` and `remove` mutate the file in place via `toml_edit` to preserve
-//! comments and formatting. `list` and `show` are read-only.
+//! Business logic lives in `xvision_engine::api::settings::providers::*`
+//! (single source of truth, also dispatched by the dashboard's
+//! `/api/settings/providers` routes). This module is a thin CLI shim —
+//! it parses flags, opens an `ApiContext`, and formats the results for
+//! a TTY.
+//!
+//! `check` is the one exception: it runs a live TCP / HTTP probe with
+//! arbitrary network latency, which is intentionally out of scope for
+//! the engine API in v1.
 
+use std::path::PathBuf;
+
+use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
+
+use xvision_engine::api::settings::providers::{
+    self, AddProviderRequest, ProviderRow,
+};
+use xvision_engine::api::{Actor, ApiContext};
 
 #[derive(Args, Debug)]
 pub struct ProviderCmd {
@@ -50,93 +65,98 @@ enum ProviderAction {
     },
 }
 
-pub async fn run(cmd: ProviderCmd) -> anyhow::Result<()> {
+pub async fn run(cmd: ProviderCmd) -> Result<()> {
     let config_path = std::env::current_dir()?.join("config/default.toml");
+    let xvn_home = resolve_xvn_home()?;
+    let user = std::env::var("USER")
+        .or_else(|_| std::env::var("USERNAME"))
+        .unwrap_or_else(|_| "operator".to_string());
+    let ctx = ApiContext::open(&xvn_home, Actor::Cli { user })
+        .await
+        .map_err(|e| anyhow::anyhow!("open ApiContext: {e}"))?;
+
     match cmd.action {
-        ProviderAction::List => list(&config_path),
-        ProviderAction::Show { name } => show(&config_path, &name),
-        ProviderAction::Check { name, probe } => check(&config_path, &name, probe).await,
+        ProviderAction::List => list(&ctx, &config_path).await,
+        ProviderAction::Show { name } => show(&ctx, &config_path, &name).await,
+        ProviderAction::Check { name, probe } => check(&ctx, &config_path, &name, probe).await,
         ProviderAction::Add {
             name,
             kind,
             base_url,
             api_key_env,
-        } => add(&config_path, &name, &kind, &base_url, &api_key_env),
-        ProviderAction::Remove { name } => remove(&config_path, &name),
+        } => add(&ctx, &config_path, name, kind, base_url, api_key_env).await,
+        ProviderAction::Remove { name } => remove(&ctx, &config_path, &name).await,
     }
 }
 
-fn list(config_path: &std::path::Path) -> anyhow::Result<()> {
-    let cfg = xvision_core::config::load_runtime(config_path)?;
+fn resolve_xvn_home() -> Result<PathBuf> {
+    if let Ok(p) = std::env::var("XVN_HOME") {
+        return Ok(PathBuf::from(p));
+    }
+    let home = dirs::home_dir().context("HOME not set; set XVN_HOME")?;
+    Ok(home.join(".xvn"))
+}
+
+async fn list(ctx: &ApiContext, config_path: &std::path::Path) -> Result<()> {
+    let report = providers::list(ctx, config_path)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     println!(
         "{:<18} {:<14} {:<42} {:<22} {}",
         "NAME", "KIND", "BASE_URL", "API_KEY_ENV", "KEY"
     );
-    for p in &cfg.providers {
+    for p in &report.providers {
         let key_state = if p.api_key_env.is_empty() {
             "n/a".to_string()
-        } else if std::env::var(&p.api_key_env).is_ok() {
+        } else if p.api_key_set {
             "● set".to_string()
         } else {
             "○ missing".to_string()
-        };
-        let kind = match p.kind {
-            xvision_core::config::ProviderKind::Anthropic => "anthropic",
-            xvision_core::config::ProviderKind::OpenaiCompat => "openai-compat",
-            xvision_core::config::ProviderKind::LocalCandle => "local-candle",
         };
         let env_display = if p.api_key_env.is_empty() {
             "(none)".to_string()
         } else {
             p.api_key_env.clone()
         };
-        let synth_marker = if p.name.starts_with('_') {
-            "  (synthetic)"
-        } else {
-            ""
-        };
+        let synth_marker = if p.synthetic { "  (synthetic)" } else { "" };
         println!(
             "{:<18} {:<14} {:<42} {:<22} {}{}",
-            p.name, kind, p.base_url, env_display, key_state, synth_marker
+            p.name, p.kind, p.base_url, env_display, key_state, synth_marker
         );
     }
     Ok(())
 }
 
-fn show(config_path: &std::path::Path, name: &str) -> anyhow::Result<()> {
-    let cfg = xvision_core::config::load_runtime(config_path)?;
-    let p = cfg
-        .providers
-        .iter()
-        .find(|p| p.name == name)
-        .ok_or_else(|| anyhow::anyhow!("provider `{name}` not found"))?;
-    println!("{}", serde_json::to_string_pretty(p)?);
-    if !p.api_key_env.is_empty() {
-        let state = if std::env::var(&p.api_key_env).is_ok() {
-            "set"
-        } else {
-            "missing"
-        };
-        println!("(env {} → {state})", p.api_key_env);
+async fn show(ctx: &ApiContext, config_path: &std::path::Path, name: &str) -> Result<()> {
+    let row = providers::show(ctx, config_path, name)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    println!("{}", serde_json::to_string_pretty(&row)?);
+    if !row.api_key_env.is_empty() {
+        let state = if row.api_key_set { "set" } else { "missing" };
+        println!("(env {} → {state})", row.api_key_env);
     }
     Ok(())
 }
 
-async fn check(config_path: &std::path::Path, name: &str, probe: bool) -> anyhow::Result<()> {
-    let cfg = xvision_core::config::load_runtime(config_path)?;
-    let p = cfg
-        .providers
-        .iter()
-        .find(|p| p.name == name)
-        .ok_or_else(|| anyhow::anyhow!("provider `{name}` not found"))?;
+async fn check(
+    ctx: &ApiContext,
+    config_path: &std::path::Path,
+    name: &str,
+    probe: bool,
+) -> Result<()> {
+    // CLI-only — the engine API doesn't run live network probes in v1.
+    let row: ProviderRow = providers::show(ctx, config_path, name)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    if !p.api_key_env.is_empty() && std::env::var(&p.api_key_env).is_err() {
-        println!("○ env {} not set", p.api_key_env);
-    } else if !p.api_key_env.is_empty() {
-        println!("● env {} set", p.api_key_env);
+    if !row.api_key_env.is_empty() && !row.api_key_set {
+        println!("○ env {} not set", row.api_key_env);
+    } else if !row.api_key_env.is_empty() {
+        println!("● env {} set", row.api_key_env);
     }
 
-    let url = url_parse_minimal(&p.base_url)?;
+    let url = url_parse_minimal(&row.base_url)?;
     let stream = tokio::net::TcpStream::connect((url.host.as_str(), url.port)).await;
     match stream {
         Ok(_) => println!("● tcp {}:{} reachable", url.host, url.port),
@@ -145,14 +165,14 @@ async fn check(config_path: &std::path::Path, name: &str, probe: bool) -> anyhow
 
     if probe {
         let client = reqwest::Client::new();
-        let probe_url = if p.base_url.ends_with('/') {
-            format!("{}models", p.base_url)
+        let probe_url = if row.base_url.ends_with('/') {
+            format!("{}models", row.base_url)
         } else {
-            format!("{}/models", p.base_url)
+            format!("{}/models", row.base_url)
         };
         let mut req = client.get(&probe_url);
-        if !p.api_key_env.is_empty() {
-            if let Ok(key) = std::env::var(&p.api_key_env) {
+        if !row.api_key_env.is_empty() {
+            if let Ok(key) = std::env::var(&row.api_key_env) {
                 req = req.header("Authorization", format!("Bearer {key}"));
             }
         }
@@ -171,7 +191,7 @@ struct MinimalUrl {
 
 /// Tiny URL parser for `https://host[:port]/...` and `http://host[:port]/...`.
 /// Avoids pulling in the `url` crate just for `provider check`.
-fn url_parse_minimal(s: &str) -> anyhow::Result<MinimalUrl> {
+fn url_parse_minimal(s: &str) -> Result<MinimalUrl> {
     let (scheme, rest) = s
         .split_once("://")
         .ok_or_else(|| anyhow::anyhow!("base_url missing scheme: {s}"))?;
@@ -179,7 +199,8 @@ fn url_parse_minimal(s: &str) -> anyhow::Result<MinimalUrl> {
     let (host, port) = match host_port_path.split_once(':') {
         Some((h, p)) => (
             h.to_string(),
-            p.parse::<u16>().map_err(|e| anyhow::anyhow!("port parse: {e}"))?,
+            p.parse::<u16>()
+                .map_err(|e| anyhow::anyhow!("port parse: {e}"))?,
         ),
         None => (
             host_port_path.to_string(),
@@ -189,154 +210,98 @@ fn url_parse_minimal(s: &str) -> anyhow::Result<MinimalUrl> {
     Ok(MinimalUrl { host, port })
 }
 
-fn add(
+async fn add(
+    ctx: &ApiContext,
     config_path: &std::path::Path,
-    name: &str,
-    kind: &str,
-    base_url: &str,
-    api_key_env: &str,
-) -> anyhow::Result<()> {
-    use toml_edit::{value, ArrayOfTables, DocumentMut, Table};
-
-    match kind {
-        "anthropic" | "openai-compat" | "local-candle" => {}
-        other => {
-            anyhow::bail!("invalid kind `{other}`; must be one of: anthropic | openai-compat | local-candle")
-        }
-    }
-    if name.starts_with('_') {
-        anyhow::bail!("provider names starting with '_' are reserved");
-    }
-
-    let raw = std::fs::read_to_string(config_path)?;
-    let mut doc: DocumentMut = raw.parse()?;
-    let providers = match doc
-        .entry("providers")
-        .or_insert_with(|| toml_edit::Item::ArrayOfTables(ArrayOfTables::new()))
-    {
-        toml_edit::Item::ArrayOfTables(arr) => arr,
-        _ => anyhow::bail!("[[providers]] is not an array of tables"),
-    };
-    if providers
-        .iter()
-        .any(|t| t.get("name").and_then(|v| v.as_str()) == Some(name))
-    {
-        anyhow::bail!("provider `{name}` already exists");
-    }
-    let mut row = Table::new();
-    row.insert("name", value(name));
-    row.insert("kind", value(kind));
-    row.insert("base_url", value(base_url));
-    row.insert("api_key_env", value(api_key_env));
-    providers.push(row);
-
-    std::fs::write(config_path, doc.to_string())?;
-    xvision_core::config::load_runtime(config_path)?;
+    name: String,
+    kind: String,
+    base_url: String,
+    api_key_env: String,
+) -> Result<()> {
+    providers::add(
+        ctx,
+        config_path,
+        AddProviderRequest {
+            name,
+            kind,
+            base_url,
+            api_key_env,
+        },
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("{e}"))?;
     Ok(())
 }
 
-fn remove(config_path: &std::path::Path, name: &str) -> anyhow::Result<()> {
-    use toml_edit::DocumentMut;
-
-    let cfg = xvision_core::config::load_runtime(config_path)?;
-    let intern_kind: xvision_core::config::ProviderKind = cfg.intern.provider.into();
-    if let Some(p) = cfg.providers.iter().find(|p| p.name == name) {
-        if p.matches_triple(intern_kind, &cfg.intern.base_url, &cfg.intern.api_key_env) {
-            anyhow::bail!(
-                "cannot remove provider `{name}`: referenced by [intern] (workspace default Intern slot). \
-                 Edit [intern] to point at a different provider first."
-            );
-        }
-    } else {
-        anyhow::bail!("provider `{name}` not found");
-    }
-
-    let raw = std::fs::read_to_string(config_path)?;
-    let mut doc: DocumentMut = raw.parse()?;
-    if let Some(toml_edit::Item::ArrayOfTables(arr)) = doc.get_mut("providers") {
-        let before = arr.len();
-        arr.retain(|t| t.get("name").and_then(|v| v.as_str()) != Some(name));
-        if arr.len() == before {
-            anyhow::bail!("provider `{name}` not found in TOML (race / synthetic row)");
-        }
-    } else {
-        anyhow::bail!("no [[providers]] block in {}", config_path.display());
-    }
-    std::fs::write(config_path, doc.to_string())?;
-    xvision_core::config::load_runtime(config_path)?;
+async fn remove(ctx: &ApiContext, config_path: &std::path::Path, name: &str) -> Result<()> {
+    providers::remove(ctx, config_path, name)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xvision_engine::api::Actor;
 
-    #[test]
-    fn show_returns_err_for_unknown_name() {
+    async fn test_ctx(dir: &tempfile::TempDir) -> ApiContext {
+        ApiContext::open(
+            dir.path(),
+            Actor::Cli {
+                user: "test".into(),
+            },
+        )
+        .await
+        .unwrap()
+    }
+
+    fn write_min_config(dir: &tempfile::TempDir) -> std::path::PathBuf {
+        let p = dir.path().join("default.toml");
+        std::fs::write(&p, MIN_CONFIG).unwrap();
+        p
+    }
+
+    #[tokio::test]
+    async fn list_succeeds_against_min_config() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("default.toml");
-        std::fs::write(&path, MIN_CONFIG).unwrap();
-        let err = show(&path, "nope").unwrap_err();
+        let config = write_min_config(&dir);
+        let ctx = test_ctx(&dir).await;
+        list(&ctx, &config).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn show_returns_err_for_unknown_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = write_min_config(&dir);
+        let ctx = test_ctx(&dir).await;
+        let err = show(&ctx, &config, "nope").await.unwrap_err();
         assert!(format!("{err:#}").contains("not found"));
     }
 
-    #[test]
-    fn show_prints_known_provider() {
+    #[tokio::test]
+    async fn add_appends_provider_row() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("default.toml");
-        std::fs::write(&path, MIN_CONFIG).unwrap();
-        // We just want to assert no error; stdout capture isn't easy in a unit
-        // test without extra plumbing.
-        show(&path, "anthropic").unwrap();
-    }
-
-    #[test]
-    fn list_succeeds_against_min_config() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("default.toml");
-        std::fs::write(&path, MIN_CONFIG).unwrap();
-        list(&path).unwrap();
-    }
-
-    #[test]
-    fn add_appends_provider_row() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("default.toml");
-        std::fs::write(&path, MIN_CONFIG).unwrap();
+        let config = write_min_config(&dir);
+        let ctx = test_ctx(&dir).await;
         add(
-            &path,
-            "openai",
-            "openai-compat",
-            "https://api.openai.com/v1",
-            "OPENAI_API_KEY",
+            &ctx,
+            &config,
+            "openai".into(),
+            "openai-compat".into(),
+            "https://api.openai.com/v1".into(),
+            "OPENAI_API_KEY".into(),
         )
+        .await
         .unwrap();
-        let cfg = xvision_core::config::load_runtime(&path).unwrap();
+        let cfg = xvision_core::config::load_runtime(&config).unwrap();
         assert!(cfg.providers.iter().any(|p| p.name == "openai"));
     }
 
-    #[test]
-    fn add_rejects_duplicate_name() {
+    #[tokio::test]
+    async fn remove_drops_provider_row() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("default.toml");
-        std::fs::write(&path, MIN_CONFIG).unwrap();
-        let err = add(&path, "anthropic", "anthropic", "https://x", "K").unwrap_err();
-        assert!(format!("{err:#}").contains("already exists"));
-    }
-
-    #[test]
-    fn add_rejects_invalid_kind() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("default.toml");
-        std::fs::write(&path, MIN_CONFIG).unwrap();
-        let err = add(&path, "x", "BOGUS", "https://x", "K").unwrap_err();
-        assert!(format!("{err:#}").contains("kind"));
-    }
-
-    #[test]
-    fn remove_drops_provider_row() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("default.toml");
+        let config = dir.path().join("default.toml");
         let mut src = MIN_CONFIG.to_string();
         src.push_str(
             r#"
@@ -347,9 +312,10 @@ base_url = "https://x"
 api_key_env = "K"
 "#,
         );
-        std::fs::write(&path, src).unwrap();
-        remove(&path, "ephemeral").unwrap();
-        let cfg = xvision_core::config::load_runtime(&path).unwrap();
+        std::fs::write(&config, src).unwrap();
+        let ctx = test_ctx(&dir).await;
+        remove(&ctx, &config, "ephemeral").await.unwrap();
+        let cfg = xvision_core::config::load_runtime(&config).unwrap();
         assert!(!cfg.providers.iter().any(|p| p.name == "ephemeral"));
     }
 
@@ -370,15 +336,6 @@ api_key_env = "K"
     #[test]
     fn url_parse_rejects_no_scheme() {
         assert!(url_parse_minimal("api.openai.com/v1").is_err());
-    }
-
-    #[test]
-    fn remove_refuses_when_intern_block_references_it() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("default.toml");
-        std::fs::write(&path, MIN_CONFIG).unwrap();
-        let err = remove(&path, "anthropic").unwrap_err();
-        assert!(format!("{err:#}").contains("referenced by [intern]"));
     }
 
     const MIN_CONFIG: &str = r#"
