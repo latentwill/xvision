@@ -135,9 +135,7 @@ pub async fn run(cmd: EvalCmd) -> Result<()> {
 }
 
 fn parse_mode(s: &str) -> Result<RunMode> {
-    RunMode::parse(s).context(format!(
-        "unknown mode {s:?}; expected one of: paper | backtest",
-    ))
+    RunMode::parse(s).context(format!("unknown mode {s:?}; expected one of: paper | backtest",))
 }
 
 async fn run_run(args: RunArgs) -> Result<()> {
@@ -218,11 +216,7 @@ async fn run_list(args: ListArgs) -> Result<()> {
     let req = ListRunsRequest {
         strategy_bundle_hash: args.strategy,
         scenario_id: args.scenario,
-        status: args
-            .status
-            .as_deref()
-            .map(parse_status)
-            .transpose()?,
+        status: args.status.as_deref().map(parse_status).transpose()?,
     };
     let runs = eval::list(&ctx, req)
         .await
@@ -400,7 +394,9 @@ async fn run_attest(args: AttestArgs) -> Result<()> {
     println!("  signature       {}…", sig_prefix);
     println!("  total_return    {:.2}%", att.metrics.total_return_pct);
     println!("  sharpe          {:.3}", att.metrics.sharpe);
-    println!("  tokens (in/out) {} / {}", att.tokens_used.input, att.tokens_used.output);
+    println!(
+        "  tokens (in/out) {} / {}",
+        att.tokens_used.input, att.tokens_used.output
+    );
     Ok(())
 }
-

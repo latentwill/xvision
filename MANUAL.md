@@ -294,10 +294,27 @@ xvn strategy ls
 xvn strategy run <id> --fixture <name> --decisions <N> [--mock]
 ```
 
-### AI agent drives xvn (Plan 2a)
+### Skills (Plan 2b — see crates/xvision-skills)
+
+Skills are OSShip-style markdown files (YAML frontmatter + body) that
+override a strategy slot's prompt + model_requirement and union its
+allowed_tools. They live under `$XVN_HOME/skills/<name>.md` and compose
+into any saved strategy.
+
+```bash
+xvn skill new --from-file my-trader.md  # register / overwrite
+xvn skill ls                            # list saved skills
+xvn skill attach <agent_id> --slot trader --skill my-trader
+```
+
+Marketplace publish/browse/install/attest verbs are deferred to Plan 5
+(blockchain integration). Skills work fully offline without them.
+
+### AI agent drives xvn (Plan 2a + 2b)
 
 External AI agents (Claude Code, Hermes, Cursor, Codex) can author the
-same `StrategyBundle`s over MCP without the operator-CLI round-trip:
+same `StrategyBundle`s and `Skill`s over MCP without the operator-CLI
+round-trip:
 
 ```bash
 cargo build --release -p xvision-mcp        # produces target/release/xvn-mcp
@@ -306,10 +323,12 @@ cargo build --release -p xvision-mcp        # produces target/release/xvn-mcp
 Authoring verbs the server advertises over `tools/list`:
 `xvn_list_templates`, `xvn_create_strategy`, `xvn_get_strategy`,
 `xvn_update_slot`, `xvn_set_mechanical_param`, `xvn_set_risk_config`,
-`xvn_validate_draft` — alongside the indicator surface (`xvn_health`,
-`xvn_sma`, `xvn_rsi`, ...) that has shipped since v0.1. State lives in
-`$XVN_HOME/strategies/<id>.json`, the same path `xvn strategy ls` reads
-from.
+`xvn_validate_draft`, plus the Plan 2b skill verbs `xvn_create_skill`,
+`xvn_list_skills`, `xvn_attach_skill_to_agent` — alongside the indicator
+surface (`xvn_health`, `xvn_sma`, `xvn_rsi`, ...) that has shipped since
+v0.1. State lives in `$XVN_HOME/strategies/<id>.json` and
+`$XVN_HOME/skills/<name>.md`, the same paths `xvn strategy ls` and
+`xvn skill ls` read from.
 
 In Claude Code, register the binary in `~/.claude/settings.json`:
 
@@ -327,7 +346,7 @@ chat UI is immediately visible to both `xvn strategy ls` and a connected
 MCP agent.
 
 End-to-end paths beyond this surface (marketplace publishing, live
-trading, batch eval) land in subsequent plans (2b, 2c, 3) — they share
+trading, batch eval) land in subsequent plans (2c, 3, 5) — they share
 this same bundle format.
 
 ---

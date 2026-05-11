@@ -94,6 +94,9 @@ pub async fn run(
         }
     };
 
-    println!("\n--- ExecutionReceipt ---\n{}", serde_json::to_string_pretty(&receipt)?);
+    println!(
+        "\n--- ExecutionReceipt ---\n{}",
+        serde_json::to_string_pretty(&receipt)?
+    );
     Ok(())
 }
