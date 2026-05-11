@@ -25,6 +25,7 @@ const MIGRATION_001: &str = include_str!("../../migrations/001_api_audit.sql");
 const MIGRATION_002: &str = include_str!("../../migrations/002_eval.sql");
 const MIGRATION_003: &str = include_str!("../../migrations/003_chat_sessions.sql");
 const MIGRATION_004: &str = include_str!("../../migrations/004_search_index.sql");
+const MIGRATION_005: &str = include_str!("../../migrations/005_agents.sql");
 
 #[derive(Clone, Debug)]
 pub struct ApiContext {
@@ -61,6 +62,7 @@ impl ApiContext {
         sqlx::query(MIGRATION_002).execute(&pool).await?;
         sqlx::query(MIGRATION_003).execute(&pool).await?;
         sqlx::query(MIGRATION_004).execute(&pool).await?;
+        sqlx::query(MIGRATION_005).execute(&pool).await?;
 
         Ok(Self {
             db: pool,
