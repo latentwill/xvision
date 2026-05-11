@@ -18,6 +18,8 @@ import {
 import { useLocation } from "react-router-dom";
 
 import { useQuery } from "@tanstack/react-query";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import { Icon } from "@/components/primitives/Icon";
 import { Pill } from "@/components/primitives/Pill";
@@ -393,10 +395,10 @@ function BubbleView({
     );
   return (
     <div className="self-start max-w-[92%]">
-      <div className="bg-surface-2/60 border border-border rounded-md px-2.5 py-1.5 text-[13px] whitespace-pre-wrap leading-snug">
+      <div className="bg-surface-2/60 border border-border rounded-md px-2.5 py-1.5 text-[13px] leading-snug">
         {b.text ? (
           <>
-            {b.text}
+            <MarkdownView text={b.text} />
             {showDots && <TypingDots inline />}
           </>
         ) : showDots ? (
@@ -441,6 +443,82 @@ function BubbleView({
         </div>
       )}
     </div>
+  );
+}
+
+function MarkdownView({ text }: { text: string }) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        // Inline code keeps a soft background; block code is wrapped in <pre>
+        // which carries its own background — so suppress the inline styling
+        // when ReactMarkdown gives the <code> a language- className (block).
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        code: ({ children, className, ...props }: any) => (
+          <code
+            className={`font-mono text-[12px] ${
+              className ? "" : "bg-surface-2/70 px-1 py-0.5 rounded"
+            }`}
+            {...props}
+          >
+            {children}
+          </code>
+        ),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        pre: ({ children }: any) => (
+          <pre className="font-mono text-[12px] bg-surface-2/70 p-2 rounded my-1.5 overflow-x-auto">
+            {children}
+          </pre>
+        ),
+        table: ({ children }) => (
+          <div className="overflow-x-auto my-1.5">
+            <table className="border-collapse text-[12px]">{children}</table>
+          </div>
+        ),
+        th: ({ children }) => (
+          <th className="border border-border-soft px-1.5 py-1 text-left font-medium">
+            {children}
+          </th>
+        ),
+        td: ({ children }) => (
+          <td className="border border-border-soft px-1.5 py-1">{children}</td>
+        ),
+        ul: ({ children }) => (
+          <ul className="list-disc pl-4 my-1 space-y-0.5">{children}</ul>
+        ),
+        ol: ({ children }) => (
+          <ol className="list-decimal pl-4 my-1 space-y-0.5">{children}</ol>
+        ),
+        p: ({ children }) => (
+          <p className="my-1 first:mt-0 last:mb-0">{children}</p>
+        ),
+        strong: ({ children }) => (
+          <strong className="text-text font-semibold">{children}</strong>
+        ),
+        h1: ({ children }) => (
+          <h1 className="text-[14px] font-semibold my-1.5">{children}</h1>
+        ),
+        h2: ({ children }) => (
+          <h2 className="text-[14px] font-semibold my-1.5">{children}</h2>
+        ),
+        h3: ({ children }) => (
+          <h3 className="text-[13px] font-semibold my-1">{children}</h3>
+        ),
+        a: ({ children, href }) => (
+          <a
+            href={href}
+            className="text-gold underline decoration-gold/40 hover:decoration-gold"
+            target="_blank"
+            rel="noreferrer"
+          >
+            {children}
+          </a>
+        ),
+      }}
+    >
+      {text}
+    </ReactMarkdown>
   );
 }
 
