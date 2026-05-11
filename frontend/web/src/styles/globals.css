@@ -40,4 +40,7 @@
   .tnum {
     font-variant-numeric: tabular-nums;
   }
+  .input {
+    @apply w-full bg-surface-elev border border-border rounded px-2.5 py-1.5 text-[13px] text-text placeholder:text-text-3 focus:outline-none focus:border-text-3;
+  }
 }
