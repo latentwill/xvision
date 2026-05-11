@@ -1,6 +1,7 @@
 import { Outlet } from "react-router-dom";
 import { Sidebar } from "./Sidebar";
 import { ChatRail } from "./ChatRail";
+import { CommandPalette } from "./CommandPalette";
 
 export function Layout() {
   return (
@@ -10,6 +11,7 @@ export function Layout() {
         <Outlet />
       </main>
       <ChatRail />
+      <CommandPalette />
     </div>
   );
 }

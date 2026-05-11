@@ -254,7 +254,7 @@ git commit -am "feat(engine): search() with prefix + kind filtering"
 
 Wire indexer calls into the existing artifact create/update paths. Each indexer is a small adapter that maps an artifact to an `IndexEntry`.
 
-- [ ] **Step 1: Strategy indexer**
+- [x] **Step 1: Strategy indexer**
 
 ```rust
 pub fn index_strategy(idx: &SearchIndex, draft: &StrategyDraft) -> anyhow::Result<()> {
@@ -272,7 +272,7 @@ pub fn index_strategy(idx: &SearchIndex, draft: &StrategyDraft) -> anyhow::Resul
 
 Call this from `xvision-engine::mcp::authoring::create_strategy` and `update_slot`.
 
-- [ ] **Step 2: Run indexer**
+- [x] **Step 2: Run indexer**
 
 ```rust
 pub fn index_run(idx: &SearchIndex, run: &RunSummary) -> anyhow::Result<()> {
@@ -294,7 +294,7 @@ Call from `xvision-eval::run_completed` hook.
 
 Each follows the same shape; wired into the corresponding create site. JournalEntry is wired in the Lab Notebook plan if/when shipped.
 
-- [ ] **Step 4: Static action index**
+- [x] **Step 4: Static action index**
 
 Bootstrap-time, index a fixed list of named actions:
 
@@ -320,7 +320,7 @@ pub fn seed_actions(idx: &SearchIndex) -> anyhow::Result<()> {
 }
 ```
 
-- [ ] **Step 5: One-shot reindex on dashboard startup**
+- [x] **Step 5: One-shot reindex on dashboard startup**
 
 The dashboard's `serve()` entry calls a small `reindex_all()` that walks the existing artifact stores once on startup, plus `seed_actions()`. After that, the indexer hooks keep things current.
 
@@ -338,7 +338,7 @@ git commit -am "feat(engine): per-artifact search indexers + bootstrap reindex"
 
 **File:** `crates/xvision-dashboard/src/routes/search.rs`
 
-- [ ] **Step 1: Handler**
+- [x] **Step 1: Handler**
 
 ```rust
 use axum::extract::{Query, State};
@@ -371,7 +371,7 @@ fn parse_kinds(s: &str) -> Vec<SearchKind> { s.split(',').filter_map(SearchKind:
 
 Wire into `routes/mod.rs` as `GET /api/search`. Add `search_index: Arc<SearchIndex>` to `AppState`.
 
-- [ ] **Step 2: Test**
+- [x] **Step 2: Test**
 
 ```rust
 #[tokio::test]
@@ -399,7 +399,7 @@ git commit -am "feat(dashboard): GET /api/search wired to FTS index"
 
 Add the `<dialog>` markup to `base.html` so it's available on every authenticated route. Per ui-elements.md §1.5: 640px wide, centered, search input at top, results grouped by kind.
 
-- [ ] **Step 1: Markup**
+- [x] **Step 1: Markup** (adapted to React `<CommandPalette>` in `frontend/web/src/components/shell/`)
 
 ```html
 {# templates/base.html — append before </body> #}
@@ -450,7 +450,7 @@ git commit -am "feat(dashboard): command palette modal markup in base template"
 
 **File:** `crates/xvision-dashboard/static/js/command_palette.js`
 
-- [ ] **Step 1: Open / close binding**
+- [x] **Step 1: Open / close binding** (React `useEffect` on `window keydown`)
 
 ```javascript
 const dlg = document.getElementById('cmd-palette');
@@ -477,7 +477,7 @@ function openPalette() {
 function closePalette() { dlg.close(); }
 ```
 
-- [ ] **Step 2: Type-to-search with debounce**
+- [x] **Step 2: Type-to-search with debounce**
 
 ```javascript
 let activeIdx = 0;
@@ -552,7 +552,7 @@ results.addEventListener('click', e => {
 function escape(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 ```
 
-- [ ] **Step 3: Mount script in base.html**
+- [x] **Step 3: Mount script in base.html** (React: mounted in `Layout.tsx` above `<Outlet/>`)
 
 ```html
 <script type="module" src="/static/js/command_palette.js"></script>
@@ -581,7 +581,7 @@ Modify `xvision-dashboard::serve()` to:
 
 This handles the cold-start case — a user who has artifacts but no index yet gets one populated transparently. Subsequent indexing is incremental via the per-artifact hooks.
 
-- [ ] **Step 1: `reindex_all`**
+- [x] **Step 1: `reindex_all`** (called from `serve()`; walks bundle store + run table, reseeds scenarios + actions)
 
 ```rust
 pub fn reindex_all(idx: &SearchIndex, xvn_home: &Path) -> anyhow::Result<()> {

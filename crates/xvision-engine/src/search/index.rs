@@ -21,6 +21,11 @@ pub enum SearchKind {
     Scenario,
     Deployment,
     JournalEntry,
+    /// Static "named action" rows seeded once at dashboard startup
+    /// (e.g. "New strategy from template…"). Behaves identically to other
+    /// kinds for the index/search surface; the UI surfaces them in a
+    /// dedicated "Actions" group at the top of the result list.
+    Action,
 }
 
 impl SearchKind {
@@ -32,6 +37,7 @@ impl SearchKind {
             SearchKind::Scenario => "scenario",
             SearchKind::Deployment => "deployment",
             SearchKind::JournalEntry => "journal_entry",
+            SearchKind::Action => "action",
         }
     }
 
@@ -43,6 +49,7 @@ impl SearchKind {
             "scenario" => SearchKind::Scenario,
             "deployment" => SearchKind::Deployment,
             "journal_entry" => SearchKind::JournalEntry,
+            "action" => SearchKind::Action,
             _ => return None,
         })
     }
