@@ -55,12 +55,12 @@ impl AppState {
     /// presents itself as `Actor::Cli { user: "dashboard" }` for now —
     /// per-user identity arrives with the auth plan in v1.5.
     pub fn api_context(&self) -> ApiContext {
-        ApiContext {
-            db: self.pool.clone(),
-            actor: Actor::Cli {
+        ApiContext::new(
+            self.pool.clone(),
+            Actor::Cli {
                 user: "dashboard".to_string(),
             },
-            xvn_home: self.xvn_home.clone(),
-        }
+            self.xvn_home.clone(),
+        )
     }
 }
