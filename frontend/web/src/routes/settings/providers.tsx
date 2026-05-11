@@ -11,11 +11,13 @@ import {
 } from "@/api/settings";
 import type {
   AddProviderRequest,
-  ProviderKindStr,
   ProviderRow,
-} from "@/api/types.providers";
+} from "@/api/types.gen";
 
-const KIND_OPTIONS: { value: ProviderKindStr; label: string; hint: string }[] = [
+// `ProviderKind` lives in `xvision-core` without ts-rs wiring; the engine
+// API surfaces it as a plain `string`. We narrow it to the registered
+// kebab-case set in the form UI so the dropdown stays type-safe locally.
+const KIND_OPTIONS = [
   {
     value: "anthropic",
     label: "Anthropic",
@@ -32,7 +34,9 @@ const KIND_OPTIONS: { value: ProviderKindStr; label: string; hint: string }[] = 
     label: "Local (candle)",
     hint: "In-process candle model. No HTTP, no api_key_env.",
   },
-];
+] as const satisfies ReadonlyArray<{ value: string; label: string; hint: string }>;
+
+type ProviderKindStr = (typeof KIND_OPTIONS)[number]["value"];
 
 export function SettingsProvidersRoute() {
   const qc = useQueryClient();
