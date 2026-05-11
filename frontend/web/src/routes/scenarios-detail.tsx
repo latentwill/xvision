@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
-import { ApiError } from "@/api/client";
+import { ApiError, apiFetch } from "@/api/client";
 import {
   archiveScenario,
   cloneScenario,
@@ -12,6 +12,9 @@ import {
   getScenario,
   scenarioKeys,
 } from "@/api/scenarios";
+import { getScenarioChart, scenarioChartKeys } from "@/api/chart";
+import { listRuns } from "@/api/eval";
+import { ScenarioChart } from "@/components/chart/ScenarioChart";
 import type { Scenario, SlippageModel } from "@/api/types.gen";
 
 // ── helpers ────────────────────────────────────────────────────────────────
@@ -215,7 +218,7 @@ function DetailView({
 
       <Card>
         {activeTab === "definition" && <DefinitionTab s={s} />}
-        {activeTab === "runs" && <RunsTab />}
+        {activeTab === "runs" && <RunsTab scenarioId={s.id} />}
         {activeTab === "bar-cache" && (
           <BarCacheTab cacheKey={s.bar_cache_policy.cache_key} />
         )}
@@ -291,78 +294,241 @@ function DefinitionTab({ s }: { s: Scenario }) {
 
   const windowLabel = `${fmtDate(s.time_window.start)} → ${fmtDate(s.time_window.end)}`;
 
+  const chart = useQuery({
+    queryKey: scenarioChartKeys.scenario(s.id),
+    queryFn: () => getScenarioChart(s.id),
+  });
+
   return (
-    <dl className="grid grid-cols-[180px_1fr] gap-y-2.5 text-[13px] p-5">
-      <dt className="text-text-3 self-center">Asset</dt>
-      <dd className="font-mono m-0">{assetLabel}</dd>
-
-      <dt className="text-text-3 self-center">Window</dt>
-      <dd className="font-mono m-0">{windowLabel}</dd>
-
-      <dt className="text-text-3 self-center">Granularity</dt>
-      <dd className="font-mono m-0">{s.granularity}</dd>
-
-      <dt className="text-text-3 self-center">Venue</dt>
-      <dd className="font-mono m-0">{String(s.venue.venue)}</dd>
-
-      <dt className="text-text-3 self-center">Fees (m/t bps)</dt>
-      <dd className="font-mono m-0">
-        {s.venue.fees.maker_bps} / {s.venue.fees.taker_bps}
-      </dd>
-
-      <dt className="text-text-3 self-center">Slippage</dt>
-      <dd className="font-mono m-0">{fmtSlippage(s.venue.slippage)}</dd>
-
-      <dt className="text-text-3 self-center">Latency (ms)</dt>
-      <dd className="font-mono m-0">{s.venue.latency.decision_to_fill_ms}</dd>
-
-      <dt className="text-text-3 self-center">Cache key</dt>
-      <dd className="font-mono text-[11px] break-all m-0">
-        {s.bar_cache_policy.cache_key}
-      </dd>
-
-      <dt className="text-text-3 self-center">Source</dt>
-      <dd className="m-0">
-        <Pill tone="default">{s.source}</Pill>
-      </dd>
-
-      <dt className="text-text-3 self-start mt-0.5">Tags</dt>
-      <dd className="m-0">
-        {s.tags.length > 0 ? (
-          <div className="flex flex-wrap gap-1">
-            {s.tags.map((tag) => (
-              <Pill key={tag} tone="default">
-                {tag}
-              </Pill>
-            ))}
-          </div>
-        ) : (
-          <span className="text-text-3">—</span>
+    <div>
+      <div className="p-5 pb-0">
+        {chart.isPending && (
+          <div className="text-text-3 text-[13px] mb-4">Loading chart…</div>
         )}
-      </dd>
-    </dl>
+        {chart.isError && (
+          <div className="text-danger text-[13px] mb-4">Chart unavailable.</div>
+        )}
+        {chart.data && (
+          <div className="mb-5">
+            <ScenarioChart payload={chart.data} />
+          </div>
+        )}
+      </div>
+
+      <dl className="grid grid-cols-[180px_1fr] gap-y-2.5 text-[13px] px-5 pb-5">
+        <dt className="text-text-3 self-center">Asset</dt>
+        <dd className="font-mono m-0">{assetLabel}</dd>
+
+        <dt className="text-text-3 self-center">Window</dt>
+        <dd className="font-mono m-0">{windowLabel}</dd>
+
+        <dt className="text-text-3 self-center">Granularity</dt>
+        <dd className="font-mono m-0">{s.granularity}</dd>
+
+        <dt className="text-text-3 self-center">Venue</dt>
+        <dd className="font-mono m-0">{String(s.venue.venue)}</dd>
+
+        <dt className="text-text-3 self-center">Fees (m/t bps)</dt>
+        <dd className="font-mono m-0">
+          {s.venue.fees.maker_bps} / {s.venue.fees.taker_bps}
+        </dd>
+
+        <dt className="text-text-3 self-center">Slippage</dt>
+        <dd className="font-mono m-0">{fmtSlippage(s.venue.slippage)}</dd>
+
+        <dt className="text-text-3 self-center">Latency (ms)</dt>
+        <dd className="font-mono m-0">{s.venue.latency.decision_to_fill_ms}</dd>
+
+        <dt className="text-text-3 self-center">Cache key</dt>
+        <dd className="font-mono text-[11px] break-all m-0">
+          {s.bar_cache_policy.cache_key}
+        </dd>
+
+        <dt className="text-text-3 self-center">Source</dt>
+        <dd className="m-0">
+          <Pill tone="default">{s.source}</Pill>
+        </dd>
+
+        <dt className="text-text-3 self-start mt-0.5">Tags</dt>
+        <dd className="m-0">
+          {s.tags.length > 0 ? (
+            <div className="flex flex-wrap gap-1">
+              {s.tags.map((tag) => (
+                <Pill key={tag} tone="default">
+                  {tag}
+                </Pill>
+              ))}
+            </div>
+          ) : (
+            <span className="text-text-3">—</span>
+          )}
+        </dd>
+      </dl>
+    </div>
   );
 }
 
 // ── runs tab ───────────────────────────────────────────────────────────────
 
-function RunsTab() {
+function RunsTab({ scenarioId }: { scenarioId: string }) {
+  const { data, isPending, error } = useQuery({
+    queryKey: ["runs", "by-scenario", scenarioId],
+    queryFn: () => listRuns(),
+  });
+
+  if (isPending) {
+    return (
+      <div className="px-6 py-8 text-center text-text-3 text-[13px]">
+        Loading runs…
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <div className="px-6 py-8 text-center text-danger text-[13px]">
+        {error instanceof Error ? error.message : String(error)}
+      </div>
+    );
+  }
+
+  const filtered = (data ?? []).filter((r) => r.scenario_id === scenarioId);
+
+  if (filtered.length === 0) {
+    return (
+      <div className="px-6 py-8 text-center">
+        <p className="text-text-3 text-[13px] m-0">
+          No runs against this scenario yet.
+        </p>
+      </div>
+    );
+  }
+
   return (
-    <div className="px-6 py-8 text-center">
-      <p className="text-text-3 text-[13px] m-0">
-        Runs against this scenario will appear here.
-      </p>
+    <div className="px-5 py-4 overflow-x-auto">
+      <table className="w-full text-[13px]">
+        <thead>
+          <tr className="text-text-3 text-left">
+            <th className="pb-2 pr-4 font-medium">Run</th>
+            <th className="pb-2 pr-4 font-medium">Strategy</th>
+            <th className="pb-2 pr-4 font-medium">Mode</th>
+            <th className="pb-2 pr-4 font-medium">Status</th>
+            <th className="pb-2 font-medium">Completed</th>
+          </tr>
+        </thead>
+        <tbody>
+          {filtered.map((r) => (
+            <tr key={r.id} className="border-t border-border">
+              <td className="py-2 pr-4">
+                <Link
+                  to={`/eval-runs/${r.id}`}
+                  className="font-mono text-[12px] text-text hover:underline"
+                >
+                  {r.id}
+                </Link>
+              </td>
+              <td className="py-2 pr-4 font-mono text-[12px] text-text-2">
+                {r.strategy_bundle_hash}
+              </td>
+              <td className="py-2 pr-4 text-text-2">{r.mode}</td>
+              <td className="py-2 pr-4 text-text-2">{r.status}</td>
+              <td className="py-2 text-text-3">
+                {r.completed_at ? fmtDate(r.completed_at) : "—"}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
 
 // ── bar-cache tab ──────────────────────────────────────────────────────────
 
+type BarsCacheRowResponse = {
+  cache_key: string;
+  asset: string;
+  granularity: string;
+  window_start: string;
+  window_end: string;
+  bar_count: number;
+  fetched_at: string;
+};
+
 function BarCacheTab({ cacheKey }: { cacheKey: string }) {
+  const { data, isPending } = useQuery({
+    queryKey: ["bars-cache", cacheKey],
+    queryFn: () =>
+      apiFetch<BarsCacheRowResponse>(
+        `/api/bars/${encodeURIComponent(cacheKey)}`,
+      ),
+    retry: false,
+  });
+
+  if (isPending) {
+    return (
+      <div className="px-6 py-8 text-center text-text-3 text-[13px]">
+        Loading cache row…
+      </div>
+    );
+  }
+
+  if (!data) {
+    return (
+      <div className="px-6 py-8">
+        <p className="text-text-3 text-[13px] m-0 mb-1">Cache key</p>
+        <code className="font-mono text-[12px] text-text break-all">
+          {cacheKey}
+        </code>
+        <p className="text-text-3 text-[13px] mt-4">
+          No cache row yet — run{" "}
+          <code className="font-mono text-text-2">xvn bars fetch</code> to
+          populate.
+        </p>
+      </div>
+    );
+  }
+
   return (
-    <div className="px-6 py-8">
-      <p className="text-text-3 text-[13px] m-0 mb-1">Cache key</p>
-      <code className="font-mono text-[12px] text-text break-all">{cacheKey}</code>
+    <div className="px-5 py-4">
+      <dl className="grid grid-cols-[180px_1fr] gap-y-2 text-[13px]">
+        <dt className="text-text-3">Cache key</dt>
+        <dd className="font-mono text-[11px] break-all m-0">{cacheKey}</dd>
+
+        <dt className="text-text-3">Asset</dt>
+        <dd className="font-mono m-0">{data.asset}</dd>
+
+        <dt className="text-text-3">Granularity</dt>
+        <dd className="font-mono m-0">{data.granularity}</dd>
+
+        <dt className="text-text-3">Window</dt>
+        <dd className="font-mono text-[12px] m-0">
+          {data.window_start} → {data.window_end}
+        </dd>
+
+        <dt className="text-text-3">Bars</dt>
+        <dd className="font-mono m-0">{data.bar_count.toLocaleString()}</dd>
+
+        <dt className="text-text-3">Fetched at</dt>
+        <dd className="font-mono text-[12px] m-0">{data.fetched_at}</dd>
+
+        <dt className="text-text-3"></dt>
+        <dd className="m-0 mt-2">
+          {/* TODO: wire to a future POST /api/bars/:cache_key/refetch endpoint
+              once xvn bars fetch is accessible via the dashboard.
+              The write path requires Alpaca credentials — out of scope for v1. */}
+          <button
+            type="button"
+            disabled
+            title="Run xvn bars fetch from the CLI to refresh"
+            className="border border-border px-2 py-1 rounded text-[12px] text-text-3 opacity-50 cursor-not-allowed"
+          >
+            Refetch
+          </button>
+          <span className="ml-2 text-[11px] text-text-3">
+            Use <code className="font-mono">xvn bars fetch</code> to refresh
+          </span>
+        </dd>
+      </dl>
     </div>
   );
 }

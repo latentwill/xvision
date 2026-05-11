@@ -7,7 +7,7 @@ use axum::{
 use tower_http::trace::TraceLayer;
 
 use crate::routes::{
-    chat_rail, eval_runs, health::health, scenarios, search as search_route, settings,
+    bars, chat_rail, eval_runs, health::health, scenarios, search as search_route, settings,
     static_files, strategies, wizard,
 };
 use crate::state::AppState;
@@ -38,6 +38,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/eval/runs/:id", get(eval_runs::get))
         .route("/api/eval/runs/:id/chart", get(eval_runs::chart))
         .route("/api/eval/compare", get(eval_runs::compare))
+        .route("/api/bars/:cache_key", get(bars::cache_row))
         .route("/api/search", get(search_route::handler))
         .route("/api/settings/brokers", get(settings::brokers::get))
         .route(
