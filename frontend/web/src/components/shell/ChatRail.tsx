@@ -45,7 +45,13 @@ const RAIL_OPEN_LS = "xvn.chat_rail.open";
 const RAIL_PROVIDER_LS = "xvn.chat_rail.provider";
 const RAIL_MODEL_LS = "xvn.chat_rail.model";
 
-type Tool = { call: string; ok: boolean; summary: string };
+type Tool = {
+  call: string;
+  ok: boolean;
+  summary: string;
+  /** True between tool_call and tool_result; drives the chip spinner. */
+  pending?: boolean;
+};
 type AssistantBubble = {
   role: "assistant";
   text: string;
@@ -289,7 +295,7 @@ export function ChatRail() {
         }}
       />
 
-      <Thread bubbles={bubbles} />
+      <Thread bubbles={bubbles} isStreaming={isStreaming} />
 
       {error && (
         <div className="px-4 py-2 border-t border-border text-rose-300 text-[12px]">
@@ -317,7 +323,13 @@ export function ChatRail() {
   );
 }
 
-function Thread({ bubbles }: { bubbles: Bubble[] }) {
+function Thread({
+  bubbles,
+  isStreaming,
+}: {
+  bubbles: Bubble[];
+  isStreaming: boolean;
+}) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     ref.current?.scrollTo({
@@ -336,13 +348,28 @@ function Thread({ bubbles }: { bubbles: Bubble[] }) {
           authoring loop.
         </div>
       ) : (
-        bubbles.map((b, i) => <BubbleView key={i} b={b} />)
+        bubbles.map((b, i) => (
+          <BubbleView
+            key={i}
+            b={b}
+            isLast={i === bubbles.length - 1}
+            isStreaming={isStreaming}
+          />
+        ))
       )}
     </div>
   );
 }
 
-function BubbleView({ b }: { b: Bubble }) {
+function BubbleView({
+  b,
+  isLast,
+  isStreaming,
+}: {
+  b: Bubble;
+  isLast: boolean;
+  isStreaming: boolean;
+}) {
   if (b.role === "user") {
     return (
       <div className="self-end max-w-[92%]">
@@ -352,15 +379,31 @@ function BubbleView({ b }: { b: Bubble }) {
       </div>
     );
   }
+  const showDots = isStreaming && isLast;
   return (
     <div className="self-start max-w-[92%]">
       <div className="bg-surface-2/60 border border-border rounded-md px-2.5 py-1.5 text-[13px] whitespace-pre-wrap leading-snug">
-        {b.text || <span className="text-text-3 italic">thinking…</span>}
+        {b.text ? (
+          <>
+            {b.text}
+            {showDots && <TypingDots inline />}
+          </>
+        ) : showDots ? (
+          <TypingDots />
+        ) : (
+          <span className="text-text-3 italic">thinking…</span>
+        )}
       </div>
       {b.tools.length > 0 && (
         <div className="mt-1.5 flex flex-wrap gap-1">
           {b.tools.map((t, i) => (
             <Pill key={i} tone={t.ok ? "info" : "danger"}>
+              {t.pending && (
+                <span
+                  className="inline-block w-2 h-2 mr-1 border border-current border-t-transparent rounded-full animate-spin align-middle"
+                  aria-label="running"
+                />
+              )}
               <span className="font-mono">{t.call}</span>
               {t.summary && (
                 <span className="text-text-3"> · {t.summary}</span>
@@ -370,6 +413,28 @@ function BubbleView({ b }: { b: Bubble }) {
         </div>
       )}
     </div>
+  );
+}
+
+function TypingDots({ inline }: { inline?: boolean }) {
+  return (
+    <span
+      className={`inline-flex items-center gap-1 align-middle ${inline ? "ml-1.5" : ""}`}
+      aria-label="generating"
+    >
+      <span
+        className="w-1.5 h-1.5 rounded-full bg-text-3 animate-pulse"
+        style={{ animationDelay: "0ms" }}
+      />
+      <span
+        className="w-1.5 h-1.5 rounded-full bg-text-3 animate-pulse"
+        style={{ animationDelay: "150ms" }}
+      />
+      <span
+        className="w-1.5 h-1.5 rounded-full bg-text-3 animate-pulse"
+        style={{ animationDelay: "300ms" }}
+      />
+    </span>
   );
 }
 
@@ -542,6 +607,7 @@ function applyEvent(
         call: ev.tool,
         ok: true,
         summary: summarizeArgs(ev.tool, ev.args),
+        pending: true,
       });
     } else if (ev.type === "tool_result") {
       let slot = -1;
@@ -557,6 +623,7 @@ function applyEvent(
           ...a.tools[slot],
           ok: !result?.error,
           summary: summarizeResult(ev.tool, ev.result),
+          pending: false,
         };
       }
     } else if (ev.type === "error") {
