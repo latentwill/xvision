@@ -1,18 +1,36 @@
 //! Shared dashboard state — DB pool + xvn home — built once at server start
 //! and threaded into every API route via axum's `State` extractor.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::SqlitePool;
 
+use xvision_engine::api::settings::providers::ProviderModelsReport;
 use xvision_engine::api::{Actor, ApiContext};
+
+const MODELS_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
+
+#[derive(Clone)]
+struct CachedModels {
+    fetched_at: Instant,
+    report: ProviderModelsReport,
+}
 
 #[derive(Clone)]
 pub struct AppState {
     pub pool: SqlitePool,
     pub xvn_home: PathBuf,
+    /// Per-provider catalog cache so the chat-rail dropdown doesn't
+    /// hammer upstream `/models` on every page load. 5-minute TTL is the
+    /// sweet spot between freshness and rate-limit pressure (OpenRouter
+    /// publishes dozens of model rotations per day; longer than that
+    /// and the operator sees stale options).
+    models_cache: Arc<Mutex<HashMap<String, CachedModels>>>,
 }
 
 impl AppState {
@@ -48,7 +66,11 @@ impl AppState {
             tracing::warn!(error = %e, "could not hydrate provider secrets into env");
         }
 
-        Ok(Self { pool, xvn_home })
+        Ok(Self {
+            pool,
+            xvn_home,
+            models_cache: Arc::new(Mutex::new(HashMap::new())),
+        })
     }
 
     /// Build an `ApiContext` for one HTTP request. The dashboard always
@@ -61,6 +83,39 @@ impl AppState {
                 user: "dashboard".to_string(),
             },
             xvn_home: self.xvn_home.clone(),
+        }
+    }
+
+    /// Read a cached models report for `provider` if it's within the TTL.
+    /// Stale entries are evicted lazily on the next put.
+    pub fn models_cache_get(&self, provider: &str) -> Option<ProviderModelsReport> {
+        let cache = self.models_cache.lock().ok()?;
+        let entry = cache.get(provider)?;
+        if entry.fetched_at.elapsed() > MODELS_CACHE_TTL {
+            None
+        } else {
+            Some(entry.report.clone())
+        }
+    }
+
+    /// Insert a freshly-fetched report into the cache.
+    pub fn models_cache_put(&self, provider: String, report: ProviderModelsReport) {
+        if let Ok(mut cache) = self.models_cache.lock() {
+            cache.insert(
+                provider,
+                CachedModels {
+                    fetched_at: Instant::now(),
+                    report,
+                },
+            );
+        }
+    }
+
+    /// Drop a specific provider's cache (after a key rotation or a
+    /// manual "refresh" from the UI). No-op if the entry doesn't exist.
+    pub fn models_cache_invalidate(&self, provider: &str) {
+        if let Ok(mut cache) = self.models_cache.lock() {
+            cache.remove(provider);
         }
     }
 }

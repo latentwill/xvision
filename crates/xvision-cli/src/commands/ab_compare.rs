@@ -77,6 +77,7 @@ pub async fn run(
                 kind: cli_trader_kind,
                 base_url: trader_base_url.clone(),
                 api_key_env: trader_api_key_env.clone(),
+                enabled_models: Vec::new(),
             });
             synth_name
         });

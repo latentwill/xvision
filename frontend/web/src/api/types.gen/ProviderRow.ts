@@ -21,4 +21,10 @@ synthetic: boolean,
  * True if removing this entry would orphan the `[intern]` workspace
  * default slot. UI should disable the delete button.
  */
-referenced_by_intern: boolean, };
+referenced_by_intern: boolean, 
+/**
+ * Subset of the provider's catalog the operator has enabled for the
+ * chat-rail / wizard dropdown. Empty until the operator picks
+ * models via Settings → Providers → Manage models.
+ */
+enabled_models: Array<string>, };

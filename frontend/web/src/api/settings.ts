@@ -9,6 +9,7 @@ import type {
   DaemonReport,
   FactoryResetReport,
   IdentityReport,
+  ProviderModelsReport,
   ProviderRow,
   ProvidersReport,
   RegenIdentityReport,
@@ -25,6 +26,8 @@ export const settingsKeys = {
   daemon: () => [...settingsKeys.all, "daemon"] as const,
   identity: () => [...settingsKeys.all, "identity"] as const,
   providers: () => [...settingsKeys.all, "providers"] as const,
+  providerModels: (name: string) =>
+    [...settingsKeys.all, "providers", name, "models"] as const,
 };
 
 export function getBrokers(): Promise<BrokersReport> {
@@ -106,6 +109,33 @@ export function setDefaultProvider(
     {
       method: "POST",
       body: JSON.stringify(body),
+    },
+  );
+}
+
+/// Fetch the provider's upstream model catalog. Backend caches for ~5
+/// minutes; large lists (OpenRouter) still return quickly on a cache
+/// hit. 400/404 errors bubble back via `ApiError`.
+export function listProviderModels(
+  name: string,
+): Promise<ProviderModelsReport> {
+  return apiFetch<ProviderModelsReport>(
+    `/api/settings/providers/${encodeURIComponent(name)}/models`,
+  );
+}
+
+/// Persist the operator's curated subset of models for a provider.
+/// Returns the refreshed `ProviderRow` so the caller can swap the cached
+/// row without an extra GET.
+export function setEnabledModels(
+  name: string,
+  models: string[],
+): Promise<ProviderRow> {
+  return apiFetch<ProviderRow>(
+    `/api/settings/providers/${encodeURIComponent(name)}/enabled-models`,
+    {
+      method: "PUT",
+      body: JSON.stringify({ models }),
     },
   );
 }

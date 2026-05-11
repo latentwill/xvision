@@ -52,6 +52,43 @@ pub struct ProviderRow {
     /// True if removing this entry would orphan the `[intern]` workspace
     /// default slot. UI should disable the delete button.
     pub referenced_by_intern: bool,
+    /// Subset of the provider's catalog the operator has enabled for the
+    /// chat-rail / wizard dropdown. Empty until the operator picks
+    /// models via Settings → Providers → Manage models.
+    pub enabled_models: Vec<String>,
+}
+
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderModelEntry {
+    /// Canonical model id used in `/chat/completions` calls.
+    pub id: String,
+    /// Human-readable label when the provider exposes one (Anthropic does;
+    /// most OpenAI-compat providers don't). Falls back to `id` on the UI.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    /// Free-form provider tag — `openai`, `anthropic`, `meta`, etc.
+    /// Surfaced as a sub-label so OpenRouter's "anthropic/claude-…" rows
+    /// can be filtered alongside DeepSeek's "deepseek-…".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owned_by: Option<String>,
+    /// Context window if the provider returns one. Optional.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_length: Option<u32>,
+}
+
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderModelsReport {
+    pub models: Vec<ProviderModelEntry>,
 }
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
@@ -185,6 +222,204 @@ pub async fn remove(
         "providers.remove",
         Some(name),
         None,
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    result
+}
+
+/// Hit the provider's catalog endpoint and return a normalized list.
+/// The HTTP call lives behind the engine API so the dashboard never has
+/// to learn about provider-specific endpoint paths or auth headers.
+pub async fn fetch_models(
+    ctx: &ApiContext,
+    config_path: &Path,
+    name: &str,
+) -> ApiResult<ProviderModelsReport> {
+    let started = Instant::now();
+    let result = fetch_models_inner(config_path, name).await;
+    let outcome = audit_outcome(&result);
+    let _ = audit::record(
+        ctx,
+        "settings",
+        "providers.fetch_models",
+        Some(name),
+        None,
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    result
+}
+
+async fn fetch_models_inner(
+    config_path: &Path,
+    name: &str,
+) -> ApiResult<ProviderModelsReport> {
+    let cfg = load_cfg(config_path).await?;
+    let entry = cfg
+        .providers
+        .iter()
+        .find(|p| p.name == name)
+        .ok_or_else(|| ApiError::NotFound(format!("provider `{name}` not found")))?;
+    let api_key = if entry.api_key_env.is_empty() {
+        String::new()
+    } else {
+        std::env::var(&entry.api_key_env).map_err(|_| {
+            ApiError::Validation(format!(
+                "no API key set for `{}` (env var {} unset); paste a key first",
+                entry.name, entry.api_key_env
+            ))
+        })?
+    };
+    if api_key.is_empty() && entry.kind != ProviderKind::LocalCandle {
+        return Err(ApiError::Validation(format!(
+            "provider `{}` has no API key set",
+            entry.name
+        )));
+    }
+
+    let base_url = entry.base_url.clone();
+    let kind = entry.kind;
+    tracing::info!(
+        target: "xvision::providers::fetch_models",
+        provider = %name,
+        kind = ?kind,
+        base_url = %base_url,
+        "fetching model catalog"
+    );
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| ApiError::Internal(format!("build http client: {e}")))?;
+
+    let models = match kind {
+        ProviderKind::Anthropic => fetch_anthropic_models(&client, &api_key).await?,
+        ProviderKind::OpenaiCompat => {
+            fetch_openai_compat_models(&client, &base_url, &api_key).await?
+        }
+        ProviderKind::LocalCandle => {
+            return Err(ApiError::Validation(
+                "local-candle providers don't expose a catalog endpoint".into(),
+            ));
+        }
+    };
+
+    Ok(ProviderModelsReport { models })
+}
+
+async fn fetch_anthropic_models(
+    client: &reqwest::Client,
+    api_key: &str,
+) -> ApiResult<Vec<ProviderModelEntry>> {
+    let resp = client
+        .get("https://api.anthropic.com/v1/models")
+        .header("x-api-key", api_key)
+        .header("anthropic-version", "2023-06-01")
+        .send()
+        .await
+        .map_err(|e| ApiError::Internal(format!("anthropic /v1/models: {e}")))?;
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(ApiError::Validation(format!(
+            "anthropic /v1/models {status}: {body}"
+        )));
+    }
+    let v: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| ApiError::Internal(format!("parse anthropic models: {e}")))?;
+    let arr = v["data"].as_array().cloned().unwrap_or_default();
+    let mut out = Vec::with_capacity(arr.len());
+    for m in arr {
+        let id = m["id"].as_str().unwrap_or_default();
+        if id.is_empty() {
+            continue;
+        }
+        out.push(ProviderModelEntry {
+            id: id.to_string(),
+            display_name: m["display_name"].as_str().map(str::to_string),
+            owned_by: Some("anthropic".to_string()),
+            context_length: None,
+        });
+    }
+    Ok(out)
+}
+
+async fn fetch_openai_compat_models(
+    client: &reqwest::Client,
+    base_url: &str,
+    api_key: &str,
+) -> ApiResult<Vec<ProviderModelEntry>> {
+    let url = format!("{}/models", base_url.trim_end_matches('/'));
+    let mut req = client.get(&url);
+    if !api_key.is_empty() {
+        req = req.header("authorization", format!("Bearer {api_key}"));
+    }
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| ApiError::Internal(format!("GET {url}: {e}")))?;
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(ApiError::Validation(format!(
+            "GET {url} {status}: {body}"
+        )));
+    }
+    let v: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| ApiError::Internal(format!("parse {url}: {e}")))?;
+    let arr = v["data"].as_array().cloned().unwrap_or_default();
+    let mut out = Vec::with_capacity(arr.len());
+    for m in arr {
+        let id = m["id"].as_str().unwrap_or_default();
+        if id.is_empty() {
+            continue;
+        }
+        // OpenRouter exposes context_length under the same key; OpenAI/Groq
+        // don't. Be permissive — extra fields are fine, missing ones are
+        // None.
+        let context_length = m["context_length"]
+            .as_u64()
+            .or_else(|| m["max_context_length"].as_u64())
+            .map(|n| n as u32);
+        out.push(ProviderModelEntry {
+            id: id.to_string(),
+            display_name: m["name"].as_str().map(str::to_string),
+            owned_by: m["owned_by"]
+                .as_str()
+                .map(str::to_string)
+                .or_else(|| m["provider"]["name"].as_str().map(str::to_string)),
+            context_length,
+        });
+    }
+    Ok(out)
+}
+
+/// Persist the operator's curated subset of models for a provider —
+/// the chat-rail picker only surfaces ids in this list. Empty `models`
+/// clears the selection (UI then prompts the operator to pick again).
+pub async fn set_enabled_models(
+    ctx: &ApiContext,
+    config_path: &Path,
+    name: &str,
+    models: Vec<String>,
+) -> ApiResult<ProviderRow> {
+    let started = Instant::now();
+    let result = set_enabled_models_inner(config_path, &ctx.xvn_home, name, models.clone()).await;
+    let outcome = audit_outcome(&result);
+    let args = serde_json::to_string(&serde_json::json!({ "count": models.len() })).ok();
+    let _ = audit::record(
+        ctx,
+        "settings",
+        "providers.set_enabled_models",
+        Some(name),
+        args.as_deref(),
         outcome,
         started.elapsed().as_millis() as i64,
     )
@@ -482,6 +717,94 @@ async fn remove_inner(config_path: &Path, xvn_home: &Path, name: &str) -> ApiRes
     Ok(())
 }
 
+async fn set_enabled_models_inner(
+    config_path: &Path,
+    xvn_home: &Path,
+    name: &str,
+    models: Vec<String>,
+) -> ApiResult<ProviderRow> {
+    // Refuse silently-bad inputs before opening the TOML — gives the UI a
+    // typed validation error instead of a confusing parse failure later.
+    for m in &models {
+        let trimmed = m.trim();
+        if trimmed.is_empty() {
+            return Err(ApiError::Validation("empty model id in list".into()));
+        }
+        if trimmed.len() > 256 {
+            return Err(ApiError::Validation(format!(
+                "model id too long ({} chars): `{}`",
+                trimmed.len(),
+                &trimmed[..40]
+            )));
+        }
+    }
+    // Deduplicate while preserving order — operators copy/paste pages
+    // and we'd rather not have the same id twice in the TOML array.
+    let mut seen = std::collections::HashSet::new();
+    let deduped: Vec<String> = models
+        .into_iter()
+        .filter(|m| seen.insert(m.clone()))
+        .collect();
+
+    {
+        let cfg = load_cfg(config_path).await?;
+        let exists = cfg.providers.iter().any(|p| p.name == name);
+        if !exists {
+            return Err(ApiError::NotFound(format!("provider `{name}` not found")));
+        }
+    }
+
+    let path: PathBuf = config_path.to_path_buf();
+    let target = name.to_string();
+    let to_write = deduped.clone();
+    task::spawn_blocking(move || -> ApiResult<()> {
+        use toml_edit::{value, Array, ArrayOfTables, DocumentMut};
+        let raw = std::fs::read_to_string(&path)
+            .map_err(|e| ApiError::Internal(format!("read {}: {e}", path.display())))?;
+        let mut doc: DocumentMut = raw
+            .parse()
+            .map_err(|e| ApiError::Internal(format!("parse {}: {e}", path.display())))?;
+        let providers = match doc
+            .entry("providers")
+            .or_insert_with(|| toml_edit::Item::ArrayOfTables(ArrayOfTables::new()))
+        {
+            toml_edit::Item::ArrayOfTables(arr) => arr,
+            _ => {
+                return Err(ApiError::Validation(
+                    "[[providers]] is not an array of tables".into(),
+                ))
+            }
+        };
+        let mut matched = false;
+        for tbl in providers.iter_mut() {
+            if tbl.get("name").and_then(|v| v.as_str()) == Some(&target) {
+                let mut arr = Array::new();
+                for m in &to_write {
+                    arr.push(m.as_str());
+                }
+                tbl.insert("enabled_models", value(arr));
+                matched = true;
+                break;
+            }
+        }
+        if !matched {
+            return Err(ApiError::NotFound(format!(
+                "provider `{target}` not found in TOML (race / synthetic row)"
+            )));
+        }
+        std::fs::write(&path, doc.to_string())
+            .map_err(|e| ApiError::Internal(format!("write {}: {e}", path.display())))?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| ApiError::Internal(format!("spawn_blocking: {e}")))??;
+
+    // Re-validate and re-emit the canonical row so the caller can render
+    // the new state without an extra GET.
+    let _ = load_cfg(config_path).await?;
+    show_inner(config_path, xvn_home, name).await
+}
+
 async fn set_default_inner(
     config_path: &Path,
     name: &str,
@@ -575,6 +898,7 @@ fn row_from_entry(
         api_key_set,
         synthetic: entry.name.starts_with('_'),
         referenced_by_intern,
+        enabled_models: entry.enabled_models.clone(),
     }
 }
 

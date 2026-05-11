@@ -1,17 +1,20 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
 import { ApiError } from "@/api/client";
 import {
   addProvider,
+  listProviderModels,
   listProviders,
   removeProvider,
   setDefaultProvider,
+  setEnabledModels,
   settingsKeys,
 } from "@/api/settings";
 import type {
   AddProviderRequest,
+  ProviderModelEntry,
   ProviderRow,
 } from "@/api/types.gen";
 
@@ -270,6 +273,7 @@ function ProviderRowView({
   const lockReason = locked
     ? "Workspace default — promote another provider first, then come back to remove this one."
     : null;
+  const [managing, setManaging] = useState(false);
   return (
     <>
       <tr className="border-t border-border-soft align-middle">
@@ -298,6 +302,17 @@ function ProviderRowView({
         </td>
         <td className="py-2 pr-0 text-right">
           <div className="inline-flex items-center gap-2">
+            {row.api_key_set ? (
+              <button
+                onClick={() => setManaging((m) => !m)}
+                title="Pick which models from this provider show up in the chat-rail dropdown"
+                className="px-2 py-1 rounded text-[12px] border border-border text-text-2 hover:text-text hover:border-text-3"
+              >
+                {row.enabled_models.length === 0
+                  ? "Pick models"
+                  : `Models · ${row.enabled_models.length}`}
+              </button>
+            ) : null}
             {!row.referenced_by_intern && row.api_key_set ? (
               <button
                 onClick={onPromote}
@@ -319,6 +334,13 @@ function ProviderRowView({
           </div>
         </td>
       </tr>
+      {managing ? (
+        <tr className="border-t border-border-soft/40 bg-surface-elev/20">
+          <td colSpan={5} className="py-3 pr-0">
+            <ModelManager row={row} onClose={() => setManaging(false)} />
+          </td>
+        </tr>
+      ) : null}
       {removeError ? (
         <tr className="border-t border-border-soft/40">
           <td colSpan={5} className="py-2 pr-0 text-[12px] text-danger">
@@ -343,6 +365,223 @@ function ProviderRowView({
       ) : null}
     </>
   );
+}
+
+function ModelManager({
+  row,
+  onClose,
+}: {
+  row: ProviderRow;
+  onClose: () => void;
+}) {
+  const qc = useQueryClient();
+  const models = useQuery({
+    queryKey: settingsKeys.providerModels(row.name),
+    queryFn: () => listProviderModels(row.name),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const [filter, setFilter] = useState("");
+  // Working set — toggling checkboxes mutates this, "Save" flushes to the
+  // server. Initialized from the persisted enabled_models so reopening
+  // the manager shows the prior state.
+  const [selected, setSelected] = useState<Set<string>>(
+    () => new Set(row.enabled_models),
+  );
+  // Reset working set when the row's persisted state changes underneath us
+  // (eg. another tab saved a different selection).
+  const persistedKey = row.enabled_models.join(",");
+  useMemo(() => {
+    setSelected(new Set(row.enabled_models));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [persistedKey]);
+
+  const save = useMutation({
+    mutationFn: (ids: string[]) => setEnabledModels(row.name, ids),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: settingsKeys.providers() });
+      onClose();
+    },
+  });
+
+  const list = models.data?.models ?? [];
+  const filtered = filter.trim()
+    ? list.filter((m) =>
+        modelSearchHaystack(m).includes(filter.trim().toLowerCase()),
+      )
+    : list;
+  const selectedCount = selected.size;
+  const dirty = setsDiffer(selected, new Set(row.enabled_models));
+
+  return (
+    <div className="px-4 space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-[13px] text-text-2">
+          Manage <code className="font-mono text-text">{row.name}</code> models
+          <span className="text-text-3 ml-2">
+            ({selectedCount} selected
+            {list.length ? ` of ${list.length}` : ""})
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => models.refetch()}
+            disabled={models.isFetching}
+            className="text-[12px] px-2 py-1 rounded border border-border text-text-2 hover:text-text disabled:opacity-50"
+          >
+            {models.isFetching ? "Refreshing…" : "Refresh"}
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-[12px] px-2 py-1 rounded border border-border text-text-2 hover:text-text"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+
+      {models.isError ? (
+        <div className="text-[12px] text-danger">
+          {errorMessage(models.error)}
+        </div>
+      ) : null}
+
+      <input
+        type="text"
+        value={filter}
+        onChange={(e) => setFilter(e.target.value)}
+        placeholder={
+          list.length > 20
+            ? `Filter ${list.length} models — try "claude", "70b", "free"`
+            : "Filter…"
+        }
+        className="w-full bg-surface-elev border border-border rounded px-3 py-1.5 text-[13px] text-text font-mono"
+      />
+
+      {models.isPending ? (
+        <div className="text-[12px] text-text-3 py-4 text-center">
+          Loading model catalog…
+        </div>
+      ) : list.length === 0 ? (
+        <div className="text-[12px] text-text-3 py-4 text-center">
+          Upstream returned no models.
+        </div>
+      ) : (
+        <div className="max-h-[300px] overflow-y-auto border border-border-soft rounded">
+          <table className="w-full">
+            <tbody>
+              {filtered.map((m) => (
+                <ModelRow
+                  key={m.id}
+                  model={m}
+                  checked={selected.has(m.id)}
+                  onToggle={(on) => {
+                    setSelected((prev) => {
+                      const next = new Set(prev);
+                      if (on) next.add(m.id);
+                      else next.delete(m.id);
+                      return next;
+                    });
+                  }}
+                />
+              ))}
+              {filtered.length === 0 && filter.trim() ? (
+                <tr>
+                  <td className="py-2 px-2 text-[12px] text-text-3">
+                    No match for "{filter.trim()}"
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div className="flex items-center gap-2 pt-1">
+        <button
+          type="button"
+          disabled={!dirty || save.isPending}
+          onClick={() => save.mutate(Array.from(selected))}
+          className="px-3 py-1.5 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft disabled:opacity-40"
+        >
+          {save.isPending ? "Saving…" : "Save selection"}
+        </button>
+        <button
+          type="button"
+          onClick={() => setSelected(new Set(row.enabled_models))}
+          disabled={!dirty || save.isPending}
+          className="text-[12px] text-text-3 hover:text-text disabled:opacity-30"
+        >
+          Reset
+        </button>
+        {save.isError ? (
+          <span className="text-[12px] text-danger">
+            {errorMessage(save.error)}
+          </span>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function ModelRow({
+  model,
+  checked,
+  onToggle,
+}: {
+  model: ProviderModelEntry;
+  checked: boolean;
+  onToggle: (on: boolean) => void;
+}) {
+  return (
+    <tr
+      className="border-t border-border-soft/40 first:border-t-0 hover:bg-surface-elev/40 cursor-pointer"
+      onClick={() => onToggle(!checked)}
+    >
+      <td className="py-1.5 pl-3 pr-2 w-6">
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={(e) => onToggle(e.target.checked)}
+          onClick={(e) => e.stopPropagation()}
+        />
+      </td>
+      <td className="py-1.5 pr-2">
+        <code className="font-mono text-[12px] text-text">{model.id}</code>
+        {model.display_name && model.display_name !== model.id ? (
+          <span className="ml-2 text-[11px] text-text-3">
+            {model.display_name}
+          </span>
+        ) : null}
+      </td>
+      <td className="py-1.5 pr-3 text-right text-[11px] text-text-3 whitespace-nowrap">
+        {model.owned_by ?? ""}
+        {model.context_length
+          ? `${model.owned_by ? " · " : ""}${formatContext(model.context_length)}`
+          : ""}
+      </td>
+    </tr>
+  );
+}
+
+function formatContext(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M ctx`;
+  if (n >= 1_000) return `${Math.round(n / 1_000)}K ctx`;
+  return `${n} ctx`;
+}
+
+function modelSearchHaystack(m: ProviderModelEntry): string {
+  return [m.id, m.display_name ?? "", m.owned_by ?? ""]
+    .join(" ")
+    .toLowerCase();
+}
+
+function setsDiffer<T>(a: Set<T>, b: Set<T>): boolean {
+  if (a.size !== b.size) return true;
+  for (const x of a) if (!b.has(x)) return true;
+  return false;
 }
 
 function AddProviderForm({
@@ -396,7 +635,7 @@ function AddProviderForm({
           kind: meta.wireKind,
           base_url: trimmedBaseUrl,
           api_key_env: "",
-          api_key: trimmedKey === "" ? undefined : apiKey,
+          api_key: trimmedKey === "" ? null : apiKey,
         });
       }}
       className="border border-border-soft rounded-md p-4 mb-4 bg-surface-elev/30 space-y-3"

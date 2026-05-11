@@ -50,6 +50,14 @@ pub struct ProviderEntry {
     pub base_url: String,
     #[garde(length(max = 64))]
     pub api_key_env: String,
+    /// Subset of the provider's catalog the operator has explicitly
+    /// enabled for the chat-rail / wizard dropdown. Empty means
+    /// "nothing picked yet" — the UI surfaces a prompt to open Settings
+    /// → Providers → Manage models. Especially load-bearing for
+    /// OpenRouter, which exposes hundreds of routes.
+    #[serde(default)]
+    #[garde(skip)]
+    pub enabled_models: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -370,6 +378,7 @@ fn auto_derive_intern_provider_row(cfg: &mut RuntimeConfig) {
         kind,
         base_url,
         api_key_env,
+        enabled_models: Vec::new(),
     });
 }
 
