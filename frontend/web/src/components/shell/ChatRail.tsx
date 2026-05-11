@@ -239,7 +239,7 @@ export function ChatRail() {
   if (!open) {
     return (
       <aside
-        className="hidden xl:flex w-[44px] flex-col items-center gap-3 border-l border-border-soft bg-surface-sidebar py-4"
+        className="hidden xl:flex w-[44px] flex-col items-center gap-3 h-screen sticky top-0 border-l border-border-soft bg-surface-sidebar py-4"
         aria-label="Chat rail"
       >
         <button
@@ -255,7 +255,7 @@ export function ChatRail() {
 
   return (
     <aside
-      className="hidden xl:flex w-[360px] flex-col border-l border-border-soft bg-surface-sidebar"
+      className="hidden xl:flex w-[360px] flex-col h-screen sticky top-0 border-l border-border-soft bg-surface-sidebar"
       aria-label="Chat rail"
     >
       <header className="px-4 py-3 border-b border-border-soft flex items-center justify-between gap-2">
@@ -340,7 +340,7 @@ function Thread({
   return (
     <div
       ref={ref}
-      className="flex-1 overflow-y-auto px-4 py-3 flex flex-col gap-2"
+      className="flex-1 min-h-0 overflow-y-auto px-4 py-3 flex flex-col gap-2"
     >
       {bubbles.length === 0 ? (
         <div className="text-text-3 italic text-[13px] text-center py-4">
