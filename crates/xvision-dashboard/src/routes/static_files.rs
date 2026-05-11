@@ -17,7 +17,11 @@ pub async fn serve_index() -> Response {
 }
 
 pub async fn serve_static(Path(path): Path<String>) -> Response {
-    serve_path(&path).await
+    // `rust-embed` stores files relative to the configured `#[folder = "static/"]`,
+    // so the SPA's `static/assets/index-*.js` ends up under the key
+    // `assets/index-*.js`. Axum's `Path<String>` extractor strips the `/assets/`
+    // route prefix, so reattach it before looking up the embedded asset.
+    serve_path(&format!("assets/{path}")).await
 }
 
 pub async fn fallback(uri: Uri) -> Response {
