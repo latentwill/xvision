@@ -72,6 +72,9 @@ ANTHROPIC_API_KEY=$(op read 'op://Personal/Anthropic API/credential') \
 
 Strategies are stored under `$XVN_HOME/strategies/<id>.json` (default `~/.xvn/strategies/`).
 
+> **Exit codes:** `xvn strategy *` and `xvn eval *` return typed exit codes
+> (0 / 2 / 3 / 4 / 5 / 7) — see **Exit codes** in `MANUAL.md`.
+
 ## Skills
 
 ```bash
