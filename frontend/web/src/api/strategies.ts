@@ -76,11 +76,32 @@ export type ValidateDraftOut = {
   errors: string[];
 };
 
+export type TemplateInfo = {
+  name: string;
+  display_name: string;
+  plain_summary: string;
+};
+
+export type TemplatesListResponse = {
+  items: TemplateInfo[];
+};
+
+export type CreateStrategyReq = {
+  template: string;
+  name: string;
+  creator?: string | null;
+};
+
+export type CreateStrategyOut = {
+  id: string;
+};
+
 export const strategyKeys = {
   all: ["strategies"] as const,
   list: () => [...strategyKeys.all, "list"] as const,
   detail: (id: string) => [...strategyKeys.all, "detail", id] as const,
   validate: (id: string) => [...strategyKeys.all, "validate", id] as const,
+  templates: () => [...strategyKeys.all, "templates"] as const,
 };
 
 export function listStrategies(): Promise<StrategySummary[]> {
@@ -125,4 +146,24 @@ export function validateDraft(id: string): Promise<ValidateDraftOut> {
     `/api/strategy/${encodeURIComponent(id)}/validate`,
     { method: "POST" },
   );
+}
+
+/// List the built-in strategy templates. Static registry on the
+/// backend; safe to fetch once and cache.
+export function listTemplates(): Promise<TemplateInfo[]> {
+  return apiFetch<TemplatesListResponse>("/api/templates").then(
+    (r) => r.items,
+  );
+}
+
+/// Create a new draft strategy from a template. Returns the new
+/// agent_id; the picker UI redirects to /authoring/:id after this
+/// resolves.
+export function createStrategy(
+  body: CreateStrategyReq,
+): Promise<CreateStrategyOut> {
+  return apiFetch<CreateStrategyOut>("/api/strategies", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 }
