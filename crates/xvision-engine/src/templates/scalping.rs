@@ -1,7 +1,7 @@
-use crate::bundle::manifest::{PublicManifest, RegimeFit};
-use crate::bundle::risk::RiskPreset;
-use crate::bundle::slot::LLMSlot;
-use crate::bundle::StrategyBundle;
+use crate::strategies::manifest::{PublicManifest, RegimeFit};
+use crate::strategies::risk::RiskPreset;
+use crate::strategies::slot::LLMSlot;
+use crate::strategies::{PipelineDef, Strategy};
 use crate::templates::Template;
 
 const TRADER_PROMPT: &str = r#"You are a scalping crypto trader. Inputs:
@@ -35,8 +35,8 @@ impl Template for Scalping {
          latency — use only on liquid pairs."
     }
 
-    fn new_draft(&self, id: String, name: String, creator: String) -> StrategyBundle {
-        StrategyBundle {
+    fn new_draft(&self, id: String, name: String, creator: String) -> Strategy {
+        Strategy {
             manifest: PublicManifest {
                 id,
                 display_name: name,
@@ -51,6 +51,8 @@ impl Template for Scalping {
                 risk_preset_or_config: "conservative".into(),
                 published_at: None,
             },
+            agents: Vec::new(),
+            pipeline: PipelineDef::default(),
             regime_slot: None,
             intern_slot: None,
             trader_slot: Some(LLMSlot {
@@ -60,8 +62,6 @@ impl Template for Scalping {
                 allowed_tools: vec!["ohlcv".into(), "indicator_panel".into()],
             }),
             risk: RiskPreset::Conservative.expand(),
-            capital: xvision_core::Capital::default(),
-            risk_caps: xvision_core::RiskCaps::default(),
             mechanical_params: serde_json::json!({
                 "ema_fast": 5,
                 "ema_slow": 13,

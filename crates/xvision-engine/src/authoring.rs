@@ -1,5 +1,5 @@
-//! Strategy authoring dispatcher — pure Rust functions over `&dyn BundleStore`
-//! that mutate `StrategyBundle`s. Both surfaces call into here:
+//! Strategy authoring dispatcher — pure Rust functions over `&dyn StrategyStore`
+//! that mutate `Strategy`s. Both surfaces call into here:
 //!
 //! - `xvision-mcp` exposes these to external AI agents via MCP tool calls
 //!   (`xvn_create_strategy`, `xvn_update_slot`, ...).
@@ -12,12 +12,12 @@
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
-use crate::bundle::{
+use crate::strategies::{
     risk::{RiskConfig, RiskPreset},
     slot::LLMSlot,
-    store::BundleStore,
+    store::StrategyStore,
     validate::validate_bundle,
-    StrategyBundle,
+    Strategy,
 };
 use crate::templates::registry as template_registry;
 
@@ -107,7 +107,7 @@ pub fn list_templates() -> Vec<TemplateInfo> {
 }
 
 pub async fn create_strategy(
-    store: &dyn BundleStore,
+    store: &dyn StrategyStore,
     req: CreateStrategyReq,
 ) -> anyhow::Result<CreateStrategyOut> {
     let tpl = template_registry::get(&req.template).ok_or_else(|| {
@@ -124,14 +124,14 @@ pub async fn create_strategy(
 }
 
 pub async fn get_strategy(
-    store: &dyn BundleStore,
+    store: &dyn StrategyStore,
     id: &str,
-) -> anyhow::Result<StrategyBundle> {
+) -> anyhow::Result<Strategy> {
     store.load(id).await
 }
 
 pub async fn update_slot(
-    store: &dyn BundleStore,
+    store: &dyn StrategyStore,
     req: UpdateSlotReq,
 ) -> anyhow::Result<UpdateSlotOut> {
     let mut bundle = store.load(&req.id).await?;
@@ -175,7 +175,7 @@ pub async fn update_slot(
 }
 
 pub async fn set_mechanical_param(
-    store: &dyn BundleStore,
+    store: &dyn StrategyStore,
     req: SetMechanicalParamReq,
 ) -> anyhow::Result<()> {
     let mut bundle = store.load(&req.id).await?;
@@ -189,7 +189,7 @@ pub async fn set_mechanical_param(
 }
 
 pub async fn set_risk_config(
-    store: &dyn BundleStore,
+    store: &dyn StrategyStore,
     req: SetRiskConfigReq,
 ) -> anyhow::Result<SetRiskConfigOut> {
     let (config, applied) = match (req.preset, req.explicit) {
@@ -218,7 +218,7 @@ pub async fn set_risk_config(
 }
 
 pub async fn validate_draft(
-    store: &dyn BundleStore,
+    store: &dyn StrategyStore,
     id: &str,
 ) -> anyhow::Result<ValidateDraftOut> {
     let bundle = store.load(id).await?;
@@ -236,7 +236,7 @@ pub async fn validate_draft(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bundle::store::FilesystemStore;
+    use crate::strategies::store::FilesystemStore;
 
     fn store_in_tmp() -> (FilesystemStore, tempfile::TempDir) {
         let td = tempfile::tempdir().unwrap();

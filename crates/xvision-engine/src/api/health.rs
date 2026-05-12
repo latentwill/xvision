@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
 use crate::api::{ApiContext, ApiError, ApiResult};
-use crate::bundle::store::strategy_store_dir;
+use crate::strategies::store::strategy_store_dir;
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(

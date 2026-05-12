@@ -17,8 +17,8 @@ use xvision_engine::authoring::{
     self, CreateStrategyOut, CreateStrategyReq, SetRiskConfigOut, SetRiskConfigReq,
     TemplateInfo, UpdateSlotOut, UpdateSlotReq, ValidateDraftOut,
 };
-use xvision_engine::bundle::risk::RiskConfig;
-use xvision_engine::bundle::StrategyBundle;
+use xvision_engine::strategies::risk::RiskConfig;
+use xvision_engine::strategies::Strategy;
 
 use crate::error::DashboardError;
 use crate::state::AppState;
@@ -64,7 +64,7 @@ pub async fn post_create(
 pub async fn get(
     Path(id): Path<String>,
     State(state): State<AppState>,
-) -> Result<Json<StrategyBundle>, DashboardError> {
+) -> Result<Json<Strategy>, DashboardError> {
     let bundle = strategy::get(&state.api_context(), &id).await?;
     Ok(Json(bundle))
 }

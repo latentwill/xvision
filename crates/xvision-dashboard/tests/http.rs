@@ -84,16 +84,16 @@ async fn strategies_list_returns_canonical_defaults_on_fresh_home() {
 
 #[tokio::test]
 async fn strategies_list_returns_seeded_bundle() {
-    use xvision_engine::bundle::{
-        manifest::PublicManifest, risk::RiskPreset, store::BundleStore, store::FilesystemStore,
-        StrategyBundle,
+    use xvision_engine::strategies::{
+        manifest::PublicManifest, risk::RiskPreset, store::StrategyStore, store::FilesystemStore,
+        Strategy,
     };
 
     let (server, tmp) = boot().await;
     let store = FilesystemStore::new(tmp.path().join("strategies"));
     let bundle_id = "01J0DASHTEST00000000000001";
     store
-        .save(&StrategyBundle {
+        .save(&Strategy {
             manifest: PublicManifest {
                 id: bundle_id.into(),
                 display_name: "Dashboard Test".into(),
@@ -108,12 +108,12 @@ async fn strategies_list_returns_seeded_bundle() {
                 risk_preset_or_config: "balanced".into(),
                 published_at: None,
             },
+            agents: Vec::new(),
+            pipeline: Default::default(),
             regime_slot: None,
             intern_slot: None,
             trader_slot: None,
             risk: RiskPreset::Balanced.expand(),
-            capital: xvision_core::Capital::default(),
-            risk_caps: xvision_core::RiskCaps::default(),
             mechanical_params: serde_json::json!({}),
         })
         .await

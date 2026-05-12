@@ -784,7 +784,7 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
 async fn execute_in_background(
     ctx: ApiContext,
     mut run: Run,
-    bundle: crate::bundle::StrategyBundle,
+    bundle: crate::strategies::Strategy,
     scenario: Scenario,
     executor: Box<dyn Executor>,
     dispatch: Arc<dyn LlmDispatch>,

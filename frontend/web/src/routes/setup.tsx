@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 
 import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
@@ -7,6 +8,7 @@ import { Pill } from "@/components/primitives/Pill";
 
 import { streamChat, type WizardEvent } from "@/api/wizard";
 import { ApiError } from "@/api/client";
+import { listProviders, settingsKeys } from "@/api/settings";
 
 // One bubble in the chat thread. Assistant bubbles accumulate text from
 // `WizardEvent::Token` events; tool round-trips render inline as chips
@@ -27,6 +29,29 @@ export function SetupRoute() {
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
+  // Pull the providers list so we can pass the workspace default's
+  // (provider, model) explicitly to streamChat — the rename from
+  // [intern] → [default_llm] surfaced as `is_default` on ProviderRow
+  // and `default_model` on ProvidersReport. The wizard used to call
+  // streamChat without these and rely on backend fallback; that
+  // worked but left users guessing what model was running.
+  const providers = useQuery({
+    queryKey: settingsKeys.providers(),
+    queryFn: listProviders,
+  });
+  const defaultPick = useMemo<{
+    provider: string;
+    model: string;
+  } | null>(() => {
+    const rows = providers.data?.providers ?? [];
+    const def = rows.find((r) => r.is_default && r.api_key_set && !r.synthetic);
+    if (!def) return null;
+    const explicit = providers.data?.default_model?.trim();
+    const model = explicit && explicit.length > 0 ? explicit : def.enabled_models[0];
+    if (!model) return null;
+    return { provider: def.name, model };
+  }, [providers.data]);
+
   // Cancel any in-flight stream on unmount so the server-side WizardLoop
   // exits cleanly when the user navigates away mid-turn.
   useEffect(() => () => abortRef.current?.abort(), []);
@@ -46,7 +71,14 @@ export function SetupRoute() {
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     try {
-      for await (const ev of streamChat({ message: userText }, ctrl.signal)) {
+      for await (const ev of streamChat(
+        {
+          message: userText,
+          provider: defaultPick?.provider,
+          model: defaultPick?.model,
+        },
+        ctrl.signal,
+      )) {
         applyEvent(setBubbles, setDraftId, ev);
       }
     } catch (e) {
@@ -72,14 +104,16 @@ export function SetupRoute() {
             ? "Streaming…"
             : draftId
               ? "Draft ready"
-              : "Tell the wizard what you want to build"
+              : defaultPick
+                ? `Model: ${defaultPick.provider} / ${defaultPick.model}`
+                : "Tell the wizard what you want to build"
         }
       />
 
       <Card className="px-6 py-5 mb-3">
         <div className="text-text-2 text-[14px] leading-snug max-w-prose">
           The setup agent walks you from a plain-English description to a
-          validated <span className="text-text">StrategyBundle</span> ready to
+          validated <span className="text-text">Strategy</span> ready to
           backtest. Try:{" "}
           <span className="text-text font-mono">
             "Buys dips when the trend is up"
@@ -87,6 +121,21 @@ export function SetupRoute() {
           or <span className="text-text font-mono">"Mean reversion on BTC"</span>.
         </div>
       </Card>
+
+      {providers.data && !defaultPick ? (
+        <Card className="px-6 py-3 mb-3 border-amber-500/40">
+          <p className="m-0 text-[13px] text-amber-300">
+            No default LLM configured.{" "}
+            <Link
+              to="/settings/providers"
+              className="underline decoration-amber-500/40 hover:decoration-amber-300"
+            >
+              Set one in Settings → Providers
+            </Link>{" "}
+            before the wizard can run.
+          </p>
+        </Card>
+      ) : null}
 
       <Card className="p-0 overflow-hidden">
         <Thread bubbles={bubbles} streaming={isStreaming} />

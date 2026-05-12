@@ -47,11 +47,11 @@ async fn eval_run_returns_notfound_for_unseeded_scenario_id() {
     use xvision_engine::agent::llm::{LlmDispatch, MockDispatch};
     use xvision_engine::api::eval::{self, EvalRunRequest};
     use xvision_engine::api::ApiError;
-    use xvision_engine::bundle::manifest::PublicManifest;
-    use xvision_engine::bundle::risk::RiskPreset;
-    use xvision_engine::bundle::slot::LLMSlot;
-    use xvision_engine::bundle::store::{strategy_store_dir, BundleStore, FilesystemStore};
-    use xvision_engine::bundle::StrategyBundle;
+    use xvision_engine::strategies::manifest::PublicManifest;
+    use xvision_engine::strategies::risk::RiskPreset;
+    use xvision_engine::strategies::slot::LLMSlot;
+    use xvision_engine::strategies::store::{strategy_store_dir, FilesystemStore, StrategyStore};
+    use xvision_engine::strategies::Strategy;
     use xvision_engine::eval::run::RunMode;
     use xvision_engine::tools::ToolRegistry;
     use xvision_execution::broker_surface::{BrokerSurface, MockBrokerSurface};
@@ -70,7 +70,7 @@ async fn eval_run_returns_notfound_for_unseeded_scenario_id() {
     // (otherwise the test trips on NotFound for the bundle, not the
     // scenario — the latter is what we want to assert here).
     let agent_id = "01TESTBUNDLERUNSCENARIO0XA";
-    let bundle = StrategyBundle {
+    let bundle = Strategy {
         manifest: PublicManifest {
             id: agent_id.into(),
             display_name: "Test bundle".into(),
@@ -85,6 +85,8 @@ async fn eval_run_returns_notfound_for_unseeded_scenario_id() {
             risk_preset_or_config: "balanced".into(),
             published_at: None,
         },
+        agents: Vec::new(),
+        pipeline: Default::default(),
         regime_slot: None,
         intern_slot: None,
         trader_slot: Some(LLMSlot {
@@ -94,8 +96,6 @@ async fn eval_run_returns_notfound_for_unseeded_scenario_id() {
             allowed_tools: vec![],
         }),
         risk: RiskPreset::Balanced.expand(),
-        capital: xvision_core::Capital::default(),
-        risk_caps: xvision_core::RiskCaps::default(),
         mechanical_params: serde_json::json!({}),
     };
     let bundle_store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
@@ -138,11 +138,11 @@ async fn eval_run_resolves_seeded_scenario_via_db_lookup() {
     use std::sync::Arc;
     use xvision_engine::agent::llm::{LlmDispatch, MockDispatch};
     use xvision_engine::api::eval::{self, EvalRunRequest};
-    use xvision_engine::bundle::manifest::PublicManifest;
-    use xvision_engine::bundle::risk::RiskPreset;
-    use xvision_engine::bundle::slot::LLMSlot;
-    use xvision_engine::bundle::store::{strategy_store_dir, BundleStore, FilesystemStore};
-    use xvision_engine::bundle::StrategyBundle;
+    use xvision_engine::strategies::manifest::PublicManifest;
+    use xvision_engine::strategies::risk::RiskPreset;
+    use xvision_engine::strategies::slot::LLMSlot;
+    use xvision_engine::strategies::store::{strategy_store_dir, FilesystemStore, StrategyStore};
+    use xvision_engine::strategies::Strategy;
     use xvision_engine::eval::run::{RunMode, RunStatus};
     use xvision_engine::tools::ToolRegistry;
     use xvision_execution::broker_surface::{BrokerSurface, MockBrokerSurface};
@@ -158,7 +158,7 @@ async fn eval_run_resolves_seeded_scenario_via_db_lookup() {
     .unwrap();
 
     let agent_id = "01TESTBUNDLERUNSCENARIO0XB";
-    let bundle = StrategyBundle {
+    let bundle = Strategy {
         manifest: PublicManifest {
             id: agent_id.into(),
             display_name: "Test bundle".into(),
@@ -173,6 +173,8 @@ async fn eval_run_resolves_seeded_scenario_via_db_lookup() {
             risk_preset_or_config: "balanced".into(),
             published_at: None,
         },
+        agents: Vec::new(),
+        pipeline: Default::default(),
         regime_slot: None,
         intern_slot: None,
         trader_slot: Some(LLMSlot {
@@ -182,8 +184,6 @@ async fn eval_run_resolves_seeded_scenario_via_db_lookup() {
             allowed_tools: vec![],
         }),
         risk: RiskPreset::Balanced.expand(),
-        capital: xvision_core::Capital::default(),
-        risk_caps: xvision_core::RiskCaps::default(),
         mechanical_params: serde_json::json!({}),
     };
     let bundle_store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));

@@ -28,7 +28,7 @@ use crate::agent::pipeline::{run_pipeline, PipelineInputs};
 use crate::api::chart::{
     ChartEquityPoint, HoldMarker, MarkerEvent, RunChartEvent, RunEventBus, TradeSide, TradeMarker,
 };
-use crate::bundle::StrategyBundle;
+use crate::strategies::Strategy;
 use crate::eval::executor::Executor;
 use crate::eval::metrics::{
     annualization_periods_per_year, equity_to_returns, max_drawdown_pct, sharpe_from_returns,
@@ -159,7 +159,7 @@ impl Executor for BacktestExecutor {
     async fn run(
         &self,
         run: &mut Run,
-        bundle: &StrategyBundle,
+        bundle: &Strategy,
         scenario: &Scenario,
         dispatch: Arc<dyn LlmDispatch>,
         tools: Arc<ToolRegistry>,
@@ -225,7 +225,7 @@ impl BacktestExecutor {
     async fn run_inner(
         &self,
         run: &mut Run,
-        bundle: &StrategyBundle,
+        bundle: &Strategy,
         scenario: &Scenario,
         dispatch: Arc<dyn LlmDispatch>,
         tools: Arc<ToolRegistry>,
@@ -281,7 +281,7 @@ impl BacktestExecutor {
         // bars remaining"; under-reporting on slow fixtures is fine.
         let total_decision_bars = bars.len().saturating_sub(WARMUP_BARS).max(1) as f64;
 
-        let initial = bundle.capital.initial;
+        let initial = scenario.capital.initial;
         let slip_bps = match &scenario.venue.slippage {
             SlippageModel::Linear { bps } => *bps as f64,
             SlippageModel::None => 0.0,

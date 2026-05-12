@@ -17,7 +17,7 @@ use xvision_execution::broker_surface::{BrokerSurface, OrderRequest, Side};
 
 use crate::agent::llm::LlmDispatch;
 use crate::agent::pipeline::{run_pipeline, PipelineInputs};
-use crate::bundle::StrategyBundle;
+use crate::strategies::Strategy;
 use crate::eval::executor::Executor;
 use crate::eval::metrics::{
     annualization_periods_per_year, equity_to_returns, max_drawdown_pct, sharpe_from_returns,
@@ -103,7 +103,7 @@ impl Executor for PaperExecutor {
     async fn run(
         &self,
         run: &mut Run,
-        bundle: &StrategyBundle,
+        bundle: &Strategy,
         scenario: &Scenario,
         dispatch: Arc<dyn LlmDispatch>,
         tools: Arc<ToolRegistry>,
@@ -147,7 +147,7 @@ impl PaperExecutor {
     async fn run_inner(
         &self,
         run: &mut Run,
-        bundle: &StrategyBundle,
+        bundle: &Strategy,
         scenario: &Scenario,
         dispatch: Arc<dyn LlmDispatch>,
         tools: Arc<ToolRegistry>,

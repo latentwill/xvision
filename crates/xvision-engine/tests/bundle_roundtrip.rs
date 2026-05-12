@@ -1,12 +1,12 @@
-use xvision_engine::bundle::manifest::{PublicManifest, RegimeFit};
-use xvision_engine::bundle::risk::{RiskConfig, RiskPreset};
-use xvision_engine::bundle::slot::LLMSlot;
-use xvision_engine::bundle::StrategyBundle;
+use xvision_engine::strategies::manifest::{PublicManifest, RegimeFit};
+use xvision_engine::strategies::risk::{RiskConfig, RiskPreset};
+use xvision_engine::strategies::slot::LLMSlot;
+use xvision_engine::strategies::Strategy;
 
-fn sample_bundle() -> StrategyBundle {
-    use xvision_engine::bundle::manifest::{PublicManifest, RegimeFit};
-    use xvision_engine::bundle::slot::LLMSlot;
-    StrategyBundle {
+fn sample_bundle() -> Strategy {
+    use xvision_engine::strategies::manifest::{PublicManifest, RegimeFit};
+    use xvision_engine::strategies::slot::LLMSlot;
+    Strategy {
         manifest: PublicManifest {
             id: "01H8N7Z000".to_string(),
             display_name: "Test".to_string(),
@@ -21,6 +21,8 @@ fn sample_bundle() -> StrategyBundle {
             risk_preset_or_config: "balanced".to_string(),
             published_at: None,
         },
+        agents: Vec::new(),
+        pipeline: Default::default(),
         regime_slot: Some(LLMSlot {
             role: "regime".into(),
             prompt: "...".into(),
@@ -35,8 +37,6 @@ fn sample_bundle() -> StrategyBundle {
             allowed_tools: vec!["ohlcv".into()],
         }),
         risk: RiskPreset::Balanced.expand(),
-        capital: xvision_core::Capital::default(),
-        risk_caps: xvision_core::RiskCaps::default(),
         mechanical_params: serde_json::json!({"rsi_oversold": 30, "rsi_overbought": 70}),
     }
 }
@@ -99,14 +99,14 @@ fn manifest_roundtrip_with_required_fields() {
 fn bundle_roundtrip() {
     let b = sample_bundle();
     let json = serde_json::to_string(&b).unwrap();
-    let parsed: StrategyBundle = serde_json::from_str(&json).unwrap();
+    let parsed: Strategy = serde_json::from_str(&json).unwrap();
     assert_eq!(parsed.manifest.template, "mean_reversion");
     assert!(parsed.regime_slot.is_some());
     assert!(parsed.intern_slot.is_none());
     assert!(parsed.trader_slot.is_some());
 }
 
-use xvision_engine::bundle::validate::{validate_bundle, ValidationError};
+use xvision_engine::strategies::validate::{validate_bundle, ValidationError};
 
 #[test]
 fn valid_bundle_passes() {
@@ -149,21 +149,27 @@ fn bundle_without_trader_slot_fails() {
 }
 
 #[test]
-fn bundle_carries_capital_and_risk_caps() {
-    // CS-M2 Task 5: capital + risk caps moved off Scenario, onto bundle.
+fn bundle_does_not_carry_capital_or_risk_caps() {
+    // Capital moved back onto Scenario (not Strategy/bundle). The bundle
+    // only carries per-trade RiskConfig. Verify the struct round-trips
+    // cleanly without capital/risk_caps fields.
     let b = sample_bundle();
-    assert_eq!(b.capital.initial, 100_000.0);
-    assert_eq!(b.capital.currency, "USD");
-    assert_eq!(b.risk_caps.max_concurrent_positions, 1);
-    assert_eq!(b.risk_caps.max_leverage, 1.0);
+    let json = serde_json::to_string(&b).unwrap();
+    assert!(
+        !json.contains("\"capital\""),
+        "capital must not appear in Strategy JSON"
+    );
+    assert!(
+        !json.contains("\"risk_caps\""),
+        "risk_caps must not appear in Strategy JSON"
+    );
 }
 
 #[test]
-fn bundle_with_missing_capital_still_deserializes() {
-    // Old serialized bundles (pre-Task-5) didn't have capital/risk_caps. The
-    // #[serde(default)] guard means they still round-trip with the default
-    // values populated.
-    let pre_task5_json = serde_json::json!({
+fn bundle_with_extra_capital_field_in_json_still_deserializes() {
+    // Old serialized bundles (pre-merge) may have capital/risk_caps in JSON.
+    // Strategy ignores unknown fields by default — they silently drop.
+    let pre_merge_json = serde_json::json!({
         "manifest": {
             "id": "01H8OLDB",
             "display_name": "Legacy",
@@ -191,11 +197,14 @@ fn bundle_with_missing_capital_still_deserializes() {
             "stop_loss_atr_multiple": 2.0,
             "daily_loss_kill_pct": 0.05
         },
+        "capital": { "initial": 100000.0, "currency": "USD" },
+        "risk_caps": { "max_concurrent_positions": 1, "max_leverage": 1.0, "daily_loss_kill_switch_pct": 0.05 },
         "mechanical_params": {}
     });
-    let parsed: StrategyBundle = serde_json::from_value(pre_task5_json).unwrap();
-    assert_eq!(parsed.capital.initial, 100_000.0);
-    assert_eq!(parsed.risk_caps.max_concurrent_positions, 1);
+    // Should parse without error; extra fields are ignored.
+    let parsed: Strategy = serde_json::from_value(pre_merge_json).unwrap();
+    assert_eq!(parsed.manifest.id, "01H8OLDB");
+    assert!(parsed.trader_slot.is_some());
 }
 
 #[test]

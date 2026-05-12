@@ -1,7 +1,7 @@
-use crate::bundle::manifest::{PublicManifest, RegimeFit};
-use crate::bundle::risk::RiskPreset;
-use crate::bundle::slot::LLMSlot;
-use crate::bundle::StrategyBundle;
+use crate::strategies::manifest::{PublicManifest, RegimeFit};
+use crate::strategies::risk::RiskPreset;
+use crate::strategies::slot::LLMSlot;
+use crate::strategies::{PipelineDef, Strategy};
 use crate::templates::Template;
 
 const TRADER_PROMPT: &str = r#"You are wrapping a deterministic moving-average
@@ -41,8 +41,8 @@ impl Template for MaCrossover {
          Used as a marketplace seed listing."
     }
 
-    fn new_draft(&self, id: String, name: String, creator: String) -> StrategyBundle {
-        StrategyBundle {
+    fn new_draft(&self, id: String, name: String, creator: String) -> Strategy {
+        Strategy {
             manifest: PublicManifest {
                 id,
                 display_name: name,
@@ -57,6 +57,8 @@ impl Template for MaCrossover {
                 risk_preset_or_config: "conservative".into(),
                 published_at: None,
             },
+            agents: Vec::new(),
+            pipeline: PipelineDef::default(),
             regime_slot: None,
             intern_slot: None,
             trader_slot: Some(LLMSlot {
@@ -66,8 +68,6 @@ impl Template for MaCrossover {
                 allowed_tools: vec!["ohlcv".into(), "indicator_panel".into()],
             }),
             risk: RiskPreset::Conservative.expand(),
-            capital: xvision_core::Capital::default(),
-            risk_caps: xvision_core::RiskCaps::default(),
             mechanical_params: serde_json::json!({
                 "fast_ma_period": 20,
                 "slow_ma_period": 50

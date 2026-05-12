@@ -1,7 +1,7 @@
 //! Scenario — a frozen evaluation context (asset window, venue settings,
 //! replay mode, lineage). Properties of the world, not the agent — capital
-//! and risk live on `StrategyBundle` (see `bundle/mod.rs` `capital` +
-//! `risk_caps` fields, types in `xvision_core::risk`).
+//! lives on `Scenario` (a per-run envelope; strategy-level risk lives on
+//! `Strategy` via `strategies::risk::RiskConfig`).
 //!
 //! The seeding logic for canonical scenarios will move to a separate
 //! `scenario_seed.rs` in Task 6. Until then, `canonical_scenarios()` here
@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 
 // Re-export from xvision-data so consumers don't need a second import.
 pub use xvision_data::alpaca::BarGranularity;
+pub use xvision_core::Capital;
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(
@@ -42,6 +43,12 @@ pub struct Scenario {
     pub data_source: DataSource,
     pub venue: VenueSettings,
     pub replay_mode: ReplayMode,
+
+    /// Initial trading capital for this evaluation scenario. Moved back onto
+    /// Scenario (from StrategyBundle) so backtest results are reproducible
+    /// independent of which strategy is run against the scenario.
+    #[serde(default)]
+    pub capital: Capital,
 
     pub bar_cache_policy: BarCachePolicy,
 
@@ -402,6 +409,7 @@ pub fn canonical_scenarios() -> Vec<Scenario> {
                 fill_model: default_fill_model(),
             },
             replay_mode: ReplayMode::Continuous,
+            capital: Capital::default(),
             bar_cache_policy: BarCachePolicy {
                 cache_key: cache_key.into(),
                 refresh_policy: RefreshPolicy::NeverRefresh,

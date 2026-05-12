@@ -1,4 +1,4 @@
-use xvision_engine::bundle::validate::validate_bundle;
+use xvision_engine::strategies::validate::validate_bundle;
 use xvision_engine::templates::registry;
 
 const EXPECTED_TEMPLATES: &[&str] = &[

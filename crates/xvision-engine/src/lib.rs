@@ -7,7 +7,7 @@ pub mod agents;
 pub mod api;
 pub mod authoring;
 pub mod baselines;
-pub mod bundle;
+pub mod strategies;
 pub mod chat_session;
 pub mod error;
 pub mod eval;
@@ -17,7 +17,7 @@ pub mod templates;
 pub mod tokens;
 pub mod tools;
 
-pub use bundle::StrategyBundle;
+pub use strategies::Strategy;
 pub use error::EngineError;
 
 // Re-export the bundle-side risk types so consumers don't have to depend

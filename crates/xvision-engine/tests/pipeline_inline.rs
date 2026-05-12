@@ -1,14 +1,14 @@
 use std::sync::Arc;
 use xvision_engine::agent::llm::MockDispatch;
 use xvision_engine::agent::pipeline::{run_pipeline, PipelineInputs, PipelineOutputs};
-use xvision_engine::bundle::manifest::{PublicManifest, RegimeFit};
-use xvision_engine::bundle::risk::RiskPreset;
-use xvision_engine::bundle::slot::LLMSlot;
-use xvision_engine::bundle::StrategyBundle;
+use xvision_engine::strategies::manifest::{PublicManifest, RegimeFit};
+use xvision_engine::strategies::risk::RiskPreset;
+use xvision_engine::strategies::slot::LLMSlot;
+use xvision_engine::strategies::Strategy;
 use xvision_engine::tools::ToolRegistry;
 
-fn fixture_bundle() -> StrategyBundle {
-    StrategyBundle {
+fn fixture_bundle() -> Strategy {
+    Strategy {
         manifest: PublicManifest {
             id: "01H8N7ZPIPE".into(),
             display_name: "Pipe Test".into(),
@@ -42,8 +42,6 @@ fn fixture_bundle() -> StrategyBundle {
             allowed_tools: vec!["ohlcv".into()],
         }),
         risk: RiskPreset::Balanced.expand(),
-        capital: xvision_core::Capital::default(),
-        risk_caps: xvision_core::RiskCaps::default(),
         mechanical_params: serde_json::json!({}),
     }
 }

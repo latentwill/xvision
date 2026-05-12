@@ -1,5 +1,5 @@
 //! First-run seed: the 4 canonical BTC scenarios and the
-//! `bundle-canonical-defaults` StrategyBundle.
+//! `bundle-canonical-defaults` Strategy.
 //!
 //! Idempotent — `run_seed_if_needed` short-circuits when canonical rows
 //! already exist (counted via `source = 'canonical'`). Called from
@@ -8,18 +8,17 @@
 //!
 //! Canonical scenarios are the same four BTC regimes the old compiled-in
 //! `canonical_scenarios()` returned: bull-Q1-2025, bear-Q3-2024,
-//! chop-Q2-2025, flash-crash-Aug-2024. The bundle holds the canonical
-//! `Capital` + `RiskCaps` defaults (moved off `Scenario` in Task 5).
+//! chop-Q2-2025, flash-crash-Aug-2024. Capital lives on `Scenario`.
 
 use chrono::{DateTime, TimeZone, Utc};
 use xvision_data::alpaca::BarGranularity;
-use xvision_core::{Capital, RiskCaps};
+use xvision_core::Capital;
 
 use crate::api::{ApiContext, ApiError, ApiResult};
-use crate::bundle::manifest::{PublicManifest, RegimeFit};
-use crate::bundle::risk::RiskPreset;
-use crate::bundle::store::{strategy_store_dir, BundleStore, FilesystemStore};
-use crate::bundle::StrategyBundle;
+use crate::strategies::manifest::{PublicManifest, RegimeFit};
+use crate::strategies::risk::RiskPreset;
+use crate::strategies::store::{strategy_store_dir, FilesystemStore, StrategyStore};
+use crate::strategies::Strategy;
 use crate::eval::bars::compute_cache_key;
 use crate::eval::scenario::{
     AdjustmentMode, AssetClass, AssetRef, BarCachePolicy, CalendarRef, DataSource, Fees,
@@ -28,27 +27,14 @@ use crate::eval::scenario::{
 };
 use crate::eval::scenario_store;
 
-/// Canonical `Capital` + `RiskCaps` defaults, wrapped as a
-/// `bundle-canonical-defaults` StrategyBundle. These are the same numbers
-/// the pre-Task-5 `Scenario.capital` / `Scenario.risk` fields carried.
+/// Canonical defaults bundle id, used to seed the filesystem store.
 pub struct CanonicalDefaults {
     pub bundle_id: String,
-    pub capital: Capital,
-    pub risk_caps: RiskCaps,
 }
 
 pub fn canonical_defaults_bundle() -> CanonicalDefaults {
     CanonicalDefaults {
         bundle_id: "bundle-canonical-defaults".into(),
-        capital: Capital {
-            initial: 100_000.0,
-            currency: "USD".into(),
-        },
-        risk_caps: RiskCaps {
-            max_concurrent_positions: 1,
-            max_leverage: 1.0,
-            daily_loss_kill_switch_pct: 0.05,
-        },
     }
 }
 
@@ -134,6 +120,7 @@ fn seed_btc(
             },
         },
         replay_mode: ReplayMode::Continuous,
+        capital: Capital::default(),
         bar_cache_policy: BarCachePolicy {
             cache_key: String::new(),
             refresh_policy: RefreshPolicy::NeverRefresh,
@@ -153,12 +140,13 @@ fn seed_btc(
     s
 }
 
-/// Build the `bundle-canonical-defaults` StrategyBundle. Carries the
-/// canonical `Capital` + `RiskCaps`; other fields are minimal-but-valid so
-/// callers that load this bundle as a starting point have something to
-/// deserialize. Most concrete fields will be overridden by real bundles.
-fn build_canonical_defaults_bundle(defaults: &CanonicalDefaults) -> StrategyBundle {
-    StrategyBundle {
+/// Build the `bundle-canonical-defaults` Strategy. Other fields are
+/// minimal-but-valid so callers that load this bundle as a starting point
+/// have something to deserialize. Most concrete fields will be overridden
+/// by real bundles.
+fn build_canonical_defaults_bundle(defaults: &CanonicalDefaults) -> Strategy {
+    use crate::strategies::agent_ref::PipelineDef;
+    Strategy {
         manifest: PublicManifest {
             id: defaults.bundle_id.clone(),
             display_name: "Canonical defaults".into(),
@@ -180,12 +168,12 @@ fn build_canonical_defaults_bundle(defaults: &CanonicalDefaults) -> StrategyBund
             risk_preset_or_config: "balanced".into(),
             published_at: None,
         },
+        agents: Vec::new(),
+        pipeline: PipelineDef::default(),
         regime_slot: None,
         intern_slot: None,
         trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
-        capital: defaults.capital.clone(),
-        risk_caps: defaults.risk_caps.clone(),
         mechanical_params: serde_json::json!({}),
     }
 }

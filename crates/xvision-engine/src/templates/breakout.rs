@@ -1,7 +1,7 @@
-use crate::bundle::manifest::{PublicManifest, RegimeFit};
-use crate::bundle::risk::RiskPreset;
-use crate::bundle::slot::LLMSlot;
-use crate::bundle::StrategyBundle;
+use crate::strategies::manifest::{PublicManifest, RegimeFit};
+use crate::strategies::risk::RiskPreset;
+use crate::strategies::slot::LLMSlot;
+use crate::strategies::{PipelineDef, Strategy};
 use crate::templates::Template;
 
 const TRADER_PROMPT: &str = r#"You are a breakout crypto trader. Inputs:
@@ -34,8 +34,8 @@ impl Template for Breakout {
         "Buys when price breaks above its recent range, exits on stall."
     }
 
-    fn new_draft(&self, id: String, name: String, creator: String) -> StrategyBundle {
-        StrategyBundle {
+    fn new_draft(&self, id: String, name: String, creator: String) -> Strategy {
+        Strategy {
             manifest: PublicManifest {
                 id,
                 display_name: name,
@@ -50,6 +50,8 @@ impl Template for Breakout {
                 risk_preset_or_config: "balanced".into(),
                 published_at: None,
             },
+            agents: Vec::new(),
+            pipeline: PipelineDef::default(),
             regime_slot: None,
             intern_slot: None,
             trader_slot: Some(LLMSlot {
@@ -59,8 +61,6 @@ impl Template for Breakout {
                 allowed_tools: vec!["ohlcv".into(), "indicator_panel".into()],
             }),
             risk: RiskPreset::Balanced.expand(),
-            capital: xvision_core::Capital::default(),
-            risk_caps: xvision_core::RiskCaps::default(),
             mechanical_params: serde_json::json!({
                 "donchian_period": 20,
                 "volume_confirm_multiple": 1.5

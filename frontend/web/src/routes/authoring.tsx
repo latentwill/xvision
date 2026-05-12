@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
+import { ModelPicker } from "@/components/ModelPicker";
 import { ApiError } from "@/api/client";
 import {
   getStrategy,
@@ -12,12 +13,13 @@ import {
   updateSlot,
   validateDraft,
   type LLMSlot,
-  type StrategyBundle,
+  type Strategy,
   type UpdateSlotBody,
   type ValidateDraftOut,
 } from "@/api/strategies";
 import { getStrategyChart, strategyChartKeys } from "@/api/chart";
 import { StrategyChart } from "@/components/chart/StrategyChart";
+import { listProviders, settingsKeys } from "@/api/settings";
 
 const RISK_PRESETS: { key: string; label: string }[] = [
   { key: "conservative", label: "Conservative" },
@@ -133,7 +135,7 @@ function PerformanceHistoryCard({ strategyId }: { strategyId: string }) {
   );
 }
 
-function BundleEditor({ bundle }: { bundle: StrategyBundle }) {
+function BundleEditor({ bundle }: { bundle: Strategy }) {
   return (
     <>
       <ManifestCard bundle={bundle} />
@@ -159,7 +161,7 @@ function BundleEditor({ bundle }: { bundle: StrategyBundle }) {
   );
 }
 
-function ManifestCard({ bundle }: { bundle: StrategyBundle }) {
+function ManifestCard({ bundle }: { bundle: Strategy }) {
   const m = bundle.manifest;
   return (
     <Card>
@@ -209,6 +211,10 @@ function SlotCard({
   slot: LLMSlot | null;
 }) {
   const qc = useQueryClient();
+  const providers = useQuery({
+    queryKey: settingsKeys.providers(),
+    queryFn: listProviders,
+  });
   const [prompt, setPrompt] = useState(slot?.prompt ?? "");
   const [model, setModel] = useState(slot?.model_requirement ?? "");
   const [tools, setTools] = useState((slot?.allowed_tools ?? []).join(", "));
@@ -271,13 +277,32 @@ function SlotCard({
             placeholder={`System prompt for the ${role} slot…`}
           />
         </Field>
-        <Field label="Model requirement">
-          <input
-            className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
-            value={model}
-            onChange={(e) => setModel(e.target.value)}
-            placeholder="e.g. anthropic.claude-sonnet-4.6+"
-          />
+        <Field
+          label="Model requirement"
+          hint="Pick a configured model below, or type a constraint pattern (e.g. anthropic.claude-sonnet-4.6+)."
+        >
+          <div className="space-y-2">
+            <ModelPicker
+              rows={providers.data?.providers ?? []}
+              loading={providers.isPending}
+              provider={
+                providers.data?.providers.find((p) =>
+                  p.enabled_models.includes(model),
+                )?.name ?? null
+              }
+              model={model}
+              onChange={(_p, m) => setModel(m)}
+              className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
+              placeholder="— pick a configured model —"
+              ariaLabel={`Model requirement for ${role} slot`}
+            />
+            <input
+              className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              placeholder="or type a constraint…"
+            />
+          </div>
         </Field>
         <Field
           label="Allowed tools"
@@ -312,7 +337,7 @@ function SlotCard({
   );
 }
 
-function RiskCard({ bundle }: { bundle: StrategyBundle }) {
+function RiskCard({ bundle }: { bundle: Strategy }) {
   const qc = useQueryClient();
   const [savedFlash, setSavedFlash] = useState(false);
   const apply = useMutation({
@@ -382,7 +407,7 @@ function RiskCard({ bundle }: { bundle: StrategyBundle }) {
   );
 }
 
-function MechanicalParamsCard({ bundle }: { bundle: StrategyBundle }) {
+function MechanicalParamsCard({ bundle }: { bundle: Strategy }) {
   const json = JSON.stringify(bundle.mechanical_params, null, 2);
   const empty =
     bundle.mechanical_params == null ||

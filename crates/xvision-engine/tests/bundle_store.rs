@@ -1,12 +1,12 @@
 use tempfile::tempdir;
-use xvision_engine::bundle::manifest::{PublicManifest, RegimeFit};
-use xvision_engine::bundle::risk::RiskPreset;
-use xvision_engine::bundle::slot::LLMSlot;
-use xvision_engine::bundle::store::{BundleStore, FilesystemStore};
-use xvision_engine::bundle::StrategyBundle;
+use xvision_engine::strategies::manifest::{PublicManifest, RegimeFit};
+use xvision_engine::strategies::risk::RiskPreset;
+use xvision_engine::strategies::slot::LLMSlot;
+use xvision_engine::strategies::store::{StrategyStore, FilesystemStore};
+use xvision_engine::strategies::Strategy;
 
-fn sample_bundle(id: &str) -> StrategyBundle {
-    StrategyBundle {
+fn sample_bundle(id: &str) -> Strategy {
+    Strategy {
         manifest: PublicManifest {
             id: id.to_string(),
             display_name: "Test".into(),
@@ -21,6 +21,8 @@ fn sample_bundle(id: &str) -> StrategyBundle {
             risk_preset_or_config: "balanced".into(),
             published_at: None,
         },
+        agents: Vec::new(),
+        pipeline: Default::default(),
         regime_slot: None,
         intern_slot: None,
         trader_slot: Some(LLMSlot {
@@ -30,8 +32,6 @@ fn sample_bundle(id: &str) -> StrategyBundle {
             allowed_tools: vec!["ohlcv".into()],
         }),
         risk: RiskPreset::Balanced.expand(),
-        capital: xvision_core::Capital::default(),
-        risk_caps: xvision_core::RiskCaps::default(),
         mechanical_params: serde_json::json!({}),
     }
 }

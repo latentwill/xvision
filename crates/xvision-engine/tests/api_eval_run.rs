@@ -13,11 +13,11 @@ use xvision_data::fixtures::ensure_test_fixture;
 use xvision_engine::agent::llm::{LlmDispatch, MockDispatch};
 use xvision_engine::api::eval::{self, EvalRunRequest};
 use xvision_engine::api::{Actor, ApiContext, ApiError};
-use xvision_engine::bundle::manifest::PublicManifest;
-use xvision_engine::bundle::risk::RiskPreset;
-use xvision_engine::bundle::slot::LLMSlot;
-use xvision_engine::bundle::store::{BundleStore, FilesystemStore};
-use xvision_engine::bundle::StrategyBundle;
+use xvision_engine::strategies::manifest::PublicManifest;
+use xvision_engine::strategies::risk::RiskPreset;
+use xvision_engine::strategies::slot::LLMSlot;
+use xvision_engine::strategies::store::{StrategyStore, FilesystemStore};
+use xvision_engine::strategies::Strategy;
 use xvision_engine::eval::canonical_scenarios;
 use xvision_engine::eval::run::{RunMode, RunStatus};
 use xvision_engine::tools::ToolRegistry;
@@ -45,8 +45,8 @@ async fn ctx_with_tables() -> (ApiContext, tempfile::TempDir) {
     (ctx, dir)
 }
 
-async fn save_test_bundle(ctx: &ApiContext, agent_id: &str) -> StrategyBundle {
-    let bundle = StrategyBundle {
+async fn save_test_bundle(ctx: &ApiContext, agent_id: &str) -> Strategy {
+    let bundle = Strategy {
         manifest: PublicManifest {
             id: agent_id.to_string(),
             display_name: "Test bundle".into(),
@@ -70,8 +70,6 @@ async fn save_test_bundle(ctx: &ApiContext, agent_id: &str) -> StrategyBundle {
             allowed_tools: vec![],
         }),
         risk: RiskPreset::Balanced.expand(),
-        capital: xvision_core::Capital::default(),
-        risk_caps: xvision_core::RiskCaps::default(),
         mechanical_params: serde_json::json!({}),
     };
     let store = FilesystemStore::new(ctx.xvn_home.join("strategies"));

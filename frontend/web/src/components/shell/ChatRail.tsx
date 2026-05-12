@@ -23,6 +23,7 @@ import remarkGfm from "remark-gfm";
 
 import { Icon } from "@/components/primitives/Icon";
 import { Pill } from "@/components/primitives/Pill";
+import { ModelPicker } from "@/components/ModelPicker";
 import { ApiError } from "@/api/client";
 import {
   type ChatMessage,
@@ -256,7 +257,7 @@ export function ChatRail() {
         </div>
       </header>
 
-      <ModelPicker
+      <RailModelBar
         rows={providers.data?.providers ?? []}
         loading={providers.isPending}
         provider={providerName}
@@ -540,7 +541,7 @@ function QuickReplies({
   );
 }
 
-function ModelPicker({
+function RailModelBar({
   rows,
   loading,
   provider,
@@ -553,74 +554,22 @@ function ModelPicker({
   model: string;
   onChange: (provider: string | null, model: string) => void;
 }) {
-  // Flat list of (provider, model) options drawn from each ready
-  // provider's curated `enabled_models`. The dropdown is a real model
-  // picker — the provider is inferred from the selected row, not
-  // chosen independently.
-  const options = rows
-    .filter((r) => r.api_key_set && !r.synthetic)
-    .flatMap((r) =>
-      r.enabled_models.map((m) => ({ provider: r.name, model: m })),
-    );
-  const value =
-    provider && model
-      ? options.find((o) => o.provider === provider && o.model === model)
-        ? `${provider}::${model}`
-        : ""
-      : "";
   return (
     <div className="border-b border-border-soft px-4 py-2 bg-surface-2/30 flex items-center gap-2">
       <label className="text-[11px] text-text-3 uppercase tracking-wider">
         Model
       </label>
-      <select
-        value={value}
-        onChange={(e) => {
-          if (!e.target.value) {
-            onChange(null, "");
-            return;
-          }
-          const [p, ...rest] = e.target.value.split("::");
-          onChange(p, rest.join("::"));
-        }}
-        disabled={loading}
+      <ModelPicker
+        rows={rows}
+        loading={loading}
+        provider={provider}
+        model={model}
+        onChange={onChange}
         className="flex-1 min-w-0 text-[12px] bg-transparent border border-border-soft rounded-sm px-1.5 py-0.5 text-text font-mono"
-      >
-        {options.length === 0 ? (
-          <option value="">no models picked — visit Settings → Providers</option>
-        ) : (
-          <option value="">— pick a model —</option>
-        )}
-        {groupByProvider(options).map((g) => (
-          <optgroup key={g.provider} label={g.provider}>
-            {g.items.map((o) => (
-              <option
-                key={`${o.provider}::${o.model}`}
-                value={`${o.provider}::${o.model}`}
-              >
-                {o.model}
-              </option>
-            ))}
-          </optgroup>
-        ))}
-      </select>
+        emptyHint="no models picked — visit Settings → Providers"
+      />
     </div>
   );
-}
-
-function groupByProvider(
-  options: { provider: string; model: string }[],
-): { provider: string; items: { provider: string; model: string }[] }[] {
-  const map = new Map<string, { provider: string; model: string }[]>();
-  for (const o of options) {
-    const arr = map.get(o.provider) ?? [];
-    arr.push(o);
-    map.set(o.provider, arr);
-  }
-  return Array.from(map.entries()).map(([provider, items]) => ({
-    provider,
-    items,
-  }));
 }
 
 function Composer({
