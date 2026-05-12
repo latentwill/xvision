@@ -3,4 +3,5 @@ export type UpdateProviderRequest = {
   base_url: string;
   api_key_env: string;
   api_key?: string | null;
+  enabled_models?: Array<string> | null;
 };

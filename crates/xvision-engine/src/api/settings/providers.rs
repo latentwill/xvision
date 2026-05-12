@@ -157,6 +157,8 @@ pub struct UpdateProviderRequest {
     pub api_key_env: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled_models: Option<Vec<String>>,
 }
 
 /// Persisted provider secrets. Lives in `$XVN_HOME/secrets/providers.toml`,
@@ -230,6 +232,7 @@ pub async fn add(
         "base_url": req.base_url,
         "api_key_env": req.api_key_env,
         "api_key_provided": req.api_key.as_ref().is_some_and(|k| !k.is_empty()),
+        "enabled_models_count": req.enabled_models.as_ref().map(Vec::len),
     }))
     .ok();
     let target = req.name.clone();
@@ -810,6 +813,21 @@ async fn update_inner(
             "api_key_env is required for auth-bearing providers".into(),
         ));
     }
+    if let Some(models) = &req.enabled_models {
+        for model in models {
+            let trimmed = model.trim();
+            if trimmed.is_empty() {
+                return Err(ApiError::Validation("empty model id in list".into()));
+            }
+            if trimmed.len() > 256 {
+                return Err(ApiError::Validation(format!(
+                    "model id too long ({} chars): `{}`",
+                    trimmed.len(),
+                    &trimmed[..40]
+                )));
+            }
+        }
+    }
     let was_default = provider_matches_default(entry, &cfg);
 
     let path: PathBuf = config_path.to_path_buf();
@@ -817,9 +835,10 @@ async fn update_inner(
     let kind_str = req.kind.clone();
     let base_url = trimmed_base_url.to_string();
     let api_key_env = trimmed_env.clone();
+    let enabled_models = req.enabled_models.clone();
     let default_model = cfg.default_llm.as_ref().map(|d| d.model.clone());
     task::spawn_blocking(move || -> ApiResult<()> {
-        use toml_edit::{value, DocumentMut};
+        use toml_edit::{value, Array, DocumentMut};
         let raw = std::fs::read_to_string(&path).map_err(|e| {
             ApiError::Internal(format!("read {}: {e}", path.display()))
         })?;
@@ -833,6 +852,13 @@ async fn update_inner(
                     tbl.insert("kind", value(kind_str.clone()));
                     tbl.insert("base_url", value(base_url.clone()));
                     tbl.insert("api_key_env", value(api_key_env.clone()));
+                    if let Some(models) = &enabled_models {
+                        let mut arr = Array::new();
+                        for model in models {
+                            arr.push(model.as_str());
+                        }
+                        tbl.insert("enabled_models", value(arr));
+                    }
                     matched = true;
                     break;
                 }
@@ -1594,11 +1620,13 @@ sqlite_url = "sqlite://x.db"
                 base_url: "https://proxy.example/v1".into(),
                 api_key_env: "ANTHROPIC_PROXY_KEY".into(),
                 api_key: Some("sk-updated".into()),
+                enabled_models: Some(vec!["claude-sonnet-4-6".into()]),
             },
         )
         .await
         .unwrap();
         assert_eq!(row.base_url, "https://proxy.example/v1");
+        assert_eq!(row.enabled_models, vec!["claude-sonnet-4-6"]);
         assert!(row.is_default);
         let raw = std::fs::read_to_string(&path).unwrap();
         assert!(raw.contains("base_url = \"https://proxy.example/v1\""));
