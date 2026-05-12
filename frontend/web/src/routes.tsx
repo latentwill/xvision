@@ -14,6 +14,7 @@ import {
   SettingsBrokersRoute,
   SettingsDangerRoute,
   SettingsProvidersRoute,
+  SettingsSkillsRoute,
 } from "./routes/settings";
 
 export const router = createBrowserRouter([
@@ -39,6 +40,7 @@ export const router = createBrowserRouter([
           { index: true, element: <Navigate to="providers" replace /> },
           { path: "providers", element: <SettingsProvidersRoute /> },
           { path: "brokers", element: <SettingsBrokersRoute /> },
+          { path: "skills", element: <SettingsSkillsRoute /> },
           { path: "danger", element: <SettingsDangerRoute /> },
         ],
       },
