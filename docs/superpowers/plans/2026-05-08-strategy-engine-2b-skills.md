@@ -1,5 +1,7 @@
 # Strategy Creation Engine — Plan 2b (Skills) Implementation Plan
 
+> **⚠️ SUPERSEDED (2026-05-12) by [ADR 0012](../../../decisions/0012-deprecate-in-app-skills.md).** The Agents page shipped 2026-05-11 (PR #83) made the OSShip-style markdown-skill authoring surface redundant: every job a skill did (override slot prompt, set model requirement, set tool allowlist) is now owned by `engine::agents::AgentSlot` and edited at `/agents`. The `xvision-skills` crate, `xvn skill …` CLI, three `xvn_*_skill*` MCP verbs, and the `skill_ids` stub on `AgentSlot` were deleted. This document is preserved for historical context only — do not implement against it. Marketplace-distributed reusable prompts return in Plan 5 against `Agent`, not `StrategyBundle`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 > **Depends on:** Plan #1 + Plan 2a merged.
 > **Scope decision (2026-05-08):** Marketplace + reputation work has been **fully deferred to Plan 5** (blockchain integration). Plan 2b ships only the **skills system** — OSShip-style markdown skills authors can compose into strategy slots. Skills are useful for authoring (e.g., a `news-aware-decision` skill that any trader slot can attach) and stand alone without a marketplace. Discovery + reputation + content-addressed publishing all wait for the blockchain plan to be in place.

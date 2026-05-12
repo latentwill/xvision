@@ -2,10 +2,10 @@
 -- See docs/superpowers/plans/2026-05-11-agents-page-v1.md Task 1.
 -- Migration registry: v1-shipping-plan.md §"Migration reservations".
 --
--- An agent is a named bundle of (system_prompt + provider + model + skills)
--- per slot. Slots are user-named free text; the default agent has one slot
--- named `main`. Pipeline-stage names (intern, trader, risk, executor) are
--- valid conventions, not enforced — see CLAUDE.md terminology table.
+-- An agent is a named bundle of (system_prompt + provider + model) per slot.
+-- Slots are user-named free text; the default agent has one slot named
+-- `main`. Pipeline-stage names (intern, trader, risk, executor) are valid
+-- conventions, not enforced — see CLAUDE.md terminology table.
 
 CREATE TABLE IF NOT EXISTS agents (
     agent_id        TEXT PRIMARY KEY,           -- ULID
@@ -31,7 +31,6 @@ CREATE TABLE IF NOT EXISTS agent_slots (
     provider        TEXT NOT NULL,              -- references config.toml providers[].name
     model           TEXT NOT NULL,
     system_prompt   TEXT NOT NULL,
-    skill_ids_json  TEXT NOT NULL DEFAULT '[]', -- JSON array of skill ULIDs
     max_tokens      INTEGER NOT NULL DEFAULT 4096,
     PRIMARY KEY (agent_id, slot_index)
 );
