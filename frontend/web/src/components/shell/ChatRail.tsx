@@ -13,8 +13,13 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
 import { useLocation } from "react-router-dom";
+
+import { useQuery } from "@tanstack/react-query";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import { Icon } from "@/components/primitives/Icon";
 import { Pill } from "@/components/primitives/Pill";
@@ -24,22 +29,33 @@ import {
   type ContentBlock,
   type ContextScope,
   type WizardEvent,
-  createSession,
   deleteSession,
-  fetchHistory,
   headerLabel,
   placeholder,
   quickReplies,
+  resolveSession,
   scopeFromPath,
   scopeKey,
   streamChat,
-  updateScope,
 } from "@/api/chat_rail";
+import { listProviders, settingsKeys } from "@/api/settings";
+import type { ProviderRow } from "@/api/types.gen";
 
-const SESSION_LS_PREFIX = "xvn.chat_rail.session.";
 const RAIL_OPEN_LS = "xvn.chat_rail.open";
+const RAIL_PROVIDER_LS = "xvn.chat_rail.provider";
+const RAIL_MODEL_LS = "xvn.chat_rail.model";
 
-type Tool = { call: string; ok: boolean; summary: string };
+type Tool = {
+  call: string;
+  ok: boolean;
+  summary: string;
+  /** True between tool_call and tool_result; drives the chip spinner. */
+  pending?: boolean;
+  /** Raw args from tool_call; consumed by toolNarrative for inline confirmations. */
+  args?: unknown;
+  /** Raw result from tool_result; consumed by toolNarrative for inline confirmations. */
+  result?: unknown;
+};
 type AssistantBubble = {
   role: "assistant";
   text: string;
@@ -64,8 +80,44 @@ export function ChatRail() {
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [providerName, setProviderName] = useState<string | null>(
+    () => localStorage.getItem(RAIL_PROVIDER_LS),
+  );
+  const [modelId, setModelId] = useState<string>(
+    () => localStorage.getItem(RAIL_MODEL_LS) ?? "",
+  );
   const abortRef = useRef<AbortController | null>(null);
   const lastScopeKeyRef = useRef<string | null>(null);
+
+  const providers = useQuery({
+    queryKey: settingsKeys.providers(),
+    queryFn: listProviders,
+    enabled: open,
+  });
+  // Auto-pick the first enabled (provider, model) from the intern's
+  // default once the catalog loads, so users who configured a provider
+  // can chat without diving into the picker. If the operator hasn't
+  // enabled any models yet, the picker shows a "visit Settings" hint.
+  useEffect(() => {
+    if (providerName && modelId) return;
+    const rows = providers.data?.providers ?? [];
+    const candidates = rows
+      .filter((p) => p.api_key_set && !p.synthetic && p.enabled_models.length > 0)
+      .sort((a, b) =>
+        a.is_default === b.is_default
+          ? 0
+          : a.is_default
+            ? -1
+            : 1,
+      );
+    const pick = candidates[0];
+    if (!pick) return;
+    const m = pick.enabled_models[0];
+    setProviderName(pick.name);
+    setModelId(m);
+    localStorage.setItem(RAIL_PROVIDER_LS, pick.name);
+    localStorage.setItem(RAIL_MODEL_LS, m);
+  }, [providerName, modelId, providers.data]);
 
   // Persist open/close so the rail stays in the user's chosen state across
   // route changes (and reloads).
@@ -73,9 +125,9 @@ export function ChatRail() {
     localStorage.setItem(RAIL_OPEN_LS, open ? "1" : "0");
   }, [open]);
 
-  // When the rail is open and the scope changes, ensure we have a session
-  // for the current scope-key + load its history. Cached session id lives
-  // in localStorage keyed by scope so the conversation resumes.
+  // When the rail is open and the scope changes, resolve a session for
+  // the current scope. The server owns session lifecycle — the rail
+  // never holds a stale id across DB resets or fresh deploys.
   useEffect(() => {
     if (!open) return;
     if (lastScopeKeyRef.current === key && sessionId) return;
@@ -85,40 +137,12 @@ export function ChatRail() {
     (async () => {
       setError(null);
       try {
-        const cached = localStorage.getItem(SESSION_LS_PREFIX + key);
-        let id: string;
-        if (cached) {
-          id = cached;
-          // Make sure server-side scope matches (handles the case where
-          // the user changed pages between sessions but the cached id
-          // was created with a different scope).
-          await updateScope(id, scope).catch(() => {
-            // 404 → session was deleted server-side; fall back to fresh.
-            throw new Error("session-stale");
-          });
-        } else {
-          id = await createSession(scope);
-          localStorage.setItem(SESSION_LS_PREFIX + key, id);
-        }
+        const resolved = await resolveSession(scope);
         if (cancelled) return;
-        setSessionId(id);
-        const history = await fetchHistory(id);
-        if (cancelled) return;
-        setBubbles(historyToBubbles(history));
+        setSessionId(resolved.session_id);
+        setBubbles(historyToBubbles(resolved.history));
       } catch (e) {
         if (cancelled) return;
-        if ((e as Error).message === "session-stale") {
-          localStorage.removeItem(SESSION_LS_PREFIX + key);
-          try {
-            const id = await createSession(scope);
-            localStorage.setItem(SESSION_LS_PREFIX + key, id);
-            setSessionId(id);
-            setBubbles([]);
-          } catch (e2) {
-            setError(formatErr(e2));
-          }
-          return;
-        }
         setError(formatErr(e));
       }
     })();
@@ -151,7 +175,12 @@ export function ChatRail() {
       abortRef.current = ctrl;
       try {
         for await (const ev of streamChat(
-          { session_id: sessionId, message: userText },
+          {
+            session_id: sessionId,
+            message: userText,
+            provider: providerName ?? undefined,
+            model: modelId.trim() || undefined,
+          },
           ctrl.signal,
         )) {
           applyEvent(setBubbles, ev);
@@ -164,7 +193,7 @@ export function ChatRail() {
         abortRef.current = null;
       }
     },
-    [sessionId, isStreaming],
+    [sessionId, isStreaming, providerName, modelId],
   );
 
   const startFresh = useCallback(async () => {
@@ -173,20 +202,20 @@ export function ChatRail() {
     try {
       await deleteSession(sessionId);
     } catch {
-      /* best-effort */
+      /* best-effort — server may have already dropped it */
     }
-    localStorage.removeItem(SESSION_LS_PREFIX + key);
     setSessionId(null);
     setBubbles([]);
     setError(null);
-    // Force the open-effect to re-create a session for this scope.
+    // Force the open-effect to re-resolve a session for this scope.
+    // After delete, the next resolve will find no match and create one.
     lastScopeKeyRef.current = null;
-  }, [sessionId, key]);
+  }, [sessionId]);
 
   if (!open) {
     return (
       <aside
-        className="hidden xl:flex w-[44px] flex-col items-center gap-3 border-l border-border-soft bg-surface-sidebar py-4"
+        className="hidden xl:flex w-[44px] flex-col items-center gap-3 h-screen sticky top-0 border-l border-border-soft bg-surface-sidebar py-4"
         aria-label="Chat rail"
       >
         <button
@@ -202,7 +231,7 @@ export function ChatRail() {
 
   return (
     <aside
-      className="hidden xl:flex w-[360px] flex-col border-l border-border-soft bg-surface-sidebar"
+      className="hidden xl:flex w-[360px] flex-col h-screen sticky top-0 border-l border-border-soft bg-surface-sidebar"
       aria-label="Chat rail"
     >
       <header className="px-4 py-3 border-b border-border-soft flex items-center justify-between gap-2">
@@ -227,7 +256,22 @@ export function ChatRail() {
         </div>
       </header>
 
-      <Thread bubbles={bubbles} />
+      <ModelPicker
+        rows={providers.data?.providers ?? []}
+        loading={providers.isPending}
+        provider={providerName}
+        model={modelId}
+        onChange={(p, m) => {
+          setProviderName(p);
+          setModelId(m);
+          if (p) localStorage.setItem(RAIL_PROVIDER_LS, p);
+          else localStorage.removeItem(RAIL_PROVIDER_LS);
+          if (m) localStorage.setItem(RAIL_MODEL_LS, m);
+          else localStorage.removeItem(RAIL_MODEL_LS);
+        }}
+      />
+
+      <Thread bubbles={bubbles} isStreaming={isStreaming} />
 
       {error && (
         <div className="px-4 py-2 border-t border-border text-rose-300 text-[12px]">
@@ -255,7 +299,13 @@ export function ChatRail() {
   );
 }
 
-function Thread({ bubbles }: { bubbles: Bubble[] }) {
+function Thread({
+  bubbles,
+  isStreaming,
+}: {
+  bubbles: Bubble[];
+  isStreaming: boolean;
+}) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     ref.current?.scrollTo({
@@ -266,7 +316,7 @@ function Thread({ bubbles }: { bubbles: Bubble[] }) {
   return (
     <div
       ref={ref}
-      className="flex-1 overflow-y-auto px-4 py-3 flex flex-col gap-2"
+      className="flex-1 min-h-0 overflow-y-auto px-4 py-3 flex flex-col gap-2"
     >
       {bubbles.length === 0 ? (
         <div className="text-text-3 italic text-[13px] text-center py-4">
@@ -274,13 +324,28 @@ function Thread({ bubbles }: { bubbles: Bubble[] }) {
           authoring loop.
         </div>
       ) : (
-        bubbles.map((b, i) => <BubbleView key={i} b={b} />)
+        bubbles.map((b, i) => (
+          <BubbleView
+            key={i}
+            b={b}
+            isLast={i === bubbles.length - 1}
+            isStreaming={isStreaming}
+          />
+        ))
       )}
     </div>
   );
 }
 
-function BubbleView({ b }: { b: Bubble }) {
+function BubbleView({
+  b,
+  isLast,
+  isStreaming,
+}: {
+  b: Bubble;
+  isLast: boolean;
+  isStreaming: boolean;
+}) {
   if (b.role === "user") {
     return (
       <div className="self-end max-w-[92%]">
@@ -290,15 +355,54 @@ function BubbleView({ b }: { b: Bubble }) {
       </div>
     );
   }
+  const showDots = isStreaming && isLast;
+  const narratives = b.tools
+    .map((t, i) => ({ i, n: toolNarrative(t) }))
+    .filter(
+      (x): x is { i: number; n: { ok: boolean; content: ReactNode } } =>
+        x.n !== null,
+    );
   return (
     <div className="self-start max-w-[92%]">
-      <div className="bg-surface-2/60 border border-border rounded-md px-2.5 py-1.5 text-[13px] whitespace-pre-wrap leading-snug">
-        {b.text || <span className="text-text-3 italic">thinking…</span>}
+      <div className="bg-surface-2/60 border border-border rounded-md px-2.5 py-1.5 text-[13px] leading-snug">
+        {b.text ? (
+          <>
+            <MarkdownView text={b.text} />
+            {showDots && <TypingDots inline />}
+          </>
+        ) : showDots ? (
+          <TypingDots />
+        ) : (
+          <span className="text-text-3 italic">thinking…</span>
+        )}
       </div>
+      {narratives.length > 0 && (
+        <div className="mt-1.5 flex flex-col gap-1">
+          {narratives.map(({ i, n }) => (
+            <div
+              key={`narr-${i}`}
+              className={`text-[12px] flex items-start gap-1.5 ${
+                n.ok ? "text-emerald-300" : "text-rose-300"
+              }`}
+            >
+              <span className="leading-[1.4] flex-shrink-0">
+                {n.ok ? "✓" : "✗"}
+              </span>
+              <span className="leading-[1.4]">{n.content}</span>
+            </div>
+          ))}
+        </div>
+      )}
       {b.tools.length > 0 && (
-        <div className="mt-1.5 flex flex-wrap gap-1">
+        <div className="mt-1.5 flex flex-wrap gap-1 opacity-60">
           {b.tools.map((t, i) => (
             <Pill key={i} tone={t.ok ? "info" : "danger"}>
+              {t.pending && (
+                <span
+                  className="inline-block w-2 h-2 mr-1 border border-current border-t-transparent rounded-full animate-spin align-middle"
+                  aria-label="running"
+                />
+              )}
               <span className="font-mono">{t.call}</span>
               {t.summary && (
                 <span className="text-text-3"> · {t.summary}</span>
@@ -308,6 +412,104 @@ function BubbleView({ b }: { b: Bubble }) {
         </div>
       )}
     </div>
+  );
+}
+
+function MarkdownView({ text }: { text: string }) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        // Inline code keeps a soft background; block code is wrapped in <pre>
+        // which carries its own background — so suppress the inline styling
+        // when ReactMarkdown gives the <code> a language- className (block).
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        code: ({ children, className, ...props }: any) => (
+          <code
+            className={`font-mono text-[12px] ${
+              className ? "" : "bg-surface-2/70 px-1 py-0.5 rounded"
+            }`}
+            {...props}
+          >
+            {children}
+          </code>
+        ),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        pre: ({ children }: any) => (
+          <pre className="font-mono text-[12px] bg-surface-2/70 p-2 rounded my-1.5 overflow-x-auto">
+            {children}
+          </pre>
+        ),
+        table: ({ children }) => (
+          <div className="overflow-x-auto my-1.5">
+            <table className="border-collapse text-[12px]">{children}</table>
+          </div>
+        ),
+        th: ({ children }) => (
+          <th className="border border-border-soft px-1.5 py-1 text-left font-medium">
+            {children}
+          </th>
+        ),
+        td: ({ children }) => (
+          <td className="border border-border-soft px-1.5 py-1">{children}</td>
+        ),
+        ul: ({ children }) => (
+          <ul className="list-disc pl-4 my-1 space-y-0.5">{children}</ul>
+        ),
+        ol: ({ children }) => (
+          <ol className="list-decimal pl-4 my-1 space-y-0.5">{children}</ol>
+        ),
+        p: ({ children }) => (
+          <p className="my-1 first:mt-0 last:mb-0">{children}</p>
+        ),
+        strong: ({ children }) => (
+          <strong className="text-text font-semibold">{children}</strong>
+        ),
+        h1: ({ children }) => (
+          <h1 className="text-[14px] font-semibold my-1.5">{children}</h1>
+        ),
+        h2: ({ children }) => (
+          <h2 className="text-[14px] font-semibold my-1.5">{children}</h2>
+        ),
+        h3: ({ children }) => (
+          <h3 className="text-[13px] font-semibold my-1">{children}</h3>
+        ),
+        a: ({ children, href }) => (
+          <a
+            href={href}
+            className="text-gold underline decoration-gold/40 hover:decoration-gold"
+            target="_blank"
+            rel="noreferrer"
+          >
+            {children}
+          </a>
+        ),
+      }}
+    >
+      {text}
+    </ReactMarkdown>
+  );
+}
+
+function TypingDots({ inline }: { inline?: boolean }) {
+  return (
+    <span
+      className={`inline-flex items-center gap-1 align-middle ${inline ? "ml-1.5" : ""}`}
+      aria-label="generating"
+    >
+      <span
+        className="w-1.5 h-1.5 rounded-full bg-text-3 animate-pulse"
+        style={{ animationDelay: "0ms" }}
+      />
+      <span
+        className="w-1.5 h-1.5 rounded-full bg-text-3 animate-pulse"
+        style={{ animationDelay: "150ms" }}
+      />
+      <span
+        className="w-1.5 h-1.5 rounded-full bg-text-3 animate-pulse"
+        style={{ animationDelay: "300ms" }}
+      />
+    </span>
   );
 }
 
@@ -336,6 +538,89 @@ function QuickReplies({
       ))}
     </div>
   );
+}
+
+function ModelPicker({
+  rows,
+  loading,
+  provider,
+  model,
+  onChange,
+}: {
+  rows: ProviderRow[];
+  loading: boolean;
+  provider: string | null;
+  model: string;
+  onChange: (provider: string | null, model: string) => void;
+}) {
+  // Flat list of (provider, model) options drawn from each ready
+  // provider's curated `enabled_models`. The dropdown is a real model
+  // picker — the provider is inferred from the selected row, not
+  // chosen independently.
+  const options = rows
+    .filter((r) => r.api_key_set && !r.synthetic)
+    .flatMap((r) =>
+      r.enabled_models.map((m) => ({ provider: r.name, model: m })),
+    );
+  const value =
+    provider && model
+      ? options.find((o) => o.provider === provider && o.model === model)
+        ? `${provider}::${model}`
+        : ""
+      : "";
+  return (
+    <div className="border-b border-border-soft px-4 py-2 bg-surface-2/30 flex items-center gap-2">
+      <label className="text-[11px] text-text-3 uppercase tracking-wider">
+        Model
+      </label>
+      <select
+        value={value}
+        onChange={(e) => {
+          if (!e.target.value) {
+            onChange(null, "");
+            return;
+          }
+          const [p, ...rest] = e.target.value.split("::");
+          onChange(p, rest.join("::"));
+        }}
+        disabled={loading}
+        className="flex-1 min-w-0 text-[12px] bg-transparent border border-border-soft rounded-sm px-1.5 py-0.5 text-text font-mono"
+      >
+        {options.length === 0 ? (
+          <option value="">no models picked — visit Settings → Providers</option>
+        ) : (
+          <option value="">— pick a model —</option>
+        )}
+        {groupByProvider(options).map((g) => (
+          <optgroup key={g.provider} label={g.provider}>
+            {g.items.map((o) => (
+              <option
+                key={`${o.provider}::${o.model}`}
+                value={`${o.provider}::${o.model}`}
+              >
+                {o.model}
+              </option>
+            ))}
+          </optgroup>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+function groupByProvider(
+  options: { provider: string; model: string }[],
+): { provider: string; items: { provider: string; model: string }[] }[] {
+  const map = new Map<string, { provider: string; model: string }[]>();
+  for (const o of options) {
+    const arr = map.get(o.provider) ?? [];
+    arr.push(o);
+    map.set(o.provider, arr);
+  }
+  return Array.from(map.entries()).map(([provider, items]) => ({
+    provider,
+    items,
+  }));
 }
 
 function Composer({
@@ -397,6 +682,8 @@ function applyEvent(
         call: ev.tool,
         ok: true,
         summary: summarizeArgs(ev.tool, ev.args),
+        pending: true,
+        args: ev.args,
       });
     } else if (ev.type === "tool_result") {
       let slot = -1;
@@ -412,6 +699,8 @@ function applyEvent(
           ...a.tools[slot],
           ok: !result?.error,
           summary: summarizeResult(ev.tool, ev.result),
+          pending: false,
+          result: ev.result,
         };
       }
     } else if (ev.type === "error") {
@@ -465,6 +754,7 @@ function historyToBubbles(history: ChatMessage[]): Bubble[] {
                 ...tool,
                 ok: !isErr,
                 summary: tool.summary,
+                result: parsed ?? undefined,
               };
             }
           }
@@ -494,6 +784,7 @@ function historyToBubbles(history: ChatMessage[]): Bubble[] {
           call: b.name,
           ok: true,
           summary: summarizeArgs(b.name, b.input),
+          args: b.input,
         }));
       pendingAssistant = { role: "assistant", text, tools };
     }
@@ -553,6 +844,150 @@ function summarizeResult(tool: string, result: unknown): string {
       return r.applied ? String(r.applied) : "";
     default:
       return "";
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Tool narratives — human-readable confirmation lines rendered above the
+// (dimmer) raw tool pills. Returns null for tools still pending (the chip
+// spinner is the cue) and for read-only tools whose result is already
+// reflected in the model's prose.
+
+function toolNarrative(
+  t: Tool,
+): { ok: boolean; content: ReactNode } | null {
+  if (t.pending) return null;
+  if (t.call === "get_strategy" || t.call === "list_templates") return null;
+  const args = (t.args ?? {}) as Record<string, unknown>;
+  const result = (t.result ?? {}) as Record<string, unknown>;
+  const errorMsg =
+    typeof result.error === "string" ? result.error : undefined;
+  if (errorMsg) {
+    return {
+      ok: false,
+      content: (
+        <>
+          {friendlyVerb(t.call)} failed: <span>{errorMsg}</span>
+        </>
+      ),
+    };
+  }
+  switch (t.call) {
+    case "create_strategy": {
+      const name = String(args["name"] ?? "(unnamed)");
+      const template = String(args["template"] ?? "");
+      const id = typeof result["id"] === "string" ? result["id"] : "";
+      return {
+        ok: true,
+        content: (
+          <>
+            Created strategy{" "}
+            <strong className="text-text font-semibold">{name}</strong>
+            {template && (
+              <>
+                {" "}from{" "}
+                <code className="font-mono text-text">{template}</code>
+              </>
+            )}
+            {id && (
+              <>
+                {" "}(<code className="font-mono text-text-2">{id}</code>)
+              </>
+            )}
+          </>
+        ),
+      };
+    }
+    case "set_mechanical_param": {
+      const key = String(args["key"] ?? "?");
+      const rawValue = args["value"];
+      const value =
+        rawValue === undefined
+          ? "?"
+          : typeof rawValue === "string"
+            ? rawValue
+            : JSON.stringify(rawValue);
+      return {
+        ok: true,
+        content: (
+          <>
+            Set <code className="font-mono text-text">{key}</code> ={" "}
+            <code className="font-mono text-text">{value}</code>
+          </>
+        ),
+      };
+    }
+    case "set_risk_config": {
+      const preset =
+        typeof args["preset"] === "string"
+          ? (args["preset"] as string)
+          : undefined;
+      return {
+        ok: true,
+        content: preset ? (
+          <>
+            Risk preset:{" "}
+            <strong className="text-text font-semibold">{preset}</strong>
+          </>
+        ) : (
+          <>Risk: explicit settings applied</>
+        ),
+      };
+    }
+    case "validate_draft": {
+      const ok = result["ok"] === true;
+      const errs = Array.isArray(result["errors"])
+        ? (result["errors"] as unknown[]).length
+        : 0;
+      return ok
+        ? { ok: true, content: <>Validation passed</> }
+        : {
+            ok: false,
+            content: (
+              <>
+                Validation failed ({errs} error{errs === 1 ? "" : "s"})
+              </>
+            ),
+          };
+    }
+    case "update_slot": {
+      const slot = String(args["slot"] ?? "?");
+      const updated = Array.isArray(result["updated"])
+        ? (result["updated"] as string[]).join(", ")
+        : "";
+      return {
+        ok: true,
+        content: updated ? (
+          <>
+            Updated <code className="font-mono text-text">{slot}</code>:{" "}
+            {updated}
+          </>
+        ) : (
+          <>
+            Updated <code className="font-mono text-text">{slot}</code>
+          </>
+        ),
+      };
+    }
+    default:
+      return null;
+  }
+}
+
+function friendlyVerb(call: string): string {
+  switch (call) {
+    case "create_strategy":
+      return "Create strategy";
+    case "set_mechanical_param":
+      return "Set parameter";
+    case "set_risk_config":
+      return "Set risk";
+    case "validate_draft":
+      return "Validate";
+    case "update_slot":
+      return "Update slot";
+    default:
+      return call;
   }
 }
 

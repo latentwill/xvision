@@ -76,13 +76,12 @@ function FilterBar() {
         </select>
       </div>
       <div className="flex items-center gap-2">
-        <button
-          className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium border border-border text-text-2 hover:text-text hover:border-text-3 transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:text-text-2 disabled:hover:border-border"
-          disabled
-          title="Coming in Plan 3 (Authoring)"
+        <Link
+          to="/strategies/new"
+          className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium border border-border text-text-2 hover:text-text hover:border-text-3 transition-colors"
         >
           <Icon name="plus" size={13} /> New from template
-        </button>
+        </Link>
         <Link
           to="/setup"
           className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft transition-colors"

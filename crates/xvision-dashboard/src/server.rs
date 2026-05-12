@@ -7,16 +7,41 @@ use axum::{
 use tower_http::trace::TraceLayer;
 
 use crate::routes::{
-    bars, chat_rail, eval_runs, health::health, scenarios, search as search_route, settings,
-    static_files, strategies, wizard,
+    agents, bars, chat_rail, eval_runs, health::health, scenarios, search as search_route,
+    settings, skills, static_files, strategies, wizard,
 };
 use crate::state::AppState;
+use xvision_engine::api::eval as api_eval;
 use xvision_engine::api::search as api_search;
 
 pub fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/api/health", get(health))
-        .route("/api/strategies", get(strategies::list))
+        .route(
+            "/api/agents",
+            get(agents::list).post(agents::create),
+        )
+        .route("/api/agents/templates", get(agents::templates))
+        .route(
+            "/api/agents/:id",
+            get(agents::get).put(agents::update).delete(agents::archive),
+        )
+        .route("/api/agents/:id/validate", post(agents::validate))
+        .route("/api/agents/:id/strategies", get(agents::deployed_in))
+        .route("/api/agents/:id/runs", get(agents::recent_runs))
+        .route(
+            "/api/skills",
+            get(skills::list).post(skills::create),
+        )
+        .route(
+            "/api/skills/:id",
+            get(skills::get).put(skills::update).delete(skills::archive),
+        )
+        .route(
+            "/api/strategies",
+            get(strategies::list).post(strategies::post_create),
+        )
+        .route("/api/templates", get(strategies::list_templates))
         .route("/api/strategy/:id", get(strategies::get))
         .route(
             "/api/strategy/:id/slot/:role",
@@ -28,24 +53,34 @@ pub fn build_router(state: AppState) -> Router {
             post(strategies::post_validate),
         )
         .route("/api/strategies/:id/chart", get(strategies::chart))
+        // NOTE: /api/scenarios/preview MUST be before /api/scenarios/:id —
+        // axum's router matches in registration order for overlapping patterns.
         .route("/api/scenarios", get(scenarios::list).post(scenarios::create))
         .route("/api/scenarios/preview", get(scenarios::preview))
         .route("/api/scenarios/:id", get(scenarios::get).delete(scenarios::delete))
         .route("/api/scenarios/:id/chart", get(scenarios::chart))
         .route("/api/scenarios/:id/clone", post(scenarios::clone))
         .route("/api/scenarios/:id/archive", post(scenarios::archive))
-        .route("/api/eval/runs", get(eval_runs::list).post(eval_runs::launch))
+        .route(
+            "/api/eval/runs",
+            get(eval_runs::list).post(eval_runs::post_start),
+        )
         .route("/api/eval/runs/compare/chart", get(eval_runs::compare_chart))
         .route("/api/eval/runs/:id", get(eval_runs::get))
         .route("/api/eval/runs/:id/chart", get(eval_runs::chart))
         .route("/api/eval/runs/:id/stream", get(eval_runs::stream))
         .route("/api/eval/compare", get(eval_runs::compare))
+        .route("/api/eval/scenarios", get(eval_runs::list_scenarios))
         .route("/api/bars/:cache_key", get(bars::cache_row))
         .route("/api/search", get(search_route::handler))
         .route("/api/settings/brokers", get(settings::brokers::get))
         .route(
             "/api/settings/brokers/alpaca",
             post(settings::brokers::set_alpaca).delete(settings::brokers::delete_alpaca),
+        )
+        .route(
+            "/api/settings/brokers/alpaca/test-connection",
+            post(settings::brokers::test_alpaca),
         )
         .route("/api/settings/daemon", get(settings::daemon::get))
         .route("/api/settings/identity", get(settings::identity::get))
@@ -56,6 +91,22 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/settings/providers/:name",
             get(settings::providers::show).delete(settings::providers::remove),
+        )
+        .route(
+            "/api/settings/providers/:name/set-default",
+            post(settings::providers::set_default),
+        )
+        .route(
+            "/api/settings/providers/:name/models",
+            get(settings::providers::list_models),
+        )
+        .route(
+            "/api/settings/providers/:name/enabled-models",
+            axum::routing::put(settings::providers::put_enabled_models),
+        )
+        .route(
+            "/api/settings/providers/:name/test-connection",
+            post(settings::providers::test_connection),
         )
         .route("/api/settings/danger/wipe-db", post(settings::danger::wipe_db))
         .route(
@@ -68,16 +119,12 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/api/wizard/chat", post(wizard::chat))
         .route(
-            "/api/chat-rail/sessions",
-            post(chat_rail::create_session),
+            "/api/chat-rail/sessions/resolve",
+            post(chat_rail::resolve_session),
         )
         .route(
             "/api/chat-rail/sessions/:id/history",
             get(chat_rail::history),
-        )
-        .route(
-            "/api/chat-rail/sessions/:id/scope",
-            post(chat_rail::update_scope),
         )
         .route(
             "/api/chat-rail/sessions/:id",
@@ -96,6 +143,23 @@ pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
     // the static action set + canonical scenarios. Idempotent — every
     // subsequent indexer hook just refreshes the row in place.
     api_search::reindex_all(&state.api_context()).await;
+
+    // Sweep eval runs left in Queued/Running from a previous process.
+    // Background tasks die with the daemon, so without this the runs
+    // list shows phantom "Running" rows after every restart.
+    match api_eval::fail_orphan_runs(&state.api_context()).await {
+        Ok(0) => {}
+        Ok(n) => tracing::info!(
+            target: "xvision::dashboard",
+            failed = n,
+            "swept orphan eval runs at startup",
+        ),
+        Err(e) => tracing::warn!(
+            target: "xvision::dashboard",
+            error = %e,
+            "failed to sweep orphan eval runs at startup",
+        ),
+    }
 
     let app = build_router(state);
     tracing::info!(%addr, "xvision-dashboard listening");

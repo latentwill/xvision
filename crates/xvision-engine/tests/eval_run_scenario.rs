@@ -50,7 +50,7 @@ async fn eval_run_returns_notfound_for_unseeded_scenario_id() {
     use xvision_engine::bundle::manifest::PublicManifest;
     use xvision_engine::bundle::risk::RiskPreset;
     use xvision_engine::bundle::slot::LLMSlot;
-    use xvision_engine::bundle::store::{BundleStore, FilesystemStore};
+    use xvision_engine::bundle::store::{strategy_store_dir, BundleStore, FilesystemStore};
     use xvision_engine::bundle::StrategyBundle;
     use xvision_engine::eval::run::RunMode;
     use xvision_engine::tools::ToolRegistry;
@@ -98,7 +98,7 @@ async fn eval_run_returns_notfound_for_unseeded_scenario_id() {
         risk_caps: xvision_core::RiskCaps::default(),
         mechanical_params: serde_json::json!({}),
     };
-    let bundle_store = FilesystemStore::new(ctx.xvn_home.join("bundles"));
+    let bundle_store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
     bundle_store.save(&bundle).await.unwrap();
 
     let mock_broker = Arc::new(MockBrokerSurface::new(100_000.0));
@@ -141,7 +141,7 @@ async fn eval_run_resolves_seeded_scenario_via_db_lookup() {
     use xvision_engine::bundle::manifest::PublicManifest;
     use xvision_engine::bundle::risk::RiskPreset;
     use xvision_engine::bundle::slot::LLMSlot;
-    use xvision_engine::bundle::store::{BundleStore, FilesystemStore};
+    use xvision_engine::bundle::store::{strategy_store_dir, BundleStore, FilesystemStore};
     use xvision_engine::bundle::StrategyBundle;
     use xvision_engine::eval::run::{RunMode, RunStatus};
     use xvision_engine::tools::ToolRegistry;
@@ -186,7 +186,7 @@ async fn eval_run_resolves_seeded_scenario_via_db_lookup() {
         risk_caps: xvision_core::RiskCaps::default(),
         mechanical_params: serde_json::json!({}),
     };
-    let bundle_store = FilesystemStore::new(ctx.xvn_home.join("bundles"));
+    let bundle_store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
     bundle_store.save(&bundle).await.unwrap();
 
     let mock_broker = Arc::new(MockBrokerSurface::new(100_000.0));

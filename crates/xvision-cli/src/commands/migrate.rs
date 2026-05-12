@@ -130,7 +130,7 @@ async fn run_dry(xvn_home: PathBuf) -> Result<()> {
     }
 
     // Check strategy bundle.
-    let bundle_path = xvn_home.join("bundles").join("bundle-canonical-defaults.json");
+    let bundle_path = xvn_home.join("strategies").join("bundle-canonical-defaults.json");
     if bundle_path.exists() {
         println!("seed: canonical-defaults strategy bundle present");
     } else {

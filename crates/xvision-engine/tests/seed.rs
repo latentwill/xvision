@@ -24,9 +24,9 @@ async fn seed_runs_on_fresh_db() {
             .unwrap();
     assert_eq!(count.0, 4, "expected 4 canonical scenarios seeded");
 
-    // The canonical-defaults StrategyBundle lives in `xvn_home/bundles/` as
+    // The canonical-defaults StrategyBundle lives in `xvn_home/strategies/` as
     // JSON (FilesystemStore) — bundles aren't SQLite-backed yet.
-    let bundle_path = dir.path().join("bundles").join("bundle-canonical-defaults.json");
+    let bundle_path = dir.path().join("strategies").join("bundle-canonical-defaults.json");
     assert!(
         bundle_path.exists(),
         "expected canonical-defaults bundle seeded at {}",

@@ -710,6 +710,160 @@ async fn load_bars_for_scenario(
     .await
 }
 
+/// Non-blocking dashboard entrypoint. Validates the request, persists a
+/// `Queued` run row, spawns a background task that drives the executor,
+/// and returns the freshly-persisted `RunDetail`. The HTTP handler
+/// returns in ~milliseconds; the run finishes in 3–10+ minutes and the
+/// frontend polls `GET /api/eval/runs/:id` to track progress.
+///
+/// Sync-up-front validation: env vars (`ANTHROPIC_API_KEY`, Alpaca
+/// creds in paper mode) are read before the spawn so missing-config
+/// errors return as `ApiError::Validation` rather than landing in the
+/// row's `error` field. Strategy/scenario lookups also happen up-front
+/// for the same reason.
+pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDetail> {
+    let started = Instant::now();
+    let bundle = api_strategy::get(ctx, &req.agent_id).await?;
+    let scenario = resolve_scenario(ctx, &req.scenario_id).await?;
+
+    // Build broker / dispatch / tools from env up-front so any
+    // missing-config errors return synchronously rather than landing in
+    // a background-task failure row the user has to dig out of the list.
+    let broker: Option<Arc<dyn BrokerSurface>> = match req.mode {
+        RunMode::Paper => Some(build_alpaca_paper_broker(ctx).await?),
+        RunMode::Backtest => None,
+    };
+    let api_key = std::env::var("ANTHROPIC_API_KEY").map_err(|_| {
+        ApiError::Validation("ANTHROPIC_API_KEY env var is required".into())
+    })?;
+    let dispatch: Arc<dyn LlmDispatch> = Arc::new(AnthropicDispatch::new(api_key));
+    let tools = Arc::new(ToolRegistry::default_with_builtins());
+
+    let executor: Box<dyn Executor> = match req.mode {
+        RunMode::Paper => {
+            let b = broker.expect("paper mode broker built above");
+            Box::new(PaperExecutor::new(b))
+        }
+        RunMode::Backtest => Box::new(BacktestExecutor::new().with_event_bus(ctx.event_bus.clone())),
+    };
+
+    let mut run = Run::new_queued(req.agent_id.clone(), scenario.id.clone(), req.mode);
+    run.params_override = req.params_override.clone();
+    let store = RunStore::new(ctx.db.clone());
+    store
+        .create(&run)
+        .await
+        .map_err(|e| ApiError::Internal(format!("create run: {e}")))?;
+
+    let args_json = serde_json::to_string(&req).ok();
+    let _ = audit::record(
+        ctx,
+        "eval",
+        "start",
+        Some(&run.id),
+        args_json.as_deref(),
+        Outcome::Ok,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+
+    let ctx_bg = ctx.clone();
+    let run_id = run.id.clone();
+    tokio::spawn(async move {
+        execute_in_background(ctx_bg, run, bundle, scenario, executor, dispatch, tools).await;
+    });
+
+    get_run(ctx, &run_id).await
+}
+
+/// Background-task body: transition Queued → Running, drive the
+/// executor, and on completion/failure persist the canonical state.
+/// Detached — failures here can't propagate to the spawning request, so
+/// every error path writes to the run row's `error` field and logs at
+/// the `xvision::eval` target.
+async fn execute_in_background(
+    ctx: ApiContext,
+    mut run: Run,
+    bundle: crate::bundle::StrategyBundle,
+    scenario: Scenario,
+    executor: Box<dyn Executor>,
+    dispatch: Arc<dyn LlmDispatch>,
+    tools: Arc<ToolRegistry>,
+) {
+    let store = RunStore::new(ctx.db.clone());
+
+    if let Err(e) = store
+        .update_status(&run.id, RunStatus::Running, None)
+        .await
+    {
+        tracing::error!(
+            target: "xvision::eval",
+            run_id = %run.id,
+            error = %e,
+            "failed to transition Queued → Running",
+        );
+        return;
+    }
+
+    let dispatch_for_postprocess = dispatch.clone();
+
+    if let Err(e) = executor
+        .run(&mut run, &bundle, &scenario, dispatch, tools, &store)
+        .await
+    {
+        let err_msg = e.to_string();
+        tracing::error!(
+            target: "xvision::eval",
+            run_id = %run.id,
+            error = %err_msg,
+            "executor failed",
+        );
+        let _ = store
+            .update_status(&run.id, RunStatus::Failed, Some(&err_msg))
+            .await;
+        if let Ok(failed) = store.get(&run.id).await {
+            api_search::upsert_run(&ctx, &failed).await;
+        }
+        return;
+    }
+
+    let finalized = match store.get(&run.id).await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(
+                target: "xvision::eval",
+                run_id = %run.id,
+                error = %e,
+                "failed to re-read finalized run",
+            );
+            return;
+        }
+    };
+    api_search::upsert_run(&ctx, &finalized).await;
+
+    // Best-effort findings extraction — failures audit but don't reopen
+    // the run.
+    crate::eval::postprocess::extract_and_record(
+        &ctx,
+        &finalized.id,
+        dispatch_for_postprocess,
+        crate::eval::postprocess::DEFAULT_FINDINGS_MODEL,
+    )
+    .await;
+}
+
+/// Sweep any `Queued` or `Running` rows from a previous process and
+/// transition them to `Failed`. Background tasks die with the dashboard
+/// process so a clean restart should fail orphans out before serving
+/// traffic — otherwise the runs list shows phantom "Running" rows.
+pub async fn fail_orphan_runs(ctx: &ApiContext) -> ApiResult<u64> {
+    let store = RunStore::new(ctx.db.clone());
+    store
+        .fail_active_runs("daemon restarted before run completed")
+        .await
+        .map_err(|e| ApiError::Internal(format!("fail orphan runs: {e}")))
+}
+
 pub async fn scenarios(ctx: &ApiContext) -> ApiResult<Vec<ScenarioSummary>> {
     let started = Instant::now();
     // Pull the live set from the DB (seeded canonical rows + any

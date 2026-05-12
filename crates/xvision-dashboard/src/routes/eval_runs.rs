@@ -22,6 +22,7 @@ use serde::{Deserialize, Serialize};
 use xvision_engine::api::chart::{self as chart_api, CompareChartPayload, RunChartEvent, RunChartPayload};
 use xvision_engine::api::eval::{
     self, CompareRunsRequest, EvalRunRequest, ListRunsRequest, RunDetail, RunSummary,
+    ScenarioSummary,
 };
 use xvision_engine::eval::compare::ComparisonReport;
 use xvision_engine::eval::run::RunStatus;
@@ -145,7 +146,22 @@ pub async fn compare_chart(
     Ok(Json(payload))
 }
 
-/// `POST /api/eval/runs` — launch a new eval run.
+#[derive(Serialize)]
+pub struct ScenariosListResponse {
+    pub items: Vec<ScenarioSummary>,
+}
+
+/// `GET /api/eval/scenarios` — list the canonical scenarios the start
+/// modal renders in its dropdown. Wraps `eval::scenarios` (which audits
+/// the call). The list is small and static; clients are free to cache.
+pub async fn list_scenarios(
+    State(state): State<AppState>,
+) -> Result<Json<ScenariosListResponse>, DashboardError> {
+    let items = eval::scenarios(&state.api_context()).await?;
+    Ok(Json(ScenariosListResponse { items }))
+}
+
+/// `POST /api/eval/runs` — launch a new eval run (synchronous, blocking).
 ///
 /// Constructs broker / dispatch / tools from environment variables (via
 /// `eval::run`). Returns `201 Created` with the slim `RunSummary` on
@@ -159,6 +175,21 @@ pub async fn launch(
     let run = eval::run(&state.api_context(), req).await?;
     let summary = eval::summarise_run(run);
     Ok((StatusCode::CREATED, Json(summary)))
+}
+
+/// `POST /api/eval/runs` (non-blocking) — kick off a new eval run. Body
+/// `EvalRunRequest { agent_id, scenario_id, mode, params_override? }`.
+///
+/// Returns 202 Accepted with the freshly-persisted `RunDetail` (status
+/// = `Queued`). The actual run drives in a background tokio task; the
+/// caller is expected to poll `GET /api/eval/runs/:id` until status
+/// reaches a terminal state.
+pub async fn post_start(
+    State(state): State<AppState>,
+    Json(body): Json<EvalRunRequest>,
+) -> Result<(StatusCode, Json<RunDetail>), DashboardError> {
+    let detail = eval::start_run(&state.api_context(), body).await?;
+    Ok((StatusCode::ACCEPTED, Json(detail)))
 }
 
 // ── SSE helpers ─────────────────────────────────────────────────────────────

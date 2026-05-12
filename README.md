@@ -144,6 +144,7 @@ opens others:
 - `docs/superpowers/specs/` — design specifications
 - `docs/superpowers/plans/` — implementation plans (executable)
 - `docs/HACKATHON-1-PAGER.md` — narrative pitch
+- `docs/marketing-followups.md` — public-copy follow-ups and external references
 - `docker/README.md` — Docker image guide
 
 ## License

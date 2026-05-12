@@ -13,7 +13,11 @@ random_seed = 42
 # stored in `$XVN_HOME/secrets/providers.toml` (mode 0600) and loaded
 # into the process env at startup.
 
-[intern]
+[default_llm]
+# Workspace-level default LLM. Used by the chat rail, the setup wizard, and
+# as a fallback for any agent slot that doesn't override its own provider/
+# model. Renamed from [intern] on 2026-05-12 — old configs with [intern]
+# still parse (one-release deprecation alias).
 provider          = "anthropic"  # anthropic | openai-compat | local-candle
 base_url          = "https://api.anthropic.com"
 model             = "claude-haiku-4-5"

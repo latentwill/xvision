@@ -34,7 +34,7 @@ async fn ctx_with_tables() -> (ApiContext, tempfile::TempDir) {
         .await
         .unwrap();
     let dir = tempfile::tempdir().unwrap();
-    std::fs::create_dir_all(dir.path().join("bundles")).unwrap();
+    std::fs::create_dir_all(dir.path().join("strategies")).unwrap();
     let ctx = ApiContext::new(
         pool,
         Actor::Cli {
@@ -74,7 +74,7 @@ async fn save_test_bundle(ctx: &ApiContext, agent_id: &str) -> StrategyBundle {
         risk_caps: xvision_core::RiskCaps::default(),
         mechanical_params: serde_json::json!({}),
     };
-    let store = FilesystemStore::new(ctx.xvn_home.join("bundles"));
+    let store = FilesystemStore::new(ctx.xvn_home.join("strategies"));
     store.save(&bundle).await.unwrap();
     bundle
 }

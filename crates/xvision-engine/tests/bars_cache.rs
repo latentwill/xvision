@@ -46,7 +46,7 @@ async fn test_ctx_with_mock_alpaca() -> (ApiContext, MockServer) {
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query(include_str!("../migrations/005_bars_cache.sql"))
+    sqlx::query(include_str!("../migrations/010_bars_cache.sql"))
         .execute(&pool)
         .await
         .unwrap();

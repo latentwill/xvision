@@ -18,7 +18,7 @@ use xvision_core::{Capital, RiskCaps};
 use crate::api::{ApiContext, ApiError, ApiResult};
 use crate::bundle::manifest::{PublicManifest, RegimeFit};
 use crate::bundle::risk::RiskPreset;
-use crate::bundle::store::{BundleStore, FilesystemStore};
+use crate::bundle::store::{strategy_store_dir, BundleStore, FilesystemStore};
 use crate::bundle::StrategyBundle;
 use crate::eval::bars::compute_cache_key;
 use crate::eval::scenario::{
@@ -209,11 +209,11 @@ pub async fn run_seed_if_needed(ctx: &ApiContext) -> ApiResult<()> {
         }
     }
 
-    // The bundle store is filesystem-backed (xvn_home/bundles/<id>.json).
+    // The bundle store is filesystem-backed (xvn_home/strategies/<id>.json).
     // Treat the on-disk file as the source of truth — only write when
     // missing, so an operator who has edited the canonical-defaults bundle
     // doesn't get clobbered on the next `ApiContext::open`.
-    let bundles_root = ctx.xvn_home.join("bundles");
+    let bundles_root = strategy_store_dir(&ctx.xvn_home);
     let store = FilesystemStore::new(bundles_root.clone());
     let defaults = canonical_defaults_bundle();
     let bundle_path = bundles_root.join(format!("{}.json", defaults.bundle_id));

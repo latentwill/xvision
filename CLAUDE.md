@@ -15,6 +15,8 @@ Diverging from these names should require a written rationale.
 | Per-decision-cycle id (briefing → decision → outcome) | `cycle_id` | ~~setup_id~~ |
 | Pre-mint local id of a marketplace pipeline | `agent_id` (string ULID, becomes the NFT token id post-mint) | ~~strategy_id~~ |
 | Immutable pipeline configuration (engine bundle artifact) | `StrategyBundle` | (no rename) |
+| Reusable agent template (per-prompt+model+skills record) | `Agent` (with `Vec<AgentSlot>`) | ~~agent template~~, ~~saved profile~~ |
+| Strategy's reference to a library agent | `AgentRef { agent_id, role }` | (no rename) |
 | Trading-decision producer trait (xvision-eval baselines) | `Algorithm` | ~~Strategy~~ |
 | One experimental arm in A/B compare | `arm` / `Box<dyn Algorithm>` | (no change) |
 | The trader's call (input to risk) | `TraderDecision` | (no change) |
@@ -23,10 +25,24 @@ Diverging from these names should require a written rationale.
 | The DB table for cycles (formerly `setups`) | `cycles` | ~~setups~~ |
 | Eval-result count of cycles processed | `cycles_evaluated` | ~~setups_evaluated~~ |
 
-**Pipeline-stage names** (intern, trader, risk, executor) are roles in the
-processing pipeline and are NOT renamed. The `xvn strategy` CLI verb manages
-`StrategyBundle`s and is NOT renamed. The `xvn setup` CLI verb (config init)
-is NOT renamed — it remains the verb form.
+**Pipeline-stage names** (intern, trader, risk, executor) are **valid
+conventions, not enforced.** They live as starter-template labels in
+`crates/xvision-engine/src/agents/templates.rs`; the underlying data model
+treats slot names as user-defined free text. Users can rename or invent
+slot names per strategy. The conventions exist so multi-stage strategies
+have a shared vocabulary; nothing in the engine requires them.
+
+Amended 2026-05-12 to reflect the agents page v1 outcome (see
+`docs/superpowers/plans/2026-05-11-agents-page-v1.md` and the followup
+strategies refactor at `2026-05-12-strategies-refactor-agent-composition.md`).
+Before that, slot names were hardcoded in `StrategyBundle` fields
+(`intern_slot`, `trader_slot`, `regime_slot`); the strategies refactor
+replaces those with `Strategy { agents: Vec<AgentRef> }` where the role
+label per AgentRef is free text.
+
+The `xvn strategy` CLI verb manages strategy bundles and is NOT renamed.
+The `xvn setup` CLI verb (config init) is NOT renamed — it remains the
+verb form.
 
 **Migration notes:**
 - DB migration `0002_rename_setup_to_cycle.sql` renamed the `setups` table to
@@ -63,9 +79,13 @@ See `docker/README.md` for env vars and mounts.
 ## Active plans
 
 See `docs/superpowers/plans/` for executable implementation plans:
-- `2026-05-10-terminology-rename-option-b.md` (this rename, complete)
+- `2026-05-10-terminology-rename-option-b.md` (rename, complete)
 - `2026-05-10-blockchain-1-non-custodial-wallets-amendments.md` (wallet plan v1.1)
 - `2026-05-10-leverage-items.md` (1-pager, README, MANUAL.md, eod report)
 - `2026-05-10-blockchain-1-non-custodial-wallets-plan.md` (original wallet plan)
+- `2026-05-11-agents-page-v1.md` (agents page v1, complete — merged in PR #83)
+- `2026-05-11-perps-eval-simulator.md` (perps backtest sim, follow-up)
+- `2026-05-12-strategies-refactor-agent-composition.md` (Strategy → agent composition, big follow-up)
+- `2026-05-12-eval-per-agent-metrics.md` (per-agent attribution, depends on strategies refactor)
 - AR-1/AR-2/AR-3 (autoresearcher)
 - 2c (scheduler), 2d (dashboard), and others

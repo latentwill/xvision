@@ -5,13 +5,16 @@
 import { apiFetch } from "./client";
 import type {
   AddProviderRequest,
+  AlpacaTestReport,
   BrokersReport,
   DaemonReport,
   FactoryResetReport,
   IdentityReport,
+  ProviderModelsReport,
   ProviderRow,
   ProvidersReport,
   RegenIdentityReport,
+  TestConnectionReport,
   WipeDbReport,
 } from "./types.gen";
 
@@ -25,6 +28,8 @@ export const settingsKeys = {
   daemon: () => [...settingsKeys.all, "daemon"] as const,
   identity: () => [...settingsKeys.all, "identity"] as const,
   providers: () => [...settingsKeys.all, "providers"] as const,
+  providerModels: (name: string) =>
+    [...settingsKeys.all, "providers", name, "models"] as const,
 };
 
 export function getBrokers(): Promise<BrokersReport> {
@@ -64,6 +69,16 @@ export function clearAlpacaCredentials(): Promise<void> {
   });
 }
 
+/// Connectivity probe for Alpaca — calls `/v2/account` with the stored
+/// (or env-var fallback) credentials. Network/auth failures surface in
+/// `error` rather than as HTTP errors so the UI renders an inline pill.
+export function testAlpacaConnection(): Promise<AlpacaTestReport> {
+  return apiFetch<AlpacaTestReport>(
+    "/api/settings/brokers/alpaca/test-connection",
+    { method: "POST" },
+  );
+}
+
 export function getDaemon(): Promise<DaemonReport> {
   return apiFetch<DaemonReport>("/api/settings/daemon");
 }
@@ -91,6 +106,62 @@ export function removeProvider(name: string): Promise<void> {
   return apiFetch<void>(
     `/api/settings/providers/${encodeURIComponent(name)}`,
     { method: "DELETE" },
+  );
+}
+
+/// Point `[intern]` at this provider so the previous default becomes
+/// deletable. `model` is optional; when omitted the existing
+/// `intern.model` is kept (the operator decides whether to update it).
+export function setDefaultProvider(
+  name: string,
+  body: { model?: string } = {},
+): Promise<void> {
+  return apiFetch<void>(
+    `/api/settings/providers/${encodeURIComponent(name)}/set-default`,
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    },
+  );
+}
+
+/// Fetch the provider's upstream model catalog. Backend caches for ~5
+/// minutes; large lists (OpenRouter) still return quickly on a cache
+/// hit. 400/404 errors bubble back via `ApiError`.
+export function listProviderModels(
+  name: string,
+): Promise<ProviderModelsReport> {
+  return apiFetch<ProviderModelsReport>(
+    `/api/settings/providers/${encodeURIComponent(name)}/models`,
+  );
+}
+
+/// Persist the operator's curated subset of models for a provider.
+/// Returns the refreshed `ProviderRow` so the caller can swap the cached
+/// row without an extra GET.
+export function setEnabledModels(
+  name: string,
+  models: string[],
+): Promise<ProviderRow> {
+  return apiFetch<ProviderRow>(
+    `/api/settings/providers/${encodeURIComponent(name)}/enabled-models`,
+    {
+      method: "PUT",
+      body: JSON.stringify({ models }),
+    },
+  );
+}
+
+/// Connectivity probe — POST that calls the provider's catalog endpoint
+/// and returns `{ ok, latency_ms, model_count, error? }`. Network/auth
+/// failures land in `error` (with `ok = false`) rather than as HTTP
+/// errors, so the UI renders an inline pill either way.
+export function testProviderConnection(
+  name: string,
+): Promise<TestConnectionReport> {
+  return apiFetch<TestConnectionReport>(
+    `/api/settings/providers/${encodeURIComponent(name)}/test-connection`,
+    { method: "POST" },
   );
 }
 

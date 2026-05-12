@@ -57,6 +57,10 @@ enum ProviderAction {
         /// Env var holding the API key (empty for no-auth endpoints).
         #[arg(long, default_value = "")]
         api_key_env: String,
+        /// Inline API key. When omitted, the engine requires the env var
+        /// above to already be exported in the shell.
+        #[arg(long)]
+        api_key: Option<String>,
     },
     /// Remove a provider by name. Refused if any slot references it.
     Remove {
@@ -84,7 +88,8 @@ pub async fn run(cmd: ProviderCmd) -> Result<()> {
             kind,
             base_url,
             api_key_env,
-        } => add(&ctx, &config_path, name, kind, base_url, api_key_env).await,
+            api_key,
+        } => add(&ctx, &config_path, name, kind, base_url, api_key_env, api_key).await,
         ProviderAction::Remove { name } => remove(&ctx, &config_path, &name).await,
     }
 }
@@ -217,6 +222,7 @@ async fn add(
     kind: String,
     base_url: String,
     api_key_env: String,
+    api_key: Option<String>,
 ) -> Result<()> {
     providers::add(
         ctx,
@@ -226,7 +232,7 @@ async fn add(
             kind,
             base_url,
             api_key_env,
-            api_key: None,
+            api_key,
         },
     )
     .await
@@ -292,6 +298,7 @@ mod tests {
             "openai-compat".into(),
             "https://api.openai.com/v1".into(),
             "OPENAI_API_KEY".into(),
+            Some("sk-test".into()),
         )
         .await
         .unwrap();

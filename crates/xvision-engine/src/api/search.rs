@@ -16,7 +16,7 @@ use std::time::Instant;
 
 use crate::api::audit::{self, Outcome};
 use crate::api::{ApiContext, ApiError, ApiResult};
-use crate::bundle::store::{BundleStore, FilesystemStore};
+use crate::bundle::store::{strategy_store_dir, BundleStore, FilesystemStore};
 use crate::bundle::StrategyBundle;
 use crate::eval::findings::Finding;
 use crate::eval::run::{Run, RunMode, RunStatus};
@@ -198,7 +198,7 @@ pub async fn seed_actions(ctx: &ApiContext) {
 /// surface even if (say) a single strategy file is corrupt.
 pub async fn reindex_all(ctx: &ApiContext) {
     // 1. Strategies — walk the filesystem bundle store.
-    let store = FilesystemStore::new(ctx.xvn_home.join("bundles"));
+    let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
     match store.list().await {
         Ok(ids) => {
             for id in ids {

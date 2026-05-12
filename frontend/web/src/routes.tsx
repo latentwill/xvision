@@ -5,6 +5,9 @@ import { StrategiesRoute } from "./routes/strategies";
 import { ScenariosRoute } from "./routes/scenarios";
 import { ScenariosNewRoute } from "./routes/scenarios-new";
 import { ScenariosDetailRoute } from "./routes/scenarios-detail";
+import { StrategiesNewRoute } from "./routes/strategies-new";
+import { AgentsRoute } from "./routes/agents";
+import { AgentsEditRoute } from "./routes/agents-edit";
 import { AuthoringRoute } from "./routes/authoring";
 import { EvalRunsRoute } from "./routes/eval-runs";
 import { EvalRunDetailRoute } from "./routes/eval-runs-detail";
@@ -16,6 +19,7 @@ import {
   SettingsBrokersRoute,
   SettingsDangerRoute,
   SettingsProvidersRoute,
+  SettingsSkillsRoute,
 } from "./routes/settings";
 
 export const router = createBrowserRouter([
@@ -25,6 +29,10 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <HomeRoute /> },
       { path: "strategies", element: <StrategiesRoute /> },
+      { path: "strategies/new", element: <StrategiesNewRoute /> },
+      { path: "agents", element: <AgentsRoute /> },
+      { path: "agents/new", element: <AgentsEditRoute /> },
+      { path: "agents/:id", element: <AgentsEditRoute /> },
       { path: "scenarios", element: <ScenariosRoute /> },
       { path: "scenarios/new", element: <ScenariosNewRoute /> },
       { path: "scenarios/:id", element: <ScenariosDetailRoute /> },
@@ -42,6 +50,7 @@ export const router = createBrowserRouter([
           { index: true, element: <Navigate to="providers" replace /> },
           { path: "providers", element: <SettingsProvidersRoute /> },
           { path: "brokers", element: <SettingsBrokersRoute /> },
+          { path: "skills", element: <SettingsSkillsRoute /> },
           { path: "danger", element: <SettingsDangerRoute /> },
         ],
       },

@@ -7,6 +7,7 @@ import { ApiError } from "@/api/client";
 import { getHealth, healthKeys } from "@/api/health";
 import { evalKeys, listRuns } from "@/api/eval";
 import { strategyKeys, listStrategies } from "@/api/strategies";
+import { agentKeys, listAgents } from "@/api/agents";
 import {
   getBrokers,
   getIdentity,
@@ -38,6 +39,10 @@ export function HomeRoute() {
     queryKey: strategyKeys.list(),
     queryFn: listStrategies,
   });
+  const agents = useQuery({
+    queryKey: agentKeys.list(),
+    queryFn: () => listAgents(),
+  });
   const providers = useQuery({
     queryKey: settingsKeys.providers(),
     queryFn: listProviders,
@@ -60,10 +65,11 @@ export function HomeRoute() {
 
   const recent = (runs.data ?? []).slice(0, 5);
   const strategyCount = strategies.data?.length ?? 0;
+  const agentCount = agents.data?.length ?? 0;
   const identityNote = identity.data?.note;
   const identityActive = identity.data?.feature_compiled_in ?? false;
-  const internProvider = providers.data?.providers.find(
-    (p) => p.referenced_by_intern,
+  const defaultProvider = providers.data?.providers.find(
+    (p) => p.is_default,
   );
 
   return (
@@ -107,6 +113,20 @@ export function HomeRoute() {
           />
 
           <CountCard
+            label="Agents"
+            value={agents.isPending ? "…" : String(agentCount)}
+            link={{
+              to: agentCount === 0 ? "/agents/new" : "/agents",
+              label: agentCount === 0 ? "create" : "manage",
+            }}
+            sub={
+              agentCount === 0
+                ? "reusable templates that compose into strategies"
+                : agents.data?.[0]?.name
+            }
+          />
+
+          <CountCard
             label="Providers"
             value={
               providers.isPending
@@ -114,7 +134,7 @@ export function HomeRoute() {
                 : String(providers.data?.providers.length ?? 0)
             }
             link={{ to: "/settings/providers", label: "configure" }}
-            sub={internProvider ? `intern → ${internProvider.name}` : undefined}
+            sub={defaultProvider ? `default → ${defaultProvider.name}` : undefined}
           />
 
           <Card className="p-5">

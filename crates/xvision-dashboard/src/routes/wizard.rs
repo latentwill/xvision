@@ -14,7 +14,6 @@
 //! 500 with `{"code":"internal","message":"..."}`. Future plan-#7
 //! work will switch this to the per-arm provider registry.
 
-use std::sync::Arc;
 use std::time::Duration;
 
 use axum::extract::{Json, State};
@@ -24,22 +23,28 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::StreamExt;
 
-use xvision_engine::agent::llm::{AnthropicDispatch, LlmDispatch};
 use xvision_engine::chat_session::{ChatSessionStore, ContextScope};
 
 use crate::error::DashboardError;
+use crate::llm_dispatch;
 use crate::state::AppState;
 use crate::wizard_loop::{WizardEvent, WizardLoop};
 
 #[derive(Debug, Deserialize)]
 pub struct ChatBody {
     pub message: String,
-    #[serde(default = "default_model")]
-    pub model: String,
+    /// Optional explicit model id. When `None`, the resolver falls back
+    /// to the model declared in `[default_llm]` for the default provider.
+    #[serde(default)]
+    pub model: Option<String>,
+    /// Optional explicit provider name. When `None`, the
+    /// `[default_llm]`-referenced provider is used.
+    #[serde(default)]
+    pub provider: Option<String>,
 }
 
-fn default_model() -> String {
-    "claude-sonnet-4-6".to_string()
+fn default_model() -> &'static str {
+    "claude-sonnet-4-6"
 }
 
 pub async fn chat(
@@ -49,11 +54,20 @@ pub async fn chat(
     Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>>,
     DashboardError,
 > {
-    let api_key = std::env::var("ANTHROPIC_API_KEY").map_err(|_| {
-        DashboardError::Internal(anyhow::anyhow!(
-            "ANTHROPIC_API_KEY not set on the server — set it before launching `xvn dashboard serve`"
-        ))
-    })?;
+    tracing::info!(
+        target: "xvision::dashboard::wizard",
+        provider = ?body.provider,
+        model = ?body.model,
+        message_len = body.message.len(),
+        "POST /api/wizard/chat"
+    );
+
+    let resolved = llm_dispatch::resolve(
+        body.provider.as_deref(),
+        body.model.as_deref(),
+        default_model(),
+    )
+    .await?;
 
     // One-shot route: create a fresh Workspace-scoped session at request
     // time. The persistent rail uses POST /api/chat-rail/sessions instead.
@@ -67,10 +81,10 @@ pub async fn chat(
     // turn without backpressure surprising the producer task.
     let (tx, rx) = mpsc::channel::<WizardEvent>(16);
 
-    let dispatch: Arc<dyn LlmDispatch> = Arc::new(AnthropicDispatch::new(api_key));
+    let dispatch = resolved.dispatch;
     let xvn_home = state.xvn_home.clone();
     let pool = state.pool.clone();
-    let model = body.model;
+    let model = resolved.model;
     let message = body.message;
 
     tokio::spawn(async move {
@@ -116,16 +130,22 @@ mod tests {
     use serde_json::Value;
 
     #[test]
-    fn chat_body_default_model_is_sonnet_4_6() {
+    fn chat_body_default_model_is_none() {
         let body: ChatBody = serde_json::from_str(r#"{"message":"hi"}"#).unwrap();
-        assert_eq!(body.model, "claude-sonnet-4-6");
+        // The resolver fills in the model from [intern] / default_model() —
+        // an unset field deserializes as `None`.
+        assert!(body.model.is_none());
+        assert!(body.provider.is_none());
     }
 
     #[test]
-    fn chat_body_accepts_explicit_model() {
-        let body: ChatBody =
-            serde_json::from_str(r#"{"message":"hi","model":"claude-opus-4-7"}"#).unwrap();
-        assert_eq!(body.model, "claude-opus-4-7");
+    fn chat_body_accepts_explicit_model_and_provider() {
+        let body: ChatBody = serde_json::from_str(
+            r#"{"message":"hi","model":"claude-opus-4-7","provider":"anthropic"}"#,
+        )
+        .unwrap();
+        assert_eq!(body.model.as_deref(), Some("claude-opus-4-7"));
+        assert_eq!(body.provider.as_deref(), Some("anthropic"));
     }
 
     #[test]

@@ -2,18 +2,20 @@
 //!
 //! Plan #11 Phase C Task 4. The legacy one-shot `/api/wizard/chat` route
 //! creates a new session per request; the rail's endpoints expose the
-//! full session lifecycle so the React rail can resume across routes,
-//! switch context scope mid-session, and start fresh on demand.
+//! full session lifecycle so the React rail can resume across routes
+//! and start fresh on demand.
+//!
+//! Sessions are owned server-side, keyed by `ContextScope`. The rail
+//! never holds a stale id across DB resets or fresh deploys — it just
+//! re-resolves on mount.
 //!
 //! Endpoints:
 //!
-//! - `POST   /api/chat-rail/sessions`               → `{ session_id }`
+//! - `POST   /api/chat-rail/sessions/resolve`       → `{ session_id, history }`
 //! - `GET    /api/chat-rail/sessions/:id/history`   → `Vec<ChatMessage>`
-//! - `POST   /api/chat-rail/sessions/:id/scope`     → 204
 //! - `DELETE /api/chat-rail/sessions/:id`           → 204
 //! - `POST   /api/chat-rail/chat` (SSE)             → `WizardEvent`s
 
-use std::sync::Arc;
 use std::time::Duration;
 
 use axum::extract::{Json, Path, State};
@@ -24,33 +26,40 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::StreamExt;
 
-use xvision_engine::agent::llm::{AnthropicDispatch, LlmDispatch};
 use xvision_engine::chat_session::{ChatMessage, ChatSessionStore, ContextScope};
 
 use crate::error::DashboardError;
+use crate::llm_dispatch;
 use crate::state::AppState;
 use crate::wizard_loop::{WizardEvent, WizardLoop};
 
 #[derive(Debug, Deserialize)]
-pub struct CreateSessionReq {
-    /// Initial scope. Use `Workspace` if the rail is opened from a route
-    /// without a more-specific context.
+pub struct ResolveSessionReq {
+    /// Scope to look up. Server returns the most-recent session for
+    /// this scope or creates one if no match exists.
     pub scope: ContextScope,
 }
 
 #[derive(Debug, Serialize)]
-pub struct CreateSessionResp {
+pub struct ResolveSessionResp {
     pub session_id: String,
+    pub history: Vec<ChatMessage>,
 }
 
-pub async fn create_session(
+/// POST `/api/chat-rail/sessions/resolve` — the rail's mount-time
+/// entrypoint. Always returns a usable `(session_id, history)` pair so
+/// the frontend never holds a stale id.
+pub async fn resolve_session(
     State(state): State<AppState>,
-    Json(req): Json<CreateSessionReq>,
-) -> Result<Json<CreateSessionResp>, DashboardError> {
-    let session_id = ChatSessionStore::create_session(&state.pool, &req.scope)
+    Json(req): Json<ResolveSessionReq>,
+) -> Result<Json<ResolveSessionResp>, DashboardError> {
+    let (session_id, history) = ChatSessionStore::resolve(&state.pool, &req.scope)
         .await
         .map_err(DashboardError::Internal)?;
-    Ok(Json(CreateSessionResp { session_id }))
+    Ok(Json(ResolveSessionResp {
+        session_id,
+        history,
+    }))
 }
 
 pub async fn history(
@@ -61,22 +70,6 @@ pub async fn history(
         .await
         .map_err(DashboardError::Internal)?;
     Ok(Json(messages))
-}
-
-pub async fn update_scope(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(scope): Json<ContextScope>,
-) -> Result<StatusCode, DashboardError> {
-    // Verify the session exists first so we return 404, not a silent UPDATE
-    // 0 rows. `load_scope` returns NotFound when the session doesn't exist.
-    ChatSessionStore::load_scope(&state.pool, &id)
-        .await
-        .map_err(|_| DashboardError::NotFound(format!("session '{id}'")))?;
-    ChatSessionStore::update_scope(&state.pool, &id, &scope)
-        .await
-        .map_err(DashboardError::Internal)?;
-    Ok(StatusCode::NO_CONTENT)
 }
 
 pub async fn delete_session(
@@ -93,12 +86,19 @@ pub async fn delete_session(
 pub struct ChatBody {
     pub session_id: String,
     pub message: String,
-    #[serde(default = "default_model")]
-    pub model: String,
+    /// Explicit model id. When `None`, the resolver falls back to the
+    /// `[default_llm]` model for the default provider, or the dashboard's
+    /// hard-coded sonnet fallback for non-default providers.
+    #[serde(default)]
+    pub model: Option<String>,
+    /// Explicit provider name. When `None`, the `[default_llm]`-referenced
+    /// default provider is used (which is what existing clients expect).
+    #[serde(default)]
+    pub provider: Option<String>,
 }
 
-fn default_model() -> String {
-    "claude-sonnet-4-6".to_string()
+fn default_model() -> &'static str {
+    "claude-sonnet-4-6"
 }
 
 pub async fn chat(
@@ -108,11 +108,21 @@ pub async fn chat(
     Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>>,
     DashboardError,
 > {
-    let api_key = std::env::var("ANTHROPIC_API_KEY").map_err(|_| {
-        DashboardError::Internal(anyhow::anyhow!(
-            "ANTHROPIC_API_KEY not set on the server — set it before launching `xvn dashboard serve`"
-        ))
-    })?;
+    tracing::info!(
+        target: "xvision::dashboard::chat_rail",
+        session_id = %body.session_id,
+        provider = ?body.provider,
+        model = ?body.model,
+        message_len = body.message.len(),
+        "POST /api/chat-rail/chat"
+    );
+
+    let resolved = llm_dispatch::resolve(
+        body.provider.as_deref(),
+        body.model.as_deref(),
+        default_model(),
+    )
+    .await?;
 
     // Read the session's persisted scope so the system prompt is always
     // in sync with whatever the most recent /scope POST set, even if the
@@ -123,11 +133,11 @@ pub async fn chat(
 
     let (tx, rx) = mpsc::channel::<WizardEvent>(16);
 
-    let dispatch: Arc<dyn LlmDispatch> = Arc::new(AnthropicDispatch::new(api_key));
+    let dispatch = resolved.dispatch;
     let xvn_home = state.xvn_home.clone();
     let pool = state.pool.clone();
     let session_id = body.session_id;
-    let model = body.model;
+    let model = resolved.model;
     let message = body.message;
 
     tokio::spawn(async move {

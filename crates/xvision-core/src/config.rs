@@ -50,6 +50,14 @@ pub struct ProviderEntry {
     pub base_url: String,
     #[garde(length(max = 64))]
     pub api_key_env: String,
+    /// Subset of the provider's catalog the operator has explicitly
+    /// enabled for the chat-rail / wizard dropdown. Empty means
+    /// "nothing picked yet" — the UI surfaces a prompt to open Settings
+    /// → Providers → Manage models. Especially load-bearing for
+    /// OpenRouter, which exposes hundreds of routes.
+    #[serde(default)]
+    #[garde(skip)]
+    pub enabled_models: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -85,7 +93,7 @@ fn validate_provider_name(name: &String, _ctx: &()) -> garde::Result {
     }
     if name.starts_with('_') {
         // The leading-underscore namespace is reserved for synthetic rows
-        // (e.g. _default_intern auto-derived from the [intern] block).
+        // (e.g. _default_llm auto-derived from the [intern] block).
         return Err(garde::Error::new(
             "provider names starting with '_' are reserved",
         ));
@@ -110,8 +118,13 @@ pub struct RuntimeConfig {
     #[serde(default)]
     #[garde(dive)]
     pub providers: Vec<ProviderEntry>,
+    /// Workspace-level default LLM (used by chat-rail, wizard, and any
+    /// agent slot that doesn't override its own provider/model). Accepts
+    /// `[default_llm]` (canonical) or `[intern]` (legacy alias kept for
+    /// one release for backward compatibility with existing user configs).
+    #[serde(alias = "intern")]
     #[garde(dive)]
-    pub intern: Intern,
+    pub default_llm: Intern,
     #[garde(dive)]
     pub trader: Trader,
     #[garde(dive)]
@@ -381,7 +394,7 @@ pub fn load_runtime(path: &Path) -> Result<RuntimeConfig, ConfigError> {
             path: path.to_path_buf(),
             message: msg,
         })?;
-    auto_derive_intern_provider_row(&mut cfg);
+    auto_derive_default_llm_provider_row(&mut cfg);
     validate_unique_provider_names(&cfg).map_err(|msg| ConfigError::CrossField {
         path: path.to_path_buf(),
         message: msg,
@@ -389,13 +402,14 @@ pub fn load_runtime(path: &Path) -> Result<RuntimeConfig, ConfigError> {
     Ok(cfg)
 }
 
-/// Synthesize a `_default_intern` provider row from the `[intern]` block if no
-/// existing row already matches its (kind, base_url, api_key_env) triple. The
-/// reserved underscore prefix prevents user-declared collisions.
-fn auto_derive_intern_provider_row(cfg: &mut RuntimeConfig) {
-    let kind: ProviderKind = cfg.intern.provider.into();
-    let base_url = cfg.intern.base_url.clone();
-    let api_key_env = cfg.intern.api_key_env.clone();
+/// Synthesize a `_default_llm` provider row from the `[default_llm]` block
+/// (legacy alias `[intern]`) if no existing row already matches its
+/// (kind, base_url, api_key_env) triple. The reserved underscore prefix
+/// prevents user-declared collisions.
+fn auto_derive_default_llm_provider_row(cfg: &mut RuntimeConfig) {
+    let kind: ProviderKind = cfg.default_llm.provider.into();
+    let base_url = cfg.default_llm.base_url.clone();
+    let api_key_env = cfg.default_llm.api_key_env.clone();
     if cfg
         .providers
         .iter()
@@ -404,10 +418,11 @@ fn auto_derive_intern_provider_row(cfg: &mut RuntimeConfig) {
         return;
     }
     cfg.providers.push(ProviderEntry {
-        name: "_default_intern".to_string(),
+        name: "_default_llm".to_string(),
         kind,
         base_url,
         api_key_env,
+        enabled_models: Vec::new(),
     });
 }
 
@@ -447,7 +462,7 @@ mod tests {
     fn loads_repo_default_toml() {
         let cfg =
             load_runtime(&project_root().join("config/default.toml")).expect("config/default.toml must load");
-        assert_eq!(cfg.intern.temperature, 0.0, "Tier 1 fix #1");
+        assert_eq!(cfg.default_llm.temperature, 0.0, "Tier 1 fix #1");
         assert_eq!(cfg.trader.temperature, 0.0, "Tier 1 fix #2");
         assert!(cfg.backtest.step >= cfg.backtest.horizon, "Tier 1 fix #4");
         assert_eq!(
@@ -667,8 +682,8 @@ sqlite_url = "sqlite://x.db"
     fn repo_default_toml_ships_with_no_user_providers() {
         // The repo's default config no longer seeds [[providers]]; users add
         // their own via Settings → Providers (or `xvn provider add`). The
-        // `[intern]` block stays so `auto_derive_intern_provider_row` can
-        // synthesize a `_default_intern` row, keeping the runtime valid.
+        // `[intern]` block stays so `auto_derive_default_llm_provider_row` can
+        // synthesize a `_default_llm` row, keeping the runtime valid.
         let cfg = load_runtime(&project_root().join("config/default.toml")).unwrap();
         let user_rows: Vec<&str> = cfg
             .providers
@@ -682,34 +697,34 @@ sqlite_url = "sqlite://x.db"
         );
         // The synthetic intern row must still exist so backends can resolve.
         assert!(
-            cfg.providers.iter().any(|p| p.name == "_default_intern"),
-            "synthetic `_default_intern` row must be auto-derived from [intern]"
+            cfg.providers.iter().any(|p| p.name == "_default_llm"),
+            "synthetic `_default_llm` row must be auto-derived from [intern]"
         );
     }
 
     #[test]
-    fn auto_derives_default_intern_provider() {
+    fn auto_derives_default_llm_provider() {
         let cfg = load_runtime(&project_root().join("config/default.toml"))
             .expect("must load");
         let synth = cfg
             .providers
             .iter()
-            .find(|p| p.name == "_default_intern");
+            .find(|p| p.name == "_default_llm");
         // Either the synthetic row exists, OR the user-declared anthropic row
         // already matches the [intern] triple (Task 4 lands the explicit row).
         match synth {
             Some(s) => {
-                assert_eq!(s.base_url, cfg.intern.base_url);
-                assert_eq!(s.api_key_env, cfg.intern.api_key_env);
+                assert_eq!(s.base_url, cfg.default_llm.base_url);
+                assert_eq!(s.api_key_env, cfg.default_llm.api_key_env);
             }
             None => {
                 // Task 4 has landed an explicit row matching the triple.
-                let kind: ProviderKind = cfg.intern.provider.into();
+                let kind: ProviderKind = cfg.default_llm.provider.into();
                 assert!(cfg.providers.iter().any(|p| p.matches_triple(
                     kind,
-                    &cfg.intern.base_url,
-                    &cfg.intern.api_key_env
-                )), "either _default_intern OR a user-declared matching row must be present");
+                    &cfg.default_llm.base_url,
+                    &cfg.default_llm.api_key_env
+                )), "either _default_llm OR a user-declared matching row must be present");
             }
         }
     }
@@ -886,6 +901,7 @@ sqlite_url = "sqlite://x.db"
                 kind: k,
                 base_url: "https://example.com".into(),
                 api_key_env: "X".into(),
+                enabled_models: Vec::new(),
             })
             .unwrap();
             let back: ProviderEntry = toml::from_str(&s).unwrap();

@@ -17,6 +17,7 @@ use tokio::sync::Mutex;
 use xvision_core::config::AlpacaData;
 use xvision_data::alpaca::AlpacaBarsFetcher;
 
+pub mod agents;
 pub mod audit;
 pub mod chart;
 pub mod eval;
@@ -24,6 +25,7 @@ pub mod health;
 pub mod scenario;
 pub mod search;
 pub mod settings;
+pub mod skills;
 pub mod strategy;
 
 /// Migrations baked into the binary at compile time. Order matters —
@@ -33,9 +35,11 @@ const MIGRATION_001: &str = include_str!("../../migrations/001_api_audit.sql");
 const MIGRATION_002: &str = include_str!("../../migrations/002_eval.sql");
 const MIGRATION_003: &str = include_str!("../../migrations/003_chat_sessions.sql");
 const MIGRATION_004: &str = include_str!("../../migrations/004_search_index.sql");
-const MIGRATION_005: &str = include_str!("../../migrations/005_bars_cache.sql");
-const MIGRATION_006: &str = include_str!("../../migrations/006_scenarios.sql");
-const MIGRATION_007: &str = include_str!("../../migrations/007_runs_scenario_fk.sql");
+const MIGRATION_005_AGENTS: &str = include_str!("../../migrations/005_agents.sql");
+const MIGRATION_007_SKILLS: &str = include_str!("../../migrations/007_skills.sql");
+const MIGRATION_010_BARS_CACHE: &str = include_str!("../../migrations/010_bars_cache.sql");
+const MIGRATION_011_SCENARIOS: &str = include_str!("../../migrations/011_scenarios.sql");
+const MIGRATION_012_RUNS_FK: &str = include_str!("../../migrations/012_runs_scenario_fk.sql");
 
 /// Map of cache_key → per-key mutex used by `eval::bars::load_bars` to
 /// serialize concurrent misses for the same window. Kept inside an outer
@@ -111,9 +115,11 @@ impl ApiContext {
         sqlx::query(MIGRATION_002).execute(&pool).await?;
         sqlx::query(MIGRATION_003).execute(&pool).await?;
         sqlx::query(MIGRATION_004).execute(&pool).await?;
-        sqlx::query(MIGRATION_005).execute(&pool).await?;
-        sqlx::query(MIGRATION_006).execute(&pool).await?;
-        sqlx::query(MIGRATION_007).execute(&pool).await?;
+        sqlx::query(MIGRATION_005_AGENTS).execute(&pool).await?;
+        sqlx::query(MIGRATION_007_SKILLS).execute(&pool).await?;
+        sqlx::query(MIGRATION_010_BARS_CACHE).execute(&pool).await?;
+        sqlx::query(MIGRATION_011_SCENARIOS).execute(&pool).await?;
+        sqlx::query(MIGRATION_012_RUNS_FK).execute(&pool).await?;
 
         let ctx = Self::new(pool, actor, xvn_home.to_path_buf());
 
