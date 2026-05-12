@@ -579,7 +579,7 @@ async fn providers_list_returns_seeded_anthropic() {
     assert_eq!(items.len(), 1);
     assert_eq!(items[0]["name"], "anthropic");
     assert_eq!(items[0]["kind"], "anthropic");
-    assert_eq!(items[0]["referenced_by_intern"], true);
+    assert_eq!(items[0]["is_default"], true);
     assert_eq!(items[0]["synthetic"], false);
 }
 
@@ -621,7 +621,7 @@ async fn providers_add_creates_and_persists_row() {
     let row: serde_json::Value = response.json();
     assert_eq!(row["name"], "openai");
     assert_eq!(row["kind"], "openai-compat");
-    assert_eq!(row["referenced_by_intern"], false);
+    assert_eq!(row["is_default"], false);
 
     // Round-trip: GET list reflects the addition.
     let list = server.get("/api/settings/providers").await;

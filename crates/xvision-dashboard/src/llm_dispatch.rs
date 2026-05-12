@@ -1,6 +1,6 @@
 //! Provider-aware LLM dispatch resolution for the chat-rail / wizard
 //! SSE routes. Loads `RuntimeConfig`, finds the requested provider (or
-//! falls back to the `[intern]` default), reads its API key from env,
+//! falls back to the `[default_llm]` default), reads its API key from env,
 //! and hands back a boxed `LlmDispatch` of the right wire kind.
 //!
 //! Failure surfaces as a typed `DashboardError` so the HTTP handlers
@@ -25,9 +25,9 @@ pub struct ResolvedDispatch {
 /// Resolve a `(provider, model)` selection from a chat request body.
 ///
 /// `provider`: explicit provider name from the request, or `None` to use
-///             the `[intern]`-referenced default.
+///             the `[default_llm]`-referenced default.
 /// `model`:    explicit model from the request, or `None` to fall back
-///             to the model declared in `[intern]` for the default
+///             to the model declared in `[default_llm]` for the default
 ///             provider (otherwise the caller's `default_model`).
 pub async fn resolve(
     provider: Option<&str>,
@@ -80,7 +80,7 @@ pub async fn resolve(
         .map(str::to_string)
         .or_else(|| {
             if provider_name == intern_provider_name {
-                Some(cfg.intern.model.clone())
+                Some(cfg.default_llm.model.clone())
             } else {
                 None
             }
@@ -139,16 +139,16 @@ async fn load_cfg(path: &Path) -> Result<RuntimeConfig, DashboardError> {
         .map_err(|e| DashboardError::Internal(anyhow::anyhow!("load config: {e}")))
 }
 
-/// Name of the provider currently referenced by `[intern]`. If no row
+/// Name of the provider currently referenced by `[default_llm]`. If no row
 /// declares the intern's triple, the auto-derived `_default_intern`
 /// synthetic name is returned (which the resolver then looks up just
 /// like any other entry).
 fn intern_default_name(cfg: &RuntimeConfig) -> String {
-    let kind: ProviderKind = cfg.intern.provider.into();
+    let kind: ProviderKind = cfg.default_llm.provider.into();
     cfg.providers
         .iter()
         .find(|p: &&ProviderEntry| {
-            p.matches_triple(kind, &cfg.intern.base_url, &cfg.intern.api_key_env)
+            p.matches_triple(kind, &cfg.default_llm.base_url, &cfg.default_llm.api_key_env)
         })
         .map(|p| p.name.clone())
         .unwrap_or_else(|| "_default_intern".to_string())

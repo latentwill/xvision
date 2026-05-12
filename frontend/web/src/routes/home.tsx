@@ -68,11 +68,8 @@ export function HomeRoute() {
   const agentCount = agents.data?.length ?? 0;
   const identityNote = identity.data?.note;
   const identityActive = identity.data?.feature_compiled_in ?? false;
-  // `referenced_by_intern` is the engine's current sentinel for the workspace
-  // default provider — UX surfaces it as "default" (role-agnostic). The
-  // schema rename is tracked separately; this is the UX-side cleanup.
   const defaultProvider = providers.data?.providers.find(
-    (p) => p.referenced_by_intern,
+    (p) => p.is_default,
   );
 
   return (

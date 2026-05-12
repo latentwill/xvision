@@ -67,8 +67,8 @@ pub struct SetDefaultBody {
     pub model: Option<String>,
 }
 
-/// POST `/api/settings/providers/:name/set-default` — point `[intern]` at
-/// the named provider so the previous default becomes deletable.
+/// POST `/api/settings/providers/:name/set-default` — point `[default_llm]`
+/// at the named provider so the previous default becomes deletable.
 pub async fn set_default(
     State(state): State<AppState>,
     Path(name): Path<String>,
