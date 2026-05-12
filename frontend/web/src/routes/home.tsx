@@ -5,13 +5,22 @@ import { Card } from "@/components/primitives/Card";
 import { ApiError } from "@/api/client";
 import { getHealth, healthKeys } from "@/api/health";
 import { evalKeys, listRuns } from "@/api/eval";
+import { chartKeys, getRunChart } from "@/api/chart";
 import { strategyKeys, listStrategies } from "@/api/strategies";
 import { agentKeys, listAgents } from "@/api/agents";
-import { getBrokers, listProviders, settingsKeys } from "@/api/settings";
+import {
+  getBrokers,
+  getIdentity,
+  listProviders,
+  settingsKeys,
+} from "@/api/settings";
+import { RunChart } from "@/components/chart/RunChart";
 import type {
   BrokerEntry,
   BrokersReport,
   HealthReport,
+  HealthStatus,
+  Probe,
   ProviderRow,
   RunSummary,
 } from "@/api/types.gen";
@@ -43,6 +52,10 @@ export function HomeRoute() {
     queryKey: settingsKeys.brokers(),
     queryFn: getBrokers,
   });
+  const identity = useQuery({
+    queryKey: settingsKeys.identity(),
+    queryFn: getIdentity,
+  });
 
   const attention = buildAttention({
     health: health.data,
@@ -52,8 +65,16 @@ export function HomeRoute() {
   });
 
   const recent = (runs.data ?? []).slice(0, 5);
+  const latestRunId = recent[0]?.id ?? "";
+  const latestChart = useQuery({
+    queryKey: chartKeys.run(latestRunId),
+    queryFn: () => getRunChart(latestRunId),
+    enabled: !!latestRunId,
+  });
   const strategyCount = strategies.data?.length ?? 0;
   const agentCount = agents.data?.length ?? 0;
+  const identityNote = identity.data?.note;
+  const identityActive = identity.data?.feature_compiled_in ?? false;
   const defaultProvider = providers.data?.providers.find(
     (p) => p.is_default,
   );
@@ -61,7 +82,7 @@ export function HomeRoute() {
   return (
     <>
       <Topbar
-        title="Dashboard"
+        title="Control Tower"
         sub="paper · localhost · workspace status at a glance"
       />
 
@@ -82,9 +103,19 @@ export function HomeRoute() {
             loading={runs.isPending}
             error={runs.error}
           />
+
+          <ControlChartCard
+            hasRuns={recent.length > 0}
+            loadingRuns={runs.isPending}
+            loadingChart={latestChart.isPending}
+            chartError={latestChart.error}
+            chart={latestChart.data}
+          />
         </div>
 
         <div className="col-span-12 lg:col-span-4 space-y-5">
+          <HealthCard report={health.data} loading={health.isPending} />
+
           <CountCard
             label="Strategies"
             value={strategies.isPending ? "…" : String(strategyCount)}
@@ -120,6 +151,24 @@ export function HomeRoute() {
             link={{ to: "/settings/providers", label: "configure" }}
             sub={defaultProvider ? `default → ${defaultProvider.name}` : undefined}
           />
+
+          <Card className="p-5">
+            <div className="text-text-3 text-[11px] uppercase tracking-wider mb-2">
+              On-chain identity
+            </div>
+            <div className="flex items-center gap-2">
+              {identityActive ? (
+                <Pill tone="gold">compiled in</Pill>
+              ) : (
+                <Pill>not compiled</Pill>
+              )}
+            </div>
+            {identityNote ? (
+              <p className="m-0 mt-2 text-text-3 text-[11px] leading-snug">
+                {identityNote}
+              </p>
+            ) : null}
+          </Card>
         </div>
       </div>
     </>
@@ -287,6 +336,114 @@ function RecentRunsCard({
   );
 }
 
+function ControlChartCard({
+  hasRuns,
+  loadingRuns,
+  loadingChart,
+  chartError,
+  chart,
+}: {
+  hasRuns: boolean;
+  loadingRuns: boolean;
+  loadingChart: boolean;
+  chartError: unknown;
+  chart: Parameters<typeof RunChart>[0]["payload"] | undefined;
+}) {
+  return (
+    <Card className="p-5">
+      <div className="flex items-baseline justify-between mb-3">
+        <h2 className="m-0 font-serif font-medium text-[24px] tracking-tight">
+          Chart snapshot
+        </h2>
+        <Link
+          to="/eval-runs"
+          className="text-[12px] text-text-2 hover:text-text"
+        >
+          open eval →
+        </Link>
+      </div>
+      {loadingRuns ? (
+        <div className="text-text-3 text-[13px] text-center py-6">
+          Loading runs…
+        </div>
+      ) : !hasRuns ? (
+        <div className="text-text-3 text-[13px] text-center py-6">
+          No runs yet. Start one from Eval.
+        </div>
+      ) : loadingChart ? (
+        <div className="text-text-3 text-[13px] text-center py-6">
+          Loading chart…
+        </div>
+      ) : chartError ? (
+        <div className="text-danger text-[13px] text-center py-6">
+          Chart unavailable.
+        </div>
+      ) : chart ? (
+        <RunChart payload={chart} />
+      ) : null}
+    </Card>
+  );
+}
+
+function HealthCard({
+  report,
+  loading,
+}: {
+  report: HealthReport | undefined;
+  loading: boolean;
+}) {
+  return (
+    <Card className="p-5">
+      <div className="text-text-3 text-[11px] uppercase tracking-wider mb-2">
+        Local health
+      </div>
+      {loading || !report ? (
+        <div className="space-y-1.5">
+          <div className="h-4 w-32 bg-surface-elev rounded animate-pulse" />
+          <div className="h-4 w-24 bg-surface-elev rounded animate-pulse" />
+        </div>
+      ) : (
+        <>
+          <div className="mb-3 flex items-center gap-2">
+            <HealthDot status={report.status} />
+            <span className="text-[13px] text-text capitalize">
+              {report.status}
+            </span>
+          </div>
+          <ul className="m-0 p-0 list-none space-y-1">
+            {report.probes.map((p) => (
+              <ProbeRow key={p.name} probe={p} />
+            ))}
+          </ul>
+        </>
+      )}
+    </Card>
+  );
+}
+
+function ProbeRow({ probe }: { probe: Probe }) {
+  return (
+    <li className="flex items-center justify-between gap-2 text-[12px]">
+      <span className="flex items-center gap-2 text-text-2">
+        <HealthDot status={probe.status} />
+        <code className="font-mono text-text-2">{probe.name}</code>
+      </span>
+      <span className="text-text-3 truncate">
+        {probe.latency_ms != null ? `${probe.latency_ms}ms` : probe.detail ?? ""}
+      </span>
+    </li>
+  );
+}
+
+function HealthDot({ status }: { status: HealthStatus }) {
+  const cls =
+    status === "ok"
+      ? "bg-gold"
+      : status === "degraded"
+        ? "bg-warn"
+        : "bg-danger";
+  return <span className={`inline-block w-1.5 h-1.5 rounded-full ${cls}`} />;
+}
 function CountCard({
   label,
   value,
