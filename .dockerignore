@@ -8,6 +8,14 @@ target
 **/target
 Cargo.lock.bak
 
+# Frontend dependency/build outputs
+frontend/web/node_modules
+frontend/web/dist
+frontend/web/.vite
+frontend/web/*.tsbuildinfo
+coverage
+**/coverage
+
 # Runtime data (never ship as part of the image)
 data
 *.db
