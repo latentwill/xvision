@@ -539,10 +539,10 @@ function RunEvalCard({ agentId }: { agentId: string }) {
           <code className="font-mono text-text-2">--mode paper</code> for Alpaca paper trading.
         </p>
         <Link
-          to="/eval-runs"
+          to={`/eval-runs?strategy=${encodeURIComponent(agentId)}&start=1`}
           className="inline-flex items-center gap-1 text-[13px] text-text hover:text-gold"
         >
-          Browse eval runs →
+          Open launcher →
         </Link>
       </div>
     </Card>
@@ -563,15 +563,10 @@ function SectionHeader({ label, hint }: { label: string; hint?: string }) {
 }
 
 function InspectorActions({ strategyId }: { strategyId: string }) {
-  // Discoverable CTA for "now that you've edited this bundle, run it."
-  // Deep-links the strategy id via `?strategy=<id>` so a future
-  // run-form on `/eval-runs` can pre-select it without an extra
-  // round-trip. Until that form exists the param is benign — the
-  // route just ignores it.
   return (
     <div className="flex items-center justify-end gap-3 mb-5">
       <Link
-        to={`/eval-runs?strategy=${encodeURIComponent(strategyId)}`}
+        to={`/eval-runs?strategy=${encodeURIComponent(strategyId)}&start=1`}
         className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft transition-colors"
       >
         Run eval →
