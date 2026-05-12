@@ -1,0 +1,46 @@
+name: web bundle budget
+
+# Enforces an upper bound on the SPA bundle so the chart libraries don't
+# silently bloat the dashboard binary (the SPA is baked into the rust-embed
+# asset table by vite outputting into crates/xvision-dashboard/static).
+#
+# Path-scoped to keep Actions minutes low — same conservation policy as
+# docker.yml. The job only runs when the frontend, its lockfile, or this
+# workflow itself changes.
+on:
+  pull_request:
+    paths:
+      - "frontend/web/**"
+      - ".github/workflows/web-budget.yml"
+
+concurrency:
+  group: web-budget-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  budget:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v3
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+          cache-dependency-path: frontend/web/pnpm-lock.yaml
+      - name: install
+        run: cd frontend/web && pnpm install --frozen-lockfile
+      - name: build
+        run: cd frontend/web && pnpm build
+      - name: enforce chunk-size budget
+        # Vite emits the SPA into crates/xvision-dashboard/static; the
+        # biggest JS chunk must stay under 1.2 MB raw (~400 KB gzipped).
+        # Bump only with a paired note on what's contributing to the size.
+        run: |
+          BUDGET_BYTES=$((1200 * 1024))
+          SIZE=$(stat -c%s crates/xvision-dashboard/static/assets/*.js | sort -n | tail -1)
+          echo "biggest chunk: ${SIZE} bytes (budget: ${BUDGET_BYTES})"
+          if [ "$SIZE" -ge "$BUDGET_BYTES" ]; then
+            echo "::error::JS chunk ${SIZE} bytes exceeds budget ${BUDGET_BYTES}"
+            exit 1
+          fi
