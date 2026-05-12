@@ -8,7 +8,6 @@ import type { QuoteCurrency } from "./QuoteCurrency";
 import type { ReplayMode } from "./ReplayMode";
 import type { ScenarioSource } from "./ScenarioSource";
 import type { TimeWindow } from "./TimeWindow";
-import type { Capital } from "./Capital";
 import type { VenueSettings } from "./VenueSettings";
 
-export type Scenario = { id: string, parent_scenario_id: string | null, source: ScenarioSource, display_name: string, description: string, tags: Array<string>, notes: string | null, asset_class: AssetClass, asset: Array<AssetRef>, quote_currency: QuoteCurrency, time_window: TimeWindow, granularity: string, timezone: string, calendar: CalendarRef, data_source: DataSource, venue: VenueSettings, replay_mode: ReplayMode, capital: Capital, bar_cache_policy: BarCachePolicy, created_at: string, created_by: string, archived_at: string | null, };
+export type Scenario = { id: string, parent_scenario_id: string | null, source: ScenarioSource, display_name: string, description: string, tags: Array<string>, notes: string | null, asset_class: AssetClass, asset: Array<AssetRef>, quote_currency: QuoteCurrency, time_window: TimeWindow, granularity: string, timezone: string, calendar: CalendarRef, data_source: DataSource, venue: VenueSettings, replay_mode: ReplayMode, capital: { initial: number, currency: string }, bar_cache_policy: BarCachePolicy, created_at: string, created_by: string, archived_at: string | null, };

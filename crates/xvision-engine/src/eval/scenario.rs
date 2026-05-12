@@ -48,6 +48,7 @@ pub struct Scenario {
     /// Scenario (from StrategyBundle) so backtest results are reproducible
     /// independent of which strategy is run against the scenario.
     #[serde(default)]
+    #[cfg_attr(feature = "ts-export", ts(type = "{ initial: number, currency: string }"))]
     pub capital: Capital,
 
     pub bar_cache_policy: BarCachePolicy,
