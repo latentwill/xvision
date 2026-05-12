@@ -25,6 +25,9 @@ use xvision_data::fixtures::load_ohlcv_fixture;
 
 use crate::agent::llm::LlmDispatch;
 use crate::agent::pipeline::{run_pipeline, PipelineInputs};
+use crate::api::chart::{
+    ChartEquityPoint, HoldMarker, MarkerEvent, RunChartEvent, RunEventBus, TradeSide, TradeMarker,
+};
 use crate::bundle::StrategyBundle;
 use crate::eval::executor::Executor;
 use crate::eval::metrics::{
@@ -57,6 +60,12 @@ pub struct BacktestExecutor {
     /// from `data/probes/<scenario.bar_cache_policy.cache_key>.parquet`
     /// via `load_ohlcv_fixture`.
     injected_bars: Option<Vec<Ohlcv>>,
+    /// Optional live-stream event bus. When `Some`, the executor emits
+    /// `RunChartEvent::Equity` and `RunChartEvent::Marker` events after
+    /// each decision cycle so SSE subscribers at `/live/<run_id>` see
+    /// real-time chart updates. When `None` (most unit tests), emission
+    /// is a no-op.
+    event_bus: Option<Arc<RunEventBus>>,
 }
 
 impl BacktestExecutor {
@@ -75,6 +84,7 @@ impl BacktestExecutor {
         Self {
             progress: Some(progress),
             injected_bars: None,
+            event_bus: None,
         }
     }
 
@@ -89,6 +99,7 @@ impl BacktestExecutor {
         Self {
             progress: None,
             injected_bars: Some(bars),
+            event_bus: None,
         }
     }
 
@@ -97,12 +108,38 @@ impl BacktestExecutor {
         Self {
             progress: Some(progress),
             injected_bars: Some(bars),
+            event_bus: None,
         }
+    }
+
+    /// Bars + live-stream event bus (no progress channel).
+    pub fn with_bars_and_event_bus(bars: Vec<Ohlcv>, bus: Arc<RunEventBus>) -> Self {
+        Self {
+            progress: None,
+            injected_bars: Some(bars),
+            event_bus: Some(bus),
+        }
+    }
+
+    /// Attach a live-stream event bus to an existing executor. Builder-style
+    /// so callers can chain after `with_bars` / `with_progress`:
+    ///   `BacktestExecutor::with_bars(bars).with_event_bus(bus)`.
+    pub fn with_event_bus(mut self, bus: Arc<RunEventBus>) -> Self {
+        self.event_bus = Some(bus);
+        self
     }
 
     fn emit(&self, event: ProgressEvent) {
         if let Some(tx) = self.progress.as_ref() {
             send_event(tx, event);
+        }
+    }
+
+    /// Emit a `RunChartEvent` onto the event bus if one is configured.
+    /// Inline `.await` is fine here since `run_inner` is already `async`.
+    async fn emit_chart(&self, run_id: &str, event: RunChartEvent) {
+        if let Some(bus) = self.event_bus.as_ref() {
+            bus.emit(run_id, event).await;
         }
     }
 }
@@ -385,7 +422,77 @@ impl BacktestExecutor {
                     },
                 })
                 .await?;
+
+            // Emit a marker event derived from this decision. Mirrors the
+            // action → marker-variant mapping in `chart::split_markers`.
+            // Only emit for actions where fill data is present (same guard
+            // as split_markers uses for trade-like actions).
+            let t = bar.timestamp.timestamp();
+            let marker_event = match parsed.action.as_str() {
+                "long_open" => {
+                    if let (Some(price), Some(size)) = (fill.fill_price, fill.fill_size) {
+                        Some(MarkerEvent::Trade(TradeMarker {
+                            time: t,
+                            side: TradeSide::Buy,
+                            price,
+                            size,
+                            fee: fill.fee.unwrap_or(0.0),
+                            pnl_realized: if fill.realized_pnl != 0.0 {
+                                Some(fill.realized_pnl)
+                            } else {
+                                None
+                            },
+                            decision_index: decision_idx,
+                            justification: Some(parsed.justification.clone()),
+                        }))
+                    } else {
+                        None
+                    }
+                }
+                "short_open" | "flat" => {
+                    if let (Some(price), Some(size)) = (fill.fill_price, fill.fill_size) {
+                        Some(MarkerEvent::Trade(TradeMarker {
+                            time: t,
+                            side: TradeSide::Sell,
+                            price,
+                            size,
+                            fee: fill.fee.unwrap_or(0.0),
+                            pnl_realized: if fill.realized_pnl != 0.0 {
+                                Some(fill.realized_pnl)
+                            } else {
+                                None
+                            },
+                            decision_index: decision_idx,
+                            justification: Some(parsed.justification.clone()),
+                        }))
+                    } else {
+                        None
+                    }
+                }
+                "hold" => Some(MarkerEvent::Hold(HoldMarker {
+                    time: t,
+                    price: next_bar.open,
+                    conviction: Some(parsed.conviction),
+                    decision_index: decision_idx,
+                })),
+                _ => None,
+            };
+            if let Some(marker) = marker_event {
+                self.emit_chart(&run.id, RunChartEvent::Marker(marker)).await;
+            }
+
             store.record_equity(&run.id, bar.timestamp, equity).await?;
+
+            // Emit equity event for live-stream subscribers.
+            self.emit_chart(
+                &run.id,
+                RunChartEvent::Equity(ChartEquityPoint {
+                    time: bar.timestamp.timestamp(),
+                    equity_usd: equity,
+                }),
+            )
+            .await;
+
             equity_curve.push(equity);
 
             // Running drawdown — peak updates after each tick so

@@ -8,11 +8,15 @@ use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::SqlitePool;
 
 use xvision_engine::api::{Actor, ApiContext};
+use xvision_engine::api::chart::RunEventBus;
 
 #[derive(Clone)]
 pub struct AppState {
     pub pool: SqlitePool,
     pub xvn_home: PathBuf,
+    /// Singleton live-stream event bus. Constructed once at server start and
+    /// shared across all HTTP requests via `api_context()`.
+    pub event_bus: std::sync::Arc<RunEventBus>,
 }
 
 impl AppState {
@@ -61,7 +65,11 @@ impl AppState {
             tracing::warn!(error = %e, "could not hydrate provider secrets into env");
         }
 
-        Ok(Self { pool, xvn_home })
+        Ok(Self {
+            pool,
+            xvn_home,
+            event_bus: std::sync::Arc::new(RunEventBus::new()),
+        })
     }
 
     /// Build an `ApiContext` for one HTTP request. The dashboard always
@@ -75,5 +83,6 @@ impl AppState {
             },
             self.xvn_home.clone(),
         )
+        .with_event_bus(self.event_bus.clone())
     }
 }

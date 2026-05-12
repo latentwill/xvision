@@ -561,7 +561,10 @@ async fn run_inner(
                                 volume: b.volume,
                             })
                             .collect();
-                        Box::new(BacktestExecutor::with_bars(ohlcv))
+                        Box::new(
+                            BacktestExecutor::with_bars(ohlcv)
+                                .with_event_bus(ctx.event_bus.clone()),
+                        )
                     }
                     Err(e) => {
                         // load_bars failed (no Alpaca creds in tests, or
@@ -573,11 +576,11 @@ async fn run_inner(
                             error = %e,
                             "load_bars failed; falling back to fixture loader",
                         );
-                        Box::new(BacktestExecutor::new())
+                        Box::new(BacktestExecutor::new().with_event_bus(ctx.event_bus.clone()))
                     }
                 }
             } else {
-                Box::new(BacktestExecutor::new())
+                Box::new(BacktestExecutor::new().with_event_bus(ctx.event_bus.clone()))
             }
         }
     };

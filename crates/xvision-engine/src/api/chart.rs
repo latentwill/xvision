@@ -900,6 +900,61 @@ fn compute_max_drawdown_pct(equity: &[ChartEquityPoint]) -> f64 {
     max_dd
 }
 
+// ── Task 1 (M3) — RunEventBus and live-stream event types ──────────────────
+
+use tokio::sync::broadcast;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "event", content = "data")]
+pub enum RunChartEvent {
+    Bar(ChartBar),
+    IndicatorTail(std::collections::HashMap<String, IndicatorPoint>),
+    Marker(MarkerEvent),
+    Equity(ChartEquityPoint),
+    Status { phase: String, message: Option<String> },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum MarkerEvent {
+    Trade(TradeMarker),
+    Veto(VetoMarker),
+    Hold(HoldMarker),
+}
+
+pub struct RunEventBus {
+    senders: tokio::sync::Mutex<std::collections::HashMap<String, broadcast::Sender<RunChartEvent>>>,
+}
+
+impl Default for RunEventBus {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl RunEventBus {
+    pub fn new() -> Self {
+        Self {
+            senders: Default::default(),
+        }
+    }
+
+    pub async fn sender(&self, run_id: &str) -> broadcast::Sender<RunChartEvent> {
+        let mut g = self.senders.lock().await;
+        g.entry(run_id.into())
+            .or_insert_with(|| broadcast::channel(1024).0)
+            .clone()
+    }
+
+    pub async fn subscribe(&self, run_id: &str) -> broadcast::Receiver<RunChartEvent> {
+        self.sender(run_id).await.subscribe()
+    }
+
+    pub async fn emit(&self, run_id: &str, event: RunChartEvent) {
+        let _ = self.sender(run_id).await.send(event);
+    }
+}
+
 // ── Task 4 — build_compare_payload ─────────────────────────────────────────
 
 /// Build a `CompareChartPayload` for the given set of run ids.

@@ -57,6 +57,12 @@ pub struct ApiContext {
     /// `cache_key` serialize on the per-key mutex so only one upstream
     /// fetch happens.
     pub(crate) bars_singleflight: Arc<SingleflightMap>,
+    /// Live-stream event bus for in-flight run events. Singleton — shared
+    /// across all HTTP requests. `AppState` holds the canonical `Arc` and
+    /// passes it via `with_event_bus`. Default is a fresh bus so unit tests
+    /// that construct `ApiContext::new` directly still work without extra
+    /// wiring.
+    pub event_bus: Arc<chart::RunEventBus>,
 }
 
 // `AlpacaBarsFetcher` doesn't derive Debug (it holds a reqwest::Client
@@ -70,6 +76,7 @@ impl std::fmt::Debug for ApiContext {
             .field("xvn_home", &self.xvn_home)
             .field("alpaca", &"<AlpacaBarsFetcher>")
             .field("bars_singleflight", &"<SingleflightMap>")
+            .field("event_bus", &"<RunEventBus>")
             .finish()
     }
 }
@@ -136,6 +143,7 @@ impl ApiContext {
                 AlpacaData::DEFAULT_RATE_LIMIT_RPM,
             )),
             bars_singleflight: Arc::new(Mutex::new(HashMap::new())),
+            event_bus: Arc::new(chart::RunEventBus::new()),
         }
     }
 
@@ -145,6 +153,21 @@ impl ApiContext {
     pub fn with_alpaca_fetcher(mut self, alpaca: Arc<AlpacaBarsFetcher>) -> Self {
         self.alpaca = alpaca;
         self
+    }
+
+    /// Builder override for the live-stream event bus. `AppState` calls
+    /// this in `api_context()` so all request handlers share the singleton
+    /// bus held on `AppState`. Tests that use `ApiContext::new` directly
+    /// get an isolated per-test bus via the default in `new`.
+    pub fn with_event_bus(mut self, bus: Arc<chart::RunEventBus>) -> Self {
+        self.event_bus = bus;
+        self
+    }
+
+    /// Accessor for the singleton event bus. Used by handlers and the
+    /// executor to emit live-stream events.
+    pub fn event_bus(&self) -> &Arc<chart::RunEventBus> {
+        &self.event_bus
     }
 
     /// Builder override for the Alpaca fetcher's rate limit. Replaces the
