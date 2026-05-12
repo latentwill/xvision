@@ -294,27 +294,10 @@ xvn strategy ls
 xvn strategy run <id> --fixture <name> --decisions <N> [--mock]
 ```
 
-### Skills (Plan 2b — see crates/xvision-skills)
-
-Skills are OSShip-style markdown files (YAML frontmatter + body) that
-override a strategy slot's prompt + model_requirement and union its
-allowed_tools. They live under `$XVN_HOME/skills/<name>.md` and compose
-into any saved strategy.
-
-```bash
-xvn skill new --from-file my-trader.md  # register / overwrite
-xvn skill ls                            # list saved skills
-xvn skill attach <agent_id> --slot trader --skill my-trader
-```
-
-Marketplace publish/browse/install/attest verbs are deferred to Plan 5
-(blockchain integration). Skills work fully offline without them.
-
-### AI agent drives xvn (Plan 2a + 2b)
+### AI agent drives xvn (Plan 2a)
 
 External AI agents (Claude Code, Hermes, Cursor, Codex) can author the
-same `StrategyBundle`s and `Skill`s over MCP without the operator-CLI
-round-trip:
+same `StrategyBundle`s over MCP without the operator-CLI round-trip:
 
 ```bash
 cargo build --release -p xvision-mcp        # produces target/release/xvn-mcp
@@ -323,12 +306,15 @@ cargo build --release -p xvision-mcp        # produces target/release/xvn-mcp
 Authoring verbs the server advertises over `tools/list`:
 `xvn_list_templates`, `xvn_create_strategy`, `xvn_get_strategy`,
 `xvn_update_slot`, `xvn_set_mechanical_param`, `xvn_set_risk_config`,
-`xvn_validate_draft`, plus the Plan 2b skill verbs `xvn_create_skill`,
-`xvn_list_skills`, `xvn_attach_skill_to_agent` — alongside the indicator
-surface (`xvn_health`, `xvn_sma`, `xvn_rsi`, ...) that has shipped since
-v0.1. State lives in `$XVN_HOME/strategies/<id>.json` and
-`$XVN_HOME/skills/<name>.md`, the same paths `xvn strategy ls` and
-`xvn skill ls` read from.
+`xvn_validate_draft` — alongside the indicator surface (`xvn_health`,
+`xvn_sma`, `xvn_rsi`, ...) that has shipped since v0.1. State lives in
+`$XVN_HOME/strategies/<id>.json`, the same path `xvn strategy ls` reads
+from.
+
+> The Plan 2b in-app skills surface (`xvn skill …`, the `xvn_*_skill*`
+> MCP verbs, the `xvision-skills` crate) was removed per ADR 0012 — the
+> Agents page (`engine::agents`, `/agents`) replaces it as the
+> reusable-prompt authoring surface.
 
 In Claude Code, register the binary in `~/.claude/settings.json`:
 
@@ -363,29 +349,26 @@ xvn eval compare <run_id_a> <run_id_b>
 `xvn eval run` is part of the current surface. Use `xvn scenario ls` to find
 scenario ids; `xvn eval scenarios` remains available but is deprecated.
 
-### Exit codes (Plan 2b-followup)
+### Exit codes
 
-`xvn skill *`, `xvn strategy *`, and `xvn eval *` follow Printing-Press-style
-typed exit codes so AI agents can dispatch on the *number*, not the error
-text:
+`xvn strategy *` and `xvn eval *` follow Printing-Press-style typed exit
+codes so AI agents can dispatch on the *number*, not the error text:
 
 | Code | Meaning | Agent should |
 |------|---------|--------------|
 | 0 | Success | continue |
 | 2 | Usage / malformed input / unknown enum variant | re-read `--help`, fix the invocation |
 | 3 | Auth (missing or invalid credential) | prompt operator for `ANTHROPIC_API_KEY` or `--mock` |
-| 4 | Resource not found (strategy id, skill name, run id) | re-fetch with `xvn <verb> ls`; the id is stale |
+| 4 | Resource not found (strategy id, run id) | re-fetch with `xvn <verb> ls`; the id is stale |
 | 5 | Upstream / network / disk / database error | retry with backoff |
-| 7 | State conflict (e.g. attaching skill to empty slot) | inspect the resource and reconcile state |
+| 7 | State conflict (e.g. duplicate name on rename) | inspect the resource and reconcile state |
 
 Other verbs (`fire-trade`, `venue`, `ab-compare`, `dashboard`, `eod`, …)
 default to exit 5 on any error pending per-command opt-in.
 
 ```bash
 xvn strategy show 01BAD; echo $?      # 4
-xvn skill new --from-file /no/such; echo $?    # 2
 xvn eval show 01BAD; echo $?          # 4
-xvn skill attach <id> --slot intern --skill x; echo $?   # 7 (slot empty)
 ```
 
 ---

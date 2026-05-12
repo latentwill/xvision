@@ -10,13 +10,12 @@ Crate layout, pipeline stages, slot model. Cross-reference: top-level `architect
 | `xvision-engine` | Engine + API surface (`crates/xvision-engine/src/api/`) — backtest runner, settings, search, bundle store |
 | `xvision-cli` | `xvn` binary; subcommands under `crates/xvision-cli/src/commands/*.rs` |
 | `xvision-dashboard` | axum HTTP server + embedded SPA; routes under `src/routes/*.rs` |
-| `xvision-skills` | Markdown skill parser + filesystem store + attach-to-bundle helper |
 | `xvision-eval` | Eval harness — A/B compare, baselines (`src/baselines/`), gate logic |
 | `xvision-intern` | Intern backends (`OpenAICompatIntern`, `AnthropicIntern`, `AcpxIntern`) |
 | `xvision-mcp` | MCP tool surface (rsi/sma/ema/macd/bollinger/atr/donchian/fib/health) |
 | `xvision-execution` | Venue executors (Alpaca, Orderly) — used by `fire-trade` / `close-position` |
 | `xvision-identity` | ERC-8004 IdentityRegistry + ReputationRegistry client (opt-in — `cargo build -p xvision-identity`) |
-| `xvision-skills` (vendored) | `.claude/skills/byreal/` + `.claude/skills/mantle/` — git submodules feeding xvision's *own* Stage-1 Intern prompt |
+| Vendored skill catalogs | `.claude/skills/byreal/` + `.claude/skills/mantle/` — git submodules feeding xvision's *own* Stage-1 Intern prompt (Claude Code skills, distinct from the deprecated in-app surface) |
 
 ## Pipeline (the four roles)
 
@@ -24,7 +23,7 @@ Crate layout, pipeline stages, slot model. Cross-reference: top-level `architect
 Cycle (snapshot) ──▶ Intern ──▶ Briefing ──▶ Trader ──▶ TraderDecision ──▶ Risk ──▶ RiskDecision ──▶ Executor ──▶ Venue
 ```
 
-A `StrategyBundle` parameterises each stage as a **slot**: `intern_slot`, `trader_slot`, `risk_slot`, `executor_slot`. A slot carries a prompt, a model_requirement, and an allowed_tools set. `xvn skill attach` swaps a slot's contents from a markdown skill file.
+A `StrategyBundle` parameterises each stage as a **slot**: `intern_slot`, `trader_slot`, `risk_slot`, `executor_slot`. A slot carries a prompt, a model_requirement, and an allowed_tools set. Reusable prompt authoring lives on the `Agent` entity (`/agents`, `engine::agents`) — the Plan 2b `xvn skill attach` surface was removed in ADR 0012.
 
 ## Intern backends (pick deterministically)
 

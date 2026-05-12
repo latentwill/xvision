@@ -24,7 +24,6 @@ Don't grep blindly. The repo has canonical docs — start there:
 - `ab-compare` — N-arm backtest, emits `BacktestResult` JSON. The headline run.
 - `metrics` / `gate` — pre-committed metrics + anti-overfit verdict (treatment vs baseline).
 - `strategy` — author / validate / list `StrategyBundle`s (`$XVN_HOME/strategies/<id>.json`).
-- `skill` — author + attach OSShip-style markdown skills to a bundle's intern/trader/risk slot. Storage: `$XVN_HOME/skills/<name>.md`. **NB:** this is xvision's internal skill concept (runtime LLM-prompt swap on a pipeline slot) — NOT the same thing as Claude Code skills like this one.
 - `dashboard serve` — axum server with the SPA baked in via `rust-embed`. Default bind `0.0.0.0:8788`.
 - `provider` — manage registered LLM providers in `$XVN_HOME/config/default.toml`.
 - `intern` / `trader` / `risk` — preview prompts or run one pipeline stage in isolation.

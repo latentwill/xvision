@@ -14,7 +14,6 @@ members = [
     "crates/xvision-identity",
     "crates/xvision-mcp",
     "crates/xvision-dashboard",
-    "crates/xvision-skills",
     "xtask",
 ]
 
@@ -37,7 +36,6 @@ default-members = [
     "crates/xvision-cli",
     "crates/xvision-mcp",
     "crates/xvision-dashboard",
-    "crates/xvision-skills",
 ]
 
 [workspace.package]

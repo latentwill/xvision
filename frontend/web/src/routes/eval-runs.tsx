@@ -6,6 +6,8 @@ import { Card } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
 import { Icon } from "@/components/primitives/Icon";
 import { ApiError } from "@/api/client";
+import { chartKeys, getRunChart } from "@/api/chart";
+import { RunChart } from "@/components/chart/RunChart";
 import {
   evalKeys,
   listRuns,
@@ -59,6 +61,12 @@ export function EvalRunsRoute() {
       setStartOpen(true);
     }
   }, [startRequested]);
+  const latestRunId = q.data?.[0]?.id ?? "";
+  const latestChart = useQuery({
+    queryKey: chartKeys.run(latestRunId),
+    queryFn: () => getRunChart(latestRunId),
+    enabled: !!latestRunId,
+  });
 
   function toggleSelected(id: string) {
     setSelected((prev) => {
@@ -125,6 +133,31 @@ export function EvalRunsRoute() {
             onToggle={toggleSelected}
           />
         )}
+      </Card>
+
+      <h2 className="font-serif italic text-[20px] text-text mt-8 mb-3">
+        Latest run chart
+      </h2>
+      <Card className="p-5">
+        {q.isPending ? (
+          <div className="text-text-3 text-[13px] text-center py-6">
+            Loading runs…
+          </div>
+        ) : !latestRunId ? (
+          <div className="text-text-3 text-[13px] text-center py-6">
+            No runs yet. Start an eval to render chart history.
+          </div>
+        ) : latestChart.isPending ? (
+          <div className="text-text-3 text-[13px] text-center py-6">
+            Loading chart…
+          </div>
+        ) : latestChart.isError ? (
+          <div className="text-danger text-[13px] text-center py-6">
+            Chart unavailable for latest run.
+          </div>
+        ) : latestChart.data ? (
+          <RunChart payload={latestChart.data} />
+        ) : null}
       </Card>
     </>
   );

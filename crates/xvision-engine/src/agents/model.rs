@@ -33,6 +33,14 @@ pub struct AgentSlot {
     pub provider: String,
     pub model: String,
     pub system_prompt: String,
+    /// Forward-compat hook for the v1.1 skill registry (see
+    /// `docs/superpowers/plans/2026-05-11-agents-page-v1.md` §Skills).
+    /// Each entry is a ULID into the workspace skill registry; entries
+    /// of `kind = tool | prompt_fragment | evaluator` compose onto this
+    /// slot at runtime. The picker is hidden in v1 until `/settings/skills`
+    /// ships — but the field is persisted so existing agents survive the
+    /// registry landing without a schema migration. Not related to the
+    /// Plan 2b `xvn skill` surface that was removed in ADR 0012.
     pub skill_ids: Vec<String>,
     pub max_tokens: u32,
 }
