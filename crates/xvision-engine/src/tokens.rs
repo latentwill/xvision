@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::bundle::StrategyBundle;
+use crate::strategies::Strategy;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenEstimate {
@@ -13,7 +13,7 @@ const CHARS_PER_TOKEN: usize = 4;
 const FIXED_CONTEXT_TOKENS_PER_FIRE: u64 = 600; // ohlcv panel + indicator panel header
 const OUTPUT_TOKENS_PER_FIRE: u64 = 80; // typical small JSON decision
 
-pub fn estimate_pipeline_tokens(b: &StrategyBundle, decision_points: u64) -> TokenEstimate {
+pub fn estimate_pipeline_tokens(b: &Strategy, decision_points: u64) -> TokenEstimate {
     let mut per_fire_input = 0u64;
     let mut per_fire_output = 0u64;
     for slot in [&b.regime_slot, &b.intern_slot, &b.trader_slot]

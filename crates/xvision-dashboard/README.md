@@ -17,7 +17,7 @@ debounced fuzzy-search modal over every artifact in xvn:
 | Group       | Source                                                |
 |-------------|-------------------------------------------------------|
 | Actions     | Static list seeded at startup (new strategy, settings, …) |
-| Strategies  | `~/.xvn/bundles/<id>.json` via `BundleStore::list`    |
+| Strategies  | `~/.xvn/bundles/<id>.json` via `StrategyStore::list`    |
 | Runs        | `eval_runs` table via `RunStore::list`                |
 | Findings    | `eval_findings` rows (per run) via `read_findings`    |
 | Scenarios   | `canonical_scenarios()` (compiled-in fixed set)       |

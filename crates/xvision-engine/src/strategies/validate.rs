@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use crate::bundle::StrategyBundle;
+use crate::strategies::Strategy;
 
 #[derive(Debug, Error)]
 pub enum ValidationError {
@@ -16,7 +16,7 @@ pub enum ValidationError {
     UndeclaredTool(String),
 }
 
-pub fn validate_bundle(b: &StrategyBundle) -> Result<(), ValidationError> {
+pub fn validate_bundle(b: &Strategy) -> Result<(), ValidationError> {
     if b.regime_slot.is_none() && b.intern_slot.is_none() && b.trader_slot.is_none() {
         return Err(ValidationError::NoLlmSlots);
     }

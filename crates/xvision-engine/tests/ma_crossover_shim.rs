@@ -1,5 +1,5 @@
 use xvision_engine::baselines::ma_crossover::ma_crossover_template;
-use xvision_engine::bundle::validate::validate_bundle;
+use xvision_engine::strategies::validate::validate_bundle;
 
 #[test]
 fn ma_crossover_produces_valid_bundle() {

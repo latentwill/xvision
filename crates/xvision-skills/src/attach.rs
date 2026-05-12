@@ -1,5 +1,5 @@
 use crate::Skill;
-use xvision_engine::bundle::StrategyBundle;
+use xvision_engine::strategies::Strategy;
 
 /// Attach a skill to a named slot of a strategy bundle. Replaces the slot's
 /// prompt with the skill body, sets `model_requirement`, and unions the
@@ -8,7 +8,7 @@ use xvision_engine::bundle::StrategyBundle;
 /// Errors if `slot_role` is unknown or if the slot is currently empty —
 /// authors must fill the slot before they can layer a skill onto it.
 pub fn attach_skill_to_agent(
-    bundle: &mut StrategyBundle,
+    bundle: &mut Strategy,
     slot_role: &str,
     skill: &Skill,
 ) -> anyhow::Result<()> {

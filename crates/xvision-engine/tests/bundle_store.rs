@@ -1,12 +1,12 @@
 use tempfile::tempdir;
-use xvision_engine::bundle::manifest::{PublicManifest, RegimeFit};
-use xvision_engine::bundle::risk::RiskPreset;
-use xvision_engine::bundle::slot::LLMSlot;
-use xvision_engine::bundle::store::{BundleStore, FilesystemStore};
-use xvision_engine::bundle::StrategyBundle;
+use xvision_engine::strategies::manifest::{PublicManifest, RegimeFit};
+use xvision_engine::strategies::risk::RiskPreset;
+use xvision_engine::strategies::slot::LLMSlot;
+use xvision_engine::strategies::store::{StrategyStore, FilesystemStore};
+use xvision_engine::strategies::Strategy;
 
-fn sample_bundle(id: &str) -> StrategyBundle {
-    StrategyBundle {
+fn sample_bundle(id: &str) -> Strategy {
+    Strategy {
         manifest: PublicManifest {
             id: id.to_string(),
             display_name: "Test".into(),

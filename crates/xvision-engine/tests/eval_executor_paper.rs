@@ -13,10 +13,10 @@ use std::sync::Arc;
 use chrono::{TimeZone, Utc};
 use sqlx::SqlitePool;
 use xvision_engine::agent::llm::{LlmDispatch, MockDispatch};
-use xvision_engine::bundle::manifest::PublicManifest;
-use xvision_engine::bundle::risk::RiskPreset;
-use xvision_engine::bundle::slot::LLMSlot;
-use xvision_engine::bundle::StrategyBundle;
+use xvision_engine::strategies::manifest::PublicManifest;
+use xvision_engine::strategies::risk::RiskPreset;
+use xvision_engine::strategies::slot::LLMSlot;
+use xvision_engine::strategies::Strategy;
 use xvision_engine::eval::executor::{Executor, PaperExecutor};
 use xvision_engine::eval::{
     canonical_scenarios, Run, RunMode, RunStatus, RunStore, Scenario,
@@ -33,8 +33,8 @@ async fn pool_with_migration() -> SqlitePool {
     pool
 }
 
-fn minimal_bundle() -> StrategyBundle {
-    StrategyBundle {
+fn minimal_bundle() -> Strategy {
+    Strategy {
         manifest: PublicManifest {
             id: "01TESTBUNDLE0000000000000A".into(),
             display_name: "Test bundle".into(),
@@ -83,7 +83,7 @@ async fn paper_harness(
     PaperExecutor,
     RunStore,
     Run,
-    StrategyBundle,
+    Strategy,
     Scenario,
     Arc<dyn LlmDispatch>,
     Arc<ToolRegistry>,

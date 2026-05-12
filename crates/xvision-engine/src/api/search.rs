@@ -16,8 +16,8 @@ use std::time::Instant;
 
 use crate::api::audit::{self, Outcome};
 use crate::api::{ApiContext, ApiError, ApiResult};
-use crate::bundle::store::{strategy_store_dir, BundleStore, FilesystemStore};
-use crate::bundle::StrategyBundle;
+use crate::strategies::store::{strategy_store_dir, StrategyStore, FilesystemStore};
+use crate::strategies::Strategy;
 use crate::eval::findings::Finding;
 use crate::eval::run::{Run, RunMode, RunStatus};
 use crate::eval::scenario::canonical_scenarios;
@@ -58,7 +58,7 @@ pub async fn search(
 /// Upsert a strategy bundle into the index. Best-effort — logs and returns
 /// `Ok(())` on failure so the calling create/update path isn't blocked by
 /// a transient index write error.
-pub async fn upsert_strategy(ctx: &ApiContext, bundle: &StrategyBundle) {
+pub async fn upsert_strategy(ctx: &ApiContext, bundle: &Strategy) {
     let entry = strategy_entry(bundle);
     if let Err(e) = SearchIndex::upsert(&ctx.db, &entry).await {
         tracing::warn!(error = %e, agent_id = %bundle.manifest.id, "search index upsert (strategy) failed");
@@ -226,7 +226,7 @@ pub async fn reindex_all(ctx: &ApiContext) {
     seed_actions(ctx).await;
 }
 
-fn strategy_entry(bundle: &StrategyBundle) -> IndexEntry {
+fn strategy_entry(bundle: &Strategy) -> IndexEntry {
     let m = &bundle.manifest;
     let summary = if m.plain_summary.is_empty() {
         format!("{} · risk {}", m.template, m.risk_preset_or_config)
