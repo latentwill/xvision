@@ -104,6 +104,8 @@ async fn strategies_list_returns_seeded_bundle() {
                 risk_preset_or_config: "balanced".into(),
                 published_at: None,
             },
+            agents: Vec::new(),
+            pipeline: Default::default(),
             regime_slot: None,
             intern_slot: None,
             trader_slot: None,
