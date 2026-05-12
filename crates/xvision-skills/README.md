@@ -1,5 +1,9 @@
 # xvision-skills
 
+These are xvision runtime skills attached to strategy slots via `xvn skill ...`.
+They are not the same thing as repo-local Claude Code skills under
+`.claude/skills/`.
+
 OSShip-style markdown skills for xvn. Authors write a single markdown
 file with YAML frontmatter; the runtime parses it, persists it under
 `$XVN_HOME/skills/<name>.md`, and lets it be attached to a slot of any

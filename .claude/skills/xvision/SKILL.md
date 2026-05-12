@@ -31,6 +31,14 @@ Don't grep blindly. The repo has canonical docs — start there:
 - `store` — SQLite flight-recorder (`xvn.db`) migrate / stats.
 - `eod` — end-of-day operator report (markdown to stdout).
 
+## High-value examples
+
+- `xvn strategy ls`
+- `xvn strategy show <id>`
+- `xvn eval run --strategy <id> --scenario crypto-bull-q1-2025 --mode backtest`
+- `xvn provider ls`
+- `xvn dashboard serve --bind 127.0.0.1:8788`
+
 ## Pipeline vocabulary (locked 2026-05-10, terminology rename Option B)
 
 | Concept | Name |
@@ -60,6 +68,10 @@ Cargo from `~/.cargo/bin`. `xvision-identity` is opt-in — excluded from `defau
 GHCR image `ghcr.io/latentwill/xvision:latest` is built from `Dockerfile.deploy` (CLI + SPA baked in) by `.github/workflows/docker.yml`. Trigger: tag push `v*.*.*` or `gh workflow run docker.yml --ref main -f dockerfile=Dockerfile.deploy`.
 
 Two live instances on `extndly-dev`: `xvn.tail2bb69.ts.net` (personal) + `xvnej.tail2bb69.ts.net` (QA). Stacks at `/root/deploy/stacks/{xvn,xvnej}/`. Redeploy: `docker compose pull && docker compose up -d --force-recreate`. App shares netns with the tailscale sidecar — if `ts-*` restarts, `--force-recreate` the app too.
+
+Live-node control currently means the Tailscale-served dashboard node, not
+generic SSH orchestration. Assume `xvn.tail2bb69.ts.net` or
+`xvnej.tail2bb69.ts.net` unless the operator tells you otherwise.
 
 ## Don'ts
 

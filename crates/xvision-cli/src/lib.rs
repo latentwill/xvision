@@ -204,7 +204,7 @@ pub enum Command {
     Dashboard(commands::dashboard::DashboardCmd),
     /// End-of-day operator report (markdown to stdout).
     Eod(commands::eod::EodArgs),
-    /// Browse eval runs and canonical scenarios. (`run` lands in a follow-up.)
+    /// Launch, browse, compare, and inspect eval runs plus canonical scenarios.
     Eval(commands::eval::EvalCmd),
     /// Scenario authoring: create / ls / show / clone / archive / rm / tree.
     Scenario(commands::scenario::ScenarioCmd),
