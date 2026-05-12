@@ -2,6 +2,7 @@
 
 use chrono::{TimeZone, Utc};
 use xvision_engine::eval::scenario::*;
+use xvision_core::Capital;
 
 #[test]
 fn scenario_serde_roundtrip() {
@@ -24,6 +25,7 @@ fn scenario_serde_roundtrip() {
             start: Utc.with_ymd_and_hms(2024, 2, 3, 0, 0, 0).unwrap(),
             end: Utc.with_ymd_and_hms(2025, 2, 3, 0, 0, 0).unwrap(),
         },
+        capital: Capital::default(),
         granularity: BarGranularity::Hour1,
         timezone: "UTC".into(),
         calendar: CalendarRef::Continuous24x7,

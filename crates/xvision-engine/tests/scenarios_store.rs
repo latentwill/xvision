@@ -9,7 +9,7 @@ use xvision_data::alpaca::BarGranularity;
 use xvision_engine::eval::scenario::{
     AdjustmentMode, AssetClass, AssetRef, BarCachePolicy, CalendarRef, DataSource, Fees, FillModel,
     LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode,
-    Scenario, ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings,
+    Scenario, ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings, Capital,
 };
 use xvision_engine::eval::scenario_store as store;
 
@@ -57,6 +57,7 @@ fn make_test_scenario(id: &str) -> Scenario {
                 volume_constraints: None,
             },
         },
+        capital: Capital::default(),
         replay_mode: ReplayMode::Continuous,
         bar_cache_policy: BarCachePolicy {
             cache_key: format!("k_{}", id),

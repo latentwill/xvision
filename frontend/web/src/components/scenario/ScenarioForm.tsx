@@ -44,6 +44,10 @@ const CALENDAR: CalendarRef = 'Continuous24x7';
 const REPLAY_MODE: ReplayMode = { mode: 'Continuous' };
 const MARKET_ORDER_FILL: MarketOrderFill = 'FullAtClose';
 const LIMIT_ORDER_FILL: LimitOrderFill = 'NeverFills';
+const SCENARIO_CAPITAL = {
+  initial: 100000,
+  currency: 'USD',
+};
 
 export function ScenarioForm({
   initial,
@@ -113,6 +117,7 @@ export function ScenarioForm({
       asset: [{ class: ASSET_CLASS, symbol: asset, venue_symbol: `${asset}/USD` }],
       quote_currency: QUOTE_CURRENCY,
       time_window: { start: `${from}T00:00:00Z`, end: `${to}T00:00:00Z` },
+      capital: SCENARIO_CAPITAL,
       granularity,
       timezone: 'UTC',
       calendar: CALENDAR,

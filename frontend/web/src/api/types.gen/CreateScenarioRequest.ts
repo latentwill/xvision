@@ -13,4 +13,4 @@ import type { VenueSettings } from "./VenueSettings";
  * Request to create a new scenario. Caller fills in every field; the
  * engine assigns `id`, `created_at`, `created_by`, and `bar_cache_policy`.
  */
-export type CreateScenarioRequest = { display_name: string, description: string, asset_class: AssetClass, asset: Array<AssetRef>, quote_currency: QuoteCurrency, time_window: TimeWindow, granularity: string, timezone: string, calendar: CalendarRef, venue: VenueSettings, data_source: DataSource, replay_mode: ReplayMode, tags: Array<string>, notes: string | null, parent_scenario_id: string | null, source: ScenarioSource, };
+export type CreateScenarioRequest = { display_name: string, description: string, asset_class: AssetClass, asset: Array<AssetRef>, quote_currency: QuoteCurrency, time_window: TimeWindow, capital: { initial: number, currency: string }, granularity: string, timezone: string, calendar: CalendarRef, venue: VenueSettings, data_source: DataSource, replay_mode: ReplayMode, tags: Array<string>, notes: string | null, parent_scenario_id: string | null, source: ScenarioSource, };

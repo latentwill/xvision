@@ -10,7 +10,7 @@ use xvision_core::AssetSymbol;
 use xvision_engine::api::scenario as api_scenario;
 use xvision_engine::api::{Actor, ApiContext, ApiError};
 use xvision_engine::eval::scenario::{
-    AssetClass, AssetRef, BarGranularity, CalendarRef, DataSource, AdjustmentMode, FillModel,
+    AssetClass, AssetRef, BarGranularity, CalendarRef, Capital, DataSource, AdjustmentMode, FillModel,
     Fees, LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, ReplayMode, Scenario,
     ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings,
 };
@@ -268,6 +268,7 @@ fn scenario_to_create_request(s: &Scenario) -> api_scenario::CreateScenarioReque
         asset: s.asset.clone(),
         quote_currency: s.quote_currency,
         time_window: s.time_window.clone(),
+        capital: s.capital.clone(),
         granularity: s.granularity,
         timezone: s.timezone.clone(),
         calendar: s.calendar.clone(),
@@ -321,6 +322,7 @@ async fn run_create(ctx: &ApiContext, a: CreateArgs) -> CliResult<()> {
                 .ok_or_else(|| CliError::usage(anyhow::anyhow!("invalid --to date")))?
                 .and_utc(),
         },
+        capital: Capital::default(),
         granularity,
         timezone: "UTC".into(),
         calendar: CalendarRef::Continuous24x7,

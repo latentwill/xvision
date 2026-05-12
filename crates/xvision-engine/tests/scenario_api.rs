@@ -32,6 +32,7 @@ fn valid_request() -> CreateScenarioRequest {
             start: Utc.with_ymd_and_hms(2024, 2, 3, 0, 0, 0).unwrap(),
             end: Utc.with_ymd_and_hms(2024, 2, 10, 0, 0, 0).unwrap(),
         },
+        capital: xvision_core::Capital::default(),
         granularity: BarGranularity::Hour1,
         timezone: "UTC".into(),
         calendar: CalendarRef::Continuous24x7,
