@@ -953,6 +953,15 @@ impl RunEventBus {
     pub async fn emit(&self, run_id: &str, event: RunChartEvent) {
         let _ = self.sender(run_id).await.send(event);
     }
+
+    /// Remove the broadcast sender for `run_id` from the map. Once removed,
+    /// existing subscribers will see the channel as closed (next `recv` returns
+    /// `RecvError::Closed`), giving SSE consumers a clean "stream ending" signal.
+    /// Call this after emitting the terminal `Status` event so subscribers drain
+    /// the last event before the channel drops.
+    pub async fn drop_channel(&self, run_id: &str) {
+        self.senders.lock().await.remove(run_id);
+    }
 }
 
 // ── Task 4 — build_compare_payload ─────────────────────────────────────────

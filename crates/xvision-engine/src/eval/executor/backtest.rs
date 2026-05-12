@@ -112,15 +112,6 @@ impl BacktestExecutor {
         }
     }
 
-    /// Bars + live-stream event bus (no progress channel).
-    pub fn with_bars_and_event_bus(bars: Vec<Ohlcv>, bus: Arc<RunEventBus>) -> Self {
-        Self {
-            progress: None,
-            injected_bars: Some(bars),
-            event_bus: Some(bus),
-        }
-    }
-
     /// Attach a live-stream event bus to an existing executor. Builder-style
     /// so callers can chain after `with_bars` / `with_progress`:
     ///   `BacktestExecutor::with_bars(bars).with_event_bus(bus)`.
@@ -196,12 +187,34 @@ impl Executor for BacktestExecutor {
                     metrics: metrics.clone(),
                     tokens_used,
                 });
+                self.emit_chart(
+                    &run.id,
+                    RunChartEvent::Status {
+                        phase: "completed".into(),
+                        message: None,
+                    },
+                )
+                .await;
+                if let Some(bus) = self.event_bus.as_ref() {
+                    bus.drop_channel(&run.id).await;
+                }
             }
             Err(e) => {
                 self.emit(ProgressEvent::RunFailed {
                     run_id: run.id.clone(),
                     error: e.to_string(),
                 });
+                self.emit_chart(
+                    &run.id,
+                    RunChartEvent::Status {
+                        phase: "failed".into(),
+                        message: Some(e.to_string()),
+                    },
+                )
+                .await;
+                if let Some(bus) = self.event_bus.as_ref() {
+                    bus.drop_channel(&run.id).await;
+                }
             }
         }
         result
@@ -431,40 +444,32 @@ impl BacktestExecutor {
             let marker_event = match parsed.action.as_str() {
                 "long_open" => {
                     if let (Some(price), Some(size)) = (fill.fill_price, fill.fill_size) {
-                        Some(MarkerEvent::Trade(TradeMarker {
-                            time: t,
-                            side: TradeSide::Buy,
+                        Some(MarkerEvent::Trade(make_trade_marker(
+                            TradeSide::Buy,
+                            t,
                             price,
                             size,
-                            fee: fill.fee.unwrap_or(0.0),
-                            pnl_realized: if fill.realized_pnl != 0.0 {
-                                Some(fill.realized_pnl)
-                            } else {
-                                None
-                            },
-                            decision_index: decision_idx,
-                            justification: Some(parsed.justification.clone()),
-                        }))
+                            fill.fee,
+                            fill.realized_pnl,
+                            decision_idx,
+                            &parsed.justification,
+                        )))
                     } else {
                         None
                     }
                 }
                 "short_open" | "flat" => {
                     if let (Some(price), Some(size)) = (fill.fill_price, fill.fill_size) {
-                        Some(MarkerEvent::Trade(TradeMarker {
-                            time: t,
-                            side: TradeSide::Sell,
+                        Some(MarkerEvent::Trade(make_trade_marker(
+                            TradeSide::Sell,
+                            t,
                             price,
                             size,
-                            fee: fill.fee.unwrap_or(0.0),
-                            pnl_realized: if fill.realized_pnl != 0.0 {
-                                Some(fill.realized_pnl)
-                            } else {
-                                None
-                            },
-                            decision_index: decision_idx,
-                            justification: Some(parsed.justification.clone()),
-                        }))
+                            fill.fee,
+                            fill.realized_pnl,
+                            decision_idx,
+                            &parsed.justification,
+                        )))
                     } else {
                         None
                     }
@@ -652,6 +657,35 @@ fn simulate_fill(a: SimulateFillArgs) -> FillOutcome {
         fill_size: Some(traded_units),
         fee: Some(fee),
         realized_pnl: realized - fee,
+    }
+}
+
+/// Build a `TradeMarker` from fill-level data. Extracted to avoid duplicating
+/// the identical field construction across the `long_open` and
+/// `short_open`/`flat` arms of the marker-event match.
+fn make_trade_marker(
+    side: TradeSide,
+    time: i64,
+    price: f64,
+    size: f64,
+    fee: Option<f64>,
+    realized_pnl: f64,
+    decision_index: u32,
+    justification: &str,
+) -> TradeMarker {
+    TradeMarker {
+        time,
+        side,
+        price,
+        size,
+        fee: fee.unwrap_or(0.0),
+        pnl_realized: if realized_pnl != 0.0 {
+            Some(realized_pnl)
+        } else {
+            None
+        },
+        decision_index,
+        justification: Some(justification.to_owned()),
     }
 }
 
