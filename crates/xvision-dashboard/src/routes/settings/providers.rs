@@ -60,6 +60,7 @@ pub async fn update(
     Json(req): Json<UpdateProviderRequest>,
 ) -> Result<Json<ProviderRow>, DashboardError> {
     let row = providers::update(&state.api_context(), &config_path(), &name, req).await?;
+    state.models_cache_invalidate(&name);
     Ok(Json(row))
 }
 
