@@ -328,7 +328,10 @@ impl WizardLoop {
             }
             "set_mechanical_param" => {
                 let req: authoring::SetMechanicalParamReq = serde_json::from_value(input)?;
-                xvision_engine::api::strategy::set_mechanical_param(&self.api_context, req).await
+                let out =
+                    xvision_engine::api::strategy::set_mechanical_param(&self.api_context, req)
+                        .await?;
+                Ok(serde_json::to_value(out)?)
             }
             "set_risk_config" => {
                 let req: authoring::SetRiskConfigReq = serde_json::from_value(input)?;
@@ -374,7 +377,7 @@ impl WizardLoop {
                         xvision_engine::api::Actor::Cli {
                             user: "dashboard".to_string(),
                         },
-                        self.xvn_home.clone(),
+                        self.api_context.xvn_home.clone(),
                     ),
                     req,
                 )

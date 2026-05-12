@@ -14,4 +14,4 @@ pub mod context;
 pub mod store;
 
 pub use context::ContextScope;
-pub use store::{ChatMessage, ChatSessionStore};
+pub use store::{ChatMessage, ChatSessionStore, ChatSessionSummary};
