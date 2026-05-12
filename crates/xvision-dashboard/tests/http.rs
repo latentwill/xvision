@@ -130,7 +130,9 @@ async fn strategies_list_returns_seeded_bundle() {
         .iter()
         .find(|i| i["agent_id"] == bundle_id)
         .expect("test bundle must be present");
+    assert_eq!(test_bundle["display_name"], "Dashboard Test");
     assert_eq!(test_bundle["template"], "mean_reversion");
+    assert_eq!(test_bundle["decision_cadence_minutes"], 60);
 }
 
 #[tokio::test]

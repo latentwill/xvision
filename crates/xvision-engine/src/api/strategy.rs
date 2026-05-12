@@ -30,7 +30,9 @@ use std::time::Instant;
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct StrategySummary {
     pub agent_id: String,
+    pub display_name: String,
     pub template: String,
+    pub decision_cadence_minutes: u32,
     /// Model requirement of the bundle's primary slot — trader if set,
     /// otherwise the first configured slot in (trader, intern, regime)
     /// order. None when no slot has a model_requirement. Surfaced so the
@@ -84,8 +86,10 @@ async fn list_inner(ctx: &ApiContext) -> ApiResult<Vec<StrategySummary>> {
             .map(|s| s.model_requirement.clone())
             .filter(|m| !m.trim().is_empty());
         out.push(StrategySummary {
-            agent_id: bundle.manifest.id,
-            template: bundle.manifest.template,
+            agent_id: bundle.manifest.id.clone(),
+            display_name: bundle.manifest.display_name.clone(),
+            template: bundle.manifest.template.clone(),
+            decision_cadence_minutes: bundle.manifest.decision_cadence_minutes,
             model,
         });
     }
@@ -216,6 +220,40 @@ pub async fn update_slot(ctx: &ApiContext, req: UpdateSlotReq) -> ApiResult<Upda
         ctx,
         "strategy",
         "update_slot",
+        Some(&agent_id),
+        args_json.as_deref(),
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    if result.is_ok() {
+        index_strategy_after_mutation(ctx, &store, &agent_id).await;
+    }
+    result
+}
+
+/// Set one mechanical parameter on the bundle and refresh the search index.
+pub async fn set_mechanical_param(
+    ctx: &ApiContext,
+    req: authoring::SetMechanicalParamReq,
+) -> ApiResult<serde_json::Value> {
+    let started = Instant::now();
+    let agent_id = req.id.clone();
+    let args_json = serde_json::to_string(&req).ok();
+    let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+    let result = authoring::set_mechanical_param(&store, req)
+        .await
+        .map(|_| serde_json::json!({ "ok": true }))
+        .map_err(|e| map_authoring_error(e, Some(&agent_id)));
+
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let _ = audit::record(
+        ctx,
+        "strategy",
+        "set_mechanical_param",
         Some(&agent_id),
         args_json.as_deref(),
         outcome,
