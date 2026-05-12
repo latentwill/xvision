@@ -22,7 +22,6 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { Icon } from "@/components/primitives/Icon";
-import { Pill } from "@/components/primitives/Pill";
 import { ModelPicker } from "@/components/ModelPicker";
 import { ApiError } from "@/api/client";
 import {
@@ -50,6 +49,7 @@ type Tool = {
   call: string;
   ok: boolean;
   summary: string;
+  resultSummary?: string;
   /** True between tool_call and tool_result; drives the chip spinner. */
   pending?: boolean;
   /** Raw args from tool_call; consumed by toolNarrative for inline confirmations. */
@@ -357,10 +357,10 @@ function BubbleView({
     );
   }
   const showDots = isStreaming && isLast;
-  const narratives = b.tools
-    .map((t, i) => ({ i, n: toolNarrative(t) }))
+  const logs = b.tools
+    .map((t) => ({ n: toolLogLine(t) }))
     .filter(
-      (x): x is { i: number; n: { ok: boolean; content: ReactNode } } =>
+      (x): x is { n: { ok: boolean; content: ReactNode } } =>
         x.n !== null,
     );
   return (
@@ -377,9 +377,9 @@ function BubbleView({
           <span className="text-text-3 italic">thinking…</span>
         )}
       </div>
-      {narratives.length > 0 && (
+      {logs.length > 0 && (
         <div className="mt-1.5 flex flex-col gap-1">
-          {narratives.map(({ i, n }) => (
+          {logs.map(({ n }, i) => (
             <div
               key={`narr-${i}`}
               className={`text-[12px] flex items-start gap-1.5 ${
@@ -391,24 +391,6 @@ function BubbleView({
               </span>
               <span className="leading-[1.4]">{n.content}</span>
             </div>
-          ))}
-        </div>
-      )}
-      {b.tools.length > 0 && (
-        <div className="mt-1.5 flex flex-wrap gap-1 opacity-60">
-          {b.tools.map((t, i) => (
-            <Pill key={i} tone={t.ok ? "info" : "danger"}>
-              {t.pending && (
-                <span
-                  className="inline-block w-2 h-2 mr-1 border border-current border-t-transparent rounded-full animate-spin align-middle"
-                  aria-label="running"
-                />
-              )}
-              <span className="font-mono">{t.call}</span>
-              {t.summary && (
-                <span className="text-text-3"> · {t.summary}</span>
-              )}
-            </Pill>
           ))}
         </div>
       )}
@@ -648,6 +630,7 @@ function applyEvent(
           ...a.tools[slot],
           ok: !result?.error,
           summary: summarizeResult(ev.tool, ev.result),
+          resultSummary: summarizeResult(ev.tool, ev.result),
           pending: false,
           result: ev.result,
         };
@@ -687,23 +670,24 @@ function historyToBubbles(history: ChatMessage[]): Bubble[] {
         if (prior.role === "assistant") {
           for (const tr of toolResults) {
             // Tool result content is the JSON-stringified result; surface
-            // an error chip if it parses to {error: ...}.
-            const parsed = safeParseJson(tr.content);
-            const isErr =
-              parsed &&
-              typeof parsed === "object" &&
-              parsed !== null &&
-              "error" in parsed;
+            // an error line if it parses to {error: ...}.
             // We don't know which tool_use this corresponds to without
             // the assistant's tool_use id; fall back to flipping the
             // most recent unresolved tool chip.
             if (prior.tools.length > 0) {
               const tool = prior.tools[prior.tools.length - 1];
+              const parsedResult = safeParseJson(tr.content);
+              const isErr =
+                parsedResult &&
+                typeof parsedResult === "object" &&
+                parsedResult !== null &&
+                "error" in parsedResult;
               prior.tools[prior.tools.length - 1] = {
                 ...tool,
                 ok: !isErr,
-                summary: tool.summary,
-                result: parsed ?? undefined,
+                summary: summarizeArgs(tool.call, tool.args),
+                resultSummary: summarizeResult(tool.call, parsedResult),
+                result: parsedResult ?? undefined,
               };
             }
           }
@@ -797,16 +781,12 @@ function summarizeResult(tool: string, result: unknown): string {
 }
 
 // ---------------------------------------------------------------------------
-// Tool narratives — human-readable confirmation lines rendered above the
-// (dimmer) raw tool pills. Returns null for tools still pending (the chip
-// spinner is the cue) and for read-only tools whose result is already
-// reflected in the model's prose.
+// Tool transcript lines — explicit in-thread call/result logging that
+// shows each xvn invocation and final result.
 
-function toolNarrative(
+function toolLogLine(
   t: Tool,
 ): { ok: boolean; content: ReactNode } | null {
-  if (t.pending) return null;
-  if (t.call === "get_strategy" || t.call === "list_templates") return null;
   const args = (t.args ?? {}) as Record<string, unknown>;
   const result = (t.result ?? {}) as Record<string, unknown>;
   const errorMsg =
@@ -822,13 +802,42 @@ function toolNarrative(
     };
   }
   switch (t.call) {
+    case "get_strategy":
+    case "list_templates": {
+      const arg = args["template"] ?? args["id"] ?? "all";
+      return {
+        ok: true,
+        content: t.pending ? (
+          <>
+            Calling <code className="font-mono text-text">{t.call}</code> with{" "}
+            <code className="font-mono text-text-2">{String(arg)}</code> …
+          </>
+        ) : (
+          <>
+            {t.call} returned{" "}
+            <span className="font-mono text-text">{t.resultSummary ?? ""}</span>
+          </>
+        ),
+      };
+    }
     case "create_strategy": {
       const name = String(args["name"] ?? "(unnamed)");
       const template = String(args["template"] ?? "");
       const id = typeof result["id"] === "string" ? result["id"] : "";
       return {
         ok: true,
-        content: (
+        content: t.pending ? (
+          <>
+            Calling <code className="font-mono text-text">create_strategy</code>{" "}
+            for <strong className="text-text font-semibold">{name}</strong>
+            {template && (
+              <>
+                {" "}from{" "}
+                <code className="font-mono text-text-2">{template}</code>
+              </>
+            )}
+          </>
+        ) : (
           <>
             Created strategy{" "}
             <strong className="text-text font-semibold">{name}</strong>
@@ -860,7 +869,8 @@ function toolNarrative(
         ok: true,
         content: (
           <>
-            Set <code className="font-mono text-text">{key}</code> ={" "}
+            {t.pending ? "Calling" : "Set"} {" "}
+            <code className="font-mono text-text">{key}</code> ={" "}
             <code className="font-mono text-text">{value}</code>
           </>
         ),
@@ -906,7 +916,11 @@ function toolNarrative(
         : "";
       return {
         ok: true,
-        content: updated ? (
+        content: t.pending ? (
+          <>
+            Updating <code className="font-mono text-text">{slot}</code>…
+          </>
+        ) : updated ? (
           <>
             Updated <code className="font-mono text-text">{slot}</code>:{" "}
             {updated}
@@ -918,8 +932,59 @@ function toolNarrative(
         ),
       };
     }
+    case "run_eval": {
+      if (t.pending) {
+        return {
+          ok: true,
+          content: (
+            <>
+              Running <code className="font-mono text-text">eval</code>...
+            </>
+          ),
+        };
+      }
+      const evaluation = String(args["evaluation_id"] ?? "");
+      return {
+        ok: true,
+        content: evaluation ? (
+          <>
+            Eval run {" "}
+            <code className="font-mono text-text">{evaluation}</code>{" "}
+            {t.resultSummary ? (
+              <span className="text-text-2">({t.resultSummary})</span>
+            ) : null}
+          </>
+        ) : (
+          <>Eval action complete</>
+        ),
+      };
+    }
     default:
-      return null;
+      if (t.pending) {
+        return {
+          ok: true,
+          content: (
+            <>
+              Calling <code className="font-mono text-text">{t.call}</code>{" "}
+              <span className="text-text-2">
+                {summarizeArgs(t.call, t.args)}
+              </span>
+              …
+            </>
+          ),
+        };
+      }
+      return {
+        ok: true,
+        content: (
+          <>
+            {t.call} completed
+            {t.resultSummary ? (
+              <span className="text-text-2">: {t.resultSummary}</span>
+            ) : null}
+          </>
+        ),
+      };
   }
 }
 

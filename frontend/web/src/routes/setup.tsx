@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 
 import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
-import { Pill } from "@/components/primitives/Pill";
 
 import { streamChat, type WizardEvent } from "@/api/wizard";
 import { ApiError } from "@/api/client";
@@ -16,7 +15,15 @@ import { listProviders, settingsKeys } from "@/api/settings";
 type AssistantBubble = {
   role: "assistant";
   text: string;
-  tools: { call: string; ok: boolean; summary: string }[];
+  tools: {
+    call: string;
+    ok: boolean;
+    summary: string;
+    resultSummary?: string;
+    pending?: boolean;
+    args?: unknown;
+    result?: unknown;
+  }[];
 };
 type UserBubble = { role: "user"; text: string };
 type Bubble = UserBubble | AssistantBubble;
@@ -187,6 +194,8 @@ function applyEvent(
         call: ev.tool,
         ok: true,
         summary: summarizeArgs(ev.tool, ev.args),
+        args: ev.args,
+        pending: true,
       });
     } else if (ev.type === "tool_result") {
       // Match the most recent same-named call (matches the server-side
@@ -203,7 +212,10 @@ function applyEvent(
         a.tools[slot] = {
           ...a.tools[slot],
           ok: !result?.error,
-          summary: summarizeResult(ev.tool, ev.result),
+          summary: summarizeArgs(ev.tool, a.tools[slot].args),
+          resultSummary: summarizeResult(ev.tool, ev.result),
+          pending: false,
+          result: ev.result,
         };
       }
     } else if (ev.type === "done") {
@@ -310,17 +322,115 @@ function BubbleView({ b }: { b: Bubble }) {
         {b.text || <span className="text-text-3 italic">thinking…</span>}
       </div>
       {b.tools.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {b.tools.map((t, i) => (
-            <Pill key={i} tone={t.ok ? "info" : "danger"}>
-              <span className="font-mono">{t.call}</span>
-              {t.summary && <span className="text-text-3"> · {t.summary}</span>}
-            </Pill>
-          ))}
+        <div className="mt-2 flex flex-col gap-1">
+          {b.tools.map((t, i) => {
+            const row = toolLogLine(t);
+            if (!row) return null;
+            return (
+              <div
+                key={`tool-${i}`}
+                className={`text-[13px] leading-snug flex items-start gap-1.5 ${
+                  row.ok ? "text-emerald-300" : "text-rose-300"
+                }`}
+              >
+                <span className="leading-[1.4] flex-shrink-0">
+                  {row.ok ? "✓" : "✗"}
+                </span>
+                <span className="leading-[1.4]">{row.content}</span>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
   );
+}
+
+function toolLogLine(
+  t: {
+    call: string;
+    ok: boolean;
+    summary: string;
+    resultSummary?: string;
+    pending?: boolean;
+    args?: unknown;
+    result?: unknown;
+  },
+): { ok: boolean; content: ReactNode } | null {
+  const args = (t.args ?? {}) as Record<string, unknown>;
+  const result = (t.result ?? {}) as Record<string, unknown>;
+
+  if (typeof result.error === "string") {
+    return {
+      ok: false,
+      content: (
+        <>
+          {t.call} failed: <span className="font-mono text-text">{result.error}</span>
+        </>
+      ),
+    };
+  }
+
+  if (t.pending) {
+    return {
+      ok: true,
+      content: (
+        <>
+          Calling <code className="font-mono text-text">{t.call}</code> with{" "}
+          <code className="font-mono text-text-2">{t.summary}</code>
+        </>
+      ),
+    };
+  }
+
+  switch (t.call) {
+    case "create_strategy": {
+      const id = String(args["id"] ?? result["id"] ?? "");
+      return {
+        ok: true,
+        content: (
+          <>
+            Created strategy{" "}
+            <strong className="font-semibold text-text">
+              {String(args["name"] ?? "(unnamed)")}
+            </strong>
+            {id && <> (<span className="font-mono">{id}</span>)</>}
+          </>
+        ),
+      };
+    }
+    case "list_templates":
+      return {
+        ok: true,
+        content: `Listed templates: ${t.resultSummary ?? "loaded"}`,
+      };
+    case "get_strategy":
+      return { ok: true, content: `Loaded strategy ${String(args["id"] ?? "")}` };
+    case "validate_draft":
+      return {
+        ok: t.resultSummary ? t.resultSummary === "ok" : true,
+        content: `Validation ${t.resultSummary === "ok" ? "passed" : "completed"}`,
+      };
+    case "set_mechanical_param":
+      return {
+        ok: true,
+        content: (
+          <>
+            Set <code className="font-mono text-text">{String(args["key"] ?? "?")}</code>{" "}
+            = <code className="font-mono text-text">{String(args["value"] ?? "")}</code>
+          </>
+        ),
+      };
+    case "set_risk_config":
+      return { ok: true, content: `Risk config updated (${t.resultSummary ?? "ok"})` };
+    case "update_slot":
+      return { ok: true, content: `Updated slot ${String(args["slot"] ?? "?")}` };
+    default:
+      return {
+        ok: true,
+        content: t.resultSummary ? `${t.call}: ${t.resultSummary}` : `${t.call} complete`,
+      };
+  }
 }
 
 function Composer({
