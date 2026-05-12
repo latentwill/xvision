@@ -1,7 +1,8 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
+import { ModelPicker } from "@/components/ModelPicker";
 import { ApiError } from "@/api/client";
 import {
   addProvider,
@@ -118,11 +119,6 @@ export function SettingsProvidersRoute() {
     onSuccess: () => qc.invalidateQueries({ queryKey: settingsKeys.providers() }),
   });
 
-  const promote = useMutation({
-    mutationFn: (name: string) => setDefaultProvider(name),
-    onSuccess: () => qc.invalidateQueries({ queryKey: settingsKeys.providers() }),
-  });
-
   if (list.isPending) {
     return (
       <Card className="p-6 animate-pulse">
@@ -153,9 +149,11 @@ export function SettingsProvidersRoute() {
   }
 
   const rows = list.data.providers;
+  const defaultModel = list.data.default_model ?? null;
 
   return (
     <div className="space-y-5">
+      <DefaultLlmCard rows={rows} defaultModel={defaultModel} />
       <Card className="p-5">
         <div className="flex items-center justify-between mb-3">
           <div>
@@ -209,16 +207,7 @@ export function SettingsProvidersRoute() {
                 <ProviderRowView
                   key={p.name}
                   row={p}
-                  canPromote={
-                    rows.some(
-                      (r) =>
-                        r.name !== p.name &&
-                        r.api_key_set &&
-                        !r.synthetic,
-                    )
-                  }
                   onRemove={() => remove.mutate(p.name)}
-                  onPromote={() => promote.mutate(p.name)}
                   removeError={
                     remove.variables === p.name && remove.isError
                       ? errorMessage(remove.error)
@@ -226,14 +215,6 @@ export function SettingsProvidersRoute() {
                   }
                   removeBusy={
                     remove.variables === p.name && remove.isPending
-                  }
-                  promoteBusy={
-                    promote.variables === p.name && promote.isPending
-                  }
-                  promoteError={
-                    promote.variables === p.name && promote.isError
-                      ? errorMessage(promote.error)
-                      : null
                   }
                 />
               ))}
@@ -247,30 +228,21 @@ export function SettingsProvidersRoute() {
 
 function ProviderRowView({
   row,
-  canPromote,
   onRemove,
-  onPromote,
   removeError,
   removeBusy,
-  promoteBusy,
-  promoteError,
 }: {
   row: ProviderRow;
-  canPromote: boolean;
   onRemove: () => void;
-  onPromote: () => void;
   removeError: string | null;
   removeBusy: boolean;
-  promoteBusy: boolean;
-  promoteError: string | null;
 }) {
-  // Default rows are locked from deletion because the intern slot needs
-  // a target. Operators can switch the default to another configured
-  // provider first (the "set as default" button below); that unlocks the
-  // old default for removal.
+  // The workspace default LLM is locked from deletion — removing it
+  // would orphan the default. The operator changes the default via the
+  // top-of-page Default-LLM card, which unlocks the old default.
   const locked = row.is_default;
   const lockReason = locked
-    ? "Workspace default — promote another provider first, then come back to remove this one."
+    ? "Workspace default — change the default LLM above before removing this provider."
     : null;
   const [managing, setManaging] = useState(false);
   const test = useMutation<TestConnectionReport, unknown, void>({
@@ -325,16 +297,6 @@ function ProviderRowView({
                   : `Models · ${row.enabled_models.length}`}
               </button>
             ) : null}
-            {!row.is_default && row.api_key_set ? (
-              <button
-                onClick={onPromote}
-                disabled={promoteBusy}
-                title="Make this the workspace default (intern provider)"
-                className="px-2 py-1 rounded text-[12px] border border-border text-text-2 hover:text-gold hover:border-gold disabled:opacity-30"
-              >
-                {promoteBusy ? "Switching…" : "Set as default"}
-              </button>
-            ) : null}
             <button
               onClick={onRemove}
               disabled={locked || removeBusy}
@@ -370,22 +332,119 @@ function ProviderRowView({
           </td>
         </tr>
       ) : null}
-      {promoteError ? (
-        <tr className="border-t border-border-soft/40">
-          <td colSpan={5} className="py-2 pr-0 text-[12px] text-danger">
-            {promoteError}
-          </td>
-        </tr>
-      ) : null}
-      {locked && !canPromote ? (
-        <tr className="border-t border-border-soft/40">
-          <td colSpan={5} className="py-2 pr-0 text-[12px] text-text-3">
-            Add another provider with an API key, then you can demote this
-            one and remove it.
-          </td>
-        </tr>
-      ) : null}
     </>
+  );
+}
+
+function DefaultLlmCard({
+  rows,
+  defaultModel,
+}: {
+  rows: ProviderRow[];
+  defaultModel: string | null;
+}) {
+  const qc = useQueryClient();
+  const eligible = rows.filter((r) => r.api_key_set && !r.synthetic);
+  const currentDefault = eligible.find((r) => r.is_default) ?? null;
+
+  const [provider, setProvider] = useState<string | null>(
+    currentDefault?.name ?? null,
+  );
+  const [model, setModel] = useState<string>(defaultModel ?? "");
+
+  // Sync local form state when the upstream query data changes (e.g.
+  // after a successful save, or if another tab edited the default).
+  useEffect(() => {
+    setProvider(currentDefault?.name ?? null);
+    setModel(defaultModel ?? "");
+  }, [currentDefault?.name, defaultModel]);
+
+  const save = useMutation({
+    mutationFn: async () => {
+      if (!provider) throw new Error("pick a provider");
+      await setDefaultProvider(provider, {
+        model: model.trim() ? model.trim() : undefined,
+      });
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: settingsKeys.providers() });
+    },
+  });
+
+  if (eligible.length === 0) {
+    // No configured providers yet — the "add your first provider" flow
+    // below owns the empty state; don't surface a stub card.
+    return null;
+  }
+
+  const dirty =
+    provider !== (currentDefault?.name ?? null) ||
+    model !== (defaultModel ?? "");
+
+  return (
+    <Card className="p-5">
+      <h3 className="m-0 font-serif font-medium text-[20px] tracking-tight">
+        Default LLM
+      </h3>
+      <p className="m-0 mt-1 mb-4 text-text-3 text-[12px]">
+        The provider and model xvision uses by default for the wizard, the
+        chat-rail, and any agent slot that doesn't override.
+      </p>
+      <div className="grid grid-cols-1 md:grid-cols-[1fr_2fr_auto] gap-3 md:items-end">
+        <div>
+          <label className="block text-[12px] text-text-2 mb-1">Provider</label>
+          <select
+            value={provider ?? ""}
+            onChange={(e) => {
+              const next = e.target.value || null;
+              setProvider(next);
+              if (next !== provider) setModel("");
+            }}
+            className="w-full px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono focus:outline-none focus:border-text-3"
+          >
+            <option value="">— pick a provider —</option>
+            {eligible.map((r) => (
+              <option key={r.name} value={r.name}>
+                {r.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="block text-[12px] text-text-2 mb-1">Model</label>
+          <ModelPicker
+            rows={rows}
+            loading={false}
+            provider={provider}
+            model={model}
+            onChange={(_p, m) => setModel(m)}
+            filterProvider={provider ?? undefined}
+            className="w-full px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono focus:outline-none focus:border-text-3"
+            placeholder={
+              provider ? "— pick a model —" : "— pick a provider first —"
+            }
+            emptyHint={
+              provider
+                ? `no enabled models for ${provider} — pick them via Models below`
+                : "— pick a provider first —"
+            }
+          />
+        </div>
+        <button
+          type="button"
+          disabled={!dirty || !provider || save.isPending}
+          onClick={() => save.mutate()}
+          className="px-3 py-2 rounded text-[13px] font-medium border border-gold text-gold hover:bg-gold/10 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {save.isPending ? "Saving…" : "Save"}
+        </button>
+      </div>
+      {save.isError ? (
+        <p className="m-0 mt-2 text-[12px] text-rose-300 font-mono">
+          {errorMessage(save.error)}
+        </p>
+      ) : null}
+    </Card>
   );
 }
 

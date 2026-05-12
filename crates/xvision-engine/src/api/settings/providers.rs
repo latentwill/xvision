@@ -30,6 +30,12 @@ use crate::api::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProvidersReport {
     pub providers: Vec<ProviderRow>,
+    /// The currently-configured model on `[default_llm]`. Surfaced
+    /// alongside the per-row `is_default` flag so the Default-LLM UI
+    /// can pre-fill its model dropdown without a second fetch. None
+    /// when the operator hasn't set a model yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_model: Option<String>,
 }
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
@@ -533,7 +539,18 @@ async fn list_inner(config_path: &Path, xvn_home: &Path) -> ApiResult<ProvidersR
         .filter(|p| !p.name.starts_with('_'))
         .map(|p| row_from_entry(p, &cfg, intern_kind, &secrets))
         .collect();
-    Ok(ProvidersReport { providers })
+    let default_model = {
+        let m = cfg.default_llm.model.trim();
+        if m.is_empty() {
+            None
+        } else {
+            Some(m.to_string())
+        }
+    };
+    Ok(ProvidersReport {
+        providers,
+        default_model,
+    })
 }
 
 async fn show_inner(
