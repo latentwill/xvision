@@ -368,3 +368,13 @@ Hermes Agent (NousResearch) is the OpenClaw successor — its own README documen
   - **Tours vs the chat rail** — the chat rail (DESIGN.md §7) is the long-tail Q&A surface; tours are the up-front "here's what's on this screen" surface. They complement, don't overlap.
 - **Why noted:** DESIGN.md Appendix C explicitly ruled out "In-app onboarding tour beyond the first-run wizard" for v1. That's correct for the v1 cut, but the Inspector + Eval surfaces are dense enough that anyone past the user himself will need a guided pass on first encounter, and "go read DESIGN.md" doesn't scale. Cheap to add (driver.js is one of the most lightweight tour libs), incremental (one tour at a time), and removable (a flag-toggle disables all tours if they get in the way).
 - **Blocking:** non-blocking. Quality-of-life / onboarding polish.
+
+### F37 [Shared]. Orphan recovery for remote CLI jobs after dashboard restart
+
+- **Trigger:** any operational use of `/api/cli/jobs*` on the tailscale-served dashboard nodes beyond one-shot smoke tests.
+- **Scope:** the remote CLI backend now exists in `xvision-dashboard` (`routes/cli.rs`, `cli_jobs/{model,store,runner}.rs`, migration `013_cli_jobs.sql`, and `tests/cli_jobs_routes.rs`), but in-flight jobs are still tracked by an in-memory runner. If the dashboard process restarts, a persisted `running` job can become orphaned because there is no startup sweep equivalent to the eval-run cleanup path in `xvision-dashboard/src/server.rs`.
+  - add a startup sweep that marks stale `queued` / `running` CLI jobs as failed-or-cancelled with an explicit restart/orphan reason
+  - document the post-restart contract for `GET /api/cli/jobs/:id` and `/output`
+  - add at least one restart/orphan integration test once cargo verification is available
+- **Why noted:** the agent-access plan originally assumed the remote CLI backend was missing, but execution confirmed the main backend surface already exists. The real remaining backend gap is restart/orphan handling, not route creation or SQLite persistence.
+- **Blocking:** non-blocking for tailscale-only private use; blocking before treating remote CLI jobs as a durable operator surface.

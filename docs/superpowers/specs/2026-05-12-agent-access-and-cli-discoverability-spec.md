@@ -19,6 +19,11 @@ This spec covers:
 - CLI discoverability and surface completeness checks
 - tailscale-only remote execution guidance and alignment with the existing remote CLI design
 
+Implementation note: the dashboard-backed remote CLI job backend already exists
+in this codebase. This pass therefore focuses on documentation/discoverability
+alignment plus explicit follow-up notes for the remaining operational/security
+gaps rather than re-implementing the backend from scratch.
+
 This spec does **not** cover the UI/state consistency fixes from the QA surface pass. Those belong to the companion QA Pass 4 surface-consistency spec.
 
 ## Product Rules

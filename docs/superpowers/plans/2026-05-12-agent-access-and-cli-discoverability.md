@@ -6,6 +6,8 @@
 
 **Architecture:** Split the work into two layers. First, repair the documentation/discoverability surface so GitHub readers, Claude Code users, and CLI users all get the same story about skills and commands. Then add the first executable remote-control slice inside `xvision-dashboard`: a shell-free job API that runs typed `xvn` argv arrays on the local Tailscale-served node and persists job/output state in the existing SQLite database.
 
+**Implementation discovery note:** During execution we confirmed that the core dashboard remote CLI backend described in Tasks 3-4 already exists in this codebase (`/api/cli/jobs*`, persistence, SSE, and HTTP tests). The remaining live work from this plan is therefore the documentation/discoverability slice plus follow-up notes on the actual gap: restart/orphan-job recovery and broader connection/security hardening.
+
 **Tech Stack:** Markdown docs (`README.md`, `MANUAL.md`, `.claude/skills/*`, crate READMEs), Rust workspace (`xvision-cli`, `xvision-dashboard`, `xvision-engine`), Axum, SQLx/SQLite migrations, async process management with Tokio, dashboard integration tests, `cargo`.
 
 ---

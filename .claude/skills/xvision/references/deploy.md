@@ -48,6 +48,18 @@ for h in xvn.tail2bb69.ts.net xvnej.tail2bb69.ts.net; do
 done
 ```
 
+## Remote control path
+
+Live-node agent control is tailscale-only in the current design. Use:
+
+- `https://xvn.tail2bb69.ts.net`
+- `https://xvnej.tail2bb69.ts.net`
+
+The preferred remote path is the dashboard-served typed `xvn` job surface, not
+generic SSH orchestration. See
+`docs/superpowers/specs/2026-05-12-remote-cli-over-tailscale-design.md` for the
+remote CLI contract and follow-up security boundary.
+
 ## Pitfalls (each bit at least once)
 
 - **Netns dependency**: if the `ts-*` sidecar restarts (or you `docker compose restart` it), dependent containers using `network_mode: service:ts-*` lose their netns. Always `--force-recreate` the app afterwards.
