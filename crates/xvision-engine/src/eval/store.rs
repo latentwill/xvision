@@ -112,6 +112,27 @@ impl RunStore {
         Ok(())
     }
 
+    /// Sweep any runs left in `Queued` or `Running` status from a
+    /// previous process: flip them to `Failed` with the given reason
+    /// and set `completed_at = now`. Called once at dashboard startup
+    /// because background tasks die with the process — without this
+    /// sweep, a crash leaves rows visually "in flight" forever.
+    /// Returns the number of rows updated.
+    pub async fn fail_active_runs(&self, reason: &str) -> Result<u64> {
+        let now = Utc::now().to_rfc3339();
+        let res = sqlx::query(
+            "UPDATE eval_runs \
+             SET status = 'failed', completed_at = ?, error = ? \
+             WHERE status IN ('queued', 'running')",
+        )
+        .bind(&now)
+        .bind(reason)
+        .execute(&self.pool)
+        .await
+        .context("fail active eval_runs")?;
+        Ok(res.rows_affected())
+    }
+
     /// Mark a run completed: persist metrics_json, set completed_at = now,
     /// flip status to Completed. Idempotent if called twice (the second call
     /// just refreshes completed_at).
