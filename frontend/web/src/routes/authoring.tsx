@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
+import { ModelPicker } from "@/components/ModelPicker";
 import { ApiError } from "@/api/client";
 import {
   addStrategyAgent,
@@ -12,18 +13,27 @@ import {
   removeStrategyAgent,
   setRiskConfig,
   strategyKeys,
+  updateSlot,
   validateDraft,
+  type LLMSlot,
+  type RiskConfig,
   type Strategy,
+  type UpdateSlotBody,
   type ValidateDraftOut,
 } from "@/api/strategies";
 import { listAgents } from "@/api/agents";
 import { getStrategyChart, strategyChartKeys } from "@/api/chart";
 import { StrategyChart } from "@/components/chart/StrategyChart";
+import { listProviders, settingsKeys } from "@/api/settings";
 
-const RISK_PRESETS: { key: string; label: string }[] = [
-  { key: "conservative", label: "Conservative" },
-  { key: "balanced", label: "Balanced" },
-  { key: "aggressive", label: "Aggressive" },
+const SLOT_ROLES: {
+  role: "regime" | "intern" | "trader";
+  label: string;
+  required: boolean;
+}[] = [
+  { role: "regime", label: "Regime", required: false },
+  { role: "intern", label: "Intern", required: false },
+  { role: "trader", label: "Trader", required: true },
 ];
 
 export function AuthoringRoute() {
@@ -129,6 +139,22 @@ function BundleEditor({ bundle }: { bundle: Strategy }) {
     <>
       <ManifestCard bundle={bundle} />
       <AgentsCard bundle={bundle} />
+      {SLOT_ROLES.map(({ role, label, required }) => (
+        <SlotCard
+          key={role}
+          id={bundle.manifest.id}
+          role={role}
+          label={label}
+          required={required}
+          slot={
+            role === "regime"
+              ? bundle.regime_slot
+              : role === "intern"
+                ? bundle.intern_slot
+                : bundle.trader_slot
+          }
+        />
+      ))}
       <RiskCard bundle={bundle} />
       <MechanicalParamsCard bundle={bundle} />
     </>
@@ -334,14 +360,163 @@ function ManifestCard({ bundle }: { bundle: Strategy }) {
   );
 }
 
-function RiskCard({ bundle }: { bundle: Strategy }) {
+function SlotCard({
+  id,
+  role,
+  label,
+  required,
+  slot,
+}: {
+  id: string;
+  role: "regime" | "intern" | "trader";
+  label: string;
+  required: boolean;
+  slot: LLMSlot | null;
+}) {
   const qc = useQueryClient();
+  const providers = useQuery({
+    queryKey: settingsKeys.providers(),
+    queryFn: listProviders,
+  });
+  const [prompt, setPrompt] = useState(slot?.prompt ?? "");
+  const [model, setModel] = useState(slot?.model_requirement ?? "");
+  const [tools, setTools] = useState((slot?.allowed_tools ?? []).join(", "));
   const [savedFlash, setSavedFlash] = useState(false);
-  const apply = useMutation({
-    mutationFn: (preset: string) =>
-      setRiskConfig(bundle.manifest.id, { preset }),
+
+  // Reset when the underlying slot's saved values change.
+  useEffect(() => {
+    setPrompt(slot?.prompt ?? "");
+    setModel(slot?.model_requirement ?? "");
+    setTools((slot?.allowed_tools ?? []).join(", "));
+  }, [slot?.prompt, slot?.model_requirement, slot?.allowed_tools]);
+
+  const dirty =
+    prompt !== (slot?.prompt ?? "") ||
+    model !== (slot?.model_requirement ?? "") ||
+    tools !== (slot?.allowed_tools ?? []).join(", ");
+
+  const save = useMutation({
+    mutationFn: (body: UpdateSlotBody) => updateSlot(id, role, body),
     onSuccess: () => {
       setSavedFlash(true);
+      window.setTimeout(() => setSavedFlash(false), 1800);
+      qc.invalidateQueries({ queryKey: strategyKeys.detail(id) });
+    },
+  });
+
+  function onSave() {
+    const body: UpdateSlotBody = {};
+    if (prompt !== (slot?.prompt ?? "")) body.prompt = prompt;
+    if (model !== (slot?.model_requirement ?? ""))
+      body.model_requirement = model;
+    const parsedTools = tools
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean);
+    if (parsedTools.join(",") !== (slot?.allowed_tools ?? []).join(","))
+      body.allowed_tools = parsedTools;
+    if (Object.keys(body).length === 0) return;
+    save.mutate(body);
+  }
+
+  return (
+    <Card>
+      <SectionHeader
+        label={`${label} slot`}
+        hint={
+          slot
+            ? `${role} · model: ${slot.model_requirement || "(none)"}`
+            : required
+              ? "Required — not set"
+              : "Optional · not set"
+        }
+      />
+      <div className="px-5 pb-5 space-y-3">
+        <Field label="Prompt">
+          <textarea
+            className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono leading-snug min-h-[140px]"
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            placeholder={`System prompt for the ${role} slot…`}
+          />
+        </Field>
+        <Field
+          label="Model requirement"
+          hint="Pick a configured model below, or type a constraint pattern (e.g. anthropic.claude-sonnet-4.6+)."
+        >
+          <div className="space-y-2">
+            <ModelPicker
+              rows={providers.data?.providers ?? []}
+              loading={providers.isPending}
+              provider={
+                providers.data?.providers.find((p) =>
+                  p.enabled_models.includes(model),
+                )?.name ?? null
+              }
+              model={model}
+              onChange={(_p, m) => setModel(m)}
+              className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
+              placeholder="— pick a configured model —"
+              ariaLabel={`Model requirement for ${role} slot`}
+            />
+            <input
+              className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              placeholder="or type a constraint…"
+            />
+          </div>
+        </Field>
+        <Field
+          label="Allowed tools"
+          hint="Comma-separated tool names from the registry."
+        >
+          <input
+            className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
+            value={tools}
+            onChange={(e) => setTools(e.target.value)}
+            placeholder="ohlcv, indicator_panel"
+          />
+        </Field>
+
+        <div className="flex items-center gap-3 pt-1">
+          <button
+            onClick={onSave}
+            disabled={!dirty || save.isPending}
+            className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft disabled:opacity-40 disabled:hover:bg-gold transition-colors"
+          >
+            {save.isPending ? "Saving…" : "Save slot"}
+          </button>
+          {savedFlash ? (
+            <span className="text-[12px] text-success">Saved.</span>
+          ) : save.isError ? (
+            <span className="text-[12px] text-danger">
+              {errorMessage(save.error)}
+            </span>
+          ) : null}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function RiskCard({ bundle }: { bundle: Strategy }) {
+  const qc = useQueryClient();
+  const [form, setForm] = useState(() => riskFormFromConfig(bundle.risk));
+  const [savedFlash, setSavedFlash] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setForm(riskFormFromConfig(bundle.risk));
+    setLocalError(null);
+  }, [bundle.risk]);
+
+  const apply = useMutation({
+    mutationFn: (explicit: RiskConfig) =>
+      setRiskConfig(bundle.manifest.id, { explicit }),
+    onSuccess: () => {
+      setSavedFlash(true);
+      setLocalError(null);
       window.setTimeout(() => setSavedFlash(false), 1800);
       qc.invalidateQueries({
         queryKey: strategyKeys.detail(bundle.manifest.id),
@@ -351,57 +526,144 @@ function RiskCard({ bundle }: { bundle: Strategy }) {
 
   const r = bundle.risk;
   const currentBasis = bundle.manifest.risk_preset_or_config;
+  const dirty =
+    form.risk_pct_per_trade !== (r.risk_pct_per_trade * 100).toFixed(2) ||
+    form.max_concurrent_positions !== String(r.max_concurrent_positions) ||
+    form.max_leverage !== String(r.max_leverage) ||
+    form.stop_loss_atr_multiple !== String(r.stop_loss_atr_multiple) ||
+    form.daily_loss_kill_pct !== (r.daily_loss_kill_pct * 100).toFixed(2);
+
+  function onChange<K extends keyof RiskFormState>(key: K, value: string) {
+    setForm((prev) => ({ ...prev, [key]: value }));
+    setLocalError(null);
+  }
+
+  function onSave() {
+    const riskPerTrade = Number(form.risk_pct_per_trade);
+    const maxConcurrentPositions = Number(form.max_concurrent_positions);
+    const maxLeverage = Number(form.max_leverage);
+    const stopLossAtr = Number(form.stop_loss_atr_multiple);
+    const dailyLossKill = Number(form.daily_loss_kill_pct);
+
+    if (!Number.isFinite(riskPerTrade) || riskPerTrade <= 0) {
+      setLocalError("Risk per trade must be > 0");
+      return;
+    }
+    if (
+      !Number.isFinite(maxConcurrentPositions) ||
+      maxConcurrentPositions < 1
+    ) {
+      setLocalError("Max concurrent positions must be at least 1");
+      return;
+    }
+    if (!Number.isFinite(maxLeverage) || maxLeverage <= 0) {
+      setLocalError("Max leverage must be > 0");
+      return;
+    }
+    if (!Number.isFinite(stopLossAtr) || stopLossAtr <= 0) {
+      setLocalError("Stop-loss ATR multiple must be > 0");
+      return;
+    }
+    if (!Number.isFinite(dailyLossKill) || dailyLossKill <= 0) {
+      setLocalError("Daily loss kill must be > 0");
+      return;
+    }
+
+    apply.mutate({
+      risk_pct_per_trade: riskPerTrade / 100,
+      max_concurrent_positions: maxConcurrentPositions,
+      max_leverage: maxLeverage,
+      stop_loss_atr_multiple: stopLossAtr,
+      daily_loss_kill_pct: dailyLossKill / 100,
+    });
+  }
 
   return (
     <Card>
       <SectionHeader label="Risk" hint={`Currently: ${currentBasis}`} />
       <div className="px-5 pb-5 space-y-4">
-        <div className="flex items-center gap-2">
-          {RISK_PRESETS.map((p) => (
-            <button
-              key={p.key}
-              onClick={() => apply.mutate(p.key)}
-              disabled={apply.isPending || currentBasis === p.key}
-              className={`px-3 py-2 rounded text-[13px] font-medium border transition-colors ${
-                currentBasis === p.key
-                  ? "bg-gold text-bg border-gold"
-                  : "border-border text-text-2 hover:text-text hover:border-text-3"
-              } disabled:opacity-50`}
-            >
-              {p.label}
-            </button>
-          ))}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <Field label="Risk per trade (%)">
+            <input
+              className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
+              value={form.risk_pct_per_trade}
+              onChange={(e) => onChange("risk_pct_per_trade", e.target.value)}
+            />
+          </Field>
+          <Field label="Max concurrent positions">
+            <input
+              className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
+              value={form.max_concurrent_positions}
+              onChange={(e) =>
+                onChange("max_concurrent_positions", e.target.value)
+              }
+            />
+          </Field>
+          <Field label="Max leverage">
+            <input
+              className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
+              value={form.max_leverage}
+              onChange={(e) => onChange("max_leverage", e.target.value)}
+            />
+          </Field>
+          <Field label="Stop-loss ATR multiple">
+            <input
+              className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
+              value={form.stop_loss_atr_multiple}
+              onChange={(e) =>
+                onChange("stop_loss_atr_multiple", e.target.value)
+              }
+            />
+          </Field>
+          <Field label="Daily loss kill (%)">
+            <input
+              className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
+              value={form.daily_loss_kill_pct}
+              onChange={(e) => onChange("daily_loss_kill_pct", e.target.value)}
+            />
+          </Field>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={onSave}
+            disabled={!dirty || apply.isPending}
+            className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft disabled:opacity-40 disabled:hover:bg-gold transition-colors"
+          >
+            {apply.isPending ? "Saving…" : "Save risk"}
+          </button>
           {savedFlash ? (
-            <span className="text-[12px] text-success ml-2">Applied.</span>
+            <span className="text-[12px] text-success">Saved.</span>
+          ) : localError ? (
+            <span className="text-[12px] text-danger">{localError}</span>
           ) : apply.isError ? (
-            <span className="text-[12px] text-danger ml-2">
+            <span className="text-[12px] text-danger">
               {errorMessage(apply.error)}
             </span>
           ) : null}
         </div>
-
-        <dl className="grid grid-cols-2 gap-y-2 text-[13px] text-text-2">
-          <RiskRow
-            label="Risk per trade"
-            value={`${(r.risk_pct_per_trade * 100).toFixed(2)}%`}
-          />
-          <RiskRow
-            label="Max concurrent positions"
-            value={String(r.max_concurrent_positions)}
-          />
-          <RiskRow label="Max leverage" value={`${r.max_leverage.toFixed(1)}x`} />
-          <RiskRow
-            label="Stop-loss ATR ×"
-            value={r.stop_loss_atr_multiple.toFixed(1)}
-          />
-          <RiskRow
-            label="Daily loss kill"
-            value={`${(r.daily_loss_kill_pct * 100).toFixed(2)}%`}
-          />
-        </dl>
       </div>
     </Card>
   );
+}
+
+type RiskFormState = {
+  risk_pct_per_trade: string;
+  max_concurrent_positions: string;
+  max_leverage: string;
+  stop_loss_atr_multiple: string;
+  daily_loss_kill_pct: string;
+};
+
+function riskFormFromConfig(risk: RiskConfig): RiskFormState {
+  return {
+    risk_pct_per_trade: (risk.risk_pct_per_trade * 100).toFixed(2),
+    max_concurrent_positions: String(risk.max_concurrent_positions),
+    max_leverage: String(risk.max_leverage),
+    stop_loss_atr_multiple: String(risk.stop_loss_atr_multiple),
+    daily_loss_kill_pct: (risk.daily_loss_kill_pct * 100).toFixed(2),
+  };
 }
 
 function MechanicalParamsCard({ bundle }: { bundle: Strategy }) {
@@ -536,10 +798,10 @@ function RunEvalCard({ agentId }: { agentId: string }) {
           <code className="font-mono text-text-2">--mode paper</code> for Alpaca paper trading.
         </p>
         <Link
-          to="/eval-runs"
+          to={`/eval-runs?strategy=${encodeURIComponent(agentId)}&start=1`}
           className="inline-flex items-center gap-1 text-[13px] text-text hover:text-gold"
         >
-          Browse eval runs →
+          Open launcher →
         </Link>
       </div>
     </Card>
@@ -560,15 +822,10 @@ function SectionHeader({ label, hint }: { label: string; hint?: string }) {
 }
 
 function InspectorActions({ strategyId }: { strategyId: string }) {
-  // Discoverable CTA for "now that you've edited this bundle, run it."
-  // Deep-links the strategy id via `?strategy=<id>` so a future
-  // run-form on `/eval-runs` can pre-select it without an extra
-  // round-trip. Until that form exists the param is benign — the
-  // route just ignores it.
   return (
     <div className="flex items-center justify-end gap-3 mb-5">
       <Link
-        to={`/eval-runs?strategy=${encodeURIComponent(strategyId)}`}
+        to={`/eval-runs?strategy=${encodeURIComponent(strategyId)}&start=1`}
         className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft transition-colors"
       >
         Run eval →
@@ -577,12 +834,23 @@ function InspectorActions({ strategyId }: { strategyId: string }) {
   );
 }
 
-function RiskRow({ label, value }: { label: string; value: string }) {
+function Field({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
   return (
-    <>
-      <dt className="text-text-3">{label}</dt>
-      <dd className="m-0 text-text font-mono">{value}</dd>
-    </>
+    <label className="block">
+      <span className="text-[12px] text-text-2 mb-1 block">{label}</span>
+      {children}
+      {hint ? (
+        <span className="text-[11px] text-text-3 mt-1 block">{hint}</span>
+      ) : null}
+    </label>
   );
 }
 

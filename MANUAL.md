@@ -349,6 +349,20 @@ End-to-end paths beyond this surface (marketplace publishing, live
 trading, batch eval) land in subsequent plans (2c, 3, 5) — they share
 this same bundle format.
 
+### Eval runs
+
+The shipped eval surface is available through both the dashboard and the CLI:
+
+```bash
+xvn eval run --strategy <id> --scenario crypto-bull-q1-2025 --mode backtest
+xvn eval list
+xvn eval show <run_id>
+xvn eval compare <run_id_a> <run_id_b>
+```
+
+`xvn eval run` is part of the current surface. Use `xvn scenario ls` to find
+scenario ids; `xvn eval scenarios` remains available but is deprecated.
+
 ### Exit codes (Plan 2b-followup)
 
 `xvn skill *`, `xvn strategy *`, and `xvn eval *` follow Printing-Press-style

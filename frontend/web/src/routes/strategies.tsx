@@ -5,7 +5,12 @@ import { Card } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
 import { Icon } from "@/components/primitives/Icon";
 import { ApiError } from "@/api/client";
-import { listStrategies, strategyKeys } from "@/api/strategies";
+import {
+  listStrategies,
+  strategyKeys,
+  type StrategyListItem,
+} from "@/api/strategies";
+import { formatCadence } from "@/lib/format";
 
 export function StrategiesRoute() {
   const q = useQuery({
@@ -71,18 +76,16 @@ function FilterBar() {
 function StrategiesTable({
   items,
 }: {
-  items: {
-    agent_id: string;
-    template: string;
-    model?: string;
-  }[];
+  items: StrategyListItem[];
 }) {
   return (
     <table className="w-full">
       <thead>
         <tr className="text-left text-text-2 text-[12px] border-b border-border-soft">
-          <th className="font-normal py-2.5 px-5">Agent ID</th>
+          <th className="font-normal py-2.5 px-5">Strategy ID</th>
+          <th className="font-normal py-2.5 px-3">Name</th>
           <th className="font-normal py-2.5 px-3">Template</th>
+          <th className="font-normal py-2.5 px-3">Cadence</th>
           <th className="font-normal py-2.5 px-3">Model</th>
           <th className="font-normal py-2.5 px-3">Status</th>
           <th className="font-normal py-2.5 px-5"></th>
@@ -102,13 +105,17 @@ function StrategiesTable({
                 {row.agent_id}
               </Link>
             </td>
+            <td className="py-3 px-3 text-text">{row.display_name}</td>
             <td className="py-3 px-3 text-text-2">{row.template}</td>
+            <td className="py-3 px-3 font-mono text-text-2 text-[12px]">
+              {formatCadence(row.decision_cadence_minutes)}
+            </td>
             <td className="py-3 px-3 font-mono text-text-2 text-[12px]">
               {row.model ?? <span className="text-text-3 italic">—</span>}
             </td>
             <td className="py-3 px-3">
-              <Pill tone="gold">
-                <span className="w-1.5 h-1.5 rounded-full bg-gold" /> validated
+              <Pill>
+                <span className="w-1.5 h-1.5 rounded-full bg-text-3" /> draft
               </Pill>
             </td>
             <td className="py-3 px-5 text-text-3 text-right">

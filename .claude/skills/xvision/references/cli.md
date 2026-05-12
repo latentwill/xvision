@@ -26,7 +26,7 @@ xvn <COMMAND>
 | `indicator` | Compute one technical indicator from a JSON price/HLC series |
 | `dashboard` | Run the embedded web dashboard (axum + Vite SPA) |
 | `eod` | End-of-day operator report (markdown to stdout) |
-| `eval` | Browse eval runs and canonical scenarios |
+| `eval` | Launch, browse, compare, and inspect eval runs |
 | `portfolio` | Read live portfolio state from a venue |
 | `fire-trade` | Manual single-trade smoke test against a live venue |
 | `close-position` | Close any open position in `--asset` at the given venue |
@@ -73,6 +73,15 @@ xvn dashboard serve --bind 0.0.0.0:8788
 ```
 
 SPA baked into the binary via `rust-embed` from `crates/xvision-dashboard/static/` (populated by `pnpm build` in `frontend/web/`). HTTP routes registered in `crates/xvision-dashboard/src/server.rs`.
+
+## Eval
+
+```bash
+xvn eval run --strategy <id> --scenario crypto-bull-q1-2025 --mode backtest
+xvn eval list
+xvn eval show <run_id>
+xvn eval compare <run_id_a> <run_id_b>
+```
 
 ## Providers
 
