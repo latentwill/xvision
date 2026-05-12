@@ -37,6 +37,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/eval/runs/compare/chart", get(eval_runs::compare_chart))
         .route("/api/eval/runs/:id", get(eval_runs::get))
         .route("/api/eval/runs/:id/chart", get(eval_runs::chart))
+        .route("/api/eval/runs/:id/stream", get(eval_runs::stream))
         .route("/api/eval/compare", get(eval_runs::compare))
         .route("/api/bars/:cache_key", get(bars::cache_row))
         .route("/api/search", get(search_route::handler))

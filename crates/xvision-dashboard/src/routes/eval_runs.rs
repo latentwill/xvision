@@ -9,14 +9,17 @@
 //! parses `?ids=` (comma-separated) and surfaces api validation /
 //! not-found errors transparently.
 
+use std::time::Duration;
+
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
+    response::sse::{Event, KeepAlive, Sse},
     Json,
 };
 use serde::{Deserialize, Serialize};
 
-use xvision_engine::api::chart::{self as chart_api, CompareChartPayload, RunChartPayload};
+use xvision_engine::api::chart::{self as chart_api, CompareChartPayload, RunChartEvent, RunChartPayload};
 use xvision_engine::api::eval::{
     self, CompareRunsRequest, EvalRunRequest, ListRunsRequest, RunDetail, RunSummary,
 };
@@ -155,4 +158,95 @@ pub async fn launch(
     let run = eval::run(&state.api_context(), req).await?;
     let summary = eval::summarise_run(run);
     Ok((StatusCode::CREATED, Json(summary)))
+}
+
+// ── SSE helpers ─────────────────────────────────────────────────────────────
+
+/// Map a `RunChartEvent` variant to its SSE event name.
+fn event_name(ev: &RunChartEvent) -> &'static str {
+    match ev {
+        RunChartEvent::Bar(_) => "bar",
+        RunChartEvent::IndicatorTail(_) => "indicator_tail",
+        RunChartEvent::Marker(_) => "marker",
+        RunChartEvent::Equity(_) => "equity",
+        RunChartEvent::Status { .. } => "status",
+    }
+}
+
+/// Serialize a `RunChartEvent` into an SSE `Event`. Returns `None` on
+/// serialization failure (should be unreachable for well-formed types).
+fn to_sse_event(ev: RunChartEvent) -> Option<Event> {
+    let name = event_name(&ev);
+    serde_json::to_string(&ev)
+        .ok()
+        .map(|payload| Event::default().event(name).data(payload))
+}
+
+// ── SSE handler ─────────────────────────────────────────────────────────────
+
+/// `GET /api/eval/runs/:id/stream` — SSE stream of live `RunChartEvent`s
+/// for the given run. Events are batched server-side on a 250ms cadence
+/// so the client doesn't get flooded during fast backtests. The stream
+/// stays open until the bus drops the channel (terminal Status) or the
+/// client disconnects.
+pub async fn stream(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+) -> Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>> {
+    use tokio::time::{interval, MissedTickBehavior};
+
+    let mut rx = state.event_bus.subscribe(&run_id).await;
+
+    let sse_stream = async_stream::stream! {
+        let mut batch: Vec<RunChartEvent> = Vec::new();
+        let mut ticker = interval(Duration::from_millis(250));
+        ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        // The first tick fires immediately — consume it so we wait one full
+        // period before flushing the first batch.
+        ticker.tick().await;
+
+        loop {
+            tokio::select! {
+                _ = ticker.tick() => {
+                    for ev in batch.drain(..) {
+                        if let Some(sse_ev) = to_sse_event(ev) {
+                            yield Ok(sse_ev);
+                        }
+                    }
+                }
+                recv = rx.recv() => {
+                    match recv {
+                        Ok(ev) => {
+                            // Bound batch size to avoid unbounded growth when
+                            // the client stalls. Drop oldest 32 if we exceed 256.
+                            if batch.len() >= 256 {
+                                batch.drain(0..32);
+                            }
+                            batch.push(ev);
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                            // Caller fell behind; the client is responsible for
+                            // re-syncing via a REST snapshot — keep the stream open.
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                            // Bus dropped this channel (terminal Status was emitted).
+                            // Flush any remaining batch items then end the stream.
+                            for ev in batch.drain(..) {
+                                if let Some(sse_ev) = to_sse_event(ev) {
+                                    yield Ok(sse_ev);
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    };
+
+    Sse::new(sse_stream).keep_alive(
+        KeepAlive::new()
+            .interval(Duration::from_secs(15))
+            .text("keep-alive"),
+    )
 }

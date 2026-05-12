@@ -1,0 +1,116 @@
+//! Integration test for `GET /api/eval/runs/:id/stream`.
+//!
+//! Strategy: spin up a real `axum::serve` on a random port, emit events via
+//! the bus from a spawned task, and read the SSE stream body with `reqwest`
+//! (which supports streaming). `axum_test::TestServer` materialises the
+//! response body all at once, which would block forever on an SSE stream
+//! that hasn't closed — even though the stream DOES terminate here (via
+//! `drop_channel`), the response body can only be consumed after the stream
+//! ends, so we use `reqwest` + streaming to avoid buffering the entire body.
+
+use std::time::Duration;
+
+use tempfile::TempDir;
+use tokio::time::timeout;
+use xvision_dashboard::{server::build_router, AppState};
+use xvision_engine::api::chart::{ChartEquityPoint, RunChartEvent};
+
+/// Boot a real TCP server on an ephemeral port and return the base URL.
+async fn boot_server() -> (String, TempDir, AppState) {
+    let tmp = TempDir::new().unwrap();
+    let state = AppState::new(tmp.path().to_path_buf())
+        .await
+        .expect("init dashboard state");
+    let router = build_router(state.clone());
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind ephemeral port");
+    let addr = listener.local_addr().unwrap();
+    let base_url = format!("http://{addr}");
+
+    tokio::spawn(async move {
+        axum::serve(listener, router)
+            .await
+            .expect("axum serve failed");
+    });
+
+    (base_url, tmp, state)
+}
+
+#[tokio::test]
+async fn sse_stream_emits_equity_and_status_then_closes() {
+    let (base_url, _tmp, state) = boot_server().await;
+    let bus = state.event_bus.clone();
+
+    // Spawn a task that emits events after a short delay so the HTTP
+    // connection has time to establish before the stream starts.
+    let bus_task = bus.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        bus_task
+            .emit(
+                "test-run",
+                RunChartEvent::Equity(ChartEquityPoint {
+                    time: 1,
+                    equity_usd: 100.0,
+                }),
+            )
+            .await;
+        bus_task
+            .emit(
+                "test-run",
+                RunChartEvent::Status {
+                    phase: "completed".into(),
+                    message: None,
+                },
+            )
+            .await;
+        // Drop the channel so the SSE handler sees RecvError::Closed and
+        // terminates the stream. Without this the handler waits for the next
+        // tick to flush and the test would stall.
+        bus_task.drop_channel("test-run").await;
+    });
+
+    let url = format!("{base_url}/api/eval/runs/test-run/stream");
+    let client = reqwest::Client::new();
+
+    // Give the server up to 5 s to deliver the full SSE body and close.
+    let body = timeout(Duration::from_secs(5), async {
+        let resp = client
+            .get(&url)
+            .send()
+            .await
+            .expect("GET /api/eval/runs/test-run/stream");
+
+        assert_eq!(resp.status(), reqwest::StatusCode::OK);
+        let content_type = resp.headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        assert!(
+            content_type.contains("text/event-stream"),
+            "expected text/event-stream content-type, got: {content_type}"
+        );
+
+        // Consume the full body (stream terminates once drop_channel fires).
+        resp.bytes().await.expect("read body")
+    })
+    .await
+    .expect("SSE stream did not close within 5 s");
+
+    let text = std::str::from_utf8(&body).expect("body is utf-8");
+
+    assert!(
+        text.contains("event: equity"),
+        "expected 'event: equity' in SSE body; got:\n{text}"
+    );
+    assert!(
+        text.contains("event: status"),
+        "expected 'event: status' in SSE body; got:\n{text}"
+    );
+    assert!(
+        text.contains("100"),
+        "expected equity value '100' in SSE body; got:\n{text}"
+    );
+}
