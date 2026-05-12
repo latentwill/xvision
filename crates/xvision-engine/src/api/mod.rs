@@ -17,6 +17,7 @@ pub mod eval;
 pub mod health;
 pub mod search;
 pub mod settings;
+pub mod skills;
 pub mod strategy;
 
 /// Migrations baked into the binary at compile time. Order matters —
@@ -27,6 +28,7 @@ const MIGRATION_002: &str = include_str!("../../migrations/002_eval.sql");
 const MIGRATION_003: &str = include_str!("../../migrations/003_chat_sessions.sql");
 const MIGRATION_004: &str = include_str!("../../migrations/004_search_index.sql");
 const MIGRATION_005: &str = include_str!("../../migrations/005_agents.sql");
+const MIGRATION_007: &str = include_str!("../../migrations/007_skills.sql");
 
 #[derive(Clone, Debug)]
 pub struct ApiContext {
@@ -64,6 +66,7 @@ impl ApiContext {
         sqlx::query(MIGRATION_003).execute(&pool).await?;
         sqlx::query(MIGRATION_004).execute(&pool).await?;
         sqlx::query(MIGRATION_005).execute(&pool).await?;
+        sqlx::query(MIGRATION_007).execute(&pool).await?;
 
         Ok(Self {
             db: pool,
