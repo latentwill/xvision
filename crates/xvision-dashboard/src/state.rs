@@ -10,6 +10,7 @@ use anyhow::Context;
 use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::SqlitePool;
 
+use crate::cli_jobs::runner::CliJobRunner;
 use xvision_engine::api::chart::RunEventBus;
 use xvision_engine::api::settings::providers::ProviderModelsReport;
 use xvision_engine::api::{Actor, ApiContext};
@@ -35,6 +36,8 @@ pub struct AppState {
     /// publishes dozens of model rotations per day; longer than that
     /// and the operator sees stale options).
     models_cache: Arc<Mutex<HashMap<String, CachedModels>>>,
+    cli_command: PathBuf,
+    cli_runner: Arc<CliJobRunner>,
 }
 
 impl AppState {
@@ -83,11 +86,16 @@ impl AppState {
             tracing::warn!(error = %e, "could not hydrate provider secrets into env");
         }
 
+        let cli_command = PathBuf::from("xvn");
+        let cli_runner = Arc::new(CliJobRunner::new(pool.clone(), cli_command.clone()));
+
         Ok(Self {
             pool,
             xvn_home,
             event_bus: Arc::new(RunEventBus::new()),
             models_cache: Arc::new(Mutex::new(HashMap::new())),
+            cli_command,
+            cli_runner,
         })
     }
 
@@ -136,5 +144,19 @@ impl AppState {
         if let Ok(mut cache) = self.models_cache.lock() {
             cache.remove(provider);
         }
+    }
+
+    pub fn cli_command(&self) -> &std::path::Path {
+        &self.cli_command
+    }
+
+    pub fn cli_runner(&self) -> Arc<CliJobRunner> {
+        self.cli_runner.clone()
+    }
+
+    pub fn with_cli_command_for_tests(mut self, cli_command: PathBuf) -> Self {
+        self.cli_runner = Arc::new(CliJobRunner::new(self.pool.clone(), cli_command.clone()));
+        self.cli_command = cli_command;
+        self
     }
 }

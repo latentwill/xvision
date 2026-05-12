@@ -26,7 +26,9 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::StreamExt;
 
-use xvision_engine::chat_session::{ChatMessage, ChatSessionStore, ContextScope};
+use xvision_engine::chat_session::{
+    ChatMessage, ChatSessionStore, ChatSessionSummary, ContextScope,
+};
 
 use crate::error::DashboardError;
 use crate::llm_dispatch;
@@ -70,6 +72,15 @@ pub async fn history(
         .await
         .map_err(DashboardError::Internal)?;
     Ok(Json(messages))
+}
+
+pub async fn list_sessions(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<ChatSessionSummary>>, DashboardError> {
+    let sessions = ChatSessionStore::list_sessions(&state.pool)
+        .await
+        .map_err(DashboardError::Internal)?;
+    Ok(Json(sessions))
 }
 
 pub async fn delete_session(

@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   ColorType,
   CrosshairMode,
   createChart,
   type IChartApi,
+  type LogicalRange,
   type UTCTimestamp,
 } from "lightweight-charts";
 import type { RunChartPayload, IndicatorPoint } from "@/api/types.gen";
@@ -14,7 +15,11 @@ import { type LayerKey } from "./chart-layers";
 import { MarkerSidePanel } from "./MarkerSidePanel";
 
 type ActiveMarker = { kind: "trade" | "veto" | "hold"; decision_index: number };
-type Props = { payload: RunChartPayload; themeMode?: "dark" | "light" };
+type Props = {
+  payload: RunChartPayload;
+  themeMode?: "dark" | "light";
+  follow?: boolean;
+};
 
 function toLine(p: IndicatorPoint) {
   return { time: p.time as UTCTimestamp, value: p.value };
@@ -33,6 +38,36 @@ function buildOpts(theme: ReturnType<typeof chartTheme>) {
     crosshair: { mode: CrosshairMode.Normal },
     timeScale: { rightOffset: 6, secondsVisible: false },
   };
+}
+
+function applyLogicalRange(charts: IChartApi[], range: LogicalRange) {
+  charts.forEach((chart) => {
+    chart.timeScale().setVisibleLogicalRange(range);
+  });
+}
+
+function applyAnchorLogicalRangeToPeers(
+  charts: IChartApi[],
+  anchorChart: IChartApi,
+  range: LogicalRange,
+) {
+  charts.forEach((chart) => {
+    if (chart !== anchorChart) {
+      chart.timeScale().setVisibleLogicalRange(range);
+    }
+  });
+}
+
+function enterFollowMode(charts: IChartApi[]) {
+  const anchorChart = charts[0];
+  if (!anchorChart) return;
+  const anchorTimeScale = anchorChart.timeScale();
+  anchorTimeScale.scrollToRealTime();
+
+  const anchorRange = anchorTimeScale.getVisibleLogicalRange();
+  if (anchorRange) {
+    applyAnchorLogicalRangeToPeers(charts, anchorChart, anchorRange);
+  }
 }
 
 function LayersPanel({
@@ -90,8 +125,19 @@ function LayersPanel({
   );
 }
 
-export function RunChart({ payload, themeMode = "dark" }: Props) {
+export function RunChart({
+  payload,
+  themeMode = "dark",
+  follow = false,
+}: Props) {
   const priceRef = useRef<HTMLDivElement>(null);
+  const chartSetRef = useRef<IChartApi[]>([]);
+  const followRef = useRef(follow);
+  const layoutFollowRef = useRef(follow);
+  const effectFollowRef = useRef(follow);
+  const frozenLogicalRangeRef = useRef<LogicalRange | null>(null);
+  const buildVersionRef = useRef(0);
+  const followTransitionBuildVersionRef = useRef<number | null>(null);
   const subRef = useRef<HTMLDivElement>(null);
   const eqRef = useRef<HTMLDivElement>(null);
   const ddRef = useRef<HTMLDivElement>(null);
@@ -103,6 +149,8 @@ export function RunChart({ payload, themeMode = "dark" }: Props) {
 
   useEffect(() => {
     if (!priceRef.current) return;
+    const buildVersion = buildVersionRef.current + 1;
+    buildVersionRef.current = buildVersion;
     const theme = chartTheme(themeMode);
     const opts = buildOpts(theme);
 
@@ -267,8 +315,10 @@ export function RunChart({ payload, themeMode = "dark" }: Props) {
     const all = [priceChart, subChart, eqChart, ddChart, volChart].filter(
       (c): c is IChartApi => c !== null,
     );
+    chartSetRef.current = all;
+
     all.forEach((c) =>
-      c.timeScale().subscribeVisibleLogicalRangeChange((r) => {
+      c.timeScale().subscribeVisibleLogicalRangeChange((r: LogicalRange | null) => {
         if (!r) return;
         all.forEach((other) => {
           if (other !== c) other.timeScale().setVisibleLogicalRange(r);
@@ -276,10 +326,57 @@ export function RunChart({ payload, themeMode = "dark" }: Props) {
       }),
     );
 
+    if (follow) {
+      frozenLogicalRangeRef.current = null;
+      enterFollowMode(all);
+      followTransitionBuildVersionRef.current = effectFollowRef.current
+        ? null
+        : buildVersion;
+    }
+
+    const frozenLogicalRange = frozenLogicalRangeRef.current;
+    if (!follow && frozenLogicalRange) {
+      applyLogicalRange(all, frozenLogicalRange);
+    }
+
     return () => {
+      const viewportChart = all[0];
+      frozenLogicalRangeRef.current = followRef.current
+        ? null
+        : viewportChart?.timeScale().getVisibleLogicalRange() ?? null;
+      if (chartSetRef.current === all) {
+        chartSetRef.current = [];
+      }
       all.forEach((c) => c.remove());
     };
   }, [payload, layers, themeMode]);
+
+  useLayoutEffect(() => {
+    const wasFollowing = layoutFollowRef.current;
+    followRef.current = follow;
+
+    if (wasFollowing && !follow) {
+      frozenLogicalRangeRef.current =
+        chartSetRef.current[0]?.timeScale().getVisibleLogicalRange() ??
+        frozenLogicalRangeRef.current;
+    }
+
+    layoutFollowRef.current = follow;
+  }, [follow]);
+
+  useEffect(() => {
+    const wasFollowing = effectFollowRef.current;
+    effectFollowRef.current = follow;
+
+    if (!follow || wasFollowing) return;
+
+    frozenLogicalRangeRef.current = null;
+    if (followTransitionBuildVersionRef.current === buildVersionRef.current) {
+      followTransitionBuildVersionRef.current = null;
+      return;
+    }
+    enterFollowMode(chartSetRef.current);
+  }, [follow]);
 
   return (
     <ChartContainer

@@ -1,4 +1,4 @@
-import { NavLink, useNavigate } from "react-router-dom";
+import { NavLink } from "react-router-dom";
 import { Icon, type IconName } from "@/components/primitives/Icon";
 
 type Item = { to: string; label: string; icon: IconName };
@@ -13,7 +13,6 @@ const PRIMARY: Item[] = [
 ];
 
 export function Sidebar() {
-  const navigate = useNavigate();
   return (
     <aside className="bg-surface-sidebar border-r border-border-soft flex flex-col w-[200px] pt-6 pb-4">
       <div className="px-6 pb-8">
@@ -48,20 +47,6 @@ export function Sidebar() {
           </NavLink>
         ))}
       </nav>
-
-      <div className="mx-4 mb-4 px-3.5 py-3.5 bg-gold/5 border border-gold/20 rounded-sm">
-        <h4 className="m-0 mb-1.5 text-[13px] font-semibold text-text">Setup agent</h4>
-        <p className="m-0 mb-3 text-text-2 text-[12px] leading-snug">
-          Add an LLM key to begin building strategies with xvn.
-        </p>
-        <button
-          type="button"
-          onClick={() => navigate("/settings/providers")}
-          className="w-full flex items-center justify-center px-3 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft transition-colors"
-        >
-          Add LLM key
-        </button>
-      </div>
 
       <div className="flex items-center gap-2.5 px-4 py-3.5 border-t border-border-soft mt-auto">
         <div className="w-8 h-8 rounded-full bg-surface-panel border border-border flex items-center justify-center text-[11px] font-semibold text-text">

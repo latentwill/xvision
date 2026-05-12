@@ -31,6 +31,8 @@ import {
   type WizardEvent,
   deleteSession,
   headerLabel,
+  listSessions,
+  loadSessionHistory,
   placeholder,
   quickReplies,
   resolveSession,
@@ -94,6 +96,12 @@ export function ChatRail() {
     queryKey: settingsKeys.providers(),
     queryFn: listProviders,
     enabled: open,
+  });
+  const sessionsQ = useQuery({
+    queryKey: ["chat-rail", "sessions"],
+    queryFn: listSessions,
+    enabled: open,
+    refetchInterval: 5000,
   });
   // Auto-pick the first enabled (provider, model) from the intern's
   // default once the catalog loads, so users who configured a provider
@@ -211,7 +219,13 @@ export function ChatRail() {
     // Force the open-effect to re-resolve a session for this scope.
     // After delete, the next resolve will find no match and create one.
     lastScopeKeyRef.current = null;
-  }, [sessionId]);
+    void sessionsQ.refetch();
+  }, [sessionId, sessionsQ]);
+
+  const recentScopeSessions = useMemo(() => {
+    const all = sessionsQ.data ?? [];
+    return all.filter((s) => scopeKey(s.scope) === key).slice(0, 8);
+  }, [sessionsQ.data, key]);
 
   if (!open) {
     return (
@@ -256,6 +270,34 @@ export function ChatRail() {
           </button>
         </div>
       </header>
+      {recentScopeSessions.length > 0 && (
+        <div className="px-4 py-2 border-b border-border-soft bg-surface-2/20">
+          <div className="text-[11px] text-text-3 mb-1">Conversation history</div>
+          <div className="space-y-1">
+            {recentScopeSessions.map((s) => (
+              <button
+                key={s.id}
+                onClick={async () => {
+                  try {
+                    setSessionId(s.id);
+                    const h = await loadSessionHistory(s.id);
+                    setBubbles(historyToBubbles(h));
+                  } catch (e) {
+                    setError(formatErr(e));
+                  }
+                }}
+                className={`w-full text-left rounded px-2 py-1 text-[11px] border ${
+                  s.id === sessionId
+                    ? "border-gold/40 text-text bg-gold/5"
+                    : "border-border-soft text-text-2 hover:text-text"
+                }`}
+              >
+                {new Date(s.last_activity_at).toLocaleString()}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       <RailModelBar
         rows={providers.data?.providers ?? []}
@@ -943,13 +985,16 @@ function toolLogLine(
           ),
         };
       }
-      const evaluation = String(args["evaluation_id"] ?? "");
+      const runId =
+        typeof result["run_id"] === "string"
+          ? (result["run_id"] as string)
+          : "";
       return {
         ok: true,
-        content: evaluation ? (
+        content: runId ? (
           <>
-            Eval run {" "}
-            <code className="font-mono text-text">{evaluation}</code>{" "}
+            Eval run{" "}
+            <code className="font-mono text-text">{runId}</code>{" "}
             {t.resultSummary ? (
               <span className="text-text-2">({t.resultSummary})</span>
             ) : null}

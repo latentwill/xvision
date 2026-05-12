@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
@@ -119,8 +121,8 @@ export function SetupRoute() {
 
       <Card className="px-6 py-5 mb-3">
         <div className="text-text-2 text-[14px] leading-snug max-w-prose">
-          The setup agent walks you from a plain-English description to a
-          validated <span className="text-text">Strategy</span> ready to
+          Setup walks you from a plain-English description to a
+          validated <span className="text-text">strategy</span> ready to
           backtest. Try:{" "}
           <span className="text-text font-mono">
             "Buys dips when the trend is up"
@@ -293,7 +295,7 @@ function Thread({
   return (
     <div
       ref={ref}
-      className="max-h-[60vh] overflow-y-auto px-5 py-4 flex flex-col gap-3"
+      className="h-[58vh] overflow-y-auto px-5 py-4 flex flex-col gap-3"
     >
       {bubbles.length === 0 ? (
         <div className="text-text-3 italic font-serif text-[15px] text-center py-6">
@@ -319,7 +321,7 @@ function BubbleView({ b }: { b: Bubble }) {
   return (
     <div className="self-start max-w-[85%]">
       <div className="bg-surface-2/60 border border-border rounded-md px-3 py-2 text-[14px] whitespace-pre-wrap leading-snug">
-        {b.text || <span className="text-text-3 italic">thinking…</span>}
+        {b.text ? <MarkdownView text={b.text} /> : <span className="text-text-3 italic">thinking…</span>}
       </div>
       {b.tools.length > 0 && (
         <div className="mt-2 flex flex-col gap-1">
@@ -343,6 +345,39 @@ function BubbleView({ b }: { b: Bubble }) {
         </div>
       )}
     </div>
+  );
+}
+
+function MarkdownView({ text }: { text: string }) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        code: ({ children, className, ...props }) => (
+          <code
+            className={`font-mono text-[12px] ${
+              className ? "" : "bg-surface-2/70 px-1 py-0.5 rounded"
+            }`}
+            {...props}
+          >
+            {children}
+          </code>
+        ),
+        pre: ({ children }) => (
+          <pre className="font-mono text-[12px] bg-surface-2/70 p-2 rounded my-1.5 overflow-x-auto">
+            {children}
+          </pre>
+        ),
+        p: ({ children }) => (
+          <p className="my-1 first:mt-0 last:mb-0">{children}</p>
+        ),
+        strong: ({ children }) => (
+          <strong className="text-text font-semibold">{children}</strong>
+        ),
+      }}
+    >
+      {text}
+    </ReactMarkdown>
   );
 }
 
