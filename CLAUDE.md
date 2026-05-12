@@ -4,6 +4,25 @@ Project-specific guidance. The workspace-level `/Users/edkennedy/Code/CLAUDE.md`
 covers shared conventions across projects; the rules here are xvision-specific
 and override anything in conflict with the workspace file.
 
+## Deployment guardrails (hard rules)
+
+These rules are mandatory for agents operating on deploy hosts and this repo.
+
+- NEVER run `cargo`, `cargo build`, `cargo check`, or `cargo test` on server/deploy hosts.
+- NEVER build Docker images on server/deploy hosts for production rollout.
+- ALWAYS publish runtime images through GitHub Actions workflow `.github/workflows/docker.yml`.
+- ALWAYS use `workflow_dispatch` inputs explicitly when triggering GHCR builds:
+  - `dockerfile=Dockerfile.deploy`
+  - `build_identity=false` (unless identity image is intentionally requested)
+  - `build_profile=release` for production; `staging` only for manual test images
+- ALWAYS verify rollout by checking running container image digest matches the GHCR digest you just published.
+
+Preferred command path from repo root:
+
+```bash
+scripts/deploy-ghcr.sh
+```
+
 ## Terminology
 
 Naming conventions across the xvision codebase. Locked in 2026-05-10 (terminology
