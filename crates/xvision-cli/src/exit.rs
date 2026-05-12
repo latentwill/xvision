@@ -7,9 +7,9 @@
 //!   0  Success     command completed
 //!   2  Usage       caller-fixable: bad flag, malformed input, unknown enum variant
 //!   3  Auth        missing / invalid credential (e.g. ANTHROPIC_API_KEY)
-//!   4  NotFound    referenced resource does not exist (strategy id, skill name, run id)
+//!   4  NotFound    referenced resource does not exist (strategy id, run id)
 //!   5  Upstream    LLM API / broker / network / file system / database error
-//!   7  Conflict    state collision (e.g. attaching a skill to an empty slot)
+//!   7  Conflict    state collision (e.g. duplicate name on rename)
 //! ```
 //!
 //! Commands carry the category through `CliError`. `From<anyhow::Error>`

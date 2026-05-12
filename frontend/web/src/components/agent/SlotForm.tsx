@@ -1,12 +1,10 @@
 // SlotForm — editor for a single AgentSlot. Renders an expandable card
-// with provider/model picker, system prompt textarea, max_tokens, and
-// skill multi-select (loads from /settings/skills registry).
+// with provider/model picker, system prompt textarea, max_tokens, skills
+// placeholder (no skill registry yet — hidden when empty per v1 plan).
 
-import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import type { AgentSlot } from "@/api/agents";
 import { listProviders, settingsKeys } from "@/api/settings";
-import { listSkills, skillKeys } from "@/api/skills";
 import { Icon } from "@/components/primitives/Icon";
 
 export function SlotForm({
@@ -119,23 +117,26 @@ export function SlotForm({
         />
       </Field>
 
-      <Field label="Max tokens">
-        <input
-          type="number"
-          value={slot.max_tokens}
-          min={1}
-          onChange={(e) =>
-            patch("max_tokens", Math.max(1, parseInt(e.target.value, 10) || 0))
-          }
-          className="w-full md:w-1/2 px-3 py-2 bg-surface-card border border-border rounded-sm text-[13.5px] text-text font-mono focus:outline-none focus:border-gold/40"
-        />
-      </Field>
-
-      <div className="mt-4">
-        <SkillPicker
-          selectedIds={slot.skill_ids}
-          onChange={(ids) => patch("skill_ids", ids)}
-        />
+      <div className="grid grid-cols-2 gap-4 mt-4">
+        <Field label="Max tokens">
+          <input
+            type="number"
+            value={slot.max_tokens}
+            min={1}
+            onChange={(e) =>
+              patch("max_tokens", Math.max(1, parseInt(e.target.value, 10) || 0))
+            }
+            className="w-full px-3 py-2 bg-surface-card border border-border rounded-sm text-[13.5px] text-text font-mono focus:outline-none focus:border-gold/40"
+          />
+        </Field>
+        {slot.skill_ids.length > 0 ? (
+          <Field label="Skills">
+            <div className="text-text-3 text-[12px] px-3 py-2">
+              {slot.skill_ids.length} skill
+              {slot.skill_ids.length === 1 ? "" : "s"} (manage at /settings/skills)
+            </div>
+          </Field>
+        ) : null}
       </div>
     </div>
   );
@@ -155,83 +156,5 @@ function Field({
       </span>
       {children}
     </label>
-  );
-}
-
-function SkillPicker({
-  selectedIds,
-  onChange,
-}: {
-  selectedIds: string[];
-  onChange: (ids: string[]) => void;
-}) {
-  const q = useQuery({
-    queryKey: skillKeys.list(false),
-    queryFn: () => listSkills(false),
-  });
-
-  function toggle(id: string) {
-    if (selectedIds.includes(id)) {
-      onChange(selectedIds.filter((x) => x !== id));
-    } else {
-      onChange([...selectedIds, id]);
-    }
-  }
-
-  const skills = q.data ?? [];
-
-  if (q.isPending) {
-    return (
-      <Field label="Skills">
-        <div className="text-text-3 text-[12px] px-3 py-2">Loading…</div>
-      </Field>
-    );
-  }
-
-  if (skills.length === 0) {
-    return (
-      <Field label="Skills">
-        <div className="text-text-3 text-[12.5px] px-3 py-2 leading-snug">
-          No skills configured yet.{" "}
-          <Link
-            to="/settings/skills"
-            className="text-gold hover:underline"
-          >
-            Add some at Settings → Skills
-          </Link>
-          .
-        </div>
-      </Field>
-    );
-  }
-
-  return (
-    <Field label="Skills">
-      <div className="flex flex-wrap gap-1.5">
-        {skills.map((s) => {
-          const selected = selectedIds.includes(s.skill_id);
-          return (
-            <button
-              key={s.skill_id}
-              type="button"
-              onClick={() => toggle(s.skill_id)}
-              title={s.description || s.kind}
-              className={[
-                "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-sm text-[12px] border transition-colors",
-                selected
-                  ? "bg-gold/15 border-gold/40 text-gold"
-                  : "bg-surface-card border-border text-text-2 hover:text-text hover:border-border-strong",
-              ].join(" ")}
-            >
-              <span className="font-mono">{s.name}</span>
-              <span className="text-[10px] opacity-70">
-                {s.kind.replace("_", " ")}
-              </span>
-              {selected ? <Icon name="check" size={11} /> : null}
-            </button>
-          );
-        })}
-      </div>
-    </Field>
   );
 }
