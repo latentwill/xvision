@@ -128,9 +128,9 @@ function StrategiesTable({ items }: { items: { agent_id: string; template: strin
               <Link
                 to={`/authoring/${encodeURIComponent(row.agent_id)}`}
                 className="text-text-3 hover:text-text"
-                aria-label={`Edit ${row.agent_id}`}
+                aria-label={`Open inspector for ${row.agent_id}`}
               >
-                Edit →
+                Inspector →
               </Link>
             </td>
           </tr>
