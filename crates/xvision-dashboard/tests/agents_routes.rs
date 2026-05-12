@@ -25,6 +25,7 @@ fn sample_create_body(name: &str) -> Value {
             "provider": "anthropic",
             "model": "claude-sonnet-4-6",
             "system_prompt": "You are a trader.",
+            "skill_ids": [],
             "max_tokens": 4096,
         }]
     })
@@ -178,6 +179,7 @@ async fn update_replaces_slots() {
                 "provider": "anthropic",
                 "model": "claude-sonnet-4-6",
                 "system_prompt": "Trade.",
+                "skill_ids": [],
                 "max_tokens": 4096,
             },
             {
@@ -185,6 +187,7 @@ async fn update_replaces_slots() {
                 "provider": "anthropic",
                 "model": "claude-haiku-4-5",
                 "system_prompt": "Check risk.",
+                "skill_ids": [],
                 "max_tokens": 2048,
             }
         ]

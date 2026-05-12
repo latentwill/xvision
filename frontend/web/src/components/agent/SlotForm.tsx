@@ -1,5 +1,6 @@
 // SlotForm — editor for a single AgentSlot. Renders an expandable card
-// with provider/model picker, system prompt textarea, and max_tokens.
+// with provider/model picker, system prompt textarea, max_tokens, skills
+// placeholder (no skill registry yet — hidden when empty per v1 plan).
 
 import { useQuery } from "@tanstack/react-query";
 import type { AgentSlot } from "@/api/agents";
@@ -128,6 +129,15 @@ export function SlotForm({
             className="w-full px-3 py-2 bg-surface-card border border-border rounded-sm text-[13.5px] text-text font-mono focus:outline-none focus:border-gold/40"
           />
         </Field>
+
+        {slot.skill_ids.length > 0 ? (
+          <Field label="Skills">
+            <div className="text-text-3 text-[12px] px-3 py-2">
+              {slot.skill_ids.length} skill
+              {slot.skill_ids.length === 1 ? "" : "s"} (manage at /settings/skills)
+            </div>
+          </Field>
+        ) : null}
       </div>
     </div>
   );
