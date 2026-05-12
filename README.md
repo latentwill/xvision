@@ -45,6 +45,13 @@ If you are an external or embedded agent using this repo, start here:
 4. For exact CLI usage, run `xvn --help` and read `.claude/skills/xvision/references/cli.md`.
 5. For live-node remote control, use the Tailscale-served dashboard node (`xvn.tail2bb69.ts.net` or `xvnej.tail2bb69.ts.net`) rather than assuming arbitrary SSH access.
 
+Hard deployment rules for agents:
+
+1. Never run `cargo` on server/deploy hosts.
+2. Never do production image builds on server/deploy hosts.
+3. Use GHCR via `.github/workflows/docker.yml` (`workflow_dispatch`) for deploy builds.
+4. Prefer `scripts/deploy-ghcr.sh` as the canonical deployment trigger/watch flow.
+
 ## Quickstart (for first users)
 
 This walks through running xvision against Orderly testnet with no real money.
