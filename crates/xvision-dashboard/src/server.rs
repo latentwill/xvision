@@ -39,9 +39,13 @@ pub fn build_router(state: AppState) -> Router {
             "/api/strategy/:id/validate",
             post(strategies::post_validate),
         )
-        .route("/api/eval/runs", get(eval_runs::list))
+        .route(
+            "/api/eval/runs",
+            get(eval_runs::list).post(eval_runs::post_start),
+        )
         .route("/api/eval/runs/:id", get(eval_runs::get))
         .route("/api/eval/compare", get(eval_runs::compare))
+        .route("/api/eval/scenarios", get(eval_runs::list_scenarios))
         .route("/api/search", get(search_route::handler))
         .route("/api/settings/brokers", get(settings::brokers::get))
         .route(
