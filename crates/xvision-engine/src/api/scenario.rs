@@ -17,6 +17,8 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
+use xvision_core::Capital;
+
 use crate::api::{ApiContext, ApiError, ApiResult};
 use crate::eval::scenario::*;
 use crate::eval::{bars as engine_bars, scenario_store};
@@ -37,6 +39,8 @@ pub struct CreateScenarioRequest {
     pub asset: Vec<AssetRef>,
     pub quote_currency: QuoteCurrency,
     pub time_window: TimeWindow,
+    #[cfg_attr(feature = "ts-export", ts(type = "{ initial: number, currency: string }"))]
+    pub capital: Capital,
     #[cfg_attr(feature = "ts-export", ts(type = "string"))]
     pub granularity: BarGranularity,
     pub timezone: String,
@@ -117,6 +121,7 @@ pub async fn create(ctx: &ApiContext, req: CreateScenarioRequest) -> ApiResult<S
         data_source: req.data_source,
         venue: req.venue,
         replay_mode: req.replay_mode,
+        capital: req.capital,
         bar_cache_policy: BarCachePolicy {
             cache_key,
             refresh_policy: RefreshPolicy::NeverRefresh,
@@ -177,6 +182,7 @@ pub async fn clone(
         timezone: parent_s.timezone,
         calendar: parent_s.calendar,
         venue: mutations.venue.unwrap_or(parent_s.venue),
+        capital: parent_s.capital,
         data_source: parent_s.data_source,
         replay_mode: parent_s.replay_mode,
         tags: mutations.tags.unwrap_or(parent_s.tags),
