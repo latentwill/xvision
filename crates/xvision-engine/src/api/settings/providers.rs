@@ -902,18 +902,37 @@ async fn set_default_inner(
         let mut doc: DocumentMut = raw.parse().map_err(|e| {
             ApiError::Internal(format!("parse {}: {e}", path.display()))
         })?;
-        let intern = doc
-            .entry("intern")
+        // If the operator's config was generated before the rename and
+        // still has [intern], migrate the entire table to [default_llm]
+        // — temperature, max_tokens, reasoning_effort all live there and
+        // the Intern struct deserializer requires them. Then drop the
+        // legacy section so we don't end up with both [intern] and
+        // [default_llm] (which confuses the serde alias).
+        let legacy_intern = doc.get("intern").and_then(|i| i.as_table()).cloned();
+        doc.remove("intern");
+
+        let default_llm = doc
+            .entry("default_llm")
             .or_insert(Item::Table(Default::default()))
             .as_table_mut()
             .ok_or_else(|| {
-                ApiError::Validation("[intern] is not a table".into())
+                ApiError::Validation("[default_llm] is not a table".into())
             })?;
-        intern.insert("provider", value(kind_str));
-        intern.insert("base_url", value(new_base));
-        intern.insert("api_key_env", value(new_env));
+        // Bring legacy fields forward when the destination doesn't
+        // already define them — operator's prior temperature/max_tokens
+        // survive the migration.
+        if let Some(legacy) = legacy_intern {
+            for (k, v) in legacy.iter() {
+                if default_llm.get(k).is_none() {
+                    default_llm.insert(k, v.clone());
+                }
+            }
+        }
+        default_llm.insert("provider", value(kind_str));
+        default_llm.insert("base_url", value(new_base));
+        default_llm.insert("api_key_env", value(new_env));
         if let Some(m) = model_owned {
-            intern.insert("model", value(m));
+            default_llm.insert("model", value(m));
         }
         std::fs::write(&path, doc.to_string()).map_err(|e| {
             ApiError::Internal(format!("write {}: {e}", path.display()))
