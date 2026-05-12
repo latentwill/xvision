@@ -155,23 +155,42 @@ impl ChatSessionStore {
         Ok(())
     }
 
-    /// Update the persisted `ContextScope` for a session — backs the
-    /// "Change context ▾" affordance.
-    pub async fn update_scope(
+    /// Resolve the chat-rail session for a given scope: return the
+    /// most-recently active session for that scope along with its
+    /// history, creating a fresh empty session if no match exists.
+    ///
+    /// The lookup compares the persisted `context_scope_json` against a
+    /// fresh serialization of `scope`. Serde is deterministic for the
+    /// same value so writer and reader hash to the same string.
+    ///
+    /// Replaces the previous "frontend caches a session id and validates
+    /// via update_scope" flow — sessions are now owned server-side so
+    /// the rail can't hold a stale id across DB resets or fresh deploys.
+    pub async fn resolve(
         pool: &SqlitePool,
-        session_id: &str,
         scope: &ContextScope,
-    ) -> Result<()> {
-        let json = serde_json::to_string(scope).context("serialize ContextScope")?;
-        sqlx::query(
-            "UPDATE chat_sessions SET context_scope_json = ?2 WHERE id = ?1",
+    ) -> Result<(String, Vec<ChatMessage>)> {
+        let scope_json = serde_json::to_string(scope).context("serialize ContextScope")?;
+        let existing: Option<String> = sqlx::query_scalar(
+            "SELECT id FROM chat_sessions \
+             WHERE context_scope_json = ?1 \
+             ORDER BY last_activity_at DESC LIMIT 1",
         )
-        .bind(session_id)
-        .bind(&json)
-        .execute(pool)
+        .bind(&scope_json)
+        .fetch_optional(pool)
         .await
-        .context("update session scope")?;
-        Ok(())
+        .context("query chat_sessions by scope")?;
+
+        match existing {
+            Some(id) => {
+                let history = Self::load_history(pool, &id).await?;
+                Ok((id, history))
+            }
+            None => {
+                let id = Self::create_session(pool, scope).await?;
+                Ok((id, Vec::new()))
+            }
+        }
     }
 
     /// Read the session's current `ContextScope`. Errors if the session
@@ -297,19 +316,58 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn update_scope_round_trips() {
+    async fn resolve_creates_then_returns_existing_session() {
         let pool = fresh_pool().await;
-        let sid = ChatSessionStore::create_session(&pool, &ContextScope::Workspace)
-            .await
-            .unwrap();
-        let new_scope = ContextScope::Strategy {
+        let scope = ContextScope::Strategy {
             draft_id: "btc-momentum".into(),
         };
-        ChatSessionStore::update_scope(&pool, &sid, &new_scope)
+
+        // First call has no match → creates a fresh session, empty history.
+        let (id1, history1) = ChatSessionStore::resolve(&pool, &scope).await.unwrap();
+        assert!(history1.is_empty());
+
+        // Append a message; second resolve must return the same id and
+        // include that message.
+        ChatSessionStore::append(&pool, &id1, "user", &[block("hi")])
             .await
             .unwrap();
-        let back = ChatSessionStore::load_scope(&pool, &sid).await.unwrap();
-        assert_eq!(back, new_scope);
+        let (id2, history2) = ChatSessionStore::resolve(&pool, &scope).await.unwrap();
+        assert_eq!(id2, id1);
+        assert_eq!(history2.len(), 1);
+        assert_eq!(history2[0].role, "user");
+    }
+
+    #[tokio::test]
+    async fn resolve_returns_most_recent_for_scope() {
+        let pool = fresh_pool().await;
+        let scope = ContextScope::Workspace;
+
+        let id_old = ChatSessionStore::create_session(&pool, &scope).await.unwrap();
+        // Sleep enough that last_activity_at differs at RFC3339 resolution.
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        let id_new = ChatSessionStore::create_session(&pool, &scope).await.unwrap();
+
+        let (resolved, _) = ChatSessionStore::resolve(&pool, &scope).await.unwrap();
+        assert_eq!(resolved, id_new, "most recent wins");
+        assert_ne!(resolved, id_old);
+    }
+
+    #[tokio::test]
+    async fn resolve_differentiates_by_scope() {
+        let pool = fresh_pool().await;
+        let workspace = ContextScope::Workspace;
+        let strategy = ContextScope::Strategy {
+            draft_id: "x".into(),
+        };
+
+        let (workspace_id, _) = ChatSessionStore::resolve(&pool, &workspace).await.unwrap();
+        let (strategy_id, _) = ChatSessionStore::resolve(&pool, &strategy).await.unwrap();
+        assert_ne!(workspace_id, strategy_id, "scopes get distinct sessions");
+
+        // Re-resolving each scope returns its own existing id, not a new one.
+        let (workspace_again, _) =
+            ChatSessionStore::resolve(&pool, &workspace).await.unwrap();
+        assert_eq!(workspace_again, workspace_id);
     }
 
     #[tokio::test]
