@@ -2,14 +2,17 @@
 //!
 //! Plan #11 Phase C Task 4. The legacy one-shot `/api/wizard/chat` route
 //! creates a new session per request; the rail's endpoints expose the
-//! full session lifecycle so the React rail can resume across routes,
-//! switch context scope mid-session, and start fresh on demand.
+//! full session lifecycle so the React rail can resume across routes
+//! and start fresh on demand.
+//!
+//! Sessions are owned server-side, keyed by `ContextScope`. The rail
+//! never holds a stale id across DB resets or fresh deploys — it just
+//! re-resolves on mount.
 //!
 //! Endpoints:
 //!
-//! - `POST   /api/chat-rail/sessions`               → `{ session_id }`
+//! - `POST   /api/chat-rail/sessions/resolve`       → `{ session_id, history }`
 //! - `GET    /api/chat-rail/sessions/:id/history`   → `Vec<ChatMessage>`
-//! - `POST   /api/chat-rail/sessions/:id/scope`     → 204
 //! - `DELETE /api/chat-rail/sessions/:id`           → 204
 //! - `POST   /api/chat-rail/chat` (SSE)             → `WizardEvent`s
 
@@ -31,25 +34,32 @@ use crate::state::AppState;
 use crate::wizard_loop::{WizardEvent, WizardLoop};
 
 #[derive(Debug, Deserialize)]
-pub struct CreateSessionReq {
-    /// Initial scope. Use `Workspace` if the rail is opened from a route
-    /// without a more-specific context.
+pub struct ResolveSessionReq {
+    /// Scope to look up. Server returns the most-recent session for
+    /// this scope or creates one if no match exists.
     pub scope: ContextScope,
 }
 
 #[derive(Debug, Serialize)]
-pub struct CreateSessionResp {
+pub struct ResolveSessionResp {
     pub session_id: String,
+    pub history: Vec<ChatMessage>,
 }
 
-pub async fn create_session(
+/// POST `/api/chat-rail/sessions/resolve` — the rail's mount-time
+/// entrypoint. Always returns a usable `(session_id, history)` pair so
+/// the frontend never holds a stale id.
+pub async fn resolve_session(
     State(state): State<AppState>,
-    Json(req): Json<CreateSessionReq>,
-) -> Result<Json<CreateSessionResp>, DashboardError> {
-    let session_id = ChatSessionStore::create_session(&state.pool, &req.scope)
+    Json(req): Json<ResolveSessionReq>,
+) -> Result<Json<ResolveSessionResp>, DashboardError> {
+    let (session_id, history) = ChatSessionStore::resolve(&state.pool, &req.scope)
         .await
         .map_err(DashboardError::Internal)?;
-    Ok(Json(CreateSessionResp { session_id }))
+    Ok(Json(ResolveSessionResp {
+        session_id,
+        history,
+    }))
 }
 
 pub async fn history(
@@ -60,22 +70,6 @@ pub async fn history(
         .await
         .map_err(DashboardError::Internal)?;
     Ok(Json(messages))
-}
-
-pub async fn update_scope(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(scope): Json<ContextScope>,
-) -> Result<StatusCode, DashboardError> {
-    // Verify the session exists first so we return 404, not a silent UPDATE
-    // 0 rows. `load_scope` returns NotFound when the session doesn't exist.
-    ChatSessionStore::load_scope(&state.pool, &id)
-        .await
-        .map_err(|_| DashboardError::NotFound(format!("session '{id}'")))?;
-    ChatSessionStore::update_scope(&state.pool, &id, &scope)
-        .await
-        .map_err(DashboardError::Internal)?;
-    Ok(StatusCode::NO_CONTENT)
 }
 
 pub async fn delete_session(

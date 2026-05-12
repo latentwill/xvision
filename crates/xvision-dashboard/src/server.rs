@@ -97,16 +97,12 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/api/wizard/chat", post(wizard::chat))
         .route(
-            "/api/chat-rail/sessions",
-            post(chat_rail::create_session),
+            "/api/chat-rail/sessions/resolve",
+            post(chat_rail::resolve_session),
         )
         .route(
             "/api/chat-rail/sessions/:id/history",
             get(chat_rail::history),
-        )
-        .route(
-            "/api/chat-rail/sessions/:id/scope",
-            post(chat_rail::update_scope),
         )
         .route(
             "/api/chat-rail/sessions/:id",
