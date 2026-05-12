@@ -36,7 +36,11 @@ pub fn build_router(state: AppState) -> Router {
             "/api/skills/:id",
             get(skills::get).put(skills::update).delete(skills::archive),
         )
-        .route("/api/strategies", get(strategies::list))
+        .route(
+            "/api/strategies",
+            get(strategies::list).post(strategies::post_create),
+        )
+        .route("/api/templates", get(strategies::list_templates))
         .route("/api/strategy/:id", get(strategies::get))
         .route(
             "/api/strategy/:id/slot/:role",

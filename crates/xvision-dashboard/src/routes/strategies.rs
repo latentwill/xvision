@@ -4,6 +4,7 @@
 
 use axum::{
     extract::{Path, State},
+    http::StatusCode,
     Json,
 };
 use serde::{Deserialize, Serialize};
@@ -12,7 +13,8 @@ use xvision_engine::api::strategy::{
     self, set_risk_config, update_slot, validate_draft, StrategySummary,
 };
 use xvision_engine::authoring::{
-    SetRiskConfigOut, SetRiskConfigReq, UpdateSlotOut, UpdateSlotReq, ValidateDraftOut,
+    self, CreateStrategyOut, CreateStrategyReq, SetRiskConfigOut, SetRiskConfigReq,
+    TemplateInfo, UpdateSlotOut, UpdateSlotReq, ValidateDraftOut,
 };
 use xvision_engine::bundle::risk::RiskConfig;
 use xvision_engine::bundle::StrategyBundle;
@@ -30,6 +32,31 @@ pub async fn list(
 ) -> Result<Json<StrategiesListResponse>, DashboardError> {
     let items = strategy::list(&state.api_context()).await?;
     Ok(Json(StrategiesListResponse { items }))
+}
+
+#[derive(Serialize)]
+pub struct TemplatesListResponse {
+    pub items: Vec<TemplateInfo>,
+}
+
+/// `GET /api/templates` — list the built-in strategy templates the
+/// template picker shows. The list is a static registry (no DB or env
+/// dependency) so no audit log is needed.
+pub async fn list_templates() -> Json<TemplatesListResponse> {
+    Json(TemplatesListResponse {
+        items: authoring::list_templates(),
+    })
+}
+
+/// `POST /api/strategies` — create a new draft strategy from a template.
+/// Body: `{ template, name, creator? }`. Returns `{ id }` (the new
+/// agent_id); the frontend redirects to `/authoring/:id`.
+pub async fn post_create(
+    State(state): State<AppState>,
+    Json(body): Json<CreateStrategyReq>,
+) -> Result<(StatusCode, Json<CreateStrategyOut>), DashboardError> {
+    let out = strategy::create_strategy(&state.api_context(), body).await?;
+    Ok((StatusCode::CREATED, Json(out)))
 }
 
 /// Inspector render path — full bundle for `/authoring/<id>`.
