@@ -25,6 +25,7 @@ use xvision_engine::api::eval::{
 };
 use xvision_engine::eval::compare::ComparisonReport;
 use xvision_engine::eval::run::RunStatus;
+use xvision_engine::eval::store::RunStore;
 
 use crate::error::DashboardError;
 use crate::state::AppState;
@@ -189,15 +190,52 @@ fn to_sse_event(ev: RunChartEvent) -> Option<Event> {
 /// so the client doesn't get flooded during fast backtests. The stream
 /// stays open until the bus drops the channel (terminal Status) or the
 /// client disconnects.
+///
+/// If the run is already in a terminal state (Completed / Failed / Cancelled)
+/// when the client connects — meaning the executor already dropped the bus
+/// channel — a single synthetic `status` event is emitted immediately and
+/// the stream closes. This prevents late subscribers from hanging forever on
+/// a channel that will never receive events.
 pub async fn stream(
     State(state): State<AppState>,
     Path(run_id): Path<String>,
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>> {
     use tokio::time::{interval, MissedTickBehavior};
 
-    let mut rx = state.event_bus.subscribe(&run_id).await;
+    // Pre-check: if the run is already in a terminal state, emit one
+    // synthetic status event and close immediately — the bus channel was
+    // already dropped by the executor so subscribing would produce a channel
+    // that never fires. Runs not found in the DB are allowed through to the
+    // bus subscription path (they may be in-flight with the row not yet
+    // committed, or in test scenarios where the bus is live without a DB row).
+    let store = RunStore::new(state.pool.clone());
+    let terminal: Option<(String, Option<String>)> = match store.get(&run_id).await {
+        Ok(run) if run.status.is_terminal() => {
+            let phase = match run.status {
+                RunStatus::Completed => "completed",
+                RunStatus::Failed => "failed",
+                RunStatus::Cancelled => "cancelled",
+                _ => unreachable!(),
+            };
+            Some((phase.to_string(), run.error.clone()))
+        }
+        Ok(_) | Err(_) => None,
+    };
 
+    let bus = state.event_bus.clone();
     let sse_stream = async_stream::stream! {
+        if let Some((phase, message)) = terminal {
+            let payload = serde_json::json!({
+                "event": "status",
+                "data": { "phase": phase, "message": message },
+            });
+            if let Ok(s) = serde_json::to_string(&payload) {
+                yield Ok(Event::default().event("status").data(s));
+            }
+            return;
+        }
+
+        let mut rx = bus.subscribe(&run_id).await;
         let mut batch: Vec<RunChartEvent> = Vec::new();
         let mut ticker = interval(Duration::from_millis(250));
         ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);

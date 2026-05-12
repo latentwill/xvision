@@ -14,6 +14,8 @@ use tempfile::TempDir;
 use tokio::time::timeout;
 use xvision_dashboard::{server::build_router, AppState};
 use xvision_engine::api::chart::{ChartEquityPoint, RunChartEvent};
+use xvision_engine::eval::run::{Run, RunMode, RunStatus};
+use xvision_engine::eval::store::RunStore;
 
 /// Boot a real TCP server on an ephemeral port and return the base URL.
 async fn boot_server() -> (String, TempDir, AppState) {
@@ -112,5 +114,80 @@ async fn sse_stream_emits_equity_and_status_then_closes() {
     assert!(
         text.contains("100"),
         "expected equity value '100' in SSE body; got:\n{text}"
+    );
+}
+
+#[tokio::test]
+async fn sse_stream_late_subscriber_gets_immediate_close_for_completed_run() {
+    let (base_url, _tmp, state) = boot_server().await;
+
+    // Insert a completed run into the store so the handler's pre-check finds
+    // it in a terminal state. Uses "crypto-bull-q1-2025" — a canonical
+    // scenario seeded by AppState::new so the trigger-based FK passes.
+    let store = RunStore::new(state.pool.clone());
+    let run = Run {
+        id: "test-run-completed".into(),
+        strategy_bundle_hash: "abc123".into(),
+        scenario_id: "crypto-bull-q1-2025".into(),
+        params_override: None,
+        mode: RunMode::Backtest,
+        status: RunStatus::Queued,
+        started_at: chrono::Utc::now(),
+        completed_at: None,
+        metrics: None,
+        error: None,
+        estimated_total_tokens: None,
+        actual_input_tokens: None,
+        actual_output_tokens: None,
+    };
+    store.create(&run).await.expect("insert test run");
+    store
+        .update_status("test-run-completed", RunStatus::Completed, None)
+        .await
+        .expect("mark run completed");
+
+    // Simulate the executor having already cleaned up the bus channel.
+    state
+        .event_bus
+        .drop_channel("test-run-completed")
+        .await;
+
+    let url = format!("{base_url}/api/eval/runs/test-run-completed/stream");
+    let client = reqwest::Client::new();
+
+    // The handler should detect the terminal state and close immediately —
+    // give it a generous 2 s timeout (should finish in milliseconds).
+    let body = timeout(Duration::from_secs(2), async {
+        let resp = client
+            .get(&url)
+            .send()
+            .await
+            .expect("GET /api/eval/runs/test-run-completed/stream");
+
+        assert_eq!(resp.status(), reqwest::StatusCode::OK);
+        let content_type = resp
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        assert!(
+            content_type.contains("text/event-stream"),
+            "expected text/event-stream content-type, got: {content_type}"
+        );
+
+        resp.bytes().await.expect("read body")
+    })
+    .await
+    .expect("SSE stream did not close within 2 s for already-completed run");
+
+    let text = std::str::from_utf8(&body).expect("body is utf-8");
+
+    assert!(
+        text.contains("event: status"),
+        "expected 'event: status' in SSE body; got:\n{text}"
+    );
+    assert!(
+        text.contains("completed"),
+        "expected 'completed' phase in SSE body; got:\n{text}"
     );
 }
