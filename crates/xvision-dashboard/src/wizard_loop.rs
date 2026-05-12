@@ -1,6 +1,6 @@
 //! Server-side LLM agent that drives the strategy authoring loop. The user
 //! sends one chat message; this struct repeatedly calls the LLM with the
-//! seven authoring verbs as `ToolDefinition`s, routes any `ToolUse` blocks
+//! strategy/eval verbs as `ToolDefinition`s, routes any `ToolUse` blocks
 //! the model emits to `xvision_engine::authoring`, persists every turn
 //! (user / assistant / tool_result) to the `chat_sessions` store, and
 //! re-calls until the model responds with a text-only `EndTurn`.
@@ -26,8 +26,10 @@ use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::agent::llm::{
     ContentBlock, LlmDispatch, LlmRequest, LlmResponse, Message, StopReason, ToolDefinition,
 };
+use xvision_engine::api::eval::{self as api_eval, EvalRunRequest};
 use xvision_engine::authoring;
 use xvision_engine::chat_session::{ChatSessionStore, ContextScope};
+use xvision_engine::eval::run::RunMode;
 
 const WIZARD_SYSTEM_PROMPT_BASE: &str = include_str!("../prompts/wizard.md");
 
@@ -343,12 +345,52 @@ impl WizardLoop {
                     .await?;
                 Ok(serde_json::to_value(out)?)
             }
+            "run_eval" => {
+                let agent_id = input
+                    .get("agent_id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("run_eval: missing `agent_id`"))?;
+                let scenario_id = input
+                    .get("scenario_id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("run_eval: missing `scenario_id`"))?;
+                let mode = input
+                    .get("mode")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("backtest");
+                let mode = match mode {
+                    "paper" => RunMode::Paper,
+                    _ => RunMode::Backtest,
+                };
+                let req = EvalRunRequest {
+                    agent_id: agent_id.to_string(),
+                    scenario_id: scenario_id.to_string(),
+                    mode,
+                    params_override: None,
+                };
+                let out = api_eval::start_run(
+                    &xvision_engine::api::ApiContext::new(
+                        self.pool.clone(),
+                        xvision_engine::api::Actor::Cli {
+                            user: "dashboard".to_string(),
+                        },
+                        self.xvn_home.clone(),
+                    ),
+                    req,
+                )
+                .await?;
+                Ok(serde_json::json!({
+                    "run_id": out.summary.id,
+                    "status": out.summary.status,
+                    "scenario_id": out.summary.scenario_id
+                }))
+            }
             other => anyhow::bail!("unknown authoring verb: {other}"),
         }
     }
 }
 
-/// The seven authoring verbs as `ToolDefinition`s. The schemas mirror the
+/// Authoring/eval verbs as `ToolDefinition`s. The schemas mirror the
 /// engine's request structs but only declare the fields a model needs;
 /// optional fields are omitted from `required`.
 fn wizard_tool_defs() -> Vec<ToolDefinition> {
@@ -392,6 +434,8 @@ fn wizard_tool_defs() -> Vec<ToolDefinition> {
                     "slot": {"type": "string", "enum": ["regime", "intern", "trader"]},
                     "prompt": {"type": "string"},
                     "model_requirement": {"type": "string"},
+                    "provider": {"type": "string"},
+                    "model": {"type": "string"},
                     "allowed_tools": {"type": "array", "items": {"type": "string"}}
                 },
                 "required": ["id", "slot"]
@@ -430,6 +474,19 @@ fn wizard_tool_defs() -> Vec<ToolDefinition> {
                 "type": "object",
                 "properties": {"id": {"type": "string"}},
                 "required": ["id"]
+            }),
+        },
+        ToolDefinition {
+            name: "run_eval".into(),
+            description: "Start an eval run for a strategy and scenario.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "agent_id": {"type": "string"},
+                    "scenario_id": {"type": "string"},
+                    "mode": {"type": "string", "enum": ["backtest", "paper"]}
+                },
+                "required": ["agent_id", "scenario_id"]
             }),
         },
     ]
@@ -667,10 +724,10 @@ mod tests {
     }
 
     #[test]
-    fn wizard_tool_defs_advertises_seven_verbs() {
+    fn wizard_tool_defs_advertises_core_verbs() {
         let defs = wizard_tool_defs();
         let names: Vec<_> = defs.iter().map(|d| d.name.as_str()).collect();
-        assert_eq!(names.len(), 7);
+        assert_eq!(names.len(), 8);
         for v in [
             "list_templates",
             "create_strategy",
@@ -679,6 +736,7 @@ mod tests {
             "set_mechanical_param",
             "set_risk_config",
             "validate_draft",
+            "run_eval",
         ] {
             assert!(names.contains(&v), "missing verb {v} in {names:?}");
         }

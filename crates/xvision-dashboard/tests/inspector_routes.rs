@@ -147,3 +147,62 @@ async fn post_validate_unknown_draft_is_404() {
         .await;
     response.assert_status_not_found();
 }
+
+#[tokio::test]
+async fn strategy_agents_add_rename_remove_round_trip() {
+    let (server, _tmp, state) = boot().await;
+    let strategy_id = create_draft(&state).await;
+
+    // Create an agent first (strategy add-agent validates FK existence).
+    let agent_resp = server
+        .post("/api/agents")
+        .json(&serde_json::json!({
+            "name": "qa-agent",
+            "description": "for inspector route test",
+            "tags": [],
+            "slots": [{
+                "name": "main",
+                "provider": "anthropic",
+                "model": "claude-sonnet-4-6",
+                "system_prompt": "Test slot prompt body for validator.",
+                "skill_ids": [],
+                "max_tokens": 512
+            }]
+        }))
+        .await;
+    agent_resp.assert_status_ok();
+    let agent_body: serde_json::Value = agent_resp.json();
+    let agent_id = agent_body["agent_id"].as_str().unwrap().to_string();
+
+    let add = server
+        .post(&format!("/api/strategy/{strategy_id}/agents"))
+        .json(&serde_json::json!({
+            "agent_id": agent_id,
+            "role": "trader"
+        }))
+        .await;
+    add.assert_status_ok();
+    let add_body: serde_json::Value = add.json();
+    assert_eq!(add_body["agents"][0]["role"], "trader");
+
+    let rename = server
+        .patch(&format!("/api/strategy/{strategy_id}/agents/trader"))
+        .json(&serde_json::json!({
+            "new_role": "signal_trader"
+        }))
+        .await;
+    rename.assert_status_ok();
+    let rename_body: serde_json::Value = rename.json();
+    assert_eq!(rename_body["agents"][0]["role"], "signal_trader");
+
+    let remove = server
+        .delete(&format!("/api/strategy/{strategy_id}/agents/signal_trader"))
+        .await;
+    remove.assert_status_ok();
+    let remove_body: serde_json::Value = remove.json();
+    assert_eq!(
+        remove_body["agents"].as_array().unwrap().len(),
+        0,
+        "strategy should have no attached agents after remove"
+    );
+}

@@ -7,7 +7,10 @@ import { Pill } from "@/components/primitives/Pill";
 import { ModelPicker } from "@/components/ModelPicker";
 import { ApiError } from "@/api/client";
 import {
+  addStrategyAgent,
   getStrategy,
+  renameStrategyAgentRole,
+  removeStrategyAgent,
   setRiskConfig,
   strategyKeys,
   updateSlot,
@@ -18,6 +21,7 @@ import {
   type UpdateSlotBody,
   type ValidateDraftOut,
 } from "@/api/strategies";
+import { listAgents } from "@/api/agents";
 import { getStrategyChart, strategyChartKeys } from "@/api/chart";
 import { StrategyChart } from "@/components/chart/StrategyChart";
 import { listProviders, settingsKeys } from "@/api/settings";
@@ -134,6 +138,7 @@ function BundleEditor({ bundle }: { bundle: Strategy }) {
   return (
     <>
       <ManifestCard bundle={bundle} />
+      <AgentsCard bundle={bundle} />
       {SLOT_ROLES.map(({ role, label, required }) => (
         <SlotCard
           key={role}
@@ -153,6 +158,169 @@ function BundleEditor({ bundle }: { bundle: Strategy }) {
       <RiskCard bundle={bundle} />
       <MechanicalParamsCard bundle={bundle} />
     </>
+  );
+}
+
+function AgentsCard({ bundle }: { bundle: Strategy }) {
+  const qc = useQueryClient();
+  const agentPool = useQuery({
+    queryKey: ["agents", "pool"],
+    queryFn: () => listAgents({ include_archived: false, limit: 200 }),
+  });
+  const [newAgentId, setNewAgentId] = useState("");
+  const [newRole, setNewRole] = useState("");
+  const [renameRoleFrom, setRenameRoleFrom] = useState<string | null>(null);
+  const [renameRoleTo, setRenameRoleTo] = useState("");
+
+  const attached = bundle.agents ?? [];
+  const available = (agentPool.data ?? []).filter(
+    (a) => !attached.some((r) => r.agent_id === a.agent_id),
+  );
+
+  const addMut = useMutation({
+    mutationFn: (payload: { agent_id: string; role: string }) =>
+      addStrategyAgent(bundle.manifest.id, payload),
+    onSuccess: () => {
+      setNewAgentId("");
+      setNewRole("");
+      qc.invalidateQueries({ queryKey: strategyKeys.detail(bundle.manifest.id) });
+    },
+  });
+
+  const removeMut = useMutation({
+    mutationFn: (role: string) => removeStrategyAgent(bundle.manifest.id, role),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: strategyKeys.detail(bundle.manifest.id) });
+    },
+  });
+
+  const renameMut = useMutation({
+    mutationFn: (payload: { role: string; newRole: string }) =>
+      renameStrategyAgentRole(bundle.manifest.id, payload.role, payload.newRole),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: strategyKeys.detail(bundle.manifest.id) });
+    },
+  });
+
+  function renameRole() {
+    if (!renameRoleFrom || !renameRoleTo.trim()) return;
+    renameMut.mutate({
+      role: renameRoleFrom,
+      newRole: renameRoleTo.trim(),
+    });
+    setRenameRoleFrom(null);
+    setRenameRoleTo("");
+  }
+
+  return (
+    <Card>
+      <SectionHeader
+        label="Strategy agents"
+        hint="Attach reusable agents and define role names for this strategy."
+      />
+      <div className="px-5 pb-5 space-y-4">
+        {attached.length === 0 ? (
+          <p className="m-0 text-[13px] text-text-3">
+            No agents attached yet.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {attached.map((a) => (
+              <div
+                key={`${a.agent_id}:${a.role}`}
+                className="border border-border-soft rounded p-3"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-[13px]">
+                    <span className="text-text font-mono">{a.role}</span>
+                    <span className="text-text-3"> · </span>
+                    <span className="text-text-2 font-mono">{a.agent_id}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      className="text-[12px] text-text-2 hover:text-text"
+                      onClick={() => {
+                        setRenameRoleFrom(a.role);
+                        setRenameRoleTo(a.role);
+                      }}
+                    >
+                      Rename role
+                    </button>
+                    <button
+                      className="text-[12px] text-danger"
+                      onClick={() => removeMut.mutate(a.role)}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {renameRoleFrom && (
+          <div className="border border-border-soft rounded p-3 space-y-2">
+            <div className="text-[12px] text-text-2">
+              Renaming role <code>{renameRoleFrom}</code>
+            </div>
+            <input
+              className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
+              value={renameRoleTo}
+              onChange={(e) => setRenameRoleTo(e.target.value)}
+            />
+            <div className="flex gap-2">
+              <button
+                onClick={renameRole}
+                className="px-3 py-1.5 rounded text-[12px] border border-border"
+              >
+                Save role
+              </button>
+              <button
+                onClick={() => setRenameRoleFrom(null)}
+                className="px-3 py-1.5 rounded text-[12px] border border-border-soft text-text-2"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div className="border border-border-soft rounded p-3 space-y-2">
+          <div className="text-[12px] text-text-2">Add agent</div>
+          <select
+            className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text"
+            value={newAgentId}
+            onChange={(e) => setNewAgentId(e.target.value)}
+          >
+            <option value="">Select agent…</option>
+            {available.map((a) => (
+              <option key={a.agent_id} value={a.agent_id}>
+                {a.name} · {a.agent_id}
+              </option>
+            ))}
+          </select>
+          <input
+            className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
+            value={newRole}
+            onChange={(e) => setNewRole(e.target.value)}
+            placeholder="Role name (e.g. trader)"
+          />
+          <button
+            onClick={() =>
+              addMut.mutate({
+                agent_id: newAgentId,
+                role: newRole.trim(),
+              })
+            }
+            disabled={!newAgentId || !newRole.trim() || addMut.isPending}
+            className="px-3 py-1.5 rounded text-[12px] border border-border disabled:opacity-50"
+          >
+            Add Agent
+          </button>
+        </div>
+      </div>
+    </Card>
   );
 }
 

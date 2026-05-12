@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { RunChart } from "./RunChart";
 import { useRunStream, type LiveStatus } from "./use-run-stream";
@@ -11,6 +11,14 @@ type Props = {
 export function LiveChart({ runId, themeMode = "dark" }: Props) {
   const { data, status } = useRunStream(runId);
   const [follow, setFollow] = useState(true);
+  const previousRunIdRef = useRef(runId);
+  const effectiveFollow = previousRunIdRef.current === runId ? follow : true;
+
+  useEffect(() => {
+    if (previousRunIdRef.current === runId) return;
+    previousRunIdRef.current = runId;
+    setFollow(true);
+  }, [runId]);
 
   return (
     <div>
@@ -22,11 +30,11 @@ export function LiveChart({ runId, themeMode = "dark" }: Props) {
         <label className="flex items-center gap-2">
           <input
             type="checkbox"
-            checked={follow}
+            checked={effectiveFollow}
             onChange={(e) => setFollow(e.target.checked)}
           />
-          {follow ? "Following live" : "Frozen"}
-          {!follow && (
+          {effectiveFollow ? "Following live" : "Frozen"}
+          {!effectiveFollow && (
             <button
               type="button"
               onClick={() => setFollow(true)}
@@ -38,7 +46,7 @@ export function LiveChart({ runId, themeMode = "dark" }: Props) {
         </label>
       </div>
       {data ? (
-        <RunChart payload={data} themeMode={themeMode} />
+        <RunChart payload={data} themeMode={themeMode} follow={effectiveFollow} />
       ) : (
         <div className="text-text-3 py-12 text-center">
           Waiting for first event…

@@ -1,13 +1,22 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { LiveChart } from "./LiveChart";
 import samplePayload from "./__fixtures__/sample-run-chart.json";
 
+const liveChartMocks = vi.hoisted(() => ({
+  runChartProps: vi.fn(),
+}));
+
 // Mock RunChart so lightweight-charts never tries to use canvas/WebGL in jsdom.
 vi.mock("./RunChart", () => ({
-  RunChart: () => <div data-testid="run-chart-mock" />,
+  RunChart: (props: { follow?: boolean }) => {
+    liveChartMocks.runChartProps(props);
+    return (
+      <div data-testid="run-chart-mock" data-follow={String(props.follow)} />
+    );
+  },
 }));
 
 // Performance budget: snapshot-to-render time for the LiveChart shell.
@@ -25,6 +34,7 @@ function renderWithQuery(ui: React.ReactElement) {
 
 describe("LiveChart", () => {
   beforeEach(() => {
+    liveChartMocks.runChartProps.mockClear();
     vi.spyOn(globalThis, "fetch").mockResolvedValue({
       ok: true,
       status: 200,
@@ -33,6 +43,7 @@ describe("LiveChart", () => {
   });
 
   afterEach(() => {
+    cleanup();
     vi.restoreAllMocks();
   });
 
@@ -53,5 +64,47 @@ describe("LiveChart", () => {
     );
     const elapsed = performance.now() - start;
     expect(elapsed).toBeLessThan(SNAPSHOT_RENDER_BUDGET_MS);
+  });
+
+  it("passes follow state through to RunChart as the checkbox toggles", async () => {
+    renderWithQuery(<LiveChart runId="r_test" />);
+
+    const runChart = await screen.findByTestId("run-chart-mock");
+    expect(runChart).toHaveAttribute("data-follow", "true");
+
+    fireEvent.click(screen.getByRole("checkbox"));
+
+    expect(runChart).toHaveAttribute("data-follow", "false");
+    expect(screen.getByText("Frozen")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Resume live" }));
+
+    expect(runChart).toHaveAttribute("data-follow", "true");
+    expect(liveChartMocks.runChartProps).toHaveBeenLastCalledWith(
+      expect.objectContaining({ follow: true }),
+    );
+  });
+
+  it("resets follow mode when the run changes", async () => {
+    const { rerender } = renderWithQuery(<LiveChart runId="r_test" />);
+
+    const runChart = await screen.findByTestId("run-chart-mock");
+    fireEvent.click(screen.getByRole("checkbox"));
+    expect(runChart).toHaveAttribute("data-follow", "false");
+
+    rerender(
+      <QueryClientProvider
+        client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      >
+        <LiveChart runId="r_next" />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("run-chart-mock")).toHaveAttribute(
+        "data-follow",
+        "true",
+      ),
+    );
   });
 });

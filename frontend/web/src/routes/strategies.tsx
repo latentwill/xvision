@@ -54,32 +54,7 @@ function subtitleFor(q: ReturnType<typeof useQuery>) {
 function FilterBar() {
   return (
     <div className="flex items-center justify-between mb-4 gap-3">
-      <div className="flex items-center gap-2.5">
-        <div className="flex items-center gap-2 px-3 py-2 bg-surface-elev border border-border rounded w-[280px] text-text-3 opacity-50">
-          <Icon name="search" size={14} />
-          <input
-            className="bg-transparent border-0 outline-0 flex-1 text-[13px] text-text placeholder:text-text-3 disabled:cursor-not-allowed"
-            placeholder="Filter by name…"
-            disabled
-            aria-label="Filter strategies (coming soon)"
-            title="Filtering ships with Plan 5 (Findings + Polish)"
-          />
-        </div>
-        <select
-          className="bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text-2 disabled:opacity-50 disabled:cursor-not-allowed"
-          disabled
-          title="Status filter ships with Plan 5 (Findings + Polish)"
-        >
-          <option>All status</option>
-        </select>
-        <select
-          className="bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text-2 disabled:opacity-50 disabled:cursor-not-allowed"
-          disabled
-          title="Template filter ships with Plan 5 (Findings + Polish)"
-        >
-          <option>All templates</option>
-        </select>
-      </div>
+      <div className="text-[13px] text-text-3">Latest strategy drafts</div>
       <div className="flex items-center gap-2">
         <Link
           to="/strategies/new"

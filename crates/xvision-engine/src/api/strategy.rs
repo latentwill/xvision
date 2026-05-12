@@ -12,11 +12,14 @@ use crate::api::{
     audit::{self, Outcome},
     search as api_search, ApiContext, ApiError, ApiResult,
 };
+use crate::agents::AgentStore;
 use crate::authoring::{
-    self, CreateStrategyOut, CreateStrategyReq, SetRiskConfigOut, SetRiskConfigReq,
-    UpdateSlotOut, UpdateSlotReq, ValidateDraftOut,
+    self, AddAgentRefRequest, CreateStrategyOut, CreateStrategyReq, RemoveAgentRefRequest,
+    RenameAgentRoleRequest, SetPipelineRequest, SetRiskConfigOut, SetRiskConfigReq, UpdateSlotOut,
+    UpdateSlotReq, ValidateDraftOut,
 };
 use crate::strategies::{
+    AgentRef, PipelineDef, PipelineEdge, PipelineKind,
     store::{strategy_store_dir, StrategyStore, FilesystemStore},
     Strategy,
 };
@@ -30,9 +33,7 @@ use std::time::Instant;
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct StrategySummary {
     pub agent_id: String,
-    pub display_name: String,
     pub template: String,
-    pub decision_cadence_minutes: u32,
     /// Model requirement of the bundle's primary slot — trader if set,
     /// otherwise the first configured slot in (trader, intern, regime)
     /// order. None when no slot has a model_requirement. Surfaced so the
@@ -40,6 +41,66 @@ pub struct StrategySummary {
     /// each bundle separately.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+}
+
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AddAgentReq {
+    pub strategy_id: String,
+    pub agent_id: String,
+    pub role: String,
+}
+
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RemoveAgentReq {
+    pub strategy_id: String,
+    pub role: String,
+}
+
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SetPipelineReq {
+    pub strategy_id: String,
+    pub kind: PipelineKind,
+    #[serde(default)]
+    pub edges: Vec<PipelineEdge>,
+}
+
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RenameAgentRoleReq {
+    pub strategy_id: String,
+    pub role: String,
+    pub new_role: String,
+}
+
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct StrategyAgentsOut {
+    pub strategy_id: String,
+    pub agents: Vec<AgentRef>,
+    pub pipeline: PipelineDef,
 }
 
 pub async fn list(ctx: &ApiContext) -> ApiResult<Vec<StrategySummary>> {
@@ -83,13 +144,11 @@ async fn list_inner(ctx: &ApiContext) -> ApiResult<Vec<StrategySummary>> {
             .as_ref()
             .or(bundle.intern_slot.as_ref())
             .or(bundle.regime_slot.as_ref())
-            .map(|s| s.model_requirement.clone())
+            .map(|s| s.effective_model())
             .filter(|m| !m.trim().is_empty());
         out.push(StrategySummary {
-            agent_id: bundle.manifest.id.clone(),
-            display_name: bundle.manifest.display_name.clone(),
-            template: bundle.manifest.template.clone(),
-            decision_cadence_minutes: bundle.manifest.decision_cadence_minutes,
+            agent_id: bundle.manifest.id,
+            template: bundle.manifest.template,
             model,
         });
     }
@@ -160,11 +219,28 @@ fn map_authoring_error(err: anyhow::Error, agent_id: Option<&str>) -> ApiError {
         "supply either preset or explicit",
         "unknown template",
         "mechanical_params is not a JSON object",
+        "role is required",
+        "already exists on strategy",
+        "not found on strategy",
+        "pipeline edges are only valid for graph pipelines",
+        "single pipelines cannot include more than one agent",
+        "graph edges must reference existing strategy roles",
+        "graph pipelines cannot contain self-loops",
+        "graph pipelines cannot contain duplicate edges",
+        "graph pipelines must be acyclic",
     ];
     if validation_markers.iter().any(|m| msg.contains(m)) {
         return ApiError::Validation(msg);
     }
     ApiError::Internal(msg)
+}
+
+fn strategy_agents_out(strategy: Strategy) -> StrategyAgentsOut {
+    StrategyAgentsOut {
+        strategy_id: strategy.manifest.id.clone(),
+        agents: strategy.agents,
+        pipeline: strategy.pipeline,
+    }
 }
 
 /// Create a new draft strategy from a template. Wraps
@@ -228,6 +304,170 @@ pub async fn update_slot(ctx: &ApiContext, req: UpdateSlotReq) -> ApiResult<Upda
     .await;
     if result.is_ok() {
         index_strategy_after_mutation(ctx, &store, &agent_id).await;
+    }
+    result
+}
+
+pub async fn add_agent(ctx: &ApiContext, req: AddAgentReq) -> ApiResult<StrategyAgentsOut> {
+    let started = Instant::now();
+    let strategy_id = req.strategy_id.clone();
+    let agent_id = req.agent_id.clone();
+    let args_json = serde_json::to_string(&req).ok();
+    let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+    let agent_store = AgentStore::new(ctx.db.clone());
+    let result = match agent_store
+        .get(&agent_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+    {
+        Some(_) => authoring::add_agent_ref(
+            &store,
+            AddAgentRefRequest {
+                strategy_id: req.strategy_id,
+                agent_id: req.agent_id,
+                role: req.role,
+            },
+        )
+        .await
+        .map(strategy_agents_out)
+        .map_err(|e| map_authoring_error(e, Some(&strategy_id))),
+        None => Err(ApiError::NotFound(format!("agent {agent_id}"))),
+    };
+
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let _ = audit::record(
+        ctx,
+        "strategy",
+        "strategy_add_agent",
+        Some(&strategy_id),
+        args_json.as_deref(),
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    if result.is_ok() {
+        index_strategy_after_mutation(ctx, &store, &strategy_id).await;
+    }
+    result
+}
+
+pub async fn remove_agent(
+    ctx: &ApiContext,
+    req: RemoveAgentReq,
+) -> ApiResult<StrategyAgentsOut> {
+    let started = Instant::now();
+    let strategy_id = req.strategy_id.clone();
+    let args_json = serde_json::to_string(&req).ok();
+    let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+    let result = authoring::remove_agent_ref(
+        &store,
+        RemoveAgentRefRequest {
+            strategy_id: req.strategy_id,
+            role: req.role,
+        },
+    )
+    .await
+    .map(strategy_agents_out)
+    .map_err(|e| map_authoring_error(e, Some(&strategy_id)));
+
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let _ = audit::record(
+        ctx,
+        "strategy",
+        "strategy_remove_agent",
+        Some(&strategy_id),
+        args_json.as_deref(),
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    if result.is_ok() {
+        index_strategy_after_mutation(ctx, &store, &strategy_id).await;
+    }
+    result
+}
+
+pub async fn rename_agent_role(
+    ctx: &ApiContext,
+    req: RenameAgentRoleReq,
+) -> ApiResult<StrategyAgentsOut> {
+    let started = Instant::now();
+    let strategy_id = req.strategy_id.clone();
+    let args_json = serde_json::to_string(&req).ok();
+    let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+    let result = authoring::rename_agent_role(
+        &store,
+        RenameAgentRoleRequest {
+            strategy_id: req.strategy_id,
+            role: req.role,
+            new_role: req.new_role,
+        },
+    )
+    .await
+    .map(strategy_agents_out)
+    .map_err(|e| map_authoring_error(e, Some(&strategy_id)));
+
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let _ = audit::record(
+        ctx,
+        "strategy",
+        "strategy_rename_agent_role",
+        Some(&strategy_id),
+        args_json.as_deref(),
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    if result.is_ok() {
+        index_strategy_after_mutation(ctx, &store, &strategy_id).await;
+    }
+    result
+}
+
+pub async fn set_pipeline(ctx: &ApiContext, req: SetPipelineReq) -> ApiResult<StrategyAgentsOut> {
+    let started = Instant::now();
+    let strategy_id = req.strategy_id.clone();
+    let args_json = serde_json::to_string(&req).ok();
+    let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+    let result = authoring::set_pipeline(
+        &store,
+        SetPipelineRequest {
+            strategy_id: req.strategy_id,
+            pipeline: PipelineDef {
+                kind: req.kind,
+                edges: req.edges,
+            },
+        },
+    )
+    .await
+    .map(strategy_agents_out)
+    .map_err(|e| map_authoring_error(e, Some(&strategy_id)));
+
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let _ = audit::record(
+        ctx,
+        "strategy",
+        "strategy_set_pipeline",
+        Some(&strategy_id),
+        args_json.as_deref(),
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    if result.is_ok() {
+        index_strategy_after_mutation(ctx, &store, &strategy_id).await;
     }
     result
 }
@@ -435,6 +675,8 @@ mod tests {
                 slot: "trader".into(),
                 prompt: Some("New prompt.".into()),
                 model_requirement: None,
+                provider: None,
+                model: None,
                 allowed_tools: None,
             },
         )
@@ -464,6 +706,8 @@ mod tests {
                 slot: "no-such-role".into(),
                 prompt: Some("p".into()),
                 model_requirement: None,
+                provider: None,
+                model: None,
                 allowed_tools: None,
             },
         )
@@ -481,6 +725,8 @@ mod tests {
                 slot: "trader".into(),
                 prompt: Some("p".into()),
                 model_requirement: None,
+                provider: None,
+                model: None,
                 allowed_tools: None,
             },
         )

@@ -4,6 +4,7 @@
 //! so `xvn dashboard serve` boots end-to-end. Phase B adds typed API routes
 //! that wrap `xvision_engine::api::*`.
 
+pub mod cli_jobs;
 pub mod embed;
 pub mod error;
 pub mod llm_dispatch;

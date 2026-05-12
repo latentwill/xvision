@@ -40,6 +40,7 @@ const MIGRATION_007_SKILLS: &str = include_str!("../../migrations/007_skills.sql
 const MIGRATION_010_BARS_CACHE: &str = include_str!("../../migrations/010_bars_cache.sql");
 const MIGRATION_011_SCENARIOS: &str = include_str!("../../migrations/011_scenarios.sql");
 const MIGRATION_012_RUNS_FK: &str = include_str!("../../migrations/012_runs_scenario_fk.sql");
+const MIGRATION_013_CLI_JOBS: &str = include_str!("../../migrations/013_cli_jobs.sql");
 
 /// Map of cache_key → per-key mutex used by `eval::bars::load_bars` to
 /// serialize concurrent misses for the same window. Kept inside an outer
@@ -120,6 +121,7 @@ impl ApiContext {
         sqlx::query(MIGRATION_010_BARS_CACHE).execute(&pool).await?;
         sqlx::query(MIGRATION_011_SCENARIOS).execute(&pool).await?;
         sqlx::query(MIGRATION_012_RUNS_FK).execute(&pool).await?;
+        sqlx::query(MIGRATION_013_CLI_JOBS).execute(&pool).await?;
 
         let ctx = Self::new(pool, actor, xvn_home.to_path_buf());
 

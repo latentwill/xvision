@@ -1,13 +1,13 @@
 use std::net::SocketAddr;
 
 use axum::{
-    routing::{delete, get, post, put},
+    routing::{delete, get, patch, post, put},
     Router,
 };
 use tower_http::trace::TraceLayer;
 
 use crate::routes::{
-    agents, bars, chat_rail, eval_runs, health::health, scenarios, search as search_route,
+    agents, bars, chat_rail, cli, eval_runs, health::health, scenarios, search as search_route,
     settings, skills, static_files, strategies, wizard,
 };
 use crate::state::AppState;
@@ -47,6 +47,12 @@ pub fn build_router(state: AppState) -> Router {
             "/api/strategy/:id/slot/:role",
             put(strategies::put_slot),
         )
+        .route("/api/strategy/:id/agents", post(strategies::post_add_agent))
+        .route(
+            "/api/strategy/:id/agents/:role",
+            delete(strategies::delete_agent).patch(strategies::patch_agent_role),
+        )
+        .route("/api/strategy/:id/pipeline", put(strategies::put_pipeline))
         .route("/api/strategy/:id/risk", put(strategies::put_risk))
         .route(
             "/api/strategy/:id/validate",
@@ -72,6 +78,11 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/eval/compare", get(eval_runs::compare))
         .route("/api/eval/scenarios", get(eval_runs::list_scenarios))
         .route("/api/bars/:cache_key", get(bars::cache_row))
+        .route("/api/cli/jobs", post(cli::create))
+        .route("/api/cli/jobs/:id", get(cli::get))
+        .route("/api/cli/jobs/:id/output", get(cli::output))
+        .route("/api/cli/jobs/:id/events", get(cli::events))
+        .route("/api/cli/jobs/:id/cancel", post(cli::cancel))
         .route("/api/search", get(search_route::handler))
         .route("/api/settings/brokers", get(settings::brokers::get))
         .route(
@@ -125,6 +136,10 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/chat-rail/sessions/:id/history",
             get(chat_rail::history),
+        )
+        .route(
+            "/api/chat-rail/sessions",
+            get(chat_rail::list_sessions),
         )
         .route(
             "/api/chat-rail/sessions/:id",
