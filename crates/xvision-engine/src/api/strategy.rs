@@ -16,9 +16,9 @@ use crate::authoring::{
     self, CreateStrategyOut, CreateStrategyReq, SetRiskConfigOut, SetRiskConfigReq,
     UpdateSlotOut, UpdateSlotReq, ValidateDraftOut,
 };
-use crate::bundle::{
-    store::{strategy_store_dir, BundleStore, FilesystemStore},
-    StrategyBundle,
+use crate::strategies::{
+    store::{strategy_store_dir, StrategyStore, FilesystemStore},
+    Strategy,
 };
 use std::time::Instant;
 
@@ -74,7 +74,7 @@ async fn list_inner(ctx: &ApiContext) -> ApiResult<Vec<StrategySummary>> {
     Ok(out)
 }
 
-pub async fn get(ctx: &ApiContext, agent_id: &str) -> ApiResult<StrategyBundle> {
+pub async fn get(ctx: &ApiContext, agent_id: &str) -> ApiResult<Strategy> {
     let started = Instant::now();
     let result = get_inner(ctx, agent_id).await;
 
@@ -95,7 +95,7 @@ pub async fn get(ctx: &ApiContext, agent_id: &str) -> ApiResult<StrategyBundle> 
     result
 }
 
-async fn get_inner(ctx: &ApiContext, agent_id: &str) -> ApiResult<StrategyBundle> {
+async fn get_inner(ctx: &ApiContext, agent_id: &str) -> ApiResult<Strategy> {
     let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
     store.load(agent_id).await.map_err(|e| {
         if is_not_found(&e) {

@@ -3,7 +3,7 @@
 OSShip-style markdown skills for xvn. Authors write a single markdown
 file with YAML frontmatter; the runtime parses it, persists it under
 `$XVN_HOME/skills/<name>.md`, and lets it be attached to a slot of any
-saved `StrategyBundle`.
+saved `Strategy`.
 
 See spec: `docs/superpowers/specs/2026-05-08-strategy-creation-engine-design.md` §6.
 

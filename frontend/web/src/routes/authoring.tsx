@@ -12,7 +12,7 @@ import {
   updateSlot,
   validateDraft,
   type LLMSlot,
-  type StrategyBundle,
+  type Strategy,
   type UpdateSlotBody,
   type ValidateDraftOut,
 } from "@/api/strategies";
@@ -103,7 +103,7 @@ function InspectorPage({ id }: { id: string }) {
   );
 }
 
-function BundleEditor({ bundle }: { bundle: StrategyBundle }) {
+function BundleEditor({ bundle }: { bundle: Strategy }) {
   return (
     <>
       <ManifestCard bundle={bundle} />
@@ -129,7 +129,7 @@ function BundleEditor({ bundle }: { bundle: StrategyBundle }) {
   );
 }
 
-function ManifestCard({ bundle }: { bundle: StrategyBundle }) {
+function ManifestCard({ bundle }: { bundle: Strategy }) {
   const m = bundle.manifest;
   return (
     <Card>
@@ -282,7 +282,7 @@ function SlotCard({
   );
 }
 
-function RiskCard({ bundle }: { bundle: StrategyBundle }) {
+function RiskCard({ bundle }: { bundle: Strategy }) {
   const qc = useQueryClient();
   const [savedFlash, setSavedFlash] = useState(false);
   const apply = useMutation({
@@ -352,7 +352,7 @@ function RiskCard({ bundle }: { bundle: StrategyBundle }) {
   );
 }
 
-function MechanicalParamsCard({ bundle }: { bundle: StrategyBundle }) {
+function MechanicalParamsCard({ bundle }: { bundle: Strategy }) {
   const json = JSON.stringify(bundle.mechanical_params, null, 2);
   const empty =
     bundle.mechanical_params == null ||

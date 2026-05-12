@@ -41,7 +41,7 @@ export type PublicManifest = {
   published_at: string | null;
 };
 
-export type StrategyBundle = {
+export type Strategy = {
   manifest: PublicManifest;
   regime_slot: LLMSlot | null;
   intern_slot: LLMSlot | null;
@@ -110,8 +110,8 @@ export function listStrategies(): Promise<StrategySummary[]> {
   );
 }
 
-export function getStrategy(id: string): Promise<StrategyBundle> {
-  return apiFetch<StrategyBundle>(`/api/strategy/${encodeURIComponent(id)}`);
+export function getStrategy(id: string): Promise<Strategy> {
+  return apiFetch<Strategy>(`/api/strategy/${encodeURIComponent(id)}`);
 }
 
 export function updateSlot(

@@ -1,12 +1,12 @@
-use xvision_engine::bundle::manifest::{PublicManifest, RegimeFit};
-use xvision_engine::bundle::risk::{RiskConfig, RiskPreset};
-use xvision_engine::bundle::slot::LLMSlot;
-use xvision_engine::bundle::StrategyBundle;
+use xvision_engine::strategies::manifest::{PublicManifest, RegimeFit};
+use xvision_engine::strategies::risk::{RiskConfig, RiskPreset};
+use xvision_engine::strategies::slot::LLMSlot;
+use xvision_engine::strategies::Strategy;
 
-fn sample_bundle() -> StrategyBundle {
-    use xvision_engine::bundle::manifest::{PublicManifest, RegimeFit};
-    use xvision_engine::bundle::slot::LLMSlot;
-    StrategyBundle {
+fn sample_bundle() -> Strategy {
+    use xvision_engine::strategies::manifest::{PublicManifest, RegimeFit};
+    use xvision_engine::strategies::slot::LLMSlot;
+    Strategy {
         manifest: PublicManifest {
             id: "01H8N7Z000".to_string(),
             display_name: "Test".to_string(),
@@ -97,14 +97,14 @@ fn manifest_roundtrip_with_required_fields() {
 fn bundle_roundtrip() {
     let b = sample_bundle();
     let json = serde_json::to_string(&b).unwrap();
-    let parsed: StrategyBundle = serde_json::from_str(&json).unwrap();
+    let parsed: Strategy = serde_json::from_str(&json).unwrap();
     assert_eq!(parsed.manifest.template, "mean_reversion");
     assert!(parsed.regime_slot.is_some());
     assert!(parsed.intern_slot.is_none());
     assert!(parsed.trader_slot.is_some());
 }
 
-use xvision_engine::bundle::validate::{validate_bundle, ValidationError};
+use xvision_engine::strategies::validate::{validate_bundle, ValidationError};
 
 #[test]
 fn valid_bundle_passes() {

@@ -1,7 +1,7 @@
-use crate::bundle::manifest::{PublicManifest, RegimeFit};
-use crate::bundle::risk::RiskPreset;
-use crate::bundle::slot::LLMSlot;
-use crate::bundle::{PipelineDef, StrategyBundle};
+use crate::strategies::manifest::{PublicManifest, RegimeFit};
+use crate::strategies::risk::RiskPreset;
+use crate::strategies::slot::LLMSlot;
+use crate::strategies::{PipelineDef, Strategy};
 use crate::templates::Template;
 
 const TRADER_PROMPT: &str = r#"You are a trend-following crypto trader. Inputs:
@@ -33,8 +33,8 @@ impl Template for TrendFollower {
          Best when markets are moving."
     }
 
-    fn new_draft(&self, id: String, name: String, creator: String) -> StrategyBundle {
-        StrategyBundle {
+    fn new_draft(&self, id: String, name: String, creator: String) -> Strategy {
+        Strategy {
             manifest: PublicManifest {
                 id,
                 display_name: name,

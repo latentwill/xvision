@@ -26,7 +26,7 @@ use xvision_engine::agent::llm::{
     ContentBlock, LlmDispatch, LlmRequest, LlmResponse, Message, StopReason, ToolDefinition,
 };
 use xvision_engine::authoring;
-use xvision_engine::bundle::store::{strategy_store_dir, FilesystemStore};
+use xvision_engine::strategies::store::{strategy_store_dir, FilesystemStore};
 use xvision_engine::chat_session::{ChatSessionStore, ContextScope};
 
 const WIZARD_SYSTEM_PROMPT_BASE: &str = include_str!("../prompts/wizard.md");
@@ -366,7 +366,7 @@ fn wizard_tool_defs() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "get_strategy".into(),
-            description: "Read the current draft state. Returns the StrategyBundle JSON.".into(),
+            description: "Read the current draft state. Returns the Strategy JSON.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {"id": {"type": "string"}},

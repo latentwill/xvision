@@ -3,9 +3,9 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use async_trait::async_trait;
 
-use crate::bundle::StrategyBundle;
+use crate::strategies::Strategy;
 
-/// Canonical on-disk directory for `StrategyBundle` JSON files, relative to
+/// Canonical on-disk directory for `Strategy` JSON files, relative to
 /// `$XVN_HOME`. Single source of truth so the CLI and dashboard never drift
 /// onto different paths.
 pub fn strategy_store_dir(xvn_home: &Path) -> PathBuf {
@@ -13,9 +13,9 @@ pub fn strategy_store_dir(xvn_home: &Path) -> PathBuf {
 }
 
 #[async_trait]
-pub trait BundleStore: Send + Sync {
-    async fn save(&self, bundle: &StrategyBundle) -> anyhow::Result<()>;
-    async fn load(&self, id: &str) -> anyhow::Result<StrategyBundle>;
+pub trait StrategyStore: Send + Sync {
+    async fn save(&self, bundle: &Strategy) -> anyhow::Result<()>;
+    async fn load(&self, id: &str) -> anyhow::Result<Strategy>;
     async fn list(&self) -> anyhow::Result<Vec<String>>;
 }
 
@@ -34,8 +34,8 @@ impl FilesystemStore {
 }
 
 #[async_trait]
-impl BundleStore for FilesystemStore {
-    async fn save(&self, bundle: &StrategyBundle) -> anyhow::Result<()> {
+impl StrategyStore for FilesystemStore {
+    async fn save(&self, bundle: &Strategy) -> anyhow::Result<()> {
         tokio::fs::create_dir_all(&self.root).await?;
         let path = self.path_for(&bundle.manifest.id);
         let json = serde_json::to_vec_pretty(bundle)?;
@@ -45,7 +45,7 @@ impl BundleStore for FilesystemStore {
         Ok(())
     }
 
-    async fn load(&self, id: &str) -> anyhow::Result<StrategyBundle> {
+    async fn load(&self, id: &str) -> anyhow::Result<Strategy> {
         let path = self.path_for(id);
         let bytes = tokio::fs::read(&path)
             .await

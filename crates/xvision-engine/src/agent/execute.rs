@@ -14,7 +14,7 @@ use crate::agent::llm::{
     ContentBlock, LlmDispatch, LlmRequest, LlmResponse, Message, StopReason,
 };
 use crate::agent::tool_call;
-use crate::bundle::slot::LLMSlot;
+use crate::strategies::slot::LLMSlot;
 use crate::tools::ToolRegistry;
 
 /// Hard cap on tool-use turns per slot. Real Stage-1 Intern reasoning

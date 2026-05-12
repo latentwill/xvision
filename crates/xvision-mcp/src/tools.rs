@@ -7,8 +7,8 @@
 //!   and travel through the wire as JSON `null` (we round-trip through
 //!   `Option<f64>` for that).
 //! - **Authoring tools** (`xvn_list_templates`, `xvn_create_strategy`, ...)
-//!   — stateful: persist `StrategyBundle`s to `$XVN_HOME/strategies/`
-//!   via `xvision_engine::bundle::store::FilesystemStore`.
+//!   — stateful: persist `Strategy`s to `$XVN_HOME/strategies/`
+//!   via `xvision_engine::strategies::store::FilesystemStore`.
 
 use std::path::PathBuf;
 
@@ -22,9 +22,9 @@ use xvision_data as xvn;
 use xvision_engine::api::eval::{self as api_eval, CompareRunsRequest, ListRunsRequest};
 use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::authoring;
-use xvision_engine::bundle::{
+use xvision_engine::strategies::{
     risk::RiskConfig,
-    store::{BundleStore, FilesystemStore},
+    store::{StrategyStore, FilesystemStore},
 };
 use xvision_engine::eval::run::RunStatus;
 use xvision_engine::eval::store::RunStore;
@@ -421,8 +421,8 @@ impl XvisionTools {
         json_or_err(&out)
     }
 
-    /// Get a strategy bundle by id. Returns the full `StrategyBundle` JSON.
-    #[tool(description = "Get a strategy bundle by id. Returns the full StrategyBundle JSON.")]
+    /// Get a strategy bundle by id. Returns the full `Strategy` JSON.
+    #[tool(description = "Get a strategy bundle by id. Returns the full Strategy JSON.")]
     async fn xvn_get_strategy(
         &self,
         Parameters(req): Parameters<StrategyId>,

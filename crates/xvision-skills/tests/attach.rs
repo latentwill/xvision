@@ -1,7 +1,7 @@
-use xvision_engine::bundle::manifest::{PublicManifest, RegimeFit};
-use xvision_engine::bundle::risk::RiskPreset;
-use xvision_engine::bundle::slot::LLMSlot;
-use xvision_engine::bundle::StrategyBundle;
+use xvision_engine::strategies::manifest::{PublicManifest, RegimeFit};
+use xvision_engine::strategies::risk::RiskPreset;
+use xvision_engine::strategies::slot::LLMSlot;
+use xvision_engine::strategies::Strategy;
 use xvision_skills::attach::attach_skill_to_agent;
 use xvision_skills::Skill;
 
@@ -18,8 +18,8 @@ fn dummy_skill() -> Skill {
     }
 }
 
-fn dummy_bundle() -> StrategyBundle {
-    StrategyBundle {
+fn dummy_bundle() -> Strategy {
+    Strategy {
         manifest: PublicManifest {
             id: "01".into(),
             display_name: "T".into(),

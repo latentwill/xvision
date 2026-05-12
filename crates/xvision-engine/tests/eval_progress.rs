@@ -13,10 +13,10 @@ use std::sync::Arc;
 
 use sqlx::SqlitePool;
 use xvision_engine::agent::llm::{LlmDispatch, MockDispatch};
-use xvision_engine::bundle::manifest::PublicManifest;
-use xvision_engine::bundle::risk::RiskPreset;
-use xvision_engine::bundle::slot::LLMSlot;
-use xvision_engine::bundle::StrategyBundle;
+use xvision_engine::strategies::manifest::PublicManifest;
+use xvision_engine::strategies::risk::RiskPreset;
+use xvision_engine::strategies::slot::LLMSlot;
+use xvision_engine::strategies::Strategy;
 use xvision_engine::eval::executor::{Executor, PaperExecutor};
 use xvision_engine::eval::progress::{ProgressBus, ProgressEvent};
 use xvision_engine::eval::run::{Run, RunMode};
@@ -44,8 +44,8 @@ fn long_open_dispatch() -> Arc<dyn LlmDispatch> {
     ))
 }
 
-fn build_bundle(agent_id: &str) -> StrategyBundle {
-    StrategyBundle {
+fn build_bundle(agent_id: &str) -> Strategy {
+    Strategy {
         manifest: PublicManifest {
             id: agent_id.into(),
             display_name: "progress-test bundle".into(),
