@@ -2,7 +2,7 @@
 
 > **Status:** Draft tradeoff note. Drafted 2026-05-12.
 > **Purpose:** Reduce xvision's Docker/GHCR deployment cycle time and failure cost without moving heavy Rust builds back onto the 3.7 GiB `extndly-dev` server.
-> **Scope:** `.github/workflows/docker.yml`, `Dockerfile.deploy`, `Cargo.toml` build profiles, and `.dockerignore`.
+> **Scope:** `.github/workflows/docker.yml`, `Dockerfile.deploy`, `Dockerfile`, `Cargo.toml` build profiles, and `.dockerignore`.
 
 ---
 
@@ -243,7 +243,7 @@ cache-to: type=gha,scope=xvision-default-${{ github.event.inputs.build_profile |
 
 ### 7.3 Build profile support in Docker
 
-Add to `Dockerfile.deploy`:
+Add to `Dockerfile.deploy` and the CLI-only `Dockerfile` so the workflow's `build_profile` input behaves consistently for both Dockerfile choices:
 
 ```dockerfile
 ARG BUILD_PROFILE=release
