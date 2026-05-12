@@ -164,7 +164,6 @@ mod tests {
                 provider: "anthropic".into(),
                 model: "x".into(),
                 system_prompt: "p".into(),
-                skill_ids: vec![],
                 max_tokens: 4096,
             },
             AgentSlot {
@@ -172,7 +171,6 @@ mod tests {
                 provider: "anthropic".into(),
                 model: "x".into(),
                 system_prompt: "p".into(),
-                skill_ids: vec![],
                 max_tokens: 4096,
             },
         ];

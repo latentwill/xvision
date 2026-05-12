@@ -28,7 +28,6 @@ xvision-risk      = { path = "../xvision-risk" }
 xvision-execution = { path = "../xvision-execution" }
 xvision-harness   = { path = "../xvision-harness" }
 xvision-engine    = { path = "../xvision-engine" }
-xvision-skills    = { path = "../xvision-skills" }
 xvision-dashboard = { path = "../xvision-dashboard" }
 ulid              = "1"
 dirs              = "5"

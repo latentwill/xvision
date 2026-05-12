@@ -31,7 +31,6 @@ pub struct AgentSlot {
     pub provider: String,
     pub model: String,
     pub system_prompt: String,
-    pub skill_ids: Vec<String>,
     pub max_tokens: u32,
 }
 
@@ -55,7 +54,6 @@ impl Agent {
                 provider: provider.into(),
                 model: model.into(),
                 system_prompt: String::new(),
-                skill_ids: Vec::new(),
                 max_tokens: 4096,
             }],
             archived: false,

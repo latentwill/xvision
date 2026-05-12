@@ -1,5 +1,5 @@
 // Agent list table. Renders a row per agent with name, description,
-// status pill, slot count, skills count, updated_at.
+// status pill, slot count, updated_at.
 //
 // Status pill in v1: Draft / Validated / In use / Archived.
 // "In use" depends on deployed_in (empty in v1), so most agents resolve
@@ -26,7 +26,6 @@ export function AgentList({
           <th className="px-5 py-3 font-medium">Name</th>
           <th className="px-5 py-3 font-medium">Status</th>
           <th className="px-5 py-3 font-medium">Slots</th>
-          <th className="px-5 py-3 font-medium">Skills</th>
           <th className="px-5 py-3 font-medium">Updated</th>
         </tr>
       </thead>
@@ -44,11 +43,6 @@ export function AgentList({
 }
 
 function AgentRow({ agent, status }: { agent: Agent; status: AgentStatus }) {
-  const skillsCount = agent.slots.reduce(
-    (acc, s) => acc + s.skill_ids.length,
-    0,
-  );
-
   return (
     <tr className="border-t border-border-soft hover:bg-surface-hover transition-colors">
       <td className="px-5 py-3">
@@ -71,9 +65,6 @@ function AgentRow({ agent, status }: { agent: Agent; status: AgentStatus }) {
         {agent.slots.length === 1
           ? `1 (${agent.slots[0]?.name ?? "main"})`
           : `${agent.slots.length}`}
-      </td>
-      <td className="px-5 py-3 text-text-2 font-mono text-[12px]">
-        {skillsCount}
       </td>
       <td className="px-5 py-3 text-text-3 text-[12px]">
         {formatRelative(agent.updated_at)}

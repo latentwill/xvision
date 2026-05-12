@@ -20,7 +20,6 @@ xvn <COMMAND>
 | `run-setup` | Run a single setup through Intern → Risk slice |
 | `intern` / `trader` / `risk` | Stage in isolation (preview prompt or run a backend call) |
 | `strategy` | Strategy authoring (create / validate / ls / show / templates / run) |
-| `skill` | Skill authoring (xvision-internal — NOT Claude Code skills) |
 | `provider` | Manage registered LLM providers in `$XVN_HOME/config/default.toml` |
 | `store` | SQLite flight-recorder (migrate / stats) on `$XVN_HOME/xvn.db` |
 | `indicator` | Compute one technical indicator from a JSON price/HLC series |
@@ -54,17 +53,7 @@ xvn strategy show <ulid>
 
 Bundles persist at `$XVN_HOME/strategies/<agent_id>.json` (agent_id = ULID).
 
-## Skill authoring (xvision-internal)
-
-Read a markdown skill with YAML frontmatter, save to `$XVN_HOME/skills/`, attach to a bundle slot:
-
-```bash
-xvn skill new --from-file my-trader.md      # or `--from-file -` for stdin
-xvn skill ls
-xvn skill attach <agent_id> --slot trader --skill my-trader [--dry-run]
-```
-
-Slots: `regime` | `intern` | `trader`. Attach replaces prompt + model_requirement and unions allowed_tools. **Not** the same thing as a Claude Code skill — the consumer is xvision's own runtime sub-agents.
+Reusable prompt authoring used to live under `xvn skill …` (Plan 2b). That surface was removed in ADR 0012 — the Agents page (`/agents`, `engine::agents`) is now the canonical authoring path. See `decisions/0012-deprecate-in-app-skills.md`.
 
 ## Dashboard
 
