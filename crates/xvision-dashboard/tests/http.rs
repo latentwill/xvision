@@ -136,6 +136,37 @@ async fn strategies_list_returns_seeded_bundle() {
 }
 
 #[tokio::test]
+async fn post_create_strategy_is_visible_in_public_strategies_list() {
+    let (server, _tmp) = boot().await;
+
+    let response = server
+        .post("/api/strategies")
+        .json(&serde_json::json!({
+            "template": "mean_reversion",
+            "name": "Wizard Visible",
+            "creator": "@wizard"
+        }))
+        .await;
+    response.assert_status(StatusCode::CREATED);
+    let created: serde_json::Value = response.json();
+    let created_id = created["id"]
+        .as_str()
+        .expect("create_strategy returns id");
+
+    let response = server.get("/api/strategies").await;
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    let items = body["items"].as_array().unwrap();
+    let created = items
+        .iter()
+        .find(|item| item["agent_id"] == created_id)
+        .expect("created strategy present in list");
+
+    assert_eq!(created["display_name"], "Wizard Visible");
+    assert_eq!(created["template"], "mean_reversion");
+}
+
+#[tokio::test]
 async fn eval_runs_list_returns_array_when_empty() {
     let (server, _tmp) = boot().await;
 
