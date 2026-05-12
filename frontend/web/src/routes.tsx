@@ -9,6 +9,7 @@ import { AuthoringRoute } from "./routes/authoring";
 import { EvalRunsRoute } from "./routes/eval-runs";
 import { EvalRunDetailRoute } from "./routes/eval-runs-detail";
 import { EvalCompareRoute } from "./routes/eval-compare";
+import { LiveRoute } from "./routes/live";
 import { SetupRoute } from "./routes/setup";
 import {
   SettingsLayout,
@@ -32,6 +33,7 @@ export const router = createBrowserRouter([
       { path: "eval-runs", element: <EvalRunsRoute /> },
       { path: "eval-runs/:runId", element: <EvalRunDetailRoute /> },
       { path: "eval-runs/compare", element: <EvalCompareRoute /> },
+      { path: "live/:id", element: <LiveRoute /> },
       { path: "setup", element: <SetupRoute /> },
       {
         path: "settings",
