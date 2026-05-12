@@ -13,6 +13,7 @@ import {
   updateSlot,
   validateDraft,
   type LLMSlot,
+  type RiskConfig,
   type Strategy,
   type UpdateSlotBody,
   type ValidateDraftOut,
@@ -20,12 +21,6 @@ import {
 import { getStrategyChart, strategyChartKeys } from "@/api/chart";
 import { StrategyChart } from "@/components/chart/StrategyChart";
 import { listProviders, settingsKeys } from "@/api/settings";
-
-const RISK_PRESETS: { key: string; label: string }[] = [
-  { key: "conservative", label: "Conservative" },
-  { key: "balanced", label: "Balanced" },
-  { key: "aggressive", label: "Aggressive" },
-];
 
 const SLOT_ROLES: {
   role: "regime" | "intern" | "trader";
@@ -339,12 +334,21 @@ function SlotCard({
 
 function RiskCard({ bundle }: { bundle: Strategy }) {
   const qc = useQueryClient();
+  const [form, setForm] = useState(() => riskFormFromConfig(bundle.risk));
   const [savedFlash, setSavedFlash] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setForm(riskFormFromConfig(bundle.risk));
+    setLocalError(null);
+  }, [bundle.risk]);
+
   const apply = useMutation({
-    mutationFn: (preset: string) =>
-      setRiskConfig(bundle.manifest.id, { preset }),
+    mutationFn: (explicit: RiskConfig) =>
+      setRiskConfig(bundle.manifest.id, { explicit }),
     onSuccess: () => {
       setSavedFlash(true);
+      setLocalError(null);
       window.setTimeout(() => setSavedFlash(false), 1800);
       qc.invalidateQueries({
         queryKey: strategyKeys.detail(bundle.manifest.id),
@@ -354,57 +358,144 @@ function RiskCard({ bundle }: { bundle: Strategy }) {
 
   const r = bundle.risk;
   const currentBasis = bundle.manifest.risk_preset_or_config;
+  const dirty =
+    form.risk_pct_per_trade !== (r.risk_pct_per_trade * 100).toFixed(2) ||
+    form.max_concurrent_positions !== String(r.max_concurrent_positions) ||
+    form.max_leverage !== String(r.max_leverage) ||
+    form.stop_loss_atr_multiple !== String(r.stop_loss_atr_multiple) ||
+    form.daily_loss_kill_pct !== (r.daily_loss_kill_pct * 100).toFixed(2);
+
+  function onChange<K extends keyof RiskFormState>(key: K, value: string) {
+    setForm((prev) => ({ ...prev, [key]: value }));
+    setLocalError(null);
+  }
+
+  function onSave() {
+    const riskPerTrade = Number(form.risk_pct_per_trade);
+    const maxConcurrentPositions = Number(form.max_concurrent_positions);
+    const maxLeverage = Number(form.max_leverage);
+    const stopLossAtr = Number(form.stop_loss_atr_multiple);
+    const dailyLossKill = Number(form.daily_loss_kill_pct);
+
+    if (!Number.isFinite(riskPerTrade) || riskPerTrade <= 0) {
+      setLocalError("Risk per trade must be > 0");
+      return;
+    }
+    if (
+      !Number.isFinite(maxConcurrentPositions) ||
+      maxConcurrentPositions < 1
+    ) {
+      setLocalError("Max concurrent positions must be at least 1");
+      return;
+    }
+    if (!Number.isFinite(maxLeverage) || maxLeverage <= 0) {
+      setLocalError("Max leverage must be > 0");
+      return;
+    }
+    if (!Number.isFinite(stopLossAtr) || stopLossAtr <= 0) {
+      setLocalError("Stop-loss ATR multiple must be > 0");
+      return;
+    }
+    if (!Number.isFinite(dailyLossKill) || dailyLossKill <= 0) {
+      setLocalError("Daily loss kill must be > 0");
+      return;
+    }
+
+    apply.mutate({
+      risk_pct_per_trade: riskPerTrade / 100,
+      max_concurrent_positions: maxConcurrentPositions,
+      max_leverage: maxLeverage,
+      stop_loss_atr_multiple: stopLossAtr,
+      daily_loss_kill_pct: dailyLossKill / 100,
+    });
+  }
 
   return (
     <Card>
       <SectionHeader label="Risk" hint={`Currently: ${currentBasis}`} />
       <div className="px-5 pb-5 space-y-4">
-        <div className="flex items-center gap-2">
-          {RISK_PRESETS.map((p) => (
-            <button
-              key={p.key}
-              onClick={() => apply.mutate(p.key)}
-              disabled={apply.isPending || currentBasis === p.key}
-              className={`px-3 py-2 rounded text-[13px] font-medium border transition-colors ${
-                currentBasis === p.key
-                  ? "bg-gold text-bg border-gold"
-                  : "border-border text-text-2 hover:text-text hover:border-text-3"
-              } disabled:opacity-50`}
-            >
-              {p.label}
-            </button>
-          ))}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <Field label="Risk per trade (%)">
+            <input
+              className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
+              value={form.risk_pct_per_trade}
+              onChange={(e) => onChange("risk_pct_per_trade", e.target.value)}
+            />
+          </Field>
+          <Field label="Max concurrent positions">
+            <input
+              className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
+              value={form.max_concurrent_positions}
+              onChange={(e) =>
+                onChange("max_concurrent_positions", e.target.value)
+              }
+            />
+          </Field>
+          <Field label="Max leverage">
+            <input
+              className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
+              value={form.max_leverage}
+              onChange={(e) => onChange("max_leverage", e.target.value)}
+            />
+          </Field>
+          <Field label="Stop-loss ATR multiple">
+            <input
+              className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
+              value={form.stop_loss_atr_multiple}
+              onChange={(e) =>
+                onChange("stop_loss_atr_multiple", e.target.value)
+              }
+            />
+          </Field>
+          <Field label="Daily loss kill (%)">
+            <input
+              className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
+              value={form.daily_loss_kill_pct}
+              onChange={(e) => onChange("daily_loss_kill_pct", e.target.value)}
+            />
+          </Field>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={onSave}
+            disabled={!dirty || apply.isPending}
+            className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft disabled:opacity-40 disabled:hover:bg-gold transition-colors"
+          >
+            {apply.isPending ? "Saving…" : "Save risk"}
+          </button>
           {savedFlash ? (
-            <span className="text-[12px] text-success ml-2">Applied.</span>
+            <span className="text-[12px] text-success">Saved.</span>
+          ) : localError ? (
+            <span className="text-[12px] text-danger">{localError}</span>
           ) : apply.isError ? (
-            <span className="text-[12px] text-danger ml-2">
+            <span className="text-[12px] text-danger">
               {errorMessage(apply.error)}
             </span>
           ) : null}
         </div>
-
-        <dl className="grid grid-cols-2 gap-y-2 text-[13px] text-text-2">
-          <RiskRow
-            label="Risk per trade"
-            value={`${(r.risk_pct_per_trade * 100).toFixed(2)}%`}
-          />
-          <RiskRow
-            label="Max concurrent positions"
-            value={String(r.max_concurrent_positions)}
-          />
-          <RiskRow label="Max leverage" value={`${r.max_leverage.toFixed(1)}x`} />
-          <RiskRow
-            label="Stop-loss ATR ×"
-            value={r.stop_loss_atr_multiple.toFixed(1)}
-          />
-          <RiskRow
-            label="Daily loss kill"
-            value={`${(r.daily_loss_kill_pct * 100).toFixed(2)}%`}
-          />
-        </dl>
       </div>
     </Card>
   );
+}
+
+type RiskFormState = {
+  risk_pct_per_trade: string;
+  max_concurrent_positions: string;
+  max_leverage: string;
+  stop_loss_atr_multiple: string;
+  daily_loss_kill_pct: string;
+};
+
+function riskFormFromConfig(risk: RiskConfig): RiskFormState {
+  return {
+    risk_pct_per_trade: (risk.risk_pct_per_trade * 100).toFixed(2),
+    max_concurrent_positions: String(risk.max_concurrent_positions),
+    max_leverage: String(risk.max_leverage),
+    stop_loss_atr_multiple: String(risk.stop_loss_atr_multiple),
+    daily_loss_kill_pct: (risk.daily_loss_kill_pct * 100).toFixed(2),
+  };
 }
 
 function MechanicalParamsCard({ bundle }: { bundle: Strategy }) {
@@ -592,15 +683,6 @@ function Field({
         <span className="text-[11px] text-text-3 mt-1 block">{hint}</span>
       ) : null}
     </label>
-  );
-}
-
-function RiskRow({ label, value }: { label: string; value: string }) {
-  return (
-    <>
-      <dt className="text-text-3">{label}</dt>
-      <dd className="m-0 text-text font-mono">{value}</dd>
-    </>
   );
 }
 
