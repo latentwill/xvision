@@ -207,7 +207,7 @@ impl AgentStore {
 
     async fn load_slots(&self, agent_id: &str) -> Result<Vec<AgentSlot>> {
         let rows = sqlx::query(
-            "SELECT name, provider, model, system_prompt, max_tokens \
+            "SELECT name, provider, model, system_prompt, skill_ids_json, max_tokens \
              FROM agent_slots WHERE agent_id = ? ORDER BY slot_index ASC",
         )
         .bind(agent_id)
@@ -216,12 +216,16 @@ impl AgentStore {
 
         let mut out = Vec::with_capacity(rows.len());
         for row in rows {
+            let skill_ids_json: String = row.try_get("skill_ids_json")?;
+            let skill_ids: Vec<String> =
+                serde_json::from_str(&skill_ids_json).context("parse skill_ids_json")?;
             let max_tokens: i64 = row.try_get("max_tokens")?;
             out.push(AgentSlot {
                 name: row.try_get("name")?,
                 provider: row.try_get("provider")?,
                 model: row.try_get("model")?,
                 system_prompt: row.try_get("system_prompt")?,
+                skill_ids,
                 max_tokens: max_tokens as u32,
             });
         }
@@ -235,10 +239,12 @@ async fn insert_slot(
     idx: i64,
     slot: &AgentSlot,
 ) -> Result<()> {
+    let skill_ids_json =
+        serde_json::to_string(&slot.skill_ids).context("serialize skill_ids")?;
     sqlx::query(
         "INSERT INTO agent_slots \
-         (agent_id, slot_index, name, provider, model, system_prompt, max_tokens) \
-         VALUES (?, ?, ?, ?, ?, ?, ?)",
+         (agent_id, slot_index, name, provider, model, system_prompt, skill_ids_json, max_tokens) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(agent_id)
     .bind(idx)
@@ -246,6 +252,7 @@ async fn insert_slot(
     .bind(&slot.provider)
     .bind(&slot.model)
     .bind(&slot.system_prompt)
+    .bind(&skill_ids_json)
     .bind(slot.max_tokens as i64)
     .execute(&mut **tx)
     .await
@@ -293,6 +300,7 @@ mod tests {
             provider: "anthropic".to_string(),
             model: "claude-sonnet-4-6".to_string(),
             system_prompt: "You are a trader.".to_string(),
+            skill_ids: vec![],
             max_tokens: 4096,
         }
     }
