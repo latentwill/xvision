@@ -1,7 +1,6 @@
 //! Integration tests for the chat rail REST surface:
-//!   POST   /api/chat-rail/sessions
+//!   POST   /api/chat-rail/sessions/resolve
 //!   GET    /api/chat-rail/sessions/:id/history
-//!   POST   /api/chat-rail/sessions/:id/scope
 //!   DELETE /api/chat-rail/sessions/:id
 //!
 //! The SSE `POST /api/chat-rail/chat` route requires `ANTHROPIC_API_KEY`
@@ -27,23 +26,49 @@ async fn boot() -> (TestServer, TempDir, AppState) {
 }
 
 #[tokio::test]
-async fn create_session_returns_session_id() {
+async fn resolve_creates_session_on_first_call() {
     let (server, _tmp, _state) = boot().await;
     let resp = server
-        .post("/api/chat-rail/sessions")
+        .post("/api/chat-rail/sessions/resolve")
         .json(&json!({"scope": {"scope": "workspace"}}))
         .await;
     resp.assert_status_ok();
     let body: Value = resp.json();
     let id = body["session_id"].as_str().expect("session_id present");
     assert!(!id.is_empty());
+    assert_eq!(
+        body["history"].as_array().expect("history array").len(),
+        0,
+        "fresh resolve has empty history"
+    );
 }
 
 #[tokio::test]
-async fn create_session_persists_scope() {
+async fn resolve_returns_same_session_for_same_scope() {
+    let (server, _tmp, _state) = boot().await;
+    let scope = json!({"scope": "run", "run_id": "01HABC"});
+
+    let first = server
+        .post("/api/chat-rail/sessions/resolve")
+        .json(&json!({"scope": scope}))
+        .await
+        .json::<Value>();
+    let first_id = first["session_id"].as_str().unwrap().to_string();
+
+    let second = server
+        .post("/api/chat-rail/sessions/resolve")
+        .json(&json!({"scope": scope}))
+        .await
+        .json::<Value>();
+    let second_id = second["session_id"].as_str().unwrap().to_string();
+    assert_eq!(first_id, second_id, "same scope → same session");
+}
+
+#[tokio::test]
+async fn resolve_persists_scope_and_returns_history() {
     let (server, _tmp, state) = boot().await;
     let resp = server
-        .post("/api/chat-rail/sessions")
+        .post("/api/chat-rail/sessions/resolve")
         .json(&json!({"scope": {"scope": "run", "run_id": "01HABC"}}))
         .await;
     resp.assert_status_ok();
@@ -58,6 +83,25 @@ async fn create_session_persists_scope() {
             run_id: "01HABC".into(),
         }
     );
+
+    // Append a message and re-resolve — the response now includes it.
+    ChatSessionStore::append(
+        &state.pool,
+        &id,
+        "user",
+        &[json!({"type":"text","text":"hi"})],
+    )
+    .await
+    .unwrap();
+    let after = server
+        .post("/api/chat-rail/sessions/resolve")
+        .json(&json!({"scope": {"scope": "run", "run_id": "01HABC"}}))
+        .await
+        .json::<Value>();
+    assert_eq!(after["session_id"].as_str().unwrap(), id);
+    let history = after["history"].as_array().unwrap();
+    assert_eq!(history.len(), 1);
+    assert_eq!(history[0]["role"], "user");
 }
 
 #[tokio::test]
@@ -108,38 +152,6 @@ async fn history_returns_persisted_messages_in_seq_order() {
     assert_eq!(arr[0]["seq"], 0);
     assert_eq!(arr[1]["role"], "assistant");
     assert_eq!(arr[1]["seq"], 1);
-}
-
-#[tokio::test]
-async fn update_scope_changes_persisted_scope() {
-    let (server, _tmp, state) = boot().await;
-    let id = ChatSessionStore::create_session(&state.pool, &ContextScope::Workspace)
-        .await
-        .unwrap();
-
-    let resp = server
-        .post(&format!("/api/chat-rail/sessions/{id}/scope"))
-        .json(&json!({"scope": "strategy", "draft_id": "btc-mom"}))
-        .await;
-    assert_eq!(resp.status_code(), StatusCode::NO_CONTENT);
-
-    let scope = ChatSessionStore::load_scope(&state.pool, &id).await.unwrap();
-    assert_eq!(
-        scope,
-        ContextScope::Strategy {
-            draft_id: "btc-mom".into(),
-        }
-    );
-}
-
-#[tokio::test]
-async fn update_scope_404s_for_unknown_session() {
-    let (server, _tmp, _state) = boot().await;
-    let resp = server
-        .post("/api/chat-rail/sessions/does-not-exist/scope")
-        .json(&json!({"scope": "workspace"}))
-        .await;
-    assert_eq!(resp.status_code(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
