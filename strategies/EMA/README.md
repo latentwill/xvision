@@ -152,6 +152,7 @@ section inside each strategy file — not as separate files.
 - [`ema_50_200_golden_cross`](ema_50_200_golden_cross.md) — P2 × R1; canonical cultural-weight cross.
 - [`ema_ribbon_alignment`](ema_ribbon_alignment.md) — P3 × R1; multi-EMA stack alignment.
 - [`ema_pullback_bounce`](ema_pullback_bounce.md) — P1/P6 × R2; buy pullback to fast EMA in trend.
+- [`ema_trend_persistence`](ema_trend_persistence.md) — P3/P4/P6 × R1/R2; stacked MAs with reclaim-and-add trend continuation.
 - [`ema_slope_momentum`](ema_slope_momentum.md) — P4 × R1; trade slope (derivative), not crosses.
 - [`ema_acceleration_reversal`](ema_acceleration_reversal.md) — P5 × R4; second-derivative early-reversal signal.
 - [`price_ema_distance_meanrev`](price_ema_distance_meanrev.md) — P6 × R5; stretch mean-reversion in chop.
