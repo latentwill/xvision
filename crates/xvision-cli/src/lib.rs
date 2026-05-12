@@ -131,11 +131,25 @@ pub enum Command {
     /// Run an N-arm backtest A/B comparison and emit `BacktestResult` JSON.
     AbCompare {
         /// Path to a JSON file containing a `Vec<MarketSnapshot>`.
+        /// Required: cycles drive Trader / baseline decisions tick-by-tick.
         #[arg(long)]
         cycles: PathBuf,
-        /// Path to a JSON file containing a `Vec<MarketBar>`.
+        /// Path to a JSON file containing a `Vec<MarketBar>`. Mutually
+        /// exclusive with `--from` + `--to`: when those are set, bars come
+        /// from the SQLite cache (Alpaca on miss) instead of a JSON file.
         #[arg(long)]
-        bars: PathBuf,
+        bars: Option<PathBuf>,
+        /// Start of bar window (YYYY-MM-DD). When set with --to, bars are
+        /// fetched from the cache + Alpaca; --bars must be omitted.
+        #[arg(long)]
+        from: Option<chrono::NaiveDate>,
+        /// End of bar window (YYYY-MM-DD).
+        #[arg(long)]
+        to: Option<chrono::NaiveDate>,
+        /// Bar granularity when fetching: `1h` or `1d`. Ignored when bars
+        /// come from `--bars` JSON.
+        #[arg(long, default_value = "1h")]
+        granularity: String,
         /// Comma-separated arm specs. Heads:
         /// `trader_arm`, `buy_and_hold`, `always_long`, `always_short`,
         /// `random_direction:seed=<u64>`, `rsi_mean_reversion`,
@@ -192,8 +206,14 @@ pub enum Command {
     Eod(commands::eod::EodArgs),
     /// Browse eval runs and canonical scenarios. (`run` lands in a follow-up.)
     Eval(commands::eval::EvalCmd),
+    /// Scenario authoring: create / ls / show / clone / archive / rm / tree.
+    Scenario(commands::scenario::ScenarioCmd),
     /// Manage registered LLM providers in config/default.toml.
     Provider(commands::provider::ProviderCmd),
+    /// SQLite-cached historical bars: fetch / ls / rm / gc.
+    Bars(commands::bars::BarsCmd),
+    /// Apply pending migrations + seed, or report state with --dry-run.
+    Migrate(commands::migrate::MigrateCmd),
 }
 
 impl Cli {
@@ -239,6 +259,9 @@ impl Cli {
             Command::AbCompare {
                 cycles,
                 bars,
+                from,
+                to,
+                granularity,
                 arms,
                 output,
                 initial_nav_usd,
@@ -255,6 +278,9 @@ impl Cli {
                 commands::ab_compare::run(
                     cycles,
                     bars,
+                    from,
+                    to,
+                    granularity,
                     arms,
                     output,
                     initial_nav_usd,
@@ -281,7 +307,10 @@ impl Cli {
             Command::Dashboard(cmd) => commands::dashboard::run(cmd).await.map_err(Into::into),
             Command::Eod(args) => commands::eod::run(args).await.map_err(Into::into),
             Command::Eval(cmd) => commands::eval::run(cmd).await,
+            Command::Scenario(cmd) => commands::scenario::run(cmd).await,
             Command::Provider(cmd) => commands::provider::run(cmd).await.map_err(Into::into),
+            Command::Bars(cmd) => commands::bars::run(cmd).await,
+            Command::Migrate(cmd) => commands::migrate::run(cmd).await,
         }
     }
 }

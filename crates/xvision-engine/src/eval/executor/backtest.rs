@@ -20,10 +20,14 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use serde::Deserialize;
+use xvision_core::market::Ohlcv;
 use xvision_data::fixtures::load_ohlcv_fixture;
 
 use crate::agent::llm::LlmDispatch;
 use crate::agent::pipeline::{run_pipeline, PipelineInputs};
+use crate::api::chart::{
+    ChartEquityPoint, HoldMarker, MarkerEvent, RunChartEvent, RunEventBus, TradeSide, TradeMarker,
+};
 use crate::strategies::Strategy;
 use crate::eval::executor::Executor;
 use crate::eval::metrics::{
@@ -48,11 +52,27 @@ pub struct BacktestExecutor {
     /// is a no-op via `send_event`. Mirrors PR #35's PaperExecutor wiring
     /// so SSE / CLI subscribers see both run modes through the same bus.
     progress: Option<ProgressTx>,
+    /// Optional pre-loaded bars. When `Some`, the executor skips the
+    /// `load_ohlcv_fixture` path and replays the provided bars directly.
+    /// Populated by Task 8's DB-resolved path in `api::eval::run_inner`
+    /// (bars come from the `eval::bars::load_bars` cache wrapper). When
+    /// `None` (the legacy / canonical-scenario fallback), bars are loaded
+    /// from `data/probes/<scenario.bar_cache_policy.cache_key>.parquet`
+    /// via `load_ohlcv_fixture`.
+    injected_bars: Option<Vec<Ohlcv>>,
+    /// Optional live-stream event bus. When `Some`, the executor emits
+    /// `RunChartEvent::Equity` and `RunChartEvent::Marker` events after
+    /// each decision cycle so SSE subscribers at `/live/<run_id>` see
+    /// real-time chart updates. When `None` (most unit tests), emission
+    /// is a no-op.
+    event_bus: Option<Arc<RunEventBus>>,
 }
 
 impl BacktestExecutor {
     /// Constructor without progress wiring. Existing callers
-    /// (`api::eval::run_with_deps` today) keep working unchanged.
+    /// (`api::eval::run_with_deps` today, plus tests against legacy
+    /// `canonical_scenarios()` ids) keep working unchanged — bars get
+    /// loaded from `data/probes/<cache_key>.parquet`.
     pub fn new() -> Self {
         Self::default()
     }
@@ -63,12 +83,54 @@ impl BacktestExecutor {
     pub fn with_progress(progress: ProgressTx) -> Self {
         Self {
             progress: Some(progress),
+            injected_bars: None,
+            event_bus: None,
         }
+    }
+
+    /// Constructor that injects bars directly, bypassing the fixture
+    /// loader. Used by `api::eval::run_inner` when the scenario comes
+    /// from the new DB-backed registry: bars are fetched / cached via
+    /// `eval::bars::load_bars` and handed to the executor pre-loaded.
+    ///
+    /// Bars must be in chronological order and contain enough lookback
+    /// for the warm-up window (`WARMUP_BARS` + 1).
+    pub fn with_bars(bars: Vec<Ohlcv>) -> Self {
+        Self {
+            progress: None,
+            injected_bars: Some(bars),
+            event_bus: None,
+        }
+    }
+
+    /// Both bars + progress.
+    pub fn with_bars_and_progress(bars: Vec<Ohlcv>, progress: ProgressTx) -> Self {
+        Self {
+            progress: Some(progress),
+            injected_bars: Some(bars),
+            event_bus: None,
+        }
+    }
+
+    /// Attach a live-stream event bus to an existing executor. Builder-style
+    /// so callers can chain after `with_bars` / `with_progress`:
+    ///   `BacktestExecutor::with_bars(bars).with_event_bus(bus)`.
+    pub fn with_event_bus(mut self, bus: Arc<RunEventBus>) -> Self {
+        self.event_bus = Some(bus);
+        self
     }
 
     fn emit(&self, event: ProgressEvent) {
         if let Some(tx) = self.progress.as_ref() {
             send_event(tx, event);
+        }
+    }
+
+    /// Emit a `RunChartEvent` onto the event bus if one is configured.
+    /// Inline `.await` is fine here since `run_inner` is already `async`.
+    async fn emit_chart(&self, run_id: &str, event: RunChartEvent) {
+        if let Some(bus) = self.event_bus.as_ref() {
+            bus.emit(run_id, event).await;
         }
     }
 }
@@ -125,12 +187,34 @@ impl Executor for BacktestExecutor {
                     metrics: metrics.clone(),
                     tokens_used,
                 });
+                self.emit_chart(
+                    &run.id,
+                    RunChartEvent::Status {
+                        phase: "completed".into(),
+                        message: None,
+                    },
+                )
+                .await;
+                if let Some(bus) = self.event_bus.as_ref() {
+                    bus.drop_channel(&run.id).await;
+                }
             }
             Err(e) => {
                 self.emit(ProgressEvent::RunFailed {
                     run_id: run.id.clone(),
                     error: e.to_string(),
                 });
+                self.emit_chart(
+                    &run.id,
+                    RunChartEvent::Status {
+                        phase: "failed".into(),
+                        message: Some(e.to_string()),
+                    },
+                )
+                .await;
+                if let Some(bus) = self.event_bus.as_ref() {
+                    bus.drop_channel(&run.id).await;
+                }
             }
         }
         result
@@ -152,11 +236,13 @@ impl BacktestExecutor {
             .await?;
         run.status = RunStatus::Running;
 
+        // TODO(Task 5): pull from StrategyBundle. For v1 we read the first
+        // venue_symbol off the scenario's asset list (BTC/USD for canonicals).
         let asset = scenario
-            .asset_universe
+            .asset
             .first()
-            .ok_or_else(|| anyhow!("scenario {} has empty asset_universe", scenario.id))?
-            .clone();
+            .map(|a| a.venue_symbol.clone())
+            .ok_or_else(|| anyhow!("scenario {} has empty asset list", scenario.id))?;
 
         let cadence_min = bundle.manifest.decision_cadence_minutes as i64;
         if cadence_min <= 0 {
@@ -166,12 +252,25 @@ impl BacktestExecutor {
             );
         }
 
-        let bars = load_ohlcv_fixture(&scenario.data_seed, &asset, usize::MAX)
-            .map_err(|e| anyhow!("load fixture {}: {e}", scenario.data_seed))?;
+        // Bars come from one of two sources:
+        // 1. Injected via `with_bars` — Task 8's DB-resolved path goes
+        //    through `eval::bars::load_bars` and hands a pre-loaded
+        //    `Vec<Ohlcv>` to the executor. This is the path the new
+        //    `api::scenario::get`-based eval::run uses.
+        // 2. Legacy fixture loader — the canonical-scenarios fallback
+        //    still reads from `data/probes/<cache_key>.parquet`. Keeps
+        //    pre-Task-8 tests working without a DB / Alpaca creds.
+        let bars: Vec<Ohlcv> = if let Some(injected) = self.injected_bars.clone() {
+            injected
+        } else {
+            let data_seed = &scenario.bar_cache_policy.cache_key;
+            load_ohlcv_fixture(data_seed, &asset, usize::MAX)
+                .map_err(|e| anyhow!("load fixture {}: {e}", data_seed))?
+        };
         if bars.len() <= WARMUP_BARS + 1 {
             anyhow::bail!(
-                "fixture {} has only {} bars; need > {}",
-                scenario.data_seed,
+                "scenario {} has only {} bars; need > {}",
+                scenario.id,
                 bars.len(),
                 WARMUP_BARS + 1
             );
@@ -183,11 +282,11 @@ impl BacktestExecutor {
         let total_decision_bars = bars.len().saturating_sub(WARMUP_BARS).max(1) as f64;
 
         let initial = scenario.capital.initial;
-        let slip_bps = match &scenario.slippage {
+        let slip_bps = match &scenario.venue.slippage {
             SlippageModel::Linear { bps } => *bps as f64,
             SlippageModel::None => 0.0,
         };
-        let taker_bps = scenario.fees.taker_bps as f64;
+        let taker_bps = scenario.venue.fees.taker_bps as f64;
 
         let mut equity = initial;
         let mut equity_curve: Vec<f64> = vec![initial];
@@ -336,7 +435,69 @@ impl BacktestExecutor {
                     },
                 })
                 .await?;
+
+            // Emit a marker event derived from this decision. Mirrors the
+            // action → marker-variant mapping in `chart::split_markers`.
+            // Only emit for actions where fill data is present (same guard
+            // as split_markers uses for trade-like actions).
+            let t = bar.timestamp.timestamp();
+            let marker_event = match parsed.action.as_str() {
+                "long_open" => {
+                    if let (Some(price), Some(size)) = (fill.fill_price, fill.fill_size) {
+                        Some(MarkerEvent::Trade(make_trade_marker(
+                            TradeSide::Buy,
+                            t,
+                            price,
+                            size,
+                            fill.fee,
+                            fill.realized_pnl,
+                            decision_idx,
+                            &parsed.justification,
+                        )))
+                    } else {
+                        None
+                    }
+                }
+                "short_open" | "flat" => {
+                    if let (Some(price), Some(size)) = (fill.fill_price, fill.fill_size) {
+                        Some(MarkerEvent::Trade(make_trade_marker(
+                            TradeSide::Sell,
+                            t,
+                            price,
+                            size,
+                            fill.fee,
+                            fill.realized_pnl,
+                            decision_idx,
+                            &parsed.justification,
+                        )))
+                    } else {
+                        None
+                    }
+                }
+                "hold" => Some(MarkerEvent::Hold(HoldMarker {
+                    time: t,
+                    price: next_bar.open,
+                    conviction: Some(parsed.conviction),
+                    decision_index: decision_idx,
+                })),
+                _ => None,
+            };
+            if let Some(marker) = marker_event {
+                self.emit_chart(&run.id, RunChartEvent::Marker(marker)).await;
+            }
+
             store.record_equity(&run.id, bar.timestamp, equity).await?;
+
+            // Emit equity event for live-stream subscribers.
+            self.emit_chart(
+                &run.id,
+                RunChartEvent::Equity(ChartEquityPoint {
+                    time: bar.timestamp.timestamp(),
+                    equity_usd: equity,
+                }),
+            )
+            .await;
+
             equity_curve.push(equity);
 
             // Running drawdown — peak updates after each tick so
@@ -496,6 +657,35 @@ fn simulate_fill(a: SimulateFillArgs) -> FillOutcome {
         fill_size: Some(traded_units),
         fee: Some(fee),
         realized_pnl: realized - fee,
+    }
+}
+
+/// Build a `TradeMarker` from fill-level data. Extracted to avoid duplicating
+/// the identical field construction across the `long_open` and
+/// `short_open`/`flat` arms of the marker-event match.
+fn make_trade_marker(
+    side: TradeSide,
+    time: i64,
+    price: f64,
+    size: f64,
+    fee: Option<f64>,
+    realized_pnl: f64,
+    decision_index: u32,
+    justification: &str,
+) -> TradeMarker {
+    TradeMarker {
+        time,
+        side,
+        price,
+        size,
+        fee: fee.unwrap_or(0.0),
+        pnl_realized: if realized_pnl != 0.0 {
+            Some(realized_pnl)
+        } else {
+            None
+        },
+        decision_index,
+        justification: Some(justification.to_owned()),
     }
 }
 

@@ -74,6 +74,7 @@ export function EvalRunsRoute() {
   return (
     <>
       <Topbar title="Eval" sub={subtitleFor(q)} />
+
       <div className="mb-3 flex justify-end items-center gap-2">
         {selected.size > 0 ? (
           <CompareToolbar
@@ -93,6 +94,7 @@ export function EvalRunsRoute() {
       {startOpen ? (
         <StartEvalDialog onClose={() => setStartOpen(false)} />
       ) : null}
+
       <Card>
         {q.isPending ? (
           <LoadingSkeleton />
@@ -111,6 +113,8 @@ export function EvalRunsRoute() {
     </>
   );
 }
+
+// ── Existing helpers ───────────────────────────────────────────────────────
 
 function subtitleFor(q: ReturnType<typeof useQuery>) {
   if (q.isPending) return "Loading…";
@@ -502,9 +506,8 @@ function EmptyState() {
         no runs yet
       </div>
       <p className="m-0 max-w-md mx-auto leading-snug">
-        Eval runs created via{" "}
-        <code className="text-text font-mono">xvn ab-compare</code> or the
-        eval engine will appear here. Run something to get started.
+        Use the launcher above to start a run, or trigger one via{" "}
+        <code className="text-text font-mono">xvn ab-compare</code>.
       </p>
     </div>
   );

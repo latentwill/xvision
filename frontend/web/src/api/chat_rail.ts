@@ -47,6 +47,13 @@ export type ResolveSessionResp = {
   history: ChatMessage[];
 };
 
+export type ChatSessionSummary = {
+  id: string;
+  scope: ContextScope;
+  started_at: string;
+  last_activity_at: string;
+};
+
 /// Resolve the chat-rail session for the current scope. Server returns
 /// the most-recent session matching the scope (with its full history),
 /// or creates a fresh empty session if no match exists. Always lands a
@@ -67,6 +74,16 @@ export async function deleteSession(sessionId: string): Promise<void> {
   await apiFetch<void>(
     `/api/chat-rail/sessions/${encodeURIComponent(sessionId)}`,
     { method: "DELETE" },
+  );
+}
+
+export function listSessions(): Promise<ChatSessionSummary[]> {
+  return apiFetch<ChatSessionSummary[]>("/api/chat-rail/sessions");
+}
+
+export function loadSessionHistory(sessionId: string): Promise<ChatMessage[]> {
+  return apiFetch<ChatMessage[]>(
+    `/api/chat-rail/sessions/${encodeURIComponent(sessionId)}/history`,
   );
 }
 

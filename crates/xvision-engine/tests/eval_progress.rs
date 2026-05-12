@@ -9,6 +9,8 @@
 //! subscribers must subscribe BEFORE the executor runs to avoid losing
 //! the `RunStarted` event (broadcast doesn't replay).
 
+#![allow(deprecated)] // canonical_scenarios() — see Task 8 (M2) deprecation note.
+
 use std::sync::Arc;
 
 use sqlx::SqlitePool;
@@ -60,6 +62,8 @@ fn build_bundle(agent_id: &str) -> Strategy {
             risk_preset_or_config: "balanced".into(),
             published_at: None,
         },
+        agents: Vec::new(),
+        pipeline: Default::default(),
         regime_slot: None,
         intern_slot: None,
         trader_slot: Some(LLMSlot {

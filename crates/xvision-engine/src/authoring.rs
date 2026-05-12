@@ -10,9 +10,13 @@
 //! (rmcp::ErrorData, axum::Json, etc.) happens at the call site.
 
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use ulid::Ulid;
 
 use crate::strategies::{
+    AgentRef,
+    PipelineDef,
+    PipelineKind,
     risk::{RiskConfig, RiskPreset},
     slot::LLMSlot,
     store::StrategyStore,
@@ -52,6 +56,8 @@ pub struct UpdateSlotReq {
     pub slot: String,
     pub prompt: Option<String>,
     pub model_requirement: Option<String>,
+    pub provider: Option<String>,
+    pub model: Option<String>,
     pub allowed_tools: Option<Vec<String>>,
 }
 
@@ -59,6 +65,32 @@ pub struct UpdateSlotReq {
 pub struct UpdateSlotOut {
     pub id: String,
     pub updated: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AddAgentRefRequest {
+    pub strategy_id: String,
+    pub agent_id: String,
+    pub role: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoveAgentRefRequest {
+    pub strategy_id: String,
+    pub role: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RenameAgentRoleRequest {
+    pub strategy_id: String,
+    pub role: String,
+    pub new_role: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetPipelineRequest {
+    pub strategy_id: String,
+    pub pipeline: PipelineDef,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -148,6 +180,8 @@ pub async fn update_slot(
         prompt: String::new(),
         model_requirement: String::new(),
         allowed_tools: vec![],
+        provider: None,
+        model: None,
     });
     let mut updated: Vec<String> = Vec::new();
     if let Some(p) = req.prompt {
@@ -157,6 +191,14 @@ pub async fn update_slot(
     if let Some(m) = req.model_requirement {
         slot.model_requirement = m;
         updated.push("model_requirement".into());
+    }
+    if let Some(p) = req.provider {
+        slot.provider = if p.trim().is_empty() { None } else { Some(p) };
+        updated.push("provider".into());
+    }
+    if let Some(m) = req.model {
+        slot.model = if m.trim().is_empty() { None } else { Some(m) };
+        updated.push("model".into());
     }
     if let Some(t) = req.allowed_tools {
         slot.allowed_tools = t;
@@ -172,6 +214,176 @@ pub async fn update_slot(
         id: req.id,
         updated,
     })
+}
+
+pub async fn add_agent_ref(
+    store: &dyn StrategyStore,
+    req: AddAgentRefRequest,
+) -> anyhow::Result<Strategy> {
+    let mut strategy = store.load(&req.strategy_id).await?;
+    let role = req.role.trim();
+    if role.is_empty() {
+        anyhow::bail!("role is required");
+    }
+    if strategy.agents.iter().any(|a| a.role == role) {
+        anyhow::bail!("role '{role}' already exists on strategy");
+    }
+    strategy.agents.push(AgentRef {
+        agent_id: req.agent_id,
+        role: role.to_string(),
+    });
+    if strategy.pipeline.kind == PipelineKind::Single && strategy.agents.len() > 1 {
+        strategy.pipeline.kind = PipelineKind::Sequential;
+    }
+    store.save(&strategy).await?;
+    Ok(strategy)
+}
+
+pub async fn remove_agent_ref(
+    store: &dyn StrategyStore,
+    req: RemoveAgentRefRequest,
+) -> anyhow::Result<Strategy> {
+    let mut strategy = store.load(&req.strategy_id).await?;
+    let before = strategy.agents.len();
+    strategy.agents.retain(|a| a.role != req.role);
+    if strategy.agents.len() == before {
+        anyhow::bail!("role '{}' not found on strategy", req.role);
+    }
+    if strategy.pipeline.kind == PipelineKind::Graph {
+        strategy
+            .pipeline
+            .edges
+            .retain(|edge| edge.from_role != req.role && edge.to_role != req.role);
+    }
+    if strategy.agents.len() <= 1 {
+        strategy.pipeline = PipelineDef::default();
+    } else if strategy.pipeline.kind == PipelineKind::Graph {
+        validate_graph_pipeline(&strategy)?;
+    }
+    store.save(&strategy).await?;
+    Ok(strategy)
+}
+
+pub async fn rename_agent_role(
+    store: &dyn StrategyStore,
+    req: RenameAgentRoleRequest,
+) -> anyhow::Result<Strategy> {
+    let mut strategy = store.load(&req.strategy_id).await?;
+    let new_role = req.new_role.trim();
+    if new_role.is_empty() {
+        anyhow::bail!("new role is required");
+    }
+    if strategy
+        .agents
+        .iter()
+        .any(|a| a.role == new_role && a.role != req.role)
+    {
+        anyhow::bail!("role '{new_role}' already exists on strategy");
+    }
+    let mut found = false;
+    for agent in &mut strategy.agents {
+        if agent.role == req.role {
+            agent.role = new_role.to_string();
+            found = true;
+            break;
+        }
+    }
+    if !found {
+        anyhow::bail!("role '{}' not found on strategy", req.role);
+    }
+    if strategy.pipeline.kind == PipelineKind::Graph {
+        for edge in &mut strategy.pipeline.edges {
+            if edge.from_role == req.role {
+                edge.from_role = new_role.to_string();
+            }
+            if edge.to_role == req.role {
+                edge.to_role = new_role.to_string();
+            }
+        }
+        validate_graph_pipeline(&strategy)?;
+    }
+    store.save(&strategy).await?;
+    Ok(strategy)
+}
+
+pub async fn set_pipeline(
+    store: &dyn StrategyStore,
+    req: SetPipelineRequest,
+) -> anyhow::Result<Strategy> {
+    if req.pipeline.kind != PipelineKind::Graph && !req.pipeline.edges.is_empty() {
+        anyhow::bail!("pipeline edges are only valid for graph pipelines");
+    }
+    let mut strategy = store.load(&req.strategy_id).await?;
+    strategy.pipeline = req.pipeline;
+    validate_pipeline_shape(&strategy)?;
+    store.save(&strategy).await?;
+    Ok(strategy)
+}
+
+fn validate_pipeline_shape(strategy: &Strategy) -> anyhow::Result<()> {
+    if strategy.pipeline.kind == PipelineKind::Single && strategy.agents.len() > 1 {
+        anyhow::bail!("single pipelines cannot include more than one agent");
+    }
+    if strategy.pipeline.kind == PipelineKind::Graph {
+        validate_graph_pipeline(strategy)?;
+    }
+    Ok(())
+}
+
+fn validate_graph_pipeline(strategy: &Strategy) -> anyhow::Result<()> {
+    let roles: HashSet<&str> = strategy.agents.iter().map(|agent| agent.role.as_str()).collect();
+    let mut adjacency: HashMap<&str, Vec<&str>> = HashMap::new();
+    let mut seen_edges: HashSet<(&str, &str)> = HashSet::new();
+
+    for edge in &strategy.pipeline.edges {
+        let from = edge.from_role.as_str();
+        let to = edge.to_role.as_str();
+
+        if !roles.contains(from) || !roles.contains(to) {
+            anyhow::bail!("graph edges must reference existing strategy roles");
+        }
+        if from == to {
+            anyhow::bail!("graph pipelines cannot contain self-loops");
+        }
+        if !seen_edges.insert((from, to)) {
+            anyhow::bail!("graph pipelines cannot contain duplicate edges");
+        }
+        adjacency.entry(from).or_default().push(to);
+    }
+
+    let mut visiting = HashSet::new();
+    let mut visited = HashSet::new();
+    for role in &roles {
+        if graph_cycle_from(*role, &adjacency, &mut visiting, &mut visited) {
+            anyhow::bail!("graph pipelines must be acyclic");
+        }
+    }
+
+    Ok(())
+}
+
+fn graph_cycle_from<'a>(
+    role: &'a str,
+    adjacency: &HashMap<&'a str, Vec<&'a str>>,
+    visiting: &mut HashSet<&'a str>,
+    visited: &mut HashSet<&'a str>,
+) -> bool {
+    if visited.contains(role) {
+        return false;
+    }
+    if !visiting.insert(role) {
+        return true;
+    }
+    if let Some(neighbors) = adjacency.get(role) {
+        for next in neighbors {
+            if graph_cycle_from(next, adjacency, visiting, visited) {
+                return true;
+            }
+        }
+    }
+    visiting.remove(role);
+    visited.insert(role);
+    false
 }
 
 pub async fn set_mechanical_param(
@@ -291,6 +503,8 @@ mod tests {
                 slot: "trader".into(),
                 prompt: Some("New prompt".into()),
                 model_requirement: None,
+                provider: None,
+                model: None,
                 allowed_tools: None,
             },
         )

@@ -1090,8 +1090,8 @@ mod tests {
     #[tokio::test]
     async fn eval_list_returns_seeded_runs() {
         let (tools, _td) = tools_with_tmp();
-        let id_a = seed_run(&tools, "h-A", "s-A", 12.0).await;
-        let id_b = seed_run(&tools, "h-B", "s-B", 7.5).await;
+        let id_a = seed_run(&tools, "h-A", "crypto-bull-q1-2025", 12.0).await;
+        let id_b = seed_run(&tools, "h-B", "crypto-bear-q3-2024", 7.5).await;
 
         let s = tools
             .xvn_eval_list(Parameters(EvalListReq::default()))
@@ -1107,8 +1107,8 @@ mod tests {
     #[tokio::test]
     async fn eval_list_filters_by_strategy() {
         let (tools, _td) = tools_with_tmp();
-        let _id_a = seed_run(&tools, "h-A", "s-A", 12.0).await;
-        let id_b = seed_run(&tools, "h-B", "s-B", 7.5).await;
+        let _id_a = seed_run(&tools, "h-A", "crypto-bull-q1-2025", 12.0).await;
+        let id_b = seed_run(&tools, "h-B", "crypto-bear-q3-2024", 7.5).await;
 
         let s = tools
             .xvn_eval_list(Parameters(EvalListReq {
@@ -1126,7 +1126,7 @@ mod tests {
     #[tokio::test]
     async fn eval_get_returns_run_detail_for_known_run() {
         let (tools, _td) = tools_with_tmp();
-        let id = seed_run(&tools, "h-A", "s-A", 4.0).await;
+        let id = seed_run(&tools, "h-A", "crypto-bull-q1-2025", 4.0).await;
 
         let s = tools
             .xvn_eval_get(Parameters(EvalRunIdReq { run_id: id.clone() }))
@@ -1154,7 +1154,7 @@ mod tests {
     #[tokio::test]
     async fn eval_metrics_returns_just_metrics() {
         let (tools, _td) = tools_with_tmp();
-        let id = seed_run(&tools, "h-A", "s-A", 21.0).await;
+        let id = seed_run(&tools, "h-A", "crypto-bull-q1-2025", 21.0).await;
 
         let s = tools
             .xvn_eval_metrics(Parameters(EvalRunIdReq { run_id: id }))
@@ -1182,8 +1182,8 @@ mod tests {
     #[tokio::test]
     async fn eval_compare_returns_comparison_report() {
         let (tools, _td) = tools_with_tmp();
-        let id_a = seed_run(&tools, "h-A", "s-A", 10.0).await;
-        let id_b = seed_run(&tools, "h-B", "s-B", 5.0).await;
+        let id_a = seed_run(&tools, "h-A", "crypto-bull-q1-2025", 10.0).await;
+        let id_b = seed_run(&tools, "h-B", "crypto-bear-q3-2024", 5.0).await;
 
         let s = tools
             .xvn_eval_compare(Parameters(EvalCompareReq {
@@ -1202,7 +1202,7 @@ mod tests {
     #[tokio::test]
     async fn eval_compare_rejects_single_run() {
         let (tools, _td) = tools_with_tmp();
-        let id = seed_run(&tools, "h-A", "s-A", 10.0).await;
+        let id = seed_run(&tools, "h-A", "crypto-bull-q1-2025", 10.0).await;
         let err = tools
             .xvn_eval_compare(Parameters(EvalCompareReq { run_ids: vec![id] }))
             .await
@@ -1217,7 +1217,7 @@ mod tests {
     #[tokio::test]
     async fn eval_findings_returns_empty_array_when_none() {
         let (tools, _td) = tools_with_tmp();
-        let id = seed_run(&tools, "h-A", "s-A", 10.0).await;
+        let id = seed_run(&tools, "h-A", "crypto-bull-q1-2025", 10.0).await;
         let s = tools
             .xvn_eval_findings(Parameters(EvalRunIdReq { run_id: id }))
             .await

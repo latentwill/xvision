@@ -1,10 +1,13 @@
 //! Phase 6.2 — Alpaca paper-trading executor.
 //!
-//! v1 scope: BTC-only via Alpaca's crypto endpoint (`BTC/USD`).
+//! Supports the full Alpaca crypto whitelist (see
+//! `xvision_data::asset_whitelist::ALPACA_CRYPTO_WHITELIST` and
+//! `xvision_core::AssetSymbol`). Symbol mapping is delegated to
+//! `AssetSymbol::as_alpaca_pair()` / `AssetSymbol::from_str`.
 //!
-//! Symbol mapping is hardcoded for v1 (`AssetSymbol::Btc` → `"BTC/USD"`).
-//! Multi-asset follow-up: load from `config/whitelist.toml` and drive the
-//! symbol map from that file (tracked as a post-Phase-8 cleanup).
+//! Each `AlpacaExecutor` instance is configured with a `default_asset` that
+//! drives `submit()` and `Action::Close` until `TraderDecision` carries an
+//! explicit `asset` field (F18 — tracked in the scenario-eval plan).
 //!
 //! # Idempotency
 //! Every `submit` call sets `client_order_id = td.cycle_id.to_string()`.
@@ -28,24 +31,18 @@ use crate::executor::{ExecutionReceipt, Executor, ExecutorError};
 
 // ── Alpaca symbol mapping ────────────────────────────────────────────────────
 
-/// v1: hardcoded BTC/USD. Multi-asset path: build a `HashMap<AssetSymbol, &str>`
-/// from `config/whitelist.toml` at startup.
-const BTC_USD: &str = "BTC/USD";
-
-fn alpaca_symbol_for(asset: AssetSymbol) -> Result<&'static str, ExecutorError> {
-    match asset {
-        AssetSymbol::Btc => Ok(BTC_USD),
-        other => Err(ExecutorError::NotActionable(format!(
-            "asset {other:?} not supported in v1 (BTC-only)"
-        ))),
-    }
+/// Convert an `AssetSymbol` into the Alpaca trading-pair string (`"BTC/USD"`,
+/// `"ETH/USD"`, …). Delegates to `AssetSymbol::as_alpaca_pair()`.
+fn alpaca_symbol_for(asset: AssetSymbol) -> String {
+    asset.as_alpaca_pair()
 }
 
+/// Parse an Alpaca-side symbol string back to an `AssetSymbol`. Accepts the
+/// pair form (`"BTC/USD"`), the concatenated form (`"BTCUSD"`), and the bare
+/// short code (`"BTC"`) for every whitelisted asset. Delegates to
+/// `AssetSymbol`'s `FromStr` impl.
 fn asset_symbol_from_alpaca(sym: &str) -> Option<AssetSymbol> {
-    match sym {
-        "BTC/USD" | "BTCUSD" | "BTC" => Some(AssetSymbol::Btc),
-        _ => None,
-    }
+    sym.parse().ok()
 }
 
 // ── Internal HTTP abstraction ────────────────────────────────────────────────
@@ -347,8 +344,12 @@ fn apca_position_to_plain(pos: &apca::api::v2::position::Position) -> AlpacaPosi
 /// a mock without hitting the network.
 pub struct AlpacaExecutor<A = ApacClientApi> {
     api: A,
-    /// Alpaca symbol string for BTC. v1: always `"BTC/USD"`.
-    symbol_for_btc: &'static str,
+    /// Asset this executor instance trades. Drives `submit()` and the
+    /// `Action::Close` path until `TraderDecision` carries an explicit asset
+    /// field (F18 / scenario-eval Task 11). Default constructors set this to
+    /// `AssetSymbol::Btc` for back-compat; use [`AlpacaExecutor::with_asset`]
+    /// to target a different asset.
+    default_asset: AssetSymbol,
 }
 
 impl AlpacaExecutor<ApacClientApi> {
@@ -361,7 +362,7 @@ impl AlpacaExecutor<ApacClientApi> {
         let client = apca::Client::new(api_info);
         Ok(Self {
             api: ApacClientApi::new(client),
-            symbol_for_btc: BTC_USD,
+            default_asset: AssetSymbol::Btc,
         })
     }
 
@@ -376,7 +377,7 @@ impl AlpacaExecutor<ApacClientApi> {
         let client = apca::Client::new(api_info);
         Ok(Self {
             api: ApacClientApi::new(client),
-            symbol_for_btc: BTC_USD,
+            default_asset: AssetSymbol::Btc,
         })
     }
 }
@@ -387,8 +388,16 @@ impl<A: AlpacaApi> AlpacaExecutor<A> {
     pub(crate) fn with_api(api: A) -> Self {
         Self {
             api,
-            symbol_for_btc: BTC_USD,
+            default_asset: AssetSymbol::Btc,
         }
+    }
+
+    /// Override the default asset this executor trades. Useful for callers
+    /// that want a non-BTC instance (e.g. an ETH-only paper executor) before
+    /// `TraderDecision.asset` lands in Task 11.
+    pub fn with_asset(mut self, asset: AssetSymbol) -> Self {
+        self.default_asset = asset;
+        self
     }
 
     /// Poll an order until it reaches a terminal state.
@@ -468,15 +477,18 @@ impl<A: AlpacaApi + 'static> Executor for AlpacaExecutor<A> {
             },
             Action::Close => {
                 // Delegate — close_position works by asset from the decision.
-                // TraderDecision doesn't carry the asset directly; the hardcoded
-                // BTC-only assumption means we always close BTC.
-                return self.close_position(AssetSymbol::Btc).await;
+                // TraderDecision doesn't yet carry the asset directly (F18 /
+                // scenario-eval Task 11), so we fall back to this executor's
+                // configured `default_asset`.
+                return self.close_position(self.default_asset).await;
             },
             Action::Buy | Action::Sell => {}, // fall through
         }
 
-        // 3. Determine Alpaca symbol (v1: always BTC/USD via symbol_for_btc).
-        let symbol = self.symbol_for_btc;
+        // 3. Determine Alpaca symbol from the executor's configured asset
+        //    (TraderDecision.asset wiring lands in Task 11).
+        let asset = self.default_asset;
+        let symbol = alpaca_symbol_for(asset);
 
         // 4. Compute notional from live equity.
         let account = self.api.get_account().await?;
@@ -485,7 +497,7 @@ impl<A: AlpacaApi + 'static> Executor for AlpacaExecutor<A> {
         // 5. Compute bracket prices.
         let mid_price = self
             .api
-            .get_position(symbol)
+            .get_position(&symbol)
             .await?
             .and_then(|p| p.current_price)
             .unwrap_or(0.0);
@@ -496,7 +508,7 @@ impl<A: AlpacaApi + 'static> Executor for AlpacaExecutor<A> {
             (Some(tp), Some(sl))
         } else {
             // No live price available — submit a simple market order without
-            // bracket legs. This can happen for a fresh account with no BTC
+            // bracket legs. This can happen for a fresh account with no open
             // position; the risk layer still passes stop/tp percentages but
             // we can't derive absolute prices without a reference.
             (None, None)
@@ -508,7 +520,7 @@ impl<A: AlpacaApi + 'static> Executor for AlpacaExecutor<A> {
         };
 
         let req = OrderRequest {
-            symbol: symbol.to_string(),
+            symbol,
             notional,
             side,
             take_profit_price,
@@ -525,7 +537,7 @@ impl<A: AlpacaApi + 'static> Executor for AlpacaExecutor<A> {
 
         Ok(Self::build_receipt(
             td.cycle_id,
-            AssetSymbol::Btc,
+            asset,
             &filled,
             account.equity,
         ))
@@ -535,15 +547,10 @@ impl<A: AlpacaApi + 'static> Executor for AlpacaExecutor<A> {
         &self,
         asset: AssetSymbol,
     ) -> Result<ExecutionReceipt, ExecutorError> {
-        // v1: symbol_for_btc covers BTC; alpaca_symbol_for rejects others.
-        let symbol = if asset == AssetSymbol::Btc {
-            self.symbol_for_btc
-        } else {
-            alpaca_symbol_for(asset)?
-        };
+        let symbol = alpaca_symbol_for(asset);
 
         // Check for an existing position.
-        let position = self.api.get_position(symbol).await?;
+        let position = self.api.get_position(&symbol).await?;
 
         let Some(pos) = position else {
             // No open position — return a zero-fill receipt per the trait spec.
@@ -572,7 +579,7 @@ impl<A: AlpacaApi + 'static> Executor for AlpacaExecutor<A> {
         let notional = pos.market_value.unwrap_or(pos.qty * pos.avg_entry_price);
 
         let req = OrderRequest {
-            symbol: symbol.to_string(),
+            symbol,
             notional,
             side: close_side,
             take_profit_price: None,
@@ -787,6 +794,7 @@ mod tests {
                 stop_loss_pct: 2.5,
                 take_profit_pct: 5.0,
                 trader_summary: "Long entry on confirmed range break with 2:1 R:R.".into(),
+                asset: None,
             },
         }
     }
@@ -878,6 +886,7 @@ mod tests {
                 stop_loss_pct: 2.0,
                 take_profit_pct: 4.0,
                 trader_summary: "Vetoed test decision — should not reach executor.".into(),
+                asset: None,
             },
             reason: VetoReason::DailyLossCircuitBreaker,
         };

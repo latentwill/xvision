@@ -16,7 +16,9 @@ pub struct Agent {
     pub tags: Vec<String>,
     pub slots: Vec<AgentSlot>,
     pub archived: bool,
+    #[cfg_attr(feature = "ts-export", ts(type = "string"))]
     pub created_at: DateTime<Utc>,
+    #[cfg_attr(feature = "ts-export", ts(type = "string"))]
     pub updated_at: DateTime<Utc>,
 }
 

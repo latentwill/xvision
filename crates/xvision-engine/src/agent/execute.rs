@@ -51,7 +51,7 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
 
     for _iter in 0..MAX_TOOL_USE_ITERATIONS {
         let req = LlmRequest {
-            model: input.slot.model_requirement.clone(),
+            model: input.slot.effective_model(),
             system_prompt: input.slot.prompt.clone(),
             messages: messages.clone(),
             max_tokens: 1000,

@@ -14,26 +14,26 @@ async fn pool_with_migration() -> SqlitePool {
 }
 
 fn ctx_with(pool: SqlitePool, dir: &std::path::Path) -> ApiContext {
-    ApiContext {
-        db: pool,
-        actor: Actor::Cli {
+    ApiContext::new(
+        pool,
+        Actor::Cli {
             user: "operator".into(),
         },
-        xvn_home: dir.to_path_buf(),
-    }
+        dir.to_path_buf(),
+    )
 }
 
 #[tokio::test]
 async fn audit_records_ok_outcome() {
     let pool = pool_with_migration().await;
     let dir = tempfile::tempdir().unwrap();
-    let ctx = ApiContext {
-        db: pool.clone(),
-        actor: Actor::Cli {
+    let ctx = ApiContext::new(
+        pool.clone(),
+        Actor::Cli {
             user: "operator".into(),
         },
-        xvn_home: dir.path().to_path_buf(),
-    };
+        dir.path().to_path_buf(),
+    );
     record(&ctx, "strategy", "list", None, None, Outcome::Ok, 12)
         .await
         .unwrap();
@@ -55,13 +55,13 @@ async fn audit_records_ok_outcome() {
 async fn audit_records_error_outcome() {
     let pool = pool_with_migration().await;
     let dir = tempfile::tempdir().unwrap();
-    let ctx = ApiContext {
-        db: pool.clone(),
-        actor: Actor::Mcp {
+    let ctx = ApiContext::new(
+        pool.clone(),
+        Actor::Mcp {
             session_id: "sess-1".into(),
         },
-        xvn_home: dir.path().to_path_buf(),
-    };
+        dir.path().to_path_buf(),
+    );
     record(
         &ctx,
         "strategy",
@@ -87,13 +87,13 @@ async fn audit_records_error_outcome() {
 async fn audit_records_target_and_args_json() {
     let pool = pool_with_migration().await;
     let dir = tempfile::tempdir().unwrap();
-    let ctx = ApiContext {
-        db: pool.clone(),
-        actor: Actor::AgentRunner {
+    let ctx = ApiContext::new(
+        pool.clone(),
+        Actor::AgentRunner {
             run_id: "run-42".into(),
         },
-        xvn_home: dir.path().to_path_buf(),
-    };
+        dir.path().to_path_buf(),
+    );
     record(
         &ctx,
         "eval",

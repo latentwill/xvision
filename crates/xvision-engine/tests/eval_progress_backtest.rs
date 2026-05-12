@@ -7,6 +7,8 @@
 //! executor runs — broadcast doesn't replay, so a late subscribe loses
 //! the RunStarted event.
 
+#![allow(deprecated)] // canonical_scenarios() — see Task 8 (M2) deprecation note.
+
 use std::sync::Arc;
 
 use sqlx::SqlitePool;
