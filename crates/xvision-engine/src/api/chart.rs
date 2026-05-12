@@ -905,7 +905,7 @@ fn compute_max_drawdown_pct(equity: &[ChartEquityPoint]) -> f64 {
 use tokio::sync::broadcast;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "event", content = "data")]
+#[serde(tag = "event", content = "data", rename_all = "snake_case")]
 pub enum RunChartEvent {
     Bar(ChartBar),
     IndicatorTail(std::collections::HashMap<String, IndicatorPoint>),

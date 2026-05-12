@@ -17,23 +17,21 @@ export type LiveStatus = "snapshot" | "streaming" | "reconnecting" | "closed";
 // must stay in lockstep with `RunChartEvent` in
 // crates/xvision-engine/src/api/chart.rs).
 //
-// RunChartEvent uses #[serde(tag = "event", content = "data")] with no
-// rename_all, so tag values are PascalCase. The SSE frame names (from
-// event_name() in eval_runs.rs) are lowercase. The browser fires
-// addEventListener('bar', ...) on `event: bar` SSE frames, and e.data
-// contains the full serialised RunChartEvent: {"event":"Bar","data":{...}}.
+// The `event` tag values are snake_case, matching the Rust `RunChartEvent`
+// `rename_all = "snake_case"` and the SSE frame name from `event_name()` in
+// eval_runs.rs — so the inner discriminant and the SSE listener name agree.
 type WireMarker =
   | ({ kind: "trade" } & TradeMarker)
   | ({ kind: "veto" } & VetoMarker)
   | ({ kind: "hold" } & HoldMarker);
 
 type WireEvent =
-  | { event: "Bar"; data: ChartBar }
-  | { event: "Equity"; data: ChartEquityPoint }
-  | { event: "Marker"; data: WireMarker }
-  | { event: "Status"; data: { phase: string; message: string | null } }
+  | { event: "bar"; data: ChartBar }
+  | { event: "equity"; data: ChartEquityPoint }
+  | { event: "marker"; data: WireMarker }
+  | { event: "status"; data: { phase: string; message: string | null } }
   | {
-      event: "IndicatorTail";
+      event: "indicator_tail";
       data: Record<string, { time: number; value: number }>;
     };
 
@@ -69,16 +67,13 @@ export function useRunStream(runId: string, initial?: RunChartPayload) {
       if (!prev) return prev;
       const markers = { ...prev.markers };
       if (m.kind === "trade") {
-        const { kind: _tradeKind, ...trade } = m;
-        void _tradeKind;
+        const { kind: _trade, ...trade } = m;
         markers.trades = [...markers.trades, trade];
       } else if (m.kind === "veto") {
-        const { kind: _vetoKind, ...veto } = m;
-        void _vetoKind;
+        const { kind: _veto, ...veto } = m;
         markers.vetoes = [...markers.vetoes, veto];
       } else if (m.kind === "hold") {
-        const { kind: _holdKind, ...hold } = m;
-        void _holdKind;
+        const { kind: _hold, ...hold } = m;
         markers.holds = [...markers.holds, hold];
       }
       return { ...prev, markers };
@@ -109,19 +104,19 @@ export function useRunStream(runId: string, initial?: RunChartPayload) {
 
       es.addEventListener("bar", (e) => {
         const parsed = JSON.parse((e as MessageEvent).data) as WireEvent;
-        if (parsed.event === "Bar") mergeBar(parsed.data);
+        if (parsed.event === "bar") mergeBar(parsed.data);
       });
       es.addEventListener("equity", (e) => {
         const parsed = JSON.parse((e as MessageEvent).data) as WireEvent;
-        if (parsed.event === "Equity") mergeEquity(parsed.data);
+        if (parsed.event === "equity") mergeEquity(parsed.data);
       });
       es.addEventListener("marker", (e) => {
         const parsed = JSON.parse((e as MessageEvent).data) as WireEvent;
-        if (parsed.event === "Marker") mergeMarker(parsed.data);
+        if (parsed.event === "marker") mergeMarker(parsed.data);
       });
       es.addEventListener("status", (e) => {
         const parsed = JSON.parse((e as MessageEvent).data) as WireEvent;
-        if (parsed.event === "Status") {
+        if (parsed.event === "status") {
           const phase = parsed.data.phase;
           if (phase === "completed" || phase === "failed") {
             es.close();
