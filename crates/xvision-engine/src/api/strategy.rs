@@ -31,6 +31,13 @@ use std::time::Instant;
 pub struct StrategySummary {
     pub agent_id: String,
     pub template: String,
+    /// Model requirement of the bundle's primary slot — trader if set,
+    /// otherwise the first configured slot in (trader, intern, regime)
+    /// order. None when no slot has a model_requirement. Surfaced so the
+    /// strategies list page can render a Model column without fetching
+    /// each bundle separately.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 pub async fn list(ctx: &ApiContext) -> ApiResult<Vec<StrategySummary>> {
@@ -66,9 +73,20 @@ async fn list_inner(ctx: &ApiContext) -> ApiResult<Vec<StrategySummary>> {
             .load(&id)
             .await
             .map_err(|e| ApiError::Internal(e.to_string()))?;
+        // Primary slot priority: trader → intern → regime. trader is
+        // the decision-maker and the schema-required one; the others
+        // are advisory/scoring layers that may not be filled.
+        let model = bundle
+            .trader_slot
+            .as_ref()
+            .or(bundle.intern_slot.as_ref())
+            .or(bundle.regime_slot.as_ref())
+            .map(|s| s.model_requirement.clone())
+            .filter(|m| !m.trim().is_empty());
         out.push(StrategySummary {
             agent_id: bundle.manifest.id,
             template: bundle.manifest.template,
+            model,
         });
     }
     Ok(out)
