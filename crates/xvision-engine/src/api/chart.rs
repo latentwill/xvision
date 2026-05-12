@@ -1064,3 +1064,156 @@ pub async fn build_compare_payload(
         price_backdrop,
     })
 }
+
+// ── Task 3 (M3) — scenario preview transient payload ───────────────────────
+
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScenarioPreviewPayload {
+    pub cache_key: String,
+    pub asset: String,
+    pub granularity: String,
+    pub bars: Vec<ChartBar>,
+    pub cache_status: CacheStatus,
+    pub baseline_equity: Option<Vec<ChartEquityPoint>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PreviewQuery {
+    pub asset: String,
+    pub from: String,        // YYYY-MM-DD
+    pub to: String,
+    pub granularity: String, // "1h" | "1d"
+    pub baseline: Option<bool>,
+}
+
+pub async fn build_scenario_preview(
+    ctx: &ApiContext,
+    q: PreviewQuery,
+) -> ApiResult<ScenarioPreviewPayload> {
+    use chrono::NaiveDate;
+
+    // Validate dates.
+    let from = NaiveDate::parse_from_str(&q.from, "%Y-%m-%d")
+        .map_err(|e| ApiError::Validation(format!("from: {e}")))?
+        .and_hms_opt(0, 0, 0)
+        .unwrap()
+        .and_utc();
+    let to = NaiveDate::parse_from_str(&q.to, "%Y-%m-%d")
+        .map_err(|e| ApiError::Validation(format!("to: {e}")))?
+        .and_hms_opt(0, 0, 0)
+        .unwrap()
+        .and_utc();
+    if from >= to {
+        return Err(ApiError::Validation("from must be < to".into()));
+    }
+
+    // Granularity.
+    let g = match q.granularity.as_str() {
+        "1h" => xvision_data::alpaca::BarGranularity::Hour1,
+        "1d" => xvision_data::alpaca::BarGranularity::Day1,
+        other => {
+            return Err(ApiError::Validation(format!(
+                "granularity '{other}' not in v1 set; allowed: 1h, 1d"
+            )))
+        }
+    };
+
+    // Asset whitelist.
+    if !xvision_data::asset_whitelist::is_alpaca_crypto_supported(&q.asset) {
+        return Err(ApiError::Validation(format!(
+            "asset '{}' not in alpaca crypto whitelist",
+            q.asset
+        )));
+    }
+    let pair = xvision_data::asset_whitelist::to_alpaca_pair(&q.asset);
+    let data_source_tag = "alpaca-historical-v1";
+    let cache_key = crate::eval::bars::compute_cache_key(&pair, g, from, to, data_source_tag);
+
+    // Cache status — query first, before load_bars triggers a fetch.
+    let expected_count = preview_expected_bar_count(from, to, g);
+    let cache_row = query_bars_cache_meta(ctx, &cache_key).await?;
+    let cache_status = match cache_row {
+        None => CacheStatus::NotCached { expected_count },
+        Some((bar_count, fetched_at)) => {
+            if bar_count >= expected_count {
+                CacheStatus::FullyCached { bar_count, fetched_at }
+            } else {
+                CacheStatus::PartiallyCached {
+                    fetched_count: bar_count,
+                    expected_count,
+                }
+            }
+        }
+    };
+
+    // Bars: only load when the cache says we have data. Without credentials
+    // a cache-miss load_bars will fail — same defensive pattern used in
+    // build_scenario_payload.
+    let bars: Vec<ChartBar> = if matches!(
+        cache_status,
+        CacheStatus::FullyCached { .. } | CacheStatus::PartiallyCached { .. }
+    ) {
+        crate::eval::bars::load_bars(
+            ctx,
+            &crate::eval::bars::BarCacheArgs {
+                cache_key: cache_key.clone(),
+                asset_pair: pair,
+                granularity: g,
+                start: from,
+                end: to,
+                data_source_tag: data_source_tag.into(),
+            },
+        )
+        .await?
+        .iter()
+        .map(bar_to_chart_bar)
+        .collect()
+    } else {
+        Vec::new()
+    };
+
+    // Optional Buy-and-Hold baseline equity (initial = $100k, proportional
+    // to bar close).
+    let baseline_equity = if q.baseline.unwrap_or(false) && !bars.is_empty() {
+        let initial = 100_000.0;
+        let first_close = bars.first().map(|b| b.close).unwrap_or(1.0);
+        Some(
+            bars.iter()
+                .map(|b| ChartEquityPoint {
+                    time: b.time,
+                    equity_usd: initial * (b.close / first_close.max(f64::EPSILON)),
+                })
+                .collect(),
+        )
+    } else {
+        None
+    };
+
+    Ok(ScenarioPreviewPayload {
+        cache_key,
+        asset: q.asset,
+        granularity: q.granularity,
+        bars,
+        cache_status,
+        baseline_equity,
+    })
+}
+
+fn preview_expected_bar_count(
+    from: chrono::DateTime<chrono::Utc>,
+    to: chrono::DateTime<chrono::Utc>,
+    g: xvision_data::alpaca::BarGranularity,
+) -> u32 {
+    let secs = (to - from).num_seconds().max(0) as u64;
+    let bar_secs: u64 = match g {
+        xvision_data::alpaca::BarGranularity::Hour1 => 3600,
+        xvision_data::alpaca::BarGranularity::Day1 => 86_400,
+        _ => 3600,
+    };
+    (secs / bar_secs) as u32
+}

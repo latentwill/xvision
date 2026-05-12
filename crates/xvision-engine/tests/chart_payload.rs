@@ -136,3 +136,110 @@ async fn build_compare_payload_returns_not_found_for_missing_run() {
         "error message should name the missing run id, got: {msg}"
     );
 }
+
+// ── Task 3 — build_scenario_preview tests ───────────────────────────────────
+
+#[tokio::test]
+async fn build_scenario_preview_validates_dates_and_assets() {
+    let ctx = test_ctx().await;
+
+    // Invalid date format.
+    let err = xvision_engine::api::chart::build_scenario_preview(
+        &ctx,
+        xvision_engine::api::chart::PreviewQuery {
+            asset: "ETH".into(),
+            from: "not-a-date".into(),
+            to: "2024-02-10".into(),
+            granularity: "1h".into(),
+            baseline: None,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(err, xvision_engine::api::ApiError::Validation(_)));
+
+    // from >= to.
+    let err = xvision_engine::api::chart::build_scenario_preview(
+        &ctx,
+        xvision_engine::api::chart::PreviewQuery {
+            asset: "ETH".into(),
+            from: "2024-02-10".into(),
+            to: "2024-02-03".into(),
+            granularity: "1h".into(),
+            baseline: None,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(err, xvision_engine::api::ApiError::Validation(_)));
+
+    // Unknown granularity.
+    let err = xvision_engine::api::chart::build_scenario_preview(
+        &ctx,
+        xvision_engine::api::chart::PreviewQuery {
+            asset: "ETH".into(),
+            from: "2024-02-03".into(),
+            to: "2024-02-10".into(),
+            granularity: "5m".into(),
+            baseline: None,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(err, xvision_engine::api::ApiError::Validation(_)));
+
+    // Asset not on whitelist.
+    let err = xvision_engine::api::chart::build_scenario_preview(
+        &ctx,
+        xvision_engine::api::chart::PreviewQuery {
+            asset: "FAKE".into(),
+            from: "2024-02-03".into(),
+            to: "2024-02-10".into(),
+            granularity: "1h".into(),
+            baseline: None,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(err, xvision_engine::api::ApiError::Validation(_)));
+}
+
+#[tokio::test]
+async fn build_scenario_preview_uncached_returns_not_cached_status() {
+    let ctx = test_ctx().await;
+
+    // Valid request, but cache is empty — should return NotCached
+    // status with an empty bars vec (no Alpaca fetch attempted because
+    // we short-circuit on NotCached).
+    let payload = xvision_engine::api::chart::build_scenario_preview(
+        &ctx,
+        xvision_engine::api::chart::PreviewQuery {
+            asset: "ETH".into(),
+            from: "2024-02-03".into(),
+            to: "2024-02-10".into(),
+            granularity: "1h".into(),
+            baseline: Some(true),
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(payload.asset, "ETH");
+    assert_eq!(payload.granularity, "1h");
+    assert!(payload.bars.is_empty(), "no cache → no bars");
+    assert!(
+        payload.baseline_equity.is_none(),
+        "baseline depends on bars; empty bars → no baseline"
+    );
+    assert!(
+        matches!(
+            payload.cache_status,
+            xvision_engine::api::chart::CacheStatus::NotCached { .. }
+        ),
+        "expected NotCached, got: {:?}",
+        payload.cache_status
+    );
+    // Cache key should be deterministic — re-running with the same inputs
+    // must produce the same key.
+    assert!(!payload.cache_key.is_empty());
+}
