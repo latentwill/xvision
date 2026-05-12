@@ -107,9 +107,9 @@ export function ChatRail() {
     const candidates = rows
       .filter((p) => p.api_key_set && !p.synthetic && p.enabled_models.length > 0)
       .sort((a, b) =>
-        a.referenced_by_intern === b.referenced_by_intern
+        a.is_default === b.is_default
           ? 0
-          : a.referenced_by_intern
+          : a.is_default
             ? -1
             : 1,
       );
