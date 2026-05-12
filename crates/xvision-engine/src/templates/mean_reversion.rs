@@ -1,7 +1,7 @@
 use crate::bundle::manifest::{PublicManifest, RegimeFit};
 use crate::bundle::risk::RiskPreset;
 use crate::bundle::slot::LLMSlot;
-use crate::bundle::StrategyBundle;
+use crate::bundle::{PipelineDef, StrategyBundle};
 use crate::templates::Template;
 
 const TRADER_PROMPT: &str = r#"You are a mean-reversion crypto trader. Inputs:
@@ -52,6 +52,8 @@ impl Template for MeanReversion {
                 risk_preset_or_config: "balanced".into(),
                 published_at: None,
             },
+            agents: Vec::new(),
+            pipeline: PipelineDef::default(),
             regime_slot: Some(LLMSlot {
                 role: "regime".into(),
                 prompt: REGIME_PROMPT.into(),

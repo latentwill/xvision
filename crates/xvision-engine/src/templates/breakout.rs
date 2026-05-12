@@ -1,7 +1,7 @@
 use crate::bundle::manifest::{PublicManifest, RegimeFit};
 use crate::bundle::risk::RiskPreset;
 use crate::bundle::slot::LLMSlot;
-use crate::bundle::StrategyBundle;
+use crate::bundle::{PipelineDef, StrategyBundle};
 use crate::templates::Template;
 
 const TRADER_PROMPT: &str = r#"You are a breakout crypto trader. Inputs:
@@ -50,6 +50,8 @@ impl Template for Breakout {
                 risk_preset_or_config: "balanced".into(),
                 published_at: None,
             },
+            agents: Vec::new(),
+            pipeline: PipelineDef::default(),
             regime_slot: None,
             intern_slot: None,
             trader_slot: Some(LLMSlot {
