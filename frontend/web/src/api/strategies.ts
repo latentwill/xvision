@@ -5,10 +5,17 @@
 // "./types.gen"`.
 
 import { apiFetch } from "./client";
-import type { StrategySummary } from "./types.gen";
+
+export type StrategyListItem = {
+  agent_id: string;
+  display_name: string;
+  template: string;
+  decision_cadence_minutes: number;
+  model?: string;
+};
 
 export type StrategiesListResponse = {
-  items: StrategySummary[];
+  items: StrategyListItem[];
 };
 
 export type LLMSlot = {
@@ -104,7 +111,7 @@ export const strategyKeys = {
   templates: () => [...strategyKeys.all, "templates"] as const,
 };
 
-export function listStrategies(): Promise<StrategySummary[]> {
+export function listStrategies(): Promise<StrategyListItem[]> {
   return apiFetch<StrategiesListResponse>("/api/strategies").then(
     (r) => r.items,
   );
