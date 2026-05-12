@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { AssetClass } from '../../api/types.gen/AssetClass';
 import type { CalendarRef } from '../../api/types.gen/CalendarRef';
 import type { CreateScenarioRequest } from '../../api/types.gen/CreateScenarioRequest';
@@ -13,12 +13,21 @@ import type { SlippageModel } from '../../api/types.gen/SlippageModel';
 import type { Venue } from '../../api/types.gen/Venue';
 import { RegimeRangePresets } from './RegimeRangePresets';
 
+export type ScenarioFormDraft = {
+  asset: string;
+  from: string;
+  to: string;
+  granularity: 'Hour1' | 'Day1';
+};
+
 export type ScenarioFormProps = {
   initial?: Partial<CreateScenarioRequest>;
   submitting?: boolean;
   error?: string;
   onSubmit: (req: CreateScenarioRequest) => void;
   onCancel?: () => void;
+  /** Fires whenever the four preview-relevant fields change. */
+  onDraftChange?: (draft: ScenarioFormDraft) => void;
   layout?: 'wizard' | 'inline';
 };
 
@@ -42,6 +51,7 @@ export function ScenarioForm({
   error,
   onSubmit,
   onCancel,
+  onDraftChange,
   layout = 'wizard',
 }: ScenarioFormProps) {
   const [name, setName] = useState(initial?.display_name ?? '');
@@ -72,6 +82,13 @@ export function ScenarioForm({
   );
 
   const estimatedBars = estimateBars(from, to, granularity);
+
+  useEffect(() => {
+    if (onDraftChange) {
+      onDraftChange({ asset, from, to, granularity });
+    }
+    // Intentionally include onDraftChange — parent should memoize if needed.
+  }, [asset, from, to, granularity, onDraftChange]);
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
