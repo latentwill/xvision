@@ -2,6 +2,7 @@ import { createBrowserRouter, Navigate } from "react-router-dom";
 import { Layout } from "@/components/shell/Layout";
 import { HomeRoute } from "./routes/home";
 import { StrategiesRoute } from "./routes/strategies";
+import { StrategiesNewRoute } from "./routes/strategies-new";
 import { AgentsRoute } from "./routes/agents";
 import { AgentsEditRoute } from "./routes/agents-edit";
 import { AuthoringRoute } from "./routes/authoring";
@@ -24,6 +25,7 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <HomeRoute /> },
       { path: "strategies", element: <StrategiesRoute /> },
+      { path: "strategies/new", element: <StrategiesNewRoute /> },
       { path: "agents", element: <AgentsRoute /> },
       { path: "agents/new", element: <AgentsEditRoute /> },
       { path: "agents/:id", element: <AgentsEditRoute /> },
