@@ -34,9 +34,3 @@ export function formatCadence(minutes: number): string {
 
   return `${hours}h ${remainderMinutes}m`;
 }
-
-export function formatCadence(minutes: number): string {
-  if (minutes % 1440 === 0) return `${minutes / 1440}d`;
-  if (minutes % 60 === 0) return `${minutes / 60}h`;
-  return `${minutes}m`;
-}

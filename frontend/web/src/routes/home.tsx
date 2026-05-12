@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
+import { Pill } from "@/components/primitives/Pill";
 import { ApiError } from "@/api/client";
 import { getHealth, healthKeys } from "@/api/health";
 import { evalKeys, listRuns } from "@/api/eval";
