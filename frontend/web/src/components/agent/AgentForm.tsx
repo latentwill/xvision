@@ -34,7 +34,6 @@ const BLANK_SLOT: AgentSlot = {
   provider: "",
   model: "",
   system_prompt: "",
-  skill_ids: [],
   max_tokens: 4096,
 };
 

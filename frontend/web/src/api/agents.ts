@@ -10,7 +10,6 @@ export type AgentSlot = {
   provider: string;
   model: string;
   system_prompt: string;
-  skill_ids: string[];
   max_tokens: number;
 };
 

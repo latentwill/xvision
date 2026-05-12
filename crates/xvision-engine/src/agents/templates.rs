@@ -50,7 +50,6 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                      briefing, output a decision in the schema: \
                      {action: long_open|short_open|flat|hold, conviction: 0..1, justification: string}."
                         .into(),
-                skill_ids: vec![],
                 max_tokens: 4096,
             }],
         },
@@ -72,7 +71,6 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                          thesis: regime, dominant signal, contradicting signals, expected \
                          volatility, time horizon."
                             .into(),
-                    skill_ids: vec![],
                     max_tokens: 4096,
                 },
                 AgentSlot {
@@ -84,7 +82,6 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                          decision in the schema: {action, conviction, justification}. Be \
                          conservative when the analyst flags contradictions."
                             .into(),
-                    skill_ids: vec![],
                     max_tokens: 2048,
                 },
             ],
@@ -106,7 +103,6 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                         "You are a trader. Propose a decision given the briefing. Output \
                          {action, conviction, justification, size_hint_pct}."
                             .into(),
-                    skill_ids: vec![],
                     max_tokens: 4096,
                 },
                 AgentSlot {
@@ -118,7 +114,6 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                          current portfolio state, output {verdict: approve|modify|veto, \
                          size_cap_pct, reason}."
                             .into(),
-                    skill_ids: vec![],
                     max_tokens: 2048,
                 },
                 AgentSlot {
@@ -130,7 +125,6 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                          verdict, output the final order: {action, size_pct, stop_loss_pct, \
                          take_profit_pct}."
                             .into(),
-                    skill_ids: vec![],
                     max_tokens: 2048,
                 },
             ],
