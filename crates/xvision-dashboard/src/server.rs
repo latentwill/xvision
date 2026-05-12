@@ -11,6 +11,7 @@ use crate::routes::{
     static_files, strategies, wizard,
 };
 use crate::state::AppState;
+use xvision_engine::api::eval as api_eval;
 use xvision_engine::api::search as api_search;
 
 pub fn build_router(state: AppState) -> Router {
@@ -129,6 +130,23 @@ pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
     // the static action set + canonical scenarios. Idempotent — every
     // subsequent indexer hook just refreshes the row in place.
     api_search::reindex_all(&state.api_context()).await;
+
+    // Sweep eval runs left in Queued/Running from a previous process.
+    // Background tasks die with the daemon, so without this the runs
+    // list shows phantom "Running" rows after every restart.
+    match api_eval::fail_orphan_runs(&state.api_context()).await {
+        Ok(0) => {}
+        Ok(n) => tracing::info!(
+            target: "xvision::dashboard",
+            failed = n,
+            "swept orphan eval runs at startup",
+        ),
+        Err(e) => tracing::warn!(
+            target: "xvision::dashboard",
+            error = %e,
+            "failed to sweep orphan eval runs at startup",
+        ),
+    }
 
     let app = build_router(state);
     tracing::info!(%addr, "xvision-dashboard listening");
