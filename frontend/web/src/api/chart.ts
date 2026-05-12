@@ -5,6 +5,7 @@ import type {
   CompareChartPayload,
   RunChartPayload,
   ScenarioChartPayload,
+  ScenarioPreviewPayload,
   StrategyChartPayload,
 } from "./types.gen";
 
@@ -48,4 +49,25 @@ export function getStrategyChart(
   return apiFetch<StrategyChartPayload>(
     `/api/strategies/${encodeURIComponent(strategyId)}/chart`,
   );
+}
+
+export function openRunStream(runId: string): EventSource {
+  return new EventSource(`/api/eval/runs/${encodeURIComponent(runId)}/stream`);
+}
+
+export async function getScenarioPreview(params: {
+  asset: string;
+  from: string;
+  to: string;
+  granularity: "1h" | "1d";
+  baseline?: boolean;
+}): Promise<ScenarioPreviewPayload> {
+  const q = new URLSearchParams({
+    asset: params.asset,
+    from: params.from,
+    to: params.to,
+    granularity: params.granularity,
+  });
+  if (params.baseline !== undefined) q.set("baseline", String(params.baseline));
+  return apiFetch<ScenarioPreviewPayload>(`/api/scenarios/preview?${q}`);
 }
