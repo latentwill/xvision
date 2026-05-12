@@ -22,13 +22,13 @@ async fn ctx_with_eval_tables() -> (ApiContext, tempfile::TempDir) {
         .await
         .unwrap();
     let dir = tempfile::tempdir().unwrap();
-    let ctx = ApiContext {
-        db: pool,
-        actor: Actor::Cli {
+    let ctx = ApiContext::new(
+        pool,
+        Actor::Cli {
             user: "operator".into(),
         },
-        xvn_home: dir.path().to_path_buf(),
-    };
+        dir.path().to_path_buf(),
+    );
     (ctx, dir)
 }
 

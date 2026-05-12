@@ -21,6 +21,8 @@ fn sample_bundle(id: &str) -> Strategy {
             risk_preset_or_config: "balanced".into(),
             published_at: None,
         },
+        agents: Vec::new(),
+        pipeline: Default::default(),
         regime_slot: None,
         intern_slot: None,
         trader_slot: Some(LLMSlot {

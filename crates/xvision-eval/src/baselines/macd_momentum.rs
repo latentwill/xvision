@@ -65,6 +65,7 @@ impl Algorithm for MacdMomentum {
                 stop_loss_pct: 2.0,
                 take_profit_pct: 4.0,
                 trader_summary: "MacdMomentum: MACD hist crossed above zero — long momentum.".into(),
+                asset: None,
             })
         } else if bearish_cross {
             Some(TraderDecision {
@@ -75,6 +76,7 @@ impl Algorithm for MacdMomentum {
                 stop_loss_pct: 2.0,
                 take_profit_pct: 4.0,
                 trader_summary: "MacdMomentum: MACD hist crossed below zero — short momentum.".into(),
+                asset: None,
             })
         } else {
             None

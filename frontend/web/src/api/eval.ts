@@ -3,6 +3,7 @@
 import { apiFetch } from "./client";
 import type {
   ComparisonReport,
+  EvalRunRequest,
   RunDetail,
   RunMode,
   RunSummary,
@@ -65,12 +66,22 @@ export function listScenarios(): Promise<ScenarioSummary[]> {
   );
 }
 
-/// Kick off a new eval run. Returns the queued `RunDetail` (status =
-/// `Queued`); the actual run drives in a background task and progresses
-/// to `Running` then `Completed` / `Failed`. Frontend polls
+/// Kick off a new eval run (non-blocking). Returns the queued `RunDetail`
+/// (status = `Queued`); the actual run drives in a background task and
+/// progresses to `Running` then `Completed` / `Failed`. Frontend polls
 /// `GET /api/eval/runs/:id` until terminal.
 export function startRun(req: StartRunReq): Promise<RunDetail> {
   return apiFetch<RunDetail>("/api/eval/runs", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+}
+
+/// Kick off a new eval run (synchronous, blocking). Returns the slim
+/// `RunSummary` after the run completes. For testing/CLI flows where
+/// you need a completed result directly.
+export function runEval(req: EvalRunRequest): Promise<RunSummary> {
+  return apiFetch<RunSummary>("/api/eval/runs", {
     method: "POST",
     body: JSON.stringify(req),
   });

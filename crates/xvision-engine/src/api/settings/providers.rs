@@ -1228,13 +1228,13 @@ sqlite_url = "sqlite://x.db"
             .execute(&pool)
             .await
             .unwrap();
-        ApiContext {
-            db: pool,
-            actor: Actor::Cli {
+        ApiContext::new(
+            pool,
+            Actor::Cli {
                 user: "test".into(),
             },
-            xvn_home: dir.path().to_path_buf(),
-        }
+            dir.path().to_path_buf(),
+        )
     }
 
     fn write_min_config(dir: &TempDir) -> std::path::PathBuf {

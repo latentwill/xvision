@@ -3,6 +3,8 @@
 //! not-yet-finalized runs, signing-key bootstrap (auto-generate on
 //! first call, reuse on second), and audit-row write.
 
+#![allow(deprecated)] // canonical_scenarios() — see Task 8 (M2) deprecation note.
+
 use chrono::{Duration, TimeZone, Utc};
 use sqlx::SqlitePool;
 use xvision_engine::api::eval::{self};
@@ -23,13 +25,13 @@ async fn ctx_with_eval_tables() -> (ApiContext, tempfile::TempDir) {
         .await
         .unwrap();
     let dir = tempfile::tempdir().unwrap();
-    let ctx = ApiContext {
-        db: pool,
-        actor: Actor::Cli {
+    let ctx = ApiContext::new(
+        pool,
+        Actor::Cli {
             user: "operator".into(),
         },
-        xvn_home: dir.path().to_path_buf(),
-    };
+        dir.path().to_path_buf(),
+    );
     (ctx, dir)
 }
 

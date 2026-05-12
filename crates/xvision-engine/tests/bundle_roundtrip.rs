@@ -21,6 +21,8 @@ fn sample_bundle() -> Strategy {
             risk_preset_or_config: "balanced".to_string(),
             published_at: None,
         },
+        agents: Vec::new(),
+        pipeline: Default::default(),
         regime_slot: Some(LLMSlot {
             role: "regime".into(),
             prompt: "...".into(),
@@ -144,6 +146,65 @@ fn bundle_without_trader_slot_fails() {
     b.trader_slot = None; // regime_slot still Some, so NoLlmSlots wouldn't fire
     let err = validate_bundle(&b).unwrap_err();
     assert!(matches!(err, ValidationError::MissingTraderSlot));
+}
+
+#[test]
+fn bundle_does_not_carry_capital_or_risk_caps() {
+    // Capital moved back onto Scenario (not Strategy/bundle). The bundle
+    // only carries per-trade RiskConfig. Verify the struct round-trips
+    // cleanly without capital/risk_caps fields.
+    let b = sample_bundle();
+    let json = serde_json::to_string(&b).unwrap();
+    assert!(
+        !json.contains("\"capital\""),
+        "capital must not appear in Strategy JSON"
+    );
+    assert!(
+        !json.contains("\"risk_caps\""),
+        "risk_caps must not appear in Strategy JSON"
+    );
+}
+
+#[test]
+fn bundle_with_extra_capital_field_in_json_still_deserializes() {
+    // Old serialized bundles (pre-merge) may have capital/risk_caps in JSON.
+    // Strategy ignores unknown fields by default — they silently drop.
+    let pre_merge_json = serde_json::json!({
+        "manifest": {
+            "id": "01H8OLDB",
+            "display_name": "Legacy",
+            "plain_summary": "x",
+            "creator": "@t",
+            "template": "mean_reversion",
+            "regime_fit": ["range_bound"],
+            "asset_universe": ["BTC/USD"],
+            "decision_cadence_minutes": 15,
+            "required_models": ["mock"],
+            "required_tools": ["ohlcv"],
+            "risk_preset_or_config": "balanced",
+            "published_at": null
+        },
+        "trader_slot": {
+            "role": "trader",
+            "prompt": "decide",
+            "model_requirement": "mock",
+            "allowed_tools": ["ohlcv"]
+        },
+        "risk": {
+            "risk_pct_per_trade": 0.015,
+            "max_concurrent_positions": 2,
+            "max_leverage": 3.0,
+            "stop_loss_atr_multiple": 2.0,
+            "daily_loss_kill_pct": 0.05
+        },
+        "capital": { "initial": 100000.0, "currency": "USD" },
+        "risk_caps": { "max_concurrent_positions": 1, "max_leverage": 1.0, "daily_loss_kill_switch_pct": 0.05 },
+        "mechanical_params": {}
+    });
+    // Should parse without error; extra fields are ignored.
+    let parsed: Strategy = serde_json::from_value(pre_merge_json).unwrap();
+    assert_eq!(parsed.manifest.id, "01H8OLDB");
+    assert!(parsed.trader_slot.is_some());
 }
 
 #[test]

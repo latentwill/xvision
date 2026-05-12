@@ -67,6 +67,7 @@ pub async fn run(
         stop_loss_pct,
         take_profit_pct,
         trader_summary: summary,
+        asset: None,
     };
     let risk = RiskDecision::Approved { decision };
 

@@ -4,6 +4,8 @@
 //! full lifecycle: bundle lookup + scenario lookup + executor invocation
 //! + run persistence + audit.
 
+#![allow(deprecated)] // canonical_scenarios() — see Task 8 (M2) deprecation note.
+
 use std::sync::Arc;
 
 use sqlx::SqlitePool;
@@ -33,13 +35,13 @@ async fn ctx_with_tables() -> (ApiContext, tempfile::TempDir) {
         .unwrap();
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("strategies")).unwrap();
-    let ctx = ApiContext {
-        db: pool,
-        actor: Actor::Cli {
+    let ctx = ApiContext::new(
+        pool,
+        Actor::Cli {
             user: "operator".into(),
         },
-        xvn_home: dir.path().to_path_buf(),
-    };
+        dir.path().to_path_buf(),
+    );
     (ctx, dir)
 }
 

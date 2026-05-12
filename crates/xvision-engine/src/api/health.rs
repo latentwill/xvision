@@ -229,13 +229,27 @@ mod tests {
         assert_eq!(report.status, HealthStatus::Down);
     }
 
-    /// Spec G.2: a fresh install has no `strategies/` directory; that case
-    /// is *not* an error — it's the empty-but-ok shape `"0 (no strategies dir
-    /// yet)"`. Catches the regression where someone "fixes" the missing-dir
-    /// branch to return Degraded.
+    /// Spec G.2: when the `strategies/` directory does not exist (e.g. an
+    /// `ApiContext` built via `new()` without running migrations or seed), the
+    /// probe must still render as Ok — it returns the empty-but-ok shape
+    /// `"0 (no strategies dir yet)"`. Catches the regression where someone
+    /// "fixes" the missing-dir branch to return Degraded.
+    ///
+    /// Note: `ApiContext::open()` seeds `bundle-canonical-defaults` into the
+    /// strategies dir, so we use `ApiContext::new()` here to keep the dir
+    /// genuinely absent.
     #[tokio::test]
     async fn check_flags_missing_strategies_dir_renders_zero_count_ok() {
-        let (ctx, _dir) = fresh_ctx().await;
+        use sqlx::SqlitePool;
+        let dir = tempfile::tempdir().unwrap();
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let ctx = ApiContext::new(
+            pool,
+            Actor::Cli {
+                user: "operator".into(),
+            },
+            dir.path().to_path_buf(),
+        );
         let report = check(&ctx).await.unwrap();
         let probe = report
             .probes

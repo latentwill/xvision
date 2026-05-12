@@ -131,6 +131,44 @@ pub struct RuntimeConfig {
     pub backtest: Backtest,
     #[garde(skip)]
     pub paths: Paths,
+    /// Market-data fetcher knobs. Optional with a fully-defaulted struct so
+    /// older config files (and tests using inline TOML) keep loading.
+    #[serde(default)]
+    #[garde(dive)]
+    pub data: Data,
+}
+
+/// Top-level `[data]` section. Holds per-fetcher knobs; today only Alpaca.
+#[derive(Debug, Clone, PartialEq, Validate, Serialize, Deserialize, Default)]
+pub struct Data {
+    #[serde(default)]
+    #[garde(dive)]
+    pub alpaca: AlpacaData,
+}
+
+/// `[data.alpaca]` knobs read by `xvision-engine` when constructing the
+/// `AlpacaBarsFetcher`. Defaults match Alpaca's free-tier crypto-data limit.
+#[derive(Debug, Clone, PartialEq, Validate, Serialize, Deserialize)]
+pub struct AlpacaData {
+    #[serde(default = "AlpacaData::default_rate_limit_rpm")]
+    #[garde(range(min = 1, max = 10_000))]
+    pub rate_limit_rpm: u32,
+}
+
+impl AlpacaData {
+    pub const DEFAULT_RATE_LIMIT_RPM: u32 = 200;
+
+    fn default_rate_limit_rpm() -> u32 {
+        Self::DEFAULT_RATE_LIMIT_RPM
+    }
+}
+
+impl Default for AlpacaData {
+    fn default() -> Self {
+        Self {
+            rate_limit_rpm: Self::DEFAULT_RATE_LIMIT_RPM,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -427,6 +465,108 @@ mod tests {
         assert_eq!(cfg.default_llm.temperature, 0.0, "Tier 1 fix #1");
         assert_eq!(cfg.trader.temperature, 0.0, "Tier 1 fix #2");
         assert!(cfg.backtest.step >= cfg.backtest.horizon, "Tier 1 fix #4");
+        assert_eq!(
+            cfg.data.alpaca.rate_limit_rpm,
+            AlpacaData::DEFAULT_RATE_LIMIT_RPM,
+            "default.toml ships with the documented Alpaca rate limit"
+        );
+    }
+
+    #[test]
+    fn data_alpaca_section_defaults_when_omitted() {
+        // Older configs that don't yet have a `[data.alpaca]` section must
+        // still load (serde default fills the gap with 200 rpm).
+        let toml_src = r#"
+[runtime]
+mode = "backtest"
+executor = "alpaca"
+random_seed = 42
+
+[intern]
+provider = "anthropic"
+base_url = "https://api.anthropic.com"
+model = "x"
+api_key_env = "K"
+temperature = 0.0
+max_tokens = 1024
+
+[trader]
+model_path = "models/x.gguf"
+temperature = 0.0
+forward_paper_temperature = 0.4
+max_tokens = 512
+[trader.vectors]
+enabled = false
+config = "off"
+
+[backtest]
+step = 24
+horizon = 16
+bootstrap_resamples = 1000
+bootstrap_block_size = 8
+
+[paths]
+data_root = "data"
+vectors = "data/vectors"
+probes = "data/probes"
+sqlite_url = "sqlite://x.db"
+"#;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("no-data.toml");
+        std::fs::write(&path, toml_src).unwrap();
+        let cfg = load_runtime(&path).unwrap();
+        assert_eq!(
+            cfg.data.alpaca.rate_limit_rpm,
+            AlpacaData::DEFAULT_RATE_LIMIT_RPM,
+            "missing [data.alpaca] section must default-fill"
+        );
+    }
+
+    #[test]
+    fn data_alpaca_rate_limit_rpm_round_trips() {
+        let toml_src = r#"
+[runtime]
+mode = "backtest"
+executor = "alpaca"
+random_seed = 42
+
+[intern]
+provider = "anthropic"
+base_url = "https://api.anthropic.com"
+model = "x"
+api_key_env = "K"
+temperature = 0.0
+max_tokens = 1024
+
+[trader]
+model_path = "models/x.gguf"
+temperature = 0.0
+forward_paper_temperature = 0.4
+max_tokens = 512
+[trader.vectors]
+enabled = false
+config = "off"
+
+[backtest]
+step = 24
+horizon = 16
+bootstrap_resamples = 1000
+bootstrap_block_size = 8
+
+[paths]
+data_root = "data"
+vectors = "data/vectors"
+probes = "data/probes"
+sqlite_url = "sqlite://x.db"
+
+[data.alpaca]
+rate_limit_rpm = 600
+"#;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rpm-override.toml");
+        std::fs::write(&path, toml_src).unwrap();
+        let cfg = load_runtime(&path).unwrap();
+        assert_eq!(cfg.data.alpaca.rate_limit_rpm, 600);
     }
 
     #[test]

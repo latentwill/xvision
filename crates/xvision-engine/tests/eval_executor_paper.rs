@@ -8,6 +8,8 @@
 //!  - per-tick equity samples are persisted (eval_equity_samples)
 //!  - finalize() lands a MetricsSummary on the run
 
+#![allow(deprecated)] // canonical_scenarios() — see Task 8 (M2) deprecation note.
+
 use std::sync::Arc;
 
 use chrono::{TimeZone, Utc};

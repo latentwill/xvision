@@ -5,9 +5,10 @@ import { Card } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
 import { ApiError } from "@/api/client";
 import { evalKeys, getRun } from "@/api/eval";
+import { chartKeys, getRunChart } from "@/api/chart";
+import { RunChart } from "@/components/chart/RunChart";
 import type {
   DecisionRowDto,
-  EquityPoint,
   RunSummary,
 } from "@/api/types.gen";
 
@@ -26,6 +27,11 @@ export function EvalRunDetailRoute() {
     queryKey: evalKeys.run(id),
     queryFn: () => getRun(id),
     enabled: id.length > 0,
+  });
+  const chart = useQuery({
+    queryKey: chartKeys.run(id),
+    queryFn: () => getRunChart(id),
+    enabled: !!id,
   });
 
   if (q.isPending) {
@@ -71,13 +77,20 @@ export function EvalRunDetailRoute() {
       </Card>
 
       <h2 className="font-serif italic text-[20px] text-text mt-8 mb-3">
-        Equity{" "}
-        <span className="text-text-3 text-[14px]">
-          ({detail.equity_curve.length} samples)
-        </span>
+        Equity
       </h2>
       <Card className="p-5">
-        <EquityChart points={detail.equity_curve} />
+        {chart.isPending && (
+          <div className="text-text-3 text-[13px] text-center py-6">
+            Loading chart…
+          </div>
+        )}
+        {chart.isError && (
+          <div className="text-danger text-[13px] text-center py-6">
+            Chart unavailable: {String(chart.error)}
+          </div>
+        )}
+        {chart.data && <RunChart payload={chart.data} />}
       </Card>
     </>
   );
@@ -212,54 +225,6 @@ function EmptyDecisions() {
         This run hasn't recorded any decisions yet — likely still queued or
         running.
       </p>
-    </div>
-  );
-}
-
-// Tiny inline SVG sparkline. Matches the prototype's Sparkline shape; an
-// interactive d3/recharts replacement can come later when v1 has more data.
-function EquityChart({ points }: { points: EquityPoint[] }) {
-  if (points.length === 0) {
-    return (
-      <p className="m-0 text-text-3 text-[13px] text-center py-6">
-        no equity samples recorded yet
-      </p>
-    );
-  }
-  const w = 720;
-  const h = 160;
-  const ys = points.map((p) => p.equity_usd);
-  const min = Math.min(...ys);
-  const max = Math.max(...ys);
-  const range = max - min || 1;
-  const path = points
-    .map((p, i) => {
-      const x = (i / (points.length - 1 || 1)) * w;
-      const y = h - 4 - ((p.equity_usd - min) / range) * (h - 8);
-      return `${i === 0 ? "M" : "L"}${x.toFixed(2)},${y.toFixed(2)}`;
-    })
-    .join(" ");
-
-  const last = points[points.length - 1];
-
-  return (
-    <div>
-      <div className="flex items-center justify-between text-[12px] text-text-3 mb-2">
-        <span>{fmtTime(points[0].timestamp)}</span>
-        <span className="font-mono text-text">
-          ${last.equity_usd.toLocaleString(undefined, {
-            maximumFractionDigits: 2,
-          })}
-        </span>
-        <span>{fmtTime(last.timestamp)}</span>
-      </div>
-      <svg
-        viewBox={`0 0 ${w} ${h}`}
-        className="w-full h-[160px]"
-        aria-label="Equity curve"
-      >
-        <path d={path} fill="none" stroke="var(--gold)" strokeWidth="1.4" />
-      </svg>
     </div>
   );
 }

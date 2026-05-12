@@ -15,6 +15,11 @@ use serde::{Deserialize, Serialize};
 /// user-defined role this agent plays in this particular strategy. The
 /// same agent can appear in different strategies under different role
 /// names — role lives on the reference, not the referent.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AgentRef {
     pub agent_id: String,
@@ -30,6 +35,11 @@ pub struct AgentRef {
 /// - `Graph`: arbitrary DAG defined by `edges`. v1 does not ship a graph
 ///   editor — the variant exists so on-disk JSON can carry a graph from
 ///   a future version without breaking parse for current builds.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum PipelineKind {
@@ -49,6 +59,11 @@ impl Default for PipelineKind {
 /// One directed edge in a `Graph` pipeline. Ignored for `Single` and
 /// `Sequential`. Roles refer to `AgentRef.role` values present on the
 /// owning bundle's `agents` list.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PipelineEdge {
     pub from_role: String,
@@ -56,6 +71,11 @@ pub struct PipelineEdge {
 }
 
 /// Wiring spec for a strategy's agents.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PipelineDef {
     pub kind: PipelineKind,

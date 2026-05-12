@@ -10,6 +10,8 @@ use anyhow::Context;
 use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::SqlitePool;
 
+use crate::cli_jobs::runner::CliJobRunner;
+use xvision_engine::api::chart::RunEventBus;
 use xvision_engine::api::settings::providers::ProviderModelsReport;
 use xvision_engine::api::{Actor, ApiContext};
 
@@ -25,12 +27,17 @@ struct CachedModels {
 pub struct AppState {
     pub pool: SqlitePool,
     pub xvn_home: PathBuf,
+    /// Singleton live-stream event bus. Constructed once at server start and
+    /// shared across all HTTP requests via `api_context()`.
+    pub event_bus: Arc<RunEventBus>,
     /// Per-provider catalog cache so the chat-rail dropdown doesn't
     /// hammer upstream `/models` on every page load. 5-minute TTL is the
     /// sweet spot between freshness and rate-limit pressure (OpenRouter
     /// publishes dozens of model rotations per day; longer than that
     /// and the operator sees stale options).
     models_cache: Arc<Mutex<HashMap<String, CachedModels>>>,
+    cli_command: PathBuf,
+    cli_runner: Arc<CliJobRunner>,
 }
 
 impl AppState {
@@ -54,6 +61,19 @@ impl AppState {
             .await
             .context("run xvision-engine migrations")?;
 
+        // First-run seed: canonical scenarios + bundle-canonical-defaults.
+        // Mirrors `ApiContext::open` so dashboard-only bootstrap paths
+        // (xvn dashboard serve + integration tests) hit the same baseline
+        // state. Idempotent — short-circuits when canonical rows exist.
+        let seed_ctx = ApiContext::new(
+            pool.clone(),
+            Actor::Cli { user: "dashboard-bootstrap".into() },
+            xvn_home.clone(),
+        );
+        xvision_engine::eval::scenario_seed::run_seed_if_needed(&seed_ctx)
+            .await
+            .context("seed canonical scenarios")?;
+
         // Hydrate the process env with persisted provider API keys so backend
         // constructors that call std::env::var(api_key_env) see the keys the
         // operator pasted via Settings → Providers. Env vars set in the shell
@@ -66,10 +86,16 @@ impl AppState {
             tracing::warn!(error = %e, "could not hydrate provider secrets into env");
         }
 
+        let cli_command = PathBuf::from("xvn");
+        let cli_runner = Arc::new(CliJobRunner::new(pool.clone(), cli_command.clone()));
+
         Ok(Self {
             pool,
             xvn_home,
+            event_bus: Arc::new(RunEventBus::new()),
             models_cache: Arc::new(Mutex::new(HashMap::new())),
+            cli_command,
+            cli_runner,
         })
     }
 
@@ -77,13 +103,14 @@ impl AppState {
     /// presents itself as `Actor::Cli { user: "dashboard" }` for now —
     /// per-user identity arrives with the auth plan in v1.5.
     pub fn api_context(&self) -> ApiContext {
-        ApiContext {
-            db: self.pool.clone(),
-            actor: Actor::Cli {
+        ApiContext::new(
+            self.pool.clone(),
+            Actor::Cli {
                 user: "dashboard".to_string(),
             },
-            xvn_home: self.xvn_home.clone(),
-        }
+            self.xvn_home.clone(),
+        )
+        .with_event_bus(self.event_bus.clone())
     }
 
     /// Read a cached models report for `provider` if it's within the TTL.
@@ -117,5 +144,19 @@ impl AppState {
         if let Ok(mut cache) = self.models_cache.lock() {
             cache.remove(provider);
         }
+    }
+
+    pub fn cli_command(&self) -> &std::path::Path {
+        &self.cli_command
+    }
+
+    pub fn cli_runner(&self) -> Arc<CliJobRunner> {
+        self.cli_runner.clone()
+    }
+
+    pub fn with_cli_command_for_tests(mut self, cli_command: PathBuf) -> Self {
+        self.cli_runner = Arc::new(CliJobRunner::new(self.pool.clone(), cli_command.clone()));
+        self.cli_command = cli_command;
+        self
     }
 }

@@ -7,6 +7,12 @@
 import { apiFetch } from "./client";
 import type { StrategySummary } from "./types.gen";
 
+export type PipelineKind = "single" | "sequential" | "graph";
+export type PipelineEdge = {
+  from_role: string;
+  to_role: string;
+};
+
 export type StrategiesListResponse = {
   items: StrategySummary[];
 };
@@ -15,6 +21,8 @@ export type LLMSlot = {
   role: string;
   prompt: string;
   model_requirement: string;
+  provider?: string | null;
+  model?: string | null;
   allowed_tools: string[];
 };
 
@@ -48,17 +56,27 @@ export type Strategy = {
   trader_slot: LLMSlot | null;
   risk: RiskConfig;
   mechanical_params: unknown;
+  agents?: { agent_id: string; role: string }[];
+  pipeline?: { kind: PipelineKind; edges?: PipelineEdge[] };
 };
 
 export type UpdateSlotBody = Partial<{
   prompt: string;
   model_requirement: string;
+  provider: string;
+  model: string;
   allowed_tools: string[];
 }>;
 
 export type UpdateSlotOut = {
   id: string;
   updated: string[];
+};
+
+export type StrategyAgentsOut = {
+  strategy_id: string;
+  agents: { agent_id: string; role: string }[];
+  pipeline: { kind: PipelineKind; edges?: PipelineEdge[] };
 };
 
 export type PutRiskBody =
@@ -145,6 +163,43 @@ export function validateDraft(id: string): Promise<ValidateDraftOut> {
   return apiFetch<ValidateDraftOut>(
     `/api/strategy/${encodeURIComponent(id)}/validate`,
     { method: "POST" },
+  );
+}
+
+export function addStrategyAgent(
+  strategyId: string,
+  body: { agent_id: string; role: string },
+): Promise<StrategyAgentsOut> {
+  return apiFetch<StrategyAgentsOut>(
+    `/api/strategy/${encodeURIComponent(strategyId)}/agents`,
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    },
+  );
+}
+
+export function removeStrategyAgent(
+  strategyId: string,
+  role: string,
+): Promise<StrategyAgentsOut> {
+  return apiFetch<StrategyAgentsOut>(
+    `/api/strategy/${encodeURIComponent(strategyId)}/agents/${encodeURIComponent(role)}`,
+    { method: "DELETE" },
+  );
+}
+
+export function renameStrategyAgentRole(
+  strategyId: string,
+  role: string,
+  newRole: string,
+): Promise<StrategyAgentsOut> {
+  return apiFetch<StrategyAgentsOut>(
+    `/api/strategy/${encodeURIComponent(strategyId)}/agents/${encodeURIComponent(role)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ new_role: newRole }),
+    },
   );
 }
 
