@@ -472,6 +472,40 @@ pub async fn set_pipeline(ctx: &ApiContext, req: SetPipelineReq) -> ApiResult<St
     result
 }
 
+/// Set one mechanical parameter on the bundle and refresh the search index.
+pub async fn set_mechanical_param(
+    ctx: &ApiContext,
+    req: authoring::SetMechanicalParamReq,
+) -> ApiResult<serde_json::Value> {
+    let started = Instant::now();
+    let agent_id = req.id.clone();
+    let args_json = serde_json::to_string(&req).ok();
+    let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+    let result = authoring::set_mechanical_param(&store, req)
+        .await
+        .map(|_| serde_json::json!({ "ok": true }))
+        .map_err(|e| map_authoring_error(e, Some(&agent_id)));
+
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let _ = audit::record(
+        ctx,
+        "strategy",
+        "set_mechanical_param",
+        Some(&agent_id),
+        args_json.as_deref(),
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    if result.is_ok() {
+        index_strategy_after_mutation(ctx, &store, &agent_id).await;
+    }
+    result
+}
+
 /// Update the bundle's risk config — preset (Conservative / Balanced /
 /// Aggressive) or an explicit `RiskConfig` blob, but not both.
 pub async fn set_risk_config(

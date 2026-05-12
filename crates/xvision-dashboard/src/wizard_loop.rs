@@ -22,12 +22,12 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
+use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::agent::llm::{
     ContentBlock, LlmDispatch, LlmRequest, LlmResponse, Message, StopReason, ToolDefinition,
 };
 use xvision_engine::api::eval::{self as api_eval, EvalRunRequest};
 use xvision_engine::authoring;
-use xvision_engine::strategies::store::{strategy_store_dir, FilesystemStore};
 use xvision_engine::chat_session::{ChatSessionStore, ContextScope};
 use xvision_engine::eval::run::RunMode;
 
@@ -65,7 +65,7 @@ pub enum WizardEvent {
 }
 
 pub struct WizardLoop {
-    xvn_home: PathBuf,
+    api_context: ApiContext,
     dispatch: Arc<dyn LlmDispatch>,
     model: String,
     pool: SqlitePool,
@@ -97,8 +97,15 @@ impl WizardLoop {
     ) -> anyhow::Result<Self> {
         let user_block = serde_json::json!({"type": "text", "text": new_message});
         ChatSessionStore::append(&pool, &session_id, "user", &[user_block]).await?;
-        Ok(Self {
+        let api_context = ApiContext::new(
+            pool.clone(),
+            Actor::Cli {
+                user: "wizard".to_string(),
+            },
             xvn_home,
+        );
+        Ok(Self {
+            api_context,
             dispatch,
             model,
             pool,
@@ -294,7 +301,6 @@ impl WizardLoop {
         name: &str,
         input: serde_json::Value,
     ) -> anyhow::Result<serde_json::Value> {
-        let store = FilesystemStore::new(strategy_store_dir(&self.xvn_home));
         match name {
             "list_templates" => {
                 let out = authoring::list_templates();
@@ -302,7 +308,8 @@ impl WizardLoop {
             }
             "create_strategy" => {
                 let req: authoring::CreateStrategyReq = serde_json::from_value(input)?;
-                let out = authoring::create_strategy(&store, req).await?;
+                let out = xvision_engine::api::strategy::create_strategy(&self.api_context, req)
+                    .await?;
                 Ok(serde_json::to_value(out)?)
             }
             "get_strategy" => {
@@ -310,22 +317,23 @@ impl WizardLoop {
                     .get("id")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow::anyhow!("get_strategy: missing `id`"))?;
-                let out = authoring::get_strategy(&store, id).await?;
+                let out = xvision_engine::api::strategy::get(&self.api_context, id).await?;
                 Ok(serde_json::to_value(out)?)
             }
             "update_slot" => {
                 let req: authoring::UpdateSlotReq = serde_json::from_value(input)?;
-                let out = authoring::update_slot(&store, req).await?;
+                let out = xvision_engine::api::strategy::update_slot(&self.api_context, req)
+                    .await?;
                 Ok(serde_json::to_value(out)?)
             }
             "set_mechanical_param" => {
                 let req: authoring::SetMechanicalParamReq = serde_json::from_value(input)?;
-                authoring::set_mechanical_param(&store, req).await?;
-                Ok(serde_json::json!({ "ok": true }))
+                xvision_engine::api::strategy::set_mechanical_param(&self.api_context, req).await
             }
             "set_risk_config" => {
                 let req: authoring::SetRiskConfigReq = serde_json::from_value(input)?;
-                let out = authoring::set_risk_config(&store, req).await?;
+                let out =
+                    xvision_engine::api::strategy::set_risk_config(&self.api_context, req).await?;
                 Ok(serde_json::to_value(out)?)
             }
             "validate_draft" => {
@@ -333,7 +341,8 @@ impl WizardLoop {
                     .get("id")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow::anyhow!("validate_draft: missing `id`"))?;
-                let out = authoring::validate_draft(&store, id).await?;
+                let out = xvision_engine::api::strategy::validate_draft(&self.api_context, id)
+                    .await?;
                 Ok(serde_json::to_value(out)?)
             }
             "run_eval" => {
@@ -604,6 +613,56 @@ mod tests {
             }
             other => panic!("expected Done with draft_id, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn wizard_create_strategy_is_visible_via_public_strategy_list() {
+        let mock = Arc::new(MockDispatch::sequence(vec![
+            MockDispatch::tool_use(
+                "tu_1",
+                "create_strategy",
+                serde_json::json!({"template": "mean_reversion", "name": "Wizard Visible"}),
+            ),
+            LlmResponse {
+                content: vec![ContentBlock::Text {
+                    text: "Created the draft.".into(),
+                }],
+                stop_reason: StopReason::EndTurn,
+                input_tokens: 5,
+                output_tokens: 5,
+            },
+        ]));
+        let (mut wl, pool, td, _sid) =
+            loop_with_session(mock, "make me a strategy", ContextScope::Workspace).await;
+        let events = drain(&mut wl).await;
+
+        let draft_id = events
+            .iter()
+            .rev()
+            .find_map(|e| match e {
+                WizardEvent::Done {
+                    draft_id: Some(id),
+                } => Some(id.clone()),
+                _ => None,
+            })
+            .expect("wizard should emit a draft id");
+
+        let ctx = ApiContext::new(
+            pool,
+            Actor::Cli {
+                user: "wizard-test".to_string(),
+            },
+            td.path().to_path_buf(),
+        );
+        let summaries = xvision_engine::api::strategy::list(&ctx)
+            .await
+            .expect("strategy list");
+        let created = summaries
+            .iter()
+            .find(|item| item.agent_id == draft_id)
+            .expect("created strategy must be visible via public list");
+        assert_eq!(created.display_name, "Wizard Visible");
+        assert_eq!(created.template, "mean_reversion");
     }
 
     #[tokio::test]

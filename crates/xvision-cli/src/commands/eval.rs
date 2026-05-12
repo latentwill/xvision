@@ -1,8 +1,6 @@
-//! `xvn eval` — browse eval runs and canonical scenarios. The
-//! demo-driving `xvn eval run` subcommand is deferred to a follow-up
-//! PR (it pulls in PaperExecutor + AlpacaPaperSurface + LlmDispatch +
-//! ToolRegistry construction from env, which deserves its own
-//! integration concerns).
+//! `xvn eval` — launch, browse, inspect, compare, and attest eval runs.
+//! `run` is part of the shipped surface and uses the same engine API as
+//! the dashboard-backed eval routes.
 
 use std::path::PathBuf;
 
@@ -40,8 +38,7 @@ pub struct EvalCmd {
 
 #[derive(Subcommand, Debug)]
 pub enum Op {
-    /// Run an eval — `--mode paper` against Alpaca paper today (backtest
-    /// mode lands when BacktestExecutor ships).
+    /// Run an eval against the selected scenario and strategy bundle.
     Run(RunArgs),
     /// List eval runs (most recent first).
     List(ListArgs),
@@ -63,7 +60,7 @@ pub struct RunArgs {
     /// Scenario id from `xvn eval scenarios`.
     #[arg(long)]
     pub scenario: String,
-    /// Run mode: `paper` (today) or `backtest` (rejected for now — Phase 3.B-backtest).
+    /// Run mode: `paper` or `backtest`.
     #[arg(long, default_value = "paper")]
     pub mode: String,
     /// Override the xvn home directory.

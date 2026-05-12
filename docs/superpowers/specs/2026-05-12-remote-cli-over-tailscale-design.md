@@ -1,6 +1,6 @@
 # Remote CLI Over Tailscale — Design
 
-> **Status:** Draft design / spec — approved in conversation, not yet implemented. Drafted 2026-05-12.
+> **Status:** Draft design / spec — approved in conversation. The core backend surface now exists in `xvision-dashboard`; remaining follow-up work is restart/orphan recovery plus broader connection/security hardening. Drafted 2026-05-12.
 > **Purpose:** Add a remote execution surface so an external agent can submit `xvn` commands to `xvn.tail2bb69.ts.net` / `xvnej.tail2bb69.ts.net` and receive structured results without shell access.
 > **Integrates with:** `xvision-dashboard`, `xvision-cli`, the existing Tailscale-served `dashboard serve` deployment, and future auth/rate-limit work.
 
@@ -30,9 +30,9 @@ Today, the live nodes expose the dashboard HTTP server over Tailscale:
 - `xvn.tail2bb69.ts.net` proxies to the personal `xvn-app` container's `dashboard serve`.
 - `xvnej.tail2bb69.ts.net` proxies to the QA `xvnej-app` container's `dashboard serve`.
 
-The dashboard already exposes typed `/api/*` routes for health, strategies, eval browsing, search, wizard/chat surfaces, and settings. It does **not** expose a general remote CLI surface. `xvn-mcp` exists, but it is stdio MCP, not an HTTP-served tool surface.
+The dashboard already exposes typed `/api/*` routes for health, strategies, eval browsing, search, wizard/chat surfaces, settings, and the remote CLI job family under `/api/cli/jobs*`. `xvn-mcp` exists separately as stdio MCP, not an HTTP-served tool surface.
 
-That means an external agent cannot currently say "run `xvn ab-compare ...` on this node" over the shared Tailscale URL. The missing piece is a remote execution wrapper inside the dashboard server.
+That means the main remaining gap is not the existence of the remote execution wrapper, but its operational hardening: reconnect semantics across daemon restarts, orphan-job cleanup, and the future auth/capability boundary beyond raw Tailscale reachability.
 
 ---
 
@@ -258,6 +258,30 @@ Responsibilities:
 - get-job endpoint
 - get-output endpoint
 - SSE event endpoint
+
+## 8. Implemented status in this branch
+
+The core backend described here is already present in the current codebase:
+
+- `crates/xvision-dashboard/src/routes/cli.rs`
+- `crates/xvision-dashboard/src/cli_jobs/model.rs`
+- `crates/xvision-dashboard/src/cli_jobs/store.rs`
+- `crates/xvision-dashboard/src/cli_jobs/runner.rs`
+- `crates/xvision-dashboard/src/server.rs`
+- `crates/xvision-engine/migrations/013_cli_jobs.sql`
+- `crates/xvision-dashboard/tests/cli_jobs_routes.rs`
+
+What still appears unfinished from an operational perspective:
+
+- no startup sweep for orphaned `running` CLI jobs after a dashboard restart
+- no frontend UI for the CLI job surface in `frontend/web`
+- no second-layer auth/capability model beyond Tailscale reachability
+
+Treat this design doc as the contract for an already-landed backend surface plus its remaining hardening work, not as a greenfield implementation brief.
+
+## 9. SSH Origin and Follow-up Boundary
+
+This work item started from the need to tell an external agent how to reach the server, which often meant “use SSH”. For v1 we intentionally narrow that to the Tailscale-served node and a typed remote CLI wrapper. Broader host-to-host access, stronger auth, capability tokens, rate limiting, and any future generic remote-host story remain follow-up connection/security work.
 - cancel endpoint
 
 ### 7.2 Job runner

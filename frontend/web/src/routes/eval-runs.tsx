@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
@@ -14,13 +14,12 @@ import {
   type ScenarioSummary,
   type StartRunReq,
 } from "@/api/eval";
-import { listStrategies, strategyKeys } from "@/api/strategies";
-import type {
-  RunDetail,
-  RunMode,
-  RunSummary,
-  StrategySummary,
-} from "@/api/types.gen";
+import {
+  listStrategies,
+  strategyKeys,
+  type StrategyListItem,
+} from "@/api/strategies";
+import type { RunDetail, RunMode, RunSummary } from "@/api/types.gen";
 
 const STATUS_TONE: Record<string, "gold" | "warn" | "danger" | "default" | "info"> = {
   completed: "gold",
@@ -31,6 +30,7 @@ const STATUS_TONE: Record<string, "gold" | "warn" | "danger" | "default" | "info
 };
 
 export function EvalRunsRoute() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const q = useQuery({
     queryKey: evalKeys.runs(),
     queryFn: listRuns,
@@ -47,10 +47,18 @@ export function EvalRunsRoute() {
     },
   });
   const navigate = useNavigate();
+  const preselectedStrategy = searchParams.get("strategy") ?? "";
+  const startRequested = searchParams.get("start") === "1";
   // Selection state for the Compare flow. Lifted here so the Topbar can
   // render the action button next to the run count.
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
-  const [startOpen, setStartOpen] = useState(false);
+  const [startOpen, setStartOpen] = useState(startRequested);
+
+  useEffect(() => {
+    if (startRequested) {
+      setStartOpen(true);
+    }
+  }, [startRequested]);
 
   function toggleSelected(id: string) {
     setSelected((prev) => {
@@ -92,7 +100,15 @@ export function EvalRunsRoute() {
         </button>
       </div>
       {startOpen ? (
-        <StartEvalDialog onClose={() => setStartOpen(false)} />
+        <StartEvalDialog
+          initialAgentId={preselectedStrategy}
+          onClose={() => {
+            setStartOpen(false);
+            const next = new URLSearchParams(searchParams);
+            next.delete("start");
+            setSearchParams(next);
+          }}
+        />
       ) : null}
 
       <Card>
@@ -263,7 +279,13 @@ function RunsTable({
   );
 }
 
-function StartEvalDialog({ onClose }: { onClose: () => void }) {
+function StartEvalDialog({
+  initialAgentId,
+  onClose,
+}: {
+  initialAgentId: string;
+  onClose: () => void;
+}) {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const strategies = useQuery({
@@ -276,9 +298,13 @@ function StartEvalDialog({ onClose }: { onClose: () => void }) {
     staleTime: 5 * 60 * 1000,
   });
 
-  const [agentId, setAgentId] = useState<string>("");
+  const [agentId, setAgentId] = useState<string>(initialAgentId);
   const [scenarioId, setScenarioId] = useState<string>("");
   const [mode, setMode] = useState<RunMode>("paper");
+
+  useEffect(() => {
+    setAgentId(initialAgentId);
+  }, [initialAgentId]);
 
   const start = useMutation<RunDetail, unknown, StartRunReq>({
     mutationFn: startRun,
@@ -331,15 +357,16 @@ function StartEvalDialog({ onClose }: { onClose: () => void }) {
               Strategy
             </label>
             <select
+              aria-label="Strategy"
               value={agentId}
               onChange={(e) => setAgentId(e.target.value)}
               disabled={strategies.isPending}
               className="w-full px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono focus:outline-none focus:border-text-3"
             >
               <option value="">— pick a strategy —</option>
-              {(strategies.data ?? []).map((s: StrategySummary) => (
+              {(strategies.data ?? []).map((s: StrategyListItem) => (
                 <option key={s.agent_id} value={s.agent_id}>
-                  {s.agent_id} · {s.template}
+                  {s.display_name} · {s.agent_id}
                 </option>
               ))}
             </select>
@@ -355,6 +382,7 @@ function StartEvalDialog({ onClose }: { onClose: () => void }) {
               Scenario
             </label>
             <select
+              aria-label="Scenario"
               value={scenarioId}
               onChange={(e) => setScenarioId(e.target.value)}
               disabled={scenarios.isPending}
