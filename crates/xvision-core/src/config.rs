@@ -386,7 +386,7 @@ fn read_toml<T: for<'de> Deserialize<'de> + Validate<Context = ()>>(path: &Path)
 }
 
 pub fn load_runtime(path: &Path) -> Result<RuntimeConfig, ConfigError> {
-    let mut cfg: RuntimeConfig = read_toml(path)?;
+    let cfg: RuntimeConfig = read_toml(path)?;
     cfg.backtest
         .validate_step_vs_horizon()
         .map_err(|msg| ConfigError::CrossField {

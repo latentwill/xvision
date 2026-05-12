@@ -232,7 +232,6 @@ pub async fn add(
         "base_url": req.base_url,
         "api_key_env": req.api_key_env,
         "api_key_provided": req.api_key.as_ref().is_some_and(|k| !k.is_empty()),
-        "enabled_models_count": req.enabled_models.as_ref().map(Vec::len),
     }))
     .ok();
     let target = req.name.clone();
@@ -264,6 +263,7 @@ pub async fn update(
         "base_url": req.base_url,
         "api_key_env": req.api_key_env,
         "api_key_provided": req.api_key.as_ref().is_some_and(|k| !k.is_empty()),
+        "enabled_models_count": req.enabled_models.as_ref().map(Vec::len),
     }))
     .ok();
     let result = update_inner(config_path, &ctx.xvn_home, name, req).await;
