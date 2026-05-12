@@ -34,11 +34,11 @@ use crate::wizard_loop::{WizardEvent, WizardLoop};
 pub struct ChatBody {
     pub message: String,
     /// Optional explicit model id. When `None`, the resolver falls back
-    /// to the model declared in `[intern]` for the default provider.
+    /// to the model declared in `[default_llm]` for the default provider.
     #[serde(default)]
     pub model: Option<String>,
     /// Optional explicit provider name. When `None`, the
-    /// `[intern]`-referenced provider is used.
+    /// `[default_llm]`-referenced provider is used.
     #[serde(default)]
     pub provider: Option<String>,
 }

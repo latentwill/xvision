@@ -93,11 +93,11 @@ pub struct ChatBody {
     pub session_id: String,
     pub message: String,
     /// Explicit model id. When `None`, the resolver falls back to the
-    /// `[intern]` model for the default provider, or the dashboard's
+    /// `[default_llm]` model for the default provider, or the dashboard's
     /// hard-coded sonnet fallback for non-default providers.
     #[serde(default)]
     pub model: Option<String>,
-    /// Explicit provider name. When `None`, the `[intern]`-referenced
+    /// Explicit provider name. When `None`, the `[default_llm]`-referenced
     /// default provider is used (which is what existing clients expect).
     #[serde(default)]
     pub provider: Option<String>,

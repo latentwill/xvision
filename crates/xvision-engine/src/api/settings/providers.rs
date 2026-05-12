@@ -49,9 +49,10 @@ pub struct ProviderRow {
     pub api_key_set: bool,
     /// True for synthetic rows (name starts with `_`) — read-only.
     pub synthetic: bool,
-    /// True if removing this entry would orphan the `[intern]` workspace
-    /// default slot. UI should disable the delete button.
-    pub referenced_by_intern: bool,
+    /// True if this provider is the workspace default (referenced by the
+    /// `[default_llm]` block). UI should disable the delete button when
+    /// `is_default` is set — removing it would orphan the workspace default.
+    pub is_default: bool,
     /// Subset of the provider's catalog the operator has enabled for the
     /// chat-rail / wizard dropdown. Empty until the operator picks
     /// models via Settings → Providers → Manage models.
@@ -427,8 +428,8 @@ pub async fn set_enabled_models(
     result
 }
 
-/// Point `[intern]` at a different provider so the previous default
-/// becomes deletable. Optional `model` overrides `intern.model`; when
+/// Point `[default_llm]` at a different provider so the previous default
+/// becomes deletable. Optional `model` overrides `default_llm.model`; when
 /// omitted, the existing model is kept (operator's choice if it's
 /// incompatible with the new provider).
 pub async fn set_default(
@@ -457,7 +458,7 @@ pub async fn set_default(
 
 async fn list_inner(config_path: &Path, xvn_home: &Path) -> ApiResult<ProvidersReport> {
     let cfg = load_cfg(config_path).await?;
-    let intern_kind: ProviderKind = cfg.intern.provider.into();
+    let intern_kind: ProviderKind = cfg.default_llm.provider.into();
     let secrets = load_providers_secrets(xvn_home).await?;
     let providers = cfg
         .providers
@@ -476,7 +477,7 @@ async fn show_inner(
     name: &str,
 ) -> ApiResult<ProviderRow> {
     let cfg = load_cfg(config_path).await?;
-    let intern_kind: ProviderKind = cfg.intern.provider.into();
+    let intern_kind: ProviderKind = cfg.default_llm.provider.into();
     let secrets = load_providers_secrets(xvn_home).await?;
     let entry = cfg
         .providers
@@ -628,9 +629,9 @@ async fn add_inner(
     // row. Without this the user would add DeepSeek with a key, then see
     // a "broken default" warning until they explicitly hit "Set as
     // default" — a step that's invisible until they go looking for it.
-    let intern_kind: ProviderKind = cfg.intern.provider.into();
+    let intern_kind: ProviderKind = cfg.default_llm.provider.into();
     let intern_entry = cfg.providers.iter().find(|p| {
-        p.matches_triple(intern_kind, &cfg.intern.base_url, &cfg.intern.api_key_env)
+        p.matches_triple(intern_kind, &cfg.default_llm.base_url, &cfg.default_llm.api_key_env)
     });
     let intern_has_key = intern_entry
         .map(|e| {
@@ -658,7 +659,7 @@ async fn add_inner(
 
 async fn remove_inner(config_path: &Path, xvn_home: &Path, name: &str) -> ApiResult<()> {
     let cfg = load_cfg(config_path).await?;
-    let intern_kind: ProviderKind = cfg.intern.provider.into();
+    let intern_kind: ProviderKind = cfg.default_llm.provider.into();
     let entry = cfg
         .providers
         .iter()
@@ -669,10 +670,10 @@ async fn remove_inner(config_path: &Path, xvn_home: &Path, name: &str) -> ApiRes
             "cannot remove synthetic provider `{name}`"
         )));
     }
-    if entry.matches_triple(intern_kind, &cfg.intern.base_url, &cfg.intern.api_key_env) {
+    if entry.matches_triple(intern_kind, &cfg.default_llm.base_url, &cfg.default_llm.api_key_env) {
         return Err(ApiError::Conflict(format!(
-            "cannot remove `{name}`: referenced by [intern] (workspace default Intern slot). \
-             Edit [intern] to point at a different provider first."
+            "cannot remove `{name}`: it's the workspace default LLM ([default_llm]). \
+             Set another provider as default first, then come back to remove this one."
         )));
     }
 
@@ -888,8 +889,8 @@ fn row_from_entry(
                 .map(|v| !v.is_empty())
                 .unwrap_or(false)
     };
-    let referenced_by_intern =
-        entry.matches_triple(intern_kind, &cfg.intern.base_url, &cfg.intern.api_key_env);
+    let is_default =
+        entry.matches_triple(intern_kind, &cfg.default_llm.base_url, &cfg.default_llm.api_key_env);
     ProviderRow {
         name: entry.name.clone(),
         kind: kind_to_str(entry.kind).into(),
@@ -897,7 +898,7 @@ fn row_from_entry(
         api_key_env: entry.api_key_env.clone(),
         api_key_set,
         synthetic: entry.name.starts_with('_'),
-        referenced_by_intern,
+        is_default,
         enabled_models: entry.enabled_models.clone(),
     }
 }
@@ -1151,7 +1152,7 @@ sqlite_url = "sqlite://x.db"
         let p = &report.providers[0];
         assert_eq!(p.name, "anthropic");
         assert_eq!(p.kind, "anthropic");
-        assert!(p.referenced_by_intern);
+        assert!(p.is_default);
         assert!(!p.synthetic);
     }
 

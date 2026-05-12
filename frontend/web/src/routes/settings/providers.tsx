@@ -269,7 +269,7 @@ function ProviderRowView({
   // a target. Operators can switch the default to another configured
   // provider first (the "set as default" button below); that unlocks the
   // old default for removal.
-  const locked = row.referenced_by_intern;
+  const locked = row.is_default;
   const lockReason = locked
     ? "Workspace default — promote another provider first, then come back to remove this one."
     : null;
@@ -280,7 +280,7 @@ function ProviderRowView({
         <td className="py-2 pr-3">
           <div className="flex items-center gap-2">
             <code className="font-mono text-[13px] text-text">{row.name}</code>
-            {row.referenced_by_intern ? <Pill tone="gold">default</Pill> : null}
+            {row.is_default ? <Pill tone="gold">default</Pill> : null}
           </div>
         </td>
         <td className="py-2 pr-3 text-text-2 text-[12px] font-mono">
@@ -313,7 +313,7 @@ function ProviderRowView({
                   : `Models · ${row.enabled_models.length}`}
               </button>
             ) : null}
-            {!row.referenced_by_intern && row.api_key_set ? (
+            {!row.is_default && row.api_key_set ? (
               <button
                 onClick={onPromote}
                 disabled={promoteBusy}

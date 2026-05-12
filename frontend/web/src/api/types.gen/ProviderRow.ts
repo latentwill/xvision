@@ -18,10 +18,11 @@ api_key_set: boolean,
  */
 synthetic: boolean, 
 /**
- * True if removing this entry would orphan the `[intern]` workspace
- * default slot. UI should disable the delete button.
+ * True if this provider is the workspace default (referenced by the
+ * `[default_llm]` block). UI should disable the delete button when
+ * `is_default` is set — removing it would orphan the workspace default.
  */
-referenced_by_intern: boolean, 
+is_default: boolean, 
 /**
  * Subset of the provider's catalog the operator has enabled for the
  * chat-rail / wizard dropdown. Empty until the operator picks
