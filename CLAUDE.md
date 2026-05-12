@@ -14,7 +14,7 @@ Diverging from these names should require a written rationale.
 |---|---|---|
 | Per-decision-cycle id (briefing → decision → outcome) | `cycle_id` | ~~setup_id~~ |
 | Pre-mint local id of a marketplace pipeline | `agent_id` (string ULID, becomes the NFT token id post-mint) | ~~strategy_id~~ |
-| Immutable pipeline configuration (engine bundle artifact) | `StrategyBundle` | (no rename) |
+| Immutable pipeline configuration (the strategy artifact) | `Strategy` (in `crates/xvision-engine/src/strategies/`) | ~~StrategyBundle~~, ~~bundle~~ |
 | Reusable agent template (per-prompt+model+skills record) | `Agent` (with `Vec<AgentSlot>`) | ~~agent template~~, ~~saved profile~~ |
 | Strategy's reference to a library agent | `AgentRef { agent_id, role }` | (no rename) |
 | Trading-decision producer trait (xvision-eval baselines) | `Algorithm` | ~~Strategy~~ |

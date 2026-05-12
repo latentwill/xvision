@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use xvision_engine::agent::execute::{execute_slot, SlotInput};
 use xvision_engine::agent::llm::{ContentBlock, LlmResponse, MockDispatch, StopReason};
-use xvision_engine::bundle::slot::LLMSlot;
+use xvision_engine::strategies::slot::LLMSlot;
 use xvision_engine::tools::ToolRegistry;
 
 #[tokio::test]

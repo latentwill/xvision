@@ -79,7 +79,7 @@ export function SetupRoute() {
       <Card className="px-6 py-5 mb-3">
         <div className="text-text-2 text-[14px] leading-snug max-w-prose">
           The setup agent walks you from a plain-English description to a
-          validated <span className="text-text">StrategyBundle</span> ready to
+          validated <span className="text-text">Strategy</span> ready to
           backtest. Try:{" "}
           <span className="text-text font-mono">
             "Buys dips when the trend is up"

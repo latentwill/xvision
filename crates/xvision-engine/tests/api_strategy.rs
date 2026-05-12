@@ -38,14 +38,14 @@ async fn get_returns_not_found_for_unknown_id() {
 
 #[tokio::test]
 async fn list_returns_summaries_for_existing_bundles() {
-    use xvision_engine::bundle::{
-        manifest::PublicManifest, risk::RiskPreset, store::BundleStore, store::FilesystemStore,
-        StrategyBundle,
+    use xvision_engine::strategies::{
+        manifest::PublicManifest, risk::RiskPreset, store::StrategyStore, store::FilesystemStore,
+        Strategy,
     };
 
     let (ctx, _d) = ctx_with_strategies_dir().await;
     let store = FilesystemStore::new(ctx.xvn_home.join("strategies"));
-    let bundle = StrategyBundle {
+    let bundle = Strategy {
         manifest: PublicManifest {
             id: "01J0TESTSTRAT00000000000001".into(),
             display_name: "Test Strategy".into(),

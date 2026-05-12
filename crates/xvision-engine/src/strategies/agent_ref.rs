@@ -1,5 +1,5 @@
 //! `AgentRef` + `PipelineDef` — the building blocks of the post-refactor
-//! `StrategyBundle`. Per the
+//! `Strategy`. Per the
 //! `2026-05-12-strategies-refactor-agent-composition.md` plan, strategies
 //! stop carrying fixed `regime/intern/trader` slots and instead reference
 //! N agents from the workspace agent library, each playing a
@@ -25,7 +25,7 @@ pub struct AgentRef {
 ///
 /// - `Single`: exactly one agent; no edges.
 /// - `Sequential`: agents execute in the order they appear in
-///   `StrategyBundle.agents`. Edges are derived from that order so
+///   `Strategy.agents`. Edges are derived from that order so
 ///   `edges` is empty under this kind.
 /// - `Graph`: arbitrary DAG defined by `edges`. v1 does not ship a graph
 ///   editor — the variant exists so on-disk JSON can carry a graph from
@@ -82,7 +82,7 @@ impl PipelineDef {
     }
 
     /// Convenience: ordered sequential pipeline. Edges stay empty —
-    /// callers read order off `StrategyBundle.agents`.
+    /// callers read order off `Strategy.agents`.
     pub fn sequential() -> Self {
         Self {
             kind: PipelineKind::Sequential,

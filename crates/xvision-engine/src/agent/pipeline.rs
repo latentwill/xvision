@@ -2,11 +2,11 @@ use std::sync::Arc;
 
 use crate::agent::execute::{execute_slot, SlotInput};
 use crate::agent::llm::{LlmDispatch, LlmResponse};
-use crate::bundle::StrategyBundle;
+use crate::strategies::Strategy;
 use crate::tools::ToolRegistry;
 
 pub struct PipelineInputs<'a> {
-    pub bundle: &'a StrategyBundle,
+    pub bundle: &'a Strategy,
     pub seed_inputs: serde_json::Value,
     pub dispatch: Arc<dyn LlmDispatch>,
     pub tools: Arc<ToolRegistry>,

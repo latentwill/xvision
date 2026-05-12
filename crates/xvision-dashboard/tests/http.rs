@@ -80,16 +80,16 @@ async fn strategies_list_returns_array_when_empty() {
 
 #[tokio::test]
 async fn strategies_list_returns_seeded_bundle() {
-    use xvision_engine::bundle::{
-        manifest::PublicManifest, risk::RiskPreset, store::BundleStore, store::FilesystemStore,
-        StrategyBundle,
+    use xvision_engine::strategies::{
+        manifest::PublicManifest, risk::RiskPreset, store::StrategyStore, store::FilesystemStore,
+        Strategy,
     };
 
     let (server, tmp) = boot().await;
     let store = FilesystemStore::new(tmp.path().join("strategies"));
     let bundle_id = "01J0DASHTEST00000000000001";
     store
-        .save(&StrategyBundle {
+        .save(&Strategy {
             manifest: PublicManifest {
                 id: bundle_id.into(),
                 display_name: "Dashboard Test".into(),

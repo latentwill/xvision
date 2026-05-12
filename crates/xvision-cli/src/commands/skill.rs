@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use clap::{Args, Subcommand};
 use tokio::io::AsyncReadExt;
-use xvision_engine::bundle::store::{strategy_store_dir, BundleStore, FilesystemStore};
+use xvision_engine::strategies::store::{strategy_store_dir, StrategyStore, FilesystemStore};
 use xvision_skills::attach::attach_skill_to_agent;
 use xvision_skills::parse;
 use xvision_skills::store::{FilesystemSkillStore, SkillStore};

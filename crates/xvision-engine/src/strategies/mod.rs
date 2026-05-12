@@ -7,13 +7,13 @@ pub mod validate;
 
 use serde::{Deserialize, Serialize};
 
-pub use crate::bundle::agent_ref::{AgentRef, PipelineDef, PipelineEdge, PipelineKind};
-use crate::bundle::manifest::PublicManifest;
-use crate::bundle::risk::RiskConfig;
-use crate::bundle::slot::LLMSlot;
+pub use crate::strategies::agent_ref::{AgentRef, PipelineDef, PipelineEdge, PipelineKind};
+use crate::strategies::manifest::PublicManifest;
+use crate::strategies::risk::RiskConfig;
+use crate::strategies::slot::LLMSlot;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct StrategyBundle {
+pub struct Strategy {
     pub manifest: PublicManifest,
 
     // ── New: agent composition (refactor T1) ──────────────────────────
@@ -64,8 +64,8 @@ fn is_default_pipeline(p: &PipelineDef) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bundle::manifest::PublicManifest;
-    use crate::bundle::risk::{RiskConfig, RiskPreset};
+    use crate::strategies::manifest::PublicManifest;
+    use crate::strategies::risk::{RiskConfig, RiskPreset};
     use serde_json::json;
 
     fn make_manifest() -> PublicManifest {
@@ -101,7 +101,7 @@ mod tests {
             "risk": RiskPreset::Balanced.expand(),
             "mechanical_params": {}
         });
-        let bundle: StrategyBundle = serde_json::from_value(raw).unwrap();
+        let bundle: Strategy = serde_json::from_value(raw).unwrap();
         assert!(bundle.agents.is_empty(), "agents defaults to empty");
         assert_eq!(
             bundle.pipeline.kind,
@@ -124,7 +124,7 @@ mod tests {
             "risk": RiskPreset::Balanced.expand(),
             "mechanical_params": {}
         });
-        let bundle: StrategyBundle = serde_json::from_value(raw).unwrap();
+        let bundle: Strategy = serde_json::from_value(raw).unwrap();
         assert_eq!(bundle.agents.len(), 1);
         assert_eq!(bundle.agents[0].agent_id, "01HZAGENT1");
         assert_eq!(bundle.agents[0].role, "trader");
@@ -153,7 +153,7 @@ mod tests {
             "risk": RiskPreset::Balanced.expand(),
             "mechanical_params": {}
         });
-        let bundle: StrategyBundle = serde_json::from_value(raw).unwrap();
+        let bundle: Strategy = serde_json::from_value(raw).unwrap();
         assert_eq!(bundle.agents.len(), 1);
         assert!(bundle.trader_slot.is_some());
     }
@@ -162,7 +162,7 @@ mod tests {
     fn empty_agents_and_default_pipeline_round_trip_compactly() {
         // For pre-migration bundles, the new fields stay out of the
         // wire shape so existing JSON stays diff-clean.
-        let bundle = StrategyBundle {
+        let bundle = Strategy {
             manifest: make_manifest(),
             agents: Vec::new(),
             pipeline: PipelineDef::default(),
@@ -176,7 +176,7 @@ mod tests {
         assert!(!s.contains("\"agents\""), "empty agents omitted: {s}");
         assert!(!s.contains("\"pipeline\""), "default pipeline omitted: {s}");
         // But populated agents/pipeline DO surface.
-        let bundle = StrategyBundle {
+        let bundle = Strategy {
             agents: vec![AgentRef {
                 agent_id: "x".into(),
                 role: "main".into(),
