@@ -42,32 +42,23 @@ export type WizardEvent =
   | { type: "done"; draft_id?: string | null }
   | { type: "error"; message: string };
 
-export async function createSession(scope: ContextScope): Promise<string> {
-  const body = await apiFetch<{ session_id: string }>(
-    "/api/chat-rail/sessions",
+export type ResolveSessionResp = {
+  session_id: string;
+  history: ChatMessage[];
+};
+
+/// Resolve the chat-rail session for the current scope. Server returns
+/// the most-recent session matching the scope (with its full history),
+/// or creates a fresh empty session if no match exists. Always lands a
+/// usable id — no client-side cache to go stale.
+export function resolveSession(
+  scope: ContextScope,
+): Promise<ResolveSessionResp> {
+  return apiFetch<ResolveSessionResp>(
+    "/api/chat-rail/sessions/resolve",
     {
       method: "POST",
       body: JSON.stringify({ scope }),
-    },
-  );
-  return body.session_id;
-}
-
-export function fetchHistory(sessionId: string): Promise<ChatMessage[]> {
-  return apiFetch<ChatMessage[]>(
-    `/api/chat-rail/sessions/${encodeURIComponent(sessionId)}/history`,
-  );
-}
-
-export async function updateScope(
-  sessionId: string,
-  scope: ContextScope,
-): Promise<void> {
-  await apiFetch<void>(
-    `/api/chat-rail/sessions/${encodeURIComponent(sessionId)}/scope`,
-    {
-      method: "POST",
-      body: JSON.stringify(scope),
     },
   );
 }
