@@ -7,7 +7,7 @@ use axum::{
 use tower_http::trace::TraceLayer;
 
 use crate::routes::{
-    agents, chat_rail, eval_runs, health::health, search as search_route, settings,
+    agents, chat_rail, eval_runs, health::health, search as search_route, settings, skills,
     static_files, strategies, wizard,
 };
 use crate::state::AppState;
@@ -28,6 +28,14 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/agents/:id/validate", post(agents::validate))
         .route("/api/agents/:id/strategies", get(agents::deployed_in))
         .route("/api/agents/:id/runs", get(agents::recent_runs))
+        .route(
+            "/api/skills",
+            get(skills::list).post(skills::create),
+        )
+        .route(
+            "/api/skills/:id",
+            get(skills::get).put(skills::update).delete(skills::archive),
+        )
         .route("/api/strategies", get(strategies::list))
         .route("/api/strategy/:id", get(strategies::get))
         .route(
