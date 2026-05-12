@@ -29,21 +29,18 @@ import {
   type ContentBlock,
   type ContextScope,
   type WizardEvent,
-  createSession,
   deleteSession,
-  fetchHistory,
   headerLabel,
   placeholder,
   quickReplies,
+  resolveSession,
   scopeFromPath,
   scopeKey,
   streamChat,
-  updateScope,
 } from "@/api/chat_rail";
 import { listProviders, settingsKeys } from "@/api/settings";
 import type { ProviderRow } from "@/api/types.gen";
 
-const SESSION_LS_PREFIX = "xvn.chat_rail.session.";
 const RAIL_OPEN_LS = "xvn.chat_rail.open";
 const RAIL_PROVIDER_LS = "xvn.chat_rail.provider";
 const RAIL_MODEL_LS = "xvn.chat_rail.model";
@@ -128,9 +125,9 @@ export function ChatRail() {
     localStorage.setItem(RAIL_OPEN_LS, open ? "1" : "0");
   }, [open]);
 
-  // When the rail is open and the scope changes, ensure we have a session
-  // for the current scope-key + load its history. Cached session id lives
-  // in localStorage keyed by scope so the conversation resumes.
+  // When the rail is open and the scope changes, resolve a session for
+  // the current scope. The server owns session lifecycle — the rail
+  // never holds a stale id across DB resets or fresh deploys.
   useEffect(() => {
     if (!open) return;
     if (lastScopeKeyRef.current === key && sessionId) return;
@@ -140,40 +137,12 @@ export function ChatRail() {
     (async () => {
       setError(null);
       try {
-        const cached = localStorage.getItem(SESSION_LS_PREFIX + key);
-        let id: string;
-        if (cached) {
-          id = cached;
-          // Make sure server-side scope matches (handles the case where
-          // the user changed pages between sessions but the cached id
-          // was created with a different scope).
-          await updateScope(id, scope).catch(() => {
-            // 404 → session was deleted server-side; fall back to fresh.
-            throw new Error("session-stale");
-          });
-        } else {
-          id = await createSession(scope);
-          localStorage.setItem(SESSION_LS_PREFIX + key, id);
-        }
+        const resolved = await resolveSession(scope);
         if (cancelled) return;
-        setSessionId(id);
-        const history = await fetchHistory(id);
-        if (cancelled) return;
-        setBubbles(historyToBubbles(history));
+        setSessionId(resolved.session_id);
+        setBubbles(historyToBubbles(resolved.history));
       } catch (e) {
         if (cancelled) return;
-        if ((e as Error).message === "session-stale") {
-          localStorage.removeItem(SESSION_LS_PREFIX + key);
-          try {
-            const id = await createSession(scope);
-            localStorage.setItem(SESSION_LS_PREFIX + key, id);
-            setSessionId(id);
-            setBubbles([]);
-          } catch (e2) {
-            setError(formatErr(e2));
-          }
-          return;
-        }
         setError(formatErr(e));
       }
     })();
@@ -233,15 +202,15 @@ export function ChatRail() {
     try {
       await deleteSession(sessionId);
     } catch {
-      /* best-effort */
+      /* best-effort — server may have already dropped it */
     }
-    localStorage.removeItem(SESSION_LS_PREFIX + key);
     setSessionId(null);
     setBubbles([]);
     setError(null);
-    // Force the open-effect to re-create a session for this scope.
+    // Force the open-effect to re-resolve a session for this scope.
+    // After delete, the next resolve will find no match and create one.
     lastScopeKeyRef.current = null;
-  }, [sessionId, key]);
+  }, [sessionId]);
 
   if (!open) {
     return (
