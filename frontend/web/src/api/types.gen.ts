@@ -61,6 +61,7 @@ export type { RunSummary } from "./types.gen/RunSummary";
 export type { Scenario } from "./types.gen/Scenario";
 export type { ScenarioChartPayload } from "./types.gen/ScenarioChartPayload";
 export type { ScenarioMutations } from "./types.gen/ScenarioMutations";
+export type { ScenarioPreviewPayload } from "./types.gen/ScenarioPreviewPayload";
 export type { ScenarioSource } from "./types.gen/ScenarioSource";
 export type { Severity } from "./types.gen/Severity";
 export type { SlippageModel } from "./types.gen/SlippageModel";
