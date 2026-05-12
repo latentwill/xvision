@@ -5,7 +5,7 @@ name: web bundle budget
 # asset table by vite outputting into crates/xvision-dashboard/static).
 #
 # Path-scoped to keep Actions minutes low — same conservation policy as
-# docker.yml. The job only runs when the frontend, its lockfile, or this
+docker.yml. The job only runs when the frontend, its lockfile, or this
 # workflow itself changes.
 on:
   pull_request:
@@ -23,6 +23,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v3
+        with:
+          package_json_file: frontend/web/package.json
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
