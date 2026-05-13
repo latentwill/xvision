@@ -1,28 +1,26 @@
 ---
 track: agent-docs-cli-truth
 worktree: /root/deploy/xvision/.worktrees/agent-docs-cli-truth
-branch: agent-docs-cli-truth
-phase: local-docs-verified
-last_updated: 2026-05-13T01:58:04Z
+branch: agent-docs-cli-truth-clean
+phase: phase-b-pr-open
+last_updated: 2026-05-13T02:33:38Z
 owner: codex
 ---
 
 # What I'm Doing Right Now
 
-Claimed the execution-board docs/help truth track. Fixed stale agent-facing docs
-against source truth: README quickstart, README/frontend route table,
-Claude-skill terminology, architecture reference terminology, and MANUAL
-incident-response commands.
+PR [#100](https://github.com/latentwill/xvision/pull/100) is open for the
+execution-board docs/help truth track. It aligns agent-facing docs against the
+shipped CLI/UI surface and removes stale strategy/bundle wording.
 
 # Blocked On
 
-The board's Rust verification command,
-`cargo test -p xvision-cli help_cli -- --nocapture`, is not run on this deploy
-host per `CLAUDE.md`.
+Operator review/merge for PR #100. Cargo help verification still needs CI or a
+non-deploy environment.
 
 # Next Up
 
-Local non-Rust verification passed:
+Local non-Rust verification passed in this worktree:
 
 - `bash scripts/check_agent_docs.sh`
 - `git diff --check`
