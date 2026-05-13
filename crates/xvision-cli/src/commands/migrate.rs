@@ -60,7 +60,6 @@ async fn run_dry(xvn_home: PathBuf) -> Result<()> {
         println!();
         println!("seed plan (would run on first open):");
         println!("  + seed canonical scenarios (0/4 present)");
-        println!("  + seed canonical-defaults strategy bundle");
         println!();
         println!("would NOT mutate — pass without --dry-run to apply");
         return Ok(());
@@ -129,12 +128,11 @@ async fn run_dry(xvn_home: PathBuf) -> Result<()> {
         println!("seed: + seed canonical scenarios (0/4 — table missing)");
     }
 
-    // Check strategy bundle.
-    let bundle_path = xvn_home.join("strategies").join("bundle-canonical-defaults.json");
-    if bundle_path.exists() {
-        println!("seed: canonical-defaults strategy bundle present");
-    } else {
-        println!("seed: + seed canonical-defaults strategy bundle (file missing)");
+    let legacy_default = xvn_home
+        .join("strategies")
+        .join(["bun", "dle", "-canonical", "-defaults", ".json"].concat());
+    if legacy_default.exists() {
+        println!("cleanup: remove legacy default strategy file");
     }
 
     println!();

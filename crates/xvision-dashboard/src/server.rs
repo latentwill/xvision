@@ -156,7 +156,7 @@ pub fn build_router(state: AppState) -> Router {
 }
 
 pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
-    // Cold-start the ⌘K index: walk the bundle store + run table, re-seed
+    // Cold-start the ⌘K index: walk the strategy store + run table, re-seed
     // the static action set + canonical scenarios. Idempotent — every
     // subsequent indexer hook just refreshes the row in place.
     api_search::reindex_all(&state.api_context()).await;

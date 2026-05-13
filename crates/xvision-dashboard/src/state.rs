@@ -62,7 +62,7 @@ impl AppState {
             .await
             .context("run xvision-engine migrations")?;
 
-        // First-run seed: canonical scenarios + bundle-canonical-defaults.
+        // First-run seed: canonical scenarios.
         // Mirrors `ApiContext::open` so dashboard-only bootstrap paths
         // (xvn dashboard serve + integration tests) hit the same baseline
         // state. Idempotent — short-circuits when canonical rows exist.

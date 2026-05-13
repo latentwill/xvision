@@ -122,12 +122,13 @@ impl ApiContext {
         sqlx::query(MIGRATION_011_SCENARIOS).execute(&pool).await?;
         sqlx::query(MIGRATION_012_RUNS_FK).execute(&pool).await?;
         sqlx::query(MIGRATION_013_CLI_JOBS).execute(&pool).await?;
+        migrate_eval_agent_id(&pool).await?;
 
         let ctx = Self::new(pool, actor, xvn_home.to_path_buf());
 
-        // First-run seed: 4 canonical scenarios + `bundle-canonical-defaults`
-        // StrategyBundle. Idempotent — short-circuits when canonical rows
-        // already exist, so re-opening the same `xvn_home` is a no-op.
+        // First-run seed: 4 canonical scenarios. Idempotent — short-circuits
+        // when canonical rows already exist, so re-opening the same `xvn_home`
+        // is a no-op.
         crate::eval::scenario_seed::run_seed_if_needed(&ctx).await?;
 
         Ok(ctx)
@@ -207,6 +208,49 @@ impl ApiContext {
             .or_insert_with(|| Arc::new(Mutex::new(())))
             .clone()
     }
+}
+
+async fn table_has_column(pool: &SqlitePool, table: &str, column: &str) -> ApiResult<bool> {
+    let sql = format!("PRAGMA table_info({table})");
+    let rows: Vec<(i64, String, String, i64, Option<String>, i64)> =
+        sqlx::query_as(&sql).fetch_all(pool).await?;
+    Ok(rows.iter().any(|(_, name, _, _, _, _)| name == column))
+}
+
+fn legacy_eval_strategy_column() -> String {
+    ["strategy", "_bun", "dle", "_hash"].concat()
+}
+
+async fn migrate_eval_agent_id(pool: &SqlitePool) -> ApiResult<()> {
+    let legacy_column = legacy_eval_strategy_column();
+    let runs_have_legacy = table_has_column(pool, "eval_runs", &legacy_column).await?;
+    let runs_have_agent = table_has_column(pool, "eval_runs", "agent_id").await?;
+    if runs_have_legacy && !runs_have_agent {
+        let sql = format!("ALTER TABLE eval_runs RENAME COLUMN {legacy_column} TO agent_id");
+        sqlx::query(&sql)
+            .execute(pool)
+            .await?;
+    }
+
+    let attest_have_legacy =
+        table_has_column(pool, "eval_attestations", &legacy_column).await?;
+    let attest_have_agent = table_has_column(pool, "eval_attestations", "agent_id").await?;
+    if attest_have_legacy && !attest_have_agent {
+        let sql =
+            format!("ALTER TABLE eval_attestations RENAME COLUMN {legacy_column} TO agent_id");
+        sqlx::query(&sql)
+            .execute(pool)
+            .await?;
+    }
+
+    sqlx::query("DROP INDEX IF EXISTS idx_eval_runs_strategy")
+        .execute(pool)
+        .await?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_eval_runs_agent ON eval_runs(agent_id)")
+        .execute(pool)
+        .await?;
+
+    Ok(())
 }
 
 #[derive(Clone, Debug)]

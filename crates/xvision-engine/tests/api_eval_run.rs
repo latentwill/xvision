@@ -1,7 +1,7 @@
 //! Tests for `engine::api::eval::run_with_deps` — the testable variant of
 //! the demo-driving paper-mode dispatcher. The env-bound public `run`
 //! function delegates to `run_with_deps` so this test surface covers the
-//! full lifecycle: bundle lookup + scenario lookup + executor invocation
+//! full lifecycle: strategy lookup + scenario lookup + executor invocation
 //! + run persistence + audit.
 
 #![allow(deprecated)] // canonical_scenarios() — see Task 8 (M2) deprecation note.
@@ -33,6 +33,10 @@ async fn ctx_with_tables() -> (ApiContext, tempfile::TempDir) {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/014_eval_agent_id.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("strategies")).unwrap();
     let ctx = ApiContext::new(
@@ -45,11 +49,11 @@ async fn ctx_with_tables() -> (ApiContext, tempfile::TempDir) {
     (ctx, dir)
 }
 
-async fn save_test_bundle(ctx: &ApiContext, agent_id: &str) -> Strategy {
-    let bundle = Strategy {
+async fn save_test_strategy(ctx: &ApiContext, agent_id: &str) -> Strategy {
+    let strategy = Strategy {
         manifest: PublicManifest {
             id: agent_id.to_string(),
-            display_name: "Test bundle".into(),
+            display_name: "Test strategy".into(),
             plain_summary: "for api::eval::run tests".into(),
             creator: "@tester".into(),
             template: "mean_reversion".into(),
@@ -61,6 +65,8 @@ async fn save_test_bundle(ctx: &ApiContext, agent_id: &str) -> Strategy {
             risk_preset_or_config: "balanced".into(),
             published_at: None,
         },
+        agents: Vec::new(),
+        pipeline: Default::default(),
         regime_slot: None,
         intern_slot: None,
         trader_slot: Some(LLMSlot {
@@ -73,8 +79,8 @@ async fn save_test_bundle(ctx: &ApiContext, agent_id: &str) -> Strategy {
         mechanical_params: serde_json::json!({}),
     };
     let store = FilesystemStore::new(ctx.xvn_home.join("strategies"));
-    store.save(&bundle).await.unwrap();
-    bundle
+    store.save(&strategy).await.unwrap();
+    strategy
 }
 
 fn hold_dispatch() -> Arc<dyn LlmDispatch> {
@@ -86,8 +92,8 @@ fn hold_dispatch() -> Arc<dyn LlmDispatch> {
 #[tokio::test]
 async fn run_with_deps_completes_paper_run_with_mocks() {
     let (ctx, _d) = ctx_with_tables().await;
-    let agent_id = "01TESTBUNDLE0000000000000A";
-    save_test_bundle(&ctx, agent_id).await;
+    let agent_id = "01TESTSTRATEGY0000000000000A";
+    save_test_strategy(&ctx, agent_id).await;
 
     // The shortest canonical scenario is flash-crash-2024-08 (~30 days).
     // We use that here to keep the test runtime fast — at 60-min cadence
@@ -119,7 +125,7 @@ async fn run_with_deps_completes_paper_run_with_mocks() {
     assert!(run.metrics.is_some());
     assert!(run.completed_at.is_some());
     assert_eq!(run.scenario_id, scenario_id);
-    assert_eq!(run.strategy_bundle_hash, agent_id);
+    assert_eq!(run.agent_id, agent_id);
     // For hold-only the broker should not have been touched.
     assert_eq!(mock_broker.submitted().len(), 0);
 }
@@ -155,8 +161,8 @@ async fn run_returns_not_found_for_unknown_strategy() {
 #[tokio::test]
 async fn run_returns_not_found_for_unknown_scenario() {
     let (ctx, _d) = ctx_with_tables().await;
-    let agent_id = "01TESTBUNDLE0000000000000B";
-    save_test_bundle(&ctx, agent_id).await;
+    let agent_id = "01TESTSTRATEGY0000000000000B";
+    save_test_strategy(&ctx, agent_id).await;
 
     let mock_broker = Arc::new(MockBrokerSurface::new(100_000.0));
     let broker: Option<Arc<dyn BrokerSurface>> = Some(mock_broker);
@@ -185,8 +191,8 @@ async fn run_returns_not_found_for_unknown_scenario() {
 #[tokio::test]
 async fn run_with_deps_completes_backtest_run_with_mocks() {
     let (ctx, _d) = ctx_with_tables().await;
-    let agent_id = "01TESTBUNDLE0000000000000C";
-    save_test_bundle(&ctx, agent_id).await;
+    let agent_id = "01TESTSTRATEGY0000000000000C";
+    save_test_strategy(&ctx, agent_id).await;
 
     // Generate the synthetic fixture the flash-crash scenario points at.
     // ensure_test_fixture is idempotent so this is safe to call repeatedly.
@@ -231,8 +237,8 @@ async fn run_with_deps_completes_backtest_run_with_mocks() {
 #[tokio::test]
 async fn run_rejects_paper_mode_without_broker() {
     let (ctx, _d) = ctx_with_tables().await;
-    let agent_id = "01TESTBUNDLE000000000000PAP";
-    save_test_bundle(&ctx, agent_id).await;
+    let agent_id = "01TESTSTRATEGY000000000000PAP";
+    save_test_strategy(&ctx, agent_id).await;
 
     let dispatch = hold_dispatch();
     let tools = Arc::new(ToolRegistry::empty());
@@ -259,8 +265,8 @@ async fn run_rejects_paper_mode_without_broker() {
 #[tokio::test]
 async fn run_writes_audit_row_on_completion() {
     let (ctx, _d) = ctx_with_tables().await;
-    let agent_id = "01TESTBUNDLE0000000000000D";
-    save_test_bundle(&ctx, agent_id).await;
+    let agent_id = "01TESTSTRATEGY0000000000000D";
+    save_test_strategy(&ctx, agent_id).await;
 
     let mock_broker = Arc::new(MockBrokerSurface::new(50_000.0));
     let broker: Option<Arc<dyn BrokerSurface>> = Some(mock_broker);
@@ -296,8 +302,8 @@ async fn run_writes_audit_row_on_completion() {
 #[tokio::test]
 async fn run_persists_run_to_runstore_so_get_finds_it() {
     let (ctx, _d) = ctx_with_tables().await;
-    let agent_id = "01TESTBUNDLE0000000000000E";
-    save_test_bundle(&ctx, agent_id).await;
+    let agent_id = "01TESTSTRATEGY0000000000000E";
+    save_test_strategy(&ctx, agent_id).await;
 
     let mock_broker = Arc::new(MockBrokerSurface::new(100_000.0));
     let broker: Option<Arc<dyn BrokerSurface>> = Some(mock_broker);

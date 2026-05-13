@@ -21,7 +21,7 @@ async fn run_insert_with_unknown_scenario_rejected() {
     .unwrap();
 
     let err = sqlx::query(
-        "INSERT INTO eval_runs (id, strategy_bundle_hash, scenario_id, mode, status, started_at) \
+        "INSERT INTO eval_runs (id, agent_id, scenario_id, mode, status, started_at) \
          VALUES (?, ?, ?, ?, ?, ?)",
     )
     .bind("r_bad")
@@ -56,7 +56,7 @@ async fn run_insert_with_seeded_canonical_scenario_succeeds() {
     // The first-run seed (run_seed_if_needed, called from ApiContext::open)
     // inserts the four canonical scenarios; 'crypto-bull-q1-2025' is one.
     sqlx::query(
-        "INSERT INTO eval_runs (id, strategy_bundle_hash, scenario_id, mode, status, started_at) \
+        "INSERT INTO eval_runs (id, agent_id, scenario_id, mode, status, started_at) \
          VALUES (?, ?, ?, ?, ?, ?)",
     )
     .bind("r_ok")
@@ -84,7 +84,7 @@ async fn run_update_to_unknown_scenario_rejected() {
 
     // Seed a run pointing at a valid (canonical) scenario.
     sqlx::query(
-        "INSERT INTO eval_runs (id, strategy_bundle_hash, scenario_id, mode, status, started_at) \
+        "INSERT INTO eval_runs (id, agent_id, scenario_id, mode, status, started_at) \
          VALUES (?, ?, ?, ?, ?, ?)",
     )
     .bind("r_upd")

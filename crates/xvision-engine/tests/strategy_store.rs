@@ -5,7 +5,7 @@ use xvision_engine::strategies::slot::LLMSlot;
 use xvision_engine::strategies::store::{StrategyStore, FilesystemStore};
 use xvision_engine::strategies::Strategy;
 
-fn sample_bundle(id: &str) -> Strategy {
+fn sample_strategy(id: &str) -> Strategy {
     Strategy {
         manifest: PublicManifest {
             id: id.to_string(),
@@ -40,18 +40,18 @@ fn sample_bundle(id: &str) -> Strategy {
 async fn save_and_load_roundtrip() {
     let dir = tempdir().unwrap();
     let store = FilesystemStore::new(dir.path().to_path_buf());
-    let b = sample_bundle("01H8N7Z000");
-    store.save(&b).await.unwrap();
+    let strategy = sample_strategy("01H8N7Z000");
+    store.save(&strategy).await.unwrap();
     let loaded = store.load("01H8N7Z000").await.unwrap();
-    assert_eq!(loaded, b);
+    assert_eq!(loaded, strategy);
 }
 
 #[tokio::test]
-async fn list_returns_saved_bundles() {
+async fn list_returns_saved_strategies() {
     let dir = tempdir().unwrap();
     let store = FilesystemStore::new(dir.path().to_path_buf());
-    store.save(&sample_bundle("01H8N7ZAAA")).await.unwrap();
-    store.save(&sample_bundle("01H8N7ZBBB")).await.unwrap();
+    store.save(&sample_strategy("01H8N7ZAAA")).await.unwrap();
+    store.save(&sample_strategy("01H8N7ZBBB")).await.unwrap();
     let ids = store.list().await.unwrap();
     assert_eq!(ids.len(), 2);
     assert!(ids.contains(&"01H8N7ZAAA".to_string()));

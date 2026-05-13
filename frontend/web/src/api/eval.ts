@@ -37,7 +37,7 @@ export type StartRunReq = {
 };
 
 export type ListRunsParams = {
-  strategy_bundle_hash?: string;
+  agent_id?: string;
   scenario_id?: string;
   status?: string;
 };
@@ -48,7 +48,7 @@ export const evalKeys = {
     [
       ...evalKeys.all,
       "runs",
-      params?.strategy_bundle_hash ?? "",
+      params?.agent_id ?? "",
       params?.scenario_id ?? "",
       params?.status ?? "",
     ] as const,
@@ -60,8 +60,8 @@ export const evalKeys = {
 
 export function listRuns(params?: ListRunsParams): Promise<RunSummary[]> {
   const qs = new URLSearchParams();
-  if (params?.strategy_bundle_hash) {
-    qs.set("strategy_bundle_hash", params.strategy_bundle_hash);
+  if (params?.agent_id) {
+    qs.set("agent_id", params.agent_id);
   }
   if (params?.scenario_id) {
     qs.set("scenario_id", params.scenario_id);

@@ -3,11 +3,11 @@ use xvision_engine::eval::{MetricsSummary, Run, RunMode, RunStatus};
 #[test]
 fn run_new_queued_starts_in_queued_state() {
     let r = Run::new_queued(
-        "bundle-hash-x".into(),
+        "strategy-hash-x".into(),
         "crypto-bull-q1-2025".into(),
         RunMode::Backtest,
     );
-    assert_eq!(r.strategy_bundle_hash, "bundle-hash-x");
+    assert_eq!(r.agent_id, "strategy-hash-x");
     assert_eq!(r.scenario_id, "crypto-bull-q1-2025");
     assert_eq!(r.mode, RunMode::Backtest);
     assert_eq!(r.status, RunStatus::Queued);

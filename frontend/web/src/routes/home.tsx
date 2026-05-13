@@ -100,7 +100,7 @@ export function HomeRoute() {
             link={{ to: "/strategies", label: "manage" }}
             sub={
               strategyCount === 0
-                ? "draft your first bundle in the Setup wizard"
+                ? "draft your first strategy in the Setup wizard"
                 : strategies.data?.[0]?.template
             }
           />
@@ -173,7 +173,7 @@ function AttentionCard({
           Health probes are green, no failed runs in the recent window, every
           declared provider has its API-key env var set, and broker credentials
           are present for the configured executor. You're good to draft a
-          bundle.
+          strategy.
         </p>
       ) : (
         <ul className="m-0 p-0 list-none space-y-2">
@@ -243,7 +243,7 @@ function RecentRunsCard({
         </p>
       ) : runs.length === 0 ? (
         <p className="m-0 text-text-2 text-[13px] leading-snug">
-          No runs yet. Draft a bundle in{" "}
+          No runs yet. Draft a strategy in{" "}
           <Link to="/setup" className="text-gold hover:underline">
             Setup
           </Link>

@@ -62,13 +62,13 @@ pub async fn post_create(
     Ok((StatusCode::CREATED, Json(out)))
 }
 
-/// Inspector render path — full bundle for `/authoring/<id>`.
+/// Inspector render path — full strategy for `/authoring/<id>`.
 pub async fn get(
     Path(id): Path<String>,
     State(state): State<AppState>,
 ) -> Result<Json<Strategy>, DashboardError> {
-    let bundle = strategy::get(&state.api_context(), &id).await?;
-    Ok(Json(bundle))
+    let strategy = strategy::get(&state.api_context(), &id).await?;
+    Ok(Json(strategy))
 }
 
 #[derive(Deserialize)]
@@ -113,7 +113,7 @@ pub struct PutRiskBody {
     pub explicit: Option<RiskConfig>,
 }
 
-/// `PUT /api/strategy/:id/risk` — set the bundle's risk config via preset
+/// `PUT /api/strategy/:id/risk` — set the strategy's risk config via preset
 /// (Conservative / Balanced / Aggressive) or explicit blob, but not both.
 pub async fn put_risk(
     Path(id): Path<String>,
@@ -143,10 +143,10 @@ pub async fn post_validate(
 
 /// `GET /api/strategies/:id/chart` — strategy chart payload.
 ///
-/// Lists all runs for the strategy bundle, computes per-run normalised
+/// Lists all runs for the strategy, computes per-run normalised
 /// equity curves and headline metrics (final PnL, max drawdown, Sharpe),
 /// and returns the grouped result. An unknown or unused strategy id
-/// returns 200 with an empty `run_series` (not 404 — the bundle may exist
+/// returns 200 with an empty `run_series` (not 404 — the strategy may exist
 /// even if no runs reference it yet).
 pub async fn chart(
     Path(id): Path<String>,

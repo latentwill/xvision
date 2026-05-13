@@ -45,7 +45,7 @@ pub struct Scenario {
     pub replay_mode: ReplayMode,
 
     /// Initial trading capital for this evaluation scenario. Moved back onto
-    /// Scenario (from StrategyBundle) so backtest results are reproducible
+    /// Scenario (from Strategy) so backtest results are reproducible
     /// independent of which strategy is run against the scenario.
     #[serde(default)]
     #[cfg_attr(feature = "ts-export", ts(type = "{ initial: number, currency: string }"))]

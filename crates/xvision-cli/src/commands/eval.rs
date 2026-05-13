@@ -38,13 +38,13 @@ pub struct EvalCmd {
 
 #[derive(Subcommand, Debug)]
 pub enum Op {
-    /// Run an eval against the selected scenario and strategy bundle.
+    /// Run an eval against the selected scenario and strategy.
     Run(RunArgs),
     /// List eval runs (most recent first).
     List(ListArgs),
     /// Show a single run by id.
     Show(ShowArgs),
-    /// List canonical scenarios bundled with this binary.
+    /// List canonical scenarios packaged with this binary.
     Scenarios(ScenariosArgs),
     /// Compare 2+ completed runs side-by-side (metrics + equity + findings).
     Compare(CompareArgs),
@@ -54,7 +54,7 @@ pub enum Op {
 
 #[derive(Args, Debug)]
 pub struct RunArgs {
-    /// Strategy bundle id (the `agent_id` from `xvn strategy ls`).
+    /// Strategy agent id from `xvn strategy ls`.
     #[arg(long)]
     pub strategy: String,
     /// Scenario id from `xvn eval scenarios`.
@@ -76,7 +76,7 @@ pub struct ListArgs {
     /// Override the xvn home directory (default: $XVN_HOME or ~/.xvn).
     #[arg(long)]
     pub xvn_home: Option<PathBuf>,
-    /// Only show runs for this strategy bundle hash.
+    /// Only show runs for this strategy agent id.
     #[arg(long)]
     pub strategy: Option<String>,
     /// Only show runs against this scenario id.
@@ -231,7 +231,7 @@ fn parse_status(s: &str) -> Result<RunStatus> {
 async fn run_list(args: ListArgs) -> CliResult<()> {
     let ctx = open_ctx(args.xvn_home.clone()).await.exit_with(XvnExit::Upstream)?;
     let req = ListRunsRequest {
-        strategy_bundle_hash: args.strategy,
+        agent_id: args.strategy,
         scenario_id: args.scenario,
         status: args.status.as_deref().map(parse_status).transpose().exit_with(XvnExit::Usage)?,
     };
@@ -254,7 +254,7 @@ async fn run_list(args: ListArgs) -> CliResult<()> {
             r.status.as_str(),
             r.mode.as_str(),
             r.scenario_id,
-            r.strategy_bundle_hash,
+            r.agent_id,
             r.started_at.to_rfc3339(),
         );
     }
@@ -274,7 +274,7 @@ async fn run_show(args: ShowArgs) -> CliResult<()> {
     println!("status          {}", run.status.as_str());
     println!("mode            {}", run.mode.as_str());
     println!("scenario        {}", run.scenario_id);
-    println!("strategy_hash   {}", run.strategy_bundle_hash);
+    println!("strategy        {}", run.agent_id);
     println!("started_at      {}", run.started_at.to_rfc3339());
     if let Some(c) = run.completed_at {
         println!("completed_at    {}", c.to_rfc3339());
@@ -334,7 +334,7 @@ async fn run_compare(args: CompareArgs) -> CliResult<()> {
         println!(
             "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
             r.id,
-            r.strategy_bundle_hash,
+            r.agent_id,
             r.scenario_id,
             r.status.as_str(),
             tr,
@@ -396,7 +396,7 @@ async fn run_attest(args: AttestArgs) -> CliResult<()> {
     let key_prefix: String = att.signing_pubkey_hex.chars().take(16).collect();
     println!("Attested run {}", args.run_id);
     println!("  scenario        {}", att.scenario_id);
-    println!("  strategy_hash   {}", att.strategy_bundle_hash);
+    println!("  strategy        {}", att.agent_id);
     println!("  ran_at          {}", att.ran_at.to_rfc3339());
     println!("  pubkey          {}…", key_prefix);
     println!("  signature       {}…", sig_prefix);

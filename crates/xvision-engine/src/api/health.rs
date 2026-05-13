@@ -1,5 +1,5 @@
 //! `/api/health` engine surface — probes the local dependencies a v1 install
-//! actually relies on (xvn home dir, sqlite pool, bundle store).
+//! actually relies on (xvn home dir, sqlite pool, strategy store).
 //!
 //! Probes that need credentials or external network (alpaca paper, llm) are
 //! intentionally deferred — they show up in plan 2 once the providers and
@@ -235,9 +235,8 @@ mod tests {
     /// `"0 (no strategies dir yet)"`. Catches the regression where someone
     /// "fixes" the missing-dir branch to return Degraded.
     ///
-    /// Note: `ApiContext::open()` seeds `bundle-canonical-defaults` into the
-    /// strategies dir, so we use `ApiContext::new()` here to keep the dir
-    /// genuinely absent.
+    /// Note: `ApiContext::open()` creates `xvn_home`, so we use
+    /// `ApiContext::new()` here to keep the strategies dir genuinely absent.
     #[tokio::test]
     async fn check_flags_missing_strategies_dir_renders_zero_count_ok() {
         use sqlx::SqlitePool;

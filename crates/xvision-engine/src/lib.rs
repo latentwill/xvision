@@ -20,6 +20,6 @@ pub mod tools;
 pub use strategies::Strategy;
 pub use error::EngineError;
 
-// Re-export the bundle-side risk types so consumers don't have to depend
-// on xvision-core directly just to construct a StrategyBundle.
+// Re-export strategy risk types so consumers don't have to depend on
+// xvision-core directly just to construct a Strategy.
 pub use xvision_core::{Capital, RiskCaps};
