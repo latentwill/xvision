@@ -159,3 +159,10 @@ Avoid:
 - Verified with frontend install, full frontend test suite, frontend typecheck,
   `git diff --check`, and clean branch status. Rust scenario tests remain
   CI/non-deploy follow-up.
+
+### `strategy-agent-inspector`
+
+- Completed checkpoint: `strategy-agent-inspector` commit `cd5687d` adapts the
+  authoring/Inspector UI for strategy AgentRefs and pipeline state.
+- Verified with `corepack pnpm --dir frontend/web test -- authoring-risk`,
+  frontend typecheck, and `git diff --check`.
