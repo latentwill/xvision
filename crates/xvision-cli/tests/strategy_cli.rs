@@ -217,6 +217,27 @@ fn templates_lists_known_templates() {
 }
 
 #[test]
+fn templates_json_exposes_registry_version_and_summaries() {
+    let dir = tempdir().unwrap();
+    let out = xvn(&["strategy", "templates", "--json"], dir.path());
+    assert!(out.status.success());
+    let body: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(body["registry_version"], registry::registry_version());
+    let templates = body["templates"].as_array().expect("templates array");
+    let mean_reversion = templates
+        .iter()
+        .find(|template| template["name"] == "mean_reversion")
+        .expect("mean_reversion template");
+    assert_eq!(mean_reversion["display_name"], "Buys dips");
+    assert!(
+        mean_reversion["plain_summary"]
+            .as_str()
+            .expect("plain_summary")
+            .contains("sideways markets")
+    );
+}
+
+#[test]
 fn add_agent_set_pipeline_and_remove_agent_roundtrip() {
     let dir = tempdir().unwrap();
 

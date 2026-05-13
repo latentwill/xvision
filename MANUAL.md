@@ -299,7 +299,7 @@ remote CLI job API or `scripts/xvn-remote.py`.
 
 ```bash
 xvn doctor [--json]
-xvn strategy templates                 # list templates
+xvn strategy templates [--json]        # list templates
 xvn strategy create --template <t> --name <n> [--json]
 xvn strategy create --from-file strategy.json [--json]
 xvn strategy validate <id>

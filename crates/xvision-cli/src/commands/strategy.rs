@@ -58,7 +58,11 @@ enum StrategyAction {
     /// Show a saved strategy as JSON.
     Show { id: String },
     /// List available strategy templates.
-    Templates,
+    Templates {
+        /// Emit the template registry and entries as JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Add a library agent reference to a strategy.
     AddAgent {
         /// Strategy id returned from `xvn strategy create`.
@@ -122,7 +126,7 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
         StrategyAction::Validate { id } => validate(&id).await,
         StrategyAction::Ls { json } => ls(json).await,
         StrategyAction::Show { id } => show(&id).await,
-        StrategyAction::Templates => templates().await,
+        StrategyAction::Templates { json } => templates(json).await,
         StrategyAction::AddAgent { strategy_id, agent_id, role } => {
             add_agent(&strategy_id, &agent_id, &role).await
         }
@@ -343,8 +347,31 @@ async fn show(id: &str) -> CliResult<()> {
     Ok(())
 }
 
-async fn templates() -> CliResult<()> {
+async fn templates(json: bool) -> CliResult<()> {
     let names = registry::list_template_names();
+    if json {
+        let templates = names
+            .iter()
+            .filter_map(|name| {
+                registry::get(name).map(|tpl| {
+                    serde_json::json!({
+                        "name": tpl.name(),
+                        "display_name": tpl.display_name(),
+                        "plain_summary": tpl.plain_summary(),
+                    })
+                })
+            })
+            .collect::<Vec<_>>();
+        let out = serde_json::json!({
+            "registry_version": registry::registry_version(),
+            "templates": templates,
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&out).exit_with(XvnExit::Upstream)?
+        );
+        return Ok(());
+    }
     for name in names {
         if let Some(tpl) = registry::get(&name) {
             println!("{:<20} {}", name, tpl.display_name());

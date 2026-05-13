@@ -74,6 +74,11 @@ describe("StrategiesNewRoute", () => {
 
     const name = screen.getByLabelText("Name");
     fireEvent.change(name, { target: { value: "Funding Fade Agent" } });
+    expect(
+      screen.getByText(
+        "xvn strategy create --template custom --name 'Funding Fade Agent' --json",
+      ),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Create strategy" }));
 
     await waitFor(() => {

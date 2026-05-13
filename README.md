@@ -72,6 +72,7 @@ cargo build --release
 
 # 4. Configure a strategy from a template
 ./target/release/xvn strategy templates
+./target/release/xvn strategy templates --json
 STRATEGY_ID=$(./target/release/xvn strategy create --template mean_reversion --name my-first-agent)
 
 # 5. Run or inspect evals
