@@ -34,7 +34,7 @@ import {
   type ContentBlock,
   type ContextScope,
   type WizardEvent,
-  deleteSession,
+  createSession,
   headerLabel,
   listSessions,
   loadSessionHistory,
@@ -205,26 +205,26 @@ export function ChatRail() {
   );
 
   const startFresh = useCallback(async () => {
-    if (!sessionId) return;
     abortRef.current?.abort();
-    try {
-      await deleteSession(sessionId);
-    } catch {
-      /* best-effort — server may have already dropped it */
-    }
-    setSessionId(null);
+    setInput("");
     setBubbles([]);
     setError(null);
-    // Force the open-effect to re-resolve a session for this scope.
-    // After delete, the next resolve will find no match and create one.
-    lastScopeKeyRef.current = null;
-    void sessionsQ.refetch();
-  }, [sessionId, sessionsQ]);
+    try {
+      const created = await createSession(scope);
+      setSessionId(created.session_id);
+      setBubbles(historyToBubbles(created.history));
+      lastScopeKeyRef.current = key;
+      void sessionsQ.refetch();
+    } catch (e) {
+      setError(formatErr(e));
+    }
+  }, [key, scope, sessionsQ]);
 
   const recentScopeSessions = useMemo(() => {
-    const all = sessionsQ.data ?? [];
-    return all.filter((s) => scopeKey(s.scope) === key).slice(0, 8);
-  }, [sessionsQ.data, key]);
+    return (sessionsQ.data ?? [])
+      .filter((s) => scopeKey(s.scope) === key)
+      .slice(0, 8);
+  }, [key, sessionsQ.data]);
 
   if (!open) {
     return (
@@ -258,7 +258,7 @@ export function ChatRail() {
             onClick={startFresh}
             title="Start a new conversation in this context"
           >
-            Start fresh
+            New chat
           </button>
           <button
             className="text-text-3 hover:text-text"
@@ -350,7 +350,8 @@ function Thread({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    ref.current?.scrollTo({
+    if (!ref.current || typeof ref.current.scrollTo !== "function") return;
+    ref.current.scrollTo({
       top: ref.current.scrollHeight,
       behavior: "smooth",
     });

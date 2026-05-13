@@ -1,4 +1,5 @@
 //! Integration tests for the chat rail REST surface:
+//!   POST   /api/chat-rail/sessions
 //!   POST   /api/chat-rail/sessions/resolve
 //!   GET    /api/chat-rail/sessions/:id/history
 //!   DELETE /api/chat-rail/sessions/:id
@@ -41,6 +42,40 @@ async fn resolve_creates_session_on_first_call() {
         0,
         "fresh resolve has empty history"
     );
+}
+
+#[tokio::test]
+async fn create_session_always_starts_new_history_without_deleting_old_session() {
+    let (server, _tmp, state) = boot().await;
+    let scope = ContextScope::Route {
+        route: "/strategies".into(),
+    };
+    let old_id = ChatSessionStore::create_session(&state.pool, &scope)
+        .await
+        .unwrap();
+    ChatSessionStore::append(
+        &state.pool,
+        &old_id,
+        "user",
+        &[json!({"type":"text","text":"previous question"})],
+    )
+    .await
+    .unwrap();
+
+    let resp = server
+        .post("/api/chat-rail/sessions")
+        .json(&json!({"scope": {"scope": "route", "route": "/strategies"}}))
+        .await;
+    resp.assert_status_ok();
+    let body: Value = resp.json();
+    let new_id = body["session_id"].as_str().expect("new id present");
+    assert_ne!(new_id, old_id, "new chat creates a distinct session");
+    assert_eq!(body["history"].as_array().unwrap().len(), 0);
+
+    let old_history = ChatSessionStore::load_history(&state.pool, &old_id)
+        .await
+        .unwrap();
+    assert_eq!(old_history.len(), 1, "old conversation stays available");
 }
 
 #[tokio::test]

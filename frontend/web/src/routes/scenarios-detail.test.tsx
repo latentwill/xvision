@@ -93,6 +93,15 @@ const scenario = {
 const chartPayload: ScenarioChartPayload = {
   scenario,
   bars: [],
+  indicators: {
+    sma_20: [], sma_30: [], sma_50: [], sma_60: [], sma_90: [], sma_200: [],
+    ema_20: [], ema_30: [], ema_50: [], ema_60: [], ema_90: [], ema_200: [],
+    bollinger: { upper: [], middle: [], lower: [] },
+    donchian: { upper: [], lower: [] },
+    rsi_14: [],
+    macd: { line: [], signal: [], histogram: [] },
+    atr_14: [],
+  },
   cache_status: { type: "NotCached", expected_count: 540 },
 };
 

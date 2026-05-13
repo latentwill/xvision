@@ -4,4 +4,4 @@ import type { DonchianSeries } from "./DonchianSeries";
 import type { IndicatorPoint } from "./IndicatorPoint";
 import type { MacdSeries } from "./MacdSeries";
 
-export type Indicators = { sma_20: Array<IndicatorPoint>, sma_50: Array<IndicatorPoint>, sma_200: Array<IndicatorPoint>, ema_20: Array<IndicatorPoint>, ema_50: Array<IndicatorPoint>, ema_200: Array<IndicatorPoint>, bollinger: BollingerSeries, donchian: DonchianSeries, rsi_14: Array<IndicatorPoint>, macd: MacdSeries, atr_14: Array<IndicatorPoint>, };
+export type Indicators = { sma_20: Array<IndicatorPoint>, sma_30: Array<IndicatorPoint>, sma_50: Array<IndicatorPoint>, sma_60: Array<IndicatorPoint>, sma_90: Array<IndicatorPoint>, sma_200: Array<IndicatorPoint>, ema_20: Array<IndicatorPoint>, ema_30: Array<IndicatorPoint>, ema_50: Array<IndicatorPoint>, ema_60: Array<IndicatorPoint>, ema_90: Array<IndicatorPoint>, ema_200: Array<IndicatorPoint>, bollinger: BollingerSeries, donchian: DonchianSeries, rsi_14: Array<IndicatorPoint>, macd: MacdSeries, atr_14: Array<IndicatorPoint>, };

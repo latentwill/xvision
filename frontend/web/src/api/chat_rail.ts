@@ -54,6 +54,15 @@ export type ChatSessionSummary = {
   last_activity_at: string;
 };
 
+export function createSession(
+  scope: ContextScope,
+): Promise<ResolveSessionResp> {
+  return apiFetch<ResolveSessionResp>("/api/chat-rail/sessions", {
+    method: "POST",
+    body: JSON.stringify({ scope }),
+  });
+}
+
 /// Resolve the chat-rail session for the current scope. Server returns
 /// the most-recent session matching the scope (with its full history),
 /// or creates a fresh empty session if no match exists. Always lands a

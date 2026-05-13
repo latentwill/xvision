@@ -574,7 +574,7 @@ function StartEvalDialog({
               <option value="">— pick a strategy —</option>
               {(strategies.data ?? []).map((s: StrategyListItem) => (
                 <option key={s.agent_id} value={s.agent_id}>
-                  {s.display_name} · {s.agent_id}
+                  {s.display_name || "Untitled strategy"}
                 </option>
               ))}
             </select>

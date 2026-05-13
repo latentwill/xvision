@@ -385,7 +385,6 @@ function EditProviderForm({
   const qc = useQueryClient();
   const [kind, setKind] = useState(row.kind);
   const [baseUrl, setBaseUrl] = useState(row.base_url);
-  const [apiKeyEnv, setApiKeyEnv] = useState(row.api_key_env);
   const [apiKey, setApiKey] = useState("");
 
   const save = useMutation({
@@ -397,20 +396,16 @@ function EditProviderForm({
   });
 
   const trimmedBaseUrl = baseUrl.trim();
-  const trimmedEnv = apiKeyEnv.trim();
+  const trimmedEnv = row.api_key_env;
   const errors: string[] = [];
   if (trimmedBaseUrl === "") {
     errors.push("base URL is required");
   } else if (!isHttpUrl(trimmedBaseUrl)) {
     errors.push("base URL must start with http:// or https://");
   }
-  if (kind !== "local-candle" && trimmedEnv === "") {
-    errors.push("API key env is required");
-  }
   const dirty =
     kind !== row.kind ||
     trimmedBaseUrl !== row.base_url ||
-    trimmedEnv !== row.api_key_env ||
     apiKey.trim() !== "";
   const submittable = dirty && errors.length === 0;
 
@@ -428,7 +423,7 @@ function EditProviderForm({
       }}
       className="px-4 space-y-3"
     >
-      <div className="grid grid-cols-1 md:grid-cols-[150px_1fr_220px] gap-3">
+      <div className="grid grid-cols-1 md:grid-cols-[150px_1fr] gap-3">
         <Field label="Kind">
           <select
             value={kind}
@@ -444,13 +439,6 @@ function EditProviderForm({
           <input
             value={baseUrl}
             onChange={(e) => setBaseUrl(e.target.value)}
-            className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
-          />
-        </Field>
-        <Field label="API key env">
-          <input
-            value={apiKeyEnv}
-            onChange={(e) => setApiKeyEnv(e.target.value)}
             className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
           />
         </Field>

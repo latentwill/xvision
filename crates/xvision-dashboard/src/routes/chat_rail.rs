@@ -3,7 +3,7 @@
 //! Plan #11 Phase C Task 4. The legacy one-shot `/api/wizard/chat` route
 //! creates a new session per request; the rail's endpoints expose the
 //! full session lifecycle so the React rail can resume across routes
-//! and start fresh on demand.
+//! and create a new chat on demand.
 //!
 //! Sessions are owned server-side, keyed by `ContextScope`. The rail
 //! never holds a stale id across DB resets or fresh deploys — it just
@@ -11,6 +11,7 @@
 //!
 //! Endpoints:
 //!
+//! - `POST   /api/chat-rail/sessions`               → `{ session_id, history }`
 //! - `POST   /api/chat-rail/sessions/resolve`       → `{ session_id, history }`
 //! - `GET    /api/chat-rail/sessions/:id/history`   → `Vec<ChatMessage>`
 //! - `DELETE /api/chat-rail/sessions/:id`           → 204
@@ -46,6 +47,21 @@ pub struct ResolveSessionReq {
 pub struct ResolveSessionResp {
     pub session_id: String,
     pub history: Vec<ChatMessage>,
+}
+
+/// POST `/api/chat-rail/sessions` — create a fresh empty session for
+/// this scope without deleting previous conversations in the same scope.
+pub async fn create_session(
+    State(state): State<AppState>,
+    Json(req): Json<ResolveSessionReq>,
+) -> Result<Json<ResolveSessionResp>, DashboardError> {
+    let session_id = ChatSessionStore::create_session(&state.pool, &req.scope)
+        .await
+        .map_err(DashboardError::Internal)?;
+    Ok(Json(ResolveSessionResp {
+        session_id,
+        history: Vec::new(),
+    }))
 }
 
 /// POST `/api/chat-rail/sessions/resolve` — the rail's mount-time
