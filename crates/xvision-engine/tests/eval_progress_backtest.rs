@@ -35,6 +35,10 @@ async fn fresh_store() -> RunStore {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/014_eval_agent_id.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     RunStore::new(pool)
 }
 
@@ -44,11 +48,11 @@ fn long_open_dispatch() -> Arc<dyn LlmDispatch> {
     ))
 }
 
-fn build_bundle(agent_id: &str) -> Strategy {
+fn build_strategy(agent_id: &str) -> Strategy {
     Strategy {
         manifest: PublicManifest {
             id: agent_id.into(),
-            display_name: "backtest-progress-test bundle".into(),
+            display_name: "backtest-progress-test strategy".into(),
             plain_summary: "for eval::progress backtest tests".into(),
             creator: "@tester".into(),
             template: "mean_reversion".into(),
@@ -60,6 +64,8 @@ fn build_bundle(agent_id: &str) -> Strategy {
             risk_preset_or_config: "balanced".into(),
             published_at: None,
         },
+        agents: Vec::new(),
+        pipeline: Default::default(),
         regime_slot: None,
         intern_slot: None,
         trader_slot: Some(LLMSlot {
@@ -83,10 +89,10 @@ async fn backtest_executor_emits_all_progress_event_types() {
         .into_iter()
         .find(|s| s.id == "flash-crash-2024-08")
         .expect("flash-crash-2024-08 scenario must exist");
-    let bundle = build_bundle("01TESTBUNDLEPROGBT00000001");
+    let strategy = build_strategy("01TESTSTRATEGYPROGBT00000001");
 
     let mut run = Run::new_queued(
-        bundle.manifest.id.clone(),
+        strategy.manifest.id.clone(),
         scenario.id.clone(),
         RunMode::Backtest,
     );
@@ -104,7 +110,7 @@ async fn backtest_executor_emits_all_progress_event_types() {
     let executor = BacktestExecutor::with_progress(tx);
 
     let result = executor
-        .run(&mut run, &bundle, &scenario, &[], dispatch, tools, &store)
+        .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)
         .await;
     assert!(
         result.is_ok(),
@@ -205,9 +211,9 @@ async fn backtest_executor_runs_clean_with_no_progress_subscriber() {
         .into_iter()
         .find(|s| s.id == "flash-crash-2024-08")
         .expect("flash-crash-2024-08 scenario must exist");
-    let bundle = build_bundle("01TESTBUNDLEPROGBT00000002");
+    let strategy = build_strategy("01TESTSTRATEGYPROGBT00000002");
     let mut run = Run::new_queued(
-        bundle.manifest.id.clone(),
+        strategy.manifest.id.clone(),
         scenario.id.clone(),
         RunMode::Backtest,
     );
@@ -222,7 +228,7 @@ async fn backtest_executor_runs_clean_with_no_progress_subscriber() {
     let executor = BacktestExecutor::with_progress(tx);
 
     executor
-        .run(&mut run, &bundle, &scenario, &[], dispatch, tools, &store)
+        .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)
         .await
         .expect("run should still succeed without a subscriber");
 }
@@ -239,9 +245,9 @@ async fn backtest_executor_default_constructor_is_silent() {
         .into_iter()
         .find(|s| s.id == "flash-crash-2024-08")
         .expect("flash-crash-2024-08 scenario must exist");
-    let bundle = build_bundle("01TESTBUNDLEPROGBT00000003");
+    let strategy = build_strategy("01TESTSTRATEGYPROGBT00000003");
     let mut run = Run::new_queued(
-        bundle.manifest.id.clone(),
+        strategy.manifest.id.clone(),
         scenario.id.clone(),
         RunMode::Backtest,
     );
@@ -252,7 +258,7 @@ async fn backtest_executor_default_constructor_is_silent() {
     let executor = BacktestExecutor::new();
 
     executor
-        .run(&mut run, &bundle, &scenario, &[], dispatch, tools, &store)
+        .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)
         .await
         .expect("BacktestExecutor::new() should run to completion");
 }

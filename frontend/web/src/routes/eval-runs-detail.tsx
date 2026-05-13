@@ -108,7 +108,7 @@ function SummaryCard({ summary }: { summary: RunSummary }) {
           <div className="text-text-2 text-[12px] mt-1">
             strategy{" "}
             <code className="font-mono text-text">
-              {summary.strategy_bundle_hash.slice(0, 12)}
+              {summary.agent_id.slice(0, 12)}
             </code>
           </div>
         </div>

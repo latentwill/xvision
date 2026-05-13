@@ -87,7 +87,7 @@ impl RunMode {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Run {
     pub id: String, // ULID
-    pub strategy_bundle_hash: String,
+    pub agent_id: String,
     pub scenario_id: String,
     pub params_override: Option<serde_json::Value>,
     pub mode: RunMode,
@@ -104,13 +104,13 @@ pub struct Run {
 impl Run {
     /// Construct a fresh `Queued` run with a generated ULID and `started_at = now`.
     pub fn new_queued(
-        strategy_bundle_hash: String,
+        agent_id: String,
         scenario_id: String,
         mode: RunMode,
     ) -> Self {
         Self {
             id: Ulid::new().to_string(),
-            strategy_bundle_hash,
+            agent_id,
             scenario_id,
             params_override: None,
             mode,

@@ -89,7 +89,7 @@ pub type CliResult<T> = Result<T, CliError>;
 /// site:
 ///
 /// ```ignore
-/// let bundle = store().load(id).await.exit_with(XvnExit::NotFound)?;
+/// let strategy = store().load(id).await.exit_with(XvnExit::NotFound)?;
 /// ```
 pub trait ResultExt<T> {
     fn exit_with(self, code: XvnExit) -> CliResult<T>;

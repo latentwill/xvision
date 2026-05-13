@@ -36,7 +36,7 @@ pub enum ProgressEvent {
     /// Emitted once at the start of the run, before the first decision.
     RunStarted {
         run_id: String,
-        /// Pre-run token estimate from the bundle's tokens module. 0 if
+        /// Pre-run token estimate from the strategy's tokens module. 0 if
         /// the executor doesn't compute one (today: PaperExecutor).
         estimated_tokens: u64,
     },

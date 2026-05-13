@@ -2,7 +2,7 @@ use xvision_engine::templates::registry;
 use xvision_engine::tokens::{estimate_pipeline_tokens, estimate_pipeline_tokens_from_slots};
 
 #[test]
-fn estimator_returns_positive_token_counts_for_real_bundle() {
+fn estimator_returns_positive_token_counts_for_real_strategy() {
     let tpl = registry::get("mean_reversion").unwrap();
     let b = tpl.new_draft("01H8N7ZTKN".into(), "tkn-test".into(), "@t".into());
     let est = estimate_pipeline_tokens(&b, /*decision_points=*/ 100);

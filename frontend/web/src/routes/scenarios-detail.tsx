@@ -438,7 +438,7 @@ function RunsTab({ scenarioId }: { scenarioId: string }) {
                 </Link>
               </td>
               <td className="py-2 pr-4 font-mono text-[12px] text-text-2">
-                {r.strategy_bundle_hash}
+                {r.agent_id}
               </td>
               <td className="py-2 pr-4 text-text-2">{r.mode}</td>
               <td className="py-2 pr-4 text-text-2">{r.status}</td>

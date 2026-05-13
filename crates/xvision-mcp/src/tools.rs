@@ -150,7 +150,7 @@ pub struct UpdateSlotReq {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SetMechanicalParamReq {
     pub id: String,
-    /// Key inside `bundle.mechanical_params` (template-specific).
+    /// Key inside `Strategy.mechanical_params` (template-specific).
     pub key: String,
     /// New value (any JSON type the template accepts).
     pub value: serde_json::Value,
@@ -174,9 +174,9 @@ pub struct SetRiskConfigReq {
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 pub struct EvalListReq {
-    /// Optional filter: only return runs for this strategy bundle id.
+    /// Optional filter: only return runs for this strategy agent id.
     #[serde(default)]
-    pub strategy_bundle_hash: Option<String>,
+    pub agent_id: Option<String>,
     /// Optional filter: only return runs against this scenario id.
     #[serde(default)]
     pub scenario_id: Option<String>,
@@ -357,7 +357,7 @@ impl XvisionTools {
 
     // -----------------------------------------------------------------------
     // authoring tools — operate on `$XVN_HOME/strategies/<id>.json` via
-    // xvision_engine's bundle store + template registry + validator.
+    // xvision_engine's strategy store + template registry + validator.
     // -----------------------------------------------------------------------
 
     /// List strategy templates available to `xvn_create_strategy`. Returns an
@@ -372,7 +372,7 @@ impl XvisionTools {
     /// Create a new strategy draft from a template. Persists to
     /// `$XVN_HOME/strategies/<id>.json`. Returns `{ id }`.
     #[tool(
-        description = "Create a new strategy draft from a template. Persists the bundle and returns { id } (ULID)."
+        description = "Create a new strategy draft from a template. Persists the strategy and returns { id } (ULID)."
     )]
     async fn xvn_create_strategy(
         &self,
@@ -391,23 +391,23 @@ impl XvisionTools {
         json_or_err(&out)
     }
 
-    /// Get a strategy bundle by id. Returns the full `Strategy` JSON.
-    #[tool(description = "Get a strategy bundle by id. Returns the full Strategy JSON.")]
+    /// Get a strategy by id. Returns the full `Strategy` JSON.
+    #[tool(description = "Get a strategy by id. Returns the full Strategy JSON.")]
     async fn xvn_get_strategy(
         &self,
         Parameters(req): Parameters<StrategyId>,
     ) -> Result<String, rmcp::ErrorData> {
-        let bundle = authoring::get_strategy(&self.store(), &req.id)
+        let strategy = authoring::get_strategy(&self.store(), &req.id)
             .await
             .map_err(authoring_err)?;
-        json_or_err(&bundle)
+        json_or_err(&strategy)
     }
 
-    /// Update a slot on a strategy bundle. Only fields with non-null values
+    /// Update a slot on a strategy. Only fields with non-null values
     /// are mutated. Returns `{ id, updated: [...] }` listing which fields
     /// changed.
     #[tool(
-        description = "Update a slot on a strategy bundle. Only fields with non-null values are mutated. Returns { id, updated }."
+        description = "Update a slot on a strategy. Only fields with non-null values are mutated. Returns { id, updated }."
     )]
     async fn xvn_update_slot(
         &self,
@@ -428,10 +428,10 @@ impl XvisionTools {
         json_or_err(&out)
     }
 
-    /// Set a key inside `bundle.mechanical_params`. Templates document
+    /// Set a key inside `Strategy.mechanical_params`. Templates document
     /// which keys they accept. Returns `{ id, key }`.
     #[tool(
-        description = "Set a key inside bundle.mechanical_params. Templates document which keys they accept. Returns { id, key }."
+        description = "Set a key inside Strategy.mechanical_params. Templates document which keys they accept. Returns { id, key }."
     )]
     async fn xvn_set_mechanical_param(
         &self,
@@ -452,11 +452,11 @@ impl XvisionTools {
         json_or_err(&serde_json::json!({ "id": id, "key": key }))
     }
 
-    /// Set the risk config on a strategy bundle. Provide either `preset`
+    /// Set the risk config on a strategy. Provide either `preset`
     /// (one of `conservative` / `balanced` / `aggressive`) or `explicit`
     /// (a full `RiskConfig`). Mutually exclusive. Returns `{ id, applied }`.
     #[tool(
-        description = "Set the risk config on a strategy bundle. Supply either preset (conservative/balanced/aggressive) or explicit (full RiskConfig). Mutually exclusive. Returns { id, applied }."
+        description = "Set the risk config on a strategy. Supply either preset (conservative/balanced/aggressive) or explicit (full RiskConfig). Mutually exclusive. Returns { id, applied }."
     )]
     async fn xvn_set_risk_config(
         &self,
@@ -485,7 +485,7 @@ impl XvisionTools {
         json_or_err(&out)
     }
 
-    /// Validate a strategy draft against bundle invariants (trader slot
+    /// Validate a strategy draft against strategy invariants (trader slot
     /// required, asset universe non-empty, risk in range, declared tools
     /// granted by some slot, etc.). Returns `{ id, ok, errors }` —
     /// `errors` is empty when `ok` is true.
@@ -516,11 +516,11 @@ impl XvisionTools {
     // construction from env, which deserves its own integration concern.
 
     /// List eval runs. Returns the slim `RunSummary` shape (id +
-    /// strategy_bundle_hash + scenario_id + mode + status + started_at +
+    /// agent_id + scenario_id + mode + status + started_at +
     /// completed_at + headline metrics). Optional filters narrow the
     /// result to a strategy / scenario / status.
     #[tool(
-        description = "List eval runs (slim shape). Optional filters: strategy_bundle_hash, scenario_id, status."
+        description = "List eval runs (slim shape). Optional filters: agent_id, scenario_id, status."
     )]
     async fn xvn_eval_list(
         &self,
@@ -531,7 +531,7 @@ impl XvisionTools {
         let summaries = api_eval::list_summaries(
             &ctx,
             ListRunsRequest {
-                strategy_bundle_hash: req.strategy_bundle_hash,
+                agent_id: req.agent_id,
                 scenario_id: req.scenario_id,
                 status,
             },
@@ -575,10 +575,10 @@ impl XvisionTools {
         json_or_err(&run.metrics)
     }
 
-    /// List the canonical scenarios bundled with this binary. These are
+    /// List the canonical scenarios packaged with this binary. These are
     /// the same scenarios the CLI's `xvn eval scenarios` shows.
     #[tool(
-        description = "List canonical scenarios bundled with this binary. Returns id, display_name, asset_universe, regime_tags, time_window_days."
+        description = "List canonical scenarios packaged with this binary. Returns id, display_name, asset_universe, regime_tags, time_window_days."
     )]
     async fn xvn_eval_scenarios(&self) -> Result<String, rmcp::ErrorData> {
         let ctx = self.api_context().await?;
@@ -716,9 +716,9 @@ mod tests {
             .xvn_get_strategy(Parameters(StrategyId { id: id.clone() }))
             .await
             .unwrap();
-        let bundle = parsed(&g);
-        assert_eq!(bundle["manifest"]["id"], id);
-        assert_eq!(bundle["manifest"]["template"], "trend_follower");
+        let strategy = parsed(&g);
+        assert_eq!(strategy["manifest"]["id"], id);
+        assert_eq!(strategy["manifest"]["template"], "trend_follower");
     }
 
     #[tokio::test]
@@ -766,8 +766,8 @@ mod tests {
             .xvn_get_strategy(Parameters(StrategyId { id }))
             .await
             .unwrap();
-        let bundle = parsed(&g);
-        assert_eq!(bundle["trader_slot"]["prompt"], "New prompt");
+        let strategy = parsed(&g);
+        assert_eq!(strategy["trader_slot"]["prompt"], "New prompt");
     }
 
     #[tokio::test]
@@ -821,8 +821,8 @@ mod tests {
             .xvn_get_strategy(Parameters(StrategyId { id }))
             .await
             .unwrap();
-        let bundle = parsed(&g);
-        assert_eq!(bundle["mechanical_params"]["ema_fast"], 8);
+        let strategy = parsed(&g);
+        assert_eq!(strategy["mechanical_params"]["ema_fast"], 8);
     }
 
     #[tokio::test]
@@ -852,9 +852,9 @@ mod tests {
             .xvn_get_strategy(Parameters(StrategyId { id }))
             .await
             .unwrap();
-        let bundle = parsed(&g);
-        assert_eq!(bundle["risk"]["risk_pct_per_trade"], 0.015);
-        assert_eq!(bundle["risk"]["max_concurrent_positions"], 2);
+        let strategy = parsed(&g);
+        assert_eq!(strategy["risk"]["risk_pct_per_trade"], 0.015);
+        assert_eq!(strategy["risk"]["max_concurrent_positions"], 2);
     }
 
     #[tokio::test]
@@ -919,13 +919,13 @@ mod tests {
     /// Returns the run id so tests can refer back to it.
     async fn seed_run(
         tools: &XvisionTools,
-        bundle_hash: &str,
+        agent_id: &str,
         scenario_id: &str,
         total_return_pct: f64,
     ) -> String {
         let ctx = tools.api_context().await.unwrap();
         let store = RunStore::new(ctx.db.clone());
-        let mut run = Run::new_queued(bundle_hash.into(), scenario_id.into(), RunMode::Backtest);
+        let mut run = Run::new_queued(agent_id.into(), scenario_id.into(), RunMode::Backtest);
         run.status = RunStatus::Completed;
         store.create(&run).await.unwrap();
 
@@ -991,7 +991,7 @@ mod tests {
 
         let s = tools
             .xvn_eval_list(Parameters(EvalListReq {
-                strategy_bundle_hash: Some("h-B".into()),
+                agent_id: Some("h-B".into()),
                 ..Default::default()
             }))
             .await

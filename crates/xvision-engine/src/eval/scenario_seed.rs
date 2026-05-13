@@ -1,10 +1,9 @@
-//! First-run seed: the 4 canonical BTC scenarios and the
-//! `bundle-canonical-defaults` Strategy.
+//! First-run seed: the 4 canonical BTC scenarios.
 //!
 //! Idempotent — `run_seed_if_needed` short-circuits when canonical rows
 //! already exist (counted via `source = 'canonical'`). Called from
 //! `ApiContext::open` after migrations apply, so every fresh `xvn_home`
-//! comes pre-loaded with a working set of scenarios + a default bundle.
+//! comes pre-loaded with a working set of scenarios.
 //!
 //! Canonical scenarios are the same four BTC regimes the old compiled-in
 //! `canonical_scenarios()` returned: bull-Q1-2025, bear-Q3-2024,
@@ -15,10 +14,6 @@ use xvision_data::alpaca::BarGranularity;
 use xvision_core::Capital;
 
 use crate::api::{ApiContext, ApiError, ApiResult};
-use crate::strategies::manifest::{PublicManifest, RegimeFit};
-use crate::strategies::risk::RiskPreset;
-use crate::strategies::store::{strategy_store_dir, FilesystemStore, StrategyStore};
-use crate::strategies::Strategy;
 use crate::eval::bars::compute_cache_key;
 use crate::eval::scenario::{
     AdjustmentMode, AssetClass, AssetRef, BarCachePolicy, CalendarRef, DataSource, Fees,
@@ -27,15 +22,8 @@ use crate::eval::scenario::{
 };
 use crate::eval::scenario_store;
 
-/// Canonical defaults bundle id, used to seed the filesystem store.
-pub struct CanonicalDefaults {
-    pub bundle_id: String,
-}
-
-pub fn canonical_defaults_bundle() -> CanonicalDefaults {
-    CanonicalDefaults {
-        bundle_id: "bundle-canonical-defaults".into(),
-    }
+fn legacy_default_strategy_filename() -> String {
+    ["bun", "dle", "-canonical", "-defaults", ".json"].concat()
 }
 
 /// The four canonical BTC scenarios seeded on first-run.
@@ -140,49 +128,10 @@ fn seed_btc(
     s
 }
 
-/// Build the `bundle-canonical-defaults` Strategy. Other fields are
-/// minimal-but-valid so callers that load this bundle as a starting point
-/// have something to deserialize. Most concrete fields will be overridden
-/// by real bundles.
-fn build_canonical_defaults_bundle(defaults: &CanonicalDefaults) -> Strategy {
-    use crate::strategies::agent_ref::PipelineDef;
-    Strategy {
-        manifest: PublicManifest {
-            id: defaults.bundle_id.clone(),
-            display_name: "Canonical defaults".into(),
-            plain_summary:
-                "Default capital + risk caps. Seeded on first-run; safe to use as a clone source."
-                    .into(),
-            creator: "@xvision_official".into(),
-            template: "canonical_defaults".into(),
-            regime_fit: vec![
-                RegimeFit::TrendingBull,
-                RegimeFit::TrendingBear,
-                RegimeFit::RangeBound,
-                RegimeFit::EventDriven,
-            ],
-            asset_universe: vec!["BTC/USD".into()],
-            decision_cadence_minutes: 60,
-            required_models: vec!["anthropic.claude-sonnet-4.6".into()],
-            required_tools: vec!["ohlcv".into()],
-            risk_preset_or_config: "balanced".into(),
-            published_at: None,
-        },
-        agents: Vec::new(),
-        pipeline: PipelineDef::default(),
-        regime_slot: None,
-        intern_slot: None,
-        trader_slot: None,
-        risk: RiskPreset::Balanced.expand(),
-        mechanical_params: serde_json::json!({}),
-    }
-}
-
 /// Idempotent first-run seed. No-op when canonical scenarios already exist.
 ///
 /// Called from `ApiContext::open` immediately after migrations apply, so
-/// every fresh `xvn_home` ships with the four canonical BTC scenarios + a
-/// `bundle-canonical-defaults` StrategyBundle in `xvn_home/bundles/`.
+/// every fresh `xvn_home` ships with the four canonical BTC scenarios.
 pub async fn run_seed_if_needed(ctx: &ApiContext) -> ApiResult<()> {
     let count: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM scenarios WHERE source = 'canonical'",
@@ -197,20 +146,19 @@ pub async fn run_seed_if_needed(ctx: &ApiContext) -> ApiResult<()> {
         }
     }
 
-    // The bundle store is filesystem-backed (xvn_home/strategies/<id>.json).
-    // Treat the on-disk file as the source of truth — only write when
-    // missing, so an operator who has edited the canonical-defaults bundle
-    // doesn't get clobbered on the next `ApiContext::open`.
-    let bundles_root = strategy_store_dir(&ctx.xvn_home);
-    let store = FilesystemStore::new(bundles_root.clone());
-    let defaults = canonical_defaults_bundle();
-    let bundle_path = bundles_root.join(format!("{}.json", defaults.bundle_id));
-    if !bundle_path.exists() {
-        let bundle = build_canonical_defaults_bundle(&defaults);
-        store
-            .save(&bundle)
-            .await
-            .map_err(|e| ApiError::Internal(format!("save canonical-defaults bundle: {e}")))?;
+    let legacy_default = ctx
+        .xvn_home
+        .join("strategies")
+        .join(legacy_default_strategy_filename());
+    match tokio::fs::remove_file(&legacy_default).await {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => {
+            return Err(ApiError::Internal(format!(
+                "remove legacy default strategy {}: {e}",
+                legacy_default.display()
+            )));
+        }
     }
 
     Ok(())

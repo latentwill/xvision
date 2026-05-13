@@ -105,7 +105,7 @@ async fn get_returns_not_found_for_unknown_id() {
 }
 
 #[tokio::test]
-async fn list_returns_summaries_for_existing_bundles() {
+async fn list_returns_summaries_for_existing_strategys() {
     use xvision_engine::strategies::{
         manifest::PublicManifest, risk::RiskPreset, store::StrategyStore, store::FilesystemStore,
         Strategy,
@@ -113,7 +113,7 @@ async fn list_returns_summaries_for_existing_bundles() {
 
     let (ctx, _d) = ctx_with_strategies_dir().await;
     let store = FilesystemStore::new(ctx.xvn_home.join("strategies"));
-    let bundle = Strategy {
+    let strategy = Strategy {
         manifest: PublicManifest {
             id: "01J0TESTSTRAT00000000000001".into(),
             display_name: "Test Strategy".into(),
@@ -136,7 +136,7 @@ async fn list_returns_summaries_for_existing_bundles() {
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({}),
     };
-    store.save(&bundle).await.unwrap();
+    store.save(&strategy).await.unwrap();
 
     let out = strategy::list(&ctx).await.unwrap();
     assert_eq!(out.len(), 1);
@@ -161,13 +161,13 @@ async fn list_writes_audit_row() {
 #[tokio::test]
 async fn add_agent_ref_appends_role_and_audits() {
     let (ctx, _dir) = test_context().await;
-    let strategy_bundle = create_sample_strategy(&ctx).await;
+    let strategy_strategy = create_sample_strategy(&ctx).await;
     let agent = create_sample_agent(&ctx, "Mean Rev Agent").await;
 
     let out = strategy::add_agent(
         &ctx,
         AddAgentReq {
-            strategy_id: strategy_bundle.manifest.id.clone(),
+            strategy_id: strategy_strategy.manifest.id.clone(),
             agent_id: agent.agent_id.clone(),
             role: "trader".into(),
         },
@@ -175,7 +175,7 @@ async fn add_agent_ref_appends_role_and_audits() {
     .await
     .unwrap();
 
-    assert_eq!(out.strategy_id, strategy_bundle.manifest.id);
+    assert_eq!(out.strategy_id, strategy_strategy.manifest.id);
     assert_eq!(out.agents.len(), 1);
     assert_eq!(out.agents[0].agent_id, agent.agent_id);
     assert_eq!(out.agents[0].role, "trader");
@@ -191,12 +191,12 @@ async fn add_agent_ref_appends_role_and_audits() {
 #[tokio::test]
 async fn set_pipeline_rejects_graph_edges_for_non_graph_kind() {
     let (ctx, _dir) = test_context().await;
-    let strategy_bundle = create_sample_strategy(&ctx).await;
+    let strategy_strategy = create_sample_strategy(&ctx).await;
 
     let err = strategy::set_pipeline(
         &ctx,
         SetPipelineReq {
-            strategy_id: strategy_bundle.manifest.id,
+            strategy_id: strategy_strategy.manifest.id,
             kind: PipelineKind::Single,
             edges: vec![PipelineEdge {
                 from_role: "analyst".into(),
@@ -216,12 +216,12 @@ async fn set_pipeline_rejects_graph_edges_for_non_graph_kind() {
 #[tokio::test]
 async fn add_agent_ref_rejects_missing_agent() {
     let (ctx, _dir) = test_context().await;
-    let strategy_bundle = create_sample_strategy(&ctx).await;
+    let strategy_strategy = create_sample_strategy(&ctx).await;
 
     let err = strategy::add_agent(
         &ctx,
         AddAgentReq {
-            strategy_id: strategy_bundle.manifest.id,
+            strategy_id: strategy_strategy.manifest.id,
             agent_id: "01MISSINGAGENT00000000000000".into(),
             role: "trader".into(),
         },
@@ -238,14 +238,14 @@ async fn add_agent_ref_rejects_missing_agent() {
 #[tokio::test]
 async fn set_pipeline_rejects_single_for_multi_agent_strategy() {
     let (ctx, _dir) = test_context().await;
-    let strategy_bundle = create_sample_strategy(&ctx).await;
+    let strategy_strategy = create_sample_strategy(&ctx).await;
     let first_agent = create_sample_agent(&ctx, "Scout").await;
     let second_agent = create_sample_agent(&ctx, "Trader").await;
 
     let _ = strategy::add_agent(
         &ctx,
         AddAgentReq {
-            strategy_id: strategy_bundle.manifest.id.clone(),
+            strategy_id: strategy_strategy.manifest.id.clone(),
             agent_id: first_agent.agent_id,
             role: "scout".into(),
         },
@@ -255,7 +255,7 @@ async fn set_pipeline_rejects_single_for_multi_agent_strategy() {
     let _ = strategy::add_agent(
         &ctx,
         AddAgentReq {
-            strategy_id: strategy_bundle.manifest.id.clone(),
+            strategy_id: strategy_strategy.manifest.id.clone(),
             agent_id: second_agent.agent_id,
             role: "trader".into(),
         },
@@ -266,7 +266,7 @@ async fn set_pipeline_rejects_single_for_multi_agent_strategy() {
     let err = strategy::set_pipeline(
         &ctx,
         SetPipelineReq {
-            strategy_id: strategy_bundle.manifest.id,
+            strategy_id: strategy_strategy.manifest.id,
             kind: PipelineKind::Single,
             edges: vec![],
         },
@@ -283,13 +283,13 @@ async fn set_pipeline_rejects_single_for_multi_agent_strategy() {
 #[tokio::test]
 async fn set_pipeline_rejects_graph_edges_for_unknown_roles() {
     let (ctx, _dir) = test_context().await;
-    let strategy_bundle = create_sample_strategy(&ctx).await;
+    let strategy_strategy = create_sample_strategy(&ctx).await;
     let agent = create_sample_agent(&ctx, "Trader").await;
 
     let _ = strategy::add_agent(
         &ctx,
         AddAgentReq {
-            strategy_id: strategy_bundle.manifest.id.clone(),
+            strategy_id: strategy_strategy.manifest.id.clone(),
             agent_id: agent.agent_id,
             role: "trader".into(),
         },
@@ -300,7 +300,7 @@ async fn set_pipeline_rejects_graph_edges_for_unknown_roles() {
     let err = strategy::set_pipeline(
         &ctx,
         SetPipelineReq {
-            strategy_id: strategy_bundle.manifest.id,
+            strategy_id: strategy_strategy.manifest.id,
             kind: PipelineKind::Graph,
             edges: vec![PipelineEdge {
                 from_role: "analyst".into(),
@@ -320,14 +320,14 @@ async fn set_pipeline_rejects_graph_edges_for_unknown_roles() {
 #[tokio::test]
 async fn set_pipeline_rejects_graph_cycles() {
     let (ctx, _dir) = test_context().await;
-    let strategy_bundle = create_sample_strategy(&ctx).await;
+    let strategy_strategy = create_sample_strategy(&ctx).await;
     let scout = create_sample_agent(&ctx, "Scout").await;
     let trader = create_sample_agent(&ctx, "Trader").await;
 
     let _ = strategy::add_agent(
         &ctx,
         AddAgentReq {
-            strategy_id: strategy_bundle.manifest.id.clone(),
+            strategy_id: strategy_strategy.manifest.id.clone(),
             agent_id: scout.agent_id,
             role: "scout".into(),
         },
@@ -337,7 +337,7 @@ async fn set_pipeline_rejects_graph_cycles() {
     let _ = strategy::add_agent(
         &ctx,
         AddAgentReq {
-            strategy_id: strategy_bundle.manifest.id.clone(),
+            strategy_id: strategy_strategy.manifest.id.clone(),
             agent_id: trader.agent_id,
             role: "trader".into(),
         },
@@ -348,7 +348,7 @@ async fn set_pipeline_rejects_graph_cycles() {
     let err = strategy::set_pipeline(
         &ctx,
         SetPipelineReq {
-            strategy_id: strategy_bundle.manifest.id,
+            strategy_id: strategy_strategy.manifest.id,
             kind: PipelineKind::Graph,
             edges: vec![
                 PipelineEdge {
@@ -374,7 +374,7 @@ async fn set_pipeline_rejects_graph_cycles() {
 #[tokio::test]
 async fn remove_agent_prunes_graph_edges_for_removed_role() {
     let (ctx, _dir) = test_context().await;
-    let strategy_bundle = create_sample_strategy(&ctx).await;
+    let strategy_strategy = create_sample_strategy(&ctx).await;
     let scout = create_sample_agent(&ctx, "Scout").await;
     let trader = create_sample_agent(&ctx, "Trader").await;
     let risk = create_sample_agent(&ctx, "Risk").await;
@@ -382,7 +382,7 @@ async fn remove_agent_prunes_graph_edges_for_removed_role() {
     let _ = strategy::add_agent(
         &ctx,
         AddAgentReq {
-            strategy_id: strategy_bundle.manifest.id.clone(),
+            strategy_id: strategy_strategy.manifest.id.clone(),
             agent_id: scout.agent_id,
             role: "scout".into(),
         },
@@ -392,7 +392,7 @@ async fn remove_agent_prunes_graph_edges_for_removed_role() {
     let _ = strategy::add_agent(
         &ctx,
         AddAgentReq {
-            strategy_id: strategy_bundle.manifest.id.clone(),
+            strategy_id: strategy_strategy.manifest.id.clone(),
             agent_id: trader.agent_id,
             role: "trader".into(),
         },
@@ -402,7 +402,7 @@ async fn remove_agent_prunes_graph_edges_for_removed_role() {
     let _ = strategy::add_agent(
         &ctx,
         AddAgentReq {
-            strategy_id: strategy_bundle.manifest.id.clone(),
+            strategy_id: strategy_strategy.manifest.id.clone(),
             agent_id: risk.agent_id,
             role: "risk".into(),
         },
@@ -413,7 +413,7 @@ async fn remove_agent_prunes_graph_edges_for_removed_role() {
     let _ = strategy::set_pipeline(
         &ctx,
         SetPipelineReq {
-            strategy_id: strategy_bundle.manifest.id.clone(),
+            strategy_id: strategy_strategy.manifest.id.clone(),
             kind: PipelineKind::Graph,
             edges: vec![
                 PipelineEdge {
@@ -433,7 +433,7 @@ async fn remove_agent_prunes_graph_edges_for_removed_role() {
     let out = strategy::remove_agent(
         &ctx,
         RemoveAgentReq {
-            strategy_id: strategy_bundle.manifest.id,
+            strategy_id: strategy_strategy.manifest.id,
             role: "trader".into(),
         },
     )

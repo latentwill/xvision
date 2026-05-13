@@ -1,5 +1,5 @@
 //! `BacktestExecutor` — replays an OHLCV fixture in chronological order,
-//! invoking the bundle's pipeline at each decision boundary and simulating
+//! invoking the strategy's pipeline at each decision boundary and simulating
 //! fills against the next bar's open with linear slippage + taker fees. No
 //! broker is involved; positions and equity are tracked in-memory.
 //!
@@ -159,7 +159,7 @@ impl Executor for BacktestExecutor {
     async fn run(
         &self,
         run: &mut Run,
-        bundle: &Strategy,
+        strategy: &Strategy,
         scenario: &Scenario,
         agent_slots: &[ResolvedAgentSlot],
         dispatch: Arc<dyn LlmDispatch>,
@@ -174,7 +174,7 @@ impl Executor for BacktestExecutor {
         });
 
         let result = self
-            .run_inner(run, bundle, scenario, agent_slots, dispatch, tools, store)
+            .run_inner(run, strategy, scenario, agent_slots, dispatch, tools, store)
             .await;
 
         match &result {
@@ -226,7 +226,7 @@ impl BacktestExecutor {
     async fn run_inner(
         &self,
         run: &mut Run,
-        bundle: &Strategy,
+        strategy: &Strategy,
         scenario: &Scenario,
         agent_slots: &[ResolvedAgentSlot],
         dispatch: Arc<dyn LlmDispatch>,
@@ -238,7 +238,7 @@ impl BacktestExecutor {
             .await?;
         run.status = RunStatus::Running;
 
-        // TODO(Task 5): pull from StrategyBundle. For v1 we read the first
+        // TODO(Task 5): pull from Strategy. For v1 we read the first
         // venue_symbol off the scenario's asset list (BTC/USD for canonicals).
         let asset = scenario
             .asset
@@ -246,11 +246,11 @@ impl BacktestExecutor {
             .map(|a| a.venue_symbol.clone())
             .ok_or_else(|| anyhow!("scenario {} has empty asset list", scenario.id))?;
 
-        let cadence_min = bundle.manifest.decision_cadence_minutes as i64;
+        let cadence_min = strategy.manifest.decision_cadence_minutes as i64;
         if cadence_min <= 0 {
             anyhow::bail!(
-                "bundle {} has non-positive decision_cadence_minutes",
-                bundle.manifest.id
+                "strategy {} has non-positive decision_cadence_minutes",
+                strategy.manifest.id
             );
         }
 
@@ -308,7 +308,7 @@ impl BacktestExecutor {
                 continue;
             }
             // Cadence gate: only fire on bars whose minute-aligned timestamp
-            // is divisible by the bundle's cadence. With hourly bars and
+            // is divisible by the strategy's cadence. With hourly bars and
             // 60-min cadence this always matches.
             if (bar.timestamp.timestamp() / 60) % cadence_min != 0 {
                 continue;
@@ -341,7 +341,7 @@ impl BacktestExecutor {
             });
 
             let outs = run_pipeline(PipelineInputs {
-                bundle,
+                strategy,
                 agent_slots,
                 seed_inputs: seed,
                 dispatch: dispatch.clone(),
@@ -365,7 +365,7 @@ impl BacktestExecutor {
                 slip_bps,
                 taker_bps,
                 equity,
-                risk_pct: bundle.risk.risk_pct_per_trade,
+                risk_pct: strategy.risk.risk_pct_per_trade,
             });
             position = fill.new_pos;
             entry_price = fill.new_entry;
@@ -525,7 +525,7 @@ impl BacktestExecutor {
 
         let returns = equity_to_returns(&equity_curve);
         let periods_per_year =
-            annualization_periods_per_year(bundle.manifest.decision_cadence_minutes);
+            annualization_periods_per_year(strategy.manifest.decision_cadence_minutes);
 
         let metrics = MetricsSummary {
             total_return_pct: total_return_pct(initial, equity),

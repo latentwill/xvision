@@ -56,14 +56,14 @@ fn create_agent(home: &std::path::Path, name: &str) -> String {
 
 fn create_legacy_strategy(home: &std::path::Path, id: &str, name: &str) {
     let tpl = registry::get("mean_reversion").unwrap();
-    let bundle = tpl.new_draft(id.to_string(), name.to_string(), "@strategy-cli-test".into());
+    let strategy = tpl.new_draft(id.to_string(), name.to_string(), "@strategy-cli-test".into());
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .unwrap();
     rt.block_on(async {
         let store = FilesystemStore::new(strategy_store_dir(home));
-        store.save(&bundle).await.unwrap();
+        store.save(&strategy).await.unwrap();
     });
 }
 

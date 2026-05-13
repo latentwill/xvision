@@ -220,7 +220,7 @@ async fn delete_blocked_when_runs_reference_scenario() {
 
     // Insert a fake eval_runs row referencing this scenario.
     sqlx::query(
-        "INSERT INTO eval_runs (id, strategy_bundle_hash, scenario_id, mode, status, started_at) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO eval_runs (id, agent_id, scenario_id, mode, status, started_at) VALUES (?, ?, ?, ?, ?, ?)",
     )
     .bind("run_1")
     .bind("hash")
