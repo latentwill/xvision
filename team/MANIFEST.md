@@ -33,9 +33,7 @@ All four foundation tracks merged to `main`:
 **Phase B — Build-out** (historical snapshot)
 
 Phase A unblocked all of Phase B. Pick a row from the build order, claim it via
-the current execution board or the table below, update/create
-`team/status/<track>.md`, and start. Do not use `team/queue/*__claim.md` for
-the current recovery pass; the board/status files are the coordination surface.
+`team/queue/<track>__<utc>__claim.md`, edit the row below, and start.
 
 | Track | Worktree | Branch | Owner CLI | Plan | Status |
 |---|---|---|---|---|---|

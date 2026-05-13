@@ -18,11 +18,6 @@ Use these as reference only:
 ## Global rules
 
 - One track per worktree.
-- Use this board plus `team/status/<track>.md` files for coordination.
-- Do not use MCP-backed subagents or message-queue dispatch for routine track
-  execution; the MCP queue has shown delayed completion reporting and can block
-  spawning other workers.
-- Do not create new `team/queue/*__claim.md` files for this recovery pass.
 - Do not execute the wrapper plans directly.
 - If two tracks touch the same source file, they are not parallel-safe unless
   explicitly marked below.
@@ -189,3 +184,12 @@ Avoid:
   the track status stays scoped to `team/status/qa4-chat-eval-launcher.md`.
 - Verified with focused eval-runs test, frontend typecheck, full frontend test
   suite, and `git diff --check`. Rust checks remain CI/non-deploy follow-up.
+
+### `qa4-chat-eval-launcher`
+
+- Completed checkpoint: `qa4-chat-eval-launcher` commit `18ab4c0` switches the
+  Start eval dialog to the scenario registry and adds client-side
+  provider/model plus Alpaca paper preflight before queueing eval runs.
+- Verified with `corepack pnpm --dir frontend/web test -- eval-runs`,
+  frontend typecheck, and `git diff --check`. Rust dashboard/wizard-loop
+  verification remains CI/non-deploy follow-up.
