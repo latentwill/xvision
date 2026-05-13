@@ -18,7 +18,7 @@ export default defineConfig({
       "../../crates/xvision-dashboard/static",
     ),
     emptyOutDir: true,
-    sourcemap: true,
+    sourcemap: false,
   },
   server: {
     port: 5180,

@@ -218,3 +218,91 @@ async fn eval_run_resolves_seeded_scenario_via_db_lookup() {
     assert_eq!(run.scenario_id, "flash-crash-aug-2024");
     assert_eq!(run.status, RunStatus::Completed);
 }
+
+#[tokio::test]
+async fn backtest_missing_cache_and_fixture_returns_actionable_validation() {
+    use std::sync::Arc;
+    use xvision_engine::agent::llm::{LlmDispatch, MockDispatch};
+    use xvision_engine::api::eval::{self, EvalRunRequest};
+    use xvision_engine::api::ApiError;
+    use xvision_engine::eval::run::RunMode;
+    use xvision_engine::strategies::manifest::PublicManifest;
+    use xvision_engine::strategies::risk::RiskPreset;
+    use xvision_engine::strategies::slot::LLMSlot;
+    use xvision_engine::strategies::store::{strategy_store_dir, FilesystemStore, StrategyStore};
+    use xvision_engine::strategies::Strategy;
+    use xvision_engine::tools::ToolRegistry;
+
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = ApiContext::open(
+        dir.path(),
+        Actor::Cli {
+            user: "test".into(),
+        },
+    )
+    .await
+    .unwrap();
+
+    let agent_id = "01TESTBUNDLEMISSINGFIXTURE";
+    let bundle = Strategy {
+        manifest: PublicManifest {
+            id: agent_id.into(),
+            display_name: "Missing fixture test".into(),
+            plain_summary: "for missing fixture preflight".into(),
+            creator: "@tester".into(),
+            template: "custom".into(),
+            regime_fit: vec![],
+            asset_universe: vec!["BTC/USD".into()],
+            decision_cadence_minutes: 60,
+            required_models: vec![],
+            required_tools: vec![],
+            risk_preset_or_config: "balanced".into(),
+            published_at: None,
+        },
+        agents: Vec::new(),
+        pipeline: Default::default(),
+        regime_slot: None,
+        intern_slot: None,
+        trader_slot: Some(LLMSlot {
+            role: "trader".into(),
+            prompt: "Decide.".into(),
+            model_requirement: "anthropic.claude-sonnet-4.6+".into(),
+            allowed_tools: vec![],
+            provider: None,
+            model: None,
+        }),
+        risk: RiskPreset::Balanced.expand(),
+        mechanical_params: serde_json::json!({}),
+    };
+    let bundle_store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+    bundle_store.save(&bundle).await.unwrap();
+
+    let dispatch: Arc<dyn LlmDispatch> = Arc::new(MockDispatch::echo(
+        r#"{"action":"hold","conviction":0.0,"justification":"hold"}"#,
+    ));
+    let tools = Arc::new(ToolRegistry::empty());
+
+    let err = eval::run_with_deps(
+        &ctx,
+        EvalRunRequest {
+            agent_id: agent_id.into(),
+            scenario_id: "crypto-rangebound-q2-2025".into(),
+            mode: RunMode::Backtest,
+            params_override: None,
+        },
+        None,
+        dispatch,
+        tools,
+    )
+    .await
+    .expect_err("missing cache + fixture should fail before executor");
+
+    match err {
+        ApiError::Validation(msg) => {
+            assert!(msg.contains("missing bars cache"));
+            assert!(msg.contains("Fetch bars"));
+            assert!(msg.contains("crypto-rangebound-q2-2025"));
+        }
+        other => panic!("expected Validation, got {other:?}"),
+    }
+}

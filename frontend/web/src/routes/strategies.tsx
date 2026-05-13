@@ -60,13 +60,13 @@ function FilterBar() {
           to="/strategies/new"
           className="inline-flex flex-1 items-center justify-center gap-2 rounded border border-border px-3.5 py-2 text-[13px] font-medium text-text-2 transition-colors hover:border-text-3 hover:text-text sm:flex-none"
         >
-          <Icon name="plus" size={13} /> New from template
+          <Icon name="plus" size={13} /> New strategy
         </Link>
         <Link
-          to="/setup"
+          to="/strategies/new"
           className="inline-flex flex-1 items-center justify-center gap-2 rounded bg-gold px-3.5 py-2 text-[13px] font-medium text-bg transition-colors hover:bg-gold-soft sm:flex-none"
         >
-          <Icon name="plus" size={13} /> New strategy
+          <Icon name="plus" size={13} /> Open form
         </Link>
       </div>
     </div>
@@ -85,22 +85,21 @@ function StrategiesTable({
           <article key={row.agent_id} className="px-4 py-3">
             <div className="mb-1.5 flex items-start justify-between gap-2">
               <div>
-                <div className="text-[11px] uppercase tracking-wide text-text-3">
-                  Strategy ID
-                </div>
                 <Link
                   to={`/authoring/${encodeURIComponent(row.agent_id)}`}
-                  className="font-mono text-[13px] text-text hover:underline"
+                  className="text-[15px] text-text hover:underline"
                 >
-                  {row.agent_id}
+                  {row.display_name || "Untitled strategy"}
                 </Link>
+                <div className="mt-0.5 font-mono text-[11px] text-text-3">
+                  {row.agent_id}
+                </div>
               </div>
               <Pill>
                 <span className="h-1.5 w-1.5 rounded-full bg-text-3" /> draft
               </Pill>
             </div>
 
-            <div className="text-[15px] text-text">{row.display_name}</div>
             <div className="mt-1 text-[12px] text-text-2">
               {row.template} · {formatCadence(row.decision_cadence_minutes)}
             </div>
@@ -128,8 +127,8 @@ function StrategiesTable({
         <table className="w-full">
           <thead>
             <tr className="border-b border-border-soft text-left text-[12px] text-text-2">
-              <th className="px-5 py-2.5 font-normal">Strategy ID</th>
               <th className="px-3 py-2.5 font-normal">Name</th>
+              <th className="px-5 py-2.5 font-normal">Backend ID</th>
               <th className="px-3 py-2.5 font-normal">Template</th>
               <th className="px-3 py-2.5 font-normal">Tags</th>
               <th className="px-3 py-2.5 font-normal">Cadence</th>
@@ -144,20 +143,18 @@ function StrategiesTable({
                 key={row.agent_id}
                 className="border-b border-border-soft transition-colors last:border-b-0 hover:bg-surface-hover"
               >
-                <td className="max-w-[220px] px-5 py-3 font-mono text-text">
+                <td className="px-3 py-3 text-text">
                   <Link
                     to={`/authoring/${encodeURIComponent(row.agent_id)}`}
                     className="break-all text-text hover:underline"
                   >
-                    {row.agent_id}
+                    {row.display_name || "Untitled strategy"}
                   </Link>
                 </td>
-                <td className="max-w-[220px] px-3 py-3 text-text">
-                  <span className="break-words">{row.display_name}</span>
+                <td className="px-5 py-3 font-mono text-[12px] text-text-3">
+                  {row.agent_id}
                 </td>
-                <td className="max-w-[160px] px-3 py-3 text-text-2">
-                  <span className="break-all">{row.template}</span>
-                </td>
+                <td className="px-3 py-3 text-text-2">{row.template}</td>
                 <td className="px-3 py-3">
                   <TagList tags={row.tags ?? []} />
                 </td>

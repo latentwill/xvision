@@ -14,6 +14,19 @@ operator-side prerequisites.
 
 ---
 
+## Live-node remote control
+
+If you need to drive a running xvision node over Tailscale, use the dashboard's
+remote CLI job API or `scripts/xvn-remote.py`.
+
+- Prefer `scripts/xvn-remote.py exec ...` for backtests and other long-running
+  typed CLI work.
+- Do not assume arbitrary SSH access or a general-purpose shell on the node.
+- Use `GET /api/cli/jobs/:id` and `GET /api/cli/jobs/:id/output` to reconnect
+  after disconnects.
+
+---
+
 ## Tier 2 — blocking forward-paper / on-chain (Phase 11)
 
 ### M5. Set up Alpaca paper account + creds (F5 alpha)

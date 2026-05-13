@@ -217,6 +217,8 @@ describe("EvalRunsRoute", () => {
 
     const strategy = (await screen.findByLabelText("Strategy")) as HTMLSelectElement;
     await waitFor(() => expect(strategy.value).toBe("01TEST"));
+    expect(screen.getByRole("option", { name: "Trend 4H" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /01TEST/ })).not.toBeInTheDocument();
   });
 
   it("loads launcher scenarios from the scenario registry", async () => {

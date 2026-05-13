@@ -398,3 +398,15 @@ Hermes Agent (NousResearch) is the OpenClaw successor — its own README documen
   - add at least one restart/orphan integration test once cargo verification is available
 - **Why noted:** the agent-access plan originally assumed the remote CLI backend was missing, but execution confirmed the main backend surface already exists. The real remaining backend gap is restart/orphan handling, not route creation or SQLite persistence.
 - **Blocking:** non-blocking for tailscale-only private use; blocking before treating remote CLI jobs as a durable operator surface.
+
+### F38 [Shared]. QA6 dashboard remediation — chat, strategies, charts, eval reliability
+
+- **Trigger:** QA6 operator pass on 2026-05-13 found product-state and chart parity regressions across Strategies, chat rail, Settings, eval launch, and Scenario TradingView charts.
+- **Scope:** execute [QA6 dashboard remediation](docs/superpowers/plans/2026-05-13-qa6-dashboard-remediation.md):
+  - Chat rail: `New chat` preserves previous conversations, restores history, clears composer immediately, and does not reorient unexpectedly on Strategies.
+  - Strategies: name-first open form, template optional rather than default, strategy ID secondary, no surfaced `canonical_defaults`, readable strategy names in eval pickers, no `NaN` cadence.
+  - Agents/settings: Skills lives under Agents, provider env details are hidden from UI, agent/provider/model pick lists show configured choices, chat rail exposes provider/model discovery tools.
+  - Eval: missing scenario parquet/cache failures become actionable preflight errors instead of raw filesystem errors.
+  - TradingView charts: Scenario uses the same reusable chart/layer behavior as run/strategy surfaces; timeframe controls affect chart range; indicator choices include the expanded SMA/EMA periods.
+  - Performance: audit first-load and chart-heavy routes after the behavioral fixes.
+- **Blocking:** YES for treating the dashboard as QA-ready for non-author operators.

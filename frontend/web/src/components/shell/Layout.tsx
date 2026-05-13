@@ -1,7 +1,11 @@
+import { lazy, Suspense } from "react";
 import { Outlet } from "react-router-dom";
 import { Sidebar } from "./Sidebar";
-import { ChatRail } from "./ChatRail";
 import { CommandPalette } from "./CommandPalette";
+
+const ChatRail = lazy(() =>
+  import("./ChatRail").then((m) => ({ default: m.ChatRail })),
+);
 
 export function Layout() {
   return (
@@ -10,7 +14,9 @@ export function Layout() {
       <main className="px-9 pt-9 pb-6 overflow-x-hidden">
         <Outlet />
       </main>
-      <ChatRail />
+      <Suspense fallback={<div className="w-11" />}>
+        <ChatRail />
+      </Suspense>
       <CommandPalette />
     </div>
   );
