@@ -91,9 +91,6 @@ function StrategiesTable({
                 >
                   {row.display_name || "Untitled strategy"}
                 </Link>
-                <div className="mt-0.5 font-mono text-[11px] text-text-3">
-                  {row.agent_id}
-                </div>
               </div>
               <Pill>
                 <span className="h-1.5 w-1.5 rounded-full bg-text-3" /> draft
@@ -114,7 +111,7 @@ function StrategiesTable({
               <Link
                 to={`/authoring/${encodeURIComponent(row.agent_id)}`}
                 className="text-[13px] text-text-3 hover:text-text"
-                aria-label={`Open inspector for ${row.agent_id}`}
+                aria-label={`Open inspector for ${displayName(row)}`}
               >
                 Inspector →
               </Link>
@@ -128,7 +125,6 @@ function StrategiesTable({
           <thead>
             <tr className="border-b border-border-soft text-left text-[12px] text-text-2">
               <th className="px-3 py-2.5 font-normal">Name</th>
-              <th className="px-5 py-2.5 font-normal">Backend ID</th>
               <th className="px-3 py-2.5 font-normal">Template</th>
               <th className="px-3 py-2.5 font-normal">Tags</th>
               <th className="px-3 py-2.5 font-normal">Cadence</th>
@@ -151,9 +147,6 @@ function StrategiesTable({
                     {row.display_name || "Untitled strategy"}
                   </Link>
                 </td>
-                <td className="px-5 py-3 font-mono text-[12px] text-text-3">
-                  {row.agent_id}
-                </td>
                 <td className="px-3 py-3 text-text-2">{row.template}</td>
                 <td className="px-3 py-3">
                   <TagList tags={row.tags ?? []} />
@@ -173,7 +166,7 @@ function StrategiesTable({
                   <Link
                     to={`/authoring/${encodeURIComponent(row.agent_id)}`}
                     className="text-text-3 hover:text-text"
-                    aria-label={`Open inspector for ${row.agent_id}`}
+                    aria-label={`Open inspector for ${displayName(row)}`}
                   >
                     Inspector →
                   </Link>
@@ -187,6 +180,10 @@ function StrategiesTable({
   );
 }
 
+function displayName(row: StrategyListItem) {
+  return row.display_name || "Untitled strategy";
+}
+
 function TagList({ tags }: { tags: string[] }) {
   if (tags.length === 0) {
     return <span className="text-[12px] italic text-text-3">—</span>;
@@ -194,11 +191,11 @@ function TagList({ tags }: { tags: string[] }) {
   const visible = tags.slice(0, 3);
   const extra = tags.length - visible.length;
   return (
-    <div className="flex max-w-[260px] flex-wrap gap-1.5">
+    <div className="flex max-w-[280px] flex-wrap gap-1.5">
       {visible.map((tag) => (
         <span
           key={tag}
-          className="max-w-[120px] break-all rounded border border-border-soft bg-surface-elev px-1.5 py-0.5 font-mono text-[11px] leading-tight text-text-2"
+          className="max-w-[150px] truncate rounded border border-border-soft bg-surface-elev px-1.5 py-0.5 font-mono text-[11px] leading-tight text-text-2"
           title={tag}
         >
           {tag}

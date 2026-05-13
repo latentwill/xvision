@@ -210,7 +210,9 @@ pub struct XvisionTools {
 
 fn resolve_xvn_home() -> PathBuf {
     if let Ok(s) = std::env::var("XVN_HOME") {
-        return PathBuf::from(s);
+        if !s.is_empty() {
+            return PathBuf::from(s);
+        }
     }
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
     PathBuf::from(home).join(".xvn")

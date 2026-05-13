@@ -118,7 +118,11 @@ export function useRunStream(runId: string, initial?: RunChartPayload) {
         const parsed = JSON.parse((e as MessageEvent).data) as WireEvent;
         if (parsed.event === "status") {
           const phase = parsed.data.phase;
-          if (phase === "completed" || phase === "failed" || phase === "cancelled") {
+          if (
+            phase === "completed" ||
+            phase === "failed" ||
+            phase === "cancelled"
+          ) {
             es.close();
             esRef.current = null;
             setStatus("closed");

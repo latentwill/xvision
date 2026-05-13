@@ -16,9 +16,11 @@ import {
   type RiskConfig,
   type Strategy,
 } from "@/api/strategies";
-import { listAgents } from "@/api/agents";
+import { createAgent, listAgents } from "@/api/agents";
+import { listProviders, settingsKeys } from "@/api/settings";
 import { getStrategyChart, strategyChartKeys } from "@/api/chart";
 import { StrategyChart } from "@/components/chart/StrategyChart";
+import { ModelPicker } from "@/components/ModelPicker";
 
 export function AuthoringRoute() {
   const params = useParams<{ id?: string }>();
@@ -131,8 +133,17 @@ function AgentsCard({ strategy }: { strategy: Strategy }) {
     queryKey: ["agents", "pool"],
     queryFn: () => listAgents({ include_archived: false, limit: 200 }),
   });
+  const providers = useQuery({
+    queryKey: settingsKeys.providers(),
+    queryFn: listProviders,
+  });
   const [newAgentId, setNewAgentId] = useState("");
   const [newRole, setNewRole] = useState("");
+  const [newAgentName, setNewAgentName] = useState("");
+  const [newAgentRole, setNewAgentRole] = useState("");
+  const [newAgentProvider, setNewAgentProvider] = useState<string | null>(null);
+  const [newAgentModel, setNewAgentModel] = useState("");
+  const [newAgentPrompt, setNewAgentPrompt] = useState("");
   const [renameRoleFrom, setRenameRoleFrom] = useState<string | null>(null);
   const [renameRoleTo, setRenameRoleTo] = useState("");
 
@@ -156,6 +167,43 @@ function AgentsCard({ strategy }: { strategy: Strategy }) {
     onSuccess: () => {
       setNewAgentId("");
       setNewRole("");
+      invalidateStrategy();
+    },
+  });
+
+  const createAttachMut = useMutation({
+    mutationFn: async () => {
+      if (!newAgentProvider || !newAgentModel) {
+        throw new Error("Pick a provider/model for the new agent.");
+      }
+      const agent = await createAgent({
+        name: newAgentName.trim(),
+        description: "",
+        tags: [],
+        slots: [
+          {
+            name: "main",
+            provider: newAgentProvider,
+            model: newAgentModel,
+            system_prompt: newAgentPrompt.trim(),
+            skill_ids: [],
+            max_tokens: 4096,
+          },
+        ],
+      });
+      await addStrategyAgent(strategy.manifest.id, {
+        agent_id: agent.agent_id,
+        role: newAgentRole.trim(),
+      });
+      return agent;
+    },
+    onSuccess: async () => {
+      setNewAgentName("");
+      setNewAgentRole("");
+      setNewAgentProvider(null);
+      setNewAgentModel("");
+      setNewAgentPrompt("");
+      await qc.invalidateQueries({ queryKey: ["agents", "pool"] });
       invalidateStrategy();
     },
   });
@@ -351,7 +399,7 @@ function AgentsCard({ strategy }: { strategy: Strategy }) {
         )}
 
         <div className="border border-border-soft rounded p-3 space-y-2">
-          <div className="text-[12px] text-text-2">Add agent</div>
+          <div className="text-[12px] text-text-2">Attach existing agent</div>
           <select
             className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text"
             value={newAgentId}
@@ -382,6 +430,72 @@ function AgentsCard({ strategy }: { strategy: Strategy }) {
           >
             Add Agent
           </button>
+        </div>
+
+        <div className="border border-border-soft rounded p-3 space-y-3">
+          <div className="text-[12px] text-text-2">Create and attach agent</div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <Field label="New agent name">
+              <input
+                className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text"
+                value={newAgentName}
+                onChange={(e) => setNewAgentName(e.target.value)}
+                placeholder="DeepSeek trader"
+              />
+            </Field>
+            <Field label="New agent role">
+              <input
+                className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
+                value={newAgentRole}
+                onChange={(e) => setNewAgentRole(e.target.value)}
+                placeholder="trader"
+              />
+            </Field>
+          </div>
+          <Field label="New agent model">
+            <ModelPicker
+              rows={providers.data?.providers ?? []}
+              loading={providers.isPending}
+              provider={newAgentProvider}
+              model={newAgentModel}
+              onChange={(provider, model) => {
+                setNewAgentProvider(provider);
+                setNewAgentModel(model);
+              }}
+              className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
+              ariaLabel="New agent model"
+              emptyHint="No enabled models for agent creation"
+            />
+          </Field>
+          <Field label="New agent system prompt">
+            <textarea
+              className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono leading-relaxed"
+              value={newAgentPrompt}
+              onChange={(e) => setNewAgentPrompt(e.target.value)}
+              rows={3}
+              placeholder="Trade with discipline."
+            />
+          </Field>
+          <button
+            onClick={() => createAttachMut.mutate()}
+            disabled={
+              !newAgentName.trim() ||
+              !newAgentRole.trim() ||
+              !newAgentProvider ||
+              !newAgentModel ||
+              createAttachMut.isPending
+            }
+            className="px-3 py-1.5 rounded text-[12px] border border-border text-text disabled:opacity-50"
+          >
+            {createAttachMut.isPending
+              ? "Creating..."
+              : "Create and attach agent"}
+          </button>
+          {createAttachMut.isError ? (
+            <div className="text-[12px] text-danger">
+              {errorMessage(createAttachMut.error)}
+            </div>
+          ) : null}
         </div>
       </div>
     </Card>

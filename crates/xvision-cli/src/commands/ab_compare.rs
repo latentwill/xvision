@@ -194,12 +194,7 @@ async fn load_bars_input(
         ),
         (true, false) => {
             // Cache-backed path. asset already validated by caller.
-            let g = match granularity {
-                "1h" => BarGranularity::Hour1,
-                "4h" => BarGranularity::Hour4,
-                "1d" => BarGranularity::Day1,
-                other => anyhow::bail!("granularity '{other}' not in v1 set {{1h,4h,1d}}"),
-            };
+            let g = granularity.parse::<BarGranularity>()?;
             // Safe: cache_window match arm guarantees both Some.
             let from = from.unwrap();
             let to = to.unwrap();
@@ -257,18 +252,8 @@ async fn load_bars_input(
     }
 }
 
-/// Resolve `$XVN_HOME` (or `~/.xvn`) and open an `ApiContext` bound to
-/// it. Mirrors `commands::bars::open_ctx` — duplicating the ~6 lines of
-/// resolution avoids exposing `open_ctx` as a CLI-wide helper before
-/// there's a third caller to warrant the API surface.
 async fn open_api_ctx() -> anyhow::Result<ApiContext> {
-    let xvn_home = if let Ok(p) = std::env::var("XVN_HOME") {
-        PathBuf::from(p)
-    } else {
-        dirs::home_dir()
-            .ok_or_else(|| anyhow::anyhow!("HOME not set; set XVN_HOME explicitly"))?
-            .join(".xvn")
-    };
+    let xvn_home = crate::commands::home::resolve_xvn_home_env()?;
     let user = std::env::var("USER")
         .or_else(|_| std::env::var("USERNAME"))
         .unwrap_or_else(|_| "operator".to_string());

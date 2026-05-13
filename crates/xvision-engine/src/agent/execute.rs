@@ -4,9 +4,8 @@
 //! advertised to the model each turn. When the model emits
 //! `ContentBlock::ToolUse` blocks we route them through the slot's
 //! `ToolRegistry`, append `ToolResult` blocks to the conversation, and
-//! re-call until the model emits a text-only `EndTurn` (or hits the
-//! iteration cap, which fails the slot rather than returning a partial
-//! decision).
+//! re-call until the model emits a text-only `EndTurn` or the dispatch/tool
+//! layer returns an error.
 
 use std::sync::Arc;
 
@@ -16,11 +15,6 @@ use crate::agent::llm::{
 use crate::agent::tool_call;
 use crate::strategies::slot::LLMSlot;
 use crate::tools::ToolRegistry;
-
-/// Hard cap on tool-use turns per slot. Real Stage-1 Intern reasoning
-/// tops out at 3-4 round trips; 8 absorbs surprise without letting a
-/// runaway loop bill arbitrary tokens.
-const MAX_TOOL_USE_ITERATIONS: u32 = 8;
 
 pub struct SlotInput<'a> {
     pub slot: &'a LLMSlot,
@@ -49,7 +43,7 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
     let mut total_input_tokens = 0u32;
     let mut total_output_tokens = 0u32;
 
-    for _iter in 0..MAX_TOOL_USE_ITERATIONS {
+    loop {
         let req = LlmRequest {
             model: input.slot.effective_model(),
             system_prompt: input.slot.prompt.clone(),
@@ -58,8 +52,8 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
             tools: tool_defs.clone(),
         };
         let resp = input.dispatch.complete(req).await?;
-        total_input_tokens += resp.input_tokens;
-        total_output_tokens += resp.output_tokens;
+        total_input_tokens = total_input_tokens.saturating_add(resp.input_tokens);
+        total_output_tokens = total_output_tokens.saturating_add(resp.output_tokens);
 
         let uses = tool_call::tool_uses(&resp.content);
 
@@ -108,9 +102,4 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
             content: results,
         });
     }
-
-    anyhow::bail!(
-        "execute_slot exceeded {MAX_TOOL_USE_ITERATIONS} tool-use iterations \
-         — the model is stuck calling tools without producing a final decision"
-    )
 }

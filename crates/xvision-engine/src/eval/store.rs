@@ -112,6 +112,62 @@ impl RunStore {
         Ok(())
     }
 
+    /// Persist live LLM token usage for an in-flight run. Executors call this
+    /// after each completed pipeline cycle so dashboards can show actual token
+    /// progress before finalization.
+    pub async fn update_token_usage(
+        &self,
+        id: &str,
+        input_tokens: u64,
+        output_tokens: u64,
+    ) -> Result<()> {
+        let res = sqlx::query(
+            "UPDATE eval_runs \
+             SET actual_input_tokens = ?, actual_output_tokens = ? \
+             WHERE id = ?",
+        )
+        .bind(input_tokens as i64)
+        .bind(output_tokens as i64)
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .context("update eval_runs token usage")?;
+        if res.rows_affected() == 0 {
+            anyhow::bail!("update_token_usage: no run with id '{id}'");
+        }
+        Ok(())
+    }
+
+    /// Mark a queued/running run as cancelled. Returns false if the run exists
+    /// but is already terminal or otherwise no longer cancellable.
+    pub async fn cancel_active(&self, id: &str, reason: &str) -> Result<bool> {
+        let now = Utc::now().to_rfc3339();
+        let res = sqlx::query(
+            "UPDATE eval_runs \
+             SET status = 'cancelled', completed_at = ?, error = ? \
+             WHERE id = ? AND status IN ('queued', 'running')",
+        )
+        .bind(&now)
+        .bind(reason)
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .context("cancel active eval_run")?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    pub async fn is_cancelled(&self, id: &str) -> Result<bool> {
+        let row = sqlx::query("SELECT status FROM eval_runs WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await
+            .context("select eval_run status")?;
+        Ok(row
+            .and_then(|r| r.try_get::<String, _>("status").ok())
+            .as_deref()
+            == Some("cancelled"))
+    }
+
     /// Sweep any runs left in `Queued` or `Running` status from a
     /// previous process: flip them to `Failed` with the given reason
     /// and set `completed_at = now`. Called once at dashboard startup

@@ -13,7 +13,7 @@
 
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::{Args, Subcommand};
 
 use xvision_engine::api::settings::providers::{
@@ -104,11 +104,7 @@ fn runtime_config_path(xvn_home: &std::path::Path) -> PathBuf {
 }
 
 fn resolve_xvn_home() -> Result<PathBuf> {
-    if let Ok(p) = std::env::var("XVN_HOME") {
-        return Ok(PathBuf::from(p));
-    }
-    let home = dirs::home_dir().context("HOME not set; set XVN_HOME")?;
-    Ok(home.join(".xvn"))
+    crate::commands::home::resolve_xvn_home_env()
 }
 
 async fn list(ctx: &ApiContext, config_path: &std::path::Path) -> Result<()> {

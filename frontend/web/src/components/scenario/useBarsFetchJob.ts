@@ -109,6 +109,8 @@ export function scenarioGranularityToCli(granularity: string) {
       return "1h";
     case "Hour4":
       return "4h";
+    case "Hour6":
+      return "6h";
     case "Day1":
       return "1d";
     default:

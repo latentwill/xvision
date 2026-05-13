@@ -1,11 +1,11 @@
 import { useEffect } from "react";
 import { useParams, Link } from "react-router-dom";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
 import { ApiError } from "@/api/client";
-import { evalKeys, getRun } from "@/api/eval";
+import { cancelRun, evalKeys, getRun } from "@/api/eval";
 import { chartKeys, getRunChart, openRunStream } from "@/api/chart";
 import { RunChart } from "@/components/chart/RunChart";
 import type {
@@ -25,18 +25,29 @@ const STATUS_TONE: Record<string, "gold" | "warn" | "danger" | "default" | "info
 export function EvalRunDetailRoute() {
   const { runId } = useParams<{ runId: string }>();
   const id = runId ?? "";
-  const queryClient = useQueryClient();
+  const qc = useQueryClient();
   const q = useQuery({
     queryKey: evalKeys.run(id),
     queryFn: () => getRun(id),
     enabled: id.length > 0,
+    refetchInterval: (query) => {
+      const detail = query.state.data;
+      const status = detail?.summary.status;
+      return status === "queued" || status === "running" ? 2000 : false;
+    },
   });
   const chart = useQuery({
     queryKey: chartKeys.run(id),
     queryFn: () => getRunChart(id),
     enabled: !!id,
   });
-  useLiveRunStream(id, q.data, queryClient);
+  const cancel = useMutation({
+    mutationFn: cancelRun,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: evalKeys.all });
+    },
+  });
+  useLiveRunStream(id, q.data, qc);
 
   if (q.isPending) {
     return (
@@ -67,7 +78,11 @@ export function EvalRunDetailRoute() {
         sub={`${detail.summary.scenario_id} · ${detail.summary.mode}`}
       />
 
-      <SummaryCard summary={detail.summary} />
+      <SummaryCard
+        summary={detail.summary}
+        onCancel={() => cancel.mutate(detail.summary.id)}
+        cancelling={cancel.variables === detail.summary.id && cancel.isPending}
+      />
 
       <h2 className="font-serif italic text-[20px] text-text mt-8 mb-3">
         Decisions <span className="text-text-3 text-[14px]">({detail.decisions.length})</span>
@@ -192,9 +207,17 @@ function isTerminalStatus(status: string): boolean {
   return status === "completed" || status === "failed" || status === "cancelled";
 }
 
-function SummaryCard({ summary }: { summary: RunSummary }) {
+function SummaryCard({
+  summary,
+  onCancel,
+  cancelling,
+}: {
+  summary: RunSummary;
+  onCancel: () => void;
+  cancelling: boolean;
+}) {
   const tone = STATUS_TONE[summary.status] ?? "default";
-  const live = summary.status === "queued" || summary.status === "running";
+  const inflight = summary.status === "queued" || summary.status === "running";
   return (
     <Card className="p-5">
       <div className="flex items-center justify-between mb-4">
@@ -207,16 +230,29 @@ function SummaryCard({ summary }: { summary: RunSummary }) {
             </code>
           </div>
         </div>
-        <Pill tone={tone}>
-          <span
-            className="w-1.5 h-1.5 rounded-full"
-            style={dotColor(tone)}
-          />
-          {summary.status}
-        </Pill>
+        <div className="flex items-center gap-3">
+          {inflight ? (
+            <button
+              type="button"
+              aria-label={`Cancel run ${summary.id}`}
+              onClick={onCancel}
+              disabled={cancelling}
+              className="text-[12px] text-warn hover:text-text disabled:opacity-50"
+            >
+              {cancelling ? "Cancelling..." : "Cancel"}
+            </button>
+          ) : null}
+          <Pill tone={tone}>
+            <span
+              className="w-1.5 h-1.5 rounded-full"
+              style={dotColor(tone)}
+            />
+            {summary.status}
+          </Pill>
+        </div>
       </div>
 
-      {live ? (
+      {inflight ? (
         <div className="mb-4 inline-flex items-center gap-1.5 rounded-sm border border-info/30 bg-info/[0.06] px-2 py-1 text-[12px] text-info">
           <span className="w-1.5 h-1.5 rounded-full bg-info" />
           streaming
@@ -233,6 +269,7 @@ function SummaryCard({ summary }: { summary: RunSummary }) {
           label="Completed"
           value={summary.completed_at ? fmtTime(summary.completed_at) : "—"}
         />
+        <Metric label="Tokens" value={fmtTokens(summary)} />
       </div>
 
       {summary.error ? (
@@ -395,6 +432,13 @@ function fmtPct(n: number | null | undefined): string {
   if (n == null) return "—";
   const sign = n > 0 ? "+" : "";
   return `${sign}${n.toFixed(2)}%`;
+}
+
+function fmtTokens(summary: RunSummary): string {
+  const total =
+    (summary.actual_input_tokens ?? 0) +
+    (summary.actual_output_tokens ?? 0);
+  return total > 0 ? total.toLocaleString() : "—";
 }
 
 function fmtTime(iso: string): string {

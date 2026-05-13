@@ -51,6 +51,8 @@ pub enum ScenarioOp {
     Show(ShowArgs),
     /// Clone an existing scenario, optionally overriding fields.
     Clone(CloneArgs),
+    /// Validate a full CreateScenarioRequest TOML file without creating it.
+    Validate(ValidateArgs),
     /// Soft-delete (archive) a scenario by id.
     Archive {
         /// Scenario id.
@@ -82,7 +84,8 @@ pub struct CreateArgs {
     /// Window end date (YYYY-MM-DD, UTC midnight).
     #[arg(long)]
     pub to: NaiveDate,
-    /// Bar granularity: `1h`, `4h`, or `1d`.
+    /// Bar granularity. Supports Alpaca bars:
+    /// 1-59m, 1-23h, 1d, 1w, 1/2/3/4/6/12mo.
     #[arg(long, default_value = "1h")]
     pub granularity: String,
     /// Venue (only `alpaca` in v1).
@@ -106,6 +109,9 @@ pub struct CreateArgs {
     /// Optional notes.
     #[arg(long)]
     pub notes: Option<String>,
+    /// Emit the created Scenario as JSON.
+    #[arg(long)]
+    pub json: bool,
     /// Load the full `CreateScenarioRequest` from a TOML file (other flags
     /// are ignored when this is set).
     #[arg(long)]
@@ -155,6 +161,16 @@ pub struct CloneArgs {
     pub asset: Option<String>,
 }
 
+#[derive(Args, Debug)]
+pub struct ValidateArgs {
+    /// Full `CreateScenarioRequest` TOML file.
+    #[arg(long)]
+    pub from_file: PathBuf,
+    /// Emit a JSON validation report.
+    #[arg(long)]
+    pub json: bool,
+}
+
 pub async fn run(cmd: ScenarioCmd) -> CliResult<()> {
     let ctx = open_ctx(cmd.xvn_home.clone())
         .await
@@ -164,6 +180,7 @@ pub async fn run(cmd: ScenarioCmd) -> CliResult<()> {
         ScenarioOp::Ls(a) => run_ls(&ctx, a).await,
         ScenarioOp::Show(a) => run_show(&ctx, a).await,
         ScenarioOp::Clone(a) => run_clone(&ctx, a).await,
+        ScenarioOp::Validate(a) => run_validate(&ctx, a).await,
         ScenarioOp::Archive { id } => {
             api_scenario::archive(&ctx, &id)
                 .await
@@ -184,20 +201,8 @@ pub async fn run(cmd: ScenarioCmd) -> CliResult<()> {
 
 // ---- helpers ----------------------------------------------------------------
 
-fn resolve_xvn_home(override_path: Option<PathBuf>) -> anyhow::Result<PathBuf> {
-    if let Some(p) = override_path {
-        return Ok(p);
-    }
-    if let Ok(p) = std::env::var("XVN_HOME") {
-        return Ok(PathBuf::from(p));
-    }
-    let home = dirs::home_dir()
-        .ok_or_else(|| anyhow::anyhow!("HOME not set; pass --xvn-home"))?;
-    Ok(home.join(".xvn"))
-}
-
 async fn open_ctx(override_path: Option<PathBuf>) -> anyhow::Result<ApiContext> {
-    let xvn_home = resolve_xvn_home(override_path)?;
+    let xvn_home = crate::commands::home::resolve_xvn_home(override_path)?;
     let user = std::env::var("USER")
         .or_else(|_| std::env::var("USERNAME"))
         .unwrap_or_else(|_| "operator".to_string());
@@ -207,14 +212,7 @@ async fn open_ctx(override_path: Option<PathBuf>) -> anyhow::Result<ApiContext> 
 }
 
 fn parse_granularity(s: &str) -> CliResult<BarGranularity> {
-    match s {
-        "1h" => Ok(BarGranularity::Hour1),
-        "4h" => Ok(BarGranularity::Hour4),
-        "1d" => Ok(BarGranularity::Day1),
-        other => Err(CliError::usage(anyhow::anyhow!(
-            "granularity '{other}' not in v1 set {{1h,4h,1d}}"
-        ))),
-    }
+    BarGranularity::from_str(s).map_err(|e| CliError::usage(anyhow::anyhow!("{e}")))
 }
 
 fn parse_slippage(s: &str) -> CliResult<SlippageModel> {
@@ -295,6 +293,14 @@ async fn run_create(ctx: &ApiContext, a: CreateArgs) -> CliResult<()> {
         let s = api_scenario::create(ctx, req)
             .await
             .map_err(|e| api_to_cli("scenario create", e))?;
+        if a.json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&s)
+                    .map_err(|e| CliError::upstream(anyhow::anyhow!("serialize: {e}")))?
+            );
+            return Ok(());
+        }
         println!("created {} ({})", s.id, s.display_name);
         return Ok(());
     }
@@ -358,6 +364,14 @@ async fn run_create(ctx: &ApiContext, a: CreateArgs) -> CliResult<()> {
     let s = api_scenario::create(ctx, req)
         .await
         .map_err(|e| api_to_cli("scenario create", e))?;
+    if a.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&s)
+                .map_err(|e| CliError::upstream(anyhow::anyhow!("serialize: {e}")))?
+        );
+        return Ok(());
+    }
     println!("created {} ({})", s.id, s.display_name);
     Ok(())
 }
@@ -471,6 +485,22 @@ async fn run_clone(ctx: &ApiContext, a: CloneArgs) -> CliResult<()> {
         .await
         .map_err(|e| api_to_cli("scenario clone", e))?;
     println!("cloned to {} (parent: {})", s.id, a.id);
+    Ok(())
+}
+
+async fn run_validate(ctx: &ApiContext, a: ValidateArgs) -> CliResult<()> {
+    let body = std::fs::read_to_string(&a.from_file)
+        .map_err(|e| CliError::usage(anyhow::anyhow!("read {}: {e}", a.from_file.display())))?;
+    let req: api_scenario::CreateScenarioRequest = toml::from_str(&body)
+        .map_err(|e| CliError::usage(anyhow::anyhow!("parse TOML: {e}")))?;
+    api_scenario::validate_request(ctx, &req)
+        .await
+        .map_err(|e| api_to_cli("scenario validate", e))?;
+    if a.json {
+        println!("{}", serde_json::json!({ "ok": true }));
+    } else {
+        println!("ok");
+    }
     Ok(())
 }
 

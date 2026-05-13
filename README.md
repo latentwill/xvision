@@ -67,11 +67,13 @@ cargo build --release
 ./target/release/xvn migrate
 
 # 3. Check provider config
+./target/release/xvn doctor --json
 ./target/release/xvn provider list
 
 # 4. Configure a strategy from a template
 ./target/release/xvn strategy templates
-STRATEGY_ID=$(./target/release/xvn strategy new --template mean_reversion --name my-first-agent)
+./target/release/xvn strategy templates --json
+STRATEGY_ID=$(./target/release/xvn strategy create --template mean_reversion --name my-first-agent)
 
 # 5. Run or inspect evals
 ./target/release/xvn eval scenarios
@@ -140,7 +142,7 @@ Current operator commands:
 - `xvn close-position --venue <alpaca|orderly> --asset BTC` — close one open position.
 - `xvn fire-trade --venue <alpaca|orderly> --side buy --size-bps 100` — manual smoke trade through the venue executor.
 - `xvn store stats --db data/store.db` — inspect local flight-recorder state.
-- `xvn eval list` and `xvn eval show <run_id>` — inspect eval history.
+- `xvn eval list` and `xvn eval get <run_id>` — inspect eval history.
 
 The non-custodial design closes one failure mode (xvision can't drain you) but
 opens others:

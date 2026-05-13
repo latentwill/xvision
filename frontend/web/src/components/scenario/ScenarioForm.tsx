@@ -20,7 +20,7 @@ export type ScenarioFormDraft = {
   granularity: ScenarioGranularity;
 };
 
-type ScenarioGranularity = 'Hour1' | 'Hour4' | 'Day1';
+type ScenarioGranularity = string;
 
 export type ScenarioFormProps = {
   initial?: Partial<CreateScenarioRequest>;
@@ -50,6 +50,22 @@ const SCENARIO_CAPITAL = {
   initial: 100000,
   currency: 'USD',
 };
+const GRANULARITY_OPTIONS = [
+  '1m',
+  '5m',
+  '15m',
+  '30m',
+  '1h',
+  '4h',
+  '6h',
+  '12h',
+  '1d',
+  '1w',
+  '1mo',
+  '3mo',
+  '6mo',
+  '12mo',
+];
 
 export function ScenarioForm({
   initial,
@@ -71,7 +87,7 @@ export function ScenarioForm({
     initial?.time_window?.end?.slice(0, 10) ?? '',
   );
   const [granularity, setGranularity] = useState<ScenarioGranularity>(
-    (initial?.granularity as ScenarioGranularity | undefined) ?? 'Hour1',
+    normalizeGranularity(initial?.granularity) ?? '1h',
   );
   const [tags, setTags] = useState<string[]>(initial?.tags ?? []);
   const [notes, setNotes] = useState(initial?.notes ?? '');
@@ -204,11 +220,18 @@ export function ScenarioForm({
         </Row>
         <RegimeRangePresets onPick={(start, end) => { setFrom(start); setTo(end); }} />
         <Field label="Granularity">
-          <Radio
+          <input
+            className="input"
+            list="scenario-granularity-options"
             value={granularity}
-            onChange={(v: ScenarioGranularity) => setGranularity(v)}
-            options={[['Hour1', '1h'], ['Hour4', '4h'], ['Day1', '1d']] as const}
+            onChange={(e) => setGranularity(e.target.value)}
+            required
           />
+          <datalist id="scenario-granularity-options">
+            {GRANULARITY_OPTIONS.map((g) => (
+              <option key={g} value={g} />
+            ))}
+          </datalist>
         </Field>
       </Section>
 
@@ -300,10 +323,44 @@ function estimateBars(from: string, to: string, g: ScenarioGranularity): number 
   if (!from || !to) return 0;
   const ms = +new Date(to) - +new Date(from);
   if (ms <= 0) return 0;
-  const hours = ms / 3_600_000;
-  if (g === 'Hour1') return Math.round(hours);
-  if (g === 'Hour4') return Math.round(hours / 4);
-  return Math.round(hours / 24);
+  const barSeconds = granularitySeconds(g);
+  if (!barSeconds) return 0;
+  return Math.round(ms / 1000 / barSeconds);
+}
+
+function normalizeGranularity(granularity: string | undefined) {
+  switch (granularity) {
+    case 'Minute1':
+      return '1m';
+    case 'Minute5':
+      return '5m';
+    case 'Minute15':
+      return '15m';
+    case 'Hour1':
+      return '1h';
+    case 'Hour4':
+      return '4h';
+    case 'Hour6':
+      return '6h';
+    case 'Day1':
+      return '1d';
+    default:
+      return granularity;
+  }
+}
+
+function granularitySeconds(granularity: string) {
+  const match = granularity.trim().match(/^(\d+)(m|h|d|w|mo)$/i);
+  if (!match) return null;
+  const amount = Number(match[1]);
+  const unit = match[2].toLowerCase();
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+  if (unit === 'm') return amount * 60;
+  if (unit === 'h') return amount * 3_600;
+  if (unit === 'd') return amount * 86_400;
+  if (unit === 'w') return amount * 604_800;
+  if (unit === 'mo') return amount * 30 * 86_400;
+  return null;
 }
 
 function Section({
@@ -374,32 +431,6 @@ function TagInput({
         }}
         onChange={(e) => setDraft(e.target.value)}
       />
-    </div>
-  );
-}
-
-function Radio({
-  value,
-  onChange,
-  options,
-}: {
-  value: ScenarioGranularity;
-  onChange: (v: ScenarioGranularity) => void;
-  options: readonly (readonly [string, string])[];
-}) {
-  return (
-    <div className="flex gap-3 text-[13px]">
-      {options.map(([v, label]) => (
-        <label key={v} className="flex items-center gap-1.5">
-          <input
-            type="radio"
-            value={v}
-            checked={value === v}
-            onChange={() => onChange(v as ScenarioGranularity)}
-          />{' '}
-          {label}
-        </label>
-      ))}
     </div>
   );
 }

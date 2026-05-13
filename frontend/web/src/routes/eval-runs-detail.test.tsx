@@ -103,6 +103,8 @@ function detail(overrides: Partial<RunDetail> = {}): RunDetail {
       sharpe: null,
       max_drawdown_pct: null,
       total_return_pct: null,
+      actual_input_tokens: null,
+      actual_output_tokens: null,
       error: null,
     },
     decisions: [],

@@ -1,4 +1,5 @@
 use chrono::{TimeZone, Utc};
+use std::str::FromStr;
 use xvision_data::alpaca::BarGranularity;
 use xvision_engine::api::scenario::{create, CreateScenarioRequest};
 use xvision_engine::api::{ApiContext, ApiError};
@@ -88,6 +89,33 @@ async fn create_succeeds_with_hour4_granularity() {
 }
 
 #[tokio::test]
+async fn create_succeeds_with_hour6_granularity() {
+    let ctx = test_ctx().await;
+    let mut req = valid_request();
+    req.granularity = BarGranularity::Hour6;
+
+    let s = create(&ctx, req).await.unwrap();
+
+    assert_eq!(s.granularity, BarGranularity::Hour6);
+    assert!(!s.bar_cache_policy.cache_key.is_empty());
+}
+
+#[tokio::test]
+async fn create_succeeds_with_minute_and_week_granularities() {
+    let ctx = test_ctx().await;
+
+    let mut minute_req = valid_request();
+    minute_req.granularity = BarGranularity::Minute5;
+    let minute_scenario = create(&ctx, minute_req).await.unwrap();
+    assert_eq!(minute_scenario.granularity, BarGranularity::Minute5);
+
+    let mut week_req = valid_request();
+    week_req.granularity = BarGranularity::from_str("1w").unwrap();
+    let week_scenario = create(&ctx, week_req).await.unwrap();
+    assert_eq!(week_scenario.granularity, BarGranularity::Week1);
+}
+
+#[tokio::test]
 async fn create_rejects_multi_asset_v1() {
     let ctx = test_ctx().await;
     let mut req = valid_request();
@@ -114,15 +142,6 @@ async fn create_rejects_non_crypto_asset_class() {
     let ctx = test_ctx().await;
     let mut req = valid_request();
     req.asset_class = AssetClass::Equity;
-    let err = create(&ctx, req).await.unwrap_err();
-    assert!(matches!(err, ApiError::Validation(_)));
-}
-
-#[tokio::test]
-async fn create_rejects_unsupported_granularity() {
-    let ctx = test_ctx().await;
-    let mut req = valid_request();
-    req.granularity = BarGranularity::Minute5;
     let err = create(&ctx, req).await.unwrap_err();
     assert!(matches!(err, ApiError::Validation(_)));
 }
