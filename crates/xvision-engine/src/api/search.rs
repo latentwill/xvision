@@ -56,17 +56,17 @@ pub async fn search(
     result
 }
 
-/// Upsert a strategy bundle into the index. Best-effort — logs and returns
+/// Upsert a strategy into the index. Best-effort — logs and returns
 /// `Ok(())` on failure so the calling create/update path isn't blocked by
 /// a transient index write error.
-pub async fn upsert_strategy(ctx: &ApiContext, bundle: &Strategy) {
-    let entry = strategy_entry(bundle);
+pub async fn upsert_strategy(ctx: &ApiContext, strategy: &Strategy) {
+    let entry = strategy_entry(strategy);
     if let Err(e) = SearchIndex::upsert(&ctx.db, &entry).await {
-        tracing::warn!(error = %e, agent_id = %bundle.manifest.id, "search index upsert (strategy) failed");
+        tracing::warn!(error = %e, agent_id = %strategy.manifest.id, "search index upsert (strategy) failed");
     }
 }
 
-/// Drop a strategy from the index. Called when a bundle is deleted.
+/// Drop a strategy from the index. Called when a strategy is deleted.
 pub async fn delete_strategy(ctx: &ApiContext, agent_id: &str) {
     if let Err(e) = SearchIndex::delete(&ctx.db, SearchKind::Strategy, agent_id).await {
         tracing::warn!(error = %e, agent_id, "search index delete (strategy) failed");
@@ -197,18 +197,18 @@ pub async fn seed_actions(ctx: &ApiContext) {
 /// The dashboard logs and continues so users always get *some* search
 /// surface even if (say) a single strategy file is corrupt.
 pub async fn reindex_all(ctx: &ApiContext) {
-    // 1. Strategies — walk the filesystem bundle store.
+    // 1. Strategies — walk the filesystem strategy store.
     let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
     match store.list().await {
         Ok(ids) => {
             for id in ids {
                 match store.load(&id).await {
-                    Ok(bundle) => upsert_strategy(ctx, &bundle).await,
-                    Err(e) => tracing::warn!(error = %e, agent_id = %id, "reindex: load bundle failed"),
+                    Ok(strategy) => upsert_strategy(ctx, &strategy).await,
+                    Err(e) => tracing::warn!(error = %e, agent_id = %id, "reindex: load strategy failed"),
                 }
             }
         }
-        Err(e) => tracing::warn!(error = %e, "reindex: list bundles failed"),
+        Err(e) => tracing::warn!(error = %e, "reindex: list strategies failed"),
     }
 
     // 2. Runs (+ their findings) — paginate via RunStore::list with no
@@ -238,8 +238,8 @@ pub async fn reindex_all(ctx: &ApiContext) {
     seed_actions(ctx).await;
 }
 
-fn strategy_entry(bundle: &Strategy) -> IndexEntry {
-    let m = &bundle.manifest;
+fn strategy_entry(strategy: &Strategy) -> IndexEntry {
+    let m = &strategy.manifest;
     let summary = if m.plain_summary.is_empty() {
         format!("{} · risk {}", m.template, m.risk_preset_or_config)
     } else {

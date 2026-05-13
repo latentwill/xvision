@@ -103,7 +103,7 @@ impl Executor for PaperExecutor {
     async fn run(
         &self,
         run: &mut Run,
-        bundle: &Strategy,
+        strategy: &Strategy,
         scenario: &Scenario,
         agent_slots: &[ResolvedAgentSlot],
         dispatch: Arc<dyn LlmDispatch>,
@@ -118,7 +118,7 @@ impl Executor for PaperExecutor {
         });
 
         let result = self
-            .run_inner(run, bundle, scenario, agent_slots, dispatch, tools, store)
+            .run_inner(run, strategy, scenario, agent_slots, dispatch, tools, store)
             .await;
 
         match &result {
@@ -148,7 +148,7 @@ impl PaperExecutor {
     async fn run_inner(
         &self,
         run: &mut Run,
-        bundle: &Strategy,
+        strategy: &Strategy,
         scenario: &Scenario,
         agent_slots: &[ResolvedAgentSlot],
         dispatch: Arc<dyn LlmDispatch>,
@@ -160,7 +160,7 @@ impl PaperExecutor {
             .await?;
         run.status = RunStatus::Running;
 
-        // TODO(Task 5): pull from StrategyBundle. For now we read the first
+        // TODO(Task 5): pull from Strategy. For now we read the first
         // venue_symbol off the scenario's asset list — preserves v1 BTC-only
         // semantics (canonical scenarios all have asset[0].venue_symbol = "BTC/USD").
         let asset = scenario
@@ -169,11 +169,11 @@ impl PaperExecutor {
             .map(|a| a.venue_symbol.clone())
             .ok_or_else(|| anyhow::anyhow!("scenario {} has empty asset list", scenario.id))?;
 
-        let cadence = Duration::minutes(bundle.manifest.decision_cadence_minutes as i64);
+        let cadence = Duration::minutes(strategy.manifest.decision_cadence_minutes as i64);
         if cadence.num_seconds() <= 0 {
             anyhow::bail!(
-                "bundle {} has non-positive decision_cadence_minutes",
-                bundle.manifest.id
+                "strategy {} has non-positive decision_cadence_minutes",
+                strategy.manifest.id
             );
         }
 
@@ -216,7 +216,7 @@ impl PaperExecutor {
             });
 
             let outs = run_pipeline(PipelineInputs {
-                bundle,
+                strategy,
                 agent_slots,
                 seed_inputs: seed,
                 dispatch: dispatch.clone(),
@@ -238,7 +238,7 @@ impl PaperExecutor {
             let mut fee: Option<f64> = None;
 
             if is_actionable(&parsed.action) {
-                let usd_at_risk = balance * bundle.risk.risk_pct_per_trade;
+                let usd_at_risk = balance * strategy.risk.risk_pct_per_trade;
                 let size = (usd_at_risk / BTC_REFERENCE_PRICE_USD).max(0.0);
                 let side = if parsed.action == "long_open" {
                     Side::Buy
@@ -250,7 +250,7 @@ impl PaperExecutor {
                     side,
                     size,
                     stop_loss_pct: Some(
-                        (bundle.risk.stop_loss_atr_multiple as f32).max(0.5),
+                        (strategy.risk.stop_loss_atr_multiple as f32).max(0.5),
                     ),
                     take_profit_pct: Some(5.0),
                     idempotency_key: format!("{}-{}", run.id, decision_idx),
@@ -339,7 +339,7 @@ impl PaperExecutor {
 
         let returns = equity_to_returns(&full_curve);
         let periods_per_year =
-            annualization_periods_per_year(bundle.manifest.decision_cadence_minutes);
+            annualization_periods_per_year(strategy.manifest.decision_cadence_minutes);
 
         // Win rate from realized PnL is computed downstream once
         // PaperExecutor tracks entry/exit pairs. Until then it stays 0.0

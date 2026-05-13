@@ -2,7 +2,7 @@
 //!
 //! Owns migration `004_search_index.sql` per the v1 migration registry. This
 //! module exposes the `SearchIndex` CRUD over the FTS5 virtual table; the
-//! per-artifact indexer hooks (bundle::save, eval::store::finalize,
+//! per-artifact indexer hooks (strategy save, eval::store::finalize,
 //! findings::record, etc.) and the `engine::api::search::*` surface that
 //! wraps them are deferred to follow-up PRs.
 //!

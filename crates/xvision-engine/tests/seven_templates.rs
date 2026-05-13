@@ -1,4 +1,4 @@
-use xvision_engine::strategies::validate::validate_bundle;
+use xvision_engine::strategies::validate::validate_strategy;
 use xvision_engine::templates::registry;
 
 const EXPECTED_TEMPLATES: &[&str] = &[
@@ -29,11 +29,11 @@ fn each_template_produces_a_valid_draft() {
     for name in EXPECTED_TEMPLATES {
         let tpl = registry::get(name)
             .unwrap_or_else(|| panic!("template {name} missing from registry"));
-        // ULID-shaped 26-char id (validate_bundle doesn't enforce format,
+        // ULID-shaped 26-char id (validate_strategy doesn't enforce format,
         // just shape; this matches the assertion in the plan).
         let id: String = format!("01H8N7Z{name}").chars().take(26).collect();
         let draft = tpl.new_draft(id, format!("test-{name}"), "@test".into());
-        validate_bundle(&draft).unwrap_or_else(|e| panic!("{name}: {e}"));
+        validate_strategy(&draft).unwrap_or_else(|e| panic!("{name}: {e}"));
     }
 }
 

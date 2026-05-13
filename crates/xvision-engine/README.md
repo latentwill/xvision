@@ -1,6 +1,6 @@
 # xvision-engine
 
-Strategy creation, bundling, and inline agent execution for xvn.
+Strategy creation and inline agent execution for xvn.
 
 See specs:
 - `docs/superpowers/specs/2026-05-08-strategy-creation-engine-design.md`
@@ -8,7 +8,7 @@ See specs:
 
 ## What ships in v0.2 (Plan 2a)
 
-- Strategy bundle types (manifest + slots + risk + mechanical params) **— v0.1 (Plan #1)**
+- Strategy types (manifest + slots + risk + mechanical params) **— v0.1 (Plan #1)**
 - 8 templates: `trend_follower`, `breakout`, `mean_reversion`, `momentum`,
   `range_trade`, `scalping`, `news_trader`, `custom`, plus the
   `ma_crossover_baseline` seed
@@ -73,4 +73,3 @@ Strategies are stored under `$XVN_HOME/strategies/<id>.json` (default `~/.xvn/st
 
 > **Exit codes:** `xvn strategy *` and `xvn eval *` return typed exit codes
 > (0 / 2 / 3 / 4 / 5 / 7) — see **Exit codes** in `MANUAL.md`.
-

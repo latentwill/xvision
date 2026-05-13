@@ -5,7 +5,7 @@
 //! N agents from the workspace agent library, each playing a
 //! user-defined role in the strategy's pipeline.
 //!
-//! This file is the bundle-side half of that refactor. The agent records
+//! This file is the strategy-side half of that refactor. The agent records
 //! themselves live in `crates/xvision-engine/src/agents/`.
 
 use serde::{Deserialize, Serialize};
@@ -58,7 +58,7 @@ impl Default for PipelineKind {
 
 /// One directed edge in a `Graph` pipeline. Ignored for `Single` and
 /// `Sequential`. Roles refer to `AgentRef.role` values present on the
-/// owning bundle's `agents` list.
+/// owning strategy's `agents` list.
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(
     feature = "ts-export",
@@ -186,7 +186,7 @@ mod tests {
 
     #[test]
     fn pipeline_def_missing_edges_field_defaults_to_empty() {
-        // Old bundles written before this refactor have no `edges` —
+        // Old strategies written before this refactor have no `edges` —
         // serde(default) lets them parse.
         let d: PipelineDef = serde_json::from_value(json!({
             "kind": "sequential"

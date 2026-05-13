@@ -17,7 +17,7 @@ use xvision_engine::api::{
 use xvision_engine::strategies::slot::LLMSlot;
 use xvision_engine::strategies::{AgentRef, PipelineDef, PipelineEdge, PipelineKind};
 use xvision_engine::strategies::store::{strategy_store_dir, StrategyStore, FilesystemStore};
-use xvision_engine::strategies::validate::validate_bundle;
+use xvision_engine::strategies::validate::validate_strategy;
 use xvision_engine::templates::registry;
 use xvision_engine::tokens::{estimate_pipeline_tokens, estimate_pipeline_tokens_from_slots};
 use xvision_engine::tools::ToolRegistry;
@@ -41,11 +41,11 @@ enum StrategyAction {
         #[arg(long)]
         creator: Option<String>,
     },
-    /// Validate a saved strategy bundle by id.
+    /// Validate a saved strategy by id.
     Validate { id: String },
     /// List all saved strategy ids.
     Ls,
-    /// Show a saved strategy bundle as JSON.
+    /// Show a saved strategy as JSON.
     Show { id: String },
     /// List available strategy templates.
     Templates,
@@ -78,9 +78,9 @@ enum StrategyAction {
         #[arg(long = "edge")]
         edges: Vec<String>,
     },
-    /// Convert legacy slot-shaped strategy bundles into agent references.
+    /// Convert legacy slot-shaped strategies into agent references.
     MigrateAgents {
-        /// Show what would change without writing bundles or agents.
+        /// Show what would change without writing strategies or agents.
         #[arg(long)]
         dry_run: bool,
     },
@@ -235,15 +235,15 @@ async fn new(template: &str, name: &str, creator: Option<String>) -> CliResult<(
         draft.intern_slot = None;
         draft.trader_slot = None;
     }
-    validate_bundle(&draft).exit_with(XvnExit::Usage)?;
+    validate_strategy(&draft).exit_with(XvnExit::Usage)?;
     store().save(&draft).await.exit_with(XvnExit::Upstream)?;
     println!("{id}");
     Ok(())
 }
 
 async fn validate(id: &str) -> CliResult<()> {
-    let bundle = store().load(id).await.exit_with(XvnExit::NotFound)?;
-    validate_bundle(&bundle).exit_with(XvnExit::Usage)?;
+    let strategy = store().load(id).await.exit_with(XvnExit::NotFound)?;
+    validate_strategy(&strategy).exit_with(XvnExit::Usage)?;
     println!("ok");
     Ok(())
 }
@@ -257,8 +257,8 @@ async fn ls() -> CliResult<()> {
 }
 
 async fn show(id: &str) -> CliResult<()> {
-    let bundle = store().load(id).await.exit_with(XvnExit::NotFound)?;
-    let json = serde_json::to_string_pretty(&bundle).exit_with(XvnExit::Upstream)?;
+    let strategy = store().load(id).await.exit_with(XvnExit::NotFound)?;
+    let json = serde_json::to_string_pretty(&strategy).exit_with(XvnExit::Upstream)?;
     println!("{json}");
     Ok(())
 }
@@ -341,9 +341,9 @@ async fn migrate_agents(dry_run: bool) -> CliResult<()> {
     let mut skipped = 0usize;
 
     for id in ids {
-        let mut bundle = store().load(&id).await.exit_with(XvnExit::NotFound)?;
-        let legacy_slots = legacy_slots(&bundle);
-        if !bundle.agents.is_empty() || legacy_slots.is_empty() {
+        let mut strategy = store().load(&id).await.exit_with(XvnExit::NotFound)?;
+        let legacy_slots = legacy_slots(&strategy);
+        if !strategy.agents.is_empty() || legacy_slots.is_empty() {
             skipped += 1;
             continue;
         }
@@ -365,14 +365,14 @@ async fn migrate_agents(dry_run: bool) -> CliResult<()> {
             let agent = api_agents::create(
                 ctx,
                 api_agents::CreateAgentRequest {
-                    name: format!("{} {role}", bundle.manifest.display_name),
+                    name: format!("{} {role}", strategy.manifest.display_name),
                     description: format!(
                         "Migrated from strategy {} role {role}",
-                        bundle.manifest.id
+                        strategy.manifest.id
                     ),
                     tags: vec![
                         "strategy-migrated".to_string(),
-                        bundle.manifest.template.clone(),
+                        strategy.manifest.template.clone(),
                     ],
                     slots: vec![slot_to_agent_slot(&slot)],
                 },
@@ -385,18 +385,18 @@ async fn migrate_agents(dry_run: bool) -> CliResult<()> {
             });
         }
 
-        bundle.agents = agent_refs;
-        bundle.pipeline = if bundle.agents.len() <= 1 {
+        strategy.agents = agent_refs;
+        strategy.pipeline = if strategy.agents.len() <= 1 {
             PipelineDef::default()
         } else {
             PipelineDef::sequential()
         };
-        bundle.regime_slot = None;
-        bundle.intern_slot = None;
-        bundle.trader_slot = None;
-        validate_bundle(&bundle).exit_with(XvnExit::Usage)?;
-        store().save(&bundle).await.exit_with(XvnExit::Upstream)?;
-        println!("{id}: migrated {} legacy slots [{roles}]", bundle.agents.len());
+        strategy.regime_slot = None;
+        strategy.intern_slot = None;
+        strategy.trader_slot = None;
+        validate_strategy(&strategy).exit_with(XvnExit::Usage)?;
+        store().save(&strategy).await.exit_with(XvnExit::Upstream)?;
+        println!("{id}: migrated {} legacy slots [{roles}]", strategy.agents.len());
         migrated += 1;
     }
 
@@ -404,15 +404,15 @@ async fn migrate_agents(dry_run: bool) -> CliResult<()> {
     Ok(())
 }
 
-fn legacy_slots(bundle: &xvision_engine::strategies::Strategy) -> Vec<(String, LLMSlot)> {
+fn legacy_slots(strategy: &xvision_engine::strategies::Strategy) -> Vec<(String, LLMSlot)> {
     let mut slots = Vec::new();
-    if let Some(slot) = bundle.regime_slot.clone() {
+    if let Some(slot) = strategy.regime_slot.clone() {
         slots.push(("regime".to_string(), slot));
     }
-    if let Some(slot) = bundle.intern_slot.clone() {
+    if let Some(slot) = strategy.intern_slot.clone() {
         slots.push(("intern".to_string(), slot));
     }
-    if let Some(slot) = bundle.trader_slot.clone() {
+    if let Some(slot) = strategy.trader_slot.clone() {
         slots.push(("trader".to_string(), slot));
     }
     slots
@@ -452,10 +452,10 @@ fn provider_model_from_slot(slot: &LLMSlot) -> (String, String) {
 }
 
 async fn run_inline(id: &str, fixture: &str, decisions: u32, mock: bool) -> CliResult<()> {
-    let bundle = store().load(id).await.exit_with(XvnExit::NotFound)?;
-    let agent_slots = resolve_agent_slots_for_cli(&bundle).await?;
+    let strategy = store().load(id).await.exit_with(XvnExit::NotFound)?;
+    let agent_slots = resolve_agent_slots_for_cli(&strategy).await?;
     let est = if agent_slots.is_empty() {
-        estimate_pipeline_tokens(&bundle, decisions as u64)
+        estimate_pipeline_tokens(&strategy, decisions as u64)
     } else {
         estimate_pipeline_tokens_from_slots(
             agent_slots.iter().map(|resolved| &resolved.slot),
@@ -478,12 +478,12 @@ async fn run_inline(id: &str, fixture: &str, decisions: u32, mock: bool) -> CliR
     };
     let tools = Arc::new(ToolRegistry::default_with_builtins());
 
-    let asset = bundle
+    let asset = strategy
         .manifest
         .asset_universe
         .first()
         .cloned()
-        .ok_or_else(|| CliError::usage(anyhow::anyhow!("bundle has empty asset_universe")))?;
+        .ok_or_else(|| CliError::usage(anyhow::anyhow!("strategy has empty asset_universe")))?;
 
     // Fetch the OHLCV + indicator_panel tools once; both are stateless and
     // safe to re-invoke per decision. The lookback (200 bars) matches the
@@ -531,7 +531,7 @@ async fn run_inline(id: &str, fixture: &str, decisions: u32, mock: bool) -> CliR
             "indicator_panel": panel,
         });
         let outs = run_pipeline(PipelineInputs {
-            bundle: &bundle,
+            strategy: &strategy,
             agent_slots: &agent_slots,
             seed_inputs: seed,
             dispatch: dispatch.clone(),
@@ -553,16 +553,16 @@ async fn run_inline(id: &str, fixture: &str, decisions: u32, mock: bool) -> CliR
 }
 
 async fn resolve_agent_slots_for_cli(
-    bundle: &xvision_engine::strategies::Strategy,
+    strategy: &xvision_engine::strategies::Strategy,
 ) -> CliResult<Vec<ResolvedAgentSlot>> {
-    if bundle.agents.is_empty() {
+    if strategy.agents.is_empty() {
         return Ok(Vec::new());
     }
 
     let ctx = open_ctx().await?;
     let agent_store = AgentStore::new(ctx.db.clone());
-    let mut out = Vec::with_capacity(bundle.agents.len());
-    for agent_ref in &bundle.agents {
+    let mut out = Vec::with_capacity(strategy.agents.len());
+    for agent_ref in &strategy.agents {
         let agent = agent_store
             .get(&agent_ref.agent_id)
             .await

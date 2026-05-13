@@ -3,7 +3,7 @@ import type { RunMode } from "./RunMode";
 
 export type EvalRunRequest = { 
 /**
- * Strategy bundle id (the `agent_id` returned by `api::strategy::list`).
+ * Strategy agent id returned by `api::strategy::list`.
  */
 agent_id: string, 
 /**
@@ -17,7 +17,7 @@ scenario_id: string,
  */
 mode: RunMode, 
 /**
- * Optional per-run override of bundle.mechanical_params. Persisted as
+ * Optional per-run override of strategy.mechanical_params. Persisted as
  * `eval_runs.params_override_json`.
  */
 params_override: Record<string, unknown> | null, };

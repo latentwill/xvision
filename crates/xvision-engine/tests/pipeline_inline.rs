@@ -9,7 +9,7 @@ use xvision_engine::strategies::slot::LLMSlot;
 use xvision_engine::strategies::{PipelineDef, Strategy};
 use xvision_engine::tools::ToolRegistry;
 
-fn fixture_bundle() -> Strategy {
+fn fixture_strategy() -> Strategy {
     Strategy {
         manifest: PublicManifest {
             id: "01H8N7ZPIPE".into(),
@@ -69,11 +69,11 @@ fn text_response(text: &str) -> LlmResponse {
 
 #[tokio::test]
 async fn three_slot_pipeline_chains_outputs() {
-    let bundle = fixture_bundle();
+    let strategy = fixture_strategy();
     let dispatch = Arc::new(MockDispatch::echo(r#"{"ok":true}"#));
     let tools = Arc::new(ToolRegistry::default_with_builtins());
     let outs: PipelineOutputs = run_pipeline(PipelineInputs {
-        bundle: &bundle,
+        strategy: &strategy,
         agent_slots: &[],
         seed_inputs: serde_json::json!({"ohlcv_history": [], "indicator_panel": {}}),
         dispatch,
@@ -90,12 +90,12 @@ async fn three_slot_pipeline_chains_outputs() {
 
 #[tokio::test]
 async fn skips_missing_optional_slots() {
-    let mut bundle = fixture_bundle();
-    bundle.regime_slot = None; // skip
+    let mut strategy = fixture_strategy();
+    strategy.regime_slot = None; // skip
     let dispatch = Arc::new(MockDispatch::echo(r#"{"ok":true}"#));
     let tools = Arc::new(ToolRegistry::default_with_builtins());
     let outs = run_pipeline(PipelineInputs {
-        bundle: &bundle,
+        strategy: &strategy,
         agent_slots: &[],
         seed_inputs: serde_json::json!({}),
         dispatch,
@@ -110,11 +110,11 @@ async fn skips_missing_optional_slots() {
 
 #[tokio::test]
 async fn resolved_agent_pipeline_uses_trader_role_as_decision_output() {
-    let mut bundle = fixture_bundle();
-    bundle.regime_slot = None;
-    bundle.intern_slot = None;
-    bundle.trader_slot = None;
-    bundle.pipeline = PipelineDef::sequential();
+    let mut strategy = fixture_strategy();
+    strategy.regime_slot = None;
+    strategy.intern_slot = None;
+    strategy.trader_slot = None;
+    strategy.pipeline = PipelineDef::sequential();
     let agent_slots = vec![
         ResolvedAgentSlot {
             role: "scout".into(),
@@ -143,7 +143,7 @@ async fn resolved_agent_pipeline_uses_trader_role_as_decision_output() {
     let dispatch = Arc::new(MockDispatch::echo(r#"{"action":"hold"}"#));
     let tools = Arc::new(ToolRegistry::default_with_builtins());
     let outs = run_pipeline(PipelineInputs {
-        bundle: &bundle,
+        strategy: &strategy,
         agent_slots: &agent_slots,
         seed_inputs: serde_json::json!({}),
         dispatch,
@@ -159,11 +159,11 @@ async fn resolved_agent_pipeline_uses_trader_role_as_decision_output() {
 
 #[tokio::test]
 async fn resolved_agent_pipeline_uses_last_output_without_trader_role() {
-    let mut bundle = fixture_bundle();
-    bundle.regime_slot = None;
-    bundle.intern_slot = None;
-    bundle.trader_slot = None;
-    bundle.pipeline = PipelineDef::sequential();
+    let mut strategy = fixture_strategy();
+    strategy.regime_slot = None;
+    strategy.intern_slot = None;
+    strategy.trader_slot = None;
+    strategy.pipeline = PipelineDef::sequential();
     let agent_slots = vec![
         ResolvedAgentSlot {
             role: "scout".into(),
@@ -195,7 +195,7 @@ async fn resolved_agent_pipeline_uses_last_output_without_trader_role() {
     ]));
     let tools = Arc::new(ToolRegistry::default_with_builtins());
     let outs = run_pipeline(PipelineInputs {
-        bundle: &bundle,
+        strategy: &strategy,
         agent_slots: &agent_slots,
         seed_inputs: serde_json::json!({}),
         dispatch,

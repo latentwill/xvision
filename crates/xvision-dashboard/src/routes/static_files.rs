@@ -1,4 +1,4 @@
-//! SPA fallback handler — serves bundled assets, falling back to `index.html`
+//! SPA fallback handler — serves packaged assets, falling back to `index.html`
 //! so React Router can take over deep-link routes.
 
 use axum::{

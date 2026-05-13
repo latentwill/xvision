@@ -16,12 +16,16 @@ async fn pool_with_migration() -> SqlitePool {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/014_eval_agent_id.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     pool
 }
 
 fn finalized_run() -> Run {
     let mut r = Run::new_queued(
-        "bundle-hash-x".into(),
+        "strategy-hash-x".into(),
         "crypto-bull-q1-2025".into(),
         RunMode::Backtest,
     );
@@ -79,7 +83,7 @@ fn sign_carries_run_and_scenario_metadata() {
     let scenario = first_scenario();
     let key = fresh_signing_key();
     let att = sign(&run, &scenario, &key).unwrap();
-    assert_eq!(att.strategy_bundle_hash, run.strategy_bundle_hash);
+    assert_eq!(att.agent_id, run.agent_id);
     assert_eq!(att.scenario_id, scenario.id);
     assert_eq!(att.metrics, run.metrics.clone().unwrap());
     assert_eq!(att.tokens_used.input, 12_345);
@@ -181,7 +185,7 @@ async fn run_store_record_attestation_and_get_round_trips() {
         .await
         .expect("get must succeed")
         .expect("attestation must be present");
-    assert_eq!(read.strategy_bundle_hash, att.strategy_bundle_hash);
+    assert_eq!(read.agent_id, att.agent_id);
     assert_eq!(read.scenario_id, att.scenario_id);
     assert_eq!(read.signature_hex, att.signature_hex);
     assert_eq!(read.signing_pubkey_hex, att.signing_pubkey_hex);

@@ -1,4 +1,4 @@
-//! `GET /api/health` — local probes (data dir, db, bundle store).
+//! `GET /api/health` — local probes (data dir, db, strategy store).
 //!
 //! Always 200; the body's `status` field is the canonical
 //! ok/degraded/down indicator. Probe failures show up in `probes[*]`

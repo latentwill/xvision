@@ -3,14 +3,14 @@ use xvision_engine::strategies::risk::{RiskConfig, RiskPreset};
 use xvision_engine::strategies::slot::LLMSlot;
 use xvision_engine::strategies::Strategy;
 
-fn sample_bundle() -> Strategy {
+fn sample_strategy() -> Strategy {
     use xvision_engine::strategies::manifest::{PublicManifest, RegimeFit};
     use xvision_engine::strategies::slot::LLMSlot;
     Strategy {
         manifest: PublicManifest {
             id: "01H8N7Z000".to_string(),
             display_name: "Test".to_string(),
-            plain_summary: "test bundle".to_string(),
+            plain_summary: "test strategy".to_string(),
             creator: "@test".to_string(),
             template: "mean_reversion".to_string(),
             regime_fit: vec![RegimeFit::RangeBound],
@@ -96,9 +96,9 @@ fn manifest_roundtrip_with_required_fields() {
 }
 
 #[test]
-fn bundle_roundtrip() {
-    let b = sample_bundle();
-    let json = serde_json::to_string(&b).unwrap();
+fn strategy_roundtrip() {
+    let strategy = sample_strategy();
+    let json = serde_json::to_string(&strategy).unwrap();
     let parsed: Strategy = serde_json::from_str(&json).unwrap();
     assert_eq!(parsed.manifest.template, "mean_reversion");
     assert!(parsed.regime_slot.is_some());
@@ -106,55 +106,55 @@ fn bundle_roundtrip() {
     assert!(parsed.trader_slot.is_some());
 }
 
-use xvision_engine::strategies::validate::{validate_bundle, ValidationError};
+use xvision_engine::strategies::validate::{validate_strategy, ValidationError};
 
 #[test]
-fn valid_bundle_passes() {
-    let b = sample_bundle();
-    assert!(validate_bundle(&b).is_ok());
+fn valid_strategy_passes() {
+    let strategy = sample_strategy();
+    assert!(validate_strategy(&strategy).is_ok());
 }
 
 #[test]
-fn bundle_without_any_llm_slot_fails() {
-    let mut b = sample_bundle();
-    b.regime_slot = None;
-    b.intern_slot = None;
-    b.trader_slot = None;
-    let err = validate_bundle(&b).unwrap_err();
+fn strategy_without_any_llm_slot_fails() {
+    let mut strategy = sample_strategy();
+    strategy.regime_slot = None;
+    strategy.intern_slot = None;
+    strategy.trader_slot = None;
+    let err = validate_strategy(&strategy).unwrap_err();
     assert!(matches!(err, ValidationError::NoAgents));
 }
 
 #[test]
-fn bundle_with_empty_asset_universe_fails() {
-    let mut b = sample_bundle();
-    b.manifest.asset_universe.clear();
-    let err = validate_bundle(&b).unwrap_err();
+fn strategy_with_empty_asset_universe_fails() {
+    let mut strategy = sample_strategy();
+    strategy.manifest.asset_universe.clear();
+    let err = validate_strategy(&strategy).unwrap_err();
     assert!(matches!(err, ValidationError::EmptyAssetUniverse));
 }
 
 #[test]
-fn bundle_with_zero_capital_risk_fails() {
-    let mut b = sample_bundle();
-    b.risk.risk_pct_per_trade = 0.0;
-    let err = validate_bundle(&b).unwrap_err();
+fn strategy_with_zero_capital_risk_fails() {
+    let mut strategy = sample_strategy();
+    strategy.risk.risk_pct_per_trade = 0.0;
+    let err = validate_strategy(&strategy).unwrap_err();
     assert!(matches!(err, ValidationError::InvalidRisk(_)));
 }
 
 #[test]
-fn bundle_without_trader_slot_fails() {
-    let mut b = sample_bundle();
-    b.trader_slot = None; // regime_slot still Some, so NoAgents wouldn't fire
-    let err = validate_bundle(&b).unwrap_err();
+fn strategy_without_trader_slot_fails() {
+    let mut strategy = sample_strategy();
+    strategy.trader_slot = None; // regime_slot still Some, so NoAgents wouldn't fire
+    let err = validate_strategy(&strategy).unwrap_err();
     assert!(matches!(err, ValidationError::MissingTraderSlot));
 }
 
 #[test]
-fn bundle_does_not_carry_capital_or_risk_caps() {
-    // Capital moved back onto Scenario (not Strategy/bundle). The bundle
+fn strategy_does_not_carry_capital_or_risk_caps() {
+    // Capital moved back onto Scenario (not Strategy/strategy). The strategy
     // only carries per-trade RiskConfig. Verify the struct round-trips
     // cleanly without capital/risk_caps fields.
-    let b = sample_bundle();
-    let json = serde_json::to_string(&b).unwrap();
+    let strategy = sample_strategy();
+    let json = serde_json::to_string(&strategy).unwrap();
     assert!(
         !json.contains("\"capital\""),
         "capital must not appear in Strategy JSON"
@@ -166,8 +166,8 @@ fn bundle_does_not_carry_capital_or_risk_caps() {
 }
 
 #[test]
-fn bundle_with_extra_capital_field_in_json_still_deserializes() {
-    // Old serialized bundles (pre-merge) may have capital/risk_caps in JSON.
+fn strategy_with_extra_capital_field_in_json_still_deserializes() {
+    // Old serialized strategies (pre-merge) may have capital/risk_caps in JSON.
     // Strategy ignores unknown fields by default — they silently drop.
     let pre_merge_json = serde_json::json!({
         "manifest": {
@@ -208,11 +208,11 @@ fn bundle_with_extra_capital_field_in_json_still_deserializes() {
 }
 
 #[test]
-fn bundle_with_undeclared_required_tool_fails() {
-    let mut b = sample_bundle();
+fn strategy_with_undeclared_required_tool_fails() {
+    let mut b = sample_strategy();
     // Manifest declares a tool no slot has in its allowed_tools.
     b.manifest.required_tools.push("nansen_smartmoney".into());
-    let err = validate_bundle(&b).unwrap_err();
+    let err = validate_strategy(&b).unwrap_err();
     match err {
         ValidationError::UndeclaredTool(name) => assert_eq!(name, "nansen_smartmoney"),
         other => panic!("expected UndeclaredTool, got {other:?}"),

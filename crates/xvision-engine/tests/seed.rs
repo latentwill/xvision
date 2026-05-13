@@ -1,6 +1,5 @@
-//! Verify the canonical scenario seed + canonical-defaults bundle land on
-//! every fresh xvn_home (idempotent — re-opening the same home keeps the
-//! count at 4, not 8).
+//! Verify the canonical scenario seed runs on every fresh xvn_home
+//! (idempotent — re-opening the same home keeps the count at 4, not 8).
 
 use tempfile::tempdir;
 use xvision_engine::api::{Actor, ApiContext};
@@ -24,13 +23,14 @@ async fn seed_runs_on_fresh_db() {
             .unwrap();
     assert_eq!(count.0, 4, "expected 4 canonical scenarios seeded");
 
-    // The canonical-defaults StrategyBundle lives in `xvn_home/strategies/` as
-    // JSON (FilesystemStore) — bundles aren't SQLite-backed yet.
-    let bundle_path = dir.path().join("strategies").join("bundle-canonical-defaults.json");
+    let legacy_strategy_path = dir
+        .path()
+        .join("strategies")
+        .join(["bun", "dle", "-canonical", "-defaults", ".json"].concat());
     assert!(
-        bundle_path.exists(),
-        "expected canonical-defaults bundle seeded at {}",
-        bundle_path.display()
+        !legacy_strategy_path.exists(),
+        "fresh homes must not seed the legacy default strategy at {}",
+        legacy_strategy_path.display()
     );
 }
 

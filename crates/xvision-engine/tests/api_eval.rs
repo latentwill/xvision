@@ -16,6 +16,10 @@ async fn ctx_with_eval_tables() -> (ApiContext, tempfile::TempDir) {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/014_eval_agent_id.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     let dir = tempfile::tempdir().unwrap();
     let ctx = ApiContext::new(
         pool,
@@ -52,27 +56,27 @@ async fn list_returns_persisted_runs() {
 }
 
 #[tokio::test]
-async fn list_filters_by_strategy_bundle_hash() {
+async fn list_filters_by_agent_id() {
     let (ctx, _d) = ctx_with_eval_tables().await;
     let store = RunStore::new(ctx.db.clone());
     let mut a = Run::new_queued("h-A".into(), "s".into(), RunMode::Backtest);
     let mut b = Run::new_queued("h-A".into(), "s".into(), RunMode::Paper);
     let mut c = Run::new_queued("h-B".into(), "s".into(), RunMode::Backtest);
-    a.strategy_bundle_hash = "h-A".into();
-    b.strategy_bundle_hash = "h-A".into();
-    c.strategy_bundle_hash = "h-B".into();
+    a.agent_id = "h-A".into();
+    b.agent_id = "h-A".into();
+    c.agent_id = "h-B".into();
     store.create(&a).await.unwrap();
     store.create(&b).await.unwrap();
     store.create(&c).await.unwrap();
 
     let req = ListRunsRequest {
-        strategy_bundle_hash: Some("h-A".into()),
+        agent_id: Some("h-A".into()),
         ..Default::default()
     };
     let runs = eval::list(&ctx, req).await.unwrap();
     assert_eq!(runs.len(), 2);
     for r in &runs {
-        assert_eq!(r.strategy_bundle_hash, "h-A");
+        assert_eq!(r.agent_id, "h-A");
     }
 }
 

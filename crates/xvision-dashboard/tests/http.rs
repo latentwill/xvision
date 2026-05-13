@@ -68,22 +68,18 @@ async fn unknown_api_route_404s() {
 }
 
 #[tokio::test]
-async fn strategies_list_returns_canonical_defaults_on_fresh_home() {
+async fn strategies_list_is_empty_on_fresh_home() {
     let (server, _tmp) = boot().await;
 
     let response = server.get("/api/strategies").await;
     response.assert_status_ok();
     let body: serde_json::Value = response.json();
     let items = body["items"].as_array().expect("items must be array");
-    // `AppState::new` seeds `bundle-canonical-defaults` alongside the
-    // four canonical scenarios. The list should contain just that bundle
-    // on a fresh xvn_home.
-    assert_eq!(items.len(), 1);
-    assert_eq!(items[0]["agent_id"], "bundle-canonical-defaults");
+    assert_eq!(items.len(), 0, "fresh homes should not list seeded strategies");
 }
 
 #[tokio::test]
-async fn strategies_list_returns_seeded_bundle() {
+async fn strategies_list_returns_seeded_strategy() {
     use xvision_engine::strategies::{
         manifest::PublicManifest, risk::RiskPreset, store::StrategyStore, store::FilesystemStore,
         Strategy,
@@ -91,11 +87,11 @@ async fn strategies_list_returns_seeded_bundle() {
 
     let (server, tmp) = boot().await;
     let store = FilesystemStore::new(tmp.path().join("strategies"));
-    let bundle_id = "01J0DASHTEST00000000000001";
+    let strategy_id = "01J0DASHTEST00000000000001";
     store
         .save(&Strategy {
             manifest: PublicManifest {
-                id: bundle_id.into(),
+                id: strategy_id.into(),
                 display_name: "Dashboard Test".into(),
                 plain_summary: "seeded for /api/strategies test".into(),
                 creator: "@dashboard-test".into(),
@@ -123,16 +119,14 @@ async fn strategies_list_returns_seeded_bundle() {
     response.assert_status_ok();
     let body: serde_json::Value = response.json();
     let items = body["items"].as_array().expect("items array");
-    // Canonical-defaults bundle is seeded by `AppState::new`; this test
-    // adds one more, so the list now contains two entries. We assert
-    // that our test bundle is present rather than asserting list size.
-    let test_bundle = items
+    assert_eq!(items.len(), 1);
+    let test_strategy = items
         .iter()
-        .find(|i| i["agent_id"] == bundle_id)
-        .expect("test bundle must be present");
-    assert_eq!(test_bundle["display_name"], "Dashboard Test");
-    assert_eq!(test_bundle["template"], "mean_reversion");
-    assert_eq!(test_bundle["decision_cadence_minutes"], 60);
+        .find(|i| i["agent_id"] == strategy_id)
+        .expect("test strategy must be present");
+    assert_eq!(test_strategy["display_name"], "Dashboard Test");
+    assert_eq!(test_strategy["template"], "mean_reversion");
+    assert_eq!(test_strategy["decision_cadence_minutes"], 60);
 }
 
 #[tokio::test]
@@ -526,7 +520,7 @@ async fn launch_eval_run_rejects_unknown_strategy() {
         "params_override": null,
     });
     let response = server.post("/api/eval/runs").json(&body).await;
-    // "does-not-exist" is not in the bundle store → 404 not_found.
+    // "does-not-exist" is not in the strategy store → 404 not_found.
     response.assert_status(axum::http::StatusCode::NOT_FOUND);
     let resp_body: serde_json::Value = response.json();
     assert_eq!(resp_body["code"], "not_found");
@@ -1070,11 +1064,46 @@ async fn scenario_chart_returns_404_for_unknown() {
 
 #[tokio::test]
 async fn strategy_chart_returns_empty_run_series_for_unused_strategy() {
-    let (server, _tmp) = boot().await;
-    let response = server.get("/api/strategies/bundle-canonical-defaults/chart").await;
+    use xvision_engine::strategies::{
+        manifest::PublicManifest, risk::RiskPreset, store::FilesystemStore, store::StrategyStore,
+        Strategy,
+    };
+
+    let (server, tmp) = boot().await;
+    let store = FilesystemStore::new(tmp.path().join("strategies"));
+    let strategy_id = "01J0DASHTESTCHART000000001";
+    store
+        .save(&Strategy {
+            manifest: PublicManifest {
+                id: strategy_id.into(),
+                display_name: "Unused Strategy".into(),
+                plain_summary: "seeded for chart endpoint test".into(),
+                creator: "@dashboard-test".into(),
+                template: "mean_reversion".into(),
+                regime_fit: vec![],
+                asset_universe: vec!["BTC/USD".into()],
+                decision_cadence_minutes: 60,
+                required_models: vec![],
+                required_tools: vec![],
+                risk_preset_or_config: "balanced".into(),
+                published_at: None,
+            },
+            agents: Vec::new(),
+            pipeline: Default::default(),
+            regime_slot: None,
+            intern_slot: None,
+            trader_slot: None,
+            risk: RiskPreset::Balanced.expand(),
+            mechanical_params: serde_json::json!({}),
+        })
+        .await
+        .unwrap();
+
+    let response = server
+        .get(&format!("/api/strategies/{strategy_id}/chart"))
+        .await;
     response.assert_status_ok();
     let body: serde_json::Value = response.json();
-    // bundle-canonical-defaults exists but has no runs against it on a fresh db.
     assert!(
         body["run_series"].is_array(),
         "run_series must be array"

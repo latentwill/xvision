@@ -1,5 +1,5 @@
-//! Strategy bundle operations. Backed by the existing filesystem bundle
-//! store from Plan #1 (`xvision-engine/src/bundle/store.rs`). Every function
+//! Strategy operations. Backed by the existing filesystem strategy
+//! store from Plan #1. Every function
 //! records to `api_audit` via `audit::record` on completion.
 //!
 //! Read-only ops (`list`, `get`) ship today; the mutation surface
@@ -33,12 +33,13 @@ use std::time::Instant;
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct StrategySummary {
     pub agent_id: String,
+    pub display_name: String,
     pub template: String,
-    /// Model requirement of the bundle's primary slot — trader if set,
-    /// otherwise the first configured slot in (trader, intern, regime)
-    /// order. None when no slot has a model_requirement. Surfaced so the
-    /// strategies list page can render a Model column without fetching
-    /// each bundle separately.
+    pub decision_cadence_minutes: u32,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// Model summary for attached AgentRefs. Falls back to legacy slot config
+    /// and shows the first unique model plus a count when multiple are present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
 }
@@ -126,33 +127,123 @@ pub async fn list(ctx: &ApiContext) -> ApiResult<Vec<StrategySummary>> {
 
 async fn list_inner(ctx: &ApiContext) -> ApiResult<Vec<StrategySummary>> {
     let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+    let agent_store = AgentStore::new(ctx.db.clone());
     let ids = store
         .list()
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
     let mut out = Vec::with_capacity(ids.len());
     for id in ids {
-        let bundle = store
+        let strategy = store
             .load(&id)
             .await
             .map_err(|e| ApiError::Internal(e.to_string()))?;
-        // Primary slot priority: trader → intern → regime. trader is
-        // the decision-maker and the schema-required one; the others
-        // are advisory/scoring layers that may not be filled.
-        let model = bundle
-            .trader_slot
-            .as_ref()
-            .or(bundle.intern_slot.as_ref())
-            .or(bundle.regime_slot.as_ref())
-            .map(|s| s.effective_model())
-            .filter(|m| !m.trim().is_empty());
+        let model = model_summary(ctx, &agent_store, &strategy).await?;
+        let tags = strategy_tags(&strategy);
         out.push(StrategySummary {
-            agent_id: bundle.manifest.id,
-            template: bundle.manifest.template,
+            agent_id: strategy.manifest.id.clone(),
+            display_name: strategy.manifest.display_name.clone(),
+            template: strategy.manifest.template.clone(),
+            decision_cadence_minutes: strategy.manifest.decision_cadence_minutes,
+            tags,
             model,
         });
     }
     Ok(out)
+}
+
+async fn model_summary(
+    ctx: &ApiContext,
+    agent_store: &AgentStore,
+    strategy: &Strategy,
+) -> ApiResult<Option<String>> {
+    let mut models = Vec::new();
+
+    for agent_ref in &strategy.agents {
+        let agent = agent_store
+            .get(&agent_ref.agent_id)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
+        let Some(agent) = agent else {
+            tracing::warn!(
+                agent_id = %agent_ref.agent_id,
+                strategy_id = %strategy.manifest.id,
+                actor = ?&ctx.actor,
+                "strategy summary skipped missing AgentRef"
+            );
+            continue;
+        };
+        for slot in agent.slots {
+            push_unique_model(&mut models, slot.model);
+        }
+    }
+
+    if models.is_empty() {
+        // Legacy slot fallback for older strategy JSON. Trader is the
+        // decision-maker, so it wins over advisory/scoring slots.
+        if let Some(slot) = strategy
+            .trader_slot
+            .as_ref()
+            .or(strategy.intern_slot.as_ref())
+            .or(strategy.regime_slot.as_ref())
+        {
+            push_unique_model(&mut models, slot.effective_model());
+        }
+    }
+
+    Ok(match models.as_slice() {
+        [] => None,
+        [one] => Some(one.clone()),
+        [first, rest @ ..] => Some(format!("{first} +{}", rest.len())),
+    })
+}
+
+fn push_unique_model(models: &mut Vec<String>, model: String) {
+    let model = model.trim();
+    if model.is_empty() {
+        return;
+    }
+    if !models.iter().any(|m| m == model) {
+        models.push(model.to_string());
+    }
+}
+
+fn strategy_tags(strategy: &Strategy) -> Vec<String> {
+    let mut tags = Vec::new();
+    push_unique_tag(&mut tags, strategy.manifest.template.clone());
+    for asset in &strategy.manifest.asset_universe {
+        push_unique_tag(&mut tags, asset.clone());
+    }
+    for regime in &strategy.manifest.regime_fit {
+        push_unique_tag(&mut tags, regime_tag(*regime));
+    }
+    for tool in &strategy.manifest.required_tools {
+        push_unique_tag(&mut tags, tool.clone());
+    }
+    tags
+}
+
+fn push_unique_tag(tags: &mut Vec<String>, tag: String) {
+    let tag = tag.trim();
+    if tag.is_empty() {
+        return;
+    }
+    if !tags.iter().any(|t| t == tag) {
+        tags.push(tag.to_string());
+    }
+}
+
+fn regime_tag(regime: crate::strategies::manifest::RegimeFit) -> String {
+    match regime {
+        crate::strategies::manifest::RegimeFit::TrendingBull => "trending_bull",
+        crate::strategies::manifest::RegimeFit::TrendingBear => "trending_bear",
+        crate::strategies::manifest::RegimeFit::RangeBound => "range_bound",
+        crate::strategies::manifest::RegimeFit::Chop => "chop",
+        crate::strategies::manifest::RegimeFit::HighVol => "high_vol",
+        crate::strategies::manifest::RegimeFit::LowVol => "low_vol",
+        crate::strategies::manifest::RegimeFit::EventDriven => "event_driven",
+    }
+    .to_string()
 }
 
 pub async fn get(ctx: &ApiContext, agent_id: &str) -> ApiResult<Strategy> {
@@ -472,7 +563,7 @@ pub async fn set_pipeline(ctx: &ApiContext, req: SetPipelineReq) -> ApiResult<St
     result
 }
 
-/// Set one mechanical parameter on the bundle and refresh the search index.
+/// Set one mechanical parameter on the strategy and refresh the search index.
 pub async fn set_mechanical_param(
     ctx: &ApiContext,
     req: authoring::SetMechanicalParamReq,
@@ -506,7 +597,7 @@ pub async fn set_mechanical_param(
     result
 }
 
-/// Update the bundle's risk config — preset (Conservative / Balanced /
+/// Update the strategy's risk config — preset (Conservative / Balanced /
 /// Aggressive) or an explicit `RiskConfig` blob, but not both.
 pub async fn set_risk_config(
     ctx: &ApiContext,
@@ -540,7 +631,7 @@ pub async fn set_risk_config(
     result
 }
 
-/// Re-load the bundle after a successful mutation and refresh its row in
+/// Re-load the strategy after a successful mutation and refresh its row in
 /// the search index. Best-effort: a failure here is logged inside
 /// `api::search::upsert_strategy` and never bubbled up — the mutation has
 /// already succeeded and the audit row is already written.
@@ -550,12 +641,12 @@ async fn index_strategy_after_mutation(
     agent_id: &str,
 ) {
     match store.load(agent_id).await {
-        Ok(bundle) => api_search::upsert_strategy(ctx, &bundle).await,
+        Ok(strategy) => api_search::upsert_strategy(ctx, &strategy).await,
         Err(e) => tracing::warn!(error = %e, agent_id, "post-mutation reload for indexer failed"),
     }
 }
 
-/// Run the bundle through the validator. The result type carries the
+/// Run the strategy through the validator. The result type carries the
 /// success/failure verdict + reasons; this wrapper only surfaces an
 /// `ApiError` for hard load failures (NotFound / Internal). A validation
 /// failure round-trips as `Ok(ValidateDraftOut { ok: false, errors })`.
@@ -633,8 +724,8 @@ mod tests {
         .await
         .unwrap();
         assert!(audit_row_exists(&ctx, "create", &out.id).await);
-        let bundle = get(&ctx, &out.id).await.unwrap();
-        assert_eq!(bundle.manifest.id, out.id);
+        let strategy = get(&ctx, &out.id).await.unwrap();
+        assert_eq!(strategy.manifest.id, out.id);
     }
 
     #[tokio::test]

@@ -217,7 +217,7 @@ mod tests {
 
     fn finalized_run() -> Run {
         let mut r = Run::new_queued(
-            "bundle-h".into(),
+            "strategy-h".into(),
             "crypto-bull-q1-2025".into(),
             RunMode::Backtest,
         );

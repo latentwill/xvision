@@ -8,7 +8,7 @@ export function Topbar({
   cmdkPlaceholder = "Jump to anything…",
 }: {
   title: string;
-  sub?: string;
+  sub?: React.ReactNode;
   cmdkPlaceholder?: string;
 }) {
   const setCmdkOpen = useUi((s) => s.setCmdkOpen);
@@ -18,7 +18,11 @@ export function Topbar({
         <h1 className="m-0 mb-1 font-serif font-medium text-[38px] tracking-tight leading-none">
           {title}
         </h1>
-        {sub ? <div className="text-text-2 text-sm">{sub}</div> : null}
+        {sub ? (
+          <div className="max-w-[min(680px,60vw)] break-words text-sm text-text-2">
+            {sub}
+          </div>
+        ) : null}
       </div>
 
       <div className="flex items-center gap-3">

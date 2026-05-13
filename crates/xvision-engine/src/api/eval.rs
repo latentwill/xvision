@@ -49,7 +49,7 @@ use xvision_execution::broker_surface::{AlpacaPaperSurface, BrokerSurface};
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct ListRunsRequest {
-    pub strategy_bundle_hash: Option<String>,
+    pub agent_id: Option<String>,
     pub scenario_id: Option<String>,
     pub status: Option<RunStatus>,
 }
@@ -74,7 +74,7 @@ pub struct ScenarioSummary {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunSummary {
     pub id: String,
-    pub strategy_bundle_hash: String,
+    pub agent_id: String,
     pub scenario_id: String,
     pub mode: String,
     pub status: String,
@@ -160,7 +160,7 @@ pub async fn list(ctx: &ApiContext, req: ListRunsRequest) -> ApiResult<Vec<Run>>
 async fn list_inner(ctx: &ApiContext, req: &ListRunsRequest) -> ApiResult<Vec<Run>> {
     let store = RunStore::new(ctx.db.clone());
     let filter = ListFilter {
-        strategy_bundle_hash: req.strategy_bundle_hash.clone(),
+        agent_id: req.agent_id.clone(),
         scenario_id: req.scenario_id.clone(),
         status: req.status,
     };
@@ -424,7 +424,7 @@ async fn get_run_inner(ctx: &ApiContext, id: &str) -> ApiResult<RunDetail> {
 )]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvalRunRequest {
-    /// Strategy bundle id (the `agent_id` returned by `api::strategy::list`).
+    /// Strategy agent id returned by `api::strategy::list`.
     pub agent_id: String,
     /// Scenario id from `canonical_scenarios()` (e.g. `crypto-bull-q1-2025`).
     pub scenario_id: String,
@@ -432,7 +432,7 @@ pub struct EvalRunRequest {
     /// paper credentials; `Backtest` replays the scenario's parquet fixture
     /// in-process without any broker.
     pub mode: RunMode,
-    /// Optional per-run override of bundle.mechanical_params. Persisted as
+    /// Optional per-run override of `Strategy.mechanical_params`. Persisted as
     /// `eval_runs.params_override_json`.
     #[cfg_attr(feature = "ts-export", ts(type = "Record<string, unknown> | null"))]
     pub params_override: Option<serde_json::Value>,
@@ -455,14 +455,14 @@ pub async fn run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<Run> {
     // Early NotFound surfaces without env-var noise. Resolve the scenario
     // via the DB-backed registry (with a legacy `canonical_scenarios()`
     // fallback for test contexts that haven't applied migration 006).
-    let bundle = api_strategy::get(ctx, &req.agent_id).await?;
+    let strategy = api_strategy::get(ctx, &req.agent_id).await?;
     let _scenario = resolve_scenario(ctx, &req.scenario_id).await?;
 
     let broker: Option<Arc<dyn BrokerSurface>> = match req.mode {
         RunMode::Paper => Some(build_alpaca_paper_broker(ctx).await?),
         RunMode::Backtest => None,
     };
-    let dispatch_arc = build_eval_dispatch(ctx, &bundle).await?;
+    let dispatch_arc = build_eval_dispatch(ctx, &strategy).await?;
     let tools_arc = Arc::new(ToolRegistry::default_with_builtins());
     run_with_deps(ctx, req, broker, dispatch_arc, tools_arc).await
 }
@@ -512,9 +512,9 @@ async fn build_alpaca_paper_broker(
 
 async fn build_eval_dispatch(
     ctx: &ApiContext,
-    bundle: &crate::strategies::Strategy,
+    strategy: &crate::strategies::Strategy,
 ) -> ApiResult<Arc<dyn LlmDispatch>> {
-    let provider_name = select_eval_provider(ctx, bundle).await?;
+    let provider_name = select_eval_provider(ctx, strategy).await?;
     let cfg_path = runtime_config_path(ctx);
     let cfg = tokio::task::spawn_blocking(move || config::load_runtime(&cfg_path))
         .await
@@ -534,12 +534,12 @@ async fn build_eval_dispatch(
 
 async fn select_eval_provider(
     ctx: &ApiContext,
-    bundle: &crate::strategies::Strategy,
+    strategy: &crate::strategies::Strategy,
 ) -> ApiResult<String> {
     if let Some(provider) = [
-        bundle.trader_slot.as_ref(),
-        bundle.intern_slot.as_ref(),
-        bundle.regime_slot.as_ref(),
+        strategy.trader_slot.as_ref(),
+        strategy.intern_slot.as_ref(),
+        strategy.regime_slot.as_ref(),
     ]
     .into_iter()
     .flatten()
@@ -551,7 +551,7 @@ async fn select_eval_provider(
     }
 
     let agent_store = AgentStore::new(ctx.db.clone());
-    for agent_ref in &bundle.agents {
+    for agent_ref in &strategy.agents {
         if let Some(agent) = agent_store
             .get(&agent_ref.agent_id)
             .await
@@ -575,15 +575,15 @@ async fn select_eval_provider(
 
 async fn resolve_agent_slots(
     ctx: &ApiContext,
-    bundle: &crate::strategies::Strategy,
+    strategy: &crate::strategies::Strategy,
 ) -> ApiResult<Vec<ResolvedAgentSlot>> {
-    if bundle.agents.is_empty() {
+    if strategy.agents.is_empty() {
         return Ok(Vec::new());
     }
 
     let agent_store = AgentStore::new(ctx.db.clone());
-    let mut out = Vec::with_capacity(bundle.agents.len());
-    for agent_ref in &bundle.agents {
+    let mut out = Vec::with_capacity(strategy.agents.len());
+    for agent_ref in &strategy.agents {
         let agent = agent_store
             .get(&agent_ref.agent_id)
             .await
@@ -681,9 +681,9 @@ async fn run_inner(
     dispatch: Arc<dyn LlmDispatch>,
     tools: Arc<ToolRegistry>,
 ) -> ApiResult<Run> {
-    // 1. Look up the strategy bundle. Propagates ApiError::NotFound cleanly.
-    let bundle = api_strategy::get(ctx, &req.agent_id).await?;
-    let agent_slots = resolve_agent_slots(ctx, &bundle).await?;
+    // 1. Look up the strategy. Propagates ApiError::NotFound cleanly.
+    let strategy = api_strategy::get(ctx, &req.agent_id).await?;
+    let agent_slots = resolve_agent_slots(ctx, &strategy).await?;
 
     // 2. Look up the scenario. Primary path is the DB-backed registry
     //    (`api::scenario::get`); legacy path falls back to the compiled-in
@@ -725,7 +725,7 @@ async fn run_inner(
     let dispatch_for_postprocess = dispatch.clone();
 
     if let Err(e) = executor
-        .run(&mut run, &bundle, &scenario, &agent_slots, dispatch, tools, &store)
+        .run(&mut run, &strategy, &scenario, &agent_slots, dispatch, tools, &store)
         .await
     {
         // Persist the failure so downstream callers (CLI, dashboard) can
@@ -902,7 +902,7 @@ fn missing_bars_validation(scenario: &Scenario, source_error: Option<String>) ->
 /// for the same reason.
 pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDetail> {
     let started = Instant::now();
-    let bundle = api_strategy::get(ctx, &req.agent_id).await?;
+    let strategy = api_strategy::get(ctx, &req.agent_id).await?;
     let (scenario, from_db) = resolve_scenario_with_source(ctx, &req.scenario_id).await?;
 
     // Build broker / dispatch / tools from env up-front so any
@@ -912,7 +912,7 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
         RunMode::Paper => Some(build_alpaca_paper_broker(ctx).await?),
         RunMode::Backtest => None,
     };
-    let dispatch = build_eval_dispatch(ctx, &bundle).await?;
+    let dispatch = build_eval_dispatch(ctx, &strategy).await?;
     let tools = Arc::new(ToolRegistry::default_with_builtins());
 
     let executor: Box<dyn Executor> = match req.mode {
@@ -946,7 +946,7 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
     let ctx_bg = ctx.clone();
     let run_id = run.id.clone();
     tokio::spawn(async move {
-        execute_in_background(ctx_bg, run, bundle, scenario, executor, dispatch, tools).await;
+        execute_in_background(ctx_bg, run, strategy, scenario, executor, dispatch, tools).await;
     });
 
     get_run(ctx, &run_id).await
@@ -960,7 +960,7 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
 async fn execute_in_background(
     ctx: ApiContext,
     mut run: Run,
-    bundle: crate::strategies::Strategy,
+    strategy: crate::strategies::Strategy,
     scenario: Scenario,
     executor: Box<dyn Executor>,
     dispatch: Arc<dyn LlmDispatch>,
@@ -984,7 +984,7 @@ async fn execute_in_background(
     let dispatch_for_postprocess = dispatch.clone();
 
     if let Err(e) = executor
-        .run(&mut run, &bundle, &scenario, &[], dispatch, tools, &store)
+        .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)
         .await
     {
         let err_msg = e.to_string();
@@ -1114,7 +1114,7 @@ fn summarise(run: Run) -> RunSummary {
     };
     RunSummary {
         id: run.id,
-        strategy_bundle_hash: run.strategy_bundle_hash,
+        agent_id: run.agent_id,
         scenario_id: run.scenario_id,
         mode: match run.mode {
             RunMode::Backtest => "backtest".into(),
