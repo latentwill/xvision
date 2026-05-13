@@ -57,6 +57,9 @@ When presenting the pack, emphasize:
 
 ## Index
 
+- [`judge-pitch.md`](judge-pitch.md) — one-page summary of the strategy pack and demo order.
+- [`judge-pitch-slides.md`](judge-pitch-slides.md) — slide-style markdown for a judge-facing presentation.
+- [`judge-pitch-script.md`](judge-pitch-script.md) — super-short spoken script for the demo.
 - [`scenario-map.md`](scenario-map.md) — one-page map from strategy to regime and expected failure mode.
 - [`regime_filter_4h_ema_stack`](regime_filter_4h_ema_stack.md) — trend filter first, then 1h pullback entries.
 - [`volume_confirmed_breakout`](volume_confirmed_breakout.md) — breakout only when higher-timeframe bias and volume agree.
