@@ -43,8 +43,8 @@ export function ModelPicker({
   /** Override the "— pick a model —" placeholder. */
   placeholder?: string;
 }) {
-  const all = rows
-    .filter((r) => r.api_key_set && !r.synthetic)
+  const configuredProviders = rows.filter((r) => r.api_key_set && !r.synthetic);
+  const all = configuredProviders
     .flatMap((r) =>
       r.enabled_models.map((m) => ({ provider: r.name, model: m })),
     );
@@ -75,7 +75,10 @@ export function ModelPicker({
     >
       {options.length === 0 ? (
         <option value="">
-          {emptyHint ?? "no models — visit Settings → Providers"}
+          {emptyHint ??
+            (configuredProviders.length === 0
+              ? "No provider configured"
+              : "no models — visit Settings → Providers")}
         </option>
       ) : (
         <option value="">{placeholder ?? "— pick a model —"}</option>

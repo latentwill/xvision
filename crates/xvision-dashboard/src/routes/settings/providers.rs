@@ -14,7 +14,7 @@ use std::path::PathBuf;
 
 use xvision_engine::api::settings::providers::{
     self, AddProviderRequest, ProviderModelsReport, ProviderRow, ProvidersReport,
-    TestConnectionReport,
+    TestConnectionReport, UpdateProviderRequest,
 };
 
 use crate::error::DashboardError;
@@ -52,6 +52,16 @@ pub async fn add(
 ) -> Result<(StatusCode, Json<ProviderRow>), DashboardError> {
     let row = providers::add(&state.api_context(), &config_path(), req).await?;
     Ok((StatusCode::CREATED, Json(row)))
+}
+
+pub async fn update(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Json(req): Json<UpdateProviderRequest>,
+) -> Result<Json<ProviderRow>, DashboardError> {
+    let row = providers::update(&state.api_context(), &config_path(), &name, req).await?;
+    state.models_cache_invalidate(&name);
+    Ok(Json(row))
 }
 
 pub async fn remove(

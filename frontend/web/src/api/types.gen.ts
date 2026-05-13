@@ -87,6 +87,7 @@ export type { TimeWindow } from "./types.gen/TimeWindow";
 export type { TradeMarker } from "./types.gen/TradeMarker";
 export type { TradeSide } from "./types.gen/TradeSide";
 export type { UpdateAgentRequest } from "./types.gen/UpdateAgentRequest";
+export type { UpdateProviderRequest } from "./types.gen/UpdateProviderRequest";
 export type { UpdateSkillRequest } from "./types.gen/UpdateSkillRequest";
 export type { ValidationDiagnostic } from "./types.gen/ValidationDiagnostic";
 export type { Venue } from "./types.gen/Venue";
