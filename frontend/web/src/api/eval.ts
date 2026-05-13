@@ -85,6 +85,15 @@ export function deleteRun(id: string): Promise<void> {
   });
 }
 
+export function cancelRun(id: string): Promise<RunSummary> {
+  return apiFetch<RunSummary>(
+    `/api/eval/runs/${encodeURIComponent(id)}/cancel`,
+    {
+      method: "POST",
+    },
+  );
+}
+
 export function compareRuns(ids: string[]): Promise<ComparisonReport> {
   const qs = ids.map(encodeURIComponent).join(",");
   return apiFetch<ComparisonReport>(`/api/eval/compare?ids=${qs}`);

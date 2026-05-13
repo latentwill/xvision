@@ -134,6 +134,9 @@ impl Executor for PaperExecutor {
                 });
             }
             Err(e) => {
+                if matches!(store.is_cancelled(&run.id).await, Ok(true)) {
+                    return result;
+                }
                 self.emit(ProgressEvent::RunFailed {
                     run_id: run.id.clone(),
                     error: e.to_string(),
@@ -193,6 +196,9 @@ impl PaperExecutor {
 
         let mut ts = scenario.time_window.start;
         while ts < scenario.time_window.end {
+            if store.is_cancelled(&run.id).await? {
+                anyhow::bail!("eval run cancelled");
+            }
             // Emit RunTick before pipeline work so dashboard progress
             // bars can advance even if the LLM call is slow.
             let elapsed = (ts - scenario.time_window.start).num_seconds() as f64;
@@ -225,6 +231,15 @@ impl PaperExecutor {
             .await?;
             total_input_tokens += outs.total_input_tokens as u64;
             total_output_tokens += outs.total_output_tokens as u64;
+            run.actual_input_tokens = Some(total_input_tokens);
+            run.actual_output_tokens = Some(total_output_tokens);
+            store
+                .update_token_usage(&run.id, total_input_tokens, total_output_tokens)
+                .await?;
+
+            if store.is_cancelled(&run.id).await? {
+                anyhow::bail!("eval run cancelled");
+            }
 
             let parsed = outs
                 .trader
@@ -328,6 +343,10 @@ impl PaperExecutor {
 
             decision_idx += 1;
             ts += cadence;
+        }
+
+        if store.is_cancelled(&run.id).await? {
+            anyhow::bail!("eval run cancelled");
         }
 
         let final_balance = self.broker.balance().await?;
