@@ -22,6 +22,13 @@ vi.mock("@/api/eval", () => ({
   listRuns: vi.fn().mockResolvedValue([]),
 }));
 
+vi.mock("@/api/chart", () => ({
+  chartKeys: {
+    run: (id: string) => ["chart", "run", id],
+  },
+  getRunChart: vi.fn(),
+}));
+
 vi.mock("@/api/strategies", () => ({
   strategyKeys: {
     list: () => ["strategies", "list"],
@@ -42,7 +49,14 @@ vi.mock("@/api/settings", () => ({
     brokers: () => ["settings", "brokers"],
   },
   listProviders: vi.fn().mockResolvedValue({ providers: [] }),
-  getBrokers: vi.fn().mockResolvedValue({ executor: "paper", brokers: [] }),
+  getBrokers: vi.fn().mockResolvedValue({
+    executor: "paper",
+    alpaca: {
+      name: "Alpaca",
+      configured: true,
+      credentials: [],
+    },
+  }),
 }));
 
 function renderRoute() {

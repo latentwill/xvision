@@ -28,11 +28,12 @@ use chrono::{DateTime, Utc};
 use ed25519_dalek::SigningKey;
 use serde::{Deserialize, Serialize};
 
-use crate::agent::llm::{AnthropicDispatch, LlmDispatch};
+use crate::agent::llm::{AnthropicDispatch, LlmDispatch, OpenaiCompatDispatch};
 use crate::api::audit::{self, Outcome};
 use crate::api::settings::brokers as api_brokers;
 use crate::api::scenario as api_scenario;
 use crate::api::{search as api_search, strategy as api_strategy, ApiContext, ApiError, ApiResult};
+use crate::agents::AgentStore;
 use crate::eval::attestation::{self, EvalAttestation};
 use crate::eval::compare::{compare_runs, ComparisonReport};
 #[allow(deprecated)]
@@ -42,6 +43,7 @@ use crate::eval::run::{Run, RunMode, RunStatus};
 use crate::eval::scenario::Scenario;
 use crate::eval::store::{ListFilter, RunStore};
 use crate::tools::ToolRegistry;
+use xvision_core::config::{self, ProviderEntry, ProviderKind};
 use xvision_execution::broker_surface::{AlpacaPaperSurface, BrokerSurface};
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -213,6 +215,34 @@ pub async fn get(ctx: &ApiContext, run_id: &str) -> ApiResult<Run> {
         ctx,
         "eval",
         "get",
+        Some(run_id),
+        None,
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    result
+}
+
+pub async fn delete(ctx: &ApiContext, run_id: &str) -> ApiResult<()> {
+    let started = Instant::now();
+    let store = RunStore::new(ctx.db.clone());
+    let result = store.delete(run_id).await.map_err(|e| {
+        let msg = e.to_string();
+        if msg.contains("run not found") {
+            ApiError::NotFound(format!("eval run '{run_id}'"))
+        } else {
+            ApiError::Internal(msg)
+        }
+    });
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let _ = audit::record(
+        ctx,
+        "eval",
+        "delete",
         Some(run_id),
         None,
         outcome,
@@ -424,17 +454,14 @@ pub async fn run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<Run> {
     // Early NotFound surfaces without env-var noise. Resolve the scenario
     // via the DB-backed registry (with a legacy `canonical_scenarios()`
     // fallback for test contexts that haven't applied migration 006).
-    let _bundle = api_strategy::get(ctx, &req.agent_id).await?;
+    let bundle = api_strategy::get(ctx, &req.agent_id).await?;
     let _scenario = resolve_scenario(ctx, &req.scenario_id).await?;
 
     let broker: Option<Arc<dyn BrokerSurface>> = match req.mode {
         RunMode::Paper => Some(build_alpaca_paper_broker(ctx).await?),
         RunMode::Backtest => None,
     };
-    let api_key = std::env::var("ANTHROPIC_API_KEY").map_err(|_| {
-        ApiError::Validation("ANTHROPIC_API_KEY env var is required".into())
-    })?;
-    let dispatch_arc: Arc<dyn LlmDispatch> = Arc::new(AnthropicDispatch::new(api_key));
+    let dispatch_arc = build_eval_dispatch(ctx, &bundle).await?;
     let tools_arc = Arc::new(ToolRegistry::default_with_builtins());
     run_with_deps(ctx, req, broker, dispatch_arc, tools_arc).await
 }
@@ -480,6 +507,107 @@ async fn build_alpaca_paper_broker(
             }
         }
     }
+}
+
+async fn build_eval_dispatch(
+    ctx: &ApiContext,
+    bundle: &crate::strategies::Strategy,
+) -> ApiResult<Arc<dyn LlmDispatch>> {
+    let provider_name = select_eval_provider(ctx, bundle).await?;
+    let cfg_path = runtime_config_path(ctx);
+    let cfg = tokio::task::spawn_blocking(move || config::load_runtime(&cfg_path))
+        .await
+        .map_err(|e| ApiError::Internal(format!("spawn_blocking: {e}")))?
+        .map_err(|e| ApiError::Validation(format!("load config: {e}")))?;
+    let entry = cfg
+        .providers
+        .iter()
+        .find(|p| p.name == provider_name)
+        .ok_or_else(|| {
+            ApiError::Validation(format!(
+                "provider `{provider_name}` is not configured. Pick a configured provider/model for the strategy agent before running eval."
+            ))
+        })?;
+    dispatch_from_provider(entry).await
+}
+
+async fn select_eval_provider(
+    ctx: &ApiContext,
+    bundle: &crate::strategies::Strategy,
+) -> ApiResult<String> {
+    if let Some(provider) = [
+        bundle.trader_slot.as_ref(),
+        bundle.intern_slot.as_ref(),
+        bundle.regime_slot.as_ref(),
+    ]
+    .into_iter()
+    .flatten()
+    .filter_map(|slot| slot.provider.as_deref())
+    .map(str::trim)
+    .find(|provider| !provider.is_empty())
+    {
+        return Ok(provider.to_string());
+    }
+
+    let agent_store = AgentStore::new(ctx.db.clone());
+    for agent_ref in &bundle.agents {
+        if let Some(agent) = agent_store
+            .get(&agent_ref.agent_id)
+            .await
+            .map_err(|e| ApiError::Internal(format!("load agent {}: {e}", agent_ref.agent_id)))?
+        {
+            if let Some(provider) = agent
+                .slots
+                .iter()
+                .map(|slot| slot.provider.trim())
+                .find(|provider| !provider.is_empty())
+            {
+                return Ok(provider.to_string());
+            }
+        }
+    }
+
+    Err(ApiError::Validation(
+        "eval requires an explicit provider/model on a strategy slot or attached agent; no workspace default is assumed".into(),
+    ))
+}
+
+async fn dispatch_from_provider(entry: &ProviderEntry) -> ApiResult<Arc<dyn LlmDispatch>> {
+    let api_key = if entry.api_key_env.is_empty() {
+        String::new()
+    } else {
+        std::env::var(&entry.api_key_env).map_err(|_| {
+            ApiError::Validation(format!(
+                "no API key for provider `{}` (env var {} is unset). Paste a key in Settings → Providers or export {} before running eval.",
+                entry.name, entry.api_key_env, entry.api_key_env
+            ))
+        })?
+    };
+    if api_key.is_empty() && entry.kind != ProviderKind::LocalCandle {
+        return Err(ApiError::Validation(format!(
+            "provider `{}` has no API key set. Paste one in Settings → Providers.",
+            entry.name
+        )));
+    }
+    match entry.kind {
+        ProviderKind::Anthropic => Ok(Arc::new(AnthropicDispatch::new(api_key))),
+        ProviderKind::OpenaiCompat => Ok(Arc::new(OpenaiCompatDispatch::new(
+            entry.base_url.clone(),
+            api_key,
+        ))),
+        ProviderKind::LocalCandle => Err(ApiError::Validation(
+            "local-candle providers are not wired into eval runs yet".into(),
+        )),
+    }
+}
+
+fn runtime_config_path(ctx: &ApiContext) -> std::path::PathBuf {
+    if let Ok(p) = std::env::var("XVN_CONFIG_PATH") {
+        if !p.is_empty() {
+            return p.into();
+        }
+    }
+    ctx.xvn_home.join("config").join("default.toml")
 }
 
 /// Testable / deps-injecting variant of `run`. Tests pass a
@@ -733,10 +861,7 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
         RunMode::Paper => Some(build_alpaca_paper_broker(ctx).await?),
         RunMode::Backtest => None,
     };
-    let api_key = std::env::var("ANTHROPIC_API_KEY").map_err(|_| {
-        ApiError::Validation("ANTHROPIC_API_KEY env var is required".into())
-    })?;
-    let dispatch: Arc<dyn LlmDispatch> = Arc::new(AnthropicDispatch::new(api_key));
+    let dispatch = build_eval_dispatch(ctx, &bundle).await?;
     let tools = Arc::new(ToolRegistry::default_with_builtins());
 
     let executor: Box<dyn Executor> = match req.mode {

@@ -1,15 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card } from "@/components/primitives/Card";
-import { Pill } from "@/components/primitives/Pill";
-import { ModelPicker } from "@/components/ModelPicker";
 import { ApiError } from "@/api/client";
 import {
   addProvider,
   listProviderModels,
   listProviders,
   removeProvider,
-  setDefaultProvider,
   setEnabledModels,
   settingsKeys,
   testProviderConnection,
@@ -149,11 +146,9 @@ export function SettingsProvidersRoute() {
   }
 
   const rows = list.data.providers;
-  const defaultModel = list.data.default_model ?? null;
 
   return (
     <div className="space-y-5">
-      <DefaultLlmCard rows={rows} defaultModel={defaultModel} />
       <Card className="p-5">
         <div className="flex items-center justify-between mb-3">
           <div>
@@ -237,13 +232,6 @@ function ProviderRowView({
   removeError: string | null;
   removeBusy: boolean;
 }) {
-  // The workspace default LLM is locked from deletion — removing it
-  // would orphan the default. The operator changes the default via the
-  // top-of-page Default-LLM card, which unlocks the old default.
-  const locked = row.is_default;
-  const lockReason = locked
-    ? "Workspace default — change the default LLM above before removing this provider."
-    : null;
   const [managing, setManaging] = useState(false);
   const test = useMutation<TestConnectionReport, unknown, void>({
     mutationFn: () => testProviderConnection(row.name),
@@ -254,7 +242,6 @@ function ProviderRowView({
         <td className="py-2 pr-3">
           <div className="flex items-center gap-2">
             <code className="font-mono text-[13px] text-text">{row.name}</code>
-            {row.is_default ? <Pill tone="gold">default</Pill> : null}
           </div>
         </td>
         <td className="py-2 pr-3 text-text-2 text-[12px] font-mono">
@@ -299,8 +286,7 @@ function ProviderRowView({
             ) : null}
             <button
               onClick={onRemove}
-              disabled={locked || removeBusy}
-              title={lockReason ?? undefined}
+              disabled={removeBusy}
               className="px-2 py-1 rounded text-[12px] border border-border text-text-2 hover:text-danger hover:border-danger disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:text-text-2 disabled:hover:border-border"
             >
               {removeBusy ? "Removing…" : "Remove"}
@@ -333,118 +319,6 @@ function ProviderRowView({
         </tr>
       ) : null}
     </>
-  );
-}
-
-function DefaultLlmCard({
-  rows,
-  defaultModel,
-}: {
-  rows: ProviderRow[];
-  defaultModel: string | null;
-}) {
-  const qc = useQueryClient();
-  const eligible = rows.filter((r) => r.api_key_set && !r.synthetic);
-  const currentDefault = eligible.find((r) => r.is_default) ?? null;
-
-  const [provider, setProvider] = useState<string | null>(
-    currentDefault?.name ?? null,
-  );
-  const [model, setModel] = useState<string>(defaultModel ?? "");
-
-  // Sync local form state when the upstream query data changes (e.g.
-  // after a successful save, or if another tab edited the default).
-  useEffect(() => {
-    setProvider(currentDefault?.name ?? null);
-    setModel(defaultModel ?? "");
-  }, [currentDefault?.name, defaultModel]);
-
-  const save = useMutation({
-    mutationFn: async () => {
-      if (!provider) throw new Error("pick a provider");
-      await setDefaultProvider(provider, {
-        model: model.trim() ? model.trim() : undefined,
-      });
-    },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: settingsKeys.providers() });
-    },
-  });
-
-  if (eligible.length === 0) {
-    // No configured providers yet — the "add your first provider" flow
-    // below owns the empty state; don't surface a stub card.
-    return null;
-  }
-
-  const dirty =
-    provider !== (currentDefault?.name ?? null) ||
-    model !== (defaultModel ?? "");
-
-  return (
-    <Card className="p-5">
-      <h3 className="m-0 font-serif font-medium text-[20px] tracking-tight">
-        Default LLM
-      </h3>
-      <p className="m-0 mt-1 mb-4 text-text-3 text-[12px]">
-        The provider and model xvision uses by default for the wizard, the
-        chat-rail, and any agent slot that doesn't override.
-      </p>
-      <div className="grid grid-cols-1 md:grid-cols-[1fr_2fr_auto] gap-3 md:items-end">
-        <div>
-          <label className="block text-[12px] text-text-2 mb-1">Provider</label>
-          <select
-            value={provider ?? ""}
-            onChange={(e) => {
-              const next = e.target.value || null;
-              setProvider(next);
-              if (next !== provider) setModel("");
-            }}
-            className="w-full px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono focus:outline-none focus:border-text-3"
-          >
-            <option value="">— pick a provider —</option>
-            {eligible.map((r) => (
-              <option key={r.name} value={r.name}>
-                {r.name}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="block text-[12px] text-text-2 mb-1">Model</label>
-          <ModelPicker
-            rows={rows}
-            loading={false}
-            provider={provider}
-            model={model}
-            onChange={(_p, m) => setModel(m)}
-            filterProvider={provider ?? undefined}
-            className="w-full px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono focus:outline-none focus:border-text-3"
-            placeholder={
-              provider ? "— pick a model —" : "— pick a provider first —"
-            }
-            emptyHint={
-              provider
-                ? `no enabled models for ${provider} — pick them via Models below`
-                : "— pick a provider first —"
-            }
-          />
-        </div>
-        <button
-          type="button"
-          disabled={!dirty || !provider || save.isPending}
-          onClick={() => save.mutate()}
-          className="px-3 py-2 rounded text-[13px] font-medium border border-gold text-gold hover:bg-gold/10 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {save.isPending ? "Saving…" : "Save"}
-        </button>
-      </div>
-      {save.isError ? (
-        <p className="m-0 mt-2 text-[12px] text-rose-300 font-mono">
-          {errorMessage(save.error)}
-        </p>
-      ) : null}
-    </Card>
   );
 }
 

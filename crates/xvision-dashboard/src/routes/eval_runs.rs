@@ -78,6 +78,14 @@ pub async fn get(
     Ok(Json(detail))
 }
 
+pub async fn delete_run(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, DashboardError> {
+    eval::delete(&state.api_context(), &id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 #[derive(Debug, Deserialize)]
 pub struct CompareParams {
     /// Comma-separated run ids: `?ids=01J…,01K…`. Whitespace around commas

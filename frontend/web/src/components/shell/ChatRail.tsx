@@ -103,22 +103,16 @@ export function ChatRail() {
     enabled: open,
     refetchInterval: 5000,
   });
-  // Auto-pick the first enabled (provider, model) from the intern's
-  // default once the catalog loads, so users who configured a provider
-  // can chat without diving into the picker. If the operator hasn't
-  // enabled any models yet, the picker shows a "visit Settings" hint.
+  // Auto-pick the first enabled (provider, model) once the catalog loads
+  // so users who configured a provider can chat without diving into the
+  // picker. If the operator hasn't enabled any models yet, the picker
+  // shows a "visit Settings" hint.
   useEffect(() => {
     if (providerName && modelId) return;
     const rows = providers.data?.providers ?? [];
-    const candidates = rows
-      .filter((p) => p.api_key_set && !p.synthetic && p.enabled_models.length > 0)
-      .sort((a, b) =>
-        a.is_default === b.is_default
-          ? 0
-          : a.is_default
-            ? -1
-            : 1,
-      );
+    const candidates = rows.filter(
+      (p) => p.api_key_set && !p.synthetic && p.enabled_models.length > 0,
+    );
     const pick = candidates[0];
     if (!pick) return;
     const m = pick.enabled_models[0];
