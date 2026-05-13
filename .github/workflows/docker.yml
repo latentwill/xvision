@@ -68,6 +68,9 @@ jobs:
             pkg-config \
             libsqlite3-dev
 
+      - name: Ensure dashboard static embed dir exists
+        run: mkdir -p crates/xvision-dashboard/static
+
       - name: Rust deploy compile check
         run: cargo check --bin xvn
 

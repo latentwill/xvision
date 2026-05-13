@@ -9,7 +9,7 @@
 
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use chrono::Duration;
 use serde::Deserialize;
@@ -30,15 +30,7 @@ use crate::eval::scenario::Scenario;
 use crate::eval::store::{DecisionRow, RunStore};
 use crate::tools::ToolRegistry;
 
-/// Reference base-asset price used to size orders in base units when the
-/// broker doesn't expose a live quote method. Production AlpacaPaperSurface
-/// recomputes notional from `get_position(symbol).current_price` internally
-/// — this constant is only the basis for the *base-asset units* number we
-/// hand the broker. v1 BTC-only.
-///
-/// Future: lift this into a `BrokerSurface::quote(asset)` method or a
-/// dedicated price-discovery dependency. Tracked for v1.1.
-const BTC_REFERENCE_PRICE_USD: f64 = 70_000.0;
+const DEFAULT_REFERENCE_PRICE_USD: f64 = 70_000.0;
 
 pub struct PaperExecutor {
     broker: Arc<dyn BrokerSurface>,
@@ -101,13 +93,24 @@ struct TraderOutput {
 }
 
 impl TraderOutput {
-    fn flat() -> Self {
-        Self {
-            action: "flat".into(),
-            conviction: 0.0,
-            justification: "parse error or missing — fell back to flat".into(),
-        }
+    fn parse_strict(raw: &str, run_id: &str, decision_index: u32) -> Result<Self> {
+        serde_json::from_str::<Self>(raw).map_err(|e| {
+            anyhow!(
+                "run {} decision {}: trader output is invalid JSON: {}",
+                run_id,
+                decision_index,
+                e
+            )
+        })
     }
+}
+
+fn configured_reference_price_usd() -> f64 {
+    std::env::var("XVN_PAPER_REFERENCE_PRICE_USD")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        .filter(|v| *v > 0.0)
+        .unwrap_or(DEFAULT_REFERENCE_PRICE_USD)
 }
 
 fn is_actionable(action: &str) -> bool {
@@ -236,6 +239,7 @@ impl PaperExecutor {
         let mut n_trades = 0u32;
         let mut total_input_tokens: u64 = 0;
         let mut total_output_tokens: u64 = 0;
+        let mut reference_price_usd = configured_reference_price_usd();
         // Running peak for drawdown_pct in MetricsUpdated. Start at the
         // initial balance so the first tick's drawdown is well-defined.
         let mut peak_equity = initial_balance.max(0.0);
@@ -287,11 +291,11 @@ impl PaperExecutor {
                 anyhow::bail!("eval run cancelled");
             }
 
-            let parsed = outs
+            let trader = outs
                 .trader
                 .as_ref()
-                .and_then(|t| serde_json::from_str::<TraderOutput>(&t.text()).ok())
-                .unwrap_or_else(TraderOutput::flat);
+                .ok_or_else(|| anyhow!("run {} decision {}: trader output missing", run.id, decision_idx))?;
+            let parsed = TraderOutput::parse_strict(&trader.text(), &run.id, decision_idx)?;
 
             let mut order_size: Option<f64> = None;
             let mut fill_price: Option<f64> = None;
@@ -300,7 +304,7 @@ impl PaperExecutor {
 
             if is_actionable(&parsed.action) {
                 let usd_at_risk = balance * strategy.risk.risk_pct_per_trade;
-                let size = (usd_at_risk / BTC_REFERENCE_PRICE_USD).max(0.0);
+                let size = (usd_at_risk / reference_price_usd).max(0.0);
                 let side = if parsed.action == "long_open" {
                     Side::Buy
                 } else {
@@ -318,6 +322,10 @@ impl PaperExecutor {
                 };
                 let conf = self.broker.submit_order(req).await?;
                 fill_price = conf.fill_price;
+                if let Some(px) = conf.fill_price.filter(|px| *px > 0.0) {
+                    // Keep sizing in sync with the latest executable price.
+                    reference_price_usd = px;
+                }
                 fill_size = Some(conf.fill_size);
                 fee = conf.fee;
                 order_size = Some(size);
