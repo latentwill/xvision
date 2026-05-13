@@ -318,6 +318,43 @@ async fn settings_brokers_reflects_set_env_vars() {
 }
 
 #[tokio::test]
+async fn settings_brokers_replaces_stored_alpaca_credentials() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _alpaca_key = scoped_unset("APCA_API_KEY_ID");
+    let _alpaca_sec = scoped_unset("APCA_API_SECRET_KEY");
+
+    let (server, _tmp) = boot().await;
+
+    let first = server
+        .post("/api/settings/brokers/alpaca")
+        .json(&serde_json::json!({
+            "api_key_id": "FIRSTKEY00001111",
+            "api_secret_key": "first-secret",
+            "base_url": "https://paper-api.alpaca.markets"
+        }))
+        .await;
+    first.assert_status(axum::http::StatusCode::CREATED);
+
+    let second = server
+        .post("/api/settings/brokers/alpaca")
+        .json(&serde_json::json!({
+            "api_key_id": "SECONDKEY00002222",
+            "api_secret_key": "second-secret",
+            "base_url": "https://paper-api.alpaca.markets"
+        }))
+        .await;
+    second.assert_status(axum::http::StatusCode::CREATED);
+    let replaced: serde_json::Value = second.json();
+    assert_eq!(replaced["stored_key_id_suffix"], "2222");
+
+    let response = server.get("/api/settings/brokers").await;
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["alpaca"]["stored"], true);
+    assert_eq!(body["alpaca"]["stored_key_id_suffix"], "2222");
+}
+
+#[tokio::test]
 async fn settings_daemon_returns_not_applicable_in_v1() {
     let (server, _tmp) = boot().await;
     let response = server.get("/api/settings/daemon").await;
@@ -825,11 +862,6 @@ async fn providers_add_creates_and_persists_row() {
     let (server, tmp) = boot().await;
     let cfg = write_config(&tmp);
     let _g = scoped_set("XVN_CONFIG_PATH", cfg.to_str().unwrap());
-    // Pretend the operator already has the seeded default's key exported.
-    // Without this the add path's auto-promote would re-point [intern] at
-    // the new openai row — see providers::add_inner.
-    let _g_key = scoped_set("ANTHROPIC_API_KEY", "sk-ant-test");
-
     let response = server
         .post("/api/settings/providers")
         .json(&serde_json::json!({
@@ -902,16 +934,44 @@ async fn providers_add_rejects_invalid_kind_with_400() {
 }
 
 #[tokio::test]
-async fn providers_remove_refuses_intern_referenced_with_409() {
+async fn providers_remove_default_clears_default_with_204() {
     let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let (server, tmp) = boot().await;
     let cfg = write_config(&tmp);
     let _g = scoped_set("XVN_CONFIG_PATH", cfg.to_str().unwrap());
 
     let response = server.delete("/api/settings/providers/anthropic").await;
-    response.assert_status(axum::http::StatusCode::CONFLICT);
+    response.assert_status(axum::http::StatusCode::NO_CONTENT);
+
+    let list = server.get("/api/settings/providers").await;
+    let body: serde_json::Value = list.json();
+    let items = body["providers"].as_array().unwrap();
+    assert!(items.is_empty());
+    assert_eq!(body["default_model"], serde_json::Value::Null);
+}
+
+#[tokio::test]
+async fn providers_update_edits_row() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let (server, tmp) = boot().await;
+    let cfg = write_config(&tmp);
+    let _g = scoped_set("XVN_CONFIG_PATH", cfg.to_str().unwrap());
+
+    let response = server
+        .put("/api/settings/providers/anthropic")
+        .json(&serde_json::json!({
+            "kind": "anthropic",
+            "base_url": "https://proxy.example/v1",
+            "api_key_env": "ANTHROPIC_PROXY_KEY",
+            "api_key": "sk-updated",
+        }))
+        .await;
+    response.assert_status_ok();
     let body: serde_json::Value = response.json();
-    assert_eq!(body["code"], "conflict");
+    assert_eq!(body["name"], "anthropic");
+    assert_eq!(body["base_url"], "https://proxy.example/v1");
+    assert_eq!(body["api_key_env"], "ANTHROPIC_PROXY_KEY");
+    assert_eq!(body["is_default"], true);
 }
 
 #[tokio::test]
@@ -921,10 +981,7 @@ async fn providers_remove_drops_row_and_returns_204() {
     let cfg = write_config(&tmp);
     let _g = scoped_set("XVN_CONFIG_PATH", cfg.to_str().unwrap());
 
-    // Seed an extra non-intern-referenced provider so we can delete it.
-    // Set ANTHROPIC_API_KEY so the auto-promote in add_inner doesn't
-    // re-point intern at the new openai row.
-    let _g_key = scoped_set("ANTHROPIC_API_KEY", "sk-ant-test");
+    // Seed an extra non-default provider so we can delete it.
     server
         .post("/api/settings/providers")
         .json(&serde_json::json!({
