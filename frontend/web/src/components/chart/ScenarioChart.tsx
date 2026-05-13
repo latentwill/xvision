@@ -21,10 +21,14 @@ export function ScenarioChart({
   payload,
   themeMode = "dark",
   onFetch,
+  fetchStatus,
+  fetchDisabled,
 }: {
   payload: ScenarioChartPayload;
   themeMode?: "dark" | "light";
   onFetch?: () => void;
+  fetchStatus?: string | null;
+  fetchDisabled?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [range, setRange] = useState<RangePreset>("All");
@@ -99,7 +103,12 @@ export function ScenarioChart({
         <span className="text-text-3 text-[12px]">
           {assetSymbol} · {payload.scenario.granularity}
         </span>
-        <CacheStatusBadge status={payload.cache_status} onFetch={onFetch} />
+        <CacheStatusBadge
+          status={payload.cache_status}
+          onFetch={onFetch}
+          fetchStatus={fetchStatus}
+          disabled={!!fetchDisabled}
+        />
       </div>
       <ChartContainer
         range={range}
@@ -117,9 +126,7 @@ export function ScenarioChart({
       >
         {payload.bars.length === 0 ? (
           <div className="flex items-center justify-center h-[360px] text-text-3 text-[13px]">
-            No bars cached — run{" "}
-            <code className="mx-1 font-mono text-text-2">xvn bars fetch</code>{" "}
-            to populate.
+            No bars cached yet. Use Fetch bars to populate this chart.
           </div>
         ) : (
           <div ref={ref} style={{ height: 360 }} />

@@ -677,6 +677,7 @@ pub async fn build_scenario_payload(
         .max(0) as u64;
     let bar_secs: u64 = match scenario.granularity {
         BarGranularity::Hour1 => 3600,
+        BarGranularity::Hour4 => 14_400,
         BarGranularity::Day1 => 86_400,
         // Fallback for future granularities — treat as hourly.
         _ => 3600,
@@ -1087,7 +1088,7 @@ pub struct PreviewQuery {
     pub asset: String,
     pub from: String,        // YYYY-MM-DD
     pub to: String,
-    pub granularity: String, // "1h" | "1d"
+    pub granularity: String, // "1h" | "4h" | "1d"
     pub baseline: Option<bool>,
 }
 
@@ -1115,10 +1116,11 @@ pub async fn build_scenario_preview(
     // Granularity.
     let g = match q.granularity.as_str() {
         "1h" => xvision_data::alpaca::BarGranularity::Hour1,
+        "4h" => xvision_data::alpaca::BarGranularity::Hour4,
         "1d" => xvision_data::alpaca::BarGranularity::Day1,
         other => {
             return Err(ApiError::Validation(format!(
-                "granularity '{other}' not in v1 set; allowed: 1h, 1d"
+                "granularity '{other}' not in v1 set; allowed: 1h, 4h, 1d"
             )))
         }
     };
@@ -1212,6 +1214,7 @@ fn preview_expected_bar_count(
     let secs = (to - from).num_seconds().max(0) as u64;
     let bar_secs: u64 = match g {
         xvision_data::alpaca::BarGranularity::Hour1 => 3600,
+        xvision_data::alpaca::BarGranularity::Hour4 => 14_400,
         xvision_data::alpaca::BarGranularity::Day1 => 86_400,
         _ => 3600,
     };
