@@ -12,6 +12,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { AuthoringRoute } from "./authoring";
 import * as strategyApi from "@/api/strategies";
 import * as agentApi from "@/api/agents";
+import * as settingsApi from "@/api/settings";
 
 vi.mock("@/api/strategies", async () => {
   const actual = await vi.importActual<typeof import("@/api/strategies")>(
@@ -24,6 +25,7 @@ vi.mock("@/api/strategies", async () => {
     setRiskConfig: vi.fn(),
     updateSlot: vi.fn(),
     setStrategyPipeline: vi.fn(),
+    addStrategyAgent: vi.fn(),
   };
 });
 
@@ -34,6 +36,7 @@ vi.mock("@/api/agents", async () => {
   return {
     ...actual,
     listAgents: vi.fn(),
+    createAgent: vi.fn(),
   };
 });
 
@@ -54,7 +57,7 @@ vi.mock("@/api/settings", () => ({
   settingsKeys: {
     providers: () => ["settings", "providers"],
   },
-  listProviders: vi.fn().mockResolvedValue({ providers: [] }),
+  listProviders: vi.fn(),
 }));
 
 function renderRoute() {
@@ -81,6 +84,9 @@ beforeEach(() => {
   vi.mocked(strategyApi.validateDraft).mockReset();
   vi.mocked(strategyApi.setRiskConfig).mockReset();
   vi.mocked(strategyApi.setStrategyPipeline).mockReset();
+  vi.mocked(strategyApi.addStrategyAgent).mockReset();
+  vi.mocked(agentApi.createAgent).mockReset();
+  vi.mocked(settingsApi.listProviders).mockResolvedValue({ providers: [] });
 });
 
 afterEach(() => {
@@ -301,6 +307,124 @@ describe("AuthoringRoute agent composition", () => {
       expect(strategyApi.setStrategyPipeline).toHaveBeenCalledWith("01TEST", {
         kind: "sequential",
         edges: [],
+      });
+    });
+  });
+
+  it("creates and attaches an agent with the configured provider/model picker", async () => {
+    vi.mocked(agentApi.listAgents).mockResolvedValue([]);
+    vi.mocked(settingsApi.listProviders).mockResolvedValue({
+      providers: [
+        {
+          name: "openrouter",
+          kind: "openai-compat",
+          base_url: "https://openrouter.ai/api/v1",
+          api_key_env: "OPENROUTER_API_KEY",
+          api_key_set: true,
+          synthetic: false,
+          is_default: false,
+          enabled_models: ["deepseek/deepseek-v4-flash"],
+        },
+      ],
+    });
+    vi.mocked(strategyApi.getStrategy).mockResolvedValue({
+      manifest: {
+        id: "01TEST",
+        display_name: "Agent Stack",
+        template: "custom",
+        creator: "@t",
+        plain_summary: "",
+        regime_fit: [],
+        asset_universe: [],
+        decision_cadence_minutes: 240,
+        required_models: [],
+        required_tools: [],
+        risk_preset_or_config: "balanced",
+        published_at: null,
+      },
+      agents: [],
+      pipeline: { kind: "single" },
+      regime_slot: null,
+      intern_slot: null,
+      trader_slot: null,
+      risk: {
+        risk_pct_per_trade: 0.015,
+        max_concurrent_positions: 2,
+        max_leverage: 3,
+        stop_loss_atr_multiple: 2,
+        daily_loss_kill_pct: 0.05,
+      },
+      mechanical_params: {},
+    });
+    vi.mocked(strategyApi.validateDraft).mockResolvedValue({
+      id: "01TEST",
+      ok: true,
+      errors: [],
+    });
+    vi.mocked(agentApi.createAgent).mockResolvedValue({
+      agent_id: "01DEEPSEEK",
+      name: "DeepSeek trader",
+      description: "",
+      tags: [],
+      slots: [
+        {
+          name: "main",
+          provider: "openrouter",
+          model: "deepseek/deepseek-v4-flash",
+          system_prompt: "Trade with discipline.",
+          skill_ids: [],
+          max_tokens: 4096,
+        },
+      ],
+      archived: false,
+      created_at: "2026-05-13T14:52:21Z",
+      updated_at: "2026-05-13T14:52:21Z",
+    });
+    vi.mocked(strategyApi.addStrategyAgent).mockResolvedValue({
+      strategy_id: "01TEST",
+      agents: [{ agent_id: "01DEEPSEEK", role: "trader" }],
+      pipeline: { kind: "single" },
+    });
+
+    renderRoute();
+
+    fireEvent.change(await screen.findByLabelText("New agent name"), {
+      target: { value: "DeepSeek trader" },
+    });
+    fireEvent.change(screen.getByLabelText("New agent role"), {
+      target: { value: "trader" },
+    });
+    fireEvent.change(screen.getByLabelText("New agent model"), {
+      target: { value: "openrouter::deepseek/deepseek-v4-flash" },
+    });
+    fireEvent.change(screen.getByLabelText("New agent system prompt"), {
+      target: { value: "Trade with discipline." },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Create and attach agent" }),
+    );
+
+    await waitFor(() => {
+      expect(agentApi.createAgent).toHaveBeenCalledWith({
+        name: "DeepSeek trader",
+        description: "",
+        tags: [],
+        slots: [
+          {
+            name: "main",
+            provider: "openrouter",
+            model: "deepseek/deepseek-v4-flash",
+            system_prompt: "Trade with discipline.",
+            skill_ids: [],
+            max_tokens: 4096,
+          },
+        ],
+      });
+    });
+    await waitFor(() => {
+      expect(strategyApi.addStrategyAgent).toHaveBeenCalledWith("01TEST", {
+        agent_id: "01DEEPSEEK",
+        role: "trader",
       });
     });
   });
