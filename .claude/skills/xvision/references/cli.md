@@ -92,3 +92,33 @@ xvn eod > reports/eod-2026-05-11.md
 ```
 
 Headline reports land in `reports/headline_<quant>/<date>.{json,md}` by convention.
+
+## Remote CLI over Tailscale
+
+Use this when driving a live node over `xvn.tail2bb69.ts.net` or `xvnej.tail2bb69.ts.net`.
+
+### Helper script
+
+```bash
+scripts/xvn-remote.py exec eval run --strategy <id> --scenario crypto-bull-q1-2025 --mode backtest
+scripts/xvn-remote.py submit eval list
+scripts/xvn-remote.py status <job_id>
+scripts/xvn-remote.py output <job_id>
+scripts/xvn-remote.py cancel <job_id>
+```
+
+### Raw API contract
+
+- `POST /api/cli/jobs` with JSON body `{ "argv": ["eval", "run", ...], "timeout_secs": 3600 }`
+- `GET /api/cli/jobs/:id`
+- `GET /api/cli/jobs/:id/output`
+- `GET /api/cli/jobs/:id/events`
+- `POST /api/cli/jobs/:id/cancel`
+
+Rules:
+
+- argv only; no shell text
+- no caller-controlled cwd
+- no caller-controlled env in v1
+- reject `dashboard` and `mcp` argv
+- trust boundary is Tailscale reachability for now
