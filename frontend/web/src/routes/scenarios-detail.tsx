@@ -15,6 +15,10 @@ import {
 import { getScenarioChart, scenarioChartKeys } from "@/api/chart";
 import { listRuns } from "@/api/eval";
 import { ScenarioChart } from "@/components/chart/ScenarioChart";
+import {
+  scenarioGranularityToCli,
+  useBarsFetchJob,
+} from "@/components/scenario/useBarsFetchJob";
 import type { Scenario, SlippageModel } from "@/api/types.gen";
 
 // ── helpers ────────────────────────────────────────────────────────────────
@@ -220,7 +224,7 @@ function DetailView({
         {activeTab === "definition" && <DefinitionTab s={s} />}
         {activeTab === "runs" && <RunsTab scenarioId={s.id} />}
         {activeTab === "bar-cache" && (
-          <BarCacheTab cacheKey={s.bar_cache_policy.cache_key} />
+          <BarCacheTab scenario={s} />
         )}
       </Card>
     </div>
@@ -298,6 +302,7 @@ function DefinitionTab({ s }: { s: Scenario }) {
     queryKey: scenarioChartKeys.scenario(s.id),
     queryFn: () => getScenarioChart(s.id),
   });
+  const barsFetch = useBarsFetchJob(buildBarsFetchSpec(s));
 
   return (
     <div>
@@ -310,7 +315,13 @@ function DefinitionTab({ s }: { s: Scenario }) {
         )}
         {chart.data && (
           <div className="mb-5">
-            <ScenarioChart payload={chart.data} />
+            <ScenarioChart
+              payload={chart.data}
+              onFetch={barsFetch.start}
+              fetchStatus={barsFetch.statusText}
+              fetchDisabled={!barsFetch.canStart}
+            />
+            <BarsFetchJobStatus fetch={barsFetch} />
           </div>
         )}
       </div>
@@ -454,7 +465,9 @@ type BarsCacheRowResponse = {
   fetched_at: string;
 };
 
-function BarCacheTab({ cacheKey }: { cacheKey: string }) {
+function BarCacheTab({ scenario }: { scenario: Scenario }) {
+  const cacheKey = scenario.bar_cache_policy.cache_key;
+  const barsFetch = useBarsFetchJob(buildBarsFetchSpec(scenario));
   const { data, isPending } = useQuery({
     queryKey: ["bars-cache", cacheKey],
     queryFn: () =>
@@ -480,10 +493,17 @@ function BarCacheTab({ cacheKey }: { cacheKey: string }) {
           {cacheKey}
         </code>
         <p className="text-text-3 text-[13px] mt-4">
-          No cache row yet — run{" "}
-          <code className="font-mono text-text-2">xvn bars fetch</code> to
-          populate.
+          No cache row yet.
         </p>
+        <button
+          type="button"
+          onClick={barsFetch.start}
+          disabled={!barsFetch.canStart}
+          className="mt-3 border border-border px-2 py-1 rounded text-[12px] text-text hover:border-text-3 disabled:opacity-60 disabled:cursor-not-allowed"
+        >
+          {barsFetch.statusText ?? "Fetch bars"}
+        </button>
+        <BarsFetchJobStatus fetch={barsFetch} />
       </div>
     );
   }
@@ -513,22 +533,51 @@ function BarCacheTab({ cacheKey }: { cacheKey: string }) {
 
         <dt className="text-text-3"></dt>
         <dd className="m-0 mt-2">
-          {/* TODO: wire to a future POST /api/bars/:cache_key/refetch endpoint
-              once xvn bars fetch is accessible via the dashboard.
-              The write path requires Alpaca credentials — out of scope for v1. */}
           <button
             type="button"
-            disabled
-            title="Run xvn bars fetch from the CLI to refresh"
-            className="border border-border px-2 py-1 rounded text-[12px] text-text-3 opacity-50 cursor-not-allowed"
+            onClick={barsFetch.start}
+            disabled={!barsFetch.canStart}
+            className="border border-border px-2 py-1 rounded text-[12px] text-text hover:border-text-3 disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            Refetch
+            {barsFetch.statusText ?? "Fetch bars"}
           </button>
-          <span className="ml-2 text-[11px] text-text-3">
-            Use <code className="font-mono">xvn bars fetch</code> to refresh
-          </span>
+          <BarsFetchJobStatus fetch={barsFetch} />
         </dd>
       </dl>
+    </div>
+  );
+}
+
+function buildBarsFetchSpec(s: Scenario) {
+  const asset = s.asset[0]?.symbol;
+  if (!asset) return null;
+  return {
+    asset,
+    granularity: scenarioGranularityToCli(s.granularity),
+    from: fmtDate(s.time_window.start),
+    to: fmtDate(s.time_window.end),
+    invalidateQueryKeys: [
+      scenarioChartKeys.scenario(s.id),
+      ["bars-cache", s.bar_cache_policy.cache_key] as const,
+    ],
+  };
+}
+
+function BarsFetchJobStatus({
+  fetch,
+}: {
+  fetch: ReturnType<typeof useBarsFetchJob>;
+}) {
+  if (!fetch.statusText && !fetch.outputText && !fetch.errorText) return null;
+  return (
+    <div className="mt-2 rounded border border-border bg-surface px-3 py-2 text-[12px] text-text-2">
+      {fetch.statusText && <div>{fetch.statusText}</div>}
+      {fetch.errorText && <div className="text-danger">{fetch.errorText}</div>}
+      {fetch.outputText && (
+        <pre className="mt-2 whitespace-pre-wrap font-mono text-[11px] text-text-3">
+          {fetch.outputText}
+        </pre>
+      )}
     </div>
   );
 }

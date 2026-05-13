@@ -76,6 +76,18 @@ async fn create_succeeds_with_valid_request() {
 }
 
 #[tokio::test]
+async fn create_succeeds_with_hour4_granularity() {
+    let ctx = test_ctx().await;
+    let mut req = valid_request();
+    req.granularity = BarGranularity::Hour4;
+
+    let s = create(&ctx, req).await.unwrap();
+
+    assert_eq!(s.granularity, BarGranularity::Hour4);
+    assert!(!s.bar_cache_policy.cache_key.is_empty());
+}
+
+#[tokio::test]
 async fn create_rejects_multi_asset_v1() {
     let ctx = test_ctx().await;
     let mut req = valid_request();
