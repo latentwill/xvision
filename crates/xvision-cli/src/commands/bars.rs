@@ -66,7 +66,7 @@ pub struct FetchArgs {
     /// Window end date (UTC, midnight).
     #[arg(long)]
     pub to: NaiveDate,
-    /// Bar granularity. v1 supports `1h` or `1d`.
+    /// Bar granularity. v1 supports `1h`, `4h`, or `1d`.
     #[arg(long, default_value = "1h")]
     pub granularity: String,
 }
@@ -122,10 +122,11 @@ async fn run_fetch(ctx: &ApiContext, a: FetchArgs) -> CliResult<()> {
         .map_err(|e| CliError::usage(anyhow::anyhow!("{e}")))?;
     let granularity = match a.granularity.as_str() {
         "1h" => BarGranularity::Hour1,
+        "4h" => BarGranularity::Hour4,
         "1d" => BarGranularity::Day1,
         other => {
             return Err(CliError::usage(anyhow::anyhow!(
-                "granularity '{other}' not in v1 set {{1h,1d}}"
+                "granularity '{other}' not in v1 set {{1h,4h,1d}}"
             )));
         }
     };
