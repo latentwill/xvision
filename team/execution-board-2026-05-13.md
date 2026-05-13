@@ -40,6 +40,7 @@ Use these as reference only:
 | `ghcr-build-optimization` | `.worktrees/ghcr-build-optimization` | GH Actions preflight + staging profile | none | yes | YAML parse + workflow diff check |
 | `strategy-agent-backend` | `.worktrees/strategy-agent-backend-core` | Strategy-agent backend refactor | none | no overlap with tracks 9/10 | `cargo test -p xvision-engine && cargo test -p xvision-cli strategy -- --nocapture` |
 | `pr94-chart-stabilization` | `.worktrees/pr94-chart-stabilization` | Narrow chart bug salvage from PR 94 | none | yes | `pnpm --dir frontend/web test -- RunChart LiveChart` |
+| `runtime-render-optimization` | `.worktrees/runtime-render-optimization` | Rust + frontend rendering-speed optimization pass | after `pr94-chart-stabilization` preferred | no overlap with active chart/frontend tracks | frontend build/test + focused chart perf smoke; Rust checks in CI/non-deploy |
 | `qa4-settings-zero-provider` | `.worktrees/qa4-settings-zero-provider` | Zero providers, no default LLM, provider edit, broker replace | none | yes | `cargo test -p xvision-core -p xvision-engine` |
 | `qa4-scenarios-4h-bars-ui` | `.worktrees/qa4-scenarios-4h-bars-ui` | 4H scenarios + bars fetch UI | prefer remote CLI sweep first | yes if off wizard/strategy files | `cargo test -p xvision-engine scenario -- --nocapture` |
 | `qa4-chat-eval-launcher` | `.worktrees/qa4-chat-eval-launcher` | Chat tools + eval launcher preflight/errors | after track 9 preferred | no overlap with track 9 | dashboard/eval tests |
@@ -53,11 +54,12 @@ Use these as reference only:
 3. `ghcr-build-optimization`
 4. `strategy-agent-backend`
 5. `pr94-chart-stabilization`
-6. `qa4-settings-zero-provider`
-7. `qa4-scenarios-4h-bars-ui`
-8. `qa4-surface-consistency`
-9. `qa4-chat-eval-launcher`
-10. `strategy-agent-inspector`
+6. `runtime-render-optimization`
+7. `qa4-settings-zero-provider`
+8. `qa4-scenarios-4h-bars-ui`
+9. `qa4-surface-consistency`
+10. `qa4-chat-eval-launcher`
+11. `strategy-agent-inspector`
 
 ## Immediate start set
 
@@ -67,6 +69,8 @@ Safe to start now:
 - `agent-docs-cli-truth`
 - `ghcr-build-optimization`
 - `pr94-chart-stabilization`
+- `runtime-render-optimization` once `pr94-chart-stabilization` is merged or no
+  longer active
 - `qa4-settings-zero-provider`
 - `qa4-scenarios-4h-bars-ui`
 
@@ -125,6 +129,30 @@ Avoid:
 - Completed checkpoint: `pr94-chart-stabilization` commit `da8b3a6`
   stabilizes RunChart time-scale synchronization and passes
   `corepack pnpm --dir frontend/web test -- RunChart LiveChart`.
+
+### `runtime-render-optimization`
+
+- Claimed in `.worktrees/runtime-render-optimization`.
+- Implemented checkpoint:
+  - `RunChart` now keeps chart instances stable across data-only payload
+    changes and updates existing series instead of rebuilding every pane.
+  - Dashboard router applies HTTP compression.
+  - Embedded static assets get cache headers (`index.html` no-cache, hashed
+    assets immutable).
+  - Frontend production source maps are no longer embedded.
+  - Font imports are latin-only.
+  - Route modules and the chat rail are lazily split from the initial bundle.
+- Verification:
+  - `corepack pnpm --dir frontend/web test -- RunChart LiveChart`
+  - `corepack pnpm --dir frontend/web typecheck`
+  - `corepack pnpm --dir frontend/web test`
+  - `corepack pnpm --dir frontend/web exec vite build --outDir /tmp/xvision-runtime-render-build --emptyOutDir true`
+  - `git diff --check`
+- Build artifact check: no `.map` files emitted, font asset count is 18
+  instead of the previous 100, and the old single ~805 KB JS bundle is split
+  into route/chart/chat chunks.
+- Rust checks remain CI/non-deploy follow-up because local Cargo is forbidden
+  on this deploy host.
 
 ### `ghcr-build-optimization`
 
