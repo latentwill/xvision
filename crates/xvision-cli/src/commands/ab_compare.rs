@@ -194,7 +194,9 @@ async fn load_bars_input(
         ),
         (true, false) => {
             // Cache-backed path. asset already validated by caller.
-            let g = granularity.parse::<BarGranularity>()?;
+            let g = granularity
+                .parse::<BarGranularity>()
+                .map_err(anyhow::Error::msg)?;
             // Safe: cache_window match arm guarantees both Some.
             let from = from.unwrap();
             let to = to.unwrap();
