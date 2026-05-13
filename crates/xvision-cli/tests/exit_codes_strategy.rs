@@ -15,6 +15,15 @@ fn code(out: &std::process::Output) -> i32 {
     out.status.code().expect("child terminated by signal")
 }
 
+fn new_strategy_id(home: &std::path::Path) -> String {
+    let out = xvn(
+        &["strategy", "new", "--template", "mean_reversion", "--name", "x"],
+        home,
+    );
+    assert_eq!(code(&out), 0, "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    String::from_utf8(out.stdout).unwrap().trim().to_string()
+}
+
 #[test]
 fn strategy_templates_returns_0() {
     let dir = tempdir().unwrap();
@@ -54,13 +63,38 @@ fn strategy_validate_unknown_id_returns_4_not_found() {
 }
 
 #[test]
-fn strategy_run_missing_anthropic_key_returns_3_auth() {
+fn strategy_add_agent_unknown_agent_returns_4_not_found() {
     let dir = tempdir().unwrap();
+    let id = new_strategy_id(dir.path());
     let out = xvn(
-        &["strategy", "new", "--template", "mean_reversion", "--name", "x"],
+        &[
+            "strategy",
+            "add-agent",
+            &id,
+            "missing-agent-id",
+            "--role",
+            "trader",
+        ],
         dir.path(),
     );
-    let id = String::from_utf8(out.stdout).unwrap().trim().to_string();
+    assert_eq!(code(&out), 4, "stderr: {}", String::from_utf8_lossy(&out.stderr));
+}
+
+#[test]
+fn strategy_set_pipeline_unknown_kind_returns_2_usage() {
+    let dir = tempdir().unwrap();
+    let id = new_strategy_id(dir.path());
+    let out = xvn(
+        &["strategy", "set-pipeline", &id, "--kind", "parallel"],
+        dir.path(),
+    );
+    assert_eq!(code(&out), 2, "stderr: {}", String::from_utf8_lossy(&out.stderr));
+}
+
+#[test]
+fn strategy_run_missing_anthropic_key_returns_3_auth() {
+    let dir = tempdir().unwrap();
+    let id = new_strategy_id(dir.path());
 
     // Force ANTHROPIC_API_KEY unset — must use a Command that explicitly
     // removes the env var, since the parent process may have it set.
