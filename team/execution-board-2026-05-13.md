@@ -177,6 +177,16 @@ Avoid:
 
 ### `qa4-chat-eval-launcher`
 
+- Completed checkpoint: `qa4-chat-eval-launcher` commit `18ab4c0` adds eval
+  launcher preflight, uses scenario-registry scenarios, defaults the web
+  launcher to backtest mode, and keeps launch/preflight errors inline.
+- Final branch head is `4fbabaa`, which removes a branch-local board edit so
+  the track status stays scoped to `team/status/qa4-chat-eval-launcher.md`.
+- Verified with focused eval-runs test, frontend typecheck, full frontend test
+  suite, and `git diff --check`. Rust checks remain CI/non-deploy follow-up.
+
+### `qa4-chat-eval-launcher`
+
 - Completed checkpoint: `qa4-chat-eval-launcher` commit `18ab4c0` switches the
   Start eval dialog to the scenario registry and adds client-side
   provider/model plus Alpaca paper preflight before queueing eval runs.
