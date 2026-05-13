@@ -174,3 +174,12 @@ Avoid:
 - Verified with full frontend test suite, frontend typecheck, frontend build,
   and `git diff --check`. Rust dashboard verification remains CI/non-deploy
   follow-up.
+
+### `qa4-chat-eval-launcher`
+
+- Completed checkpoint: `qa4-chat-eval-launcher` commit `18ab4c0` switches the
+  Start eval dialog to the scenario registry and adds client-side
+  provider/model plus Alpaca paper preflight before queueing eval runs.
+- Verified with `corepack pnpm --dir frontend/web test -- eval-runs`,
+  frontend typecheck, and `git diff --check`. Rust dashboard/wizard-loop
+  verification remains CI/non-deploy follow-up.
