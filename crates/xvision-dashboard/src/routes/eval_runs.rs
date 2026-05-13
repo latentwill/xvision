@@ -207,6 +207,7 @@ fn event_name(ev: &RunChartEvent) -> &'static str {
     match ev {
         RunChartEvent::Bar(_) => "bar",
         RunChartEvent::IndicatorTail(_) => "indicator_tail",
+        RunChartEvent::Decision(_) => "decision",
         RunChartEvent::Marker(_) => "marker",
         RunChartEvent::Equity(_) => "equity",
         RunChartEvent::Status { .. } => "status",

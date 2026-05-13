@@ -1,14 +1,16 @@
+import { useEffect } from "react";
 import { useParams, Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
 import { ApiError } from "@/api/client";
 import { evalKeys, getRun } from "@/api/eval";
-import { chartKeys, getRunChart } from "@/api/chart";
+import { chartKeys, getRunChart, openRunStream } from "@/api/chart";
 import { RunChart } from "@/components/chart/RunChart";
 import type {
   DecisionRowDto,
+  RunDetail,
   RunSummary,
 } from "@/api/types.gen";
 
@@ -23,6 +25,7 @@ const STATUS_TONE: Record<string, "gold" | "warn" | "danger" | "default" | "info
 export function EvalRunDetailRoute() {
   const { runId } = useParams<{ runId: string }>();
   const id = runId ?? "";
+  const queryClient = useQueryClient();
   const q = useQuery({
     queryKey: evalKeys.run(id),
     queryFn: () => getRun(id),
@@ -33,6 +36,7 @@ export function EvalRunDetailRoute() {
     queryFn: () => getRunChart(id),
     enabled: !!id,
   });
+  useLiveRunStream(id, q.data, queryClient);
 
   if (q.isPending) {
     return (
@@ -98,8 +102,99 @@ export function EvalRunDetailRoute() {
 
 // ────────────────────────────────────────────────────────────────────────────
 
+type LiveRunEvent =
+  | { event: "decision"; data: DecisionRowDto }
+  | { event: "status"; data: { phase: string; message: string | null } };
+
+function useLiveRunStream(
+  runId: string,
+  detail: RunDetail | undefined,
+  queryClient: ReturnType<typeof useQueryClient>,
+) {
+  const status = detail?.summary.status;
+  const shouldStream = Boolean(status && !isTerminalStatus(status));
+  useEffect(() => {
+    if (!runId || !shouldStream) return;
+
+    const es = openRunStream(runId);
+    const updateRun = (updater: (current: RunDetail) => RunDetail) => {
+      queryClient.setQueryData<RunDetail>(evalKeys.run(runId), (current) => {
+        if (!current) return current;
+        return updater(current);
+      });
+    };
+
+    const onDecision = (ev: Event) => {
+      const parsed = JSON.parse((ev as MessageEvent).data) as LiveRunEvent;
+      if (parsed.event !== "decision") return;
+      updateRun((current) => {
+        const exists = current.decisions.some(
+          (row) => row.decision_index === parsed.data.decision_index,
+        );
+        if (exists) {
+          return {
+            ...current,
+            decisions: current.decisions
+              .map((row) =>
+                row.decision_index === parsed.data.decision_index
+                  ? parsed.data
+                  : row,
+              )
+              .sort((a, b) => a.decision_index - b.decision_index),
+          };
+        }
+        return {
+          ...current,
+          decisions: [...current.decisions, parsed.data].sort(
+            (a, b) => a.decision_index - b.decision_index,
+          ),
+        };
+      });
+    };
+
+    const onStatus = (ev: Event) => {
+      const parsed = JSON.parse((ev as MessageEvent).data) as LiveRunEvent;
+      if (parsed.event !== "status") return;
+      updateRun((current) => ({
+        ...current,
+        summary: {
+          ...current.summary,
+          status: parsed.data.phase,
+          error:
+            parsed.data.phase === "failed"
+              ? (parsed.data.message ?? current.summary.error)
+              : current.summary.error,
+        },
+      }));
+      if (isTerminalStatus(parsed.data.phase)) {
+        es.close();
+        queryClient.invalidateQueries({ queryKey: evalKeys.run(runId) });
+        queryClient.invalidateQueries({ queryKey: chartKeys.run(runId) });
+      }
+    };
+
+    es.addEventListener("decision", onDecision);
+    es.addEventListener("status", onStatus);
+    es.onerror = () => {
+      es.close();
+      queryClient.invalidateQueries({ queryKey: evalKeys.run(runId) });
+    };
+
+    return () => {
+      es.removeEventListener("decision", onDecision);
+      es.removeEventListener("status", onStatus);
+      es.close();
+    };
+  }, [runId, shouldStream, queryClient]);
+}
+
+function isTerminalStatus(status: string): boolean {
+  return status === "completed" || status === "failed" || status === "cancelled";
+}
+
 function SummaryCard({ summary }: { summary: RunSummary }) {
   const tone = STATUS_TONE[summary.status] ?? "default";
+  const live = summary.status === "queued" || summary.status === "running";
   return (
     <Card className="p-5">
       <div className="flex items-center justify-between mb-4">
@@ -120,6 +215,13 @@ function SummaryCard({ summary }: { summary: RunSummary }) {
           {summary.status}
         </Pill>
       </div>
+
+      {live ? (
+        <div className="mb-4 inline-flex items-center gap-1.5 rounded-sm border border-info/30 bg-info/[0.06] px-2 py-1 text-[12px] text-info">
+          <span className="w-1.5 h-1.5 rounded-full bg-info" />
+          streaming
+        </div>
+      ) : null}
 
       <div className="grid grid-cols-3 gap-x-8 gap-y-3">
         <Metric label="Sharpe" value={fmtNumber(summary.sharpe)} />
