@@ -11,6 +11,12 @@ pub struct CliJobStore {
     pool: SqlitePool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CliJobRecovery {
+    pub restarted_queued: Vec<CliJob>,
+    pub failed_running: u64,
+}
+
 impl CliJobStore {
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
@@ -189,6 +195,49 @@ impl CliJobStore {
         }
 
         self.get(job_id).await
+    }
+
+    pub async fn recover_after_restart(&self) -> Result<CliJobRecovery> {
+        let queued_rows = sqlx::query(
+            "SELECT
+                job_id, argv_json, status, created_at, started_at, finished_at,
+                exit_code, timeout_secs, timed_out, cancel_requested,
+                stdout_bytes, stderr_bytes, stdout_truncated, stderr_truncated,
+                error_message
+             FROM cli_jobs
+             WHERE status = ?1
+             ORDER BY created_at ASC",
+        )
+        .bind(CliJobStatus::Queued.as_str())
+        .fetch_all(&self.pool)
+        .await
+        .context("load queued cli jobs for restart recovery")?;
+
+        let restarted_queued = queued_rows
+            .into_iter()
+            .map(row_to_job)
+            .collect::<Result<Vec<_>>>()?;
+
+        let failed = sqlx::query(
+            "UPDATE cli_jobs
+             SET status = ?1,
+                 finished_at = ?2,
+                 error_message = ?3
+             WHERE status = ?4",
+        )
+        .bind(CliJobStatus::Failed.as_str())
+        .bind(Utc::now().to_rfc3339())
+        .bind("cli job orphaned by dashboard restart")
+        .bind(CliJobStatus::Running.as_str())
+        .execute(&self.pool)
+        .await
+        .context("fail orphaned running cli jobs after restart")?
+        .rows_affected();
+
+        Ok(CliJobRecovery {
+            restarted_queued,
+            failed_running: failed,
+        })
     }
 
     async fn append_chunk(&self, job_id: &str, stream: &str, payload: &str) -> Result<()> {

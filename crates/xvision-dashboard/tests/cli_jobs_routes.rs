@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use axum_test::TestServer;
 use tempfile::TempDir;
+use xvision_dashboard::cli_jobs::store::CliJobStore;
 use xvision_dashboard::server::build_router;
 use xvision_dashboard::AppState;
 
@@ -32,6 +33,16 @@ async fn boot_http() -> (String, TempDir, tokio::task::JoinHandle<()>) {
         axum::serve(listener, app).await.unwrap();
     });
     (format!("http://{addr}"), tmp, handle)
+}
+
+async fn boot_existing_home(root: &std::path::Path) -> TestServer {
+    let cli = write_fake_cli(root);
+    let state = AppState::new(root.to_path_buf())
+        .await
+        .expect("init dashboard state")
+        .with_cli_command_for_tests(cli);
+    state.recover_cli_jobs().await.expect("recover cli jobs");
+    TestServer::new(build_router(state)).unwrap()
 }
 
 fn write_fake_cli(root: &std::path::Path) -> std::path::PathBuf {
@@ -235,4 +246,58 @@ async fn sse_stream_emits_job_started_and_job_finished_events() {
     assert!(text.contains("event: job_finished"));
 
     handle.abort();
+}
+
+#[tokio::test]
+async fn startup_recovers_queued_jobs() {
+    let tmp = TempDir::new().unwrap();
+    let state = AppState::new(tmp.path().to_path_buf())
+        .await
+        .expect("init dashboard state");
+    let store = CliJobStore::new(state.pool.clone());
+    let job = store
+        .create_queued(vec!["help".into()], 30)
+        .await
+        .expect("create queued job");
+
+    drop(store);
+    drop(state);
+
+    let server = boot_existing_home(tmp.path()).await;
+    let meta = wait_for_terminal_status(&server, &job.job_id).await;
+    assert_eq!(meta["status"], "succeeded");
+
+    let output_path = format!("/api/cli/jobs/{}/output", job.job_id);
+    let out = server.get(&output_path).await;
+    out.assert_status_ok();
+    let payload: serde_json::Value = out.json();
+    assert!(payload["stdout"].as_str().unwrap_or("").contains("Usage: xvn"));
+}
+
+#[tokio::test]
+async fn startup_fails_running_jobs_as_orphans() {
+    let tmp = TempDir::new().unwrap();
+    let state = AppState::new(tmp.path().to_path_buf())
+        .await
+        .expect("init dashboard state");
+    let store = CliJobStore::new(state.pool.clone());
+    let job = store
+        .create_queued(vec!["slow".into()], 30)
+        .await
+        .expect("create queued job");
+    store.mark_running(&job.job_id).await.expect("mark running");
+
+    drop(store);
+    drop(state);
+
+    let server = boot_existing_home(tmp.path()).await;
+    let path = format!("/api/cli/jobs/{}", job.job_id);
+    let response = server.get(&path).await;
+    response.assert_status_ok();
+    let meta: serde_json::Value = response.json();
+    assert_eq!(meta["status"], "failed");
+    assert!(meta["error_message"]
+        .as_str()
+        .unwrap_or("")
+        .contains("orphaned by dashboard restart"));
 }
