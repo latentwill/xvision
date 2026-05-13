@@ -58,6 +58,10 @@ function applyAnchorLogicalRangeToPeers(
   });
 }
 
+function sameLogicalRange(a: LogicalRange | null, b: LogicalRange | null) {
+  return a?.from === b?.from && a?.to === b?.to;
+}
+
 function enterFollowMode(charts: IChartApi[]) {
   const anchorChart = charts[0];
   if (!anchorChart) return;
@@ -138,6 +142,7 @@ export function RunChart({
   const frozenLogicalRangeRef = useRef<LogicalRange | null>(null);
   const buildVersionRef = useRef(0);
   const followTransitionBuildVersionRef = useRef<number | null>(null);
+  const lastSynchronizedRangeRef = useRef<LogicalRange | null>(null);
   const subRef = useRef<HTMLDivElement>(null);
   const eqRef = useRef<HTMLDivElement>(null);
   const ddRef = useRef<HTMLDivElement>(null);
@@ -320,6 +325,8 @@ export function RunChart({
     all.forEach((c) =>
       c.timeScale().subscribeVisibleLogicalRangeChange((r: LogicalRange | null) => {
         if (!r) return;
+        if (sameLogicalRange(r, lastSynchronizedRangeRef.current)) return;
+        lastSynchronizedRangeRef.current = r;
         all.forEach((other) => {
           if (other !== c) other.timeScale().setVisibleLogicalRange(r);
         });
