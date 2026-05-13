@@ -36,17 +36,43 @@ export type StartRunReq = {
   params_override?: Record<string, unknown> | null;
 };
 
+export type ListRunsParams = {
+  strategy_bundle_hash?: string;
+  scenario_id?: string;
+  status?: string;
+};
+
 export const evalKeys = {
   all: ["eval"] as const,
-  runs: () => [...evalKeys.all, "runs"] as const,
+  runs: (params?: ListRunsParams) =>
+    [
+      ...evalKeys.all,
+      "runs",
+      params?.strategy_bundle_hash ?? "",
+      params?.scenario_id ?? "",
+      params?.status ?? "",
+    ] as const,
   run: (id: string) => [...evalKeys.all, "run", id] as const,
   compare: (ids: string[]) =>
     [...evalKeys.all, "compare", ids.join(",")] as const,
   scenarios: () => [...evalKeys.all, "scenarios"] as const,
 };
 
-export function listRuns(): Promise<RunSummary[]> {
-  return apiFetch<RunsListResponse>("/api/eval/runs").then((r) => r.items);
+export function listRuns(params?: ListRunsParams): Promise<RunSummary[]> {
+  const qs = new URLSearchParams();
+  if (params?.strategy_bundle_hash) {
+    qs.set("strategy_bundle_hash", params.strategy_bundle_hash);
+  }
+  if (params?.scenario_id) {
+    qs.set("scenario_id", params.scenario_id);
+  }
+  if (params?.status) {
+    qs.set("status", params.status);
+  }
+  const suffix = qs.size > 0 ? `?${qs.toString()}` : "";
+  return apiFetch<RunsListResponse>(`/api/eval/runs${suffix}`).then(
+    (r) => r.items,
+  );
 }
 
 export function getRun(id: string): Promise<RunDetail> {

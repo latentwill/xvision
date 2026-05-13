@@ -34,9 +34,15 @@ const STATUS_TONE: Record<string, "gold" | "warn" | "danger" | "default" | "info
 
 export function EvalRunsRoute() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const strategyFilter = searchParams.get("strategy")?.trim() ?? "";
   const q = useQuery({
-    queryKey: evalKeys.runs(),
-    queryFn: listRuns,
+    queryKey: evalKeys.runs({
+      strategy_bundle_hash: strategyFilter || undefined,
+    }),
+    queryFn: () =>
+      listRuns({
+        strategy_bundle_hash: strategyFilter || undefined,
+      }),
     // Poll while any run is still in flight; stop once everything's
     // terminal. Background eval tasks drive in the dashboard process
     // and can take minutes — without this the list looks frozen.
@@ -50,7 +56,7 @@ export function EvalRunsRoute() {
     },
   });
   const navigate = useNavigate();
-  const preselectedStrategy = searchParams.get("strategy") ?? "";
+  const preselectedStrategy = strategyFilter;
   const startRequested = searchParams.get("start") === "1";
   // Selection state for the Compare flow. Lifted here so the Topbar can
   // render the action button next to the run count.
@@ -90,7 +96,7 @@ export function EvalRunsRoute() {
 
   return (
     <>
-      <Topbar title="Eval" sub={subtitleFor(q)} />
+      <Topbar title="Eval" sub={subtitleFor(q, strategyFilter)} />
 
       <div className="mb-3 flex justify-end items-center gap-2">
         {selected.size > 0 ? (
@@ -118,6 +124,26 @@ export function EvalRunsRoute() {
             setSearchParams(next);
           }}
         />
+      ) : null}
+
+      {strategyFilter ? (
+        <div className="mb-3 px-3 py-2 rounded border border-border-soft bg-surface-elev text-[12px] text-text-2 flex items-center justify-between gap-2">
+          <span>
+            Filtering runs for strategy{" "}
+            <code className="font-mono text-text">{strategyFilter}</code>
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              const next = new URLSearchParams(searchParams);
+              next.delete("strategy");
+              setSearchParams(next);
+            }}
+            className="text-text-3 hover:text-text underline-offset-2 hover:underline"
+          >
+            Clear filter
+          </button>
+        </div>
       ) : null}
 
       <Card>
@@ -166,13 +192,14 @@ export function EvalRunsRoute() {
 
 // ── Existing helpers ───────────────────────────────────────────────────────
 
-function subtitleFor(q: ReturnType<typeof useQuery>) {
+function subtitleFor(q: ReturnType<typeof useQuery>, strategyFilter: string) {
   if (q.isPending) return "Loading…";
   if (q.isError) return "Couldn't load runs";
   const data = q.data as { length: number } | undefined;
   if (!data) return "";
   const n = data.length;
-  return `${n} ${n === 1 ? "run" : "runs"}`;
+  const base = `${n} ${n === 1 ? "run" : "runs"}`;
+  return strategyFilter ? `${base} for ${strategyFilter}` : base;
 }
 
 function CompareToolbar({
