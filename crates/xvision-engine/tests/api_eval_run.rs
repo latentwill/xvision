@@ -294,6 +294,48 @@ async fn run_writes_audit_row_on_completion() {
 }
 
 #[tokio::test]
+async fn start_run_writes_audit_row_on_validation_failure() {
+    let (ctx, _d) = ctx_with_tables().await;
+
+    let r = eval::start_run(
+        &ctx,
+        EvalRunRequest {
+            agent_id: "does-not-exist".into(),
+            scenario_id: canonical_scenarios()[0].id.clone(),
+            mode: RunMode::Backtest,
+            params_override: None,
+        },
+    )
+    .await;
+
+    assert!(
+        matches!(r, Err(ApiError::NotFound(_))),
+        "expected NotFound for unknown strategy, got {r:?}",
+    );
+
+    let (target, outcome, error): (Option<String>, String, Option<String>) =
+        sqlx::query_as(
+            "SELECT target, outcome, error \
+             FROM api_audit \
+             WHERE domain = 'eval' AND operation = 'start'",
+        )
+        .fetch_one(&ctx.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        target.as_deref(),
+        Some("does-not-exist@crypto-bull-q1-2025"),
+    );
+    assert_eq!(outcome, "error");
+    assert!(
+        error
+            .as_deref()
+            .is_some_and(|msg| msg.contains("does-not-exist")),
+        "expected audit error to name the missing strategy, got {error:?}",
+    );
+}
+
+#[tokio::test]
 async fn run_persists_run_to_runstore_so_get_finds_it() {
     let (ctx, _d) = ctx_with_tables().await;
     let agent_id = "01TESTBUNDLE0000000000000E";

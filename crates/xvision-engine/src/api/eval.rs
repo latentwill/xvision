@@ -851,6 +851,36 @@ async fn load_bars_for_scenario(
 /// for the same reason.
 pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDetail> {
     let started = Instant::now();
+    let target_hint = format!("{}@{}", req.agent_id, req.scenario_id);
+    let args_json = serde_json::to_string(&req).ok();
+    let result = start_run_inner(ctx, req).await;
+
+    let (outcome, target) = match &result {
+        Ok(detail) => (Outcome::Ok, Some(detail.summary.id.clone())),
+        Err(e) => {
+            tracing::warn!(
+                target: "xvision::eval",
+                request = %target_hint,
+                error = %e,
+                "eval start failed",
+            );
+            (Outcome::Error(e.to_string()), Some(target_hint))
+        }
+    };
+    let _ = audit::record(
+        ctx,
+        "eval",
+        "start",
+        target.as_deref(),
+        args_json.as_deref(),
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    result
+}
+
+async fn start_run_inner(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDetail> {
     let bundle = api_strategy::get(ctx, &req.agent_id).await?;
     let scenario = resolve_scenario(ctx, &req.scenario_id).await?;
 
@@ -879,18 +909,6 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
         .create(&run)
         .await
         .map_err(|e| ApiError::Internal(format!("create run: {e}")))?;
-
-    let args_json = serde_json::to_string(&req).ok();
-    let _ = audit::record(
-        ctx,
-        "eval",
-        "start",
-        Some(&run.id),
-        args_json.as_deref(),
-        Outcome::Ok,
-        started.elapsed().as_millis() as i64,
-    )
-    .await;
 
     let ctx_bg = ctx.clone();
     let run_id = run.id.clone();
