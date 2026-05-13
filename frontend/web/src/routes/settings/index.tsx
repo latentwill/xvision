@@ -21,7 +21,6 @@ import type {
 const TABS = [
   { to: "providers", label: "Providers" },
   { to: "brokers", label: "Brokers" },
-  { to: "skills", label: "Skills" },
   { to: "danger", label: "Danger zone" },
 ];
 

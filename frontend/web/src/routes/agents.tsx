@@ -102,6 +102,13 @@ function FilterBar({
       </label>
 
       <Link
+        to="/agents/skills"
+        className="inline-flex items-center gap-1.5 px-3 py-2 rounded text-[13px] font-medium border border-border text-text-2 hover:text-text hover:border-border-strong transition-colors"
+      >
+        Skills
+      </Link>
+
+      <Link
         to="/agents/new"
         className="inline-flex items-center gap-1.5 px-3 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft transition-colors"
       >

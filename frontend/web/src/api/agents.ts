@@ -12,7 +12,7 @@ export type AgentSlot = {
   system_prompt: string;
   // Forward-compat hook for the v1.1 workspace skill registry
   // (kind = tool | prompt_fragment | evaluator). Picker is hidden in v1
-  // until `/settings/skills` ships. Not related to the Plan 2b `xvn skill`
+  // until `/agents/skills` ships. Not related to the Plan 2b `xvn skill`
   // surface removed in ADR 0012.
   skill_ids: string[];
   max_tokens: number;

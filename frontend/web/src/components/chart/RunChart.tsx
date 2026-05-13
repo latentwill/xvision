@@ -11,7 +11,7 @@ import type { RunChartPayload, IndicatorPoint } from "@/api/types.gen";
 import { ChartContainer, type RangePreset } from "./ChartContainer";
 import { chartTheme } from "./chart-theme";
 import { useChartLayers } from "./use-chart-layers";
-import { type LayerKey } from "./chart-layers";
+import { ChartLayersPanel } from "./ChartLayersPanel";
 import { MarkerSidePanel } from "./MarkerSidePanel";
 
 type ActiveMarker = { kind: "trade" | "veto" | "hold"; decision_index: number };
@@ -74,61 +74,6 @@ function enterFollowMode(charts: IChartApi[]) {
   }
 }
 
-function LayersPanel({
-  layers,
-  toggle,
-  set,
-}: {
-  layers: Record<LayerKey, boolean>;
-  toggle: (k: LayerKey) => void;
-  set: (k: LayerKey, v: boolean) => void;
-}) {
-  const priceKeys = [
-    "candles", "sma20", "sma50", "sma200",
-    "ema20", "ema50", "ema200",
-    "bollinger", "donchian",
-    "markerBuy", "markerSell", "markerVeto", "markerHold",
-    "positionBand",
-  ] as const;
-  const subpaneKeys = ["subpaneRsi", "subpaneMacd", "subpaneAtr", "subpaneOff"] as const;
-  const equityKeys = ["equity", "drawdown"] as const;
-
-  return (
-    <div className="space-y-2">
-      <div className="text-text-3 mb-1">Price pane</div>
-      {priceKeys.map((k) => (
-        <label key={k} className="flex items-center gap-2">
-          <input type="checkbox" checked={layers[k]} onChange={() => toggle(k)} /> {k}
-        </label>
-      ))}
-      <div className="text-text-3 mb-1 mt-3">Subpane</div>
-      {subpaneKeys.map((k) => (
-        <label key={k} className="flex items-center gap-2">
-          <input
-            type="radio"
-            name="subpane"
-            checked={layers[k]}
-            onChange={() => {
-              subpaneKeys.forEach((kk) => set(kk, kk === k));
-            }}
-          />{" "}
-          {k}
-        </label>
-      ))}
-      <div className="text-text-3 mb-1 mt-3">Equity pane</div>
-      {equityKeys.map((k) => (
-        <label key={k} className="flex items-center gap-2">
-          <input type="checkbox" checked={layers[k]} onChange={() => toggle(k)} /> {k}
-        </label>
-      ))}
-      <div className="text-text-3 mb-1 mt-3">Volume</div>
-      <label className="flex items-center gap-2">
-        <input type="checkbox" checked={layers.volume} onChange={() => toggle("volume")} /> volume
-      </label>
-    </div>
-  );
-}
-
 export function RunChart({
   payload,
   themeMode = "dark",
@@ -186,14 +131,26 @@ export function RunChart({
     }
     if (layers.sma20)
       priceChart.addLineSeries({ color: theme.series.sma20, lineWidth: 1 }).setData(payload.indicators.sma_20.map(toLine));
+    if (layers.sma30 && payload.indicators.sma_30)
+      priceChart.addLineSeries({ color: "#a7f3d0", lineWidth: 1 }).setData(payload.indicators.sma_30.map(toLine));
     if (layers.sma50)
       priceChart.addLineSeries({ color: theme.series.sma50, lineWidth: 1 }).setData(payload.indicators.sma_50.map(toLine));
+    if (layers.sma60 && payload.indicators.sma_60)
+      priceChart.addLineSeries({ color: "#6ee7b7", lineWidth: 1 }).setData(payload.indicators.sma_60.map(toLine));
+    if (layers.sma90 && payload.indicators.sma_90)
+      priceChart.addLineSeries({ color: "#34d399", lineWidth: 1 }).setData(payload.indicators.sma_90.map(toLine));
     if (layers.sma200)
       priceChart.addLineSeries({ color: theme.series.sma200, lineWidth: 1 }).setData(payload.indicators.sma_200.map(toLine));
     if (layers.ema20)
       priceChart.addLineSeries({ color: theme.series.ema20, lineWidth: 1, lineStyle: 2 }).setData(payload.indicators.ema_20.map(toLine));
+    if (layers.ema30 && payload.indicators.ema_30)
+      priceChart.addLineSeries({ color: "#bae6fd", lineWidth: 1, lineStyle: 2 }).setData(payload.indicators.ema_30.map(toLine));
     if (layers.ema50)
       priceChart.addLineSeries({ color: theme.series.ema50, lineWidth: 1, lineStyle: 2 }).setData(payload.indicators.ema_50.map(toLine));
+    if (layers.ema60 && payload.indicators.ema_60)
+      priceChart.addLineSeries({ color: "#7dd3fc", lineWidth: 1, lineStyle: 2 }).setData(payload.indicators.ema_60.map(toLine));
+    if (layers.ema90 && payload.indicators.ema_90)
+      priceChart.addLineSeries({ color: "#38bdf8", lineWidth: 1, lineStyle: 2 }).setData(payload.indicators.ema_90.map(toLine));
     if (layers.ema200)
       priceChart.addLineSeries({ color: theme.series.ema200, lineWidth: 1, lineStyle: 2 }).setData(payload.indicators.ema_200.map(toLine));
     if (layers.bollinger) {
@@ -389,7 +346,16 @@ export function RunChart({
     <ChartContainer
       range={range}
       onRange={setRange}
-      layersPanel={<LayersPanel layers={layers} toggle={toggle} set={set} />}
+      layersPanel={
+        <ChartLayersPanel
+          layers={layers}
+          toggle={toggle}
+          set={set}
+          markers
+          equity
+          radioName="run-chart-subpane"
+        />
+      }
     >
       <div ref={priceRef} style={{ height: 380 }} />
       <div ref={subRef} style={{ height: 100 }} />
