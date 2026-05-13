@@ -40,11 +40,18 @@ enum StrategyAction {
         name: String,
         #[arg(long)]
         creator: Option<String>,
+        /// Emit the created strategy as JSON.
+        #[arg(long)]
+        json: bool,
     },
     /// Validate a saved strategy by id.
     Validate { id: String },
     /// List all saved strategy ids.
-    Ls,
+    Ls {
+        /// Emit as JSON array instead of one id per line.
+        #[arg(long)]
+        json: bool,
+    },
     /// Show a saved strategy as JSON.
     Show { id: String },
     /// List available strategy templates.
@@ -102,9 +109,14 @@ enum StrategyAction {
 
 pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
     match cmd.action {
-        StrategyAction::New { template, name, creator } => new(&template, &name, creator).await,
+        StrategyAction::New {
+            template,
+            name,
+            creator,
+            json,
+        } => new(&template, &name, creator, json).await,
         StrategyAction::Validate { id } => validate(&id).await,
-        StrategyAction::Ls => ls().await,
+        StrategyAction::Ls { json } => ls(json).await,
         StrategyAction::Show { id } => show(&id).await,
         StrategyAction::Templates => templates().await,
         StrategyAction::AddAgent { strategy_id, agent_id, role } => {
@@ -183,7 +195,7 @@ fn parse_edge(raw: &str) -> CliResult<PipelineEdge> {
     })
 }
 
-async fn new(template: &str, name: &str, creator: Option<String>) -> CliResult<()> {
+async fn new(template: &str, name: &str, creator: Option<String>, json: bool) -> CliResult<()> {
     let tpl = registry::get(template).ok_or_else(|| {
         CliError::usage(anyhow::anyhow!(
             "unknown template '{template}' — try `xvn strategy templates`"
@@ -233,6 +245,17 @@ async fn new(template: &str, name: &str, creator: Option<String>) -> CliResult<(
     }
     validate_strategy(&draft).exit_with(XvnExit::Usage)?;
     store().save(&draft).await.exit_with(XvnExit::Upstream)?;
+    if json {
+        let out = serde_json::json!({
+            "id": id,
+            "strategy": draft,
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&out).exit_with(XvnExit::Upstream)?
+        );
+        return Ok(());
+    }
     println!("{id}");
     Ok(())
 }
@@ -244,8 +267,15 @@ async fn validate(id: &str) -> CliResult<()> {
     Ok(())
 }
 
-async fn ls() -> CliResult<()> {
+async fn ls(json: bool) -> CliResult<()> {
     let ids = store().list().await.exit_with(XvnExit::Upstream)?;
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&ids).exit_with(XvnExit::Upstream)?
+        );
+        return Ok(());
+    }
     for id in ids {
         println!("{id}");
     }

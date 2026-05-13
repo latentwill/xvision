@@ -107,6 +107,9 @@ pub struct CreateArgs {
     /// Optional notes.
     #[arg(long)]
     pub notes: Option<String>,
+    /// Emit the created Scenario as JSON.
+    #[arg(long)]
+    pub json: bool,
     /// Load the full `CreateScenarioRequest` from a TOML file (other flags
     /// are ignored when this is set).
     #[arg(long)]
@@ -277,6 +280,14 @@ async fn run_create(ctx: &ApiContext, a: CreateArgs) -> CliResult<()> {
         let s = api_scenario::create(ctx, req)
             .await
             .map_err(|e| api_to_cli("scenario create", e))?;
+        if a.json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&s)
+                    .map_err(|e| CliError::upstream(anyhow::anyhow!("serialize: {e}")))?
+            );
+            return Ok(());
+        }
         println!("created {} ({})", s.id, s.display_name);
         return Ok(());
     }
@@ -340,6 +351,14 @@ async fn run_create(ctx: &ApiContext, a: CreateArgs) -> CliResult<()> {
     let s = api_scenario::create(ctx, req)
         .await
         .map_err(|e| api_to_cli("scenario create", e))?;
+    if a.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&s)
+                .map_err(|e| CliError::upstream(anyhow::anyhow!("serialize: {e}")))?
+        );
+        return Ok(());
+    }
     println!("created {} ({})", s.id, s.display_name);
     Ok(())
 }

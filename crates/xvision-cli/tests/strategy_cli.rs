@@ -133,6 +133,38 @@ fn create_alias_is_noninteractive_strategy_create() {
 }
 
 #[test]
+fn create_and_ls_json_are_machine_readable() {
+    let dir = tempdir().unwrap();
+
+    let out = xvn(
+        &[
+            "strategy",
+            "create",
+            "--template",
+            "mean_reversion",
+            "--name",
+            "json-create",
+            "--json",
+        ],
+        dir.path(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let body: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let id = body["id"].as_str().expect("id field").to_string();
+    assert!(id.starts_with("01"), "body: {body}");
+    assert_eq!(body["strategy"]["manifest"]["id"], id);
+
+    let out = xvn(&["strategy", "ls", "--json"], dir.path());
+    assert!(out.status.success());
+    let ids: Vec<String> = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(ids.contains(&id), "ids: {ids:?}");
+}
+
+#[test]
 fn templates_lists_known_templates() {
     let dir = tempdir().unwrap();
     let out = xvn(&["strategy", "templates"], dir.path());
