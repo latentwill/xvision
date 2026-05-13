@@ -1,6 +1,5 @@
 //! `xvn strategy ...` — strategy authoring subcommands.
 
-use std::env;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -124,11 +123,7 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
 }
 
 fn home() -> PathBuf {
-    if let Ok(p) = env::var("XVN_HOME") {
-        return PathBuf::from(p);
-    }
-    let h = dirs::home_dir().expect("$HOME");
-    h.join(".xvn")
+    crate::commands::home::resolve_xvn_home_env().expect("resolve XVN_HOME")
 }
 
 fn store() -> FilesystemStore {

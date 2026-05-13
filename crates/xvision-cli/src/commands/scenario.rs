@@ -82,7 +82,8 @@ pub struct CreateArgs {
     /// Window end date (YYYY-MM-DD, UTC midnight).
     #[arg(long)]
     pub to: NaiveDate,
-    /// Bar granularity: `1h`, `4h`, or `1d`.
+    /// Bar granularity. Supports Alpaca bars:
+    /// 1-59m, 1-23h, 1d, 1w, 1/2/3/4/6/12mo.
     #[arg(long, default_value = "1h")]
     pub granularity: String,
     /// Venue (only `alpaca` in v1).
@@ -184,20 +185,8 @@ pub async fn run(cmd: ScenarioCmd) -> CliResult<()> {
 
 // ---- helpers ----------------------------------------------------------------
 
-fn resolve_xvn_home(override_path: Option<PathBuf>) -> anyhow::Result<PathBuf> {
-    if let Some(p) = override_path {
-        return Ok(p);
-    }
-    if let Ok(p) = std::env::var("XVN_HOME") {
-        return Ok(PathBuf::from(p));
-    }
-    let home = dirs::home_dir()
-        .ok_or_else(|| anyhow::anyhow!("HOME not set; pass --xvn-home"))?;
-    Ok(home.join(".xvn"))
-}
-
 async fn open_ctx(override_path: Option<PathBuf>) -> anyhow::Result<ApiContext> {
-    let xvn_home = resolve_xvn_home(override_path)?;
+    let xvn_home = crate::commands::home::resolve_xvn_home(override_path)?;
     let user = std::env::var("USER")
         .or_else(|_| std::env::var("USERNAME"))
         .unwrap_or_else(|_| "operator".to_string());
@@ -207,14 +196,7 @@ async fn open_ctx(override_path: Option<PathBuf>) -> anyhow::Result<ApiContext> 
 }
 
 fn parse_granularity(s: &str) -> CliResult<BarGranularity> {
-    match s {
-        "1h" => Ok(BarGranularity::Hour1),
-        "4h" => Ok(BarGranularity::Hour4),
-        "1d" => Ok(BarGranularity::Day1),
-        other => Err(CliError::usage(anyhow::anyhow!(
-            "granularity '{other}' not in v1 set {{1h,4h,1d}}"
-        ))),
-    }
+    BarGranularity::from_str(s).map_err(|e| CliError::usage(anyhow::anyhow!("{e}")))
 }
 
 fn parse_slippage(s: &str) -> CliResult<SlippageModel> {

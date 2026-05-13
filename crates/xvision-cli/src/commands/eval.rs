@@ -201,19 +201,8 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
     Ok(())
 }
 
-fn resolve_xvn_home(override_path: Option<PathBuf>) -> Result<PathBuf> {
-    if let Some(p) = override_path {
-        return Ok(p);
-    }
-    if let Ok(p) = std::env::var("XVN_HOME") {
-        return Ok(PathBuf::from(p));
-    }
-    let home = dirs::home_dir().context("HOME not set; pass --xvn-home")?;
-    Ok(home.join(".xvn"))
-}
-
 async fn open_ctx(override_path: Option<PathBuf>) -> Result<ApiContext> {
-    let xvn_home = resolve_xvn_home(override_path)?;
+    let xvn_home = crate::commands::home::resolve_xvn_home(override_path)?;
     let user = std::env::var("USER")
         .or_else(|_| std::env::var("USERNAME"))
         .unwrap_or_else(|_| "operator".to_string());

@@ -146,8 +146,9 @@ pub enum Command {
         /// End of bar window (YYYY-MM-DD).
         #[arg(long)]
         to: Option<chrono::NaiveDate>,
-        /// Bar granularity when fetching: `1h`, `4h`, or `1d`. Ignored when bars
-        /// come from `--bars` JSON.
+        /// Bar granularity when fetching. Supports Alpaca bars:
+        /// 1-59m, 1-23h, 1d, 1w, 1/2/3/4/6/12mo. Ignored when bars come
+        /// from `--bars` JSON.
         #[arg(long, default_value = "1h")]
         granularity: String,
         /// Comma-separated arm specs. Heads:

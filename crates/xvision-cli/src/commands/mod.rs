@@ -5,6 +5,7 @@ pub mod dashboard;
 pub mod eod;
 pub mod eval;
 pub mod fire_trade;
+pub mod home;
 pub mod indicator;
 pub mod intern;
 pub mod metrics;

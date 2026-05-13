@@ -3,7 +3,7 @@
 //! enforces business rules:
 //! - asset.len() == 1 (multi-asset is a v1.1 follow-up)
 //! - asset_class == Crypto, quote_currency == Usd
-//! - granularity ∈ {Hour1, Hour4, Day1}
+//! - granularity is one of the Alpaca-supported bar timeframes
 //! - replay_mode == Continuous
 //! - time_window: start < end, end ≤ now, start ≥ Alpaca crypto history floor
 //! - asset symbol must be in the Alpaca crypto whitelist
@@ -221,14 +221,6 @@ async fn validate(req: &CreateScenarioRequest, ctx: &ApiContext) -> ApiResult<()
     if !matches!(req.quote_currency, QuoteCurrency::Usd) {
         return Err(ApiError::Validation(
             "quote_currency must be Usd in v1".into(),
-        ));
-    }
-    if !matches!(
-        req.granularity,
-        BarGranularity::Hour1 | BarGranularity::Hour4 | BarGranularity::Day1
-    ) {
-        return Err(ApiError::Validation(
-            "granularity must be Hour1, Hour4, or Day1 in v1".into(),
         ));
     }
     if !matches!(req.replay_mode, ReplayMode::Continuous) {
