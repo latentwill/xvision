@@ -411,4 +411,22 @@ describe("RunChart", () => {
     expect(charts[0]?.timeScaleApi.scrollToRealTime).toHaveBeenCalledTimes(1);
     expectChartsToHaveRange(charts, realtimeRange);
   });
+
+  it("does not bounce synchronized range updates back to the originating chart", () => {
+    const payload = samplePayload as any;
+    render(<RunChart payload={payload} />);
+    const charts = [...chartMocks.createdCharts];
+    const anchor = charts[0]!;
+    const peer = charts[1]!;
+
+    anchor.emitVisibleLogicalRangeChange(realtimeRange);
+    expect(peer.timeScaleApi.setVisibleLogicalRange).toHaveBeenCalledWith(
+      realtimeRange,
+    );
+
+    anchor.timeScaleApi.setVisibleLogicalRange.mockClear();
+    peer.emitVisibleLogicalRangeChange(realtimeRange);
+
+    expect(anchor.timeScaleApi.setVisibleLogicalRange).not.toHaveBeenCalled();
+  });
 });
