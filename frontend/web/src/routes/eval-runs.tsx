@@ -497,6 +497,11 @@ function StartEvalDialog({
   const [mode, setMode] = useState<RunMode>("backtest");
   const [preflightError, setPreflightError] = useState<string | null>(null);
 
+  const selectedStrategy = strategies.data?.find((s) => s.agent_id === agentId) ?? null;
+  const selectedStrategyNeedsDefaultProvider = Boolean(
+    selectedStrategy && !selectedStrategy.model?.trim(),
+  );
+
   useEffect(() => {
     setAgentId(initialAgentId);
   }, [initialAgentId]);
@@ -510,16 +515,33 @@ function StartEvalDialog({
     },
   });
 
+  const launcherBlocked = evalPreflightError({
+    strategies,
+    mode,
+    providers,
+    brokers,
+    strategyNeedsDefaultProvider: selectedStrategyNeedsDefaultProvider,
+    hasWorkspaceDefaultProvider:
+      providers.data?.providers.some((row) => row.is_default) ?? false,
+  });
+
   const ready =
-    agentId.length > 0 && scenarioId.length > 0 && !start.isPending;
+    agentId.length > 0 &&
+    scenarioId.length > 0 &&
+    !start.isPending &&
+    !launcherBlocked;
 
   function onSubmit(e: FormEvent) {
     e.preventDefault();
     if (!ready) return;
     const blocked = evalPreflightError({
+      strategies,
       mode,
       providers,
       brokers,
+      strategyNeedsDefaultProvider: selectedStrategyNeedsDefaultProvider,
+      hasWorkspaceDefaultProvider:
+        providers.data?.providers.some((row) => row.is_default) ?? false,
     });
     if (blocked) {
       setPreflightError(blocked);
@@ -653,9 +675,9 @@ function StartEvalDialog({
             </p>
           </fieldset>
 
-          {preflightError || start.isError ? (
+          {launcherBlocked || preflightError || start.isError ? (
             <p className="m-0 text-[12px] text-rose-300 font-mono">
-              {preflightError ?? errorDetail(start.error)}
+              {launcherBlocked ?? preflightError ?? errorDetail(start.error)}
             </p>
           ) : null}
 
@@ -682,22 +704,35 @@ function StartEvalDialog({
 }
 
 function evalPreflightError({
+  strategies,
   mode,
   providers,
   brokers,
+  strategyNeedsDefaultProvider,
+  hasWorkspaceDefaultProvider,
 }: {
+  strategies: UseQueryResult<StrategyListItem[]>;
   mode: RunMode;
   providers: UseQueryResult<ProvidersReport>;
   brokers: UseQueryResult<BrokersReport>;
+  strategyNeedsDefaultProvider: boolean;
+  hasWorkspaceDefaultProvider: boolean;
 }): string | null {
-  if (providers.isPending || brokers.isPending) {
+  if (strategies.isPending || providers.isPending || brokers.isPending) {
     return "Still loading eval prerequisites.";
+  }
+  if (strategies.isError) {
+    return "Couldn't load strategies. Refresh and try again.";
   }
   if (providers.isError) {
     return "Couldn't load LLM providers. Refresh and try again.";
   }
   if (brokers.isError) {
     return "Couldn't load broker settings. Refresh and try again.";
+  }
+
+  if (strategyNeedsDefaultProvider && !hasWorkspaceDefaultProvider) {
+    return "No workspace default provider is configured for this strategy. Set [default_llm] in Settings -> Providers or pick a strategy with an explicit model/provider.";
   }
 
   const rows = providers.data?.providers ?? [];
@@ -734,7 +769,15 @@ function scenarioWindowLabel(s: Scenario): string {
 }
 
 function errorDetail(err: unknown): string {
-  if (err instanceof ApiError) return `${err.code}: ${err.message}`;
+  if (err instanceof ApiError) {
+    if (
+      err.status === 422 &&
+      err.message.includes("workspace [default_llm]")
+    ) {
+      return "No workspace default provider is configured. Set [default_llm] in Settings -> Providers or pick a strategy with an explicit model/provider.";
+    }
+    return `${err.code}: ${err.message}`;
+  }
   if (err instanceof Error) return err.message;
   return String(err);
 }
