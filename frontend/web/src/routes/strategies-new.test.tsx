@@ -73,6 +73,8 @@ describe("StrategiesNewRoute", () => {
     renderRoute();
 
     const name = screen.getByLabelText("Name");
+    expect(name).toHaveValue("");
+
     fireEvent.change(name, { target: { value: "Funding Fade Agent" } });
     fireEvent.click(screen.getByRole("button", { name: "Create strategy" }));
 
@@ -84,5 +86,27 @@ describe("StrategiesNewRoute", () => {
       });
     });
     expect(navigate).toHaveBeenCalledWith("/authoring/st_1");
+  });
+
+  it("autofills the blank form when a template is selected", async () => {
+    renderRoute();
+
+    const template = await screen.findByLabelText("Template");
+    await screen.findByRole("option", { name: "Trend follower" });
+    fireEvent.change(template, { target: { value: "trend_follower" } });
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Name")).toHaveValue("Trend follower");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Create strategy" }));
+
+    await waitFor(() => {
+      expect(strategyApi.createStrategy).toHaveBeenCalledWith({
+        template: "trend_follower",
+        name: "Trend follower",
+        creator: null,
+      });
+    });
   });
 });

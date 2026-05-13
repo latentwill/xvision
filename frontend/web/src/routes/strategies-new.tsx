@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
@@ -15,6 +15,7 @@ import {
 export function StrategiesNewRoute() {
   const navigate = useNavigate();
   const [name, setName] = useState("");
+  const [nameEdited, setNameEdited] = useState(false);
   const [template, setTemplate] = useState("custom");
 
   const templates = useQuery({
@@ -35,6 +36,19 @@ export function StrategiesNewRoute() {
     },
   });
   const canCreate = name.trim().length > 0 && !create.isPending;
+  const templateOptions = (templates.data ?? []).filter(
+    (t) => t.name !== "custom",
+  );
+  const selectedTemplate = templateOptions.find((t) => t.name === template);
+
+  useEffect(() => {
+    if (!selectedTemplate || nameEdited || name.trim().length > 0) return;
+    setName(selectedTemplate.display_name);
+  }, [name, nameEdited, selectedTemplate]);
+
+  function onTemplateChange(nextTemplate: string) {
+    setTemplate(nextTemplate);
+  }
 
   return (
     <>
@@ -63,42 +77,56 @@ export function StrategiesNewRoute() {
           }}
           className="space-y-4"
         >
-          <label className="block">
-            <span className="block text-[11px] uppercase tracking-wide text-text-3 mb-1.5">
+          <div className="block">
+            <label
+              htmlFor="strategy-name"
+              className="block text-[11px] uppercase tracking-wide text-text-3 mb-1.5"
+            >
               Name
-            </span>
+            </label>
             <input
+              id="strategy-name"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={(e) => {
+                setNameEdited(true);
+                setName(e.target.value);
+              }}
               autoFocus
               className="w-full px-3 py-2 bg-surface-panel border border-border rounded-sm text-[14px] text-text focus:outline-none focus:border-gold/40"
               placeholder="Funding Fade Agent"
             />
-          </label>
+          </div>
 
-          <label className="block">
-            <span className="block text-[11px] uppercase tracking-wide text-text-3 mb-1.5">
-              Starter
-            </span>
+          <div className="block">
+            <label
+              htmlFor="strategy-template"
+              className="block text-[11px] uppercase tracking-wide text-text-3 mb-1.5"
+            >
+              Template
+            </label>
             <select
+              id="strategy-template"
               value={template}
-              onChange={(e) => setTemplate(e.target.value)}
+              onChange={(e) => onTemplateChange(e.target.value)}
               className="w-full px-3 py-2 bg-surface-panel border border-border rounded-sm text-[13.5px] text-text focus:outline-none focus:border-gold/40"
             >
-              <option value="custom">Open form</option>
-              {(templates.data ?? [])
-                .filter((t) => t.name !== "custom")
-                .map((t) => (
-                  <option key={t.name} value={t.name}>
-                    {t.display_name}
-                  </option>
-                ))}
+              <option value="custom">Open form (no template)</option>
+              {templateOptions.map((t) => (
+                <option key={t.name} value={t.name}>
+                  {t.display_name}
+                </option>
+              ))}
             </select>
             <p className="m-0 mt-1 text-[12px] text-text-3 leading-snug">
-              Open form starts from a minimal single-agent strategy. Pick a
-              template only when its scaffold already matches the idea.
+              Start empty, or pick a template to fill the blank form with its
+              suggested defaults.
             </p>
-          </label>
+            {selectedTemplate ? (
+              <p className="m-0 mt-1 text-[12px] text-text-2 leading-snug">
+                {selectedTemplate.plain_summary}
+              </p>
+            ) : null}
+          </div>
 
           {templates.isError ? (
             <p className="m-0 text-text-3 text-[12px]">
