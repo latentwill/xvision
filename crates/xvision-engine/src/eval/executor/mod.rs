@@ -17,6 +17,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use crate::agent::llm::LlmDispatch;
+use crate::agent::pipeline::ResolvedAgentSlot;
 use crate::strategies::Strategy;
 use crate::eval::run::{MetricsSummary, Run};
 use crate::eval::scenario::Scenario;
@@ -39,6 +40,7 @@ pub trait Executor: Send + Sync {
         run: &mut Run,
         bundle: &Strategy,
         scenario: &Scenario,
+        agent_slots: &[ResolvedAgentSlot],
         dispatch: Arc<dyn LlmDispatch>,
         tools: Arc<ToolRegistry>,
         store: &RunStore,
