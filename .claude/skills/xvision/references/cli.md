@@ -45,8 +45,8 @@ Pre-rename heads-up: this used to be `--setups`; it's `--cycles` now.
 ## Strategy authoring
 
 ```bash
-xvn strategy new --name funding-fader --template trader-arm
-xvn strategy validate --id <ulid>
+xvn strategy new --name funding-fader --template mean_reversion
+xvn strategy validate <ulid>
 xvn strategy ls
 xvn strategy show <ulid>
 ```
@@ -75,10 +75,11 @@ xvn eval compare <run_id_a> <run_id_b>
 ## Providers
 
 ```bash
-xvn provider add --name claude --kind anthropic --model claude-sonnet-4-6 --api-key-env ANTHROPIC_API_KEY
+xvn provider add --name claude --kind anthropic --base-url https://api.anthropic.com --api-key-env ANTHROPIC_API_KEY
 xvn provider ls
-xvn provider set-default --name claude --model claude-sonnet-4-6
-xvn provider rm --name claude
+xvn provider show --name claude
+xvn provider check --name claude
+xvn provider remove --name claude
 ```
 
 Writes to `$XVN_HOME/config/default.toml`. Secrets live separately under `$XVN_HOME/secrets/`.

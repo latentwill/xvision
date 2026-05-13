@@ -3,7 +3,24 @@
 > Single source of truth for current phase and per-track ownership. Updated
 > whenever a track lands a phase boundary or a new track spawns.
 >
-> Last updated: 2026-05-13 by `strategy-agent-backend` (execution-board reconciliation)
+> Last updated: 2026-05-13 by `integration-next-build` (execution-board integration)
+
+## Current recovery board
+
+For the current deduped recovery/rework tracks and integration order, start
+with:
+
+- `team/execution-board-2026-05-13.md`
+
+That board supersedes the overlapping wrapper plans from 2026-05-12 as the
+execution source of truth. All ten board tracks have checkpoint branches; the
+`integration-next-build` branch aggregates them for the next build.
+
+### Integration branch
+
+| Track | Worktree | Branch | Source |
+|---|---|---|---|
+| `integration-next-build` | `.worktrees/integration-next-build` | `integration-next-build` | `team/execution-board-2026-05-13.md` |
 
 ## Current phase
 
@@ -16,7 +33,9 @@ live assignment state.
 
 ### Live execution-board state (current)
 
-- Open PRs: **#96** only (`strategy-agent-backend` branch).
+- Open board work: none; see `team/execution-board-2026-05-13.md` closeout.
+- Integration work: `integration-next-build` combines completed checkpoint
+  branches for the next build.
 - Active ownership should be read from `team/status/*.md` + `team/queue/*.md`.
 - New work claims should use `team/queue/<track>__<utc>__claim.md` and update
   `team/status/<track>.md` immediately.

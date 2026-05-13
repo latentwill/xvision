@@ -265,7 +265,7 @@ function AlpacaBrokerCard({ entry }: { entry: BrokerEntry }) {
                 }}
                 className="text-[12px] text-text-2 hover:text-text underline-offset-2 hover:underline"
               >
-                replace
+                Edit replacement
               </button>
               <button
                 type="button"
@@ -347,7 +347,7 @@ function AlpacaBrokerCard({ entry }: { entry: BrokerEntry }) {
               disabled={save.isPending}
               className="px-3 py-1.5 rounded text-[13px] font-medium border border-gold text-gold hover:bg-gold/10 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {save.isPending ? "Saving…" : entry.stored ? "Replace" : "Save"}
+              {save.isPending ? "Saving…" : entry.stored ? "Save replacement" : "Save"}
             </button>
             {entry.stored ? (
               <button
@@ -472,4 +472,3 @@ function CredentialRow({ cred }: { cred: CredentialRef }) {
     </tr>
   );
 }
-

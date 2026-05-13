@@ -15,6 +15,7 @@ import type {
   ProvidersReport,
   RegenIdentityReport,
   TestConnectionReport,
+  UpdateProviderRequest,
   WipeDbReport,
 } from "./types.gen";
 
@@ -100,6 +101,19 @@ export function addProvider(
     method: "POST",
     body: JSON.stringify(body),
   });
+}
+
+export function updateProvider(
+  name: string,
+  body: UpdateProviderRequest,
+): Promise<ProviderRow> {
+  return apiFetch<ProviderRow>(
+    `/api/settings/providers/${encodeURIComponent(name)}`,
+    {
+      method: "PUT",
+      body: JSON.stringify(body),
+    },
+  );
 }
 
 export function removeProvider(name: string): Promise<void> {

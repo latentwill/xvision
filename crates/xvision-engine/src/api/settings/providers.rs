@@ -30,8 +30,10 @@ use crate::api::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProvidersReport {
     pub providers: Vec<ProviderRow>,
-    /// Deprecated compatibility field. Always `None`; model selection is
-    /// explicit per chat session, wizard request, or agent slot.
+    /// The currently-configured model on `[default_llm]`. Surfaced
+    /// alongside the per-row `is_default` flag so the Default-LLM UI
+    /// can pre-fill its model dropdown without a second fetch. None
+    /// when the operator hasn't set a default/model yet.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_model: Option<String>,
 }
@@ -51,10 +53,11 @@ pub struct ProviderRow {
     pub api_key_env: String,
     /// True if `api_key_env` is non-empty and the env var is set.
     pub api_key_set: bool,
-    /// True for synthetic rows (name starts with `_`) — read-only.
+    /// True for synthetic rows (kept for wire compatibility; new configs do
+    /// not auto-create provider rows from `[default_llm]`).
     pub synthetic: bool,
-    /// Deprecated compatibility field. Always false; providers are not
-    /// promoted to workspace defaults.
+    /// True if this provider is the workspace default (referenced by the
+    /// `[default_llm]` block). Removing it clears the default.
     pub is_default: bool,
     /// Subset of the provider's catalog the operator has enabled for the
     /// chat-rail / wizard dropdown. Empty until the operator picks
@@ -142,6 +145,22 @@ pub struct AddProviderRequest {
     pub api_key: Option<String>,
 }
 
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateProviderRequest {
+    pub kind: String,
+    pub base_url: String,
+    pub api_key_env: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled_models: Option<Vec<String>>,
+}
+
 /// Persisted provider secrets. Lives in `$XVN_HOME/secrets/providers.toml`,
 /// keyed by provider name → `[provider]` table. Never returned through the
 /// read API — only `ProviderRow::api_key_set` (a presence flag) surfaces.
@@ -224,6 +243,37 @@ pub async fn add(
         "settings",
         "providers.add",
         Some(&target),
+        args.as_deref(),
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    result
+}
+
+pub async fn update(
+    ctx: &ApiContext,
+    config_path: &Path,
+    name: &str,
+    req: UpdateProviderRequest,
+) -> ApiResult<ProviderRow> {
+    let started = Instant::now();
+    let args = serde_json::to_string(&serde_json::json!({
+        "kind": req.kind,
+        "base_url": req.base_url,
+        "api_key_env": req.api_key_env,
+        "api_key_provided": req.api_key.as_ref().is_some_and(|k| !k.is_empty()),
+        "enabled_models_count": req.enabled_models.as_ref().map(Vec::len),
+    }))
+    .ok();
+    let result = update_inner(config_path, &ctx.xvn_home, name, req).await;
+
+    let outcome = audit_outcome(&result);
+    let _ = audit::record(
+        ctx,
+        "settings",
+        "providers.update",
+        Some(name),
         args.as_deref(),
         outcome,
         started.elapsed().as_millis() as i64,
@@ -530,14 +580,21 @@ async fn list_inner(config_path: &Path, xvn_home: &Path) -> ApiResult<ProvidersR
     let providers = cfg
         .providers
         .iter()
-        // Synthetic rows (auto-derived from [intern] / names with `_` prefix)
-        // are plumbing — hide them from the UI so the empty-state is honest.
+        // Hide any historical internal rows so the empty-state is honest.
         .filter(|p| !p.name.starts_with('_'))
-        .map(|p| row_from_entry(p, &secrets))
+        .map(|p| row_from_entry(p, &cfg, &secrets))
         .collect();
+    let default_model = {
+        cfg.default_llm
+            .as_ref()
+            .and_then(|default_llm| {
+                let m = default_llm.model.trim();
+                (!m.is_empty()).then(|| m.to_string())
+            })
+    };
     Ok(ProvidersReport {
         providers,
-        default_model: None,
+        default_model,
     })
 }
 
@@ -553,7 +610,7 @@ async fn show_inner(
         .iter()
         .find(|p| p.name == name)
         .ok_or_else(|| ApiError::NotFound(format!("provider `{name}` not found")))?;
-    Ok(row_from_entry(entry, &secrets))
+    Ok(row_from_entry(entry, &cfg, &secrets))
 }
 
 async fn add_inner(
@@ -689,11 +746,120 @@ async fn add_inner(
         std::env::set_var(&api_key_env, key);
     }
 
-    // Re-validate the resulting config; bubble up a validation error if the
-    // file is no longer well-formed (eg. a hand-edit clashed with our row).
+    // Re-validate the resulting config. Adding a provider does not promote it
+    // to `[default_llm]`; defaults are explicit so zero-default workspaces stay
+    // zero-default until the operator opts in.
     let _ = load_cfg(config_path).await?;
 
     show_inner(config_path, xvn_home, &name).await
+}
+
+async fn update_inner(
+    config_path: &Path,
+    xvn_home: &Path,
+    name: &str,
+    req: UpdateProviderRequest,
+) -> ApiResult<ProviderRow> {
+    let cfg = load_cfg(config_path).await?;
+    let entry = cfg
+        .providers
+        .iter()
+        .find(|p| p.name == name)
+        .ok_or_else(|| ApiError::NotFound(format!("provider `{name}` not found")))?;
+    if entry.name.starts_with('_') {
+        return Err(ApiError::Validation(format!(
+            "cannot update internal provider `{name}`"
+        )));
+    }
+    let parsed_kind = parse_kind(&req.kind)?;
+    let trimmed_base_url = req.base_url.trim();
+    if trimmed_base_url.is_empty() {
+        return Err(ApiError::Validation("base_url is empty".into()));
+    }
+    if !(trimmed_base_url.starts_with("http://") || trimmed_base_url.starts_with("https://")) {
+        return Err(ApiError::Validation(format!(
+            "base_url must start with http:// or https:// (got `{trimmed_base_url}`)"
+        )));
+    }
+    let trimmed_env = req.api_key_env.trim().to_string();
+    if trimmed_env.is_empty() && parsed_kind != ProviderKind::LocalCandle {
+        return Err(ApiError::Validation(
+            "api_key_env is required for auth-bearing providers".into(),
+        ));
+    }
+    if let Some(models) = req.enabled_models.as_ref() {
+        validate_model_ids(models)?;
+    }
+    let was_default = provider_matches_default(entry, &cfg);
+
+    let path: PathBuf = config_path.to_path_buf();
+    let n = name.to_string();
+    let kind_str = req.kind.clone();
+    let base_url = trimmed_base_url.to_string();
+    let api_key_env = trimmed_env.clone();
+    let enabled_models = req.enabled_models.clone().map(dedup_model_ids);
+    let default_model = cfg.default_llm.as_ref().map(|d| d.model.clone());
+    task::spawn_blocking(move || -> ApiResult<()> {
+        use toml_edit::{value, Array, DocumentMut};
+        let raw = std::fs::read_to_string(&path).map_err(|e| {
+            ApiError::Internal(format!("read {}: {e}", path.display()))
+        })?;
+        let mut doc: DocumentMut = raw.parse().map_err(|e| {
+            ApiError::Internal(format!("parse {}: {e}", path.display()))
+        })?;
+        if let Some(toml_edit::Item::ArrayOfTables(arr)) = doc.get_mut("providers") {
+            let mut matched = false;
+            for tbl in arr.iter_mut() {
+                if tbl.get("name").and_then(|v| v.as_str()) == Some(&n) {
+                    tbl.insert("kind", value(kind_str.clone()));
+                    tbl.insert("base_url", value(base_url.clone()));
+                    tbl.insert("api_key_env", value(api_key_env.clone()));
+                    if let Some(models) = &enabled_models {
+                        let mut arr = Array::new();
+                        for model in models {
+                            arr.push(model.as_str());
+                        }
+                        tbl.insert("enabled_models", value(arr));
+                    }
+                    matched = true;
+                    break;
+                }
+            }
+            if !matched {
+                return Err(ApiError::NotFound(format!(
+                    "provider `{n}` not found in TOML (race / internal row)"
+                )));
+            }
+        } else {
+            return Err(ApiError::Validation(format!(
+                "no [[providers]] block in {}",
+                path.display()
+            )));
+        }
+        if was_default {
+            write_default_llm(
+                &mut doc,
+                parsed_kind,
+                &base_url,
+                &api_key_env,
+                default_model.as_deref(),
+            )?;
+        }
+        std::fs::write(&path, doc.to_string()).map_err(|e| {
+            ApiError::Internal(format!("write {}: {e}", path.display()))
+        })?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| ApiError::Internal(format!("spawn_blocking: {e}")))??;
+
+    if let Some(key) = req.api_key.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        upsert_provider_secret(xvn_home, name, &trimmed_env, key).await?;
+        std::env::set_var(&trimmed_env, key);
+    }
+
+    let _ = load_cfg(config_path).await?;
+    show_inner(config_path, xvn_home, name).await
 }
 
 async fn remove_inner(config_path: &Path, xvn_home: &Path, name: &str) -> ApiResult<()> {
@@ -705,9 +871,11 @@ async fn remove_inner(config_path: &Path, xvn_home: &Path, name: &str) -> ApiRes
         .ok_or_else(|| ApiError::NotFound(format!("provider `{name}` not found")))?;
     if entry.name.starts_with('_') {
         return Err(ApiError::Validation(format!(
-            "cannot remove synthetic provider `{name}`"
+            "cannot remove internal provider `{name}`"
         )));
     }
+    let was_default = provider_matches_default(entry, &cfg);
+
     let path: PathBuf = config_path.to_path_buf();
     let n = name.to_string();
     task::spawn_blocking(move || -> ApiResult<()> {
@@ -723,7 +891,7 @@ async fn remove_inner(config_path: &Path, xvn_home: &Path, name: &str) -> ApiRes
             arr.retain(|t| t.get("name").and_then(|v| v.as_str()) != Some(&n));
             if arr.len() == before {
                 return Err(ApiError::NotFound(format!(
-                    "provider `{n}` not found in TOML (race / synthetic row)"
+                    "provider `{n}` not found in TOML (race / internal row)"
                 )));
             }
         } else {
@@ -731,6 +899,9 @@ async fn remove_inner(config_path: &Path, xvn_home: &Path, name: &str) -> ApiRes
                 "no [[providers]] block in {}",
                 path.display()
             )));
+        }
+        if was_default {
+            clear_default_llm(&mut doc);
         }
         std::fs::write(&path, doc.to_string()).map_err(|e| {
             ApiError::Internal(format!("write {}: {e}", path.display()))
@@ -757,26 +928,8 @@ async fn set_enabled_models_inner(
 ) -> ApiResult<ProviderRow> {
     // Refuse silently-bad inputs before opening the TOML — gives the UI a
     // typed validation error instead of a confusing parse failure later.
-    for m in &models {
-        let trimmed = m.trim();
-        if trimmed.is_empty() {
-            return Err(ApiError::Validation("empty model id in list".into()));
-        }
-        if trimmed.len() > 256 {
-            return Err(ApiError::Validation(format!(
-                "model id too long ({} chars): `{}`",
-                trimmed.len(),
-                &trimmed[..40]
-            )));
-        }
-    }
-    // Deduplicate while preserving order — operators copy/paste pages
-    // and we'd rather not have the same id twice in the TOML array.
-    let mut seen = std::collections::HashSet::new();
-    let deduped: Vec<String> = models
-        .into_iter()
-        .filter(|m| seen.insert(m.clone()))
-        .collect();
+    validate_model_ids(&models)?;
+    let deduped = dedup_model_ids(models);
 
     {
         let cfg = load_cfg(config_path).await?;
@@ -850,56 +1003,33 @@ async fn set_default_inner(
         .ok_or_else(|| ApiError::NotFound(format!("provider `{name}` not found")))?;
     if entry.name.starts_with('_') {
         return Err(ApiError::Validation(format!(
-            "cannot set default to synthetic provider `{name}`"
+            "cannot set default to internal provider `{name}`"
         )));
     }
     let new_kind = entry.kind;
     let new_base = entry.base_url.clone();
     let new_env = entry.api_key_env.clone();
 
-    let kind_str = kind_to_str(new_kind).to_string();
-    let model_owned = model.map(str::to_string);
+    let model_owned = model
+        .map(str::to_string)
+        .or_else(|| cfg.default_llm.as_ref().map(|d| d.model.clone()))
+        .or_else(|| sensible_default_model(new_kind, name).map(str::to_string));
     let path: PathBuf = config_path.to_path_buf();
     task::spawn_blocking(move || -> ApiResult<()> {
-        use toml_edit::{value, DocumentMut, Item};
+        use toml_edit::DocumentMut;
         let raw = std::fs::read_to_string(&path).map_err(|e| {
             ApiError::Internal(format!("read {}: {e}", path.display()))
         })?;
         let mut doc: DocumentMut = raw.parse().map_err(|e| {
             ApiError::Internal(format!("parse {}: {e}", path.display()))
         })?;
-        // If the operator's config was generated before the rename and
-        // still has [intern], migrate the entire table to [default_llm]
-        // — temperature, max_tokens, reasoning_effort all live there and
-        // the Intern struct deserializer requires them. Then drop the
-        // legacy section so we don't end up with both [intern] and
-        // [default_llm] (which confuses the serde alias).
-        let legacy_intern = doc.get("intern").and_then(|i| i.as_table()).cloned();
-        doc.remove("intern");
-
-        let default_llm = doc
-            .entry("default_llm")
-            .or_insert(Item::Table(Default::default()))
-            .as_table_mut()
-            .ok_or_else(|| {
-                ApiError::Validation("[default_llm] is not a table".into())
-            })?;
-        // Bring legacy fields forward when the destination doesn't
-        // already define them — operator's prior temperature/max_tokens
-        // survive the migration.
-        if let Some(legacy) = legacy_intern {
-            for (k, v) in legacy.iter() {
-                if default_llm.get(k).is_none() {
-                    default_llm.insert(k, v.clone());
-                }
-            }
-        }
-        default_llm.insert("provider", value(kind_str));
-        default_llm.insert("base_url", value(new_base));
-        default_llm.insert("api_key_env", value(new_env));
-        if let Some(m) = model_owned {
-            default_llm.insert("model", value(m));
-        }
+        write_default_llm(
+            &mut doc,
+            new_kind,
+            &new_base,
+            &new_env,
+            model_owned.as_deref(),
+        )?;
         std::fs::write(&path, doc.to_string()).map_err(|e| {
             ApiError::Internal(format!("write {}: {e}", path.display()))
         })?;
@@ -925,6 +1055,7 @@ async fn load_cfg(config_path: &Path) -> ApiResult<RuntimeConfig> {
 
 fn row_from_entry(
     entry: &ProviderEntry,
+    cfg: &RuntimeConfig,
     secrets: &ProvidersSecretsFile,
 ) -> ProviderRow {
     let api_key_set = if entry.api_key_env.is_empty() {
@@ -937,6 +1068,7 @@ fn row_from_entry(
                 .map(|v| !v.is_empty())
                 .unwrap_or(false)
     };
+    let is_default = provider_matches_default(entry, cfg);
     ProviderRow {
         name: entry.name.clone(),
         kind: kind_to_str(entry.kind).into(),
@@ -944,9 +1076,91 @@ fn row_from_entry(
         api_key_env: entry.api_key_env.clone(),
         api_key_set,
         synthetic: entry.name.starts_with('_'),
-        is_default: false,
+        is_default,
         enabled_models: entry.enabled_models.clone(),
     }
+}
+
+fn provider_matches_default(entry: &ProviderEntry, cfg: &RuntimeConfig) -> bool {
+    cfg.default_llm
+        .as_ref()
+        .map(|default_llm| {
+            let kind: ProviderKind = default_llm.provider.into();
+            entry.matches_triple(kind, &default_llm.base_url, &default_llm.api_key_env)
+        })
+        .unwrap_or(false)
+}
+
+fn clear_default_llm(doc: &mut toml_edit::DocumentMut) {
+    doc.remove("default_llm");
+    doc.remove("intern");
+}
+
+fn validate_model_ids(models: &[String]) -> ApiResult<()> {
+    for model in models {
+        let trimmed = model.trim();
+        if trimmed.is_empty() {
+            return Err(ApiError::Validation("empty model id in list".into()));
+        }
+        if trimmed.len() > 256 {
+            let prefix: String = trimmed.chars().take(40).collect();
+            return Err(ApiError::Validation(format!(
+                "model id too long ({} chars): `{prefix}`",
+                trimmed.len()
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn dedup_model_ids(models: Vec<String>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    models
+        .into_iter()
+        .filter(|model| seen.insert(model.clone()))
+        .collect()
+}
+
+fn write_default_llm(
+    doc: &mut toml_edit::DocumentMut,
+    kind: ProviderKind,
+    base_url: &str,
+    api_key_env: &str,
+    model: Option<&str>,
+) -> ApiResult<()> {
+    use toml_edit::{value, Item};
+
+    let legacy_intern = doc.get("intern").and_then(|i| i.as_table()).cloned();
+    doc.remove("intern");
+
+    let default_llm = doc
+        .entry("default_llm")
+        .or_insert(Item::Table(Default::default()))
+        .as_table_mut()
+        .ok_or_else(|| ApiError::Validation("[default_llm] is not a table".into()))?;
+    if let Some(legacy) = legacy_intern {
+        for (k, v) in legacy.iter() {
+            if default_llm.get(k).is_none() {
+                default_llm.insert(k, v.clone());
+            }
+        }
+    }
+    default_llm.insert("provider", value(kind_to_str(kind)));
+    default_llm.insert("base_url", value(base_url));
+    default_llm.insert("api_key_env", value(api_key_env));
+    if let Some(m) = model {
+        default_llm.insert("model", value(m));
+    }
+    if default_llm.get("model").is_none() {
+        default_llm.insert("model", value(""));
+    }
+    if default_llm.get("temperature").is_none() {
+        default_llm.insert("temperature", value(0.0));
+    }
+    if default_llm.get("max_tokens").is_none() {
+        default_llm.insert("max_tokens", value(1024));
+    }
+    Ok(())
 }
 
 /// Conventional env var name for a (kind, name) tuple. Matches the names
@@ -960,6 +1174,25 @@ fn default_api_key_env_for(kind: ProviderKind, name: &str) -> String {
             name.to_ascii_uppercase().replace('-', "_")
         ),
         ProviderKind::LocalCandle => String::new(),
+    }
+}
+
+/// Best-effort model id for a `(kind, name)` provider — mirrors the
+/// fallbacks the dashboard chat-rail dropdown uses so the wizard
+/// (which lacks a model picker) gets a working model out of the box.
+fn sensible_default_model(kind: ProviderKind, name: &str) -> Option<&'static str> {
+    match kind {
+        ProviderKind::Anthropic => Some("claude-sonnet-4-6"),
+        ProviderKind::OpenaiCompat => match name {
+            // Prefer the newer DeepSeek id when an operator explicitly sets
+            // this provider as the workspace default.
+            "deepseek" => Some("deepseek-v4-flash"),
+            "groq" => Some("llama-3.3-70b-versatile"),
+            "openrouter" => Some("anthropic/claude-3.5-sonnet"),
+            "openai" => Some("gpt-4o-mini"),
+            _ => None,
+        },
+        ProviderKind::LocalCandle => None,
     }
 }
 
@@ -1179,7 +1412,7 @@ sqlite_url = "sqlite://x.db"
         let p = &report.providers[0];
         assert_eq!(p.name, "anthropic");
         assert_eq!(p.kind, "anthropic");
-        assert!(!p.is_default);
+        assert!(p.is_default);
         assert!(!p.synthetic);
     }
 
@@ -1322,12 +1555,44 @@ sqlite_url = "sqlite://x.db"
     }
 
     #[tokio::test]
-    async fn remove_refuses_when_intern_references_provider() {
+    async fn remove_clears_default_when_referenced_provider_is_deleted() {
         let dir = TempDir::new().unwrap();
         let path = write_min_config(&dir);
         let ctx = ctx_in(&dir).await;
-        let err = remove(&ctx, &path, "anthropic").await.unwrap_err();
-        assert!(matches!(err, ApiError::Conflict(_)), "got {err:?}");
+        remove(&ctx, &path, "anthropic").await.unwrap();
+        let report = list(&ctx, &path).await.unwrap();
+        assert!(report.providers.is_empty());
+        assert_eq!(report.default_model, None);
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(!raw.contains("[default_llm]"));
+        assert!(!raw.contains("[intern]"));
+    }
+
+    #[tokio::test]
+    async fn update_edits_provider_and_keeps_default_pointer() {
+        let dir = TempDir::new().unwrap();
+        let path = write_min_config(&dir);
+        let ctx = ctx_in(&dir).await;
+        let row = update(
+            &ctx,
+            &path,
+            "anthropic",
+            UpdateProviderRequest {
+                kind: "anthropic".into(),
+                base_url: "https://proxy.example/v1".into(),
+                api_key_env: "ANTHROPIC_PROXY_KEY".into(),
+                api_key: Some("sk-updated".into()),
+                enabled_models: Some(vec!["claude-sonnet-4-6".into()]),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(row.base_url, "https://proxy.example/v1");
+        assert_eq!(row.enabled_models, vec!["claude-sonnet-4-6"]);
+        assert!(row.is_default);
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(raw.contains("base_url = \"https://proxy.example/v1\""));
+        assert!(raw.contains("api_key_env = \"ANTHROPIC_PROXY_KEY\""));
     }
 
     #[tokio::test]

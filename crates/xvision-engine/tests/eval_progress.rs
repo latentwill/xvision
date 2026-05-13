@@ -105,7 +105,7 @@ async fn paper_executor_emits_all_progress_event_types() {
     let executor = PaperExecutor::with_progress(broker, tx);
 
     let result = executor
-        .run(&mut run, &bundle, &scenario, dispatch, tools, &store)
+        .run(&mut run, &bundle, &scenario, &[], dispatch, tools, &store)
         .await;
     assert!(result.is_ok(), "paper run should succeed: {:?}", result.err());
 
@@ -201,7 +201,7 @@ async fn paper_executor_runs_clean_with_no_progress_subscriber() {
     let executor = PaperExecutor::with_progress(broker, tx);
 
     executor
-        .run(&mut run, &bundle, &scenario, dispatch, tools, &store)
+        .run(&mut run, &bundle, &scenario, &[], dispatch, tools, &store)
         .await
         .expect("run should still succeed without a subscriber");
 }

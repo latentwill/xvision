@@ -196,8 +196,9 @@ async fn load_bars_input(
             // Cache-backed path. asset already validated by caller.
             let g = match granularity {
                 "1h" => BarGranularity::Hour1,
+                "4h" => BarGranularity::Hour4,
                 "1d" => BarGranularity::Day1,
-                other => anyhow::bail!("granularity '{other}' not in v1 set {{1h,1d}}"),
+                other => anyhow::bail!("granularity '{other}' not in v1 set {{1h,4h,1d}}"),
             };
             // Safe: cache_window match arm guarantees both Some.
             let from = from.unwrap();

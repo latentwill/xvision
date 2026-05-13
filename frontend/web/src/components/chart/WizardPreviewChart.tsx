@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { getScenarioPreview } from '@/api/chart';
 import type { ScenarioChartPayload } from '@/api/types.gen/ScenarioChartPayload';
+import { useBarsFetchJob } from '@/components/scenario/useBarsFetchJob';
 
 import { ScenarioChart } from './ScenarioChart';
 
@@ -10,7 +11,7 @@ type Props = {
   asset: string;
   from: string;
   to: string;
-  granularity: '1h' | '1d';
+  granularity: '1h' | '4h' | '1d';
   includeBaseline?: boolean;
 };
 
@@ -39,13 +40,25 @@ export function WizardPreviewChart({
   }, [asset, from, to, granularity, includeBaseline]);
 
   const ready = !!debounced.asset && !!debounced.from && !!debounced.to;
+  const previewQueryKey = ['scenario-preview', debounced] as const;
 
   const query = useQuery({
-    queryKey: ['scenario-preview', debounced],
+    queryKey: previewQueryKey,
     queryFn: () => getScenarioPreview(debounced),
     enabled: ready,
     staleTime: 30_000,
   });
+  const barsFetch = useBarsFetchJob(
+    ready
+      ? {
+          asset: debounced.asset,
+          from: debounced.from,
+          to: debounced.to,
+          granularity: debounced.granularity,
+          invalidateQueryKeys: [previewQueryKey],
+        }
+      : null,
+  );
 
   if (!ready) {
     return (
@@ -87,7 +100,7 @@ export function WizardPreviewChart({
       ],
       quote_currency: 'Usd',
       time_window: { start: debounced.from, end: debounced.to },
-      granularity: debounced.granularity === '1h' ? 'Hour1' : 'Day1',
+      granularity: previewGranularityToScenario(debounced.granularity),
       timezone: 'UTC',
       calendar: 'Continuous24x7',
       data_source: { type: 'AlpacaHistorical', feed: null, adjustment: 'Raw' },
@@ -127,8 +140,37 @@ export function WizardPreviewChart({
         )}
       </div>
       <div style={{ maxHeight: 220, overflow: 'hidden' }}>
-        <ScenarioChart payload={payload} />
+        <ScenarioChart
+          payload={payload}
+          onFetch={barsFetch.start}
+          fetchStatus={barsFetch.statusText}
+          fetchDisabled={!barsFetch.canStart}
+        />
       </div>
+      {(barsFetch.statusText || barsFetch.outputText || barsFetch.errorText) && (
+        <div className="border-t border-border px-3 py-2 text-[12px] text-text-2">
+          {barsFetch.statusText && <div>{barsFetch.statusText}</div>}
+          {barsFetch.errorText && (
+            <div className="text-danger">{barsFetch.errorText}</div>
+          )}
+          {barsFetch.outputText && (
+            <pre className="mt-2 whitespace-pre-wrap font-mono text-[11px] text-text-3">
+              {barsFetch.outputText}
+            </pre>
+          )}
+        </div>
+      )}
     </div>
   );
+}
+
+function previewGranularityToScenario(granularity: Props['granularity']) {
+  switch (granularity) {
+    case '1h':
+      return 'Hour1';
+    case '4h':
+      return 'Hour4';
+    case '1d':
+      return 'Day1';
+  }
 }

@@ -1,8 +1,9 @@
 use serde::{Deserialize, Serialize};
 
+use crate::strategies::slot::LLMSlot;
 use crate::strategies::Strategy;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TokenEstimate {
     pub input: u64,
     pub output: u64,
@@ -13,13 +14,16 @@ const CHARS_PER_TOKEN: usize = 4;
 const FIXED_CONTEXT_TOKENS_PER_FIRE: u64 = 600; // ohlcv panel + indicator panel header
 const OUTPUT_TOKENS_PER_FIRE: u64 = 80; // typical small JSON decision
 
-pub fn estimate_pipeline_tokens(b: &Strategy, decision_points: u64) -> TokenEstimate {
+pub fn estimate_pipeline_tokens_from_slots<'a, I>(
+    slots: I,
+    decision_points: u64,
+) -> TokenEstimate
+where
+    I: IntoIterator<Item = &'a LLMSlot>,
+{
     let mut per_fire_input = 0u64;
     let mut per_fire_output = 0u64;
-    for slot in [&b.regime_slot, &b.intern_slot, &b.trader_slot]
-        .into_iter()
-        .flatten()
-    {
+    for slot in slots {
         let prompt_tokens = slot.prompt.len().div_ceil(CHARS_PER_TOKEN) as u64;
         per_fire_input += prompt_tokens + FIXED_CONTEXT_TOKENS_PER_FIRE;
         per_fire_output += OUTPUT_TOKENS_PER_FIRE;
@@ -31,4 +35,13 @@ pub fn estimate_pipeline_tokens(b: &Strategy, decision_points: u64) -> TokenEsti
         output,
         total: input + output,
     }
+}
+
+pub fn estimate_pipeline_tokens(b: &Strategy, decision_points: u64) -> TokenEstimate {
+    estimate_pipeline_tokens_from_slots(
+        [&b.regime_slot, &b.intern_slot, &b.trader_slot]
+            .into_iter()
+            .flatten(),
+        decision_points,
+    )
 }

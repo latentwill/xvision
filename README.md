@@ -64,25 +64,23 @@ cargo build --release
 
 # 2. Generate an EVM signing key (or use an existing one)
 # 3. Set up Orderly testnet account with that key
-# 4. Initialize xvision
+# 4. Initialize xvision config/state
 export CREDENTIAL_SECRET=$(openssl rand -hex 32)
-./target/release/xvn setup
-# follow prompts to register Orderly account on testnet
+./target/release/xvn migrate
 
-# 5. Issue a trading-only key
-./target/release/xvn key issue --user op
-# Verify: ./target/release/xvn key verify <pubkey>
+# 5. Check provider config
+./target/release/xvn provider list
 
 # 6. Configure a strategy from a template
 ./target/release/xvn strategy templates
-./target/release/xvn strategy create --from buy_and_hold --agent-id my-first-agent
+STRATEGY_ID=$(./target/release/xvn strategy new --template mean_reversion --name my-first-agent)
 
-# 7. Set a budget
-./target/release/xvn budget set --agent my-first-agent --hard-cap 100
+# 7. Run or inspect evals
+./target/release/xvn eval scenarios
+./target/release/xvn eval run --strategy "$STRATEGY_ID" --scenario crypto-bull-q1-2025 --mode backtest
 
-# 8. Run a single trader cycle and inspect the result
-./target/release/xvn run --agent my-first-agent --cycle-id $(uuidgen)
-./target/release/xvn audit agent --agent my-first-agent --since 1h
+# 8. Inspect stored runs
+./target/release/xvn eval list
 ```
 
 Or pull the Docker image — see `docker/README.md` for the full mount/env-var
@@ -115,7 +113,7 @@ docker run --rm -p 8788:8788 -e XVN_AUTOMIGRATE=1 \
 ```
 
 V1 routes: `/` Dashboard, `/setup` Wizard, `/strategies`, `/authoring/:id`,
-`/eval-runs`, `/eval-runs/:id`, `/eval/compare`, `/settings/*`.
+`/eval-runs`, `/eval-runs/:id`, `/eval-runs/compare`, `/settings/*`.
 See `frontend/README.md` for the full route table and `frontend/DESIGN.md` for
 the design synthesis.
 
@@ -127,13 +125,13 @@ the design synthesis.
 ## Safety
 
 xvision assumes a single operator who monitors the system and can intervene.
-Critical operator commands:
+Current operator commands:
 
-- `xvn kill --strategy <id>` — halt one agent, in-flight positions stay open
-- `xvn kill --all` — global halt, every dispatcher refuses new orders
-- `xvn unhalt --strategy <id>` — resume after halt
-- `xvn emergency-close --all` — flatten every position via market orders
-- `xvn audit agent --agent <id> --since 1h` — see every decision in the last hour
+- `xvn portfolio --venue <alpaca|orderly>` — read live portfolio state.
+- `xvn close-position --venue <alpaca|orderly> --asset BTC` — close one open position.
+- `xvn fire-trade --venue <alpaca|orderly> --side buy --size-bps 100` — manual smoke trade through the venue executor.
+- `xvn store stats --db data/store.db` — inspect local flight-recorder state.
+- `xvn eval list` and `xvn eval show <run_id>` — inspect eval history.
 
 The non-custodial design closes one failure mode (xvision can't drain you) but
 opens others:

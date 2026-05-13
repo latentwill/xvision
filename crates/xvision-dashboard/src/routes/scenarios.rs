@@ -117,7 +117,7 @@ pub async fn chart(
 
 /// `GET /api/scenarios/preview` — transient chart payload for the
 /// new-scenario wizard. No DB row is created. Query params:
-/// asset, from (YYYY-MM-DD), to, granularity (1h|1d), baseline (bool, optional).
+/// asset, from (YYYY-MM-DD), to, granularity (1h|4h|1d), baseline (bool, optional).
 pub async fn preview(
     State(state): State<AppState>,
     axum::extract::Query(q): axum::extract::Query<chart_api::PreviewQuery>,
