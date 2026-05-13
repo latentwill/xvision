@@ -11,6 +11,7 @@ use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::SqlitePool;
 
 use crate::cli_jobs::runner::CliJobRunner;
+use crate::cli_jobs::store::CliJobStore;
 use xvision_engine::api::chart::RunEventBus;
 use xvision_engine::api::settings::providers::ProviderModelsReport;
 use xvision_engine::api::{Actor, ApiContext};
@@ -152,6 +153,30 @@ impl AppState {
 
     pub fn cli_runner(&self) -> Arc<CliJobRunner> {
         self.cli_runner.clone()
+    }
+
+    pub async fn recover_cli_jobs(&self) -> anyhow::Result<()> {
+        let store = CliJobStore::new(self.pool.clone());
+        let recovery = store
+            .recover_after_restart()
+            .await
+            .context("recover cli jobs after dashboard restart")?;
+
+        let restarted = recovery.restarted_queued.len();
+        for job in recovery.restarted_queued {
+            self.cli_runner.start(job);
+        }
+
+        if restarted > 0 || recovery.failed_running > 0 {
+            tracing::info!(
+                target: "xvision::dashboard",
+                restarted_queued = restarted,
+                failed_running = recovery.failed_running,
+                "recovered cli jobs at startup",
+            );
+        }
+
+        Ok(())
     }
 
     pub fn with_cli_command_for_tests(mut self, cli_command: PathBuf) -> Self {

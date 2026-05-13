@@ -176,6 +176,14 @@ pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
         ),
     }
 
+    if let Err(e) = state.recover_cli_jobs().await {
+        tracing::warn!(
+            target: "xvision::dashboard",
+            error = %e,
+            "failed to recover cli jobs at startup",
+        );
+    }
+
     let app = build_router(state);
     tracing::info!(%addr, "xvision-dashboard listening");
     let listener = tokio::net::TcpListener::bind(addr).await?;
