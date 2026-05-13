@@ -6,6 +6,6 @@ export type ProvidersReport = { providers: Array<ProviderRow>,
  * The currently-configured model on `[default_llm]`. Surfaced
  * alongside the per-row `is_default` flag so the Default-LLM UI
  * can pre-fill its model dropdown without a second fetch. None
- * when the operator hasn't set a model yet.
+ * when the operator hasn't set a default/model yet.
  */
 default_model?: string, };

@@ -101,7 +101,9 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route(
             "/api/settings/providers/:name",
-            get(settings::providers::show).delete(settings::providers::remove),
+            get(settings::providers::show)
+                .put(settings::providers::update)
+                .delete(settings::providers::remove),
         )
         .route(
             "/api/settings/providers/:name/set-default",

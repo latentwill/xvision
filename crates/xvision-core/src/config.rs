@@ -92,8 +92,7 @@ fn validate_provider_name(name: &String, _ctx: &()) -> garde::Result {
         return Err(garde::Error::new("provider name must be 1..=32 chars"));
     }
     if name.starts_with('_') {
-        // The leading-underscore namespace is reserved for synthetic rows
-        // (e.g. _default_llm auto-derived from the [intern] block).
+        // The leading-underscore namespace is reserved for internal rows.
         return Err(garde::Error::new(
             "provider names starting with '_' are reserved",
         ));
@@ -118,13 +117,13 @@ pub struct RuntimeConfig {
     #[serde(default)]
     #[garde(dive)]
     pub providers: Vec<ProviderEntry>,
-    /// Workspace-level default LLM (used by chat-rail, wizard, and any
-    /// agent slot that doesn't override its own provider/model). Accepts
-    /// `[default_llm]` (canonical) or `[intern]` (legacy alias kept for
-    /// one release for backward compatibility with existing user configs).
-    #[serde(alias = "intern")]
+    /// Optional workspace-level default LLM (used by chat-rail, wizard, and
+    /// any agent slot that doesn't override its own provider/model). Accepts
+    /// `[default_llm]` (canonical) or `[intern]` (legacy alias kept for one
+    /// release for backward compatibility with existing user configs).
+    #[serde(default, alias = "intern")]
     #[garde(dive)]
-    pub default_llm: Intern,
+    pub default_llm: Option<Intern>,
     #[garde(dive)]
     pub trader: Trader,
     #[garde(dive)]
@@ -394,36 +393,11 @@ pub fn load_runtime(path: &Path) -> Result<RuntimeConfig, ConfigError> {
             path: path.to_path_buf(),
             message: msg,
         })?;
-    auto_derive_default_llm_provider_row(&mut cfg);
     validate_unique_provider_names(&cfg).map_err(|msg| ConfigError::CrossField {
         path: path.to_path_buf(),
         message: msg,
     })?;
     Ok(cfg)
-}
-
-/// Synthesize a `_default_llm` provider row from the `[default_llm]` block
-/// (legacy alias `[intern]`) if no existing row already matches its
-/// (kind, base_url, api_key_env) triple. The reserved underscore prefix
-/// prevents user-declared collisions.
-fn auto_derive_default_llm_provider_row(cfg: &mut RuntimeConfig) {
-    let kind: ProviderKind = cfg.default_llm.provider.into();
-    let base_url = cfg.default_llm.base_url.clone();
-    let api_key_env = cfg.default_llm.api_key_env.clone();
-    if cfg
-        .providers
-        .iter()
-        .any(|p| p.matches_triple(kind, &base_url, &api_key_env))
-    {
-        return;
-    }
-    cfg.providers.push(ProviderEntry {
-        name: "_default_llm".to_string(),
-        kind,
-        base_url,
-        api_key_env,
-        enabled_models: Vec::new(),
-    });
 }
 
 fn validate_unique_provider_names(cfg: &RuntimeConfig) -> Result<(), String> {
@@ -462,7 +436,11 @@ mod tests {
     fn loads_repo_default_toml() {
         let cfg =
             load_runtime(&project_root().join("config/default.toml")).expect("config/default.toml must load");
-        assert_eq!(cfg.default_llm.temperature, 0.0, "Tier 1 fix #1");
+        assert_eq!(
+            cfg.default_llm.as_ref().unwrap().temperature,
+            0.0,
+            "Tier 1 fix #1"
+        );
         assert_eq!(cfg.trader.temperature, 0.0, "Tier 1 fix #2");
         assert!(cfg.backtest.step >= cfg.backtest.horizon, "Tier 1 fix #4");
         assert_eq!(
@@ -520,6 +498,43 @@ sqlite_url = "sqlite://x.db"
             AlpacaData::DEFAULT_RATE_LIMIT_RPM,
             "missing [data.alpaca] section must default-fill"
         );
+    }
+
+    #[test]
+    fn runtime_config_loads_without_default_llm() {
+        let toml_src = r#"
+[runtime]
+mode = "backtest"
+executor = "alpaca"
+random_seed = 42
+
+[trader]
+model_path = "models/x.gguf"
+temperature = 0.0
+forward_paper_temperature = 0.4
+max_tokens = 512
+[trader.vectors]
+enabled = false
+config = "off"
+
+[backtest]
+step = 24
+horizon = 16
+bootstrap_resamples = 1000
+bootstrap_block_size = 8
+
+[paths]
+data_root = "data"
+vectors = "data/vectors"
+probes = "data/probes"
+sqlite_url = "sqlite://x.db"
+"#;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("no-default-llm.toml");
+        std::fs::write(&path, toml_src).unwrap();
+        let cfg = load_runtime(&path).unwrap();
+        assert!(cfg.default_llm.is_none());
+        assert!(cfg.providers.is_empty());
     }
 
     #[test]
@@ -671,9 +686,8 @@ sqlite_url = "sqlite://x.db"
         let path = dir.path().join("with-providers.toml");
         std::fs::write(&path, toml_src).unwrap();
         let cfg = load_runtime(&path).unwrap();
-        // Two declared rows must round-trip; auto-derive (Task 3) may add a
-        // synthetic row but cannot remove user-declared ones.
-        assert!(cfg.providers.len() >= 2);
+        // Two declared rows must round-trip; no provider rows are synthesized.
+        assert_eq!(cfg.providers.len(), 2);
         assert!(cfg.providers.iter().any(|p| p.name == "anthropic"));
         assert!(cfg.providers.iter().any(|p| p.name == "ollama-local"));
     }
@@ -681,9 +695,7 @@ sqlite_url = "sqlite://x.db"
     #[test]
     fn repo_default_toml_ships_with_no_user_providers() {
         // The repo's default config no longer seeds [[providers]]; users add
-        // their own via Settings → Providers (or `xvn provider add`). The
-        // `[intern]` block stays so `auto_derive_default_llm_provider_row` can
-        // synthesize a `_default_llm` row, keeping the runtime valid.
+        // their own via Settings -> Providers (or `xvn provider add`).
         let cfg = load_runtime(&project_root().join("config/default.toml")).unwrap();
         let user_rows: Vec<&str> = cfg
             .providers
@@ -695,42 +707,21 @@ sqlite_url = "sqlite://x.db"
             user_rows.is_empty(),
             "default.toml should ship without user provider rows, got {user_rows:?}"
         );
-        // The synthetic intern row must still exist so backends can resolve.
         assert!(
-            cfg.providers.iter().any(|p| p.name == "_default_llm"),
-            "synthetic `_default_llm` row must be auto-derived from [intern]"
+            cfg.providers.iter().all(|p| p.name != "_default_llm"),
+            "default.toml should not synthesize `_default_llm` provider rows"
         );
     }
 
     #[test]
-    fn auto_derives_default_llm_provider() {
+    fn does_not_auto_derive_default_llm_provider() {
         let cfg = load_runtime(&project_root().join("config/default.toml"))
             .expect("must load");
-        let synth = cfg
-            .providers
-            .iter()
-            .find(|p| p.name == "_default_llm");
-        // Either the synthetic row exists, OR the user-declared anthropic row
-        // already matches the [intern] triple (Task 4 lands the explicit row).
-        match synth {
-            Some(s) => {
-                assert_eq!(s.base_url, cfg.default_llm.base_url);
-                assert_eq!(s.api_key_env, cfg.default_llm.api_key_env);
-            }
-            None => {
-                // Task 4 has landed an explicit row matching the triple.
-                let kind: ProviderKind = cfg.default_llm.provider.into();
-                assert!(cfg.providers.iter().any(|p| p.matches_triple(
-                    kind,
-                    &cfg.default_llm.base_url,
-                    &cfg.default_llm.api_key_env
-                )), "either _default_llm OR a user-declared matching row must be present");
-            }
-        }
+        assert!(cfg.providers.iter().all(|p| p.name != "_default_llm"));
     }
 
     #[test]
-    fn auto_derive_skips_when_user_already_declared_match() {
+    fn declared_default_matching_provider_round_trips_without_synthetic() {
         let toml_src = r#"
 [runtime]
 mode = "backtest"
@@ -776,7 +767,7 @@ sqlite_url = "sqlite://x.db"
         let path = dir.path().join("user-already-declared.toml");
         std::fs::write(&path, toml_src).unwrap();
         let cfg = load_runtime(&path).unwrap();
-        assert_eq!(cfg.providers.len(), 1, "synthetic must be skipped");
+        assert_eq!(cfg.providers.len(), 1, "synthetic must not be added");
         assert_eq!(cfg.providers[0].name, "anthropic");
     }
 
