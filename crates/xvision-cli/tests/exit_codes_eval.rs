@@ -55,6 +55,32 @@ fn eval_get_alias_unknown_run_returns_4_not_found() {
 }
 
 #[test]
+fn eval_results_unknown_run_returns_4_not_found() {
+    let dir = tempdir().unwrap();
+    let out = xvn(
+        &["eval", "results", "01ZZZZZZZZZZZZZZZZZZZZZZZZ"],
+        dir.path(),
+    );
+    assert_eq!(code(&out), 4);
+}
+
+#[test]
+fn eval_watch_unknown_run_returns_4_not_found() {
+    let dir = tempdir().unwrap();
+    let out = xvn(
+        &[
+            "eval",
+            "watch",
+            "01ZZZZZZZZZZZZZZZZZZZZZZZZ",
+            "--once",
+            "--json",
+        ],
+        dir.path(),
+    );
+    assert_eq!(code(&out), 4);
+}
+
+#[test]
 fn eval_validate_bad_mode_returns_2_usage() {
     let dir = tempdir().unwrap();
     let out = xvn(

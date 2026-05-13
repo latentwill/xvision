@@ -357,6 +357,8 @@ xvn eval run --strategy <id> --scenario crypto-bull-q1-2025 --mode backtest
 xvn eval validate --strategy <id> --scenario crypto-bull-q1-2025 --mode backtest
 xvn eval list [--json]
 xvn eval get <run_id> [--json]
+xvn eval watch <run_id> [--once] [--json]
+xvn eval results <run_id> [--json]
 xvn eval compare <run_id_a> <run_id_b>
 ```
 
