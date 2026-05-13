@@ -16,7 +16,7 @@ use serde::Deserialize;
 use xvision_execution::broker_surface::{BrokerSurface, OrderRequest, Side};
 
 use crate::agent::llm::LlmDispatch;
-use crate::agent::pipeline::{run_pipeline, PipelineInputs};
+use crate::agent::pipeline::{run_pipeline, PipelineInputs, ResolvedAgentSlot};
 use crate::strategies::Strategy;
 use crate::eval::executor::Executor;
 use crate::eval::metrics::{
@@ -105,6 +105,7 @@ impl Executor for PaperExecutor {
         run: &mut Run,
         bundle: &Strategy,
         scenario: &Scenario,
+        agent_slots: &[ResolvedAgentSlot],
         dispatch: Arc<dyn LlmDispatch>,
         tools: Arc<ToolRegistry>,
         store: &RunStore,
@@ -117,7 +118,7 @@ impl Executor for PaperExecutor {
         });
 
         let result = self
-            .run_inner(run, bundle, scenario, dispatch, tools, store)
+            .run_inner(run, bundle, scenario, agent_slots, dispatch, tools, store)
             .await;
 
         match &result {
@@ -149,6 +150,7 @@ impl PaperExecutor {
         run: &mut Run,
         bundle: &Strategy,
         scenario: &Scenario,
+        agent_slots: &[ResolvedAgentSlot],
         dispatch: Arc<dyn LlmDispatch>,
         tools: Arc<ToolRegistry>,
         store: &RunStore,
@@ -215,6 +217,7 @@ impl PaperExecutor {
 
             let outs = run_pipeline(PipelineInputs {
                 bundle,
+                agent_slots,
                 seed_inputs: seed,
                 dispatch: dispatch.clone(),
                 tools: tools.clone(),

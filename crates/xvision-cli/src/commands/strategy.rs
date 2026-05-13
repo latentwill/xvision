@@ -7,8 +7,10 @@ use std::sync::Arc;
 use clap::{Args, Subcommand};
 use ulid::Ulid;
 use xvision_engine::agent::llm::{AnthropicDispatch, LlmDispatch, MockDispatch};
-use xvision_engine::agent::pipeline::{run_pipeline, PipelineInputs};
-use xvision_engine::agents::AgentSlot;
+use xvision_engine::agent::pipeline::{
+    agent_slot_to_llm_slot, run_pipeline, PipelineInputs, ResolvedAgentSlot,
+};
+use xvision_engine::agents::{AgentSlot, AgentStore};
 use xvision_engine::api::{
     agents as api_agents, strategy as api_strategy, Actor, ApiContext, ApiError,
 };
@@ -414,6 +416,7 @@ fn provider_model_from_slot(slot: &LLMSlot) -> (String, String) {
 
 async fn run_inline(id: &str, fixture: &str, decisions: u32, mock: bool) -> CliResult<()> {
     let bundle = store().load(id).await.exit_with(XvnExit::NotFound)?;
+    let agent_slots = resolve_agent_slots_for_cli(&bundle).await?;
     let est = estimate_pipeline_tokens(&bundle, decisions as u64);
     println!(
         "estimate: input={} output={} total={} (decisions={})",
@@ -485,6 +488,7 @@ async fn run_inline(id: &str, fixture: &str, decisions: u32, mock: bool) -> CliR
         });
         let outs = run_pipeline(PipelineInputs {
             bundle: &bundle,
+            agent_slots: &agent_slots,
             seed_inputs: seed,
             dispatch: dispatch.clone(),
             tools: tools.clone(),
@@ -502,4 +506,31 @@ async fn run_inline(id: &str, fixture: &str, decisions: u32, mock: bool) -> CliR
         decisions, total_in, total_out
     );
     Ok(())
+}
+
+async fn resolve_agent_slots_for_cli(
+    bundle: &xvision_engine::strategies::Strategy,
+) -> CliResult<Vec<ResolvedAgentSlot>> {
+    if bundle.agents.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let ctx = open_ctx().await?;
+    let agent_store = AgentStore::new(ctx.db.clone());
+    let mut out = Vec::with_capacity(bundle.agents.len());
+    for agent_ref in &bundle.agents {
+        let agent = agent_store
+            .get(&agent_ref.agent_id)
+            .await
+            .map_err(|e| CliError::upstream(anyhow::anyhow!("load agent {}: {e}", agent_ref.agent_id)))?
+            .ok_or_else(|| CliError::not_found(anyhow::anyhow!("agent {}", agent_ref.agent_id)))?;
+        let slot = agent.slots.first().ok_or_else(|| {
+            CliError::usage(anyhow::anyhow!("agent {} has no executable slots", agent.agent_id))
+        })?;
+        out.push(ResolvedAgentSlot {
+            role: agent_ref.role.clone(),
+            slot: agent_slot_to_llm_slot(&agent_ref.role, slot),
+        });
+    }
+    Ok(out)
 }
