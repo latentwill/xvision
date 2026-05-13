@@ -493,7 +493,7 @@ async fn run_validate(ctx: &ApiContext, a: ValidateArgs) -> CliResult<()> {
         .map_err(|e| CliError::usage(anyhow::anyhow!("read {}: {e}", a.from_file.display())))?;
     let req: api_scenario::CreateScenarioRequest = toml::from_str(&body)
         .map_err(|e| CliError::usage(anyhow::anyhow!("parse TOML: {e}")))?;
-    api_scenario::validate_request(ctx, &req)
+    api_scenario::validate_request(&req, ctx)
         .await
         .map_err(|e| api_to_cli("scenario validate", e))?;
     if a.json {
