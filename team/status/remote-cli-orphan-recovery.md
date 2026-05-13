@@ -1,15 +1,16 @@
 ---
 track: remote-cli-orphan-recovery
 worktree: /root/deploy/xvision/.worktrees/remote-cli-orphan-recovery
-branch: remote-cli-orphan-recovery
-phase: implementation
-last_updated: 2026-05-13T01:50:23Z
+branch: remote-cli-orphan-recovery-clean
+phase: phase-b-pr-open
+last_updated: 2026-05-13T02:32:06Z
 owner: codex
 ---
 
 # What I'm doing right now
 
-Implementing the execution-board recovery gap for remote CLI jobs.
+PR [#99](https://github.com/latentwill/xvision/pull/99) is open for the
+execution-board remote CLI orphan recovery gap.
 
 ## Progress
 
@@ -18,9 +19,14 @@ Implementing the execution-board recovery gap for remote CLI jobs.
 - [x] Added regression tests for restart recovery.
 - [x] Added store-level recovery for queued/running CLI jobs.
 - [x] Wired recovery into dashboard startup.
-- [ ] Run Rust verification once a Rust toolchain is available.
+- [ ] Cargo verification in CI/non-deploy environment.
 
 # Blocked on
 
-Local verification: this environment does not have `cargo`, `rustc`, or
-`rustfmt` installed.
+Operator review/merge of PR #99, plus cargo verification in CI/non-deploy.
+
+CI/non-deploy verification command:
+
+```bash
+cargo test -p xvision-dashboard cli_jobs -- --nocapture
+```
