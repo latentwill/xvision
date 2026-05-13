@@ -90,3 +90,40 @@ async fn delete_alpaca_is_idempotent_on_fresh_home() {
     let del = server.delete("/api/settings/brokers/alpaca").await;
     del.assert_status(axum::http::StatusCode::NO_CONTENT);
 }
+
+#[tokio::test]
+async fn post_alpaca_replaces_existing_credentials_without_clear() {
+    let (server, _tmp, _state) = boot().await;
+
+    server
+        .post("/api/settings/brokers/alpaca")
+        .json(&serde_json::json!({
+            "api_key_id": "PKFIRST00000001",
+            "api_secret_key": "secret-1",
+            "base_url": "https://paper-api.alpaca.markets"
+        }))
+        .await
+        .assert_status(axum::http::StatusCode::CREATED);
+
+    let replace = server
+        .post("/api/settings/brokers/alpaca")
+        .json(&serde_json::json!({
+            "api_key_id": "PKSECOND0000002",
+            "api_secret_key": "secret-2",
+            "base_url": "https://broker.example"
+        }))
+        .await;
+    replace.assert_status(axum::http::StatusCode::CREATED);
+
+    let snap = server.get("/api/settings/brokers").await;
+    snap.assert_status_ok();
+    let body: serde_json::Value = snap.json();
+    assert_eq!(body["alpaca"]["stored"], true);
+    assert_eq!(body["alpaca"]["stored_key_id_suffix"], "0002");
+    assert_eq!(body["alpaca"]["base_url"], "https://broker.example");
+    let serialized = body.to_string();
+    assert!(!serialized.contains("secret-1"));
+    assert!(!serialized.contains("secret-2"));
+    assert!(!serialized.contains("PKFIRST00000001"));
+    assert!(!serialized.contains("PKSECOND0000002"));
+}

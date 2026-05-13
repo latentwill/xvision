@@ -862,11 +862,6 @@ async fn providers_add_creates_and_persists_row() {
     let (server, tmp) = boot().await;
     let cfg = write_config(&tmp);
     let _g = scoped_set("XVN_CONFIG_PATH", cfg.to_str().unwrap());
-    // Pretend the operator already has the seeded default's key exported.
-    // Without this the add path's auto-promote would re-point [intern] at
-    // the new openai row — see providers::add_inner.
-    let _g_key = scoped_set("ANTHROPIC_API_KEY", "sk-ant-test");
-
     let response = server
         .post("/api/settings/providers")
         .json(&serde_json::json!({
@@ -986,10 +981,7 @@ async fn providers_remove_drops_row_and_returns_204() {
     let cfg = write_config(&tmp);
     let _g = scoped_set("XVN_CONFIG_PATH", cfg.to_str().unwrap());
 
-    // Seed an extra non-intern-referenced provider so we can delete it.
-    // Set ANTHROPIC_API_KEY so the auto-promote in add_inner doesn't
-    // re-point intern at the new openai row.
-    let _g_key = scoped_set("ANTHROPIC_API_KEY", "sk-ant-test");
+    // Seed an extra non-default provider so we can delete it.
     server
         .post("/api/settings/providers")
         .json(&serde_json::json!({

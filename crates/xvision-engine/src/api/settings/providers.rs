@@ -1184,8 +1184,8 @@ fn sensible_default_model(kind: ProviderKind, name: &str) -> Option<&'static str
     match kind {
         ProviderKind::Anthropic => Some("claude-sonnet-4-6"),
         ProviderKind::OpenaiCompat => match name {
-            // V4 names per https://api-docs.deepseek.com — `deepseek-chat`
-            // retires 2026-07-24, so auto-promote points at the new id.
+            // Prefer the newer DeepSeek id when an operator explicitly sets
+            // this provider as the workspace default.
             "deepseek" => Some("deepseek-v4-flash"),
             "groq" => Some("llama-3.3-70b-versatile"),
             "openrouter" => Some("anthropic/claude-3.5-sonnet"),
