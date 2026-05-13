@@ -52,7 +52,7 @@ Implemented in `web/src/routes/`:
 | `/` Home | `home.tsx` | Dashboard — KPI tiles, recent runs |
 | `/setup` | `setup.tsx` | Wizard (chat-driven onboarding + drafting) |
 | `/strategies` | `strategies.tsx` | Drafts list, lineage column |
-| `/authoring/:id` | `authoring.tsx` | Inspector: bundle tree + slot editor |
+| `/authoring/:id` | `authoring.tsx` | Inspector: strategy tree + agent-role editor |
 | `/eval-runs` | `eval-runs.tsx` | Leaderboard with filters + Compare select |
 | `/eval-runs/:id` | `eval-runs-detail.tsx` | Run detail (equity, findings, ledger) |
 | `/eval-runs/compare` | `eval-compare.tsx` | Side-by-side run comparison |
