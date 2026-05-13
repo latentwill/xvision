@@ -121,7 +121,7 @@ fn bundle_without_any_llm_slot_fails() {
     b.intern_slot = None;
     b.trader_slot = None;
     let err = validate_bundle(&b).unwrap_err();
-    assert!(matches!(err, ValidationError::NoLlmSlots));
+    assert!(matches!(err, ValidationError::NoAgents));
 }
 
 #[test]
@@ -143,7 +143,7 @@ fn bundle_with_zero_capital_risk_fails() {
 #[test]
 fn bundle_without_trader_slot_fails() {
     let mut b = sample_bundle();
-    b.trader_slot = None; // regime_slot still Some, so NoLlmSlots wouldn't fire
+    b.trader_slot = None; // regime_slot still Some, so NoAgents wouldn't fire
     let err = validate_bundle(&b).unwrap_err();
     assert!(matches!(err, ValidationError::MissingTraderSlot));
 }

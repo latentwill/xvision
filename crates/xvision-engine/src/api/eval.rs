@@ -29,6 +29,7 @@ use ed25519_dalek::SigningKey;
 use serde::{Deserialize, Serialize};
 
 use crate::agent::llm::{AnthropicDispatch, LlmDispatch, OpenaiCompatDispatch};
+use crate::agent::pipeline::{agent_slot_to_llm_slot, ResolvedAgentSlot};
 use crate::api::audit::{self, Outcome};
 use crate::api::settings::brokers as api_brokers;
 use crate::api::scenario as api_scenario;
@@ -572,6 +573,33 @@ async fn select_eval_provider(
     ))
 }
 
+async fn resolve_agent_slots(
+    ctx: &ApiContext,
+    bundle: &crate::strategies::Strategy,
+) -> ApiResult<Vec<ResolvedAgentSlot>> {
+    if bundle.agents.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let agent_store = AgentStore::new(ctx.db.clone());
+    let mut out = Vec::with_capacity(bundle.agents.len());
+    for agent_ref in &bundle.agents {
+        let agent = agent_store
+            .get(&agent_ref.agent_id)
+            .await
+            .map_err(|e| ApiError::Internal(format!("load agent {}: {e}", agent_ref.agent_id)))?
+            .ok_or_else(|| ApiError::NotFound(format!("agent {}", agent_ref.agent_id)))?;
+        let slot = agent.slots.first().ok_or_else(|| {
+            ApiError::Validation(format!("agent {} has no executable slots", agent.agent_id))
+        })?;
+        out.push(ResolvedAgentSlot {
+            role: agent_ref.role.clone(),
+            slot: agent_slot_to_llm_slot(&agent_ref.role, slot),
+        });
+    }
+    Ok(out)
+}
+
 async fn dispatch_from_provider(entry: &ProviderEntry) -> ApiResult<Arc<dyn LlmDispatch>> {
     let api_key = if entry.api_key_env.is_empty() {
         String::new()
@@ -655,6 +683,7 @@ async fn run_inner(
 ) -> ApiResult<Run> {
     // 1. Look up the strategy bundle. Propagates ApiError::NotFound cleanly.
     let bundle = api_strategy::get(ctx, &req.agent_id).await?;
+    let agent_slots = resolve_agent_slots(ctx, &bundle).await?;
 
     // 2. Look up the scenario. Primary path is the DB-backed registry
     //    (`api::scenario::get`); legacy path falls back to the compiled-in
@@ -732,7 +761,7 @@ async fn run_inner(
     let dispatch_for_postprocess = dispatch.clone();
 
     if let Err(e) = executor
-        .run(&mut run, &bundle, &scenario, dispatch, tools, &store)
+        .run(&mut run, &bundle, &scenario, &agent_slots, dispatch, tools, &store)
         .await
     {
         // Persist the failure so downstream callers (CLI, dashboard) can
@@ -933,7 +962,7 @@ async fn execute_in_background(
     let dispatch_for_postprocess = dispatch.clone();
 
     if let Err(e) = executor
-        .run(&mut run, &bundle, &scenario, dispatch, tools, &store)
+        .run(&mut run, &bundle, &scenario, &[], dispatch, tools, &store)
         .await
     {
         let err_msg = e.to_string();
