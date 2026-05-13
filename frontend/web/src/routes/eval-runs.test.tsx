@@ -155,15 +155,32 @@ function scenario(overrides: Partial<Scenario> = {}): Scenario {
 function mockReady({
   providers = [provider()],
   alpaca = broker(),
+  defaultModel = "gpt-4.1-mini",
+  strategies = [
+    {
+      agent_id: "01TEST",
+      display_name: "Trend 4H",
+      template: "trend_follower",
+      decision_cadence_minutes: 240,
+    },
+  ],
 }: {
   providers?: ProviderRow[];
   alpaca?: BrokerEntry;
+  defaultModel?: string | undefined;
+  strategies?: Array<{
+    agent_id: string;
+    display_name: string;
+    template: string;
+    decision_cadence_minutes: number;
+    model?: string;
+  }>;
 } = {}) {
   vi.mocked(evalApi.listRuns).mockResolvedValue([]);
   vi.mocked(scenariosApi.listScenarios).mockResolvedValue([scenario()]);
   vi.mocked(settingsApi.listProviders).mockResolvedValue({
     providers,
-    default_model: "gpt-4.1-mini",
+    default_model: defaultModel,
   });
   vi.mocked(settingsApi.getBrokers).mockResolvedValue({
     alpaca,
@@ -177,14 +194,7 @@ function mockReady({
       note: "post-v1",
     }),
   });
-  vi.mocked(strategyApi.listStrategies).mockResolvedValue([
-    {
-      agent_id: "01TEST",
-      display_name: "Trend 4H",
-      template: "trend_follower",
-      decision_cadence_minutes: 240,
-    },
-  ]);
+  vi.mocked(strategyApi.listStrategies).mockResolvedValue(strategies);
 }
 
 describe("EvalRunsRoute", () => {
@@ -217,6 +227,28 @@ describe("EvalRunsRoute", () => {
 
     await screen.findByRole("option", { name: /User 4H/ });
     expect(scenariosApi.listScenarios).toHaveBeenCalled();
+  });
+
+  it("shows a workspace default provider warning when the selected strategy has no model", async () => {
+    mockReady({
+      providers: [provider({ is_default: false })],
+      defaultModel: undefined,
+      strategies: [
+        {
+          agent_id: "01TEST",
+          display_name: "Trend 4H",
+          template: "trend_follower",
+          decision_cadence_minutes: 240,
+        },
+      ],
+    });
+
+    renderRoute("/eval-runs?strategy=01TEST&start=1");
+
+    expect(
+      await screen.findByText(/No workspace default provider is configured/i),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Start" })).toBeDisabled();
   });
 
   it("blocks eval launch when no provider with credentials is configured", async () => {
