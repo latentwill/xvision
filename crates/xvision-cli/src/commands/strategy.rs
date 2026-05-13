@@ -8,6 +8,8 @@ use clap::{Args, Subcommand};
 use ulid::Ulid;
 use xvision_engine::agent::llm::{AnthropicDispatch, LlmDispatch, MockDispatch};
 use xvision_engine::agent::pipeline::{run_pipeline, PipelineInputs};
+use xvision_engine::api::{strategy as api_strategy, Actor, ApiContext, ApiError};
+use xvision_engine::strategies::{PipelineEdge, PipelineKind};
 use xvision_engine::strategies::store::{strategy_store_dir, StrategyStore, FilesystemStore};
 use xvision_engine::strategies::validate::validate_bundle;
 use xvision_engine::templates::registry;
@@ -41,6 +43,35 @@ enum StrategyAction {
     Show { id: String },
     /// List available strategy templates.
     Templates,
+    /// Add a library agent reference to a strategy.
+    AddAgent {
+        /// Strategy id returned from `xvn strategy new`.
+        strategy_id: String,
+        /// Agent id from the workspace agent library.
+        agent_id: String,
+        /// Role this agent plays inside the strategy.
+        #[arg(long)]
+        role: String,
+    },
+    /// Remove an agent reference by role.
+    RemoveAgent {
+        /// Strategy id returned from `xvn strategy new`.
+        strategy_id: String,
+        /// Role to remove from the strategy.
+        #[arg(long)]
+        role: String,
+    },
+    /// Set the strategy pipeline kind and optional graph edges.
+    SetPipeline {
+        /// Strategy id returned from `xvn strategy new`.
+        strategy_id: String,
+        /// `single`, `sequential`, or `graph`.
+        #[arg(long)]
+        kind: String,
+        /// Graph edge in `from:to` form. Repeat for multiple edges.
+        #[arg(long = "edge")]
+        edges: Vec<String>,
+    },
     /// Run a saved strategy inline against a fixture (decision_points iterations).
     Run {
         /// Strategy id (ULID) returned from `xvn strategy new`.
@@ -64,6 +95,15 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
         StrategyAction::Ls => ls().await,
         StrategyAction::Show { id } => show(&id).await,
         StrategyAction::Templates => templates().await,
+        StrategyAction::AddAgent { strategy_id, agent_id, role } => {
+            add_agent(&strategy_id, &agent_id, &role).await
+        }
+        StrategyAction::RemoveAgent { strategy_id, role } => {
+            remove_agent(&strategy_id, &role).await
+        }
+        StrategyAction::SetPipeline { strategy_id, kind, edges } => {
+            set_pipeline(&strategy_id, &kind, &edges).await
+        }
         StrategyAction::Run { id, fixture, decisions, mock } => {
             run_inline(&id, &fixture, decisions, mock).await
         }
@@ -80,6 +120,58 @@ fn home() -> PathBuf {
 
 fn store() -> FilesystemStore {
     FilesystemStore::new(strategy_store_dir(&home()))
+}
+
+async fn open_ctx() -> CliResult<ApiContext> {
+    let user = std::env::var("USER")
+        .or_else(|_| std::env::var("USERNAME"))
+        .unwrap_or_else(|_| "operator".to_string());
+    ApiContext::open(&home(), Actor::Cli { user })
+        .await
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("open ApiContext: {e}")))
+}
+
+fn api_to_cli(prefix: &str, e: ApiError) -> CliError {
+    let exit = match &e {
+        ApiError::NotFound(_) => XvnExit::NotFound,
+        ApiError::Validation(_) => XvnExit::Usage,
+        ApiError::Conflict(_) => XvnExit::Conflict,
+        ApiError::Internal(_) | ApiError::Db(_) | ApiError::Other(_) => XvnExit::Upstream,
+    };
+    CliError {
+        exit,
+        source: anyhow::anyhow!("{prefix}: {e}"),
+    }
+}
+
+fn parse_pipeline_kind(kind: &str) -> CliResult<PipelineKind> {
+    match kind {
+        "single" => Ok(PipelineKind::Single),
+        "sequential" => Ok(PipelineKind::Sequential),
+        "graph" => Ok(PipelineKind::Graph),
+        other => Err(CliError::usage(anyhow::anyhow!(
+            "unknown pipeline kind '{other}' - expected single | sequential | graph"
+        ))),
+    }
+}
+
+fn parse_edge(raw: &str) -> CliResult<PipelineEdge> {
+    let Some((from, to)) = raw.split_once(':') else {
+        return Err(CliError::usage(anyhow::anyhow!(
+            "invalid edge '{raw}' - expected from:to"
+        )));
+    };
+    let from = from.trim();
+    let to = to.trim();
+    if from.is_empty() || to.is_empty() {
+        return Err(CliError::usage(anyhow::anyhow!(
+            "invalid edge '{raw}' - both roles are required"
+        )));
+    }
+    Ok(PipelineEdge {
+        from_role: from.to_string(),
+        to_role: to.to_string(),
+    })
 }
 
 async fn new(template: &str, name: &str, creator: Option<String>) -> CliResult<()> {
@@ -128,6 +220,67 @@ async fn templates() -> CliResult<()> {
             println!("{:<20} {}", name, tpl.display_name());
         }
     }
+    Ok(())
+}
+
+async fn add_agent(strategy_id: &str, agent_id: &str, role: &str) -> CliResult<()> {
+    let ctx = open_ctx().await?;
+    let out = api_strategy::add_agent(
+        &ctx,
+        api_strategy::AddAgentReq {
+            strategy_id: strategy_id.to_string(),
+            agent_id: agent_id.to_string(),
+            role: role.to_string(),
+        },
+    )
+    .await
+    .map_err(|e| api_to_cli("strategy add-agent", e))?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&out).exit_with(XvnExit::Upstream)?
+    );
+    Ok(())
+}
+
+async fn remove_agent(strategy_id: &str, role: &str) -> CliResult<()> {
+    let ctx = open_ctx().await?;
+    let out = api_strategy::remove_agent(
+        &ctx,
+        api_strategy::RemoveAgentReq {
+            strategy_id: strategy_id.to_string(),
+            role: role.to_string(),
+        },
+    )
+    .await
+    .map_err(|e| api_to_cli("strategy remove-agent", e))?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&out).exit_with(XvnExit::Upstream)?
+    );
+    Ok(())
+}
+
+async fn set_pipeline(strategy_id: &str, kind: &str, edges: &[String]) -> CliResult<()> {
+    let kind = parse_pipeline_kind(kind)?;
+    let edges = edges
+        .iter()
+        .map(|edge| parse_edge(edge))
+        .collect::<CliResult<Vec<_>>>()?;
+    let ctx = open_ctx().await?;
+    let out = api_strategy::set_pipeline(
+        &ctx,
+        api_strategy::SetPipelineReq {
+            strategy_id: strategy_id.to_string(),
+            kind,
+            edges,
+        },
+    )
+    .await
+    .map_err(|e| api_to_cli("strategy set-pipeline", e))?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&out).exit_with(XvnExit::Upstream)?
+    );
     Ok(())
 }
 
