@@ -54,7 +54,7 @@ Hard deployment rules for agents:
 
 ## Quickstart (for first users)
 
-This walks through running xvision against Orderly testnet with no real money.
+This walks through a local backtest path with no live orders.
 
 ```bash
 # 1. Clone and build
@@ -62,24 +62,21 @@ git clone https://github.com/latentwill/xvision
 cd xvision
 cargo build --release
 
-# 2. Generate an EVM signing key (or use an existing one)
-# 3. Set up Orderly testnet account with that key
-# 4. Initialize xvision config/state
-export CREDENTIAL_SECRET=$(openssl rand -hex 32)
+# 2. Initialize xvision config/state
 ./target/release/xvn migrate
 
-# 5. Check provider config
+# 3. Check provider config
 ./target/release/xvn provider list
 
-# 6. Configure a strategy from a template
+# 4. Configure a strategy from a template
 ./target/release/xvn strategy templates
 STRATEGY_ID=$(./target/release/xvn strategy new --template mean_reversion --name my-first-agent)
 
-# 7. Run or inspect evals
+# 5. Run or inspect evals
 ./target/release/xvn eval scenarios
 ./target/release/xvn eval run --strategy "$STRATEGY_ID" --scenario crypto-bull-q1-2025 --mode backtest
 
-# 8. Inspect stored runs
+# 6. Inspect stored runs
 ./target/release/xvn eval list
 ```
 
@@ -145,17 +142,30 @@ opens others:
 
 ## Architecture
 
-- **Trading rail** (this scope): non-custodial, broker-side scope enforcement,
-  off-chain SQLite audit log + reservation ledger.
-- **Marketplace rail** (separate scope, Plan 5): on-chain protocol for fees +
-  delegation. xvision.io would run this; a self-hosted instance does not need
-  it.
-- **Autoresearcher** (separate scope, AR-1/AR-2/AR-3): the mutator + judge +
-  lineage seal pipeline.
+- **Operator surfaces:** the React/Vite dashboard, `xvn` CLI, and `xvn-mcp`
+  all call the same `xvision-engine::api` layer instead of duplicating
+  business logic.
+- **Authoring model:** strategies are bundles with manifests, risk config,
+  mechanical params, and AgentRefs/PipelineDef composition over workspace
+  agents. Legacy fixed slots still parse for compatibility.
+- **Eval loop:** scenarios are DB-backed and seeded with canonical rows.
+  Backtest mode replays cached bars through `BacktestExecutor`; paper mode
+  uses Alpaca broker-surface credentials. Runs, decisions, equity, findings,
+  and attestations persist in SQLite.
+- **Dashboard runtime:** `xvision-dashboard` serves the embedded SPA, JSON API,
+  wizard/chat SSE, CLI-job SSE, and live run chart streams from one axum
+  binary.
+- **Optional identity rail:** `xvision-identity` contains draft ERC-8004
+  manifest/reputation clients. It is opt-in and not required for the default
+  dashboard/eval loop.
 
 ## Documentation
 
 - `MANUAL.md` — operator runbook (commands, daily checklist, scale tiers)
+- `architecture.md` / `architecture-diagram.mermaid` — current system shape
+- `docs/superpowers/plans/2026-05-13-v2-v4-action-plan.md` — active V2-V4 roadmap
+- `frontend/README.md` and `frontend/DESIGN.md` — shipped dashboard routes and design notes
+- `crates/xvision-dashboard/README.md` — embedded dashboard API notes
 - `docs/superpowers/specs/` — design specifications
 - `docs/superpowers/plans/` — implementation plans (executable)
 - `docs/HACKATHON-1-PAGER.md` — narrative pitch

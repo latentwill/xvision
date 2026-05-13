@@ -64,85 +64,134 @@ The Trader is wrapped as a `Strategy` adapter (`TraderArm`) so it competes again
 
 ### 2.1 Full system diagram
 
-Renders inline on GitHub. Standalone source: `architecture-diagram.mermaid`. Blue is deterministic rule code; green is external services; purple is storage; orange is orchestrator + tool-surface code; pink is on-chain ERC-8004 registries on Mantle; cyan is eval. Red dashed remains reserved for future v2-deferred nodes.
+Renders inline on GitHub. Standalone source: `architecture-diagram.mermaid`. Blue is deterministic/runtime code; green is external services; purple is storage; orange is operator and API surfaces; pink is optional ERC-8004 identity wiring; cyan is eval and charting.
 
 ```mermaid
 flowchart TD
-    A1[Alpaca OHLCV<br/>price + volume]
-    A2[Exchange APIs<br/>funding rate, OI]
-    A3[Nansen<br/>smart-money flows]
-
-    IND[Technical Indicators<br/>RSI · MA · Bollinger<br/>MACD · Donchian · ATR]
-
-    HA[<b>Ops</b><br/>pipeline orchestrator<br/>state assembly · scheduling]
-
-    S1[<b>Stage 1 · Intern</b><br/>OpenAI- / Anthropic-compat<br/>or ACPX agent harness<br/>━━━━━━━━━━━━<br/>bull · bear · flat cases<br/>evidence inventory · regime<br/>━━━━━━━━━━━━<br/>NO candidate decision]
-
-    MCP[<b>xvn-mcp</b><br/>stdio MCP server · stateless<br/>━━━━━━━━━━━━<br/>indicator tools<br/>rsi · sma · ema · macd<br/>bollinger · atr · donchian<br/>fib_retracements · health<br/>━━━━━━━━━━━━<br/>active when INTERN=acpx]
-
-    S2[<b>Stage 2 · Trader</b><br/>OpenAI-compat HTTP<br/>or local candle<br/>━━━━━━━━━━━━<br/>action · size · direction<br/>stop · take-profit]
-
-    R[<b>Risk Layer</b><br/>deterministic rules · no LLM<br/>━━━━━━━━━━━━<br/>position limits<br/>daily-loss circuit breaker<br/>correlation cluster cap<br/>asset whitelist]
-
-    S3[<b>Stage 3 · Execution</b><br/>idempotent tool calls]
-    AP[Alpaca Paper<br/>bracket orders<br/>v1 testing path]
-    OR[Orderly Network<br/>perpetual futures · Mantle<br/>orderly-connector-rs<br/>v1 hackathon executor]
-
-    subgraph ERC8004 [ERC-8004 · Mantle]
-        ID[Identity Registry<br/>per-strategy NFT<br/>+ strategy_manifest_cid]
-        RP[Reputation Registry<br/>per-run feedback<br/>Δ-Sharpe + code commit]
-        VL[Validation Registry<br/>per-trade strategy proof<br/>strategy_id + result hash]
+    %% Operator surfaces
+    subgraph OPERATOR [Operator surfaces]
+        WEB[React + Vite dashboard<br/>strategies, agents, scenarios<br/>eval runs, settings, chat rail]
+        CLI[xvn CLI<br/>strategy, agent, scenario<br/>eval, provider, dashboard]
+        MCP[xvn-mcp stdio server<br/>indicator, authoring, eval tools]
     end
 
-    DB[(SQLite<br/>decisions · briefings<br/>market state · arm_name)]
+    %% Dashboard transport
+    subgraph DASH [xvision-dashboard · axum]
+        STATIC[Embedded SPA assets<br/>RustEmbed static files]
+        ROUTER[HTTP API router<br/>/api/agents · /api/strategies<br/>/api/scenarios · /api/eval/runs<br/>/api/settings · /api/chat-rail]
+        STREAM[SSE streams<br/>wizard chat · chat rail<br/>CLI jobs · live run chart]
+    end
 
-    M[<b>Metrics · Eval</b><br/>━━━━━━━━━━━━<br/>Δ-Sharpe primary<br/>max drawdown<br/>profit factor · win rate<br/>decision divergence rate<br/>━━━━━━━━━━━━<br/>paired bootstrap 95% CI]
+    %% Shared engine API
+    subgraph ENGINE [xvision-engine shared API]
+        CTX[ApiContext<br/>SQLite pool · XVN_HOME<br/>actor · bars fetcher<br/>RunEventBus]
+        AUTHOR[Authoring API<br/>templates · agents · skills<br/>strategy drafts · validation]
+        AGENT[Agent library<br/>AgentSlot provider/model/prompt<br/>skill_ids · max_tokens]
+        STRAT[Strategy bundle<br/>manifest · risk config<br/>mechanical params<br/>AgentRefs + PipelineDef<br/>legacy slots still parsed]
+        PIPE[Agent pipeline<br/>single/sequential executable<br/>graph parsed, not executable]
+        LLM[LlmDispatch<br/>OpenAI-compatible<br/>Anthropic · local provider]
+        TOOLS[ToolRegistry<br/>built-in indicator tools]
+        SCEN[Scenario registry<br/>canonical · user · clone · generated<br/>AlpacaHistorical or SyntheticWalk]
+        EVAL[Eval API<br/>run · list · detail<br/>compare · attest]
+        BACKTEST[BacktestExecutor<br/>replay OHLCV bars<br/>simulated fills · metrics]
+        PAPER[PaperExecutor<br/>broker-surface paper mode]
+        CHART[Chart API<br/>RunChartPayload<br/>indicators · equity · markers]
+    end
 
-    BL[Baselines<br/>━━━━━━━━━━━━<br/>buy-hold · random<br/>RSI · MA-cross · Bollinger<br/>MACD · Donchian · Fibs<br/>smart-money copy<br/>funding-rate fader]
+    %% Persistence and local files
+    subgraph STORE [Local state]
+        DB[(SQLite xvn.db<br/>agents · skills · scenarios<br/>eval_runs · decisions · equity<br/>findings · chat · cli_jobs · audit)]
+        HOME[$XVN_HOME<br/>runtime config · secrets<br/>strategy JSON · identity keys]
+        BARS[(Bars cache<br/>singleflight load_bars<br/>compressed cached rows)]
+    end
 
-    A1 --> IND
-    A1 --> HA
-    A2 --> HA
-    A3 --> HA
-    IND --> HA
+    %% External integrations
+    subgraph EXT [External services]
+        ALPACA_DATA[Alpaca historical bars]
+        ALPACA_PAPER[Alpaca paper broker]
+        PROVIDERS[LLM providers<br/>OpenAI-compatible · Anthropic]
+    end
 
-    HA --> S1
-    S1 -.->|tool calls<br/>when INTERN=acpx| MCP
-    MCP -.->|computes at agent-supplied<br/>parameters| IND
-    S1 -->|JSON: InternBriefing<br/>neutral evidence only| S2
-    S2 -->|JSON: TraderDecision| R
+    %% Optional on-chain identity path
+    subgraph CHAIN [Optional identity path]
+        ID[xvision-identity<br/>ERC-8004 draft client<br/>agent manifests · reputation posts]
+        MANTLE[Mantle RPC/contracts<br/>operator-deployed registries]
+    end
 
-    R -->|approved or modified| S3
-    R -.->|vetoed| DB
+    %% Surface routing
+    WEB --> STATIC
+    WEB --> ROUTER
+    WEB --> STREAM
+    CLI --> CTX
+    MCP --> CTX
+    ROUTER --> CTX
+    STREAM --> CTX
 
-    S3 --> AP
-    S3 --> OR
-    S3 -.->|after closed trade| VL
+    %% Engine composition
+    CTX --> AUTHOR
+    CTX --> EVAL
+    CTX --> CHART
+    AUTHOR --> AGENT
+    AUTHOR --> STRAT
+    AUTHOR --> SCEN
+    STRAT -->|AgentRefs| AGENT
+    STRAT --> PIPE
+    AGENT --> PIPE
+    PIPE --> LLM
+    PIPE --> TOOLS
 
-    HA -.->|once at strategy mint| ID
-    M -.->|after each run| RP
+    %% Eval execution
+    EVAL -->|resolve strategy| STRAT
+    EVAL -->|resolve scenario| SCEN
+    EVAL -->|select provider/model| LLM
+    EVAL -->|backtest mode| BACKTEST
+    EVAL -->|paper mode| PAPER
+    SCEN --> BARS
+    BARS --> BACKTEST
+    BACKTEST --> PIPE
+    PAPER --> PIPE
+    BACKTEST --> CHART
 
-    S1 -.-> DB
-    S2 -.-> DB
-    R -.-> DB
-    S3 -.-> DB
+    %% Persistence
+    CTX --> DB
+    AUTHOR --> DB
+    EVAL --> DB
+    CHART --> DB
+    CHART --> BARS
+    DB --> CHART
+    CTX --> HOME
+    HOME --> LLM
+    HOME --> PAPER
 
-    DB --> M
-    BL --> M
+    %% External calls
+    BARS -->|cache miss| ALPACA_DATA
+    PAPER --> ALPACA_PAPER
+    LLM --> PROVIDERS
 
+    %% Live updates
+    BACKTEST -->|RunChartEvent| STREAM
+    STREAM --> WEB
+    CHART -->|REST snapshot| ROUTER
+
+    %% Optional attestations / on-chain identity
+    EVAL -.->|EvalAttestation in DB| DB
+    EVAL -.->|future/runtime-gated| ID
+    ID -.-> MANTLE
+
+    %% Styling
     classDef deterministic fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#000
-    classDef storage fill:#f3e8ff,stroke:#7c3aed,color:#000
-    classDef external fill:#dcfce7,stroke:#16a34a,color:#000
-    classDef orchestrator fill:#ffedd5,stroke:#ea580c,stroke-width:2px,color:#000
-    classDef eval fill:#cffafe,stroke:#0891b2,color:#000
+    classDef storage fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px,color:#000
+    classDef external fill:#dcfce7,stroke:#16a34a,stroke-width:2px,color:#000
+    classDef surface fill:#ffedd5,stroke:#ea580c,stroke-width:2px,color:#000
+    classDef eval fill:#cffafe,stroke:#0891b2,stroke-width:2px,color:#000
     classDef onchain fill:#fce7f3,stroke:#db2777,stroke-width:2px,color:#000
 
-    class R deterministic
-    class DB storage
-    class A1,A2,A3,AP,OR external
-    class HA,MCP,S1,S2,S3 orchestrator
-    class M,BL eval
-    class ID,RP,VL onchain
+    class CTX,AUTHOR,AGENT,STRAT,PIPE,LLM,TOOLS deterministic
+    class DB,HOME,BARS storage
+    class ALPACA_DATA,ALPACA_PAPER,PROVIDERS external
+    class WEB,CLI,MCP,STATIC,ROUTER,STREAM surface
+    class SCEN,EVAL,BACKTEST,PAPER,CHART eval
+    class ID,MANTLE onchain
 ```
 
 ---
@@ -166,7 +215,7 @@ No news, no fundamentals (out of scope by user decision).
 
 ```json
 {
-  "setup_id": "uuid",
+  "cycle_id": "uuid",
   "asset": "BTC-PERP",
   "bull_case": "strongest argument for going long",
   "bear_case": "strongest argument for going short",
@@ -223,7 +272,7 @@ caller.
 
 ```json
 {
-  "setup_id": "uuid",
+  "cycle_id": "uuid",
   "action": "buy | sell | flat | close",
   "size_bps": 75,
   "direction": "long | short | flat",
@@ -271,15 +320,16 @@ The risk layer logs every veto with reason. Vetoes are valuable signal — they 
 - Close position.
 - Query portfolio state.
 
-**Idempotency:** Each decision carries a `setup_id` used as client order ID to prevent duplicate execution if Stage 3 is retried.
+**Idempotency:** Each decision carries a `cycle_id` used as the broker `client_order_id` for entries, so duplicate retries collapse at the venue boundary.
 
 **State sync:** Portfolio state is read from Alpaca after every action and cached for the next Stage 1 input.
 
-**Two execution paths run in parallel for v1 (Mantle Turing Test hackathon):**
-- **Alpaca paper** is the pre-launch testing path. Validates Stage 1→2→3 plumbing against a battle-tested broker simulator before any on-chain capital is touched.
-- **Orderly Network on Mantle** is the hackathon submission path. Orderly is shared-orderbook infrastructure that 340+ brokers (FusionX, Ranger, Aark, Ascendex, Kai, …) front-end onto; trades execute against Mantle vault `0x816f722424B49Cf1275cc86DA9840Fbd5a6167e9` (chain_id 5000). Capital is pre-funded on Mantle by the user; the agent never bridges. The integration is native Rust via `orderly-connector-rs = "0.4"` — no Node.js dependency, no subprocess shellout.
+**Execution paths in code:**
+- **Backtest** is the default eval path. `BacktestExecutor` replays cached OHLCV bars, simulates fills, persists decisions/equity/metrics, and emits chart events for live dashboard streams.
+- **Alpaca paper** is the configured broker-surface path for paper evals and manual smoke commands. It uses `AlpacaPaperSurface` / `AlpacaExecutor`, with `cycle_id` forwarded as `client_order_id`.
+- **Orderly Network on Mantle** exists in `xvision-execution::OrderlyExecutor` for live perps experiments, but it is not the default `xvision-engine` eval broker surface. The broker-surface enum keeps `OrderlyLive` as a stub until the live path is wired into operator UX.
 
-A `--executor {alpaca,orderly}` flag selects between them at runtime. The Orderly executor (`crates/xvision-execution/orderly.rs`) holds an `OrderlyService` instance plus signed-request `Credentials` and surfaces the SDK's `create_order` / `cancel_order` / `get_holding` / `get_positions` methods through the `Executor` trait.
+The shipped eval launcher selects `RunMode::Backtest` or `RunMode::Paper`; paper mode builds an Alpaca broker surface from Settings-stored credentials or `APCA_*` environment variables.
 
 > **Venue history (2026-05-03).** Three iterations in one day:
 > 1. Earliest drafts named "Byreal Perps on Mantle" — wrong on its face: Byreal CLMM is Solana, Byreal Perps CLI is Hyperliquid, the "Byreal-on-Mantle" association is a Mantle Super Portal bridge into Byreal's *Solana* liquidity.
@@ -292,26 +342,26 @@ A `--executor {alpaca,orderly}` flag selects between them at runtime. The Orderl
 
 ### 6.1 ERC-8004 — On-chain agent identity and strategy provenance
 
-ERC-8004 (deployed on Ethereum mainnet and Mantle mainnet, January–February 2026) defines three lightweight on-chain registries for autonomous agents: **Identity**, **Reputation**, and **Validation**. All three are load-bearing for xvision's Mantle submission, and each maps cleanly onto the multistrategy loom architecture.
+ERC-8004 identity support is optional in the current codebase. The `xvision-identity` crate is excluded from default workspace builds, ships draft Identity/Reputation registry bindings, and is intentionally not required for the dashboard, CLI, or eval pipeline to run.
 
-**Identity Registry (ERC-721 agent NFT).** Each strategy variant in the loom is minted as an NFT at first run. The token's metadata includes a `strategy_manifest_cid` — an IPFS/Arweave content hash of the strategy manifest (`agent_id`, `strategy_name`, `code_commit`, `strategy_adapter_type`, `risk_preset`). The manifest CID is 32–64 bytes on-chain; the full manifest file lives off-chain. This is exactly the ERC-721 metadata pattern. The NFT is the strategy's permanent identity: swapping the code commit or adapter type means the strategy has forked and starts a fresh reputation trace.
+**Identity Registry (ERC-721 agent NFT).** The planned mint flow registers an `agentURI` manifest for a strategy or agent identity. The current `xvision-identity` crate can construct manifests and client calls, but production deployment and operator wiring remain gated by ADR 0008.
 
-**Reputation Registry.** Feedback records accrue to the strategy NFT after every closed experiment run. Each strategy in the loom receives reputation entries recording its risk-adjusted return, regime context, and code commit. Critically, reputation attaches to a specific `(strategy_id, code_commit)`, not just an address. Two runs of the same strategy at the same commit compound the same reputation. A new commit (mutated parameters, new adapter) starts fresh. This makes strategy variants composable trust primitives: well-performing strategies can be forked and their reputation partially inherited via on-chain lineage.
+**Reputation Registry.** The crate models reputation feedback as signed outcome posts keyed by agent token id. Current eval attestations are persisted locally in SQLite; posting reputation on-chain is a follow-on integration, not part of the default eval run.
 
-**Validation Registry.** This is the "prove it" layer and the most important for xvision's core claim. After every closed Orderly/Mantle trade, Stage 3 constructs and submits a validation proof to the Mantle Validation Registry — same chain as the trade, single-chain audit trail:
+**Validation Registry.** The architecture still reserves a place for per-trade validation proofs, but the current implementation has local `EvalAttestation` signing and persistence. On-chain validation registry submission is not wired into default Stage 3 execution.
 
 ```json
 {
-  "setup_id": "uuid",
+  "cycle_id": "uuid",
   "action": "buy | sell | flat | close",
-  "strategy_id": 42,
-  "strategy_name": "trader_arm",
+  "agent_id": 42,
+  "strategy_name": "mean_reversion_v1",
   "trade_result_hash": "keccak256(closed_pnl | timestamp | price)",
   "run_id": "uuid"
 }
 ```
 
-`strategy_id` is the agent NFT token ID = 8 bytes; `strategy_name` is the readable label preserved off-chain. The proof is cheap to post and gives anyone the ability to verify on-chain that a specific strategy produced a specific trade. Comparisons across strategies in the loom are publicly auditable without trusting the operator's reporting.
+`agent_id` is the eventual agent NFT token id; `strategy_name` is the readable label preserved off-chain. The local audit trail already records the causal chain; the on-chain path is the future public verification layer.
 
 **Why this matters for the thesis.** Most on-chain agent identity is retrospective: address + transaction history. The Validation proof is prospective — the strategy is committed at inference time, identified by its NFT token, and recorded before the outcome is known. The trade is the *output* of the strategy, not the definition of it. The on-chain record proves the causal chain: this strategy variant → this decision → this outcome.
 
@@ -321,12 +371,12 @@ ERC-8004 (deployed on Ethereum mainnet and Mantle mainnet, January–February 20
 |---|---|---|---|
 | Strategy manifest (JSON sidecar) | ~500 bytes | IPFS / Arweave | Once per strategy mint / fork |
 | `strategy_manifest_cid` in agent NFT metadata | 32–64 bytes | Mantle (Identity Registry) | Once at strategy mint |
-| `strategy_id` + receipt fields per trade | ~32 bytes | Mantle (Validation Registry) | After every closed position |
+| `agent_id` + receipt fields per trade | ~32 bytes | Mantle (Validation Registry) | After every closed position |
 | Reputation entry per experiment run | ~64 bytes | Mantle (Reputation Registry) | After each backtest / paper run |
 
 The on-chain artifacts are hashes, commitments, and the tiny per-trade strategy reference. EVM storage at 20K gas per 32-byte slot keeps the loom's per-trade and per-run costs bounded even on Mantle.
 
-**Implementation.** `xvision-execution` constructs the Validation proof after each closed Orderly position on Mantle and submits via `alloy`. ERC-8004 contract addresses (Identity, Reputation, Validation registries on Mantle mainnet) live in `config/mantle.toml` alongside the Orderly vault address. The agent NFT is minted once per strategy via `xvn setup --mint-agent-nft`; subsequent runs only post to Reputation and Validation. Trades, identity, and reputation all live on the same chain — no cross-chain handoff in the audit trail.
+**Implementation status.** `xvision-identity` provides draft `alloy` clients and manifest types, but no other workspace crate depends on it by default. Build it explicitly with `cargo build -p xvision-identity`; see ADR 0008 before treating registry addresses or ABIs as production inputs.
 
 ---
 
@@ -409,7 +459,7 @@ Beyond pairwise Strategy A vs Strategy B comparisons, every strategy variant mus
 Every Stage 1 and Stage 2 call produces a structured trace record persisted to SQLite alongside the briefing and decision. Without traces, a strategy that underperforms in backtest is a black box; with traces, the exact iteration where behaviour diverged is pinpointable.
 
 **Minimum trace fields per call:**
-- `run_id`, `setup_id`, `stage` (intern | trader), `arm_name` (strategy label)
+- `run_id`, `cycle_id`, `stage` (intern | trader), `arm_name` (strategy label)
 - `model` and backend identifier
 - Full input (system prompt + user content)
 - Raw model output (full JSON string, pre-parse)
@@ -417,7 +467,7 @@ Every Stage 1 and Stage 2 call produces a structured trace record persisted to S
 - Token count (prompt + completion) and latency (ms)
 - Any exception with traceback
 
-**Storage:** `traces` table in the existing SQLite store. Schema mirrors the existing `decisions` table structure; keyed on `(run_id, setup_id, stage)`.
+**Storage:** trace-like data is represented today across eval decisions, equity samples, findings, audit rows, and stage-specific persisted JSON. A dedicated `traces` table remains a clean target if the eval loop needs full prompt/output replay keyed on `(run_id, cycle_id, stage)`.
 
 **Why this matters:** Traces must exist before any evaluation loop runs. An eval loop without traces cannot distinguish "the strategy was wrong" from "the prompt was wrong" from "the model produced a parse error and fell back." Traces are the diagnostic layer that makes every other eval result interpretable.
 
@@ -443,8 +493,8 @@ The runtime is Rust. Plotting and a small offline analysis surface use Python vi
 
 **Trading:**
 - `apca` for Stage 3 Alpaca paper (`alpaca-rs` on crates.io is a stub)
-- `orderly-connector-rs = "0.4"` for Stage 3 Mantle execution (native Rust async; verified by `probes/m0-orderly/`). Trades land on Mantle's Orderly vault `0x816f722424B49Cf1275cc86DA9840Fbd5a6167e9`
-- `alloy` for direct Mantle / EVM interactions (ERC-8004 identity NFT mint + reputation/validation registry posts; same chain as the trades, no bridge)
+- Direct `reqwest` Orderly REST integration in `xvision-execution::orderly` for live Mantle experiments. The default engine eval path still uses backtest or Alpaca paper broker surfaces.
+- `alloy` inside optional `xvision-identity` for draft ERC-8004 identity/reputation clients.
 - `ta` crate (or hand-rolled in `polars`) for technical indicators
 - Custom thin clients for Nansen and exchange APIs via `reqwest`
 
@@ -490,9 +540,11 @@ xvision/
 │   ├── xvision-intern/           # Stage 1 (OpenAI- or Anthropic-compatible HTTP)
 │   ├── xvision-trader/           # Stage 2 (TraderBackend HTTP trait, optional local candle)
 │   ├── xvision-risk/             # deterministic risk layer
-│   ├── xvision-execution/        # Stage 3: Alpaca + Orderly
-│   ├── xvision-identity/         # ERC-8004 manifest + reputation/validation receipts
-│   ├── xvision-eval/             # backtest harness, baselines, Δ-Sharpe
+│   ├── xvision-execution/        # Broker/executor surfaces: Alpaca + Orderly
+│   ├── xvision-engine/           # Shared API: agents, strategies, scenarios, eval, charts
+│   ├── xvision-dashboard/        # Axum API + embedded Vite SPA
+│   ├── xvision-identity/         # Optional ERC-8004 manifest + reputation client
+│   ├── xvision-eval/             # Legacy backtest harness, baselines, Δ-Sharpe
 │   ├── xvision-harness/          # boundary probes (minimal v1 corpus)
 │   └── xvision-cli/              # clap-based CLI; installed binary is `xvn`
 │
@@ -524,7 +576,7 @@ Explicit non-goals for hackathon. Each is a real follow-on but not v1:
 - News, fundamentals, sentiment from social
 - Auto-scaling / cloud deployment beyond a single Vast.ai/RunPod box for backtest acceleration
 
-**Note on previously-deferred items still in v1:** ERC-8004 identity + reputation + validation registries are v1-required, all on Mantle. On-chain trade execution runs on Mantle via **Orderly Network** (`orderly-connector-rs`, native Rust). **Byreal Agent Skills** stays vendored as the Stage 1 Intern's skill catalog, satisfying the hackathon Path 1 endorsement of Byreal tooling without forcing the trade venue. The Byreal Perps CLI executor path is preserved as a verified fork option (see `decisions/0006-executor-choice.md`). See §6 (Stage 3) and implementation-plan.md → "Mantle hackathon integration."
+**Current cut:** ERC-8004 and Orderly remain important architecture tracks, but they are not required for the shipped dashboard/eval loop. Default operator flow is strategy/agent authoring → scenario-backed backtest or Alpaca paper eval → local run storage and optional local eval attestation.
 
 ---
 
@@ -542,7 +594,7 @@ For the record, the following were debated and decided:
 | Primary eval metric? | **Δ-Sharpe** between Strategy A and Strategy B, paired on the same setups. |
 | Backtest or forward paper? | **Backtest first** for population statistics; forward paper for deployment validation. |
 | Telemetry backend (v2)? | **Self-hosted Langfuse** as primary, OpenTelemetry GenAI conventions throughout. **v1 ships SQLite flight recorder + `tracing` console only**; full OTel/Langfuse deferred to v2. |
-| On-chain executor? | **Orderly Network on Mantle** via `orderly-connector-rs = "0.4"` (native Rust async). Decision rationale and the day's three-pivot history live in `decisions/0006-executor-choice.md`. Byreal Agent Skills stay vendored as the Stage 1 Intern's skill catalog so Path 1's named-tooling endorsement is satisfied through context, not execution. The Byreal Perps CLI path (Hyperliquid execution) is preserved as a fork option — M0 probe at `probes/m0-byreal/` passed. Vertex Protocol was eliminated on 2026-05-03 morning (operationally dead — gateways 404, repos ~1 year stale). See §6. |
+| On-chain executor? | **Orderly Network on Mantle** remains the accepted live-perps direction in ADR 0006, and `xvision-execution::OrderlyExecutor` exists. The default eval/operator loop is currently backtest or Alpaca paper; Orderly broker-surface UX and ERC-8004 posting stay follow-on wiring. |
 | Anti-overfit gate? | **Reportable, not blocking, in v1.** v1 surfaces a named verdict (PassesBothRegimes / SingleRegimeEvidence / Fails) in the report. The gate re-tightens to blocking when any automated optimizer over strategies ships (Karpathy autoresearch v2). |
 
 ---
