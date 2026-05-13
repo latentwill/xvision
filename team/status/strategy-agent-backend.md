@@ -2,13 +2,14 @@
 track: strategy-agent-backend
 worktree: /root/deploy/xvision/.worktrees/strategy-agent-backend-core
 branch: strategy-agent-backend-core
-phase: implementation-progress
-last_updated: 2026-05-13T02:26:22Z
+phase: phase-b-pr-open
+last_updated: 2026-05-13T02:28:40Z
 ---
 
 # What I'm doing right now
 
-Committed the backend/CLI checkpoints on `strategy-agent-backend-core`:
+PR [#97](https://github.com/latentwill/xvision/pull/97) is open from branch
+`strategy-agent-backend-core-refresh` with backend/CLI checkpoints:
 
 - `2ae9828 feat(cli): expose strategy agent composition commands`
 - Adds `xvn strategy add-agent`, `remove-agent`, and `set-pipeline`
@@ -40,12 +41,11 @@ new shape, and retain a salvage path for existing local slot-shaped bundles.
 
 # Blocked on
 
-Nothing.
+Operator review and merge for PR #97.
 
 # Next up
 
-- Push `strategy-agent-backend-core` and open PR with the full backend checkpoint
-  stack for review/merge.
+- Address PR review comments, then merge PR #97.
 - Keep graph pipeline execution out of this scope unless execution-board
   priorities change; current behavior is explicit runtime rejection.
 - Run the required Rust verification in CI or a non-deploy workspace:
