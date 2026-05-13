@@ -8,8 +8,12 @@ use clap::{Args, Subcommand};
 use ulid::Ulid;
 use xvision_engine::agent::llm::{AnthropicDispatch, LlmDispatch, MockDispatch};
 use xvision_engine::agent::pipeline::{run_pipeline, PipelineInputs};
-use xvision_engine::api::{strategy as api_strategy, Actor, ApiContext, ApiError};
-use xvision_engine::strategies::{PipelineEdge, PipelineKind};
+use xvision_engine::agents::AgentSlot;
+use xvision_engine::api::{
+    agents as api_agents, strategy as api_strategy, Actor, ApiContext, ApiError,
+};
+use xvision_engine::strategies::slot::LLMSlot;
+use xvision_engine::strategies::{AgentRef, PipelineDef, PipelineEdge, PipelineKind};
 use xvision_engine::strategies::store::{strategy_store_dir, StrategyStore, FilesystemStore};
 use xvision_engine::strategies::validate::validate_bundle;
 use xvision_engine::templates::registry;
@@ -72,6 +76,12 @@ enum StrategyAction {
         #[arg(long = "edge")]
         edges: Vec<String>,
     },
+    /// Convert legacy slot-shaped strategy bundles into agent references.
+    MigrateAgents {
+        /// Show what would change without writing bundles or agents.
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Run a saved strategy inline against a fixture (decision_points iterations).
     Run {
         /// Strategy id (ULID) returned from `xvn strategy new`.
@@ -104,6 +114,7 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
         StrategyAction::SetPipeline { strategy_id, kind, edges } => {
             set_pipeline(&strategy_id, &kind, &edges).await
         }
+        StrategyAction::MigrateAgents { dry_run } => migrate_agents(dry_run).await,
         StrategyAction::Run { id, fixture, decisions, mock } => {
             run_inline(&id, &fixture, decisions, mock).await
         }
@@ -282,6 +293,123 @@ async fn set_pipeline(strategy_id: &str, kind: &str, edges: &[String]) -> CliRes
         serde_json::to_string_pretty(&out).exit_with(XvnExit::Upstream)?
     );
     Ok(())
+}
+
+async fn migrate_agents(dry_run: bool) -> CliResult<()> {
+    let ids = store().list().await.exit_with(XvnExit::Upstream)?;
+    let ctx = if dry_run { None } else { Some(open_ctx().await?) };
+    let mut migrated = 0usize;
+    let mut skipped = 0usize;
+
+    for id in ids {
+        let mut bundle = store().load(&id).await.exit_with(XvnExit::NotFound)?;
+        let legacy_slots = legacy_slots(&bundle);
+        if !bundle.agents.is_empty() || legacy_slots.is_empty() {
+            skipped += 1;
+            continue;
+        }
+
+        let roles = legacy_slots
+            .iter()
+            .map(|(role, _)| role.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        if dry_run {
+            println!("{id}: would migrate {} legacy slots [{roles}]", legacy_slots.len());
+            migrated += 1;
+            continue;
+        }
+
+        let ctx = ctx.as_ref().expect("ctx exists when dry_run=false");
+        let mut agent_refs = Vec::with_capacity(legacy_slots.len());
+        for (role, slot) in legacy_slots {
+            let agent = api_agents::create(
+                ctx,
+                api_agents::CreateAgentRequest {
+                    name: format!("{} {role}", bundle.manifest.display_name),
+                    description: format!(
+                        "Migrated from strategy {} role {role}",
+                        bundle.manifest.id
+                    ),
+                    tags: vec![
+                        "strategy-migrated".to_string(),
+                        bundle.manifest.template.clone(),
+                    ],
+                    slots: vec![slot_to_agent_slot(&slot)],
+                },
+            )
+            .await
+            .map_err(|e| api_to_cli("strategy migrate-agents", e))?;
+            agent_refs.push(AgentRef {
+                agent_id: agent.agent_id,
+                role,
+            });
+        }
+
+        bundle.agents = agent_refs;
+        bundle.pipeline = if bundle.agents.len() <= 1 {
+            PipelineDef::default()
+        } else {
+            PipelineDef::sequential()
+        };
+        bundle.regime_slot = None;
+        bundle.intern_slot = None;
+        bundle.trader_slot = None;
+        validate_bundle(&bundle).exit_with(XvnExit::Usage)?;
+        store().save(&bundle).await.exit_with(XvnExit::Upstream)?;
+        println!("{id}: migrated {} legacy slots [{roles}]", bundle.agents.len());
+        migrated += 1;
+    }
+
+    println!("summary: migrated={migrated} skipped={skipped}");
+    Ok(())
+}
+
+fn legacy_slots(bundle: &xvision_engine::strategies::Strategy) -> Vec<(String, LLMSlot)> {
+    let mut slots = Vec::new();
+    if let Some(slot) = bundle.regime_slot.clone() {
+        slots.push(("regime".to_string(), slot));
+    }
+    if let Some(slot) = bundle.intern_slot.clone() {
+        slots.push(("intern".to_string(), slot));
+    }
+    if let Some(slot) = bundle.trader_slot.clone() {
+        slots.push(("trader".to_string(), slot));
+    }
+    slots
+}
+
+fn slot_to_agent_slot(slot: &LLMSlot) -> AgentSlot {
+    let (provider, model) = provider_model_from_slot(slot);
+    AgentSlot {
+        name: "main".to_string(),
+        provider,
+        model,
+        system_prompt: slot.prompt.clone(),
+        skill_ids: Vec::new(),
+        max_tokens: 4096,
+    }
+}
+
+fn provider_model_from_slot(slot: &LLMSlot) -> (String, String) {
+    let parsed = slot.model_requirement.split_once('.').map(|(provider, model)| {
+        (provider.trim().to_string(), model.trim().to_string())
+    });
+    let provider = slot
+        .provider
+        .as_ref()
+        .filter(|provider| !provider.trim().is_empty())
+        .cloned()
+        .or_else(|| parsed.as_ref().map(|(provider, _)| provider.clone()))
+        .unwrap_or_else(|| "manual".to_string());
+    let model = slot
+        .model
+        .as_ref()
+        .filter(|model| !model.trim().is_empty())
+        .cloned()
+        .or_else(|| parsed.map(|(_, model)| model))
+        .unwrap_or_else(|| slot.model_requirement.clone());
+    (provider, model)
 }
 
 async fn run_inline(id: &str, fixture: &str, decisions: u32, mock: bool) -> CliResult<()> {
