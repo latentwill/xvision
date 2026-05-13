@@ -300,6 +300,7 @@ remote CLI job API or `scripts/xvn-remote.py`.
 ```bash
 xvn strategy templates                 # list templates
 xvn strategy create --template <t> --name <n> [--json]
+xvn strategy create --from-file strategy.json [--json]
 xvn strategy validate <id>
 xvn strategy show <id>
 xvn strategy ls [--json]
@@ -353,6 +354,7 @@ The shipped eval surface is available through both the dashboard and the CLI:
 
 ```bash
 xvn eval run --strategy <id> --scenario crypto-bull-q1-2025 --mode backtest
+xvn eval validate --strategy <id> --scenario crypto-bull-q1-2025 --mode backtest
 xvn eval list [--json]
 xvn eval get <run_id> [--json]
 xvn eval compare <run_id_a> <run_id_b>

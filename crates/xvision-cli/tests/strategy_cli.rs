@@ -165,6 +165,48 @@ fn create_and_ls_json_are_machine_readable() {
 }
 
 #[test]
+fn create_from_full_strategy_json_file() {
+    let source = tempdir().unwrap();
+    let out = xvn(
+        &[
+            "strategy",
+            "create",
+            "--template",
+            "mean_reversion",
+            "--name",
+            "json-source",
+            "--json",
+        ],
+        source.path(),
+    );
+    assert!(out.status.success());
+    let body: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let strategy = body["strategy"].clone();
+
+    let target = tempdir().unwrap();
+    let file = target.path().join("strategy.json");
+    std::fs::write(&file, serde_json::to_vec_pretty(&strategy).unwrap()).unwrap();
+    let out = xvn(
+        &[
+            "strategy",
+            "create",
+            "--from-file",
+            file.to_str().unwrap(),
+            "--json",
+        ],
+        target.path(),
+    );
+
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let created: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(created["id"], strategy["manifest"]["id"]);
+}
+
+#[test]
 fn templates_lists_known_templates() {
     let dir = tempdir().unwrap();
     let out = xvn(&["strategy", "templates"], dir.path());

@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 use xvision_engine::api::eval::{self, CompareRunsRequest, EvalRunRequest, ListRunsRequest};
+use xvision_engine::api::{scenario as api_scenario, strategy as api_strategy};
 use xvision_engine::api::{Actor, ApiContext, ApiError};
 use xvision_engine::eval::run::{RunMode, RunStatus};
 
@@ -49,6 +50,8 @@ pub enum Op {
     Scenarios(ScenariosArgs),
     /// Compare 2+ completed runs side-by-side (metrics + equity + findings).
     Compare(CompareArgs),
+    /// Validate an eval run request without launching it.
+    Validate(ValidateArgs),
     /// Sign + persist an EvalAttestation for a completed run.
     Attest(AttestArgs),
 }
@@ -128,6 +131,25 @@ pub struct CompareArgs {
 }
 
 #[derive(Args, Debug)]
+pub struct ValidateArgs {
+    /// Strategy agent id from `xvn strategy ls`.
+    #[arg(long)]
+    pub strategy: String,
+    /// Scenario id from `xvn scenario ls`.
+    #[arg(long)]
+    pub scenario: String,
+    /// Run mode: `paper` or `backtest`.
+    #[arg(long, default_value = "paper")]
+    pub mode: String,
+    /// Override the xvn home directory.
+    #[arg(long)]
+    pub xvn_home: Option<PathBuf>,
+    /// Emit a JSON validation report.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Args, Debug)]
 pub struct AttestArgs {
     /// Run id (ULID) of a completed run with metrics.
     pub run_id: String,
@@ -148,6 +170,7 @@ pub async fn run(cmd: EvalCmd) -> CliResult<()> {
         Op::Show(args) => run_show(args).await,
         Op::Scenarios(args) => run_scenarios(args).await,
         Op::Compare(args) => run_compare(args).await,
+        Op::Validate(args) => run_validate(args).await,
         Op::Attest(args) => run_attest(args).await,
     }
 }
@@ -356,6 +379,35 @@ async fn run_compare(args: CompareArgs) -> CliResult<()> {
         println!("\nFindings: (none)");
     }
 
+    Ok(())
+}
+
+async fn run_validate(args: ValidateArgs) -> CliResult<()> {
+    let ctx = open_ctx(args.xvn_home.clone())
+        .await
+        .exit_with(XvnExit::Upstream)?;
+    let mode = parse_mode(&args.mode).exit_with(XvnExit::Usage)?;
+    api_strategy::get(&ctx, &args.strategy)
+        .await
+        .map_err(|e| api_to_cli("eval validate strategy", e))?;
+    api_scenario::get(&ctx, &args.scenario)
+        .await
+        .map_err(|e| api_to_cli("eval validate scenario", e))?;
+
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "ok": true,
+                "strategy": args.strategy,
+                "scenario": args.scenario,
+                "mode": mode.as_str(),
+            }))
+            .exit_with(XvnExit::Upstream)?
+        );
+    } else {
+        println!("ok");
+    }
     Ok(())
 }
 

@@ -34,10 +34,13 @@ enum StrategyAction {
     /// Create a new strategy draft from a template.
     #[command(visible_alias = "create")]
     New {
+        /// Load a full Strategy object from a JSON or TOML file.
         #[arg(long)]
-        template: String,
+        from_file: Option<PathBuf>,
         #[arg(long)]
-        name: String,
+        template: Option<String>,
+        #[arg(long)]
+        name: Option<String>,
         #[arg(long)]
         creator: Option<String>,
         /// Emit the created strategy as JSON.
@@ -110,11 +113,12 @@ enum StrategyAction {
 pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
     match cmd.action {
         StrategyAction::New {
+            from_file,
             template,
             name,
             creator,
             json,
-        } => new(&template, &name, creator, json).await,
+        } => new(from_file, template, name, creator, json).await,
         StrategyAction::Validate { id } => validate(&id).await,
         StrategyAction::Ls { json } => ls(json).await,
         StrategyAction::Show { id } => show(&id).await,
@@ -195,8 +199,47 @@ fn parse_edge(raw: &str) -> CliResult<PipelineEdge> {
     })
 }
 
-async fn new(template: &str, name: &str, creator: Option<String>, json: bool) -> CliResult<()> {
-    let tpl = registry::get(template).ok_or_else(|| {
+async fn new(
+    from_file: Option<PathBuf>,
+    template: Option<String>,
+    name: Option<String>,
+    creator: Option<String>,
+    json: bool,
+) -> CliResult<()> {
+    if let Some(path) = from_file {
+        let strategy = load_strategy_file(&path)?;
+        validate_strategy(&strategy).exit_with(XvnExit::Usage)?;
+        store()
+            .save(&strategy)
+            .await
+            .exit_with(XvnExit::Upstream)?;
+        let id = strategy.manifest.id.clone();
+        if json {
+            let out = serde_json::json!({
+                "id": id,
+                "strategy": strategy,
+            });
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&out).exit_with(XvnExit::Upstream)?
+            );
+        } else {
+            println!("{id}");
+        }
+        return Ok(());
+    }
+
+    let template = template.ok_or_else(|| {
+        CliError::usage(anyhow::anyhow!(
+            "strategy create requires --template unless --from-file is set"
+        ))
+    })?;
+    let name = name.ok_or_else(|| {
+        CliError::usage(anyhow::anyhow!(
+            "strategy create requires --name unless --from-file is set"
+        ))
+    })?;
+    let tpl = registry::get(&template).ok_or_else(|| {
         CliError::usage(anyhow::anyhow!(
             "unknown template '{template}' — try `xvn strategy templates`"
         ))
@@ -205,7 +248,7 @@ async fn new(template: &str, name: &str, creator: Option<String>, json: bool) ->
     let creator = creator
         .or_else(|| std::env::var("XVN_CREATOR").ok())
         .unwrap_or_else(|| "@anonymous".to_string());
-    let mut draft = tpl.new_draft(id.clone(), name.to_string(), creator);
+    let mut draft = tpl.new_draft(id.clone(), name.clone(), creator);
     let legacy = legacy_slots(&draft);
     if draft.agents.is_empty() && !legacy.is_empty() {
         let ctx = open_ctx().await?;
@@ -258,6 +301,17 @@ async fn new(template: &str, name: &str, creator: Option<String>, json: bool) ->
     }
     println!("{id}");
     Ok(())
+}
+
+fn load_strategy_file(path: &std::path::Path) -> CliResult<xvision_engine::strategies::Strategy> {
+    let body = std::fs::read_to_string(path)
+        .map_err(|e| CliError::usage(anyhow::anyhow!("read {}: {e}", path.display())))?;
+    match path.extension().and_then(|ext| ext.to_str()) {
+        Some("toml") => toml::from_str(&body)
+            .map_err(|e| CliError::usage(anyhow::anyhow!("parse TOML: {e}"))),
+        _ => serde_json::from_str(&body)
+            .map_err(|e| CliError::usage(anyhow::anyhow!("parse JSON: {e}"))),
+    }
 }
 
 async fn validate(id: &str) -> CliResult<()> {

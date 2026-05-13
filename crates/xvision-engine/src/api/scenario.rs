@@ -94,7 +94,7 @@ pub struct ScenarioMutations {
 /// fully-populated `Scenario` (with engine-assigned id, timestamps, and
 /// cache key) once the row is inserted.
 pub async fn create(ctx: &ApiContext, req: CreateScenarioRequest) -> ApiResult<Scenario> {
-    validate(&req, ctx).await?;
+    validate_request(&req, ctx).await?;
     let id = format!("sc_{}", Ulid::new());
     let cache_key = engine_bars::compute_cache_key(
         &req.asset[0].venue_symbol,
@@ -206,7 +206,7 @@ pub async fn delete(ctx: &ApiContext, id: &str) -> ApiResult<()> {
     scenario_store::delete_scenario(ctx, id).await
 }
 
-async fn validate(req: &CreateScenarioRequest, ctx: &ApiContext) -> ApiResult<()> {
+pub async fn validate_request(req: &CreateScenarioRequest, ctx: &ApiContext) -> ApiResult<()> {
     if req.asset.len() != 1 {
         return Err(ApiError::Validation(format!(
             "asset.len() must be 1 in v1 (got {})",

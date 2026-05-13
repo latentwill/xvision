@@ -51,6 +51,8 @@ pub enum ScenarioOp {
     Show(ShowArgs),
     /// Clone an existing scenario, optionally overriding fields.
     Clone(CloneArgs),
+    /// Validate a full CreateScenarioRequest TOML file without creating it.
+    Validate(ValidateArgs),
     /// Soft-delete (archive) a scenario by id.
     Archive {
         /// Scenario id.
@@ -159,6 +161,16 @@ pub struct CloneArgs {
     pub asset: Option<String>,
 }
 
+#[derive(Args, Debug)]
+pub struct ValidateArgs {
+    /// Full `CreateScenarioRequest` TOML file.
+    #[arg(long)]
+    pub from_file: PathBuf,
+    /// Emit a JSON validation report.
+    #[arg(long)]
+    pub json: bool,
+}
+
 pub async fn run(cmd: ScenarioCmd) -> CliResult<()> {
     let ctx = open_ctx(cmd.xvn_home.clone())
         .await
@@ -168,6 +180,7 @@ pub async fn run(cmd: ScenarioCmd) -> CliResult<()> {
         ScenarioOp::Ls(a) => run_ls(&ctx, a).await,
         ScenarioOp::Show(a) => run_show(&ctx, a).await,
         ScenarioOp::Clone(a) => run_clone(&ctx, a).await,
+        ScenarioOp::Validate(a) => run_validate(&ctx, a).await,
         ScenarioOp::Archive { id } => {
             api_scenario::archive(&ctx, &id)
                 .await
@@ -472,6 +485,22 @@ async fn run_clone(ctx: &ApiContext, a: CloneArgs) -> CliResult<()> {
         .await
         .map_err(|e| api_to_cli("scenario clone", e))?;
     println!("cloned to {} (parent: {})", s.id, a.id);
+    Ok(())
+}
+
+async fn run_validate(ctx: &ApiContext, a: ValidateArgs) -> CliResult<()> {
+    let body = std::fs::read_to_string(&a.from_file)
+        .map_err(|e| CliError::usage(anyhow::anyhow!("read {}: {e}", a.from_file.display())))?;
+    let req: api_scenario::CreateScenarioRequest = toml::from_str(&body)
+        .map_err(|e| CliError::usage(anyhow::anyhow!("parse TOML: {e}")))?;
+    api_scenario::validate_request(ctx, &req)
+        .await
+        .map_err(|e| api_to_cli("scenario validate", e))?;
+    if a.json {
+        println!("{}", serde_json::json!({ "ok": true }));
+    } else {
+        println!("ok");
+    }
     Ok(())
 }
 
