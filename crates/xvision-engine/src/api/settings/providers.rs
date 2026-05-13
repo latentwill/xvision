@@ -928,26 +928,8 @@ async fn set_enabled_models_inner(
 ) -> ApiResult<ProviderRow> {
     // Refuse silently-bad inputs before opening the TOML — gives the UI a
     // typed validation error instead of a confusing parse failure later.
-    for m in &models {
-        let trimmed = m.trim();
-        if trimmed.is_empty() {
-            return Err(ApiError::Validation("empty model id in list".into()));
-        }
-        if trimmed.len() > 256 {
-            return Err(ApiError::Validation(format!(
-                "model id too long ({} chars): `{}`",
-                trimmed.len(),
-                &trimmed[..40]
-            )));
-        }
-    }
-    // Deduplicate while preserving order — operators copy/paste pages
-    // and we'd rather not have the same id twice in the TOML array.
-    let mut seen = std::collections::HashSet::new();
-    let deduped: Vec<String> = models
-        .into_iter()
-        .filter(|m| seen.insert(m.clone()))
-        .collect();
+    validate_model_ids(&models)?;
+    let deduped = dedup_model_ids(models);
 
     {
         let cfg = load_cfg(config_path).await?;
@@ -1109,16 +1091,34 @@ fn provider_matches_default(entry: &ProviderEntry, cfg: &RuntimeConfig) -> bool 
         .unwrap_or(false)
 }
 
-fn provider_has_runtime_key(entry: &ProviderEntry) -> bool {
-    !entry.api_key_env.is_empty()
-        && std::env::var(&entry.api_key_env)
-            .map(|v| !v.is_empty())
-            .unwrap_or(false)
-}
-
 fn clear_default_llm(doc: &mut toml_edit::DocumentMut) {
     doc.remove("default_llm");
     doc.remove("intern");
+}
+
+fn validate_model_ids(models: &[String]) -> ApiResult<()> {
+    for model in models {
+        let trimmed = model.trim();
+        if trimmed.is_empty() {
+            return Err(ApiError::Validation("empty model id in list".into()));
+        }
+        if trimmed.len() > 256 {
+            let prefix: String = trimmed.chars().take(40).collect();
+            return Err(ApiError::Validation(format!(
+                "model id too long ({} chars): `{prefix}`",
+                trimmed.len()
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn dedup_model_ids(models: Vec<String>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    models
+        .into_iter()
+        .filter(|model| seen.insert(model.clone()))
+        .collect()
 }
 
 fn write_default_llm(
