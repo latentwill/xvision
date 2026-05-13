@@ -19,7 +19,7 @@ use xvision_engine::strategies::{AgentRef, PipelineDef, PipelineEdge, PipelineKi
 use xvision_engine::strategies::store::{strategy_store_dir, StrategyStore, FilesystemStore};
 use xvision_engine::strategies::validate::validate_bundle;
 use xvision_engine::templates::registry;
-use xvision_engine::tokens::estimate_pipeline_tokens;
+use xvision_engine::tokens::{estimate_pipeline_tokens, estimate_pipeline_tokens_from_slots};
 use xvision_engine::tools::ToolRegistry;
 
 use crate::exit::{CliError, CliResult, ResultExt, XvnExit};
@@ -197,7 +197,44 @@ async fn new(template: &str, name: &str, creator: Option<String>) -> CliResult<(
     let creator = creator
         .or_else(|| env::var("XVN_CREATOR").ok())
         .unwrap_or_else(|| "@anonymous".to_string());
-    let draft = tpl.new_draft(id.clone(), name.to_string(), creator);
+    let mut draft = tpl.new_draft(id.clone(), name.to_string(), creator);
+    let legacy = legacy_slots(&draft);
+    if draft.agents.is_empty() && !legacy.is_empty() {
+        let ctx = open_ctx().await?;
+        let mut agent_refs = Vec::with_capacity(legacy.len());
+        for (role, slot) in legacy {
+            let agent = api_agents::create(
+                &ctx,
+                api_agents::CreateAgentRequest {
+                    name: format!("{name} {role}"),
+                    description: format!(
+                        "Generated from strategy {} template {} role {role}",
+                        draft.manifest.id, draft.manifest.template
+                    ),
+                    tags: vec![
+                        "strategy-template-seed".to_string(),
+                        draft.manifest.template.clone(),
+                    ],
+                    slots: vec![slot_to_agent_slot(&slot)],
+                },
+            )
+            .await
+            .map_err(|e| api_to_cli("strategy new", e))?;
+            agent_refs.push(AgentRef {
+                agent_id: agent.agent_id,
+                role,
+            });
+        }
+        draft.agents = agent_refs;
+        draft.pipeline = if draft.agents.len() <= 1 {
+            PipelineDef::default()
+        } else {
+            PipelineDef::sequential()
+        };
+        draft.regime_slot = None;
+        draft.intern_slot = None;
+        draft.trader_slot = None;
+    }
     validate_bundle(&draft).exit_with(XvnExit::Usage)?;
     store().save(&draft).await.exit_with(XvnExit::Upstream)?;
     println!("{id}");
@@ -417,7 +454,14 @@ fn provider_model_from_slot(slot: &LLMSlot) -> (String, String) {
 async fn run_inline(id: &str, fixture: &str, decisions: u32, mock: bool) -> CliResult<()> {
     let bundle = store().load(id).await.exit_with(XvnExit::NotFound)?;
     let agent_slots = resolve_agent_slots_for_cli(&bundle).await?;
-    let est = estimate_pipeline_tokens(&bundle, decisions as u64);
+    let est = if agent_slots.is_empty() {
+        estimate_pipeline_tokens(&bundle, decisions as u64)
+    } else {
+        estimate_pipeline_tokens_from_slots(
+            agent_slots.iter().map(|resolved| &resolved.slot),
+            decisions as u64,
+        )
+    };
     println!(
         "estimate: input={} output={} total={} (decisions={})",
         est.input, est.output, est.total, decisions

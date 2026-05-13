@@ -6,6 +6,8 @@ use xvision_engine::{
         agents::{self as agents_api, CreateAgentRequest},
         Actor, ApiContext,
     },
+    strategies::store::{strategy_store_dir, FilesystemStore, StrategyStore},
+    templates::registry,
 };
 
 fn xvn(args: &[&str], home: &std::path::Path) -> std::process::Output {
@@ -52,6 +54,19 @@ fn create_agent(home: &std::path::Path, name: &str) -> String {
     })
 }
 
+fn create_legacy_strategy(home: &std::path::Path, id: &str, name: &str) {
+    let tpl = registry::get("mean_reversion").unwrap();
+    let bundle = tpl.new_draft(id.to_string(), name.to_string(), "@strategy-cli-test".into());
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        let store = FilesystemStore::new(strategy_store_dir(home));
+        store.save(&bundle).await.unwrap();
+    });
+}
+
 #[test]
 fn new_validate_ls_show_roundtrip() {
     let dir = tempdir().unwrap();
@@ -87,6 +102,9 @@ fn new_validate_ls_show_roundtrip() {
     let json = String::from_utf8(out.stdout).unwrap();
     assert!(json.contains("\"template\""));
     assert!(json.contains("mean_reversion"));
+    assert!(json.contains("\"agents\""), "json: {json}");
+    assert!(!json.contains("\"regime_slot\""), "json: {json}");
+    assert!(!json.contains("\"trader_slot\""), "json: {json}");
 }
 
 #[test]
@@ -205,24 +223,8 @@ fn add_agent_set_pipeline_and_remove_agent_roundtrip() {
 #[test]
 fn migrate_agents_converts_legacy_slots_to_agent_refs() {
     let dir = tempdir().unwrap();
-
-    let out = xvn(
-        &[
-            "strategy",
-            "new",
-            "--template",
-            "mean_reversion",
-            "--name",
-            "legacy-slots",
-        ],
-        dir.path(),
-    );
-    assert!(
-        out.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let strategy_id = String::from_utf8(out.stdout).unwrap().trim().to_string();
+    let strategy_id = "legacy-slots-id";
+    create_legacy_strategy(dir.path(), strategy_id, "legacy-slots");
 
     let out = xvn(&["strategy", "migrate-agents", "--dry-run"], dir.path());
     assert!(
