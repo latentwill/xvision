@@ -27,6 +27,7 @@ use xvision_engine::agent::llm::{
     ContentBlock, LlmDispatch, LlmRequest, LlmResponse, Message, StopReason, ToolDefinition,
 };
 use xvision_engine::api::eval::{self as api_eval, EvalRunRequest};
+use xvision_engine::api::scenario::{self as api_scenario, CreateScenarioRequest, ListScenariosFilter};
 use xvision_engine::authoring;
 use xvision_engine::chat_session::{ChatSessionStore, ContextScope};
 use xvision_engine::eval::run::RunMode;
@@ -320,6 +321,27 @@ impl WizardLoop {
                 let out = xvision_engine::api::strategy::get(&self.api_context, id).await?;
                 Ok(serde_json::to_value(out)?)
             }
+            "list_strategies" => {
+                let out = xvision_engine::api::strategy::list(&self.api_context).await?;
+                Ok(serde_json::to_value(out)?)
+            }
+            "list_scenarios" => {
+                let out = api_scenario::list(&self.api_context, ListScenariosFilter::default()).await?;
+                Ok(serde_json::to_value(out)?)
+            }
+            "get_scenario" => {
+                let id = input
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("get_scenario: missing `id`"))?;
+                let out = api_scenario::get(&self.api_context, id).await?;
+                Ok(serde_json::to_value(out)?)
+            }
+            "create_scenario" => {
+                let req: CreateScenarioRequest = serde_json::from_value(input)?;
+                let out = api_scenario::create(&self.api_context, req).await?;
+                Ok(serde_json::to_value(out)?)
+            }
             "update_slot" => {
                 let req: authoring::UpdateSlotReq = serde_json::from_value(input)?;
                 let out = xvision_engine::api::strategy::update_slot(&self.api_context, req)
@@ -425,6 +447,61 @@ fn wizard_tool_defs() -> Vec<ToolDefinition> {
                 "type": "object",
                 "properties": {"id": {"type": "string"}},
                 "required": ["id"]
+            }),
+        },
+        ToolDefinition {
+            name: "list_strategies".into(),
+            description: "List existing strategy drafts with ids, template names, and model labels.".into(),
+            input_schema: serde_json::json!({
+                "type": "object", "properties": {}, "required": []
+            }),
+        },
+        ToolDefinition {
+            name: "list_scenarios".into(),
+            description: "List available scenarios, including canonical and user-created scenarios.".into(),
+            input_schema: serde_json::json!({
+                "type": "object", "properties": {}, "required": []
+            }),
+        },
+        ToolDefinition {
+            name: "get_scenario".into(),
+            description: "Read a scenario by id.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {"id": {"type": "string"}},
+                "required": ["id"]
+            }),
+        },
+        ToolDefinition {
+            name: "create_scenario".into(),
+            description: "Create a scenario. Use list_scenarios first when the user asks for an existing scenario; only create when they request a new one and provide the required fields.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "display_name": {"type": "string"},
+                    "description": {"type": "string"},
+                    "asset_class": {"type": "string"},
+                    "asset": {"type": "array", "items": {"type": "object"}},
+                    "quote_currency": {"type": "string"},
+                    "time_window": {"type": "object"},
+                    "capital": {"type": "object"},
+                    "granularity": {"type": "string"},
+                    "timezone": {"type": "string"},
+                    "calendar": {"type": "object"},
+                    "venue": {"type": "object"},
+                    "data_source": {"type": "object"},
+                    "replay_mode": {"type": "string"},
+                    "tags": {"type": "array", "items": {"type": "string"}},
+                    "notes": {"type": ["string", "null"]},
+                    "parent_scenario_id": {"type": ["string", "null"]},
+                    "source": {"type": "string"}
+                },
+                "required": [
+                    "display_name", "description", "asset_class", "asset",
+                    "quote_currency", "time_window", "capital", "granularity",
+                    "timezone", "calendar", "venue", "data_source",
+                    "replay_mode", "tags", "source"
+                ]
             }),
         },
         ToolDefinition {
@@ -730,11 +807,15 @@ mod tests {
     fn wizard_tool_defs_advertises_core_verbs() {
         let defs = wizard_tool_defs();
         let names: Vec<_> = defs.iter().map(|d| d.name.as_str()).collect();
-        assert_eq!(names.len(), 8);
+        assert_eq!(names.len(), 12);
         for v in [
             "list_templates",
             "create_strategy",
             "get_strategy",
+            "list_strategies",
+            "list_scenarios",
+            "get_scenario",
+            "create_scenario",
             "update_slot",
             "set_mechanical_param",
             "set_risk_config",

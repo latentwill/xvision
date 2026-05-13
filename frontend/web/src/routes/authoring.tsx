@@ -4,7 +4,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
-import { ModelPicker } from "@/components/ModelPicker";
 import { ApiError } from "@/api/client";
 import {
   addStrategyAgent,
@@ -13,28 +12,14 @@ import {
   removeStrategyAgent,
   setRiskConfig,
   strategyKeys,
-  updateSlot,
   validateDraft,
-  type LLMSlot,
   type RiskConfig,
   type Strategy,
-  type UpdateSlotBody,
   type ValidateDraftOut,
 } from "@/api/strategies";
 import { listAgents } from "@/api/agents";
 import { getStrategyChart, strategyChartKeys } from "@/api/chart";
 import { StrategyChart } from "@/components/chart/StrategyChart";
-import { listProviders, settingsKeys } from "@/api/settings";
-
-const SLOT_ROLES: {
-  role: "regime" | "intern" | "trader";
-  label: string;
-  required: boolean;
-}[] = [
-  { role: "regime", label: "Regime", required: false },
-  { role: "intern", label: "Intern", required: false },
-  { role: "trader", label: "Trader", required: true },
-];
 
 export function AuthoringRoute() {
   const params = useParams<{ id?: string }>();
@@ -139,22 +124,6 @@ function BundleEditor({ bundle }: { bundle: Strategy }) {
     <>
       <ManifestCard bundle={bundle} />
       <AgentsCard bundle={bundle} />
-      {SLOT_ROLES.map(({ role, label, required }) => (
-        <SlotCard
-          key={role}
-          id={bundle.manifest.id}
-          role={role}
-          label={label}
-          required={required}
-          slot={
-            role === "regime"
-              ? bundle.regime_slot
-              : role === "intern"
-                ? bundle.intern_slot
-                : bundle.trader_slot
-          }
-        />
-      ))}
       <RiskCard bundle={bundle} />
       <MechanicalParamsCard bundle={bundle} />
     </>
@@ -246,6 +215,12 @@ function AgentsCard({ bundle }: { bundle: Strategy }) {
                     >
                       Rename role
                     </button>
+                    <Link
+                      className="text-[12px] text-text-2 hover:text-text"
+                      to={`/agents/${encodeURIComponent(a.agent_id)}`}
+                    >
+                      Edit agent
+                    </Link>
                     <button
                       className="text-[12px] text-danger"
                       onClick={() => removeMut.mutate(a.role)}
@@ -356,146 +331,6 @@ function ManifestCard({ bundle }: { bundle: Strategy }) {
         <DT>Risk basis</DT>
         <DD>{m.risk_preset_or_config}</DD>
       </dl>
-    </Card>
-  );
-}
-
-function SlotCard({
-  id,
-  role,
-  label,
-  required,
-  slot,
-}: {
-  id: string;
-  role: "regime" | "intern" | "trader";
-  label: string;
-  required: boolean;
-  slot: LLMSlot | null;
-}) {
-  const qc = useQueryClient();
-  const providers = useQuery({
-    queryKey: settingsKeys.providers(),
-    queryFn: listProviders,
-  });
-  const [prompt, setPrompt] = useState(slot?.prompt ?? "");
-  const [model, setModel] = useState(slot?.model_requirement ?? "");
-  const [tools, setTools] = useState((slot?.allowed_tools ?? []).join(", "));
-  const [savedFlash, setSavedFlash] = useState(false);
-
-  // Reset when the underlying slot's saved values change.
-  useEffect(() => {
-    setPrompt(slot?.prompt ?? "");
-    setModel(slot?.model_requirement ?? "");
-    setTools((slot?.allowed_tools ?? []).join(", "));
-  }, [slot?.prompt, slot?.model_requirement, slot?.allowed_tools]);
-
-  const dirty =
-    prompt !== (slot?.prompt ?? "") ||
-    model !== (slot?.model_requirement ?? "") ||
-    tools !== (slot?.allowed_tools ?? []).join(", ");
-
-  const save = useMutation({
-    mutationFn: (body: UpdateSlotBody) => updateSlot(id, role, body),
-    onSuccess: () => {
-      setSavedFlash(true);
-      window.setTimeout(() => setSavedFlash(false), 1800);
-      qc.invalidateQueries({ queryKey: strategyKeys.detail(id) });
-    },
-  });
-
-  function onSave() {
-    const body: UpdateSlotBody = {};
-    if (prompt !== (slot?.prompt ?? "")) body.prompt = prompt;
-    if (model !== (slot?.model_requirement ?? ""))
-      body.model_requirement = model;
-    const parsedTools = tools
-      .split(",")
-      .map((t) => t.trim())
-      .filter(Boolean);
-    if (parsedTools.join(",") !== (slot?.allowed_tools ?? []).join(","))
-      body.allowed_tools = parsedTools;
-    if (Object.keys(body).length === 0) return;
-    save.mutate(body);
-  }
-
-  return (
-    <Card>
-      <SectionHeader
-        label={`${label} slot`}
-        hint={
-          slot
-            ? `${role} · model: ${slot.model_requirement || "(none)"}`
-            : required
-              ? "Required — not set"
-              : "Optional · not set"
-        }
-      />
-      <div className="px-5 pb-5 space-y-3">
-        <Field label="Prompt">
-          <textarea
-            className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono leading-snug min-h-[140px]"
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            placeholder={`System prompt for the ${role} slot…`}
-          />
-        </Field>
-        <Field
-          label="Model requirement"
-          hint="Pick a configured model below, or type a constraint pattern (e.g. anthropic.claude-sonnet-4.6+)."
-        >
-          <div className="space-y-2">
-            <ModelPicker
-              rows={providers.data?.providers ?? []}
-              loading={providers.isPending}
-              provider={
-                providers.data?.providers.find((p) =>
-                  p.enabled_models.includes(model),
-                )?.name ?? null
-              }
-              model={model}
-              onChange={(_p, m) => setModel(m)}
-              className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
-              placeholder="— pick a configured model —"
-              ariaLabel={`Model requirement for ${role} slot`}
-            />
-            <input
-              className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              placeholder="or type a constraint…"
-            />
-          </div>
-        </Field>
-        <Field
-          label="Allowed tools"
-          hint="Comma-separated tool names from the registry."
-        >
-          <input
-            className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
-            value={tools}
-            onChange={(e) => setTools(e.target.value)}
-            placeholder="ohlcv, indicator_panel"
-          />
-        </Field>
-
-        <div className="flex items-center gap-3 pt-1">
-          <button
-            onClick={onSave}
-            disabled={!dirty || save.isPending}
-            className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft disabled:opacity-40 disabled:hover:bg-gold transition-colors"
-          >
-            {save.isPending ? "Saving…" : "Save slot"}
-          </button>
-          {savedFlash ? (
-            <span className="text-[12px] text-success">Saved.</span>
-          ) : save.isError ? (
-            <span className="text-[12px] text-danger">
-              {errorMessage(save.error)}
-            </span>
-          ) : null}
-        </div>
-      </div>
     </Card>
   );
 }

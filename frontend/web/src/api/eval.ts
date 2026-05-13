@@ -53,6 +53,12 @@ export function getRun(id: string): Promise<RunDetail> {
   return apiFetch<RunDetail>(`/api/eval/runs/${encodeURIComponent(id)}`);
 }
 
+export function deleteRun(id: string): Promise<void> {
+  return apiFetch<void>(`/api/eval/runs/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}
+
 export function compareRuns(ids: string[]): Promise<ComparisonReport> {
   const qs = ids.map(encodeURIComponent).join(",");
   return apiFetch<ComparisonReport>(`/api/eval/compare?ids=${qs}`);

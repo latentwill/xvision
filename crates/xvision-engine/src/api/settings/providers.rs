@@ -30,10 +30,8 @@ use crate::api::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProvidersReport {
     pub providers: Vec<ProviderRow>,
-    /// The currently-configured model on `[default_llm]`. Surfaced
-    /// alongside the per-row `is_default` flag so the Default-LLM UI
-    /// can pre-fill its model dropdown without a second fetch. None
-    /// when the operator hasn't set a model yet.
+    /// Deprecated compatibility field. Always `None`; model selection is
+    /// explicit per chat session, wizard request, or agent slot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_model: Option<String>,
 }
@@ -55,9 +53,8 @@ pub struct ProviderRow {
     pub api_key_set: bool,
     /// True for synthetic rows (name starts with `_`) — read-only.
     pub synthetic: bool,
-    /// True if this provider is the workspace default (referenced by the
-    /// `[default_llm]` block). UI should disable the delete button when
-    /// `is_default` is set — removing it would orphan the workspace default.
+    /// Deprecated compatibility field. Always false; providers are not
+    /// promoted to workspace defaults.
     pub is_default: bool,
     /// Subset of the provider's catalog the operator has enabled for the
     /// chat-rail / wizard dropdown. Empty until the operator picks
@@ -529,7 +526,6 @@ pub async fn set_default(
 
 async fn list_inner(config_path: &Path, xvn_home: &Path) -> ApiResult<ProvidersReport> {
     let cfg = load_cfg(config_path).await?;
-    let intern_kind: ProviderKind = cfg.default_llm.provider.into();
     let secrets = load_providers_secrets(xvn_home).await?;
     let providers = cfg
         .providers
@@ -537,19 +533,11 @@ async fn list_inner(config_path: &Path, xvn_home: &Path) -> ApiResult<ProvidersR
         // Synthetic rows (auto-derived from [intern] / names with `_` prefix)
         // are plumbing — hide them from the UI so the empty-state is honest.
         .filter(|p| !p.name.starts_with('_'))
-        .map(|p| row_from_entry(p, &cfg, intern_kind, &secrets))
+        .map(|p| row_from_entry(p, &secrets))
         .collect();
-    let default_model = {
-        let m = cfg.default_llm.model.trim();
-        if m.is_empty() {
-            None
-        } else {
-            Some(m.to_string())
-        }
-    };
     Ok(ProvidersReport {
         providers,
-        default_model,
+        default_model: None,
     })
 }
 
@@ -559,14 +547,13 @@ async fn show_inner(
     name: &str,
 ) -> ApiResult<ProviderRow> {
     let cfg = load_cfg(config_path).await?;
-    let intern_kind: ProviderKind = cfg.default_llm.provider.into();
     let secrets = load_providers_secrets(xvn_home).await?;
     let entry = cfg
         .providers
         .iter()
         .find(|p| p.name == name)
         .ok_or_else(|| ApiError::NotFound(format!("provider `{name}` not found")))?;
-    Ok(row_from_entry(entry, &cfg, intern_kind, &secrets))
+    Ok(row_from_entry(entry, &secrets))
 }
 
 async fn add_inner(
@@ -704,44 +691,13 @@ async fn add_inner(
 
     // Re-validate the resulting config; bubble up a validation error if the
     // file is no longer well-formed (eg. a hand-edit clashed with our row).
-    let cfg = load_cfg(config_path).await?;
-
-    // First-time setup ergonomics: if the current intern default has no
-    // key set but we just added one *with* a key, auto-promote the new
-    // row. Without this the user would add DeepSeek with a key, then see
-    // a "broken default" warning until they explicitly hit "Set as
-    // default" — a step that's invisible until they go looking for it.
-    let intern_kind: ProviderKind = cfg.default_llm.provider.into();
-    let intern_entry = cfg.providers.iter().find(|p| {
-        p.matches_triple(intern_kind, &cfg.default_llm.base_url, &cfg.default_llm.api_key_env)
-    });
-    let intern_has_key = intern_entry
-        .map(|e| {
-            !e.api_key_env.is_empty()
-                && std::env::var(&e.api_key_env)
-                    .map(|v| !v.is_empty())
-                    .unwrap_or(false)
-        })
-        .unwrap_or(false);
-    let new_has_key = !api_key_env.is_empty()
-        && std::env::var(&api_key_env)
-            .map(|v| !v.is_empty())
-            .unwrap_or(false);
-    if !intern_has_key && new_has_key {
-        // Best-effort — failure here doesn't undo the add. Pick a sane
-        // default model for the wire kind so the wizard (which has no
-        // model picker yet) doesn't hit a 404 for the old default's
-        // model id on the new provider.
-        let default_model = sensible_default_model(parsed_kind, &name);
-        let _ = set_default_inner(config_path, &name, default_model).await;
-    }
+    let _ = load_cfg(config_path).await?;
 
     show_inner(config_path, xvn_home, &name).await
 }
 
 async fn remove_inner(config_path: &Path, xvn_home: &Path, name: &str) -> ApiResult<()> {
     let cfg = load_cfg(config_path).await?;
-    let intern_kind: ProviderKind = cfg.default_llm.provider.into();
     let entry = cfg
         .providers
         .iter()
@@ -752,13 +708,6 @@ async fn remove_inner(config_path: &Path, xvn_home: &Path, name: &str) -> ApiRes
             "cannot remove synthetic provider `{name}`"
         )));
     }
-    if entry.matches_triple(intern_kind, &cfg.default_llm.base_url, &cfg.default_llm.api_key_env) {
-        return Err(ApiError::Conflict(format!(
-            "cannot remove `{name}`: it's the workspace default LLM ([default_llm]). \
-             Set another provider as default first, then come back to remove this one."
-        )));
-    }
-
     let path: PathBuf = config_path.to_path_buf();
     let n = name.to_string();
     task::spawn_blocking(move || -> ApiResult<()> {
@@ -976,8 +925,6 @@ async fn load_cfg(config_path: &Path) -> ApiResult<RuntimeConfig> {
 
 fn row_from_entry(
     entry: &ProviderEntry,
-    cfg: &RuntimeConfig,
-    intern_kind: ProviderKind,
     secrets: &ProvidersSecretsFile,
 ) -> ProviderRow {
     let api_key_set = if entry.api_key_env.is_empty() {
@@ -990,8 +937,6 @@ fn row_from_entry(
                 .map(|v| !v.is_empty())
                 .unwrap_or(false)
     };
-    let is_default =
-        entry.matches_triple(intern_kind, &cfg.default_llm.base_url, &cfg.default_llm.api_key_env);
     ProviderRow {
         name: entry.name.clone(),
         kind: kind_to_str(entry.kind).into(),
@@ -999,7 +944,7 @@ fn row_from_entry(
         api_key_env: entry.api_key_env.clone(),
         api_key_set,
         synthetic: entry.name.starts_with('_'),
-        is_default,
+        is_default: false,
         enabled_models: entry.enabled_models.clone(),
     }
 }
@@ -1015,25 +960,6 @@ fn default_api_key_env_for(kind: ProviderKind, name: &str) -> String {
             name.to_ascii_uppercase().replace('-', "_")
         ),
         ProviderKind::LocalCandle => String::new(),
-    }
-}
-
-/// Best-effort model id for a `(kind, name)` provider — mirrors the
-/// fallbacks the dashboard chat-rail dropdown uses so the wizard
-/// (which lacks a model picker) gets a working model out of the box.
-fn sensible_default_model(kind: ProviderKind, name: &str) -> Option<&'static str> {
-    match kind {
-        ProviderKind::Anthropic => Some("claude-sonnet-4-6"),
-        ProviderKind::OpenaiCompat => match name {
-            // V4 names per https://api-docs.deepseek.com — `deepseek-chat`
-            // retires 2026-07-24, so auto-promote points at the new id.
-            "deepseek" => Some("deepseek-v4-flash"),
-            "groq" => Some("llama-3.3-70b-versatile"),
-            "openrouter" => Some("anthropic/claude-3.5-sonnet"),
-            "openai" => Some("gpt-4o-mini"),
-            _ => None,
-        },
-        ProviderKind::LocalCandle => None,
     }
 }
 
@@ -1253,7 +1179,7 @@ sqlite_url = "sqlite://x.db"
         let p = &report.providers[0];
         assert_eq!(p.name, "anthropic");
         assert_eq!(p.kind, "anthropic");
-        assert!(p.is_default);
+        assert!(!p.is_default);
         assert!(!p.synthetic);
     }
 

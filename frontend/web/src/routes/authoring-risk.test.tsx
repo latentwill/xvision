@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 
@@ -104,14 +104,16 @@ describe("AuthoringRoute risk editor", () => {
     fireEvent.change(input, { target: { value: "2.50" } });
     fireEvent.click(screen.getByRole("button", { name: "Save risk" }));
 
-    expect(strategyApi.setRiskConfig).toHaveBeenCalledWith("01TEST", {
-      explicit: {
-        risk_pct_per_trade: 0.025,
-        max_concurrent_positions: 2,
-        max_leverage: 3,
-        stop_loss_atr_multiple: 2,
-        daily_loss_kill_pct: 0.05,
-      },
+    await waitFor(() => {
+      expect(strategyApi.setRiskConfig).toHaveBeenCalledWith("01TEST", {
+        explicit: {
+          risk_pct_per_trade: 0.025,
+          max_concurrent_positions: 2,
+          max_leverage: 3,
+          stop_loss_atr_multiple: 2,
+          daily_loss_kill_pct: 0.05,
+        },
+      });
     });
   });
 });

@@ -10,6 +10,7 @@ import { chartKeys, getRunChart } from "@/api/chart";
 import { RunChart } from "@/components/chart/RunChart";
 import {
   evalKeys,
+  deleteRun,
   listRuns,
   listScenarios,
   startRun,
@@ -223,6 +224,13 @@ function RunsTable({
   onToggle: (id: string) => void;
 }) {
   const navigate = useNavigate();
+  const qc = useQueryClient();
+  const remove = useMutation({
+    mutationFn: deleteRun,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: evalKeys.runs() });
+    },
+  });
 
   function go(id: string) {
     navigate(`/eval-runs/${id}`);
@@ -242,6 +250,7 @@ function RunsTable({
           <th className="font-normal py-2.5 px-3 text-right">Max DD</th>
           <th className="font-normal py-2.5 px-3 text-right">Return</th>
           <th className="font-normal py-2.5 px-5">Started</th>
+          <th className="font-normal py-2.5 px-5 text-right"></th>
         </tr>
       </thead>
       <tbody>
@@ -304,6 +313,21 @@ function RunsTable({
               <td className="py-3 px-5 text-text-3 text-[12px]">
                 {fmtTime(row.started_at)}
               </td>
+              <td
+                className="py-3 px-5 text-right"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <button
+                  type="button"
+                  onClick={() => remove.mutate(row.id)}
+                  disabled={remove.variables === row.id && remove.isPending}
+                  className="text-[12px] text-text-3 hover:text-danger disabled:opacity-50"
+                >
+                  {remove.variables === row.id && remove.isPending
+                    ? "Deleting…"
+                    : "Delete"}
+                </button>
+              </td>
             </tr>
           );
         })}
@@ -328,12 +352,11 @@ function StartEvalDialog({
   const scenarios = useQuery({
     queryKey: evalKeys.scenarios(),
     queryFn: listScenarios,
-    staleTime: 5 * 60 * 1000,
   });
 
   const [agentId, setAgentId] = useState<string>(initialAgentId);
   const [scenarioId, setScenarioId] = useState<string>("");
-  const [mode, setMode] = useState<RunMode>("paper");
+  const [mode, setMode] = useState<RunMode>("backtest");
 
   useEffect(() => {
     setAgentId(initialAgentId);

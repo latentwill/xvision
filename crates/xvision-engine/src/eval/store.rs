@@ -172,6 +172,40 @@ impl RunStore {
         row_to_run(&row)
     }
 
+    pub async fn delete(&self, id: &str) -> Result<()> {
+        let mut tx = self.pool.begin().await.context("begin delete run tx")?;
+        sqlx::query("DELETE FROM eval_decisions WHERE run_id = ?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .context("delete eval_decisions")?;
+        sqlx::query("DELETE FROM eval_equity_samples WHERE run_id = ?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .context("delete eval_equity_samples")?;
+        sqlx::query("DELETE FROM eval_findings WHERE run_id = ?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .context("delete eval_findings")?;
+        sqlx::query("DELETE FROM eval_attestations WHERE run_id = ?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .context("delete eval_attestations")?;
+        let res = sqlx::query("DELETE FROM eval_runs WHERE id = ?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .context("delete eval_runs")?;
+        if res.rows_affected() == 0 {
+            anyhow::bail!("run not found: {id}");
+        }
+        tx.commit().await.context("commit delete run tx")?;
+        Ok(())
+    }
+
     pub async fn list(&self, filter: ListFilter) -> Result<Vec<Run>> {
         // Build the SQL dynamically with optional WHERE clauses. Using
         // sqlx::query (not query_as!) keeps this purely runtime — no

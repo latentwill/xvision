@@ -1,7 +1,7 @@
 //! Provider-aware LLM dispatch resolution for the chat-rail / wizard
-//! SSE routes. Loads `RuntimeConfig`, finds the requested provider (or
-//! falls back to the `[default_llm]` default), reads its API key from env,
-//! and hands back a boxed `LlmDispatch` of the right wire kind.
+//! SSE routes. Loads `RuntimeConfig`, finds the explicitly requested
+//! provider, reads its API key from env, and hands back a boxed
+//! `LlmDispatch` of the right wire kind.
 //!
 //! Failure surfaces as a typed `DashboardError` so the HTTP handlers
 //! can render a meaningful 4xx/5xx body instead of bubbling up a raw
@@ -10,7 +10,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use xvision_core::config::{ProviderEntry, ProviderKind, RuntimeConfig};
+use xvision_core::config::{ProviderKind, RuntimeConfig};
 use xvision_engine::agent::llm::{AnthropicDispatch, LlmDispatch, OpenaiCompatDispatch};
 
 use crate::error::DashboardError;
@@ -24,24 +24,26 @@ pub struct ResolvedDispatch {
 
 /// Resolve a `(provider, model)` selection from a chat request body.
 ///
-/// `provider`: explicit provider name from the request, or `None` to use
-///             the `[default_llm]`-referenced default.
-/// `model`:    explicit model from the request, or `None` to fall back
-///             to the model declared in `[default_llm]` for the default
-///             provider (otherwise the caller's `default_model`).
+/// Both fields are required. The UI has provider/model pickers for the
+/// chat rail and wizard; silently falling back to a workspace default is
+/// too broad because strategy agents and chat sessions may need different
+/// models.
 pub async fn resolve(
     provider: Option<&str>,
     model: Option<&str>,
-    default_model: &str,
+    _default_model: &str,
 ) -> Result<ResolvedDispatch, DashboardError> {
     let path = config_path();
     let cfg = load_cfg(&path).await?;
 
-    let intern_provider_name = intern_default_name(&cfg);
-
     let provider_name = provider
-        .map(str::to_string)
-        .unwrap_or_else(|| intern_provider_name.clone());
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .ok_or_else(|| DashboardError::Validation {
+            field: "provider".into(),
+            msg: "choose a provider in the model picker before sending chat".into(),
+        })?
+        .to_string();
 
     let entry = cfg
         .providers
@@ -77,15 +79,13 @@ pub async fn resolve(
     }
 
     let model = model
-        .map(str::to_string)
-        .or_else(|| {
-            if provider_name == intern_provider_name {
-                Some(cfg.default_llm.model.clone())
-            } else {
-                None
-            }
-        })
-        .unwrap_or_else(|| default_model.to_string());
+        .map(str::trim)
+        .filter(|m| !m.is_empty())
+        .ok_or_else(|| DashboardError::Validation {
+            field: "model".into(),
+            msg: "choose a model in the picker before sending chat".into(),
+        })?
+        .to_string();
 
     let dispatch: Arc<dyn LlmDispatch> = match entry.kind {
         ProviderKind::Anthropic => Arc::new(AnthropicDispatch::new(api_key)),
@@ -137,19 +137,4 @@ async fn load_cfg(path: &Path) -> Result<RuntimeConfig, DashboardError> {
         .await
         .map_err(|e| DashboardError::Internal(anyhow::anyhow!("spawn_blocking: {e}")))?
         .map_err(|e| DashboardError::Internal(anyhow::anyhow!("load config: {e}")))
-}
-
-/// Name of the provider currently referenced by `[default_llm]`. If no row
-/// declares the intern's triple, the auto-derived `_default_intern`
-/// synthetic name is returned (which the resolver then looks up just
-/// like any other entry).
-fn intern_default_name(cfg: &RuntimeConfig) -> String {
-    let kind: ProviderKind = cfg.default_llm.provider.into();
-    cfg.providers
-        .iter()
-        .find(|p: &&ProviderEntry| {
-            p.matches_triple(kind, &cfg.default_llm.base_url, &cfg.default_llm.api_key_env)
-        })
-        .map(|p| p.name.clone())
-        .unwrap_or_else(|| "_default_intern".to_string())
 }
