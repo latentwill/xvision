@@ -108,6 +108,31 @@ fn new_validate_ls_show_roundtrip() {
 }
 
 #[test]
+fn create_alias_is_noninteractive_strategy_create() {
+    let dir = tempdir().unwrap();
+
+    let out = xvn(
+        &[
+            "strategy",
+            "create",
+            "--template",
+            "mean_reversion",
+            "--name",
+            "alias-create",
+        ],
+        dir.path(),
+    );
+
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let id = String::from_utf8(out.stdout).unwrap().trim().to_string();
+    assert!(id.starts_with("01"), "expected ULID, got: {id}");
+}
+
+#[test]
 fn templates_lists_known_templates() {
     let dir = tempdir().unwrap();
     let out = xvn(&["strategy", "templates"], dir.path());

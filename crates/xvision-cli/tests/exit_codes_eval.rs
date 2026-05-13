@@ -48,6 +48,13 @@ fn eval_show_unknown_run_returns_4_not_found() {
 }
 
 #[test]
+fn eval_get_alias_unknown_run_returns_4_not_found() {
+    let dir = tempdir().unwrap();
+    let out = xvn(&["eval", "get", "01ZZZZZZZZZZZZZZZZZZZZZZZZ"], dir.path());
+    assert_eq!(code(&out), 4);
+}
+
+#[test]
 fn eval_compare_single_id_returns_2_clap_usage() {
     // num_args=2.. — clap rejects with exit 2 before reaching engine.
     let dir = tempdir().unwrap();

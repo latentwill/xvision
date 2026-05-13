@@ -43,6 +43,7 @@ pub enum Op {
     /// List eval runs (most recent first).
     List(ListArgs),
     /// Show a single run by id.
+    #[command(visible_alias = "get")]
     Show(ShowArgs),
     /// List canonical scenarios packaged with this binary.
     Scenarios(ScenariosArgs),

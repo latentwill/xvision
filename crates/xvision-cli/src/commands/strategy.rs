@@ -32,6 +32,7 @@ pub struct StrategyCmd {
 #[derive(Subcommand, Debug)]
 enum StrategyAction {
     /// Create a new strategy draft from a template.
+    #[command(visible_alias = "create")]
     New {
         #[arg(long)]
         template: String,
@@ -50,7 +51,7 @@ enum StrategyAction {
     Templates,
     /// Add a library agent reference to a strategy.
     AddAgent {
-        /// Strategy id returned from `xvn strategy new`.
+        /// Strategy id returned from `xvn strategy create`.
         strategy_id: String,
         /// Agent id from the workspace agent library.
         agent_id: String,
@@ -60,7 +61,7 @@ enum StrategyAction {
     },
     /// Remove an agent reference by role.
     RemoveAgent {
-        /// Strategy id returned from `xvn strategy new`.
+        /// Strategy id returned from `xvn strategy create`.
         strategy_id: String,
         /// Role to remove from the strategy.
         #[arg(long)]
@@ -68,7 +69,7 @@ enum StrategyAction {
     },
     /// Set the strategy pipeline kind and optional graph edges.
     SetPipeline {
-        /// Strategy id returned from `xvn strategy new`.
+        /// Strategy id returned from `xvn strategy create`.
         strategy_id: String,
         /// `single`, `sequential`, or `graph`.
         #[arg(long)]
@@ -85,7 +86,7 @@ enum StrategyAction {
     },
     /// Run a saved strategy inline against a fixture (decision_points iterations).
     Run {
-        /// Strategy id (ULID) returned from `xvn strategy new`.
+        /// Strategy id (ULID) returned from `xvn strategy create`.
         id: String,
         /// Fixture parquet name under data/probes/ (without .parquet).
         #[arg(long)]
@@ -190,7 +191,7 @@ async fn new(template: &str, name: &str, creator: Option<String>) -> CliResult<(
     })?;
     let id = Ulid::new().to_string();
     let creator = creator
-        .or_else(|| env::var("XVN_CREATOR").ok())
+        .or_else(|| std::env::var("XVN_CREATOR").ok())
         .unwrap_or_else(|| "@anonymous".to_string());
     let mut draft = tpl.new_draft(id.clone(), name.to_string(), creator);
     let legacy = legacy_slots(&draft);
@@ -214,7 +215,7 @@ async fn new(template: &str, name: &str, creator: Option<String>) -> CliResult<(
                 },
             )
             .await
-            .map_err(|e| api_to_cli("strategy new", e))?;
+            .map_err(|e| api_to_cli("strategy create", e))?;
             agent_refs.push(AgentRef {
                 agent_id: agent.agent_id,
                 role,
