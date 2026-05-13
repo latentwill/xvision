@@ -70,8 +70,8 @@ enum ProviderAction {
 }
 
 pub async fn run(cmd: ProviderCmd) -> Result<()> {
-    let config_path = std::env::current_dir()?.join("config/default.toml");
     let xvn_home = resolve_xvn_home()?;
+    let config_path = runtime_config_path(&xvn_home);
     let user = std::env::var("USER")
         .or_else(|_| std::env::var("USERNAME"))
         .unwrap_or_else(|_| "operator".to_string());
@@ -92,6 +92,15 @@ pub async fn run(cmd: ProviderCmd) -> Result<()> {
         } => add(&ctx, &config_path, name, kind, base_url, api_key_env, api_key).await,
         ProviderAction::Remove { name } => remove(&ctx, &config_path, &name).await,
     }
+}
+
+fn runtime_config_path(xvn_home: &std::path::Path) -> PathBuf {
+    if let Ok(p) = std::env::var("XVN_CONFIG_PATH") {
+        if !p.is_empty() {
+            return PathBuf::from(p);
+        }
+    }
+    xvn_home.join("config").join("default.toml")
 }
 
 fn resolve_xvn_home() -> Result<PathBuf> {
@@ -264,7 +273,8 @@ mod tests {
     }
 
     fn write_min_config(dir: &tempfile::TempDir) -> std::path::PathBuf {
-        let p = dir.path().join("default.toml");
+        let p = dir.path().join("config").join("default.toml");
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
         std::fs::write(&p, MIN_CONFIG).unwrap();
         p
     }
