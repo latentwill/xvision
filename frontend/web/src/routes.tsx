@@ -38,6 +38,7 @@ export const router = createBrowserRouter([
       { path: "scenarios/:id", element: <ScenariosDetailRoute /> },
       { path: "authoring", element: <AuthoringRoute /> },
       { path: "authoring/:id", element: <AuthoringRoute /> },
+      { path: "eval", element: <Navigate to="/eval-runs" replace /> },
       { path: "eval-runs", element: <EvalRunsRoute /> },
       { path: "eval-runs/:runId", element: <EvalRunDetailRoute /> },
       { path: "eval-runs/compare", element: <EvalCompareRoute /> },

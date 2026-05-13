@@ -568,8 +568,22 @@ async fn select_eval_provider(
         }
     }
 
+    let cfg_path = runtime_config_path(ctx);
+    let cfg = tokio::task::spawn_blocking(move || config::load_runtime(&cfg_path))
+        .await
+        .map_err(|e| ApiError::Internal(format!("spawn_blocking: {e}")))?
+        .map_err(|e| ApiError::Validation(format!("load config: {e}")))?;
+    if let Some(default_llm) = cfg.default_llm {
+        let provider = match default_llm.provider {
+            config::InternProvider::Anthropic => "anthropic",
+            config::InternProvider::OpenaiCompat => "openai-compat",
+            config::InternProvider::LocalCandle => "local-candle",
+        };
+        return Ok(provider.to_string());
+    }
+
     Err(ApiError::Validation(
-        "eval requires an explicit provider/model on a strategy slot or attached agent; no workspace default is assumed".into(),
+        "eval requires a provider on a strategy slot or attached agent, or a workspace [default_llm] in config/default.toml".into(),
     ))
 }
 
