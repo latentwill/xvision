@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use xvision_engine::agent::llm::MockDispatch;
+use xvision_engine::agent::llm::{ContentBlock, LlmResponse, MockDispatch, StopReason};
 use xvision_engine::agent::pipeline::{
     run_pipeline, PipelineInputs, PipelineOutputs, ResolvedAgentSlot,
 };
@@ -53,6 +53,17 @@ fn fixture_bundle() -> Strategy {
         }),
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({}),
+    }
+}
+
+fn text_response(text: &str) -> LlmResponse {
+    LlmResponse {
+        content: vec![ContentBlock::Text {
+            text: text.to_string(),
+        }],
+        stop_reason: StopReason::EndTurn,
+        input_tokens: 1,
+        output_tokens: 1,
     }
 }
 
@@ -144,4 +155,54 @@ async fn resolved_agent_pipeline_uses_trader_role_as_decision_output() {
     assert!(outs.intern.is_none());
     assert!(outs.trader.is_some());
     assert!(outs.total_input_tokens > 0);
+}
+
+#[tokio::test]
+async fn resolved_agent_pipeline_uses_last_output_without_trader_role() {
+    let mut bundle = fixture_bundle();
+    bundle.regime_slot = None;
+    bundle.intern_slot = None;
+    bundle.trader_slot = None;
+    bundle.pipeline = PipelineDef::sequential();
+    let agent_slots = vec![
+        ResolvedAgentSlot {
+            role: "scout".into(),
+            slot: LLMSlot {
+                role: "scout".into(),
+                prompt: "scan".into(),
+                model_requirement: "mock".into(),
+                allowed_tools: vec!["ohlcv".into()],
+                provider: None,
+                model: None,
+            },
+        },
+        ResolvedAgentSlot {
+            role: "final_decider".into(),
+            slot: LLMSlot {
+                role: "final_decider".into(),
+                prompt: "decide".into(),
+                model_requirement: "mock".into(),
+                allowed_tools: vec!["ohlcv".into()],
+                provider: None,
+                model: None,
+            },
+        },
+    ];
+
+    let dispatch = Arc::new(MockDispatch::sequence(vec![
+        text_response(r#"{"stage":"first"}"#),
+        text_response(r#"{"stage":"second"}"#),
+    ]));
+    let tools = Arc::new(ToolRegistry::default_with_builtins());
+    let outs = run_pipeline(PipelineInputs {
+        bundle: &bundle,
+        agent_slots: &agent_slots,
+        seed_inputs: serde_json::json!({}),
+        dispatch,
+        tools,
+    })
+    .await
+    .unwrap();
+
+    assert_eq!(outs.trader.unwrap().text(), r#"{"stage":"second"}"#);
 }
