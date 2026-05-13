@@ -159,3 +159,13 @@ Avoid:
 - Verified with frontend install, full frontend test suite, frontend typecheck,
   `git diff --check`, and clean branch status. Rust scenario tests remain
   CI/non-deploy follow-up.
+
+### `qa4-chat-eval-launcher`
+
+- Completed checkpoint: `qa4-chat-eval-launcher` switches the Start eval
+  dialog to the scenario registry and adds client-side provider/model and
+  Alpaca paper preflight before queueing eval runs.
+- Verified with `corepack pnpm --dir frontend/web test -- eval-runs`,
+  `corepack pnpm --dir frontend/web typecheck`, and `git diff --check`.
+- Rust dashboard/wizard-loop tests remain CI/non-deploy follow-up because cargo
+  is forbidden on this deploy host.
