@@ -1,30 +1,25 @@
 ---
 track: inspector-run-cta
-worktree: /Users/edkennedy/Code/xvision (main worktree)
+worktree: /Users/edkennedy/Code/xvision
 branch: feature/inspector-run-cta
-phase: phase-b-pr-open
-last_updated: 2026-05-11T03:17:00Z
-owner: claude-opus-4-7 (1M ctx) — v1-gaps Track E
+phase: phase-b-merged
+last_updated: 2026-05-13T02:11:03Z
+owner: archived (merged via PR #70)
 ---
 
 # What I'm doing right now
 
-PR [#70](https://github.com/latentwill/xvision/pull/70) open — Track E
-of `docs/superpowers/plans/2026-05-11-v1-gaps-multi-agent.md` complete.
+Historical record only. Inspector run CTA track merged via PR [#70](https://github.com/latentwill/xvision/pull/70).
 
 ## Plan task progress
 
-- [x] Claim posted to `team/queue/`
-- [x] Branch `feature/inspector-run-cta` from `origin/main` @ `b74b657`
-- [x] Added `RunEvalCard` between ValidationCard and BackLinkCard
-- [x] `tsc -b` + `vite build` green
-- [x] Commit + PR + pr-open queue note
+- [x] `RunEvalCard` added in inspector right rail
+- [x] PR merged
+
+## Follow-up
+
+- Per-strategy run filter has already landed in PR #96.
 
 # Blocked on
 
-Operator review + merge of PR #70. Browser smoke also operator's call.
-
-# Followup available
-
-- Track H (Strategies disabled-button affordance) — `routes/strategies.tsx`
-- Per-strategy run filter — depends on PR #65 (Tracks B+C) merging first
+Nothing.

@@ -51,7 +51,7 @@ export function ScenariosRoute() {
   return (
     <>
       <Topbar title="Scenarios" sub={subtitleFor(q)} />
-      <div className="mb-3 flex items-center justify-between">
+      <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <Filters
           source={source}
           onSource={setSource}
@@ -60,7 +60,7 @@ export function ScenariosRoute() {
         />
         <Link
           to="/scenarios/new"
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-[13px] font-medium border border-gold text-gold hover:bg-gold/10 transition-colors"
+          className="inline-flex w-full items-center justify-center gap-1.5 rounded border border-gold px-3 py-1.5 text-[13px] font-medium text-gold transition-colors hover:bg-gold/10 sm:w-auto"
         >
           + New scenario
         </Link>
@@ -101,7 +101,7 @@ function Filters({
   onIncludeArchived: (v: boolean) => void;
 }) {
   return (
-    <div className="flex items-center gap-4">
+    <div className="flex flex-wrap items-center gap-3 sm:gap-4">
       <div className="flex items-center gap-2">
         <label htmlFor="scenario-source" className="text-[12px] text-text-2">
           Source
@@ -140,21 +140,10 @@ function ScenariosTable({ items }: { items: Scenario[] }) {
   }
 
   return (
-    <table className="w-full">
-      <thead>
-        <tr className="text-left text-text-2 text-[12px] border-b border-border-soft">
-          <th className="font-normal py-2.5 pl-5 pr-3">Name</th>
-          <th className="font-normal py-2.5 px-3">Asset</th>
-          <th className="font-normal py-2.5 px-3">Window</th>
-          <th className="font-normal py-2.5 px-3">Granularity</th>
-          <th className="font-normal py-2.5 px-3">Source</th>
-          <th className="font-normal py-2.5 px-3">Tags</th>
-          <th className="font-normal py-2.5 px-5 text-right"></th>
-        </tr>
-      </thead>
-      <tbody>
+    <>
+      <div className="divide-y divide-border-soft md:hidden">
         {items.map((row) => (
-          <tr
+          <article
             key={row.id}
             role="link"
             tabIndex={0}
@@ -165,58 +154,131 @@ function ScenariosTable({ items }: { items: Scenario[] }) {
                 go(row.id);
               }
             }}
-            className="border-b border-border-soft last:border-b-0 hover:bg-surface-hover focus:bg-surface-hover focus:outline-none transition-colors cursor-pointer"
+            className="px-4 py-3"
           >
-            <td className="py-3 pl-5 pr-3">
-              <div className="text-text text-[13px] leading-tight">{row.display_name}</div>
-              {row.description ? (
-                <div className="text-text-3 text-[11px] leading-tight mt-0.5 max-w-[260px] truncate">
-                  {row.description}
-                </div>
-              ) : null}
-            </td>
-            <td className="py-3 px-3 font-mono text-text-2 text-[12px]">
-              {row.asset.length > 0 ? row.asset.map((a) => a.symbol).join(", ") : "—"}
-            </td>
-            <td className="py-3 px-3 text-text-2 text-[12px] whitespace-nowrap">
-              {fmtWindow(row.time_window.start, row.time_window.end)}
-            </td>
-            <td className="py-3 px-3 font-mono text-text-2 text-[12px]">
-              {row.granularity}
-            </td>
-            <td className="py-3 px-3">
+            <div className="mb-1.5 flex items-start justify-between gap-2">
+              <div className="text-[14px] leading-tight text-text">{row.display_name}</div>
               <SourcePill source={row.source} />
-            </td>
-            <td className="py-3 px-3">
-              <div className="flex flex-wrap gap-1">
-                {row.tags.length > 0
-                  ? row.tags.slice(0, 3).map((tag) => (
-                      <Pill key={tag} tone="default">
-                        {tag}
-                      </Pill>
-                    ))
-                  : <span className="text-text-3 text-[11px]">—</span>}
-                {row.tags.length > 3 ? (
-                  <Pill tone="default">+{row.tags.length - 3}</Pill>
-                ) : null}
+            </div>
+            {row.description ? (
+              <div className="mt-0.5 line-clamp-2 text-[11px] leading-tight text-text-3">
+                {row.description}
               </div>
-            </td>
-            <td
-              className="py-3 px-5 text-right"
-              onClick={(e) => e.stopPropagation()}
-            >
+            ) : null}
+            <div className="mt-1 font-mono text-[12px] text-text-2">
+              {row.asset.length > 0 ? row.asset.map((a) => a.symbol).join(", ") : "—"}
+              {" · "}
+              {row.granularity}
+            </div>
+            <div className="mt-1 text-[12px] text-text-2">
+              {fmtWindow(row.time_window.start, row.time_window.end)}
+            </div>
+            <div className="mt-2 flex flex-wrap gap-1">
+              {row.tags.length > 0
+                ? row.tags.slice(0, 3).map((tag) => (
+                    <Pill key={tag} tone="default">
+                      {tag}
+                    </Pill>
+                  ))
+                : <span className="text-[11px] text-text-3">—</span>}
+              {row.tags.length > 3 ? (
+                <Pill tone="default">+{row.tags.length - 3}</Pill>
+              ) : null}
+            </div>
+            <div className="mt-2 text-right">
               <Link
                 to={`/scenarios/${row.id}`}
-                className="text-[12px] text-text-3 hover:text-text transition-colors"
+                className="text-[12px] text-text-3 transition-colors hover:text-text"
                 tabIndex={-1}
+                onClick={(e) => e.stopPropagation()}
               >
                 View →
               </Link>
-            </td>
-          </tr>
+            </div>
+          </article>
         ))}
-      </tbody>
-    </table>
+      </div>
+
+      <div className="hidden overflow-x-auto md:block">
+        <table className="w-full">
+          <thead>
+            <tr className="border-b border-border-soft text-left text-[12px] text-text-2">
+              <th className="py-2.5 pl-5 pr-3 font-normal">Name</th>
+              <th className="px-3 py-2.5 font-normal">Asset</th>
+              <th className="px-3 py-2.5 font-normal">Window</th>
+              <th className="px-3 py-2.5 font-normal">Granularity</th>
+              <th className="px-3 py-2.5 font-normal">Source</th>
+              <th className="px-3 py-2.5 font-normal">Tags</th>
+              <th className="px-5 py-2.5 text-right font-normal"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((row) => (
+              <tr
+                key={row.id}
+                role="link"
+                tabIndex={0}
+                onClick={() => go(row.id)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    go(row.id);
+                  }
+                }}
+                className="cursor-pointer border-b border-border-soft transition-colors last:border-b-0 hover:bg-surface-hover focus:bg-surface-hover focus:outline-none"
+              >
+                <td className="py-3 pl-5 pr-3">
+                  <div className="text-[13px] leading-tight text-text">{row.display_name}</div>
+                  {row.description ? (
+                    <div className="mt-0.5 max-w-[260px] truncate text-[11px] leading-tight text-text-3">
+                      {row.description}
+                    </div>
+                  ) : null}
+                </td>
+                <td className="px-3 py-3 font-mono text-[12px] text-text-2">
+                  {row.asset.length > 0 ? row.asset.map((a) => a.symbol).join(", ") : "—"}
+                </td>
+                <td className="whitespace-nowrap px-3 py-3 text-[12px] text-text-2">
+                  {fmtWindow(row.time_window.start, row.time_window.end)}
+                </td>
+                <td className="px-3 py-3 font-mono text-[12px] text-text-2">
+                  {row.granularity}
+                </td>
+                <td className="px-3 py-3">
+                  <SourcePill source={row.source} />
+                </td>
+                <td className="px-3 py-3">
+                  <div className="flex flex-wrap gap-1">
+                    {row.tags.length > 0
+                      ? row.tags.slice(0, 3).map((tag) => (
+                          <Pill key={tag} tone="default">
+                            {tag}
+                          </Pill>
+                        ))
+                      : <span className="text-[11px] text-text-3">—</span>}
+                    {row.tags.length > 3 ? (
+                      <Pill tone="default">+{row.tags.length - 3}</Pill>
+                    ) : null}
+                  </div>
+                </td>
+                <td
+                  className="px-5 py-3 text-right"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <Link
+                    to={`/scenarios/${row.id}`}
+                    className="text-[12px] text-text-3 transition-colors hover:text-text"
+                    tabIndex={-1}
+                  >
+                    View →
+                  </Link>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
   );
 }
 

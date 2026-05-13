@@ -2,35 +2,27 @@
 track: llm-providers-2
 worktree: /Users/edkennedy/Code/xvision/.worktrees/llm-providers-2
 branch: feature/llm-providers-phase-2
-phase: phase-b-llm-providers-phase-2
-last_updated: 2026-05-10T18:25:00Z
-owner: claude-opus session 3 (fifth claim — docker #6, leverage #8, templates #11, providers Phase 1 #14 all merged)
+phase: phase-b-merged
+last_updated: 2026-05-13T02:09:04Z
+owner: archived (merged via PR #16)
 ---
 
 # What I'm doing right now
 
-Phase 2 of the LLM Providers plan. Continues the type-system foundation laid
-in Phase 1 (PR #14, merged). Touches `xvision-core` (new `slot.rs`),
-`xvision-eval/ab_compare.rs` (ArmKind + parser + auto-suffix), and a one-line
-addition to `xvision-cli/commands/ab_compare.rs`.
+Historical record only. Phase 2 landed and merged via PR [#16](https://github.com/latentwill/xvision/pull/16).
 
 ## Plan task progress
 
-- [ ] T5 `SlotRef` newtype + 6 tests
-- [ ] T6 `ArmKind::Trader` → struct variant; 4 call-site updates; 1 new test
-- [ ] T7 `parse_arm_spec` slot overrides; 6 new tests
-- [ ] T8 `auto_suffix_arm_names`; 6 new tests; CLI wiring
-- [ ] PR open + merge
+- [x] T5 `SlotRef` newtype + tests
+- [x] T6 `ArmKind::Trader` struct variant
+- [x] T7 `parse_arm_spec` slot overrides
+- [x] T8 `auto_suffix_arm_names` + CLI wiring
+- [x] PR merged
 
 # Blocked on
 
 Nothing.
 
-# Followup available for next session
+# Next up
 
-- LLM Providers Phase 3 (ProviderRegistry + run_ab_compare wiring) — needs Phase 2
-- LLM Providers Phase 4 (`xvn provider` CLI) — needs Phase 3
-- LLM Providers Phase 5 (UI design lock)
-- Plan 2a Phases 2A.A/2A.B/2A.C/2A.E (MCP server + verbs + tool dispatch + polish)
-- Plan 2d (Dashboard + Wizard) — gates B.6/B.7/B.8
-- Eval Phases 3.D/3.E (after 3.C settles)
+No further work on this track; Phase 3+ continued in `llm-providers-3..6` and are merged.

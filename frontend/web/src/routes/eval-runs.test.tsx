@@ -67,6 +67,11 @@ describe("EvalRunsRoute", () => {
     ]);
 
     renderRoute("/eval-runs?strategy=01TEST&start=1");
+    await waitFor(() =>
+      expect(vi.mocked(evalApi.listRuns)).toHaveBeenCalledWith({
+        strategy_bundle_hash: "01TEST",
+      }),
+    );
 
     const strategy = (await screen.findByLabelText("Strategy")) as HTMLSelectElement;
     await waitFor(() => expect(strategy.value).toBe("01TEST"));

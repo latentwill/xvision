@@ -3,11 +3,23 @@
 > Single source of truth for current phase and per-track ownership. Updated
 > whenever a track lands a phase boundary or a new track spawns.
 >
-> Last updated: 2026-05-10 by `coordinator` (Phase B in flight — 3 PRs open)
+> Last updated: 2026-05-13 by `strategy-agent-backend` (execution-board reconciliation)
 
 ## Current phase
 
 **Phase A — Foundation** ✅ **complete**
+**Phase B — Build-out** ✅ **landed on `main` (historical table below)**
+
+Most of the original Phase B tracks in this manifest have since merged. The
+row table below is retained as historical context for plan lineage, not as
+live assignment state.
+
+### Live execution-board state (current)
+
+- Open PRs: **#96** only (`strategy-agent-backend` branch).
+- Active ownership should be read from `team/status/*.md` + `team/queue/*.md`.
+- New work claims should use `team/queue/<track>__<utc>__claim.md` and update
+  `team/status/<track>.md` immediately.
 
 All four foundation tracks merged to `main`:
 
@@ -18,7 +30,7 @@ All four foundation tracks merged to `main`:
 | `frontend-foundation` | [#7](https://github.com/latentwill/xvision/pull/7) | merged | xvision-dashboard + Vite/Tailwind shell |
 | `docker-image` | [#6](https://github.com/latentwill/xvision/pull/6) | `76b24b5` | slim runtime image + GHCR workflow |
 
-**Phase B — Build-out** (running now)
+**Phase B — Build-out** (historical snapshot)
 
 Phase A unblocked all of Phase B. Pick a row from the build order, claim it via
 `team/queue/<track>__<utc>__claim.md`, edit the row below, and start.
