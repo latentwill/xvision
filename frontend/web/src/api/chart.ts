@@ -59,7 +59,7 @@ export async function getScenarioPreview(params: {
   asset: string;
   from: string;
   to: string;
-  granularity: "1h" | "1d";
+  granularity: "1h" | "4h" | "1d";
   baseline?: boolean;
 }): Promise<ScenarioPreviewPayload> {
   const q = new URLSearchParams({

@@ -82,7 +82,7 @@ pub struct CreateArgs {
     /// Window end date (YYYY-MM-DD, UTC midnight).
     #[arg(long)]
     pub to: NaiveDate,
-    /// Bar granularity: `1h` or `1d`.
+    /// Bar granularity: `1h`, `4h`, or `1d`.
     #[arg(long, default_value = "1h")]
     pub granularity: String,
     /// Venue (only `alpaca` in v1).
@@ -209,9 +209,10 @@ async fn open_ctx(override_path: Option<PathBuf>) -> anyhow::Result<ApiContext> 
 fn parse_granularity(s: &str) -> CliResult<BarGranularity> {
     match s {
         "1h" => Ok(BarGranularity::Hour1),
+        "4h" => Ok(BarGranularity::Hour4),
         "1d" => Ok(BarGranularity::Day1),
         other => Err(CliError::usage(anyhow::anyhow!(
-            "granularity '{other}' not in v1 set {{1h,1d}}"
+            "granularity '{other}' not in v1 set {{1h,4h,1d}}"
         ))),
     }
 }
