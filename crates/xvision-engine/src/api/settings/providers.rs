@@ -746,36 +746,10 @@ async fn add_inner(
         std::env::set_var(&api_key_env, key);
     }
 
-    // Re-validate the resulting config; bubble up a validation error if the
-    // file is no longer well-formed (eg. a hand-edit clashed with our row).
-    let cfg = load_cfg(config_path).await?;
-
-    // First-time setup ergonomics: if the current intern default has no
-    // key set but we just added one *with* a key, auto-promote the new
-    // row. Without this the user would add DeepSeek with a key, then see
-    // a "broken default" warning until they explicitly hit "Set as
-    // default" — a step that's invisible until they go looking for it.
-    let default_entry = cfg.default_llm.as_ref().and_then(|default_llm| {
-        let kind: ProviderKind = default_llm.provider.into();
-        cfg.providers.iter().find(|p| {
-            p.matches_triple(kind, &default_llm.base_url, &default_llm.api_key_env)
-        })
-    });
-    let default_has_key = default_entry
-        .map(provider_has_runtime_key)
-        .unwrap_or(false);
-    let new_has_key = !api_key_env.is_empty()
-        && std::env::var(&api_key_env)
-            .map(|v| !v.is_empty())
-            .unwrap_or(false);
-    if !default_has_key && new_has_key {
-        // Best-effort — failure here doesn't undo the add. Pick a sane
-        // default model for the wire kind so the wizard (which has no
-        // model picker yet) doesn't hit a 404 for the old default's
-        // model id on the new provider.
-        let default_model = sensible_default_model(parsed_kind, &name);
-        let _ = set_default_inner(config_path, &name, default_model).await;
-    }
+    // Re-validate the resulting config. Adding a provider does not promote it
+    // to `[default_llm]`; defaults are explicit so zero-default workspaces stay
+    // zero-default until the operator opts in.
+    let _ = load_cfg(config_path).await?;
 
     show_inner(config_path, xvn_home, &name).await
 }
@@ -813,20 +787,8 @@ async fn update_inner(
             "api_key_env is required for auth-bearing providers".into(),
         ));
     }
-    if let Some(models) = &req.enabled_models {
-        for model in models {
-            let trimmed = model.trim();
-            if trimmed.is_empty() {
-                return Err(ApiError::Validation("empty model id in list".into()));
-            }
-            if trimmed.len() > 256 {
-                return Err(ApiError::Validation(format!(
-                    "model id too long ({} chars): `{}`",
-                    trimmed.len(),
-                    &trimmed[..40]
-                )));
-            }
-        }
+    if let Some(models) = req.enabled_models.as_ref() {
+        validate_model_ids(models)?;
     }
     let was_default = provider_matches_default(entry, &cfg);
 
@@ -835,7 +797,7 @@ async fn update_inner(
     let kind_str = req.kind.clone();
     let base_url = trimmed_base_url.to_string();
     let api_key_env = trimmed_env.clone();
-    let enabled_models = req.enabled_models.clone();
+    let enabled_models = req.enabled_models.clone().map(dedup_model_ids);
     let default_model = cfg.default_llm.as_ref().map(|d| d.model.clone());
     task::spawn_blocking(move || -> ApiResult<()> {
         use toml_edit::{value, Array, DocumentMut};
