@@ -10,12 +10,14 @@ import {
   setEnabledModels,
   settingsKeys,
   testProviderConnection,
+  updateProvider,
 } from "@/api/settings";
 import type {
   AddProviderRequest,
   ProviderModelEntry,
   ProviderRow,
   TestConnectionReport,
+  UpdateProviderRequest,
 } from "@/api/types.gen";
 
 // Provider presets the form recognises. Each preset fills in a sensible
@@ -233,6 +235,7 @@ function ProviderRowView({
   removeBusy: boolean;
 }) {
   const [managing, setManaging] = useState(false);
+  const [editing, setEditing] = useState(false);
   const test = useMutation<TestConnectionReport, unknown, void>({
     mutationFn: () => testProviderConnection(row.name),
   });
@@ -285,6 +288,12 @@ function ProviderRowView({
               </button>
             ) : null}
             <button
+              onClick={() => setEditing((v) => !v)}
+              className="px-2 py-1 rounded text-[12px] border border-border text-text-2 hover:text-text hover:border-text-3"
+            >
+              {editing ? "Cancel" : "Edit"}
+            </button>
+            <button
               onClick={onRemove}
               disabled={removeBusy}
               className="px-2 py-1 rounded text-[12px] border border-border text-text-2 hover:text-danger hover:border-danger disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:text-text-2 disabled:hover:border-border"
@@ -301,6 +310,13 @@ function ProviderRowView({
               data={test.data ?? null}
               error={test.isError ? test.error : null}
             />
+          </td>
+        </tr>
+      ) : null}
+      {editing ? (
+        <tr className="border-t border-border-soft/40 bg-surface-elev/20">
+          <td colSpan={5} className="py-3 pr-0">
+            <EditProviderForm row={row} onClose={() => setEditing(false)} />
           </td>
         </tr>
       ) : null}
@@ -356,6 +372,128 @@ function ConnectionResult({
         {data.error ?? "connection failed"}
       </span>
     </span>
+  );
+}
+
+function EditProviderForm({
+  row,
+  onClose,
+}: {
+  row: ProviderRow;
+  onClose: () => void;
+}) {
+  const qc = useQueryClient();
+  const [kind, setKind] = useState(row.kind);
+  const [baseUrl, setBaseUrl] = useState(row.base_url);
+  const [apiKeyEnv, setApiKeyEnv] = useState(row.api_key_env);
+  const [apiKey, setApiKey] = useState("");
+
+  const save = useMutation({
+    mutationFn: (req: UpdateProviderRequest) => updateProvider(row.name, req),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: settingsKeys.providers() });
+      onClose();
+    },
+  });
+
+  const trimmedBaseUrl = baseUrl.trim();
+  const trimmedEnv = apiKeyEnv.trim();
+  const errors: string[] = [];
+  if (trimmedBaseUrl === "") {
+    errors.push("base URL is required");
+  } else if (!isHttpUrl(trimmedBaseUrl)) {
+    errors.push("base URL must start with http:// or https://");
+  }
+  if (kind !== "local-candle" && trimmedEnv === "") {
+    errors.push("API key env is required");
+  }
+  const dirty =
+    kind !== row.kind ||
+    trimmedBaseUrl !== row.base_url ||
+    trimmedEnv !== row.api_key_env ||
+    apiKey.trim() !== "";
+  const submittable = dirty && errors.length === 0;
+
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!submittable) return;
+        save.mutate({
+          kind,
+          base_url: trimmedBaseUrl,
+          api_key_env: trimmedEnv,
+          api_key: apiKey.trim() === "" ? null : apiKey,
+        });
+      }}
+      className="px-4 space-y-3"
+    >
+      <div className="grid grid-cols-1 md:grid-cols-[150px_1fr_220px] gap-3">
+        <Field label="Kind">
+          <select
+            value={kind}
+            onChange={(e) => setKind(e.target.value)}
+            className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text"
+          >
+            <option value="anthropic">anthropic</option>
+            <option value="openai-compat">openai-compat</option>
+            <option value="local-candle">local-candle</option>
+          </select>
+        </Field>
+        <Field label="Base URL">
+          <input
+            value={baseUrl}
+            onChange={(e) => setBaseUrl(e.target.value)}
+            className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
+          />
+        </Field>
+        <Field label="API key env">
+          <input
+            value={apiKeyEnv}
+            onChange={(e) => setApiKeyEnv(e.target.value)}
+            className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
+          />
+        </Field>
+      </div>
+      <Field label="New API key" hint="Optional. Leave blank to keep the stored key.">
+        <input
+          type="password"
+          autoComplete="off"
+          spellCheck={false}
+          value={apiKey}
+          onChange={(e) => setApiKey(e.target.value)}
+          className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
+        />
+      </Field>
+      {errors.length > 0 ? (
+        <ul className="m-0 pl-4 text-[12px] text-danger list-disc">
+          {errors.map((e) => (
+            <li key={e}>{e}</li>
+          ))}
+        </ul>
+      ) : null}
+      <div className="flex items-center gap-2">
+        <button
+          type="submit"
+          disabled={!submittable || save.isPending}
+          className="px-3 py-1.5 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft disabled:opacity-40"
+        >
+          {save.isPending ? "Saving…" : "Save changes"}
+        </button>
+        <button
+          type="button"
+          onClick={onClose}
+          className="text-[12px] text-text-3 hover:text-text"
+        >
+          Cancel
+        </button>
+        {save.isError ? (
+          <span className="text-[12px] text-danger">
+            {errorMessage(save.error)}
+          </span>
+        ) : null}
+      </div>
+    </form>
   );
 }
 

@@ -17,8 +17,10 @@ export type ScenarioFormDraft = {
   asset: string;
   from: string;
   to: string;
-  granularity: 'Hour1' | 'Day1';
+  granularity: ScenarioGranularity;
 };
+
+type ScenarioGranularity = 'Hour1' | 'Hour4' | 'Day1';
 
 export type ScenarioFormProps = {
   initial?: Partial<CreateScenarioRequest>;
@@ -68,8 +70,8 @@ export function ScenarioForm({
   const [to, setTo] = useState(
     initial?.time_window?.end?.slice(0, 10) ?? '',
   );
-  const [granularity, setGranularity] = useState<'Hour1' | 'Day1'>(
-    (initial?.granularity as 'Hour1' | 'Day1' | undefined) ?? 'Hour1',
+  const [granularity, setGranularity] = useState<ScenarioGranularity>(
+    (initial?.granularity as ScenarioGranularity | undefined) ?? 'Hour1',
   );
   const [tags, setTags] = useState<string[]>(initial?.tags ?? []);
   const [notes, setNotes] = useState(initial?.notes ?? '');
@@ -204,8 +206,8 @@ export function ScenarioForm({
         <Field label="Granularity">
           <Radio
             value={granularity}
-            onChange={(v: 'Hour1' | 'Day1') => setGranularity(v)}
-            options={[['Hour1', '1h'], ['Day1', '1d']] as const}
+            onChange={(v: ScenarioGranularity) => setGranularity(v)}
+            options={[['Hour1', '1h'], ['Hour4', '4h'], ['Day1', '1d']] as const}
           />
         </Field>
       </Section>
@@ -294,12 +296,14 @@ export function ScenarioForm({
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-function estimateBars(from: string, to: string, g: 'Hour1' | 'Day1'): number {
+function estimateBars(from: string, to: string, g: ScenarioGranularity): number {
   if (!from || !to) return 0;
   const ms = +new Date(to) - +new Date(from);
   if (ms <= 0) return 0;
   const hours = ms / 3_600_000;
-  return g === 'Hour1' ? Math.round(hours) : Math.round(hours / 24);
+  if (g === 'Hour1') return Math.round(hours);
+  if (g === 'Hour4') return Math.round(hours / 4);
+  return Math.round(hours / 24);
 }
 
 function Section({
@@ -379,8 +383,8 @@ function Radio({
   onChange,
   options,
 }: {
-  value: 'Hour1' | 'Day1';
-  onChange: (v: 'Hour1' | 'Day1') => void;
+  value: ScenarioGranularity;
+  onChange: (v: ScenarioGranularity) => void;
   options: readonly (readonly [string, string])[];
 }) {
   return (
@@ -391,7 +395,7 @@ function Radio({
             type="radio"
             value={v}
             checked={value === v}
-            onChange={() => onChange(v as 'Hour1' | 'Day1')}
+            onChange={() => onChange(v as ScenarioGranularity)}
           />{' '}
           {label}
         </label>

@@ -21,6 +21,7 @@ pub enum BarGranularity {
     Minute5,
     Minute15,
     Hour1,
+    Hour4,
     Day1,
 }
 
@@ -31,6 +32,7 @@ impl BarGranularity {
             Self::Minute5 => "5Min",
             Self::Minute15 => "15Min",
             Self::Hour1 => "1Hour",
+            Self::Hour4 => "4Hour",
             Self::Day1 => "1Day",
         }
     }

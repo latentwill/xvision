@@ -101,7 +101,9 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route(
             "/api/settings/providers/:name",
-            get(settings::providers::show).delete(settings::providers::remove),
+            get(settings::providers::show)
+                .put(settings::providers::update)
+                .delete(settings::providers::remove),
         )
         .route(
             "/api/settings/providers/:name/set-default",
@@ -174,6 +176,14 @@ pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
             error = %e,
             "failed to sweep orphan eval runs at startup",
         ),
+    }
+
+    if let Err(e) = state.recover_cli_jobs().await {
+        tracing::warn!(
+            target: "xvision::dashboard",
+            error = %e,
+            "failed to recover cli jobs at startup",
+        );
     }
 
     let app = build_router(state);

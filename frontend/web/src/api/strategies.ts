@@ -15,9 +15,17 @@ export type StrategyListItem = {
 };
 
 export type PipelineKind = "single" | "sequential" | "graph";
+export type AgentRef = {
+  agent_id: string;
+  role: string;
+};
 export type PipelineEdge = {
   from_role: string;
   to_role: string;
+};
+export type PipelineDef = {
+  kind: PipelineKind;
+  edges?: PipelineEdge[];
 };
 
 export type StrategiesListResponse = {
@@ -63,8 +71,8 @@ export type Strategy = {
   trader_slot: LLMSlot | null;
   risk: RiskConfig;
   mechanical_params: unknown;
-  agents?: { agent_id: string; role: string }[];
-  pipeline?: { kind: PipelineKind; edges?: PipelineEdge[] };
+  agents?: AgentRef[];
+  pipeline?: PipelineDef;
 };
 
 export type UpdateSlotBody = Partial<{
@@ -82,8 +90,13 @@ export type UpdateSlotOut = {
 
 export type StrategyAgentsOut = {
   strategy_id: string;
-  agents: { agent_id: string; role: string }[];
-  pipeline: { kind: PipelineKind; edges?: PipelineEdge[] };
+  agents: AgentRef[];
+  pipeline: PipelineDef;
+};
+
+export type SetPipelineBody = {
+  kind: PipelineKind;
+  edges?: PipelineEdge[];
 };
 
 export type PutRiskBody =
@@ -206,6 +219,19 @@ export function renameStrategyAgentRole(
     {
       method: "PATCH",
       body: JSON.stringify({ new_role: newRole }),
+    },
+  );
+}
+
+export function setStrategyPipeline(
+  strategyId: string,
+  body: SetPipelineBody,
+): Promise<StrategyAgentsOut> {
+  return apiFetch<StrategyAgentsOut>(
+    `/api/strategy/${encodeURIComponent(strategyId)}/pipeline`,
+    {
+      method: "PUT",
+      body: JSON.stringify(body),
     },
   );
 }
