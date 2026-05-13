@@ -122,7 +122,7 @@ pub struct RuntimeConfig {
     /// `[default_llm]` (canonical) or `[intern]` (legacy alias kept for one
     /// release for backward compatibility with existing user configs).
     #[serde(default, alias = "intern")]
-    #[garde(dive)]
+    #[garde(skip)]
     pub default_llm: Option<Intern>,
     #[garde(dive)]
     pub trader: Trader,
