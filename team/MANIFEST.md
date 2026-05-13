@@ -3,7 +3,22 @@
 > Single source of truth for current phase and per-track ownership. Updated
 > whenever a track lands a phase boundary or a new track spawns.
 >
-> Last updated: 2026-05-10 by `coordinator` (Phase B in flight — 3 PRs open)
+> Last updated: 2026-05-13 by `strategy-agent-backend` (rework/execution board added)
+
+## Current recovery board
+
+For the current deduped recovery/rework tracks, start with:
+
+- `team/execution-board-2026-05-13.md`
+
+That board supersedes the overlapping wrapper plans from 2026-05-12 as the
+execution source of truth.
+
+### Active rework tracks
+
+| Track | Worktree | Branch | Owner CLI | Source |
+|---|---|---|---|---|
+| `strategy-agent-backend` | `.worktrees/strategy-agent-backend-core` | `strategy-agent-backend-core` | current session | `team/execution-board-2026-05-13.md` |
 
 ## Current phase
 

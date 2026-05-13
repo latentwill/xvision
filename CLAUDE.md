@@ -15,6 +15,7 @@ These rules are mandatory for agents operating on deploy hosts and this repo.
   - `dockerfile=Dockerfile.deploy`
   - `build_identity=false` (unless identity image is intentionally requested)
   - `build_profile=release` for production; `staging` only for manual test images
+- ALWAYS source `.op_env` before using `gh` or `op` so GitHub and 1Password access come from the expected deploy-host environment.
 - ALWAYS verify rollout by checking running container image digest matches the GHCR digest you just published.
 
 Preferred command path from repo root:
