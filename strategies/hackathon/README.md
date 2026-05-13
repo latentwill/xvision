@@ -19,13 +19,18 @@ The goal is not to maximize strategy count. The goal is to show that xvision can
 1. `regime_filter_4h_ema_stack` — the cleanest “trend first” story
 2. `volume_confirmed_breakout` — shows confirmation + participation
 3. `range_reversion_rsi_bollinger` — shows the non-trend / chop mode
+4. `bearish_trend_filter_4h_ema_stack` — mirror for the downside
+5. `liquidation_event_shock_reversal` — shows crash / panic handling
+6. `risk_off_failed_breakout_fade` — shows safety-first behavior and no-trade gating
 
 ## Canonical eval mapping
 
 - `regime:bull` → `regime_filter_4h_ema_stack`
 - `regime:bull` or `regime:breakout` → `volume_confirmed_breakout`
 - `regime:chop` → `range_reversion_rsi_bollinger`
-- `regime:bear` / `regime:event` → intentionally *not* covered by this pack
+- `regime:bear` → `bearish_trend_filter_4h_ema_stack`
+- `regime:event` → `liquidation_event_shock_reversal`
+- `regime:risk_off` → `risk_off_failed_breakout_fade`
 
 ## What each strategy is for
 
@@ -35,6 +40,12 @@ The goal is not to maximize strategy count. The goal is to show that xvision can
   - Should lose when breakouts lack volume or when the market is range-bound.
 - `range_reversion_rsi_bollinger` — mean reversion in non-trending markets.
   - Should lose when a strong trend is already underway.
+- `bearish_trend_filter_4h_ema_stack` — bearish mirror of the bull trend strategy.
+  - Should lose in chop and fast reversal regimes.
+- `liquidation_event_shock_reversal` — panic / liquidation reversal after stabilization.
+  - Should lose to trend-day continuation and repeated shock waves.
+- `risk_off_failed_breakout_fade` — safety-first gate for hostile conditions.
+  - Should lose when clean trend continuation has real participation.
 
 ## Judge rubric
 
