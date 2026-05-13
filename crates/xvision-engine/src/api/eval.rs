@@ -701,7 +701,7 @@ async fn run_inner(
             let b = broker.ok_or_else(|| {
                 ApiError::Validation("paper mode requires a broker".into())
             })?;
-            Box::new(PaperExecutor::new(b))
+            Box::new(PaperExecutor::new(b).with_event_bus(ctx.event_bus.clone()))
         }
         RunMode::Backtest => build_backtest_executor(ctx, &scenario, from_db).await?,
     };
@@ -918,7 +918,7 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
     let executor: Box<dyn Executor> = match req.mode {
         RunMode::Paper => {
             let b = broker.expect("paper mode broker built above");
-            Box::new(PaperExecutor::new(b))
+            Box::new(PaperExecutor::new(b).with_event_bus(ctx.event_bus.clone()))
         }
         RunMode::Backtest => build_backtest_executor(ctx, &scenario, from_db).await?,
     };

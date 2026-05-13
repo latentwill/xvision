@@ -17,6 +17,7 @@ use xvision_execution::broker_surface::{BrokerSurface, OrderRequest, Side};
 
 use crate::agent::llm::LlmDispatch;
 use crate::agent::pipeline::{run_pipeline, PipelineInputs, ResolvedAgentSlot};
+use crate::api::chart::{ChartEquityPoint, LiveDecisionRow, RunChartEvent, RunEventBus};
 use crate::strategies::Strategy;
 use crate::eval::executor::Executor;
 use crate::eval::metrics::{
@@ -46,6 +47,8 @@ pub struct PaperExecutor {
     /// action emits a `ProgressEvent`. Send-when-no-subscribers is a
     /// no-op via `send_event`.
     progress: Option<ProgressTx>,
+    /// Optional live-stream event bus for dashboard SSE subscribers.
+    event_bus: Option<Arc<RunEventBus>>,
 }
 
 impl PaperExecutor {
@@ -55,6 +58,7 @@ impl PaperExecutor {
         Self {
             broker,
             progress: None,
+            event_bus: None,
         }
     }
 
@@ -65,12 +69,24 @@ impl PaperExecutor {
         Self {
             broker,
             progress: Some(progress),
+            event_bus: None,
         }
+    }
+
+    pub fn with_event_bus(mut self, bus: Arc<RunEventBus>) -> Self {
+        self.event_bus = Some(bus);
+        self
     }
 
     fn emit(&self, event: ProgressEvent) {
         if let Some(tx) = self.progress.as_ref() {
             send_event(tx, event);
+        }
+    }
+
+    async fn emit_chart(&self, run_id: &str, event: RunChartEvent) {
+        if let Some(bus) = self.event_bus.as_ref() {
+            bus.emit(run_id, event).await;
         }
     }
 }
@@ -116,6 +132,14 @@ impl Executor for PaperExecutor {
             run_id: run.id.clone(),
             estimated_tokens: 0,
         });
+        self.emit_chart(
+            &run.id,
+            RunChartEvent::Status {
+                phase: "running".into(),
+                message: None,
+            },
+        )
+        .await;
 
         let result = self
             .run_inner(run, strategy, scenario, agent_slots, dispatch, tools, store)
@@ -132,12 +156,34 @@ impl Executor for PaperExecutor {
                     metrics: metrics.clone(),
                     tokens_used,
                 });
+                self.emit_chart(
+                    &run.id,
+                    RunChartEvent::Status {
+                        phase: "completed".into(),
+                        message: None,
+                    },
+                )
+                .await;
+                if let Some(bus) = self.event_bus.as_ref() {
+                    bus.drop_channel(&run.id).await;
+                }
             }
             Err(e) => {
                 self.emit(ProgressEvent::RunFailed {
                     run_id: run.id.clone(),
                     error: e.to_string(),
                 });
+                self.emit_chart(
+                    &run.id,
+                    RunChartEvent::Status {
+                        phase: "failed".into(),
+                        message: Some(e.to_string()),
+                    },
+                )
+                .await;
+                if let Some(bus) = self.event_bus.as_ref() {
+                    bus.drop_channel(&run.id).await;
+                }
             }
         }
         result
@@ -287,25 +333,37 @@ impl PaperExecutor {
                 conviction: parsed.conviction,
             });
 
-            store
-                .record_decision(&DecisionRow {
-                    run_id: run.id.clone(),
-                    decision_index: decision_idx,
-                    timestamp: ts,
-                    asset: asset.clone(),
-                    action: parsed.action.clone(),
-                    conviction: Some(parsed.conviction),
-                    justification: Some(parsed.justification.clone()),
-                    order_size,
-                    fill_price,
-                    fill_size,
-                    fee,
-                    pnl_realized: None,
-                })
-                .await?;
+            let decision_row = DecisionRow {
+                run_id: run.id.clone(),
+                decision_index: decision_idx,
+                timestamp: ts,
+                asset: asset.clone(),
+                action: parsed.action.clone(),
+                conviction: Some(parsed.conviction),
+                justification: Some(parsed.justification.clone()),
+                order_size,
+                fill_price,
+                fill_size,
+                fee,
+                pnl_realized: None,
+            };
+            store.record_decision(&decision_row).await?;
+            self.emit_chart(
+                &run.id,
+                RunChartEvent::Decision(LiveDecisionRow::from(&decision_row)),
+            )
+            .await;
 
             let post_balance = self.broker.balance().await?;
             store.record_equity(&run.id, ts, post_balance).await?;
+            self.emit_chart(
+                &run.id,
+                RunChartEvent::Equity(ChartEquityPoint {
+                    time: ts.timestamp(),
+                    equity_usd: post_balance,
+                }),
+            )
+            .await;
             equity_samples.push(post_balance);
 
             // Running drawdown — the running peak is updated after each
