@@ -203,6 +203,66 @@ fn add_agent_set_pipeline_and_remove_agent_roundtrip() {
 }
 
 #[test]
+fn migrate_agents_converts_legacy_slots_to_agent_refs() {
+    let dir = tempdir().unwrap();
+
+    let out = xvn(
+        &[
+            "strategy",
+            "new",
+            "--template",
+            "mean_reversion",
+            "--name",
+            "legacy-slots",
+        ],
+        dir.path(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let strategy_id = String::from_utf8(out.stdout).unwrap().trim().to_string();
+
+    let out = xvn(&["strategy", "migrate-agents", "--dry-run"], dir.path());
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("would migrate"), "stdout: {stdout}");
+    assert!(stdout.contains("regime"), "stdout: {stdout}");
+    assert!(stdout.contains("trader"), "stdout: {stdout}");
+
+    let out = xvn(&["strategy", "migrate-agents"], dir.path());
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("migrated"), "stdout: {stdout}");
+
+    let out = xvn(&["strategy", "validate", &strategy_id], dir.path());
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let out = xvn(&["strategy", "show", &strategy_id], dir.path());
+    assert!(out.status.success());
+    let json = String::from_utf8(out.stdout).unwrap();
+    assert!(json.contains("\"agents\""), "json: {json}");
+    assert!(json.contains("\"pipeline\""), "json: {json}");
+    assert!(json.contains("\"regime\""), "json: {json}");
+    assert!(json.contains("\"trader\""), "json: {json}");
+    assert!(!json.contains("\"regime_slot\""), "json: {json}");
+    assert!(!json.contains("\"trader_slot\""), "json: {json}");
+}
+
+#[test]
 fn run_inline_seeds_with_real_ohlcv_and_indicators() {
     let dir = tempdir().unwrap();
 
