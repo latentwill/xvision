@@ -166,3 +166,11 @@ Avoid:
   authoring/Inspector UI for strategy AgentRefs and pipeline state.
 - Verified with `corepack pnpm --dir frontend/web test -- authoring-risk`,
   frontend typecheck, and `git diff --check`.
+
+### `qa4-surface-consistency`
+
+- Completed checkpoint: `qa4-surface-consistency` commit `350d462` repairs
+  command-palette/frontend route consistency and updates frontend docs.
+- Verified with full frontend test suite, frontend typecheck, frontend build,
+  and `git diff --check`. Rust dashboard verification remains CI/non-deploy
+  follow-up.
