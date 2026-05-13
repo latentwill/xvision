@@ -2,6 +2,7 @@ pub mod ab_compare;
 pub mod asset;
 pub mod bars;
 pub mod dashboard;
+pub mod doctor;
 pub mod eod;
 pub mod eval;
 pub mod fire_trade;

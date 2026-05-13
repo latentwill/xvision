@@ -298,6 +298,7 @@ remote CLI job API or `scripts/xvn-remote.py`.
 ## Strategy authoring (Plan 2a — see crates/xvision-engine/README.md)
 
 ```bash
+xvn doctor [--json]
 xvn strategy templates                 # list templates
 xvn strategy create --template <t> --name <n> [--json]
 xvn strategy create --from-file strategy.json [--json]

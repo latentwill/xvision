@@ -67,6 +67,7 @@ cargo build --release
 ./target/release/xvn migrate
 
 # 3. Check provider config
+./target/release/xvn doctor --json
 ./target/release/xvn provider list
 
 # 4. Configure a strategy from a template
