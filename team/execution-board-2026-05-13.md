@@ -106,9 +106,11 @@ Avoid:
 - Additional checkpoints: `f2786a3` adds `xvn strategy migrate-agents`, and
   `fd1fc0e` executes resolved single/sequential AgentRef pipelines through
   eval and `xvn strategy run`.
-- Inspector can build against AgentRefs now, with two caveats: graph pipeline
-  execution is intentionally not implemented, and `xvn strategy new` still
-  emits legacy slot-shaped drafts until template creation is reworked.
+- Latest checkpoint: `b9c39f1` makes `xvn strategy new` seed template drafts
+  directly as AgentRefs + pipeline, and updates `xvn strategy run` token
+  estimates to derive from resolved agent slots for AgentRef strategies.
+- Inspector can build against AgentRefs; graph pipeline execution is still
+  intentionally not implemented in runtime.
 
 ### `pr94-chart-stabilization`
 
