@@ -11,8 +11,10 @@ import {
   renameStrategyAgentRole,
   removeStrategyAgent,
   setRiskConfig,
+  setStrategyPipeline,
   strategyKeys,
   validateDraft,
+  type PipelineKind,
   type RiskConfig,
   type Strategy,
   type ValidateDraftOut,
@@ -142,9 +144,18 @@ function AgentsCard({ bundle }: { bundle: Strategy }) {
   const [renameRoleTo, setRenameRoleTo] = useState("");
 
   const attached = bundle.agents ?? [];
+  const pipeline = bundle.pipeline ?? { kind: "single" as const, edges: [] };
   const available = (agentPool.data ?? []).filter(
     (a) => !attached.some((r) => r.agent_id === a.agent_id),
   );
+  const graphEdges = pipeline.edges ?? [];
+
+  function invalidateStrategy() {
+    qc.invalidateQueries({ queryKey: strategyKeys.detail(bundle.manifest.id) });
+    qc.invalidateQueries({
+      queryKey: strategyKeys.validate(bundle.manifest.id),
+    });
+  }
 
   const addMut = useMutation({
     mutationFn: (payload: { agent_id: string; role: string }) =>
@@ -152,14 +163,14 @@ function AgentsCard({ bundle }: { bundle: Strategy }) {
     onSuccess: () => {
       setNewAgentId("");
       setNewRole("");
-      qc.invalidateQueries({ queryKey: strategyKeys.detail(bundle.manifest.id) });
+      invalidateStrategy();
     },
   });
 
   const removeMut = useMutation({
     mutationFn: (role: string) => removeStrategyAgent(bundle.manifest.id, role),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: strategyKeys.detail(bundle.manifest.id) });
+      invalidateStrategy();
     },
   });
 
@@ -167,8 +178,14 @@ function AgentsCard({ bundle }: { bundle: Strategy }) {
     mutationFn: (payload: { role: string; newRole: string }) =>
       renameStrategyAgentRole(bundle.manifest.id, payload.role, payload.newRole),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: strategyKeys.detail(bundle.manifest.id) });
+      invalidateStrategy();
     },
+  });
+
+  const pipelineMut = useMutation({
+    mutationFn: (kind: PipelineKind) =>
+      setStrategyPipeline(bundle.manifest.id, { kind, edges: [] }),
+    onSuccess: invalidateStrategy,
   });
 
   function renameRole() {
@@ -181,13 +198,67 @@ function AgentsCard({ bundle }: { bundle: Strategy }) {
     setRenameRoleTo("");
   }
 
+  function onPipelineChange(kind: PipelineKind) {
+    if (kind === pipeline.kind || kind === "graph") return;
+    pipelineMut.mutate(kind);
+  }
+
   return (
     <Card>
       <SectionHeader
         label="Strategy agents"
-        hint="Attach reusable agents and define role names for this strategy."
+        hint="Attach reusable AgentRefs and define the pipeline that executes them."
       />
       <div className="px-5 pb-5 space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-[220px_1fr] gap-3 items-start border border-border-soft rounded p-3">
+          <Field
+            label="Pipeline kind"
+            hint={
+              pipeline.kind === "graph"
+                ? "Graph bundles are view-only here; graph runtime intentionally errors today."
+                : "Single requires one agent. Sequential runs refs in the order below."
+            }
+          >
+            <select
+              className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
+              value={pipeline.kind}
+              onChange={(e) =>
+                onPipelineChange(e.target.value as PipelineKind)
+              }
+              disabled={pipeline.kind === "graph" || pipelineMut.isPending}
+            >
+              <option value="single" disabled={attached.length > 1}>
+                single
+              </option>
+              <option value="sequential">sequential</option>
+              <option value="graph" disabled>
+                graph
+              </option>
+            </select>
+          </Field>
+          <div className="text-[12px] text-text-2 leading-snug">
+            <div>
+              Current:{" "}
+              <span className="font-mono text-text">{pipeline.kind}</span>
+              {pipelineMut.isPending ? " (saving...)" : ""}
+            </div>
+            <div className="mt-1">
+              {attached.length === 0
+                ? "Attach at least one AgentRef before running this strategy."
+                : pipeline.kind === "single"
+                  ? "The first AgentRef is the only executable stage."
+                  : pipeline.kind === "sequential"
+                    ? "Execution order follows the AgentRef list from top to bottom."
+                    : "Graph edges are preserved from the backend, but editing is intentionally deferred."}
+            </div>
+            {pipelineMut.isError ? (
+              <div className="mt-2 text-danger">
+                {errorMessage(pipelineMut.error)}
+              </div>
+            ) : null}
+          </div>
+        </div>
+
         {attached.length === 0 ? (
           <p className="m-0 text-[13px] text-text-3">
             No agents attached yet.
@@ -200,10 +271,17 @@ function AgentsCard({ bundle }: { bundle: Strategy }) {
                 className="border border-border-soft rounded p-3"
               >
                 <div className="flex items-center justify-between gap-2">
-                  <div className="text-[13px]">
-                    <span className="text-text font-mono">{a.role}</span>
-                    <span className="text-text-3"> · </span>
-                    <span className="text-text-2 font-mono">{a.agent_id}</span>
+                  <div className="flex items-center gap-3 text-[13px]">
+                    <span className="inline-flex items-center justify-center w-6 h-6 rounded-full border border-border-soft text-[12px] text-text-2 font-mono">
+                      {attached.indexOf(a) + 1}
+                    </span>
+                    <div>
+                      <span className="text-text font-mono">{a.role}</span>
+                      <span className="text-text-3"> · </span>
+                      <span className="text-text-2 font-mono">
+                        {a.agent_id}
+                      </span>
+                    </div>
                   </div>
                   <div className="flex items-center gap-2">
                     <button
@@ -233,6 +311,22 @@ function AgentsCard({ bundle }: { bundle: Strategy }) {
             ))}
           </div>
         )}
+
+        {pipeline.kind === "graph" && graphEdges.length > 0 ? (
+          <div className="border border-border-soft rounded p-3">
+            <div className="text-[12px] text-text-2 mb-2">Graph edges</div>
+            <div className="flex flex-wrap gap-2">
+              {graphEdges.map((edge) => (
+                <span
+                  key={`${edge.from_role}:${edge.to_role}`}
+                  className="px-2 py-1 rounded border border-border-soft bg-surface-elev text-[12px] font-mono text-text-2"
+                >
+                  {edge.from_role} → {edge.to_role}
+                </span>
+              ))}
+            </div>
+          </div>
+        ) : null}
 
         {renameRoleFrom && (
           <div className="border border-border-soft rounded p-3 space-y-2">
