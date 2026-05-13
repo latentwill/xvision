@@ -15,6 +15,7 @@ import { chartKeys, getRunChart } from "@/api/chart";
 import { RunChart } from "@/components/chart/RunChart";
 import {
   evalKeys,
+  cancelRun,
   deleteRun,
   listRuns,
   startRun,
@@ -289,7 +290,13 @@ function RunsTable({
   const remove = useMutation({
     mutationFn: deleteRun,
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: evalKeys.runs() });
+      qc.invalidateQueries({ queryKey: evalKeys.all });
+    },
+  });
+  const cancel = useMutation({
+    mutationFn: cancelRun,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: evalKeys.all });
     },
   });
 
@@ -347,7 +354,7 @@ function RunsTable({
               <div className="mt-1 text-[12px] text-text-2">
                 {row.mode} · {fmtTime(row.started_at)}
               </div>
-              <div className="mt-2 grid grid-cols-4 gap-2 text-[12px]">
+              <div className="mt-2 grid grid-cols-2 gap-2 text-[12px] min-[420px]:grid-cols-5">
                 <div className="text-text-2">
                   <div className="text-[11px] text-text-3">Sharpe</div>
                   <div className="font-mono text-text">{fmtNumber(row.sharpe)}</div>
@@ -366,12 +373,29 @@ function RunsTable({
                     {fmtDuration(row.started_at, row.completed_at, nowMs)}
                   </div>
                 </div>
+                <div className="text-text-2">
+                  <div className="text-[11px] text-text-3">Tokens</div>
+                  <div className="font-mono text-text">{fmtTokens(row)}</div>
+                </div>
               </div>
 
               <div
-                className="mt-2 flex justify-end"
+                className="mt-2 flex justify-end gap-3"
                 onClick={(e) => e.stopPropagation()}
               >
+                {isInflight(row) ? (
+                  <button
+                    type="button"
+                    aria-label={`Cancel run ${row.id}`}
+                    onClick={() => cancel.mutate(row.id)}
+                    disabled={cancel.variables === row.id && cancel.isPending}
+                    className="text-[12px] text-warn hover:text-text disabled:opacity-50"
+                  >
+                    {cancel.variables === row.id && cancel.isPending
+                      ? "Cancelling..."
+                      : "Cancel"}
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   onClick={() => remove.mutate(row.id)}
@@ -401,6 +425,7 @@ function RunsTable({
               <th className="px-3 py-2.5 text-right font-normal">Sharpe</th>
               <th className="px-3 py-2.5 text-right font-normal">Max DD</th>
               <th className="px-3 py-2.5 text-right font-normal">Return</th>
+              <th className="px-3 py-2.5 text-right font-normal">Tokens</th>
               <th className="px-3 py-2.5 text-right font-normal">Duration</th>
               <th className="px-5 py-2.5 font-normal">Started</th>
               <th className="px-5 py-2.5 text-right font-normal"></th>
@@ -461,6 +486,9 @@ function RunsTable({
                     {fmtPct(row.total_return_pct)}
                   </td>
                   <td className="px-3 py-3 text-right font-mono">
+                    {fmtTokens(row)}
+                  </td>
+                  <td className="px-3 py-3 text-right font-mono">
                     {fmtDuration(row.started_at, row.completed_at, nowMs)}
                   </td>
                   <td className="px-5 py-3 text-[12px] text-text-3">
@@ -470,16 +498,31 @@ function RunsTable({
                     className="px-5 py-3 text-right"
                     onClick={(e) => e.stopPropagation()}
                   >
-                    <button
-                      type="button"
-                      onClick={() => remove.mutate(row.id)}
-                      disabled={remove.variables === row.id && remove.isPending}
-                      className="text-[12px] text-text-3 hover:text-danger disabled:opacity-50"
-                    >
-                      {remove.variables === row.id && remove.isPending
-                        ? "Deleting…"
-                        : "Delete"}
-                    </button>
+                    <div className="flex justify-end gap-3">
+                      {isInflight(row) ? (
+                        <button
+                          type="button"
+                          aria-label={`Cancel run ${row.id}`}
+                          onClick={() => cancel.mutate(row.id)}
+                          disabled={cancel.variables === row.id && cancel.isPending}
+                          className="text-[12px] text-warn hover:text-text disabled:opacity-50"
+                        >
+                          {cancel.variables === row.id && cancel.isPending
+                            ? "Cancelling..."
+                            : "Cancel"}
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() => remove.mutate(row.id)}
+                        disabled={remove.variables === row.id && remove.isPending}
+                        className="text-[12px] text-text-3 hover:text-danger disabled:opacity-50"
+                      >
+                        {remove.variables === row.id && remove.isPending
+                          ? "Deleting…"
+                          : "Delete"}
+                      </button>
+                    </div>
                   </td>
                 </tr>
               );
@@ -793,6 +836,16 @@ function fmtPct(n: number | null | undefined): string {
   if (n == null) return "—";
   const sign = n > 0 ? "+" : "";
   return `${sign}${n.toFixed(2)}%`;
+}
+
+function isInflight(row: RunSummary): boolean {
+  return row.status === "queued" || row.status === "running";
+}
+
+function fmtTokens(row: RunSummary): string {
+  const total =
+    (row.actual_input_tokens ?? 0) + (row.actual_output_tokens ?? 0);
+  return total > 0 ? total.toLocaleString() : "—";
 }
 
 function fmtTime(iso: string): string {

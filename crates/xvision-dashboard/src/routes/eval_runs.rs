@@ -86,6 +86,14 @@ pub async fn delete_run(
     Ok(StatusCode::NO_CONTENT)
 }
 
+pub async fn cancel_run(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<RunSummary>, DashboardError> {
+    let run = eval::cancel(&state.api_context(), &id).await?;
+    Ok(Json(eval::summarise_run(run)))
+}
+
 #[derive(Debug, Deserialize)]
 pub struct CompareParams {
     /// Comma-separated run ids: `?ids=01J…,01K…`. Whitespace around commas

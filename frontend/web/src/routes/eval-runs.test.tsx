@@ -29,6 +29,7 @@ vi.mock("@/api/eval", async () => {
     ...actual,
     listRuns: vi.fn(),
     startRun: vi.fn(),
+    cancelRun: vi.fn(),
   };
 });
 
@@ -244,6 +245,8 @@ describe("EvalRunsRoute", () => {
         max_drawdown_pct: 4.5,
         total_return_pct: 8.1,
         error: null,
+        actual_input_tokens: 1000,
+        actual_output_tokens: 250,
       },
     ]);
 
@@ -251,6 +254,78 @@ describe("EvalRunsRoute", () => {
 
     expect((await screen.findAllByText("Duration")).length).toBeGreaterThan(0);
     expect(screen.getAllByText("1h 15m").length).toBeGreaterThan(0);
+  });
+
+  it("shows live token usage for in-flight runs", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([
+      {
+        id: "01RUN000000000000000000000",
+        agent_id: "01TEST",
+        scenario_id: "crypto-bull-q1-2025",
+        mode: "backtest",
+        status: "running",
+        started_at: "2026-05-13T07:00:00Z",
+        completed_at: null,
+        sharpe: null,
+        max_drawdown_pct: null,
+        total_return_pct: null,
+        error: null,
+        actual_input_tokens: 1200,
+        actual_output_tokens: 345,
+      } as never,
+    ]);
+
+    renderRoute();
+
+    await screen.findByText("1 run");
+    expect(screen.getAllByText("Tokens").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("1,545").length).toBeGreaterThan(0);
+  });
+
+  it("cancels an in-flight eval run from the list", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([
+      {
+        id: "01RUN000000000000000000000",
+        agent_id: "01TEST",
+        scenario_id: "crypto-bull-q1-2025",
+        mode: "backtest",
+        status: "running",
+        started_at: "2026-05-13T07:00:00Z",
+        completed_at: null,
+        sharpe: null,
+        max_drawdown_pct: null,
+        total_return_pct: null,
+        error: null,
+        actual_input_tokens: 1200,
+        actual_output_tokens: 345,
+      } as never,
+    ]);
+    vi.mocked(evalApi.cancelRun).mockResolvedValue({
+      id: "01RUN000000000000000000000",
+      agent_id: "01TEST",
+      scenario_id: "crypto-bull-q1-2025",
+      mode: "backtest",
+      status: "cancelled",
+      started_at: "2026-05-13T07:00:00Z",
+      completed_at: "2026-05-13T07:05:00Z",
+      sharpe: null,
+      max_drawdown_pct: null,
+      total_return_pct: null,
+      error: "cancelled by user",
+      actual_input_tokens: 1200,
+      actual_output_tokens: 345,
+    });
+
+    renderRoute();
+
+    const cancel = await screen.findAllByRole("button", { name: /Cancel run/ });
+    fireEvent.click(cancel[0]);
+
+    await waitFor(() =>
+      expect(vi.mocked(evalApi.cancelRun).mock.calls[0]?.[0]).toBe(
+        "01RUN000000000000000000000",
+      ),
+    );
   });
 
   it("blocks eval launch when no provider with credentials is configured", async () => {
