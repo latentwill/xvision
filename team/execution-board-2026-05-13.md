@@ -46,6 +46,7 @@ Use these as reference only:
 | `qa4-chat-eval-launcher` | `.worktrees/qa4-chat-eval-launcher` | Chat tools + eval launcher preflight/errors | after track 9 preferred | no overlap with track 9 | dashboard/eval tests |
 | `qa4-surface-consistency` | `.worktrees/qa4-surface-consistency` | Wizard/API/list/home/eval consistency | after track 4 preferred | no overlap with tracks 4/8 | dashboard + frontend tests |
 | `strategy-agent-inspector` | `.worktrees/strategy-agent-inspector` | Inspector rebuild for agent composition | track 4 | no | frontend typecheck + authoring smoke |
+| `mobile-safari-load` | `.worktrees/mobile-safari-load` | Mobile Safari still does not load the dashboard | none | no overlap with active frontend tracks | Safari/mobile load repro + frontend test/build smoke |
 
 ## Recommended order
 
@@ -60,6 +61,7 @@ Use these as reference only:
 9. `qa4-surface-consistency`
 10. `qa4-chat-eval-launcher`
 11. `strategy-agent-inspector`
+12. `mobile-safari-load`
 
 ## Immediate start set
 
@@ -73,6 +75,7 @@ Safe to start now:
   longer active
 - `qa4-settings-zero-provider`
 - `qa4-scenarios-4h-bars-ui`
+- `mobile-safari-load`
 
 Wait for `strategy-agent-backend`:
 
@@ -84,6 +87,7 @@ Do not overlap:
 - `strategy-agent-backend` with `qa4-surface-consistency`
 - `strategy-agent-backend` with `strategy-agent-inspector`
 - `qa4-surface-consistency` with `qa4-chat-eval-launcher`
+- `mobile-safari-load` with broad frontend route refactors
 
 ## Cherry-pick policy
 
@@ -220,9 +224,16 @@ Avoid:
 - Verified with focused eval-runs test, frontend typecheck, full frontend test
   suite, and `git diff --check`. Rust checks remain CI/non-deploy follow-up.
 
+### `mobile-safari-load`
+
+- New regression report: mobile still does not load on Safari.
+- Claimed in `.worktrees/mobile-safari-load`; focus on root-cause isolation
+  before changing production code.
+- Initial target surface: Vite/React dashboard startup path and any browser
+  compatibility assumptions that can break iOS Safari before the app renders.
+
 ### Board Closeout
 
-- All ten execution-board tracks now have branch/status checkpoints and clean
+- All previous execution-board tracks now have branch/status checkpoints and clean
   worktrees.
-- No additional unclaimed task remains on this board. New work should be added
-  as a fresh board item or selected from a newer execution board.
+- New open work: `mobile-safari-load`, claimed on 2026-05-13.
