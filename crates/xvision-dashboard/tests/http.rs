@@ -902,16 +902,44 @@ async fn providers_add_rejects_invalid_kind_with_400() {
 }
 
 #[tokio::test]
-async fn providers_remove_refuses_intern_referenced_with_409() {
+async fn providers_remove_default_clears_default_with_204() {
     let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let (server, tmp) = boot().await;
     let cfg = write_config(&tmp);
     let _g = scoped_set("XVN_CONFIG_PATH", cfg.to_str().unwrap());
 
     let response = server.delete("/api/settings/providers/anthropic").await;
-    response.assert_status(axum::http::StatusCode::CONFLICT);
+    response.assert_status(axum::http::StatusCode::NO_CONTENT);
+
+    let list = server.get("/api/settings/providers").await;
+    let body: serde_json::Value = list.json();
+    let items = body["providers"].as_array().unwrap();
+    assert!(items.is_empty());
+    assert_eq!(body["default_model"], serde_json::Value::Null);
+}
+
+#[tokio::test]
+async fn providers_update_edits_row() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let (server, tmp) = boot().await;
+    let cfg = write_config(&tmp);
+    let _g = scoped_set("XVN_CONFIG_PATH", cfg.to_str().unwrap());
+
+    let response = server
+        .put("/api/settings/providers/anthropic")
+        .json(&serde_json::json!({
+            "kind": "anthropic",
+            "base_url": "https://proxy.example/v1",
+            "api_key_env": "ANTHROPIC_PROXY_KEY",
+            "api_key": "sk-updated",
+        }))
+        .await;
+    response.assert_status_ok();
     let body: serde_json::Value = response.json();
-    assert_eq!(body["code"], "conflict");
+    assert_eq!(body["name"], "anthropic");
+    assert_eq!(body["base_url"], "https://proxy.example/v1");
+    assert_eq!(body["api_key_env"], "ANTHROPIC_PROXY_KEY");
+    assert_eq!(body["is_default"], true);
 }
 
 #[tokio::test]
