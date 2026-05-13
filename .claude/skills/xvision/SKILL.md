@@ -1,6 +1,6 @@
 ---
 name: xvision
-description: Orient a Claude Code session in the xvision repo — the `xvn` CLI surface, the intern/trader/risk pipeline vocabulary, where canonical docs live, and the deploy/build constraints that bite if ignored. Use when working in the xvision repo, when the user mentions `xvn`, xvision, intern/trader/risk slots, strategy bundles, eval runs / setups / cycles, Strategy Loom / SLF, ERC-8004 identity, or the dashboard at xvn.tail2bb69.ts.net / xvnej.tail2bb69.ts.net.
+description: Orient a Claude Code session in the xvision repo — the `xvn` CLI surface, the intern/trader/risk pipeline vocabulary, where canonical docs live, and the deploy/build constraints that bite if ignored. Use when working in the xvision repo, when the user mentions `xvn`, xvision, intern/trader/risk roles, strategy artifacts, eval runs / setups / cycles, Strategy Loom / SLF, ERC-8004 identity, or the dashboard at xvn.tail2bb69.ts.net / xvnej.tail2bb69.ts.net.
 ---
 
 # xvision
@@ -23,7 +23,7 @@ Don't grep blindly. The repo has canonical docs — start there:
 
 - `ab-compare` — N-arm backtest, emits `BacktestResult` JSON. The headline run.
 - `metrics` / `gate` — pre-committed metrics + anti-overfit verdict (treatment vs baseline).
-- `strategy` — author / validate / list `StrategyBundle`s (`$XVN_HOME/strategies/<id>.json`).
+- `strategy` — author / validate / list saved `Strategy` artifacts (`$XVN_HOME/strategies/<id>.json`).
 - `dashboard serve` — axum server with the SPA baked in via `rust-embed`. Default bind `0.0.0.0:8788`.
 - `provider` — manage registered LLM providers in `$XVN_HOME/config/default.toml`.
 - `intern` / `trader` / `risk` — preview prompts or run one pipeline stage in isolation.
@@ -44,14 +44,17 @@ Don't grep blindly. The repo has canonical docs — start there:
 |---|---|
 | Per-decision-cycle id | `cycle_id` (NOT `setup_id`) |
 | Local strategy id (pre-NFT-mint) | `agent_id` (ULID; becomes NFT token id post-mint) |
-| Pipeline-config artifact | `StrategyBundle` |
+| Pipeline-config artifact | `Strategy` |
 | Decision producer (eval baseline) | `Algorithm` (NOT `Strategy`) |
 | One A/B arm | `arm` / `Box<dyn Algorithm>` |
 | Trader output | `TraderDecision` |
 | Risk gate verdict | `RiskDecision` (Approved / Modified / Vetoed) |
 | Cycles DB table | `cycles` (formerly `setups`) |
 
-**Pipeline roles** (intern → trader → risk → executor) are NOT renamed. The `xvn strategy` and `xvn setup` CLI verbs are NOT renamed.
+**Pipeline roles** (intern → trader → risk → executor) are valid
+conventions, not hardcoded slot names. The current shipped CLI initializes
+state with `xvn migrate`; interactive setup/onboarding is handled through the
+dashboard wizard and operator runbooks.
 
 ## Build, test, run
 

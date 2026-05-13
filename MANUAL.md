@@ -46,9 +46,8 @@ operator-side prerequisites.
 - **Trigger:** Phase 11.5 prep.
 - **What:**
   1. Complete Orderly's brokered onboarding for an EVM (Mantle) wallet via
-     the Orderly EVM gateway (web flow). The `xvn setup --orderly-onboard`
-     subcommand specced in implementation-plan §6.3 is **not yet shipped**;
-     onboarding is currently manual.
+     the Orderly EVM gateway (web flow). Onboarding is currently manual; the
+     shipped CLI does not expose a brokered onboarding subcommand.
   2. Save `(orderly_key, orderly_secret, orderly_account_id)` in 1Password
      under `xvision/orderly-testnet`.
   3. Export at runtime:
@@ -297,7 +296,7 @@ xvn strategy run <id> --fixture <name> --decisions <N> [--mock]
 ### AI agent drives xvn (Plan 2a)
 
 External AI agents (Claude Code, Hermes, Cursor, Codex) can author the
-same `StrategyBundle`s over MCP without the operator-CLI round-trip:
+same `Strategy` artifacts over MCP without the operator-CLI round-trip:
 
 ```bash
 cargo build --release -p xvision-mcp        # produces target/release/xvn-mcp
@@ -333,7 +332,7 @@ MCP agent.
 
 End-to-end paths beyond this surface (marketplace publishing, live
 trading, batch eval) land in subsequent plans (2c, 3, 5) — they share
-this same bundle format.
+this same saved `Strategy` artifact shape.
 
 ### Eval runs
 
@@ -508,26 +507,30 @@ fixed: contain first, diagnose second, communicate third, post-mortem fourth.
 
 ### 1. Contain (≤ 5 min)
 
-- [ ] Run `xvn kill --all` to halt every dispatcher. New orders blocked.
-- [ ] Decide whether to also `xvn emergency-close --all`. Defaults: YES if
-      "wrong direction" exposure is suspected, NO if you're investigating a
-      tooling glitch with no exposure component.
+- [ ] Disable the affected scheduler/process supervisor or dashboard-triggered
+      run source. The shipped CLI does not yet expose global halt/unhalt
+      commands.
+- [ ] If exposure is open, inspect it with `xvn portfolio --venue <venue>` and
+      close the affected asset with `xvn close-position --venue <venue> --asset <asset>`.
+      Default to closing when "wrong direction" exposure is suspected; avoid
+      closing when investigating a tooling glitch with no exposure component.
 - [ ] Post a one-line status to wherever your status channel is: "Halt at
       <UTC time>; investigating <one-line>." Don't wait for completeness.
 
 ### 2. Diagnose (≤ 30 min)
 
-- [ ] Pull the last hour of audit log: `xvn audit agent --since 1h --all`.
-- [ ] Cross-check positions: `xvn reconcile --user op --dry-run` — server
-      state vs ledger.
+- [ ] Inspect recent eval history with `xvn eval list` and
+      `xvn eval show <run_id>`.
+- [ ] Cross-check venue state with `xvn portfolio --venue <venue>`.
 - [ ] Identify whether the issue is:
       - **Strategy bug** (specific agent producing wrong decisions)
       - **Risk engine miss** (decision passed risk that shouldn't have)
       - **Execution glitch** (signed payload mismatched, fill mismatched)
       - **Broker outage** (Orderly returned 5xx)
       - **Operator error** (wrong CLI command run)
-- [ ] If the issue is constrained to one agent, halt that agent specifically
-      and unhalt the others: `xvn kill --strategy <id>; xvn unhalt --all`.
+- [ ] If the issue is constrained to one strategy, pause that strategy in the
+      scheduler/operator process that launched it. Per-strategy halt/unhalt
+      commands are not part of the shipped CLI surface yet.
 
 ### 3. Communicate (≤ 60 min after detection)
 

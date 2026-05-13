@@ -52,10 +52,10 @@ Implemented in `web/src/routes/`:
 | `/` Home | `home.tsx` | Dashboard — KPI tiles, recent runs |
 | `/setup` | `setup.tsx` | Wizard (chat-driven onboarding + drafting) |
 | `/strategies` | `strategies.tsx` | Drafts list, lineage column |
-| `/authoring/:id` | `authoring.tsx` | Inspector: bundle tree + slot editor |
+| `/authoring/:id` | `authoring.tsx` | Inspector: strategy tree + agent-role editor |
 | `/eval-runs` | `eval-runs.tsx` | Leaderboard with filters + Compare select |
 | `/eval-runs/:id` | `eval-runs-detail.tsx` | Run detail (equity, findings, ledger) |
-| `/eval/compare` | `eval-compare.tsx` | Side-by-side run comparison |
+| `/eval-runs/compare` | `eval-compare.tsx` | Side-by-side run comparison |
 | `/settings/{providers,brokers,danger}` | `settings/*.tsx` | LLM/broker config |
 
 Out of v1: marketplace, autoresearcher dashboard, journal/lab notebook,
@@ -87,9 +87,9 @@ Defined in `prototype/styles.css` and mirrored in `web/src/styles/`:
 
 ## Domain mapping (prototype → xvision crates)
 
-Per `CLAUDE.md` terminology (`cycle_id`, `agent_id`, `StrategyBundle`):
+Per `CLAUDE.md` terminology (`cycle_id`, `agent_id`, `Strategy`):
 
-- "Strategy" in prototype copy = `StrategyBundle` in code
+- "Strategy" in prototype copy = `Strategy` in code
 - Inspector "Layers" (Data / Regime / Intern / Trader / Entry-Exit / Risk / Execution) map to the pipeline crates: `xvision-data`, `xvision-intern`, `xvision-trader`, `xvision-risk`, `xvision-execution`
 - "Run ID" (e.g. `01H8N7Z`) is a ULID; one run produces many `cycle_id`s (briefing → decision → outcome) — see `docs/superpowers/plans/2026-05-10-terminology-rename-option-b.md`
 - The Setup wizard's "Drafting" panel is the user-facing surface of the engine API foundation work in `docs/superpowers/plans/`

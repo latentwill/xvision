@@ -6,7 +6,7 @@ Crate layout, pipeline stages, slot model. Cross-reference: top-level `architect
 
 | Crate | Role |
 |---|---|
-| `xvision-core` | Shared types — `StrategyBundle`, `Algorithm` trait, `Cycle`, `Briefing`, `TraderDecision`, `RiskDecision` |
+| `xvision-core` | Shared types — `Strategy`, `Algorithm` trait, `Cycle`, `Briefing`, `TraderDecision`, `RiskDecision` |
 | `xvision-engine` | Engine + API surface (`crates/xvision-engine/src/api/`) — backtest runner, settings, search, bundle store |
 | `xvision-cli` | `xvn` binary; subcommands under `crates/xvision-cli/src/commands/*.rs` |
 | `xvision-dashboard` | axum HTTP server + embedded SPA; routes under `src/routes/*.rs` |
@@ -23,7 +23,10 @@ Crate layout, pipeline stages, slot model. Cross-reference: top-level `architect
 Cycle (snapshot) ──▶ Intern ──▶ Briefing ──▶ Trader ──▶ TraderDecision ──▶ Risk ──▶ RiskDecision ──▶ Executor ──▶ Venue
 ```
 
-A `StrategyBundle` parameterises each stage as a **slot**: `intern_slot`, `trader_slot`, `risk_slot`, `executor_slot`. A slot carries a prompt, a model_requirement, and an allowed_tools set. Reusable prompt authoring lives on the `Agent` entity (`/agents`, `engine::agents`) — the Plan 2b `xvn skill attach` surface was removed in ADR 0012.
+A `Strategy` references reusable `Agent` records for pipeline roles such as
+intern, trader, risk, and executor. Reusable prompt authoring lives on the
+`Agent` entity (`/agents`, `engine::agents`) — the Plan 2b `xvn skill attach`
+surface was removed in ADR 0012.
 
 ## Intern backends (pick deterministically)
 
@@ -49,7 +52,7 @@ $XVN_HOME/
 ├── xvn.db                # SQLite flight recorder (cycles, briefings, decisions, risk_outcomes, executions, traces)
 ├── config/default.toml   # Provider configs, intern settings, identity toggles
 ├── secrets/              # Mode 0600 — brokers.toml (Alpaca), provider api keys
-├── strategies/           # <agent_id>.json bundles
+├── strategies/           # <agent_id>.json strategy artifacts
 └── skills/               # <name>.md xvision-internal markdown skills
 ```
 
