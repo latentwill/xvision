@@ -49,7 +49,7 @@ Implemented in `web/src/routes/`:
 
 | Route | File | Purpose |
 |---|---|---|
-| `/` Home | `home.tsx` | Dashboard — KPI tiles, recent runs |
+| `/` Dashboard | `home.tsx` | Workspace status, KPI tiles, recent runs |
 | `/setup` | `setup.tsx` | Wizard (chat-driven onboarding + drafting) |
 | `/strategies` | `strategies.tsx` | Drafts list, lineage column |
 | `/authoring/:id` | `authoring.tsx` | Inspector: strategy tree + agent-role editor |
