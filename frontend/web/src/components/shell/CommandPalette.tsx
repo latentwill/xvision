@@ -34,8 +34,8 @@ const MAX_RESULTS = 40;
 // Static page-navigation entries. Always present; filtered client-side by the
 // current query so "strategies" reliably resolves even before the backend
 // index returns any artifact-level hits.
-const STATIC_ACTIONS: SearchHit[] = [
-  { kind: "action", artifact_id: "nav:home", title: "Dashboard", summary: "Home overview", tags: ["nav"], href: "/", updated_at: "", bm25_score: 0 },
+export const STATIC_ACTIONS: SearchHit[] = [
+  { kind: "action", artifact_id: "nav:home", title: "Dashboard", summary: "Workspace status at a glance", tags: ["nav"], href: "/", updated_at: "", bm25_score: 0 },
   { kind: "action", artifact_id: "nav:strategies", title: "Strategies", summary: "Manage strategy bundles", tags: ["nav"], href: "/strategies", updated_at: "", bm25_score: 0 },
   { kind: "action", artifact_id: "nav:scenarios", title: "Scenarios", summary: "Browse and create eval scenarios", tags: ["nav"], href: "/scenarios", updated_at: "", bm25_score: 0 },
   { kind: "action", artifact_id: "nav:setup", title: "New strategy", summary: "Launch the setup wizard", tags: ["nav", "create"], href: "/setup", updated_at: "", bm25_score: 0 },
