@@ -128,6 +128,60 @@ async fn api_context_open_is_idempotent() {
 }
 
 #[tokio::test]
+async fn api_context_open_accepts_already_renamed_eval_agent_schema() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("xvn.db");
+    let url = format!("sqlite://{}?mode=rwc", db_path.display());
+    let pool = SqlitePool::connect(&url).await.unwrap();
+    sqlx::query(
+        "CREATE TABLE eval_runs (
+            id TEXT PRIMARY KEY,
+            agent_id TEXT NOT NULL,
+            scenario_id TEXT NOT NULL,
+            mode TEXT NOT NULL,
+            status TEXT NOT NULL,
+            started_at TEXT,
+            completed_at TEXT,
+            metrics_json TEXT,
+            error TEXT
+        )",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE TABLE eval_attestations (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            agent_id TEXT NOT NULL,
+            scenario_id TEXT NOT NULL,
+            signed_at TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            signature_hex TEXT NOT NULL,
+            public_key_hex TEXT NOT NULL
+        )",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    pool.close().await;
+
+    let ctx = ApiContext::open(dir.path(), Actor::Cli { user: "u".into() })
+        .await
+        .expect("open must not try to rename missing strategy_bundle_hash");
+
+    let columns: Vec<(i64, String, String, i64, Option<String>, i64)> =
+        sqlx::query_as("PRAGMA table_info(eval_runs)")
+        .fetch_all(&ctx.db)
+        .await
+        .unwrap();
+    assert!(columns.iter().any(|(_, name, _, _, _, _)| name == "agent_id"));
+    assert!(!columns
+        .iter()
+        .any(|(_, name, _, _, _, _)| name == "strategy_bundle_hash"));
+}
+
+#[tokio::test]
 async fn api_context_open_creates_xvn_home_dir_if_missing() {
     let parent = tempfile::tempdir().unwrap();
     let nested = parent.path().join("nested/.xvn");

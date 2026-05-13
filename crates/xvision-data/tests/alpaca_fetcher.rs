@@ -1,7 +1,53 @@
 use chrono::{TimeZone, Utc};
+use std::str::FromStr;
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 use xvision_data::alpaca::{AlpacaBarsFetcher, BarGranularity, FetchError};
+
+#[test]
+fn bar_granularity_parses_supported_alpaca_timeframes() {
+    assert_eq!(
+        BarGranularity::from_str("1m").unwrap().as_alpaca_str(),
+        "1Min"
+    );
+    assert_eq!(
+        BarGranularity::from_str("59Min").unwrap().as_alpaca_str(),
+        "59Min"
+    );
+    assert_eq!(
+        BarGranularity::from_str("23h").unwrap().as_alpaca_str(),
+        "23Hour"
+    );
+    assert_eq!(
+        BarGranularity::from_str("1w").unwrap().as_alpaca_str(),
+        "1Week"
+    );
+    assert_eq!(
+        BarGranularity::from_str("12mo").unwrap().as_alpaca_str(),
+        "12Month"
+    );
+    assert_eq!(
+        BarGranularity::from_str("12M").unwrap().as_alpaca_str(),
+        "12Month"
+    );
+}
+
+#[test]
+fn bar_granularity_rejects_unsupported_alpaca_timeframes() {
+    assert!(BarGranularity::from_str("60m").is_err());
+    assert!(BarGranularity::from_str("24h").is_err());
+    assert!(BarGranularity::from_str("2d").is_err());
+    assert!(BarGranularity::from_str("2w").is_err());
+    assert!(BarGranularity::from_str("5mo").is_err());
+}
+
+#[test]
+fn bar_granularity_deserializes_legacy_variant_names() {
+    let g: BarGranularity = serde_json::from_str("\"Hour4\"").unwrap();
+
+    assert_eq!(g, BarGranularity::Hour4);
+    assert_eq!(serde_json::to_string(&g).unwrap(), "\"4h\"");
+}
 
 #[tokio::test]
 async fn fetch_crypto_bars_single_page() {

@@ -108,6 +108,105 @@ fn new_validate_ls_show_roundtrip() {
 }
 
 #[test]
+fn create_alias_is_noninteractive_strategy_create() {
+    let dir = tempdir().unwrap();
+
+    let out = xvn(
+        &[
+            "strategy",
+            "create",
+            "--template",
+            "mean_reversion",
+            "--name",
+            "alias-create",
+        ],
+        dir.path(),
+    );
+
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let id = String::from_utf8(out.stdout).unwrap().trim().to_string();
+    assert!(id.starts_with("01"), "expected ULID, got: {id}");
+}
+
+#[test]
+fn create_and_ls_json_are_machine_readable() {
+    let dir = tempdir().unwrap();
+
+    let out = xvn(
+        &[
+            "strategy",
+            "create",
+            "--template",
+            "mean_reversion",
+            "--name",
+            "json-create",
+            "--json",
+        ],
+        dir.path(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let body: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let id = body["id"].as_str().expect("id field").to_string();
+    assert!(id.starts_with("01"), "body: {body}");
+    assert_eq!(body["strategy"]["manifest"]["id"], id);
+
+    let out = xvn(&["strategy", "ls", "--json"], dir.path());
+    assert!(out.status.success());
+    let ids: Vec<String> = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(ids.contains(&id), "ids: {ids:?}");
+}
+
+#[test]
+fn create_from_full_strategy_json_file() {
+    let source = tempdir().unwrap();
+    let out = xvn(
+        &[
+            "strategy",
+            "create",
+            "--template",
+            "mean_reversion",
+            "--name",
+            "json-source",
+            "--json",
+        ],
+        source.path(),
+    );
+    assert!(out.status.success());
+    let body: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let strategy = body["strategy"].clone();
+
+    let target = tempdir().unwrap();
+    let file = target.path().join("strategy.json");
+    std::fs::write(&file, serde_json::to_vec_pretty(&strategy).unwrap()).unwrap();
+    let out = xvn(
+        &[
+            "strategy",
+            "create",
+            "--from-file",
+            file.to_str().unwrap(),
+            "--json",
+        ],
+        target.path(),
+    );
+
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let created: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(created["id"], strategy["manifest"]["id"]);
+}
+
+#[test]
 fn templates_lists_known_templates() {
     let dir = tempdir().unwrap();
     let out = xvn(&["strategy", "templates"], dir.path());
@@ -115,6 +214,27 @@ fn templates_lists_known_templates() {
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(stdout.contains("mean_reversion"));
     assert!(stdout.contains("Buys dips")); // display_name
+}
+
+#[test]
+fn templates_json_exposes_registry_version_and_summaries() {
+    let dir = tempdir().unwrap();
+    let out = xvn(&["strategy", "templates", "--json"], dir.path());
+    assert!(out.status.success());
+    let body: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(body["registry_version"], registry::registry_version());
+    let templates = body["templates"].as_array().expect("templates array");
+    let mean_reversion = templates
+        .iter()
+        .find(|template| template["name"] == "mean_reversion")
+        .expect("mean_reversion template");
+    assert_eq!(mean_reversion["display_name"], "Buys dips");
+    assert!(
+        mean_reversion["plain_summary"]
+            .as_str()
+            .expect("plain_summary")
+            .contains("sideways markets")
+    );
 }
 
 #[test]

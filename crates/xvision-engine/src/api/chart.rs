@@ -683,7 +683,6 @@ pub async fn build_scenario_payload(
     id: &str,
 ) -> ApiResult<ScenarioChartPayload> {
     use crate::api::scenario as api_scenario;
-    use xvision_data::alpaca::BarGranularity;
 
     let scenario = api_scenario::get(ctx, id).await?;
 
@@ -691,13 +690,7 @@ pub async fn build_scenario_payload(
     let window_secs = (scenario.time_window.end - scenario.time_window.start)
         .num_seconds()
         .max(0) as u64;
-    let bar_secs: u64 = match scenario.granularity {
-        BarGranularity::Hour1 => 3600,
-        BarGranularity::Hour4 => 14_400,
-        BarGranularity::Day1 => 86_400,
-        // Fallback for future granularities — treat as hourly.
-        _ => 3600,
-    };
+    let bar_secs = scenario.granularity.seconds();
     let expected_count = (window_secs / bar_secs) as u32;
 
     // Query bars_cache for cache status metadata — don't go through
@@ -1140,7 +1133,7 @@ pub struct PreviewQuery {
     pub asset: String,
     pub from: String,        // YYYY-MM-DD
     pub to: String,
-    pub granularity: String, // "1h" | "4h" | "1d"
+    pub granularity: String,
     pub baseline: Option<bool>,
 }
 
@@ -1165,17 +1158,10 @@ pub async fn build_scenario_preview(
         return Err(ApiError::Validation("from must be < to".into()));
     }
 
-    // Granularity.
-    let g = match q.granularity.as_str() {
-        "1h" => xvision_data::alpaca::BarGranularity::Hour1,
-        "4h" => xvision_data::alpaca::BarGranularity::Hour4,
-        "1d" => xvision_data::alpaca::BarGranularity::Day1,
-        other => {
-            return Err(ApiError::Validation(format!(
-                "granularity '{other}' not in v1 set; allowed: 1h, 4h, 1d"
-            )))
-        }
-    };
+    let g = q
+        .granularity
+        .parse::<xvision_data::alpaca::BarGranularity>()
+        .map_err(ApiError::Validation)?;
 
     // Asset whitelist.
     if !xvision_data::asset_whitelist::is_alpaca_crypto_supported(&q.asset) {
@@ -1251,7 +1237,7 @@ pub async fn build_scenario_preview(
     Ok(ScenarioPreviewPayload {
         cache_key,
         asset: q.asset,
-        granularity: q.granularity,
+        granularity: g.canonical(),
         bars,
         cache_status,
         baseline_equity,
@@ -1264,11 +1250,6 @@ fn preview_expected_bar_count(
     g: xvision_data::alpaca::BarGranularity,
 ) -> u32 {
     let secs = (to - from).num_seconds().max(0) as u64;
-    let bar_secs: u64 = match g {
-        xvision_data::alpaca::BarGranularity::Hour1 => 3600,
-        xvision_data::alpaca::BarGranularity::Hour4 => 14_400,
-        xvision_data::alpaca::BarGranularity::Day1 => 86_400,
-        _ => 3600,
-    };
+    let bar_secs = g.seconds();
     (secs / bar_secs) as u32
 }

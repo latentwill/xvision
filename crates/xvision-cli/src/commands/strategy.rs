@@ -1,6 +1,5 @@
 //! `xvn strategy ...` — strategy authoring subcommands.
 
-use std::env;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -33,25 +32,40 @@ pub struct StrategyCmd {
 #[derive(Subcommand, Debug)]
 enum StrategyAction {
     /// Create a new strategy draft from a template.
+    #[command(visible_alias = "create")]
     New {
+        /// Load a full Strategy object from a JSON or TOML file.
         #[arg(long)]
-        template: String,
+        from_file: Option<PathBuf>,
         #[arg(long)]
-        name: String,
+        template: Option<String>,
+        #[arg(long)]
+        name: Option<String>,
         #[arg(long)]
         creator: Option<String>,
+        /// Emit the created strategy as JSON.
+        #[arg(long)]
+        json: bool,
     },
     /// Validate a saved strategy by id.
     Validate { id: String },
     /// List all saved strategy ids.
-    Ls,
+    Ls {
+        /// Emit as JSON array instead of one id per line.
+        #[arg(long)]
+        json: bool,
+    },
     /// Show a saved strategy as JSON.
     Show { id: String },
     /// List available strategy templates.
-    Templates,
+    Templates {
+        /// Emit the template registry and entries as JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Add a library agent reference to a strategy.
     AddAgent {
-        /// Strategy id returned from `xvn strategy new`.
+        /// Strategy id returned from `xvn strategy create`.
         strategy_id: String,
         /// Agent id from the workspace agent library.
         agent_id: String,
@@ -61,7 +75,7 @@ enum StrategyAction {
     },
     /// Remove an agent reference by role.
     RemoveAgent {
-        /// Strategy id returned from `xvn strategy new`.
+        /// Strategy id returned from `xvn strategy create`.
         strategy_id: String,
         /// Role to remove from the strategy.
         #[arg(long)]
@@ -69,7 +83,7 @@ enum StrategyAction {
     },
     /// Set the strategy pipeline kind and optional graph edges.
     SetPipeline {
-        /// Strategy id returned from `xvn strategy new`.
+        /// Strategy id returned from `xvn strategy create`.
         strategy_id: String,
         /// `single`, `sequential`, or `graph`.
         #[arg(long)]
@@ -86,7 +100,7 @@ enum StrategyAction {
     },
     /// Run a saved strategy inline against a fixture (decision_points iterations).
     Run {
-        /// Strategy id (ULID) returned from `xvn strategy new`.
+        /// Strategy id (ULID) returned from `xvn strategy create`.
         id: String,
         /// Fixture parquet name under data/probes/ (without .parquet).
         #[arg(long)]
@@ -102,11 +116,17 @@ enum StrategyAction {
 
 pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
     match cmd.action {
-        StrategyAction::New { template, name, creator } => new(&template, &name, creator).await,
+        StrategyAction::New {
+            from_file,
+            template,
+            name,
+            creator,
+            json,
+        } => new(from_file, template, name, creator, json).await,
         StrategyAction::Validate { id } => validate(&id).await,
-        StrategyAction::Ls => ls().await,
+        StrategyAction::Ls { json } => ls(json).await,
         StrategyAction::Show { id } => show(&id).await,
-        StrategyAction::Templates => templates().await,
+        StrategyAction::Templates { json } => templates(json).await,
         StrategyAction::AddAgent { strategy_id, agent_id, role } => {
             add_agent(&strategy_id, &agent_id, &role).await
         }
@@ -124,11 +144,7 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
 }
 
 fn home() -> PathBuf {
-    if let Ok(p) = env::var("XVN_HOME") {
-        return PathBuf::from(p);
-    }
-    let h = dirs::home_dir().expect("$HOME");
-    h.join(".xvn")
+    crate::commands::home::resolve_xvn_home_env().expect("resolve XVN_HOME")
 }
 
 fn store() -> FilesystemStore {
@@ -187,17 +203,56 @@ fn parse_edge(raw: &str) -> CliResult<PipelineEdge> {
     })
 }
 
-async fn new(template: &str, name: &str, creator: Option<String>) -> CliResult<()> {
-    let tpl = registry::get(template).ok_or_else(|| {
+async fn new(
+    from_file: Option<PathBuf>,
+    template: Option<String>,
+    name: Option<String>,
+    creator: Option<String>,
+    json: bool,
+) -> CliResult<()> {
+    if let Some(path) = from_file {
+        let strategy = load_strategy_file(&path)?;
+        validate_strategy(&strategy).exit_with(XvnExit::Usage)?;
+        store()
+            .save(&strategy)
+            .await
+            .exit_with(XvnExit::Upstream)?;
+        let id = strategy.manifest.id.clone();
+        if json {
+            let out = serde_json::json!({
+                "id": id,
+                "strategy": strategy,
+            });
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&out).exit_with(XvnExit::Upstream)?
+            );
+        } else {
+            println!("{id}");
+        }
+        return Ok(());
+    }
+
+    let template = template.ok_or_else(|| {
+        CliError::usage(anyhow::anyhow!(
+            "strategy create requires --template unless --from-file is set"
+        ))
+    })?;
+    let name = name.ok_or_else(|| {
+        CliError::usage(anyhow::anyhow!(
+            "strategy create requires --name unless --from-file is set"
+        ))
+    })?;
+    let tpl = registry::get(&template).ok_or_else(|| {
         CliError::usage(anyhow::anyhow!(
             "unknown template '{template}' — try `xvn strategy templates`"
         ))
     })?;
     let id = Ulid::new().to_string();
     let creator = creator
-        .or_else(|| env::var("XVN_CREATOR").ok())
+        .or_else(|| std::env::var("XVN_CREATOR").ok())
         .unwrap_or_else(|| "@anonymous".to_string());
-    let mut draft = tpl.new_draft(id.clone(), name.to_string(), creator);
+    let mut draft = tpl.new_draft(id.clone(), name.clone(), creator);
     let legacy = legacy_slots(&draft);
     if draft.agents.is_empty() && !legacy.is_empty() {
         let ctx = open_ctx().await?;
@@ -219,7 +274,7 @@ async fn new(template: &str, name: &str, creator: Option<String>) -> CliResult<(
                 },
             )
             .await
-            .map_err(|e| api_to_cli("strategy new", e))?;
+            .map_err(|e| api_to_cli("strategy create", e))?;
             agent_refs.push(AgentRef {
                 agent_id: agent.agent_id,
                 role,
@@ -237,8 +292,30 @@ async fn new(template: &str, name: &str, creator: Option<String>) -> CliResult<(
     }
     validate_strategy(&draft).exit_with(XvnExit::Usage)?;
     store().save(&draft).await.exit_with(XvnExit::Upstream)?;
+    if json {
+        let out = serde_json::json!({
+            "id": id,
+            "strategy": draft,
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&out).exit_with(XvnExit::Upstream)?
+        );
+        return Ok(());
+    }
     println!("{id}");
     Ok(())
+}
+
+fn load_strategy_file(path: &std::path::Path) -> CliResult<xvision_engine::strategies::Strategy> {
+    let body = std::fs::read_to_string(path)
+        .map_err(|e| CliError::usage(anyhow::anyhow!("read {}: {e}", path.display())))?;
+    match path.extension().and_then(|ext| ext.to_str()) {
+        Some("toml") => toml::from_str(&body)
+            .map_err(|e| CliError::usage(anyhow::anyhow!("parse TOML: {e}"))),
+        _ => serde_json::from_str(&body)
+            .map_err(|e| CliError::usage(anyhow::anyhow!("parse JSON: {e}"))),
+    }
 }
 
 async fn validate(id: &str) -> CliResult<()> {
@@ -248,8 +325,15 @@ async fn validate(id: &str) -> CliResult<()> {
     Ok(())
 }
 
-async fn ls() -> CliResult<()> {
+async fn ls(json: bool) -> CliResult<()> {
     let ids = store().list().await.exit_with(XvnExit::Upstream)?;
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&ids).exit_with(XvnExit::Upstream)?
+        );
+        return Ok(());
+    }
     for id in ids {
         println!("{id}");
     }
@@ -263,8 +347,31 @@ async fn show(id: &str) -> CliResult<()> {
     Ok(())
 }
 
-async fn templates() -> CliResult<()> {
+async fn templates(json: bool) -> CliResult<()> {
     let names = registry::list_template_names();
+    if json {
+        let templates = names
+            .iter()
+            .filter_map(|name| {
+                registry::get(name).map(|tpl| {
+                    serde_json::json!({
+                        "name": tpl.name(),
+                        "display_name": tpl.display_name(),
+                        "plain_summary": tpl.plain_summary(),
+                    })
+                })
+            })
+            .collect::<Vec<_>>();
+        let out = serde_json::json!({
+            "registry_version": registry::registry_version(),
+            "templates": templates,
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&out).exit_with(XvnExit::Upstream)?
+        );
+        return Ok(());
+    }
     for name in names {
         if let Some(tpl) = registry::get(&name) {
             println!("{:<20} {}", name, tpl.display_name());

@@ -12,7 +12,7 @@ const DEFAULT_DRAFT: ScenarioFormDraft = {
   asset: "ETH",
   from: "",
   to: "",
-  granularity: "Hour1",
+  granularity: "1h",
 };
 
 export function ScenariosNewRoute() {
@@ -50,21 +50,10 @@ export function ScenariosNewRoute() {
           asset={draft.asset}
           from={draft.from}
           to={draft.to}
-          granularity={scenarioGranularityToPreview(draft.granularity)}
+          granularity={draft.granularity}
           includeBaseline
         />
       </div>
     </>
   );
-}
-
-function scenarioGranularityToPreview(granularity: ScenarioFormDraft["granularity"]) {
-  switch (granularity) {
-    case "Hour1":
-      return "1h";
-    case "Hour4":
-      return "4h";
-    case "Day1":
-      return "1d";
-  }
 }

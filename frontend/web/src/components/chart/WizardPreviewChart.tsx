@@ -11,7 +11,7 @@ type Props = {
   asset: string;
   from: string;
   to: string;
-  granularity: '1h' | '4h' | '1d';
+  granularity: string;
   includeBaseline?: boolean;
 };
 
@@ -179,12 +179,5 @@ function emptyIndicators(): ScenarioChartPayload['indicators'] {
 }
 
 function previewGranularityToScenario(granularity: Props['granularity']) {
-  switch (granularity) {
-    case '1h':
-      return 'Hour1';
-    case '4h':
-      return 'Hour4';
-    case '1d':
-      return 'Day1';
-  }
+  return granularity;
 }

@@ -29,19 +29,9 @@ pub struct MigrateCmd {
     pub xvn_home: Option<PathBuf>,
 }
 
-fn resolve_xvn_home(override_path: Option<PathBuf>) -> Result<PathBuf> {
-    if let Some(p) = override_path {
-        return Ok(p);
-    }
-    if let Ok(p) = std::env::var("XVN_HOME") {
-        return Ok(PathBuf::from(p));
-    }
-    let home = dirs::home_dir().context("HOME not set; pass --xvn-home")?;
-    Ok(home.join(".xvn"))
-}
-
 pub async fn run(cmd: MigrateCmd) -> CliResult<()> {
-    let xvn_home = resolve_xvn_home(cmd.xvn_home).exit_with(XvnExit::Usage)?;
+    let xvn_home =
+        crate::commands::home::resolve_xvn_home(cmd.xvn_home).exit_with(XvnExit::Usage)?;
 
     if cmd.dry_run {
         run_dry(xvn_home).await.exit_with(XvnExit::Upstream)

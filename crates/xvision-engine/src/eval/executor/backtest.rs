@@ -210,6 +210,20 @@ impl Executor for BacktestExecutor {
                 }
             }
             Err(e) => {
+                if matches!(store.is_cancelled(&run.id).await, Ok(true)) {
+                    self.emit_chart(
+                        &run.id,
+                        RunChartEvent::Status {
+                            phase: "cancelled".into(),
+                            message: Some("cancelled by user".into()),
+                        },
+                    )
+                    .await;
+                    if let Some(bus) = self.event_bus.as_ref() {
+                        bus.drop_channel(&run.id).await;
+                    }
+                    return result;
+                }
                 self.emit(ProgressEvent::RunFailed {
                     run_id: run.id.clone(),
                     error: e.to_string(),
@@ -316,6 +330,9 @@ impl BacktestExecutor {
             if i < WARMUP_BARS {
                 continue;
             }
+            if store.is_cancelled(&run.id).await? {
+                anyhow::bail!("eval run cancelled");
+            }
             // Cadence gate: only fire on bars whose minute-aligned timestamp
             // is divisible by the strategy's cadence. With hourly bars and
             // 60-min cadence this always matches.
@@ -359,6 +376,15 @@ impl BacktestExecutor {
             .await?;
             total_input_tokens += outs.total_input_tokens as u64;
             total_output_tokens += outs.total_output_tokens as u64;
+            run.actual_input_tokens = Some(total_input_tokens);
+            run.actual_output_tokens = Some(total_output_tokens);
+            store
+                .update_token_usage(&run.id, total_input_tokens, total_output_tokens)
+                .await?;
+
+            if store.is_cancelled(&run.id).await? {
+                anyhow::bail!("eval run cancelled");
+            }
 
             let parsed = outs
                 .trader
@@ -534,6 +560,10 @@ impl BacktestExecutor {
             });
 
             decision_idx += 1;
+        }
+
+        if store.is_cancelled(&run.id).await? {
+            anyhow::bail!("eval run cancelled");
         }
 
         let returns = equity_to_returns(&equity_curve);

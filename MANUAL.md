@@ -298,11 +298,13 @@ remote CLI job API or `scripts/xvn-remote.py`.
 ## Strategy authoring (Plan 2a — see crates/xvision-engine/README.md)
 
 ```bash
-xvn strategy templates                 # list templates
-xvn strategy new --template <t> --name <n>
+xvn doctor [--json]
+xvn strategy templates [--json]        # list templates
+xvn strategy create --template <t> --name <n> [--json]
+xvn strategy create --from-file strategy.json [--json]
 xvn strategy validate <id>
 xvn strategy show <id>
-xvn strategy ls
+xvn strategy ls [--json]
 xvn strategy run <id> --fixture <name> --decisions <N> [--mock]
 ```
 
@@ -353,8 +355,11 @@ The shipped eval surface is available through both the dashboard and the CLI:
 
 ```bash
 xvn eval run --strategy <id> --scenario crypto-bull-q1-2025 --mode backtest
-xvn eval list
-xvn eval show <run_id>
+xvn eval validate --strategy <id> --scenario crypto-bull-q1-2025 --mode backtest
+xvn eval list [--json]
+xvn eval get <run_id> [--json]
+xvn eval watch <run_id> [--once] [--json]
+xvn eval results <run_id> [--json]
 xvn eval compare <run_id_a> <run_id_b>
 ```
 
@@ -380,7 +385,7 @@ default to exit 5 on any error pending per-command opt-in.
 
 ```bash
 xvn strategy show 01BAD; echo $?      # 4
-xvn eval show 01BAD; echo $?          # 4
+xvn eval get 01BAD; echo $?           # 4
 ```
 
 ---
@@ -533,7 +538,7 @@ fixed: contain first, diagnose second, communicate third, post-mortem fourth.
 ### 2. Diagnose (≤ 30 min)
 
 - [ ] Inspect recent eval history with `xvn eval list` and
-      `xvn eval show <run_id>`.
+      `xvn eval get <run_id>`.
 - [ ] Cross-check venue state with `xvn portfolio --venue <venue>`.
 - [ ] Identify whether the issue is:
       - **Strategy bug** (specific agent producing wrong decisions)

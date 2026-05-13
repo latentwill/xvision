@@ -58,7 +58,7 @@ function renderRail(path = "/strategies") {
   );
 }
 
-const routeScope = { scope: "route", route: "/strategies" } as const;
+const workspaceScope = { scope: "workspace" } as const;
 
 beforeEach(() => {
   localStorage.clear();
@@ -66,7 +66,7 @@ beforeEach(() => {
   vi.mocked(chatApi.listSessions).mockResolvedValue([
     {
       id: "old-session",
-      scope: routeScope,
+      scope: workspaceScope,
       started_at: "2026-05-13T00:00:00Z",
       last_activity_at: "2026-05-13T00:05:00Z",
     },
@@ -111,7 +111,7 @@ describe("ChatRail", () => {
     renderRail();
 
     expect(await screen.findByText("previous question")).toBeInTheDocument();
-    const composer = screen.getByPlaceholderText(/ask about this page/i);
+    const composer = screen.getByPlaceholderText(/ask anything about your workspace/i);
     fireEvent.change(composer, {
       target: { value: "draft text" },
     });
@@ -119,11 +119,30 @@ describe("ChatRail", () => {
     fireEvent.click(screen.getByRole("button", { name: "New chat" }));
 
     await waitFor(() => {
-      expect(chatApi.createSession).toHaveBeenCalledWith(routeScope);
+      expect(chatApi.createSession).toHaveBeenCalledWith(workspaceScope);
     });
     expect(chatApi.deleteSession).not.toHaveBeenCalled();
-    expect(screen.getByPlaceholderText(/ask about this page/i)).toHaveValue("");
+    expect(
+      screen.getByPlaceholderText(/ask anything about your workspace/i),
+    ).toHaveValue("");
     expect(await screen.findByText(/No messages yet/i)).toBeInTheDocument();
+  });
+
+  it("uses one shared workspace session on list and Inspector routes", async () => {
+    renderRail("/authoring/01TEST");
+
+    await waitFor(() => {
+      expect(chatApi.resolveSession).toHaveBeenCalledWith(workspaceScope);
+    });
+
+    cleanup();
+    vi.mocked(chatApi.resolveSession).mockClear();
+
+    renderRail("/strategies");
+
+    await waitFor(() => {
+      expect(chatApi.resolveSession).toHaveBeenCalledWith(workspaceScope);
+    });
   });
 
   it("does not block app startup when Safari storage access is unavailable", () => {

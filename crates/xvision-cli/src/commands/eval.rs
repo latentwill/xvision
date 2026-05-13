@@ -3,10 +3,12 @@
 //! the dashboard-backed eval routes.
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 use xvision_engine::api::eval::{self, CompareRunsRequest, EvalRunRequest, ListRunsRequest};
+use xvision_engine::api::{scenario as api_scenario, strategy as api_strategy};
 use xvision_engine::api::{Actor, ApiContext, ApiError};
 use xvision_engine::eval::run::{RunMode, RunStatus};
 
@@ -43,11 +45,18 @@ pub enum Op {
     /// List eval runs (most recent first).
     List(ListArgs),
     /// Show a single run by id.
+    #[command(visible_alias = "get")]
     Show(ShowArgs),
+    /// Show final run metrics/results by id.
+    Results(ShowArgs),
+    /// Poll a run until it reaches a terminal state.
+    Watch(WatchArgs),
     /// List canonical scenarios packaged with this binary.
     Scenarios(ScenariosArgs),
     /// Compare 2+ completed runs side-by-side (metrics + equity + findings).
     Compare(CompareArgs),
+    /// Validate an eval run request without launching it.
+    Validate(ValidateArgs),
     /// Sign + persist an EvalAttestation for a completed run.
     Attest(AttestArgs),
 }
@@ -103,6 +112,24 @@ pub struct ShowArgs {
 }
 
 #[derive(Args, Debug)]
+pub struct WatchArgs {
+    /// Run id (ULID).
+    pub run_id: String,
+    /// Override the xvn home directory.
+    #[arg(long)]
+    pub xvn_home: Option<PathBuf>,
+    /// Seconds between polls.
+    #[arg(long, default_value_t = 2)]
+    pub interval_secs: u64,
+    /// Poll once and exit.
+    #[arg(long)]
+    pub once: bool,
+    /// Output the final/observed Run as JSON.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Args, Debug)]
 pub struct ScenariosArgs {
     /// Override the xvn home directory.
     #[arg(long)]
@@ -127,6 +154,25 @@ pub struct CompareArgs {
 }
 
 #[derive(Args, Debug)]
+pub struct ValidateArgs {
+    /// Strategy agent id from `xvn strategy ls`.
+    #[arg(long)]
+    pub strategy: String,
+    /// Scenario id from `xvn scenario ls`.
+    #[arg(long)]
+    pub scenario: String,
+    /// Run mode: `paper` or `backtest`.
+    #[arg(long, default_value = "paper")]
+    pub mode: String,
+    /// Override the xvn home directory.
+    #[arg(long)]
+    pub xvn_home: Option<PathBuf>,
+    /// Emit a JSON validation report.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Args, Debug)]
 pub struct AttestArgs {
     /// Run id (ULID) of a completed run with metrics.
     pub run_id: String,
@@ -145,8 +191,11 @@ pub async fn run(cmd: EvalCmd) -> CliResult<()> {
         Op::Run(args) => run_run(args).await,
         Op::List(args) => run_list(args).await,
         Op::Show(args) => run_show(args).await,
+        Op::Results(args) => run_show(args).await,
+        Op::Watch(args) => run_watch(args).await,
         Op::Scenarios(args) => run_scenarios(args).await,
         Op::Compare(args) => run_compare(args).await,
+        Op::Validate(args) => run_validate(args).await,
         Op::Attest(args) => run_attest(args).await,
     }
 }
@@ -201,19 +250,8 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
     Ok(())
 }
 
-fn resolve_xvn_home(override_path: Option<PathBuf>) -> Result<PathBuf> {
-    if let Some(p) = override_path {
-        return Ok(p);
-    }
-    if let Ok(p) = std::env::var("XVN_HOME") {
-        return Ok(PathBuf::from(p));
-    }
-    let home = dirs::home_dir().context("HOME not set; pass --xvn-home")?;
-    Ok(home.join(".xvn"))
-}
-
 async fn open_ctx(override_path: Option<PathBuf>) -> Result<ApiContext> {
-    let xvn_home = resolve_xvn_home(override_path)?;
+    let xvn_home = crate::commands::home::resolve_xvn_home(override_path)?;
     let user = std::env::var("USER")
         .or_else(|_| std::env::var("USERNAME"))
         .unwrap_or_else(|_| "operator".to_string());
@@ -294,6 +332,57 @@ async fn run_show(args: ShowArgs) -> CliResult<()> {
     Ok(())
 }
 
+async fn run_watch(args: WatchArgs) -> CliResult<()> {
+    let ctx = open_ctx(args.xvn_home.clone())
+        .await
+        .exit_with(XvnExit::Upstream)?;
+    let interval = Duration::from_secs(args.interval_secs.max(1));
+
+    loop {
+        let run = eval::get(&ctx, &args.run_id)
+            .await
+            .map_err(|e| api_to_cli("eval watch", e))?;
+        if args.json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&run).exit_with(XvnExit::Upstream)?
+            );
+        } else {
+            print_run_status_line(&run);
+        }
+
+        if args.once || run.status.is_terminal() {
+            return Ok(());
+        }
+        tokio::time::sleep(interval).await;
+    }
+}
+
+fn print_run_status_line(run: &xvision_engine::eval::run::Run) {
+    let mut line = format!(
+        "{}\t{}\t{}\t{}",
+        run.id,
+        run.status.as_str(),
+        run.mode.as_str(),
+        run.scenario_id
+    );
+    if let Some(metrics) = run.metrics.as_ref() {
+        line.push_str(&format!(
+            "\treturn={:.2}%\tsharpe={:.3}\tmax_dd={:.2}%\twin_rate={:.2}\ttrades={}\tdecisions={}",
+            metrics.total_return_pct,
+            metrics.sharpe,
+            metrics.max_drawdown_pct,
+            metrics.win_rate,
+            metrics.n_trades,
+            metrics.n_decisions
+        ));
+    }
+    if let Some(error) = run.error.as_deref() {
+        line.push_str(&format!("\terror={error}"));
+    }
+    println!("{line}");
+}
+
 async fn run_compare(args: CompareArgs) -> CliResult<()> {
     let ctx = open_ctx(args.xvn_home.clone()).await.exit_with(XvnExit::Upstream)?;
     let report = eval::compare(
@@ -366,6 +455,35 @@ async fn run_compare(args: CompareArgs) -> CliResult<()> {
         println!("\nFindings: (none)");
     }
 
+    Ok(())
+}
+
+async fn run_validate(args: ValidateArgs) -> CliResult<()> {
+    let ctx = open_ctx(args.xvn_home.clone())
+        .await
+        .exit_with(XvnExit::Upstream)?;
+    let mode = parse_mode(&args.mode).exit_with(XvnExit::Usage)?;
+    api_strategy::get(&ctx, &args.strategy)
+        .await
+        .map_err(|e| api_to_cli("eval validate strategy", e))?;
+    api_scenario::get(&ctx, &args.scenario)
+        .await
+        .map_err(|e| api_to_cli("eval validate scenario", e))?;
+
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "ok": true,
+                "strategy": args.strategy,
+                "scenario": args.scenario,
+                "mode": mode.as_str(),
+            }))
+            .exit_with(XvnExit::Upstream)?
+        );
+    } else {
+        println!("ok");
+    }
     Ok(())
 }
 

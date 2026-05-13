@@ -146,8 +146,9 @@ pub enum Command {
         /// End of bar window (YYYY-MM-DD).
         #[arg(long)]
         to: Option<chrono::NaiveDate>,
-        /// Bar granularity when fetching: `1h`, `4h`, or `1d`. Ignored when bars
-        /// come from `--bars` JSON.
+        /// Bar granularity when fetching. Supports Alpaca bars:
+        /// 1-59m, 1-23h, 1d, 1w, 1/2/3/4/6/12mo. Ignored when bars come
+        /// from `--bars` JSON.
         #[arg(long, default_value = "1h")]
         granularity: String,
         /// Comma-separated arm specs. Heads:
@@ -202,6 +203,8 @@ pub enum Command {
     Dashboard(commands::dashboard::DashboardCmd),
     /// End-of-day operator report (markdown to stdout).
     Eod(commands::eod::EodArgs),
+    /// Inspect effective xvn home/config/db/provider/template targets.
+    Doctor(commands::doctor::DoctorCmd),
     /// Launch, browse, compare, and inspect eval runs plus canonical scenarios.
     Eval(commands::eval::EvalCmd),
     /// Scenario authoring: create / ls / show / clone / archive / rm / tree.
@@ -303,6 +306,7 @@ impl Cli {
             Command::Indicator(cmd) => commands::indicator::run(cmd).map_err(Into::into),
             Command::Dashboard(cmd) => commands::dashboard::run(cmd).await.map_err(Into::into),
             Command::Eod(args) => commands::eod::run(args).await.map_err(Into::into),
+            Command::Doctor(cmd) => commands::doctor::run(cmd).await.map_err(Into::into),
             Command::Eval(cmd) => commands::eval::run(cmd).await,
             Command::Scenario(cmd) => commands::scenario::run(cmd).await,
             Command::Provider(cmd) => commands::provider::run(cmd).await.map_err(Into::into),

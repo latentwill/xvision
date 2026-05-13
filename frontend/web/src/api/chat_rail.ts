@@ -168,38 +168,18 @@ export async function* streamChat(
 }
 
 // ---------------------------------------------------------------------------
-// Scope derivation from the current location. Mirrors the rail's design in
-// ui-elements.md §1.4: open the rail with the scope matching the route the
-// user is currently on. The dashboard plan deliberately keeps Workspace as
-// the fallback; a per-route Route { route } scope is attached only for the
-// list pages (so the agent can see "this user is on /strategies", but on a
-// detail page like /authoring/:id the more specific Strategy scope wins).
+// Scope derivation from the current location. The rail is mounted once in the
+// app shell and intentionally keeps one shared workspace session across route
+// changes. Page-specific context belongs in messages/tool calls, not separate
+// rail sessions.
 export function scopeFromPath(pathname: string): ContextScope {
-  if (pathname === "/" || pathname === "") return { scope: "workspace" };
-
-  const m = (re: RegExp) => pathname.match(re);
-
-  let r = m(/^\/authoring\/([^/?#]+)/);
-  if (r) return { scope: "strategy", draft_id: decodeURIComponent(r[1]) };
-
-  r = m(/^\/eval-runs\/compare$/);
-  if (r) return { scope: "compare", run_ids: [] };
-
-  r = m(/^\/eval-runs\/([^/?#]+)$/);
-  if (r) return { scope: "run", run_id: decodeURIComponent(r[1]) };
-
-  if (pathname === "/strategies") {
-    return { scope: "route", route: "/strategies" };
-  }
-  if (pathname === "/eval-runs") {
-    return { scope: "route", route: "/eval/runs" };
-  }
+  void pathname;
   return { scope: "workspace" };
 }
 
-/// Stable key for caching session_id in localStorage. We keep one session
-/// per scope shape so navigating away and back resumes the conversation.
-/// Detail pages get their own session keyed by id.
+/// Stable key for session state. Workspace is the only rail-owned scope today;
+/// the other variants remain for server/API compatibility with historical
+/// sessions and future explicit context handoffs.
 export function scopeKey(scope: ContextScope): string {
   switch (scope.scope) {
     case "run":

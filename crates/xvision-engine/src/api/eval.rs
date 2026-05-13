@@ -86,6 +86,8 @@ pub struct RunSummary {
     pub max_drawdown_pct: Option<f64>,
     pub total_return_pct: Option<f64>,
     pub error: Option<String>,
+    pub actual_input_tokens: Option<u64>,
+    pub actual_output_tokens: Option<u64>,
 }
 
 /// Full run detail — `RunSummary` plus the decision rows and equity samples.
@@ -244,6 +246,49 @@ pub async fn delete(ctx: &ApiContext, run_id: &str) -> ApiResult<()> {
         ctx,
         "eval",
         "delete",
+        Some(run_id),
+        None,
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    result
+}
+
+pub async fn cancel(ctx: &ApiContext, run_id: &str) -> ApiResult<Run> {
+    let started = Instant::now();
+    let store = RunStore::new(ctx.db.clone());
+    let result = async {
+        let cancelled = store
+            .cancel_active(run_id, "cancelled by user")
+            .await
+            .map_err(|e| ApiError::Internal(format!("cancel run: {e}")))?;
+        if cancelled {
+            return get_inner(ctx, run_id).await;
+        }
+
+        let run = get_inner(ctx, run_id).await?;
+        if run.status.is_terminal() {
+            return Err(ApiError::Validation(format!(
+                "run '{run_id}' is already {}",
+                run.status.as_str()
+            )));
+        }
+        Err(ApiError::Validation(format!(
+            "run '{run_id}' cannot be cancelled from status {}",
+            run.status.as_str()
+        )))
+    }
+    .await;
+
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let _ = audit::record(
+        ctx,
+        "eval",
+        "cancel",
         Some(run_id),
         None,
         outcome,
@@ -988,6 +1033,12 @@ async fn execute_in_background(
         .await
     {
         let err_msg = e.to_string();
+        if matches!(store.is_cancelled(&run.id).await, Ok(true)) {
+            if let Ok(cancelled) = store.get(&run.id).await {
+                api_search::upsert_run(&ctx, &cancelled).await;
+            }
+            return;
+        }
         tracing::error!(
             target: "xvision::eval",
             run_id = %run.id,
@@ -1127,6 +1178,8 @@ fn summarise(run: Run) -> RunSummary {
         max_drawdown_pct: max_dd,
         total_return_pct: total_return,
         error: run.error,
+        actual_input_tokens: run.actual_input_tokens,
+        actual_output_tokens: run.actual_output_tokens,
     }
 }
 
