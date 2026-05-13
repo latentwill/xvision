@@ -18,6 +18,11 @@ Use these as reference only:
 ## Global rules
 
 - One track per worktree.
+- Board claims and `team/queue/*__claim.md` files are plain git-tracked
+  coordination artifacts; they do not use the MCP/subagent message queue.
+- If MCP-backed subagents hang at a "booting MCP" or similar status, keep using
+  board/status files for track state and diagnose the subagent runtime
+  separately instead of changing repo coordination.
 - Do not execute the wrapper plans directly.
 - If two tracks touch the same source file, they are not parallel-safe unless
   explicitly marked below.
