@@ -1,8 +1,18 @@
 # range_reversion_rsi_bollinger
 
+## Judge summary
+
+A clean mean-reversion example for chop, with a built-in no-trade filter for trend.
+
 ## Thesis
 
 When the market is not trending, the edge shifts toward fading extremes instead of chasing moves. This strategy only trades mean reversion after the trend regime is rejected, using RSI and Bollinger extremes to identify stretched moves in a range.
+
+## Failure regime
+
+- Strong trend with persistent EMA slope
+- Breakout expansion with increasing volume
+- News shock / event regime where extremes can keep running
 
 ## Inputs
 

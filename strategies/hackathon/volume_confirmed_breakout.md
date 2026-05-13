@@ -1,8 +1,18 @@
 # volume_confirmed_breakout
 
+## Judge summary
+
+Breakouts only count when trend bias and participation both agree.
+
 ## Thesis
 
 Breakouts are cheap signals by themselves. This strategy only acts when a breakout happens in the direction of the higher-timeframe trend and the breakout candle shows real participation. The goal is to avoid fakeouts and only trade moves that have both structure and activity behind them.
+
+## Failure regime
+
+- Range-bound chop
+- Breakouts without volume confirmation
+- Breakouts that immediately mean-revert back into the range
 
 ## Inputs
 
