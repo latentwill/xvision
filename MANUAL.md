@@ -332,7 +332,7 @@ MCP agent.
 
 End-to-end paths beyond this surface (marketplace publishing, live
 trading, batch eval) land in subsequent plans (2c, 3, 5) — they share
-this same bundle format.
+this same saved `Strategy` artifact shape.
 
 ### Eval runs
 

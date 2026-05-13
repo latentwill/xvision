@@ -33,6 +33,7 @@ grep -q "/eval-runs/compare" frontend/README.md
 reject "/eval/compare" frontend/README.md
 
 reject "StrategyBundle" .claude/skills/xvision/SKILL.md
+reject "strategy bundles" .claude/skills/xvision/SKILL.md
 reject "xvn setup" .claude/skills/xvision/SKILL.md
 reject "StrategyBundle" .claude/skills/xvision/references/architecture.md
 reject "trader-arm" .claude/skills/xvision/references/cli.md
@@ -41,7 +42,9 @@ reject "provider set-default" .claude/skills/xvision/references/cli.md
 reject "provider rm" .claude/skills/xvision/references/cli.md
 reject "provider add .* --model" .claude/skills/xvision/references/cli.md
 reject "StrategyBundle" frontend/README.md
+reject "bundle tree" frontend/README.md
 reject "StrategyBundle" MANUAL.md
+reject "bundle format" MANUAL.md
 reject "xvn kill" MANUAL.md
 reject "xvn emergency-close" MANUAL.md
 reject "xvn audit agent" MANUAL.md

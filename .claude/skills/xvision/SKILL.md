@@ -1,6 +1,6 @@
 ---
 name: xvision
-description: Orient a Claude Code session in the xvision repo — the `xvn` CLI surface, the intern/trader/risk pipeline vocabulary, where canonical docs live, and the deploy/build constraints that bite if ignored. Use when working in the xvision repo, when the user mentions `xvn`, xvision, intern/trader/risk slots, strategy bundles, eval runs / setups / cycles, Strategy Loom / SLF, ERC-8004 identity, or the dashboard at xvn.tail2bb69.ts.net / xvnej.tail2bb69.ts.net.
+description: Orient a Claude Code session in the xvision repo — the `xvn` CLI surface, the intern/trader/risk pipeline vocabulary, where canonical docs live, and the deploy/build constraints that bite if ignored. Use when working in the xvision repo, when the user mentions `xvn`, xvision, intern/trader/risk roles, strategy artifacts, eval runs / setups / cycles, Strategy Loom / SLF, ERC-8004 identity, or the dashboard at xvn.tail2bb69.ts.net / xvnej.tail2bb69.ts.net.
 ---
 
 # xvision
