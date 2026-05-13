@@ -1,7 +1,7 @@
 //! Chart payload types and builder functions.
 //!
 //! `RunChartPayload` is the server-computed, chart-ready representation of a
-//! single eval run. It bundles:
+//! single eval run. It contains:
 //! - OHLCV bars (from the bars cache via `eval::bars::load_bars`)
 //! - Server-computed indicators (SMA/EMA/Bollinger/Donchian/RSI/MACD/ATR)
 //! - Equity curve + drawdown series
@@ -808,9 +808,9 @@ pub struct StrategyChartPayload {
     pub scenarios: Vec<(String, String)>,
 }
 
-/// Build a `StrategyChartPayload` for the given strategy bundle id.
+/// Build a `StrategyChartPayload` for the given strategy agent id.
 ///
-/// Lists all runs for the bundle, loads each run's equity curve, normalises
+/// Lists all runs for the strategy, loads each run's equity curve, normalises
 /// the time axis so `time = 0` at run start, and computes headline metrics
 /// (final PnL, max drawdown, Sharpe from `metrics_json`).
 /// Runs with empty equity curves are included as zero-series rather than
@@ -825,7 +825,7 @@ pub async fn build_strategy_payload(
 
     let runs = store
         .list(ListFilter {
-            strategy_bundle_hash: Some(strategy_id.to_string()),
+            agent_id: Some(strategy_id.to_string()),
             ..Default::default()
         })
         .await

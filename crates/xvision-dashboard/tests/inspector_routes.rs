@@ -37,7 +37,7 @@ async fn create_draft(state: &AppState) -> String {
 }
 
 #[tokio::test]
-async fn get_strategy_returns_full_bundle() {
+async fn get_strategy_returns_full_strategy() {
     let (server, _tmp, state) = boot().await;
     let id = create_draft(&state).await;
 
@@ -77,10 +77,10 @@ async fn put_slot_updates_prompt() {
         .iter()
         .any(|v| v == "prompt"));
 
-    // Round-trip: fetch the bundle and confirm the prompt changed.
-    let bundle: serde_json::Value =
+    // Round-trip: fetch the strategy and confirm the prompt changed.
+    let strategy: serde_json::Value =
         server.get(&format!("/api/strategy/{id}")).await.json();
-    assert_eq!(bundle["trader_slot"]["prompt"], "Decide carefully.");
+    assert_eq!(strategy["trader_slot"]["prompt"], "Decide carefully.");
 }
 
 #[tokio::test]

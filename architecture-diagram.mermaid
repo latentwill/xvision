@@ -1,92 +1,131 @@
-%% XIANVEC system architecture
-%% Vertical flow: data sources at top, execution + on-chain proofs + metrics at bottom.
-%% Blue = deterministic. Purple = storage. Green = external.
-%% Orange = orchestrator + tool surface + LLM stages. Pink = on-chain (ERC-8004 on Mantle). Cyan = eval.
-%% Red dashed reserved for future v2-deferred nodes.
+%% Xvision system architecture
+%% Current code shape: operator surfaces call the shared xvision-engine API.
+%% Blue = deterministic/runtime code. Purple = storage. Green = external.
+%% Orange = operator/API surfaces. Pink = optional on-chain identity.
+%% Cyan = eval/charting.
 
 flowchart TD
-    %% ─────── Data sources ───────
-    A1[Alpaca OHLCV<br/>price + volume]
-    A2[Exchange APIs<br/>funding rate, OI]
-    A3[Nansen<br/>smart-money flows]
-
-    IND[Technical Indicators<br/>RSI · MA · Bollinger<br/>MACD · Donchian · ATR]
-
-    %% ─────── Orchestrator ───────
-    HA[<b>Ops</b><br/>pipeline orchestrator<br/>state assembly · scheduling]
-
-    %% ─────── Stage 1 · Intern + MCP tool surface ───────
-    S1[<b>Stage 1 · Intern</b><br/>OpenAI- / Anthropic-compat<br/>or ACPX agent harness<br/>━━━━━━━━━━━━<br/>bull · bear · flat cases<br/>evidence inventory · regime<br/>━━━━━━━━━━━━<br/>NO candidate decision]
-
-    MCP[<b>xvn-mcp</b><br/>stdio MCP server · stateless<br/>━━━━━━━━━━━━<br/>indicator tools<br/>rsi · sma · ema · macd<br/>bollinger · atr · donchian<br/>fib_retracements · health<br/>━━━━━━━━━━━━<br/>active when INTERN=acpx]
-
-    %% ─────── Stage 2 · Trader ───────
-    S2[<b>Stage 2 · Trader</b><br/>OpenAI-compat HTTP<br/>or local candle<br/>━━━━━━━━━━━━<br/>action · size · direction<br/>stop · take-profit]
-
-    %% ─────── Risk layer ───────
-    R[<b>Risk Layer</b><br/>deterministic rules · no LLM<br/>━━━━━━━━━━━━<br/>position limits<br/>daily-loss circuit breaker<br/>correlation cluster cap<br/>asset whitelist]
-
-    %% ─────── Stage 3 · Execution ───────
-    S3[<b>Stage 3 · Execution</b><br/>idempotent tool calls]
-    AP[Alpaca Paper<br/>bracket orders<br/>v1 testing path]
-    OR[Orderly Network<br/>perpetual futures · Mantle<br/>orderly-connector-rs<br/>v1 hackathon executor]
-
-    %% ─────── ERC-8004 on Mantle ───────
-    subgraph ERC8004 [ERC-8004 · Mantle]
-        ID[Identity Registry<br/>per-strategy NFT<br/>+ strategy_manifest_cid]
-        RP[Reputation Registry<br/>per-run feedback<br/>Δ-Sharpe + code commit]
-        VL[Validation Registry<br/>per-trade strategy proof<br/>strategy_id + result hash]
+    %% Operator surfaces
+    subgraph OPERATOR [Operator surfaces]
+        WEB[React + Vite dashboard<br/>strategies, agents, scenarios<br/>eval runs, settings, chat rail]
+        CLI[xvn CLI<br/>strategy, agent, scenario<br/>eval, provider, dashboard]
+        MCP[xvn-mcp stdio server<br/>indicator, authoring, eval tools]
     end
 
-    %% ─────── Storage + eval ───────
-    DB[(SQLite<br/>decisions · briefings<br/>market state · arm_name)]
+    %% Dashboard transport
+    subgraph DASH [xvision-dashboard · axum]
+        STATIC[Embedded SPA assets<br/>RustEmbed static files]
+        ROUTER[HTTP API router<br/>/api/agents · /api/strategies<br/>/api/scenarios · /api/eval/runs<br/>/api/settings · /api/chat-rail]
+        STREAM[SSE streams<br/>wizard chat · chat rail<br/>CLI jobs · live run chart]
+    end
 
-    M[<b>Metrics · Eval</b><br/>━━━━━━━━━━━━<br/>Δ-Sharpe primary<br/>max drawdown<br/>profit factor · win rate<br/>decision divergence rate<br/>━━━━━━━━━━━━<br/>paired bootstrap 95% CI]
+    %% Shared engine API
+    subgraph ENGINE [xvision-engine shared API]
+        CTX[ApiContext<br/>SQLite pool · XVN_HOME<br/>actor · bars fetcher<br/>RunEventBus]
+        AUTHOR[Authoring API<br/>templates · agents · skills<br/>strategy drafts · validation]
+        AGENT[Agent library<br/>AgentSlot provider/model/prompt<br/>skill_ids · max_tokens]
+        STRAT[Strategy bundle<br/>manifest · risk config<br/>mechanical params<br/>AgentRefs + PipelineDef<br/>legacy slots still parsed]
+        PIPE[Agent pipeline<br/>single/sequential executable<br/>graph parsed, not executable]
+        LLM[LlmDispatch<br/>OpenAI-compatible<br/>Anthropic · local provider]
+        TOOLS[ToolRegistry<br/>built-in indicator tools]
+        SCEN[Scenario registry<br/>canonical · user · clone · generated<br/>AlpacaHistorical or SyntheticWalk]
+        EVAL[Eval API<br/>run · list · detail<br/>compare · attest]
+        BACKTEST[BacktestExecutor<br/>replay OHLCV bars<br/>simulated fills · metrics]
+        PAPER[PaperExecutor<br/>broker-surface paper mode]
+        CHART[Chart API<br/>RunChartPayload<br/>indicators · equity · markers]
+    end
 
-    BL[Baselines<br/>━━━━━━━━━━━━<br/>buy-hold · random<br/>RSI · MA-cross · Bollinger<br/>MACD · Donchian · Fibs<br/>smart-money copy<br/>funding-rate fader]
+    %% Persistence and local files
+    subgraph STORE [Local state]
+        DB[(SQLite xvn.db<br/>agents · skills · scenarios<br/>eval_runs · decisions · equity<br/>findings · chat · cli_jobs · audit)]
+        HOME[$XVN_HOME<br/>runtime config · secrets<br/>strategy JSON · identity keys]
+        BARS[(Bars cache<br/>singleflight load_bars<br/>compressed cached rows)]
+    end
 
-    %% ─────── Edges ───────
-    A1 --> IND
-    A1 --> HA
-    A2 --> HA
-    A3 --> HA
-    IND --> HA
+    %% External integrations
+    subgraph EXT [External services]
+        ALPACA_DATA[Alpaca historical bars]
+        ALPACA_PAPER[Alpaca paper broker]
+        PROVIDERS[LLM providers<br/>OpenAI-compatible · Anthropic]
+    end
 
-    HA --> S1
-    S1 -.->|tool calls<br/>when INTERN=acpx| MCP
-    MCP -.->|computes at agent-supplied<br/>parameters| IND
-    S1 -->|JSON: InternBriefing<br/>neutral evidence only| S2
-    S2 -->|JSON: TraderDecision| R
+    %% Optional on-chain identity path
+    subgraph CHAIN [Optional identity path]
+        ID[xvision-identity<br/>ERC-8004 draft client<br/>agent manifests · reputation posts]
+        MANTLE[Mantle RPC/contracts<br/>operator-deployed registries]
+    end
 
-    R -->|approved or modified| S3
-    R -.->|vetoed| DB
+    %% Surface routing
+    WEB --> STATIC
+    WEB --> ROUTER
+    WEB --> STREAM
+    CLI --> CTX
+    MCP --> CTX
+    ROUTER --> CTX
+    STREAM --> CTX
 
-    S3 --> AP
-    S3 --> OR
-    S3 -.->|after closed trade| VL
+    %% Engine composition
+    CTX --> AUTHOR
+    CTX --> EVAL
+    CTX --> CHART
+    AUTHOR --> AGENT
+    AUTHOR --> STRAT
+    AUTHOR --> SCEN
+    STRAT -->|AgentRefs| AGENT
+    STRAT --> PIPE
+    AGENT --> PIPE
+    PIPE --> LLM
+    PIPE --> TOOLS
 
-    HA -.->|once at strategy mint| ID
-    M -.->|after each run| RP
+    %% Eval execution
+    EVAL -->|resolve strategy| STRAT
+    EVAL -->|resolve scenario| SCEN
+    EVAL -->|select provider/model| LLM
+    EVAL -->|backtest mode| BACKTEST
+    EVAL -->|paper mode| PAPER
+    SCEN --> BARS
+    BARS --> BACKTEST
+    BACKTEST --> PIPE
+    PAPER --> PIPE
+    BACKTEST --> CHART
 
-    S1 -.-> DB
-    S2 -.-> DB
-    R -.-> DB
-    S3 -.-> DB
+    %% Persistence
+    CTX --> DB
+    AUTHOR --> DB
+    EVAL --> DB
+    CHART --> DB
+    CHART --> BARS
+    DB --> CHART
+    CTX --> HOME
+    HOME --> LLM
+    HOME --> PAPER
 
-    DB --> M
-    BL --> M
+    %% External calls
+    BARS -->|cache miss| ALPACA_DATA
+    PAPER --> ALPACA_PAPER
+    LLM --> PROVIDERS
 
-    %% ─────── Styling ───────
+    %% Live updates
+    BACKTEST -->|RunChartEvent| STREAM
+    STREAM --> WEB
+    CHART -->|REST snapshot| ROUTER
+
+    %% Optional attestations / on-chain identity
+    EVAL -.->|EvalAttestation in DB| DB
+    EVAL -.->|future/runtime-gated| ID
+    ID -.-> MANTLE
+
+    %% Styling
     classDef deterministic fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#000
-    classDef storage fill:#f3e8ff,stroke:#7c3aed,color:#000
-    classDef external fill:#dcfce7,stroke:#16a34a,color:#000
-    classDef orchestrator fill:#ffedd5,stroke:#ea580c,stroke-width:2px,color:#000
-    classDef eval fill:#cffafe,stroke:#0891b2,color:#000
+    classDef storage fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px,color:#000
+    classDef external fill:#dcfce7,stroke:#16a34a,stroke-width:2px,color:#000
+    classDef surface fill:#ffedd5,stroke:#ea580c,stroke-width:2px,color:#000
+    classDef eval fill:#cffafe,stroke:#0891b2,stroke-width:2px,color:#000
     classDef onchain fill:#fce7f3,stroke:#db2777,stroke-width:2px,color:#000
 
-    class R deterministic
-    class DB storage
-    class A1,A2,A3,AP,OR external
-    class HA,MCP,S1,S2,S3 orchestrator
-    class M,BL eval
-    class ID,RP,VL onchain
+    class CTX,AUTHOR,AGENT,STRAT,PIPE,LLM,TOOLS deterministic
+    class DB,HOME,BARS storage
+    class ALPACA_DATA,ALPACA_PAPER,PROVIDERS external
+    class WEB,CLI,MCP,STATIC,ROUTER,STREAM surface
+    class SCEN,EVAL,BACKTEST,PAPER,CHART eval
+    class ID,MANTLE onchain

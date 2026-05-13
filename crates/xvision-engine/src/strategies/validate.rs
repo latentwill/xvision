@@ -26,7 +26,7 @@ pub enum ValidationError {
     UndeclaredTool(String),
 }
 
-pub fn validate_bundle(b: &Strategy) -> Result<(), ValidationError> {
+pub fn validate_strategy(b: &Strategy) -> Result<(), ValidationError> {
     if !b.agents.is_empty() {
         validate_agent_pipeline(b)?;
         validate_common(b)?;

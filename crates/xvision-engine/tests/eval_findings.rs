@@ -15,12 +15,16 @@ async fn pool_with_migration() -> SqlitePool {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/014_eval_agent_id.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     pool
 }
 
 fn finalized_run() -> Run {
     let mut r = Run::new_queued(
-        "bundle-h".into(),
+        "strategy-h".into(),
         "crypto-bull-q1-2025".into(),
         RunMode::Backtest,
     );

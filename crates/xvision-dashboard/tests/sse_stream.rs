@@ -127,7 +127,7 @@ async fn sse_stream_late_subscriber_gets_immediate_close_for_completed_run() {
     let store = RunStore::new(state.pool.clone());
     let run = Run {
         id: "test-run-completed".into(),
-        strategy_bundle_hash: "abc123".into(),
+        agent_id: "abc123".into(),
         scenario_id: "crypto-bull-q1-2025".into(),
         params_override: None,
         mode: RunMode::Backtest,

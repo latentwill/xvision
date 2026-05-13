@@ -33,7 +33,7 @@ use crate::state::AppState;
 
 #[derive(Debug, Default, Deserialize)]
 pub struct ListParams {
-    pub strategy_bundle_hash: Option<String>,
+    pub agent_id: Option<String>,
     pub scenario_id: Option<String>,
     /// Free-form status string ("queued", "running", …). Parsed into the
     /// typed `RunStatus` enum below; unknown values surface as a validation
@@ -62,7 +62,7 @@ pub async fn list(
         .transpose()?;
 
     let req = ListRunsRequest {
-        strategy_bundle_hash: params.strategy_bundle_hash,
+        agent_id: params.agent_id,
         scenario_id: params.scenario_id,
         status,
     };

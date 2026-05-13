@@ -66,14 +66,14 @@ async fn eval_run_returns_notfound_for_unseeded_scenario_id() {
     .await
     .unwrap();
 
-    // Seed a strategy bundle on disk so the bundle-lookup step passes
-    // (otherwise the test trips on NotFound for the bundle, not the
+    // Seed a strategy on disk so the strategy lookup step passes
+    // (otherwise the test trips on NotFound for the strategy, not the
     // scenario — the latter is what we want to assert here).
-    let agent_id = "01TESTBUNDLERUNSCENARIO0XA";
-    let bundle = Strategy {
+    let agent_id = "01TESTSTRATEGYRUNSCENARIO0XA";
+    let strategy = Strategy {
         manifest: PublicManifest {
             id: agent_id.into(),
-            display_name: "Test bundle".into(),
+            display_name: "Test strategy".into(),
             plain_summary: "for eval_run_scenario test".into(),
             creator: "@tester".into(),
             template: "mean_reversion".into(),
@@ -98,8 +98,8 @@ async fn eval_run_returns_notfound_for_unseeded_scenario_id() {
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({}),
     };
-    let bundle_store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
-    bundle_store.save(&bundle).await.unwrap();
+    let strategy_store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+    strategy_store.save(&strategy).await.unwrap();
 
     let mock_broker = Arc::new(MockBrokerSurface::new(100_000.0));
     let broker: Option<Arc<dyn BrokerSurface>> = Some(mock_broker);
@@ -157,11 +157,11 @@ async fn eval_run_resolves_seeded_scenario_via_db_lookup() {
     .await
     .unwrap();
 
-    let agent_id = "01TESTBUNDLERUNSCENARIO0XB";
-    let bundle = Strategy {
+    let agent_id = "01TESTSTRATEGYRUNSCENARIO0XB";
+    let strategy = Strategy {
         manifest: PublicManifest {
             id: agent_id.into(),
-            display_name: "Test bundle".into(),
+            display_name: "Test strategy".into(),
             plain_summary: "DB scenario lookup test".into(),
             creator: "@tester".into(),
             template: "mean_reversion".into(),
@@ -186,8 +186,8 @@ async fn eval_run_resolves_seeded_scenario_via_db_lookup() {
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({}),
     };
-    let bundle_store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
-    bundle_store.save(&bundle).await.unwrap();
+    let strategy_store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+    strategy_store.save(&strategy).await.unwrap();
 
     let mock_broker = Arc::new(MockBrokerSurface::new(100_000.0));
     let broker: Option<Arc<dyn BrokerSurface>> = Some(mock_broker);

@@ -38,7 +38,7 @@ pub trait Executor: Send + Sync {
     async fn run(
         &self,
         run: &mut Run,
-        bundle: &Strategy,
+        strategy: &Strategy,
         scenario: &Scenario,
         agent_slots: &[ResolvedAgentSlot],
         dispatch: Arc<dyn LlmDispatch>,

@@ -56,11 +56,11 @@ export function EvalRunsRoute() {
   const strategyFilter = searchParams.get("strategy")?.trim() ?? "";
   const q = useQuery({
     queryKey: evalKeys.runs({
-      strategy_bundle_hash: strategyFilter || undefined,
+      agent_id: strategyFilter || undefined,
     }),
     queryFn: () =>
       listRuns({
-        strategy_bundle_hash: strategyFilter || undefined,
+        agent_id: strategyFilter || undefined,
       }),
     // Poll while any run is still in flight; stop once everything's
     // terminal. Background eval tasks drive in the dashboard process
@@ -81,12 +81,24 @@ export function EvalRunsRoute() {
   // render the action button next to the run count.
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [startOpen, setStartOpen] = useState(startRequested);
+  const hasInflight =
+    q.data?.some((r) => r.status === "queued" || r.status === "running") ??
+    false;
+  const [nowMs, setNowMs] = useState(() => Date.now());
 
   useEffect(() => {
     if (startRequested) {
       setStartOpen(true);
     }
   }, [startRequested]);
+  useEffect(() => {
+    if (!hasInflight) {
+      setNowMs(Date.now());
+      return;
+    }
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [hasInflight]);
   const latestRunId = q.data?.[0]?.id ?? "";
   const latestChart = useQuery({
     queryKey: chartKeys.run(latestRunId),
@@ -177,6 +189,7 @@ export function EvalRunsRoute() {
             items={q.data ?? []}
             selected={selected}
             onToggle={toggleSelected}
+            nowMs={nowMs}
           />
         )}
       </Card>
@@ -264,10 +277,12 @@ function RunsTable({
   items,
   selected,
   onToggle,
+  nowMs,
 }: {
   items: RunSummary[];
   selected: Set<string>;
   onToggle: (id: string) => void;
+  nowMs: number;
 }) {
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -327,12 +342,12 @@ function RunsTable({
                 {row.id.slice(0, 12)}…
               </div>
               <div className="mt-1 font-mono text-[12px] text-text-2">
-                {row.strategy_bundle_hash.slice(0, 8)} · {row.scenario_id}
+                {row.agent_id.slice(0, 8)} · {row.scenario_id}
               </div>
               <div className="mt-1 text-[12px] text-text-2">
                 {row.mode} · {fmtTime(row.started_at)}
               </div>
-              <div className="mt-2 grid grid-cols-3 gap-2 text-[12px]">
+              <div className="mt-2 grid grid-cols-4 gap-2 text-[12px]">
                 <div className="text-text-2">
                   <div className="text-[11px] text-text-3">Sharpe</div>
                   <div className="font-mono text-text">{fmtNumber(row.sharpe)}</div>
@@ -344,6 +359,12 @@ function RunsTable({
                 <div className="text-text-2">
                   <div className="text-[11px] text-text-3">Return</div>
                   <div className="font-mono text-text">{fmtPct(row.total_return_pct)}</div>
+                </div>
+                <div className="text-text-2">
+                  <div className="text-[11px] text-text-3">Duration</div>
+                  <div className="font-mono text-text">
+                    {fmtDuration(row.started_at, row.completed_at, nowMs)}
+                  </div>
                 </div>
               </div>
 
@@ -380,6 +401,7 @@ function RunsTable({
               <th className="px-3 py-2.5 text-right font-normal">Sharpe</th>
               <th className="px-3 py-2.5 text-right font-normal">Max DD</th>
               <th className="px-3 py-2.5 text-right font-normal">Return</th>
+              <th className="px-3 py-2.5 text-right font-normal">Duration</th>
               <th className="px-5 py-2.5 font-normal">Started</th>
               <th className="px-5 py-2.5 text-right font-normal"></th>
             </tr>
@@ -422,7 +444,7 @@ function RunsTable({
                     {row.id.slice(0, 12)}…
                   </td>
                   <td className="px-3 py-3 font-mono text-[12px] text-text-2">
-                    {row.strategy_bundle_hash.slice(0, 8)}
+                    {row.agent_id.slice(0, 8)}
                   </td>
                   <td className="px-3 py-3 text-text-2">{row.scenario_id}</td>
                   <td className="px-3 py-3 text-text-2">{row.mode}</td>
@@ -437,6 +459,9 @@ function RunsTable({
                   </td>
                   <td className="px-3 py-3 text-right font-mono">
                     {fmtPct(row.total_return_pct)}
+                  </td>
+                  <td className="px-3 py-3 text-right font-mono">
+                    {fmtDuration(row.started_at, row.completed_at, nowMs)}
                   </td>
                   <td className="px-5 py-3 text-[12px] text-text-3">
                     {fmtTime(row.started_at)}
@@ -779,6 +804,24 @@ function fmtTime(iso: string): string {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+function fmtDuration(
+  startedAt: string,
+  completedAt: string | null | undefined,
+  nowMs: number,
+): string {
+  const start = Date.parse(startedAt);
+  if (Number.isNaN(start)) return "—";
+  const end = completedAt ? Date.parse(completedAt) : nowMs;
+  if (Number.isNaN(end)) return "—";
+  const totalSeconds = Math.max(0, Math.floor((end - start) / 1000));
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  if (totalMinutes < 60) return `${totalMinutes}m`;
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return minutes === 0 ? `${hours}h` : `${hours}h ${minutes}m`;
 }
 
 function LoadingSkeleton() {

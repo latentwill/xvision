@@ -48,7 +48,7 @@ function subtitleFor(q: ReturnType<typeof useQuery>) {
   const data = q.data as { length: number } | undefined;
   if (!data) return "";
   const n = data.length;
-  return `${n} ${n === 1 ? "bundle" : "bundles"}`;
+  return `${n} ${n === 1 ? "strategy" : "strategies"}`;
 }
 
 function FilterBar() {
@@ -103,8 +103,11 @@ function StrategiesTable({
             <div className="mt-1 text-[12px] text-text-2">
               {row.template} · {formatCadence(row.decision_cadence_minutes)}
             </div>
-            <div className="mt-1 font-mono text-[12px] text-text-2">
+            <div className="mt-1 break-all font-mono text-[12px] text-text-2">
               {row.model ?? <span className="italic text-text-3">—</span>}
+            </div>
+            <div className="mt-2">
+              <TagList tags={row.tags ?? []} />
             </div>
 
             <div className="mt-2.5">
@@ -127,6 +130,7 @@ function StrategiesTable({
               <th className="px-3 py-2.5 font-normal">Name</th>
               <th className="px-5 py-2.5 font-normal">Backend ID</th>
               <th className="px-3 py-2.5 font-normal">Template</th>
+              <th className="px-3 py-2.5 font-normal">Tags</th>
               <th className="px-3 py-2.5 font-normal">Cadence</th>
               <th className="px-3 py-2.5 font-normal">Model</th>
               <th className="px-3 py-2.5 font-normal">Status</th>
@@ -142,7 +146,7 @@ function StrategiesTable({
                 <td className="px-3 py-3 text-text">
                   <Link
                     to={`/authoring/${encodeURIComponent(row.agent_id)}`}
-                    className="text-text hover:underline"
+                    className="break-all text-text hover:underline"
                   >
                     {row.display_name || "Untitled strategy"}
                   </Link>
@@ -151,10 +155,13 @@ function StrategiesTable({
                   {row.agent_id}
                 </td>
                 <td className="px-3 py-3 text-text-2">{row.template}</td>
+                <td className="px-3 py-3">
+                  <TagList tags={row.tags ?? []} />
+                </td>
                 <td className="px-3 py-3 font-mono text-[12px] text-text-2">
                   {formatCadence(row.decision_cadence_minutes)}
                 </td>
-                <td className="px-3 py-3 font-mono text-[12px] text-text-2">
+                <td className="max-w-[180px] px-3 py-3 break-all font-mono text-[12px] text-text-2">
                   {row.model ?? <span className="italic text-text-3">—</span>}
                 </td>
                 <td className="px-3 py-3">
@@ -180,6 +187,28 @@ function StrategiesTable({
   );
 }
 
+function TagList({ tags }: { tags: string[] }) {
+  if (tags.length === 0) {
+    return <span className="text-[12px] italic text-text-3">—</span>;
+  }
+  const visible = tags.slice(0, 3);
+  const extra = tags.length - visible.length;
+  return (
+    <div className="flex max-w-[260px] flex-wrap gap-1.5">
+      {visible.map((tag) => (
+        <span
+          key={tag}
+          className="max-w-[120px] break-all rounded border border-border-soft bg-surface-elev px-1.5 py-0.5 font-mono text-[11px] leading-tight text-text-2"
+          title={tag}
+        >
+          {tag}
+        </span>
+      ))}
+      {extra > 0 ? <Pill tone="default">+{extra}</Pill> : null}
+    </div>
+  );
+}
+
 function LoadingSkeleton() {
   return (
     <div className="px-5 py-4 space-y-3" aria-busy>
@@ -198,7 +227,7 @@ function EmptyState() {
   return (
     <div className="px-6 py-16 text-center text-text-2">
       <div className="font-serif italic text-[28px] text-text-3 mb-3">
-        no bundles yet
+        no strategies yet
       </div>
       <p className="m-0 max-w-md mx-auto leading-snug">
         Strategies you create with{" "}

@@ -20,7 +20,7 @@ use crate::strategies::{
     risk::{RiskConfig, RiskPreset},
     slot::LLMSlot,
     store::StrategyStore,
-    validate::validate_bundle,
+    validate::validate_strategy,
     Strategy,
 };
 use crate::templates::registry as template_registry;
@@ -166,11 +166,11 @@ pub async fn update_slot(
     store: &dyn StrategyStore,
     req: UpdateSlotReq,
 ) -> anyhow::Result<UpdateSlotOut> {
-    let mut bundle = store.load(&req.id).await?;
+    let mut strategy = store.load(&req.id).await?;
     let slot_field = match req.slot.as_str() {
-        "regime" => &mut bundle.regime_slot,
-        "intern" => &mut bundle.intern_slot,
-        "trader" => &mut bundle.trader_slot,
+        "regime" => &mut strategy.regime_slot,
+        "intern" => &mut strategy.intern_slot,
+        "trader" => &mut strategy.trader_slot,
         other => anyhow::bail!(
             "unknown slot `{other}` — must be one of: regime, intern, trader"
         ),
@@ -209,7 +209,7 @@ pub async fn update_slot(
             "no fields to update — supply at least one of prompt / model_requirement / allowed_tools"
         );
     }
-    store.save(&bundle).await?;
+    store.save(&strategy).await?;
     Ok(UpdateSlotOut {
         id: req.id,
         updated,
@@ -390,14 +390,14 @@ pub async fn set_mechanical_param(
     store: &dyn StrategyStore,
     req: SetMechanicalParamReq,
 ) -> anyhow::Result<()> {
-    let mut bundle = store.load(&req.id).await?;
-    let map = bundle.mechanical_params.as_object_mut().ok_or_else(|| {
+    let mut strategy = store.load(&req.id).await?;
+    let map = strategy.mechanical_params.as_object_mut().ok_or_else(|| {
         anyhow::anyhow!(
             "mechanical_params is not a JSON object — template invariant violation"
         )
     })?;
     map.insert(req.key, req.value);
-    store.save(&bundle).await
+    store.save(&strategy).await
 }
 
 pub async fn set_risk_config(
@@ -420,9 +420,9 @@ pub async fn set_risk_config(
         (Some(_), Some(_)) => anyhow::bail!("preset and explicit are mutually exclusive"),
         (None, None) => anyhow::bail!("supply either preset or explicit"),
     };
-    let mut bundle = store.load(&req.id).await?;
-    bundle.risk = config;
-    store.save(&bundle).await?;
+    let mut strategy = store.load(&req.id).await?;
+    strategy.risk = config;
+    store.save(&strategy).await?;
     Ok(SetRiskConfigOut {
         id: req.id,
         applied: applied.into(),
@@ -433,8 +433,8 @@ pub async fn validate_draft(
     store: &dyn StrategyStore,
     id: &str,
 ) -> anyhow::Result<ValidateDraftOut> {
-    let bundle = store.load(id).await?;
-    let (ok, errors) = match validate_bundle(&bundle) {
+    let strategy = store.load(id).await?;
+    let (ok, errors) = match validate_strategy(&strategy) {
         Ok(()) => (true, vec![]),
         Err(e) => (false, vec![e.to_string()]),
     };
@@ -477,9 +477,9 @@ mod tests {
         )
         .await
         .unwrap();
-        let bundle = get_strategy(&store, &out.id).await.unwrap();
-        assert_eq!(bundle.manifest.id, out.id);
-        assert_eq!(bundle.manifest.template, "trend_follower");
+        let strategy = get_strategy(&store, &out.id).await.unwrap();
+        assert_eq!(strategy.manifest.id, out.id);
+        assert_eq!(strategy.manifest.template, "trend_follower");
     }
 
     #[tokio::test]
@@ -512,8 +512,8 @@ mod tests {
         .unwrap();
         assert_eq!(upd.updated, vec!["prompt".to_string()]);
 
-        let bundle = get_strategy(&store, &out.id).await.unwrap();
-        assert_eq!(bundle.trader_slot.unwrap().prompt, "New prompt");
+        let strategy = get_strategy(&store, &out.id).await.unwrap();
+        assert_eq!(strategy.trader_slot.unwrap().prompt, "New prompt");
     }
 
     #[tokio::test]
@@ -542,8 +542,8 @@ mod tests {
         .unwrap();
         assert_eq!(r.applied, "preset");
 
-        let bundle = get_strategy(&store, &out.id).await.unwrap();
-        assert_eq!(bundle.risk.risk_pct_per_trade, 0.015);
+        let strategy = get_strategy(&store, &out.id).await.unwrap();
+        assert_eq!(strategy.risk.risk_pct_per_trade, 0.015);
     }
 
     #[tokio::test]

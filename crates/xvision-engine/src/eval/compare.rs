@@ -36,7 +36,7 @@ pub struct ComparisonReport {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComparisonRunSummary {
     pub id: String,
-    pub strategy_bundle_hash: String,
+    pub agent_id: String,
     pub scenario_id: String,
     pub mode: RunMode,
     pub status: RunStatus,
@@ -100,7 +100,7 @@ pub async fn compare_runs(
             .with_context(|| format!("compare_runs: findings for {id}"))?;
         runs.push(ComparisonRunSummary {
             id: run.id.clone(),
-            strategy_bundle_hash: run.strategy_bundle_hash.clone(),
+            agent_id: run.agent_id.clone(),
             scenario_id: run.scenario_id.clone(),
             mode: run.mode,
             status: run.status,

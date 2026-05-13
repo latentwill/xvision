@@ -33,7 +33,7 @@ export function SettingsDangerRoute() {
           <>
             Deletes every row in <code className="font-mono">xvn.db</code>{" "}
             except the <code className="font-mono">api_audit</code> trail, so
-            the record of <em>this</em> wipe survives. Strategy bundles on
+            the record of <em>this</em> wipe survives. Strategies on
             disk, the config TOML, and any signing keys are untouched.
           </>
         }
@@ -65,7 +65,7 @@ export function SettingsDangerRoute() {
         description={
           <>
             Deletes the entire <code className="font-mono">$XVN_HOME</code>{" "}
-            directory and recreates it empty. Strategy bundles, eval runs,
+            directory and recreates it empty. Strategies, eval runs,
             chat sessions, search index — all gone. An audit line is mirrored
             to a sibling log file <em>outside</em> the home directory before
             the wipe runs, so the trail survives.

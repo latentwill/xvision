@@ -12,7 +12,7 @@ use crate::agent::llm::{ContentBlock, ToolDefinition};
 use crate::tools::{ToolName, ToolRegistry};
 
 /// Build tool definitions from a slot's `allowed_tools`. Tools the registry
-/// doesn't know are silently dropped (bundle validation should catch
+/// doesn't know are silently dropped (strategy validation should catch
 /// misspelled names at draft time). v1 input schemas are minimal — Plan 2c
 /// will add per-tool argument schemas; for now every tool gets `{type:
 /// "object"}` and the model is expected to pass the right shape based on

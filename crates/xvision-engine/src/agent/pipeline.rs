@@ -14,7 +14,7 @@ pub struct ResolvedAgentSlot {
 }
 
 pub struct PipelineInputs<'a> {
-    pub bundle: &'a Strategy,
+    pub strategy: &'a Strategy,
     pub agent_slots: &'a [ResolvedAgentSlot],
     pub seed_inputs: serde_json::Value,
     pub dispatch: Arc<dyn LlmDispatch>,
@@ -39,7 +39,7 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
     let mut total_in = 0u32;
     let mut total_out = 0u32;
 
-    let regime = if let Some(slot) = &input.bundle.regime_slot {
+    let regime = if let Some(slot) = &input.strategy.regime_slot {
         let out = execute_slot(SlotInput {
             slot,
             upstream_inputs: accumulated.clone(),
@@ -55,7 +55,7 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
         None
     };
 
-    let intern = if let Some(slot) = &input.bundle.intern_slot {
+    let intern = if let Some(slot) = &input.strategy.intern_slot {
         let out = execute_slot(SlotInput {
             slot,
             upstream_inputs: accumulated.clone(),
@@ -71,7 +71,7 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
         None
     };
 
-    let trader = if let Some(slot) = &input.bundle.trader_slot {
+    let trader = if let Some(slot) = &input.strategy.trader_slot {
         let out = execute_slot(SlotInput {
             slot,
             upstream_inputs: accumulated.clone(),
@@ -96,7 +96,7 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
 }
 
 async fn run_agent_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<PipelineOutputs> {
-    if input.bundle.pipeline.kind == PipelineKind::Graph {
+    if input.strategy.pipeline.kind == PipelineKind::Graph {
         anyhow::bail!("graph agent pipelines are not executable yet");
     }
 

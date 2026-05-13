@@ -285,7 +285,7 @@ impl WizardLoop {
             self.last_draft_id = Some(id.to_string());
             return;
         }
-        // For get_strategy the bundle's manifest.id is what we want.
+        // For get_strategy the strategy's manifest.id is what we want.
         if tool == "get_strategy" {
             if let Some(id) = result
                 .get("manifest")
@@ -523,7 +523,7 @@ fn wizard_tool_defs() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "set_mechanical_param".into(),
-            description: "Set a key inside bundle.mechanical_params (template-specific).".into(),
+            description: "Set a key inside Strategy.mechanical_params (template-specific).".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {

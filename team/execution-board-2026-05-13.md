@@ -46,6 +46,7 @@ Use these as reference only:
 | `qa4-chat-eval-launcher` | `.worktrees/qa4-chat-eval-launcher` | Chat tools + eval launcher preflight/errors | after track 9 preferred | no overlap with track 9 | dashboard/eval tests |
 | `qa4-surface-consistency` | `.worktrees/qa4-surface-consistency` | Wizard/API/list/home/eval consistency | after track 4 preferred | no overlap with tracks 4/8 | dashboard + frontend tests |
 | `strategy-agent-inspector` | `.worktrees/strategy-agent-inspector` | Inspector rebuild for agent composition | track 4 | no | frontend typecheck + authoring smoke |
+| `strategy-eval-ui-polish` | current workspace | Strategy/eval UI polish after modular agents: strategy list tags/model, Inspector chrome, overflow, eval timer, xvision skill trigger | none | no overlap with active frontend docs/runtime chart tracks | focused frontend tests + typecheck; Rust API compile in CI/non-deploy |
 | `mobile-safari-load` | `.worktrees/mobile-safari-load` | Mobile Safari still does not load the dashboard | none | no overlap with active frontend tracks | Safari/mobile load repro + frontend test/build smoke |
 
 ## Recommended order
@@ -62,6 +63,7 @@ Use these as reference only:
 10. `qa4-chat-eval-launcher`
 11. `strategy-agent-inspector`
 12. `mobile-safari-load`
+13. `strategy-eval-ui-polish`
 
 ## Immediate start set
 
@@ -236,4 +238,53 @@ Avoid:
 
 - All previous execution-board tracks now have branch/status checkpoints and clean
   worktrees.
-- New open work: `mobile-safari-load`, claimed on 2026-05-13.
+- `mobile-safari-load` and `strategy-eval-ui-polish` were the final open work
+  on this board during the 2026-05-13 merge/deploy pass.
+
+### `strategy-eval-ui-polish`
+
+Claimed 2026-05-13T08:46:17Z in the current workspace.
+
+Scope:
+
+- Fix the Strategies model column for the modular AgentRef structure.
+- Surface strategy tags on the Strategies page.
+- Remove the Inspector validation box.
+- De-emphasize the Inspector strategy id.
+- Prevent long IDs/errors from overflowing UI boxes.
+- Add elapsed/duration timing to eval runs.
+- Confirm conversation persistence status; SQLite-backed chat sessions/messages
+  already exist, so no new work is needed unless product wants a richer export.
+- Narrow the xvision Claude skill trigger so it is for agents using the `xvn`
+  CLI/dashboard, not generic coding in this repo.
+
+Initial claim order:
+
+1. Strategy list model/tags.
+2. Inspector cleanup and overflow.
+3. Eval timer.
+4. Skill trigger wording.
+
+## Next board intake
+
+The active roadmap for followups, specs, and todo notes is now
+`docs/superpowers/plans/2026-05-13-v2-v4-action-plan.md`.
+
+Seed the next execution board from these first tickets:
+
+| Order | Ticket | Phase | Effort | Source |
+|---|---|---|---|---|
+| 1 | Add Driver.js first-run and restart-tour infrastructure | V2A | M | F36 |
+| 2 | Add in-app docs/help route and docs index | V2A | M | onboarding/settings, dashboard docs |
+| 3 | Create resettable example strategies/scenarios/tutorial artifacts | V2A | M | frontend docs, eval docs |
+| 4 | Add dashboard mutating-route auth boundary | V2B | L | F35 |
+| 5 | Add remote CLI orphan recovery and audit trail | V2B | M | F37, remote CLI specs |
+| 6 | Add broker/wallet/testnet kill switch and limits | V2B | M | security + blockchain plans |
+| 7 | Deploy/refactor Mantle Sepolia identity/reputation addresses | V2C | M | SLF2, ADR 0008 |
+| 8 | Implement strategy NFT mint/readback flow | V2C | L | SLF3 |
+| 9 | Implement testnet marketplace list/buy/sell/delegate flow | V2C | L | marketplace spec |
+| 10 | Implement reputation and validation receipt write/readback | V2C | L | SLF4, SLF5 |
+| 11 | Build autoresearcher mutation/eval/judge loop | V3 | L | autoresearcher plans |
+| 12 | Build autoresearcher dashboard and lineage review | V3 | L | autoresearcher dashboard plan |
+| 13 | Run final UI/UX pass across dashboard surfaces | V3 | L | design docs, chart plans |
+| 14 | Prepare contract audit, launch flags, and mainnet runbook | V4 | L | ADR 0008, contract specs |
