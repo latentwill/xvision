@@ -2,20 +2,21 @@
 track: strategy-agent-backend
 worktree: /root/deploy/xvision/.worktrees/strategy-agent-backend
 branch: strategy-agent-backend
-phase: cross-agent-goal-set
-last_updated: 2026-05-13T01:42:23Z
+phase: phase-b-pr-open
+last_updated: 2026-05-13T01:47:43Z
 owner: codex-cli
 ---
 
 # What I'm doing right now
 
-Set a cross-agent execution goal on the board to drive completion of all
-remaining handoff-sheet tasks with explicit ownership and verification evidence.
+PR [#96](https://github.com/latentwill/xvision/pull/96) open with the
+strategy-scoped `/eval-runs` filter handoff follow-up and board coordination
+updates (claim/progress/goal/pr-open).
 
 # Blocked on
 
-Nothing.
+Operator review + merge of PR #96.
 
 # Next up
 
-1. Align active tracks to the new goal criteria and close any uncovered tasks.
+1. Pick next uncovered handoff-sheet task once PR #96 is reviewed.
