@@ -26,7 +26,8 @@ use xvision_data::fixtures::load_ohlcv_fixture;
 use crate::agent::llm::LlmDispatch;
 use crate::agent::pipeline::{run_pipeline, PipelineInputs, ResolvedAgentSlot};
 use crate::api::chart::{
-    ChartEquityPoint, HoldMarker, MarkerEvent, RunChartEvent, RunEventBus, TradeSide, TradeMarker,
+    ChartEquityPoint, HoldMarker, LiveDecisionRow, MarkerEvent, RunChartEvent, RunEventBus,
+    TradeSide, TradeMarker,
 };
 use crate::strategies::Strategy;
 use crate::eval::executor::Executor;
@@ -172,6 +173,14 @@ impl Executor for BacktestExecutor {
             run_id: run.id.clone(),
             estimated_tokens: 0,
         });
+        self.emit_chart(
+            &run.id,
+            RunChartEvent::Status {
+                phase: "running".into(),
+                message: None,
+            },
+        )
+        .await;
 
         let result = self
             .run_inner(run, strategy, scenario, agent_slots, dispatch, tools, store)
@@ -418,26 +427,30 @@ impl BacktestExecutor {
             equity = initial + realized_total
                 + position * (next_bar.open - entry_price);
 
-            store
-                .record_decision(&DecisionRow {
-                    run_id: run.id.clone(),
-                    decision_index: decision_idx,
-                    timestamp: bar.timestamp,
-                    asset: asset.clone(),
-                    action: parsed.action.clone(),
-                    conviction: Some(parsed.conviction),
-                    justification: Some(parsed.justification.clone()),
-                    order_size: fill.fill_size,
-                    fill_price: fill.fill_price,
-                    fill_size: fill.fill_size,
-                    fee: fill.fee,
-                    pnl_realized: if fill.realized_pnl != 0.0 {
-                        Some(fill.realized_pnl)
-                    } else {
-                        None
-                    },
-                })
-                .await?;
+            let decision_row = DecisionRow {
+                run_id: run.id.clone(),
+                decision_index: decision_idx,
+                timestamp: bar.timestamp,
+                asset: asset.clone(),
+                action: parsed.action.clone(),
+                conviction: Some(parsed.conviction),
+                justification: Some(parsed.justification.clone()),
+                order_size: fill.fill_size,
+                fill_price: fill.fill_price,
+                fill_size: fill.fill_size,
+                fee: fill.fee,
+                pnl_realized: if fill.realized_pnl != 0.0 {
+                    Some(fill.realized_pnl)
+                } else {
+                    None
+                },
+            };
+            store.record_decision(&decision_row).await?;
+            self.emit_chart(
+                &run.id,
+                RunChartEvent::Decision(LiveDecisionRow::from(&decision_row)),
+            )
+            .await;
 
             // Emit a marker event derived from this decision. Mirrors the
             // action → marker-variant mapping in `chart::split_markers`.

@@ -11,11 +11,12 @@
 //! Task 2 — types only (no builder yet).
 //! Task 3 — `build_run_payload` builder appended below the types.
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::api::{ApiContext, ApiError, ApiResult};
 use crate::eval::scenario::TimeWindow;
-use crate::eval::store::RunStore;
+use crate::eval::store::{DecisionRow, RunStore};
 
 // ── chart-domain types ──────────────────────────────────────────────────────
 
@@ -927,9 +928,43 @@ use tokio::sync::broadcast;
 pub enum RunChartEvent {
     Bar(ChartBar),
     IndicatorTail(std::collections::HashMap<String, IndicatorPoint>),
+    Decision(LiveDecisionRow),
     Marker(MarkerEvent),
     Equity(ChartEquityPoint),
     Status { phase: String, message: Option<String> },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LiveDecisionRow {
+    pub decision_index: u32,
+    pub timestamp: DateTime<Utc>,
+    pub asset: String,
+    pub action: String,
+    pub conviction: Option<f64>,
+    pub justification: Option<String>,
+    pub order_size: Option<f64>,
+    pub fill_price: Option<f64>,
+    pub fill_size: Option<f64>,
+    pub fee: Option<f64>,
+    pub pnl_realized: Option<f64>,
+}
+
+impl From<&DecisionRow> for LiveDecisionRow {
+    fn from(row: &DecisionRow) -> Self {
+        Self {
+            decision_index: row.decision_index,
+            timestamp: row.timestamp.clone(),
+            asset: row.asset.clone(),
+            action: row.action.clone(),
+            conviction: row.conviction,
+            justification: row.justification.clone(),
+            order_size: row.order_size,
+            fill_price: row.fill_price,
+            fill_size: row.fill_size,
+            fee: row.fee,
+            pnl_realized: row.pnl_realized,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
