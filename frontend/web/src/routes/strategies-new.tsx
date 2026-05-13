@@ -49,6 +49,9 @@ export function StrategiesNewRoute() {
   function onTemplateChange(nextTemplate: string) {
     setTemplate(nextTemplate);
   }
+  const cliCommand = `xvn strategy create --template ${shellQuote(template)} --name ${shellQuote(
+    name.trim() || "Funding Fade Agent",
+  )} --json`;
 
   return (
     <>
@@ -137,6 +140,15 @@ export function StrategiesNewRoute() {
             </p>
           ) : null}
 
+          <div>
+            <div className="mb-1 text-[11px] uppercase tracking-wide text-text-3">
+              CLI
+            </div>
+            <code className="block rounded-sm border border-border bg-surface-panel px-3 py-2 text-[12px] text-text font-mono overflow-x-auto whitespace-pre">
+              {cliCommand}
+            </code>
+          </div>
+
           <div className="flex items-center justify-end gap-2 pt-2">
             <button
               type="submit"
@@ -167,4 +179,9 @@ function errorDetail(err: unknown): string {
   if (err instanceof ApiError) return `${err.code}: ${err.message}`;
   if (err instanceof Error) return err.message;
   return String(err);
+}
+
+function shellQuote(value: string): string {
+  if (/^[A-Za-z0-9_./:-]+$/.test(value)) return value;
+  return `'${value.replace(/'/g, "'\\''")}'`;
 }

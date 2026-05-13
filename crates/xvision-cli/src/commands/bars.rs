@@ -17,7 +17,7 @@
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use chrono::{DateTime, NaiveDate, Utc};
 use clap::{Args, Subcommand};
 
@@ -66,7 +66,8 @@ pub struct FetchArgs {
     /// Window end date (UTC, midnight).
     #[arg(long)]
     pub to: NaiveDate,
-    /// Bar granularity. v1 supports `1h`, `4h`, or `1d`.
+    /// Bar granularity. Supports Alpaca bars:
+    /// 1-59m, 1-23h, 1d, 1w, 1/2/3/4/6/12mo.
     #[arg(long, default_value = "1h")]
     pub granularity: String,
 }
@@ -83,19 +84,8 @@ pub async fn run(cmd: BarsCmd) -> CliResult<()> {
     }
 }
 
-fn resolve_xvn_home(override_path: Option<PathBuf>) -> Result<PathBuf> {
-    if let Some(p) = override_path {
-        return Ok(p);
-    }
-    if let Ok(p) = std::env::var("XVN_HOME") {
-        return Ok(PathBuf::from(p));
-    }
-    let home = dirs::home_dir().context("HOME not set; pass --xvn-home")?;
-    Ok(home.join(".xvn"))
-}
-
 async fn open_ctx(override_path: Option<PathBuf>) -> Result<ApiContext> {
-    let xvn_home = resolve_xvn_home(override_path)?;
+    let xvn_home = crate::commands::home::resolve_xvn_home(override_path)?;
     let user = std::env::var("USER")
         .or_else(|_| std::env::var("USERNAME"))
         .unwrap_or_else(|_| "operator".to_string());
@@ -120,16 +110,8 @@ async fn open_ctx(override_path: Option<PathBuf>) -> Result<ApiContext> {
 async fn run_fetch(ctx: &ApiContext, a: FetchArgs) -> CliResult<()> {
     let asset = AssetSymbol::from_str(&a.asset)
         .map_err(|e| CliError::usage(anyhow::anyhow!("{e}")))?;
-    let granularity = match a.granularity.as_str() {
-        "1h" => BarGranularity::Hour1,
-        "4h" => BarGranularity::Hour4,
-        "1d" => BarGranularity::Day1,
-        other => {
-            return Err(CliError::usage(anyhow::anyhow!(
-                "granularity '{other}' not in v1 set {{1h,4h,1d}}"
-            )));
-        }
-    };
+    let granularity = BarGranularity::from_str(&a.granularity)
+        .map_err(|e| CliError::usage(anyhow::anyhow!("{e}")))?;
     let start = a
         .from
         .and_hms_opt(0, 0, 0)

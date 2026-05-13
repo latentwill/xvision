@@ -9,7 +9,7 @@
 
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use chrono::{Duration, Utc};
 use clap::Args;
 use sqlx::SqlitePool;
@@ -27,7 +27,7 @@ pub struct EodArgs {
 }
 
 pub async fn run(args: EodArgs) -> Result<()> {
-    let xvn_home = resolve_xvn_home(args.xvn_home.clone())?;
+    let xvn_home = crate::commands::home::resolve_xvn_home(args.xvn_home.clone())?;
     let user = std::env::var("USER")
         .or_else(|_| std::env::var("USERNAME"))
         .unwrap_or_else(|_| "operator".to_string());
@@ -38,17 +38,6 @@ pub async fn run(args: EodArgs) -> Result<()> {
     let report = render_report(&ctx.db, args.hours).await?;
     println!("{report}");
     Ok(())
-}
-
-fn resolve_xvn_home(override_path: Option<PathBuf>) -> Result<PathBuf> {
-    if let Some(p) = override_path {
-        return Ok(p);
-    }
-    if let Ok(p) = std::env::var("XVN_HOME") {
-        return Ok(PathBuf::from(p));
-    }
-    let home = dirs::home_dir().context("HOME not set; pass --xvn-home")?;
-    Ok(home.join(".xvn"))
 }
 
 /// Pure render fn — takes a pool + window and returns the full markdown
