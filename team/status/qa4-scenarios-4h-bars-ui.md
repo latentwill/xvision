@@ -1,6 +1,6 @@
 # qa4-scenarios-4h-bars-ui
 
-Status: claimed and implemented on 2026-05-13.
+Status: claimed, implemented, and freshly reverified on 2026-05-13T02:07:26Z.
 
 Scope:
 - Added `4h` / `Hour4` support for scenarios, Alpaca bars cache keys, scenario preview payloads, and relevant CLI parse paths.
@@ -11,7 +11,6 @@ Scope:
 Verification:
 - `corepack pnpm --dir frontend/web install --frozen-lockfile`
 - `corepack pnpm --dir frontend/web test -- ScenarioForm scenarios-detail`
-- `corepack pnpm --dir frontend/web test`
 - `corepack pnpm --dir frontend/web typecheck`
 - `git diff --check`
 
