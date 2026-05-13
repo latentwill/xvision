@@ -9,9 +9,10 @@ owner: codex-cli
 
 # What I'm doing right now
 
-PR [#96](https://github.com/latentwill/xvision/pull/96) open with the
-strategy-scoped `/eval-runs` filter handoff follow-up and board coordination
-updates (claim/progress/goal/pr-open).
+PR [#96](https://github.com/latentwill/xvision/pull/96) open with:
+- strategy-scoped `/eval-runs` filter handoff follow-up
+- `/setup` mobile responsiveness pass (thread/bubbles/composer)
+- board coordination updates (claim/progress/goal/pr-open)
 
 # Blocked on
 
@@ -19,4 +20,4 @@ Operator review + merge of PR #96.
 
 # Next up
 
-1. Pick next uncovered handoff-sheet task once PR #96 is reviewed.
+1. Continue claiming uncovered handoff-sheet tasks while PR #96 is open.
