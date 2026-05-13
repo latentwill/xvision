@@ -1,6 +1,6 @@
 ---
 name: xvision
-description: Orient a Claude Code session in the xvision repo — the `xvn` CLI surface, the intern/trader/risk pipeline vocabulary, where canonical docs live, and the deploy/build constraints that bite if ignored. Use when working in the xvision repo, when the user mentions `xvn`, xvision, intern/trader/risk roles, strategy artifacts, eval runs / setups / cycles, Strategy Loom / SLF, ERC-8004 identity, or the dashboard at xvn.tail2bb69.ts.net / xvnej.tail2bb69.ts.net.
+description: Orient a Claude Code session in the xvision repo — the `xvn` CLI surface, the intern/trader/risk pipeline vocabulary, where canonical docs live, and the deploy/build constraints that bite if ignored. Use when working in the xvision repo, when the user mentions `xvn`, xvision, intern/trader/risk roles, strategy artifacts, eval runs / setups / cycles, Strategy Loom / SLF, ERC-8004 identity, the dashboard at xvn.tail2bb69.ts.net / xvnej.tail2bb69.ts.net, or the remote CLI job surface.
 ---
 
 # xvision
@@ -16,6 +16,7 @@ Don't grep blindly. The repo has canonical docs — start there:
 - `architecture.md` — system shape.
 - `docs/superpowers/specs/` and `docs/superpowers/plans/` — design spec + executable plan for each major subsystem. Plan filenames are dated; pick the latest matching the feature you're touching.
 - `decisions/` — ADRs. ADR 0010 = the 2026-05-05 marketplace pivot; ADR 0011 = CV substrate moved to xvision-play.
+- `docs/superpowers/specs/2026-05-12-remote-cli-over-tailscale-design.md` — the shipped remote CLI contract over Tailscale.
 
 ## CLI quick map
 
@@ -74,6 +75,17 @@ Two live instances on `extndly-dev`: `xvn.tail2bb69.ts.net` (personal) + `xvnej.
 Live-node control currently means the Tailscale-served dashboard node, not
 generic SSH orchestration. Assume `xvn.tail2bb69.ts.net` or
 `xvnej.tail2bb69.ts.net` unless the operator tells you otherwise.
+
+## Remote CLI over Tailscale
+
+This is the Tailscale-served remote CLI surface for typed argv jobs.
+For command-style live-node work, prefer the typed remote CLI job API instead of ad hoc SSH or shell assumptions.
+
+- Use `scripts/xvn-remote.py exec ...` for a shell-free helper that submits typed argv.
+- Use `POST /api/cli/jobs` with `argv` for direct API access.
+- Use `GET /api/cli/jobs/:id` and `GET /api/cli/jobs/:id/output` to reconnect after disconnects.
+- Use `GET /api/cli/jobs/:id/events` for SSE progress.
+- `xvn-mcp` is separate stdio MCP, not the HTTP remote-control surface.
 
 ## Don'ts
 
