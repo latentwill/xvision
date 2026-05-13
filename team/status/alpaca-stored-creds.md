@@ -1,29 +1,22 @@
 ---
 track: alpaca-stored-creds
-worktree: /Users/edkennedy/Code/xvision (main worktree)
+worktree: /Users/edkennedy/Code/xvision
 branch: feature/alpaca-stored-creds
-phase: phase-a-implementation
-last_updated: 2026-05-11T03:46:06Z
-owner: claude-opus-4-7 (1M ctx) — post-v1-gaps UX
+phase: phase-b-merged
+last_updated: 2026-05-13T02:11:03Z
+owner: archived (merged via PR #72)
 ---
 
 # What I'm doing right now
 
-Persisting Alpaca paper credentials so operators don't have to
-re-`export APCA_*` every shell session. Engine + dashboard + frontend
-in one PR.
+Historical record only. Persistent Alpaca credentials track merged via PR [#72](https://github.com/latentwill/xvision/pull/72).
 
 ## Plan task progress
 
-- [x] Engine: persist `~/.xvn/secrets/brokers.toml` (mode 0600)
-- [x] Engine: `set_alpaca` / `clear_alpaca` / `load_alpaca_credentials` +
-  audit logging; redacted summary in `get` response
-- [x] Engine: `api::eval::run` prefers stored creds, falls back to env
-- [x] Dashboard: `POST` / `DELETE /api/settings/brokers/alpaca`
-- [x] Frontend: `AlpacaBrokerCard` with key/secret/base-url form
-- [x] Tests: 7 engine + 4 dashboard route, all green
-- [x] `tsc -b` + `vite build` + `cargo build --workspace` clean
-- [ ] Commit + PR + pr-open queue note
+- [x] engine credential storage + eval fallback logic
+- [x] dashboard POST/DELETE brokers route
+- [x] frontend settings brokers form UX
+- [x] PR merged
 
 # Blocked on
 
