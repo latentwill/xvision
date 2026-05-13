@@ -24,7 +24,7 @@ use xvision_core::market::Ohlcv;
 use xvision_data::fixtures::load_ohlcv_fixture;
 
 use crate::agent::llm::LlmDispatch;
-use crate::agent::pipeline::{run_pipeline, PipelineInputs};
+use crate::agent::pipeline::{run_pipeline, PipelineInputs, ResolvedAgentSlot};
 use crate::api::chart::{
     ChartEquityPoint, HoldMarker, MarkerEvent, RunChartEvent, RunEventBus, TradeSide, TradeMarker,
 };
@@ -161,6 +161,7 @@ impl Executor for BacktestExecutor {
         run: &mut Run,
         bundle: &Strategy,
         scenario: &Scenario,
+        agent_slots: &[ResolvedAgentSlot],
         dispatch: Arc<dyn LlmDispatch>,
         tools: Arc<ToolRegistry>,
         store: &RunStore,
@@ -173,7 +174,7 @@ impl Executor for BacktestExecutor {
         });
 
         let result = self
-            .run_inner(run, bundle, scenario, dispatch, tools, store)
+            .run_inner(run, bundle, scenario, agent_slots, dispatch, tools, store)
             .await;
 
         match &result {
@@ -227,6 +228,7 @@ impl BacktestExecutor {
         run: &mut Run,
         bundle: &Strategy,
         scenario: &Scenario,
+        agent_slots: &[ResolvedAgentSlot],
         dispatch: Arc<dyn LlmDispatch>,
         tools: Arc<ToolRegistry>,
         store: &RunStore,
@@ -340,6 +342,7 @@ impl BacktestExecutor {
 
             let outs = run_pipeline(PipelineInputs {
                 bundle,
+                agent_slots,
                 seed_inputs: seed,
                 dispatch: dispatch.clone(),
                 tools: tools.clone(),

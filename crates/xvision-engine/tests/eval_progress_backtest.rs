@@ -104,7 +104,7 @@ async fn backtest_executor_emits_all_progress_event_types() {
     let executor = BacktestExecutor::with_progress(tx);
 
     let result = executor
-        .run(&mut run, &bundle, &scenario, dispatch, tools, &store)
+        .run(&mut run, &bundle, &scenario, &[], dispatch, tools, &store)
         .await;
     assert!(
         result.is_ok(),
@@ -222,7 +222,7 @@ async fn backtest_executor_runs_clean_with_no_progress_subscriber() {
     let executor = BacktestExecutor::with_progress(tx);
 
     executor
-        .run(&mut run, &bundle, &scenario, dispatch, tools, &store)
+        .run(&mut run, &bundle, &scenario, &[], dispatch, tools, &store)
         .await
         .expect("run should still succeed without a subscriber");
 }
@@ -252,7 +252,7 @@ async fn backtest_executor_default_constructor_is_silent() {
     let executor = BacktestExecutor::new();
 
     executor
-        .run(&mut run, &bundle, &scenario, dispatch, tools, &store)
+        .run(&mut run, &bundle, &scenario, &[], dispatch, tools, &store)
         .await
         .expect("BacktestExecutor::new() should run to completion");
 }
