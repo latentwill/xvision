@@ -13,6 +13,8 @@ import { ChatRail } from "./ChatRail";
 import * as chatApi from "@/api/chat_rail";
 import * as settingsApi from "@/api/settings";
 
+const defaultStorage = globalThis.localStorage;
+
 vi.mock("@/api/chat_rail", async () => {
   const actual = await vi.importActual<typeof import("@/api/chat_rail")>(
     "@/api/chat_rail",
@@ -39,16 +41,17 @@ vi.mock("@/api/settings", async () => {
 });
 
 function renderRail(path = "/strategies") {
-  localStorage.setItem("xvn.chat_rail.open", "1");
+  try {
+    localStorage.setItem("xvn.chat_rail.open", "1");
+  } catch {
+    // Safari private or blocked storage should not prevent app startup.
+  }
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   return render(
     <MemoryRouter initialEntries={[path]}>
-      <QueryClientProvider
-        client={
-          new QueryClient({
-            defaultOptions: { queries: { retry: false } },
-          })
-        }
-      >
+      <QueryClientProvider client={client}>
         <ChatRail />
       </QueryClientProvider>
     </MemoryRouter>,
@@ -89,6 +92,16 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  Object.defineProperty(globalThis, "localStorage", {
+    value: defaultStorage,
+    writable: true,
+    configurable: true,
+  });
+  Object.defineProperty(window, "localStorage", {
+    value: defaultStorage,
+    writable: true,
+    configurable: true,
+  });
   cleanup();
   vi.restoreAllMocks();
 });
@@ -111,5 +124,33 @@ describe("ChatRail", () => {
     expect(chatApi.deleteSession).not.toHaveBeenCalled();
     expect(screen.getByPlaceholderText(/ask about this page/i)).toHaveValue("");
     expect(await screen.findByText(/No messages yet/i)).toBeInTheDocument();
+  });
+
+  it("does not block app startup when Safari storage access is unavailable", () => {
+    const blockedStorage = {
+      getItem() {
+        throw new DOMException("Blocked", "SecurityError");
+      },
+      setItem() {
+        throw new DOMException("Blocked", "SecurityError");
+      },
+      removeItem() {
+        throw new DOMException("Blocked", "SecurityError");
+      },
+    };
+    Object.defineProperty(globalThis, "localStorage", {
+      value: blockedStorage,
+      writable: true,
+      configurable: true,
+    });
+    Object.defineProperty(window, "localStorage", {
+      value: blockedStorage,
+      writable: true,
+      configurable: true,
+    });
+
+    renderRail();
+
+    expect(screen.getByLabelText("Chat rail")).toBeInTheDocument();
   });
 });

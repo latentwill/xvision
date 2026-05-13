@@ -12,6 +12,7 @@ import { ChartContainer, type RangePreset } from "./ChartContainer";
 import { chartTheme } from "./chart-theme";
 import { useChartLayers } from "./use-chart-layers";
 import { ChartLayersPanel } from "./ChartLayersPanel";
+import { type LayerKey } from "./chart-layers";
 import { MarkerSidePanel } from "./MarkerSidePanel";
 
 type ActiveMarker = { kind: "trade" | "veto" | "hold"; decision_index: number };
@@ -24,6 +25,43 @@ type Props = {
 function toLine(p: IndicatorPoint) {
   return { time: p.time as UTCTimestamp, value: p.value };
 }
+
+type SetDataSeries = {
+  setData: (data: any[]) => void;
+  setMarkers?: (markers: any[]) => void;
+};
+
+type RunChartSeries = {
+  candle?: SetDataSeries;
+  sma20?: SetDataSeries;
+  sma30?: SetDataSeries;
+  sma50?: SetDataSeries;
+  sma60?: SetDataSeries;
+  sma90?: SetDataSeries;
+  sma200?: SetDataSeries;
+  ema20?: SetDataSeries;
+  ema30?: SetDataSeries;
+  ema50?: SetDataSeries;
+  ema60?: SetDataSeries;
+  ema90?: SetDataSeries;
+  ema200?: SetDataSeries;
+  bollUpper?: SetDataSeries;
+  bollMiddle?: SetDataSeries;
+  bollLower?: SetDataSeries;
+  donchianUpper?: SetDataSeries;
+  donchianLower?: SetDataSeries;
+  markerHost?: SetDataSeries;
+  longPosition?: SetDataSeries;
+  shortPosition?: SetDataSeries;
+  rsi?: SetDataSeries;
+  macdLine?: SetDataSeries;
+  macdSignal?: SetDataSeries;
+  macdHistogram?: SetDataSeries;
+  atr?: SetDataSeries;
+  equity?: SetDataSeries;
+  drawdown?: SetDataSeries;
+  volume?: SetDataSeries;
+};
 
 function buildOpts(theme: ReturnType<typeof chartTheme>) {
   return {
@@ -74,6 +112,102 @@ function enterFollowMode(charts: IChartApi[]) {
   }
 }
 
+function buildMarkers(
+  payload: RunChartPayload,
+  layers: Record<LayerKey, boolean>,
+  theme: ReturnType<typeof chartTheme>,
+) {
+  const allMarkers: {
+    time: UTCTimestamp;
+    position: "belowBar" | "aboveBar" | "inBar";
+    color: string;
+    shape: "arrowUp" | "arrowDown" | "circle";
+    text: string;
+  }[] = [];
+  if (layers.markerBuy)
+    payload.markers.trades
+      .filter((t) => t.side === "Buy")
+      .forEach((t) =>
+        allMarkers.push({ time: t.time as UTCTimestamp, position: "belowBar", color: theme.series.markerBuy, shape: "arrowUp", text: `Buy ${t.size}` }),
+      );
+  if (layers.markerSell)
+    payload.markers.trades
+      .filter((t) => t.side === "Sell")
+      .forEach((t) =>
+        allMarkers.push({ time: t.time as UTCTimestamp, position: "aboveBar", color: theme.series.markerSell, shape: "arrowDown", text: `Sell ${t.size}` }),
+      );
+  if (layers.markerVeto)
+    payload.markers.vetoes.forEach((v) =>
+      allMarkers.push({ time: v.time as UTCTimestamp, position: "aboveBar", color: theme.series.markerVeto, shape: "circle", text: `Veto: ${v.reason}` }),
+    );
+  if (layers.markerHold)
+    payload.markers.holds.forEach((h) =>
+      allMarkers.push({ time: h.time as UTCTimestamp, position: "inBar", color: theme.series.markerHold, shape: "circle", text: "Hold" }),
+    );
+  return allMarkers.sort((a, b) => (a.time as number) - (b.time as number));
+}
+
+function applySeriesData(
+  series: RunChartSeries,
+  payload: RunChartPayload,
+  layers: Record<LayerKey, boolean>,
+  theme: ReturnType<typeof chartTheme>,
+) {
+  series.candle?.setData(
+    payload.bars.map((b) => ({
+      time: b.time as UTCTimestamp,
+      open: b.open,
+      high: b.high,
+      low: b.low,
+      close: b.close,
+    })),
+  );
+  series.sma20?.setData(payload.indicators.sma_20.map(toLine));
+  series.sma30?.setData(payload.indicators.sma_30.map(toLine));
+  series.sma50?.setData(payload.indicators.sma_50.map(toLine));
+  series.sma60?.setData(payload.indicators.sma_60.map(toLine));
+  series.sma90?.setData(payload.indicators.sma_90.map(toLine));
+  series.sma200?.setData(payload.indicators.sma_200.map(toLine));
+  series.ema20?.setData(payload.indicators.ema_20.map(toLine));
+  series.ema30?.setData(payload.indicators.ema_30.map(toLine));
+  series.ema50?.setData(payload.indicators.ema_50.map(toLine));
+  series.ema60?.setData(payload.indicators.ema_60.map(toLine));
+  series.ema90?.setData(payload.indicators.ema_90.map(toLine));
+  series.ema200?.setData(payload.indicators.ema_200.map(toLine));
+  series.bollUpper?.setData(payload.indicators.bollinger.upper.map(toLine));
+  series.bollMiddle?.setData(payload.indicators.bollinger.middle.map(toLine));
+  series.bollLower?.setData(payload.indicators.bollinger.lower.map(toLine));
+  series.donchianUpper?.setData(payload.indicators.donchian.upper.map(toLine));
+  series.donchianLower?.setData(payload.indicators.donchian.lower.map(toLine));
+  series.markerHost?.setMarkers?.(buildMarkers(payload, layers, theme));
+  series.longPosition?.setData(
+    payload.position
+      .filter((p) => p.side === "Long")
+      .map((p) => ({ time: p.time as UTCTimestamp, value: 0 })),
+  );
+  series.shortPosition?.setData(
+    payload.position
+      .filter((p) => p.side === "Short")
+      .map((p) => ({ time: p.time as UTCTimestamp, value: 0 })),
+  );
+  series.rsi?.setData(payload.indicators.rsi_14.map(toLine));
+  series.macdLine?.setData(payload.indicators.macd.line.map(toLine));
+  series.macdSignal?.setData(payload.indicators.macd.signal.map(toLine));
+  series.macdHistogram?.setData(
+    payload.indicators.macd.histogram.map((p) => ({ time: p.time as UTCTimestamp, value: p.value })),
+  );
+  series.atr?.setData(payload.indicators.atr_14.map(toLine));
+  series.equity?.setData(payload.equity.map((p) => ({ time: p.time as UTCTimestamp, value: p.equity_usd })));
+  series.drawdown?.setData(payload.drawdown.map((p) => ({ time: p.time as UTCTimestamp, value: -p.drawdown_pct })));
+  series.volume?.setData(
+    payload.bars.map((b) => ({
+      time: b.time as UTCTimestamp,
+      value: b.volume,
+      color: b.close >= b.open ? theme.series.candleUp : theme.series.candleDown,
+    })),
+  );
+}
+
 export function RunChart({
   payload,
   themeMode = "dark",
@@ -81,6 +215,9 @@ export function RunChart({
 }: Props) {
   const priceRef = useRef<HTMLDivElement>(null);
   const chartSetRef = useRef<IChartApi[]>([]);
+  const seriesRef = useRef<RunChartSeries>({});
+  const payloadRef = useRef(payload);
+  const previousPayloadRef = useRef(payload);
   const followRef = useRef(follow);
   const layoutFollowRef = useRef(follow);
   const effectFollowRef = useRef(follow);
@@ -98,6 +235,17 @@ export function RunChart({
   const [activeMarker, setActiveMarker] = useState<ActiveMarker | null>(null);
 
   useEffect(() => {
+    const previousPayload = previousPayloadRef.current;
+    const theme = chartTheme(themeMode);
+    applySeriesData(seriesRef.current, payload, layers, theme);
+    payloadRef.current = payload;
+    previousPayloadRef.current = payload;
+    if (previousPayload !== payload && followRef.current) {
+      enterFollowMode(chartSetRef.current);
+    }
+  }, [payload, layers, themeMode]);
+
+  useEffect(() => {
     if (!priceRef.current) return;
     const buildVersion = buildVersionRef.current + 1;
     buildVersionRef.current = buildVersion;
@@ -109,6 +257,7 @@ export function RunChart({
     const eqChart = eqRef.current ? createChart(eqRef.current, opts) : null;
     const ddChart = ddRef.current ? createChart(ddRef.current, opts) : null;
     const volChart = volRef.current && layers.volume ? createChart(volRef.current, opts) : null;
+    const series: RunChartSeries = {};
 
     // --- Price pane ---
     if (layers.candles) {
@@ -119,84 +268,45 @@ export function RunChart({
         wickDownColor: theme.series.candleDown,
         borderVisible: false,
       });
-      candle.setData(
-        payload.bars.map((b) => ({
-          time: b.time as UTCTimestamp,
-          open: b.open,
-          high: b.high,
-          low: b.low,
-          close: b.close,
-        })),
-      );
+      series.candle = candle as SetDataSeries;
     }
     if (layers.sma20)
-      priceChart.addLineSeries({ color: theme.series.sma20, lineWidth: 1 }).setData(payload.indicators.sma_20.map(toLine));
-    if (layers.sma30 && payload.indicators.sma_30)
-      priceChart.addLineSeries({ color: "#a7f3d0", lineWidth: 1 }).setData(payload.indicators.sma_30.map(toLine));
+      series.sma20 = priceChart.addLineSeries({ color: theme.series.sma20, lineWidth: 1 }) as SetDataSeries;
+    if (layers.sma30)
+      series.sma30 = priceChart.addLineSeries({ color: "#a7f3d0", lineWidth: 1 }) as SetDataSeries;
     if (layers.sma50)
-      priceChart.addLineSeries({ color: theme.series.sma50, lineWidth: 1 }).setData(payload.indicators.sma_50.map(toLine));
-    if (layers.sma60 && payload.indicators.sma_60)
-      priceChart.addLineSeries({ color: "#6ee7b7", lineWidth: 1 }).setData(payload.indicators.sma_60.map(toLine));
-    if (layers.sma90 && payload.indicators.sma_90)
-      priceChart.addLineSeries({ color: "#34d399", lineWidth: 1 }).setData(payload.indicators.sma_90.map(toLine));
+      series.sma50 = priceChart.addLineSeries({ color: theme.series.sma50, lineWidth: 1 }) as SetDataSeries;
+    if (layers.sma60)
+      series.sma60 = priceChart.addLineSeries({ color: "#6ee7b7", lineWidth: 1 }) as SetDataSeries;
+    if (layers.sma90)
+      series.sma90 = priceChart.addLineSeries({ color: "#34d399", lineWidth: 1 }) as SetDataSeries;
     if (layers.sma200)
-      priceChart.addLineSeries({ color: theme.series.sma200, lineWidth: 1 }).setData(payload.indicators.sma_200.map(toLine));
+      series.sma200 = priceChart.addLineSeries({ color: theme.series.sma200, lineWidth: 1 }) as SetDataSeries;
     if (layers.ema20)
-      priceChart.addLineSeries({ color: theme.series.ema20, lineWidth: 1, lineStyle: 2 }).setData(payload.indicators.ema_20.map(toLine));
-    if (layers.ema30 && payload.indicators.ema_30)
-      priceChart.addLineSeries({ color: "#bae6fd", lineWidth: 1, lineStyle: 2 }).setData(payload.indicators.ema_30.map(toLine));
+      series.ema20 = priceChart.addLineSeries({ color: theme.series.ema20, lineWidth: 1, lineStyle: 2 }) as SetDataSeries;
+    if (layers.ema30)
+      series.ema30 = priceChart.addLineSeries({ color: "#bae6fd", lineWidth: 1, lineStyle: 2 }) as SetDataSeries;
     if (layers.ema50)
-      priceChart.addLineSeries({ color: theme.series.ema50, lineWidth: 1, lineStyle: 2 }).setData(payload.indicators.ema_50.map(toLine));
-    if (layers.ema60 && payload.indicators.ema_60)
-      priceChart.addLineSeries({ color: "#7dd3fc", lineWidth: 1, lineStyle: 2 }).setData(payload.indicators.ema_60.map(toLine));
-    if (layers.ema90 && payload.indicators.ema_90)
-      priceChart.addLineSeries({ color: "#38bdf8", lineWidth: 1, lineStyle: 2 }).setData(payload.indicators.ema_90.map(toLine));
+      series.ema50 = priceChart.addLineSeries({ color: theme.series.ema50, lineWidth: 1, lineStyle: 2 }) as SetDataSeries;
+    if (layers.ema60)
+      series.ema60 = priceChart.addLineSeries({ color: "#7dd3fc", lineWidth: 1, lineStyle: 2 }) as SetDataSeries;
+    if (layers.ema90)
+      series.ema90 = priceChart.addLineSeries({ color: "#38bdf8", lineWidth: 1, lineStyle: 2 }) as SetDataSeries;
     if (layers.ema200)
-      priceChart.addLineSeries({ color: theme.series.ema200, lineWidth: 1, lineStyle: 2 }).setData(payload.indicators.ema_200.map(toLine));
+      series.ema200 = priceChart.addLineSeries({ color: theme.series.ema200, lineWidth: 1, lineStyle: 2 }) as SetDataSeries;
     if (layers.bollinger) {
-      priceChart.addLineSeries({ color: theme.series.bollUpper, lineWidth: 1 }).setData(payload.indicators.bollinger.upper.map(toLine));
-      priceChart.addLineSeries({ color: theme.series.bollMiddle, lineWidth: 1 }).setData(payload.indicators.bollinger.middle.map(toLine));
-      priceChart.addLineSeries({ color: theme.series.bollLower, lineWidth: 1 }).setData(payload.indicators.bollinger.lower.map(toLine));
+      series.bollUpper = priceChart.addLineSeries({ color: theme.series.bollUpper, lineWidth: 1 }) as SetDataSeries;
+      series.bollMiddle = priceChart.addLineSeries({ color: theme.series.bollMiddle, lineWidth: 1 }) as SetDataSeries;
+      series.bollLower = priceChart.addLineSeries({ color: theme.series.bollLower, lineWidth: 1 }) as SetDataSeries;
     }
     if (layers.donchian) {
-      priceChart.addLineSeries({ color: theme.series.donchianUpper, lineWidth: 1 }).setData(payload.indicators.donchian.upper.map(toLine));
-      priceChart.addLineSeries({ color: theme.series.donchianLower, lineWidth: 1 }).setData(payload.indicators.donchian.lower.map(toLine));
+      series.donchianUpper = priceChart.addLineSeries({ color: theme.series.donchianUpper, lineWidth: 1 }) as SetDataSeries;
+      series.donchianLower = priceChart.addLineSeries({ color: theme.series.donchianLower, lineWidth: 1 }) as SetDataSeries;
     }
 
     // --- Markers on price pane ---
-    const allMarkers: {
-      time: UTCTimestamp;
-      position: "belowBar" | "aboveBar" | "inBar";
-      color: string;
-      shape: "arrowUp" | "arrowDown" | "circle";
-      text: string;
-    }[] = [];
-    if (layers.markerBuy)
-      payload.markers.trades
-        .filter((t) => t.side === "Buy")
-        .forEach((t) =>
-          allMarkers.push({ time: t.time as UTCTimestamp, position: "belowBar", color: theme.series.markerBuy, shape: "arrowUp", text: `Buy ${t.size}` }),
-        );
-    if (layers.markerSell)
-      payload.markers.trades
-        .filter((t) => t.side === "Sell")
-        .forEach((t) =>
-          allMarkers.push({ time: t.time as UTCTimestamp, position: "aboveBar", color: theme.series.markerSell, shape: "arrowDown", text: `Sell ${t.size}` }),
-        );
-    if (layers.markerVeto)
-      payload.markers.vetoes.forEach((v) =>
-        allMarkers.push({ time: v.time as UTCTimestamp, position: "aboveBar", color: theme.series.markerVeto, shape: "circle", text: `Veto: ${v.reason}` }),
-      );
-    if (layers.markerHold)
-      payload.markers.holds.forEach((h) =>
-        allMarkers.push({ time: h.time as UTCTimestamp, position: "inBar", color: theme.series.markerHold, shape: "circle", text: "Hold" }),
-      );
-
-    if (allMarkers.length > 0) {
-      const markerHost = priceChart.addLineSeries({ visible: false });
-      markerHost.setMarkers(
-        allMarkers.sort((a, b) => (a.time as number) - (b.time as number)),
-      );
+    if (layers.markerBuy || layers.markerSell || layers.markerVeto || layers.markerHold) {
+      series.markerHost = priceChart.addLineSeries({ visible: false }) as SetDataSeries;
     }
 
     // TODO(M2): wire marker click via chart.subscribeCrosshairMove to set activeMarker
@@ -209,38 +319,28 @@ export function RunChart({
         bottomColor: "transparent",
         lineColor: "transparent",
       });
-      longSeries.setData(
-        payload.position
-          .filter((p) => p.side === "Long")
-          .map((p) => ({ time: p.time as UTCTimestamp, value: 0 })),
-      );
+      series.longPosition = longSeries as SetDataSeries;
       const shortSeries = priceChart.addAreaSeries({
         topColor: theme.series.positionShort,
         bottomColor: "transparent",
         lineColor: "transparent",
       });
-      shortSeries.setData(
-        payload.position
-          .filter((p) => p.side === "Short")
-          .map((p) => ({ time: p.time as UTCTimestamp, value: 0 })),
-      );
+      series.shortPosition = shortSeries as SetDataSeries;
     }
 
     // --- Subpane ---
     if (subChart) {
       if (layers.subpaneRsi) {
         const rsi = subChart.addLineSeries({ color: "#a78bfa", lineWidth: 1 });
-        rsi.setData(payload.indicators.rsi_14.map(toLine));
+        series.rsi = rsi as SetDataSeries;
         rsi.createPriceLine({ price: 30, color: "#475569", lineWidth: 1, lineStyle: 2 });
         rsi.createPriceLine({ price: 70, color: "#475569", lineWidth: 1, lineStyle: 2 });
       } else if (layers.subpaneMacd) {
-        subChart.addLineSeries({ color: "#22d3ee", lineWidth: 1 }).setData(payload.indicators.macd.line.map(toLine));
-        subChart.addLineSeries({ color: "#f97316", lineWidth: 1 }).setData(payload.indicators.macd.signal.map(toLine));
-        subChart.addHistogramSeries({ color: "#94a3b8" }).setData(
-          payload.indicators.macd.histogram.map((p) => ({ time: p.time as UTCTimestamp, value: p.value })),
-        );
+        series.macdLine = subChart.addLineSeries({ color: "#22d3ee", lineWidth: 1 }) as SetDataSeries;
+        series.macdSignal = subChart.addLineSeries({ color: "#f97316", lineWidth: 1 }) as SetDataSeries;
+        series.macdHistogram = subChart.addHistogramSeries({ color: "#94a3b8" }) as SetDataSeries;
       } else if (layers.subpaneAtr) {
-        subChart.addLineSeries({ color: "#fbbf24", lineWidth: 1 }).setData(payload.indicators.atr_14.map(toLine));
+        series.atr = subChart.addLineSeries({ color: "#fbbf24", lineWidth: 1 }) as SetDataSeries;
       }
     }
 
@@ -251,7 +351,7 @@ export function RunChart({
         topColor: "rgba(34,211,238,0.3)",
         bottomColor: "rgba(34,211,238,0.0)",
       });
-      eq.setData(payload.equity.map((p) => ({ time: p.time as UTCTimestamp, value: p.equity_usd })));
+      series.equity = eq as SetDataSeries;
     }
     if (ddChart && layers.drawdown) {
       const dd = ddChart.addAreaSeries({
@@ -259,18 +359,12 @@ export function RunChart({
         topColor: "rgba(239,68,68,0.3)",
         bottomColor: "rgba(239,68,68,0.0)",
       });
-      dd.setData(payload.drawdown.map((p) => ({ time: p.time as UTCTimestamp, value: -p.drawdown_pct })));
+      series.drawdown = dd as SetDataSeries;
     }
 
     // --- Volume ---
     if (volChart) {
-      volChart.addHistogramSeries({ color: theme.series.candleUp }).setData(
-        payload.bars.map((b) => ({
-          time: b.time as UTCTimestamp,
-          value: b.volume,
-          color: b.close >= b.open ? theme.series.candleUp : theme.series.candleDown,
-        })),
-      );
+      series.volume = volChart.addHistogramSeries({ color: theme.series.candleUp }) as SetDataSeries;
     }
 
     // --- Time-scale sync ---
@@ -278,6 +372,8 @@ export function RunChart({
       (c): c is IChartApi => c !== null,
     );
     chartSetRef.current = all;
+    seriesRef.current = series;
+    applySeriesData(series, payloadRef.current, layers, theme);
 
     all.forEach((c) =>
       c.timeScale().subscribeVisibleLogicalRangeChange((r: LogicalRange | null) => {
@@ -311,9 +407,12 @@ export function RunChart({
       if (chartSetRef.current === all) {
         chartSetRef.current = [];
       }
+      if (seriesRef.current === series) {
+        seriesRef.current = {};
+      }
       all.forEach((c) => c.remove());
     };
-  }, [payload, layers, themeMode]);
+  }, [layers, themeMode]);
 
   useLayoutEffect(() => {
     const wasFollowing = layoutFollowRef.current;

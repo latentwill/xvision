@@ -25,6 +25,11 @@ import { Icon } from "@/components/primitives/Icon";
 import { ModelPicker } from "@/components/ModelPicker";
 import { ApiError } from "@/api/client";
 import {
+  safeStorageGet,
+  safeStorageRemove,
+  safeStorageSet,
+} from "@/lib/storage";
+import {
   type ChatMessage,
   type ContentBlock,
   type ContextScope,
@@ -76,7 +81,7 @@ export function ChatRail() {
   const key = useMemo(() => scopeKey(scope), [scope]);
 
   const [open, setOpen] = useState<boolean>(() => {
-    return localStorage.getItem(RAIL_OPEN_LS) === "1";
+    return safeStorageGet(RAIL_OPEN_LS) === "1";
   });
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [bubbles, setBubbles] = useState<Bubble[]>([]);
@@ -84,10 +89,10 @@ export function ChatRail() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [providerName, setProviderName] = useState<string | null>(
-    () => localStorage.getItem(RAIL_PROVIDER_LS),
+    () => safeStorageGet(RAIL_PROVIDER_LS),
   );
   const [modelId, setModelId] = useState<string>(
-    () => localStorage.getItem(RAIL_MODEL_LS) ?? "",
+    () => safeStorageGet(RAIL_MODEL_LS) ?? "",
   );
   const abortRef = useRef<AbortController | null>(null);
   const lastScopeKeyRef = useRef<string | null>(null);
@@ -118,14 +123,14 @@ export function ChatRail() {
     const m = pick.enabled_models[0];
     setProviderName(pick.name);
     setModelId(m);
-    localStorage.setItem(RAIL_PROVIDER_LS, pick.name);
-    localStorage.setItem(RAIL_MODEL_LS, m);
+    safeStorageSet(RAIL_PROVIDER_LS, pick.name);
+    safeStorageSet(RAIL_MODEL_LS, m);
   }, [providerName, modelId, providers.data]);
 
   // Persist open/close so the rail stays in the user's chosen state across
   // route changes (and reloads).
   useEffect(() => {
-    localStorage.setItem(RAIL_OPEN_LS, open ? "1" : "0");
+    safeStorageSet(RAIL_OPEN_LS, open ? "1" : "0");
   }, [open]);
 
   // When the rail is open and the scope changes, resolve a session for
@@ -215,6 +220,12 @@ export function ChatRail() {
     }
   }, [key, scope, sessionsQ]);
 
+  const recentScopeSessions = useMemo(() => {
+    return (sessionsQ.data ?? [])
+      .filter((s) => scopeKey(s.scope) === key)
+      .slice(0, 8);
+  }, [key, sessionsQ.data]);
+
   if (!open) {
     return (
       <aside
@@ -258,11 +269,11 @@ export function ChatRail() {
           </button>
         </div>
       </header>
-      {(sessionsQ.data?.length ?? 0) > 0 && (
+      {recentScopeSessions.length > 0 && (
         <div className="px-4 py-2 border-b border-border-soft bg-surface-2/20">
           <div className="text-[11px] text-text-3 mb-1">Conversation history</div>
           <div className="space-y-1">
-            {(sessionsQ.data ?? []).slice(0, 8).map((s) => (
+            {recentScopeSessions.map((s) => (
               <button
                 key={s.id}
                 onClick={async () => {
@@ -295,10 +306,10 @@ export function ChatRail() {
         onChange={(p, m) => {
           setProviderName(p);
           setModelId(m);
-          if (p) localStorage.setItem(RAIL_PROVIDER_LS, p);
-          else localStorage.removeItem(RAIL_PROVIDER_LS);
-          if (m) localStorage.setItem(RAIL_MODEL_LS, m);
-          else localStorage.removeItem(RAIL_MODEL_LS);
+          if (p) safeStorageSet(RAIL_PROVIDER_LS, p);
+          else safeStorageRemove(RAIL_PROVIDER_LS);
+          if (m) safeStorageSet(RAIL_MODEL_LS, m);
+          else safeStorageRemove(RAIL_MODEL_LS);
         }}
       />
 

@@ -23,5 +23,5 @@
 ## Verification Notes
 
 - `corepack pnpm --dir frontend/web test` passed: 15 files, 33 tests.
-- `corepack pnpm --dir frontend/web build` passed. Vite still warns the main JS chunk is over 500 kB (`~810 kB` minified, `~237 kB` gzip), so code-splitting the dashboard shell/chart routes remains the main performance follow-up.
+- `corepack pnpm --dir frontend/web build` passed after the performance follow-up. Dashboard route modules and the chat rail now lazy-load through dynamic imports, chart-heavy route chunks split out of the initial shell, and Vite no longer emits the >500 kB chunk warning. The largest JS chunk is now `~260 kB` minified / `~84 kB` gzip.
 - Rust verification is blocked in this workspace because `cargo` is not installed (`cargo: command not found`). Added Rust coverage for chat session creation and missing-bars eval preflight, but those tests still need to run in CI or a Rust-equipped shell.
