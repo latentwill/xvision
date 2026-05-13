@@ -116,7 +116,7 @@ async fn paper_executor_runs_to_completion() {
     let id = run.id.clone();
 
     let metrics = executor
-        .run(&mut run, &bundle, &scenario, dispatch, tools, &store)
+        .run(&mut run, &bundle, &scenario, &[], dispatch, tools, &store)
         .await
         .expect("run must succeed");
 
@@ -134,7 +134,7 @@ async fn paper_executor_records_a_decision_row_per_tick() {
         paper_harness(canned, 100_000.0).await;
 
     executor
-        .run(&mut run, &bundle, &scenario, dispatch, tools, &store)
+        .run(&mut run, &bundle, &scenario, &[], dispatch, tools, &store)
         .await
         .unwrap();
 
@@ -154,7 +154,7 @@ async fn paper_executor_submits_orders_only_for_actionable_decisions() {
         paper_harness(canned, 100_000.0).await;
 
     let metrics = executor
-        .run(&mut run, &bundle, &scenario, dispatch, tools, &store)
+        .run(&mut run, &bundle, &scenario, &[], dispatch, tools, &store)
         .await
         .unwrap();
 
@@ -176,7 +176,7 @@ async fn paper_executor_skips_broker_for_flat_decisions() {
         paper_harness(canned, 100_000.0).await;
 
     let metrics = executor
-        .run(&mut run, &bundle, &scenario, dispatch, tools, &store)
+        .run(&mut run, &bundle, &scenario, &[], dispatch, tools, &store)
         .await
         .unwrap();
 
@@ -193,7 +193,7 @@ async fn paper_executor_records_equity_sample_per_tick() {
         paper_harness(canned, 50_000.0).await;
 
     executor
-        .run(&mut run, &bundle, &scenario, dispatch, tools, &store)
+        .run(&mut run, &bundle, &scenario, &[], dispatch, tools, &store)
         .await
         .unwrap();
 
@@ -211,7 +211,7 @@ async fn paper_executor_idempotency_key_includes_run_id_and_decision_index() {
         paper_harness(canned, 100_000.0).await;
 
     executor
-        .run(&mut run, &bundle, &scenario, dispatch, tools, &store)
+        .run(&mut run, &bundle, &scenario, &[], dispatch, tools, &store)
         .await
         .unwrap();
 
@@ -240,7 +240,7 @@ async fn paper_executor_handles_unparseable_trader_output_as_flat() {
         paper_harness(canned, 100_000.0).await;
 
     let metrics = executor
-        .run(&mut run, &bundle, &scenario, dispatch, tools, &store)
+        .run(&mut run, &bundle, &scenario, &[], dispatch, tools, &store)
         .await
         .expect("unparseable trader output must not fail the run");
 

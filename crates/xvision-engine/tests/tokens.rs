@@ -1,5 +1,5 @@
 use xvision_engine::templates::registry;
-use xvision_engine::tokens::estimate_pipeline_tokens;
+use xvision_engine::tokens::{estimate_pipeline_tokens, estimate_pipeline_tokens_from_slots};
 
 #[test]
 fn estimator_returns_positive_token_counts_for_real_bundle() {
@@ -20,4 +20,18 @@ fn estimator_scales_with_decision_points() {
     let est_small = estimate_pipeline_tokens(&b, 10);
     let est_big = estimate_pipeline_tokens(&b, 1000);
     assert!(est_big.total > est_small.total * 50); // ~100x more decisions ≈ 100x more tokens
+}
+
+#[test]
+fn slot_iterator_estimate_matches_legacy_slot_estimate() {
+    let tpl = registry::get("mean_reversion").unwrap();
+    let b = tpl.new_draft("01H8N7ZITER".into(), "iter-test".into(), "@t".into());
+    let est_legacy = estimate_pipeline_tokens(&b, 25);
+    let est_from_slots = estimate_pipeline_tokens_from_slots(
+        [&b.regime_slot, &b.intern_slot, &b.trader_slot]
+            .into_iter()
+            .flatten(),
+        25,
+    );
+    assert_eq!(est_from_slots, est_legacy);
 }
