@@ -117,7 +117,7 @@ export function SetupRoute() {
         }
       />
 
-      <Card className="px-6 py-5 mb-3">
+      <Card className="mb-3 px-4 py-4 sm:px-6 sm:py-5">
         <div className="text-text-2 text-[14px] leading-snug max-w-prose">
           Setup walks you from a plain-English description to a
           validated <span className="text-text">strategy</span> ready to
@@ -130,7 +130,7 @@ export function SetupRoute() {
       </Card>
 
       {providers.data && !defaultPick ? (
-        <Card className="px-6 py-3 mb-3 border-amber-500/40">
+        <Card className="mb-3 border-amber-500/40 px-4 py-3 sm:px-6">
           <p className="m-0 text-[13px] text-amber-300">
             No provider model is enabled.{" "}
             <Link
@@ -147,12 +147,12 @@ export function SetupRoute() {
       <Card className="p-0 overflow-hidden">
         <Thread bubbles={bubbles} streaming={isStreaming} />
         {error && (
-          <div className="px-5 py-3 border-t border-border text-rose-300 dark:text-rose-300 text-[13px]">
+          <div className="border-t border-border px-4 py-3 text-[13px] text-rose-300 dark:text-rose-300 sm:px-5">
             {error}
           </div>
         )}
         {draftId && (
-          <div className="px-5 py-3 border-t border-border bg-surface-2/40 flex items-center justify-between">
+          <div className="flex flex-col gap-1.5 border-t border-border bg-surface-2/40 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
             <div className="text-[13px] text-text-2">
               Draft <span className="font-mono text-text">{draftId}</span> is
               tracked.
@@ -293,7 +293,7 @@ function Thread({
   return (
     <div
       ref={ref}
-      className="h-[58vh] overflow-y-auto px-5 py-4 flex flex-col gap-3"
+      className="flex h-[50vh] flex-col gap-2.5 overflow-y-auto px-3 py-3 sm:h-[58vh] sm:gap-3 sm:px-5 sm:py-4"
     >
       {bubbles.length === 0 ? (
         <div className="text-text-3 italic font-serif text-[15px] text-center py-6">
@@ -309,16 +309,16 @@ function Thread({
 function BubbleView({ b }: { b: Bubble }) {
   if (b.role === "user") {
     return (
-      <div className="self-end max-w-[85%]">
-        <div className="bg-blue-500/10 dark:bg-blue-400/10 border border-blue-500/30 dark:border-blue-400/30 rounded-md px-3 py-2 text-[14px] whitespace-pre-wrap leading-snug">
+      <div className="max-w-[92%] self-end sm:max-w-[85%]">
+        <div className="whitespace-pre-wrap rounded-md border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-[13px] leading-snug dark:border-blue-400/30 dark:bg-blue-400/10 sm:text-[14px]">
           {b.text}
         </div>
       </div>
     );
   }
   return (
-    <div className="self-start max-w-[85%]">
-      <div className="bg-surface-2/60 border border-border rounded-md px-3 py-2 text-[14px] whitespace-pre-wrap leading-snug">
+    <div className="max-w-[92%] self-start sm:max-w-[85%]">
+      <div className="whitespace-pre-wrap rounded-md border border-border bg-surface-2/60 px-3 py-2 text-[13px] leading-snug sm:text-[14px]">
         {b.text ? <MarkdownView text={b.text} /> : <span className="text-text-3 italic">thinking…</span>}
       </div>
       {b.tools.length > 0 && (
@@ -329,7 +329,7 @@ function BubbleView({ b }: { b: Bubble }) {
             return (
               <div
                 key={`tool-${i}`}
-                className={`text-[13px] leading-snug flex items-start gap-1.5 ${
+                className={`flex items-start gap-1.5 text-[12px] leading-snug sm:text-[13px] ${
                   row.ok ? "text-emerald-300" : "text-rose-300"
                 }`}
               >
@@ -483,21 +483,22 @@ function Composer({
         e.preventDefault();
         onSubmit();
       }}
-      className="border-t border-border px-4 py-3 flex gap-2 bg-surface-2/30"
+      className="flex flex-col gap-2 border-t border-border bg-surface-2/30 px-3 py-3 sm:flex-row sm:items-end sm:px-4"
     >
-      <input
+      <textarea
         value={value}
         onChange={(e) => onChange(e.target.value)}
         disabled={disabled}
+        rows={2}
         placeholder={
           disabled ? "Streaming…" : "Describe your strategy or ask the wizard…"
         }
-        className="flex-1 bg-transparent border border-border rounded-md px-3 py-2 text-[14px] placeholder:text-text-3 focus:outline-none focus:ring-1 focus:ring-text-2"
+        className="min-h-[2.75rem] w-full resize-y rounded-md border border-border bg-transparent px-3 py-2 text-[14px] leading-snug placeholder:text-text-3 focus:outline-none focus:ring-1 focus:ring-text-2 sm:flex-1"
       />
       <button
         type="submit"
         disabled={disabled || !value.trim()}
-        className="px-4 py-2 rounded-md text-[13px] border border-border bg-surface-2/60 hover:bg-surface-2 disabled:opacity-50 disabled:cursor-not-allowed"
+        className="w-full rounded-md border border-border bg-surface-2/60 px-4 py-2 text-[13px] hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
       >
         {disabled ? "…" : "Send"}
       </button>
