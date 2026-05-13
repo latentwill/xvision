@@ -1,5 +1,25 @@
 # Follow-ups — operational queue
 
+## Active roadmap
+
+The active V2-V4 execution plan now lives in
+`docs/superpowers/plans/2026-05-13-v2-v4-action-plan.md`.
+
+Use that roadmap for board ordering and phase gates:
+
+| Phase | Theme | Key followup anchors |
+|---|---|---|
+| V2A | Ease of use sweep: Driver.js tours, in-app docs page, tutorials, examples | F36, F25, onboarding/settings, command palette, agent/CLI discoverability |
+| V2B | Security hardening for dashboard, remote CLI, broker, wallet, and testnet actions | F35, F37, F21, remote CLI specs |
+| V2C | Blockchain testnet: mint, buy, sell, delegate/license, marketplace, reputation, validation receipts | F5, SLF2-SLF5, SLF8, F34 |
+| V3 | Autoresearcher and final UI/UX | SLF9, SLF13, F29, F31-F33, autoresearcher plans |
+| V4 | Smart contract go-live off testnet | ADR 0008, smart contract, wallet, and marketplace specs |
+
+The older SLF/F items below are preserved as historical anchors and source
+notes. They are not the current execution order.
+
+---
+
 Tactical work deferred during Phase 4–8 implementation. Not strategic
 re-examinations (those live in `decisions/strategy-choices.md`); these are
 scheduled tasks with a clear trigger or phase that should pick them up.

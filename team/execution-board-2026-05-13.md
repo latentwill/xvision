@@ -40,6 +40,7 @@ Use these as reference only:
 | `ghcr-build-optimization` | `.worktrees/ghcr-build-optimization` | GH Actions preflight + staging profile | none | yes | YAML parse + workflow diff check |
 | `strategy-agent-backend` | `.worktrees/strategy-agent-backend-core` | Strategy-agent backend refactor | none | no overlap with tracks 9/10 | `cargo test -p xvision-engine && cargo test -p xvision-cli strategy -- --nocapture` |
 | `pr94-chart-stabilization` | `.worktrees/pr94-chart-stabilization` | Narrow chart bug salvage from PR 94 | none | yes | `pnpm --dir frontend/web test -- RunChart LiveChart` |
+| `runtime-render-optimization` | `.worktrees/runtime-render-optimization` | Rust + frontend rendering-speed optimization pass | after `pr94-chart-stabilization` preferred | no overlap with active chart/frontend tracks | frontend build/test + focused chart perf smoke; Rust checks in CI/non-deploy |
 | `qa4-settings-zero-provider` | `.worktrees/qa4-settings-zero-provider` | Zero providers, no default LLM, provider edit, broker replace | none | yes | `cargo test -p xvision-core -p xvision-engine` |
 | `qa4-scenarios-4h-bars-ui` | `.worktrees/qa4-scenarios-4h-bars-ui` | 4H scenarios + bars fetch UI | prefer remote CLI sweep first | yes if off wizard/strategy files | `cargo test -p xvision-engine scenario -- --nocapture` |
 | `qa4-chat-eval-launcher` | `.worktrees/qa4-chat-eval-launcher` | Chat tools + eval launcher preflight/errors | after track 9 preferred | no overlap with track 9 | dashboard/eval tests |
@@ -54,11 +55,12 @@ Use these as reference only:
 3. `ghcr-build-optimization`
 4. `strategy-agent-backend`
 5. `pr94-chart-stabilization`
-6. `qa4-settings-zero-provider`
-7. `qa4-scenarios-4h-bars-ui`
-8. `qa4-surface-consistency`
-9. `qa4-chat-eval-launcher`
-10. `strategy-agent-inspector`
+6. `runtime-render-optimization`
+7. `qa4-settings-zero-provider`
+8. `qa4-scenarios-4h-bars-ui`
+9. `qa4-surface-consistency`
+10. `qa4-chat-eval-launcher`
+11. `strategy-agent-inspector`
 
 ## Immediate start set
 
@@ -68,6 +70,8 @@ Safe to start now:
 - `agent-docs-cli-truth`
 - `ghcr-build-optimization`
 - `pr94-chart-stabilization`
+- `runtime-render-optimization` once `pr94-chart-stabilization` is merged or no
+  longer active
 - `qa4-settings-zero-provider`
 - `qa4-scenarios-4h-bars-ui`
 
@@ -126,6 +130,41 @@ Avoid:
 - Completed checkpoint: `pr94-chart-stabilization` commit `da8b3a6`
   stabilizes RunChart time-scale synchronization and passes
   `corepack pnpm --dir frontend/web test -- RunChart LiveChart`.
+
+### `runtime-render-optimization`
+
+Execution goal: optimize Rust chart/API payload generation and frontend
+rendering speed. This track is a runtime rendering-speed pass, not the GHCR
+build-optimization track.
+
+Static pass findings from 2026-05-13:
+
+| Priority | Effort | Item |
+|---|---:|---|
+| P0 | M | Stop rebuilding the entire live chart on every SSE point. `useRunStream` copies arrays per event and `RunChart` recreates all chart instances whenever `payload` changes. Keep series refs and call Lightweight Charts `series.update()` for bars/equity/markers. |
+| P0 | S | Add HTTP compression for API and static responses. Chart JSON and the JS bundle are large, but `build_router` has no compression layer and static serving writes raw bodies. |
+| P0 | L | Make chart payloads range/layer-aware. Rust computes and returns all bars, all indicators, position, equity, and drawdown for every run chart request. Add query params for visible window and enabled layers, plus server downsampling for long windows. |
+| P1 | M | Route-level code splitting. Every route is statically imported into the initial bundle; use React Router lazy route modules so settings/authoring/eval/chart pages load only when visited. |
+| P1 | S | Lazy-load heavy chart and markdown modules. `Layout` always loads `ChatRail`, which imports `react-markdown`/`remark-gfm`; `lightweight-charts` is also in the main chunk. |
+| P1 | S | Reduce font payload. `main.tsx` imports full `@fontsource/*` CSS for multiple weights, emitting many subset files and both `woff2`/`woff`. Prefer latin-only imports or local `@font-face` with only used `woff2` files. |
+| P1 | S | Add immutable cache headers for hashed assets and no-cache for `index.html`. Static responses currently only set content type. |
+| P1 | S | Disable production source maps or make them hidden. `vite.config.ts` emits source maps into the embedded static folder; current map is about 3 MB. |
+| P1 | M | Cache server-built chart payloads or indicator series by `(run_id, bars cache key, layer set)`. `build_run_payload` recomputes indicators and remaps vectors on every request. |
+| P2 | M | Replace per-bar `position` series with compact intervals/transitions. Rust emits one `PositionPoint` per bar and frontend filters it twice. |
+| P2 | S | Do not send compare price backdrop unless requested. Backend includes `price_backdrop` whenever runs share a scenario, even though the UI default is off. |
+| P2 | M | Bulk-load equity for strategy/compare charts. Strategy chart does one equity query per run serially; use one SQL query grouped by `run_id`. |
+| P2 | S | Make range buttons actually constrain rendered data. `ChartContainer` stores `1d/1w/1m/3m/All`, but charts still `setData` for full arrays. |
+| P2 | S | Avoid full latest-run charts on overview pages unless visible or expanded. Home and eval list both fetch/render a full `RunChart` for latest run. |
+| P3 | S | Use scenario-filtered run API instead of fetching all runs and filtering client-side in scenario detail. |
+| P3 | M | Reduce chart synchronization churn. `RunChart` creates up to five separate chart instances and each visible-range change propagates to all peers. |
+
+Initial verification guidance:
+
+- Frontend: `corepack pnpm --dir frontend/web test -- RunChart LiveChart`,
+  `corepack pnpm --dir frontend/web build`, and a focused manual smoke on run
+  detail, live run, compare, scenario detail, and home.
+- Rust: dashboard/chart API tests should run in CI or another non-deploy
+  environment because local Cargo is forbidden on this deploy host.
 
 ### `ghcr-build-optimization`
 
@@ -199,3 +238,51 @@ Avoid:
   worktrees.
 - No additional unclaimed task remains on this board. New work should be added
   as a fresh board item or selected from a newer execution board.
+
+### `strategy-eval-ui-polish`
+
+Claimed 2026-05-13T08:46:17Z in the current workspace.
+
+Scope:
+
+- Fix the Strategies model column for the modular AgentRef structure.
+- Surface strategy tags on the Strategies page.
+- Remove the Inspector validation box.
+- De-emphasize the Inspector strategy id.
+- Prevent long IDs/errors from overflowing UI boxes.
+- Add elapsed/duration timing to eval runs.
+- Confirm conversation persistence status; SQLite-backed chat sessions/messages
+  already exist, so no new work is needed unless product wants a richer export.
+- Narrow the xvision Claude skill trigger so it is for agents using the `xvn`
+  CLI/dashboard, not generic coding in this repo.
+
+Initial claim order:
+
+1. Strategy list model/tags.
+2. Inspector cleanup and overflow.
+3. Eval timer.
+4. Skill trigger wording.
+
+## Next board intake
+
+The active roadmap for followups, specs, and todo notes is now
+`docs/superpowers/plans/2026-05-13-v2-v4-action-plan.md`.
+
+Seed the next execution board from these first tickets:
+
+| Order | Ticket | Phase | Effort | Source |
+|---|---|---|---|---|
+| 1 | Add Driver.js first-run and restart-tour infrastructure | V2A | M | F36 |
+| 2 | Add in-app docs/help route and docs index | V2A | M | onboarding/settings, dashboard docs |
+| 3 | Create resettable example strategies/scenarios/tutorial artifacts | V2A | M | frontend docs, eval docs |
+| 4 | Add dashboard mutating-route auth boundary | V2B | L | F35 |
+| 5 | Add remote CLI orphan recovery and audit trail | V2B | M | F37, remote CLI specs |
+| 6 | Add broker/wallet/testnet kill switch and limits | V2B | M | security + blockchain plans |
+| 7 | Deploy/refactor Mantle Sepolia identity/reputation addresses | V2C | M | SLF2, ADR 0008 |
+| 8 | Implement strategy NFT mint/readback flow | V2C | L | SLF3 |
+| 9 | Implement testnet marketplace list/buy/sell/delegate flow | V2C | L | marketplace spec |
+| 10 | Implement reputation and validation receipt write/readback | V2C | L | SLF4, SLF5 |
+| 11 | Build autoresearcher mutation/eval/judge loop | V3 | L | autoresearcher plans |
+| 12 | Build autoresearcher dashboard and lineage review | V3 | L | autoresearcher dashboard plan |
+| 13 | Run final UI/UX pass across dashboard surfaces | V3 | L | design docs, chart plans |
+| 14 | Prepare contract audit, launch flags, and mainnet runbook | V4 | L | ADR 0008, contract specs |
