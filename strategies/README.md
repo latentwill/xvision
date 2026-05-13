@@ -53,6 +53,12 @@ Each strategy gets its own markdown file: `<slug>.md`. Required sections:
 - `funding_rate_fader` — fade extreme perp funding.
 - `liquidation_cascade_fader` — buy capitulation-flagged liquidations.
 
+### Queued — Hackathon samples
+
+- [`hackathon/`](hackathon/README.md) — three simple, regime-aware sample
+  strategies based on the transcript themes: regime filter, higher-timeframe
+  bias, and multi-confirmation entry.
+
 ### Queued — Idea generators (meta-strategies)
 
 - [`slot_machine/`](slot_machine/README.md) — LLM + ideonomy-driven variant
