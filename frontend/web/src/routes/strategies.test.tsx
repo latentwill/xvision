@@ -45,7 +45,12 @@ describe("StrategiesRoute", () => {
         template: "trend_follower",
         decision_cadence_minutes: 240,
         model: "claude-sonnet +1",
-        tags: ["trend_follower", "BTC/USD", "trending_bull"],
+        tags: [
+          "trend_follower",
+          "BTC/USD",
+          "trending_bull",
+          "very_long_strategy_tag_that_should_not_make_rows_tall",
+        ],
       },
     ]);
 
@@ -57,6 +62,14 @@ describe("StrategiesRoute", () => {
     expect(screen.getAllByText("claude-sonnet +1").length).toBeGreaterThan(0);
     expect(screen.getAllByText("BTC/USD").length).toBeGreaterThan(0);
     expect(screen.getAllByText("trending_bull").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Backend ID")).not.toBeInTheDocument();
+    expect(screen.queryByText("01TEST")).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Open inspector for 01TEST"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getAllByLabelText("Open inspector for Trend 4H").length,
+    ).toBeGreaterThan(0);
   });
 
   it("does not render NaN for invalid cadence values", async () => {
