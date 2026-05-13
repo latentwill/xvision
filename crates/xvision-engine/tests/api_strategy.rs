@@ -141,6 +141,7 @@ async fn list_returns_summaries_for_existing_bundles() {
     let out = strategy::list(&ctx).await.unwrap();
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].agent_id, "01J0TESTSTRAT00000000000001");
+    assert_eq!(out[0].display_name, "Test Strategy");
     assert_eq!(out[0].template, "mean_reversion");
 }
 

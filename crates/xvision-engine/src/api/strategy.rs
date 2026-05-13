@@ -33,6 +33,7 @@ use std::time::Instant;
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct StrategySummary {
     pub agent_id: String,
+    pub display_name: String,
     pub template: String,
     /// Model requirement of the bundle's primary slot — trader if set,
     /// otherwise the first configured slot in (trader, intern, regime)
@@ -148,6 +149,7 @@ async fn list_inner(ctx: &ApiContext) -> ApiResult<Vec<StrategySummary>> {
             .filter(|m| !m.trim().is_empty());
         out.push(StrategySummary {
             agent_id: bundle.manifest.id,
+            display_name: bundle.manifest.display_name,
             template: bundle.manifest.template,
             model,
         });

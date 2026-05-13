@@ -70,5 +70,6 @@ describe("EvalRunsRoute", () => {
 
     const strategy = (await screen.findByLabelText("Strategy")) as HTMLSelectElement;
     await waitFor(() => expect(strategy.value).toBe("01TEST"));
+    expect(strategy.selectedOptions[0]?.textContent).toContain("Trend 4H");
   });
 });
