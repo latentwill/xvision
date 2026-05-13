@@ -31,6 +31,7 @@ const realtimeRange: LogicalRangeStub = { from: 90, to: 110 };
 function createSeriesStub() {
   return {
     setData: vi.fn(),
+    update: vi.fn(),
     createPriceLine: vi.fn(),
     setMarkers: vi.fn(),
   };
@@ -166,20 +167,45 @@ describe("RunChart", () => {
     const payload = samplePayload as any;
     const { rerender } = render(<RunChart payload={payload} follow={false} />);
 
+    rerender(<RunChart payload={payload} follow={false} themeMode="light" />);
+
+    expect(chartMocks.scrollToRealTime).not.toHaveBeenCalled();
+  });
+
+  it("updates existing chart instances in place when only payload data changes", () => {
+    const payload = samplePayload as any;
+    const { rerender } = render(<RunChart payload={payload} follow />);
+    const createChartCallsBeforePayloadUpdate =
+      chartMocks.createChart.mock.calls.length;
+
     rerender(
       <RunChart
         payload={{
           ...payload,
-          position: [
-            ...payload.position,
-            { ...payload.position[payload.position.length - 1] },
+          bars: [
+            {
+              time: 1_700_000_000,
+              open: 100,
+              high: 105,
+              low: 95,
+              close: 102,
+              volume: 12,
+            },
+          ],
+          equity: [
+            {
+              time: 1_700_000_000,
+              equity_usd: 100_000,
+            },
           ],
         }}
-        follow={false}
+        follow
       />,
     );
 
-    expect(chartMocks.scrollToRealTime).not.toHaveBeenCalled();
+    expect(chartMocks.createChart.mock.calls.length).toBe(
+      createChartCallsBeforePayloadUpdate,
+    );
   });
 
   it("restores the frozen visible logical range across rebuilds after follow mode is disabled", () => {
@@ -198,18 +224,7 @@ describe("RunChart", () => {
     const createChartCallsBeforeRebuild =
       chartMocks.createChart.mock.calls.length;
 
-    rerender(
-      <RunChart
-        payload={{
-          ...payload,
-          position: [
-            ...payload.position,
-            { ...payload.position[payload.position.length - 1] },
-          ],
-        }}
-        follow={false}
-      />,
-    );
+    rerender(<RunChart payload={payload} follow={false} themeMode="light" />);
 
     const rebuiltCharts = chartMocks.createdCharts.slice(
       createChartCallsBeforeRebuild,
@@ -244,18 +259,7 @@ describe("RunChart", () => {
     const createChartCallsBeforeRebuild =
       chartMocks.createChart.mock.calls.length;
 
-    rerender(
-      <RunChart
-        payload={{
-          ...payload,
-          position: [
-            ...payload.position,
-            { ...payload.position[payload.position.length - 1] },
-          ],
-        }}
-        follow={false}
-      />,
-    );
+    rerender(<RunChart payload={payload} follow={false} themeMode="light" />);
 
     const rebuiltCharts = chartMocks.createdCharts.slice(
       createChartCallsBeforeRebuild,
@@ -321,38 +325,11 @@ describe("RunChart", () => {
     );
     expectChartsToHaveRange(initialCharts, initialCharts[0]!.getCurrentRange()!);
 
-    const updatedPayload = {
-      ...payload,
-      position: [
-        ...payload.position,
-        { ...payload.position[payload.position.length - 1] },
-      ],
-    };
-    const createChartCallsBeforePayloadUpdate =
-      chartMocks.createChart.mock.calls.length;
-
-    rerender(
-      <RunChart
-        payload={updatedPayload}
-        follow
-      />,
-    );
-
-    const rebuiltCharts = chartMocks.createdCharts.slice(
-      createChartCallsBeforePayloadUpdate,
-    );
-
-    expect(
-      rebuiltCharts[0]?.timeScaleApi.scrollToRealTime,
-    ).toHaveBeenCalledTimes(1);
-    expect(chartMocks.scrollToRealTime).toHaveBeenCalledTimes(2);
-    expectChartsToHaveRange(rebuiltCharts, rebuiltCharts[0]!.getCurrentRange()!);
-
     const createChartCallsBeforeThemeChange =
       chartMocks.createChart.mock.calls.length;
 
     rerender(
-      <RunChart payload={updatedPayload} follow themeMode="light" />,
+      <RunChart payload={payload} follow themeMode="light" />,
     );
 
     expect(chartMocks.createChart.mock.calls.length).toBeGreaterThan(
@@ -365,7 +342,7 @@ describe("RunChart", () => {
     expect(
       themeRebuiltCharts[0]?.timeScaleApi.scrollToRealTime,
     ).toHaveBeenCalledTimes(1);
-    expect(chartMocks.scrollToRealTime).toHaveBeenCalledTimes(3);
+    expect(chartMocks.scrollToRealTime).toHaveBeenCalledTimes(2);
     expectChartsToHaveRange(
       themeRebuiltCharts,
       themeRebuiltCharts[0]!.getCurrentRange()!,
@@ -379,14 +356,9 @@ describe("RunChart", () => {
 
     rerender(
       <RunChart
-        payload={{
-          ...payload,
-          position: [
-            ...payload.position,
-            { ...payload.position[payload.position.length - 1] },
-          ],
-        }}
+        payload={payload}
         follow
+        themeMode="light"
       />,
     );
 
