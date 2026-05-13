@@ -1,11 +1,18 @@
 ---
 name: xvision
-description: Orient a Claude Code session in the xvision repo — the `xvn` CLI surface, the intern/trader/risk pipeline vocabulary, where canonical docs live, and the deploy/build constraints that bite if ignored. Use when working in the xvision repo, when the user mentions `xvn`, xvision, intern/trader/risk roles, strategy artifacts, eval runs / setups / cycles, Strategy Loom / SLF, ERC-8004 identity, or the dashboard at xvn.tail2bb69.ts.net / xvnej.tail2bb69.ts.net.
+description: Orient an agent that is operating xvision as a product through the `xvn` CLI, dashboard, MCP tools, strategy/eval workflows, or live Tailscale nodes. Do not use this skill for ordinary coding tasks just because the workspace repository is xvision.
 ---
 
 # xvision
 
 A multistrategy trading-agent backtest harness. Single CLI binary `xvn` + a baked-in axum + Vite SPA dashboard.
+
+Use this skill when the task is about using xvision: running or explaining
+`xvn`, managing strategies/agents/scenarios/eval runs, operating the dashboard
+nodes, interpreting xvision pipeline vocabulary, or following xvision operator
+runbooks. Do not load it for generic code edits, dependency bumps, or ordinary
+repository navigation unless the user task also needs xvision product/CLI
+context.
 
 ## Where to look first
 

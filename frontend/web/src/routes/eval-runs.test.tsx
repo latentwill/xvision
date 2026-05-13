@@ -10,6 +10,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 
 import { EvalRunsRoute } from "./eval-runs";
+import * as chartApi from "@/api/chart";
 import * as evalApi from "@/api/eval";
 import * as scenariosApi from "@/api/scenarios";
 import * as settingsApi from "@/api/settings";
@@ -30,6 +31,13 @@ vi.mock("@/api/eval", async () => {
     startRun: vi.fn(),
   };
 });
+
+vi.mock("@/api/chart", () => ({
+  chartKeys: {
+    run: (id: string) => ["chart", "run", id],
+  },
+  getRunChart: vi.fn().mockResolvedValue(null),
+}));
 
 vi.mock("@/api/scenarios", async () => {
   const actual = await vi.importActual<typeof import("@/api/scenarios")>(
@@ -190,6 +198,7 @@ function mockReady({
 describe("EvalRunsRoute", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    vi.mocked(chartApi.getRunChart).mockResolvedValue(null as never);
   });
 
   afterEach(() => {
@@ -202,7 +211,7 @@ describe("EvalRunsRoute", () => {
     renderRoute("/eval-runs?strategy=01TEST&start=1");
     await waitFor(() =>
       expect(vi.mocked(evalApi.listRuns)).toHaveBeenCalledWith({
-        strategy_bundle_hash: "01TEST",
+        agent_id: "01TEST",
       }),
     );
 
@@ -217,6 +226,29 @@ describe("EvalRunsRoute", () => {
 
     await screen.findByRole("option", { name: /User 4H/ });
     expect(scenariosApi.listScenarios).toHaveBeenCalled();
+  });
+
+  it("shows eval run duration from started and completed times", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([
+      {
+        id: "01RUN000000000000000000000",
+        agent_id: "01TEST",
+        scenario_id: "crypto-bull-q1-2025",
+        mode: "backtest",
+        status: "completed",
+        started_at: "2026-05-13T07:00:00Z",
+        completed_at: "2026-05-13T08:15:00Z",
+        sharpe: 1.2,
+        max_drawdown_pct: 4.5,
+        total_return_pct: 8.1,
+        error: null,
+      },
+    ]);
+
+    renderRoute();
+
+    expect((await screen.findAllByText("Duration")).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("1h 15m").length).toBeGreaterThan(0);
   });
 
   it("blocks eval launch when no provider with credentials is configured", async () => {
