@@ -318,6 +318,43 @@ async fn settings_brokers_reflects_set_env_vars() {
 }
 
 #[tokio::test]
+async fn settings_brokers_replaces_stored_alpaca_credentials() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _alpaca_key = scoped_unset("APCA_API_KEY_ID");
+    let _alpaca_sec = scoped_unset("APCA_API_SECRET_KEY");
+
+    let (server, _tmp) = boot().await;
+
+    let first = server
+        .post("/api/settings/brokers/alpaca")
+        .json(&serde_json::json!({
+            "api_key_id": "FIRSTKEY00001111",
+            "api_secret_key": "first-secret",
+            "base_url": "https://paper-api.alpaca.markets"
+        }))
+        .await;
+    first.assert_status(axum::http::StatusCode::CREATED);
+
+    let second = server
+        .post("/api/settings/brokers/alpaca")
+        .json(&serde_json::json!({
+            "api_key_id": "SECONDKEY00002222",
+            "api_secret_key": "second-secret",
+            "base_url": "https://paper-api.alpaca.markets"
+        }))
+        .await;
+    second.assert_status(axum::http::StatusCode::CREATED);
+    let replaced: serde_json::Value = second.json();
+    assert_eq!(replaced["stored_key_id_suffix"], "2222");
+
+    let response = server.get("/api/settings/brokers").await;
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["alpaca"]["stored"], true);
+    assert_eq!(body["alpaca"]["stored_key_id_suffix"], "2222");
+}
+
+#[tokio::test]
 async fn settings_daemon_returns_not_applicable_in_v1() {
     let (server, _tmp) = boot().await;
     let response = server.get("/api/settings/daemon").await;
