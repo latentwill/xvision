@@ -190,11 +190,9 @@ Avoid:
 - Verified with focused eval-runs test, frontend typecheck, full frontend test
   suite, and `git diff --check`. Rust checks remain CI/non-deploy follow-up.
 
-### `qa4-chat-eval-launcher`
+### Board Closeout
 
-- Completed checkpoint: `qa4-chat-eval-launcher` commit `18ab4c0` switches the
-  Start eval dialog to the scenario registry and adds client-side
-  provider/model plus Alpaca paper preflight before queueing eval runs.
-- Verified with `corepack pnpm --dir frontend/web test -- eval-runs`,
-  frontend typecheck, and `git diff --check`. Rust dashboard/wizard-loop
-  verification remains CI/non-deploy follow-up.
+- All ten execution-board tracks now have branch/status checkpoints and clean
+  worktrees.
+- No additional unclaimed task remains on this board. New work should be added
+  as a fresh board item or selected from a newer execution board.
