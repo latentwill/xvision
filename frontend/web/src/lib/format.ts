@@ -21,6 +21,10 @@ export const fmt = {
 };
 
 export function formatCadence(minutes: number): string {
+  if (!Number.isFinite(minutes) || minutes <= 0) {
+    return "—";
+  }
+
   if (minutes < 60) {
     return `${minutes}m`;
   }

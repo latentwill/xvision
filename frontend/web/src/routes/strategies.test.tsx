@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 
@@ -33,7 +33,11 @@ function renderRoute() {
 }
 
 describe("StrategiesRoute", () => {
-  it("renders Strategy ID and display name with a humanized cadence", async () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("renders strategy names first with a humanized cadence", async () => {
     vi.mocked(strategiesApi.listStrategies).mockResolvedValue([
       {
         agent_id: "01TEST",
@@ -46,8 +50,26 @@ describe("StrategiesRoute", () => {
 
     renderRoute();
 
-    expect((await screen.findAllByText("Strategy ID")).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText("Name")).length).toBeGreaterThan(0);
     expect(screen.getAllByText("Trend 4H").length).toBeGreaterThan(0);
     expect(screen.getAllByText("4h").length).toBeGreaterThan(0);
+  });
+
+  it("does not render NaN for invalid cadence values", async () => {
+    vi.mocked(strategiesApi.listStrategies).mockResolvedValue([
+      {
+        agent_id: "01TEST",
+        display_name: "Open Strategy",
+        template: "custom",
+        decision_cadence_minutes: Number.NaN,
+        model: undefined,
+      },
+    ]);
+
+    renderRoute();
+
+    expect((await screen.findAllByText("Open Strategy")).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/NaN/)).not.toBeInTheDocument();
+    expect(screen.getAllByText("—").length).toBeGreaterThan(0);
   });
 });

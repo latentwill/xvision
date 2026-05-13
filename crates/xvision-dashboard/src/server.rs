@@ -141,7 +141,7 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route(
             "/api/chat-rail/sessions",
-            get(chat_rail::list_sessions),
+            get(chat_rail::list_sessions).post(chat_rail::create_session),
         )
         .route(
             "/api/chat-rail/sessions/:id",

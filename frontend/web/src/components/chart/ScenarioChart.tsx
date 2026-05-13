@@ -6,9 +6,12 @@ import {
   type UTCTimestamp,
 } from "lightweight-charts";
 import type { ScenarioChartPayload } from "@/api/types.gen/ScenarioChartPayload";
+import type { IndicatorPoint } from "@/api/types.gen/IndicatorPoint";
 import { chartTheme } from "./chart-theme";
 import { ChartContainer, type RangePreset } from "./ChartContainer";
 import { CacheStatusBadge } from "@/components/scenario/CacheStatusBadge";
+import { useChartLayers } from "./use-chart-layers";
+import { ChartLayersPanel } from "./ChartLayersPanel";
 
 const REGIME_BG: Record<string, string> = {
   "regime:bull": "rgba(34,197,94,0.05)",
@@ -32,7 +35,7 @@ export function ScenarioChart({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [range, setRange] = useState<RangePreset>("All");
-  const [showVolume, setShowVolume] = useState(false);
+  const { layers, toggle, set } = useChartLayers("scenario");
 
   const regime = payload.scenario.tags.find((t) => t.startsWith("regime:"));
   const bg = regime ? REGIME_BG[regime] : undefined;
@@ -59,6 +62,7 @@ export function ScenarioChart({
     });
 
     if (payload.bars.length > 0) {
+      const indicators = payload.indicators ?? emptyIndicators();
       const candle = c.addCandlestickSeries({
         upColor: theme.series.candleUp,
         downColor: theme.series.candleDown,
@@ -76,7 +80,43 @@ export function ScenarioChart({
         })),
       );
 
-      if (showVolume) {
+      if (layers.sma20)
+        c.addLineSeries({ color: theme.series.sma20, lineWidth: 1 }).setData(indicators.sma_20.map(toLine));
+      if (layers.sma30 && indicators.sma_30)
+        c.addLineSeries({ color: "#a7f3d0", lineWidth: 1 }).setData(indicators.sma_30.map(toLine));
+      if (layers.sma50)
+        c.addLineSeries({ color: theme.series.sma50, lineWidth: 1 }).setData(indicators.sma_50.map(toLine));
+      if (layers.sma60 && indicators.sma_60)
+        c.addLineSeries({ color: "#6ee7b7", lineWidth: 1 }).setData(indicators.sma_60.map(toLine));
+      if (layers.sma90 && indicators.sma_90)
+        c.addLineSeries({ color: "#34d399", lineWidth: 1 }).setData(indicators.sma_90.map(toLine));
+      if (layers.sma200)
+        c.addLineSeries({ color: theme.series.sma200, lineWidth: 1 }).setData(indicators.sma_200.map(toLine));
+      if (layers.ema20)
+        c.addLineSeries({ color: theme.series.ema20, lineWidth: 1, lineStyle: 2 }).setData(indicators.ema_20.map(toLine));
+      if (layers.ema30 && indicators.ema_30)
+        c.addLineSeries({ color: "#bae6fd", lineWidth: 1, lineStyle: 2 }).setData(indicators.ema_30.map(toLine));
+      if (layers.ema50)
+        c.addLineSeries({ color: theme.series.ema50, lineWidth: 1, lineStyle: 2 }).setData(indicators.ema_50.map(toLine));
+      if (layers.ema60 && indicators.ema_60)
+        c.addLineSeries({ color: "#7dd3fc", lineWidth: 1, lineStyle: 2 }).setData(indicators.ema_60.map(toLine));
+      if (layers.ema90 && indicators.ema_90)
+        c.addLineSeries({ color: "#38bdf8", lineWidth: 1, lineStyle: 2 }).setData(indicators.ema_90.map(toLine));
+      if (layers.ema200)
+        c.addLineSeries({ color: theme.series.ema200, lineWidth: 1, lineStyle: 2 }).setData(indicators.ema_200.map(toLine));
+      if (layers.bollinger) {
+        c.addLineSeries({ color: theme.series.bollUpper, lineWidth: 1 }).setData(indicators.bollinger.upper.map(toLine));
+        c.addLineSeries({ color: theme.series.bollMiddle, lineWidth: 1 }).setData(indicators.bollinger.middle.map(toLine));
+        c.addLineSeries({ color: theme.series.bollLower, lineWidth: 1 }).setData(indicators.bollinger.lower.map(toLine));
+      }
+      if (layers.donchian) {
+        c.addLineSeries({ color: theme.series.donchianUpper, lineWidth: 1 }).setData(indicators.donchian.upper.map(toLine));
+        c.addLineSeries({ color: theme.series.donchianLower, lineWidth: 1 }).setData(indicators.donchian.lower.map(toLine));
+      }
+
+      applyRange(c, range, payload.bars.length);
+
+      if (layers.volume) {
         const vol = c.addHistogramSeries({ priceScaleId: "volume" });
         vol.setData(
           payload.bars.map((b) => ({
@@ -95,7 +135,7 @@ export function ScenarioChart({
     }
 
     return () => c.remove();
-  }, [payload, themeMode, showVolume]);
+  }, [payload, themeMode, layers, range]);
 
   return (
     <div style={{ background: bg }}>
@@ -114,14 +154,12 @@ export function ScenarioChart({
         range={range}
         onRange={setRange}
         layersPanel={
-          <label className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={showVolume}
-              onChange={(e) => setShowVolume(e.target.checked)}
-            />{" "}
-            Volume histogram
-          </label>
+          <ChartLayersPanel
+            layers={layers}
+            toggle={toggle}
+            set={set}
+            radioName="scenario-chart-subpane"
+          />
         }
       >
         {payload.bars.length === 0 ? (
@@ -134,4 +172,38 @@ export function ScenarioChart({
       </ChartContainer>
     </div>
   );
+}
+
+function toLine(p: IndicatorPoint) {
+  return { time: p.time as UTCTimestamp, value: p.value };
+}
+
+function emptyIndicators() {
+  const empty: IndicatorPoint[] = [];
+  return {
+    sma_20: empty, sma_30: empty, sma_50: empty, sma_60: empty, sma_90: empty, sma_200: empty,
+    ema_20: empty, ema_30: empty, ema_50: empty, ema_60: empty, ema_90: empty, ema_200: empty,
+    bollinger: { upper: empty, middle: empty, lower: empty },
+    donchian: { upper: empty, lower: empty },
+    rsi_14: empty,
+    macd: { line: empty, signal: empty, histogram: empty },
+    atr_14: empty,
+  };
+}
+
+function applyRange(chart: ReturnType<typeof createChart>, range: RangePreset, len: number) {
+  if (len <= 0) return;
+  if (range === "All") {
+    chart.timeScale().fitContent();
+    return;
+  }
+  const count =
+    range === "1d" ? 24 :
+    range === "1w" ? 24 * 7 :
+    range === "1m" ? 24 * 30 :
+    24 * 90;
+  chart.timeScale().setVisibleLogicalRange({
+    from: Math.max(0, len - count),
+    to: len + 2,
+  });
 }
