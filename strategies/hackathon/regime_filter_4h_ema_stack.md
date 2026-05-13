@@ -1,8 +1,18 @@
 # regime_filter_4h_ema_stack
 
+## Judge summary
+
+A higher-timeframe trend filter first, then a lower-timeframe pullback entry.
+
 ## Thesis
 
 Trade only when the market is already acting like a trend. Use a higher-timeframe filter to decide whether the asset is trendable, then enter on a lower-timeframe pullback that re-joins the trend. This avoids the common failure mode of treating chop like trend.
+
+## Failure regime
+
+- Chop / sideways range
+- Fast reversal after a trend has already weakened
+- Low-ADX conditions where EMAs are tangled
 
 ## Inputs
 
