@@ -53,18 +53,18 @@ function subtitleFor(q: ReturnType<typeof useQuery>) {
 
 function FilterBar() {
   return (
-    <div className="flex items-center justify-between mb-4 gap-3">
+    <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
       <div className="text-[13px] text-text-3">Latest strategy drafts</div>
-      <div className="flex items-center gap-2">
+      <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
         <Link
           to="/strategies/new"
-          className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium border border-border text-text-2 hover:text-text hover:border-text-3 transition-colors"
+          className="inline-flex flex-1 items-center justify-center gap-2 rounded border border-border px-3.5 py-2 text-[13px] font-medium text-text-2 transition-colors hover:border-text-3 hover:text-text sm:flex-none"
         >
           <Icon name="plus" size={13} /> New from template
         </Link>
         <Link
           to="/setup"
-          className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft transition-colors"
+          className="inline-flex flex-1 items-center justify-center gap-2 rounded bg-gold px-3.5 py-2 text-[13px] font-medium text-bg transition-colors hover:bg-gold-soft sm:flex-none"
         >
           <Icon name="plus" size={13} /> New strategy
         </Link>
@@ -79,58 +79,103 @@ function StrategiesTable({
   items: StrategyListItem[];
 }) {
   return (
-    <table className="w-full">
-      <thead>
-        <tr className="text-left text-text-2 text-[12px] border-b border-border-soft">
-          <th className="font-normal py-2.5 px-5">Strategy ID</th>
-          <th className="font-normal py-2.5 px-3">Name</th>
-          <th className="font-normal py-2.5 px-3">Template</th>
-          <th className="font-normal py-2.5 px-3">Cadence</th>
-          <th className="font-normal py-2.5 px-3">Model</th>
-          <th className="font-normal py-2.5 px-3">Status</th>
-          <th className="font-normal py-2.5 px-5"></th>
-        </tr>
-      </thead>
-      <tbody>
+    <>
+      <div className="divide-y divide-border-soft md:hidden">
         {items.map((row) => (
-          <tr
-            key={row.agent_id}
-            className="border-b border-border-soft last:border-b-0 hover:bg-surface-hover transition-colors"
-          >
-            <td className="py-3 px-5 font-mono text-text">
-              <Link
-                to={`/authoring/${encodeURIComponent(row.agent_id)}`}
-                className="text-text hover:underline"
-              >
-                {row.agent_id}
-              </Link>
-            </td>
-            <td className="py-3 px-3 text-text">{row.display_name}</td>
-            <td className="py-3 px-3 text-text-2">{row.template}</td>
-            <td className="py-3 px-3 font-mono text-text-2 text-[12px]">
-              {formatCadence(row.decision_cadence_minutes)}
-            </td>
-            <td className="py-3 px-3 font-mono text-text-2 text-[12px]">
-              {row.model ?? <span className="text-text-3 italic">—</span>}
-            </td>
-            <td className="py-3 px-3">
+          <article key={row.agent_id} className="px-4 py-3">
+            <div className="mb-1.5 flex items-start justify-between gap-2">
+              <div>
+                <div className="text-[11px] uppercase tracking-wide text-text-3">
+                  Strategy ID
+                </div>
+                <Link
+                  to={`/authoring/${encodeURIComponent(row.agent_id)}`}
+                  className="font-mono text-[13px] text-text hover:underline"
+                >
+                  {row.agent_id}
+                </Link>
+              </div>
               <Pill>
-                <span className="w-1.5 h-1.5 rounded-full bg-text-3" /> draft
+                <span className="h-1.5 w-1.5 rounded-full bg-text-3" /> draft
               </Pill>
-            </td>
-            <td className="py-3 px-5 text-text-3 text-right">
+            </div>
+
+            <div className="text-[15px] text-text">{row.display_name}</div>
+            <div className="mt-1 text-[12px] text-text-2">
+              {row.template} · {formatCadence(row.decision_cadence_minutes)}
+            </div>
+            <div className="mt-1 font-mono text-[12px] text-text-2">
+              {row.model ?? <span className="italic text-text-3">—</span>}
+            </div>
+
+            <div className="mt-2.5">
               <Link
                 to={`/authoring/${encodeURIComponent(row.agent_id)}`}
-                className="text-text-3 hover:text-text"
+                className="text-[13px] text-text-3 hover:text-text"
                 aria-label={`Open inspector for ${row.agent_id}`}
               >
                 Inspector →
               </Link>
-            </td>
-          </tr>
+            </div>
+          </article>
         ))}
-      </tbody>
-    </table>
+      </div>
+
+      <div className="hidden overflow-x-auto md:block">
+        <table className="w-full">
+          <thead>
+            <tr className="border-b border-border-soft text-left text-[12px] text-text-2">
+              <th className="px-5 py-2.5 font-normal">Strategy ID</th>
+              <th className="px-3 py-2.5 font-normal">Name</th>
+              <th className="px-3 py-2.5 font-normal">Template</th>
+              <th className="px-3 py-2.5 font-normal">Cadence</th>
+              <th className="px-3 py-2.5 font-normal">Model</th>
+              <th className="px-3 py-2.5 font-normal">Status</th>
+              <th className="px-5 py-2.5 font-normal"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((row) => (
+              <tr
+                key={row.agent_id}
+                className="border-b border-border-soft transition-colors last:border-b-0 hover:bg-surface-hover"
+              >
+                <td className="px-5 py-3 font-mono text-text">
+                  <Link
+                    to={`/authoring/${encodeURIComponent(row.agent_id)}`}
+                    className="text-text hover:underline"
+                  >
+                    {row.agent_id}
+                  </Link>
+                </td>
+                <td className="px-3 py-3 text-text">{row.display_name}</td>
+                <td className="px-3 py-3 text-text-2">{row.template}</td>
+                <td className="px-3 py-3 font-mono text-[12px] text-text-2">
+                  {formatCadence(row.decision_cadence_minutes)}
+                </td>
+                <td className="px-3 py-3 font-mono text-[12px] text-text-2">
+                  {row.model ?? <span className="italic text-text-3">—</span>}
+                </td>
+                <td className="px-3 py-3">
+                  <Pill>
+                    <span className="h-1.5 w-1.5 rounded-full bg-text-3" /> draft
+                  </Pill>
+                </td>
+                <td className="px-5 py-3 text-right text-text-3">
+                  <Link
+                    to={`/authoring/${encodeURIComponent(row.agent_id)}`}
+                    className="text-text-3 hover:text-text"
+                    aria-label={`Open inspector for ${row.agent_id}`}
+                  >
+                    Inspector →
+                  </Link>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
   );
 }
 

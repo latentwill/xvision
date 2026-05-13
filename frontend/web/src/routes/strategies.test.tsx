@@ -46,8 +46,8 @@ describe("StrategiesRoute", () => {
 
     renderRoute();
 
-    expect(await screen.findByText("Strategy ID")).toBeTruthy();
-    expect(screen.getByText("Trend 4H")).toBeTruthy();
-    expect(screen.getByText("4h")).toBeTruthy();
+    expect((await screen.findAllByText("Strategy ID")).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Trend 4H").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("4h").length).toBeGreaterThan(0);
   });
 });
