@@ -128,6 +128,7 @@ export function WizardPreviewChart({
       archived_at: null,
     } as unknown as ScenarioChartPayload['scenario'],
     bars: query.data.bars,
+    indicators: emptyIndicators(),
     cache_status: query.data.cache_status,
   };
 
@@ -162,6 +163,19 @@ export function WizardPreviewChart({
       )}
     </div>
   );
+}
+
+function emptyIndicators(): ScenarioChartPayload['indicators'] {
+  const empty: ScenarioChartPayload['indicators']['sma_20'] = [];
+  return {
+    sma_20: empty, sma_30: empty, sma_50: empty, sma_60: empty, sma_90: empty, sma_200: empty,
+    ema_20: empty, ema_30: empty, ema_50: empty, ema_60: empty, ema_90: empty, ema_200: empty,
+    bollinger: { upper: empty, middle: empty, lower: empty },
+    donchian: { upper: empty, lower: empty },
+    rsi_14: empty,
+    macd: { line: empty, signal: empty, histogram: empty },
+    atr_14: empty,
+  };
 }
 
 function previewGranularityToScenario(granularity: Props['granularity']) {

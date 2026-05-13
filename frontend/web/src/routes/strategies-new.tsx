@@ -10,12 +10,12 @@ import {
   listTemplates,
   strategyKeys,
   type CreateStrategyOut,
-  type TemplateInfo,
 } from "@/api/strategies";
 
 export function StrategiesNewRoute() {
   const navigate = useNavigate();
-  const [pendingTemplate, setPendingTemplate] = useState<string | null>(null);
+  const [name, setName] = useState("");
+  const [template, setTemplate] = useState("custom");
 
   const templates = useQuery({
     queryKey: strategyKeys.templates(),
@@ -23,29 +23,24 @@ export function StrategiesNewRoute() {
     staleTime: 5 * 60 * 1000,
   });
 
-  const create = useMutation<CreateStrategyOut, unknown, TemplateInfo>({
-    mutationFn: (template) =>
+  const create = useMutation<CreateStrategyOut, unknown, void>({
+    mutationFn: () =>
       createStrategy({
-        template: template.name,
-        name: template.display_name,
+        template,
+        name: name.trim(),
         creator: null,
       }),
-    onMutate: (template) => {
-      setPendingTemplate(template.name);
-    },
     onSuccess: (out) => {
       navigate(`/authoring/${encodeURIComponent(out.id)}`);
     },
-    onError: () => {
-      setPendingTemplate(null);
-    },
   });
+  const canCreate = name.trim().length > 0 && !create.isPending;
 
   return (
     <>
       <Topbar
         title="New strategy"
-        sub="Pick a template to start drafting. Everything's editable in the inspector afterward."
+        sub="Name the strategy first. Templates are optional starters, not the default workflow."
       />
 
       <div className="mb-4">
@@ -60,35 +55,71 @@ export function StrategiesNewRoute() {
         </Link>
       </div>
 
-      {templates.isPending ? (
-        <Card className="p-6 animate-pulse">
-          <div className="h-4 w-48 bg-surface-elev rounded mb-3" />
-          <div className="h-4 w-72 bg-surface-elev rounded" />
-        </Card>
-      ) : templates.isError ? (
-        <Card className="p-6">
-          <div className="font-serif italic text-[20px] text-danger mb-2">
-            couldn't load templates
-          </div>
-          <p className="m-0 text-text-2 text-[13px]">
-            <code className="text-danger font-mono text-[12px]">
-              {errorDetail(templates.error)}
-            </code>
-          </p>
-        </Card>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-          {(templates.data ?? []).map((t) => (
-            <TemplateCard
-              key={t.name}
-              template={t}
-              pending={pendingTemplate === t.name && create.isPending}
-              disabled={create.isPending}
-              onPick={() => create.mutate(t)}
+      <Card className="p-5 max-w-3xl">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (canCreate) create.mutate();
+          }}
+          className="space-y-4"
+        >
+          <label className="block">
+            <span className="block text-[11px] uppercase tracking-wide text-text-3 mb-1.5">
+              Name
+            </span>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              autoFocus
+              className="w-full px-3 py-2 bg-surface-panel border border-border rounded-sm text-[14px] text-text focus:outline-none focus:border-gold/40"
+              placeholder="Funding Fade Agent"
             />
-          ))}
-        </div>
-      )}
+          </label>
+
+          <label className="block">
+            <span className="block text-[11px] uppercase tracking-wide text-text-3 mb-1.5">
+              Starter
+            </span>
+            <select
+              value={template}
+              onChange={(e) => setTemplate(e.target.value)}
+              className="w-full px-3 py-2 bg-surface-panel border border-border rounded-sm text-[13.5px] text-text focus:outline-none focus:border-gold/40"
+            >
+              <option value="custom">Open form</option>
+              {(templates.data ?? [])
+                .filter((t) => t.name !== "custom")
+                .map((t) => (
+                  <option key={t.name} value={t.name}>
+                    {t.display_name}
+                  </option>
+                ))}
+            </select>
+            <p className="m-0 mt-1 text-[12px] text-text-3 leading-snug">
+              Open form starts from a minimal single-agent strategy. Pick a
+              template only when its scaffold already matches the idea.
+            </p>
+          </label>
+
+          {templates.isError ? (
+            <p className="m-0 text-text-3 text-[12px]">
+              Templates unavailable:{" "}
+              <code className="text-danger font-mono">
+                {errorDetail(templates.error)}
+              </code>
+            </p>
+          ) : null}
+
+          <div className="flex items-center justify-end gap-2 pt-2">
+            <button
+              type="submit"
+              disabled={!canCreate}
+              className="px-4 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {create.isPending ? "Creating…" : "Create strategy"}
+            </button>
+          </div>
+        </form>
+      </Card>
 
       {create.isError ? (
         <Card className="p-4 mt-4 border-rose-500/40">
@@ -101,46 +132,6 @@ export function StrategiesNewRoute() {
         </Card>
       ) : null}
     </>
-  );
-}
-
-function TemplateCard({
-  template,
-  pending,
-  disabled,
-  onPick,
-}: {
-  template: TemplateInfo;
-  pending: boolean;
-  disabled: boolean;
-  onPick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onPick}
-      disabled={disabled}
-      className="text-left bg-surface border border-border rounded p-4 hover:border-text-3 transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:border-border flex flex-col gap-2"
-    >
-      <div className="flex items-start justify-between gap-3">
-        <h3 className="m-0 font-serif font-medium text-[18px] tracking-tight text-text">
-          {template.display_name}
-        </h3>
-        {pending ? (
-          <span className="text-[12px] text-gold">creating…</span>
-        ) : (
-          <span className="text-text-3 group-hover:text-text">
-            <Icon name="chevR" size={14} />
-          </span>
-        )}
-      </div>
-      <p className="m-0 text-[13px] text-text-2 leading-snug">
-        {template.plain_summary}
-      </p>
-      <code className="mt-auto pt-1 text-[11px] text-text-3 font-mono">
-        {template.name}
-      </code>
-    </button>
   );
 }
 

@@ -52,10 +52,18 @@ async fn serve_path(path: &str) -> Response {
 async fn try_serve_path(path: &str) -> Option<Response> {
     let asset = Assets::get(path)?;
     let mime = mime_guess::from_path(path).first_or_octet_stream();
+    let cache_control = if path == "index.html" {
+        "no-cache"
+    } else if path.starts_with("assets/") {
+        "public, max-age=31536000, immutable"
+    } else {
+        "public, max-age=3600"
+    };
     Some(
         Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, mime.as_ref())
+            .header(header::CACHE_CONTROL, cache_control)
             .body(Body::from(asset.data.into_owned()))
             .expect("response builder"),
     )

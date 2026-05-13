@@ -5,6 +5,7 @@
 import { useQuery } from "@tanstack/react-query";
 import type { AgentSlot } from "@/api/agents";
 import { listProviders, settingsKeys } from "@/api/settings";
+import { ModelPicker } from "@/components/ModelPicker";
 import { Icon } from "@/components/primitives/Icon";
 
 export function SlotForm({
@@ -26,8 +27,9 @@ export function SlotForm({
     queryKey: settingsKeys.providers(),
     queryFn: listProviders,
   });
+  const providerRows = providersQ.data?.providers ?? [];
   const providerNames =
-    providersQ.data?.providers.map((p) => p.name) ?? [];
+    providerRows.map((p) => p.name) ?? [];
 
   function patch<K extends keyof AgentSlot>(key: K, value: AgentSlot[K]) {
     onChange({ ...slot, [key]: value });
@@ -38,13 +40,13 @@ export function SlotForm({
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3 flex-1">
           <span className="text-text-3 font-mono text-[11px]">
-            slot {index + 1}
+            agent slot {index + 1}
           </span>
           <input
             type="text"
             value={slot.name}
             onChange={(e) => patch("name", e.target.value)}
-            placeholder="slot name (e.g. main, trader, risk_check)"
+            placeholder="agent slot name (e.g. main, trader, risk_check)"
             className="flex-1 bg-transparent border-0 border-b border-border-soft text-text font-mono text-[14px] focus:outline-none focus:border-gold/40 px-0 py-1"
           />
         </div>
@@ -97,13 +99,33 @@ export function SlotForm({
         </Field>
 
         <Field label="Model">
-          <input
-            type="text"
-            value={slot.model}
-            onChange={(e) => patch("model", e.target.value)}
-            placeholder="e.g. claude-sonnet-4-6"
-            className="w-full px-3 py-2 bg-surface-card border border-border rounded-sm text-[13.5px] text-text font-mono focus:outline-none focus:border-gold/40"
-          />
+          {providerRows.length > 0 ? (
+            <ModelPicker
+              rows={providerRows}
+              loading={providersQ.isPending}
+              provider={slot.provider || null}
+              model={slot.model}
+              filterProvider={slot.provider || undefined}
+              placeholder="— select model —"
+              emptyHint="No enabled models for this provider"
+              onChange={(provider, model) => {
+                onChange({
+                  ...slot,
+                  provider: provider ?? slot.provider,
+                  model,
+                });
+              }}
+              className="w-full px-3 py-2 bg-surface-card border border-border rounded-sm text-[13.5px] text-text font-mono focus:outline-none focus:border-gold/40"
+            />
+          ) : (
+            <input
+              type="text"
+              value={slot.model}
+              onChange={(e) => patch("model", e.target.value)}
+              placeholder="e.g. claude-sonnet-4-6"
+              className="w-full px-3 py-2 bg-surface-card border border-border rounded-sm text-[13.5px] text-text font-mono focus:outline-none focus:border-gold/40"
+            />
+          )}
         </Field>
       </div>
 
@@ -133,7 +155,7 @@ export function SlotForm({
           <Field label="Skills">
             <div className="text-text-3 text-[12px] px-3 py-2">
               {slot.skill_ids.length} skill
-              {slot.skill_ids.length === 1 ? "" : "s"} (manage at /settings/skills)
+              {slot.skill_ids.length === 1 ? "" : "s"} (manage at /agents/skills)
             </div>
           </Field>
         ) : null}

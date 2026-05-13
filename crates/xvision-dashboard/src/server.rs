@@ -4,7 +4,7 @@ use axum::{
     routing::{delete, get, post, put},
     Router,
 };
-use tower_http::trace::TraceLayer;
+use tower_http::{compression::CompressionLayer, trace::TraceLayer};
 
 use crate::routes::{
     agents, bars, chat_rail, cli, eval_runs, health::health, scenarios, search as search_route,
@@ -141,7 +141,7 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route(
             "/api/chat-rail/sessions",
-            get(chat_rail::list_sessions),
+            get(chat_rail::list_sessions).post(chat_rail::create_session),
         )
         .route(
             "/api/chat-rail/sessions/:id",
@@ -151,6 +151,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/", get(static_files::serve_index))
         .route("/assets/*path", get(static_files::serve_static))
         .fallback(static_files::fallback)
+        .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }

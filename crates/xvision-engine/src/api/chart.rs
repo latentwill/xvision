@@ -75,10 +75,16 @@ pub struct IndicatorPoint {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Indicators {
     pub sma_20: Vec<IndicatorPoint>,
+    pub sma_30: Vec<IndicatorPoint>,
     pub sma_50: Vec<IndicatorPoint>,
+    pub sma_60: Vec<IndicatorPoint>,
+    pub sma_90: Vec<IndicatorPoint>,
     pub sma_200: Vec<IndicatorPoint>,
     pub ema_20: Vec<IndicatorPoint>,
+    pub ema_30: Vec<IndicatorPoint>,
     pub ema_50: Vec<IndicatorPoint>,
+    pub ema_60: Vec<IndicatorPoint>,
+    pub ema_90: Vec<IndicatorPoint>,
     pub ema_200: Vec<IndicatorPoint>,
     pub bollinger: BollingerSeries,
     pub donchian: DonchianSeries,
@@ -338,45 +344,12 @@ pub async fn build_run_payload(ctx: &ApiContext, run_id: &str) -> ApiResult<RunC
         )));
     }
 
-    // 4. Extract price series for indicator computation.
-    let closes: Vec<f64> = bars.iter().map(|b| b.close).collect();
-    let highs: Vec<f64> = bars.iter().map(|b| b.high).collect();
-    let lows: Vec<f64> = bars.iter().map(|b| b.low).collect();
-    let times: Vec<i64> = bars.iter().map(|b| b.timestamp.timestamp()).collect();
-
     // 5. Convert bars to chart shape.
     let chart_bars: Vec<ChartBar> = bars.iter().map(bar_to_chart_bar).collect();
 
     // 6. Compute indicators. All functions return full-length vectors with
     //    leading NaN warmup; `series()` drops NaN entries before returning.
-    let bb = indicators::bollinger(&closes, 20, 2.0);
-    let dc = indicators::donchian(&highs, &lows, 20);
-    let mc = indicators::macd(&closes, 12, 26, 9);
-
-    let indicators = Indicators {
-        sma_20: series(&times, indicators::sma(&closes, 20)),
-        sma_50: series(&times, indicators::sma(&closes, 50)),
-        sma_200: series(&times, indicators::sma(&closes, 200)),
-        ema_20: series(&times, indicators::ema(&closes, 20)),
-        ema_50: series(&times, indicators::ema(&closes, 50)),
-        ema_200: series(&times, indicators::ema(&closes, 200)),
-        bollinger: BollingerSeries {
-            upper: series(&times, bb.upper),
-            middle: series(&times, bb.middle),
-            lower: series(&times, bb.lower),
-        },
-        donchian: DonchianSeries {
-            upper: series(&times, dc.upper),
-            lower: series(&times, dc.lower),
-        },
-        rsi_14: series(&times, indicators::rsi(&closes, 14)),
-        macd: MacdSeries {
-            line: series(&times, mc.macd),
-            signal: series(&times, mc.signal),
-            histogram: series(&times, mc.histogram),
-        },
-        atr_14: series(&times, indicators::atr(&highs, &lows, &closes, 14)),
-    };
+    let indicators = compute_indicators(&bars);
 
     // 7. Equity curve.
     let equity: Vec<ChartEquityPoint> = store
@@ -430,6 +403,47 @@ fn bar_to_chart_bar(b: &MarketBar) -> ChartBar {
         low: b.low,
         close: b.close,
         volume: b.volume,
+    }
+}
+
+fn compute_indicators(bars: &[MarketBar]) -> Indicators {
+    let closes: Vec<f64> = bars.iter().map(|b| b.close).collect();
+    let highs: Vec<f64> = bars.iter().map(|b| b.high).collect();
+    let lows: Vec<f64> = bars.iter().map(|b| b.low).collect();
+    let times: Vec<i64> = bars.iter().map(|b| b.timestamp.timestamp()).collect();
+    let bb = indicators::bollinger(&closes, 20, 2.0);
+    let dc = indicators::donchian(&highs, &lows, 20);
+    let mc = indicators::macd(&closes, 12, 26, 9);
+
+    Indicators {
+        sma_20: series(&times, indicators::sma(&closes, 20)),
+        sma_30: series(&times, indicators::sma(&closes, 30)),
+        sma_50: series(&times, indicators::sma(&closes, 50)),
+        sma_60: series(&times, indicators::sma(&closes, 60)),
+        sma_90: series(&times, indicators::sma(&closes, 90)),
+        sma_200: series(&times, indicators::sma(&closes, 200)),
+        ema_20: series(&times, indicators::ema(&closes, 20)),
+        ema_30: series(&times, indicators::ema(&closes, 30)),
+        ema_50: series(&times, indicators::ema(&closes, 50)),
+        ema_60: series(&times, indicators::ema(&closes, 60)),
+        ema_90: series(&times, indicators::ema(&closes, 90)),
+        ema_200: series(&times, indicators::ema(&closes, 200)),
+        bollinger: BollingerSeries {
+            upper: series(&times, bb.upper),
+            middle: series(&times, bb.middle),
+            lower: series(&times, bb.lower),
+        },
+        donchian: DonchianSeries {
+            upper: series(&times, dc.upper),
+            lower: series(&times, dc.lower),
+        },
+        rsi_14: series(&times, indicators::rsi(&closes, 14)),
+        macd: MacdSeries {
+            line: series(&times, mc.macd),
+            signal: series(&times, mc.signal),
+            histogram: series(&times, mc.histogram),
+        },
+        atr_14: series(&times, indicators::atr(&highs, &lows, &closes, 14)),
     }
 }
 
@@ -652,6 +666,7 @@ pub enum CacheStatus {
 pub struct ScenarioChartPayload {
     pub scenario: crate::eval::scenario::Scenario,
     pub bars: Vec<ChartBar>,
+    pub indicators: Indicators,
     pub cache_status: CacheStatus,
 }
 
@@ -702,8 +717,8 @@ pub async fn build_scenario_payload(
         }
     };
 
-    // Load bars only if cached; otherwise return empty vec.
-    let bars = if matches!(cache_status, CacheStatus::FullyCached { .. } | CacheStatus::PartiallyCached { .. }) {
+    // Load bars only if cached; otherwise return empty series.
+    let market_bars = if matches!(cache_status, CacheStatus::FullyCached { .. } | CacheStatus::PartiallyCached { .. }) {
         let asset_ref = scenario.asset.first().ok_or_else(|| {
             ApiError::Internal(format!(
                 "scenario '{}' has empty asset list",
@@ -721,15 +736,17 @@ pub async fn build_scenario_payload(
                 data_source_tag: "alpaca-historical-v1".into(),
             },
         )
-        .await
-        .map(|bs| bs.iter().map(bar_to_chart_bar).collect())?
+        .await?
     } else {
         vec![]
     };
+    let bars: Vec<ChartBar> = market_bars.iter().map(bar_to_chart_bar).collect();
+    let indicators = compute_indicators(&market_bars);
 
     Ok(ScenarioChartPayload {
         scenario,
         bars,
+        indicators,
         cache_status,
     })
 }

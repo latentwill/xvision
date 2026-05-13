@@ -47,6 +47,7 @@ Use these as reference only:
 | `qa4-surface-consistency` | `.worktrees/qa4-surface-consistency` | Wizard/API/list/home/eval consistency | after track 4 preferred | no overlap with tracks 4/8 | dashboard + frontend tests |
 | `strategy-agent-inspector` | `.worktrees/strategy-agent-inspector` | Inspector rebuild for agent composition | track 4 | no | frontend typecheck + authoring smoke |
 | `strategy-eval-ui-polish` | current workspace | Strategy/eval UI polish after modular agents: strategy list tags/model, Inspector chrome, overflow, eval timer, xvision skill trigger | none | no overlap with active frontend docs/runtime chart tracks | focused frontend tests + typecheck; Rust API compile in CI/non-deploy |
+| `mobile-safari-load` | `.worktrees/mobile-safari-load` | Mobile Safari still does not load the dashboard | none | no overlap with active frontend tracks | Safari/mobile load repro + frontend test/build smoke |
 
 ## Recommended order
 
@@ -61,6 +62,8 @@ Use these as reference only:
 9. `qa4-surface-consistency`
 10. `qa4-chat-eval-launcher`
 11. `strategy-agent-inspector`
+12. `mobile-safari-load`
+13. `strategy-eval-ui-polish`
 
 ## Immediate start set
 
@@ -74,6 +77,7 @@ Safe to start now:
   longer active
 - `qa4-settings-zero-provider`
 - `qa4-scenarios-4h-bars-ui`
+- `mobile-safari-load`
 
 Wait for `strategy-agent-backend`:
 
@@ -85,6 +89,7 @@ Do not overlap:
 - `strategy-agent-backend` with `qa4-surface-consistency`
 - `strategy-agent-backend` with `strategy-agent-inspector`
 - `qa4-surface-consistency` with `qa4-chat-eval-launcher`
+- `mobile-safari-load` with broad frontend route refactors
 
 ## Cherry-pick policy
 
@@ -133,38 +138,27 @@ Avoid:
 
 ### `runtime-render-optimization`
 
-Execution goal: optimize Rust chart/API payload generation and frontend
-rendering speed. This track is a runtime rendering-speed pass, not the GHCR
-build-optimization track.
-
-Static pass findings from 2026-05-13:
-
-| Priority | Effort | Item |
-|---|---:|---|
-| P0 | M | Stop rebuilding the entire live chart on every SSE point. `useRunStream` copies arrays per event and `RunChart` recreates all chart instances whenever `payload` changes. Keep series refs and call Lightweight Charts `series.update()` for bars/equity/markers. |
-| P0 | S | Add HTTP compression for API and static responses. Chart JSON and the JS bundle are large, but `build_router` has no compression layer and static serving writes raw bodies. |
-| P0 | L | Make chart payloads range/layer-aware. Rust computes and returns all bars, all indicators, position, equity, and drawdown for every run chart request. Add query params for visible window and enabled layers, plus server downsampling for long windows. |
-| P1 | M | Route-level code splitting. Every route is statically imported into the initial bundle; use React Router lazy route modules so settings/authoring/eval/chart pages load only when visited. |
-| P1 | S | Lazy-load heavy chart and markdown modules. `Layout` always loads `ChatRail`, which imports `react-markdown`/`remark-gfm`; `lightweight-charts` is also in the main chunk. |
-| P1 | S | Reduce font payload. `main.tsx` imports full `@fontsource/*` CSS for multiple weights, emitting many subset files and both `woff2`/`woff`. Prefer latin-only imports or local `@font-face` with only used `woff2` files. |
-| P1 | S | Add immutable cache headers for hashed assets and no-cache for `index.html`. Static responses currently only set content type. |
-| P1 | S | Disable production source maps or make them hidden. `vite.config.ts` emits source maps into the embedded static folder; current map is about 3 MB. |
-| P1 | M | Cache server-built chart payloads or indicator series by `(run_id, bars cache key, layer set)`. `build_run_payload` recomputes indicators and remaps vectors on every request. |
-| P2 | M | Replace per-bar `position` series with compact intervals/transitions. Rust emits one `PositionPoint` per bar and frontend filters it twice. |
-| P2 | S | Do not send compare price backdrop unless requested. Backend includes `price_backdrop` whenever runs share a scenario, even though the UI default is off. |
-| P2 | M | Bulk-load equity for strategy/compare charts. Strategy chart does one equity query per run serially; use one SQL query grouped by `run_id`. |
-| P2 | S | Make range buttons actually constrain rendered data. `ChartContainer` stores `1d/1w/1m/3m/All`, but charts still `setData` for full arrays. |
-| P2 | S | Avoid full latest-run charts on overview pages unless visible or expanded. Home and eval list both fetch/render a full `RunChart` for latest run. |
-| P3 | S | Use scenario-filtered run API instead of fetching all runs and filtering client-side in scenario detail. |
-| P3 | M | Reduce chart synchronization churn. `RunChart` creates up to five separate chart instances and each visible-range change propagates to all peers. |
-
-Initial verification guidance:
-
-- Frontend: `corepack pnpm --dir frontend/web test -- RunChart LiveChart`,
-  `corepack pnpm --dir frontend/web build`, and a focused manual smoke on run
-  detail, live run, compare, scenario detail, and home.
-- Rust: dashboard/chart API tests should run in CI or another non-deploy
-  environment because local Cargo is forbidden on this deploy host.
+- Claimed in `.worktrees/runtime-render-optimization`.
+- Implemented checkpoint:
+  - `RunChart` now keeps chart instances stable across data-only payload
+    changes and updates existing series instead of rebuilding every pane.
+  - Dashboard router applies HTTP compression.
+  - Embedded static assets get cache headers (`index.html` no-cache, hashed
+    assets immutable).
+  - Frontend production source maps are no longer embedded.
+  - Font imports are latin-only.
+  - Route modules and the chat rail are lazily split from the initial bundle.
+- Verification:
+  - `corepack pnpm --dir frontend/web test -- RunChart LiveChart`
+  - `corepack pnpm --dir frontend/web typecheck`
+  - `corepack pnpm --dir frontend/web test`
+  - `corepack pnpm --dir frontend/web exec vite build --outDir /tmp/xvision-runtime-render-build --emptyOutDir true`
+  - `git diff --check`
+- Build artifact check: no `.map` files emitted, font asset count is 18
+  instead of the previous 100, and the old single ~805 KB JS bundle is split
+  into route/chart/chat chunks.
+- Rust checks remain CI/non-deploy follow-up because local Cargo is forbidden
+  on this deploy host.
 
 ### `ghcr-build-optimization`
 
@@ -232,12 +226,20 @@ Initial verification guidance:
 - Verified with focused eval-runs test, frontend typecheck, full frontend test
   suite, and `git diff --check`. Rust checks remain CI/non-deploy follow-up.
 
+### `mobile-safari-load`
+
+- New regression report: mobile still does not load on Safari.
+- Claimed in `.worktrees/mobile-safari-load`; focus on root-cause isolation
+  before changing production code.
+- Initial target surface: Vite/React dashboard startup path and any browser
+  compatibility assumptions that can break iOS Safari before the app renders.
+
 ### Board Closeout
 
-- All ten execution-board tracks now have branch/status checkpoints and clean
+- All previous execution-board tracks now have branch/status checkpoints and clean
   worktrees.
-- No additional unclaimed task remains on this board. New work should be added
-  as a fresh board item or selected from a newer execution board.
+- `mobile-safari-load` and `strategy-eval-ui-polish` were the final open work
+  on this board during the 2026-05-13 merge/deploy pass.
 
 ### `strategy-eval-ui-polish`
 

@@ -703,43 +703,7 @@ async fn run_inner(
             })?;
             Box::new(PaperExecutor::new(b))
         }
-        RunMode::Backtest => {
-            if from_db {
-                match load_bars_for_scenario(ctx, &scenario).await {
-                    Ok(bars) => {
-                        let ohlcv: Vec<xvision_core::market::Ohlcv> = bars
-                            .into_iter()
-                            .map(|b| xvision_core::market::Ohlcv {
-                                timestamp: b.timestamp,
-                                open: b.open,
-                                high: b.high,
-                                low: b.low,
-                                close: b.close,
-                                volume: b.volume,
-                            })
-                            .collect();
-                        Box::new(
-                            BacktestExecutor::with_bars(ohlcv)
-                                .with_event_bus(ctx.event_bus.clone()),
-                        )
-                    }
-                    Err(e) => {
-                        // load_bars failed (no Alpaca creds in tests, or
-                        // network error). Fall back to the fixture loader
-                        // — the executor reads from the cache_key-named
-                        // parquet under `data/probes/`.
-                        tracing::warn!(
-                            scenario_id = %scenario.id,
-                            error = %e,
-                            "load_bars failed; falling back to fixture loader",
-                        );
-                        Box::new(BacktestExecutor::new().with_event_bus(ctx.event_bus.clone()))
-                    }
-                }
-            } else {
-                Box::new(BacktestExecutor::new().with_event_bus(ctx.event_bus.clone()))
-            }
-        }
+        RunMode::Backtest => build_backtest_executor(ctx, &scenario, from_db).await?,
     };
 
     // 4. Build a fresh Run, persist, then drive the executor.
@@ -867,6 +831,64 @@ async fn load_bars_for_scenario(
     .await
 }
 
+async fn build_backtest_executor(
+    ctx: &ApiContext,
+    scenario: &Scenario,
+    from_db: bool,
+) -> ApiResult<Box<dyn Executor>> {
+    if from_db {
+        match load_bars_for_scenario(ctx, scenario).await {
+            Ok(bars) => {
+                let ohlcv: Vec<xvision_core::market::Ohlcv> = bars
+                    .into_iter()
+                    .map(|b| xvision_core::market::Ohlcv {
+                        timestamp: b.timestamp,
+                        open: b.open,
+                        high: b.high,
+                        low: b.low,
+                        close: b.close,
+                        volume: b.volume,
+                    })
+                    .collect();
+                return Ok(Box::new(
+                    BacktestExecutor::with_bars(ohlcv).with_event_bus(ctx.event_bus.clone()),
+                ));
+            }
+            Err(e) => {
+                if !legacy_fixture_exists(scenario) {
+                    return Err(missing_bars_validation(scenario, Some(e.to_string())));
+                }
+                tracing::warn!(
+                    scenario_id = %scenario.id,
+                    error = %e,
+                    "load_bars failed; falling back to fixture loader",
+                );
+            }
+        }
+    } else if !legacy_fixture_exists(scenario) {
+        return Err(missing_bars_validation(scenario, None));
+    }
+
+    Ok(Box::new(
+        BacktestExecutor::new().with_event_bus(ctx.event_bus.clone()),
+    ))
+}
+
+fn legacy_fixture_exists(scenario: &Scenario) -> bool {
+    xvision_data::fixtures::fixture_path(&scenario.bar_cache_policy.cache_key).exists()
+}
+
+fn missing_bars_validation(scenario: &Scenario, source_error: Option<String>) -> ApiError {
+    let mut msg = format!(
+        "scenario '{}' is missing bars cache and legacy fixture for cache key '{}'. Fetch bars for this scenario before starting the backtest.",
+        scenario.id, scenario.bar_cache_policy.cache_key
+    );
+    if let Some(e) = source_error {
+        msg.push_str(&format!(" Last cache fetch error: {e}"));
+    }
+    ApiError::Validation(msg)
+}
+
 /// Non-blocking dashboard entrypoint. Validates the request, persists a
 /// `Queued` run row, spawns a background task that drives the executor,
 /// and returns the freshly-persisted `RunDetail`. The HTTP handler
@@ -881,7 +903,7 @@ async fn load_bars_for_scenario(
 pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDetail> {
     let started = Instant::now();
     let strategy = api_strategy::get(ctx, &req.agent_id).await?;
-    let scenario = resolve_scenario(ctx, &req.scenario_id).await?;
+    let (scenario, from_db) = resolve_scenario_with_source(ctx, &req.scenario_id).await?;
 
     // Build broker / dispatch / tools from env up-front so any
     // missing-config errors return synchronously rather than landing in
@@ -898,7 +920,7 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
             let b = broker.expect("paper mode broker built above");
             Box::new(PaperExecutor::new(b))
         }
-        RunMode::Backtest => Box::new(BacktestExecutor::new().with_event_bus(ctx.event_bus.clone())),
+        RunMode::Backtest => build_backtest_executor(ctx, &scenario, from_db).await?,
     };
 
     let mut run = Run::new_queued(req.agent_id.clone(), scenario.id.clone(), req.mode);

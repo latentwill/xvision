@@ -44,6 +44,7 @@ If you are an external or embedded agent using this repo, start here:
 3. If you are running inside Claude Code rooted in this repo, load `.claude/skills/xvision/SKILL.md`.
 4. For exact CLI usage, run `xvn --help` and read `.claude/skills/xvision/references/cli.md`.
 5. For live-node remote control, use the Tailscale-served dashboard node (`xvn.tail2bb69.ts.net` or `xvnej.tail2bb69.ts.net`) rather than assuming arbitrary SSH access.
+6. For a shell-free remote CLI helper, use `scripts/xvn-remote.py`.
 
 Hard deployment rules for agents:
 
@@ -118,6 +119,17 @@ the design synthesis.
 > (`cd frontend/web && pnpm install && pnpm build`) before `cargo build` if
 > you want the SPA embedded. The image published from `Dockerfile.deploy`
 > does this automatically.
+
+## Remote CLI over Tailscale
+
+Live-node command execution is exposed through the dashboard's typed remote CLI
+job API, not arbitrary SSH access.
+
+- Use `scripts/xvn-remote.py exec ...` for a shell-free helper.
+- Use `POST /api/cli/jobs` with a typed argv array for direct API access.
+- Long-running jobs can be resumed through `GET /api/cli/jobs/:id` and
+  `GET /api/cli/jobs/:id/output`.
+- SSE progress is available at `GET /api/cli/jobs/:id/events`.
 
 ## Safety
 

@@ -1,7 +1,7 @@
 // chart-layers.ts
 export type LayerKey =
-  | 'candles' | 'sma20' | 'sma50' | 'sma200'
-  | 'ema20' | 'ema50' | 'ema200'
+  | 'candles' | 'sma20' | 'sma30' | 'sma50' | 'sma60' | 'sma90' | 'sma200'
+  | 'ema20' | 'ema30' | 'ema50' | 'ema60' | 'ema90' | 'ema200'
   | 'bollinger' | 'donchian'
   | 'markerBuy' | 'markerSell' | 'markerVeto' | 'markerHold'
   | 'positionBand'
@@ -10,8 +10,8 @@ export type LayerKey =
   | 'volume';
 
 export const DEFAULT_LAYERS: Record<LayerKey, boolean> = {
-  candles: true, sma20: true, sma50: true, sma200: true,
-  ema20: false, ema50: false, ema200: false,
+  candles: true, sma20: true, sma30: false, sma50: true, sma60: false, sma90: false, sma200: true,
+  ema20: false, ema30: false, ema50: false, ema60: false, ema90: false, ema200: false,
   bollinger: false, donchian: false,
   markerBuy: true, markerSell: true, markerVeto: true, markerHold: false,
   positionBand: true,
