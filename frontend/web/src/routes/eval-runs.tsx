@@ -1,5 +1,10 @@
-import { useEffect, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useState, type FormEvent } from "react";
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type UseQueryResult,
+} from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
@@ -12,17 +17,31 @@ import {
   evalKeys,
   deleteRun,
   listRuns,
-  listScenarios,
   startRun,
-  type ScenarioSummary,
   type StartRunReq,
 } from "@/api/eval";
+import {
+  listScenarios,
+  scenarioKeys,
+} from "@/api/scenarios";
+import {
+  getBrokers,
+  listProviders,
+  settingsKeys,
+} from "@/api/settings";
 import {
   listStrategies,
   strategyKeys,
   type StrategyListItem,
 } from "@/api/strategies";
-import type { RunDetail, RunMode, RunSummary } from "@/api/types.gen";
+import type {
+  BrokersReport,
+  ProvidersReport,
+  RunDetail,
+  RunMode,
+  RunSummary,
+  Scenario,
+} from "@/api/types.gen";
 
 const STATUS_TONE: Record<string, "gold" | "warn" | "danger" | "default" | "info"> = {
   completed: "gold",
@@ -461,13 +480,22 @@ function StartEvalDialog({
     queryFn: listStrategies,
   });
   const scenarios = useQuery({
-    queryKey: evalKeys.scenarios(),
-    queryFn: listScenarios,
+    queryKey: scenarioKeys.list(),
+    queryFn: () => listScenarios(),
+  });
+  const providers = useQuery({
+    queryKey: settingsKeys.providers(),
+    queryFn: listProviders,
+  });
+  const brokers = useQuery({
+    queryKey: settingsKeys.brokers(),
+    queryFn: getBrokers,
   });
 
   const [agentId, setAgentId] = useState<string>(initialAgentId);
   const [scenarioId, setScenarioId] = useState<string>("");
   const [mode, setMode] = useState<RunMode>("backtest");
+  const [preflightError, setPreflightError] = useState<string | null>(null);
 
   useEffect(() => {
     setAgentId(initialAgentId);
@@ -485,9 +513,19 @@ function StartEvalDialog({
   const ready =
     agentId.length > 0 && scenarioId.length > 0 && !start.isPending;
 
-  function onSubmit(e: React.FormEvent) {
+  function onSubmit(e: FormEvent) {
     e.preventDefault();
     if (!ready) return;
+    const blocked = evalPreflightError({
+      mode,
+      providers,
+      brokers,
+    });
+    if (blocked) {
+      setPreflightError(blocked);
+      return;
+    }
+    setPreflightError(null);
     start.mutate({
       agent_id: agentId,
       scenario_id: scenarioId,
@@ -526,7 +564,10 @@ function StartEvalDialog({
             <select
               aria-label="Strategy"
               value={agentId}
-              onChange={(e) => setAgentId(e.target.value)}
+              onChange={(e) => {
+                setAgentId(e.target.value);
+                setPreflightError(null);
+              }}
               disabled={strategies.isPending}
               className="w-full px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono focus:outline-none focus:border-text-3"
             >
@@ -551,14 +592,17 @@ function StartEvalDialog({
             <select
               aria-label="Scenario"
               value={scenarioId}
-              onChange={(e) => setScenarioId(e.target.value)}
+              onChange={(e) => {
+                setScenarioId(e.target.value);
+                setPreflightError(null);
+              }}
               disabled={scenarios.isPending}
               className="w-full px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] focus:outline-none focus:border-text-3"
             >
               <option value="">— pick a scenario —</option>
-              {(scenarios.data ?? []).map((s: ScenarioSummary) => (
+              {(scenarios.data ?? []).map((s: Scenario) => (
                 <option key={s.id} value={s.id}>
-                  {s.display_name} · {s.time_window_days}d
+                  {s.display_name} · {scenarioWindowLabel(s)}
                 </option>
               ))}
             </select>
@@ -580,7 +624,10 @@ function StartEvalDialog({
                   name="mode"
                   value="paper"
                   checked={mode === "paper"}
-                  onChange={() => setMode("paper")}
+                  onChange={() => {
+                    setMode("paper");
+                    setPreflightError(null);
+                  }}
                   className="accent-gold"
                 />
                 paper
@@ -591,7 +638,10 @@ function StartEvalDialog({
                   name="mode"
                   value="backtest"
                   checked={mode === "backtest"}
-                  onChange={() => setMode("backtest")}
+                  onChange={() => {
+                    setMode("backtest");
+                    setPreflightError(null);
+                  }}
                   className="accent-gold"
                 />
                 backtest
@@ -603,9 +653,9 @@ function StartEvalDialog({
             </p>
           </fieldset>
 
-          {start.isError ? (
+          {preflightError || start.isError ? (
             <p className="m-0 text-[12px] text-rose-300 font-mono">
-              {errorDetail(start.error)}
+              {preflightError ?? errorDetail(start.error)}
             </p>
           ) : null}
 
@@ -629,6 +679,58 @@ function StartEvalDialog({
       </div>
     </div>
   );
+}
+
+function evalPreflightError({
+  mode,
+  providers,
+  brokers,
+}: {
+  mode: RunMode;
+  providers: UseQueryResult<ProvidersReport>;
+  brokers: UseQueryResult<BrokersReport>;
+}): string | null {
+  if (providers.isPending || brokers.isPending) {
+    return "Still loading eval prerequisites.";
+  }
+  if (providers.isError) {
+    return "Couldn't load LLM providers. Refresh and try again.";
+  }
+  if (brokers.isError) {
+    return "Couldn't load broker settings. Refresh and try again.";
+  }
+
+  const rows = providers.data?.providers ?? [];
+  const hasCredentialedProvider = rows.some((row) => {
+    const noAuthProvider = row.api_key_env.trim().length === 0;
+    return row.api_key_set || noAuthProvider;
+  });
+  if (!hasCredentialedProvider) {
+    return "Add a provider/API key in Settings -> Providers before running eval.";
+  }
+
+  const hasEnabledModel = rows.some((row) => row.enabled_models.length > 0);
+  const defaultModel = providers.data?.default_model;
+  if (!hasEnabledModel && !defaultModel) {
+    return "Enable a provider model in Settings -> Providers before running eval.";
+  }
+
+  const alpacaConfigured = brokers.data?.alpaca.configured === true;
+  if (mode === "paper" && !alpacaConfigured) {
+    return "Configure Alpaca paper credentials in Settings -> Brokers before running a paper eval.";
+  }
+
+  return null;
+}
+
+function scenarioWindowLabel(s: Scenario): string {
+  const start = Date.parse(s.time_window.start);
+  const end = Date.parse(s.time_window.end);
+  if (Number.isNaN(start) || Number.isNaN(end) || end <= start) {
+    return s.granularity;
+  }
+  const days = Math.max(1, Math.round((end - start) / 86_400_000));
+  return `${s.granularity} · ${days}d`;
 }
 
 function errorDetail(err: unknown): string {
