@@ -26,7 +26,7 @@ const STATUS_TONE: Record<string, "gold" | "warn" | "danger" | "default" | "info
 };
 
 export function HomeRoute() {
-  const runs = useQuery({ queryKey: evalKeys.runs(), queryFn: listRuns });
+  const runs = useQuery({ queryKey: evalKeys.runs(), queryFn: () => listRuns() });
   const strategies = useQuery({
     queryKey: strategyKeys.list(),
     queryFn: listStrategies,

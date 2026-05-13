@@ -34,9 +34,15 @@ const STATUS_TONE: Record<string, "gold" | "warn" | "danger" | "default" | "info
 
 export function EvalRunsRoute() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const strategyFilter = searchParams.get("strategy")?.trim() ?? "";
   const q = useQuery({
-    queryKey: evalKeys.runs(),
-    queryFn: listRuns,
+    queryKey: evalKeys.runs({
+      strategy_bundle_hash: strategyFilter || undefined,
+    }),
+    queryFn: () =>
+      listRuns({
+        strategy_bundle_hash: strategyFilter || undefined,
+      }),
     // Poll while any run is still in flight; stop once everything's
     // terminal. Background eval tasks drive in the dashboard process
     // and can take minutes — without this the list looks frozen.
@@ -50,7 +56,7 @@ export function EvalRunsRoute() {
     },
   });
   const navigate = useNavigate();
-  const preselectedStrategy = searchParams.get("strategy") ?? "";
+  const preselectedStrategy = strategyFilter;
   const startRequested = searchParams.get("start") === "1";
   // Selection state for the Compare flow. Lifted here so the Topbar can
   // render the action button next to the run count.
@@ -90,9 +96,9 @@ export function EvalRunsRoute() {
 
   return (
     <>
-      <Topbar title="Eval" sub={subtitleFor(q)} />
+      <Topbar title="Eval" sub={subtitleFor(q, strategyFilter)} />
 
-      <div className="mb-3 flex justify-end items-center gap-2">
+      <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
         {selected.size > 0 ? (
           <CompareToolbar
             count={selected.size}
@@ -103,7 +109,7 @@ export function EvalRunsRoute() {
         <button
           type="button"
           onClick={() => setStartOpen(true)}
-          className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft transition-colors"
+          className="inline-flex w-full items-center justify-center gap-2 rounded bg-gold px-3.5 py-1.5 text-[13px] font-medium text-bg transition-colors hover:bg-gold-soft sm:w-auto"
         >
           <Icon name="plus" size={13} /> Start eval
         </button>
@@ -118,6 +124,26 @@ export function EvalRunsRoute() {
             setSearchParams(next);
           }}
         />
+      ) : null}
+
+      {strategyFilter ? (
+        <div className="mb-3 px-3 py-2 rounded border border-border-soft bg-surface-elev text-[12px] text-text-2 flex items-center justify-between gap-2">
+          <span>
+            Filtering runs for strategy{" "}
+            <code className="font-mono text-text">{strategyFilter}</code>
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              const next = new URLSearchParams(searchParams);
+              next.delete("strategy");
+              setSearchParams(next);
+            }}
+            className="text-text-3 hover:text-text underline-offset-2 hover:underline"
+          >
+            Clear filter
+          </button>
+        </div>
       ) : null}
 
       <Card>
@@ -166,13 +192,14 @@ export function EvalRunsRoute() {
 
 // ── Existing helpers ───────────────────────────────────────────────────────
 
-function subtitleFor(q: ReturnType<typeof useQuery>) {
+function subtitleFor(q: ReturnType<typeof useQuery>, strategyFilter: string) {
   if (q.isPending) return "Loading…";
   if (q.isError) return "Couldn't load runs";
   const data = q.data as { length: number } | undefined;
   if (!data) return "";
   const n = data.length;
-  return `${n} ${n === 1 ? "run" : "runs"}`;
+  const base = `${n} ${n === 1 ? "run" : "runs"}`;
+  return strategyFilter ? `${base} for ${strategyFilter}` : base;
 }
 
 function CompareToolbar({
@@ -186,7 +213,7 @@ function CompareToolbar({
 }) {
   const ready = count >= 2;
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex flex-wrap items-center justify-end gap-2">
       <span className="text-[12px] text-text-2">
         {count} selected
       </span>
@@ -237,28 +264,14 @@ function RunsTable({
   }
 
   return (
-    <table className="w-full">
-      <thead>
-        <tr className="text-left text-text-2 text-[12px] border-b border-border-soft">
-          <th className="font-normal py-2.5 pl-5 pr-2 w-8"></th>
-          <th className="font-normal py-2.5 px-3">ID</th>
-          <th className="font-normal py-2.5 px-3">Strategy</th>
-          <th className="font-normal py-2.5 px-3">Scenario</th>
-          <th className="font-normal py-2.5 px-3">Mode</th>
-          <th className="font-normal py-2.5 px-3">Status</th>
-          <th className="font-normal py-2.5 px-3 text-right">Sharpe</th>
-          <th className="font-normal py-2.5 px-3 text-right">Max DD</th>
-          <th className="font-normal py-2.5 px-3 text-right">Return</th>
-          <th className="font-normal py-2.5 px-5">Started</th>
-          <th className="font-normal py-2.5 px-5 text-right"></th>
-        </tr>
-      </thead>
-      <tbody>
+    <>
+      <div className="divide-y divide-border-soft md:hidden">
         {items.map((row) => {
           const isChecked = selected.has(row.id);
           return (
-            <tr
+            <article
               key={row.id}
+              className="px-4 py-3"
               role="link"
               tabIndex={0}
               onClick={() => go(row.id)}
@@ -268,53 +281,55 @@ function RunsTable({
                   go(row.id);
                 }
               }}
-              className="border-b border-border-soft last:border-b-0 hover:bg-surface-hover focus:bg-surface-hover focus:outline-none transition-colors cursor-pointer"
             >
-              <td
-                className="py-3 pl-5 pr-2 w-8"
-                // Stop the checkbox cell from triggering row navigation. The
-                // input below stops its own events too, but covering the
-                // surrounding cell makes the entire 32px tap target safe.
-                onClick={(e) => e.stopPropagation()}
-              >
-                <input
-                  type="checkbox"
-                  aria-label={`Select run ${row.id.slice(0, 8)}`}
-                  checked={isChecked}
-                  onChange={(e) => {
-                    e.stopPropagation();
-                    onToggle(row.id);
-                  }}
+              <div className="mb-2 flex items-start justify-between gap-2">
+                <label
+                  className="inline-flex items-center gap-2 text-[12px] text-text-2"
                   onClick={(e) => e.stopPropagation()}
-                  onKeyDown={(e) => e.stopPropagation()}
-                  className="accent-gold cursor-pointer"
-                />
-              </td>
-              <td className="py-3 px-3 font-mono text-text text-[12px]">
-                {row.id.slice(0, 12)}…
-              </td>
-              <td className="py-3 px-3 font-mono text-text-2 text-[12px]">
-                {row.strategy_bundle_hash.slice(0, 8)}
-              </td>
-              <td className="py-3 px-3 text-text-2">{row.scenario_id}</td>
-              <td className="py-3 px-3 text-text-2">{row.mode}</td>
-              <td className="py-3 px-3">
+                >
+                  <input
+                    type="checkbox"
+                    aria-label={`Select run ${row.id.slice(0, 8)}`}
+                    checked={isChecked}
+                    onChange={(e) => {
+                      e.stopPropagation();
+                      onToggle(row.id);
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => e.stopPropagation()}
+                    className="cursor-pointer accent-gold"
+                  />
+                  Select
+                </label>
                 <StatusPill status={row.status} />
-              </td>
-              <td className="py-3 px-3 text-right font-mono">
-                {fmtNumber(row.sharpe)}
-              </td>
-              <td className="py-3 px-3 text-right font-mono">
-                {fmtPct(row.max_drawdown_pct)}
-              </td>
-              <td className="py-3 px-3 text-right font-mono">
-                {fmtPct(row.total_return_pct)}
-              </td>
-              <td className="py-3 px-5 text-text-3 text-[12px]">
-                {fmtTime(row.started_at)}
-              </td>
-              <td
-                className="py-3 px-5 text-right"
+              </div>
+
+              <div className="font-mono text-[12px] text-text">
+                {row.id.slice(0, 12)}…
+              </div>
+              <div className="mt-1 font-mono text-[12px] text-text-2">
+                {row.strategy_bundle_hash.slice(0, 8)} · {row.scenario_id}
+              </div>
+              <div className="mt-1 text-[12px] text-text-2">
+                {row.mode} · {fmtTime(row.started_at)}
+              </div>
+              <div className="mt-2 grid grid-cols-3 gap-2 text-[12px]">
+                <div className="text-text-2">
+                  <div className="text-[11px] text-text-3">Sharpe</div>
+                  <div className="font-mono text-text">{fmtNumber(row.sharpe)}</div>
+                </div>
+                <div className="text-text-2">
+                  <div className="text-[11px] text-text-3">Max DD</div>
+                  <div className="font-mono text-text">{fmtPct(row.max_drawdown_pct)}</div>
+                </div>
+                <div className="text-text-2">
+                  <div className="text-[11px] text-text-3">Return</div>
+                  <div className="font-mono text-text">{fmtPct(row.total_return_pct)}</div>
+                </div>
+              </div>
+
+              <div
+                className="mt-2 flex justify-end"
                 onClick={(e) => e.stopPropagation()}
               >
                 <button
@@ -327,12 +342,108 @@ function RunsTable({
                     ? "Deleting…"
                     : "Delete"}
                 </button>
-              </td>
-            </tr>
+              </div>
+            </article>
           );
         })}
-      </tbody>
-    </table>
+      </div>
+
+      <div className="hidden overflow-x-auto md:block">
+        <table className="w-full">
+          <thead>
+            <tr className="border-b border-border-soft text-left text-[12px] text-text-2">
+              <th className="w-8 py-2.5 pl-5 pr-2 font-normal"></th>
+              <th className="px-3 py-2.5 font-normal">ID</th>
+              <th className="px-3 py-2.5 font-normal">Strategy</th>
+              <th className="px-3 py-2.5 font-normal">Scenario</th>
+              <th className="px-3 py-2.5 font-normal">Mode</th>
+              <th className="px-3 py-2.5 font-normal">Status</th>
+              <th className="px-3 py-2.5 text-right font-normal">Sharpe</th>
+              <th className="px-3 py-2.5 text-right font-normal">Max DD</th>
+              <th className="px-3 py-2.5 text-right font-normal">Return</th>
+              <th className="px-5 py-2.5 font-normal">Started</th>
+              <th className="px-5 py-2.5 text-right font-normal"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((row) => {
+              const isChecked = selected.has(row.id);
+              return (
+                <tr
+                  key={row.id}
+                  role="link"
+                  tabIndex={0}
+                  onClick={() => go(row.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      go(row.id);
+                    }
+                  }}
+                  className="cursor-pointer border-b border-border-soft transition-colors last:border-b-0 hover:bg-surface-hover focus:bg-surface-hover focus:outline-none"
+                >
+                  <td
+                    className="w-8 py-3 pl-5 pr-2"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <input
+                      type="checkbox"
+                      aria-label={`Select run ${row.id.slice(0, 8)}`}
+                      checked={isChecked}
+                      onChange={(e) => {
+                        e.stopPropagation();
+                        onToggle(row.id);
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                      onKeyDown={(e) => e.stopPropagation()}
+                      className="cursor-pointer accent-gold"
+                    />
+                  </td>
+                  <td className="px-3 py-3 font-mono text-[12px] text-text">
+                    {row.id.slice(0, 12)}…
+                  </td>
+                  <td className="px-3 py-3 font-mono text-[12px] text-text-2">
+                    {row.strategy_bundle_hash.slice(0, 8)}
+                  </td>
+                  <td className="px-3 py-3 text-text-2">{row.scenario_id}</td>
+                  <td className="px-3 py-3 text-text-2">{row.mode}</td>
+                  <td className="px-3 py-3">
+                    <StatusPill status={row.status} />
+                  </td>
+                  <td className="px-3 py-3 text-right font-mono">
+                    {fmtNumber(row.sharpe)}
+                  </td>
+                  <td className="px-3 py-3 text-right font-mono">
+                    {fmtPct(row.max_drawdown_pct)}
+                  </td>
+                  <td className="px-3 py-3 text-right font-mono">
+                    {fmtPct(row.total_return_pct)}
+                  </td>
+                  <td className="px-5 py-3 text-[12px] text-text-3">
+                    {fmtTime(row.started_at)}
+                  </td>
+                  <td
+                    className="px-5 py-3 text-right"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => remove.mutate(row.id)}
+                      disabled={remove.variables === row.id && remove.isPending}
+                      className="text-[12px] text-text-3 hover:text-danger disabled:opacity-50"
+                    >
+                      {remove.variables === row.id && remove.isPending
+                        ? "Deleting…"
+                        : "Delete"}
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </>
   );
 }
 
