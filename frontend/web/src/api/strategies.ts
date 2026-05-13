@@ -1,6 +1,6 @@
 // Strategies API — wraps `engine::api::strategy::*` (PR #4 list/get,
-// PR #47 mutations). Bundle / slot / risk / validation types are
-// hand-rolled because the bundle module doesn't have ts-rs derives yet;
+// PR #47 mutations). Strategy / slot / risk / validation types are
+// hand-rolled because the strategy module doesn't have ts-rs derives yet;
 // if those land later, replace these with `import type { ... } from
 // "./types.gen"`.
 
@@ -11,6 +11,7 @@ export type StrategyListItem = {
   display_name: string;
   template: string;
   decision_cadence_minutes: number;
+  tags?: string[];
   model?: string;
 };
 

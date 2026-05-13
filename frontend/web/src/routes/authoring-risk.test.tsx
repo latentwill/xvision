@@ -88,6 +88,48 @@ afterEach(() => {
 });
 
 describe("AuthoringRoute risk editor", () => {
+  it("does not render the old validation box in the Inspector rail", async () => {
+    vi.mocked(agentApi.listAgents).mockResolvedValue([]);
+    vi.mocked(strategyApi.getStrategy).mockResolvedValue({
+      manifest: {
+        id: "01TEST",
+        display_name: "Trend 4H",
+        template: "trend_follower",
+        creator: "@t",
+        plain_summary: "",
+        regime_fit: [],
+        asset_universe: [],
+        decision_cadence_minutes: 240,
+        required_models: [],
+        required_tools: [],
+        risk_preset_or_config: "balanced",
+        published_at: null,
+      },
+      regime_slot: null,
+      intern_slot: null,
+      trader_slot: null,
+      risk: {
+        risk_pct_per_trade: 0.015,
+        max_concurrent_positions: 2,
+        max_leverage: 3,
+        stop_loss_atr_multiple: 2,
+        daily_loss_kill_pct: 0.05,
+      },
+      mechanical_params: {},
+    });
+    vi.mocked(strategyApi.validateDraft).mockResolvedValue({
+      id: "01TEST",
+      ok: false,
+      errors: ["single-agent pipeline cannot include multiple agents"],
+    });
+
+    renderRoute();
+
+    expect(await screen.findByText("Risk per trade (%)")).toBeInTheDocument();
+    expect(screen.queryByText("Validation")).not.toBeInTheDocument();
+    expect(screen.queryByText("single-agent pipeline cannot include multiple agents")).not.toBeInTheDocument();
+  });
+
   it("edits explicit risk fields and saves them", async () => {
     vi.mocked(agentApi.listAgents).mockResolvedValue([]);
     vi.mocked(strategyApi.getStrategy).mockResolvedValue({

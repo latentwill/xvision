@@ -3,7 +3,6 @@ import { Link, Navigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
-import { Pill } from "@/components/primitives/Pill";
 import { ApiError } from "@/api/client";
 import {
   addStrategyAgent,
@@ -13,11 +12,9 @@ import {
   setRiskConfig,
   setStrategyPipeline,
   strategyKeys,
-  validateDraft,
   type PipelineKind,
   type RiskConfig,
   type Strategy,
-  type ValidateDraftOut,
 } from "@/api/strategies";
 import { listAgents } from "@/api/agents";
 import { getStrategyChart, strategyChartKeys } from "@/api/chart";
@@ -34,32 +31,29 @@ export function AuthoringRoute() {
 }
 
 function InspectorPage({ id }: { id: string }) {
-  const qc = useQueryClient();
-  const bundleQ = useQuery({
+  const strategyQ = useQuery({
     queryKey: strategyKeys.detail(id),
     queryFn: () => getStrategy(id),
   });
-  const validateQ = useQuery({
-    queryKey: strategyKeys.validate(id),
-    queryFn: () => validateDraft(id),
-    enabled: bundleQ.isSuccess,
-  });
-
-  // Re-validate after the bundle changes (e.g. after a slot save).
-  useEffect(() => {
-    if (bundleQ.dataUpdatedAt > 0) {
-      qc.invalidateQueries({ queryKey: strategyKeys.validate(id) });
-    }
-  }, [bundleQ.dataUpdatedAt, id, qc]);
 
   return (
     <>
       <Topbar
         title="Inspector"
         sub={
-          bundleQ.data
-            ? `${bundleQ.data.manifest.display_name} · ${id}`
-            : id
+          strategyQ.data ? (
+            <>
+              <span>{strategyQ.data.manifest.display_name}</span>
+              <span className="mx-1.5 text-text-3">·</span>
+              <span className="break-all font-mono text-[12px] text-text-3">
+                {id}
+              </span>
+            </>
+          ) : (
+            <span className="break-all font-mono text-[12px] text-text-3">
+              {id}
+            </span>
+          )
         }
       />
 
@@ -67,25 +61,24 @@ function InspectorPage({ id }: { id: string }) {
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-5">
         <div className="space-y-5">
-          {bundleQ.isPending ? (
+          {strategyQ.isPending ? (
             <Card>
               <LoadingSkeleton />
             </Card>
-          ) : bundleQ.isError ? (
+          ) : strategyQ.isError ? (
             <Card>
               <ErrorState
-                err={bundleQ.error}
-                onRetry={() => bundleQ.refetch()}
+                err={strategyQ.error}
+                onRetry={() => strategyQ.refetch()}
               />
             </Card>
-          ) : bundleQ.data ? (
-            <BundleEditor bundle={bundleQ.data} />
+          ) : strategyQ.data ? (
+            <StrategyEditor strategy={strategyQ.data} />
           ) : null}
           <PerformanceHistoryCard strategyId={id} />
         </div>
 
         <aside className="space-y-5">
-          <ValidationCard query={validateQ} />
           <RunEvalCard agentId={id} />
           <BackLinkCard />
         </aside>
@@ -121,18 +114,18 @@ function PerformanceHistoryCard({ strategyId }: { strategyId: string }) {
   );
 }
 
-function BundleEditor({ bundle }: { bundle: Strategy }) {
+function StrategyEditor({ strategy }: { strategy: Strategy }) {
   return (
     <>
-      <ManifestCard bundle={bundle} />
-      <AgentsCard bundle={bundle} />
-      <RiskCard bundle={bundle} />
-      <MechanicalParamsCard bundle={bundle} />
+      <ManifestCard strategy={strategy} />
+      <AgentsCard strategy={strategy} />
+      <RiskCard strategy={strategy} />
+      <MechanicalParamsCard strategy={strategy} />
     </>
   );
 }
 
-function AgentsCard({ bundle }: { bundle: Strategy }) {
+function AgentsCard({ strategy }: { strategy: Strategy }) {
   const qc = useQueryClient();
   const agentPool = useQuery({
     queryKey: ["agents", "pool"],
@@ -143,23 +136,23 @@ function AgentsCard({ bundle }: { bundle: Strategy }) {
   const [renameRoleFrom, setRenameRoleFrom] = useState<string | null>(null);
   const [renameRoleTo, setRenameRoleTo] = useState("");
 
-  const attached = bundle.agents ?? [];
-  const pipeline = bundle.pipeline ?? { kind: "single" as const, edges: [] };
+  const attached = strategy.agents ?? [];
+  const pipeline = strategy.pipeline ?? { kind: "single" as const, edges: [] };
   const available = (agentPool.data ?? []).filter(
     (a) => !attached.some((r) => r.agent_id === a.agent_id),
   );
   const graphEdges = pipeline.edges ?? [];
 
   function invalidateStrategy() {
-    qc.invalidateQueries({ queryKey: strategyKeys.detail(bundle.manifest.id) });
+    qc.invalidateQueries({ queryKey: strategyKeys.detail(strategy.manifest.id) });
     qc.invalidateQueries({
-      queryKey: strategyKeys.validate(bundle.manifest.id),
+      queryKey: strategyKeys.validate(strategy.manifest.id),
     });
   }
 
   const addMut = useMutation({
     mutationFn: (payload: { agent_id: string; role: string }) =>
-      addStrategyAgent(bundle.manifest.id, payload),
+      addStrategyAgent(strategy.manifest.id, payload),
     onSuccess: () => {
       setNewAgentId("");
       setNewRole("");
@@ -168,7 +161,7 @@ function AgentsCard({ bundle }: { bundle: Strategy }) {
   });
 
   const removeMut = useMutation({
-    mutationFn: (role: string) => removeStrategyAgent(bundle.manifest.id, role),
+    mutationFn: (role: string) => removeStrategyAgent(strategy.manifest.id, role),
     onSuccess: () => {
       invalidateStrategy();
     },
@@ -176,7 +169,7 @@ function AgentsCard({ bundle }: { bundle: Strategy }) {
 
   const renameMut = useMutation({
     mutationFn: (payload: { role: string; newRole: string }) =>
-      renameStrategyAgentRole(bundle.manifest.id, payload.role, payload.newRole),
+      renameStrategyAgentRole(strategy.manifest.id, payload.role, payload.newRole),
     onSuccess: () => {
       invalidateStrategy();
     },
@@ -184,7 +177,7 @@ function AgentsCard({ bundle }: { bundle: Strategy }) {
 
   const pipelineMut = useMutation({
     mutationFn: (kind: PipelineKind) =>
-      setStrategyPipeline(bundle.manifest.id, { kind, edges: [] }),
+      setStrategyPipeline(strategy.manifest.id, { kind, edges: [] }),
     onSuccess: invalidateStrategy,
   });
 
@@ -215,7 +208,7 @@ function AgentsCard({ bundle }: { bundle: Strategy }) {
             label="Pipeline kind"
             hint={
               pipeline.kind === "graph"
-                ? "Graph bundles are view-only here; graph runtime intentionally errors today."
+                ? "Graph strategies are view-only here; graph runtime intentionally errors today."
                 : "Single requires one agent. Sequential runs refs in the order below."
             }
           >
@@ -276,9 +269,11 @@ function AgentsCard({ bundle }: { bundle: Strategy }) {
                       {attached.indexOf(a) + 1}
                     </span>
                     <div>
-                      <span className="text-text font-mono">{a.role}</span>
+                      <span className="break-all font-mono text-text">
+                        {a.role}
+                      </span>
                       <span className="text-text-3"> · </span>
-                      <span className="text-text-2 font-mono">
+                      <span className="break-all font-mono text-text-2">
                         {a.agent_id}
                       </span>
                     </div>
@@ -331,7 +326,7 @@ function AgentsCard({ bundle }: { bundle: Strategy }) {
         {renameRoleFrom && (
           <div className="border border-border-soft rounded p-3 space-y-2">
             <div className="text-[12px] text-text-2">
-              Renaming role <code>{renameRoleFrom}</code>
+              Renaming role <code className="break-all">{renameRoleFrom}</code>
             </div>
             <input
               className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
@@ -393,8 +388,8 @@ function AgentsCard({ bundle }: { bundle: Strategy }) {
   );
 }
 
-function ManifestCard({ bundle }: { bundle: Strategy }) {
-  const m = bundle.manifest;
+function ManifestCard({ strategy }: { strategy: Strategy }) {
+  const m = strategy.manifest;
   return (
     <Card>
       <SectionHeader label="Manifest" hint="Read-only metadata for v1." />
@@ -429,32 +424,32 @@ function ManifestCard({ bundle }: { bundle: Strategy }) {
   );
 }
 
-function RiskCard({ bundle }: { bundle: Strategy }) {
+function RiskCard({ strategy }: { strategy: Strategy }) {
   const qc = useQueryClient();
-  const [form, setForm] = useState(() => riskFormFromConfig(bundle.risk));
+  const [form, setForm] = useState(() => riskFormFromConfig(strategy.risk));
   const [savedFlash, setSavedFlash] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
 
   useEffect(() => {
-    setForm(riskFormFromConfig(bundle.risk));
+    setForm(riskFormFromConfig(strategy.risk));
     setLocalError(null);
-  }, [bundle.risk]);
+  }, [strategy.risk]);
 
   const apply = useMutation({
     mutationFn: (explicit: RiskConfig) =>
-      setRiskConfig(bundle.manifest.id, { explicit }),
+      setRiskConfig(strategy.manifest.id, { explicit }),
     onSuccess: () => {
       setSavedFlash(true);
       setLocalError(null);
       window.setTimeout(() => setSavedFlash(false), 1800);
       qc.invalidateQueries({
-        queryKey: strategyKeys.detail(bundle.manifest.id),
+        queryKey: strategyKeys.detail(strategy.manifest.id),
       });
     },
   });
 
-  const r = bundle.risk;
-  const currentBasis = bundle.manifest.risk_preset_or_config;
+  const r = strategy.risk;
+  const currentBasis = strategy.manifest.risk_preset_or_config;
   const dirty =
     form.risk_pct_per_trade !== (r.risk_pct_per_trade * 100).toFixed(2) ||
     form.max_concurrent_positions !== String(r.max_concurrent_positions) ||
@@ -595,12 +590,12 @@ function riskFormFromConfig(risk: RiskConfig): RiskFormState {
   };
 }
 
-function MechanicalParamsCard({ bundle }: { bundle: Strategy }) {
-  const json = JSON.stringify(bundle.mechanical_params, null, 2);
+function MechanicalParamsCard({ strategy }: { strategy: Strategy }) {
+  const json = JSON.stringify(strategy.mechanical_params, null, 2);
   const empty =
-    bundle.mechanical_params == null ||
-    (typeof bundle.mechanical_params === "object" &&
-      Object.keys(bundle.mechanical_params as object).length === 0);
+    strategy.mechanical_params == null ||
+    (typeof strategy.mechanical_params === "object" &&
+      Object.keys(strategy.mechanical_params as object).length === 0);
 
   return (
     <Card>
@@ -614,57 +609,10 @@ function MechanicalParamsCard({ bundle }: { bundle: Strategy }) {
             No mechanical params on this template.
           </p>
         ) : (
-          <pre className="m-0 p-3 bg-surface-elev border border-border-soft rounded text-[12px] text-text-2 overflow-x-auto font-mono">
+          <pre className="m-0 overflow-x-auto rounded border border-border-soft bg-surface-elev p-3 font-mono text-[12px] text-text-2">
             {json}
           </pre>
         )}
-      </div>
-    </Card>
-  );
-}
-
-function ValidationCard({
-  query,
-}: {
-  query: ReturnType<typeof useQuery<ValidateDraftOut>>;
-}) {
-  return (
-    <Card>
-      <SectionHeader label="Validation" />
-      <div className="px-5 pb-5 text-[13px]">
-        {query.isPending ? (
-          <p className="m-0 text-text-3">Validating…</p>
-        ) : query.isError ? (
-          <p className="m-0 text-danger">{errorMessage(query.error)}</p>
-        ) : query.data ? (
-          query.data.ok ? (
-            <Pill tone="gold">
-              <span className="w-1.5 h-1.5 rounded-full bg-gold" /> valid
-            </Pill>
-          ) : (
-            <div className="space-y-2">
-              <Pill tone="danger">
-                <span className="w-1.5 h-1.5 rounded-full bg-danger" />
-                {" "}
-                invalid
-              </Pill>
-              <ul className="m-0 pl-4 list-disc text-text-2 space-y-1">
-                {query.data.errors.map((err, i) => (
-                  <li key={i}>{err}</li>
-                ))}
-              </ul>
-            </div>
-          )
-        ) : null}
-        <div className="mt-4">
-          <button
-            onClick={() => query.refetch()}
-            disabled={query.isFetching}
-            className="inline-flex items-center gap-2 px-3 py-1.5 rounded text-[12px] font-medium border border-border text-text-2 hover:text-text hover:border-text-3 disabled:opacity-50 transition-colors"
-          >
-            {query.isFetching ? "Re-validating…" : "Re-validate"}
-          </button>
-        </div>
       </div>
     </Card>
   );
@@ -709,7 +657,7 @@ function RunEvalCard({ agentId }: { agentId: string }) {
       />
       <div className="px-5 py-4 space-y-3">
         <div className="relative">
-          <pre className="m-0 px-3 py-2 bg-surface-elev border border-border-soft rounded text-[11.5px] font-mono text-text overflow-x-auto whitespace-pre">
+          <pre className="m-0 overflow-x-auto whitespace-pre rounded border border-border-soft bg-surface-elev px-3 py-2 font-mono text-[11.5px] text-text">
 {cliCommand}
           </pre>
           <button
@@ -794,7 +742,11 @@ function DD({
   children: React.ReactNode;
   className?: string;
 }) {
-  return <dd className={`m-0 text-text ${className ?? ""}`}>{children}</dd>;
+  return (
+    <dd className={`m-0 min-w-0 break-words text-text ${className ?? ""}`}>
+      {children}
+    </dd>
+  );
 }
 
 function LoadingSkeleton() {
@@ -835,7 +787,7 @@ function ErrorState({ err, onRetry }: { err: unknown; onRetry: () => void }) {
         couldn't load draft
       </div>
       <p className="m-0 mb-5 max-w-md mx-auto text-text-2 leading-snug">
-        <code className="text-danger font-mono text-[12px]">
+        <code className="break-all font-mono text-[12px] text-danger">
           {errorMessage(err)}
         </code>
       </p>
