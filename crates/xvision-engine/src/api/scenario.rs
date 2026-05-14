@@ -34,6 +34,7 @@ use xvision_data::asset_whitelist::{alpaca_crypto_history_start, is_alpaca_crypt
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CreateScenarioRequest {
+    #[serde(default)]
     pub display_name: String,
     pub description: String,
     pub asset_class: AssetClass,
@@ -98,6 +99,7 @@ pub struct ScenarioMutations {
 /// cache key) once the row is inserted.
 pub async fn create(ctx: &ApiContext, req: CreateScenarioRequest) -> ApiResult<Scenario> {
     validate_request(&req, ctx).await?;
+    let display_name = req.display_name.trim().to_string();
     let id = format!("sc_{}", Ulid::new());
     let cache_key = engine_bars::compute_cache_key(
         &req.asset[0].venue_symbol,
@@ -110,7 +112,7 @@ pub async fn create(ctx: &ApiContext, req: CreateScenarioRequest) -> ApiResult<S
         id,
         parent_scenario_id: req.parent_scenario_id,
         source: req.source,
-        display_name: req.display_name,
+        display_name,
         description: req.description,
         tags: req.tags,
         notes: req.notes,

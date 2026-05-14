@@ -1,7 +1,7 @@
 use chrono::{TimeZone, Utc};
 use std::str::FromStr;
 use xvision_data::alpaca::BarGranularity;
-use xvision_engine::api::scenario::{archive, create, CreateScenarioRequest};
+use xvision_engine::api::scenario::{archive, create, validate_request, CreateScenarioRequest};
 use xvision_engine::api::{ApiContext, ApiError};
 use xvision_engine::eval::scenario::*;
 
@@ -86,6 +86,30 @@ async fn create_rejects_blank_display_name() {
 
     assert!(matches!(err, ApiError::Validation(_)));
     assert!(format!("{err}").contains("display_name is required"));
+}
+
+#[tokio::test]
+async fn missing_display_name_reaches_actionable_validation() {
+    let ctx = test_ctx().await;
+    let mut body = serde_json::to_value(valid_request()).unwrap();
+    body.as_object_mut().unwrap().remove("display_name");
+    let req: CreateScenarioRequest = serde_json::from_value(body).unwrap();
+
+    let err = validate_request(&req, &ctx).await.unwrap_err();
+
+    assert!(matches!(err, ApiError::Validation(_)));
+    assert!(format!("{err}").contains("display_name is required"));
+}
+
+#[tokio::test]
+async fn create_trims_display_name_before_persisting() {
+    let ctx = test_ctx().await;
+    let mut req = valid_request();
+    req.display_name = "  ETH 2024 named window  ".into();
+
+    let s = create(&ctx, req).await.unwrap();
+
+    assert_eq!(s.display_name, "ETH 2024 named window");
 }
 
 #[tokio::test]

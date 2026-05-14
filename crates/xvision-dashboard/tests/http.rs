@@ -686,6 +686,26 @@ fn minimal_create_request() -> serde_json::Value {
 }
 
 #[tokio::test]
+async fn create_scenario_missing_display_name_returns_actionable_400() {
+    let (server, _tmp) = boot().await;
+    let mut request = minimal_create_request();
+    request.as_object_mut().unwrap().remove("display_name");
+
+    let response = server.post("/api/scenarios").json(&request).await;
+
+    response.assert_status_bad_request();
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["code"], "validation");
+    assert!(
+        body["message"]
+            .as_str()
+            .unwrap()
+            .contains("display_name is required; provide a scenario display name"),
+        "body: {body}"
+    );
+}
+
+#[tokio::test]
 async fn create_scenario_then_archive() {
     let (server, _tmp) = boot().await;
 

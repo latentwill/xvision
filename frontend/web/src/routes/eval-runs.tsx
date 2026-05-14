@@ -5,7 +5,7 @@ import {
   useQueryClient,
   type UseQueryResult,
 } from "@tanstack/react-query";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
@@ -583,6 +583,9 @@ function StartEvalDialog({
   const selectedStrategy = (strategies.data ?? []).find(
     (s) => s.agent_id === agentId,
   );
+  const displayedError =
+    preflightError ?? (start.isError ? errorDetail(start.error) : null);
+  const setupAction = preflightSetupAction(displayedError);
 
   function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -725,10 +728,20 @@ function StartEvalDialog({
             </p>
           </fieldset>
 
-          {preflightError || start.isError ? (
-            <p className="m-0 text-[12px] text-rose-300 font-mono">
-              {preflightError ?? errorDetail(start.error)}
-            </p>
+          {displayedError ? (
+            <div className="space-y-2">
+              <p className="m-0 text-[12px] text-rose-300 font-mono">
+                {displayedError}
+              </p>
+              {setupAction ? (
+                <Link
+                  to={setupAction.to}
+                  className="inline-flex items-center justify-center rounded border border-border px-3 py-1.5 text-[12px] text-text-2 hover:border-text-3 hover:text-text"
+                >
+                  {setupAction.label}
+                </Link>
+              ) : null}
+            </div>
           ) : null}
 
           <div className="flex items-center justify-end gap-2 pt-1">
@@ -784,8 +797,7 @@ function evalPreflightError({
   }
 
   const hasEnabledModel = rows.some((row) => row.enabled_models.length > 0);
-  const defaultModel = providers.data?.default_model;
-  if (!hasEnabledModel && !defaultModel) {
+  if (!hasEnabledModel) {
     return "Enable a provider model in Settings -> Providers before running eval.";
   }
 
@@ -794,6 +806,11 @@ function evalPreflightError({
     if (requiredProviders.length === 0) {
       return "Pick a provider/model for the strategy agent before running eval.";
     }
+    const requiredModels = strategy.models ?? [];
+    if (requiredModels.length === 0) {
+      return "Pick a provider/model for the strategy agent before running eval.";
+    }
+    const requiredProviderRows = [];
     for (const providerName of requiredProviders) {
       const row = rows.find((candidate) => candidate.name === providerName);
       if (!row) {
@@ -803,6 +820,19 @@ function evalPreflightError({
       if (!row.api_key_set && !noAuthProvider) {
         return `provider '${providerName}' has no API key set. Add it in Settings -> Providers before running eval.`;
       }
+      requiredProviderRows.push(row);
+    }
+    for (const model of requiredModels) {
+      const providerWithModel = requiredProviderRows.find((row) =>
+        row.enabled_models.includes(model),
+      );
+      if (!providerWithModel) {
+        const providerName =
+          requiredProviderRows.length === 1
+            ? requiredProviderRows[0].name
+            : requiredProviders.join(", ");
+        return `model '${model}' is not enabled for provider '${providerName}'. Enable it in Settings -> Providers before running eval.`;
+      }
     }
   }
 
@@ -811,6 +841,17 @@ function evalPreflightError({
     return "Configure Alpaca paper credentials in Settings -> Brokers before running a paper eval.";
   }
 
+  return null;
+}
+
+function preflightSetupAction(error: string | null): { to: string; label: string } | null {
+  if (!error) return null;
+  if (error.includes("Settings -> Providers") || error.includes("Settings → Providers")) {
+    return { to: "/settings/providers", label: "Settings -> Providers" };
+  }
+  if (error.includes("Settings -> Brokers") || error.includes("Settings → Brokers")) {
+    return { to: "/settings/brokers", label: "Settings -> Brokers" };
+  }
   return null;
 }
 
