@@ -316,7 +316,7 @@ export function ChatRail() {
       <Thread bubbles={bubbles} isStreaming={isStreaming} />
 
       {error && (
-        <div className="px-4 py-2 border-t border-border text-rose-300 text-[12px]">
+        <div className="px-4 py-2 border-t border-border text-danger text-[12px]">
           {error}
         </div>
       )}
@@ -392,7 +392,7 @@ function BubbleView({
   if (b.role === "user") {
     return (
       <div className="self-end max-w-[92%]">
-        <div className="bg-blue-500/10 dark:bg-blue-400/10 border border-blue-500/30 dark:border-blue-400/30 rounded-md px-2.5 py-1.5 text-[13px] whitespace-pre-wrap leading-snug">
+        <div className="bg-info/10 border border-info/30 rounded-md px-2.5 py-1.5 text-[13px] whitespace-pre-wrap leading-snug">
           {b.text}
         </div>
       </div>
@@ -425,7 +425,7 @@ function BubbleView({
             <div
               key={`narr-${i}`}
               className={`text-[12px] flex items-start gap-1.5 ${
-                n.ok ? "text-emerald-300" : "text-rose-300"
+                n.ok ? "text-info" : "text-danger"
               }`}
             >
               <span className="leading-[1.4] flex-shrink-0">

@@ -28,7 +28,9 @@ export type IconName =
   | "user"
   | "list"
   | "flame"
-  | "sliders";
+  | "sliders"
+  | "sun"
+  | "moon";
 
 const PATHS: Record<IconName, ReactNode> = {
   home: <path d="M3 9.5L10 4l7 5.5V16a1 1 0 01-1 1h-3v-5H9v5H4a1 1 0 01-1-1V9.5z" />,
@@ -110,6 +112,13 @@ const PATHS: Record<IconName, ReactNode> = {
       <circle cx="14" cy="14" r="1.5" />
     </>
   ),
+  sun: (
+    <>
+      <circle cx="10" cy="10" r="3" />
+      <path d="M10 2.5v2M10 15.5v2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M2.5 10h2M15.5 10h2M4.7 15.3l1.4-1.4M13.9 6.1l1.4-1.4" />
+    </>
+  ),
+  moon: <path d="M14.5 13.8A6.5 6.5 0 016.2 5.5 6.5 6.5 0 1014.5 13.8z" />,
 };
 
 export function Icon({
