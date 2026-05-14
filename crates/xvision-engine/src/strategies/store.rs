@@ -17,6 +17,7 @@ pub trait StrategyStore: Send + Sync {
     async fn save(&self, strategy: &Strategy) -> anyhow::Result<()>;
     async fn load(&self, id: &str) -> anyhow::Result<Strategy>;
     async fn list(&self) -> anyhow::Result<Vec<String>>;
+    async fn delete(&self, id: &str) -> anyhow::Result<()>;
 }
 
 pub struct FilesystemStore {
@@ -67,5 +68,13 @@ impl StrategyStore for FilesystemStore {
             }
         }
         Ok(ids)
+    }
+
+    async fn delete(&self, id: &str) -> anyhow::Result<()> {
+        let path = self.path_for(id);
+        tokio::fs::remove_file(&path)
+            .await
+            .with_context(|| format!("deleting {}", path.display()))?;
+        Ok(())
     }
 }
