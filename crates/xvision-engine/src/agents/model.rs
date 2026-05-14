@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
     ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
 )]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct Agent {
     pub agent_id: String,
     pub name: String,
@@ -28,6 +29,7 @@ pub struct Agent {
     ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
 )]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct AgentSlot {
     pub name: String,
     pub provider: String,

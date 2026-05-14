@@ -48,6 +48,7 @@ use xvision_core::config::{self, ProviderEntry, ProviderKind};
 use xvision_execution::broker_surface::{AlpacaPaperSurface, BrokerSurface};
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ListRunsRequest {
     pub agent_id: Option<String>,
     pub scenario_id: Option<String>,
@@ -311,6 +312,7 @@ async fn get_inner(ctx: &ApiContext, run_id: &str) -> ApiResult<Run> {
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CompareRunsRequest {
     /// Two-or-more run ids to fold into a single `ComparisonReport`.
     pub run_ids: Vec<String>,
@@ -468,6 +470,7 @@ async fn get_run_inner(ctx: &ApiContext, id: &str) -> ApiResult<RunDetail> {
     ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
 )]
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct EvalRunRequest {
     /// Strategy agent id returned by `api::strategy::list`.
     pub agent_id: String,
@@ -1390,7 +1393,6 @@ fn load_or_create_signing_key(xvn_home: &Path) -> anyhow::Result<SigningKey> {
     Ok(key)
 }
 
-#[cfg(test)]
 mod tests {
     use super::*;
     use crate::strategies::{
@@ -1496,5 +1498,15 @@ mod tests {
 
         assert_eq!(slots.len(), 1);
         assert_eq!(slots[0].effective_model(), "deepseek/deepseek-v4-flash");
+    }
+
+    #[test]
+    fn eval_run_request_rejects_unknown_fields() {
+        let err = serde_json::from_str::<EvalRunRequest>(
+            r#"{"agent_id":"a","scenario_id":"s","mode":"backtest","params_override":null,"extra":true}"#,
+        )
+        .expect_err("unknown eval-run fields must be rejected");
+
+        assert!(err.to_string().contains("unknown field"));
     }
 }

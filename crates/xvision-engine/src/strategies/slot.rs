@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct LLMSlot {
     pub role: String,               // "regime", "intern", "trader"
     pub prompt: String,             // slot prompt body

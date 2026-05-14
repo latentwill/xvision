@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::agent::execute::{execute_slot, SlotInput};
-use crate::agent::llm::{LlmDispatch, LlmResponse};
+use crate::agent::llm::{LlmDispatch, LlmResponse, ResponseSchema};
 use crate::agents::AgentSlot;
 use crate::strategies::slot::LLMSlot;
 use crate::strategies::{PipelineKind, Strategy};
@@ -45,6 +45,7 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
             upstream_inputs: accumulated.clone(),
             dispatch: input.dispatch.clone(),
             tools: input.tools.clone(),
+            response_schema: None,
         })
         .await?;
         total_in += out.input_tokens;
@@ -61,6 +62,7 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
             upstream_inputs: accumulated.clone(),
             dispatch: input.dispatch.clone(),
             tools: input.tools.clone(),
+            response_schema: None,
         })
         .await?;
         total_in += out.input_tokens;
@@ -77,6 +79,7 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
             upstream_inputs: accumulated.clone(),
             dispatch: input.dispatch.clone(),
             tools: input.tools.clone(),
+            response_schema: Some(ResponseSchema::trader_output()),
         })
         .await?;
         total_in += out.input_tokens;
@@ -108,12 +111,19 @@ async fn run_agent_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pip
     let mut trader = None;
     let mut last = None;
 
-    for resolved in input.agent_slots {
+    let last_index = input.agent_slots.len().saturating_sub(1);
+    for (index, resolved) in input.agent_slots.iter().enumerate() {
+        let is_trader_output = resolved.role.eq_ignore_ascii_case("trader") || index == last_index;
         let out = execute_slot(SlotInput {
             slot: &resolved.slot,
             upstream_inputs: accumulated.clone(),
             dispatch: input.dispatch.clone(),
             tools: input.tools.clone(),
+            response_schema: if is_trader_output {
+                Some(ResponseSchema::trader_output())
+            } else {
+                None
+            },
         })
         .await?;
         total_in += out.input_tokens;

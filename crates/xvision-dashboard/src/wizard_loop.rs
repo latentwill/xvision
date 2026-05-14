@@ -228,6 +228,7 @@ impl WizardLoop {
                 messages,
                 max_tokens: 1500,
                 tools: agent_tool_defs(self.profile),
+                response_schema: None,
             };
             let resp: LlmResponse = self.dispatch.complete(req).await?;
 

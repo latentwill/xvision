@@ -10,7 +10,8 @@
 use std::sync::Arc;
 
 use crate::agent::llm::{
-    ContentBlock, LlmDispatch, LlmRequest, LlmResponse, Message, StopReason,
+    ContentBlock, LlmDispatch, LlmRequest, LlmResponse, Message, ResponseSchema,
+    StopReason,
 };
 use crate::agent::tool_call;
 use crate::strategies::slot::LLMSlot;
@@ -21,6 +22,7 @@ pub struct SlotInput<'a> {
     pub upstream_inputs: serde_json::Value,
     pub dispatch: Arc<dyn LlmDispatch>,
     pub tools: Arc<ToolRegistry>,
+    pub response_schema: Option<ResponseSchema>,
 }
 
 pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmResponse> {
@@ -50,6 +52,10 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
             messages: messages.clone(),
             max_tokens: 1000,
             tools: tool_defs.clone(),
+            response_schema: input
+                .response_schema
+                .clone()
+                .or_else(|| response_schema_for_slot(input.slot)),
         };
         let resp = input.dispatch.complete(req).await?;
         total_input_tokens = total_input_tokens.saturating_add(resp.input_tokens);
@@ -101,5 +107,47 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
             role: "user".into(),
             content: results,
         });
+    }
+}
+
+pub(crate) fn response_schema_for_slot(slot: &LLMSlot) -> Option<ResponseSchema> {
+    if slot.role.eq_ignore_ascii_case("trader") {
+        Some(ResponseSchema::trader_output())
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn slot(role: &str) -> LLMSlot {
+        LLMSlot {
+            role: role.to_string(),
+            prompt: "system".into(),
+            model_requirement: "test.model".into(),
+            allowed_tools: Vec::new(),
+            provider: Some("test".into()),
+            model: Some("model".into()),
+        }
+    }
+
+    #[test]
+    fn trader_slots_request_the_trader_output_schema() {
+        let schema = response_schema_for_slot(&slot("trader")).expect("trader schema");
+        assert_eq!(schema.name, "trader_output");
+        assert!(schema
+            .schema
+            .get("required")
+            .and_then(|v| v.as_array())
+            .unwrap()
+            .iter()
+            .any(|v| v.as_str() == Some("action")));
+    }
+
+    #[test]
+    fn non_trader_slots_do_not_force_the_trader_schema() {
+        assert!(response_schema_for_slot(&slot("intern")).is_none());
     }
 }

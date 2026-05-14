@@ -31,6 +31,7 @@ use std::time::Instant;
     ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
 )]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct StrategySummary {
     pub agent_id: String,
     pub display_name: String,
@@ -56,6 +57,7 @@ pub struct StrategySummary {
     ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
 )]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AddAgentReq {
     pub strategy_id: String,
     pub agent_id: String,
@@ -68,6 +70,7 @@ pub struct AddAgentReq {
     ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
 )]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RemoveAgentReq {
     pub strategy_id: String,
     pub role: String,
@@ -79,6 +82,7 @@ pub struct RemoveAgentReq {
     ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
 )]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SetPipelineReq {
     pub strategy_id: String,
     pub kind: PipelineKind,
@@ -92,6 +96,7 @@ pub struct SetPipelineReq {
     ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
 )]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RenameAgentRoleReq {
     pub strategy_id: String,
     pub role: String,
