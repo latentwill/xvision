@@ -61,14 +61,18 @@ returns `ok:true`, so deployed validation does not catch this before eval.
   the entrypoint log says it migrates `/data/store.db`. `/data/store.db` only
   has the older core tables, so the live deployment still has the hidden/fallback
   DB split called out by `qa8-cli-runtime-blockers`.
-- A full Alpaca eval completion run should wait until the runtime DB/CLI fix,
-  `qa9-json-schema-enforcement`, and the strategy-agent guardrail are integrated
-  into the deployed image.
+- A full Alpaca eval completion run is still blocked on the runtime DB/CLI
+  hidden-DB split and a deployed image that contains the merged JSON-schema and
+  strategy-agent guardrail work. This branch is now rebased on those mainline
+  fixes, but the live container inspected for reproduction was not.
 
 ## Fix In Branch
 
 - Removed the pipeline fallback that treated the last non-trader attached
   agent as the trader output.
+- Kept the strict trader-output parser from JSON-schema enforcement while
+  sharing it across paper and backtest executors and adding the reported run IDs
+  to the missing-`action` diagnostic regression.
 - Added eval preflight validation requiring a real trader output source:
   - legacy strategies with no attached agents must have `trader_slot`
   - attached-agent strategies must include an attached agent with role `trader`
