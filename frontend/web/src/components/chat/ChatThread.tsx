@@ -12,10 +12,16 @@ export function ChatThread({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    ref.current?.scrollTo({
-      top: ref.current.scrollHeight,
-      behavior: "smooth",
-    });
+    const el = ref.current;
+    if (!el) return;
+    if (typeof el.scrollTo === "function") {
+      el.scrollTo({
+        top: el.scrollHeight,
+        behavior: "smooth",
+      });
+      return;
+    }
+    el.scrollTop = el.scrollHeight;
   }, [bubbles]);
 
   return (
