@@ -1007,7 +1007,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn validate_draft_audits_and_returns_ok_for_template_default() {
+    async fn validate_draft_reports_missing_agent_for_template_default() {
         let (ctx, _d) = ctx_with_audit().await;
         let created = create_strategy(
             &ctx,
@@ -1020,10 +1020,13 @@ mod tests {
         .await
         .unwrap();
         let out = validate_draft(&ctx, &created.id).await.unwrap();
-        // Default-from-template drafts may or may not validate cleanly
-        // depending on what fields are required. We only assert the audit
-        // row landed and the response carries the id.
         assert_eq!(out.id, created.id);
+        assert!(!out.ok);
+        assert!(
+            out.errors.iter().any(|e| e.contains("attached agent")),
+            "expected missing attached agent error, got {:?}",
+            out.errors,
+        );
         assert!(audit_row_exists(&ctx, "validate", &created.id).await);
     }
 
