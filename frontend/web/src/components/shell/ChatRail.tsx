@@ -62,8 +62,8 @@ export function ChatRail({
 }: ChatRailProps) {
   const location = useLocation();
   const scope = useMemo<ContextScope>(
-    () => scopeFromPath(location.pathname),
-    [location.pathname],
+    () => scopeFromPath(location.pathname, location.search),
+    [location.pathname, location.search],
   );
   const key = useMemo(() => scopeKey(scope), [scope]);
 
