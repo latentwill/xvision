@@ -48,6 +48,19 @@ Use these as reference only:
 | `strategy-agent-inspector` | `.worktrees/strategy-agent-inspector` | Inspector rebuild for agent composition | track 4 | no | frontend typecheck + authoring smoke |
 | `strategy-eval-ui-polish` | current workspace | Strategy/eval UI polish after modular agents: strategy list tags/model, Inspector chrome, overflow, eval timer, xvision skill trigger | none | no overlap with active frontend docs/runtime chart tracks | focused frontend tests + typecheck; Rust API compile in CI/non-deploy |
 | `mobile-safari-load` | `.worktrees/mobile-safari-load` | Mobile Safari still does not load the dashboard | none | no overlap with active frontend tracks | Safari/mobile load repro + frontend test/build smoke |
+| `qa8-template-authoring-flow` | `.worktrees/qa8-template-authoring-flow` | Replace awkward Templates "open form" flow with an empty authoring form and optional template dropdown that autofills fields when selected | none | no overlap with broad authoring/Inspector frontend tracks | setup/strategy-new focused tests + frontend typecheck |
+| `qa8-inspector-agent-model-picker` | `.worktrees/qa8-inspector-agent-model-picker` | Fix Strategy Inspector add-agent flow so it loads the same provider/model pick list as the chat rail, and newly added OpenRouter/DeepSeek agents appear in the Inspector agent panel | `strategy-agent-backend`, `strategy-agent-inspector` | no overlap with Inspector or agent API tracks | authoring/agent focused tests + frontend typecheck + dashboard agent route smoke |
+| `qa8-shared-chat-rail-context` | `.worktrees/qa8-shared-chat-rail-context` | Audit every dashboard page and collapse separate chat rail contexts/modules so one shared chat rail/session persists across route changes, including Inspector | none | no overlap with shell/chat/eval frontend tracks | ChatRail tests + route navigation persistence smoke + frontend typecheck |
+| `qa8-eval-live-decisions` | `.worktrees/qa8-eval-live-decisions` | Stream decisions into the UI while an eval is running and show a clear running indicator for active eval slots/runs | eval store/event bus stable | no overlap with eval launcher/chart tracks | eval progress/SSE tests + eval-runs focused frontend tests |
+| `qa8-unbounded-slot-tool-use` | `.worktrees/qa8-unbounded-slot-tool-use` | Fix `execute_slot exceeded 8 tool-use iterations` by removing the hard eight tool-call cap for agent slots; agents should not fail solely because they need more tool calls | none | no overlap with eval runtime/agent execution tracks | tool-use regression test + eval slot execution test |
+| `qa8-strategy-table-density` | `.worktrees/qa8-strategy-table-density` | Make long strategy tags readable without making table rows/columns excessively tall; remove backend ID from Strategies table columns and show ID only in Inspector | none | no overlap with strategy list/Inspector UI tracks | strategies focused frontend tests + visual smoke |
+| `qa8-cli-runtime-blockers` | `.worktrees/qa8-cli-runtime-blockers` | Fix remote CLI blockers: `strategy_bundle_hash` DB schema error, inconsistent `XVN_HOME` handling, hidden fallback DBs, and unsupported 6h scenario granularity; make all supported time frames available through CLI/API | none | no overlap with CLI config/schema/scenario tracks | CLI integration tests with temp `XVN_HOME` + migration/schema regression + scenario granularity tests |
+| `qa8-cli-noninteractive-core-flows` | `.worktrees/qa8-cli-noninteractive-core-flows` | Make core CLI flows fully non-interactive for strategy create, scenario create, eval run, eval list, and eval get so the task can be completed without the UI | `qa8-cli-runtime-blockers` preferred | no overlap with CLI command refactors | CLI golden tests for create/list/get/run with no prompts |
+| `qa8-cli-json-contracts` | `.worktrees/qa8-cli-json-contracts` | Add stable machine-readable `--json` or `--format json` output for list/get/create/run commands with fields agents can chain | `qa8-cli-noninteractive-core-flows` preferred | no overlap with CLI output-format tracks | JSON schema/golden tests for strategy/scenario/eval commands |
+| `qa8-cli-full-object-create-validate` | `.worktrees/qa8-cli-full-object-create-validate` | Allow full object creation in one command for strategies and scenarios, and add explicit `strategy validate`, `scenario validate`, and `eval validate` dry-run paths | `qa8-cli-runtime-blockers` preferred | no overlap with strategy/scenario CLI shape tracks | validation tests + full-create CLI integration tests |
+| `qa8-eval-cli-workflow` | `.worktrees/qa8-eval-cli-workflow` | Make eval runs a first-class CLI workflow: `eval run`, `eval watch`, `eval results`, `eval compare`, clean final metrics, and failure reasons | `qa8-cli-runtime-blockers` preferred | no overlap with eval runtime/event-bus tracks | eval CLI integration tests + metrics output golden tests |
+| `qa8-cli-doctor-help-examples` | `.worktrees/qa8-cli-doctor-help-examples` | Add real CLI examples for create strategy, create scenario, and run eval; expose `doctor` and effective config output so agents can inspect homes/config/DB targets | `qa8-cli-runtime-blockers` preferred | no overlap with docs/help CLI tracks | help snapshot tests + doctor/effective-config tests |
+| `qa8-agent-ux-cli-templates` | `.worktrees/qa8-agent-ux-cli-templates` | Improve agent UX: deterministic strategy scaffolds for simple creation, UI copy-pastable CLI commands, and template registry/version parity between deployed image and local repo | `qa8-template-authoring-flow` preferred | no overlap with template authoring or shell UI tracks | frontend tests for CLI command rendering + template registry API tests |
 
 ## Recommended order
 
@@ -64,6 +77,19 @@ Use these as reference only:
 11. `strategy-agent-inspector`
 12. `mobile-safari-load`
 13. `strategy-eval-ui-polish`
+14. `qa8-template-authoring-flow`
+15. `qa8-strategy-table-density`
+16. `qa8-inspector-agent-model-picker`
+17. `qa8-shared-chat-rail-context`
+18. `qa8-unbounded-slot-tool-use`
+19. `qa8-eval-live-decisions`
+20. `qa8-cli-runtime-blockers`
+21. `qa8-cli-noninteractive-core-flows`
+22. `qa8-cli-json-contracts`
+23. `qa8-cli-full-object-create-validate`
+24. `qa8-eval-cli-workflow`
+25. `qa8-cli-doctor-help-examples`
+26. `qa8-agent-ux-cli-templates`
 
 ## Immediate start set
 
@@ -78,11 +104,30 @@ Safe to start now:
 - `qa4-settings-zero-provider`
 - `qa4-scenarios-4h-bars-ui`
 - `mobile-safari-load`
+- `qa8-template-authoring-flow`
+- `qa8-strategy-table-density`
+- `qa8-unbounded-slot-tool-use`
+- `qa8-cli-runtime-blockers`
 
 Wait for `strategy-agent-backend`:
 
 - `qa4-surface-consistency`
 - `strategy-agent-inspector`
+- `qa8-inspector-agent-model-picker`
+
+Wait for shared eval/chat ownership:
+
+- `qa8-shared-chat-rail-context`
+- `qa8-eval-live-decisions`
+
+Wait for CLI runtime blockers:
+
+- `qa8-cli-noninteractive-core-flows`
+- `qa8-cli-json-contracts`
+- `qa8-cli-full-object-create-validate`
+- `qa8-eval-cli-workflow`
+- `qa8-cli-doctor-help-examples`
+- `qa8-agent-ux-cli-templates`
 
 Do not overlap:
 
@@ -90,6 +135,14 @@ Do not overlap:
 - `strategy-agent-backend` with `strategy-agent-inspector`
 - `qa4-surface-consistency` with `qa4-chat-eval-launcher`
 - `mobile-safari-load` with broad frontend route refactors
+- `qa8-inspector-agent-model-picker` with `strategy-agent-inspector`
+- `qa8-shared-chat-rail-context` with broad shell/chat-rail/frontend route refactors
+- `qa8-eval-live-decisions` with eval launcher or eval event-bus refactors
+- `qa8-strategy-table-density` with `strategy-eval-ui-polish` if that track is still editing Strategies table/Inspector UI files
+- `qa8-cli-runtime-blockers` with broad CLI config/store/schema refactors
+- `qa8-cli-noninteractive-core-flows` with `qa8-cli-full-object-create-validate`
+- `qa8-eval-cli-workflow` with `qa8-eval-live-decisions` if both touch eval event/progress contracts
+- `qa8-agent-ux-cli-templates` with `qa8-template-authoring-flow`
 
 ## Cherry-pick policy
 
@@ -229,6 +282,8 @@ Avoid:
 ### `mobile-safari-load`
 
 - New regression report: mobile still does not load on Safari.
+- Repeat Q8 operator report on 2026-05-13: mobile Safari still does not load
+  the page after the latest QA pass.
 - Claimed in `.worktrees/mobile-safari-load`; focus on root-cause isolation
   before changing production code.
 - Initial target surface: Vite/React dashboard startup path and any browser
@@ -264,6 +319,73 @@ Initial claim order:
 2. Inspector cleanup and overflow.
 3. Eval timer.
 4. Skill trigger wording.
+
+### Q8 QA intake
+
+New operator QA report on 2026-05-13. Split into implementation-sized tracks
+above; do not treat this as a single broad cleanup branch.
+
+Raw items mapped to board tracks:
+
+- `mobile-safari-load`: Mobile Safari still does not load the dashboard page.
+  Treat as a current Q8 blocker, not an already-closed historical note.
+- `qa8-template-authoring-flow`: Templates wording is awkward. The strategy
+  authoring page should open as an empty form; templates should be an optional
+  dropdown that autofills the form when selected.
+- `qa8-inspector-agent-model-picker`: Strategy Inspector still cannot add an
+  agent because its provider/model pick list is empty. It must use the same
+  provider/model list as the chat rail. Agents created via chat rail, including
+  OpenRouter / DeepSeek V4 Flash, must show in the Inspector agent panel.
+- `qa8-shared-chat-rail-context`: Inspector appears to have a separate chat
+  rail context that disappears when leaving the Inspector page. Review all
+  pages and remove/rework page-specific chat rail modules so there is one
+  shared chat rail across the dashboard.
+- `qa8-eval-live-decisions`: Decisions should stream into the UI while an eval
+  is running, with a visible running indicator.
+- `qa8-unbounded-slot-tool-use`: Eval failed with
+  `execute_slot exceeded 8 tool-use iterations — the model is stuck calling tools without producing a final decision`.
+  Remove or rework the hard eight tool-use iteration limit so agents are not
+  blocked from taking the tool calls they need.
+- `qa8-strategy-table-density`: Strategy tags are too squished and make table
+  columns/rows very tall. Backend ID is not useful in the Strategies table;
+  remove it from table columns and show ID only in the Inspector.
+- `qa8-cli-runtime-blockers`: Agent attempting CLI had to use Python as a
+  thin HTTP client because remote `xvn` CLI subcommands failed with
+  `no such column: strategy_bundle_hash`; audit migrations/schema and any
+  skill/docs references that may be pointing agents at broken CLI paths. Fix
+  `XVN_HOME` so every subcommand honors it consistently, with no hidden fallback
+  to a baked-in default DB. Add all scenario time frames through API/CLI;
+  6h granularity was specifically rejected by the scenario API.
+- `qa8-cli-noninteractive-core-flows`: Core workflows must be fully
+  non-interactive: `xvn strategy create`, `xvn scenario create`,
+  `xvn eval run`, `xvn eval list`, and `xvn eval get`. Everything needed for
+  the task should be possible without the UI.
+- `qa8-cli-json-contracts`: Add a machine-readable mode, either `--json` or
+  `--format json`, for list/get/create/run commands. Outputs need stable
+  fields that are easy for agents to parse and chain.
+- `qa8-cli-full-object-create-validate`: Full object creation should be
+  possible in one command. Strategy creation needs template, display name,
+  provider/model, risk settings, mechanical params, and tags. Scenario creation
+  needs asset, date range, granularity, fees, slippage, and latency. Add
+  explicit dry-run validation for strategy, scenario, and eval so schema
+  mistakes fail before long runs.
+- `qa8-eval-cli-workflow`: Eval runs need first-class commands:
+  `xvn eval run --strategy ... --scenario ...`, `xvn eval watch <run_id>`,
+  `xvn eval results <run_id>`, and `xvn eval compare ...`. Final output should
+  cleanly include total return, Sharpe, max drawdown, win rate, trade/decision
+  count, and failure reason when applicable.
+- `qa8-cli-doctor-help-examples`: Help output should include real examples for
+  creating a strategy, creating a scenario, and running an eval. Add `doctor`
+  and/or `config show --effective` so agents can see the effective config,
+  `XVN_HOME`, DB path, providers, templates, and remote/local target.
+- `qa8-agent-ux-cli-templates`: Reduce tool loops in strategy drafting by
+  preferring deterministic scaffolds for simple strategy creation over
+  open-ended wizard behavior. UI forms should print copy-pastable CLI commands
+  for the strategy/eval/scenario action they represent. Keep templates aligned
+  between deployed image and local repo with a clear template registry/version
+  endpoint; note product concern that templates can constrain agents, so this
+  should support broader registries rather than force a narrow template-only
+  path.
 
 ## Next board intake
 
