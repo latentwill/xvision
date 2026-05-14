@@ -158,7 +158,7 @@ async fn resolved_agent_pipeline_uses_trader_role_as_decision_output() {
 }
 
 #[tokio::test]
-async fn resolved_agent_pipeline_uses_last_output_without_trader_role() {
+async fn resolved_agent_pipeline_does_not_treat_non_trader_as_decision_output() {
     let mut strategy = fixture_strategy();
     strategy.regime_slot = None;
     strategy.intern_slot = None;
@@ -204,5 +204,7 @@ async fn resolved_agent_pipeline_uses_last_output_without_trader_role() {
     .await
     .unwrap();
 
-    assert_eq!(outs.trader.unwrap().text(), r#"{"stage":"second"}"#);
+    assert!(outs.trader.is_none());
+    assert_eq!(outs.total_input_tokens, 2);
+    assert_eq!(outs.total_output_tokens, 2);
 }
