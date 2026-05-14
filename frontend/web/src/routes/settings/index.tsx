@@ -19,6 +19,7 @@ import type {
 } from "@/api/types.gen";
 
 const TABS = [
+  { to: "general", label: "General" },
   { to: "providers", label: "Providers" },
   { to: "brokers", label: "Brokers" },
   { to: "danger", label: "Danger zone" },
@@ -54,6 +55,7 @@ export function SettingsLayout() {
   );
 }
 
+export { SettingsGeneralRoute } from "./general";
 export { SettingsProvidersRoute } from "./providers";
 
 export function SettingsBrokersRoute() {
