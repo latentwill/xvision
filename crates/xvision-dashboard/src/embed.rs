@@ -4,9 +4,8 @@
 //! directory is gitignored and populated by `pnpm build` (or by `build.rs` in a
 //! later phase). `rust-embed` baked the assets into the binary at compile time.
 //!
-//! For Phase A scaffolding the directory may be empty — `rust-embed` tolerates
-//! a missing folder by failing the include only when an asset is requested at
-//! runtime, so the binary still compiles before the frontend is built.
+//! The directory must exist even for compile-only CI checks. Docker deploy builds
+//! the real SPA first and copies it here before compiling the dashboard binary.
 
 use rust_embed::RustEmbed;
 

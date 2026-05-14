@@ -187,6 +187,7 @@ pub(crate) mod tests_common {
             stop_loss_pct,
             take_profit_pct,
             trader_summary: "Test decision for risk layer.".into(),
+            asset: None,
         }
     }
 

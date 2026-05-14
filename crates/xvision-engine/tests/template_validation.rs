@@ -1,4 +1,4 @@
-use xvision_engine::strategies::validate::validate_bundle;
+use xvision_engine::strategies::validate::validate_strategy;
 use xvision_engine::templates::registry;
 
 #[test]
@@ -16,7 +16,7 @@ fn registry_has_mean_reversion() {
 fn mean_reversion_draft_validates() {
     let tpl = registry::get("mean_reversion").expect("template exists");
     let draft = tpl.new_draft("01H8N7ZTEST".into(), "test-eth-mr".into(), "@test".into());
-    validate_bundle(&draft).expect("draft must validate");
+    validate_strategy(&draft).expect("draft must validate");
     assert_eq!(draft.manifest.template, "mean_reversion");
     assert_eq!(draft.manifest.display_name, "test-eth-mr");
     assert!(draft.trader_slot.is_some());

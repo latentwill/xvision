@@ -79,10 +79,6 @@ impl Whitelist {
 }
 
 fn parse_symbol(s: &str) -> Option<AssetSymbol> {
-    match s.to_ascii_uppercase().as_str() {
-        "BTC" => Some(AssetSymbol::Btc),
-        "ETH" => Some(AssetSymbol::Eth),
-        "SOL" => Some(AssetSymbol::Sol),
-        _ => None,
-    }
+    use std::str::FromStr;
+    AssetSymbol::from_str(s).ok()
 }

@@ -1,5 +1,6 @@
-import { NavLink, useNavigate } from "react-router-dom";
+import { NavLink } from "react-router-dom";
 import { Icon, type IconName } from "@/components/primitives/Icon";
+import { useTheme } from "@/theme/useTheme";
 
 type Item = { to: string; label: string; icon: IconName };
 
@@ -7,12 +8,15 @@ const PRIMARY: Item[] = [
   { to: "/", label: "Home", icon: "home" },
   { to: "/strategies", label: "Strategies", icon: "chart" },
   { to: "/agents", label: "Agents", icon: "user" },
+  { to: "/scenarios", label: "Scenarios", icon: "list" },
   { to: "/eval-runs", label: "Eval", icon: "bars" },
   { to: "/settings", label: "Settings", icon: "sliders" },
 ];
 
 export function Sidebar({ className = "" }: { className?: string }) {
-  const navigate = useNavigate();
+  const { resolvedTheme, setDarkTheme, setLightTheme } = useTheme();
+  const isLight = resolvedTheme === "light";
+
   return (
     <aside
       className={[
@@ -53,17 +57,28 @@ export function Sidebar({ className = "" }: { className?: string }) {
         ))}
       </nav>
 
-      <div className="mx-4 mb-4 px-3.5 py-3.5 bg-gold/5 border border-gold/20 rounded-sm">
-        <h4 className="m-0 mb-1.5 text-[13px] font-semibold text-text">Setup agent</h4>
-        <p className="m-0 mb-3 text-text-2 text-[12px] leading-snug">
-          Add an LLM key to begin building strategies with xvn.
-        </p>
+      <div className="mx-4 mb-3 flex items-center gap-1 rounded border border-border-soft bg-surface-elev p-1">
         <button
           type="button"
-          onClick={() => navigate("/settings/providers")}
-          className="w-full flex items-center justify-center px-3 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft transition-colors"
+          onClick={setLightTheme}
+          aria-label="Switch to light theme"
+          className={[
+            "flex h-7 flex-1 items-center justify-center rounded text-text-3 transition-colors hover:text-text",
+            isLight ? "bg-gold/[0.12] text-gold" : "",
+          ].join(" ")}
         >
-          Add LLM key
+          <Icon name="sun" size={15} />
+        </button>
+        <button
+          type="button"
+          onClick={setDarkTheme}
+          aria-label="Switch to dark theme"
+          className={[
+            "flex h-7 flex-1 items-center justify-center rounded text-text-3 transition-colors hover:text-text",
+            !isLight ? "bg-gold/[0.12] text-gold" : "",
+          ].join(" ")}
+        >
+          <Icon name="moon" size={15} />
         </button>
       </div>
 

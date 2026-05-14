@@ -52,9 +52,12 @@ pub struct Skill {
     /// Free-form per-kind config blob. v1 doesn't validate against a
     /// schema — that's a per-kind concern that lands when a kind's
     /// runtime application surfaces.
+    #[cfg_attr(feature = "ts-export", ts(type = "Record<string, unknown>"))]
     pub config: serde_json::Value,
     pub archived: bool,
+    #[cfg_attr(feature = "ts-export", ts(type = "string"))]
     pub created_at: DateTime<Utc>,
+    #[cfg_attr(feature = "ts-export", ts(type = "string"))]
     pub updated_at: DateTime<Utc>,
 }
 

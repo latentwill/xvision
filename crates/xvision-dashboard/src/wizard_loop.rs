@@ -1,6 +1,6 @@
 //! Server-side LLM agent that drives the strategy authoring loop. The user
 //! sends one chat message; this struct repeatedly calls the LLM with the
-//! seven authoring verbs as `ToolDefinition`s, routes any `ToolUse` blocks
+//! strategy/eval verbs as `ToolDefinition`s, routes any `ToolUse` blocks
 //! the model emits to `xvision_engine::authoring`, persists every turn
 //! (user / assistant / tool_result) to the `chat_sessions` store, and
 //! re-calls until the model responds with a text-only `EndTurn`.
@@ -22,12 +22,18 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
+use crate::cli_jobs::runner::CliJobRunner;
+use crate::cli_jobs::store::CliJobStore;
+use xvision_engine::api::{Actor, ApiContext};
+use xvision_engine::api::scenario as api_scenario;
 use xvision_engine::agent::llm::{
     ContentBlock, LlmDispatch, LlmRequest, LlmResponse, Message, StopReason, ToolDefinition,
 };
+use xvision_engine::api::eval::{self as api_eval, EvalRunRequest};
+use xvision_engine::api::scenario::{CreateScenarioRequest, ListScenariosFilter};
 use xvision_engine::authoring;
-use xvision_engine::strategies::store::{strategy_store_dir, FilesystemStore};
 use xvision_engine::chat_session::{ChatSessionStore, ContextScope};
+use xvision_engine::eval::run::RunMode;
 
 const WIZARD_SYSTEM_PROMPT_BASE: &str = include_str!("../prompts/wizard.md");
 
@@ -35,6 +41,39 @@ const WIZARD_SYSTEM_PROMPT_BASE: &str = include_str!("../prompts/wizard.md");
 /// a misbehaving model from looping forever; v1 wizards never need more
 /// than 3-4 round trips per user turn.
 const MAX_TOOL_LOOP_ITERATIONS: usize = 12;
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentProfile {
+    Workspace,
+    StrategySetup,
+}
+
+impl Default for AgentProfile {
+    fn default() -> Self {
+        Self::Workspace
+    }
+}
+
+impl AgentProfile {
+    pub fn prompt_section(self) -> &'static str {
+        match self {
+            AgentProfile::Workspace => {
+                "## Agent profile: workspace\n\
+                 You are the xvision workspace assistant. Inspect existing strategies, scenarios, \
+                 eval runs, and cached market data before recommending work. Prefer typed tools \
+                 and queued xvn CLI jobs over asking the user to run commands."
+            }
+            AgentProfile::StrategySetup => {
+                "## Agent profile: strategy setup\n\
+                 You are focused on strategy setup: creating, editing, validating, and evaluating \
+                 strategies. Use existing strategies and existing scenarios before falling back to \
+                 templates or asking broad questions. Ask one targeted clarification only when the \
+                 available strategies/scenarios are genuinely ambiguous."
+            }
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -63,12 +102,14 @@ pub enum WizardEvent {
 }
 
 pub struct WizardLoop {
-    xvn_home: PathBuf,
+    api_context: ApiContext,
     dispatch: Arc<dyn LlmDispatch>,
     model: String,
     pool: SqlitePool,
     session_id: String,
     scope: ContextScope,
+    profile: AgentProfile,
+    cli_runner: Option<Arc<CliJobRunner>>,
     /// Tracked across iterations: the most recent strategy id mentioned in
     /// a tool-call/-result. Used to populate `Done.draft_id`.
     last_draft_id: Option<String>,
@@ -93,15 +134,49 @@ impl WizardLoop {
         scope: ContextScope,
         new_message: String,
     ) -> anyhow::Result<Self> {
-        let user_block = serde_json::json!({"type": "text", "text": new_message});
-        ChatSessionStore::append(&pool, &session_id, "user", &[user_block]).await?;
-        Ok(Self {
+        Self::new_with_profile(
             xvn_home,
             dispatch,
             model,
             pool,
             session_id,
             scope,
+            AgentProfile::Workspace,
+            None,
+            new_message,
+        )
+        .await
+    }
+
+    pub async fn new_with_profile(
+        xvn_home: PathBuf,
+        dispatch: Arc<dyn LlmDispatch>,
+        model: String,
+        pool: SqlitePool,
+        session_id: String,
+        scope: ContextScope,
+        profile: AgentProfile,
+        cli_runner: Option<Arc<CliJobRunner>>,
+        new_message: String,
+    ) -> anyhow::Result<Self> {
+        let user_block = serde_json::json!({"type": "text", "text": new_message});
+        ChatSessionStore::append(&pool, &session_id, "user", &[user_block]).await?;
+        let api_context = ApiContext::new(
+            pool.clone(),
+            Actor::Cli {
+                user: "wizard".to_string(),
+            },
+            xvn_home,
+        );
+        Ok(Self {
+            api_context,
+            dispatch,
+            model,
+            pool,
+            session_id,
+            scope,
+            profile,
+            cli_runner,
             last_draft_id: None,
             pending: vec![],
             is_done: false,
@@ -136,7 +211,7 @@ impl WizardLoop {
         format!(
             "{base}\n\n## Current context\n{header}\n",
             base = WIZARD_SYSTEM_PROMPT_BASE,
-            header = self.scope.header_label()
+            header = format!("{}\n\n{}", self.scope.header_label(), self.profile.prompt_section())
         )
     }
 
@@ -148,7 +223,7 @@ impl WizardLoop {
                 system_prompt: self.system_prompt(),
                 messages,
                 max_tokens: 1500,
-                tools: wizard_tool_defs(),
+                tools: agent_tool_defs(self.profile),
             };
             let resp: LlmResponse = self.dispatch.complete(req).await?;
 
@@ -275,7 +350,7 @@ impl WizardLoop {
             self.last_draft_id = Some(id.to_string());
             return;
         }
-        // For get_strategy the bundle's manifest.id is what we want.
+        // For get_strategy the strategy's manifest.id is what we want.
         if tool == "get_strategy" {
             if let Some(id) = result
                 .get("manifest")
@@ -292,7 +367,9 @@ impl WizardLoop {
         name: &str,
         input: serde_json::Value,
     ) -> anyhow::Result<serde_json::Value> {
-        let store = FilesystemStore::new(strategy_store_dir(&self.xvn_home));
+        if !agent_tool_defs(self.profile).iter().any(|d| d.name == name) {
+            anyhow::bail!("tool '{name}' is not available in {:?} profile", self.profile);
+        }
         match name {
             "list_templates" => {
                 let out = authoring::list_templates();
@@ -300,7 +377,8 @@ impl WizardLoop {
             }
             "create_strategy" => {
                 let req: authoring::CreateStrategyReq = serde_json::from_value(input)?;
-                let out = authoring::create_strategy(&store, req).await?;
+                let out = xvision_engine::api::strategy::create_strategy(&self.api_context, req)
+                    .await?;
                 Ok(serde_json::to_value(out)?)
             }
             "get_strategy" => {
@@ -308,22 +386,63 @@ impl WizardLoop {
                     .get("id")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow::anyhow!("get_strategy: missing `id`"))?;
-                let out = authoring::get_strategy(&store, id).await?;
+                let out = xvision_engine::api::strategy::get(&self.api_context, id).await?;
+                Ok(serde_json::to_value(out)?)
+            }
+            "list_strategies" => {
+                let out = xvision_engine::api::strategy::list(&self.api_context).await?;
+                Ok(serde_json::to_value(out)?)
+            }
+            "list_scenarios" => {
+                let filter = ListScenariosFilter {
+                    include_archived: input
+                        .get("include_archived")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false),
+                    ..Default::default()
+                };
+                let out = api_scenario::list(&self.api_context, filter).await?;
+                Ok(serde_json::to_value(out)?)
+            }
+            "get_scenario" => {
+                let id = input
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("get_scenario: missing `id`"))?;
+                let out = api_scenario::get(&self.api_context, id).await?;
+                Ok(serde_json::to_value(out)?)
+            }
+            "create_scenario" => {
+                let req: CreateScenarioRequest = serde_json::from_value(input)?;
+                let out = api_scenario::create(&self.api_context, req).await?;
                 Ok(serde_json::to_value(out)?)
             }
             "update_slot" => {
                 let req: authoring::UpdateSlotReq = serde_json::from_value(input)?;
-                let out = authoring::update_slot(&store, req).await?;
+                let out = xvision_engine::api::strategy::update_slot(&self.api_context, req)
+                    .await?;
+                Ok(serde_json::to_value(out)?)
+            }
+            "update_manifest" => {
+                let req: authoring::UpdateManifestReq = serde_json::from_value(input)?;
+                let out = xvision_engine::api::strategy::update_manifest(
+                    &self.api_context,
+                    req,
+                )
+                .await?;
                 Ok(serde_json::to_value(out)?)
             }
             "set_mechanical_param" => {
                 let req: authoring::SetMechanicalParamReq = serde_json::from_value(input)?;
-                authoring::set_mechanical_param(&store, req).await?;
-                Ok(serde_json::json!({ "ok": true }))
+                let out =
+                    xvision_engine::api::strategy::set_mechanical_param(&self.api_context, req)
+                        .await?;
+                Ok(serde_json::to_value(out)?)
             }
             "set_risk_config" => {
                 let req: authoring::SetRiskConfigReq = serde_json::from_value(input)?;
-                let out = authoring::set_risk_config(&store, req).await?;
+                let out =
+                    xvision_engine::api::strategy::set_risk_config(&self.api_context, req).await?;
                 Ok(serde_json::to_value(out)?)
             }
             "validate_draft" => {
@@ -331,18 +450,168 @@ impl WizardLoop {
                     .get("id")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow::anyhow!("validate_draft: missing `id`"))?;
-                let out = authoring::validate_draft(&store, id).await?;
+                let out = xvision_engine::api::strategy::validate_draft(&self.api_context, id)
+                    .await?;
                 Ok(serde_json::to_value(out)?)
+            }
+            "run_eval" => {
+                let agent_id = input
+                    .get("agent_id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("run_eval: missing `agent_id`"))?;
+                let scenario_id = input
+                    .get("scenario_id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("run_eval: missing `scenario_id`"))?;
+                let mode = input
+                    .get("mode")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("backtest");
+                let mode = match mode {
+                    "paper" => RunMode::Paper,
+                    _ => RunMode::Backtest,
+                };
+                let req = EvalRunRequest {
+                    agent_id: agent_id.to_string(),
+                    scenario_id: scenario_id.to_string(),
+                    mode,
+                    params_override: None,
+                };
+                let out = api_eval::start_run(
+                    &xvision_engine::api::ApiContext::new(
+                        self.pool.clone(),
+                        xvision_engine::api::Actor::Cli {
+                            user: "dashboard".to_string(),
+                        },
+                        self.api_context.xvn_home.clone(),
+                    ),
+                    req,
+                )
+                .await?;
+                Ok(serde_json::json!({
+                    "run_id": out.summary.id,
+                    "status": out.summary.status,
+                    "scenario_id": out.summary.scenario_id
+                }))
+            }
+            "fetch_bars" => {
+                let asset = input
+                    .get("asset")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("fetch_bars: missing `asset`"))?;
+                let from = input
+                    .get("from")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("fetch_bars: missing `from`"))?;
+                let to = input
+                    .get("to")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("fetch_bars: missing `to`"))?;
+                let granularity = input
+                    .get("granularity")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("1h");
+                if !matches!(granularity, "1h" | "1d") {
+                    anyhow::bail!("fetch_bars: granularity must be `1h` or `1d`");
+                }
+                let argv = vec![
+                    "bars".to_string(),
+                    "fetch".to_string(),
+                    "--asset".to_string(),
+                    asset.to_string(),
+                    "--from".to_string(),
+                    from.to_string(),
+                    "--to".to_string(),
+                    to.to_string(),
+                    "--granularity".to_string(),
+                    granularity.to_string(),
+                ];
+                let store = CliJobStore::new(self.pool.clone());
+                let job = store.create_queued(argv, 300).await?;
+                if let Some(runner) = &self.cli_runner {
+                    runner.start(job.clone());
+                }
+                Ok(serde_json::json!({
+                    "job_id": job.job_id,
+                    "status": job.status.as_str(),
+                    "argv": job.argv
+                }))
+            }
+            "get_cli_job" => {
+                let job_id = input
+                    .get("job_id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("get_cli_job: missing `job_id`"))?;
+                let store = CliJobStore::new(self.pool.clone());
+                let job = store
+                    .get(job_id)
+                    .await?
+                    .ok_or_else(|| anyhow::anyhow!("cli job '{job_id}' not found"))?;
+                Ok(serde_json::json!({
+                    "job_id": job.job_id,
+                    "argv": job.argv,
+                    "status": job.status.as_str(),
+                    "created_at": job.created_at,
+                    "started_at": job.started_at,
+                    "finished_at": job.finished_at,
+                    "exit_code": job.exit_code,
+                    "timed_out": job.timed_out,
+                    "cancel_requested": job.cancel_requested,
+                    "stdout_bytes": job.stdout_bytes,
+                    "stderr_bytes": job.stderr_bytes,
+                    "stdout_truncated": job.stdout_truncated,
+                    "stderr_truncated": job.stderr_truncated,
+                    "error_message": job.error_message
+                }))
+            }
+            "get_cli_job_output" => {
+                let job_id = input
+                    .get("job_id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("get_cli_job_output: missing `job_id`"))?;
+                let store = CliJobStore::new(self.pool.clone());
+                let output = store
+                    .output(job_id)
+                    .await?
+                    .ok_or_else(|| anyhow::anyhow!("cli job '{job_id}' not found"))?;
+                Ok(serde_json::json!({
+                    "job_id": output.job_id,
+                    "status": output.status.as_str(),
+                    "exit_code": output.exit_code,
+                    "stdout": output.stdout,
+                    "stderr": output.stderr,
+                    "stdout_bytes": output.stdout_bytes,
+                    "stderr_bytes": output.stderr_bytes,
+                    "stdout_truncated": output.stdout_truncated,
+                    "stderr_truncated": output.stderr_truncated
+                }))
             }
             other => anyhow::bail!("unknown authoring verb: {other}"),
         }
     }
 }
 
-/// The seven authoring verbs as `ToolDefinition`s. The schemas mirror the
+pub type AgentChatLoop = WizardLoop;
+
+/// Authoring/eval verbs as `ToolDefinition`s. The schemas mirror the
 /// engine's request structs but only declare the fields a model needs;
 /// optional fields are omitted from `required`.
 fn wizard_tool_defs() -> Vec<ToolDefinition> {
+    agent_tool_defs(AgentProfile::StrategySetup)
+}
+
+pub(crate) fn agent_tool_defs(profile: AgentProfile) -> Vec<ToolDefinition> {
+    let mut defs = strategy_tool_defs();
+    match profile {
+        AgentProfile::StrategySetup => {}
+        AgentProfile::Workspace => {
+            defs.extend(workspace_tool_defs());
+        }
+    }
+    defs
+}
+
+fn strategy_tool_defs() -> Vec<ToolDefinition> {
     vec![
         ToolDefinition {
             name: "list_templates".into(),
@@ -374,6 +643,38 @@ fn wizard_tool_defs() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
+            name: "create_scenario".into(),
+            description: "Create a scenario. Use list_scenarios first when the user asks for an existing scenario; only create when they request a new one and provide the required fields.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "display_name": {"type": "string", "minLength": 1},
+                    "description": {"type": "string"},
+                    "asset_class": {"type": "string"},
+                    "asset": {"type": "array", "items": {"type": "object"}},
+                    "quote_currency": {"type": "string"},
+                    "time_window": {"type": "object"},
+                    "capital": {"type": "object"},
+                    "granularity": {"type": "string"},
+                    "timezone": {"type": "string"},
+                    "calendar": {"type": "object"},
+                    "venue": {"type": "object"},
+                    "data_source": {"type": "object"},
+                    "replay_mode": {"type": "string"},
+                    "tags": {"type": "array", "items": {"type": "string"}},
+                    "notes": {"type": ["string", "null"]},
+                    "parent_scenario_id": {"type": ["string", "null"]},
+                    "source": {"type": "string"}
+                },
+                "required": [
+                    "display_name", "description", "asset_class", "asset",
+                    "quote_currency", "time_window", "capital", "granularity",
+                    "timezone", "calendar", "venue", "data_source",
+                    "replay_mode", "tags", "source"
+                ]
+            }),
+        },
+        ToolDefinition {
             name: "update_slot".into(),
             description: "Update a regime/intern/trader slot. Only fields with non-null values are mutated.".into(),
             input_schema: serde_json::json!({
@@ -383,14 +684,34 @@ fn wizard_tool_defs() -> Vec<ToolDefinition> {
                     "slot": {"type": "string", "enum": ["regime", "intern", "trader"]},
                     "prompt": {"type": "string"},
                     "model_requirement": {"type": "string"},
+                    "provider": {"type": "string"},
+                    "model": {"type": "string"},
                     "allowed_tools": {"type": "array", "items": {"type": "string"}}
                 },
                 "required": ["id", "slot"]
             }),
         },
         ToolDefinition {
+            name: "update_manifest".into(),
+            description: "Persist manifest fields shown in the Strategy Inspector, including asset universe and decision cadence."
+                .into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string"},
+                    "asset_universe": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "minItems": 1
+                    },
+                    "decision_cadence_minutes": {"type": "integer", "minimum": 1}
+                },
+                "required": ["id"]
+            }),
+        },
+        ToolDefinition {
             name: "set_mechanical_param".into(),
-            description: "Set a key inside bundle.mechanical_params (template-specific).".into(),
+            description: "Set a key inside Strategy.mechanical_params (template-specific).".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -421,6 +742,83 @@ fn wizard_tool_defs() -> Vec<ToolDefinition> {
                 "type": "object",
                 "properties": {"id": {"type": "string"}},
                 "required": ["id"]
+            }),
+        },
+        ToolDefinition {
+            name: "run_eval".into(),
+            description: "Start an eval run for a strategy and scenario.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "agent_id": {"type": "string"},
+                    "scenario_id": {"type": "string"},
+                    "mode": {"type": "string", "enum": ["backtest", "paper"]}
+                },
+                "required": ["agent_id", "scenario_id"]
+            }),
+        },
+        ToolDefinition {
+            name: "list_strategies".into(),
+            description: "List persisted strategies before creating a new one.".into(),
+            input_schema: serde_json::json!({
+                "type": "object", "properties": {}, "required": []
+            }),
+        },
+        ToolDefinition {
+            name: "list_scenarios".into(),
+            description: "List persisted scenarios. Use this before asking which scenario to eval against.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "include_archived": {"type": "boolean"}
+                },
+                "required": []
+            }),
+        },
+        ToolDefinition {
+            name: "get_scenario".into(),
+            description: "Read one persisted scenario by id.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {"id": {"type": "string"}},
+                "required": ["id"]
+            }),
+        },
+    ]
+}
+
+fn workspace_tool_defs() -> Vec<ToolDefinition> {
+    vec![
+        ToolDefinition {
+            name: "fetch_bars".into(),
+            description: "Queue an allowlisted `xvn bars fetch` CLI job to warm the local bar cache.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "asset": {"type": "string", "description": "BTC, ETH, SOL, etc."},
+                    "from": {"type": "string", "description": "UTC date YYYY-MM-DD"},
+                    "to": {"type": "string", "description": "UTC date YYYY-MM-DD"},
+                    "granularity": {"type": "string", "enum": ["1h", "1d"]}
+                },
+                "required": ["asset", "from", "to"]
+            }),
+        },
+        ToolDefinition {
+            name: "get_cli_job".into(),
+            description: "Inspect status and metadata for a queued xvn CLI job.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {"job_id": {"type": "string"}},
+                "required": ["job_id"]
+            }),
+        },
+        ToolDefinition {
+            name: "get_cli_job_output".into(),
+            description: "Read captured stdout/stderr for a queued xvn CLI job.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {"job_id": {"type": "string"}},
+                "required": ["job_id"]
             }),
         },
     ]
@@ -478,6 +876,19 @@ mod tests {
         out
     }
 
+    async fn seed_defaults(pool: &SqlitePool, td: &tempfile::TempDir) {
+        let ctx = ApiContext::new(
+            pool.clone(),
+            Actor::Cli {
+                user: "wizard-test".to_string(),
+            },
+            td.path().to_path_buf(),
+        );
+        xvision_engine::eval::scenario_seed::run_seed_if_needed(&ctx)
+            .await
+            .expect("seed canonical scenarios and default strategy");
+    }
+
     #[tokio::test]
     async fn text_only_response_emits_token_then_done() {
         let mock = Arc::new(MockDispatch::echo("Sure — which template?"));
@@ -518,6 +929,176 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn tell_me_what_strategies_i_have_lists_existing_strategy() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) =
+            loop_with_session(mock, "tell me what strategies I have", ContextScope::Workspace)
+                .await;
+        wl.run_tool(
+            "create_strategy",
+            serde_json::json!({"template": "mean_reversion", "name": "Wizard Inventory"}),
+        )
+        .await
+        .expect("create strategy");
+
+        let out = wl
+            .run_tool("list_strategies", serde_json::json!({}))
+            .await
+            .expect("list strategies");
+        let rows = out.as_array().expect("list_strategies returns an array");
+        assert!(
+            rows.iter().any(|row| {
+                row.get("display_name").and_then(|v| v.as_str()) == Some("Wizard Inventory")
+            }),
+            "expected created strategy in {out}"
+        );
+    }
+
+    #[tokio::test]
+    async fn wizard_update_manifest_tool_persists_inspector_manifest_fields() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) =
+            loop_with_session(mock, "make this BTC 6h", ContextScope::Workspace).await;
+        let created = wl
+            .run_tool(
+                "create_strategy",
+                serde_json::json!({"template": "mean_reversion", "name": "Bollinger Bands 6H"}),
+            )
+            .await
+            .expect("create strategy");
+        let id = created["id"].as_str().expect("created id");
+
+        wl.run_tool(
+            "update_manifest",
+            serde_json::json!({
+                "id": id,
+                "asset_universe": ["BTC/USD"],
+                "decision_cadence_minutes": 360
+            }),
+        )
+        .await
+        .expect("update manifest");
+
+        let strategy = wl
+            .run_tool("get_strategy", serde_json::json!({"id": id}))
+            .await
+            .expect("get strategy");
+        assert_eq!(strategy["manifest"]["asset_universe"][0], "BTC/USD");
+        assert_eq!(strategy["manifest"]["decision_cadence_minutes"], 360);
+    }
+
+    #[tokio::test]
+    async fn run_eval_resolves_the_strategy_we_have_and_crypto_range_bound_to_fetch_bars_action() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, pool, td, _sid) = loop_with_session(
+            mock,
+            "run an eval on the strategy we have scenario crypto range bound",
+            ContextScope::Workspace,
+        )
+        .await;
+        seed_defaults(&pool, &td).await;
+        let created = wl
+            .run_tool(
+                "create_strategy",
+                serde_json::json!({"template": "range_trade", "name": "Only Strategy"}),
+            )
+            .await
+            .expect("create strategy");
+        let agent_id = created["id"].as_str().expect("created id");
+
+        let out = wl
+            .run_tool(
+                "run_eval",
+                serde_json::json!({
+                    "agent_id": "the strategy we have",
+                    "scenario_id": "crypto range bound",
+                    "mode": "backtest"
+                }),
+            )
+            .await
+            .expect("run_eval should return an action instead of erroring");
+
+        assert_eq!(out["agent_id"], agent_id);
+        assert_eq!(out["scenario_id"], "crypto-rangebound-q2-2025");
+        assert_eq!(out["ui_action"]["type"], "fetch_bars");
+        assert_eq!(out["ui_action"]["scenario_id"], "crypto-rangebound-q2-2025");
+    }
+
+    #[tokio::test]
+    async fn ambiguous_strategy_ask_returns_one_clarifying_question() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) =
+            loop_with_session(mock, "run an eval on the strategy", ContextScope::Workspace).await;
+        wl.run_tool(
+            "create_strategy",
+            serde_json::json!({"template": "mean_reversion", "name": "First Strategy"}),
+        )
+        .await
+        .expect("create first strategy");
+        wl.run_tool(
+            "create_strategy",
+            serde_json::json!({"template": "trend_follower", "name": "Second Strategy"}),
+        )
+        .await
+        .expect("create second strategy");
+
+        let out = wl
+            .run_tool(
+                "resolve_strategy",
+                serde_json::json!({"query": "the strategy we have"}),
+            )
+            .await
+            .expect("resolve_strategy should return clarification payload");
+        let clarification = out
+            .get("needs_clarification")
+            .expect("expected needs_clarification");
+        let question = clarification["question"].as_str().expect("question");
+        let options = clarification["options"].as_array().expect("options");
+        assert_eq!(
+            question.matches('?').count(),
+            1,
+            "should ask exactly one question: {question}"
+        );
+        assert_eq!(options.len(), 2, "expected both strategies in {out}");
+    }
+
+    #[tokio::test]
+    async fn missing_bars_returns_fetch_bars_ui_action() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, pool, td, _sid) =
+            loop_with_session(mock, "run eval", ContextScope::Workspace).await;
+        seed_defaults(&pool, &td).await;
+        let created = wl
+            .run_tool(
+                "create_strategy",
+                serde_json::json!({"template": "range_trade", "name": "Needs Bars"}),
+            )
+            .await
+            .expect("create strategy");
+
+        let out = wl
+            .run_tool(
+                "run_eval",
+                serde_json::json!({
+                    "agent_id": created["id"],
+                    "scenario_id": "crypto-rangebound-q2-2025",
+                    "mode": "backtest"
+                }),
+            )
+            .await
+            .expect("run_eval should return an action when bars are missing");
+
+        assert_eq!(out["ui_action"]["type"], "fetch_bars");
+        assert_eq!(out["ui_action"]["label"], "Fetch bars");
+        assert_eq!(out["ui_action"]["argv"][0], "bars");
+        assert_eq!(out["ui_action"]["argv"][1], "fetch");
+        assert_eq!(
+            out["ui_action"]["cache_key"],
+            out["scenario"]["bar_cache_policy"]["cache_key"]
+        );
+    }
+
+    #[tokio::test]
     async fn create_strategy_round_trip_tracks_draft_id() {
         let mock = Arc::new(MockDispatch::sequence(vec![
             MockDispatch::tool_use(
@@ -547,6 +1128,56 @@ mod tests {
             }
             other => panic!("expected Done with draft_id, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn wizard_create_strategy_is_visible_via_public_strategy_list() {
+        let mock = Arc::new(MockDispatch::sequence(vec![
+            MockDispatch::tool_use(
+                "tu_1",
+                "create_strategy",
+                serde_json::json!({"template": "mean_reversion", "name": "Wizard Visible"}),
+            ),
+            LlmResponse {
+                content: vec![ContentBlock::Text {
+                    text: "Created the draft.".into(),
+                }],
+                stop_reason: StopReason::EndTurn,
+                input_tokens: 5,
+                output_tokens: 5,
+            },
+        ]));
+        let (mut wl, pool, td, _sid) =
+            loop_with_session(mock, "make me a strategy", ContextScope::Workspace).await;
+        let events = drain(&mut wl).await;
+
+        let draft_id = events
+            .iter()
+            .rev()
+            .find_map(|e| match e {
+                WizardEvent::Done {
+                    draft_id: Some(id),
+                } => Some(id.clone()),
+                _ => None,
+            })
+            .expect("wizard should emit a draft id");
+
+        let ctx = ApiContext::new(
+            pool,
+            Actor::Cli {
+                user: "wizard-test".to_string(),
+            },
+            td.path().to_path_buf(),
+        );
+        let summaries = xvision_engine::api::strategy::list(&ctx)
+            .await
+            .expect("strategy list");
+        let created = summaries
+            .iter()
+            .find(|item| item.agent_id == draft_id)
+            .expect("created strategy must be visible via public list");
+        assert_eq!(created.display_name, "Wizard Visible");
+        assert_eq!(created.template, "mean_reversion");
     }
 
     #[tokio::test]
@@ -607,22 +1238,113 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn workspace_fetch_bars_tool_queues_cli_job() {
+        let mock = Arc::new(MockDispatch::sequence(vec![
+            MockDispatch::tool_use(
+                "tu_1",
+                "fetch_bars",
+                serde_json::json!({
+                    "asset": "BTC",
+                    "from": "2025-04-01",
+                    "to": "2025-06-30",
+                    "granularity": "1h"
+                }),
+            ),
+            LlmResponse {
+                content: vec![ContentBlock::Text {
+                    text: "Queued the bars fetch.".into(),
+                }],
+                stop_reason: StopReason::EndTurn,
+                input_tokens: 5,
+                output_tokens: 5,
+            },
+        ]));
+        let (mut wl, pool, _td, _sid) =
+            loop_with_session(mock, "fetch bars", ContextScope::Workspace).await;
+        let events = drain(&mut wl).await;
+        let job_id = events
+            .iter()
+            .find_map(|e| match e {
+                WizardEvent::ToolResult { tool, result } if tool == "fetch_bars" => {
+                    result.get("job_id").and_then(|v| v.as_str()).map(str::to_string)
+                }
+                _ => None,
+            })
+            .expect("fetch_bars should return a job id");
+        let store = CliJobStore::new(pool);
+        let job = store.get(&job_id).await.unwrap().expect("queued job");
+        assert_eq!(
+            job.argv,
+            vec![
+                "bars",
+                "fetch",
+                "--asset",
+                "BTC",
+                "--from",
+                "2025-04-01",
+                "--to",
+                "2025-06-30",
+                "--granularity",
+                "1h"
+            ]
+        );
+    }
+
     #[test]
-    fn wizard_tool_defs_advertises_seven_verbs() {
+    fn wizard_tool_defs_advertises_core_verbs() {
         let defs = wizard_tool_defs();
         let names: Vec<_> = defs.iter().map(|d| d.name.as_str()).collect();
-        assert_eq!(names.len(), 7);
         for v in [
             "list_templates",
             "create_strategy",
             "get_strategy",
+            "list_strategies",
+            "list_scenarios",
+            "get_scenario",
+            "create_scenario",
             "update_slot",
+            "update_manifest",
             "set_mechanical_param",
             "set_risk_config",
             "validate_draft",
+            "run_eval",
         ] {
             assert!(names.contains(&v), "missing verb {v} in {names:?}");
         }
+    }
+
+    #[test]
+    fn strategy_setup_profile_focuses_tools_on_strategy_work() {
+        let defs = agent_tool_defs(AgentProfile::StrategySetup);
+        let names: Vec<_> = defs.iter().map(|d| d.name.as_str()).collect();
+        assert!(names.contains(&"list_strategies"));
+        assert!(names.contains(&"list_scenarios"));
+        assert!(names.contains(&"get_scenario"));
+        assert!(names.contains(&"run_eval"));
+        assert!(
+            !names.contains(&"fetch_bars"),
+            "setup profile should not expose broad workspace fetch tools: {names:?}"
+        );
+    }
+
+    #[test]
+    fn workspace_profile_gets_broader_cli_job_tools() {
+        let defs = agent_tool_defs(AgentProfile::Workspace);
+        let names: Vec<_> = defs.iter().map(|d| d.name.as_str()).collect();
+        assert!(names.contains(&"list_strategies"));
+        assert!(names.contains(&"list_scenarios"));
+        assert!(names.contains(&"fetch_bars"));
+        assert!(names.contains(&"get_cli_job"));
+        assert!(names.contains(&"get_cli_job_output"));
+    }
+
+    #[test]
+    fn strategy_setup_prompt_biases_existing_strategy_and_scenario_reuse() {
+        let prompt = AgentProfile::StrategySetup.prompt_section();
+        assert!(prompt.contains("strategy setup"));
+        assert!(prompt.contains("existing strategies"));
+        assert!(prompt.contains("existing scenarios"));
     }
 
     // -- Plan #11 Phase B persistence assertions ----------------------------

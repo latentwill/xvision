@@ -22,6 +22,13 @@ on:
         description: "Also build the WITH_IDENTITY=1 (Mantle alloy) image"
         type: boolean
         default: false
+      build_profile:
+        description: "Rust build profile (release = production; staging = faster manual test image)"
+        type: choice
+        default: release
+        options:
+          - release
+          - staging
 
 # Auto-cancel superseded runs on the same ref. Belt + suspenders against
 # the queue stacking up if multiple tags get pushed in quick succession.
@@ -36,10 +43,66 @@ permissions:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  BUILD_PROFILE: ${{ github.event.inputs.build_profile || 'release' }}
 
 jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.95.0
+
+      - name: Install Rust native build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            perl \
+            make \
+            cmake \
+            clang \
+            libclang-dev \
+            pkg-config \
+            libsqlite3-dev
+
+      - name: Ensure dashboard static embed dir exists
+        run: mkdir -p crates/xvision-dashboard/static
+
+      - name: Rust deploy compile check
+        run: cargo check --bin xvn
+
+      - name: Rust identity compile check
+        if: github.event_name == 'push' || github.event.inputs.build_identity == 'true'
+        run: cargo check --workspace
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.0.0
+          run_install: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: frontend/web/pnpm-lock.yaml
+
+      - name: Frontend build check
+        run: |
+          corepack enable
+          cd frontend/web
+          pnpm install --frozen-lockfile
+          pnpm build
+
   build-default:
     runs-on: ubuntu-latest
+    needs: preflight
+    outputs:
+      image_tag: ${{ steps.image.outputs.image_tag }}
     steps:
       - uses: actions/checkout@v4
 
@@ -72,10 +135,17 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           build-args: |
             WITH_IDENTITY=0
+            BUILD_PROFILE=${{ env.BUILD_PROFILE }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=xvision-default
-          cache-to: type=gha,scope=xvision-default,mode=max
+          cache-from: type=gha,scope=xvision-default-${{ env.BUILD_PROFILE }}
+          cache-to: type=gha,scope=xvision-default-${{ env.BUILD_PROFILE }},mode=max
+
+      - id: image
+        name: Select smoke image tag
+        run: |
+          image="${REGISTRY}/${IMAGE_NAME}:sha-${GITHUB_SHA::7}"
+          echo "image_tag=${image}" >> "$GITHUB_OUTPUT"
 
   build-identity:
     runs-on: ubuntu-latest
@@ -114,10 +184,11 @@ jobs:
           push: true
           build-args: |
             WITH_IDENTITY=1
+            BUILD_PROFILE=${{ env.BUILD_PROFILE }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=xvision-identity
-          cache-to: type=gha,scope=xvision-identity,mode=max
+          cache-from: type=gha,scope=xvision-identity-${{ env.BUILD_PROFILE }}
+          cache-to: type=gha,scope=xvision-identity-${{ env.BUILD_PROFILE }},mode=max
 
   smoke:
     runs-on: ubuntu-latest
@@ -130,10 +201,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Pull & smoke test latest
+      - name: Pull & smoke test current image
         run: |
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-          docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest --version
+          docker pull ${{ needs.build-default.outputs.image_tag }}
+          docker run --rm ${{ needs.build-default.outputs.image_tag }} --version
           # No bind mount: the image's /data is already chown'd to the
           # `xvision` non-root user (Dockerfile L86 + USER xvision). A
           # `-v $PWD/data:/data` would override that with a runner-side
@@ -141,5 +212,5 @@ jobs:
           # `--rm` discards the in-container /data after the run anyway.
           docker run --rm \
             -e XVN_AUTOMIGRATE=1 \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
+            ${{ needs.build-default.outputs.image_tag }} \
             store stats --db /data/store.db

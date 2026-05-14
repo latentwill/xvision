@@ -35,9 +35,27 @@ evaluates new strategy variants automatically.
 - Run unsupervised on production capital without operator oversight. The
   current design assumes a single operator monitoring the system.
 
+## For Agents
+
+If you are an external or embedded agent using this repo, start here:
+
+1. Read `MANUAL.md` for operator commands and environment assumptions.
+2. Read `FOLLOWUPS.md` for active engineering tracks and deferred work.
+3. If you are running inside Claude Code rooted in this repo, load `.claude/skills/xvision/SKILL.md`.
+4. For exact CLI usage, run `xvn --help` and read `.claude/skills/xvision/references/cli.md`.
+5. For live-node remote control, use the Tailscale-served dashboard node (`xvn.tail2bb69.ts.net` or `xvnej.tail2bb69.ts.net`) rather than assuming arbitrary SSH access.
+6. For a shell-free remote CLI helper, use `scripts/xvn-remote.py`.
+
+Hard deployment rules for agents:
+
+1. Never run `cargo` on server/deploy hosts.
+2. Never do production image builds on server/deploy hosts.
+3. Use GHCR via `.github/workflows/docker.yml` (`workflow_dispatch`) for deploy builds.
+4. Prefer `scripts/deploy-ghcr.sh` as the canonical deployment trigger/watch flow.
+
 ## Quickstart (for first users)
 
-This walks through running xvision against Orderly testnet with no real money.
+This walks through a local backtest path with no live orders.
 
 ```bash
 # 1. Clone and build
@@ -45,27 +63,24 @@ git clone https://github.com/latentwill/xvision
 cd xvision
 cargo build --release
 
-# 2. Generate an EVM signing key (or use an existing one)
-# 3. Set up Orderly testnet account with that key
-# 4. Initialize xvision
-export CREDENTIAL_SECRET=$(openssl rand -hex 32)
-./target/release/xvn setup
-# follow prompts to register Orderly account on testnet
+# 2. Initialize xvision config/state
+./target/release/xvn migrate
 
-# 5. Issue a trading-only key
-./target/release/xvn key issue --user op
-# Verify: ./target/release/xvn key verify <pubkey>
+# 3. Check provider config
+./target/release/xvn doctor --json
+./target/release/xvn provider list
 
-# 6. Configure a strategy from a template
+# 4. Configure a strategy from a template
 ./target/release/xvn strategy templates
-./target/release/xvn strategy create --from buy_and_hold --agent-id my-first-agent
+./target/release/xvn strategy templates --json
+STRATEGY_ID=$(./target/release/xvn strategy create --template mean_reversion --name my-first-agent)
 
-# 7. Set a budget
-./target/release/xvn budget set --agent my-first-agent --hard-cap 100
+# 5. Run or inspect evals
+./target/release/xvn eval scenarios
+./target/release/xvn eval run --strategy "$STRATEGY_ID" --scenario crypto-bull-q1-2025 --mode backtest
 
-# 8. Run a single trader cycle and inspect the result
-./target/release/xvn run --agent my-first-agent --cycle-id $(uuidgen)
-./target/release/xvn audit agent --agent my-first-agent --since 1h
+# 6. Inspect stored runs
+./target/release/xvn eval list
 ```
 
 Or pull the Docker image — see `docker/README.md` for the full mount/env-var
@@ -97,8 +112,8 @@ docker run --rm -p 8788:8788 -e XVN_AUTOMIGRATE=1 \
   ghcr.io/latentwill/xvision:latest
 ```
 
-V1 routes: `/` Control Tower, `/setup` Wizard, `/strategies`, `/authoring/:id`
-Inspector, `/eval-runs` + `/eval-runs/:id` + `/eval/compare`, `/settings/*`.
+V1 routes: `/` Dashboard, `/setup` Wizard, `/strategies`, `/authoring/:id`,
+`/eval-runs`, `/eval-runs/:id`, `/eval-runs/compare`, `/settings/*`.
 See `frontend/README.md` for the full route table and `frontend/DESIGN.md` for
 the design synthesis.
 
@@ -107,16 +122,27 @@ the design synthesis.
 > you want the SPA embedded. The image published from `Dockerfile.deploy`
 > does this automatically.
 
+## Remote CLI over Tailscale
+
+Live-node command execution is exposed through the dashboard's typed remote CLI
+job API, not arbitrary SSH access.
+
+- Use `scripts/xvn-remote.py exec ...` for a shell-free helper.
+- Use `POST /api/cli/jobs` with a typed argv array for direct API access.
+- Long-running jobs can be resumed through `GET /api/cli/jobs/:id` and
+  `GET /api/cli/jobs/:id/output`.
+- SSE progress is available at `GET /api/cli/jobs/:id/events`.
+
 ## Safety
 
 xvision assumes a single operator who monitors the system and can intervene.
-Critical operator commands:
+Current operator commands:
 
-- `xvn kill --strategy <id>` — halt one agent, in-flight positions stay open
-- `xvn kill --all` — global halt, every dispatcher refuses new orders
-- `xvn unhalt --strategy <id>` — resume after halt
-- `xvn emergency-close --all` — flatten every position via market orders
-- `xvn audit agent --agent <id> --since 1h` — see every decision in the last hour
+- `xvn portfolio --venue <alpaca|orderly>` — read live portfolio state.
+- `xvn close-position --venue <alpaca|orderly> --asset BTC` — close one open position.
+- `xvn fire-trade --venue <alpaca|orderly> --side buy --size-bps 100` — manual smoke trade through the venue executor.
+- `xvn store stats --db data/store.db` — inspect local flight-recorder state.
+- `xvn eval list` and `xvn eval get <run_id>` — inspect eval history.
 
 The non-custodial design closes one failure mode (xvision can't drain you) but
 opens others:
@@ -130,17 +156,30 @@ opens others:
 
 ## Architecture
 
-- **Trading rail** (this scope): non-custodial, broker-side scope enforcement,
-  off-chain SQLite audit log + reservation ledger.
-- **Marketplace rail** (separate scope, Plan 5): on-chain protocol for fees +
-  delegation. xvision.io would run this; a self-hosted instance does not need
-  it.
-- **Autoresearcher** (separate scope, AR-1/AR-2/AR-3): the mutator + judge +
-  lineage seal pipeline.
+- **Operator surfaces:** the React/Vite dashboard, `xvn` CLI, and `xvn-mcp`
+  all call the same `xvision-engine::api` layer instead of duplicating
+  business logic.
+- **Authoring model:** strategies are bundles with manifests, risk config,
+  mechanical params, and AgentRefs/PipelineDef composition over workspace
+  agents. Legacy fixed slots still parse for compatibility.
+- **Eval loop:** scenarios are DB-backed and seeded with canonical rows.
+  Backtest mode replays cached bars through `BacktestExecutor`; paper mode
+  uses Alpaca broker-surface credentials. Runs, decisions, equity, findings,
+  and attestations persist in SQLite.
+- **Dashboard runtime:** `xvision-dashboard` serves the embedded SPA, JSON API,
+  wizard/chat SSE, CLI-job SSE, and live run chart streams from one axum
+  binary.
+- **Optional identity rail:** `xvision-identity` contains draft ERC-8004
+  manifest/reputation clients. It is opt-in and not required for the default
+  dashboard/eval loop.
 
 ## Documentation
 
 - `MANUAL.md` — operator runbook (commands, daily checklist, scale tiers)
+- `architecture.md` / `architecture-diagram.mermaid` — current system shape
+- `docs/superpowers/plans/2026-05-13-v2-v4-action-plan.md` — active V2-V4 roadmap
+- `frontend/README.md` and `frontend/DESIGN.md` — shipped dashboard routes and design notes
+- `crates/xvision-dashboard/README.md` — embedded dashboard API notes
 - `docs/superpowers/specs/` — design specifications
 - `docs/superpowers/plans/` — implementation plans (executable)
 - `docs/HACKATHON-1-PAGER.md` — narrative pitch

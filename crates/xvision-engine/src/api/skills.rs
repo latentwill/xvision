@@ -30,6 +30,7 @@ pub struct CreateSkillRequest {
     pub description: String,
     pub kind: SkillKind,
     #[serde(default = "empty_object")]
+    #[cfg_attr(feature = "ts-export", ts(type = "Record<string, unknown>"))]
     pub config: serde_json::Value,
 }
 
@@ -47,6 +48,7 @@ pub struct UpdateSkillRequest {
     pub name: Option<String>,
     pub description: Option<String>,
     pub kind: Option<SkillKind>,
+    #[cfg_attr(feature = "ts-export", ts(type = "Record<string, unknown> | null"))]
     pub config: Option<serde_json::Value>,
 }
 

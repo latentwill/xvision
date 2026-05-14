@@ -28,7 +28,7 @@ export function ChatBubble({
 
   const showDots = isStreaming && isLast;
   const narratives = bubble.tools
-    .map((t, i) => ({ i, n: toolNarrative(t) }))
+    .map((t, i) => ({ i, n: toolLogLine(t) }))
     .filter(
       (x): x is { i: number; n: { ok: boolean; content: ReactNode } } =>
         x.n !== null,
@@ -54,7 +54,7 @@ export function ChatBubble({
             <div
               key={`narr-${i}`}
               className={`text-[12px] flex items-start gap-1.5 ${
-                n.ok ? "text-emerald-300" : "text-rose-300"
+                n.ok ? "text-info" : "text-danger"
               }`}
             >
               <span className="leading-[1.4] flex-shrink-0">
@@ -185,11 +185,9 @@ function TypingDots({ inline }: { inline?: boolean }) {
   );
 }
 
-function toolNarrative(
+function toolLogLine(
   t: Tool,
 ): { ok: boolean; content: ReactNode } | null {
-  if (t.pending) return null;
-  if (t.call === "get_strategy" || t.call === "list_templates") return null;
   const args = (t.args ?? {}) as Record<string, unknown>;
   const result = (t.result ?? {}) as Record<string, unknown>;
   const errorMsg =
@@ -205,13 +203,42 @@ function toolNarrative(
     };
   }
   switch (t.call) {
+    case "get_strategy":
+    case "list_templates": {
+      const arg = args["template"] ?? args["id"] ?? "all";
+      return {
+        ok: true,
+        content: t.pending ? (
+          <>
+            Calling <code className="font-mono text-text">{t.call}</code> with{" "}
+            <code className="font-mono text-text-2">{String(arg)}</code>...
+          </>
+        ) : (
+          <>
+            {t.call} returned{" "}
+            <span className="font-mono text-text">{t.resultSummary ?? ""}</span>
+          </>
+        ),
+      };
+    }
     case "create_strategy": {
       const name = String(args["name"] ?? "(unnamed)");
       const template = String(args["template"] ?? "");
       const id = typeof result["id"] === "string" ? result["id"] : "";
       return {
         ok: true,
-        content: (
+        content: t.pending ? (
+          <>
+            Calling <code className="font-mono text-text">create_strategy</code>{" "}
+            for <strong className="text-text font-semibold">{name}</strong>
+            {template && (
+              <>
+                {" "}from{" "}
+                <code className="font-mono text-text-2">{template}</code>
+              </>
+            )}
+          </>
+        ) : (
           <>
             Created strategy{" "}
             <strong className="text-text font-semibold">{name}</strong>
@@ -243,7 +270,8 @@ function toolNarrative(
         ok: true,
         content: (
           <>
-            Set <code className="font-mono text-text">{key}</code> ={" "}
+            {t.pending ? "Calling" : "Set"}{" "}
+            <code className="font-mono text-text">{key}</code> ={" "}
             <code className="font-mono text-text">{value}</code>
           </>
         ),
@@ -289,7 +317,11 @@ function toolNarrative(
         : "";
       return {
         ok: true,
-        content: updated ? (
+        content: t.pending ? (
+          <>
+            Updating <code className="font-mono text-text">{slot}</code>...
+          </>
+        ) : updated ? (
           <>
             Updated <code className="font-mono text-text">{slot}</code>:{" "}
             {updated}
@@ -301,8 +333,73 @@ function toolNarrative(
         ),
       };
     }
+    case "update_manifest": {
+      const updated = Array.isArray(result["updated"])
+        ? (result["updated"] as string[]).join(", ")
+        : "";
+      return {
+        ok: true,
+        content: t.pending ? (
+          <>Updating manifest...</>
+        ) : updated ? (
+          <>Updated manifest: {updated}</>
+        ) : (
+          <>Updated manifest</>
+        ),
+      };
+    }
+    case "run_eval": {
+      if (t.pending) {
+        return {
+          ok: true,
+          content: (
+            <>
+              Running <code className="font-mono text-text">eval</code>...
+            </>
+          ),
+        };
+      }
+      const runId =
+        typeof result["run_id"] === "string"
+          ? (result["run_id"] as string)
+          : "";
+      return {
+        ok: true,
+        content: runId ? (
+          <>
+            Eval run <code className="font-mono text-text">{runId}</code>
+            {t.resultSummary ? (
+              <span className="text-text-2"> ({t.resultSummary})</span>
+            ) : null}
+          </>
+        ) : (
+          <>Eval action complete</>
+        ),
+      };
+    }
     default:
-      return null;
+      if (t.pending) {
+        return {
+          ok: true,
+          content: (
+            <>
+              Calling <code className="font-mono text-text">{t.call}</code>{" "}
+              <span className="text-text-2">{t.summary}</span>...
+            </>
+          ),
+        };
+      }
+      return {
+        ok: true,
+        content: (
+          <>
+            {t.call} completed
+            {t.resultSummary ? (
+              <span className="text-text-2">: {t.resultSummary}</span>
+            ) : null}
+          </>
+        ),
+      };
   }
 }
 
@@ -318,6 +415,8 @@ function friendlyVerb(call: string): string {
       return "Validate";
     case "update_slot":
       return "Update slot";
+    case "update_manifest":
+      return "Update manifest";
     default:
       return call;
   }

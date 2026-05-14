@@ -11,17 +11,20 @@ xvision-engine  = { path = "../xvision-engine" }
 axum            = { version = "0.7", features = ["macros"] }
 tokio           = { workspace = true }
 tower           = "0.5"
-tower-http      = { version = "0.6", features = ["trace", "cors"] }
+tower-http      = { version = "0.6", features = ["trace", "cors", "compression-full"] }
 serde           = { workspace = true }
 serde_json      = { workspace = true }
 anyhow          = { workspace = true }
 async-trait     = { workspace = true }
 tokio-stream    = "0.1"
+async-stream    = "0.3"
 thiserror       = { workspace = true }
 tracing         = { workspace = true }
 tracing-subscriber = { workspace = true }
 rust-embed      = { version = "8", features = ["compression"] }
 mime_guess      = "2"
+chrono          = { workspace = true }
+ulid            = { version = "1", features = ["serde"] }
 # Re-declare sqlx with the `migrate` feature on top of the workspace defaults.
 # The dashboard owns server-startup migration runs; the engine crate only
 # defines them.
@@ -33,3 +36,4 @@ tokio     = { version = "1", features = ["full", "test-util"] }
 serde_json = "1"
 tempfile  = "3"
 chrono    = { workspace = true }
+reqwest   = { version = "0.12", features = ["stream"] }

@@ -1,24 +1,23 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card } from "@/components/primitives/Card";
-import { Pill } from "@/components/primitives/Pill";
-import { ModelPicker } from "@/components/ModelPicker";
 import { ApiError } from "@/api/client";
 import {
   addProvider,
   listProviderModels,
   listProviders,
   removeProvider,
-  setDefaultProvider,
   setEnabledModels,
   settingsKeys,
   testProviderConnection,
+  updateProvider,
 } from "@/api/settings";
 import type {
   AddProviderRequest,
   ProviderModelEntry,
   ProviderRow,
   TestConnectionReport,
+  UpdateProviderRequest,
 } from "@/api/types.gen";
 
 // Provider presets the form recognises. Each preset fills in a sensible
@@ -149,11 +148,9 @@ export function SettingsProvidersRoute() {
   }
 
   const rows = list.data.providers;
-  const defaultModel = list.data.default_model ?? null;
 
   return (
     <div className="space-y-5">
-      <DefaultLlmCard rows={rows} defaultModel={defaultModel} />
       <Card className="p-5">
         <div className="flex items-center justify-between mb-3">
           <div>
@@ -237,14 +234,8 @@ function ProviderRowView({
   removeError: string | null;
   removeBusy: boolean;
 }) {
-  // The workspace default LLM is locked from deletion — removing it
-  // would orphan the default. The operator changes the default via the
-  // top-of-page Default-LLM card, which unlocks the old default.
-  const locked = row.is_default;
-  const lockReason = locked
-    ? "Workspace default — change the default LLM above before removing this provider."
-    : null;
   const [managing, setManaging] = useState(false);
+  const [editing, setEditing] = useState(false);
   const test = useMutation<TestConnectionReport, unknown, void>({
     mutationFn: () => testProviderConnection(row.name),
   });
@@ -254,7 +245,6 @@ function ProviderRowView({
         <td className="py-2 pr-3">
           <div className="flex items-center gap-2">
             <code className="font-mono text-[13px] text-text">{row.name}</code>
-            {row.is_default ? <Pill tone="gold">default</Pill> : null}
           </div>
         </td>
         <td className="py-2 pr-3 text-text-2 text-[12px] font-mono">
@@ -298,9 +288,14 @@ function ProviderRowView({
               </button>
             ) : null}
             <button
+              onClick={() => setEditing((v) => !v)}
+              className="px-2 py-1 rounded text-[12px] border border-border text-text-2 hover:text-text hover:border-text-3"
+            >
+              {editing ? "Cancel" : "Edit"}
+            </button>
+            <button
               onClick={onRemove}
-              disabled={locked || removeBusy}
-              title={lockReason ?? undefined}
+              disabled={removeBusy}
               className="px-2 py-1 rounded text-[12px] border border-border text-text-2 hover:text-danger hover:border-danger disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:text-text-2 disabled:hover:border-border"
             >
               {removeBusy ? "Removing…" : "Remove"}
@@ -315,6 +310,13 @@ function ProviderRowView({
               data={test.data ?? null}
               error={test.isError ? test.error : null}
             />
+          </td>
+        </tr>
+      ) : null}
+      {editing ? (
+        <tr className="border-t border-border-soft/40 bg-surface-elev/20">
+          <td colSpan={5} className="py-3 pr-0">
+            <EditProviderForm row={row} onClose={() => setEditing(false)} />
           </td>
         </tr>
       ) : null}
@@ -336,118 +338,6 @@ function ProviderRowView({
   );
 }
 
-function DefaultLlmCard({
-  rows,
-  defaultModel,
-}: {
-  rows: ProviderRow[];
-  defaultModel: string | null;
-}) {
-  const qc = useQueryClient();
-  const eligible = rows.filter((r) => r.api_key_set && !r.synthetic);
-  const currentDefault = eligible.find((r) => r.is_default) ?? null;
-
-  const [provider, setProvider] = useState<string | null>(
-    currentDefault?.name ?? null,
-  );
-  const [model, setModel] = useState<string>(defaultModel ?? "");
-
-  // Sync local form state when the upstream query data changes (e.g.
-  // after a successful save, or if another tab edited the default).
-  useEffect(() => {
-    setProvider(currentDefault?.name ?? null);
-    setModel(defaultModel ?? "");
-  }, [currentDefault?.name, defaultModel]);
-
-  const save = useMutation({
-    mutationFn: async () => {
-      if (!provider) throw new Error("pick a provider");
-      await setDefaultProvider(provider, {
-        model: model.trim() ? model.trim() : undefined,
-      });
-    },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: settingsKeys.providers() });
-    },
-  });
-
-  if (eligible.length === 0) {
-    // No configured providers yet — the "add your first provider" flow
-    // below owns the empty state; don't surface a stub card.
-    return null;
-  }
-
-  const dirty =
-    provider !== (currentDefault?.name ?? null) ||
-    model !== (defaultModel ?? "");
-
-  return (
-    <Card className="p-5">
-      <h3 className="m-0 font-serif font-medium text-[20px] tracking-tight">
-        Default LLM
-      </h3>
-      <p className="m-0 mt-1 mb-4 text-text-3 text-[12px]">
-        The provider and model xvision uses by default for the wizard, the
-        chat-rail, and any agent slot that doesn't override.
-      </p>
-      <div className="grid grid-cols-1 md:grid-cols-[1fr_2fr_auto] gap-3 md:items-end">
-        <div>
-          <label className="block text-[12px] text-text-2 mb-1">Provider</label>
-          <select
-            value={provider ?? ""}
-            onChange={(e) => {
-              const next = e.target.value || null;
-              setProvider(next);
-              if (next !== provider) setModel("");
-            }}
-            className="w-full px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono focus:outline-none focus:border-text-3"
-          >
-            <option value="">— pick a provider —</option>
-            {eligible.map((r) => (
-              <option key={r.name} value={r.name}>
-                {r.name}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="block text-[12px] text-text-2 mb-1">Model</label>
-          <ModelPicker
-            rows={rows}
-            loading={false}
-            provider={provider}
-            model={model}
-            onChange={(_p, m) => setModel(m)}
-            filterProvider={provider ?? undefined}
-            className="w-full px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono focus:outline-none focus:border-text-3"
-            placeholder={
-              provider ? "— pick a model —" : "— pick a provider first —"
-            }
-            emptyHint={
-              provider
-                ? `no enabled models for ${provider} — pick them via Models below`
-                : "— pick a provider first —"
-            }
-          />
-        </div>
-        <button
-          type="button"
-          disabled={!dirty || !provider || save.isPending}
-          onClick={() => save.mutate()}
-          className="px-3 py-2 rounded text-[13px] font-medium border border-gold text-gold hover:bg-gold/10 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {save.isPending ? "Saving…" : "Save"}
-        </button>
-      </div>
-      {save.isError ? (
-        <p className="m-0 mt-2 text-[12px] text-rose-300 font-mono">
-          {errorMessage(save.error)}
-        </p>
-      ) : null}
-    </Card>
-  );
-}
-
 function ConnectionResult({
   data,
   error,
@@ -457,7 +347,7 @@ function ConnectionResult({
 }) {
   if (error) {
     return (
-      <span className="inline-flex items-center gap-1.5 text-rose-300">
+      <span className="inline-flex items-center gap-1.5 text-danger">
         <span aria-hidden>✗</span>
         <span className="font-mono text-text-2">{errorMessage(error)}</span>
       </span>
@@ -466,7 +356,7 @@ function ConnectionResult({
   if (!data) return null;
   if (data.ok) {
     return (
-      <span className="inline-flex items-center gap-1.5 text-emerald-300">
+      <span className="inline-flex items-center gap-1.5 text-info">
         <span aria-hidden>✓</span>
         <span>
           connected · {data.latency_ms}ms
@@ -476,12 +366,122 @@ function ConnectionResult({
     );
   }
   return (
-    <span className="inline-flex items-center gap-1.5 text-rose-300">
+    <span className="inline-flex items-center gap-1.5 text-danger">
       <span aria-hidden>✗</span>
       <span className="font-mono text-text-2">
         {data.error ?? "connection failed"}
       </span>
     </span>
+  );
+}
+
+function EditProviderForm({
+  row,
+  onClose,
+}: {
+  row: ProviderRow;
+  onClose: () => void;
+}) {
+  const qc = useQueryClient();
+  const [kind, setKind] = useState(row.kind);
+  const [baseUrl, setBaseUrl] = useState(row.base_url);
+  const [apiKey, setApiKey] = useState("");
+
+  const save = useMutation({
+    mutationFn: (req: UpdateProviderRequest) => updateProvider(row.name, req),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: settingsKeys.providers() });
+      onClose();
+    },
+  });
+
+  const trimmedBaseUrl = baseUrl.trim();
+  const trimmedEnv = row.api_key_env;
+  const errors: string[] = [];
+  if (trimmedBaseUrl === "") {
+    errors.push("base URL is required");
+  } else if (!isHttpUrl(trimmedBaseUrl)) {
+    errors.push("base URL must start with http:// or https://");
+  }
+  const dirty =
+    kind !== row.kind ||
+    trimmedBaseUrl !== row.base_url ||
+    apiKey.trim() !== "";
+  const submittable = dirty && errors.length === 0;
+
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!submittable) return;
+        save.mutate({
+          kind,
+          base_url: trimmedBaseUrl,
+          api_key_env: trimmedEnv,
+          api_key: apiKey.trim() === "" ? null : apiKey,
+        });
+      }}
+      className="px-4 space-y-3"
+    >
+      <div className="grid grid-cols-1 md:grid-cols-[150px_1fr] gap-3">
+        <Field label="Kind">
+          <select
+            value={kind}
+            onChange={(e) => setKind(e.target.value)}
+            className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text"
+          >
+            <option value="anthropic">anthropic</option>
+            <option value="openai-compat">openai-compat</option>
+            <option value="local-candle">local-candle</option>
+          </select>
+        </Field>
+        <Field label="Base URL">
+          <input
+            value={baseUrl}
+            onChange={(e) => setBaseUrl(e.target.value)}
+            className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
+          />
+        </Field>
+      </div>
+      <Field label="New API key" hint="Optional. Leave blank to keep the stored key.">
+        <input
+          type="password"
+          autoComplete="off"
+          spellCheck={false}
+          value={apiKey}
+          onChange={(e) => setApiKey(e.target.value)}
+          className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
+        />
+      </Field>
+      {errors.length > 0 ? (
+        <ul className="m-0 pl-4 text-[12px] text-danger list-disc">
+          {errors.map((e) => (
+            <li key={e}>{e}</li>
+          ))}
+        </ul>
+      ) : null}
+      <div className="flex items-center gap-2">
+        <button
+          type="submit"
+          disabled={!submittable || save.isPending}
+          className="px-3 py-1.5 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft disabled:opacity-40"
+        >
+          {save.isPending ? "Saving…" : "Save changes"}
+        </button>
+        <button
+          type="button"
+          onClick={onClose}
+          className="text-[12px] text-text-3 hover:text-text"
+        >
+          Cancel
+        </button>
+        {save.isError ? (
+          <span className="text-[12px] text-danger">
+            {errorMessage(save.error)}
+          </span>
+        ) : null}
+      </div>
+    </form>
   );
 }
 

@@ -14,6 +14,19 @@ operator-side prerequisites.
 
 ---
 
+## Live-node remote control
+
+If you need to drive a running xvision node over Tailscale, use the dashboard's
+remote CLI job API or `scripts/xvn-remote.py`.
+
+- Prefer `scripts/xvn-remote.py exec ...` for backtests and other long-running
+  typed CLI work.
+- Do not assume arbitrary SSH access or a general-purpose shell on the node.
+- Use `GET /api/cli/jobs/:id` and `GET /api/cli/jobs/:id/output` to reconnect
+  after disconnects.
+
+---
+
 ## Tier 2 — blocking forward-paper / on-chain (Phase 11)
 
 ### M5. Set up Alpaca paper account + creds (F5 alpha)
@@ -46,9 +59,8 @@ operator-side prerequisites.
 - **Trigger:** Phase 11.5 prep.
 - **What:**
   1. Complete Orderly's brokered onboarding for an EVM (Mantle) wallet via
-     the Orderly EVM gateway (web flow). The `xvn setup --orderly-onboard`
-     subcommand specced in implementation-plan §6.3 is **not yet shipped**;
-     onboarding is currently manual.
+     the Orderly EVM gateway (web flow). Onboarding is currently manual; the
+     shipped CLI does not expose a brokered onboarding subcommand.
   2. Save `(orderly_key, orderly_secret, orderly_account_id)` in 1Password
      under `xvision/orderly-testnet`.
   3. Export at runtime:
@@ -286,35 +298,20 @@ operator-side prerequisites.
 ## Strategy authoring (Plan 2a — see crates/xvision-engine/README.md)
 
 ```bash
-xvn strategy templates                 # list templates
-xvn strategy new --template <t> --name <n>
+xvn doctor [--json]
+xvn strategy templates [--json]        # list templates
+xvn strategy create --template <t> --name <n> [--json]
+xvn strategy create --from-file strategy.json [--json]
 xvn strategy validate <id>
 xvn strategy show <id>
-xvn strategy ls
+xvn strategy ls [--json]
 xvn strategy run <id> --fixture <name> --decisions <N> [--mock]
 ```
 
-### Skills (Plan 2b — see crates/xvision-skills)
-
-Skills are OSShip-style markdown files (YAML frontmatter + body) that
-override a strategy slot's prompt + model_requirement and union its
-allowed_tools. They live under `$XVN_HOME/skills/<name>.md` and compose
-into any saved strategy.
-
-```bash
-xvn skill new --from-file my-trader.md  # register / overwrite
-xvn skill ls                            # list saved skills
-xvn skill attach <agent_id> --slot trader --skill my-trader
-```
-
-Marketplace publish/browse/install/attest verbs are deferred to Plan 5
-(blockchain integration). Skills work fully offline without them.
-
-### AI agent drives xvn (Plan 2a + 2b)
+### AI agent drives xvn (Plan 2a)
 
 External AI agents (Claude Code, Hermes, Cursor, Codex) can author the
-same `StrategyBundle`s and `Skill`s over MCP without the operator-CLI
-round-trip:
+same `Strategy` artifacts over MCP without the operator-CLI round-trip:
 
 ```bash
 cargo build --release -p xvision-mcp        # produces target/release/xvn-mcp
@@ -323,12 +320,15 @@ cargo build --release -p xvision-mcp        # produces target/release/xvn-mcp
 Authoring verbs the server advertises over `tools/list`:
 `xvn_list_templates`, `xvn_create_strategy`, `xvn_get_strategy`,
 `xvn_update_slot`, `xvn_set_mechanical_param`, `xvn_set_risk_config`,
-`xvn_validate_draft`, plus the Plan 2b skill verbs `xvn_create_skill`,
-`xvn_list_skills`, `xvn_attach_skill_to_agent` — alongside the indicator
-surface (`xvn_health`, `xvn_sma`, `xvn_rsi`, ...) that has shipped since
-v0.1. State lives in `$XVN_HOME/strategies/<id>.json` and
-`$XVN_HOME/skills/<name>.md`, the same paths `xvn strategy ls` and
-`xvn skill ls` read from.
+`xvn_validate_draft` — alongside the indicator surface (`xvn_health`,
+`xvn_sma`, `xvn_rsi`, ...) that has shipped since v0.1. State lives in
+`$XVN_HOME/strategies/<id>.json`, the same path `xvn strategy ls` reads
+from.
+
+> The Plan 2b in-app skills surface (`xvn skill …`, the `xvn_*_skill*`
+> MCP verbs, the `xvision-skills` crate) was removed per ADR 0012 — the
+> Agents page (`engine::agents`, `/agents`) replaces it as the
+> reusable-prompt authoring surface.
 
 In Claude Code, register the binary in `~/.claude/settings.json`:
 
@@ -347,31 +347,45 @@ MCP agent.
 
 End-to-end paths beyond this surface (marketplace publishing, live
 trading, batch eval) land in subsequent plans (2c, 3, 5) — they share
-this same bundle format.
+this same saved `Strategy` artifact shape.
 
-### Exit codes (Plan 2b-followup)
+### Eval runs
 
-`xvn skill *`, `xvn strategy *`, and `xvn eval *` follow Printing-Press-style
-typed exit codes so AI agents can dispatch on the *number*, not the error
-text:
+The shipped eval surface is available through both the dashboard and the CLI:
+
+```bash
+xvn eval run --strategy <id> --scenario crypto-bull-q1-2025 --mode backtest
+xvn eval validate --strategy <id> --scenario crypto-bull-q1-2025 --mode backtest
+xvn eval list [--json]
+xvn eval get <run_id> [--json]
+xvn eval watch <run_id> [--once] [--json]
+xvn eval results <run_id> [--json]
+xvn eval compare <run_id_a> <run_id_b>
+```
+
+`xvn eval run` is part of the current surface. Use `xvn scenario ls` to find
+scenario ids; `xvn eval scenarios` remains available but is deprecated.
+
+### Exit codes
+
+`xvn strategy *` and `xvn eval *` follow Printing-Press-style typed exit
+codes so AI agents can dispatch on the *number*, not the error text:
 
 | Code | Meaning | Agent should |
 |------|---------|--------------|
 | 0 | Success | continue |
 | 2 | Usage / malformed input / unknown enum variant | re-read `--help`, fix the invocation |
 | 3 | Auth (missing or invalid credential) | prompt operator for `ANTHROPIC_API_KEY` or `--mock` |
-| 4 | Resource not found (strategy id, skill name, run id) | re-fetch with `xvn <verb> ls`; the id is stale |
+| 4 | Resource not found (strategy id, run id) | re-fetch with `xvn <verb> ls`; the id is stale |
 | 5 | Upstream / network / disk / database error | retry with backoff |
-| 7 | State conflict (e.g. attaching skill to empty slot) | inspect the resource and reconcile state |
+| 7 | State conflict (e.g. duplicate name on rename) | inspect the resource and reconcile state |
 
 Other verbs (`fire-trade`, `venue`, `ab-compare`, `dashboard`, `eod`, …)
 default to exit 5 on any error pending per-command opt-in.
 
 ```bash
 xvn strategy show 01BAD; echo $?      # 4
-xvn skill new --from-file /no/such; echo $?    # 2
-xvn eval show 01BAD; echo $?          # 4
-xvn skill attach <id> --slot intern --skill x; echo $?   # 7 (slot empty)
+xvn eval get 01BAD; echo $?           # 4
 ```
 
 ---
@@ -511,26 +525,30 @@ fixed: contain first, diagnose second, communicate third, post-mortem fourth.
 
 ### 1. Contain (≤ 5 min)
 
-- [ ] Run `xvn kill --all` to halt every dispatcher. New orders blocked.
-- [ ] Decide whether to also `xvn emergency-close --all`. Defaults: YES if
-      "wrong direction" exposure is suspected, NO if you're investigating a
-      tooling glitch with no exposure component.
+- [ ] Disable the affected scheduler/process supervisor or dashboard-triggered
+      run source. The shipped CLI does not yet expose global halt/unhalt
+      commands.
+- [ ] If exposure is open, inspect it with `xvn portfolio --venue <venue>` and
+      close the affected asset with `xvn close-position --venue <venue> --asset <asset>`.
+      Default to closing when "wrong direction" exposure is suspected; avoid
+      closing when investigating a tooling glitch with no exposure component.
 - [ ] Post a one-line status to wherever your status channel is: "Halt at
       <UTC time>; investigating <one-line>." Don't wait for completeness.
 
 ### 2. Diagnose (≤ 30 min)
 
-- [ ] Pull the last hour of audit log: `xvn audit agent --since 1h --all`.
-- [ ] Cross-check positions: `xvn reconcile --user op --dry-run` — server
-      state vs ledger.
+- [ ] Inspect recent eval history with `xvn eval list` and
+      `xvn eval get <run_id>`.
+- [ ] Cross-check venue state with `xvn portfolio --venue <venue>`.
 - [ ] Identify whether the issue is:
       - **Strategy bug** (specific agent producing wrong decisions)
       - **Risk engine miss** (decision passed risk that shouldn't have)
       - **Execution glitch** (signed payload mismatched, fill mismatched)
       - **Broker outage** (Orderly returned 5xx)
       - **Operator error** (wrong CLI command run)
-- [ ] If the issue is constrained to one agent, halt that agent specifically
-      and unhalt the others: `xvn kill --strategy <id>; xvn unhalt --all`.
+- [ ] If the issue is constrained to one strategy, pause that strategy in the
+      scheduler/operator process that launched it. Per-strategy halt/unhalt
+      commands are not part of the shipped CLI surface yet.
 
 ### 3. Communicate (≤ 60 min after detection)
 

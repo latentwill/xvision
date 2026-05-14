@@ -16,7 +16,7 @@
 
 A single vertical slice: **author a strategy → backtest it → paper-trade it on Alpaca**.
 
-- Authoring: CLI (`xvn strategy …`, `xvn skill …`) and the Wizard (chat → MCP → engine).
+- Authoring: CLI (`xvn strategy …`) and the Wizard (chat → MCP → engine). The Agents page (`/agents`) supersedes the deprecated `xvn skill …` surface per ADR 0012.
 - Eval: backtest mode (fixture parquet replay) and paper mode (Alpaca paper).
 - Comparison: `xvn eval compare` + the `/eval/compare` route.
 - Operator chrome: settings, chat rail, command palette, README/MANUAL.
@@ -39,7 +39,7 @@ Each row links to its plan. Plans are agentic-executable; this table is the orde
 | 5 | [Eval Engine](docs/superpowers/plans/2026-05-08-eval-engine-plan.md) | Backtest + Alpaca paper mode. Paper executor wraps the `BrokerSurface` from #4. Owns migration `002_eval.sql`. CLI handlers + MCP verbs both dispatch through `engine::api::eval::*`. |
 | 6 | [Strategy 2a — MCP + tool-call + 7 templates](docs/superpowers/plans/2026-05-08-strategy-engine-2a-mcp-tools-templates.md) | Tool-use loop, full template set. MCP server registers `engine::api::*` functions as tools (Foundation pattern). Eval auto-picks up tool-calls (shared `execute_slot`). |
 | 7 | [LLM Providers & Per-Arm Models](docs/superpowers/plans/2026-05-10-llm-providers-and-per-arm-models-plan.md) | `[[providers]]` registry + per-arm `SlotRef`. Needed before settings UI ships. CLI dispatches through `engine::api::settings::*` (added by this plan + Settings). |
-| 8 | [Strategy 2b — Skills](docs/superpowers/plans/2026-05-08-strategy-engine-2b-skills.md) | Local OSShip-style skills attached to slots. Marketplace deferred. CLI dispatches through `engine::api::skill::*`. |
+| 8 | ~~[Strategy 2b — Skills](docs/superpowers/plans/2026-05-08-strategy-engine-2b-skills.md)~~ | **Superseded** by the Agents page (ADR 0012). The in-app `xvn skill …` surface and the `xvision-skills` crate were removed; reusable prompt authoring now happens against the first-class `Agent` entity at `/agents`. |
 | 9 | [Strategy 2d — Dashboard + Wizard](docs/superpowers/plans/2026-05-08-strategy-engine-2d-dashboard-wizard.md) | The product face. **Live cockpit + marketplace routes deferred** — see "Out of scope" below and the plan's v1-test cut note. |
 | 10 | [Settings & Onboarding](docs/superpowers/plans/2026-05-10-settings-and-onboarding-plan.md) | `/setup` + `/settings/{providers,brokers,daemon,identity,danger}`. No SQLite migration (config/default.toml only). |
 | 11 | [Chat Rail Persistence](docs/superpowers/plans/2026-05-10-chat-rail-persistence-plan.md) | Promotes the wizard into a persistent rail across routes. Owns migration `003_chat_sessions.sql` (convert from inline rusqlite schema during integration). |

@@ -56,6 +56,7 @@ impl Algorithm for RandomDirection {
             stop_loss_pct: 2.0,
             take_profit_pct: 3.0,
             trader_summary: "RandomDirection: coin-flip long/short at 100 bps.".into(),
+            asset: None,
         })
     }
 }

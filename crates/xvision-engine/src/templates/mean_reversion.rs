@@ -59,6 +59,8 @@ impl Template for MeanReversion {
                 prompt: REGIME_PROMPT.into(),
                 model_requirement: "anthropic.claude-sonnet-4.6".into(),
                 allowed_tools: vec!["indicator_panel".into()],
+                provider: None,
+                model: None,
             }),
             intern_slot: None,
             trader_slot: Some(LLMSlot {
@@ -66,6 +68,8 @@ impl Template for MeanReversion {
                 prompt: TRADER_PROMPT.into(),
                 model_requirement: "anthropic.claude-sonnet-4.6".into(),
                 allowed_tools: vec!["ohlcv".into(), "indicator_panel".into()],
+                provider: None,
+                model: None,
             }),
             risk: RiskPreset::Balanced.expand(),
             mechanical_params: serde_json::json!({

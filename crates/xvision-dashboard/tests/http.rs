@@ -68,18 +68,18 @@ async fn unknown_api_route_404s() {
 }
 
 #[tokio::test]
-async fn strategies_list_returns_array_when_empty() {
+async fn strategies_list_is_empty_on_fresh_home() {
     let (server, _tmp) = boot().await;
 
     let response = server.get("/api/strategies").await;
     response.assert_status_ok();
     let body: serde_json::Value = response.json();
-    assert!(body["items"].is_array(), "items must be array");
-    assert_eq!(body["items"].as_array().unwrap().len(), 0);
+    let items = body["items"].as_array().expect("items must be array");
+    assert_eq!(items.len(), 0, "fresh homes should not list seeded strategies");
 }
 
 #[tokio::test]
-async fn strategies_list_returns_seeded_bundle() {
+async fn strategies_list_returns_seeded_strategy() {
     use xvision_engine::strategies::{
         manifest::PublicManifest, risk::RiskPreset, store::StrategyStore, store::FilesystemStore,
         Strategy,
@@ -87,11 +87,11 @@ async fn strategies_list_returns_seeded_bundle() {
 
     let (server, tmp) = boot().await;
     let store = FilesystemStore::new(tmp.path().join("strategies"));
-    let bundle_id = "01J0DASHTEST00000000000001";
+    let strategy_id = "01J0DASHTEST00000000000001";
     store
         .save(&Strategy {
             manifest: PublicManifest {
-                id: bundle_id.into(),
+                id: strategy_id.into(),
                 display_name: "Dashboard Test".into(),
                 plain_summary: "seeded for /api/strategies test".into(),
                 creator: "@dashboard-test".into(),
@@ -119,9 +119,45 @@ async fn strategies_list_returns_seeded_bundle() {
     response.assert_status_ok();
     let body: serde_json::Value = response.json();
     let items = body["items"].as_array().expect("items array");
-    assert_eq!(items.len(), 1, "exactly one bundle seeded");
-    assert_eq!(items[0]["agent_id"], bundle_id);
-    assert_eq!(items[0]["template"], "mean_reversion");
+    assert_eq!(items.len(), 1);
+    let test_strategy = items
+        .iter()
+        .find(|i| i["agent_id"] == strategy_id)
+        .expect("test strategy must be present");
+    assert_eq!(test_strategy["display_name"], "Dashboard Test");
+    assert_eq!(test_strategy["template"], "mean_reversion");
+    assert_eq!(test_strategy["decision_cadence_minutes"], 60);
+}
+
+#[tokio::test]
+async fn post_create_strategy_is_visible_in_public_strategies_list() {
+    let (server, _tmp) = boot().await;
+
+    let response = server
+        .post("/api/strategies")
+        .json(&serde_json::json!({
+            "template": "mean_reversion",
+            "name": "Wizard Visible",
+            "creator": "@wizard"
+        }))
+        .await;
+    response.assert_status(StatusCode::CREATED);
+    let created: serde_json::Value = response.json();
+    let created_id = created["id"]
+        .as_str()
+        .expect("create_strategy returns id");
+
+    let response = server.get("/api/strategies").await;
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    let items = body["items"].as_array().unwrap();
+    let created = items
+        .iter()
+        .find(|item| item["agent_id"] == created_id)
+        .expect("created strategy present in list");
+
+    assert_eq!(created["display_name"], "Wizard Visible");
+    assert_eq!(created["template"], "mean_reversion");
 }
 
 #[tokio::test]
@@ -188,9 +224,17 @@ async fn eval_runs_filter_by_status_skips_others() {
     .unwrap();
     let store = RunStore::new(pool);
 
-    let queued = Run::new_queued("h1".into(), "s1".into(), RunMode::Backtest);
+    let queued = Run::new_queued(
+        "h1".into(),
+        "crypto-bull-q1-2025".into(),
+        RunMode::Backtest,
+    );
     store.create(&queued).await.unwrap();
-    let mut other = Run::new_queued("h2".into(), "s2".into(), RunMode::Backtest);
+    let mut other = Run::new_queued(
+        "h2".into(),
+        "crypto-bear-q3-2024".into(),
+        RunMode::Backtest,
+    );
     other.status = RunStatus::Failed;
     store.create(&other).await.unwrap();
 
@@ -265,6 +309,43 @@ async fn settings_brokers_reflects_set_env_vars() {
             );
         }
     }
+}
+
+#[tokio::test]
+async fn settings_brokers_replaces_stored_alpaca_credentials() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _alpaca_key = scoped_unset("APCA_API_KEY_ID");
+    let _alpaca_sec = scoped_unset("APCA_API_SECRET_KEY");
+
+    let (server, _tmp) = boot().await;
+
+    let first = server
+        .post("/api/settings/brokers/alpaca")
+        .json(&serde_json::json!({
+            "api_key_id": "FIRSTKEY00001111",
+            "api_secret_key": "first-secret",
+            "base_url": "https://paper-api.alpaca.markets"
+        }))
+        .await;
+    first.assert_status(axum::http::StatusCode::CREATED);
+
+    let second = server
+        .post("/api/settings/brokers/alpaca")
+        .json(&serde_json::json!({
+            "api_key_id": "SECONDKEY00002222",
+            "api_secret_key": "second-secret",
+            "base_url": "https://paper-api.alpaca.markets"
+        }))
+        .await;
+    second.assert_status(axum::http::StatusCode::CREATED);
+    let replaced: serde_json::Value = second.json();
+    assert_eq!(replaced["stored_key_id_suffix"], "2222");
+
+    let response = server.get("/api/settings/brokers").await;
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["alpaca"]["stored"], true);
+    assert_eq!(body["alpaca"]["stored_key_id_suffix"], "2222");
 }
 
 #[tokio::test]
@@ -422,6 +503,30 @@ async fn eval_run_detail_returns_summary_decisions_and_equity() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// POST /api/eval/runs — launch
+//
+// NOTE: We cannot test a successful launch here because it requires
+// ANTHROPIC_API_KEY + (for paper mode) Alpaca credentials. Instead we
+// assert that submitting an unknown strategy returns a clean 404 — the
+// early validation in `eval::run` fires before any env-var construction.
+
+#[tokio::test]
+async fn launch_eval_run_rejects_unknown_strategy() {
+    let (server, _tmp) = boot().await;
+    let body = serde_json::json!({
+        "agent_id": "does-not-exist",
+        "scenario_id": "crypto-bull-q1-2025",
+        "mode": "backtest",
+        "params_override": null,
+    });
+    let response = server.post("/api/eval/runs").json(&body).await;
+    // "does-not-exist" is not in the strategy store → 404 not_found.
+    response.assert_status(axum::http::StatusCode::NOT_FOUND);
+    let resp_body: serde_json::Value = response.json();
+    assert_eq!(resp_body["code"], "not_found");
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // /api/eval/compare
 
 #[tokio::test]
@@ -510,6 +615,153 @@ async fn eval_compare_returns_report_for_seeded_runs() {
     assert_eq!(curves[0]["samples"].as_array().unwrap().len(), 1);
 
     assert!(body["findings"].is_array());
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// /api/scenarios
+
+#[tokio::test]
+async fn list_scenarios_returns_seeded_rows() {
+    let (server, _tmp) = boot().await;
+    let response = server.get("/api/scenarios").await;
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    let items = body["items"].as_array().expect("items array");
+    assert_eq!(items.len(), 4); // 4 canonical scenarios seeded by AppState::new
+    assert!(items.iter().any(|i| i["id"] == "crypto-bull-q1-2025"));
+}
+
+#[tokio::test]
+async fn get_scenario_returns_canonical() {
+    let (server, _tmp) = boot().await;
+    let response = server.get("/api/scenarios/crypto-bull-q1-2025").await;
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["id"], "crypto-bull-q1-2025");
+    assert_eq!(body["source"], "Canonical");
+}
+
+#[tokio::test]
+async fn get_scenario_returns_404_for_unknown() {
+    let (server, _tmp) = boot().await;
+    let response = server.get("/api/scenarios/no-such-scenario").await;
+    response.assert_status_not_found();
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["code"], "not_found");
+}
+
+fn minimal_create_request() -> serde_json::Value {
+    serde_json::json!({
+        "display_name": "Test BTC 1h scenario",
+        "description": "Integration test scenario",
+        "asset_class": "Crypto",
+        "asset": [{ "class": "Crypto", "symbol": "BTC", "venue_symbol": "BTC/USD" }],
+        "quote_currency": "Usd",
+        "time_window": {
+            "start": "2025-01-01T00:00:00Z",
+            "end": "2025-04-01T00:00:00Z"
+        },
+        "granularity": "Hour1",
+        "timezone": "UTC",
+        "calendar": "Continuous24x7",
+        "venue": {
+            "venue": "Alpaca",
+            "fees": { "maker_bps": 10, "taker_bps": 25 },
+            "slippage": { "model": "linear", "bps": 5 },
+            "latency": { "decision_to_fill_ms": 250 },
+            "fill_model": {
+                "market_order_fill": "NextBarOpen",
+                "limit_order_fill": "NeverFills",
+                "partial_fills": false,
+                "volume_constraints": null
+            }
+        },
+        "data_source": { "type": "AlpacaHistorical", "feed": null, "adjustment": "Raw" },
+        "replay_mode": { "mode": "Continuous" },
+        "tags": ["test"],
+        "notes": null,
+        "parent_scenario_id": null,
+        "source": "User"
+    })
+}
+
+#[tokio::test]
+async fn create_scenario_then_archive() {
+    let (server, _tmp) = boot().await;
+
+    // Create a new scenario.
+    let create_resp = server
+        .post("/api/scenarios")
+        .json(&minimal_create_request())
+        .await;
+    create_resp.assert_status(axum::http::StatusCode::CREATED);
+    let created: serde_json::Value = create_resp.json();
+    let id = created["id"].as_str().expect("id present");
+    assert!(id.starts_with("sc_"), "id has sc_ prefix");
+
+    // Archive it.
+    let archive_resp = server
+        .post(&format!("/api/scenarios/{id}/archive"))
+        .await;
+    archive_resp.assert_status(axum::http::StatusCode::NO_CONTENT);
+
+    // List with include_archived=true — it should show up.
+    let list_resp = server
+        .get("/api/scenarios?include_archived=true")
+        .await;
+    list_resp.assert_status_ok();
+    let body: serde_json::Value = list_resp.json();
+    let items = body["items"].as_array().expect("items");
+    assert!(
+        items.iter().any(|i| i["id"] == id),
+        "archived scenario visible with include_archived=true"
+    );
+    let archived = items.iter().find(|i| i["id"] == id).unwrap();
+    assert!(archived["archived_at"].is_string(), "archived_at is set");
+}
+
+#[tokio::test]
+async fn create_scenario_then_delete() {
+    let (server, _tmp) = boot().await;
+
+    // Create.
+    let create_resp = server
+        .post("/api/scenarios")
+        .json(&minimal_create_request())
+        .await;
+    create_resp.assert_status(axum::http::StatusCode::CREATED);
+    let created: serde_json::Value = create_resp.json();
+    let id = created["id"].as_str().expect("id present");
+
+    // Hard-delete.
+    let del_resp = server.delete(&format!("/api/scenarios/{id}")).await;
+    del_resp.assert_status(axum::http::StatusCode::NO_CONTENT);
+
+    // GET should now 404.
+    let get_resp = server.get(&format!("/api/scenarios/{id}")).await;
+    get_resp.assert_status_not_found();
+}
+
+#[tokio::test]
+async fn clone_scenario_inherits_parent() {
+    let (server, _tmp) = boot().await;
+
+    // Clone one of the canonical scenarios with no overrides.
+    let clone_resp = server
+        .post("/api/scenarios/crypto-bull-q1-2025/clone")
+        .await;
+    clone_resp.assert_status(axum::http::StatusCode::CREATED);
+    let cloned: serde_json::Value = clone_resp.json();
+    let id = cloned["id"].as_str().expect("id");
+    assert!(id.starts_with("sc_"));
+    assert_eq!(cloned["parent_scenario_id"], "crypto-bull-q1-2025");
+    assert_eq!(cloned["source"], "Clone");
+
+    // Verify it appears in the list.
+    let list_resp = server.get("/api/scenarios").await;
+    let body: serde_json::Value = list_resp.json();
+    let items = body["items"].as_array().unwrap();
+    assert!(items.iter().any(|i| i["id"] == id));
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -604,11 +856,6 @@ async fn providers_add_creates_and_persists_row() {
     let (server, tmp) = boot().await;
     let cfg = write_config(&tmp);
     let _g = scoped_set("XVN_CONFIG_PATH", cfg.to_str().unwrap());
-    // Pretend the operator already has the seeded default's key exported.
-    // Without this the add path's auto-promote would re-point [intern] at
-    // the new openai row — see providers::add_inner.
-    let _g_key = scoped_set("ANTHROPIC_API_KEY", "sk-ant-test");
-
     let response = server
         .post("/api/settings/providers")
         .json(&serde_json::json!({
@@ -681,16 +928,44 @@ async fn providers_add_rejects_invalid_kind_with_400() {
 }
 
 #[tokio::test]
-async fn providers_remove_refuses_intern_referenced_with_409() {
+async fn providers_remove_default_clears_default_with_204() {
     let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let (server, tmp) = boot().await;
     let cfg = write_config(&tmp);
     let _g = scoped_set("XVN_CONFIG_PATH", cfg.to_str().unwrap());
 
     let response = server.delete("/api/settings/providers/anthropic").await;
-    response.assert_status(axum::http::StatusCode::CONFLICT);
+    response.assert_status(axum::http::StatusCode::NO_CONTENT);
+
+    let list = server.get("/api/settings/providers").await;
+    let body: serde_json::Value = list.json();
+    let items = body["providers"].as_array().unwrap();
+    assert!(items.is_empty());
+    assert_eq!(body["default_model"], serde_json::Value::Null);
+}
+
+#[tokio::test]
+async fn providers_update_edits_row() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let (server, tmp) = boot().await;
+    let cfg = write_config(&tmp);
+    let _g = scoped_set("XVN_CONFIG_PATH", cfg.to_str().unwrap());
+
+    let response = server
+        .put("/api/settings/providers/anthropic")
+        .json(&serde_json::json!({
+            "kind": "anthropic",
+            "base_url": "https://proxy.example/v1",
+            "api_key_env": "ANTHROPIC_PROXY_KEY",
+            "api_key": "sk-updated",
+        }))
+        .await;
+    response.assert_status_ok();
     let body: serde_json::Value = response.json();
-    assert_eq!(body["code"], "conflict");
+    assert_eq!(body["name"], "anthropic");
+    assert_eq!(body["base_url"], "https://proxy.example/v1");
+    assert_eq!(body["api_key_env"], "ANTHROPIC_PROXY_KEY");
+    assert_eq!(body["is_default"], true);
 }
 
 #[tokio::test]
@@ -700,10 +975,7 @@ async fn providers_remove_drops_row_and_returns_204() {
     let cfg = write_config(&tmp);
     let _g = scoped_set("XVN_CONFIG_PATH", cfg.to_str().unwrap());
 
-    // Seed an extra non-intern-referenced provider so we can delete it.
-    // Set ANTHROPIC_API_KEY so the auto-promote in add_inner doesn't
-    // re-point intern at the new openai row.
-    let _g_key = scoped_set("ANTHROPIC_API_KEY", "sk-ant-test");
+    // Seed an extra non-default provider so we can delete it.
     server
         .post("/api/settings/providers")
         .json(&serde_json::json!({
@@ -723,6 +995,119 @@ async fn providers_remove_drops_row_and_returns_204() {
     let body: serde_json::Value = list.json();
     let items = body["providers"].as_array().unwrap();
     assert!(items.iter().all(|p| p["name"] != "openai"));
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// /api/eval/runs/:id/chart and /api/eval/runs/compare/chart
+
+#[tokio::test]
+async fn chart_returns_404_for_unknown_run() {
+    let (server, _tmp) = boot().await;
+    let response = server.get("/api/eval/runs/r_unknown/chart").await;
+    response.assert_status_not_found();
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["code"], "not_found");
+}
+
+#[tokio::test]
+async fn compare_chart_returns_400_for_empty_ids() {
+    let (server, _tmp) = boot().await;
+    // Empty ids= param → validation error.
+    let response = server.get("/api/eval/runs/compare/chart?ids=").await;
+    response.assert_status_bad_request();
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["code"], "validation");
+}
+
+#[tokio::test]
+async fn compare_chart_returns_400_for_more_than_10_ids() {
+    let (server, _tmp) = boot().await;
+    // 11 dummy ids → build_compare_payload returns Validation which becomes 400.
+    let ids: String = (0..11).map(|i| format!("r_{i}")).collect::<Vec<_>>().join(",");
+    let url = format!("/api/eval/runs/compare/chart?ids={ids}");
+    let response = server.get(&url).await;
+    response.assert_status_bad_request();
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["code"], "validation");
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// /api/scenarios/:id/chart and /api/strategies/:id/chart
+
+#[tokio::test]
+async fn scenario_chart_returns_cache_status_for_canonical() {
+    let (server, _tmp) = boot().await;
+    // crypto-bull-q1-2025 is seeded by AppState::new but has no cached bars.
+    let response = server.get("/api/scenarios/crypto-bull-q1-2025/chart").await;
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    // cache_status must be present and type-tagged (NotCached on fresh db).
+    assert!(
+        body["cache_status"].is_object(),
+        "cache_status must be an object"
+    );
+    assert!(
+        body["cache_status"]["type"].is_string(),
+        "cache_status.type must be a string"
+    );
+    assert!(body["bars"].is_array(), "bars must be array");
+}
+
+#[tokio::test]
+async fn scenario_chart_returns_404_for_unknown() {
+    let (server, _tmp) = boot().await;
+    let response = server.get("/api/scenarios/no-such-scenario/chart").await;
+    response.assert_status_not_found();
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["code"], "not_found");
+}
+
+#[tokio::test]
+async fn strategy_chart_returns_empty_run_series_for_unused_strategy() {
+    use xvision_engine::strategies::{
+        manifest::PublicManifest, risk::RiskPreset, store::FilesystemStore, store::StrategyStore,
+        Strategy,
+    };
+
+    let (server, tmp) = boot().await;
+    let store = FilesystemStore::new(tmp.path().join("strategies"));
+    let strategy_id = "01J0DASHTESTCHART000000001";
+    store
+        .save(&Strategy {
+            manifest: PublicManifest {
+                id: strategy_id.into(),
+                display_name: "Unused Strategy".into(),
+                plain_summary: "seeded for chart endpoint test".into(),
+                creator: "@dashboard-test".into(),
+                template: "mean_reversion".into(),
+                regime_fit: vec![],
+                asset_universe: vec!["BTC/USD".into()],
+                decision_cadence_minutes: 60,
+                required_models: vec![],
+                required_tools: vec![],
+                risk_preset_or_config: "balanced".into(),
+                published_at: None,
+            },
+            agents: Vec::new(),
+            pipeline: Default::default(),
+            regime_slot: None,
+            intern_slot: None,
+            trader_slot: None,
+            risk: RiskPreset::Balanced.expand(),
+            mechanical_params: serde_json::json!({}),
+        })
+        .await
+        .unwrap();
+
+    let response = server
+        .get(&format!("/api/strategies/{strategy_id}/chart"))
+        .await;
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    assert!(
+        body["run_series"].is_array(),
+        "run_series must be array"
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────

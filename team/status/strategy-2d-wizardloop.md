@@ -2,39 +2,29 @@
 track: strategy-2d-wizardloop
 worktree: /Users/edkennedy/Code/xvision/.worktrees/wizardloop
 branch: feature/strategy-2d-wizardloop
-phase: phase-b-strategy-2d-t6-wizardloop
-last_updated: 2026-05-10T23:50:00Z
-owner: claude-opus session 3 (thirteenth claim — Plan 2d T6 stacked on #33)
+phase: phase-b-merged
+last_updated: 2026-05-13T02:09:04Z
+owner: archived (merged via PR #36)
 ---
 
 # What I'm doing right now
 
-Plan 2d T6 (server-side WizardLoop). Two commits: (1) shared
-`xvision_engine::authoring` dispatcher, (2) `xvision_dashboard::wizard_loop`
-agent driving the seven authoring verbs over the new tool-use shape.
-
-11 new tests pass (5 engine `authoring` + 6 dashboard `wizard_loop`);
-`cargo test --workspace` clean (55 result lines, 0 failures).
+Historical record only. Plan 2d T6 server-side WizardLoop landed and merged via PR [#36](https://github.com/latentwill/xvision/pull/36).
 
 ## Plan task progress
 
-- [x] T6 WizardLoop core (next_event tool-use loop)
+- [x] WizardLoop core (`next_event` tool-use loop)
 - [x] Wizard system prompt
-- [x] Mock-dispatch tests (5 paths covered)
-- [ ] PR open
-- [ ] Operator merge (after #33 merges — wizardloop branch needs T10)
-- [ ] Follow-up: SSE wizard route (`routes::wizard` + axum-test)
-- [ ] Follow-up: `setup.tsx` upgrade from stub to chat UI
-- [ ] Follow-up: `xvision-mcp::tools` delegate to shared dispatcher
+- [x] Mock-dispatch coverage
+- [x] PR merged
+
+## Follow-up resolution
+
+- SSE wizard route landed in PR #36
+- `/setup` chat UI landed via PR [#41](https://github.com/latentwill/xvision/pull/41)
+- Tool-use loop wiring landed via PR [#45](https://github.com/latentwill/xvision/pull/45)
+- Real tool seeding in `xvn strategy run` landed via PR [#48](https://github.com/latentwill/xvision/pull/48)
 
 # Blocked on
 
-Operator-merge of PR #33 (T10 tool-use shape). Once #33 lands, rebase
-this branch onto fresh main and push.
-
-# Followup available for next session
-
-- **SSE wizard route + frontend** — closes the loop end-to-end. The
-  agent is ready; just plumbing.
-- **Plan 2a T11** — wire `tool_use` blocks in `execute_slot` back to
-  the `ToolRegistry` (in-loop tool dispatch for Stage 1 Intern).
+Nothing.

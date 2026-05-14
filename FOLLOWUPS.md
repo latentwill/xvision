@@ -1,5 +1,25 @@
 # Follow-ups — operational queue
 
+## Active roadmap
+
+The active V2-V4 execution plan now lives in
+`docs/superpowers/plans/2026-05-13-v2-v4-action-plan.md`.
+
+Use that roadmap for board ordering and phase gates:
+
+| Phase | Theme | Key followup anchors |
+|---|---|---|
+| V2A | Ease of use sweep: Driver.js tours, in-app docs page, tutorials, examples | F36, F25, onboarding/settings, command palette, agent/CLI discoverability |
+| V2B | Security hardening for dashboard, remote CLI, broker, wallet, and testnet actions | F35, F37, F21, remote CLI specs |
+| V2C | Blockchain testnet: mint, buy, sell, delegate/license, marketplace, reputation, validation receipts | F5, SLF2-SLF5, SLF8, F34 |
+| V3 | Autoresearcher and final UI/UX | SLF9, SLF13, F29, F31-F33, autoresearcher plans |
+| V4 | Smart contract go-live off testnet | ADR 0008, smart contract, wallet, and marketplace specs |
+
+The older SLF/F items below are preserved as historical anchors and source
+notes. They are not the current execution order.
+
+---
+
 Tactical work deferred during Phase 4–8 implementation. Not strategic
 re-examinations (those live in `decisions/strategy-choices.md`); these are
 scheduled tasks with a clear trigger or phase that should pick them up.
@@ -368,3 +388,66 @@ Hermes Agent (NousResearch) is the OpenClaw successor — its own README documen
   - **Tours vs the chat rail** — the chat rail (DESIGN.md §7) is the long-tail Q&A surface; tours are the up-front "here's what's on this screen" surface. They complement, don't overlap.
 - **Why noted:** DESIGN.md Appendix C explicitly ruled out "In-app onboarding tour beyond the first-run wizard" for v1. That's correct for the v1 cut, but the Inspector + Eval surfaces are dense enough that anyone past the user himself will need a guided pass on first encounter, and "go read DESIGN.md" doesn't scale. Cheap to add (driver.js is one of the most lightweight tour libs), incremental (one tour at a time), and removable (a flag-toggle disables all tours if they get in the way).
 - **Blocking:** non-blocking. Quality-of-life / onboarding polish.
+
+### F37 [Shared]. Orphan recovery for remote CLI jobs after dashboard restart
+
+- **Trigger:** any operational use of `/api/cli/jobs*` on the tailscale-served dashboard nodes beyond one-shot smoke tests.
+- **Scope:** the remote CLI backend now exists in `xvision-dashboard` (`routes/cli.rs`, `cli_jobs/{model,store,runner}.rs`, migration `013_cli_jobs.sql`, and `tests/cli_jobs_routes.rs`), but in-flight jobs are still tracked by an in-memory runner. If the dashboard process restarts, a persisted `running` job can become orphaned because there is no startup sweep equivalent to the eval-run cleanup path in `xvision-dashboard/src/server.rs`.
+  - add a startup sweep that marks stale `queued` / `running` CLI jobs as failed-or-cancelled with an explicit restart/orphan reason
+  - document the post-restart contract for `GET /api/cli/jobs/:id` and `/output`
+  - add at least one restart/orphan integration test once cargo verification is available
+- **Why noted:** the agent-access plan originally assumed the remote CLI backend was missing, but execution confirmed the main backend surface already exists. The real remaining backend gap is restart/orphan handling, not route creation or SQLite persistence.
+- **Blocking:** non-blocking for tailscale-only private use; blocking before treating remote CLI jobs as a durable operator surface.
+
+### F38 [Shared]. QA6 dashboard remediation — chat, strategies, charts, eval reliability
+
+- **Trigger:** QA6 operator pass on 2026-05-13 found product-state and chart parity regressions across Strategies, chat rail, Settings, eval launch, and Scenario TradingView charts.
+- **Scope:** execute [QA6 dashboard remediation](docs/superpowers/plans/2026-05-13-qa6-dashboard-remediation.md):
+  - Chat rail: `New chat` preserves previous conversations, restores history, clears composer immediately, and does not reorient unexpectedly on Strategies.
+  - Strategies: name-first open form, template optional rather than default, strategy ID secondary, no surfaced `canonical_defaults`, readable strategy names in eval pickers, no `NaN` cadence.
+  - Agents/settings: Skills lives under Agents, provider env details are hidden from UI, agent/provider/model pick lists show configured choices, chat rail exposes provider/model discovery tools.
+  - Eval: missing scenario parquet/cache failures become actionable preflight errors instead of raw filesystem errors.
+  - TradingView charts: Scenario uses the same reusable chart/layer behavior as run/strategy surfaces; timeframe controls affect chart range; indicator choices include the expanded SMA/EMA periods.
+  - Performance: audit first-load and chart-heavy routes after the behavioral fixes.
+- **Blocking:** YES for treating the dashboard as QA-ready for non-author operators.
+
+### F39 [Shared]. Serve chart images over the CLI for evals
+
+- **Trigger:** after eval result/chart payloads stabilize and the CLI workflow
+  tracks have landed (`eval run`, `watch`, `results`, JSON output).
+- **Scope:** add a CLI-accessible chart image path for eval runs, so agents and
+  operators can fetch a rendered PNG/SVG for a run without opening the
+  dashboard. Candidate shape:
+  - `xvn eval chart <run_id> --output run.png` for local use.
+  - remote CLI/API equivalent that returns or downloads the same image artifact.
+  - use the existing run chart payload as source of truth so dashboard and CLI
+    charts do not diverge.
+  - include useful defaults for price, decisions, equity, drawdown, and active
+    indicators; keep machine-readable metadata next to the image when useful.
+- **Why noted:** evals increasingly need to be agent-operable. A copyable chart
+  image lets agents include visual evidence in reports, compare runs outside
+  the browser, and hand off eval results through CLI-only workflows.
+- **Blocking:** non-blocking for deploy; quality-of-life for agent and operator
+  eval review.
+
+### F40 [Shared]. Latest build eval/scenario intake — required scenario names and provider preflight
+
+- **Trigger:** latest build/operator pass on 2026-05-14 hit two eval-adjacent
+  workflow failures:
+  - scenario creation/tooling omitted the required scenario display name.
+  - Web UI eval launch sent a stale or guessed `openai` provider and failed
+    with `provider 'openai' is not configured`; wizard recovery then tried
+    unavailable providers until it hit the tool-use loop cap.
+- **Scope:** execute the board tracks
+  [`qa8-scenario-display-name-contract`](team/execution-board-2026-05-13.md)
+  and
+  [`qa8-eval-provider-preflight`](team/execution-board-2026-05-13.md).
+  Scenario create flows should require `display_name` before persistence or
+  remote tool execution. Eval launch and wizard flows should read configured
+  providers/models before running, block zero-provider or stale-provider states
+  with an actionable setup path, and avoid retrying guessed providers.
+- **Why noted:** both failures are operator-facing reliability issues in the
+  strategy/scenario/eval loop, and they are small enough to execute as board
+  tickets without opening a broad remediation wrapper.
+- **Blocking:** blocking for treating the Web UI eval launcher and wizard as
+  ready for unattended agent use.

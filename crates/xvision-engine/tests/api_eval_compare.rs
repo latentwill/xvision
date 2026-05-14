@@ -21,26 +21,30 @@ async fn ctx_with_eval_tables() -> (ApiContext, tempfile::TempDir) {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/014_eval_agent_id.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     let dir = tempfile::tempdir().unwrap();
-    let ctx = ApiContext {
-        db: pool,
-        actor: Actor::Cli {
+    let ctx = ApiContext::new(
+        pool,
+        Actor::Cli {
             user: "operator".into(),
         },
-        xvn_home: dir.path().to_path_buf(),
-    };
+        dir.path().to_path_buf(),
+    );
     (ctx, dir)
 }
 
 async fn seed_completed_run(
     store: &RunStore,
-    bundle_hash: &str,
+    agent_id: &str,
     scenario_id: &str,
     metrics: MetricsSummary,
     n_equity_samples: usize,
 ) -> Run {
     let mut run = Run::new_queued(
-        bundle_hash.into(),
+        agent_id.into(),
         scenario_id.into(),
         RunMode::Backtest,
     );
@@ -131,8 +135,8 @@ async fn compare_returns_two_runs_with_curves_and_findings() {
     // Order is preserved — runs[0] is run_a, runs[1] is run_b.
     assert_eq!(report.runs[0].id, run_a.id);
     assert_eq!(report.runs[1].id, run_b.id);
-    assert_eq!(report.runs[0].strategy_bundle_hash, "h-A");
-    assert_eq!(report.runs[1].strategy_bundle_hash, "h-B");
+    assert_eq!(report.runs[0].agent_id, "h-A");
+    assert_eq!(report.runs[1].agent_id, "h-B");
 
     // Metrics carry through.
     assert_eq!(

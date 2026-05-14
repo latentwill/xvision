@@ -2,6 +2,7 @@ export type Tool = {
   call: string;
   ok: boolean;
   summary: string;
+  resultSummary?: string;
   /** True between tool_call and tool_result; drives the chip spinner. */
   pending?: boolean;
   /** Raw args from tool_call; consumed by tool narratives. */

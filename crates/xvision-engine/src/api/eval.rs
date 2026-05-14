@@ -28,22 +28,28 @@ use chrono::{DateTime, Utc};
 use ed25519_dalek::SigningKey;
 use serde::{Deserialize, Serialize};
 
-use crate::agent::llm::{AnthropicDispatch, LlmDispatch};
+use crate::agent::llm::{AnthropicDispatch, LlmDispatch, OpenaiCompatDispatch};
+use crate::agent::pipeline::{agent_slot_to_llm_slot, ResolvedAgentSlot};
 use crate::api::audit::{self, Outcome};
 use crate::api::settings::brokers as api_brokers;
+use crate::api::scenario as api_scenario;
 use crate::api::{search as api_search, strategy as api_strategy, ApiContext, ApiError, ApiResult};
+use crate::agents::AgentStore;
 use crate::eval::attestation::{self, EvalAttestation};
 use crate::eval::compare::{compare_runs, ComparisonReport};
+#[allow(deprecated)]
+use crate::eval::scenario::canonical_scenarios;
 use crate::eval::executor::{BacktestExecutor, Executor, PaperExecutor};
 use crate::eval::run::{Run, RunMode, RunStatus};
-use crate::eval::scenario::{canonical_scenarios, Scenario};
+use crate::eval::scenario::Scenario;
 use crate::eval::store::{ListFilter, RunStore};
 use crate::tools::ToolRegistry;
+use xvision_core::config::{self, ProviderEntry, ProviderKind};
 use xvision_execution::broker_surface::{AlpacaPaperSurface, BrokerSurface};
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct ListRunsRequest {
-    pub strategy_bundle_hash: Option<String>,
+    pub agent_id: Option<String>,
     pub scenario_id: Option<String>,
     pub status: Option<RunStatus>,
 }
@@ -68,7 +74,7 @@ pub struct ScenarioSummary {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunSummary {
     pub id: String,
-    pub strategy_bundle_hash: String,
+    pub agent_id: String,
     pub scenario_id: String,
     pub mode: String,
     pub status: String,
@@ -80,6 +86,8 @@ pub struct RunSummary {
     pub max_drawdown_pct: Option<f64>,
     pub total_return_pct: Option<f64>,
     pub error: Option<String>,
+    pub actual_input_tokens: Option<u64>,
+    pub actual_output_tokens: Option<u64>,
 }
 
 /// Full run detail — `RunSummary` plus the decision rows and equity samples.
@@ -154,7 +162,7 @@ pub async fn list(ctx: &ApiContext, req: ListRunsRequest) -> ApiResult<Vec<Run>>
 async fn list_inner(ctx: &ApiContext, req: &ListRunsRequest) -> ApiResult<Vec<Run>> {
     let store = RunStore::new(ctx.db.clone());
     let filter = ListFilter {
-        strategy_bundle_hash: req.strategy_bundle_hash.clone(),
+        agent_id: req.agent_id.clone(),
         scenario_id: req.scenario_id.clone(),
         status: req.status,
     };
@@ -210,6 +218,77 @@ pub async fn get(ctx: &ApiContext, run_id: &str) -> ApiResult<Run> {
         ctx,
         "eval",
         "get",
+        Some(run_id),
+        None,
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    result
+}
+
+pub async fn delete(ctx: &ApiContext, run_id: &str) -> ApiResult<()> {
+    let started = Instant::now();
+    let store = RunStore::new(ctx.db.clone());
+    let result = store.delete(run_id).await.map_err(|e| {
+        let msg = e.to_string();
+        if msg.contains("run not found") {
+            ApiError::NotFound(format!("eval run '{run_id}'"))
+        } else {
+            ApiError::Internal(msg)
+        }
+    });
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let _ = audit::record(
+        ctx,
+        "eval",
+        "delete",
+        Some(run_id),
+        None,
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    result
+}
+
+pub async fn cancel(ctx: &ApiContext, run_id: &str) -> ApiResult<Run> {
+    let started = Instant::now();
+    let store = RunStore::new(ctx.db.clone());
+    let result = async {
+        let cancelled = store
+            .cancel_active(run_id, "cancelled by user")
+            .await
+            .map_err(|e| ApiError::Internal(format!("cancel run: {e}")))?;
+        if cancelled {
+            return get_inner(ctx, run_id).await;
+        }
+
+        let run = get_inner(ctx, run_id).await?;
+        if run.status.is_terminal() {
+            return Err(ApiError::Validation(format!(
+                "run '{run_id}' is already {}",
+                run.status.as_str()
+            )));
+        }
+        Err(ApiError::Validation(format!(
+            "run '{run_id}' cannot be cancelled from status {}",
+            run.status.as_str()
+        )))
+    }
+    .await;
+
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let _ = audit::record(
+        ctx,
+        "eval",
+        "cancel",
         Some(run_id),
         None,
         outcome,
@@ -383,9 +462,14 @@ async fn get_run_inner(ctx: &ApiContext, id: &str) -> ApiResult<RunDetail> {
     })
 }
 
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvalRunRequest {
-    /// Strategy bundle id (the `agent_id` returned by `api::strategy::list`).
+    /// Strategy agent id returned by `api::strategy::list`.
     pub agent_id: String,
     /// Scenario id from `canonical_scenarios()` (e.g. `crypto-bull-q1-2025`).
     pub scenario_id: String,
@@ -393,8 +477,9 @@ pub struct EvalRunRequest {
     /// paper credentials; `Backtest` replays the scenario's parquet fixture
     /// in-process without any broker.
     pub mode: RunMode,
-    /// Optional per-run override of bundle.mechanical_params. Persisted as
+    /// Optional per-run override of `Strategy.mechanical_params`. Persisted as
     /// `eval_runs.params_override_json`.
+    #[cfg_attr(feature = "ts-export", ts(type = "Record<string, unknown> | null"))]
     pub params_override: Option<serde_json::Value>,
 }
 
@@ -412,23 +497,18 @@ pub struct EvalRunRequest {
 /// error rather than buried-behind an `APCA_API_KEY_ID not found` from the
 /// broker constructor.
 pub async fn run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<Run> {
-    // Early NotFound surfaces without env-var noise.
-    let _bundle = api_strategy::get(ctx, &req.agent_id).await?;
-    if !canonical_scenarios().iter().any(|s| s.id == req.scenario_id) {
-        return Err(ApiError::NotFound(format!(
-            "scenario '{}'",
-            req.scenario_id
-        )));
-    }
+    // Early NotFound surfaces without env-var noise. Resolve the scenario
+    // via the DB-backed registry (with a legacy `canonical_scenarios()`
+    // fallback for test contexts that haven't applied migration 006).
+    let strategy = api_strategy::get(ctx, &req.agent_id).await?;
+    let _scenario = resolve_scenario(ctx, &req.scenario_id).await?;
 
     let broker: Option<Arc<dyn BrokerSurface>> = match req.mode {
         RunMode::Paper => Some(build_alpaca_paper_broker(ctx).await?),
         RunMode::Backtest => None,
     };
-    let api_key = std::env::var("ANTHROPIC_API_KEY").map_err(|_| {
-        ApiError::Validation("ANTHROPIC_API_KEY env var is required".into())
-    })?;
-    let dispatch_arc: Arc<dyn LlmDispatch> = Arc::new(AnthropicDispatch::new(api_key));
+    let agent_slots = resolve_agent_slots(ctx, &strategy).await?;
+    let dispatch_arc = build_eval_dispatch(ctx, &strategy, &agent_slots).await?;
     let tools_arc = Arc::new(ToolRegistry::default_with_builtins());
     run_with_deps(ctx, req, broker, dispatch_arc, tools_arc).await
 }
@@ -476,6 +556,216 @@ async fn build_alpaca_paper_broker(
     }
 }
 
+async fn build_eval_dispatch(
+    ctx: &ApiContext,
+    strategy: &crate::strategies::Strategy,
+    agent_slots: &[ResolvedAgentSlot],
+) -> ApiResult<Arc<dyn LlmDispatch>> {
+    let provider_name = select_eval_provider(ctx, strategy, agent_slots).await?;
+    let cfg_path = runtime_config_path(ctx);
+    let cfg = tokio::task::spawn_blocking(move || config::load_runtime(&cfg_path))
+        .await
+        .map_err(|e| ApiError::Internal(format!("spawn_blocking: {e}")))?
+        .map_err(|e| ApiError::Validation(format!("load config: {e}")))?;
+    let entry = cfg
+        .providers
+        .iter()
+        .find(|p| p.name == provider_name)
+        .ok_or_else(|| {
+            ApiError::Validation(format!(
+                "provider `{provider_name}` is not configured. Pick a configured provider/model for the strategy agent before running eval."
+            ))
+        })?;
+    let runtime_slots = runtime_slots(strategy, agent_slots);
+    validate_eval_provider_models(entry, &runtime_slots)?;
+    dispatch_from_provider(entry).await
+}
+
+async fn select_eval_provider(
+    ctx: &ApiContext,
+    strategy: &crate::strategies::Strategy,
+    agent_slots: &[ResolvedAgentSlot],
+) -> ApiResult<String> {
+    if let Some(provider) = runtime_slots(strategy, agent_slots)
+        .into_iter()
+        .filter_map(|slot| slot.provider.as_deref())
+        .map(str::trim)
+        .find(|provider| !provider.is_empty())
+    {
+        return Ok(provider.to_string());
+    }
+
+    let agent_store = AgentStore::new(ctx.db.clone());
+    for agent_ref in &strategy.agents {
+        if let Some(agent) = agent_store
+            .get(&agent_ref.agent_id)
+            .await
+            .map_err(|e| ApiError::Internal(format!("load agent {}: {e}", agent_ref.agent_id)))?
+        {
+            if let Some(provider) = agent
+                .slots
+                .iter()
+                .map(|slot| slot.provider.trim())
+                .find(|provider| !provider.is_empty())
+            {
+                return Ok(provider.to_string());
+            }
+        }
+    }
+
+    Err(ApiError::Validation(
+        "eval requires an explicit provider/model on a strategy slot or attached agent; no workspace default is assumed".into(),
+    ))
+}
+
+fn runtime_slots<'a>(
+    strategy: &'a crate::strategies::Strategy,
+    agent_slots: &'a [ResolvedAgentSlot],
+) -> Vec<&'a crate::strategies::slot::LLMSlot> {
+    if !agent_slots.is_empty() {
+        return agent_slots.iter().map(|resolved| &resolved.slot).collect();
+    }
+    [
+        strategy.trader_slot.as_ref(),
+        strategy.intern_slot.as_ref(),
+        strategy.regime_slot.as_ref(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
+fn validate_eval_provider_models(
+    entry: &ProviderEntry,
+    slots: &[&crate::strategies::slot::LLMSlot],
+) -> ApiResult<()> {
+    let mut saw_provider_slot = false;
+    for slot in slots {
+        let provider = slot
+            .provider
+            .as_deref()
+            .map(str::trim)
+            .filter(|provider| !provider.is_empty())
+            .ok_or_else(|| {
+                ApiError::Validation(format!(
+                    "eval requires an explicit provider/model on strategy role `{}`; no workspace default is assumed",
+                    slot.role
+                ))
+            })?;
+        if provider != entry.name {
+            return Err(ApiError::Validation(format!(
+                "eval currently requires all executable slots to use one provider; role `{}` uses `{provider}` but selected provider is `{}`",
+                slot.role, entry.name
+            )));
+        }
+        saw_provider_slot = true;
+        let model = slot
+            .model
+            .as_deref()
+            .map(str::trim)
+            .filter(|model| !model.is_empty())
+            .ok_or_else(|| {
+                let legacy = slot.model_requirement.trim();
+                let enabled = if entry.enabled_models.is_empty() {
+                    "No models are enabled for this provider.".to_string()
+                } else {
+                    format!("Enabled models: {}", entry.enabled_models.join(", "))
+                };
+                ApiError::Validation(format!(
+                    "provider `{}` is selected for strategy role `{}`, but no explicit model is configured. Legacy model_requirement `{legacy}` is not used as a provider model id. {enabled}",
+                    entry.name, slot.role
+                ))
+            })?;
+        if entry.enabled_models.is_empty() {
+            return Err(ApiError::Validation(format!(
+                "provider `{}` has no enabled models. Enable `{model}` or pick a configured provider/model before running eval.",
+                entry.name
+            )));
+        }
+        if !entry.enabled_models.iter().any(|enabled| enabled == model) {
+            return Err(ApiError::Validation(format!(
+                "provider `{}` is selected for strategy role `{}`, but model `{model}` is not enabled for that provider. Enabled models: {}",
+                entry.name,
+                slot.role,
+                entry.enabled_models.join(", ")
+            )));
+        }
+    }
+    if saw_provider_slot {
+        Ok(())
+    } else {
+        Err(ApiError::Validation(format!(
+            "provider `{}` was selected for eval, but no executable strategy slot uses it.",
+            entry.name
+        )))
+    }
+}
+
+async fn resolve_agent_slots(
+    ctx: &ApiContext,
+    strategy: &crate::strategies::Strategy,
+) -> ApiResult<Vec<ResolvedAgentSlot>> {
+    if strategy.agents.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let agent_store = AgentStore::new(ctx.db.clone());
+    let mut out = Vec::with_capacity(strategy.agents.len());
+    for agent_ref in &strategy.agents {
+        let agent = agent_store
+            .get(&agent_ref.agent_id)
+            .await
+            .map_err(|e| ApiError::Internal(format!("load agent {}: {e}", agent_ref.agent_id)))?
+            .ok_or_else(|| ApiError::NotFound(format!("agent {}", agent_ref.agent_id)))?;
+        let slot = agent.slots.first().ok_or_else(|| {
+            ApiError::Validation(format!("agent {} has no executable slots", agent.agent_id))
+        })?;
+        out.push(ResolvedAgentSlot {
+            role: agent_ref.role.clone(),
+            slot: agent_slot_to_llm_slot(&agent_ref.role, slot),
+        });
+    }
+    Ok(out)
+}
+
+async fn dispatch_from_provider(entry: &ProviderEntry) -> ApiResult<Arc<dyn LlmDispatch>> {
+    let api_key = if entry.api_key_env.is_empty() {
+        String::new()
+    } else {
+        std::env::var(&entry.api_key_env).map_err(|_| {
+            ApiError::Validation(format!(
+                "no API key for provider `{}` (env var {} is unset). Paste a key in Settings → Providers or export {} before running eval.",
+                entry.name, entry.api_key_env, entry.api_key_env
+            ))
+        })?
+    };
+    if api_key.is_empty() && entry.kind != ProviderKind::LocalCandle {
+        return Err(ApiError::Validation(format!(
+            "provider `{}` has no API key set. Paste one in Settings → Providers.",
+            entry.name
+        )));
+    }
+    match entry.kind {
+        ProviderKind::Anthropic => Ok(Arc::new(AnthropicDispatch::new(api_key))),
+        ProviderKind::OpenaiCompat => Ok(Arc::new(OpenaiCompatDispatch::new(
+            entry.base_url.clone(),
+            api_key,
+        ))),
+        ProviderKind::LocalCandle => Err(ApiError::Validation(
+            "local-candle providers are not wired into eval runs yet".into(),
+        )),
+    }
+}
+
+fn runtime_config_path(ctx: &ApiContext) -> std::path::PathBuf {
+    if let Ok(p) = std::env::var("XVN_CONFIG_PATH") {
+        if !p.is_empty() {
+            return p.into();
+        }
+    }
+    ctx.xvn_home.join("config").join("default.toml")
+}
+
 /// Testable / deps-injecting variant of `run`. Tests pass a
 /// `MockBrokerSurface` + `MockDispatch` so no network is required;
 /// production callers go through `run` which constructs deps from env.
@@ -519,24 +809,29 @@ async fn run_inner(
     dispatch: Arc<dyn LlmDispatch>,
     tools: Arc<ToolRegistry>,
 ) -> ApiResult<Run> {
-    // 1. Look up the strategy bundle. Propagates ApiError::NotFound cleanly.
-    let bundle = api_strategy::get(ctx, &req.agent_id).await?;
+    // 1. Look up the strategy. Propagates ApiError::NotFound cleanly.
+    let strategy = api_strategy::get(ctx, &req.agent_id).await?;
+    let agent_slots = resolve_agent_slots(ctx, &strategy).await?;
 
-    // 2. Look up the scenario from the canonical set.
-    let scenario: Scenario = canonical_scenarios()
-        .into_iter()
-        .find(|s| s.id == req.scenario_id)
-        .ok_or_else(|| ApiError::NotFound(format!("scenario '{}'", req.scenario_id)))?;
+    // 2. Look up the scenario. Primary path is the DB-backed registry
+    //    (`api::scenario::get`); legacy path falls back to the compiled-in
+    //    `canonical_scenarios()` for test contexts that haven't applied
+    //    migration 006 yet (and for un-migrated legacy ids).
+    let (scenario, from_db) = resolve_scenario_with_source(ctx, &req.scenario_id).await?;
 
-    // 3. Pick the executor for this run mode.
+    // 3. Pick the executor for this run mode. For backtest mode, when the
+    //    scenario came from the DB we try to source bars through the
+    //    cache wrapper (`eval::bars::load_bars`); on miss / fetch error
+    //    we fall back to the legacy `data/probes/<cache_key>.parquet`
+    //    loader so existing test fixtures keep working.
     let executor: Box<dyn Executor> = match req.mode {
         RunMode::Paper => {
             let b = broker.ok_or_else(|| {
                 ApiError::Validation("paper mode requires a broker".into())
             })?;
-            Box::new(PaperExecutor::new(b))
+            Box::new(PaperExecutor::new(b).with_event_bus(ctx.event_bus.clone()))
         }
-        RunMode::Backtest => Box::new(BacktestExecutor::new()),
+        RunMode::Backtest => build_backtest_executor(ctx, &scenario, from_db).await?,
     };
 
     // 4. Build a fresh Run, persist, then drive the executor.
@@ -558,7 +853,7 @@ async fn run_inner(
     let dispatch_for_postprocess = dispatch.clone();
 
     if let Err(e) = executor
-        .run(&mut run, &bundle, &scenario, dispatch, tools, &store)
+        .run(&mut run, &strategy, &scenario, &agent_slots, dispatch, tools, &store)
         .await
     {
         // Persist the failure so downstream callers (CLI, dashboard) can
@@ -600,6 +895,128 @@ async fn run_inner(
     Ok(finalized)
 }
 
+/// Resolve a scenario id to a `Scenario`. Tries the DB-backed registry
+/// first (`api::scenario::get`); on `NotFound` (or on store errors —
+/// typically a test context without migration 006 applied), falls back
+/// to the compiled-in legacy `canonical_scenarios()` set so existing
+/// tests and pre-Task-6 caches keep working.
+async fn resolve_scenario(ctx: &ApiContext, id: &str) -> ApiResult<Scenario> {
+    let (s, _from_db) = resolve_scenario_with_source(ctx, id).await?;
+    Ok(s)
+}
+
+/// Same as `resolve_scenario` but also reports whether the row came from
+/// the DB (primary path) or from the compiled-in legacy fallback. The
+/// caller uses this to decide between routing bars through
+/// `eval::bars::load_bars` (DB path) or the legacy fixture loader.
+async fn resolve_scenario_with_source(
+    ctx: &ApiContext,
+    id: &str,
+) -> ApiResult<(Scenario, bool)> {
+    match api_scenario::get(ctx, id).await {
+        Ok(s) => Ok((s, true)),
+        Err(_) => {
+            #[allow(deprecated)]
+            let legacy = canonical_scenarios()
+                .into_iter()
+                .find(|s| s.id == id)
+                .ok_or_else(|| ApiError::NotFound(format!("scenario '{id}'")))?;
+            Ok((legacy, false))
+        }
+    }
+}
+
+/// Source bars for a DB-resolved scenario via the cache wrapper. The
+/// returned bars feed `BacktestExecutor::with_bars`. Errors surface
+/// fetch / cache failures so the caller can decide whether to fall
+/// back to the legacy fixture loader.
+async fn load_bars_for_scenario(
+    ctx: &ApiContext,
+    scenario: &Scenario,
+) -> ApiResult<Vec<xvision_data::alpaca::MarketBar>> {
+    let asset = scenario
+        .asset
+        .first()
+        .ok_or_else(|| {
+            ApiError::Validation(format!(
+                "scenario '{}' has empty asset list",
+                scenario.id
+            ))
+        })?
+        .venue_symbol
+        .clone();
+    crate::eval::bars::load_bars(
+        ctx,
+        &crate::eval::bars::BarCacheArgs {
+            cache_key: scenario.bar_cache_policy.cache_key.clone(),
+            asset_pair: asset,
+            granularity: scenario.granularity,
+            start: scenario.time_window.start,
+            end: scenario.time_window.end,
+            data_source_tag: "alpaca-historical-v1".into(),
+        },
+    )
+    .await
+}
+
+async fn build_backtest_executor(
+    ctx: &ApiContext,
+    scenario: &Scenario,
+    from_db: bool,
+) -> ApiResult<Box<dyn Executor>> {
+    if from_db {
+        match load_bars_for_scenario(ctx, scenario).await {
+            Ok(bars) => {
+                let ohlcv: Vec<xvision_core::market::Ohlcv> = bars
+                    .into_iter()
+                    .map(|b| xvision_core::market::Ohlcv {
+                        timestamp: b.timestamp,
+                        open: b.open,
+                        high: b.high,
+                        low: b.low,
+                        close: b.close,
+                        volume: b.volume,
+                    })
+                    .collect();
+                return Ok(Box::new(
+                    BacktestExecutor::with_bars(ohlcv).with_event_bus(ctx.event_bus.clone()),
+                ));
+            }
+            Err(e) => {
+                if !legacy_fixture_exists(scenario) {
+                    return Err(missing_bars_validation(scenario, Some(e.to_string())));
+                }
+                tracing::warn!(
+                    scenario_id = %scenario.id,
+                    error = %e,
+                    "load_bars failed; falling back to fixture loader",
+                );
+            }
+        }
+    } else if !legacy_fixture_exists(scenario) {
+        return Err(missing_bars_validation(scenario, None));
+    }
+
+    Ok(Box::new(
+        BacktestExecutor::new().with_event_bus(ctx.event_bus.clone()),
+    ))
+}
+
+fn legacy_fixture_exists(scenario: &Scenario) -> bool {
+    xvision_data::fixtures::fixture_path(&scenario.bar_cache_policy.cache_key).exists()
+}
+
+fn missing_bars_validation(scenario: &Scenario, source_error: Option<String>) -> ApiError {
+    let mut msg = format!(
+        "scenario '{}' is missing bars cache and legacy fixture for cache key '{}'. Fetch bars for this scenario before starting the backtest.",
+        scenario.id, scenario.bar_cache_policy.cache_key
+    );
+    if let Some(e) = source_error {
+        msg.push_str(&format!(" Last cache fetch error: {e}"));
+    }
+    ApiError::Validation(msg)
+}
+
 /// Non-blocking dashboard entrypoint. Validates the request, persists a
 /// `Queued` run row, spawns a background task that drives the executor,
 /// and returns the freshly-persisted `RunDetail`. The HTTP handler
@@ -613,11 +1030,8 @@ async fn run_inner(
 /// for the same reason.
 pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDetail> {
     let started = Instant::now();
-    let bundle = api_strategy::get(ctx, &req.agent_id).await?;
-    let scenario: Scenario = canonical_scenarios()
-        .into_iter()
-        .find(|s| s.id == req.scenario_id)
-        .ok_or_else(|| ApiError::NotFound(format!("scenario '{}'", req.scenario_id)))?;
+    let strategy = api_strategy::get(ctx, &req.agent_id).await?;
+    let (scenario, from_db) = resolve_scenario_with_source(ctx, &req.scenario_id).await?;
 
     // Build broker / dispatch / tools from env up-front so any
     // missing-config errors return synchronously rather than landing in
@@ -626,18 +1040,16 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
         RunMode::Paper => Some(build_alpaca_paper_broker(ctx).await?),
         RunMode::Backtest => None,
     };
-    let api_key = std::env::var("ANTHROPIC_API_KEY").map_err(|_| {
-        ApiError::Validation("ANTHROPIC_API_KEY env var is required".into())
-    })?;
-    let dispatch: Arc<dyn LlmDispatch> = Arc::new(AnthropicDispatch::new(api_key));
+    let agent_slots = resolve_agent_slots(ctx, &strategy).await?;
+    let dispatch = build_eval_dispatch(ctx, &strategy, &agent_slots).await?;
     let tools = Arc::new(ToolRegistry::default_with_builtins());
 
     let executor: Box<dyn Executor> = match req.mode {
         RunMode::Paper => {
             let b = broker.expect("paper mode broker built above");
-            Box::new(PaperExecutor::new(b))
+            Box::new(PaperExecutor::new(b).with_event_bus(ctx.event_bus.clone()))
         }
-        RunMode::Backtest => Box::new(BacktestExecutor::new()),
+        RunMode::Backtest => build_backtest_executor(ctx, &scenario, from_db).await?,
     };
 
     let mut run = Run::new_queued(req.agent_id.clone(), scenario.id.clone(), req.mode);
@@ -663,7 +1075,17 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
     let ctx_bg = ctx.clone();
     let run_id = run.id.clone();
     tokio::spawn(async move {
-        execute_in_background(ctx_bg, run, bundle, scenario, executor, dispatch, tools).await;
+        execute_in_background(
+            ctx_bg,
+            run,
+            strategy,
+            scenario,
+            agent_slots,
+            executor,
+            dispatch,
+            tools,
+        )
+        .await;
     });
 
     get_run(ctx, &run_id).await
@@ -677,8 +1099,9 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
 async fn execute_in_background(
     ctx: ApiContext,
     mut run: Run,
-    bundle: crate::strategies::Strategy,
+    strategy: crate::strategies::Strategy,
     scenario: Scenario,
+    agent_slots: Vec<ResolvedAgentSlot>,
     executor: Box<dyn Executor>,
     dispatch: Arc<dyn LlmDispatch>,
     tools: Arc<ToolRegistry>,
@@ -701,10 +1124,24 @@ async fn execute_in_background(
     let dispatch_for_postprocess = dispatch.clone();
 
     if let Err(e) = executor
-        .run(&mut run, &bundle, &scenario, dispatch, tools, &store)
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &agent_slots,
+            dispatch,
+            tools,
+            &store,
+        )
         .await
     {
         let err_msg = e.to_string();
+        if matches!(store.is_cancelled(&run.id).await, Ok(true)) {
+            if let Ok(cancelled) = store.get(&run.id).await {
+                api_search::upsert_run(&ctx, &cancelled).await;
+            }
+            return;
+        }
         tracing::error!(
             target: "xvision::eval",
             run_id = %run.id,
@@ -759,14 +1196,44 @@ pub async fn fail_orphan_runs(ctx: &ApiContext) -> ApiResult<u64> {
 
 pub async fn scenarios(ctx: &ApiContext) -> ApiResult<Vec<ScenarioSummary>> {
     let started = Instant::now();
-    let summaries: Vec<ScenarioSummary> = canonical_scenarios()
+    // Pull the live set from the DB (seeded canonical rows + any
+    // user-created ones, non-archived). Fall back to the compiled-in
+    // legacy set when the scenarios table is unavailable (test contexts
+    // without migration 006).
+    let rows: Vec<Scenario> = match api_scenario::list(
+        ctx,
+        api_scenario::ListScenariosFilter::default(),
+    )
+    .await
+    {
+        Ok(v) if !v.is_empty() => v,
+        _ => {
+            #[allow(deprecated)]
+            {
+                canonical_scenarios()
+            }
+        }
+    };
+    let summaries: Vec<ScenarioSummary> = rows
         .into_iter()
-        .map(|s| ScenarioSummary {
-            id: s.id,
-            display_name: s.display_name,
-            asset_universe: s.asset_universe,
-            regime_tags: s.regime_tags,
-            time_window_days: (s.time_window.end - s.time_window.start).num_days(),
+        .map(|s| {
+            let asset_universe: Vec<String> =
+                s.asset.iter().map(|a| a.venue_symbol.clone()).collect();
+            // Old `regime_tags` shape — extract the "regime:*" prefix off the
+            // new combined `tags` field. Will go away with Task 6's seed
+            // rewrite.
+            let regime_tags: Vec<String> = s
+                .tags
+                .iter()
+                .filter_map(|t| t.strip_prefix("regime:").map(|r| r.to_string()))
+                .collect();
+            ScenarioSummary {
+                id: s.id,
+                display_name: s.display_name,
+                asset_universe,
+                regime_tags,
+                time_window_days: (s.time_window.end - s.time_window.start).num_days(),
+            }
         })
         .collect();
 
@@ -783,6 +1250,13 @@ pub async fn scenarios(ctx: &ApiContext) -> ApiResult<Vec<ScenarioSummary>> {
     Ok(summaries)
 }
 
+/// Convert a `Run` to the slim `RunSummary` wire shape. Public so the
+/// dashboard's `launch` handler can build the 201 response directly
+/// without re-fetching from the store.
+pub fn summarise_run(run: Run) -> RunSummary {
+    summarise(run)
+}
+
 fn summarise(run: Run) -> RunSummary {
     let (sharpe, max_dd, total_return) = match &run.metrics {
         Some(m) => (
@@ -794,7 +1268,7 @@ fn summarise(run: Run) -> RunSummary {
     };
     RunSummary {
         id: run.id,
-        strategy_bundle_hash: run.strategy_bundle_hash,
+        agent_id: run.agent_id,
         scenario_id: run.scenario_id,
         mode: match run.mode {
             RunMode::Backtest => "backtest".into(),
@@ -807,6 +1281,8 @@ fn summarise(run: Run) -> RunSummary {
         max_drawdown_pct: max_dd,
         total_return_pct: total_return,
         error: run.error,
+        actual_input_tokens: run.actual_input_tokens,
+        actual_output_tokens: run.actual_output_tokens,
     }
 }
 
@@ -859,10 +1335,9 @@ async fn attest_inner(ctx: &ApiContext, run_id: &str) -> ApiResult<EvalAttestati
             run.status.as_str()
         )));
     }
-    let scenario = canonical_scenarios()
-        .into_iter()
-        .find(|s| s.id == run.scenario_id)
-        .ok_or_else(|| {
+    let scenario = resolve_scenario(ctx, &run.scenario_id)
+        .await
+        .map_err(|_| {
             ApiError::Validation(format!(
                 "run '{run_id}' references unknown scenario '{}'; cannot attest",
                 run.scenario_id
@@ -913,4 +1388,113 @@ fn load_or_create_signing_key(xvn_home: &Path) -> anyhow::Result<SigningKey> {
         let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
     }
     Ok(key)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::strategies::{
+        AgentRef, PipelineDef, Strategy,
+        manifest::PublicManifest,
+        risk::RiskPreset,
+        slot::LLMSlot,
+    };
+
+    fn provider(enabled_models: Vec<&str>) -> ProviderEntry {
+        ProviderEntry {
+            name: "openrouter".into(),
+            kind: ProviderKind::OpenaiCompat,
+            base_url: "https://openrouter.ai/api/v1".into(),
+            api_key_env: "OPENROUTER_API_KEY".into(),
+            enabled_models: enabled_models.into_iter().map(str::to_string).collect(),
+        }
+    }
+
+    fn slot(provider: Option<&str>, model: Option<&str>, model_requirement: &str) -> LLMSlot {
+        LLMSlot {
+            role: "trader".into(),
+            prompt: "Trade.".into(),
+            model_requirement: model_requirement.into(),
+            allowed_tools: Vec::new(),
+            provider: provider.map(str::to_string),
+            model: model.map(str::to_string),
+        }
+    }
+
+    fn strategy_with_legacy_slot(legacy_slot: LLMSlot) -> Strategy {
+        Strategy {
+            manifest: PublicManifest {
+                id: "01TESTEVALMODELRESOLUTION".into(),
+                display_name: "Test".into(),
+                plain_summary: "test".into(),
+                creator: "@test".into(),
+                template: "custom".into(),
+                regime_fit: Vec::new(),
+                asset_universe: vec!["BTC/USD".into()],
+                decision_cadence_minutes: 60,
+                required_models: Vec::new(),
+                required_tools: Vec::new(),
+                risk_preset_or_config: "balanced".into(),
+                published_at: None,
+            },
+            agents: vec![AgentRef {
+                agent_id: "01TESTAGENT".into(),
+                role: "trader".into(),
+            }],
+            pipeline: PipelineDef::default(),
+            regime_slot: None,
+            intern_slot: None,
+            trader_slot: Some(legacy_slot),
+            risk: RiskPreset::Balanced.expand(),
+            mechanical_params: serde_json::json!({}),
+        }
+    }
+
+    #[test]
+    fn eval_provider_model_validation_rejects_legacy_requirement_as_model() {
+        let entry = provider(vec!["deepseek/deepseek-v4-flash"]);
+        let bad_slot = slot(Some("openrouter"), None, "anthropic.claude-sonnet-4.6");
+
+        let err = validate_eval_provider_models(&entry, &[&bad_slot]).unwrap_err();
+
+        assert!(
+            err.to_string().contains("anthropic.claude-sonnet-4.6"),
+            "expected rejected model in error, got {err}",
+        );
+        assert!(
+            err.to_string().contains("deepseek/deepseek-v4-flash"),
+            "expected enabled model hint in error, got {err}",
+        );
+    }
+
+    #[test]
+    fn eval_provider_model_validation_accepts_enabled_agent_model() {
+        let entry = provider(vec!["deepseek/deepseek-v4-flash"]);
+        let agent_slot = slot(
+            Some("openrouter"),
+            Some("deepseek/deepseek-v4-flash"),
+            "anthropic.claude-sonnet-4.6",
+        );
+
+        validate_eval_provider_models(&entry, &[&agent_slot]).unwrap();
+    }
+
+    #[test]
+    fn eval_runtime_slots_prefer_attached_agents_over_legacy_slots() {
+        let legacy_slot = slot(Some("openrouter"), None, "anthropic.claude-sonnet-4.6");
+        let strategy = strategy_with_legacy_slot(legacy_slot);
+        let agent_slots = vec![ResolvedAgentSlot {
+            role: "trader".into(),
+            slot: slot(
+                Some("openrouter"),
+                Some("deepseek/deepseek-v4-flash"),
+                "anthropic.claude-sonnet-4.6",
+            ),
+        }];
+
+        let slots = runtime_slots(&strategy, &agent_slots);
+
+        assert_eq!(slots.len(), 1);
+        assert_eq!(slots[0].effective_model(), "deepseek/deepseek-v4-flash");
+    }
 }

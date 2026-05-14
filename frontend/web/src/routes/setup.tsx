@@ -1,12 +1,18 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 
+import { MarkdownView } from "@/components/agent-chat/MarkdownView";
 import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
-import { Pill } from "@/components/primitives/Pill";
 
-import { streamChat, type WizardEvent } from "@/api/wizard";
+import {
+  resolveSession,
+  streamChat,
+  type ChatMessage,
+  type ContentBlock,
+  type WizardEvent,
+} from "@/api/chat_rail";
 import { ApiError } from "@/api/client";
 import { listProviders, settingsKeys } from "@/api/settings";
 
@@ -16,25 +22,31 @@ import { listProviders, settingsKeys } from "@/api/settings";
 type AssistantBubble = {
   role: "assistant";
   text: string;
-  tools: { call: string; ok: boolean; summary: string }[];
+  tools: {
+    call: string;
+    ok: boolean;
+    summary: string;
+    resultSummary?: string;
+    pending?: boolean;
+    args?: unknown;
+    result?: unknown;
+  }[];
 };
 type UserBubble = { role: "user"; text: string };
 type Bubble = UserBubble | AssistantBubble;
 
 export function SetupRoute() {
   const [bubbles, setBubbles] = useState<Bubble[]>([]);
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [draftId, setDraftId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  // Pull the providers list so we can pass the workspace default's
-  // (provider, model) explicitly to streamChat — the rename from
-  // [intern] → [default_llm] surfaced as `is_default` on ProviderRow
-  // and `default_model` on ProvidersReport. The wizard used to call
-  // streamChat without these and rely on backend fallback; that
-  // worked but left users guessing what model was running.
+  // Pull the providers list so we can pass a concrete (provider, model)
+  // to streamChat. There is no workspace default; the setup wizard uses
+  // the first enabled model until the full rail picker is mounted.
   const providers = useQuery({
     queryKey: settingsKeys.providers(),
     queryFn: listProviders,
@@ -44,21 +56,49 @@ export function SetupRoute() {
     model: string;
   } | null>(() => {
     const rows = providers.data?.providers ?? [];
-    const def = rows.find((r) => r.is_default && r.api_key_set && !r.synthetic);
-    if (!def) return null;
-    const explicit = providers.data?.default_model?.trim();
-    const model = explicit && explicit.length > 0 ? explicit : def.enabled_models[0];
+    const row = rows.find(
+      (r) => r.api_key_set && !r.synthetic && r.enabled_models.length > 0,
+    );
+    if (!row) return null;
+    const model = row.enabled_models[0];
     if (!model) return null;
-    return { provider: def.name, model };
+    return { provider: row.name, model };
   }, [providers.data]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setError(null);
+      try {
+        const resolved = await resolveSession({
+          scope: "route",
+          route: "/setup",
+        });
+        if (cancelled) return;
+        setSessionId(resolved.session_id);
+        setBubbles(historyToBubbles(resolved.history));
+        const draft = latestDraftId(resolved.history);
+        if (draft) setDraftId(draft);
+      } catch (e) {
+        if (!cancelled) setError(formatErr(e));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Cancel any in-flight stream on unmount so the server-side WizardLoop
   // exits cleanly when the user navigates away mid-turn.
   useEffect(() => () => abortRef.current?.abort(), []);
 
   async function send() {
-    if (!input.trim() || isStreaming) return;
+    if (!sessionId || !input.trim() || isStreaming) return;
     setError(null);
+    if (!defaultPick) {
+      setError("Pick provider models in Settings → Providers before the wizard can run.");
+      return;
+    }
     const userText = input.trim();
     setInput("");
     setBubbles((b) => [
@@ -73,9 +113,11 @@ export function SetupRoute() {
     try {
       for await (const ev of streamChat(
         {
+          session_id: sessionId,
           message: userText,
-          provider: defaultPick?.provider,
-          model: defaultPick?.model,
+          provider: defaultPick.provider,
+          model: defaultPick.model,
+          profile: "strategy_setup",
         },
         ctrl.signal,
       )) {
@@ -110,27 +152,31 @@ export function SetupRoute() {
         }
       />
 
-      <Card className="px-6 py-5 mb-3">
+      <Card className="mb-3 px-4 py-4 sm:px-6 sm:py-5">
         <div className="text-text-2 text-[14px] leading-snug max-w-prose">
-          The setup agent walks you from a plain-English description to a
-          validated <span className="text-text">Strategy</span> ready to
+          Setup walks you from a plain-English description to a
+          validated <span className="text-text">strategy</span> ready to
           backtest. Try:{" "}
           <span className="text-text font-mono">
             "Buys dips when the trend is up"
           </span>{" "}
           or <span className="text-text font-mono">"Mean reversion on BTC"</span>.
         </div>
+        <div className="mt-3 text-[13px] leading-snug text-text-3">
+          Only completed tool calls change the saved draft. Open the Inspector
+          to verify the manifest before eval.
+        </div>
       </Card>
 
       {providers.data && !defaultPick ? (
-        <Card className="px-6 py-3 mb-3 border-amber-500/40">
+        <Card className="mb-3 border-amber-500/40 px-4 py-3 sm:px-6">
           <p className="m-0 text-[13px] text-amber-300">
-            No default LLM configured.{" "}
+            No provider model is enabled.{" "}
             <Link
               to="/settings/providers"
               className="underline decoration-amber-500/40 hover:decoration-amber-300"
             >
-              Set one in Settings → Providers
+              Pick provider models in Settings → Providers
             </Link>{" "}
             before the wizard can run.
           </p>
@@ -140,19 +186,19 @@ export function SetupRoute() {
       <Card className="p-0 overflow-hidden">
         <Thread bubbles={bubbles} streaming={isStreaming} />
         {error && (
-          <div className="px-5 py-3 border-t border-border text-rose-300 dark:text-rose-300 text-[13px]">
+          <div className="border-t border-border px-4 py-3 text-[13px] text-danger sm:px-5">
             {error}
           </div>
         )}
         {draftId && (
-          <div className="px-5 py-3 border-t border-border bg-surface-2/40 flex items-center justify-between">
+          <div className="flex flex-col gap-1.5 border-t border-border bg-surface-2/40 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
             <div className="text-[13px] text-text-2">
               Draft <span className="font-mono text-text">{draftId}</span> is
               tracked.
             </div>
             <Link
               to={`/authoring/${draftId}`}
-              className="text-[13px] text-blue-300 hover:underline"
+              className="text-[13px] text-info hover:underline"
             >
               Open in Inspector →
             </Link>
@@ -162,11 +208,103 @@ export function SetupRoute() {
           value={input}
           onChange={setInput}
           onSubmit={send}
-          disabled={isStreaming}
+          disabled={isStreaming || !sessionId}
         />
       </Card>
     </>
   );
+}
+
+function formatErr(e: unknown): string {
+  if (e instanceof ApiError) return `${e.code}: ${e.message}`;
+  return String(e);
+}
+
+function latestDraftId(history: ChatMessage[]): string | null {
+  for (let i = history.length - 1; i >= 0; i--) {
+    for (const block of history[i].content_blocks) {
+      if (block.type !== "tool_result") continue;
+      const parsed = safeParseJson(block.content) as Record<string, unknown> | null;
+      const id = parsed && typeof parsed.id === "string" ? parsed.id : null;
+      if (id) return id;
+    }
+  }
+  return null;
+}
+
+function historyToBubbles(history: ChatMessage[]): Bubble[] {
+  const out: Bubble[] = [];
+  let pendingAssistant: AssistantBubble | null = null;
+  for (const cm of history) {
+    if (cm.role === "user") {
+      const toolResults = cm.content_blocks.filter(
+        (b): b is Extract<ContentBlock, { type: "tool_result" }> =>
+          b.type === "tool_result",
+      );
+      if (toolResults.length > 0) {
+        const prior = pendingAssistant ?? out[out.length - 1];
+        if (prior?.role === "assistant" && prior.tools.length > 0) {
+          for (const tr of toolResults) {
+            const parsedResult = safeParseJson(tr.content);
+            const tool = prior.tools[prior.tools.length - 1];
+            const isErr =
+              parsedResult &&
+              typeof parsedResult === "object" &&
+              "error" in parsedResult;
+            prior.tools[prior.tools.length - 1] = {
+              ...tool,
+              ok: !isErr,
+              resultSummary: summarizeResult(tool.call, parsedResult),
+              pending: false,
+              result: parsedResult ?? undefined,
+            };
+          }
+        }
+        continue;
+      }
+      if (pendingAssistant) {
+        out.push(pendingAssistant);
+        pendingAssistant = null;
+      }
+      const text = cm.content_blocks
+        .filter((b): b is Extract<ContentBlock, { type: "text" }> =>
+          b.type === "text",
+        )
+        .map((b) => b.text)
+        .join("");
+      if (text) out.push({ role: "user", text });
+    } else if (cm.role === "assistant") {
+      if (pendingAssistant) out.push(pendingAssistant);
+      const text = cm.content_blocks
+        .filter((b): b is Extract<ContentBlock, { type: "text" }> =>
+          b.type === "text",
+        )
+        .map((b) => b.text)
+        .join("");
+      const tools = cm.content_blocks
+        .filter((b): b is Extract<ContentBlock, { type: "tool_use" }> =>
+          b.type === "tool_use",
+        )
+        .map((b) => ({
+          call: b.name,
+          ok: true,
+          summary: summarizeArgs(b.name, b.input),
+          pending: true,
+          args: b.input,
+        }));
+      pendingAssistant = { role: "assistant", text, tools };
+    }
+  }
+  if (pendingAssistant) out.push(pendingAssistant);
+  return out;
+}
+
+function safeParseJson(s: string): unknown {
+  try {
+    return JSON.parse(s);
+  } catch {
+    return null;
+  }
 }
 
 function applyEvent(
@@ -187,6 +325,8 @@ function applyEvent(
         call: ev.tool,
         ok: true,
         summary: summarizeArgs(ev.tool, ev.args),
+        args: ev.args,
+        pending: true,
       });
     } else if (ev.type === "tool_result") {
       // Match the most recent same-named call (matches the server-side
@@ -203,7 +343,10 @@ function applyEvent(
         a.tools[slot] = {
           ...a.tools[slot],
           ok: !result?.error,
-          summary: summarizeResult(ev.tool, ev.result),
+          summary: summarizeArgs(ev.tool, a.tools[slot].args),
+          resultSummary: summarizeResult(ev.tool, ev.result),
+          pending: false,
+          result: ev.result,
         };
       }
     } else if (ev.type === "done") {
@@ -226,6 +369,16 @@ function summarizeArgs(tool: string, args: unknown): string {
       return `${a["template"]} → ${a["name"]}`;
     case "update_slot":
       return String(a["slot"] ?? "");
+    case "update_manifest": {
+      const bits: string[] = [];
+      if (Array.isArray(a["asset_universe"])) {
+        bits.push(`assets=${(a["asset_universe"] as unknown[]).join(",")}`);
+      }
+      if (a["decision_cadence_minutes"]) {
+        bits.push(`cadence=${a["decision_cadence_minutes"]}m`);
+      }
+      return bits.join("; ");
+    }
     case "set_mechanical_param":
       return `${a["key"]} = ${JSON.stringify(a["value"])}`;
     case "set_risk_config":
@@ -256,6 +409,7 @@ function summarizeResult(tool: string, result: unknown): string {
         ? "ok"
         : `${(r.errors as string[] | undefined)?.length ?? 0} error(s)`;
     case "update_slot":
+    case "update_manifest":
       return Array.isArray(r.updated) ? (r.updated as string[]).join(", ") : "";
     case "set_risk_config":
       return r.applied ? String(r.applied) : "";
@@ -281,7 +435,7 @@ function Thread({
   return (
     <div
       ref={ref}
-      className="max-h-[60vh] overflow-y-auto px-5 py-4 flex flex-col gap-3"
+      className="flex h-[50vh] flex-col gap-2.5 overflow-y-auto px-3 py-3 sm:h-[58vh] sm:gap-3 sm:px-5 sm:py-4"
     >
       {bubbles.length === 0 ? (
         <div className="text-text-3 italic font-serif text-[15px] text-center py-6">
@@ -297,30 +451,130 @@ function Thread({
 function BubbleView({ b }: { b: Bubble }) {
   if (b.role === "user") {
     return (
-      <div className="self-end max-w-[85%]">
-        <div className="bg-blue-500/10 dark:bg-blue-400/10 border border-blue-500/30 dark:border-blue-400/30 rounded-md px-3 py-2 text-[14px] whitespace-pre-wrap leading-snug">
+      <div className="max-w-[92%] self-end sm:max-w-[85%]">
+        <div className="whitespace-pre-wrap rounded-md border border-info/30 bg-info/10 px-3 py-2 text-[13px] leading-snug sm:text-[14px]">
           {b.text}
         </div>
       </div>
     );
   }
   return (
-    <div className="self-start max-w-[85%]">
-      <div className="bg-surface-2/60 border border-border rounded-md px-3 py-2 text-[14px] whitespace-pre-wrap leading-snug">
-        {b.text || <span className="text-text-3 italic">thinking…</span>}
+    <div className="max-w-[92%] self-start sm:max-w-[85%]">
+      <div className="whitespace-pre-wrap rounded-md border border-border bg-surface-2/60 px-3 py-2 text-[13px] leading-snug sm:text-[14px]">
+        {b.text ? <MarkdownView text={b.text} /> : <span className="text-text-3 italic">thinking…</span>}
       </div>
       {b.tools.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {b.tools.map((t, i) => (
-            <Pill key={i} tone={t.ok ? "info" : "danger"}>
-              <span className="font-mono">{t.call}</span>
-              {t.summary && <span className="text-text-3"> · {t.summary}</span>}
-            </Pill>
-          ))}
+        <div className="mt-2 flex flex-col gap-1">
+          {b.tools.map((t, i) => {
+            const row = toolLogLine(t);
+            if (!row) return null;
+            return (
+              <div
+                key={`tool-${i}`}
+                className={`flex items-start gap-1.5 text-[12px] leading-snug sm:text-[13px] ${
+                  row.ok ? "text-info" : "text-danger"
+                }`}
+              >
+                <span className="leading-[1.4] flex-shrink-0">
+                  {row.ok ? "✓" : "✗"}
+                </span>
+                <span className="leading-[1.4]">{row.content}</span>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
   );
+}
+
+function toolLogLine(
+  t: {
+    call: string;
+    ok: boolean;
+    summary: string;
+    resultSummary?: string;
+    pending?: boolean;
+    args?: unknown;
+    result?: unknown;
+  },
+): { ok: boolean; content: ReactNode } | null {
+  const args = (t.args ?? {}) as Record<string, unknown>;
+  const result = (t.result ?? {}) as Record<string, unknown>;
+
+  if (typeof result.error === "string") {
+    return {
+      ok: false,
+      content: (
+        <>
+          {t.call} failed: <span className="font-mono text-text">{result.error}</span>
+        </>
+      ),
+    };
+  }
+
+  if (t.pending) {
+    return {
+      ok: true,
+      content: (
+        <>
+          Calling <code className="font-mono text-text">{t.call}</code> with{" "}
+          <code className="font-mono text-text-2">{t.summary}</code>
+        </>
+      ),
+    };
+  }
+
+  switch (t.call) {
+    case "create_strategy": {
+      const id = String(args["id"] ?? result["id"] ?? "");
+      return {
+        ok: true,
+        content: (
+          <>
+            Created strategy{" "}
+            <strong className="font-semibold text-text">
+              {String(args["name"] ?? "(unnamed)")}
+            </strong>
+            {id && <> (<span className="font-mono">{id}</span>)</>}
+          </>
+        ),
+      };
+    }
+    case "list_templates":
+      return {
+        ok: true,
+        content: `Listed templates: ${t.resultSummary ?? "loaded"}`,
+      };
+    case "get_strategy":
+      return { ok: true, content: `Loaded strategy ${String(args["id"] ?? "")}` };
+    case "validate_draft":
+      return {
+        ok: t.resultSummary ? t.resultSummary === "ok" : true,
+        content: `Validation ${t.resultSummary === "ok" ? "passed" : "completed"}`,
+      };
+    case "set_mechanical_param":
+      return {
+        ok: true,
+        content: (
+          <>
+            Set <code className="font-mono text-text">{String(args["key"] ?? "?")}</code>{" "}
+            = <code className="font-mono text-text">{String(args["value"] ?? "")}</code>
+          </>
+        ),
+      };
+    case "set_risk_config":
+      return { ok: true, content: `Risk config updated (${t.resultSummary ?? "ok"})` };
+    case "update_slot":
+      return { ok: true, content: `Updated slot ${String(args["slot"] ?? "?")}` };
+    case "update_manifest":
+      return { ok: true, content: `Updated manifest (${t.resultSummary ?? "ok"})` };
+    default:
+      return {
+        ok: true,
+        content: t.resultSummary ? `${t.call}: ${t.resultSummary}` : `${t.call} complete`,
+      };
+  }
 }
 
 function Composer({
@@ -340,21 +594,22 @@ function Composer({
         e.preventDefault();
         onSubmit();
       }}
-      className="border-t border-border px-4 py-3 flex gap-2 bg-surface-2/30"
+      className="flex flex-col gap-2 border-t border-border bg-surface-2/30 px-3 py-3 sm:flex-row sm:items-end sm:px-4"
     >
-      <input
+      <textarea
         value={value}
         onChange={(e) => onChange(e.target.value)}
         disabled={disabled}
+        rows={2}
         placeholder={
           disabled ? "Streaming…" : "Describe your strategy or ask the wizard…"
         }
-        className="flex-1 bg-transparent border border-border rounded-md px-3 py-2 text-[14px] placeholder:text-text-3 focus:outline-none focus:ring-1 focus:ring-text-2"
+        className="min-h-[2.75rem] w-full resize-y rounded-md border border-border bg-transparent px-3 py-2 text-[14px] leading-snug placeholder:text-text-3 focus:outline-none focus:ring-1 focus:ring-text-2 sm:flex-1"
       />
       <button
         type="submit"
         disabled={disabled || !value.trim()}
-        className="px-4 py-2 rounded-md text-[13px] border border-border bg-surface-2/60 hover:bg-surface-2 disabled:opacity-50 disabled:cursor-not-allowed"
+        className="w-full rounded-md border border-border bg-surface-2/60 px-4 py-2 text-[13px] hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
       >
         {disabled ? "…" : "Send"}
       </button>

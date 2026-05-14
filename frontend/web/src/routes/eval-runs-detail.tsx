@@ -1,13 +1,16 @@
+import { useEffect } from "react";
 import { useParams, Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
 import { ApiError } from "@/api/client";
-import { evalKeys, getRun } from "@/api/eval";
+import { cancelRun, evalKeys, getRun } from "@/api/eval";
+import { chartKeys, getRunChart, openRunStream } from "@/api/chart";
+import { RunChart } from "@/components/chart/RunChart";
 import type {
   DecisionRowDto,
-  EquityPoint,
+  RunDetail,
   RunSummary,
 } from "@/api/types.gen";
 
@@ -22,11 +25,29 @@ const STATUS_TONE: Record<string, "gold" | "warn" | "danger" | "default" | "info
 export function EvalRunDetailRoute() {
   const { runId } = useParams<{ runId: string }>();
   const id = runId ?? "";
+  const qc = useQueryClient();
   const q = useQuery({
     queryKey: evalKeys.run(id),
     queryFn: () => getRun(id),
     enabled: id.length > 0,
+    refetchInterval: (query) => {
+      const detail = query.state.data;
+      const status = detail?.summary.status;
+      return status === "queued" || status === "running" ? 2000 : false;
+    },
   });
+  const chart = useQuery({
+    queryKey: chartKeys.run(id),
+    queryFn: () => getRunChart(id),
+    enabled: !!id,
+  });
+  const cancel = useMutation({
+    mutationFn: cancelRun,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: evalKeys.all });
+    },
+  });
+  useLiveRunStream(id, q.data, qc);
 
   if (q.isPending) {
     return (
@@ -57,7 +78,11 @@ export function EvalRunDetailRoute() {
         sub={`${detail.summary.scenario_id} · ${detail.summary.mode}`}
       />
 
-      <SummaryCard summary={detail.summary} />
+      <SummaryCard
+        summary={detail.summary}
+        onCancel={() => cancel.mutate(detail.summary.id)}
+        cancelling={cancel.variables === detail.summary.id && cancel.isPending}
+      />
 
       <h2 className="font-serif italic text-[20px] text-text mt-8 mb-3">
         Decisions <span className="text-text-3 text-[14px]">({detail.decisions.length})</span>
@@ -71,13 +96,20 @@ export function EvalRunDetailRoute() {
       </Card>
 
       <h2 className="font-serif italic text-[20px] text-text mt-8 mb-3">
-        Equity{" "}
-        <span className="text-text-3 text-[14px]">
-          ({detail.equity_curve.length} samples)
-        </span>
+        Equity
       </h2>
       <Card className="p-5">
-        <EquityChart points={detail.equity_curve} />
+        {chart.isPending && (
+          <div className="text-text-3 text-[13px] text-center py-6">
+            Loading chart…
+          </div>
+        )}
+        {chart.isError && (
+          <div className="text-danger text-[13px] text-center py-6">
+            Chart unavailable: {String(chart.error)}
+          </div>
+        )}
+        {chart.data && <RunChart payload={chart.data} />}
       </Card>
     </>
   );
@@ -85,8 +117,107 @@ export function EvalRunDetailRoute() {
 
 // ────────────────────────────────────────────────────────────────────────────
 
-function SummaryCard({ summary }: { summary: RunSummary }) {
+type LiveRunEvent =
+  | { event: "decision"; data: DecisionRowDto }
+  | { event: "status"; data: { phase: string; message: string | null } };
+
+function useLiveRunStream(
+  runId: string,
+  detail: RunDetail | undefined,
+  queryClient: ReturnType<typeof useQueryClient>,
+) {
+  const status = detail?.summary.status;
+  const shouldStream = Boolean(status && !isTerminalStatus(status));
+  useEffect(() => {
+    if (!runId || !shouldStream) return;
+
+    const es = openRunStream(runId);
+    const updateRun = (updater: (current: RunDetail) => RunDetail) => {
+      queryClient.setQueryData<RunDetail>(evalKeys.run(runId), (current) => {
+        if (!current) return current;
+        return updater(current);
+      });
+    };
+
+    const onDecision = (ev: Event) => {
+      const parsed = JSON.parse((ev as MessageEvent).data) as LiveRunEvent;
+      if (parsed.event !== "decision") return;
+      updateRun((current) => {
+        const exists = current.decisions.some(
+          (row) => row.decision_index === parsed.data.decision_index,
+        );
+        if (exists) {
+          return {
+            ...current,
+            decisions: current.decisions
+              .map((row) =>
+                row.decision_index === parsed.data.decision_index
+                  ? parsed.data
+                  : row,
+              )
+              .sort((a, b) => a.decision_index - b.decision_index),
+          };
+        }
+        return {
+          ...current,
+          decisions: [...current.decisions, parsed.data].sort(
+            (a, b) => a.decision_index - b.decision_index,
+          ),
+        };
+      });
+    };
+
+    const onStatus = (ev: Event) => {
+      const parsed = JSON.parse((ev as MessageEvent).data) as LiveRunEvent;
+      if (parsed.event !== "status") return;
+      updateRun((current) => ({
+        ...current,
+        summary: {
+          ...current.summary,
+          status: parsed.data.phase,
+          error:
+            parsed.data.phase === "failed"
+              ? (parsed.data.message ?? current.summary.error)
+              : current.summary.error,
+        },
+      }));
+      if (isTerminalStatus(parsed.data.phase)) {
+        es.close();
+        queryClient.invalidateQueries({ queryKey: evalKeys.run(runId) });
+        queryClient.invalidateQueries({ queryKey: chartKeys.run(runId) });
+      }
+    };
+
+    es.addEventListener("decision", onDecision);
+    es.addEventListener("status", onStatus);
+    es.onerror = () => {
+      es.close();
+      queryClient.invalidateQueries({ queryKey: evalKeys.run(runId) });
+    };
+
+    return () => {
+      es.removeEventListener("decision", onDecision);
+      es.removeEventListener("status", onStatus);
+      es.close();
+    };
+  }, [runId, shouldStream, queryClient]);
+}
+
+function isTerminalStatus(status: string): boolean {
+  return status === "completed" || status === "failed" || status === "cancelled";
+}
+
+function SummaryCard({
+  summary,
+  onCancel,
+  cancelling,
+}: {
+  summary: RunSummary;
+  onCancel: () => void;
+  cancelling: boolean;
+}) {
   const tone = STATUS_TONE[summary.status] ?? "default";
+  const inflight = summary.status === "queued" || summary.status === "running";
   return (
     <Card className="p-5">
       <div className="flex items-center justify-between mb-4">
@@ -95,18 +226,38 @@ function SummaryCard({ summary }: { summary: RunSummary }) {
           <div className="text-text-2 text-[12px] mt-1">
             strategy{" "}
             <code className="font-mono text-text">
-              {summary.strategy_bundle_hash.slice(0, 12)}
+              {summary.agent_id.slice(0, 12)}
             </code>
           </div>
         </div>
-        <Pill tone={tone}>
-          <span
-            className="w-1.5 h-1.5 rounded-full"
-            style={dotColor(tone)}
-          />
-          {summary.status}
-        </Pill>
+        <div className="flex items-center gap-3">
+          {inflight ? (
+            <button
+              type="button"
+              aria-label={`Cancel run ${summary.id}`}
+              onClick={onCancel}
+              disabled={cancelling}
+              className="text-[12px] text-warn hover:text-text disabled:opacity-50"
+            >
+              {cancelling ? "Cancelling..." : "Cancel"}
+            </button>
+          ) : null}
+          <Pill tone={tone}>
+            <span
+              className="w-1.5 h-1.5 rounded-full"
+              style={dotColor(tone)}
+            />
+            {summary.status}
+          </Pill>
+        </div>
       </div>
+
+      {inflight ? (
+        <div className="mb-4 inline-flex items-center gap-1.5 rounded-sm border border-info/30 bg-info/[0.06] px-2 py-1 text-[12px] text-info">
+          <span className="w-1.5 h-1.5 rounded-full bg-info" />
+          streaming
+        </div>
+      ) : null}
 
       <div className="grid grid-cols-3 gap-x-8 gap-y-3">
         <Metric label="Sharpe" value={fmtNumber(summary.sharpe)} />
@@ -118,6 +269,7 @@ function SummaryCard({ summary }: { summary: RunSummary }) {
           label="Completed"
           value={summary.completed_at ? fmtTime(summary.completed_at) : "—"}
         />
+        <Metric label="Tokens" value={fmtTokens(summary)} />
       </div>
 
       {summary.error ? (
@@ -216,54 +368,6 @@ function EmptyDecisions() {
   );
 }
 
-// Tiny inline SVG sparkline. Matches the prototype's Sparkline shape; an
-// interactive d3/recharts replacement can come later when v1 has more data.
-function EquityChart({ points }: { points: EquityPoint[] }) {
-  if (points.length === 0) {
-    return (
-      <p className="m-0 text-text-3 text-[13px] text-center py-6">
-        no equity samples recorded yet
-      </p>
-    );
-  }
-  const w = 720;
-  const h = 160;
-  const ys = points.map((p) => p.equity_usd);
-  const min = Math.min(...ys);
-  const max = Math.max(...ys);
-  const range = max - min || 1;
-  const path = points
-    .map((p, i) => {
-      const x = (i / (points.length - 1 || 1)) * w;
-      const y = h - 4 - ((p.equity_usd - min) / range) * (h - 8);
-      return `${i === 0 ? "M" : "L"}${x.toFixed(2)},${y.toFixed(2)}`;
-    })
-    .join(" ");
-
-  const last = points[points.length - 1];
-
-  return (
-    <div>
-      <div className="flex items-center justify-between text-[12px] text-text-3 mb-2">
-        <span>{fmtTime(points[0].timestamp)}</span>
-        <span className="font-mono text-text">
-          ${last.equity_usd.toLocaleString(undefined, {
-            maximumFractionDigits: 2,
-          })}
-        </span>
-        <span>{fmtTime(last.timestamp)}</span>
-      </div>
-      <svg
-        viewBox={`0 0 ${w} ${h}`}
-        className="w-full h-[160px]"
-        aria-label="Equity curve"
-      >
-        <path d={path} fill="none" stroke="var(--gold)" strokeWidth="1.4" />
-      </svg>
-    </div>
-  );
-}
-
 function ErrorState({
   err,
   onRetry,
@@ -328,6 +432,13 @@ function fmtPct(n: number | null | undefined): string {
   if (n == null) return "—";
   const sign = n > 0 ? "+" : "";
   return `${sign}${n.toFixed(2)}%`;
+}
+
+function fmtTokens(summary: RunSummary): string {
+  const total =
+    (summary.actual_input_tokens ?? 0) +
+    (summary.actual_output_tokens ?? 0);
+  return total > 0 ? total.toLocaleString() : "—";
 }
 
 function fmtTime(iso: string): string {

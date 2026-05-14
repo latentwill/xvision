@@ -11,6 +11,7 @@ use crate::templates::trend_follower::TrendFollower;
 use crate::templates::Template;
 
 static REGISTRY: OnceLock<Vec<Box<dyn Template>>> = OnceLock::new();
+const REGISTRY_VERSION: &str = "1";
 
 fn registry() -> &'static [Box<dyn Template>] {
     REGISTRY.get_or_init(|| {
@@ -35,4 +36,8 @@ pub fn get(name: &str) -> Option<&'static dyn Template> {
 
 pub fn list_template_names() -> Vec<String> {
     registry().iter().map(|t| t.name().to_string()).collect()
+}
+
+pub fn registry_version() -> &'static str {
+    REGISTRY_VERSION
 }

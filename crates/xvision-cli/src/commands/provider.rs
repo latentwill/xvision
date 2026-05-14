@@ -13,7 +13,7 @@
 
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::{Args, Subcommand};
 
 use xvision_engine::api::settings::providers::{
@@ -70,8 +70,8 @@ enum ProviderAction {
 }
 
 pub async fn run(cmd: ProviderCmd) -> Result<()> {
-    let config_path = std::env::current_dir()?.join("config/default.toml");
     let xvn_home = resolve_xvn_home()?;
+    let config_path = runtime_config_path(&xvn_home);
     let user = std::env::var("USER")
         .or_else(|_| std::env::var("USERNAME"))
         .unwrap_or_else(|_| "operator".to_string());
@@ -94,12 +94,17 @@ pub async fn run(cmd: ProviderCmd) -> Result<()> {
     }
 }
 
-fn resolve_xvn_home() -> Result<PathBuf> {
-    if let Ok(p) = std::env::var("XVN_HOME") {
-        return Ok(PathBuf::from(p));
+fn runtime_config_path(xvn_home: &std::path::Path) -> PathBuf {
+    if let Ok(p) = std::env::var("XVN_CONFIG_PATH") {
+        if !p.is_empty() {
+            return PathBuf::from(p);
+        }
     }
-    let home = dirs::home_dir().context("HOME not set; set XVN_HOME")?;
-    Ok(home.join(".xvn"))
+    xvn_home.join("config").join("default.toml")
+}
+
+fn resolve_xvn_home() -> Result<PathBuf> {
+    crate::commands::home::resolve_xvn_home_env()
 }
 
 async fn list(ctx: &ApiContext, config_path: &std::path::Path) -> Result<()> {
@@ -264,7 +269,8 @@ mod tests {
     }
 
     fn write_min_config(dir: &tempfile::TempDir) -> std::path::PathBuf {
-        let p = dir.path().join("default.toml");
+        let p = dir.path().join("config").join("default.toml");
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
         std::fs::write(&p, MIN_CONFIG).unwrap();
         p
     }

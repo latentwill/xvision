@@ -16,7 +16,7 @@ pub enum ContextScope {
     Route { route: String },
     /// `/eval/runs/<id>` — focused on a single run.
     Run { run_id: String },
-    /// `/authoring/<id>` — focused on the strategy bundle being authored.
+    /// `/authoring/<id>` — focused on the strategy being authored.
     Strategy { draft_id: String },
     /// `/live/<id>` — focused on a deployed strategy.
     Deployment { deployment_id: String },

@@ -14,9 +14,10 @@ pub fn strategy_store_dir(xvn_home: &Path) -> PathBuf {
 
 #[async_trait]
 pub trait StrategyStore: Send + Sync {
-    async fn save(&self, bundle: &Strategy) -> anyhow::Result<()>;
+    async fn save(&self, strategy: &Strategy) -> anyhow::Result<()>;
     async fn load(&self, id: &str) -> anyhow::Result<Strategy>;
     async fn list(&self) -> anyhow::Result<Vec<String>>;
+    async fn delete(&self, id: &str) -> anyhow::Result<()>;
 }
 
 pub struct FilesystemStore {
@@ -35,10 +36,10 @@ impl FilesystemStore {
 
 #[async_trait]
 impl StrategyStore for FilesystemStore {
-    async fn save(&self, bundle: &Strategy) -> anyhow::Result<()> {
+    async fn save(&self, strategy: &Strategy) -> anyhow::Result<()> {
         tokio::fs::create_dir_all(&self.root).await?;
-        let path = self.path_for(&bundle.manifest.id);
-        let json = serde_json::to_vec_pretty(bundle)?;
+        let path = self.path_for(&strategy.manifest.id);
+        let json = serde_json::to_vec_pretty(strategy)?;
         tokio::fs::write(&path, json)
             .await
             .with_context(|| format!("writing {}", path.display()))?;
@@ -67,5 +68,13 @@ impl StrategyStore for FilesystemStore {
             }
         }
         Ok(ids)
+    }
+
+    async fn delete(&self, id: &str) -> anyhow::Result<()> {
+        let path = self.path_for(id);
+        tokio::fs::remove_file(&path)
+            .await
+            .with_context(|| format!("deleting {}", path.display()))?;
+        Ok(())
     }
 }

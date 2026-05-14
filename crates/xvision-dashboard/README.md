@@ -2,8 +2,8 @@
 
 Embedded HTTP dashboard — axum routes serving the Vite-built React SPA in
 `frontend/web/`. Boot with `xvn dashboard serve`; default bind is
-`127.0.0.1:8788`. The frontend bundle is baked into the binary at compile
-time via `static/` (populated by `npm run build` in `frontend/web/`).
+`127.0.0.1:8788`. The frontend build is baked into the binary at compile
+time via `static/` (populated by `pnpm build` in `frontend/web/`).
 
 ```sh
 xvn dashboard serve --bind 127.0.0.1:8788 --home ~/.xvn
@@ -17,10 +17,10 @@ debounced fuzzy-search modal over every artifact in xvn:
 | Group       | Source                                                |
 |-------------|-------------------------------------------------------|
 | Actions     | Static list seeded at startup (new strategy, settings, …) |
-| Strategies  | `~/.xvn/bundles/<id>.json` via `StrategyStore::list`    |
+| Strategies  | `$XVN_HOME/strategies/<id>.json` via `StrategyStore::list` |
 | Runs        | `eval_runs` table via `RunStore::list`                |
 | Findings    | `eval_findings` rows (per run) via `read_findings`    |
-| Scenarios   | `canonical_scenarios()` (compiled-in fixed set)       |
+| Scenarios   | DB-backed scenario registry, seeded with canonical rows |
 
 Backend: `GET /api/search?q=&kind=&limit=` returns `{hits: SearchHit[]}`,
 sorted by FTS5 BM25 then `updated_at desc`. Empty `q` returns the
@@ -30,8 +30,8 @@ server-side.
 
 Indexing strategy:
 - Cold start: `serve()` calls `engine::api::search::reindex_all` once,
-  which walks the bundle store + run table and reseeds scenarios +
-  actions. Idempotent — safe to re-run.
+  which walks strategies, runs, DB-backed scenarios, and static actions.
+  Idempotent — safe to re-run.
 - Incremental: `api::strategy::{create_strategy,update_slot,set_risk_config}`
   and `api::eval::run_inner` upsert their artifact's row right after the
   underlying mutation succeeds. Best-effort: a failed index write logs at
@@ -46,9 +46,12 @@ Out of scope for v1 (see `docs/superpowers/plans/2026-05-10-command-palette-plan
 
 The full route table lives in `src/server.rs::build_router`. Highlights:
 
-- `GET /api/health` — server + DB + bundle dir probes
-- `GET /api/strategies`, `GET /api/strategy/:id` (+ inspector mutations)
-- `GET /api/eval/runs`, `GET /api/eval/runs/:id`, `GET /api/eval/compare`
+- `GET /api/health` — server + DB + strategy dir probes
+- `GET /api/agents` (+ create/update/archive/validate)
+- `GET /api/strategies`, `GET /api/strategy/:id` (+ slot, AgentRef, pipeline, risk, validation mutations)
+- `GET /api/scenarios` (+ create, preview, clone, archive/delete, chart)
+- `GET /api/eval/runs`, `GET /api/eval/runs/:id`, `GET /api/eval/runs/:id/chart`, `GET /api/eval/runs/:id/stream`, `GET /api/eval/compare`
+- `POST /api/cli/jobs` (+ output/events/cancel) — remote CLI job runner
 - `GET /api/search` — command palette
 - `POST /api/wizard/chat` — wizard SSE
 - `POST /api/chat-rail/*` — persistent chat rail sessions

@@ -4,11 +4,11 @@ use axum::{
     routing::{delete, get, post, put},
     Router,
 };
-use tower_http::trace::TraceLayer;
+use tower_http::{compression::CompressionLayer, trace::TraceLayer};
 
 use crate::routes::{
-    agents, chat_rail, eval_runs, health::health, search as search_route, settings, skills,
-    static_files, strategies, wizard,
+    agents, bars, chat_rail, cli, eval_runs, health::health, scenarios, search as search_route,
+    settings, skills, static_files, strategies, wizard,
 };
 use crate::state::AppState;
 use xvision_engine::api::eval as api_eval;
@@ -42,23 +42,51 @@ pub fn build_router(state: AppState) -> Router {
             get(strategies::list).post(strategies::post_create),
         )
         .route("/api/templates", get(strategies::list_templates))
-        .route("/api/strategy/:id", get(strategies::get))
+        .route(
+            "/api/strategy/:id",
+            get(strategies::get).delete(strategies::delete),
+        )
         .route(
             "/api/strategy/:id/slot/:role",
             put(strategies::put_slot),
         )
+        .route("/api/strategy/:id/agents", post(strategies::post_add_agent))
+        .route(
+            "/api/strategy/:id/agents/:role",
+            delete(strategies::delete_agent).patch(strategies::patch_agent_role),
+        )
+        .route("/api/strategy/:id/pipeline", put(strategies::put_pipeline))
         .route("/api/strategy/:id/risk", put(strategies::put_risk))
         .route(
             "/api/strategy/:id/validate",
             post(strategies::post_validate),
         )
+        .route("/api/strategies/:id/chart", get(strategies::chart))
+        // NOTE: /api/scenarios/preview MUST be before /api/scenarios/:id —
+        // axum's router matches in registration order for overlapping patterns.
+        .route("/api/scenarios", get(scenarios::list).post(scenarios::create))
+        .route("/api/scenarios/preview", get(scenarios::preview))
+        .route("/api/scenarios/:id", get(scenarios::get).delete(scenarios::delete))
+        .route("/api/scenarios/:id/chart", get(scenarios::chart))
+        .route("/api/scenarios/:id/clone", post(scenarios::clone))
+        .route("/api/scenarios/:id/archive", post(scenarios::archive))
         .route(
             "/api/eval/runs",
             get(eval_runs::list).post(eval_runs::post_start),
         )
-        .route("/api/eval/runs/:id", get(eval_runs::get))
+        .route("/api/eval/runs/compare/chart", get(eval_runs::compare_chart))
+        .route("/api/eval/runs/:id", get(eval_runs::get).delete(eval_runs::delete_run))
+        .route("/api/eval/runs/:id/cancel", post(eval_runs::cancel_run))
+        .route("/api/eval/runs/:id/chart", get(eval_runs::chart))
+        .route("/api/eval/runs/:id/stream", get(eval_runs::stream))
         .route("/api/eval/compare", get(eval_runs::compare))
         .route("/api/eval/scenarios", get(eval_runs::list_scenarios))
+        .route("/api/bars/:cache_key", get(bars::cache_row))
+        .route("/api/cli/jobs", post(cli::create))
+        .route("/api/cli/jobs/:id", get(cli::get))
+        .route("/api/cli/jobs/:id/output", get(cli::output))
+        .route("/api/cli/jobs/:id/events", get(cli::events))
+        .route("/api/cli/jobs/:id/cancel", post(cli::cancel))
         .route("/api/search", get(search_route::handler))
         .route("/api/settings/brokers", get(settings::brokers::get))
         .route(
@@ -77,7 +105,9 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route(
             "/api/settings/providers/:name",
-            get(settings::providers::show).delete(settings::providers::remove),
+            get(settings::providers::show)
+                .put(settings::providers::update)
+                .delete(settings::providers::remove),
         )
         .route(
             "/api/settings/providers/:name/set-default",
@@ -114,6 +144,10 @@ pub fn build_router(state: AppState) -> Router {
             get(chat_rail::history),
         )
         .route(
+            "/api/chat-rail/sessions",
+            get(chat_rail::list_sessions).post(chat_rail::create_session),
+        )
+        .route(
             "/api/chat-rail/sessions/:id",
             delete(chat_rail::delete_session),
         )
@@ -121,12 +155,13 @@ pub fn build_router(state: AppState) -> Router {
         .route("/", get(static_files::serve_index))
         .route("/assets/*path", get(static_files::serve_static))
         .fallback(static_files::fallback)
+        .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
 
 pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
-    // Cold-start the ⌘K index: walk the bundle store + run table, re-seed
+    // Cold-start the ⌘K index: walk the strategy store + run table, re-seed
     // the static action set + canonical scenarios. Idempotent — every
     // subsequent indexer hook just refreshes the row in place.
     api_search::reindex_all(&state.api_context()).await;
@@ -146,6 +181,14 @@ pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
             error = %e,
             "failed to sweep orphan eval runs at startup",
         ),
+    }
+
+    if let Err(e) = state.recover_cli_jobs().await {
+        tracing::warn!(
+            target: "xvision::dashboard",
+            error = %e,
+            "failed to recover cli jobs at startup",
+        );
     }
 
     let app = build_router(state);

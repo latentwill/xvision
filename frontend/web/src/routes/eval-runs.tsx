@@ -1,25 +1,47 @@
-import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useState, type FormEvent } from "react";
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type UseQueryResult,
+} from "@tanstack/react-query";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
 import { Icon } from "@/components/primitives/Icon";
 import { ApiError } from "@/api/client";
+import { chartKeys, getRunChart } from "@/api/chart";
+import { RunChart } from "@/components/chart/RunChart";
 import {
   evalKeys,
+  cancelRun,
+  deleteRun,
   listRuns,
-  listScenarios,
   startRun,
-  type ScenarioSummary,
   type StartRunReq,
 } from "@/api/eval";
-import { listStrategies, strategyKeys } from "@/api/strategies";
+import {
+  listScenarios,
+  scenarioKeys,
+} from "@/api/scenarios";
+import {
+  getBrokers,
+  listProviders,
+  settingsKeys,
+} from "@/api/settings";
+import {
+  listStrategies,
+  strategyKeys,
+  type StrategyListItem,
+} from "@/api/strategies";
 import type {
+  BrokersReport,
+  ProvidersReport,
   RunDetail,
   RunMode,
   RunSummary,
-  StrategySummary,
+  Scenario,
 } from "@/api/types.gen";
 
 const STATUS_TONE: Record<string, "gold" | "warn" | "danger" | "default" | "info"> = {
@@ -31,9 +53,16 @@ const STATUS_TONE: Record<string, "gold" | "warn" | "danger" | "default" | "info
 };
 
 export function EvalRunsRoute() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const strategyFilter = searchParams.get("strategy")?.trim() ?? "";
   const q = useQuery({
-    queryKey: evalKeys.runs(),
-    queryFn: listRuns,
+    queryKey: evalKeys.runs({
+      agent_id: strategyFilter || undefined,
+    }),
+    queryFn: () =>
+      listRuns({
+        agent_id: strategyFilter || undefined,
+      }),
     // Poll while any run is still in flight; stop once everything's
     // terminal. Background eval tasks drive in the dashboard process
     // and can take minutes — without this the list looks frozen.
@@ -47,10 +76,36 @@ export function EvalRunsRoute() {
     },
   });
   const navigate = useNavigate();
+  const preselectedStrategy = strategyFilter;
+  const startRequested = searchParams.get("start") === "1";
   // Selection state for the Compare flow. Lifted here so the Topbar can
   // render the action button next to the run count.
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
-  const [startOpen, setStartOpen] = useState(false);
+  const [startOpen, setStartOpen] = useState(startRequested);
+  const hasInflight =
+    q.data?.some((r) => r.status === "queued" || r.status === "running") ??
+    false;
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (startRequested) {
+      setStartOpen(true);
+    }
+  }, [startRequested]);
+  useEffect(() => {
+    if (!hasInflight) {
+      setNowMs(Date.now());
+      return;
+    }
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [hasInflight]);
+  const latestRunId = q.data?.[0]?.id ?? "";
+  const latestChart = useQuery({
+    queryKey: chartKeys.run(latestRunId),
+    queryFn: () => getRunChart(latestRunId),
+    enabled: !!latestRunId,
+  });
 
   function toggleSelected(id: string) {
     setSelected((prev) => {
@@ -73,8 +128,9 @@ export function EvalRunsRoute() {
 
   return (
     <>
-      <Topbar title="Eval" sub={subtitleFor(q)} />
-      <div className="mb-3 flex flex-col sm:flex-row sm:justify-end sm:items-center gap-2">
+      <Topbar title="Eval" sub={subtitleFor(q, strategyFilter)} />
+
+      <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
         {selected.size > 0 ? (
           <CompareToolbar
             count={selected.size}
@@ -85,14 +141,43 @@ export function EvalRunsRoute() {
         <button
           type="button"
           onClick={() => setStartOpen(true)}
-          className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft transition-colors"
+          className="inline-flex w-full items-center justify-center gap-2 rounded bg-gold px-3.5 py-1.5 text-[13px] font-medium text-bg transition-colors hover:bg-gold-soft sm:w-auto"
         >
           <Icon name="plus" size={13} /> Start eval
         </button>
       </div>
       {startOpen ? (
-        <StartEvalDialog onClose={() => setStartOpen(false)} />
+        <StartEvalDialog
+          initialAgentId={preselectedStrategy}
+          onClose={() => {
+            setStartOpen(false);
+            const next = new URLSearchParams(searchParams);
+            next.delete("start");
+            setSearchParams(next);
+          }}
+        />
       ) : null}
+
+      {strategyFilter ? (
+        <div className="mb-3 px-3 py-2 rounded border border-border-soft bg-surface-elev text-[12px] text-text-2 flex items-center justify-between gap-2">
+          <span>
+            Filtering runs for strategy{" "}
+            <code className="font-mono text-text">{strategyFilter}</code>
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              const next = new URLSearchParams(searchParams);
+              next.delete("strategy");
+              setSearchParams(next);
+            }}
+            className="text-text-3 hover:text-text underline-offset-2 hover:underline"
+          >
+            Clear filter
+          </button>
+        </div>
+      ) : null}
+
       <Card>
         {q.isPending ? (
           <LoadingSkeleton />
@@ -105,20 +190,49 @@ export function EvalRunsRoute() {
             items={q.data ?? []}
             selected={selected}
             onToggle={toggleSelected}
+            nowMs={nowMs}
           />
         )}
+      </Card>
+
+      <h2 className="font-serif italic text-[20px] text-text mt-8 mb-3">
+        Latest run chart
+      </h2>
+      <Card className="p-5">
+        {q.isPending ? (
+          <div className="text-text-3 text-[13px] text-center py-6">
+            Loading runs…
+          </div>
+        ) : !latestRunId ? (
+          <div className="text-text-3 text-[13px] text-center py-6">
+            No runs yet. Start an eval to render chart history.
+          </div>
+        ) : latestChart.isPending ? (
+          <div className="text-text-3 text-[13px] text-center py-6">
+            Loading chart…
+          </div>
+        ) : latestChart.isError ? (
+          <div className="text-danger text-[13px] text-center py-6">
+            Chart unavailable for latest run.
+          </div>
+        ) : latestChart.data ? (
+          <RunChart payload={latestChart.data} />
+        ) : null}
       </Card>
     </>
   );
 }
 
-function subtitleFor(q: ReturnType<typeof useQuery>) {
+// ── Existing helpers ───────────────────────────────────────────────────────
+
+function subtitleFor(q: ReturnType<typeof useQuery>, strategyFilter: string) {
   if (q.isPending) return "Loading…";
   if (q.isError) return "Couldn't load runs";
   const data = q.data as { length: number } | undefined;
   if (!data) return "";
   const n = data.length;
-  return `${n} ${n === 1 ? "run" : "runs"}`;
+  const base = `${n} ${n === 1 ? "run" : "runs"}`;
+  return strategyFilter ? `${base} for ${strategyFilter}` : base;
 }
 
 function CompareToolbar({
@@ -132,7 +246,7 @@ function CompareToolbar({
 }) {
   const ready = count >= 2;
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    <div className="flex flex-wrap items-center justify-end gap-2">
       <span className="text-[12px] text-text-2">
         {count} selected
       </span>
@@ -164,39 +278,41 @@ function RunsTable({
   items,
   selected,
   onToggle,
+  nowMs,
 }: {
   items: RunSummary[];
   selected: Set<string>;
   onToggle: (id: string) => void;
+  nowMs: number;
 }) {
   const navigate = useNavigate();
+  const qc = useQueryClient();
+  const remove = useMutation({
+    mutationFn: deleteRun,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: evalKeys.all });
+    },
+  });
+  const cancel = useMutation({
+    mutationFn: cancelRun,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: evalKeys.all });
+    },
+  });
 
   function go(id: string) {
     navigate(`/eval-runs/${id}`);
   }
 
   return (
-    <table className="w-full">
-      <thead>
-        <tr className="text-left text-text-2 text-[12px] border-b border-border-soft">
-          <th className="font-normal py-2.5 pl-5 pr-2 w-8"></th>
-          <th className="font-normal py-2.5 px-3">ID</th>
-          <th className="font-normal py-2.5 px-3">Strategy</th>
-          <th className="font-normal py-2.5 px-3">Scenario</th>
-          <th className="font-normal py-2.5 px-3">Mode</th>
-          <th className="font-normal py-2.5 px-3">Status</th>
-          <th className="font-normal py-2.5 px-3 text-right">Sharpe</th>
-          <th className="font-normal py-2.5 px-3 text-right">Max DD</th>
-          <th className="font-normal py-2.5 px-3 text-right">Return</th>
-          <th className="font-normal py-2.5 px-5">Started</th>
-        </tr>
-      </thead>
-      <tbody>
+    <>
+      <div className="divide-y divide-border-soft md:hidden">
         {items.map((row) => {
           const isChecked = selected.has(row.id);
           return (
-            <tr
+            <article
               key={row.id}
+              className="px-4 py-3"
               role="link"
               tabIndex={0}
               onClick={() => go(row.id)}
@@ -206,60 +322,225 @@ function RunsTable({
                   go(row.id);
                 }
               }}
-              className="border-b border-border-soft last:border-b-0 hover:bg-surface-hover focus:bg-surface-hover focus:outline-none transition-colors cursor-pointer"
             >
-              <td
-                className="py-3 pl-5 pr-2 w-8"
-                // Stop the checkbox cell from triggering row navigation. The
-                // input below stops its own events too, but covering the
-                // surrounding cell makes the entire 32px tap target safe.
+              <div className="mb-2 flex items-start justify-between gap-2">
+                <label
+                  className="inline-flex items-center gap-2 text-[12px] text-text-2"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <input
+                    type="checkbox"
+                    aria-label={`Select run ${row.id.slice(0, 8)}`}
+                    checked={isChecked}
+                    onChange={(e) => {
+                      e.stopPropagation();
+                      onToggle(row.id);
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => e.stopPropagation()}
+                    className="cursor-pointer accent-gold"
+                  />
+                  Select
+                </label>
+                <StatusPill status={row.status} />
+              </div>
+
+              <div className="font-mono text-[12px] text-text">
+                {row.id.slice(0, 12)}…
+              </div>
+              <div className="mt-1 font-mono text-[12px] text-text-2">
+                {row.agent_id.slice(0, 8)} · {row.scenario_id}
+              </div>
+              <div className="mt-1 text-[12px] text-text-2">
+                {row.mode} · {fmtTime(row.started_at)}
+              </div>
+              <div className="mt-2 grid grid-cols-2 gap-2 text-[12px] min-[420px]:grid-cols-5">
+                <div className="text-text-2">
+                  <div className="text-[11px] text-text-3">Sharpe</div>
+                  <div className="font-mono text-text">{fmtNumber(row.sharpe)}</div>
+                </div>
+                <div className="text-text-2">
+                  <div className="text-[11px] text-text-3">Max DD</div>
+                  <div className="font-mono text-text">{fmtPct(row.max_drawdown_pct)}</div>
+                </div>
+                <div className="text-text-2">
+                  <div className="text-[11px] text-text-3">Return</div>
+                  <div className="font-mono text-text">{fmtPct(row.total_return_pct)}</div>
+                </div>
+                <div className="text-text-2">
+                  <div className="text-[11px] text-text-3">Duration</div>
+                  <div className="font-mono text-text">
+                    {fmtDuration(row.started_at, row.completed_at, nowMs)}
+                  </div>
+                </div>
+                <div className="text-text-2">
+                  <div className="text-[11px] text-text-3">Tokens</div>
+                  <div className="font-mono text-text">{fmtTokens(row)}</div>
+                </div>
+              </div>
+
+              <div
+                className="mt-2 flex justify-end gap-3"
                 onClick={(e) => e.stopPropagation()}
               >
-                <input
-                  type="checkbox"
-                  aria-label={`Select run ${row.id.slice(0, 8)}`}
-                  checked={isChecked}
-                  onChange={(e) => {
-                    e.stopPropagation();
-                    onToggle(row.id);
-                  }}
-                  onClick={(e) => e.stopPropagation()}
-                  onKeyDown={(e) => e.stopPropagation()}
-                  className="accent-gold cursor-pointer"
-                />
-              </td>
-              <td className="py-3 px-3 font-mono text-text text-[12px]">
-                {row.id.slice(0, 12)}…
-              </td>
-              <td className="py-3 px-3 font-mono text-text-2 text-[12px]">
-                {row.strategy_bundle_hash.slice(0, 8)}
-              </td>
-              <td className="py-3 px-3 text-text-2">{row.scenario_id}</td>
-              <td className="py-3 px-3 text-text-2">{row.mode}</td>
-              <td className="py-3 px-3">
-                <StatusPill status={row.status} />
-              </td>
-              <td className="py-3 px-3 text-right font-mono">
-                {fmtNumber(row.sharpe)}
-              </td>
-              <td className="py-3 px-3 text-right font-mono">
-                {fmtPct(row.max_drawdown_pct)}
-              </td>
-              <td className="py-3 px-3 text-right font-mono">
-                {fmtPct(row.total_return_pct)}
-              </td>
-              <td className="py-3 px-5 text-text-3 text-[12px]">
-                {fmtTime(row.started_at)}
-              </td>
-            </tr>
+                {isInflight(row) ? (
+                  <button
+                    type="button"
+                    aria-label={`Cancel run ${row.id}`}
+                    onClick={() => cancel.mutate(row.id)}
+                    disabled={cancel.variables === row.id && cancel.isPending}
+                    className="text-[12px] text-warn hover:text-text disabled:opacity-50"
+                  >
+                    {cancel.variables === row.id && cancel.isPending
+                      ? "Cancelling..."
+                      : "Cancel"}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => remove.mutate(row.id)}
+                  disabled={remove.variables === row.id && remove.isPending}
+                  className="text-[12px] text-text-3 hover:text-danger disabled:opacity-50"
+                >
+                  {remove.variables === row.id && remove.isPending
+                    ? "Deleting…"
+                    : "Delete"}
+                </button>
+              </div>
+            </article>
           );
         })}
-      </tbody>
-    </table>
+      </div>
+
+      <div className="hidden overflow-x-auto md:block">
+        <table className="w-full">
+          <thead>
+            <tr className="border-b border-border-soft text-left text-[12px] text-text-2">
+              <th className="w-8 py-2.5 pl-5 pr-2 font-normal"></th>
+              <th className="px-3 py-2.5 font-normal">ID</th>
+              <th className="px-3 py-2.5 font-normal">Strategy</th>
+              <th className="px-3 py-2.5 font-normal">Scenario</th>
+              <th className="px-3 py-2.5 font-normal">Mode</th>
+              <th className="px-3 py-2.5 font-normal">Status</th>
+              <th className="px-3 py-2.5 text-right font-normal">Sharpe</th>
+              <th className="px-3 py-2.5 text-right font-normal">Max DD</th>
+              <th className="px-3 py-2.5 text-right font-normal">Return</th>
+              <th className="px-3 py-2.5 text-right font-normal">Tokens</th>
+              <th className="px-3 py-2.5 text-right font-normal">Duration</th>
+              <th className="px-5 py-2.5 font-normal">Started</th>
+              <th className="px-5 py-2.5 text-right font-normal"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((row) => {
+              const isChecked = selected.has(row.id);
+              return (
+                <tr
+                  key={row.id}
+                  role="link"
+                  tabIndex={0}
+                  onClick={() => go(row.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      go(row.id);
+                    }
+                  }}
+                  className="cursor-pointer border-b border-border-soft transition-colors last:border-b-0 hover:bg-surface-hover focus:bg-surface-hover focus:outline-none"
+                >
+                  <td
+                    className="w-8 py-3 pl-5 pr-2"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <input
+                      type="checkbox"
+                      aria-label={`Select run ${row.id.slice(0, 8)}`}
+                      checked={isChecked}
+                      onChange={(e) => {
+                        e.stopPropagation();
+                        onToggle(row.id);
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                      onKeyDown={(e) => e.stopPropagation()}
+                      className="cursor-pointer accent-gold"
+                    />
+                  </td>
+                  <td className="px-3 py-3 font-mono text-[12px] text-text">
+                    {row.id.slice(0, 12)}…
+                  </td>
+                  <td className="px-3 py-3 font-mono text-[12px] text-text-2">
+                    {row.agent_id.slice(0, 8)}
+                  </td>
+                  <td className="px-3 py-3 text-text-2">{row.scenario_id}</td>
+                  <td className="px-3 py-3 text-text-2">{row.mode}</td>
+                  <td className="px-3 py-3">
+                    <StatusPill status={row.status} />
+                  </td>
+                  <td className="px-3 py-3 text-right font-mono">
+                    {fmtNumber(row.sharpe)}
+                  </td>
+                  <td className="px-3 py-3 text-right font-mono">
+                    {fmtPct(row.max_drawdown_pct)}
+                  </td>
+                  <td className="px-3 py-3 text-right font-mono">
+                    {fmtPct(row.total_return_pct)}
+                  </td>
+                  <td className="px-3 py-3 text-right font-mono">
+                    {fmtTokens(row)}
+                  </td>
+                  <td className="px-3 py-3 text-right font-mono">
+                    {fmtDuration(row.started_at, row.completed_at, nowMs)}
+                  </td>
+                  <td className="px-5 py-3 text-[12px] text-text-3">
+                    {fmtTime(row.started_at)}
+                  </td>
+                  <td
+                    className="px-5 py-3 text-right"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div className="flex justify-end gap-3">
+                      {isInflight(row) ? (
+                        <button
+                          type="button"
+                          aria-label={`Cancel run ${row.id}`}
+                          onClick={() => cancel.mutate(row.id)}
+                          disabled={cancel.variables === row.id && cancel.isPending}
+                          className="text-[12px] text-warn hover:text-text disabled:opacity-50"
+                        >
+                          {cancel.variables === row.id && cancel.isPending
+                            ? "Cancelling..."
+                            : "Cancel"}
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() => remove.mutate(row.id)}
+                        disabled={remove.variables === row.id && remove.isPending}
+                        className="text-[12px] text-text-3 hover:text-danger disabled:opacity-50"
+                      >
+                        {remove.variables === row.id && remove.isPending
+                          ? "Deleting…"
+                          : "Delete"}
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </>
   );
 }
 
-function StartEvalDialog({ onClose }: { onClose: () => void }) {
+function StartEvalDialog({
+  initialAgentId,
+  onClose,
+}: {
+  initialAgentId: string;
+  onClose: () => void;
+}) {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const strategies = useQuery({
@@ -267,14 +548,26 @@ function StartEvalDialog({ onClose }: { onClose: () => void }) {
     queryFn: listStrategies,
   });
   const scenarios = useQuery({
-    queryKey: evalKeys.scenarios(),
-    queryFn: listScenarios,
-    staleTime: 5 * 60 * 1000,
+    queryKey: scenarioKeys.list(),
+    queryFn: () => listScenarios(),
+  });
+  const providers = useQuery({
+    queryKey: settingsKeys.providers(),
+    queryFn: listProviders,
+  });
+  const brokers = useQuery({
+    queryKey: settingsKeys.brokers(),
+    queryFn: getBrokers,
   });
 
-  const [agentId, setAgentId] = useState<string>("");
+  const [agentId, setAgentId] = useState<string>(initialAgentId);
   const [scenarioId, setScenarioId] = useState<string>("");
-  const [mode, setMode] = useState<RunMode>("paper");
+  const [mode, setMode] = useState<RunMode>("backtest");
+  const [preflightError, setPreflightError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setAgentId(initialAgentId);
+  }, [initialAgentId]);
 
   const start = useMutation<RunDetail, unknown, StartRunReq>({
     mutationFn: startRun,
@@ -287,10 +580,24 @@ function StartEvalDialog({ onClose }: { onClose: () => void }) {
 
   const ready =
     agentId.length > 0 && scenarioId.length > 0 && !start.isPending;
+  const selectedStrategy = (strategies.data ?? []).find(
+    (s) => s.agent_id === agentId,
+  );
 
-  function onSubmit(e: React.FormEvent) {
+  function onSubmit(e: FormEvent) {
     e.preventDefault();
     if (!ready) return;
+    const blocked = evalPreflightError({
+      mode,
+      providers,
+      brokers,
+      strategy: selectedStrategy,
+    });
+    if (blocked) {
+      setPreflightError(blocked);
+      return;
+    }
+    setPreflightError(null);
     start.mutate({
       agent_id: agentId,
       scenario_id: scenarioId,
@@ -327,15 +634,19 @@ function StartEvalDialog({ onClose }: { onClose: () => void }) {
               Strategy
             </label>
             <select
+              aria-label="Strategy"
               value={agentId}
-              onChange={(e) => setAgentId(e.target.value)}
+              onChange={(e) => {
+                setAgentId(e.target.value);
+                setPreflightError(null);
+              }}
               disabled={strategies.isPending}
               className="w-full px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono focus:outline-none focus:border-text-3"
             >
               <option value="">— pick a strategy —</option>
-              {(strategies.data ?? []).map((s: StrategySummary) => (
+              {(strategies.data ?? []).map((s: StrategyListItem) => (
                 <option key={s.agent_id} value={s.agent_id}>
-                  {s.agent_id} · {s.template}
+                  {s.display_name || "Untitled strategy"}
                 </option>
               ))}
             </select>
@@ -351,15 +662,19 @@ function StartEvalDialog({ onClose }: { onClose: () => void }) {
               Scenario
             </label>
             <select
+              aria-label="Scenario"
               value={scenarioId}
-              onChange={(e) => setScenarioId(e.target.value)}
+              onChange={(e) => {
+                setScenarioId(e.target.value);
+                setPreflightError(null);
+              }}
               disabled={scenarios.isPending}
               className="w-full px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] focus:outline-none focus:border-text-3"
             >
               <option value="">— pick a scenario —</option>
-              {(scenarios.data ?? []).map((s: ScenarioSummary) => (
+              {(scenarios.data ?? []).map((s: Scenario) => (
                 <option key={s.id} value={s.id}>
-                  {s.display_name} · {s.time_window_days}d
+                  {s.display_name} · {scenarioWindowLabel(s)}
                 </option>
               ))}
             </select>
@@ -381,7 +696,10 @@ function StartEvalDialog({ onClose }: { onClose: () => void }) {
                   name="mode"
                   value="paper"
                   checked={mode === "paper"}
-                  onChange={() => setMode("paper")}
+                  onChange={() => {
+                    setMode("paper");
+                    setPreflightError(null);
+                  }}
                   className="accent-gold"
                 />
                 paper
@@ -392,7 +710,10 @@ function StartEvalDialog({ onClose }: { onClose: () => void }) {
                   name="mode"
                   value="backtest"
                   checked={mode === "backtest"}
-                  onChange={() => setMode("backtest")}
+                  onChange={() => {
+                    setMode("backtest");
+                    setPreflightError(null);
+                  }}
                   className="accent-gold"
                 />
                 backtest
@@ -404,9 +725,9 @@ function StartEvalDialog({ onClose }: { onClose: () => void }) {
             </p>
           </fieldset>
 
-          {start.isError ? (
+          {preflightError || start.isError ? (
             <p className="m-0 text-[12px] text-rose-300 font-mono">
-              {errorDetail(start.error)}
+              {preflightError ?? errorDetail(start.error)}
             </p>
           ) : null}
 
@@ -430,6 +751,77 @@ function StartEvalDialog({ onClose }: { onClose: () => void }) {
       </div>
     </div>
   );
+}
+
+function evalPreflightError({
+  mode,
+  providers,
+  brokers,
+  strategy,
+}: {
+  mode: RunMode;
+  providers: UseQueryResult<ProvidersReport>;
+  brokers: UseQueryResult<BrokersReport>;
+  strategy?: StrategyListItem;
+}): string | null {
+  if (providers.isPending || brokers.isPending) {
+    return "Still loading eval prerequisites.";
+  }
+  if (providers.isError) {
+    return "Couldn't load LLM providers. Refresh and try again.";
+  }
+  if (brokers.isError) {
+    return "Couldn't load broker settings. Refresh and try again.";
+  }
+
+  const rows = providers.data?.providers ?? [];
+  const hasCredentialedProvider = rows.some((row) => {
+    const noAuthProvider = row.api_key_env.trim().length === 0;
+    return row.api_key_set || noAuthProvider;
+  });
+  if (!hasCredentialedProvider) {
+    return "Add a provider/API key in Settings -> Providers before running eval.";
+  }
+
+  const hasEnabledModel = rows.some((row) => row.enabled_models.length > 0);
+  const defaultModel = providers.data?.default_model;
+  if (!hasEnabledModel && !defaultModel) {
+    return "Enable a provider model in Settings -> Providers before running eval.";
+  }
+
+  if (strategy) {
+    const requiredProviders = strategy.providers ?? [];
+    if (requiredProviders.length === 0) {
+      return "Pick a provider/model for the strategy agent before running eval.";
+    }
+    for (const providerName of requiredProviders) {
+      const row = rows.find((candidate) => candidate.name === providerName);
+      if (!row) {
+        return `provider '${providerName}' is not configured. Pick a configured provider/model for the strategy agent before running eval.`;
+      }
+      const noAuthProvider = row.api_key_env.trim().length === 0;
+      if (!row.api_key_set && !noAuthProvider) {
+        return `provider '${providerName}' has no API key set. Add it in Settings -> Providers before running eval.`;
+      }
+    }
+  }
+
+  const alpacaConfigured = brokers.data?.alpaca.configured === true;
+  if (mode === "paper" && !alpacaConfigured) {
+    return "Configure Alpaca paper credentials in Settings -> Brokers before running a paper eval.";
+  }
+
+  return null;
+}
+
+function scenarioWindowLabel(s: Scenario): string {
+  const start = Date.parse(s.time_window.start);
+  const end = Date.parse(s.time_window.end);
+  if (Number.isNaN(start) || Number.isNaN(end) || end <= start) {
+    return s.granularity;
+  }
+  const days = Math.max(1, Math.round((end - start) / 86_400_000));
+  return `${s.granularity} · ${days}d`;
 }
 
 function errorDetail(err: unknown): string {
@@ -469,6 +861,16 @@ function fmtPct(n: number | null | undefined): string {
   return `${sign}${n.toFixed(2)}%`;
 }
 
+function isInflight(row: RunSummary): boolean {
+  return row.status === "queued" || row.status === "running";
+}
+
+function fmtTokens(row: RunSummary): string {
+  const total =
+    (row.actual_input_tokens ?? 0) + (row.actual_output_tokens ?? 0);
+  return total > 0 ? total.toLocaleString() : "—";
+}
+
 function fmtTime(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
@@ -478,6 +880,24 @@ function fmtTime(iso: string): string {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+function fmtDuration(
+  startedAt: string,
+  completedAt: string | null | undefined,
+  nowMs: number,
+): string {
+  const start = Date.parse(startedAt);
+  if (Number.isNaN(start)) return "—";
+  const end = completedAt ? Date.parse(completedAt) : nowMs;
+  if (Number.isNaN(end)) return "—";
+  const totalSeconds = Math.max(0, Math.floor((end - start) / 1000));
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  if (totalMinutes < 60) return `${totalMinutes}m`;
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return minutes === 0 ? `${hours}h` : `${hours}h ${minutes}m`;
 }
 
 function LoadingSkeleton() {
@@ -502,9 +922,8 @@ function EmptyState() {
         no runs yet
       </div>
       <p className="m-0 max-w-md mx-auto leading-snug">
-        Eval runs created via{" "}
-        <code className="text-text font-mono">xvn ab-compare</code> or the
-        eval engine will appear here. Run something to get started.
+        Use the launcher above to start a run, or trigger one via{" "}
+        <code className="text-text font-mono">xvn ab-compare</code>.
       </p>
     </div>
   );

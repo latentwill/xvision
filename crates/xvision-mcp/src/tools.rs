@@ -28,8 +28,6 @@ use xvision_engine::strategies::{
 };
 use xvision_engine::eval::run::RunStatus;
 use xvision_engine::eval::store::RunStore;
-use xvision_skills::attach::attach_skill_to_agent;
-use xvision_skills::store::{FilesystemSkillStore, SkillStore};
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -152,7 +150,7 @@ pub struct UpdateSlotReq {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SetMechanicalParamReq {
     pub id: String,
-    /// Key inside `bundle.mechanical_params` (template-specific).
+    /// Key inside `Strategy.mechanical_params` (template-specific).
     pub key: String,
     /// New value (any JSON type the template accepts).
     pub value: serde_json::Value,
@@ -176,9 +174,9 @@ pub struct SetRiskConfigReq {
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 pub struct EvalListReq {
-    /// Optional filter: only return runs for this strategy bundle id.
+    /// Optional filter: only return runs for this strategy agent id.
     #[serde(default)]
-    pub strategy_bundle_hash: Option<String>,
+    pub agent_id: Option<String>,
     /// Optional filter: only return runs against this scenario id.
     #[serde(default)]
     pub scenario_id: Option<String>,
@@ -199,25 +197,6 @@ pub struct EvalCompareReq {
     pub run_ids: Vec<String>,
 }
 
-// --- skill-domain request shapes (Plan 2b Phase B) -------------------------
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct CreateSkillReq {
-    /// Full skill markdown including YAML frontmatter. The skill `name` is
-    /// taken from the frontmatter and used as the persisted filename.
-    pub markdown: String,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct AttachSkillReq {
-    /// ULID of the strategy bundle to mutate.
-    pub agent_id: String,
-    /// Slot to overwrite: `regime` | `intern` | `trader`.
-    pub slot: String,
-    /// Name of a skill saved under `$XVN_HOME/skills/<skill_name>.md`.
-    pub skill_name: String,
-}
-
 // ---------------------------------------------------------------------------
 // XvisionTools — the rmcp router.
 // ---------------------------------------------------------------------------
@@ -231,7 +210,9 @@ pub struct XvisionTools {
 
 fn resolve_xvn_home() -> PathBuf {
     if let Ok(s) = std::env::var("XVN_HOME") {
-        return PathBuf::from(s);
+        if !s.is_empty() {
+            return PathBuf::from(s);
+        }
     }
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
     PathBuf::from(home).join(".xvn")
@@ -256,15 +237,6 @@ impl XvisionTools {
             .unwrap_or_else(resolve_xvn_home)
             .join("strategies");
         FilesystemStore::new(root)
-    }
-
-    fn skill_store(&self) -> FilesystemSkillStore {
-        let root = self
-            .xvn_home
-            .clone()
-            .unwrap_or_else(resolve_xvn_home)
-            .join("skills");
-        FilesystemSkillStore::new(root)
     }
 
     /// Server health + version probe. Returns a JSON object with
@@ -387,7 +359,7 @@ impl XvisionTools {
 
     // -----------------------------------------------------------------------
     // authoring tools — operate on `$XVN_HOME/strategies/<id>.json` via
-    // xvision_engine's bundle store + template registry + validator.
+    // xvision_engine's strategy store + template registry + validator.
     // -----------------------------------------------------------------------
 
     /// List strategy templates available to `xvn_create_strategy`. Returns an
@@ -402,7 +374,7 @@ impl XvisionTools {
     /// Create a new strategy draft from a template. Persists to
     /// `$XVN_HOME/strategies/<id>.json`. Returns `{ id }`.
     #[tool(
-        description = "Create a new strategy draft from a template. Persists the bundle and returns { id } (ULID)."
+        description = "Create a new strategy draft from a template. Persists the strategy and returns { id } (ULID)."
     )]
     async fn xvn_create_strategy(
         &self,
@@ -421,23 +393,23 @@ impl XvisionTools {
         json_or_err(&out)
     }
 
-    /// Get a strategy bundle by id. Returns the full `Strategy` JSON.
-    #[tool(description = "Get a strategy bundle by id. Returns the full Strategy JSON.")]
+    /// Get a strategy by id. Returns the full `Strategy` JSON.
+    #[tool(description = "Get a strategy by id. Returns the full Strategy JSON.")]
     async fn xvn_get_strategy(
         &self,
         Parameters(req): Parameters<StrategyId>,
     ) -> Result<String, rmcp::ErrorData> {
-        let bundle = authoring::get_strategy(&self.store(), &req.id)
+        let strategy = authoring::get_strategy(&self.store(), &req.id)
             .await
             .map_err(authoring_err)?;
-        json_or_err(&bundle)
+        json_or_err(&strategy)
     }
 
-    /// Update a slot on a strategy bundle. Only fields with non-null values
+    /// Update a slot on a strategy. Only fields with non-null values
     /// are mutated. Returns `{ id, updated: [...] }` listing which fields
     /// changed.
     #[tool(
-        description = "Update a slot on a strategy bundle. Only fields with non-null values are mutated. Returns { id, updated }."
+        description = "Update a slot on a strategy. Only fields with non-null values are mutated. Returns { id, updated }."
     )]
     async fn xvn_update_slot(
         &self,
@@ -458,10 +430,10 @@ impl XvisionTools {
         json_or_err(&out)
     }
 
-    /// Set a key inside `bundle.mechanical_params`. Templates document
+    /// Set a key inside `Strategy.mechanical_params`. Templates document
     /// which keys they accept. Returns `{ id, key }`.
     #[tool(
-        description = "Set a key inside bundle.mechanical_params. Templates document which keys they accept. Returns { id, key }."
+        description = "Set a key inside Strategy.mechanical_params. Templates document which keys they accept. Returns { id, key }."
     )]
     async fn xvn_set_mechanical_param(
         &self,
@@ -482,11 +454,11 @@ impl XvisionTools {
         json_or_err(&serde_json::json!({ "id": id, "key": key }))
     }
 
-    /// Set the risk config on a strategy bundle. Provide either `preset`
+    /// Set the risk config on a strategy. Provide either `preset`
     /// (one of `conservative` / `balanced` / `aggressive`) or `explicit`
     /// (a full `RiskConfig`). Mutually exclusive. Returns `{ id, applied }`.
     #[tool(
-        description = "Set the risk config on a strategy bundle. Supply either preset (conservative/balanced/aggressive) or explicit (full RiskConfig). Mutually exclusive. Returns { id, applied }."
+        description = "Set the risk config on a strategy. Supply either preset (conservative/balanced/aggressive) or explicit (full RiskConfig). Mutually exclusive. Returns { id, applied }."
     )]
     async fn xvn_set_risk_config(
         &self,
@@ -515,7 +487,7 @@ impl XvisionTools {
         json_or_err(&out)
     }
 
-    /// Validate a strategy draft against bundle invariants (trader slot
+    /// Validate a strategy draft against strategy invariants (trader slot
     /// required, asset universe non-empty, risk in range, declared tools
     /// granted by some slot, etc.). Returns `{ id, ok, errors }` —
     /// `errors` is empty when `ok` is true.
@@ -532,97 +504,6 @@ impl XvisionTools {
         json_or_err(&out)
     }
 
-    // -----------------------------------------------------------------------
-    // skill verbs (Plan 2b Phase B). All three operate on
-    // `$XVN_HOME/skills/<name>.md` (markdown bodies) and, for attach, the
-    // existing `$XVN_HOME/strategies/<id>.json` bundle store.
-    // -----------------------------------------------------------------------
-
-    /// Persist a new skill from raw markdown. The `name` field of the
-    /// frontmatter becomes the on-disk filename (`<name>.md`). Returns the
-    /// parsed `name` and the SHA-256 of the supplied markdown for
-    /// content-addressable bookkeeping.
-    #[tool(description = "Create / overwrite a skill from raw markdown. Returns { name, content_hash }.")]
-    async fn xvn_create_skill(
-        &self,
-        Parameters(req): Parameters<CreateSkillReq>,
-    ) -> Result<String, rmcp::ErrorData> {
-        let parsed = xvision_skills::parse(&req.markdown)
-            .map_err(|e| rmcp::ErrorData::invalid_params(format!("{e}"), None))?;
-        self.skill_store()
-            .save(&parsed.name, &req.markdown)
-            .await
-            .map_err(|e| rmcp::ErrorData::internal_error(format!("{e:#}"), None))?;
-        json_or_err(&serde_json::json!({
-            "name": parsed.name,
-            "content_hash": parsed.content_hash,
-        }))
-    }
-
-    /// List skills saved under `$XVN_HOME/skills/`. Returns an array of
-    /// `{ name, display_name, description, version }` (sorted by filename).
-    /// Empty when no skills are registered yet.
-    #[tool(
-        description = "List saved skills. Returns array of {name, display_name, description, version}, sorted by name."
-    )]
-    async fn xvn_list_skills(&self) -> Result<String, rmcp::ErrorData> {
-        let store = self.skill_store();
-        let names = store
-            .list()
-            .await
-            .map_err(|e| rmcp::ErrorData::internal_error(format!("{e:#}"), None))?;
-        let mut out = Vec::with_capacity(names.len());
-        for name in names {
-            let skill = store
-                .load(&name)
-                .await
-                .map_err(|e| rmcp::ErrorData::internal_error(format!("{e:#}"), None))?;
-            out.push(serde_json::json!({
-                "name": skill.name,
-                "display_name": skill.display_name,
-                "description": skill.description,
-                "version": skill.version,
-            }));
-        }
-        json_or_err(&out)
-    }
-
-    /// Attach a saved skill to a slot of a saved strategy bundle. Replaces
-    /// the slot prompt with the skill body, sets `model_requirement`, and
-    /// unions skill `allowed_tools` into the slot's tool set. Persists the
-    /// mutated bundle back to `$XVN_HOME/strategies/<agent_id>.json`.
-    /// Errors if the strategy or skill is missing, the slot role is unknown,
-    /// or the targeted slot is empty.
-    #[tool(
-        description = "Attach a skill to a slot (regime|intern|trader) of a saved strategy. Returns { agent_id, slot, skill_name }."
-    )]
-    async fn xvn_attach_skill_to_agent(
-        &self,
-        Parameters(req): Parameters<AttachSkillReq>,
-    ) -> Result<String, rmcp::ErrorData> {
-        let strategies = self.store();
-        let mut bundle = strategies
-            .load(&req.agent_id)
-            .await
-            .map_err(|e| rmcp::ErrorData::invalid_params(format!("load strategy: {e:#}"), None))?;
-        let skill = self
-            .skill_store()
-            .load(&req.skill_name)
-            .await
-            .map_err(|e| rmcp::ErrorData::invalid_params(format!("load skill: {e:#}"), None))?;
-        attach_skill_to_agent(&mut bundle, &req.slot, &skill)
-            .map_err(|e| rmcp::ErrorData::invalid_params(format!("{e:#}"), None))?;
-        strategies
-            .save(&bundle)
-            .await
-            .map_err(|e| rmcp::ErrorData::internal_error(format!("save strategy: {e:#}"), None))?;
-        json_or_err(&serde_json::json!({
-            "agent_id": req.agent_id,
-            "slot": req.slot,
-            "skill_name": req.skill_name,
-        }))
-    }
-
     // --- eval browse / compare verbs (Phase 3.D Task 12) -------------------
     //
     // These wrap the existing `engine::api::eval::*` surface so MCP clients
@@ -637,11 +518,11 @@ impl XvisionTools {
     // construction from env, which deserves its own integration concern.
 
     /// List eval runs. Returns the slim `RunSummary` shape (id +
-    /// strategy_bundle_hash + scenario_id + mode + status + started_at +
+    /// agent_id + scenario_id + mode + status + started_at +
     /// completed_at + headline metrics). Optional filters narrow the
     /// result to a strategy / scenario / status.
     #[tool(
-        description = "List eval runs (slim shape). Optional filters: strategy_bundle_hash, scenario_id, status."
+        description = "List eval runs (slim shape). Optional filters: agent_id, scenario_id, status."
     )]
     async fn xvn_eval_list(
         &self,
@@ -652,7 +533,7 @@ impl XvisionTools {
         let summaries = api_eval::list_summaries(
             &ctx,
             ListRunsRequest {
-                strategy_bundle_hash: req.strategy_bundle_hash,
+                agent_id: req.agent_id,
                 scenario_id: req.scenario_id,
                 status,
             },
@@ -696,10 +577,10 @@ impl XvisionTools {
         json_or_err(&run.metrics)
     }
 
-    /// List the canonical scenarios bundled with this binary. These are
+    /// List the canonical scenarios packaged with this binary. These are
     /// the same scenarios the CLI's `xvn eval scenarios` shows.
     #[tool(
-        description = "List canonical scenarios bundled with this binary. Returns id, display_name, asset_universe, regime_tags, time_window_days."
+        description = "List canonical scenarios packaged with this binary. Returns id, display_name, asset_universe, regime_tags, time_window_days."
     )]
     async fn xvn_eval_scenarios(&self) -> Result<String, rmcp::ErrorData> {
         let ctx = self.api_context().await?;
@@ -837,9 +718,9 @@ mod tests {
             .xvn_get_strategy(Parameters(StrategyId { id: id.clone() }))
             .await
             .unwrap();
-        let bundle = parsed(&g);
-        assert_eq!(bundle["manifest"]["id"], id);
-        assert_eq!(bundle["manifest"]["template"], "trend_follower");
+        let strategy = parsed(&g);
+        assert_eq!(strategy["manifest"]["id"], id);
+        assert_eq!(strategy["manifest"]["template"], "trend_follower");
     }
 
     #[tokio::test]
@@ -887,8 +768,8 @@ mod tests {
             .xvn_get_strategy(Parameters(StrategyId { id }))
             .await
             .unwrap();
-        let bundle = parsed(&g);
-        assert_eq!(bundle["trader_slot"]["prompt"], "New prompt");
+        let strategy = parsed(&g);
+        assert_eq!(strategy["trader_slot"]["prompt"], "New prompt");
     }
 
     #[tokio::test]
@@ -942,8 +823,8 @@ mod tests {
             .xvn_get_strategy(Parameters(StrategyId { id }))
             .await
             .unwrap();
-        let bundle = parsed(&g);
-        assert_eq!(bundle["mechanical_params"]["ema_fast"], 8);
+        let strategy = parsed(&g);
+        assert_eq!(strategy["mechanical_params"]["ema_fast"], 8);
     }
 
     #[tokio::test]
@@ -973,9 +854,9 @@ mod tests {
             .xvn_get_strategy(Parameters(StrategyId { id }))
             .await
             .unwrap();
-        let bundle = parsed(&g);
-        assert_eq!(bundle["risk"]["risk_pct_per_trade"], 0.015);
-        assert_eq!(bundle["risk"]["max_concurrent_positions"], 2);
+        let strategy = parsed(&g);
+        assert_eq!(strategy["risk"]["risk_pct_per_trade"], 0.015);
+        assert_eq!(strategy["risk"]["max_concurrent_positions"], 2);
     }
 
     #[tokio::test]
@@ -1040,13 +921,13 @@ mod tests {
     /// Returns the run id so tests can refer back to it.
     async fn seed_run(
         tools: &XvisionTools,
-        bundle_hash: &str,
+        agent_id: &str,
         scenario_id: &str,
         total_return_pct: f64,
     ) -> String {
         let ctx = tools.api_context().await.unwrap();
         let store = RunStore::new(ctx.db.clone());
-        let mut run = Run::new_queued(bundle_hash.into(), scenario_id.into(), RunMode::Backtest);
+        let mut run = Run::new_queued(agent_id.into(), scenario_id.into(), RunMode::Backtest);
         run.status = RunStatus::Completed;
         store.create(&run).await.unwrap();
 
@@ -1090,8 +971,8 @@ mod tests {
     #[tokio::test]
     async fn eval_list_returns_seeded_runs() {
         let (tools, _td) = tools_with_tmp();
-        let id_a = seed_run(&tools, "h-A", "s-A", 12.0).await;
-        let id_b = seed_run(&tools, "h-B", "s-B", 7.5).await;
+        let id_a = seed_run(&tools, "h-A", "crypto-bull-q1-2025", 12.0).await;
+        let id_b = seed_run(&tools, "h-B", "crypto-bear-q3-2024", 7.5).await;
 
         let s = tools
             .xvn_eval_list(Parameters(EvalListReq::default()))
@@ -1107,12 +988,12 @@ mod tests {
     #[tokio::test]
     async fn eval_list_filters_by_strategy() {
         let (tools, _td) = tools_with_tmp();
-        let _id_a = seed_run(&tools, "h-A", "s-A", 12.0).await;
-        let id_b = seed_run(&tools, "h-B", "s-B", 7.5).await;
+        let _id_a = seed_run(&tools, "h-A", "crypto-bull-q1-2025", 12.0).await;
+        let id_b = seed_run(&tools, "h-B", "crypto-bear-q3-2024", 7.5).await;
 
         let s = tools
             .xvn_eval_list(Parameters(EvalListReq {
-                strategy_bundle_hash: Some("h-B".into()),
+                agent_id: Some("h-B".into()),
                 ..Default::default()
             }))
             .await
@@ -1126,7 +1007,7 @@ mod tests {
     #[tokio::test]
     async fn eval_get_returns_run_detail_for_known_run() {
         let (tools, _td) = tools_with_tmp();
-        let id = seed_run(&tools, "h-A", "s-A", 4.0).await;
+        let id = seed_run(&tools, "h-A", "crypto-bull-q1-2025", 4.0).await;
 
         let s = tools
             .xvn_eval_get(Parameters(EvalRunIdReq { run_id: id.clone() }))
@@ -1154,7 +1035,7 @@ mod tests {
     #[tokio::test]
     async fn eval_metrics_returns_just_metrics() {
         let (tools, _td) = tools_with_tmp();
-        let id = seed_run(&tools, "h-A", "s-A", 21.0).await;
+        let id = seed_run(&tools, "h-A", "crypto-bull-q1-2025", 21.0).await;
 
         let s = tools
             .xvn_eval_metrics(Parameters(EvalRunIdReq { run_id: id }))
@@ -1182,8 +1063,8 @@ mod tests {
     #[tokio::test]
     async fn eval_compare_returns_comparison_report() {
         let (tools, _td) = tools_with_tmp();
-        let id_a = seed_run(&tools, "h-A", "s-A", 10.0).await;
-        let id_b = seed_run(&tools, "h-B", "s-B", 5.0).await;
+        let id_a = seed_run(&tools, "h-A", "crypto-bull-q1-2025", 10.0).await;
+        let id_b = seed_run(&tools, "h-B", "crypto-bear-q3-2024", 5.0).await;
 
         let s = tools
             .xvn_eval_compare(Parameters(EvalCompareReq {
@@ -1202,7 +1083,7 @@ mod tests {
     #[tokio::test]
     async fn eval_compare_rejects_single_run() {
         let (tools, _td) = tools_with_tmp();
-        let id = seed_run(&tools, "h-A", "s-A", 10.0).await;
+        let id = seed_run(&tools, "h-A", "crypto-bull-q1-2025", 10.0).await;
         let err = tools
             .xvn_eval_compare(Parameters(EvalCompareReq { run_ids: vec![id] }))
             .await
@@ -1217,7 +1098,7 @@ mod tests {
     #[tokio::test]
     async fn eval_findings_returns_empty_array_when_none() {
         let (tools, _td) = tools_with_tmp();
-        let id = seed_run(&tools, "h-A", "s-A", 10.0).await;
+        let id = seed_run(&tools, "h-A", "crypto-bull-q1-2025", 10.0).await;
         let s = tools
             .xvn_eval_findings(Parameters(EvalRunIdReq { run_id: id }))
             .await
@@ -1225,152 +1106,5 @@ mod tests {
         let v = parsed(&s);
         let arr = v.as_array().unwrap();
         assert!(arr.is_empty(), "expected empty findings, got {v}");
-    }
-
-    // --- skill verbs (Plan 2b Phase B) -----------------------------------
-
-    const SKILL_FIXTURE: &str = include_str!("../../xvision-skills/tests/fixtures/crypto-trader-base.md");
-
-    #[tokio::test]
-    async fn create_skill_persists_and_returns_name_and_hash() {
-        let (tools, _td) = tools_with_tmp();
-        let s = tools
-            .xvn_create_skill(Parameters(CreateSkillReq {
-                markdown: SKILL_FIXTURE.into(),
-            }))
-            .await
-            .unwrap();
-        let v = parsed(&s);
-        assert_eq!(v["name"].as_str().unwrap(), "crypto-trader-base");
-        assert_eq!(v["content_hash"].as_str().unwrap().len(), 64);
-
-        // round-trip: list_skills surfaces it
-        let s = tools.xvn_list_skills().await.unwrap();
-        let v = parsed(&s);
-        let arr = v.as_array().unwrap();
-        assert_eq!(arr.len(), 1);
-        assert_eq!(arr[0]["name"].as_str().unwrap(), "crypto-trader-base");
-        assert_eq!(
-            arr[0]["display_name"].as_str().unwrap(),
-            "Generalist crypto trader"
-        );
-    }
-
-    #[tokio::test]
-    async fn create_skill_rejects_malformed_markdown() {
-        let (tools, _td) = tools_with_tmp();
-        let err = tools
-            .xvn_create_skill(Parameters(CreateSkillReq {
-                markdown: "no frontmatter here".into(),
-            }))
-            .await
-            .unwrap_err();
-        assert!(
-            err.to_string().to_lowercase().contains("frontmatter"),
-            "msg: {err}"
-        );
-    }
-
-    #[tokio::test]
-    async fn list_skills_empty_when_dir_absent() {
-        let (tools, _td) = tools_with_tmp();
-        let s = tools.xvn_list_skills().await.unwrap();
-        let v = parsed(&s);
-        assert!(v.as_array().unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn attach_skill_mutates_strategy_trader_slot() {
-        let (tools, _td) = tools_with_tmp();
-        // 1) create a strategy from a template (trader slot is filled)
-        let s = tools
-            .xvn_create_strategy(Parameters(CreateStrategyReq {
-                template: "trend_follower".into(),
-                name: "skill-attach-test".into(),
-                creator: None,
-            }))
-            .await
-            .unwrap();
-        let id = id_of(&s);
-
-        // 2) register the skill
-        tools
-            .xvn_create_skill(Parameters(CreateSkillReq {
-                markdown: SKILL_FIXTURE.into(),
-            }))
-            .await
-            .unwrap();
-
-        // 3) attach
-        let s = tools
-            .xvn_attach_skill_to_agent(Parameters(AttachSkillReq {
-                agent_id: id.clone(),
-                slot: "trader".into(),
-                skill_name: "crypto-trader-base".into(),
-            }))
-            .await
-            .unwrap();
-        let v = parsed(&s);
-        assert_eq!(v["agent_id"].as_str().unwrap(), id);
-        assert_eq!(v["slot"].as_str().unwrap(), "trader");
-        assert_eq!(v["skill_name"].as_str().unwrap(), "crypto-trader-base");
-
-        // 4) verify the bundle's trader slot now carries the skill body
-        let g = tools
-            .xvn_get_strategy(Parameters(StrategyId { id }))
-            .await
-            .unwrap();
-        let bundle = parsed(&g);
-        let prompt = bundle["trader_slot"]["prompt"].as_str().unwrap();
-        assert!(prompt.contains("crypto trader"), "prompt was: {prompt}");
-    }
-
-    #[tokio::test]
-    async fn attach_skill_unknown_strategy_404() {
-        let (tools, _td) = tools_with_tmp();
-        tools
-            .xvn_create_skill(Parameters(CreateSkillReq {
-                markdown: SKILL_FIXTURE.into(),
-            }))
-            .await
-            .unwrap();
-        let err = tools
-            .xvn_attach_skill_to_agent(Parameters(AttachSkillReq {
-                agent_id: "no-such-strategy".into(),
-                slot: "trader".into(),
-                skill_name: "crypto-trader-base".into(),
-            }))
-            .await
-            .unwrap_err();
-        assert!(
-            err.to_string().to_lowercase().contains("load strategy"),
-            "msg: {err}"
-        );
-    }
-
-    #[tokio::test]
-    async fn attach_skill_unknown_skill_404() {
-        let (tools, _td) = tools_with_tmp();
-        let s = tools
-            .xvn_create_strategy(Parameters(CreateStrategyReq {
-                template: "trend_follower".into(),
-                name: "x".into(),
-                creator: None,
-            }))
-            .await
-            .unwrap();
-        let id = id_of(&s);
-        let err = tools
-            .xvn_attach_skill_to_agent(Parameters(AttachSkillReq {
-                agent_id: id,
-                slot: "trader".into(),
-                skill_name: "no-such-skill".into(),
-            }))
-            .await
-            .unwrap_err();
-        assert!(
-            err.to_string().to_lowercase().contains("load skill"),
-            "msg: {err}"
-        );
     }
 }

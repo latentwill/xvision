@@ -14,7 +14,6 @@ members = [
     "crates/xvision-identity",
     "crates/xvision-mcp",
     "crates/xvision-dashboard",
-    "crates/xvision-skills",
     "xtask",
 ]
 
@@ -37,7 +36,6 @@ default-members = [
     "crates/xvision-cli",
     "crates/xvision-mcp",
     "crates/xvision-dashboard",
-    "crates/xvision-skills",
 ]
 
 [workspace.package]
@@ -94,4 +92,11 @@ criterion = "0.8"
 [profile.release]
 lto           = "thin"
 codegen-units = 1
+strip         = "symbols"
+
+[profile.staging]
+inherits      = "release"
+opt-level     = 1
+lto           = false
+codegen-units = 256
 strip         = "symbols"

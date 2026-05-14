@@ -16,7 +16,7 @@ use crate::eval::scenario::Scenario;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct EvalAttestation {
-    pub strategy_bundle_hash: String,
+    pub agent_id: String,
     pub scenario_id: String,
     pub metrics: MetricsSummary,
     pub tokens_used: TokensUsed,
@@ -38,14 +38,14 @@ pub struct TokensUsed {
 /// untampered. Object keys are sorted by `canonicalize_json` so insertion
 /// order doesn't affect the signature.
 fn signable_payload(
-    strategy_bundle_hash: &str,
+    agent_id: &str,
     scenario_id: &str,
     metrics: &MetricsSummary,
     tokens_used: &TokensUsed,
     ran_at: &DateTime<Utc>,
 ) -> Result<Vec<u8>> {
     let unsigned = serde_json::json!({
-        "strategy_bundle_hash": strategy_bundle_hash,
+        "agent_id": agent_id,
         "scenario_id": scenario_id,
         "metrics": metrics,
         "tokens_used": tokens_used,
@@ -68,7 +68,7 @@ pub fn sign(run: &Run, scenario: &Scenario, signing_key: &SigningKey) -> Result<
     let ran_at = run.completed_at.unwrap_or_else(Utc::now);
 
     let bytes = signable_payload(
-        &run.strategy_bundle_hash,
+        &run.agent_id,
         &scenario.id,
         &metrics,
         &tokens_used,
@@ -78,7 +78,7 @@ pub fn sign(run: &Run, scenario: &Scenario, signing_key: &SigningKey) -> Result<
     let pubkey: VerifyingKey = signing_key.verifying_key();
 
     Ok(EvalAttestation {
-        strategy_bundle_hash: run.strategy_bundle_hash.clone(),
+        agent_id: run.agent_id.clone(),
         scenario_id: scenario.id.clone(),
         metrics,
         tokens_used,
@@ -107,7 +107,7 @@ pub fn verify(att: &EvalAttestation) -> Result<()> {
     let signature = Signature::from_bytes(&sig_arr);
 
     let bytes = signable_payload(
-        &att.strategy_bundle_hash,
+        &att.agent_id,
         &att.scenario_id,
         &att.metrics,
         &att.tokens_used,

@@ -243,11 +243,11 @@ The progress panel re-renders on `bundle_patch`. The chat thread renders all eve
 
 **Endpoints**:
 - `POST /api/wizard/chat` (SSE) — main loop.
-- `GET /api/wizard/templates` — list of templates (mean_reversion, trend_follower, stat_arb, carry).
+- `GET /api/templates` — list of strategy templates.
 - `POST /api/strategies` (called by agent via tool, not by UI directly) — finalizes the draft.
 
-**Gaps**:
-- ⚠ **WizardLoop is unbuilt** (Plan 2d Task 6, not yet implemented). The frontend can be built against a stub SSE endpoint that returns scripted events; cut over when the loop ships.
+**Current status / gaps**:
+- ✅ **WizardLoop and SSE route ship.** `crates/xvision-dashboard/src/wizard_loop.rs` backs `POST /api/wizard/chat`.
 - ⚠ **`?seed=` context handler** (Plan 2d Task 7a) for "Draft variant from this finding" → not built. Frontend should handle the URL param (`/setup?seed=finding:<run_id>:<finding_id>`) and POST it as part of the initial chat request; backend resolves and injects.
 - ⚠ **First-run vs on-demand**: Plan says first-run goes to `/setup` if no provider exists. In on-demand mode the wizard needs an "exit to drafts" action. The prototype shows only one mode; **add a "Cancel draft" button** that returns to `/strategies`.
 
@@ -255,17 +255,17 @@ The progress panel re-renders on `bundle_patch`. The chat thread renders all eve
 
 **Source**: `prototype/screen-strategies.jsx`.
 
-**Data**: paginated list of bundles with name, template, forked_from, status, last_eval (Sharpe + scenario), tokens_per_run, updated_at.
+**Data**: current API returns a compact list of strategy summaries (`agent_id`, `template`, primary `model`). The richer prototype columns (fork lineage, status, last eval, token budget) require additional engine aggregation.
 
 **Components**: `StrategiesTable`, `StatusFilter`, `TemplateFilter`, `SearchBox`, `BulkActions` (currently only "New from template" and "New strategy").
 
-**Endpoints**: `GET /api/strategies?status=…&template=…&q=…`.
+**Endpoints**: `GET /api/strategies`.
 
-**Gaps**:
-- ⚠ **`status` field doesn't exist on `StrategyBundle`**. Either compute (`Validated` if has eval attestation; `Warnings` if validator returned non-empty; `Draft` otherwise; `Archived` flag stored) or add a column. **Recommendation**: store `archived: bool` and `published_at: Option<DateTime>` (already exists), and *compute* the rest from those + warnings count + has-eval-attestation.
+**Current status / gaps**:
+- ⚠ **Status is not stored on `Strategy`.** Compute UI status from validation output, archive state, and eval attestations rather than adding a second source of truth.
 - ⚠ **`forked_from` not tracked**. Add `parent_bundle_id: Option<String>` to `PublicManifest`. Migration: `ALTER TABLE bundles ADD COLUMN parent_bundle_id TEXT REFERENCES bundles(bundle_id)`. Set on agent-driven "Draft variant from this".
 - ⚠ **Last eval column** ("1.62 · bull-q1-25") needs a denormalized cache or a JOIN to `eval_runs`. Pick one in the engine API; the UI doesn't care.
-- "New from template" button → opens a small modal listing templates with a one-line description of each. Selection navigates to `/setup?template=mean_reversion` to trigger a templated wizard. **Need template catalog endpoint** (`GET /api/wizard/templates`).
+- "New from template" button → opens a small modal listing templates with a one-line description of each. Selection navigates to `/setup?template=mean_reversion` to trigger a templated wizard. Template catalog is available at `GET /api/templates`.
 
 ### 6.4 Inspector / Authoring (`/authoring/:bundleId`)
 
@@ -284,16 +284,19 @@ The progress panel re-renders on `bundle_patch`. The chat thread renders all eve
 **Components**: `BundleOutline`, `SlotEditor`, `LivePreview`, `ValidationRail`, `TokenEstimate`, `BundleJsonView`.
 
 **Endpoints**:
-- `GET /api/strategies/:id` — full bundle.
-- `PUT /api/strategies/:id` — save draft.
-- `POST /api/strategies/:id/preview-slot` — runs the slot against a fixture, returns the decision JSON.
-- `GET /api/strategies/:id/fixtures` — list of available fixtures (BTC/USD, ETH/USD, …).
+- `GET /api/strategy/:id` — full bundle.
+- `PUT /api/strategy/:id/slot/:role` — legacy slot mutation.
+- `POST /api/strategy/:id/agents`, `DELETE /api/strategy/:id/agents/:role`, `PATCH /api/strategy/:id/agents/:role` — AgentRef composition.
+- `PUT /api/strategy/:id/pipeline` — pipeline kind / graph edge update.
+- `PUT /api/strategy/:id/risk` — risk config update.
+- `POST /api/strategy/:id/validate` — validation.
 - `POST /api/eval/runs` — kick off "Run eval" button.
 
-**Gaps**:
-- ⚠ **Validation warnings** are hardcoded in the prototype. Real validators exist for token budget (use `xvision-engine/src/tokens.rs::estimate_pipeline_tokens`); the rest ("Regime classifier missing fixture") need to be specced as a `Vec<ValidationDiagnostic>` returned by `engine::api::strategy::validate(id)`.
+**Current status / gaps**:
+- ✅ **Inspector edits real AgentRefs/PipelineDef.** Fixed legacy slots still parse, but the current authoring surface is strategy composition over workspace agents.
+- ⚠ **Validation warnings** are still narrower than the prototype. Real validators exist for bundle shape and token budget; richer diagnostics should be returned by `engine::api::strategy::validate(id)`.
 - ⚠ **Live preview** depends on running a single slot in isolation. The agent crate (`xvision-engine/src/agent/execute.rs`) can do this; needs an API wrapper that takes `(slot_name, fixture_id)` and returns the decision + token usage.
-- ⚠ **"Eval attestations"** node in outline tree — backed by `eval_attestations` table per the eval engine plan, but UI affordance not in prototype. Punt to v1.1 OR show a simple list of run IDs the bundle has been evaluated against.
+- ⚠ **"Eval attestations"** node in outline tree — `eval_attestations` exists in storage/API, but UI affordance remains thin. Show a simple list in v1 or punt richer publishing controls to v1.1.
 - "Test slot" button (header) ≈ "Live preview" right-pane action — collapse one of them into the other.
 - Bundle JSON preview is truncated (`...`) in the prototype — make it an expandable `<details>` with the full JSON.
 - ⚠ **"Use this agent" toggle** (top of slot editor) — semantics unclear. Best guess: lets the user disable a slot for the current run (e.g., bypass the Intern). Confirm with engine team before wiring.
@@ -306,11 +309,11 @@ The progress panel re-renders on `bundle_patch`. The chat thread renders all eve
 
 **Components**: `RunsTable` (sortable), `RunFilters`, `CompareBar` (sticky bottom when ≥2 selected), `NewRunButton`.
 
-**Endpoints**: `GET /api/eval/runs?strategy=…&scenario=…&status=…&mode=…&from=…&sort=…&page=…&limit=…`.
+**Endpoints**: `GET /api/eval/runs?strategy=…&scenario=…&status=…`.
 
-**Gaps**:
-- ⚠ **Persistent `eval_runs` table** is planned but not implemented. Eval currently produces transient `BacktestResult`. Without the table the leaderboard is empty. **Blocker for screen — implement `eval_runs` first** (covered by the eval engine plan).
-- ⚠ **"Running 42%" status** — needs progress events from the eval pipeline. SSE channel `GET /api/eval/runs/:id/events` could push `{ progress: 0.42 }`. For now, poll the run row every 2s while status is `Running`.
+**Current status / gaps**:
+- ✅ **Persistent `eval_runs` ships.** `RunStore` persists run metadata, decisions, equity samples, findings, and attestations in SQLite.
+- ✅ **Live chart streaming ships for backtests.** `GET /api/eval/runs/:id/stream` streams `RunChartEvent`s for live chart updates; the REST snapshot lives at `GET /api/eval/runs/:id/chart`.
 - ⚠ **"Mine" vs "All" vs "Published"** — implies a `created_by` and a `published_at` on runs. Single-user v1 → "Mine" == "All". Hide the tabs in v1, or render but no-op the filter.
 - "Compare selected (0)" → enables when ≥2 rows checked, navigates to `/eval/compare?ids=…`.
 
@@ -324,8 +327,8 @@ The progress panel re-renders on `bundle_patch`. The chat thread renders all eve
 
 **Endpoints**:
 - `GET /api/eval/runs/:id` — header + KPIs + equity series.
-- `GET /api/eval/runs/:id/trades?page=…` — paginated trade ledger.
-- `GET /api/eval/runs/:id/findings` — list of findings (⚠ gap).
+- `GET /api/eval/runs/:id/chart` — chart-ready bars, indicators, equity, drawdown, position, and markers.
+- `GET /api/eval/runs/:id/stream` — live chart SSE while a run is active.
 
 **Gaps** (the user explicitly flagged this area):
 
@@ -456,7 +459,7 @@ Localhost-only daemon in v1, no auth on the API surface. **Frontend assumption**
 |---|---|---|
 | Wizard chat | `POST /api/wizard/chat` | `tool_call`, `tool_result`, `agent_message`, `bundle_patch`, `done` |
 | Chat rail | `POST /api/chat-rail/chat` | same as wizard, no `bundle_patch` |
-| Run progress | `GET /api/eval/runs/:id/events` | `progress`, `cycle_start`, `cycle_end`, `error`, `done` |
+| Live run chart | `GET /api/eval/runs/:id/stream` | `equity`, `marker`, `status` |
 
 One `useSSE(endpoint, body)` hook handles all three. JSON-encoded events, one per `data:` line.
 
@@ -466,32 +469,25 @@ Every list has a designed empty state. Authoring "no slots yet" → CTA to add t
 
 ---
 
-## 9. Backend gaps that block v1
+## 9. Backend follow-ups after the v1 cut
 
-Consolidated list of every gap surfaced above, ranked by blocker severity. Each row has a recommended owner crate and a single-sentence resolution.
+Consolidated list of gaps surfaced above, updated after the dashboard/eval implementation pass. These no longer describe blockers for rendering the current app; they describe the remaining deltas from the fuller prototype.
 
 | # | Gap | Severity | Resolution | Owner |
 |---|---|---|---|---|
-| 1 | `eval_runs` table not implemented; metrics transient | **Blocker** | Persist `BacktestResult` per run; eval engine plan covers it | `xvision-eval` + migrations |
-| 2 | `xvision-dashboard` crate doesn't exist | **Blocker** | Plan 2d Tasks 1–3 (scaffold axum server, static serve, design tokens) | new `xvision-dashboard` |
-| 3 | WizardLoop + SSE endpoint unbuilt | **Blocker** for `/setup` | Plan 2d Task 6 — implement `wizard_loop.rs` + `POST /api/wizard/chat` | `xvision-dashboard` |
-| 4 | Findings have no schema, no extractor, no storage | **High** | Spec'd above (§6.6); rule-based extractor first, LLM second | `xvision-eval` |
-| 5 | Trade ledger not persisted per run | **High** | New `trades` table; eval pipeline writes on close | `xvision-eval` |
-| 6 | StrategyBundle status field not stored | **Medium** | Add `archived: bool`; compute the rest from existing fields | `xvision-engine` |
-| 7 | StrategyBundle `parent_bundle_id` (lineage) missing | **Medium** | Add column; set on "Draft variant from this" | `xvision-engine` |
-| 8 | Validation diagnostics not specced | **Medium** | Define `ValidationDiagnostic { code, severity, msg, hint }` returned by `validate()` | `xvision-engine` |
-| 9 | Live-preview slot endpoint missing | **Medium** | Wrap `agent::execute` in `POST /api/strategies/:id/preview-slot` | `xvision-engine` |
-| 10 | `/api/health` aggregator missing | **Medium** | New endpoint probing Alpaca/LLMs/data dir; fast (<200ms) | `xvision-dashboard` |
-| 11 | Open positions ephemeral (executor in-memory only) | **Medium** | Snapshot to `paper_positions` table after each cycle close | `xvision-execution` |
-| 12 | Run "progress" not emitted; no SSE channel | **Medium** | `GET /api/eval/runs/:id/events` SSE; eval emits `progress` events | `xvision-eval` + `xvision-dashboard` |
-| 13 | Chat rail backend unbuilt | **Medium** | Chat rail persistence plan (Phase A–E) | new `xvision-engine/src/chat_session/` |
-| 14 | `?seed=` context handler for findings → wizard | **Medium** | Plan 2d Task 7a; needed for "Draft variant from this →" | `xvision-dashboard` |
-| 15 | Wizard template catalog endpoint | **Low** | `GET /api/wizard/templates` enumerating bundled templates | `xvision-dashboard` |
-| 16 | `eval_attestations` UI slot in Inspector unspecced | **Low** | Punt to v1.1; show simple list in v1 | `xvision-dashboard` |
-| 17 | Activity feed on Home has no event source | **Low** | Filter `api_audit` to a curated `kind` list | `xvision-engine` |
-| 18 | Inspector "Use this agent" toggle semantics unclear | **Low** | Confirm with engine team; best guess: per-run slot disable | docs |
+| 1 | Findings extraction/storage is implemented but still shallow | **High** | Continue rule-based extractor first, LLM extractor second | `xvision-engine` |
+| 2 | Trade ledger is folded into decision rows, not a dedicated paginated table | **High** | Add a dedicated trade table only if the UI needs independent pagination/export | `xvision-engine` |
+| 3 | Strategy status remains computed, not stored | **Medium** | Compute from validation, archive state, and eval attestations | `xvision-engine` |
+| 4 | Strategy parent lineage missing | **Medium** | Add `parent_bundle_id` / fork metadata and set on "Draft variant from this" | `xvision-engine` |
+| 5 | Validation diagnostics are narrower than the prototype | **Medium** | Return richer `ValidationDiagnostic { code, severity, msg, hint }` values | `xvision-engine` |
+| 6 | Live-preview slot endpoint missing | **Medium** | Wrap `agent::execute` in a route owned by strategy/agent preview | `xvision-engine` + `xvision-dashboard` |
+| 7 | Open positions remain broker-derived / executor-local | **Medium** | Snapshot paper positions if the UI needs durable position history | `xvision-execution` |
+| 8 | `?seed=` context handler for findings → wizard | **Medium** | Resolve finding seeds into wizard context | `xvision-dashboard` |
+| 9 | `eval_attestations` UI slot in Inspector is thin | **Low** | Show run-linked attestations in v1; richer publish controls later | `xvision-dashboard` |
+| 10 | Activity feed on Home has no curated event source | **Low** | Filter `api_audit` to a curated `kind` list | `xvision-engine` |
+| 11 | Inspector "Use this agent" toggle semantics unclear | **Low** | Decide whether this means per-run role disable, archive, or no-op | docs |
 
-**The first three are hard blockers.** Everything else is degradable: build the screen, ship a stub, light up when the backend lands.
+None of these block rendering the current dashboard. Treat them as product-depth follow-ups: build the screen against the current API, then light up richer columns/actions as the backend aggregation lands.
 
 ---
 

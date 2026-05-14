@@ -9,14 +9,15 @@
 
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use chrono::Duration;
 use serde::Deserialize;
 use xvision_execution::broker_surface::{BrokerSurface, OrderRequest, Side};
 
 use crate::agent::llm::LlmDispatch;
-use crate::agent::pipeline::{run_pipeline, PipelineInputs};
+use crate::agent::pipeline::{run_pipeline, PipelineInputs, ResolvedAgentSlot};
+use crate::api::chart::{ChartEquityPoint, LiveDecisionRow, RunChartEvent, RunEventBus};
 use crate::strategies::Strategy;
 use crate::eval::executor::Executor;
 use crate::eval::metrics::{
@@ -29,15 +30,7 @@ use crate::eval::scenario::Scenario;
 use crate::eval::store::{DecisionRow, RunStore};
 use crate::tools::ToolRegistry;
 
-/// Reference base-asset price used to size orders in base units when the
-/// broker doesn't expose a live quote method. Production AlpacaPaperSurface
-/// recomputes notional from `get_position(symbol).current_price` internally
-/// — this constant is only the basis for the *base-asset units* number we
-/// hand the broker. v1 BTC-only.
-///
-/// Future: lift this into a `BrokerSurface::quote(asset)` method or a
-/// dedicated price-discovery dependency. Tracked for v1.1.
-const BTC_REFERENCE_PRICE_USD: f64 = 70_000.0;
+const DEFAULT_REFERENCE_PRICE_USD: f64 = 70_000.0;
 
 pub struct PaperExecutor {
     broker: Arc<dyn BrokerSurface>,
@@ -46,6 +39,8 @@ pub struct PaperExecutor {
     /// action emits a `ProgressEvent`. Send-when-no-subscribers is a
     /// no-op via `send_event`.
     progress: Option<ProgressTx>,
+    /// Optional live-stream event bus for dashboard SSE subscribers.
+    event_bus: Option<Arc<RunEventBus>>,
 }
 
 impl PaperExecutor {
@@ -55,6 +50,7 @@ impl PaperExecutor {
         Self {
             broker,
             progress: None,
+            event_bus: None,
         }
     }
 
@@ -65,12 +61,24 @@ impl PaperExecutor {
         Self {
             broker,
             progress: Some(progress),
+            event_bus: None,
         }
+    }
+
+    pub fn with_event_bus(mut self, bus: Arc<RunEventBus>) -> Self {
+        self.event_bus = Some(bus);
+        self
     }
 
     fn emit(&self, event: ProgressEvent) {
         if let Some(tx) = self.progress.as_ref() {
             send_event(tx, event);
+        }
+    }
+
+    async fn emit_chart(&self, run_id: &str, event: RunChartEvent) {
+        if let Some(bus) = self.event_bus.as_ref() {
+            bus.emit(run_id, event).await;
         }
     }
 }
@@ -85,13 +93,24 @@ struct TraderOutput {
 }
 
 impl TraderOutput {
-    fn flat() -> Self {
-        Self {
-            action: "flat".into(),
-            conviction: 0.0,
-            justification: "parse error or missing — fell back to flat".into(),
-        }
+    fn parse_strict(raw: &str, run_id: &str, decision_index: u32) -> Result<Self> {
+        serde_json::from_str::<Self>(raw).map_err(|e| {
+            anyhow!(
+                "run {} decision {}: trader output is invalid JSON: {}",
+                run_id,
+                decision_index,
+                e
+            )
+        })
     }
+}
+
+fn configured_reference_price_usd() -> f64 {
+    std::env::var("XVN_PAPER_REFERENCE_PRICE_USD")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        .filter(|v| *v > 0.0)
+        .unwrap_or(DEFAULT_REFERENCE_PRICE_USD)
 }
 
 fn is_actionable(action: &str) -> bool {
@@ -103,8 +122,9 @@ impl Executor for PaperExecutor {
     async fn run(
         &self,
         run: &mut Run,
-        bundle: &Strategy,
+        strategy: &Strategy,
         scenario: &Scenario,
+        agent_slots: &[ResolvedAgentSlot],
         dispatch: Arc<dyn LlmDispatch>,
         tools: Arc<ToolRegistry>,
         store: &RunStore,
@@ -115,9 +135,17 @@ impl Executor for PaperExecutor {
             run_id: run.id.clone(),
             estimated_tokens: 0,
         });
+        self.emit_chart(
+            &run.id,
+            RunChartEvent::Status {
+                phase: "running".into(),
+                message: None,
+            },
+        )
+        .await;
 
         let result = self
-            .run_inner(run, bundle, scenario, dispatch, tools, store)
+            .run_inner(run, strategy, scenario, agent_slots, dispatch, tools, store)
             .await;
 
         match &result {
@@ -131,12 +159,37 @@ impl Executor for PaperExecutor {
                     metrics: metrics.clone(),
                     tokens_used,
                 });
+                self.emit_chart(
+                    &run.id,
+                    RunChartEvent::Status {
+                        phase: "completed".into(),
+                        message: None,
+                    },
+                )
+                .await;
+                if let Some(bus) = self.event_bus.as_ref() {
+                    bus.drop_channel(&run.id).await;
+                }
             }
             Err(e) => {
+                if matches!(store.is_cancelled(&run.id).await, Ok(true)) {
+                    return result;
+                }
                 self.emit(ProgressEvent::RunFailed {
                     run_id: run.id.clone(),
                     error: e.to_string(),
                 });
+                self.emit_chart(
+                    &run.id,
+                    RunChartEvent::Status {
+                        phase: "failed".into(),
+                        message: Some(e.to_string()),
+                    },
+                )
+                .await;
+                if let Some(bus) = self.event_bus.as_ref() {
+                    bus.drop_channel(&run.id).await;
+                }
             }
         }
         result
@@ -147,8 +200,9 @@ impl PaperExecutor {
     async fn run_inner(
         &self,
         run: &mut Run,
-        bundle: &Strategy,
+        strategy: &Strategy,
         scenario: &Scenario,
+        agent_slots: &[ResolvedAgentSlot],
         dispatch: Arc<dyn LlmDispatch>,
         tools: Arc<ToolRegistry>,
         store: &RunStore,
@@ -158,17 +212,20 @@ impl PaperExecutor {
             .await?;
         run.status = RunStatus::Running;
 
+        // TODO(Task 5): pull from Strategy. For now we read the first
+        // venue_symbol off the scenario's asset list — preserves v1 BTC-only
+        // semantics (canonical scenarios all have asset[0].venue_symbol = "BTC/USD").
         let asset = scenario
-            .asset_universe
+            .asset
             .first()
-            .ok_or_else(|| anyhow::anyhow!("scenario {} has empty asset_universe", scenario.id))?
-            .clone();
+            .map(|a| a.venue_symbol.clone())
+            .ok_or_else(|| anyhow::anyhow!("scenario {} has empty asset list", scenario.id))?;
 
-        let cadence = Duration::minutes(bundle.manifest.decision_cadence_minutes as i64);
+        let cadence = Duration::minutes(strategy.manifest.decision_cadence_minutes as i64);
         if cadence.num_seconds() <= 0 {
             anyhow::bail!(
-                "bundle {} has non-positive decision_cadence_minutes",
-                bundle.manifest.id
+                "strategy {} has non-positive decision_cadence_minutes",
+                strategy.manifest.id
             );
         }
 
@@ -182,12 +239,16 @@ impl PaperExecutor {
         let mut n_trades = 0u32;
         let mut total_input_tokens: u64 = 0;
         let mut total_output_tokens: u64 = 0;
+        let mut reference_price_usd = configured_reference_price_usd();
         // Running peak for drawdown_pct in MetricsUpdated. Start at the
         // initial balance so the first tick's drawdown is well-defined.
         let mut peak_equity = initial_balance.max(0.0);
 
         let mut ts = scenario.time_window.start;
         while ts < scenario.time_window.end {
+            if store.is_cancelled(&run.id).await? {
+                anyhow::bail!("eval run cancelled");
+            }
             // Emit RunTick before pipeline work so dashboard progress
             // bars can advance even if the LLM call is slow.
             let elapsed = (ts - scenario.time_window.start).num_seconds() as f64;
@@ -211,7 +272,8 @@ impl PaperExecutor {
             });
 
             let outs = run_pipeline(PipelineInputs {
-                bundle,
+                strategy,
+                agent_slots,
                 seed_inputs: seed,
                 dispatch: dispatch.clone(),
                 tools: tools.clone(),
@@ -219,12 +281,21 @@ impl PaperExecutor {
             .await?;
             total_input_tokens += outs.total_input_tokens as u64;
             total_output_tokens += outs.total_output_tokens as u64;
+            run.actual_input_tokens = Some(total_input_tokens);
+            run.actual_output_tokens = Some(total_output_tokens);
+            store
+                .update_token_usage(&run.id, total_input_tokens, total_output_tokens)
+                .await?;
 
-            let parsed = outs
+            if store.is_cancelled(&run.id).await? {
+                anyhow::bail!("eval run cancelled");
+            }
+
+            let trader = outs
                 .trader
                 .as_ref()
-                .and_then(|t| serde_json::from_str::<TraderOutput>(&t.text()).ok())
-                .unwrap_or_else(TraderOutput::flat);
+                .ok_or_else(|| anyhow!("run {} decision {}: trader output missing", run.id, decision_idx))?;
+            let parsed = TraderOutput::parse_strict(&trader.text(), &run.id, decision_idx)?;
 
             let mut order_size: Option<f64> = None;
             let mut fill_price: Option<f64> = None;
@@ -232,8 +303,8 @@ impl PaperExecutor {
             let mut fee: Option<f64> = None;
 
             if is_actionable(&parsed.action) {
-                let usd_at_risk = balance * bundle.risk.risk_pct_per_trade;
-                let size = (usd_at_risk / BTC_REFERENCE_PRICE_USD).max(0.0);
+                let usd_at_risk = balance * strategy.risk.risk_pct_per_trade;
+                let size = (usd_at_risk / reference_price_usd).max(0.0);
                 let side = if parsed.action == "long_open" {
                     Side::Buy
                 } else {
@@ -244,13 +315,17 @@ impl PaperExecutor {
                     side,
                     size,
                     stop_loss_pct: Some(
-                        (bundle.risk.stop_loss_atr_multiple as f32).max(0.5),
+                        (strategy.risk.stop_loss_atr_multiple as f32).max(0.5),
                     ),
                     take_profit_pct: Some(5.0),
                     idempotency_key: format!("{}-{}", run.id, decision_idx),
                 };
                 let conf = self.broker.submit_order(req).await?;
                 fill_price = conf.fill_price;
+                if let Some(px) = conf.fill_price.filter(|px| *px > 0.0) {
+                    // Keep sizing in sync with the latest executable price.
+                    reference_price_usd = px;
+                }
                 fill_size = Some(conf.fill_size);
                 fee = conf.fee;
                 order_size = Some(size);
@@ -281,25 +356,37 @@ impl PaperExecutor {
                 conviction: parsed.conviction,
             });
 
-            store
-                .record_decision(&DecisionRow {
-                    run_id: run.id.clone(),
-                    decision_index: decision_idx,
-                    timestamp: ts,
-                    asset: asset.clone(),
-                    action: parsed.action.clone(),
-                    conviction: Some(parsed.conviction),
-                    justification: Some(parsed.justification.clone()),
-                    order_size,
-                    fill_price,
-                    fill_size,
-                    fee,
-                    pnl_realized: None,
-                })
-                .await?;
+            let decision_row = DecisionRow {
+                run_id: run.id.clone(),
+                decision_index: decision_idx,
+                timestamp: ts,
+                asset: asset.clone(),
+                action: parsed.action.clone(),
+                conviction: Some(parsed.conviction),
+                justification: Some(parsed.justification.clone()),
+                order_size,
+                fill_price,
+                fill_size,
+                fee,
+                pnl_realized: None,
+            };
+            store.record_decision(&decision_row).await?;
+            self.emit_chart(
+                &run.id,
+                RunChartEvent::Decision(LiveDecisionRow::from(&decision_row)),
+            )
+            .await;
 
             let post_balance = self.broker.balance().await?;
             store.record_equity(&run.id, ts, post_balance).await?;
+            self.emit_chart(
+                &run.id,
+                RunChartEvent::Equity(ChartEquityPoint {
+                    time: ts.timestamp(),
+                    equity_usd: post_balance,
+                }),
+            )
+            .await;
             equity_samples.push(post_balance);
 
             // Running drawdown — the running peak is updated after each
@@ -324,6 +411,10 @@ impl PaperExecutor {
             ts += cadence;
         }
 
+        if store.is_cancelled(&run.id).await? {
+            anyhow::bail!("eval run cancelled");
+        }
+
         let final_balance = self.broker.balance().await?;
         // Prepend the initial balance so equity_to_returns covers the first
         // tick's drift from the seed balance, not just inter-tick drift.
@@ -333,7 +424,7 @@ impl PaperExecutor {
 
         let returns = equity_to_returns(&full_curve);
         let periods_per_year =
-            annualization_periods_per_year(bundle.manifest.decision_cadence_minutes);
+            annualization_periods_per_year(strategy.manifest.decision_cadence_minutes);
 
         // Win rate from realized PnL is computed downstream once
         // PaperExecutor tracks entry/exit pairs. Until then it stays 0.0

@@ -408,6 +408,7 @@ mod tests {
                 stop_loss_pct: 5.0,
                 take_profit_pct: 10.0,
                 trader_summary: "AlwaysBuy test strategy for harness smoke test.".into(),
+                asset: None,
             })
         }
     }

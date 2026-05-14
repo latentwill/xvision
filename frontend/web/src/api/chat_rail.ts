@@ -42,10 +42,28 @@ export type WizardEvent =
   | { type: "done"; draft_id?: string | null }
   | { type: "error"; message: string };
 
+export type AgentProfile = "workspace" | "strategy_setup";
+
 export type ResolveSessionResp = {
   session_id: string;
   history: ChatMessage[];
 };
+
+export type ChatSessionSummary = {
+  id: string;
+  scope: ContextScope;
+  started_at: string;
+  last_activity_at: string;
+};
+
+export function createSession(
+  scope: ContextScope,
+): Promise<ResolveSessionResp> {
+  return apiFetch<ResolveSessionResp>("/api/chat-rail/sessions", {
+    method: "POST",
+    body: JSON.stringify({ scope }),
+  });
+}
 
 /// Resolve the chat-rail session for the current scope. Server returns
 /// the most-recent session matching the scope (with its full history),
@@ -70,6 +88,16 @@ export async function deleteSession(sessionId: string): Promise<void> {
   );
 }
 
+export function listSessions(): Promise<ChatSessionSummary[]> {
+  return apiFetch<ChatSessionSummary[]>("/api/chat-rail/sessions");
+}
+
+export function loadSessionHistory(sessionId: string): Promise<ChatMessage[]> {
+  return apiFetch<ChatMessage[]>(
+    `/api/chat-rail/sessions/${encodeURIComponent(sessionId)}/history`,
+  );
+}
+
 export async function* streamChat(
   req: {
     session_id: string;
@@ -81,6 +109,8 @@ export async function* streamChat(
     /// Explicit model id. When omitted, the dashboard falls back to
     /// [intern].model for the default provider.
     model?: string;
+    /// Prompt/tool profile for the shared agent runtime.
+    profile?: AgentProfile;
   },
   signal?: AbortSignal,
 ): AsyncGenerator<WizardEvent> {
@@ -88,6 +118,7 @@ export async function* streamChat(
     session_id: req.session_id,
     provider: req.provider,
     model: req.model,
+    profile: req.profile,
     message_len: req.message.length,
   });
   const res = await fetch("/api/chat-rail/chat", {
@@ -142,44 +173,19 @@ export async function* streamChat(
 }
 
 // ---------------------------------------------------------------------------
-// Scope derivation from the current location. Mirrors the rail's design in
-// ui-elements.md §1.4: open the rail with the scope matching the route the
-// user is currently on. The dashboard plan deliberately keeps Workspace as
-// the fallback; a per-route Route { route } scope is attached only for the
-// list pages (so the agent can see "this user is on /strategies", but on a
-// detail page like /authoring/:id the more specific Strategy scope wins).
+// Scope derivation from the current location. The rail is mounted once in the
+// app shell and intentionally keeps one shared workspace session across route
+// changes. Page-specific context belongs in messages/tool calls, not separate
+// rail sessions.
 export function scopeFromPath(pathname: string, search = ""): ContextScope {
-  if (pathname === "/" || pathname === "") return { scope: "workspace" };
-
-  const m = (re: RegExp) => pathname.match(re);
-
-  let r = m(/^\/authoring\/([^/?#]+)/);
-  if (r) return { scope: "strategy", draft_id: decodeURIComponent(r[1]) };
-
-  r = m(/^\/eval-runs\/compare$/);
-  if (r) return { scope: "compare", run_ids: runIdsFromSearch(search) };
-
-  r = m(/^\/eval-runs\/([^/?#]+)$/);
-  if (r) return { scope: "run", run_id: decodeURIComponent(r[1]) };
-
-  if (pathname === "/strategies") {
-    return { scope: "route", route: "/strategies" };
-  }
-  if (pathname === "/eval-runs") {
-    return { scope: "route", route: "/eval/runs" };
-  }
+  void pathname;
+  void search;
   return { scope: "workspace" };
 }
 
-function runIdsFromSearch(search: string): string[] {
-  const params = new URLSearchParams(search);
-  const ids = params.getAll("ids").flatMap((v) => v.split(","));
-  return ids.map((id) => id.trim()).filter(Boolean);
-}
-
-/// Stable key for caching session_id in localStorage. We keep one session
-/// per scope shape so navigating away and back resumes the conversation.
-/// Detail pages get their own session keyed by id.
+/// Stable key for session state. Workspace is the only rail-owned scope today;
+/// the other variants remain for server/API compatibility with historical
+/// sessions and future explicit context handoffs.
 export function scopeKey(scope: ContextScope): string {
   switch (scope.scope) {
     case "run":

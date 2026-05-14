@@ -3,6 +3,8 @@
 //! not-yet-finalized runs, signing-key bootstrap (auto-generate on
 //! first call, reuse on second), and audit-row write.
 
+#![allow(deprecated)] // canonical_scenarios() — see Task 8 (M2) deprecation note.
+
 use chrono::{Duration, TimeZone, Utc};
 use sqlx::SqlitePool;
 use xvision_engine::api::eval::{self};
@@ -22,20 +24,24 @@ async fn ctx_with_eval_tables() -> (ApiContext, tempfile::TempDir) {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/014_eval_agent_id.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     let dir = tempfile::tempdir().unwrap();
-    let ctx = ApiContext {
-        db: pool,
-        actor: Actor::Cli {
+    let ctx = ApiContext::new(
+        pool,
+        Actor::Cli {
             user: "operator".into(),
         },
-        xvn_home: dir.path().to_path_buf(),
-    };
+        dir.path().to_path_buf(),
+    );
     (ctx, dir)
 }
 
 async fn seed_completed_run(store: &RunStore, scenario_id: &str) -> Run {
     let mut run = Run::new_queued(
-        "h-bundle".into(),
+        "h-strategy".into(),
         scenario_id.into(),
         RunMode::Backtest,
     );
@@ -74,7 +80,7 @@ async fn attest_signs_completed_run_and_persists_attestation() {
     // Returned attestation is structurally sound + verifies against its
     // own pubkey.
     assert_eq!(att.scenario_id, scenario_id);
-    assert_eq!(att.strategy_bundle_hash, run.strategy_bundle_hash);
+    assert_eq!(att.agent_id, run.agent_id);
     assert!(!att.signature_hex.is_empty());
     assert!(!att.signing_pubkey_hex.is_empty());
     verify(&att).expect("self-verify must succeed");
@@ -108,7 +114,7 @@ async fn attest_rejects_run_without_metrics() {
     let scenario_id = canonical_scenarios()[0].id.clone();
     // Queued — no metrics computed.
     let mut run = Run::new_queued(
-        "h-bundle".into(),
+        "h-strategy".into(),
         scenario_id,
         RunMode::Backtest,
     );

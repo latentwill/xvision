@@ -25,7 +25,7 @@ pub struct RunStore {
 
 #[derive(Debug, Default, Clone)]
 pub struct ListFilter {
-    pub strategy_bundle_hash: Option<String>,
+    pub agent_id: Option<String>,
     pub scenario_id: Option<String>,
     pub status: Option<RunStatus>,
 }
@@ -68,13 +68,13 @@ impl RunStore {
 
         sqlx::query(
             "INSERT INTO eval_runs \
-             (id, strategy_bundle_hash, scenario_id, params_override_json, mode, status, \
+             (id, agent_id, scenario_id, params_override_json, mode, status, \
               started_at, completed_at, metrics_json, error, \
               estimated_total_tokens, actual_input_tokens, actual_output_tokens) \
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&run.id)
-        .bind(&run.strategy_bundle_hash)
+        .bind(&run.agent_id)
         .bind(&run.scenario_id)
         .bind(params_override_json)
         .bind(run.mode.as_str())
@@ -110,6 +110,62 @@ impl RunStore {
             anyhow::bail!("update_status: no run with id '{id}'");
         }
         Ok(())
+    }
+
+    /// Persist live LLM token usage for an in-flight run. Executors call this
+    /// after each completed pipeline cycle so dashboards can show actual token
+    /// progress before finalization.
+    pub async fn update_token_usage(
+        &self,
+        id: &str,
+        input_tokens: u64,
+        output_tokens: u64,
+    ) -> Result<()> {
+        let res = sqlx::query(
+            "UPDATE eval_runs \
+             SET actual_input_tokens = ?, actual_output_tokens = ? \
+             WHERE id = ?",
+        )
+        .bind(input_tokens as i64)
+        .bind(output_tokens as i64)
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .context("update eval_runs token usage")?;
+        if res.rows_affected() == 0 {
+            anyhow::bail!("update_token_usage: no run with id '{id}'");
+        }
+        Ok(())
+    }
+
+    /// Mark a queued/running run as cancelled. Returns false if the run exists
+    /// but is already terminal or otherwise no longer cancellable.
+    pub async fn cancel_active(&self, id: &str, reason: &str) -> Result<bool> {
+        let now = Utc::now().to_rfc3339();
+        let res = sqlx::query(
+            "UPDATE eval_runs \
+             SET status = 'cancelled', completed_at = ?, error = ? \
+             WHERE id = ? AND status IN ('queued', 'running')",
+        )
+        .bind(&now)
+        .bind(reason)
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .context("cancel active eval_run")?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    pub async fn is_cancelled(&self, id: &str) -> Result<bool> {
+        let row = sqlx::query("SELECT status FROM eval_runs WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await
+            .context("select eval_run status")?;
+        Ok(row
+            .and_then(|r| r.try_get::<String, _>("status").ok())
+            .as_deref()
+            == Some("cancelled"))
     }
 
     /// Sweep any runs left in `Queued` or `Running` status from a
@@ -159,7 +215,7 @@ impl RunStore {
 
     pub async fn get(&self, id: &str) -> Result<Run> {
         let row = sqlx::query(
-            "SELECT id, strategy_bundle_hash, scenario_id, params_override_json, \
+            "SELECT id, agent_id, scenario_id, params_override_json, \
                     mode, status, started_at, completed_at, metrics_json, error, \
                     estimated_total_tokens, actual_input_tokens, actual_output_tokens \
              FROM eval_runs WHERE id = ?",
@@ -172,19 +228,53 @@ impl RunStore {
         row_to_run(&row)
     }
 
+    pub async fn delete(&self, id: &str) -> Result<()> {
+        let mut tx = self.pool.begin().await.context("begin delete run tx")?;
+        sqlx::query("DELETE FROM eval_decisions WHERE run_id = ?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .context("delete eval_decisions")?;
+        sqlx::query("DELETE FROM eval_equity_samples WHERE run_id = ?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .context("delete eval_equity_samples")?;
+        sqlx::query("DELETE FROM eval_findings WHERE run_id = ?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .context("delete eval_findings")?;
+        sqlx::query("DELETE FROM eval_attestations WHERE run_id = ?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .context("delete eval_attestations")?;
+        let res = sqlx::query("DELETE FROM eval_runs WHERE id = ?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .context("delete eval_runs")?;
+        if res.rows_affected() == 0 {
+            anyhow::bail!("run not found: {id}");
+        }
+        tx.commit().await.context("commit delete run tx")?;
+        Ok(())
+    }
+
     pub async fn list(&self, filter: ListFilter) -> Result<Vec<Run>> {
         // Build the SQL dynamically with optional WHERE clauses. Using
         // sqlx::query (not query_as!) keeps this purely runtime — no
         // compile-time database connection needed.
         let mut sql = String::from(
-            "SELECT id, strategy_bundle_hash, scenario_id, params_override_json, \
+            "SELECT id, agent_id, scenario_id, params_override_json, \
                     mode, status, started_at, completed_at, metrics_json, error, \
                     estimated_total_tokens, actual_input_tokens, actual_output_tokens \
              FROM eval_runs",
         );
         let mut conditions: Vec<&'static str> = Vec::new();
-        if filter.strategy_bundle_hash.is_some() {
-            conditions.push("strategy_bundle_hash = ?");
+        if filter.agent_id.is_some() {
+            conditions.push("agent_id = ?");
         }
         if filter.scenario_id.is_some() {
             conditions.push("scenario_id = ?");
@@ -199,7 +289,7 @@ impl RunStore {
         sql.push_str(" ORDER BY started_at ASC");
 
         let mut q = sqlx::query(&sql);
-        if let Some(ref h) = filter.strategy_bundle_hash {
+        if let Some(ref h) = filter.agent_id {
             q = q.bind(h);
         }
         if let Some(ref s) = filter.scenario_id {
@@ -314,13 +404,13 @@ impl RunStore {
             serde_json::to_string(&signed_payload).context("serialize signed payload")?;
         sqlx::query(
             "INSERT INTO eval_attestations \
-             (id, run_id, strategy_bundle_hash, scenario_id, signed_metrics_json, \
+             (id, run_id, agent_id, scenario_id, signed_metrics_json, \
               signature_hex, signing_pubkey_hex, signed_at) \
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(id)
         .bind(run_id)
-        .bind(&att.strategy_bundle_hash)
+        .bind(&att.agent_id)
         .bind(&att.scenario_id)
         .bind(signed_metrics_json)
         .bind(&att.signature_hex)
@@ -335,7 +425,7 @@ impl RunStore {
     /// Reads back the most recent attestation for a run, if any.
     pub async fn get_attestation(&self, run_id: &str) -> Result<Option<EvalAttestation>> {
         let row = sqlx::query(
-            "SELECT strategy_bundle_hash, scenario_id, signed_metrics_json, \
+            "SELECT agent_id, scenario_id, signed_metrics_json, \
                     signature_hex, signing_pubkey_hex, signed_at \
              FROM eval_attestations \
              WHERE run_id = ? \
@@ -348,9 +438,9 @@ impl RunStore {
         .context("select eval_attestations")?;
         let Some(row) = row else { return Ok(None) };
 
-        let strategy_bundle_hash: String = row
-            .try_get("strategy_bundle_hash")
-            .context("read attestation strategy_bundle_hash")?;
+        let agent_id: String = row
+            .try_get("agent_id")
+            .context("read attestation agent_id")?;
         let scenario_id: String = row
             .try_get("scenario_id")
             .context("read attestation scenario_id")?;
@@ -385,7 +475,7 @@ impl RunStore {
             .with_timezone(&Utc);
 
         Ok(Some(EvalAttestation {
-            strategy_bundle_hash,
+            agent_id,
             scenario_id,
             metrics,
             tokens_used,
@@ -512,9 +602,9 @@ fn row_to_run(row: &sqlx::sqlite::SqliteRow) -> Result<Run> {
 
     Ok(Run {
         id: row.try_get("id").context("read id")?,
-        strategy_bundle_hash: row
-            .try_get("strategy_bundle_hash")
-            .context("read strategy_bundle_hash")?,
+        agent_id: row
+            .try_get("agent_id")
+            .context("read agent_id")?,
         scenario_id: row.try_get("scenario_id").context("read scenario_id")?,
         params_override,
         mode,
