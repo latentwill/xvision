@@ -87,6 +87,16 @@ pub async fn resolve(
         })?
         .to_string();
 
+    if !entry.enabled_models.iter().any(|m| m == &model) {
+        return Err(DashboardError::Validation {
+            field: "model".into(),
+            msg: format!(
+                "model `{model}` is not enabled for provider `{}`. Enable it in Settings → Providers before chatting.",
+                entry.name
+            ),
+        });
+    }
+
     let dispatch: Arc<dyn LlmDispatch> = match entry.kind {
         ProviderKind::Anthropic => Arc::new(AnthropicDispatch::new(api_key)),
         ProviderKind::OpenaiCompat => {
