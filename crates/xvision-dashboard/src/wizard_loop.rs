@@ -639,7 +639,7 @@ fn strategy_tool_defs() -> Vec<ToolDefinition> {
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "display_name": {"type": "string"},
+                    "display_name": {"type": "string", "minLength": 1},
                     "description": {"type": "string"},
                     "asset_class": {"type": "string"},
                     "asset": {"type": "array", "items": {"type": "object"}},

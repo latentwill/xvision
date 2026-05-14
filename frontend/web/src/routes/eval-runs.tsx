@@ -580,6 +580,9 @@ function StartEvalDialog({
 
   const ready =
     agentId.length > 0 && scenarioId.length > 0 && !start.isPending;
+  const selectedStrategy = (strategies.data ?? []).find(
+    (s) => s.agent_id === agentId,
+  );
 
   function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -588,6 +591,7 @@ function StartEvalDialog({
       mode,
       providers,
       brokers,
+      strategy: selectedStrategy,
     });
     if (blocked) {
       setPreflightError(blocked);
@@ -753,10 +757,12 @@ function evalPreflightError({
   mode,
   providers,
   brokers,
+  strategy,
 }: {
   mode: RunMode;
   providers: UseQueryResult<ProvidersReport>;
   brokers: UseQueryResult<BrokersReport>;
+  strategy?: StrategyListItem;
 }): string | null {
   if (providers.isPending || brokers.isPending) {
     return "Still loading eval prerequisites.";
@@ -781,6 +787,23 @@ function evalPreflightError({
   const defaultModel = providers.data?.default_model;
   if (!hasEnabledModel && !defaultModel) {
     return "Enable a provider model in Settings -> Providers before running eval.";
+  }
+
+  if (strategy) {
+    const requiredProviders = strategy.providers ?? [];
+    if (requiredProviders.length === 0) {
+      return "Pick a provider/model for the strategy agent before running eval.";
+    }
+    for (const providerName of requiredProviders) {
+      const row = rows.find((candidate) => candidate.name === providerName);
+      if (!row) {
+        return `provider '${providerName}' is not configured. Pick a configured provider/model for the strategy agent before running eval.`;
+      }
+      const noAuthProvider = row.api_key_env.trim().length === 0;
+      if (!row.api_key_set && !noAuthProvider) {
+        return `provider '${providerName}' has no API key set. Add it in Settings -> Providers before running eval.`;
+      }
+    }
   }
 
   const alpacaConfigured = brokers.data?.alpaca.configured === true;

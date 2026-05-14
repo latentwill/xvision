@@ -5,4 +5,12 @@ export type StrategySummary = { agent_id: string, display_name: string, template
  * Model summary for attached AgentRefs. Falls back to legacy slot config
  * and shows the first unique model plus a count when multiple are present.
  */
-model?: string, };
+model?: string,
+/**
+ * Unique provider names required by this strategy's executable slots.
+ */
+providers: Array<string>,
+/**
+ * Unique model ids required by this strategy's executable slots.
+ */
+models: Array<string>, };

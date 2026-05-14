@@ -77,6 +77,18 @@ async fn create_succeeds_with_valid_request() {
 }
 
 #[tokio::test]
+async fn create_rejects_blank_display_name() {
+    let ctx = test_ctx().await;
+    let mut req = valid_request();
+    req.display_name = "   ".into();
+
+    let err = create(&ctx, req).await.unwrap_err();
+
+    assert!(matches!(err, ApiError::Validation(_)));
+    assert!(format!("{err}").contains("display_name is required"));
+}
+
+#[tokio::test]
 async fn create_succeeds_with_hour4_granularity() {
     let ctx = test_ctx().await;
     let mut req = valid_request();

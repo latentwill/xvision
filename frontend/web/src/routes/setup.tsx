@@ -95,6 +95,10 @@ export function SetupRoute() {
   async function send() {
     if (!sessionId || !input.trim() || isStreaming) return;
     setError(null);
+    if (!defaultPick) {
+      setError("Pick provider models in Settings → Providers before the wizard can run.");
+      return;
+    }
     const userText = input.trim();
     setInput("");
     setBubbles((b) => [
@@ -111,8 +115,8 @@ export function SetupRoute() {
         {
           session_id: sessionId,
           message: userText,
-          provider: defaultPick?.provider,
-          model: defaultPick?.model,
+          provider: defaultPick.provider,
+          model: defaultPick.model,
           profile: "strategy_setup",
         },
         ctrl.signal,

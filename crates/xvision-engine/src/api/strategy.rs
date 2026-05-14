@@ -42,6 +42,12 @@ pub struct StrategySummary {
     /// and shows the first unique model plus a count when multiple are present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// Unique provider names required by this strategy's executable slots.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub providers: Vec<String>,
+    /// Unique model ids required by this strategy's executable slots.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub models: Vec<String>,
 }
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
@@ -138,7 +144,8 @@ async fn list_inner(ctx: &ApiContext) -> ApiResult<Vec<StrategySummary>> {
             .load(&id)
             .await
             .map_err(|e| ApiError::Internal(e.to_string()))?;
-        let model = model_summary(ctx, &agent_store, &strategy).await?;
+        let inventory = provider_model_inventory(ctx, &agent_store, &strategy).await?;
+        let model = model_summary(&inventory.models);
         let tags = strategy_tags(&strategy);
         out.push(StrategySummary {
             agent_id: strategy.manifest.id.clone(),
@@ -147,17 +154,25 @@ async fn list_inner(ctx: &ApiContext) -> ApiResult<Vec<StrategySummary>> {
             decision_cadence_minutes: strategy.manifest.decision_cadence_minutes,
             tags,
             model,
+            providers: inventory.providers,
+            models: inventory.models,
         });
     }
     Ok(out)
 }
 
-async fn model_summary(
+#[derive(Default)]
+struct ProviderModelInventory {
+    providers: Vec<String>,
+    models: Vec<String>,
+}
+
+async fn provider_model_inventory(
     ctx: &ApiContext,
     agent_store: &AgentStore,
     strategy: &Strategy,
-) -> ApiResult<Option<String>> {
-    let mut models = Vec::new();
+) -> ApiResult<ProviderModelInventory> {
+    let mut inventory = ProviderModelInventory::default();
 
     for agent_ref in &strategy.agents {
         let agent = agent_store
@@ -174,11 +189,12 @@ async fn model_summary(
             continue;
         };
         for slot in agent.slots {
-            push_unique_model(&mut models, slot.model);
+            push_unique_trimmed(&mut inventory.providers, slot.provider);
+            push_unique_trimmed(&mut inventory.models, slot.model);
         }
     }
 
-    if models.is_empty() {
+    if inventory.models.is_empty() && inventory.providers.is_empty() {
         // Legacy slot fallback for older strategy JSON. Trader is the
         // decision-maker, so it wins over advisory/scoring slots.
         if let Some(slot) = strategy
@@ -187,24 +203,31 @@ async fn model_summary(
             .or(strategy.intern_slot.as_ref())
             .or(strategy.regime_slot.as_ref())
         {
-            push_unique_model(&mut models, slot.effective_model());
+            if let Some(provider) = slot.provider.as_ref() {
+                push_unique_trimmed(&mut inventory.providers, provider.clone());
+            }
+            push_unique_trimmed(&mut inventory.models, slot.effective_model());
         }
     }
 
-    Ok(match models.as_slice() {
+    Ok(inventory)
+}
+
+fn model_summary(models: &[String]) -> Option<String> {
+    match models {
         [] => None,
         [one] => Some(one.clone()),
         [first, rest @ ..] => Some(format!("{first} +{}", rest.len())),
-    })
+    }
 }
 
-fn push_unique_model(models: &mut Vec<String>, model: String) {
-    let model = model.trim();
-    if model.is_empty() {
+fn push_unique_trimmed(items: &mut Vec<String>, value: String) {
+    let value = value.trim();
+    if value.is_empty() {
         return;
     }
-    if !models.iter().any(|m| m == model) {
-        models.push(model.to_string());
+    if !items.iter().any(|m| m == value) {
+        items.push(value.to_string());
     }
 }
 

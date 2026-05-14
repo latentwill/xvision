@@ -13,6 +13,8 @@ export type StrategyListItem = {
   decision_cadence_minutes: number;
   tags?: string[];
   model?: string;
+  providers?: string[];
+  models?: string[];
 };
 
 export type PipelineKind = "single" | "sequential" | "graph";
