@@ -67,7 +67,7 @@ function getSnapshot() {
   return snapshot;
 }
 
-export function setThemePreference(preference: ThemePreference) {
+function setThemePreference(preference: ThemePreference) {
   safeStorageSet(THEME_PREFERENCE_KEY, preference);
   if (preference === "folio-dark" || preference === "black") {
     safeStorageSet(THEME_DARK_KEY, preference);

@@ -31,6 +31,6 @@ export type AssistantBubble = {
   tools: Tool[];
 };
 
-export type UserBubble = { role: "user"; text: string };
+type UserBubble = { role: "user"; text: string };
 
 export type Bubble = UserBubble | AssistantBubble;

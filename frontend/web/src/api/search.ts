@@ -24,7 +24,7 @@ export type SearchHit = {
   bm25_score: number;
 };
 
-export type SearchResponse = {
+type SearchResponse = {
   hits: SearchHit[];
 };
 

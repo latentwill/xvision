@@ -86,7 +86,7 @@ export function useBarsFetchJob(spec: BarsFetchSpec | null) {
   };
 }
 
-export function buildBarsFetchArgv(
+function buildBarsFetchArgv(
   spec: Omit<BarsFetchSpec, "invalidateQueryKeys">,
 ) {
   return [

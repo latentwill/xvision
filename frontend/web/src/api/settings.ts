@@ -7,13 +7,10 @@ import type {
   AddProviderRequest,
   AlpacaTestReport,
   BrokersReport,
-  DaemonReport,
   FactoryResetReport,
-  IdentityReport,
   ProviderModelsReport,
   ProviderRow,
   ProvidersReport,
-  RegenIdentityReport,
   TestConnectionReport,
   UpdateProviderRequest,
   WipeDbReport,
@@ -80,14 +77,6 @@ export function testAlpacaConnection(): Promise<AlpacaTestReport> {
   );
 }
 
-export function getDaemon(): Promise<DaemonReport> {
-  return apiFetch<DaemonReport>("/api/settings/daemon");
-}
-
-export function getIdentity(): Promise<IdentityReport> {
-  return apiFetch<IdentityReport>("/api/settings/identity");
-}
-
 // ─── Providers CRUD ────────────────────────────────────────────────────────
 
 export function listProviders(): Promise<ProvidersReport> {
@@ -120,22 +109,6 @@ export function removeProvider(name: string): Promise<void> {
   return apiFetch<void>(
     `/api/settings/providers/${encodeURIComponent(name)}`,
     { method: "DELETE" },
-  );
-}
-
-/// Point `[intern]` at this provider so the previous default becomes
-/// deletable. `model` is optional; when omitted the existing
-/// `intern.model` is kept (the operator decides whether to update it).
-export function setDefaultProvider(
-  name: string,
-  body: { model?: string } = {},
-): Promise<void> {
-  return apiFetch<void>(
-    `/api/settings/providers/${encodeURIComponent(name)}/set-default`,
-    {
-      method: "POST",
-      body: JSON.stringify(body),
-    },
   );
 }
 
@@ -186,16 +159,6 @@ export function dangerWipeDb(): Promise<WipeDbReport> {
     method: "POST",
     body: JSON.stringify({ confirm: DANGER_CONFIRM_TOKEN }),
   });
-}
-
-export function dangerRegenIdentity(): Promise<RegenIdentityReport> {
-  return apiFetch<RegenIdentityReport>(
-    "/api/settings/danger/regen-identity",
-    {
-      method: "POST",
-      body: JSON.stringify({ confirm: DANGER_CONFIRM_TOKEN }),
-    },
-  );
 }
 
 export function dangerFactoryReset(): Promise<FactoryResetReport> {

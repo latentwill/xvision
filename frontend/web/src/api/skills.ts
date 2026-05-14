@@ -40,10 +40,6 @@ export async function listSkills(
   return res.items;
 }
 
-export async function getSkill(skillId: string): Promise<Skill> {
-  return apiFetch<Skill>(`/api/skills/${encodeURIComponent(skillId)}`);
-}
-
 export async function createSkill(body: CreateSkillBody): Promise<Skill> {
   return apiFetch<Skill>("/api/skills", {
     method: "POST",

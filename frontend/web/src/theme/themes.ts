@@ -1,9 +1,9 @@
 export type ThemePreference = "auto" | "light" | "folio-dark" | "black";
 export type ResolvedTheme = "light" | "folio-dark" | "black";
-export type ThemeMode = "light" | "dark";
+type ThemeMode = "light" | "dark";
 export type SystemTheme = "light" | "dark";
 
-export type ChartThemeDefinition = {
+type ChartThemeDefinition = {
   background: string;
   text: string;
   grid: string;
