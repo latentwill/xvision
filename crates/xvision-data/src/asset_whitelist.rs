@@ -122,5 +122,10 @@ pub fn to_alpaca_pair(symbol: &str) -> String {
 }
 
 fn normalize_symbol(raw: &str) -> String {
-    raw.trim().to_ascii_uppercase()
+    let upper = raw.trim().to_ascii_uppercase();
+    upper
+        .strip_suffix("USD")
+        .filter(|base| !base.contains('/'))
+        .map(str::to_string)
+        .unwrap_or(upper)
 }

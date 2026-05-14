@@ -27,6 +27,7 @@ fn alpaca_crypto_pair_formats_usd_venue_symbol() {
 #[test]
 fn alpaca_crypto_asset_accepts_pair_and_lowercase_forms() {
     assert_eq!(alpaca_crypto_asset("eth/usd").unwrap().symbol, "ETH");
+    assert_eq!(alpaca_crypto_asset("ETHUSD").unwrap().symbol, "ETH");
     assert_eq!(alpaca_crypto_asset(" sol ").unwrap().venue_symbol, "SOL/USD");
     assert!(alpaca_crypto_asset("XRP").is_none());
 }
