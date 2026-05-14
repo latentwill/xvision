@@ -19,6 +19,7 @@ import type {
   BrokerEntry,
   ProviderRow,
   Scenario,
+  StrategySummary,
 } from "@/api/types.gen";
 
 vi.mock("@/api/eval", async () => {
@@ -164,9 +165,21 @@ function scenario(overrides: Partial<Scenario> = {}): Scenario {
 function mockReady({
   providers = [provider()],
   alpaca = broker(),
+  strategies = [
+    {
+      agent_id: "01TEST",
+      display_name: "Trend 4H",
+      template: "trend_follower",
+      decision_cadence_minutes: 240,
+      tags: [],
+      providers: ["openai"],
+      models: ["gpt-4.1-mini"],
+    },
+  ],
 }: {
   providers?: ProviderRow[];
   alpaca?: BrokerEntry;
+  strategies?: StrategySummary[];
 } = {}) {
   vi.mocked(evalApi.listRuns).mockResolvedValue([]);
   vi.mocked(scenariosApi.listScenarios).mockResolvedValue([scenario()]);
@@ -186,16 +199,7 @@ function mockReady({
       note: "post-v1",
     }),
   });
-  vi.mocked(strategyApi.listStrategies).mockResolvedValue([
-    {
-      agent_id: "01TEST",
-      display_name: "Trend 4H",
-      template: "trend_follower",
-      decision_cadence_minutes: 240,
-      providers: ["openai"],
-      models: ["gpt-4.1-mini"],
-    },
-  ]);
+  vi.mocked(strategyApi.listStrategies).mockResolvedValue(strategies);
 }
 
 describe("EvalRunsRoute", () => {
@@ -343,7 +347,25 @@ describe("EvalRunsRoute", () => {
     await waitFor(() => expect(startButton).not.toBeDisabled());
     fireEvent.click(startButton);
 
-    expect(await screen.findByText(/Settings -> Providers/)).toBeInTheDocument();
+    expect(await screen.findByText(/Add a provider\/API key/)).toBeInTheDocument();
+    expect(evalApi.startRun).not.toHaveBeenCalled();
+  });
+
+  it("shows a provider setup action when no providers are configured", async () => {
+    mockReady({ providers: [] });
+    vi.mocked(evalApi.startRun).mockResolvedValue({} as never);
+
+    renderRoute("/eval-runs?strategy=01TEST&start=1");
+
+    await screen.findByRole("option", { name: /User 4H/ });
+    const scenarioSelect = screen.getByLabelText("Scenario") as HTMLSelectElement;
+    fireEvent.change(scenarioSelect, { target: { value: "user-scenario-4h" } });
+    const startButton = screen.getByRole("button", { name: "Start" });
+    await waitFor(() => expect(startButton).not.toBeDisabled());
+    fireEvent.click(startButton);
+
+    const setup = await screen.findByRole("link", { name: "Settings -> Providers" });
+    expect(setup).toHaveAttribute("href", "/settings/providers");
     expect(evalApi.startRun).not.toHaveBeenCalled();
   });
 
@@ -372,6 +394,38 @@ describe("EvalRunsRoute", () => {
     expect(evalApi.startRun).not.toHaveBeenCalled();
   });
 
+  it("blocks eval launch when the strategy model is not enabled for its provider", async () => {
+    mockReady({
+      providers: [provider({ enabled_models: ["gpt-4.1-mini"] })],
+      strategies: [
+        {
+          agent_id: "01TEST",
+          display_name: "Trend 4H",
+          template: "trend_follower",
+          decision_cadence_minutes: 240,
+          tags: [],
+          providers: ["openai"],
+          models: ["gpt-4o"],
+        },
+      ],
+    });
+    vi.mocked(evalApi.startRun).mockResolvedValue({} as never);
+
+    renderRoute("/eval-runs?strategy=01TEST&start=1");
+
+    await screen.findByRole("option", { name: /User 4H/ });
+    const scenarioSelect = screen.getByLabelText("Scenario") as HTMLSelectElement;
+    fireEvent.change(scenarioSelect, { target: { value: "user-scenario-4h" } });
+    const startButton = screen.getByRole("button", { name: "Start" });
+    await waitFor(() => expect(startButton).not.toBeDisabled());
+    fireEvent.click(startButton);
+
+    expect(
+      await screen.findByText(/model 'gpt-4o' is not enabled for provider 'openai'/),
+    ).toBeInTheDocument();
+    expect(evalApi.startRun).not.toHaveBeenCalled();
+  });
+
   it("blocks paper eval launch when Alpaca credentials are missing", async () => {
     mockReady({ alpaca: broker({ configured: false, stored: false }) });
     vi.mocked(evalApi.startRun).mockResolvedValue({} as never);
@@ -386,7 +440,9 @@ describe("EvalRunsRoute", () => {
     await waitFor(() => expect(startButton).not.toBeDisabled());
     fireEvent.click(startButton);
 
-    expect(await screen.findByText(/Settings -> Brokers/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/Configure Alpaca paper credentials/),
+    ).toBeInTheDocument();
     expect(evalApi.startRun).not.toHaveBeenCalled();
   });
 });
