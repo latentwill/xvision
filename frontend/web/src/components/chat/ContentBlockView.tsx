@@ -2,14 +2,7 @@ import { InlineChartCard } from "@/components/chat/inline-chart/InlineChartCard"
 import { ChatActionCard } from "@/components/chat/cards/ChatActionCard";
 import { ChatRunListCard } from "@/components/chat/cards/ChatRunListCard";
 import { ChatStrategyCard } from "@/components/chat/cards/ChatStrategyCard";
-import type { ContentBlock } from "@/api/chat_rail";
-
-export type RichDisplayBlock = Exclude<
-  ContentBlock,
-  | { type: "text"; text: string }
-  | { type: "tool_use"; id: string; name: string; input: unknown }
-  | { type: "tool_result"; tool_use_id: string; content: string }
->;
+import type { RichDisplayBlock } from "./types";
 
 export function ContentBlockView({ block }: { block: RichDisplayBlock }) {
   switch (block.type) {

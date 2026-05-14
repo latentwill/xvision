@@ -162,6 +162,10 @@ export function SetupRoute() {
           </span>{" "}
           or <span className="text-text font-mono">"Mean reversion on BTC"</span>.
         </div>
+        <div className="mt-3 text-[13px] leading-snug text-text-3">
+          Only completed tool calls change the saved draft. Open the Inspector
+          to verify the manifest before eval.
+        </div>
       </Card>
 
       {providers.data && !defaultPick ? (
@@ -182,7 +186,7 @@ export function SetupRoute() {
       <Card className="p-0 overflow-hidden">
         <Thread bubbles={bubbles} streaming={isStreaming} />
         {error && (
-          <div className="border-t border-border px-4 py-3 text-[13px] text-rose-300 dark:text-rose-300 sm:px-5">
+          <div className="border-t border-border px-4 py-3 text-[13px] text-danger sm:px-5">
             {error}
           </div>
         )}
@@ -194,7 +198,7 @@ export function SetupRoute() {
             </div>
             <Link
               to={`/authoring/${draftId}`}
-              className="text-[13px] text-blue-300 hover:underline"
+              className="text-[13px] text-info hover:underline"
             >
               Open in Inspector →
             </Link>
@@ -365,6 +369,16 @@ function summarizeArgs(tool: string, args: unknown): string {
       return `${a["template"]} → ${a["name"]}`;
     case "update_slot":
       return String(a["slot"] ?? "");
+    case "update_manifest": {
+      const bits: string[] = [];
+      if (Array.isArray(a["asset_universe"])) {
+        bits.push(`assets=${(a["asset_universe"] as unknown[]).join(",")}`);
+      }
+      if (a["decision_cadence_minutes"]) {
+        bits.push(`cadence=${a["decision_cadence_minutes"]}m`);
+      }
+      return bits.join("; ");
+    }
     case "set_mechanical_param":
       return `${a["key"]} = ${JSON.stringify(a["value"])}`;
     case "set_risk_config":
@@ -395,6 +409,7 @@ function summarizeResult(tool: string, result: unknown): string {
         ? "ok"
         : `${(r.errors as string[] | undefined)?.length ?? 0} error(s)`;
     case "update_slot":
+    case "update_manifest":
       return Array.isArray(r.updated) ? (r.updated as string[]).join(", ") : "";
     case "set_risk_config":
       return r.applied ? String(r.applied) : "";
@@ -437,7 +452,7 @@ function BubbleView({ b }: { b: Bubble }) {
   if (b.role === "user") {
     return (
       <div className="max-w-[92%] self-end sm:max-w-[85%]">
-        <div className="whitespace-pre-wrap rounded-md border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-[13px] leading-snug dark:border-blue-400/30 dark:bg-blue-400/10 sm:text-[14px]">
+        <div className="whitespace-pre-wrap rounded-md border border-info/30 bg-info/10 px-3 py-2 text-[13px] leading-snug sm:text-[14px]">
           {b.text}
         </div>
       </div>
@@ -457,7 +472,7 @@ function BubbleView({ b }: { b: Bubble }) {
               <div
                 key={`tool-${i}`}
                 className={`flex items-start gap-1.5 text-[12px] leading-snug sm:text-[13px] ${
-                  row.ok ? "text-emerald-300" : "text-rose-300"
+                  row.ok ? "text-info" : "text-danger"
                 }`}
               >
                 <span className="leading-[1.4] flex-shrink-0">
@@ -552,6 +567,8 @@ function toolLogLine(
       return { ok: true, content: `Risk config updated (${t.resultSummary ?? "ok"})` };
     case "update_slot":
       return { ok: true, content: `Updated slot ${String(args["slot"] ?? "?")}` };
+    case "update_manifest":
+      return { ok: true, content: `Updated manifest (${t.resultSummary ?? "ok"})` };
     default:
       return {
         ok: true,

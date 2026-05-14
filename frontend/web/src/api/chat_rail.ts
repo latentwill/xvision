@@ -290,8 +290,9 @@ export async function* streamChat(
 // app shell and intentionally keeps one shared workspace session across route
 // changes. Page-specific context belongs in messages/tool calls, not separate
 // rail sessions.
-export function scopeFromPath(pathname: string): ContextScope {
+export function scopeFromPath(pathname: string, search = ""): ContextScope {
   void pathname;
+  void search;
   return { scope: "workspace" };
 }
 

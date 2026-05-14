@@ -68,6 +68,19 @@ pub struct UpdateSlotOut {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateManifestReq {
+    pub id: String,
+    pub asset_universe: Option<Vec<String>>,
+    pub decision_cadence_minutes: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateManifestOut {
+    pub id: String,
+    pub updated: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AddAgentRefRequest {
     pub strategy_id: String,
     pub agent_id: String,
@@ -211,6 +224,52 @@ pub async fn update_slot(
     }
     store.save(&strategy).await?;
     Ok(UpdateSlotOut {
+        id: req.id,
+        updated,
+    })
+}
+
+pub async fn update_manifest(
+    store: &dyn StrategyStore,
+    req: UpdateManifestReq,
+) -> anyhow::Result<UpdateManifestOut> {
+    let mut strategy = store.load(&req.id).await?;
+    let mut updated: Vec<String> = Vec::new();
+
+    if let Some(asset_universe) = req.asset_universe {
+        let mut normalized = Vec::with_capacity(asset_universe.len());
+        for asset in asset_universe {
+            let asset = asset.trim();
+            if asset.is_empty() {
+                anyhow::bail!("asset_universe cannot include blank assets");
+            }
+            if !normalized.iter().any(|item| item == asset) {
+                normalized.push(asset.to_string());
+            }
+        }
+        if normalized.is_empty() {
+            anyhow::bail!("asset_universe must include at least one asset");
+        }
+        strategy.manifest.asset_universe = normalized;
+        updated.push("asset_universe".into());
+    }
+
+    if let Some(decision_cadence_minutes) = req.decision_cadence_minutes {
+        if decision_cadence_minutes == 0 {
+            anyhow::bail!("decision_cadence_minutes must be greater than 0");
+        }
+        strategy.manifest.decision_cadence_minutes = decision_cadence_minutes;
+        updated.push("decision_cadence_minutes".into());
+    }
+
+    if updated.is_empty() {
+        anyhow::bail!(
+            "no manifest fields to update — supply asset_universe and/or decision_cadence_minutes"
+        );
+    }
+
+    store.save(&strategy).await?;
+    Ok(UpdateManifestOut {
         id: req.id,
         updated,
     })
@@ -404,7 +463,7 @@ pub async fn set_risk_config(
     store: &dyn StrategyStore,
     req: SetRiskConfigReq,
 ) -> anyhow::Result<SetRiskConfigOut> {
-    let (config, applied) = match (req.preset, req.explicit) {
+    let (config, applied, manifest_risk) = match (req.preset, req.explicit) {
         (Some(p), None) => {
             let preset = match p.as_str() {
                 "conservative" => RiskPreset::Conservative,
@@ -414,14 +473,15 @@ pub async fn set_risk_config(
                     "unknown preset `{other}` — must be one of: conservative, balanced, aggressive"
                 ),
             };
-            (preset.expand(), "preset")
+            (preset.expand(), "preset", p)
         }
-        (None, Some(cfg)) => (cfg, "explicit"),
+        (None, Some(cfg)) => (cfg, "explicit", "custom".to_string()),
         (Some(_), Some(_)) => anyhow::bail!("preset and explicit are mutually exclusive"),
         (None, None) => anyhow::bail!("supply either preset or explicit"),
     };
     let mut strategy = store.load(&req.id).await?;
     strategy.risk = config;
+    strategy.manifest.risk_preset_or_config = manifest_risk;
     store.save(&strategy).await?;
     Ok(SetRiskConfigOut {
         id: req.id,
@@ -434,10 +494,11 @@ pub async fn validate_draft(
     id: &str,
 ) -> anyhow::Result<ValidateDraftOut> {
     let strategy = store.load(id).await?;
-    let (ok, errors) = match validate_strategy(&strategy) {
-        Ok(()) => (true, vec![]),
-        Err(e) => (false, vec![e.to_string()]),
+    let errors = match validate_strategy(&strategy) {
+        Ok(()) => vec![],
+        Err(e) => vec![e.to_string()],
     };
+    let ok = errors.is_empty();
     Ok(ValidateDraftOut {
         id: id.to_string(),
         ok,
@@ -517,7 +578,44 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn set_risk_config_preset_balanced() {
+    async fn update_manifest_round_trips_inspector_fields() {
+        let (store, _td) = store_in_tmp();
+        let out = create_strategy(
+            &store,
+            CreateStrategyReq {
+                template: "mean_reversion".into(),
+                name: "x".into(),
+                creator: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let upd = update_manifest(
+            &store,
+            UpdateManifestReq {
+                id: out.id.clone(),
+                asset_universe: Some(vec!["BTC/USD".into()]),
+                decision_cadence_minutes: Some(360),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            upd.updated,
+            vec![
+                "asset_universe".to_string(),
+                "decision_cadence_minutes".to_string()
+            ]
+        );
+
+        let strategy = get_strategy(&store, &out.id).await.unwrap();
+        assert_eq!(strategy.manifest.asset_universe, vec!["BTC/USD"]);
+        assert_eq!(strategy.manifest.decision_cadence_minutes, 360);
+    }
+
+    #[tokio::test]
+    async fn set_risk_config_preset_balanced_updates_manifest_label() {
         let (store, _td) = store_in_tmp();
         let out = create_strategy(
             &store,
@@ -544,6 +642,7 @@ mod tests {
 
         let strategy = get_strategy(&store, &out.id).await.unwrap();
         assert_eq!(strategy.risk.risk_pct_per_trade, 0.015);
+        assert_eq!(strategy.manifest.risk_preset_or_config, "balanced");
     }
 
     #[tokio::test]
@@ -562,5 +661,38 @@ mod tests {
         let v = validate_draft(&store, &out.id).await.unwrap();
         assert!(v.ok);
         assert!(v.errors.is_empty());
+    }
+
+    #[tokio::test]
+    async fn validate_draft_reports_prompt_manifest_asset_and_cadence_drift() {
+        let (store, _td) = store_in_tmp();
+        let out = create_strategy(
+            &store,
+            CreateStrategyReq {
+                template: "mean_reversion".into(),
+                name: "x".into(),
+                creator: None,
+            },
+        )
+        .await
+        .unwrap();
+        let mut strategy = get_strategy(&store, &out.id).await.unwrap();
+        strategy.trader_slot.as_mut().unwrap().prompt =
+            "Trade BTC/USD on 6-hour candles. Return JSON.".into();
+        store.save(&strategy).await.unwrap();
+
+        let v = validate_draft(&store, &out.id).await.unwrap();
+
+        assert!(!v.ok);
+        assert!(
+            v.errors.iter().any(|e| e.contains("BTC/USD")),
+            "expected asset drift error, got {:?}",
+            v.errors,
+        );
+        assert!(
+            v.errors.iter().any(|e| e.contains("6h")),
+            "expected cadence drift error, got {:?}",
+            v.errors,
+        );
     }
 }

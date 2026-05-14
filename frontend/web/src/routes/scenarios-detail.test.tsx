@@ -1,7 +1,13 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as chartApi from "@/api/chart";
 import * as cliApi from "@/api/cli";
@@ -25,7 +31,13 @@ vi.mock("@/api/scenarios", async () => {
   const actual = await vi.importActual<typeof import("@/api/scenarios")>(
     "@/api/scenarios",
   );
-  return { ...actual, getScenario: vi.fn() };
+  return {
+    ...actual,
+    getScenario: vi.fn(),
+    cloneScenario: vi.fn(),
+    archiveScenario: vi.fn(),
+    deleteScenario: vi.fn(),
+  };
 });
 
 vi.mock("@/api/chart", async () => {
@@ -121,6 +133,69 @@ function renderRoute() {
 }
 
 describe("ScenariosDetailRoute bars cache actions", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("clones a scenario for editing", async () => {
+    vi.mocked(scenarioApi.getScenario).mockResolvedValue(scenario);
+    vi.mocked(chartApi.getScenarioChart).mockResolvedValue(chartPayload);
+    vi.mocked(scenarioApi.cloneScenario).mockResolvedValue({
+      ...scenario,
+      id: "sc_clone",
+      display_name: "Crypto range bound (clone)",
+      parent_scenario_id: scenario.id,
+      source: "Clone",
+    } as Scenario);
+
+    renderRoute();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Clone to edit" }));
+
+    await waitFor(() => {
+      expect(scenarioApi.cloneScenario).toHaveBeenCalledWith(
+        scenario.id,
+        expect.objectContaining({
+          display_name: "Crypto range bound (clone)",
+        }),
+      );
+    });
+  });
+
+  it("archives a scenario without leaving the detail view", async () => {
+    vi.mocked(scenarioApi.getScenario).mockResolvedValue(scenario);
+    vi.mocked(chartApi.getScenarioChart).mockResolvedValue(chartPayload);
+    vi.mocked(scenarioApi.archiveScenario).mockResolvedValue(undefined);
+
+    renderRoute();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Archive" }));
+
+    await waitFor(() => {
+      expect(scenarioApi.archiveScenario).toHaveBeenCalledWith(scenario.id);
+    });
+  });
+
+  it("surfaces hard-delete failures so users can archive instead", async () => {
+    vi.mocked(scenarioApi.getScenario).mockResolvedValue(scenario);
+    vi.mocked(chartApi.getScenarioChart).mockResolvedValue(chartPayload);
+    vi.mocked(scenarioApi.deleteScenario).mockRejectedValue(
+      new Error("cannot delete scenario: 2 runs reference it. Archive instead."),
+    );
+
+    renderRoute();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+
+    expect(
+      await screen.findByText("cannot delete scenario: 2 runs reference it. Archive instead."),
+    ).toBeInTheDocument();
+  });
+
   it("starts a bars fetch CLI job and refreshes the scenario chart after completion", async () => {
     vi.mocked(scenarioApi.getScenario).mockResolvedValue(scenario);
     vi.mocked(chartApi.getScenarioChart).mockResolvedValue(chartPayload);

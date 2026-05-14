@@ -141,10 +141,45 @@ async fn fetch_returns_asset_not_found_on_404() {
         .respond_with(ResponseTemplate::new(404))
         .mount(&server).await;
     let err = AlpacaBarsFetcher::new(server.uri(), "k".into(), "s".into())
-        .fetch_crypto_bars("FOO/USD", BarGranularity::Hour1,
-            Utc.with_ymd_and_hms(2024,2,3,0,0,0).unwrap(),
-            Utc.with_ymd_and_hms(2024,2,3,1,0,0).unwrap()).await.unwrap_err();
+        .fetch_crypto_bars(
+            "ETH/USD",
+            BarGranularity::Hour1,
+            Utc.with_ymd_and_hms(2024, 2, 3, 0, 0, 0).unwrap(),
+            Utc.with_ymd_and_hms(2024, 2, 3, 1, 0, 0).unwrap(),
+        )
+        .await
+        .unwrap_err();
     assert!(matches!(err, FetchError::AssetNotFound(_)));
+}
+
+#[tokio::test]
+async fn fetch_rejects_unknown_asset_before_http() {
+    let server = MockServer::start().await;
+    let err = AlpacaBarsFetcher::new(server.uri(), "k".into(), "s".into())
+        .fetch_crypto_bars(
+            "XRP/USD",
+            BarGranularity::Hour1,
+            Utc.with_ymd_and_hms(2024, 2, 3, 0, 0, 0).unwrap(),
+            Utc.with_ymd_and_hms(2024, 2, 3, 1, 0, 0).unwrap(),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, FetchError::AssetNotFound(_)));
+}
+
+#[tokio::test]
+async fn fetch_rejects_pre_history_window_before_http() {
+    let server = MockServer::start().await;
+    let err = AlpacaBarsFetcher::new(server.uri(), "k".into(), "s".into())
+        .fetch_crypto_bars(
+            "ETH/USD",
+            BarGranularity::Hour1,
+            Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap(),
+            Utc.with_ymd_and_hms(2020, 1, 1, 1, 0, 0).unwrap(),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, FetchError::RangeOutsideHistory { .. }));
 }
 
 #[tokio::test]

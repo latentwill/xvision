@@ -444,6 +444,15 @@ impl WizardLoop {
                     .await?;
                 Ok(serde_json::to_value(out)?)
             }
+            "update_manifest" => {
+                let req: authoring::UpdateManifestReq = serde_json::from_value(input)?;
+                let out = xvision_engine::api::strategy::update_manifest(
+                    &self.api_context,
+                    req,
+                )
+                .await?;
+                Ok(serde_json::to_value(out)?)
+            }
             "set_mechanical_param" => {
                 let req: authoring::SetMechanicalParamReq = serde_json::from_value(input)?;
                 let out =
@@ -759,6 +768,24 @@ fn strategy_tool_defs() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
+            name: "update_manifest".into(),
+            description: "Persist manifest fields shown in the Strategy Inspector, including asset universe and decision cadence."
+                .into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string"},
+                    "asset_universe": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "minItems": 1
+                    },
+                    "decision_cadence_minutes": {"type": "integer", "minimum": 1}
+                },
+                "required": ["id"]
+            }),
+        },
+        ToolDefinition {
             name: "set_mechanical_param".into(),
             description: "Set a key inside Strategy.mechanical_params (template-specific).".into(),
             input_schema: serde_json::json!({
@@ -1001,6 +1028,39 @@ mod tests {
             }),
             "expected created strategy in {out}"
         );
+    }
+
+    #[tokio::test]
+    async fn wizard_update_manifest_tool_persists_inspector_manifest_fields() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) =
+            loop_with_session(mock, "make this BTC 6h", ContextScope::Workspace).await;
+        let created = wl
+            .run_tool(
+                "create_strategy",
+                serde_json::json!({"template": "mean_reversion", "name": "Bollinger Bands 6H"}),
+            )
+            .await
+            .expect("create strategy");
+        let id = created["id"].as_str().expect("created id");
+
+        wl.run_tool(
+            "update_manifest",
+            serde_json::json!({
+                "id": id,
+                "asset_universe": ["BTC/USD"],
+                "decision_cadence_minutes": 360
+            }),
+        )
+        .await
+        .expect("update manifest");
+
+        let strategy = wl
+            .run_tool("get_strategy", serde_json::json!({"id": id}))
+            .await
+            .expect("get strategy");
+        assert_eq!(strategy["manifest"]["asset_universe"][0], "BTC/USD");
+        assert_eq!(strategy["manifest"]["decision_cadence_minutes"], 360);
     }
 
     #[tokio::test]
@@ -1320,6 +1380,7 @@ mod tests {
             "get_scenario",
             "create_scenario",
             "update_slot",
+            "update_manifest",
             "set_mechanical_param",
             "set_risk_config",
             "validate_draft",

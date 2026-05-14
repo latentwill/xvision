@@ -16,7 +16,7 @@ const CONFIRM_PHRASE = "DELETE";
 export function SettingsDangerRoute() {
   return (
     <div className="space-y-5">
-      <div className="rounded border border-danger/40 bg-danger/5 dark:bg-danger/10 px-4 py-3">
+      <div className="rounded border border-danger/40 bg-danger/10 px-4 py-3">
         <div className="text-[13px] text-danger font-medium">
           ⚠ Destructive operations
         </div>

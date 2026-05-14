@@ -22,6 +22,20 @@
 > panels (V1, V2, V3 retargeted at `arm_name` not `vector_config_hash`) carry
 > forward via the eval engine and marketplace plans linked above.
 
+## Current Chart Surfaces
+
+As of the 2026-05-14 Alpaca and TradingView implementation slices, the current
+dashboard chart surfaces are:
+
+- Run detail: candles, server-computed indicators, trade/veto/hold markers,
+  position bands, equity, drawdown, and volume.
+- Compare: up to 10 run equity curves, with a shared-scenario price backdrop
+  when all runs use the same scenario.
+- Scenario detail: price preview plus cache status.
+- Strategy detail: completed-run equity curves grouped by scenario.
+- Live cockpit: run chart snapshot plus SSE updates.
+- Scenario wizard: transient preview from form values.
+
 > Working doc · 2026-05-04 · Draft v0.1
 >
 > Scope: enumerate every panel xvision's dashboard could reasonably show,
