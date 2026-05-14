@@ -15,6 +15,12 @@ export type StrategyListItem = {
   model?: string;
   providers?: string[];
   models?: string[];
+  provider_models?: ProviderModelPair[];
+};
+
+export type ProviderModelPair = {
+  provider: string;
+  model: string;
 };
 
 export type PipelineKind = "single" | "sequential" | "graph";
@@ -124,6 +130,10 @@ export type CreateStrategyOut = {
   id: string;
 };
 
+export type CloneStrategyReq = {
+  display_name?: string;
+};
+
 export const strategyKeys = {
   all: ["strategies"] as const,
   list: () => [...strategyKeys.all, "list"] as const,
@@ -229,5 +239,21 @@ export function createStrategy(
   return apiFetch<CreateStrategyOut>("/api/strategies", {
     method: "POST",
     body: JSON.stringify(body),
+  });
+}
+
+export function cloneStrategy(
+  id: string,
+  req: CloneStrategyReq,
+): Promise<Strategy> {
+  return apiFetch<Strategy>(`/api/strategy/${encodeURIComponent(id)}/clone`, {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+}
+
+export function deleteStrategy(id: string): Promise<void> {
+  return apiFetch<void>(`/api/strategy/${encodeURIComponent(id)}`, {
+    method: "DELETE",
   });
 }

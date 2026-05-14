@@ -165,21 +165,11 @@ function scenario(overrides: Partial<Scenario> = {}): Scenario {
 function mockReady({
   providers = [provider()],
   alpaca = broker(),
-  strategies = [
-    {
-      agent_id: "01TEST",
-      display_name: "Trend 4H",
-      template: "trend_follower",
-      decision_cadence_minutes: 240,
-      tags: [],
-      providers: ["openai"],
-      models: ["gpt-4.1-mini"],
-    },
-  ],
+  strategyProviderModels = [{ provider: "openai", model: "gpt-4.1-mini" }],
 }: {
   providers?: ProviderRow[];
   alpaca?: BrokerEntry;
-  strategies?: StrategySummary[];
+  strategyProviderModels?: { provider: string; model: string }[];
 } = {}) {
   vi.mocked(evalApi.listRuns).mockResolvedValue([]);
   vi.mocked(scenariosApi.listScenarios).mockResolvedValue([scenario()]);
@@ -199,7 +189,17 @@ function mockReady({
       note: "post-v1",
     }),
   });
-  vi.mocked(strategyApi.listStrategies).mockResolvedValue(strategies);
+  vi.mocked(strategyApi.listStrategies).mockResolvedValue([
+    {
+      agent_id: "01TEST",
+      display_name: "Trend 4H",
+      template: "trend_follower",
+      decision_cadence_minutes: 240,
+      providers: ["openai"],
+      models: ["gpt-4.1-mini"],
+      provider_models: strategyProviderModels,
+    },
+  ]);
 }
 
 describe("EvalRunsRoute", () => {
@@ -453,19 +453,11 @@ describe("EvalRunsRoute", () => {
     expect(evalApi.startRun).not.toHaveBeenCalled();
   });
 
-  it("blocks eval launch when the strategy model is not enabled for its provider", async () => {
+  it("blocks eval launch when the selected strategy uses a disabled model", async () => {
     mockReady({
-      providers: [provider({ enabled_models: ["gpt-4.1-mini"] })],
-      strategies: [
-        {
-          agent_id: "01TEST",
-          display_name: "Trend 4H",
-          template: "trend_follower",
-          decision_cadence_minutes: 240,
-          tags: [],
-          providers: ["openai"],
-          models: ["gpt-4o"],
-        },
+      providers: [provider()],
+      strategyProviderModels: [
+        { provider: "openai", model: "claude-sonnet-4-5" },
       ],
     });
     vi.mocked(evalApi.startRun).mockResolvedValue({} as never);
@@ -480,7 +472,9 @@ describe("EvalRunsRoute", () => {
     fireEvent.click(startButton);
 
     expect(
-      await screen.findByText(/model 'gpt-4o' is not enabled for provider 'openai'/),
+      await screen.findByText(
+        /model 'claude-sonnet-4-5' is not enabled for provider 'openai'/,
+      ),
     ).toBeInTheDocument();
     expect(evalApi.startRun).not.toHaveBeenCalled();
   });
