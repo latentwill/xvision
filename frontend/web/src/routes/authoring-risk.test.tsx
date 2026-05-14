@@ -94,6 +94,52 @@ afterEach(() => {
 });
 
 describe("AuthoringRoute risk editor", () => {
+  it("states which strategy fields are Inspector read-only", async () => {
+    vi.mocked(agentApi.listAgents).mockResolvedValue([]);
+    vi.mocked(strategyApi.getStrategy).mockResolvedValue({
+      manifest: {
+        id: "01TEST",
+        display_name: "Trend 4H",
+        template: "trend_follower",
+        creator: "@t",
+        plain_summary: "",
+        regime_fit: [],
+        asset_universe: ["BTC/USD"],
+        decision_cadence_minutes: 240,
+        required_models: [],
+        required_tools: [],
+        risk_preset_or_config: "balanced",
+        published_at: null,
+      },
+      regime_slot: null,
+      intern_slot: null,
+      trader_slot: null,
+      risk: {
+        risk_pct_per_trade: 0.015,
+        max_concurrent_positions: 2,
+        max_leverage: 3,
+        stop_loss_atr_multiple: 2,
+        daily_loss_kill_pct: 0.05,
+      },
+      mechanical_params: {
+        lookback: 20,
+      },
+    });
+
+    renderRoute();
+
+    expect(
+      await screen.findByText(
+        "Direct edits are locked in the Inspector. Wizard changes appear here only after a save tool succeeds.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Inspector read-only in v1. Tune through setup tools; this panel shows the saved JSON.",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("does not render the old validation box in the Inspector rail", async () => {
     vi.mocked(agentApi.listAgents).mockResolvedValue([]);
     vi.mocked(strategyApi.getStrategy).mockResolvedValue({
