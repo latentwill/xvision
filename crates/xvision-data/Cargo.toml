@@ -22,8 +22,6 @@ chrono       = { workspace = true, features = ["serde"] }
 tokio        = { workspace = true, features = ["sync", "macros", "rt"] }
 governor     = "0.6"
 nonzero_ext  = "0.3"
-blake3       = "1.5"
-flate2       = "1.0"
 thiserror    = { workspace = true }
 tracing      = { workspace = true }
 

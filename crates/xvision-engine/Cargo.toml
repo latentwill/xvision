@@ -23,7 +23,6 @@ toml        = { workspace = true }
 toml_edit   = "0.22"
 serde_json  = { workspace = true }
 chrono      = { workspace = true }
-uuid        = { workspace = true }
 ulid        = { version = "1", features = ["serde"] }
 anyhow      = { workspace = true }
 thiserror   = { workspace = true }
@@ -40,7 +39,6 @@ hex         = "0.4"
 rand_core   = { version = "0.6", features = ["getrandom"] }
 
 [dev-dependencies]
-proptest = { workspace = true }
 tempfile = "3"
 tokio    = { workspace = true, features = ["rt", "macros"] }
 wiremock = "0.6"

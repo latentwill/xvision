@@ -1,0 +1,6 @@
+{
+  "ignoreIssues": {
+    "src/api/types.gen.ts": ["types"],
+    "src/api/types.gen/**": ["types"]
+  }
+}
