@@ -507,7 +507,8 @@ pub async fn run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<Run> {
         RunMode::Paper => Some(build_alpaca_paper_broker(ctx).await?),
         RunMode::Backtest => None,
     };
-    let dispatch_arc = build_eval_dispatch(ctx, &strategy).await?;
+    let agent_slots = resolve_agent_slots(ctx, &strategy).await?;
+    let dispatch_arc = build_eval_dispatch(ctx, &strategy, &agent_slots).await?;
     let tools_arc = Arc::new(ToolRegistry::default_with_builtins());
     run_with_deps(ctx, req, broker, dispatch_arc, tools_arc).await
 }
@@ -558,8 +559,9 @@ async fn build_alpaca_paper_broker(
 async fn build_eval_dispatch(
     ctx: &ApiContext,
     strategy: &crate::strategies::Strategy,
+    agent_slots: &[ResolvedAgentSlot],
 ) -> ApiResult<Arc<dyn LlmDispatch>> {
-    let provider_name = select_eval_provider(ctx, strategy).await?;
+    let provider_name = select_eval_provider(ctx, strategy, agent_slots).await?;
     let cfg_path = runtime_config_path(ctx);
     let cfg = tokio::task::spawn_blocking(move || config::load_runtime(&cfg_path))
         .await
@@ -574,23 +576,21 @@ async fn build_eval_dispatch(
                 "provider `{provider_name}` is not configured. Pick a configured provider/model for the strategy agent before running eval."
             ))
         })?;
+    let runtime_slots = runtime_slots(strategy, agent_slots);
+    validate_eval_provider_models(entry, &runtime_slots)?;
     dispatch_from_provider(entry).await
 }
 
 async fn select_eval_provider(
     ctx: &ApiContext,
     strategy: &crate::strategies::Strategy,
+    agent_slots: &[ResolvedAgentSlot],
 ) -> ApiResult<String> {
-    if let Some(provider) = [
-        strategy.trader_slot.as_ref(),
-        strategy.intern_slot.as_ref(),
-        strategy.regime_slot.as_ref(),
-    ]
-    .into_iter()
-    .flatten()
-    .filter_map(|slot| slot.provider.as_deref())
-    .map(str::trim)
-    .find(|provider| !provider.is_empty())
+    if let Some(provider) = runtime_slots(strategy, agent_slots)
+        .into_iter()
+        .filter_map(|slot| slot.provider.as_deref())
+        .map(str::trim)
+        .find(|provider| !provider.is_empty())
     {
         return Ok(provider.to_string());
     }
@@ -616,6 +616,89 @@ async fn select_eval_provider(
     Err(ApiError::Validation(
         "eval requires an explicit provider/model on a strategy slot or attached agent; no workspace default is assumed".into(),
     ))
+}
+
+fn runtime_slots<'a>(
+    strategy: &'a crate::strategies::Strategy,
+    agent_slots: &'a [ResolvedAgentSlot],
+) -> Vec<&'a crate::strategies::slot::LLMSlot> {
+    if !agent_slots.is_empty() {
+        return agent_slots.iter().map(|resolved| &resolved.slot).collect();
+    }
+    [
+        strategy.trader_slot.as_ref(),
+        strategy.intern_slot.as_ref(),
+        strategy.regime_slot.as_ref(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
+fn validate_eval_provider_models(
+    entry: &ProviderEntry,
+    slots: &[&crate::strategies::slot::LLMSlot],
+) -> ApiResult<()> {
+    let mut saw_provider_slot = false;
+    for slot in slots {
+        let provider = slot
+            .provider
+            .as_deref()
+            .map(str::trim)
+            .filter(|provider| !provider.is_empty())
+            .ok_or_else(|| {
+                ApiError::Validation(format!(
+                    "eval requires an explicit provider/model on strategy role `{}`; no workspace default is assumed",
+                    slot.role
+                ))
+            })?;
+        if provider != entry.name {
+            return Err(ApiError::Validation(format!(
+                "eval currently requires all executable slots to use one provider; role `{}` uses `{provider}` but selected provider is `{}`",
+                slot.role, entry.name
+            )));
+        }
+        saw_provider_slot = true;
+        let model = slot
+            .model
+            .as_deref()
+            .map(str::trim)
+            .filter(|model| !model.is_empty())
+            .ok_or_else(|| {
+                let legacy = slot.model_requirement.trim();
+                let enabled = if entry.enabled_models.is_empty() {
+                    "No models are enabled for this provider.".to_string()
+                } else {
+                    format!("Enabled models: {}", entry.enabled_models.join(", "))
+                };
+                ApiError::Validation(format!(
+                    "provider `{}` is selected for strategy role `{}`, but no explicit model is configured. Legacy model_requirement `{legacy}` is not used as a provider model id. {enabled}",
+                    entry.name, slot.role
+                ))
+            })?;
+        if entry.enabled_models.is_empty() {
+            return Err(ApiError::Validation(format!(
+                "provider `{}` has no enabled models. Enable `{model}` or pick a configured provider/model before running eval.",
+                entry.name
+            )));
+        }
+        if !entry.enabled_models.iter().any(|enabled| enabled == model) {
+            return Err(ApiError::Validation(format!(
+                "provider `{}` is selected for strategy role `{}`, but model `{model}` is not enabled for that provider. Enabled models: {}",
+                entry.name,
+                slot.role,
+                entry.enabled_models.join(", ")
+            )));
+        }
+    }
+    if saw_provider_slot {
+        Ok(())
+    } else {
+        Err(ApiError::Validation(format!(
+            "provider `{}` was selected for eval, but no executable strategy slot uses it.",
+            entry.name
+        )))
+    }
 }
 
 async fn resolve_agent_slots(
@@ -957,7 +1040,8 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
         RunMode::Paper => Some(build_alpaca_paper_broker(ctx).await?),
         RunMode::Backtest => None,
     };
-    let dispatch = build_eval_dispatch(ctx, &strategy).await?;
+    let agent_slots = resolve_agent_slots(ctx, &strategy).await?;
+    let dispatch = build_eval_dispatch(ctx, &strategy, &agent_slots).await?;
     let tools = Arc::new(ToolRegistry::default_with_builtins());
 
     let executor: Box<dyn Executor> = match req.mode {
@@ -991,7 +1075,17 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
     let ctx_bg = ctx.clone();
     let run_id = run.id.clone();
     tokio::spawn(async move {
-        execute_in_background(ctx_bg, run, strategy, scenario, executor, dispatch, tools).await;
+        execute_in_background(
+            ctx_bg,
+            run,
+            strategy,
+            scenario,
+            agent_slots,
+            executor,
+            dispatch,
+            tools,
+        )
+        .await;
     });
 
     get_run(ctx, &run_id).await
@@ -1007,6 +1101,7 @@ async fn execute_in_background(
     mut run: Run,
     strategy: crate::strategies::Strategy,
     scenario: Scenario,
+    agent_slots: Vec<ResolvedAgentSlot>,
     executor: Box<dyn Executor>,
     dispatch: Arc<dyn LlmDispatch>,
     tools: Arc<ToolRegistry>,
@@ -1029,7 +1124,15 @@ async fn execute_in_background(
     let dispatch_for_postprocess = dispatch.clone();
 
     if let Err(e) = executor
-        .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &agent_slots,
+            dispatch,
+            tools,
+            &store,
+        )
         .await
     {
         let err_msg = e.to_string();
@@ -1285,4 +1388,113 @@ fn load_or_create_signing_key(xvn_home: &Path) -> anyhow::Result<SigningKey> {
         let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
     }
     Ok(key)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::strategies::{
+        AgentRef, PipelineDef, Strategy,
+        manifest::PublicManifest,
+        risk::RiskPreset,
+        slot::LLMSlot,
+    };
+
+    fn provider(enabled_models: Vec<&str>) -> ProviderEntry {
+        ProviderEntry {
+            name: "openrouter".into(),
+            kind: ProviderKind::OpenaiCompat,
+            base_url: "https://openrouter.ai/api/v1".into(),
+            api_key_env: "OPENROUTER_API_KEY".into(),
+            enabled_models: enabled_models.into_iter().map(str::to_string).collect(),
+        }
+    }
+
+    fn slot(provider: Option<&str>, model: Option<&str>, model_requirement: &str) -> LLMSlot {
+        LLMSlot {
+            role: "trader".into(),
+            prompt: "Trade.".into(),
+            model_requirement: model_requirement.into(),
+            allowed_tools: Vec::new(),
+            provider: provider.map(str::to_string),
+            model: model.map(str::to_string),
+        }
+    }
+
+    fn strategy_with_legacy_slot(legacy_slot: LLMSlot) -> Strategy {
+        Strategy {
+            manifest: PublicManifest {
+                id: "01TESTEVALMODELRESOLUTION".into(),
+                display_name: "Test".into(),
+                plain_summary: "test".into(),
+                creator: "@test".into(),
+                template: "custom".into(),
+                regime_fit: Vec::new(),
+                asset_universe: vec!["BTC/USD".into()],
+                decision_cadence_minutes: 60,
+                required_models: Vec::new(),
+                required_tools: Vec::new(),
+                risk_preset_or_config: "balanced".into(),
+                published_at: None,
+            },
+            agents: vec![AgentRef {
+                agent_id: "01TESTAGENT".into(),
+                role: "trader".into(),
+            }],
+            pipeline: PipelineDef::default(),
+            regime_slot: None,
+            intern_slot: None,
+            trader_slot: Some(legacy_slot),
+            risk: RiskPreset::Balanced.expand(),
+            mechanical_params: serde_json::json!({}),
+        }
+    }
+
+    #[test]
+    fn eval_provider_model_validation_rejects_legacy_requirement_as_model() {
+        let entry = provider(vec!["deepseek/deepseek-v4-flash"]);
+        let bad_slot = slot(Some("openrouter"), None, "anthropic.claude-sonnet-4.6");
+
+        let err = validate_eval_provider_models(&entry, &[&bad_slot]).unwrap_err();
+
+        assert!(
+            err.to_string().contains("anthropic.claude-sonnet-4.6"),
+            "expected rejected model in error, got {err}",
+        );
+        assert!(
+            err.to_string().contains("deepseek/deepseek-v4-flash"),
+            "expected enabled model hint in error, got {err}",
+        );
+    }
+
+    #[test]
+    fn eval_provider_model_validation_accepts_enabled_agent_model() {
+        let entry = provider(vec!["deepseek/deepseek-v4-flash"]);
+        let agent_slot = slot(
+            Some("openrouter"),
+            Some("deepseek/deepseek-v4-flash"),
+            "anthropic.claude-sonnet-4.6",
+        );
+
+        validate_eval_provider_models(&entry, &[&agent_slot]).unwrap();
+    }
+
+    #[test]
+    fn eval_runtime_slots_prefer_attached_agents_over_legacy_slots() {
+        let legacy_slot = slot(Some("openrouter"), None, "anthropic.claude-sonnet-4.6");
+        let strategy = strategy_with_legacy_slot(legacy_slot);
+        let agent_slots = vec![ResolvedAgentSlot {
+            role: "trader".into(),
+            slot: slot(
+                Some("openrouter"),
+                Some("deepseek/deepseek-v4-flash"),
+                "anthropic.claude-sonnet-4.6",
+            ),
+        }];
+
+        let slots = runtime_slots(&strategy, &agent_slots);
+
+        assert_eq!(slots.len(), 1);
+        assert_eq!(slots[0].effective_model(), "deepseek/deepseek-v4-flash");
+    }
 }
