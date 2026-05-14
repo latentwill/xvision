@@ -20,6 +20,7 @@ import { useLocation } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 
 import { MarkdownView } from "@/components/agent-chat/MarkdownView";
+import { InlineChartCard } from "@/components/chat/inline-chart/InlineChartCard";
 import { Icon } from "@/components/primitives/Icon";
 import { ModelPicker } from "@/components/ModelPicker";
 import { ApiError } from "@/api/client";
@@ -471,6 +472,9 @@ function ContentBlocksView({ blocks }: { blocks: RenderableBlock[] }) {
 }
 
 function UnsupportedRichBlock({ block }: { block: RichDisplayBlock }) {
+  if (block.type === "inline_chart") {
+    return <InlineChartCard payload={block} />;
+  }
   if (!import.meta.env.DEV) {
     const summary =
       "a11y_summary" in block && typeof block.a11y_summary === "string"
