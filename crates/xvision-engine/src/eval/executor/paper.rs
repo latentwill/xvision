@@ -12,7 +12,6 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use chrono::Duration;
-use serde::Deserialize;
 use xvision_execution::broker_surface::{BrokerSurface, OrderRequest, Side};
 
 use crate::agent::llm::LlmDispatch;
@@ -29,6 +28,8 @@ use crate::eval::scenario::Scenario;
 use crate::eval::store::{DecisionRow, RunStore};
 use crate::strategies::Strategy;
 use crate::tools::ToolRegistry;
+
+use super::trader_output::TraderOutput;
 
 const DEFAULT_REFERENCE_PRICE_USD: f64 = 70_000.0;
 
@@ -80,59 +81,6 @@ impl PaperExecutor {
         if let Some(bus) = self.event_bus.as_ref() {
             bus.emit(run_id, event).await;
         }
-    }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct TraderOutput {
-    action: String,
-    conviction: f64,
-    justification: String,
-}
-
-impl TraderOutput {
-    fn parse_strict(raw: &str, run_id: &str, decision_index: u32) -> Result<Self> {
-        let parsed = serde_json::from_str::<Self>(raw).map_err(|e| {
-            anyhow!(
-                "run {} decision {}: trader output is invalid JSON: {}",
-                run_id,
-                decision_index,
-                e
-            )
-        })?;
-        parsed.validate(run_id, decision_index)?;
-        Ok(parsed)
-    }
-
-    fn validate(&self, run_id: &str, decision_index: u32) -> Result<()> {
-        if !matches!(
-            self.action.as_str(),
-            "long_open" | "short_open" | "flat" | "hold"
-        ) {
-            anyhow::bail!(
-                "run {} decision {}: trader output action must be one of long_open, short_open, flat, hold (got `{}`)",
-                run_id,
-                decision_index,
-                self.action
-            );
-        }
-        if !(0.0..=1.0).contains(&self.conviction) {
-            anyhow::bail!(
-                "run {} decision {}: trader output conviction must be between 0 and 1 (got {})",
-                run_id,
-                decision_index,
-                self.conviction
-            );
-        }
-        if self.justification.trim().is_empty() {
-            anyhow::bail!(
-                "run {} decision {}: trader output justification is required",
-                run_id,
-                decision_index
-            );
-        }
-        Ok(())
     }
 }
 
