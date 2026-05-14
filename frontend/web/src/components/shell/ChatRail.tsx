@@ -642,6 +642,8 @@ function applyEvent(
           result: ev.result,
         };
       }
+    } else if (ev.type === "content_block") {
+      a.blocks.push(contentBlockToRenderable(ev.block));
     } else if (ev.type === "error") {
       appendAssistantText(a, `\n\n[stream error: ${ev.message}]`);
     }
