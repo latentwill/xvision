@@ -290,9 +290,44 @@ pub async fn get(ctx: &ApiContext, agent_id: &str) -> ApiResult<Strategy> {
     result
 }
 
+pub async fn delete(ctx: &ApiContext, agent_id: &str) -> ApiResult<()> {
+    let started = Instant::now();
+    let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+    let result = delete_inner(&store, agent_id).await;
+
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let _ = audit::record(
+        ctx,
+        "strategy",
+        "delete",
+        Some(agent_id),
+        None,
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    if result.is_ok() {
+        api_search::delete_strategy(ctx, agent_id).await;
+    }
+    result
+}
+
 async fn get_inner(ctx: &ApiContext, agent_id: &str) -> ApiResult<Strategy> {
     let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
     store.load(agent_id).await.map_err(|e| {
+        if is_not_found(&e) {
+            ApiError::NotFound(format!("strategy '{agent_id}'"))
+        } else {
+            ApiError::Internal(e.to_string())
+        }
+    })
+}
+
+async fn delete_inner(store: &FilesystemStore, agent_id: &str) -> ApiResult<()> {
+    store.delete(agent_id).await.map_err(|e| {
         if is_not_found(&e) {
             ApiError::NotFound(format!("strategy '{agent_id}'"))
         } else {
