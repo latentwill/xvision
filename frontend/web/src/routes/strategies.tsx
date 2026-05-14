@@ -48,9 +48,9 @@ function subtitleFor(q: ReturnType<typeof useQuery>) {
 
 function FilterBar() {
   return (
-    <div className="flex items-center justify-between mb-4 gap-3">
-      <div className="flex items-center gap-2.5">
-        <div className="flex items-center gap-2 px-3 py-2 bg-surface-elev border border-border rounded w-[280px] text-text-3 opacity-50">
+    <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between mb-4 gap-3">
+      <div className="flex flex-col xl:flex-row xl:items-center gap-2.5 min-w-0">
+        <div className="flex items-center gap-2 px-3 py-2 bg-surface-elev border border-border rounded w-full xl:w-[280px] max-w-full text-text-3 opacity-50">
           <Icon name="search" size={14} />
           <input
             className="bg-transparent border-0 outline-0 flex-1 text-[13px] text-text placeholder:text-text-3 disabled:cursor-not-allowed"
@@ -75,16 +75,16 @@ function FilterBar() {
           <option>All templates</option>
         </select>
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex flex-col sm:flex-row sm:items-center gap-2">
         <Link
           to="/strategies/new"
-          className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium border border-border text-text-2 hover:text-text hover:border-text-3 transition-colors"
+          className="inline-flex items-center justify-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium border border-border text-text-2 hover:text-text hover:border-text-3 transition-colors"
         >
           <Icon name="plus" size={13} /> New from template
         </Link>
         <Link
           to="/setup"
-          className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft transition-colors"
+          className="inline-flex items-center justify-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft transition-colors"
         >
           <Icon name="plus" size={13} /> New strategy
         </Link>
