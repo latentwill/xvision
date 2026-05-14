@@ -238,19 +238,22 @@ async fn paper_executor_idempotency_key_includes_run_id_and_decision_index() {
 }
 
 #[tokio::test]
-async fn paper_executor_handles_unparseable_trader_output_as_flat() {
-    // Mock returns garbage that fails serde parsing → executor should fall
-    // back to a flat decision instead of erroring out the run.
+async fn paper_executor_fails_on_unparseable_trader_output() {
+    // Mock returns garbage that fails serde parsing → executor should fail
+    // the run instead of silently converting it into a flat decision.
     let canned = "definitely not json";
     let (mock, executor, store, mut run, strategy, scenario, dispatch, tools) =
         paper_harness(canned, 100_000.0).await;
 
-    let metrics = executor
+    let err = executor
         .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)
         .await
-        .expect("unparseable trader output must not fail the run");
+        .expect_err("unparseable trader output must fail the run");
 
-    assert_eq!(metrics.n_trades, 0, "unparseable → no broker submissions");
-    assert_eq!(metrics.n_decisions, 4);
+    assert!(
+        err.to_string().contains("invalid JSON"),
+        "unexpected error: {err}"
+    );
+    assert_eq!(run.status, RunStatus::Running, "run should stop mid-flight");
     assert_eq!(mock.submitted().len(), 0);
 }
