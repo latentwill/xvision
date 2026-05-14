@@ -434,10 +434,11 @@ pub async fn validate_draft(
     id: &str,
 ) -> anyhow::Result<ValidateDraftOut> {
     let strategy = store.load(id).await?;
-    let (ok, errors) = match validate_strategy(&strategy) {
-        Ok(()) => (true, vec![]),
-        Err(e) => (false, vec![e.to_string()]),
+    let errors = match validate_strategy(&strategy) {
+        Ok(()) => vec![],
+        Err(e) => vec![e.to_string()],
     };
+    let ok = errors.is_empty();
     Ok(ValidateDraftOut {
         id: id.to_string(),
         ok,
@@ -562,5 +563,38 @@ mod tests {
         let v = validate_draft(&store, &out.id).await.unwrap();
         assert!(v.ok);
         assert!(v.errors.is_empty());
+    }
+
+    #[tokio::test]
+    async fn validate_draft_reports_prompt_manifest_asset_and_cadence_drift() {
+        let (store, _td) = store_in_tmp();
+        let out = create_strategy(
+            &store,
+            CreateStrategyReq {
+                template: "mean_reversion".into(),
+                name: "x".into(),
+                creator: None,
+            },
+        )
+        .await
+        .unwrap();
+        let mut strategy = get_strategy(&store, &out.id).await.unwrap();
+        strategy.trader_slot.as_mut().unwrap().prompt =
+            "Trade BTC/USD on 6-hour candles. Return JSON.".into();
+        store.save(&strategy).await.unwrap();
+
+        let v = validate_draft(&store, &out.id).await.unwrap();
+
+        assert!(!v.ok);
+        assert!(
+            v.errors.iter().any(|e| e.contains("BTC/USD")),
+            "expected asset drift error, got {:?}",
+            v.errors,
+        );
+        assert!(
+            v.errors.iter().any(|e| e.contains("6h")),
+            "expected cadence drift error, got {:?}",
+            v.errors,
+        );
     }
 }
