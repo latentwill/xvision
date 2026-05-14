@@ -960,6 +960,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn validate_draft_reports_manifest_slot_prompt_drift() {
+        let (ctx, _d) = ctx_with_audit().await;
+        let created = create_strategy(
+            &ctx,
+            CreateStrategyReq {
+                template: "mean_reversion".into(),
+                name: "x".into(),
+                creator: None,
+            },
+        )
+        .await
+        .unwrap();
+        update_slot(
+            &ctx,
+            UpdateSlotReq {
+                id: created.id.clone(),
+                slot: "trader".into(),
+                prompt: Some("Trade BTC/USD on a 6h candle schedule.".into()),
+                model_requirement: None,
+                provider: None,
+                model: None,
+                allowed_tools: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let out = validate_draft(&ctx, &created.id).await.unwrap();
+
+        assert!(!out.ok);
+        assert!(
+            out.errors.iter().any(|e| e.contains("BTC/USD")),
+            "expected asset drift error, got {:?}",
+            out.errors,
+        );
+        assert!(
+            out.errors.iter().any(|e| e.contains("6h")),
+            "expected cadence drift error, got {:?}",
+            out.errors,
+        );
+    }
+
+    #[tokio::test]
     async fn validate_draft_missing_is_not_found() {
         let (ctx, _d) = ctx_with_audit().await;
         let r = validate_draft(&ctx, "01TOTALLYMISSINGAGENTID000").await;
