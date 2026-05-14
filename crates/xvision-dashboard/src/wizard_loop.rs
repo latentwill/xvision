@@ -30,7 +30,7 @@ use xvision_engine::agent::llm::{
     ContentBlock, LlmDispatch, LlmRequest, LlmResponse, Message, StopReason, ToolDefinition,
 };
 use xvision_engine::api::eval::{self as api_eval, EvalRunRequest};
-use xvision_engine::api::scenario::{self as api_scenario, CreateScenarioRequest, ListScenariosFilter};
+use xvision_engine::api::scenario::{CreateScenarioRequest, ListScenariosFilter};
 use xvision_engine::authoring;
 use xvision_engine::chat_session::{ChatSessionStore, ContextScope};
 use xvision_engine::eval::run::RunMode;
@@ -394,7 +394,14 @@ impl WizardLoop {
                 Ok(serde_json::to_value(out)?)
             }
             "list_scenarios" => {
-                let out = api_scenario::list(&self.api_context, ListScenariosFilter::default()).await?;
+                let filter = ListScenariosFilter {
+                    include_archived: input
+                        .get("include_archived")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false),
+                    ..Default::default()
+                };
+                let out = api_scenario::list(&self.api_context, filter).await?;
                 Ok(serde_json::to_value(out)?)
             }
             "get_scenario" => {
@@ -477,29 +484,6 @@ impl WizardLoop {
                     "status": out.summary.status,
                     "scenario_id": out.summary.scenario_id
                 }))
-            }
-            "list_strategies" => {
-                let out = xvision_engine::api::strategy::list(&self.api_context).await?;
-                Ok(serde_json::to_value(out)?)
-            }
-            "list_scenarios" => {
-                let filter = api_scenario::ListScenariosFilter {
-                    include_archived: input
-                        .get("include_archived")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false),
-                    ..Default::default()
-                };
-                let out = api_scenario::list(&self.api_context, filter).await?;
-                Ok(serde_json::to_value(out)?)
-            }
-            "get_scenario" => {
-                let id = input
-                    .get("id")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow::anyhow!("get_scenario: missing `id`"))?;
-                let out = api_scenario::get(&self.api_context, id).await?;
-                Ok(serde_json::to_value(out)?)
             }
             "fetch_bars" => {
                 let asset = input
@@ -643,29 +627,6 @@ fn strategy_tool_defs() -> Vec<ToolDefinition> {
         ToolDefinition {
             name: "get_strategy".into(),
             description: "Read the current draft state. Returns the Strategy JSON.".into(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "properties": {"id": {"type": "string"}},
-                "required": ["id"]
-            }),
-        },
-        ToolDefinition {
-            name: "list_strategies".into(),
-            description: "List existing strategy drafts with ids, template names, and model labels.".into(),
-            input_schema: serde_json::json!({
-                "type": "object", "properties": {}, "required": []
-            }),
-        },
-        ToolDefinition {
-            name: "list_scenarios".into(),
-            description: "List available scenarios, including canonical and user-created scenarios.".into(),
-            input_schema: serde_json::json!({
-                "type": "object", "properties": {}, "required": []
-            }),
-        },
-        ToolDefinition {
-            name: "get_scenario".into(),
-            description: "Read a scenario by id.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {"id": {"type": "string"}},
@@ -1287,9 +1248,6 @@ mod tests {
             "set_risk_config",
             "validate_draft",
             "run_eval",
-            "list_strategies",
-            "list_scenarios",
-            "get_scenario",
         ] {
             assert!(names.contains(&v), "missing verb {v} in {names:?}");
         }
