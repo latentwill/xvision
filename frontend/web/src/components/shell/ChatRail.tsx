@@ -23,7 +23,13 @@ import { useQuery } from "@tanstack/react-query";
 import { ChatComposer } from "@/components/chat/ChatComposer";
 import { ChatThread } from "@/components/chat/ChatThread";
 import { QuickRail } from "@/components/chat/QuickRail";
-import type { AssistantBubble, Bubble, Tool } from "@/components/chat/types";
+import type {
+  AssistantBubble,
+  Bubble,
+  RenderableBlock,
+  RichDisplayBlock,
+  Tool,
+} from "@/components/chat/types";
 import { Icon } from "@/components/primitives/Icon";
 import { ModelPicker } from "@/components/ModelPicker";
 import { ApiError } from "@/api/client";
@@ -171,7 +177,7 @@ export function ChatRail({
       setBubbles((b) => [
         ...b,
         { role: "user", text: userText },
-        { role: "assistant", text: "", tools: [] },
+        { role: "assistant", blocks: [{ kind: "text", text: "" }], tools: [] },
       ]);
       setIsStreaming(true);
       const ctrl = new AbortController();
@@ -390,9 +396,10 @@ function applyEvent(
     const last = next[next.length - 1];
     if (!last || last.role !== "assistant") return next;
     const a = { ...last } as AssistantBubble;
+    a.blocks = [...a.blocks];
     a.tools = [...a.tools];
     if (ev.type === "token") {
-      a.text = a.text + ev.text;
+      appendAssistantText(a, ev.text);
     } else if (ev.type === "tool_call") {
       a.tools.push({
         call: ev.tool,
@@ -420,10 +427,10 @@ function applyEvent(
           result: ev.result,
         };
       }
+    } else if (ev.type === "content_block") {
+      a.blocks.push(contentBlockToRenderable(ev.block));
     } else if (ev.type === "error") {
-      a.text = a.text
-        ? `${a.text}\n\n[stream error: ${ev.message}]`
-        : `[stream error: ${ev.message}]`;
+      appendAssistantText(a, `\n\n[stream error: ${ev.message}]`);
     }
     next[next.length - 1] = a;
     return next;
@@ -488,12 +495,9 @@ function historyToBubbles(history: ChatMessage[]): Bubble[] {
       }
     } else {
       // assistant
-      const text = cm.content_blocks
-        .filter((b): b is Extract<ContentBlock, { type: "text" }> =>
-          b.type === "text",
-        )
-        .map((b) => b.text)
-        .join("");
+      const blocks = cm.content_blocks
+        .filter((b) => b.type !== "tool_use" && b.type !== "tool_result")
+        .map(contentBlockToRenderable);
       const tools: Tool[] = cm.content_blocks
         .filter((b): b is Extract<ContentBlock, { type: "tool_use" }> =>
           b.type === "tool_use",
@@ -504,11 +508,42 @@ function historyToBubbles(history: ChatMessage[]): Bubble[] {
           summary: summarizeArgs(b.name, b.input),
           args: b.input,
         }));
-      pendingAssistant = { role: "assistant", text, tools };
+      pendingAssistant = { role: "assistant", blocks, tools };
     }
   }
   if (pendingAssistant) out.push(pendingAssistant);
   return out;
+}
+
+function contentBlockToRenderable(block: ContentBlock): RenderableBlock {
+  if (block.type === "text") return { kind: "text", text: block.text };
+  if (isRichDisplayBlock(block)) return { kind: "rich", block };
+  return {
+    kind: "unsupported",
+    type: String((block as { type?: string }).type ?? "unknown"),
+  };
+}
+
+function isRichDisplayBlock(block: ContentBlock): block is RichDisplayBlock {
+  return (
+    block.type === "inline_chart" ||
+    block.type === "run_list" ||
+    block.type === "strategy_card" ||
+    block.type === "action_card" ||
+    block.type === "choice_chips"
+  );
+}
+
+function appendAssistantText(bubble: AssistantBubble, text: string) {
+  const last = bubble.blocks[bubble.blocks.length - 1];
+  if (last?.kind === "text") {
+    bubble.blocks[bubble.blocks.length - 1] = {
+      ...last,
+      text: last.text + text,
+    };
+    return;
+  }
+  bubble.blocks.push({ kind: "text", text });
 }
 
 function safeParseJson(s: string): unknown {
