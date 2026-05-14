@@ -494,10 +494,16 @@ pub async fn validate_draft(
     id: &str,
 ) -> anyhow::Result<ValidateDraftOut> {
     let strategy = store.load(id).await?;
-    let errors = match validate_strategy(&strategy) {
+    let mut errors = match validate_strategy(&strategy) {
         Ok(()) => vec![],
         Err(e) => vec![e.to_string()],
     };
+    if strategy.agents.is_empty() {
+        errors.push(
+            "strategy is not eval-ready: attach at least one complete agent with provider/model before validation"
+                .to_string(),
+        );
+    }
     let ok = errors.is_empty();
     Ok(ValidateDraftOut {
         id: id.to_string(),
@@ -646,7 +652,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn validate_draft_passes_for_fresh_template() {
+    async fn validate_draft_reports_missing_agent_for_fresh_template() {
         let (store, _td) = store_in_tmp();
         let out = create_strategy(
             &store,
@@ -659,8 +665,12 @@ mod tests {
         .await
         .unwrap();
         let v = validate_draft(&store, &out.id).await.unwrap();
-        assert!(v.ok);
-        assert!(v.errors.is_empty());
+        assert!(!v.ok);
+        assert!(
+            v.errors.iter().any(|e| e.contains("attached agent")),
+            "expected missing attached agent error, got {:?}",
+            v.errors,
+        );
     }
 
     #[tokio::test]
