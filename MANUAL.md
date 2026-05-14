@@ -27,6 +27,22 @@ remote CLI job API or `scripts/xvn-remote.py`.
 
 ---
 
+## Scenario Backtest Workflow
+
+Backtest means historical Alpaca bars plus simulated execution. It does not
+send orders to Alpaca paper.
+
+1. Create a scenario in `/scenarios/new` or with `xvn scenario create`.
+2. Confirm the bar cache badge is `Fully cached`, or click `Fetch bars`.
+3. Launch a run from `/eval-runs` with mode `Backtest`.
+4. Open the run detail chart and inspect candles, decisions, equity, drawdown,
+   and markers.
+
+Paper mirror means the existing Alpaca paper route. It can place paper orders
+with the configured Alpaca paper account.
+
+---
+
 ## Tier 2 — blocking forward-paper / on-chain (Phase 11)
 
 ### M5. Set up Alpaca paper account + creds (F5 alpha)
