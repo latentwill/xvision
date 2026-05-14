@@ -1,7 +1,7 @@
 # Color Themes and Light/Dark Mode Design
 
-**Date:** 2026-05-14  
-**Surface:** Vite dashboard SPA  
+**Date:** 2026-05-14
+**Surface:** Vite dashboard SPA
 **Status:** Draft for user review
 
 ## Goal
