@@ -4,6 +4,7 @@
 //! a live Alpaca connection and is covered by the Task 15 smoke test. The
 //! tests here focus on the boundary conditions that don't need network access.
 
+use chrono::TimeZone;
 use tempfile::tempdir;
 use xvision_engine::api::{Actor, ApiContext, ApiError};
 
@@ -21,6 +22,47 @@ async fn test_ctx() -> ApiContext {
     )
     .await
     .unwrap()
+}
+
+async fn seed_cached_bars(ctx: &ApiContext, cache_key: &str, asset: &str, count: usize) {
+    let start = chrono::Utc
+        .with_ymd_and_hms(2025, 1, 1, 0, 0, 0)
+        .unwrap();
+    let mut blob = Vec::new();
+    for i in 0..count {
+        let ts = start + chrono::Duration::hours(i as i64);
+        let base = 100.0 + i as f64;
+        let line = serde_json::json!({
+            "t": ts.to_rfc3339(),
+            "o": base,
+            "h": base + 2.0,
+            "l": base - 1.0,
+            "c": base + 1.0,
+            "v": 1_000.0 + i as f64,
+        });
+        blob.extend(serde_json::to_vec(&line).unwrap());
+        blob.push(b'\n');
+    }
+
+    sqlx::query(
+        "INSERT OR REPLACE INTO bars_cache \
+         (cache_key, asset, granularity, window_start, window_end, \
+          data_source, fetched_at, bar_count, bars_blob, compression) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(cache_key)
+    .bind(asset)
+    .bind("1Hour")
+    .bind(start.to_rfc3339())
+    .bind((start + chrono::Duration::hours(count as i64)).to_rfc3339())
+    .bind("alpaca-historical-v1")
+    .bind("2026-05-14T00:00:00Z")
+    .bind(count as i64)
+    .bind(blob)
+    .bind("none")
+    .execute(&ctx.db)
+    .await
+    .unwrap();
 }
 
 /// `build_run_payload` must return `ApiError::NotFound` for a run id that
@@ -84,6 +126,44 @@ async fn build_scenario_payload_returns_not_cached_for_seeded_scenario() {
         payload.cache_status
     );
     assert!(payload.bars.is_empty(), "bars should be empty for NotCached");
+}
+
+#[tokio::test]
+async fn build_scenario_payload_loads_cached_bars_and_indicators() {
+    use xvision_engine::api::chart::{build_scenario_payload, CacheStatus};
+    use xvision_engine::api::scenario as api_scenario;
+
+    let ctx = test_ctx().await;
+    let scenario = api_scenario::get(&ctx, "crypto-bull-q1-2025")
+        .await
+        .unwrap();
+    seed_cached_bars(
+        &ctx,
+        &scenario.bar_cache_policy.cache_key,
+        &scenario.asset[0].venue_symbol,
+        64,
+    )
+    .await;
+
+    let payload = build_scenario_payload(&ctx, &scenario.id).await.unwrap();
+
+    assert_eq!(payload.scenario.id, scenario.id);
+    assert!(matches!(
+        payload.cache_status,
+        CacheStatus::PartiallyCached {
+            fetched_count: 64,
+            ..
+        }
+    ));
+    assert_eq!(payload.bars.len(), 64);
+    assert_eq!(payload.indicators.sma_20.len(), 45);
+    assert_eq!(payload.indicators.ema_20.len(), 45);
+    assert_eq!(payload.indicators.bollinger.middle.len(), 45);
+    assert_eq!(payload.indicators.rsi_14.len(), 50);
+    assert_eq!(payload.indicators.atr_14.len(), 50);
+    assert_eq!(payload.indicators.macd.line.len(), 39);
+    assert_eq!(payload.indicators.macd.signal.len(), 31);
+    assert_eq!(payload.indicators.macd.histogram.len(), 31);
 }
 
 /// `build_scenario_payload` must return `ApiError::NotFound` for an id that
