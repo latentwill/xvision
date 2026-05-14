@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState, type ElementType } from "react";
 import { Outlet, useLocation } from "react-router-dom";
 
 import { headerLabel, placeholder, scopeFromPath } from "@/api/chat_rail";
-import { ChatRail } from "@/components/shell/ChatRail";
+import type { ChatRailProps } from "@/components/shell/ChatRail";
 import { CommandPalette } from "@/components/shell/CommandPalette";
 import { Icon } from "@/components/primitives/Icon";
 import { MobileDrawer } from "@/components/mobile/MobileDrawer";
@@ -10,7 +10,11 @@ import { MobileFunctionsSheet } from "@/components/mobile/MobileFunctionsSheet";
 import { MobileTopBar } from "@/components/mobile/MobileTopBar";
 import { useUi } from "@/stores/ui";
 
-export function MobileShell() {
+export function MobileShell({
+  ChatRailComponent,
+}: {
+  ChatRailComponent: ElementType<ChatRailProps>;
+}) {
   const location = useLocation();
   const setDrawerOpen = useUi((s) => s.setMobileDrawerOpen);
   const setFunctionsOpen = useUi((s) => s.setMobileFunctionsOpen);
@@ -34,11 +38,13 @@ export function MobileShell() {
       />
       {isHome ? (
         <div className="flex-1 min-h-0">
-          <ChatRail
-            variant="panel"
-            showHeader={false}
-            onOpenActions={() => setFunctionsOpen(true)}
-          />
+          <Suspense fallback={null}>
+            <ChatRailComponent
+              variant="panel"
+              showHeader={false}
+              onOpenActions={() => setFunctionsOpen(true)}
+            />
+          </Suspense>
         </div>
       ) : (
         <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-4 pt-4 pb-24">
@@ -57,6 +63,7 @@ export function MobileShell() {
               context={headerLabel(scope)}
               onClose={() => setChatOpen(false)}
               onOpenActions={() => setFunctionsOpen(true)}
+              ChatRailComponent={ChatRailComponent}
             />
           )}
         </>
@@ -106,10 +113,12 @@ function MobileChatOverlay({
   context,
   onClose,
   onOpenActions,
+  ChatRailComponent,
 }: {
   context: string;
   onClose: () => void;
   onOpenActions: () => void;
+  ChatRailComponent: ElementType<ChatRailProps>;
 }) {
   return (
     <section className="fixed inset-0 z-40 md:hidden bg-bg flex flex-col">
@@ -132,11 +141,13 @@ function MobileChatOverlay({
         </div>
       </header>
       <div className="flex-1 min-h-0">
-        <ChatRail
-          variant="panel"
-          showHeader={false}
-          onOpenActions={onOpenActions}
-        />
+        <Suspense fallback={null}>
+          <ChatRailComponent
+            variant="panel"
+            showHeader={false}
+            onOpenActions={onOpenActions}
+          />
+        </Suspense>
       </div>
     </section>
   );
