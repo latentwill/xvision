@@ -384,7 +384,7 @@ function AlpacaConnectionResult({
           ? error.message
           : String(error);
     return (
-      <span className="inline-flex items-center gap-1.5 text-rose-300">
+      <span className="inline-flex items-center gap-1.5 text-danger">
         <span aria-hidden>✗</span>
         <span className="font-mono text-text-2">{detail}</span>
       </span>
@@ -393,7 +393,7 @@ function AlpacaConnectionResult({
   if (!data) return null;
   if (data.ok) {
     return (
-      <span className="inline-flex items-center gap-1.5 text-emerald-300">
+      <span className="inline-flex items-center gap-1.5 text-info">
         <span aria-hidden>✓</span>
         <span>
           connected · {data.latency_ms}ms
@@ -404,7 +404,7 @@ function AlpacaConnectionResult({
     );
   }
   return (
-    <span className="inline-flex items-center gap-1.5 text-rose-300">
+    <span className="inline-flex items-center gap-1.5 text-danger">
       <span aria-hidden>✗</span>
       <span className="font-mono text-text-2">
         {data.error ?? "connection failed"}
