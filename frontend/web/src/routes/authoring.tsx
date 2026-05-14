@@ -506,7 +506,10 @@ function ManifestCard({ strategy }: { strategy: Strategy }) {
   const m = strategy.manifest;
   return (
     <Card>
-      <SectionHeader label="Manifest" hint="Read-only metadata for v1." />
+      <SectionHeader
+        label="Manifest"
+        hint="Direct edits are locked in the Inspector. Wizard changes appear here only after a save tool succeeds."
+      />
       <dl className="grid grid-cols-[160px_1fr] gap-y-2 px-5 pb-4 text-[13px]">
         <DT>Display name</DT>
         <DD>{m.display_name}</DD>
@@ -715,7 +718,7 @@ function MechanicalParamsCard({ strategy }: { strategy: Strategy }) {
     <Card>
       <SectionHeader
         label="Mechanical params"
-        hint="Read-only in v1; per-field editor lands with the LLM split editor."
+        hint="Inspector read-only in v1. Tune through setup tools; this panel shows the saved JSON."
       />
       <div className="px-5 pb-5">
         {empty ? (

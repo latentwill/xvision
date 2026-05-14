@@ -162,6 +162,10 @@ export function SetupRoute() {
           </span>{" "}
           or <span className="text-text font-mono">"Mean reversion on BTC"</span>.
         </div>
+        <div className="mt-3 text-[13px] leading-snug text-text-3">
+          Only completed tool calls change the saved draft. Open the Inspector
+          to verify the manifest before eval.
+        </div>
       </Card>
 
       {providers.data && !defaultPick ? (
