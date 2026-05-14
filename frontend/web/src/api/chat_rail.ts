@@ -49,7 +49,7 @@ export type InlineTone =
   | "danger"
   | "muted";
 
-export type InlineChartKind =
+type InlineChartKind =
   | "equity"
   | "compare"
   | "histogram"
@@ -83,7 +83,7 @@ export type InlineAction = {
   command?: string | null;
 };
 
-export type InlineChartSource = {
+type InlineChartSource = {
   label: string;
   href?: string | null;
   run_id?: string | null;
@@ -112,7 +112,7 @@ export type RunListContentBlock = {
   actions: InlineAction[];
 };
 
-export type ChatRunListItem = {
+type ChatRunListItem = {
   rank: number;
   run_id: string;
   strategy_id?: string | null;
@@ -142,7 +142,7 @@ export type ActionCardContentBlock = {
   cancel?: InlineAction | null;
 };
 
-export type ChoiceChipsContentBlock = {
+type ChoiceChipsContentBlock = {
   type: "choice_chips";
   chips: InlineAction[];
 };

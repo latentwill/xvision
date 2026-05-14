@@ -1,17 +1,13 @@
 import type {
   InlineChartContentBlock,
-  InlineChartKind,
   InlineChartSeries,
-  InlineMetric,
   InlinePoint,
   InlineTone,
 } from "@/api/chat_rail";
 
 export type {
   InlineChartContentBlock,
-  InlineChartKind,
   InlineChartSeries,
-  InlineMetric,
   InlinePoint,
   InlineTone,
 };

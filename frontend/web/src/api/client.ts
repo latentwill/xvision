@@ -18,7 +18,7 @@ export class ApiError extends Error {
   }
 }
 
-export type ApiErrorShape = {
+type ApiErrorShape = {
   code: string;
   message: string;
 };

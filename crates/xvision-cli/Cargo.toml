@@ -40,7 +40,6 @@ tokio      = { workspace = true }
 reqwest    = { workspace = true }
 chrono     = { workspace = true }
 uuid       = { workspace = true, features = ["serde", "v4"] }
-tracing            = { workspace = true }
 tracing-subscriber = { workspace = true }
 sqlx               = { workspace = true }
 

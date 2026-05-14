@@ -8,7 +8,7 @@ import type {
   ScenarioMutations,
 } from "./types.gen";
 
-export type ScenariosListResponse = {
+type ScenariosListResponse = {
   items: Scenario[];
 };
 

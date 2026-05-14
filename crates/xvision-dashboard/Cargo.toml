@@ -10,7 +10,6 @@ xvision-core    = { path = "../xvision-core" }
 xvision-engine  = { path = "../xvision-engine" }
 axum            = { version = "0.7", features = ["macros"] }
 tokio           = { workspace = true }
-tower           = "0.5"
 tower-http      = { version = "0.6", features = ["trace", "cors", "compression-full"] }
 serde           = { workspace = true }
 serde_json      = { workspace = true }
@@ -20,7 +19,6 @@ tokio-stream    = "0.1"
 async-stream    = "0.3"
 thiserror       = { workspace = true }
 tracing         = { workspace = true }
-tracing-subscriber = { workspace = true }
 rust-embed      = { version = "8", features = ["compression"] }
 mime_guess      = "2"
 chrono          = { workspace = true }

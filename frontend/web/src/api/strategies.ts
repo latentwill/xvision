@@ -18,24 +18,24 @@ export type StrategyListItem = {
 };
 
 export type PipelineKind = "single" | "sequential" | "graph";
-export type AgentRef = {
+type AgentRef = {
   agent_id: string;
   role: string;
 };
-export type PipelineEdge = {
+type PipelineEdge = {
   from_role: string;
   to_role: string;
 };
-export type PipelineDef = {
+type PipelineDef = {
   kind: PipelineKind;
   edges?: PipelineEdge[];
 };
 
-export type StrategiesListResponse = {
+type StrategiesListResponse = {
   items: StrategyListItem[];
 };
 
-export type LLMSlot = {
+type LLMSlot = {
   role: string;
   prompt: string;
   model_requirement: string;
@@ -52,7 +52,7 @@ export type RiskConfig = {
   daily_loss_kill_pct: number;
 };
 
-export type PublicManifest = {
+type PublicManifest = {
   id: string;
   display_name: string;
   plain_summary: string;
@@ -76,19 +76,6 @@ export type Strategy = {
   mechanical_params: unknown;
   agents?: AgentRef[];
   pipeline?: PipelineDef;
-};
-
-export type UpdateSlotBody = Partial<{
-  prompt: string;
-  model_requirement: string;
-  provider: string;
-  model: string;
-  allowed_tools: string[];
-}>;
-
-export type UpdateSlotOut = {
-  id: string;
-  updated: string[];
 };
 
 export type StrategyAgentsOut = {
@@ -123,7 +110,7 @@ export type TemplateInfo = {
   plain_summary: string;
 };
 
-export type TemplatesListResponse = {
+type TemplatesListResponse = {
   items: TemplateInfo[];
 };
 
@@ -153,20 +140,6 @@ export function listStrategies(): Promise<StrategyListItem[]> {
 
 export function getStrategy(id: string): Promise<Strategy> {
   return apiFetch<Strategy>(`/api/strategy/${encodeURIComponent(id)}`);
-}
-
-export function updateSlot(
-  id: string,
-  role: string,
-  body: UpdateSlotBody,
-): Promise<UpdateSlotOut> {
-  return apiFetch<UpdateSlotOut>(
-    `/api/strategy/${encodeURIComponent(id)}/slot/${encodeURIComponent(role)}`,
-    {
-      method: "PUT",
-      body: JSON.stringify(body),
-    },
-  );
 }
 
 export function setRiskConfig(

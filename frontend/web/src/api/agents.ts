@@ -29,7 +29,7 @@ export type Agent = {
   updated_at: string;
 };
 
-export type Severity = "Error" | "Warning" | "Info";
+type Severity = "Error" | "Warning" | "Info";
 
 export type ValidationDiagnostic = {
   code: string;
