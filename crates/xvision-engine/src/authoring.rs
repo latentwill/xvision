@@ -32,6 +32,7 @@ use crate::templates::registry as template_registry;
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TemplateInfo {
     pub name: String,
     pub display_name: String,
@@ -39,6 +40,7 @@ pub struct TemplateInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CreateStrategyReq {
     pub template: String,
     pub name: String,
@@ -51,6 +53,7 @@ pub struct CreateStrategyOut {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct UpdateSlotReq {
     pub id: String,
     pub slot: String,
@@ -81,6 +84,7 @@ pub struct UpdateManifestOut {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AddAgentRefRequest {
     pub strategy_id: String,
     pub agent_id: String,
@@ -88,12 +92,14 @@ pub struct AddAgentRefRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RemoveAgentRefRequest {
     pub strategy_id: String,
     pub role: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RenameAgentRoleRequest {
     pub strategy_id: String,
     pub role: String,
@@ -101,12 +107,14 @@ pub struct RenameAgentRoleRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SetPipelineRequest {
     pub strategy_id: String,
     pub pipeline: PipelineDef,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SetMechanicalParamReq {
     pub id: String,
     pub key: String,
@@ -114,6 +122,7 @@ pub struct SetMechanicalParamReq {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SetRiskConfigReq {
     pub id: String,
     pub preset: Option<String>,
@@ -529,6 +538,16 @@ mod tests {
         assert!(names.contains(&"trend_follower".to_string()));
         assert!(names.contains(&"breakout".to_string()));
         assert!(names.contains(&"mean_reversion".to_string()));
+    }
+
+    #[test]
+    fn create_strategy_request_rejects_unknown_fields() {
+        let err = serde_json::from_str::<CreateStrategyReq>(
+            r#"{"template":"trend_follower","name":"x","creator":null,"surprise":true}"#,
+        )
+        .expect_err("unknown create-strategy fields must be rejected");
+
+        assert!(err.to_string().contains("unknown field"));
     }
 
     #[tokio::test]

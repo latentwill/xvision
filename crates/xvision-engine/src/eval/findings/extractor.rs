@@ -49,6 +49,7 @@ pub async fn extract_findings(
         messages: vec![Message::user_text(user_text)],
         max_tokens: 2000,
         tools: vec![],
+        response_schema: None,
     };
     let resp = dispatch.complete(req).await?;
     let text = resp.text();

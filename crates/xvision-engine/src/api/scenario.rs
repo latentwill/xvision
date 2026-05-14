@@ -32,6 +32,7 @@ use xvision_data::asset_whitelist::{alpaca_crypto_history_start, is_alpaca_crypt
     ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
 )]
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct CreateScenarioRequest {
     pub display_name: String,
     pub description: String,
@@ -62,6 +63,7 @@ pub struct CreateScenarioRequest {
     ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
 )]
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ListScenariosFilter {
     pub source: Option<ScenarioSource>,
     pub tags: Vec<String>,
@@ -78,6 +80,7 @@ pub struct ListScenariosFilter {
     ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
 )]
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ScenarioMutations {
     pub display_name: Option<String>,
     pub description: Option<String>,
