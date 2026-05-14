@@ -207,6 +207,11 @@ pub async fn delete(ctx: &ApiContext, id: &str) -> ApiResult<()> {
 }
 
 pub async fn validate_request(req: &CreateScenarioRequest, ctx: &ApiContext) -> ApiResult<()> {
+    if req.display_name.trim().is_empty() {
+        return Err(ApiError::Validation(
+            "display_name is required; provide a scenario display name".into(),
+        ));
+    }
     if req.asset.len() != 1 {
         return Err(ApiError::Validation(format!(
             "asset.len() must be 1 in v1 (got {})",

@@ -70,4 +70,24 @@ describe("ScenarioForm", () => {
       expect.objectContaining({ granularity: "15m" }),
     );
   });
+
+  it("requires a non-empty scenario display name before submit", () => {
+    const onSubmit = vi.fn();
+
+    render(<ScenarioForm onSubmit={onSubmit} />);
+
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "   " },
+    });
+    fireEvent.change(screen.getByLabelText("From"), {
+      target: { value: "2024-01-01" },
+    });
+    fireEvent.change(screen.getByLabelText("To"), {
+      target: { value: "2024-01-03" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create →" }));
+
+    expect(screen.getByText("Scenario display name is required.")).toBeInTheDocument();
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
 });

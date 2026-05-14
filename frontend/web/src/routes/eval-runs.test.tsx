@@ -192,6 +192,8 @@ function mockReady({
       display_name: "Trend 4H",
       template: "trend_follower",
       decision_cadence_minutes: 240,
+      providers: ["openai"],
+      models: ["gpt-4.1-mini"],
     },
   ]);
 }
@@ -342,6 +344,31 @@ describe("EvalRunsRoute", () => {
     fireEvent.click(startButton);
 
     expect(await screen.findByText(/Settings -> Providers/)).toBeInTheDocument();
+    expect(evalApi.startRun).not.toHaveBeenCalled();
+  });
+
+  it("blocks eval launch when the selected strategy uses an unconfigured provider", async () => {
+    mockReady({
+      providers: [
+        provider({
+          name: "openrouter",
+          base_url: "https://openrouter.ai/api/v1",
+          enabled_models: ["anthropic/claude-sonnet-4"],
+        }),
+      ],
+    });
+    vi.mocked(evalApi.startRun).mockResolvedValue({} as never);
+
+    renderRoute("/eval-runs?strategy=01TEST&start=1");
+
+    await screen.findByRole("option", { name: /User 4H/ });
+    const scenarioSelect = screen.getByLabelText("Scenario") as HTMLSelectElement;
+    fireEvent.change(scenarioSelect, { target: { value: "user-scenario-4h" } });
+    const startButton = screen.getByRole("button", { name: "Start" });
+    await waitFor(() => expect(startButton).not.toBeDisabled());
+    fireEvent.click(startButton);
+
+    expect(await screen.findByText(/provider 'openai' is not configured/)).toBeInTheDocument();
     expect(evalApi.startRun).not.toHaveBeenCalled();
   });
 

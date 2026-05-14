@@ -102,6 +102,7 @@ export function ScenarioForm({
   const [latencyMs, setLatencyMs] = useState(
     initial?.venue?.latency?.decision_to_fill_ms ?? 500,
   );
+  const [nameError, setNameError] = useState<string | null>(null);
 
   const estimatedBars = estimateBars(from, to, granularity);
 
@@ -114,6 +115,12 @@ export function ScenarioForm({
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    const displayName = name.trim();
+    if (!displayName) {
+      setNameError('Scenario display name is required.');
+      return;
+    }
+    setNameError(null);
 
     const slippage: SlippageModel = { model: 'linear', bps: slippageBps };
     const fillModel: FillModel = {
@@ -129,7 +136,7 @@ export function ScenarioForm({
     };
 
     const req: CreateScenarioRequest = {
-      display_name: name,
+      display_name: displayName,
       description: '',
       asset_class: ASSET_CLASS,
       asset: [{ class: ASSET_CLASS, symbol: asset, venue_symbol: `${asset}/USD` }],
@@ -163,9 +170,15 @@ export function ScenarioForm({
         <input
           className="input"
           value={name}
-          onChange={(e) => setName(e.target.value)}
+          onChange={(e) => {
+            setName(e.target.value);
+            if (nameError) setNameError(null);
+          }}
           required
         />
+        {nameError ? (
+          <div className="mt-1 text-[12px] text-rose-300">{nameError}</div>
+        ) : null}
       </Field>
       <Field label="Notes">
         <input
