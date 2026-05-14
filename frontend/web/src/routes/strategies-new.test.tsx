@@ -114,4 +114,24 @@ describe("StrategiesNewRoute", () => {
       });
     });
   });
+
+  it("shows the agent readiness checklist before creating a strategy", () => {
+    renderRoute();
+
+    expect(screen.getByText("Strategy-agent checklist")).toBeInTheDocument();
+    expect(
+      screen.getByText("Create or attach a reusable agent"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Pick a configured provider/model"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Add a system prompt and risk-capable role"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "A new strategy draft is not eval-ready until this checklist is complete.",
+      ),
+    ).toBeInTheDocument();
+  });
 });

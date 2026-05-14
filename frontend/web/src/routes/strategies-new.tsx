@@ -140,6 +140,28 @@ export function StrategiesNewRoute() {
             </p>
           ) : null}
 
+          <div className="rounded-sm border border-border-soft bg-surface-panel px-3 py-3">
+            <div className="mb-2 text-[11px] uppercase tracking-wide text-text-3">
+              Strategy-agent checklist
+            </div>
+            <ul className="m-0 space-y-1.5 p-0 text-[12px] text-text-2">
+              {[
+                "Create or attach a reusable agent",
+                "Pick a configured provider/model",
+                "Add a system prompt and risk-capable role",
+              ].map((item) => (
+                <li key={item} className="flex items-start gap-2">
+                  <span className="mt-[6px] h-1.5 w-1.5 rounded-full bg-text-3" />
+                  <span>{item}</span>
+                </li>
+              ))}
+            </ul>
+            <p className="m-0 mt-2 text-[12px] text-text-3 leading-snug">
+              A new strategy draft is not eval-ready until this checklist is
+              complete.
+            </p>
+          </div>
+
           <div>
             <div className="mb-1 text-[11px] uppercase tracking-wide text-text-3">
               CLI
