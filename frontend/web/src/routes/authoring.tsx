@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, Navigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
@@ -149,6 +149,11 @@ function AgentsCard({ strategy }: { strategy: Strategy }) {
 
   const attached = strategy.agents ?? [];
   const pipeline = strategy.pipeline ?? { kind: "single" as const, edges: [] };
+  const agentById = useMemo(() => {
+    return new Map(
+      (agentPool.data ?? []).map((agent) => [agent.agent_id, agent]),
+    );
+  }, [agentPool.data]);
   const available = (agentPool.data ?? []).filter(
     (a) => !attached.some((r) => r.agent_id === a.agent_id),
   );
@@ -306,52 +311,71 @@ function AgentsCard({ strategy }: { strategy: Strategy }) {
           </p>
         ) : (
           <div className="space-y-2">
-            {attached.map((a) => (
-              <div
-                key={`${a.agent_id}:${a.role}`}
-                className="border border-border-soft rounded p-3"
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-3 text-[13px]">
-                    <span className="inline-flex items-center justify-center w-6 h-6 rounded-full border border-border-soft text-[12px] text-text-2 font-mono">
-                      {attached.indexOf(a) + 1}
-                    </span>
-                    <div>
-                      <span className="break-all font-mono text-text">
-                        {a.role}
+            {attached.map((a) => {
+              const agent = agentById.get(a.agent_id);
+              const primarySlot = agent?.slots[0];
+              return (
+                <div
+                  key={`${a.agent_id}:${a.role}`}
+                  className="border border-border-soft rounded p-3"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-3 text-[13px]">
+                      <span className="inline-flex items-center justify-center w-6 h-6 rounded-full border border-border-soft text-[12px] text-text-2 font-mono">
+                        {attached.indexOf(a) + 1}
                       </span>
-                      <span className="text-text-3"> · </span>
-                      <span className="break-all font-mono text-text-2">
-                        {a.agent_id}
-                      </span>
+                      <div>
+                        <div>
+                          <span className="break-all font-mono text-text">
+                            {a.role}
+                          </span>
+                          <span className="text-text-3"> · </span>
+                          <span className="break-all font-mono text-text-2">
+                            {a.agent_id}
+                          </span>
+                        </div>
+                        {agent ? (
+                          <div className="mt-1 text-[12px] text-text-2">
+                            <span className="text-text">{agent.name}</span>
+                            {primarySlot ? (
+                              <>
+                                <span className="text-text-3"> · </span>
+                                <span className="font-mono">
+                                  {primarySlot.provider} / {primarySlot.model}
+                                </span>
+                              </>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        className="text-[12px] text-text-2 hover:text-text"
+                        onClick={() => {
+                          setRenameRoleFrom(a.role);
+                          setRenameRoleTo(a.role);
+                        }}
+                      >
+                        Rename role
+                      </button>
+                      <Link
+                        className="text-[12px] text-text-2 hover:text-text"
+                        to={`/agents/${encodeURIComponent(a.agent_id)}`}
+                      >
+                        Edit agent
+                      </Link>
+                      <button
+                        className="text-[12px] text-danger"
+                        onClick={() => removeMut.mutate(a.role)}
+                      >
+                        Remove
+                      </button>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      className="text-[12px] text-text-2 hover:text-text"
-                      onClick={() => {
-                        setRenameRoleFrom(a.role);
-                        setRenameRoleTo(a.role);
-                      }}
-                    >
-                      Rename role
-                    </button>
-                    <Link
-                      className="text-[12px] text-text-2 hover:text-text"
-                      to={`/agents/${encodeURIComponent(a.agent_id)}`}
-                    >
-                      Edit agent
-                    </Link>
-                    <button
-                      className="text-[12px] text-danger"
-                      onClick={() => removeMut.mutate(a.role)}
-                    >
-                      Remove
-                    </button>
-                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
 
@@ -400,25 +424,30 @@ function AgentsCard({ strategy }: { strategy: Strategy }) {
 
         <div className="border border-border-soft rounded p-3 space-y-2">
           <div className="text-[12px] text-text-2">Attach existing agent</div>
-          <select
-            className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text"
-            value={newAgentId}
-            onChange={(e) => setNewAgentId(e.target.value)}
-          >
-            <option value="">Select agent…</option>
-            {available.map((a) => (
-              <option key={a.agent_id} value={a.agent_id}>
-                {a.name} · {a.agent_id}
-              </option>
-            ))}
-          </select>
-          <input
-            className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
-            value={newRole}
-            onChange={(e) => setNewRole(e.target.value)}
-            placeholder="Role name (e.g. trader)"
-          />
+          <Field label="Existing agent">
+            <select
+              className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text"
+              value={newAgentId}
+              onChange={(e) => setNewAgentId(e.target.value)}
+            >
+              <option value="">Select agent…</option>
+              {available.map((a) => (
+                <option key={a.agent_id} value={a.agent_id}>
+                  {a.name} · {a.agent_id}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Existing agent role">
+            <input
+              className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
+              value={newRole}
+              onChange={(e) => setNewRole(e.target.value)}
+              placeholder="Role name (e.g. trader)"
+            />
+          </Field>
           <button
+            type="button"
             onClick={() =>
               addMut.mutate({
                 agent_id: newAgentId,
@@ -477,6 +506,7 @@ function AgentsCard({ strategy }: { strategy: Strategy }) {
             />
           </Field>
           <button
+            type="button"
             onClick={() => createAttachMut.mutate()}
             disabled={
               !newAgentName.trim() ||

@@ -347,6 +347,65 @@ describe("EvalRunsRoute", () => {
     expect(evalApi.startRun).not.toHaveBeenCalled();
   });
 
+  it("starts a backtest when the attached strategy agent provider is ready", async () => {
+    mockReady({
+      providers: [
+        provider({
+          name: "openrouter",
+          base_url: "https://openrouter.ai/api/v1",
+          enabled_models: ["deepseek/deepseek-v4-flash"],
+        }),
+      ],
+    });
+    vi.mocked(strategyApi.listStrategies).mockResolvedValue([
+      {
+        agent_id: "01TEST",
+        display_name: "DeepSeek Strategy",
+        template: "custom",
+        decision_cadence_minutes: 240,
+        providers: ["openrouter"],
+        models: ["deepseek/deepseek-v4-flash"],
+      },
+    ]);
+    vi.mocked(evalApi.startRun).mockResolvedValue({
+      summary: {
+        id: "01RUN",
+        agent_id: "01TEST",
+        scenario_id: "user-scenario-4h",
+        mode: "backtest",
+        status: "queued",
+        started_at: null,
+        completed_at: null,
+        sharpe: null,
+        max_drawdown_pct: null,
+        total_return_pct: null,
+        error: null,
+      },
+      decisions: [],
+      metrics: null,
+    } as never);
+
+    renderRoute("/eval-runs?strategy=01TEST&start=1");
+
+    await screen.findByRole("option", { name: /User 4H/ });
+    fireEvent.change(screen.getByLabelText("Scenario"), {
+      target: { value: "user-scenario-4h" },
+    });
+    const startButton = screen.getByRole("button", { name: "Start" });
+    await waitFor(() => expect(startButton).not.toBeDisabled());
+    fireEvent.click(startButton);
+
+    await waitFor(() => {
+      expect(vi.mocked(evalApi.startRun).mock.calls[0]?.[0]).toEqual({
+        agent_id: "01TEST",
+        scenario_id: "user-scenario-4h",
+        mode: "backtest",
+        params_override: null,
+      });
+    });
+    expect(screen.queryByText(/Pick a provider\/model/)).not.toBeInTheDocument();
+  });
+
   it("blocks eval launch when the selected strategy uses an unconfigured provider", async () => {
     mockReady({
       providers: [
