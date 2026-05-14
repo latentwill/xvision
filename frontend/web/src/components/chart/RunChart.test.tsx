@@ -106,6 +106,7 @@ vi.mock("lightweight-charts", () => ({
 // dynamic import so the mock is hoisted correctly under all vitest
 // transform paths.
 import { RunChart } from "./RunChart";
+import { ChartContainer } from "./ChartContainer";
 
 describe("RunChart", () => {
   beforeEach(() => {
@@ -133,6 +134,28 @@ describe("RunChart", () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     render(<RunChart payload={samplePayload as any} />);
     expect(screen.getByText(/Layers/)).toBeInTheDocument();
+  });
+
+  it("renders chart shell range controls and data table toggle", () => {
+    render(
+      <ChartContainer
+        title="Run chart"
+        range="All"
+        onRange={vi.fn()}
+        layersPanel={<div>layers</div>}
+        dataTable={<table><tbody><tr><td>row</td></tr></tbody></table>}
+      >
+        <div>chart</div>
+      </ChartContainer>,
+    );
+
+    expect(screen.getByRole("button", { name: "1d" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "All" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Data table" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Data table" }));
+
+    expect(screen.getByText("row")).toBeInTheDocument();
   });
 
   it("persists layer toggles to localStorage", () => {

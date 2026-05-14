@@ -8,10 +8,19 @@ type Props = {
   onRange: (r: RangePreset) => void;
   layersPanel: ReactNode;
   children: ReactNode;
+  dataTable?: ReactNode;
 };
 
-export function ChartContainer({ title, range, onRange, layersPanel, children }: Props) {
+export function ChartContainer({
+  title,
+  range,
+  onRange,
+  layersPanel,
+  children,
+  dataTable,
+}: Props) {
   const [layersOpen, setLayersOpen] = useState(false);
+  const [tableOpen, setTableOpen] = useState(false);
   return (
     <div className="border border-border rounded-card">
       <div className="flex items-center gap-2 px-3 py-2 border-b border-border">
@@ -36,6 +45,16 @@ export function ChartContainer({ title, range, onRange, layersPanel, children }:
           >
             Layers ▾
           </button>
+          {dataTable ? (
+            <button
+              type="button"
+              aria-pressed={tableOpen}
+              onClick={() => setTableOpen((v) => !v)}
+              className="text-[12px] text-text-3 hover:text-text-2"
+            >
+              Data table
+            </button>
+          ) : null}
         </div>
       </div>
       <div className="relative">
@@ -52,6 +71,11 @@ export function ChartContainer({ title, range, onRange, layersPanel, children }:
           </div>
         )}
       </div>
+      {tableOpen && dataTable ? (
+        <div className="border-t border-border overflow-x-auto p-3">
+          {dataTable}
+        </div>
+      ) : null}
     </div>
   );
 }
