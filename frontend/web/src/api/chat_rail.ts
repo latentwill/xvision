@@ -151,6 +151,7 @@ export type WizardEvent =
   | { type: "token"; text: string }
   | { type: "tool_call"; tool: string; args: unknown }
   | { type: "tool_result"; tool: string; result: unknown }
+  | { type: "content_block"; block: ContentBlock }
   | { type: "done"; draft_id?: string | null }
   | { type: "error"; message: string };
 
