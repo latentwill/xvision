@@ -1,0 +1,121 @@
+name: rust unused deps
+
+# Manual Rust dependency hygiene checks. Kept off pull_request by default
+# because both jobs compile or install extra tooling, and udeps requires
+# nightly.
+on:
+  workflow_dispatch:
+    inputs:
+      check:
+        description: "Which unused-dependency audit to run"
+        type: choice
+        default: machete
+        options:
+          - machete
+          - udeps
+          - both
+
+concurrency:
+  group: rust-unused-deps-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  machete:
+    name: cargo machete
+    runs-on: ubuntu-latest
+    if: github.event.inputs.check == 'machete' || github.event.inputs.check == 'both'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.95.0
+
+      - name: Cache cargo state
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: rust-unused-deps-machete
+
+      - name: Install cargo-machete
+        run: cargo install cargo-machete --locked
+
+      - name: Run cargo machete
+        run: |
+          set +e
+          cargo machete 2>&1 | tee cargo-machete.txt
+          status=${PIPESTATUS[0]}
+          {
+            echo "## cargo machete"
+            echo
+            echo '```text'
+            cat cargo-machete.txt
+            echo '```'
+          } > cargo-machete.md
+          exit "$status"
+
+      - name: Upload cargo machete report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cargo-machete-report
+          path: |
+            cargo-machete.txt
+            cargo-machete.md
+
+  udeps:
+    name: cargo udeps
+    runs-on: ubuntu-latest
+    if: github.event.inputs.check == 'udeps' || github.event.inputs.check == 'both'
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Install Rust native build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            perl \
+            make \
+            cmake \
+            clang \
+            libclang-dev \
+            pkg-config \
+            libsqlite3-dev
+
+      - name: Cache cargo state
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: rust-unused-deps-udeps
+
+      - name: Install cargo-udeps
+        run: cargo install cargo-udeps --locked
+
+      - name: Run cargo udeps
+        run: |
+          set +e
+          cargo +nightly udeps --workspace --all-targets 2>&1 | tee cargo-udeps.txt
+          status=${PIPESTATUS[0]}
+          {
+            echo "## cargo udeps"
+            echo
+            echo '```text'
+            cat cargo-udeps.txt
+            echo '```'
+          } > cargo-udeps.md
+          exit "$status"
+
+      - name: Upload cargo udeps report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cargo-udeps-report
+          path: |
+            cargo-udeps.txt
+            cargo-udeps.md
