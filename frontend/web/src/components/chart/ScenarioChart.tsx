@@ -7,7 +7,9 @@ import {
 } from "lightweight-charts";
 import type { ScenarioChartPayload } from "@/api/types.gen/ScenarioChartPayload";
 import type { IndicatorPoint } from "@/api/types.gen/IndicatorPoint";
-import { chartTheme } from "./chart-theme";
+import type { ResolvedTheme } from "@/theme/themes";
+import { useTheme } from "@/theme/useTheme";
+import { chartTheme, normalizeChartTheme } from "./chart-theme";
 import { ChartContainer, type RangePreset } from "./ChartContainer";
 import { CacheStatusBadge } from "@/components/scenario/CacheStatusBadge";
 import { useChartLayers } from "./use-chart-layers";
@@ -22,17 +24,21 @@ const REGIME_BG: Record<string, string> = {
 
 export function ScenarioChart({
   payload,
-  themeMode = "dark",
+  theme,
+  themeMode,
   onFetch,
   fetchStatus,
   fetchDisabled,
 }: {
   payload: ScenarioChartPayload;
   themeMode?: "dark" | "light";
+  theme?: ResolvedTheme;
   onFetch?: () => void;
   fetchStatus?: string | null;
   fetchDisabled?: boolean;
 }) {
+  const appTheme = useTheme();
+  const activeTheme = theme ?? normalizeChartTheme(themeMode, appTheme.resolvedTheme);
   const ref = useRef<HTMLDivElement>(null);
   const [range, setRange] = useState<RangePreset>("All");
   const { layers, toggle, set } = useChartLayers("scenario");
@@ -47,15 +53,15 @@ export function ScenarioChart({
 
   useEffect(() => {
     if (!ref.current) return;
-    const theme = chartTheme(themeMode);
+    const palette = chartTheme(activeTheme);
     const c = createChart(ref.current, {
       layout: {
-        background: { type: ColorType.Solid, color: theme.background },
-        textColor: theme.text,
+        background: { type: ColorType.Solid, color: palette.background },
+        textColor: palette.text,
       },
       grid: {
-        vertLines: { color: theme.grid },
-        horzLines: { color: theme.grid },
+        vertLines: { color: palette.grid },
+        horzLines: { color: palette.grid },
       },
       crosshair: { mode: CrosshairMode.Normal },
       timeScale: { rightOffset: 6, secondsVisible: false },
@@ -64,10 +70,10 @@ export function ScenarioChart({
     if (payload.bars.length > 0) {
       const indicators = payload.indicators ?? emptyIndicators();
       const candle = c.addCandlestickSeries({
-        upColor: theme.series.candleUp,
-        downColor: theme.series.candleDown,
-        wickUpColor: theme.series.candleUp,
-        wickDownColor: theme.series.candleDown,
+        upColor: palette.series.candleUp,
+        downColor: palette.series.candleDown,
+        wickUpColor: palette.series.candleUp,
+        wickDownColor: palette.series.candleDown,
         borderVisible: false,
       });
       candle.setData(
@@ -81,37 +87,37 @@ export function ScenarioChart({
       );
 
       if (layers.sma20)
-        c.addLineSeries({ color: theme.series.sma20, lineWidth: 1 }).setData(indicators.sma_20.map(toLine));
+        c.addLineSeries({ color: palette.series.sma20, lineWidth: 1 }).setData(indicators.sma_20.map(toLine));
       if (layers.sma30 && indicators.sma_30)
-        c.addLineSeries({ color: "#a7f3d0", lineWidth: 1 }).setData(indicators.sma_30.map(toLine));
+        c.addLineSeries({ color: palette.series.sma30, lineWidth: 1 }).setData(indicators.sma_30.map(toLine));
       if (layers.sma50)
-        c.addLineSeries({ color: theme.series.sma50, lineWidth: 1 }).setData(indicators.sma_50.map(toLine));
+        c.addLineSeries({ color: palette.series.sma50, lineWidth: 1 }).setData(indicators.sma_50.map(toLine));
       if (layers.sma60 && indicators.sma_60)
-        c.addLineSeries({ color: "#6ee7b7", lineWidth: 1 }).setData(indicators.sma_60.map(toLine));
+        c.addLineSeries({ color: palette.series.sma60, lineWidth: 1 }).setData(indicators.sma_60.map(toLine));
       if (layers.sma90 && indicators.sma_90)
-        c.addLineSeries({ color: "#34d399", lineWidth: 1 }).setData(indicators.sma_90.map(toLine));
+        c.addLineSeries({ color: palette.series.sma90, lineWidth: 1 }).setData(indicators.sma_90.map(toLine));
       if (layers.sma200)
-        c.addLineSeries({ color: theme.series.sma200, lineWidth: 1 }).setData(indicators.sma_200.map(toLine));
+        c.addLineSeries({ color: palette.series.sma200, lineWidth: 1 }).setData(indicators.sma_200.map(toLine));
       if (layers.ema20)
-        c.addLineSeries({ color: theme.series.ema20, lineWidth: 1, lineStyle: 2 }).setData(indicators.ema_20.map(toLine));
+        c.addLineSeries({ color: palette.series.ema20, lineWidth: 1, lineStyle: 2 }).setData(indicators.ema_20.map(toLine));
       if (layers.ema30 && indicators.ema_30)
-        c.addLineSeries({ color: "#bae6fd", lineWidth: 1, lineStyle: 2 }).setData(indicators.ema_30.map(toLine));
+        c.addLineSeries({ color: palette.series.ema30, lineWidth: 1, lineStyle: 2 }).setData(indicators.ema_30.map(toLine));
       if (layers.ema50)
-        c.addLineSeries({ color: theme.series.ema50, lineWidth: 1, lineStyle: 2 }).setData(indicators.ema_50.map(toLine));
+        c.addLineSeries({ color: palette.series.ema50, lineWidth: 1, lineStyle: 2 }).setData(indicators.ema_50.map(toLine));
       if (layers.ema60 && indicators.ema_60)
-        c.addLineSeries({ color: "#7dd3fc", lineWidth: 1, lineStyle: 2 }).setData(indicators.ema_60.map(toLine));
+        c.addLineSeries({ color: palette.series.ema60, lineWidth: 1, lineStyle: 2 }).setData(indicators.ema_60.map(toLine));
       if (layers.ema90 && indicators.ema_90)
-        c.addLineSeries({ color: "#38bdf8", lineWidth: 1, lineStyle: 2 }).setData(indicators.ema_90.map(toLine));
+        c.addLineSeries({ color: palette.series.ema90, lineWidth: 1, lineStyle: 2 }).setData(indicators.ema_90.map(toLine));
       if (layers.ema200)
-        c.addLineSeries({ color: theme.series.ema200, lineWidth: 1, lineStyle: 2 }).setData(indicators.ema_200.map(toLine));
+        c.addLineSeries({ color: palette.series.ema200, lineWidth: 1, lineStyle: 2 }).setData(indicators.ema_200.map(toLine));
       if (layers.bollinger) {
-        c.addLineSeries({ color: theme.series.bollUpper, lineWidth: 1 }).setData(indicators.bollinger.upper.map(toLine));
-        c.addLineSeries({ color: theme.series.bollMiddle, lineWidth: 1 }).setData(indicators.bollinger.middle.map(toLine));
-        c.addLineSeries({ color: theme.series.bollLower, lineWidth: 1 }).setData(indicators.bollinger.lower.map(toLine));
+        c.addLineSeries({ color: palette.series.bollUpper, lineWidth: 1 }).setData(indicators.bollinger.upper.map(toLine));
+        c.addLineSeries({ color: palette.series.bollMiddle, lineWidth: 1 }).setData(indicators.bollinger.middle.map(toLine));
+        c.addLineSeries({ color: palette.series.bollLower, lineWidth: 1 }).setData(indicators.bollinger.lower.map(toLine));
       }
       if (layers.donchian) {
-        c.addLineSeries({ color: theme.series.donchianUpper, lineWidth: 1 }).setData(indicators.donchian.upper.map(toLine));
-        c.addLineSeries({ color: theme.series.donchianLower, lineWidth: 1 }).setData(indicators.donchian.lower.map(toLine));
+        c.addLineSeries({ color: palette.series.donchianUpper, lineWidth: 1 }).setData(indicators.donchian.upper.map(toLine));
+        c.addLineSeries({ color: palette.series.donchianLower, lineWidth: 1 }).setData(indicators.donchian.lower.map(toLine));
       }
 
       applyRange(c, range, payload.bars.length);
@@ -124,8 +130,8 @@ export function ScenarioChart({
             value: b.volume,
             color:
               b.close >= b.open
-                ? theme.series.candleUp
-                : theme.series.candleDown,
+                ? palette.series.candleUp
+                : palette.series.candleDown,
           })),
         );
         c.priceScale("volume").applyOptions({
@@ -135,7 +141,7 @@ export function ScenarioChart({
     }
 
     return () => c.remove();
-  }, [payload, themeMode, layers, range]);
+  }, [payload, activeTheme, layers, range]);
 
   return (
     <div style={{ background: bg }}>

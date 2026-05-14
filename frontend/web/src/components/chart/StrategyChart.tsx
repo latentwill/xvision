@@ -6,7 +6,9 @@ import {
   type UTCTimestamp,
 } from "lightweight-charts";
 import type { StrategyChartPayload } from "@/api/types.gen/StrategyChartPayload";
-import { chartTheme } from "./chart-theme";
+import type { ResolvedTheme } from "@/theme/themes";
+import { useTheme } from "@/theme/useTheme";
+import { chartTheme, normalizeChartTheme } from "./chart-theme";
 import { ChartContainer, type RangePreset } from "./ChartContainer";
 
 const SCENARIO_PALETTE = [
@@ -22,11 +24,15 @@ const SCENARIO_PALETTE = [
 
 export function StrategyChart({
   payload,
-  themeMode = "dark",
+  theme,
+  themeMode,
 }: {
   payload: StrategyChartPayload;
   themeMode?: "dark" | "light";
+  theme?: ResolvedTheme;
 }) {
+  const appTheme = useTheme();
+  const activeTheme = theme ?? normalizeChartTheme(themeMode, appTheme.resolvedTheme);
   const ref = useRef<HTMLDivElement>(null);
   const [range, setRange] = useState<RangePreset>("All");
 
@@ -41,15 +47,15 @@ export function StrategyChart({
 
   useEffect(() => {
     if (!ref.current) return;
-    const theme = chartTheme(themeMode);
+    const palette = chartTheme(activeTheme);
     const c = createChart(ref.current, {
       layout: {
-        background: { type: ColorType.Solid, color: theme.background },
-        textColor: theme.text,
+        background: { type: ColorType.Solid, color: palette.background },
+        textColor: palette.text,
       },
       grid: {
-        vertLines: { color: theme.grid },
-        horzLines: { color: theme.grid },
+        vertLines: { color: palette.grid },
+        horzLines: { color: palette.grid },
       },
       crosshair: { mode: CrosshairMode.Normal },
       timeScale: { timeVisible: false, secondsVisible: false },
@@ -68,7 +74,7 @@ export function StrategyChart({
     }
 
     return () => c.remove();
-  }, [payload, themeMode, scenarioColors]);
+  }, [payload, activeTheme, scenarioColors]);
 
   if (payload.run_series.length === 0) {
     return (
