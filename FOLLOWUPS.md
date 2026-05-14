@@ -410,3 +410,22 @@ Hermes Agent (NousResearch) is the OpenClaw successor — its own README documen
   - TradingView charts: Scenario uses the same reusable chart/layer behavior as run/strategy surfaces; timeframe controls affect chart range; indicator choices include the expanded SMA/EMA periods.
   - Performance: audit first-load and chart-heavy routes after the behavioral fixes.
 - **Blocking:** YES for treating the dashboard as QA-ready for non-author operators.
+
+### F39 [Shared]. Serve chart images over the CLI for evals
+
+- **Trigger:** after eval result/chart payloads stabilize and the CLI workflow
+  tracks have landed (`eval run`, `watch`, `results`, JSON output).
+- **Scope:** add a CLI-accessible chart image path for eval runs, so agents and
+  operators can fetch a rendered PNG/SVG for a run without opening the
+  dashboard. Candidate shape:
+  - `xvn eval chart <run_id> --output run.png` for local use.
+  - remote CLI/API equivalent that returns or downloads the same image artifact.
+  - use the existing run chart payload as source of truth so dashboard and CLI
+    charts do not diverge.
+  - include useful defaults for price, decisions, equity, drawdown, and active
+    indicators; keep machine-readable metadata next to the image when useful.
+- **Why noted:** evals increasingly need to be agent-operable. A copyable chart
+  image lets agents include visual evidence in reports, compare runs outside
+  the browser, and hand off eval results through CLI-only workflows.
+- **Blocking:** non-blocking for deploy; quality-of-life for agent and operator
+  eval review.
