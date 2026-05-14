@@ -664,6 +664,7 @@ impl<A: AlpacaApi + 'static> Executor for AlpacaExecutor<A> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
     use std::sync::Arc;
     use std::sync::Mutex;
 
@@ -797,6 +798,21 @@ mod tests {
                 asset: None,
             },
         }
+    }
+
+    #[test]
+    fn alpaca_symbol_mapping_accepts_unlocked_crypto_symbols() {
+        assert_eq!(alpaca_symbol_for(AssetSymbol::Eth), "ETH/USD");
+        assert_eq!(alpaca_symbol_for(AssetSymbol::Sol), "SOL/USD");
+        assert_eq!(asset_symbol_from_alpaca("ETH/USD"), Some(AssetSymbol::Eth));
+        assert_eq!(asset_symbol_from_alpaca("sol"), Some(AssetSymbol::Sol));
+    }
+
+    #[test]
+    fn alpaca_symbol_mapping_rejects_unsupported_crypto_symbols() {
+        assert_eq!(asset_symbol_from_alpaca("XRP/USD"), None);
+        let err = AssetSymbol::from_str("XRP").unwrap_err();
+        assert!(err.contains("Alpaca crypto whitelist"));
     }
 
     // ── Test 1: submit_buy_with_bracket ──────────────────────────────────────

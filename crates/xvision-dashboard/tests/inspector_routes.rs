@@ -60,6 +60,27 @@ async fn get_strategy_unknown_returns_404() {
 }
 
 #[tokio::test]
+async fn delete_strategy_removes_draft_and_get_returns_404() {
+    let (server, _tmp, state) = boot().await;
+    let id = create_draft(&state).await;
+
+    let response = server.delete(&format!("/api/strategy/{id}")).await;
+    response.assert_status_no_content();
+
+    let get = server.get(&format!("/api/strategy/{id}")).await;
+    get.assert_status_not_found();
+}
+
+#[tokio::test]
+async fn delete_strategy_unknown_returns_404() {
+    let (server, _tmp, _state) = boot().await;
+    let response = server
+        .delete("/api/strategy/01TOTALLYMISSINGAGENTID000")
+        .await;
+    response.assert_status_not_found();
+}
+
+#[tokio::test]
 async fn put_slot_updates_prompt() {
     let (server, _tmp, state) = boot().await;
     let id = create_draft(&state).await;

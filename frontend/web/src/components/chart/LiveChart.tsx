@@ -1,14 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 
+import type { ResolvedTheme } from "@/theme/themes";
 import { RunChart } from "./RunChart";
 import { useRunStream, type LiveStatus } from "./use-run-stream";
 
 type Props = {
   runId: string;
   themeMode?: "dark" | "light";
+  theme?: ResolvedTheme;
 };
 
-export function LiveChart({ runId, themeMode = "dark" }: Props) {
+export function LiveChart({ runId, theme, themeMode }: Props) {
   const { data, status } = useRunStream(runId);
   const [follow, setFollow] = useState(true);
   const previousRunIdRef = useRef(runId);
@@ -46,7 +48,12 @@ export function LiveChart({ runId, themeMode = "dark" }: Props) {
         </label>
       </div>
       {data ? (
-        <RunChart payload={data} themeMode={themeMode} follow={effectiveFollow} />
+        <RunChart
+          payload={data}
+          theme={theme}
+          themeMode={themeMode}
+          follow={effectiveFollow}
+        />
       ) : (
         <div className="text-text-3 py-12 text-center">
           Waiting for first event…

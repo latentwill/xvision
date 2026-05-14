@@ -16,7 +16,7 @@ use crate::agents::AgentStore;
 use crate::authoring::{
     self, AddAgentRefRequest, CreateStrategyOut, CreateStrategyReq, RemoveAgentRefRequest,
     RenameAgentRoleRequest, SetPipelineRequest, SetRiskConfigOut, SetRiskConfigReq, UpdateSlotOut,
-    UpdateSlotReq, ValidateDraftOut,
+    UpdateManifestOut, UpdateManifestReq, UpdateSlotReq, ValidateDraftOut,
 };
 use crate::strategies::{
     AgentRef, PipelineDef, PipelineEdge, PipelineKind,
@@ -290,9 +290,44 @@ pub async fn get(ctx: &ApiContext, agent_id: &str) -> ApiResult<Strategy> {
     result
 }
 
+pub async fn delete(ctx: &ApiContext, agent_id: &str) -> ApiResult<()> {
+    let started = Instant::now();
+    let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+    let result = delete_inner(&store, agent_id).await;
+
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let _ = audit::record(
+        ctx,
+        "strategy",
+        "delete",
+        Some(agent_id),
+        None,
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    if result.is_ok() {
+        api_search::delete_strategy(ctx, agent_id).await;
+    }
+    result
+}
+
 async fn get_inner(ctx: &ApiContext, agent_id: &str) -> ApiResult<Strategy> {
     let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
     store.load(agent_id).await.map_err(|e| {
+        if is_not_found(&e) {
+            ApiError::NotFound(format!("strategy '{agent_id}'"))
+        } else {
+            ApiError::Internal(e.to_string())
+        }
+    })
+}
+
+async fn delete_inner(store: &FilesystemStore, agent_id: &str) -> ApiResult<()> {
+    store.delete(agent_id).await.map_err(|e| {
         if is_not_found(&e) {
             ApiError::NotFound(format!("strategy '{agent_id}'"))
         } else {
@@ -328,6 +363,9 @@ fn map_authoring_error(err: anyhow::Error, agent_id: Option<&str>) -> ApiError {
     let validation_markers = [
         "unknown slot",
         "no fields to update",
+        "no manifest fields to update",
+        "asset_universe",
+        "decision_cadence_minutes",
         "unknown preset",
         "preset and explicit are mutually exclusive",
         "supply either preset or explicit",
@@ -410,6 +448,39 @@ pub async fn update_slot(ctx: &ApiContext, req: UpdateSlotReq) -> ApiResult<Upda
         ctx,
         "strategy",
         "update_slot",
+        Some(&agent_id),
+        args_json.as_deref(),
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    if result.is_ok() {
+        index_strategy_after_mutation(ctx, &store, &agent_id).await;
+    }
+    result
+}
+
+/// Update manifest fields shown by the Strategy Inspector.
+pub async fn update_manifest(
+    ctx: &ApiContext,
+    req: UpdateManifestReq,
+) -> ApiResult<UpdateManifestOut> {
+    let started = Instant::now();
+    let agent_id = req.id.clone();
+    let args_json = serde_json::to_string(&req).ok();
+    let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+    let result = authoring::update_manifest(&store, req)
+        .await
+        .map_err(|e| map_authoring_error(e, Some(&agent_id)));
+
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let _ = audit::record(
+        ctx,
+        "strategy",
+        "update_manifest",
         Some(&agent_id),
         args_json.as_deref(),
         outcome,
@@ -879,6 +950,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn update_manifest_round_trips_and_audits() {
+        let (ctx, _d) = ctx_with_audit().await;
+        let created = create_strategy(
+            &ctx,
+            CreateStrategyReq {
+                template: "mean_reversion".into(),
+                name: "x".into(),
+                creator: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let out = update_manifest(
+            &ctx,
+            UpdateManifestReq {
+                id: created.id.clone(),
+                asset_universe: Some(vec!["BTC/USD".into()]),
+                decision_cadence_minutes: Some(360),
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(out.updated, vec!["asset_universe", "decision_cadence_minutes"]);
+        assert!(audit_row_exists(&ctx, "update_manifest", &created.id).await);
+        let strategy = get(&ctx, &created.id).await.unwrap();
+        assert_eq!(strategy.manifest.asset_universe, vec!["BTC/USD"]);
+        assert_eq!(strategy.manifest.decision_cadence_minutes, 360);
+    }
+
+    #[tokio::test]
     async fn set_risk_config_unknown_preset_is_validation_error() {
         let (ctx, _d) = ctx_with_audit().await;
         let created = create_strategy(
@@ -922,6 +1025,49 @@ mod tests {
         // row landed and the response carries the id.
         assert_eq!(out.id, created.id);
         assert!(audit_row_exists(&ctx, "validate", &created.id).await);
+    }
+
+    #[tokio::test]
+    async fn validate_draft_reports_manifest_slot_prompt_drift() {
+        let (ctx, _d) = ctx_with_audit().await;
+        let created = create_strategy(
+            &ctx,
+            CreateStrategyReq {
+                template: "mean_reversion".into(),
+                name: "x".into(),
+                creator: None,
+            },
+        )
+        .await
+        .unwrap();
+        update_slot(
+            &ctx,
+            UpdateSlotReq {
+                id: created.id.clone(),
+                slot: "trader".into(),
+                prompt: Some("Trade BTC/USD on a 6h candle schedule.".into()),
+                model_requirement: None,
+                provider: None,
+                model: None,
+                allowed_tools: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let out = validate_draft(&ctx, &created.id).await.unwrap();
+
+        assert!(!out.ok);
+        assert!(
+            out.errors.iter().any(|e| e.contains("BTC/USD")),
+            "expected asset drift error, got {:?}",
+            out.errors,
+        );
+        assert!(
+            out.errors.iter().any(|e| e.contains("6h")),
+            "expected cadence drift error, got {:?}",
+            out.errors,
+        );
     }
 
     #[tokio::test]

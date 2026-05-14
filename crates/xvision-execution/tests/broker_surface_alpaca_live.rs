@@ -20,7 +20,22 @@
 //! See: docs/superpowers/plans/2026-05-08-strategy-engine-2c-scheduler-live-exec.md#task-7-brokersurface-trait--dispatch
 //!      team/briefings/broker-surface.md
 
+use std::str::FromStr;
+
+use xvision_core::AssetSymbol;
 use xvision_execution::broker_surface::{AlpacaPaperSurface, BrokerSurface};
+
+#[test]
+fn alpaca_paper_surface_accepts_unlocked_crypto_symbols() {
+    assert_eq!(AssetSymbol::from_str("ETH").unwrap().as_alpaca_pair(), "ETH/USD");
+    assert_eq!(AssetSymbol::from_str("SOL/USD").unwrap().as_alpaca_pair(), "SOL/USD");
+}
+
+#[test]
+fn alpaca_paper_surface_rejects_unsupported_crypto_symbols() {
+    let err = AssetSymbol::from_str("XRP").unwrap_err();
+    assert!(err.contains("not in the Alpaca crypto whitelist"));
+}
 
 #[tokio::test]
 #[ignore = "requires live Alpaca paper credentials (APCA_API_KEY_ID, APCA_API_SECRET_KEY)"]

@@ -63,6 +63,11 @@ Use these as reference only:
 | `qa8-agent-ux-cli-templates` | `.worktrees/qa8-agent-ux-cli-templates` | Improve agent UX: deterministic strategy scaffolds for simple creation, UI copy-pastable CLI commands, and template registry/version parity between deployed image and local repo | `qa8-template-authoring-flow` preferred | no overlap with template authoring or shell UI tracks | frontend tests for CLI command rendering + template registry API tests |
 | `qa8-scenario-display-name-contract` | `.worktrees/qa8-scenario-display-name-contract` | Fix scenario creation/tooling so custom scenarios always carry a required display name and missing-name validation is actionable | none | no overlap with scenario create/API/CLI tracks | scenario API/CLI validation tests + create-scenario focused frontend/tool tests |
 | `qa8-eval-provider-preflight` | `.worktrees/qa8-eval-provider-preflight` | Prevent Web UI eval and wizard flows from launching with unconfigured `openai`/`anthropic` defaults; require configured provider/model selection or a clear zero-provider setup action | `qa4-settings-zero-provider` preferred | no overlap with eval launcher, chat rail, or provider picker tracks | eval launch/provider preflight tests + chat/wizard zero-provider regression test |
+| `qa9-delete-edit-flow-verification` | `.worktrees/qa9-delete-edit-flow-verification` | Verify scenario clone-to-edit, archive, and delete failure flows after live QA stopped before delete/edit coverage | none | no overlap with wizard/strategy-agent tracks; frontend test-only coverage | scenario detail focused frontend tests + typecheck |
+| `qa9-strategy-wizard-persistence` | `.worktrees/qa9-strategy-wizard-persistence` | Fix live QA bug where setup wizard/chat claims asset/cadence/risk edits but Inspector manifest still shows original draft values | none | no overlap with eval/agent attachment tracks; owns wizard authoring manifest persistence | authoring/API/wizard regression tests in CI/non-deploy + frontend typecheck |
+| `qa9-readonly-editability-contract` | `.worktrees/qa9-readonly-editability-contract` | Clarify the setup/Inspector contract so read-only manifest/mechanical fields are not presented as directly editable without a successful setup tool save | none | no overlap with backend persistence; owns copy/tests for read-only contract | setup + authoring focused frontend tests + typecheck |
+| `qa9-strategy-agent-attachment-flow` | `.worktrees/qa9-strategy-agent-attachment-flow` | Validate attaching an existing AgentRef from the Inspector and make attached rows show agent/provider/model metadata before eval | none | no overlap with setup wizard persistence or read-only copy tracks | authoring focused frontend tests + typecheck |
+| `color-themes-light-dark` | `.worktrees/color-themes-light-dark` | Execute `docs/superpowers/plans/2026-05-14-color-themes-light-dark-mode.md`: color-only dashboard themes, General settings, sidebar sun/moon toggle, chart palette integration | none | no overlap with broad shell/settings/chart frontend tracks | `corepack pnpm --dir frontend/web test && corepack pnpm --dir frontend/web typecheck && corepack pnpm --dir frontend/web build` |
 
 ## Recommended order
 
@@ -94,6 +99,7 @@ Use these as reference only:
 26. `qa8-agent-ux-cli-templates`
 27. `qa8-scenario-display-name-contract`
 28. `qa8-eval-provider-preflight`
+29. `color-themes-light-dark`
 
 ## Immediate start set
 
@@ -113,6 +119,7 @@ Safe to start now:
 - `qa8-unbounded-slot-tool-use`
 - `qa8-cli-runtime-blockers`
 - `qa8-scenario-display-name-contract`
+- `color-themes-light-dark`
 
 Wait for `strategy-agent-backend`:
 
@@ -157,6 +164,9 @@ Do not overlap:
 - `qa8-eval-provider-preflight` with `qa4-chat-eval-launcher`,
   `qa8-shared-chat-rail-context`, or `qa8-inspector-agent-model-picker` if
   those tracks are still editing provider/model picker wiring.
+- `color-themes-light-dark` with broad shell/settings/chart frontend tracks,
+  especially `qa8-shared-chat-rail-context`, `pr94-chart-stabilization`,
+  `runtime-render-optimization`, or any active Settings layout refactor.
 
 ## Cherry-pick policy
 

@@ -74,6 +74,8 @@ async fn save_test_strategy(ctx: &ApiContext, agent_id: &str) -> Strategy {
             prompt: "Decide.".into(),
             model_requirement: "anthropic.claude-sonnet-4.6+".into(),
             allowed_tools: vec![],
+            provider: None,
+            model: None,
         }),
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({}),
@@ -81,6 +83,50 @@ async fn save_test_strategy(ctx: &ApiContext, agent_id: &str) -> Strategy {
     let store = FilesystemStore::new(ctx.xvn_home.join("strategies"));
     store.save(&strategy).await.unwrap();
     strategy
+}
+
+fn write_openrouter_config(xvn_home: &std::path::Path) {
+    let config_dir = xvn_home.join("config");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    let path = config_dir.join("default.toml");
+    std::fs::write(
+        &path,
+        r#"
+[runtime]
+mode = "backtest"
+executor = "alpaca"
+random_seed = 42
+
+[[providers]]
+name = "openrouter"
+kind = "openai-compat"
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "OPENROUTER_API_KEY"
+enabled_models = ["anthropic/claude-3.5-sonnet"]
+
+[trader]
+model_path = "models/x.gguf"
+temperature = 0.0
+forward_paper_temperature = 0.4
+max_tokens = 512
+[trader.vectors]
+enabled = false
+config = "off"
+
+[backtest]
+step = 24
+horizon = 16
+bootstrap_resamples = 1000
+bootstrap_block_size = 8
+
+[paths]
+data_root = "data"
+vectors = "data/vectors"
+probes = "data/probes"
+sqlite_url = "sqlite://x.db"
+"#,
+    )
+    .unwrap();
 }
 
 fn hold_dispatch() -> Arc<dyn LlmDispatch> {
@@ -186,6 +232,49 @@ async fn run_returns_not_found_for_unknown_scenario() {
         matches!(r, Err(ApiError::NotFound(_))),
         "expected NotFound for unknown scenario, got {r:?}",
     );
+}
+
+#[tokio::test]
+async fn run_rejects_openrouter_legacy_anthropic_model_before_queueing() {
+    let (ctx, tmp) = ctx_with_tables().await;
+    write_openrouter_config(tmp.path());
+    let agent_id = "01TESTSTRATEGY000000000000OR";
+    let mut strategy = save_test_strategy(&ctx, agent_id).await;
+    let slot = strategy.trader_slot.as_mut().unwrap();
+    slot.provider = Some("openrouter".into());
+    slot.model = None;
+    slot.model_requirement = "anthropic.claude-sonnet-4.6".into();
+    let store = FilesystemStore::new(ctx.xvn_home.join("strategies"));
+    store.save(&strategy).await.unwrap();
+
+    let r = eval::run(
+        &ctx,
+        EvalRunRequest {
+            agent_id: agent_id.into(),
+            scenario_id: "flash-crash-2024-08".into(),
+            mode: RunMode::Backtest,
+            params_override: None,
+        },
+    )
+    .await;
+
+    let err = r.expect_err("invalid OpenRouter model id must reject");
+    assert!(
+        matches!(err, ApiError::Validation(_)),
+        "expected Validation, got {err:?}",
+    );
+    let msg = err.to_string();
+    assert!(msg.contains("openrouter"), "message should name provider: {msg}");
+    assert!(
+        msg.contains("anthropic.claude-sonnet-4.6"),
+        "message should name invalid model: {msg}",
+    );
+
+    let queued: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM eval_runs")
+        .fetch_one(&ctx.db)
+        .await
+        .unwrap();
+    assert_eq!(queued, 0, "model preflight must fail before queueing");
 }
 
 #[tokio::test]

@@ -113,4 +113,37 @@ describe("ScenarioChart", () => {
     expect(screen.getByText("sma60")).toBeInTheDocument();
     expect(screen.getByText("sma90")).toBeInTheDocument();
   });
+
+  it("renders scenario candles, cache status, and data table fallback", () => {
+    render(<ScenarioChart payload={payload} />);
+
+    expect(
+      screen.getByRole("img", { name: /scenario price chart for scenario/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Fully cached: 1 bars")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Data table" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Data table" }));
+
+    expect(screen.getByText("Close")).toBeInTheDocument();
+    expect(screen.getByText("Volume")).toBeInTheDocument();
+  });
+
+  it("shows fetch bars action when cache is missing", () => {
+    const onFetch = vi.fn();
+    render(
+      <ScenarioChart
+        payload={{
+          ...payload,
+          bars: [],
+          cache_status: { type: "NotCached", expected_count: 24 },
+        }}
+        onFetch={onFetch}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Fetch bars" }));
+
+    expect(onFetch).toHaveBeenCalledTimes(1);
+  });
 });

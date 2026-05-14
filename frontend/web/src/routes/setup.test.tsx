@@ -83,6 +83,16 @@ describe("SetupRoute", () => {
     expect(send).toBeEnabled();
   });
 
+  it("makes tool success the boundary for saved setup changes", async () => {
+    renderRoute();
+
+    expect(
+      await screen.findByText(
+        "Only completed tool calls change the saved draft. Open the Inspector to verify the manifest before eval.",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("blocks wizard sends when no configured provider model is available", async () => {
     vi.mocked(listProviders).mockResolvedValue({
       providers: [],
