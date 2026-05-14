@@ -13,7 +13,13 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use xvision_data::alpaca::{AlpacaBarsFetcher, BarGranularity};
 use xvision_engine::api::{Actor, ApiContext};
-use xvision_engine::eval::bars::{load_bars, BarCacheArgs};
+use xvision_engine::eval::bars::{compute_cache_key, load_bars, BarCacheArgs};
+
+fn utc(ts: &str) -> chrono::DateTime<Utc> {
+    chrono::DateTime::parse_from_rfc3339(ts)
+        .unwrap()
+        .with_timezone(&Utc)
+}
 
 /// Build an in-memory `ApiContext` whose Alpaca fetcher points at a wiremock
 /// server returning four hourly bars for the test window. Wiremock counts
@@ -69,6 +75,72 @@ async fn test_ctx_with_mock_alpaca() -> (ApiContext, MockServer) {
     // keeps it on disk for any code that reads xvn_home.
     Box::leak(Box::new(dir));
     (ctx, server)
+}
+
+#[tokio::test]
+async fn bars_cache_schema_has_expected_columns_and_index() {
+    let (ctx, _server) = test_ctx_with_mock_alpaca().await;
+
+    let columns: Vec<(String,)> =
+        sqlx::query_as("SELECT name FROM pragma_table_info('bars_cache')")
+            .fetch_all(&ctx.db)
+            .await
+            .unwrap();
+    let names: Vec<String> = columns.into_iter().map(|(name,)| name).collect();
+
+    for expected in [
+        "cache_key",
+        "asset",
+        "granularity",
+        "window_start",
+        "window_end",
+        "data_source",
+        "fetched_at",
+        "bar_count",
+        "bars_blob",
+        "compression",
+    ] {
+        assert!(
+            names.iter().any(|name| name == expected),
+            "bars_cache missing column {expected}; got {names:?}"
+        );
+    }
+
+    let indexes: Vec<(String,)> =
+        sqlx::query_as("SELECT name FROM pragma_index_list('bars_cache')")
+            .fetch_all(&ctx.db)
+            .await
+            .unwrap();
+    assert!(
+        indexes
+            .iter()
+            .any(|(name,)| name == "bars_cache_by_asset_window"),
+        "bars_cache missing asset/window index; got {indexes:?}"
+    );
+}
+
+#[test]
+fn cache_key_is_stable_for_same_window() {
+    let start = utc("2025-01-01T00:00:00Z");
+    let end = utc("2025-01-02T00:00:00Z");
+
+    let first = compute_cache_key(
+        "ETH/USD",
+        BarGranularity::Hour1,
+        start,
+        end,
+        "alpaca-historical-v1",
+    );
+    let second = compute_cache_key(
+        "ETH/USD",
+        BarGranularity::Hour1,
+        start,
+        end,
+        "alpaca-historical-v1",
+    );
+
+    assert_eq!(first, second);
+    assert_eq!(first.len(), 64);
 }
 
 #[tokio::test]
