@@ -146,12 +146,15 @@ struct TraderOutput {
 }
 
 impl TraderOutput {
-    fn flat() -> Self {
-        Self {
-            action: "flat".into(),
-            conviction: 0.0,
-            justification: "parse error or missing — fell back to flat".into(),
-        }
+    fn parse_strict(raw: &str, run_id: &str, decision_index: u32) -> Result<Self> {
+        serde_json::from_str::<Self>(raw).map_err(|e| {
+            anyhow!(
+                "run {} decision {}: trader output is invalid JSON: {}",
+                run_id,
+                decision_index,
+                e
+            )
+        })
     }
 }
 
@@ -386,14 +389,15 @@ impl BacktestExecutor {
                 anyhow::bail!("eval run cancelled");
             }
 
-            let parsed = outs
+            let trader = outs
                 .trader
                 .as_ref()
-                .and_then(|t| serde_json::from_str::<TraderOutput>(&t.text()).ok())
-                .unwrap_or_else(TraderOutput::flat);
+                .ok_or_else(|| anyhow!("run {} decision {}: trader output missing", run.id, decision_idx))?;
+            let parsed = TraderOutput::parse_strict(&trader.text(), &run.id, decision_idx)?;
 
+            let pre_fill_position = position;
             let fill = simulate_fill(SimulateFillArgs {
-                pos: position,
+                pos: pre_fill_position,
                 entry: entry_price,
                 action: &parsed.action,
                 next_open: next_bar.open,
@@ -410,26 +414,9 @@ impl BacktestExecutor {
                 n_trades += 1;
 
                 // FillRecorded — only when an actionable decision actually
-                // crossed the book. Side derives from the new position
-                // direction (long_open + reverse-from-short both buy at
-                // next_open; short_open + reverse-from-long sell). For a
-                // pure-close-to-flat the side is the opposite of the
-                // pre-fill position.
-                let side = if parsed.action == "long_open" {
-                    "buy"
-                } else if parsed.action == "short_open" {
-                    "sell"
-                } else if position == 0.0 && fill.realized_pnl.is_finite() {
-                    // pure-close case
-                    if entry_price == 0.0 {
-                        // we just flattened a long
-                        "sell"
-                    } else {
-                        "buy"
-                    }
-                } else {
-                    "buy"
-                };
+                // crossed the book. For close-to-flat decisions, side is
+                // derived from the pre-fill position direction.
+                let side = fill_side_for_action(&parsed.action, pre_fill_position);
                 self.emit(ProgressEvent::FillRecorded {
                     run_id: run.id.clone(),
                     side: side.into(),
@@ -735,6 +722,18 @@ fn make_trade_marker(
     }
 }
 
+fn fill_side_for_action(action: &str, pre_fill_position: f64) -> &'static str {
+    if action == "long_open" {
+        "buy"
+    } else if action == "short_open" {
+        "sell"
+    } else if pre_fill_position > 0.0 {
+        "sell"
+    } else {
+        "buy"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -798,5 +797,15 @@ mod tests {
         // realized leg from long close should be positive (60k > 50k entry).
         // After fee, still > 0.
         assert!(out.realized_pnl > 0.0);
+    }
+
+    #[test]
+    fn fill_side_for_flat_close_of_long_is_sell() {
+        assert_eq!(fill_side_for_action("flat", 0.5), "sell");
+    }
+
+    #[test]
+    fn fill_side_for_flat_close_of_short_is_buy() {
+        assert_eq!(fill_side_for_action("flat", -0.5), "buy");
     }
 }

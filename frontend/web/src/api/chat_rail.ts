@@ -42,6 +42,8 @@ export type WizardEvent =
   | { type: "done"; draft_id?: string | null }
   | { type: "error"; message: string };
 
+export type AgentProfile = "workspace" | "strategy_setup";
+
 export type ResolveSessionResp = {
   session_id: string;
   history: ChatMessage[];
@@ -107,6 +109,8 @@ export async function* streamChat(
     /// Explicit model id. When omitted, the dashboard falls back to
     /// [intern].model for the default provider.
     model?: string;
+    /// Prompt/tool profile for the shared agent runtime.
+    profile?: AgentProfile;
   },
   signal?: AbortSignal,
 ): AsyncGenerator<WizardEvent> {
@@ -114,6 +118,7 @@ export async function* streamChat(
     session_id: req.session_id,
     provider: req.provider,
     model: req.model,
+    profile: req.profile,
     message_len: req.message.length,
   });
   const res = await fetch("/api/chat-rail/chat", {

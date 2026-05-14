@@ -1,13 +1,18 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 
+import { MarkdownView } from "@/components/agent-chat/MarkdownView";
 import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
 
-import { streamChat, type WizardEvent } from "@/api/wizard";
+import {
+  resolveSession,
+  streamChat,
+  type ChatMessage,
+  type ContentBlock,
+  type WizardEvent,
+} from "@/api/chat_rail";
 import { ApiError } from "@/api/client";
 import { listProviders, settingsKeys } from "@/api/settings";
 
@@ -32,6 +37,7 @@ type Bubble = UserBubble | AssistantBubble;
 
 export function SetupRoute() {
   const [bubbles, setBubbles] = useState<Bubble[]>([]);
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [draftId, setDraftId] = useState<string | null>(null);
@@ -59,12 +65,35 @@ export function SetupRoute() {
     return { provider: row.name, model };
   }, [providers.data]);
 
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setError(null);
+      try {
+        const resolved = await resolveSession({
+          scope: "route",
+          route: "/setup",
+        });
+        if (cancelled) return;
+        setSessionId(resolved.session_id);
+        setBubbles(historyToBubbles(resolved.history));
+        const draft = latestDraftId(resolved.history);
+        if (draft) setDraftId(draft);
+      } catch (e) {
+        if (!cancelled) setError(formatErr(e));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Cancel any in-flight stream on unmount so the server-side WizardLoop
   // exits cleanly when the user navigates away mid-turn.
   useEffect(() => () => abortRef.current?.abort(), []);
 
   async function send() {
-    if (!input.trim() || isStreaming) return;
+    if (!sessionId || !input.trim() || isStreaming) return;
     setError(null);
     if (!defaultPick) {
       setError("Pick provider models in Settings → Providers before the wizard can run.");
@@ -84,9 +113,11 @@ export function SetupRoute() {
     try {
       for await (const ev of streamChat(
         {
+          session_id: sessionId,
           message: userText,
           provider: defaultPick.provider,
           model: defaultPick.model,
+          profile: "strategy_setup",
         },
         ctrl.signal,
       )) {
@@ -173,11 +204,103 @@ export function SetupRoute() {
           value={input}
           onChange={setInput}
           onSubmit={send}
-          disabled={isStreaming}
+          disabled={isStreaming || !sessionId}
         />
       </Card>
     </>
   );
+}
+
+function formatErr(e: unknown): string {
+  if (e instanceof ApiError) return `${e.code}: ${e.message}`;
+  return String(e);
+}
+
+function latestDraftId(history: ChatMessage[]): string | null {
+  for (let i = history.length - 1; i >= 0; i--) {
+    for (const block of history[i].content_blocks) {
+      if (block.type !== "tool_result") continue;
+      const parsed = safeParseJson(block.content) as Record<string, unknown> | null;
+      const id = parsed && typeof parsed.id === "string" ? parsed.id : null;
+      if (id) return id;
+    }
+  }
+  return null;
+}
+
+function historyToBubbles(history: ChatMessage[]): Bubble[] {
+  const out: Bubble[] = [];
+  let pendingAssistant: AssistantBubble | null = null;
+  for (const cm of history) {
+    if (cm.role === "user") {
+      const toolResults = cm.content_blocks.filter(
+        (b): b is Extract<ContentBlock, { type: "tool_result" }> =>
+          b.type === "tool_result",
+      );
+      if (toolResults.length > 0) {
+        const prior = pendingAssistant ?? out[out.length - 1];
+        if (prior?.role === "assistant" && prior.tools.length > 0) {
+          for (const tr of toolResults) {
+            const parsedResult = safeParseJson(tr.content);
+            const tool = prior.tools[prior.tools.length - 1];
+            const isErr =
+              parsedResult &&
+              typeof parsedResult === "object" &&
+              "error" in parsedResult;
+            prior.tools[prior.tools.length - 1] = {
+              ...tool,
+              ok: !isErr,
+              resultSummary: summarizeResult(tool.call, parsedResult),
+              pending: false,
+              result: parsedResult ?? undefined,
+            };
+          }
+        }
+        continue;
+      }
+      if (pendingAssistant) {
+        out.push(pendingAssistant);
+        pendingAssistant = null;
+      }
+      const text = cm.content_blocks
+        .filter((b): b is Extract<ContentBlock, { type: "text" }> =>
+          b.type === "text",
+        )
+        .map((b) => b.text)
+        .join("");
+      if (text) out.push({ role: "user", text });
+    } else if (cm.role === "assistant") {
+      if (pendingAssistant) out.push(pendingAssistant);
+      const text = cm.content_blocks
+        .filter((b): b is Extract<ContentBlock, { type: "text" }> =>
+          b.type === "text",
+        )
+        .map((b) => b.text)
+        .join("");
+      const tools = cm.content_blocks
+        .filter((b): b is Extract<ContentBlock, { type: "tool_use" }> =>
+          b.type === "tool_use",
+        )
+        .map((b) => ({
+          call: b.name,
+          ok: true,
+          summary: summarizeArgs(b.name, b.input),
+          pending: true,
+          args: b.input,
+        }));
+      pendingAssistant = { role: "assistant", text, tools };
+    }
+  }
+  if (pendingAssistant) out.push(pendingAssistant);
+  return out;
+}
+
+function safeParseJson(s: string): unknown {
+  try {
+    return JSON.parse(s);
+  } catch {
+    return null;
+  }
 }
 
 function applyEvent(
@@ -347,39 +470,6 @@ function BubbleView({ b }: { b: Bubble }) {
         </div>
       )}
     </div>
-  );
-}
-
-function MarkdownView({ text }: { text: string }) {
-  return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      components={{
-        code: ({ children, className, ...props }) => (
-          <code
-            className={`font-mono text-[12px] ${
-              className ? "" : "bg-surface-2/70 px-1 py-0.5 rounded"
-            }`}
-            {...props}
-          >
-            {children}
-          </code>
-        ),
-        pre: ({ children }) => (
-          <pre className="font-mono text-[12px] bg-surface-2/70 p-2 rounded my-1.5 overflow-x-auto">
-            {children}
-          </pre>
-        ),
-        p: ({ children }) => (
-          <p className="my-1 first:mt-0 last:mb-0">{children}</p>
-        ),
-        strong: ({ children }) => (
-          <strong className="text-text font-semibold">{children}</strong>
-        ),
-      }}
-    >
-      {text}
-    </ReactMarkdown>
   );
 }
 

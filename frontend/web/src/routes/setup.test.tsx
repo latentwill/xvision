@@ -5,7 +5,7 @@ import { MemoryRouter } from "react-router-dom";
 
 import { SetupRoute } from "./setup";
 import { listProviders } from "@/api/settings";
-import { streamChat } from "@/api/wizard";
+import { streamChat } from "@/api/chat_rail";
 
 vi.mock("@/api/settings", () => ({
   settingsKeys: {
@@ -23,7 +23,11 @@ vi.mock("@/api/settings", () => ({
   }),
 }));
 
-vi.mock("@/api/wizard", () => ({
+vi.mock("@/api/chat_rail", () => ({
+  resolveSession: vi.fn().mockResolvedValue({
+    session_id: "setup-session",
+    history: [],
+  }),
   streamChat: vi.fn(),
 }));
 

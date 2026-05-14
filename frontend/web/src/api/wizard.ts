@@ -1,17 +1,15 @@
-// Wizard chat — POSTs to /api/wizard/chat and streams Server-Sent Events
-// of `WizardEvent` JSON. EventSource is GET-only, so we hand-roll the SSE
-// parse over `fetch().body.getReader()`.
+// Compatibility wrapper for older setup code. New chat surfaces should use
+// `api/chat_rail.ts` so they share session resolution and profile controls.
 
-import { ApiError } from "./client";
+import {
+  streamChat as streamAgentChat,
+  type WizardEvent as AgentWizardEvent,
+} from "./chat_rail";
 
-export type WizardEvent =
-  | { type: "token"; text: string }
-  | { type: "tool_call"; tool: string; args: unknown }
-  | { type: "tool_result"; tool: string; result: unknown }
-  | { type: "done"; draft_id?: string | null }
-  | { type: "error"; message: string };
+export type WizardEvent = AgentWizardEvent;
 
 export type ChatRequest = {
+  session_id?: string;
   message: string;
   /// Optional model id. When omitted, the dashboard falls back to
   /// [intern].model for the default provider.
@@ -28,62 +26,19 @@ export async function* streamChat(
   req: ChatRequest,
   signal?: AbortSignal,
 ): AsyncGenerator<WizardEvent> {
-  console.info("[wizard] streamChat", {
-    provider: req.provider,
-    model: req.model,
-    message_len: req.message.length,
-  });
-  const res = await fetch("/api/wizard/chat", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      accept: "text/event-stream",
-    },
-    body: JSON.stringify(req),
-    signal,
-  });
-  if (!res.ok || !res.body) {
-    let body: { code?: string; message?: string } | undefined;
-    try {
-      body = await res.json();
-    } catch {
-      // not JSON
-    }
-    console.error("[wizard] streamChat failed", {
-      status: res.status,
-      code: body?.code,
-      message: body?.message,
-    });
-    throw new ApiError(
-      res.status,
-      body?.code ?? "http_error",
-      body?.message ?? res.statusText ?? `HTTP ${res.status}`,
-    );
+  if (!req.session_id) {
+    throw new Error("wizard streamChat compatibility wrapper requires session_id");
   }
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buf = "";
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    // SSE frame separator is a blank line ("\n\n"). Anything left over
-    // after the final separator is the start of the next frame.
-    const frames = buf.split("\n\n");
-    buf = frames.pop() ?? "";
-    for (const frame of frames) {
-      const dataLine = frame
-        .split("\n")
-        .find((l) => l.startsWith("data:"));
-      if (!dataLine) continue;
-      const json = dataLine.slice(5).trim();
-      if (!json) continue;
-      try {
-        yield JSON.parse(json) as WizardEvent;
-      } catch {
-        // skip malformed frames; the server should never produce them
-      }
-    }
+  for await (const ev of streamAgentChat(
+    {
+      session_id: req.session_id,
+      message: req.message,
+      provider: req.provider,
+      model: req.model,
+      profile: "strategy_setup",
+    },
+    signal,
+  )) {
+    yield ev;
   }
 }
