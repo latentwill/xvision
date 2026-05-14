@@ -74,7 +74,7 @@ export function EvalRunsRoute() {
   return (
     <>
       <Topbar title="Eval" sub={subtitleFor(q)} />
-      <div className="mb-3 flex justify-end items-center gap-2">
+      <div className="mb-3 flex flex-col sm:flex-row sm:justify-end sm:items-center gap-2">
         {selected.size > 0 ? (
           <CompareToolbar
             count={selected.size}
@@ -132,7 +132,7 @@ function CompareToolbar({
 }) {
   const ready = count >= 2;
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex flex-wrap items-center gap-2">
       <span className="text-[12px] text-text-2">
         {count} selected
       </span>

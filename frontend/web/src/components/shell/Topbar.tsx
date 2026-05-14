@@ -13,22 +13,22 @@ export function Topbar({
 }) {
   const setCmdkOpen = useUi((s) => s.setCmdkOpen);
   return (
-    <div className="flex items-start justify-between gap-8 mb-7">
+    <div className="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-3 xl:gap-8 mb-5 xl:mb-7">
       <div className="min-w-0">
-        <h1 className="m-0 mb-1 font-serif font-medium text-[38px] tracking-tight leading-none">
+        <h1 className="m-0 mb-1 font-serif font-medium text-[30px] xl:text-[38px] tracking-tight leading-none">
           {title}
         </h1>
         {sub ? <div className="text-text-2 text-sm">{sub}</div> : null}
       </div>
 
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 min-w-0 w-full xl:w-auto">
         <HealthPill />
 
         <button
           type="button"
           onClick={() => setCmdkOpen(true)}
           aria-label="Open command palette"
-          className="flex items-center gap-2.5 w-[380px] px-3 py-2 bg-surface-elev border border-border rounded text-text-3 text-[13px] hover:border-text-3 hover:text-text-2 transition-colors text-left"
+          className="flex items-center gap-2.5 min-w-0 flex-1 xl:flex-none xl:w-[380px] max-w-full px-3 py-2 bg-surface-elev border border-border rounded text-text-3 text-[13px] hover:border-text-3 hover:text-text-2 transition-colors text-left"
         >
           <span className="inline-flex items-center px-1.5 py-px border border-border-strong rounded-sm font-mono text-[11px] text-text-2">
             {modKeyLabel()} K
