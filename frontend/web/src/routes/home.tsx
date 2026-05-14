@@ -69,20 +69,24 @@ export function HomeRoute() {
 
       <div className="grid grid-cols-12 gap-5">
         <div className="col-span-12 lg:col-span-8 space-y-5">
-          <AttentionCard
+          <div data-tour="home-attention">
+            <AttentionCard
             items={attention}
             loading={
               runs.isPending ||
               providers.isPending ||
               brokers.isPending
             }
-          />
+            />
+          </div>
 
-          <RecentRunsCard
-            runs={recent}
-            loading={runs.isPending}
-            error={runs.error}
-          />
+          <div data-tour="home-runs">
+            <RecentRunsCard
+              runs={recent}
+              loading={runs.isPending}
+              error={runs.error}
+            />
+          </div>
 
           <ControlChartCard
             hasRuns={recent.length > 0}
@@ -94,45 +98,47 @@ export function HomeRoute() {
         </div>
 
         <div className="col-span-12 lg:col-span-4 space-y-5">
-          <CountCard
-            label="Strategies"
-            value={strategies.isPending ? "…" : String(strategyCount)}
-            link={{ to: "/strategies", label: "manage" }}
-            sub={
-              strategyCount === 0
-                ? "draft your first strategy in the Setup wizard"
-                : strategies.data?.[0]?.template
-            }
-          />
+          <div data-tour="home-counts" className="space-y-5">
+            <CountCard
+              label="Strategies"
+              value={strategies.isPending ? "…" : String(strategyCount)}
+              link={{ to: "/strategies", label: "manage" }}
+              sub={
+                strategyCount === 0
+                  ? "draft your first strategy in the Setup wizard"
+                  : strategies.data?.[0]?.template
+              }
+            />
 
-          <CountCard
-            label="Agents"
-            value={agents.isPending ? "…" : String(agentCount)}
-            link={{
-              to: agentCount === 0 ? "/agents/new" : "/agents",
-              label: agentCount === 0 ? "create" : "manage",
-            }}
-            sub={
-              agentCount === 0
-                ? "reusable templates that compose into strategies"
-                : agents.data?.[0]?.name
-            }
-          />
+            <CountCard
+              label="Agents"
+              value={agents.isPending ? "…" : String(agentCount)}
+              link={{
+                to: agentCount === 0 ? "/agents/new" : "/agents",
+                label: agentCount === 0 ? "create" : "manage",
+              }}
+              sub={
+                agentCount === 0
+                  ? "reusable templates that compose into strategies"
+                  : agents.data?.[0]?.name
+              }
+            />
 
-          <CountCard
-            label="Providers"
-            value={
-              providers.isPending
-                ? "…"
-                : String(providers.data?.providers.length ?? 0)
-            }
-            link={{ to: "/settings/providers", label: "configure" }}
-            sub={
-              (providers.data?.providers.length ?? 0) === 0
-                ? "add a provider before using chat or agents"
-                : "models are selected per agent and chat session"
-            }
-          />
+            <CountCard
+              label="Providers"
+              value={
+                providers.isPending
+                  ? "…"
+                  : String(providers.data?.providers.length ?? 0)
+              }
+              link={{ to: "/settings/providers", label: "configure" }}
+              sub={
+                (providers.data?.providers.length ?? 0) === 0
+                  ? "add a provider before using chat or agents"
+                  : "models are selected per agent and chat session"
+              }
+            />
+          </div>
         </div>
       </div>
     </>

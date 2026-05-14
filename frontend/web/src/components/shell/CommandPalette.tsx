@@ -27,6 +27,7 @@ import {
 } from "@/api/search";
 import { useUi } from "@/stores/ui";
 import { isMacPlatform, modKeyLabel } from "@/lib/platform";
+import { RESTART_TOUR_EVENT } from "@/tours/TourController";
 
 const DEBOUNCE_MS = 80;
 const MAX_RESULTS = 40;
@@ -43,6 +44,7 @@ export const STATIC_ACTIONS: SearchHit[] = [
   { kind: "action", artifact_id: "nav:settings-providers", title: "Settings · Providers", summary: "LLM keys & providers", tags: ["nav", "settings"], href: "/settings/providers", updated_at: "", bm25_score: 0 },
   { kind: "action", artifact_id: "nav:settings-brokers", title: "Settings · Brokers", summary: "Alpaca / Orderly credentials", tags: ["nav", "settings"], href: "/settings/brokers", updated_at: "", bm25_score: 0 },
   { kind: "action", artifact_id: "nav:settings-danger", title: "Settings · Danger zone", summary: "Reset / destructive ops", tags: ["nav", "settings"], href: "/settings/danger", updated_at: "", bm25_score: 0 },
+  { kind: "action", artifact_id: "action:restart-tour", title: "Restart tour", summary: "Replay the tour for the current page", tags: ["help", "tour"], href: "xvn:restart-tour", updated_at: "", bm25_score: 0 },
 ];
 
 function filterStatic(q: string): SearchHit[] {
@@ -210,6 +212,10 @@ export function CommandPalette() {
   const navigateTo = useCallback(
     (hit: SearchHit) => {
       close();
+      if (hit.href === "xvn:restart-tour") {
+        window.dispatchEvent(new Event(RESTART_TOUR_EVENT));
+        return;
+      }
       // External hrefs (api endpoints) escape the SPA; everything else
       // routes via the SPA. v1 actions only ever produce SPA hrefs but
       // we keep this guard so external links still work if added later.

@@ -12,4 +12,16 @@ describe("CommandPalette static actions", () => {
       href: "/",
     });
   });
+
+  it("exposes restart tour as a static action", () => {
+    const restart = STATIC_ACTIONS.find(
+      (a) => a.artifact_id === "action:restart-tour",
+    );
+
+    expect(restart).toMatchObject({
+      title: "Restart tour",
+      summary: "Replay the tour for the current page",
+      href: "xvn:restart-tour",
+    });
+  });
 });
