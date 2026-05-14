@@ -29,11 +29,123 @@ export type ChatMessage = {
 };
 
 // Mirrors xvision_engine::agent::llm::ContentBlock — same tagged-union
-// (#[serde(tag = "type")]) over text / tool_use / tool_result.
+// (#[serde(tag = "type")]) over text / tool_use / tool_result, extended
+// with chat-session rich display blocks built by trusted server-side tools.
 export type ContentBlock =
   | { type: "text"; text: string }
   | { type: "tool_use"; id: string; name: string; input: unknown }
-  | { type: "tool_result"; tool_use_id: string; content: string };
+  | { type: "tool_result"; tool_use_id: string; content: string }
+  | InlineChartContentBlock
+  | RunListContentBlock
+  | StrategyCardContentBlock
+  | ActionCardContentBlock
+  | ChoiceChipsContentBlock;
+
+export type InlineTone =
+  | "default"
+  | "gold"
+  | "info"
+  | "warn"
+  | "danger"
+  | "muted";
+
+export type InlineChartKind =
+  | "equity"
+  | "compare"
+  | "histogram"
+  | "drawdown"
+  | "sparkline"
+  | "trade_markers";
+
+export type InlinePoint = {
+  x: number;
+  y: number;
+  label?: string | null;
+};
+
+export type InlineChartSeries = {
+  id: string;
+  label: string;
+  tone?: InlineTone | null;
+  points: InlinePoint[];
+};
+
+export type InlineMetric = {
+  label: string;
+  value: string;
+  unit?: string | null;
+  tone?: InlineTone | null;
+};
+
+export type InlineAction = {
+  label: string;
+  href?: string | null;
+  command?: string | null;
+};
+
+export type InlineChartSource = {
+  label: string;
+  href?: string | null;
+  run_id?: string | null;
+  strategy_id?: string | null;
+};
+
+export type InlineChartContentBlock = {
+  type: "inline_chart";
+  chart_id: string;
+  kind: InlineChartKind;
+  title: string;
+  subtitle?: string | null;
+  primary_metric?: InlineMetric | null;
+  metrics: InlineMetric[];
+  series: InlineChartSeries[];
+  source?: InlineChartSource | null;
+  actions: InlineAction[];
+  a11y_summary: string;
+  downsampled: boolean;
+};
+
+export type RunListContentBlock = {
+  type: "run_list";
+  title: string;
+  runs: ChatRunListItem[];
+  actions: InlineAction[];
+};
+
+export type ChatRunListItem = {
+  rank: number;
+  run_id: string;
+  strategy_id?: string | null;
+  scenario?: string | null;
+  return_pct?: number | null;
+  sharpe?: number | null;
+  sparkline?: InlinePoint[] | null;
+};
+
+export type StrategyCardContentBlock = {
+  type: "strategy_card";
+  strategy_id: string;
+  title: string;
+  subtitle?: string | null;
+  status?: string | null;
+  metrics: InlineMetric[];
+  tags: string[];
+  actions: InlineAction[];
+};
+
+export type ActionCardContentBlock = {
+  type: "action_card";
+  action_id: string;
+  title: string;
+  body: string;
+  confirm: InlineAction;
+  cancel?: InlineAction | null;
+};
+
+export type ChoiceChipsContentBlock = {
+  type: "choice_chips";
+  chips: InlineAction[];
+};
 
 export type WizardEvent =
   | { type: "token"; text: string }
