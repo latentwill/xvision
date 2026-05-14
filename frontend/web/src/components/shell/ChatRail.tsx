@@ -20,7 +20,10 @@ import { useLocation } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 
 import { MarkdownView } from "@/components/agent-chat/MarkdownView";
-import { InlineChartCard } from "@/components/chat/inline-chart/InlineChartCard";
+import {
+  ContentBlockView,
+  type RichDisplayBlock,
+} from "@/components/chat/ContentBlockView";
 import { Icon } from "@/components/primitives/Icon";
 import { ModelPicker } from "@/components/ModelPicker";
 import { ApiError } from "@/api/client";
@@ -71,12 +74,6 @@ type AssistantBubble = {
 };
 type UserBubble = { role: "user"; text: string };
 type Bubble = UserBubble | AssistantBubble;
-type RichDisplayBlock = Exclude<
-  ContentBlock,
-  | { type: "text"; text: string }
-  | { type: "tool_use"; id: string; name: string; input: unknown }
-  | { type: "tool_result"; tool_use_id: string; content: string }
->;
 type RenderableBlock =
   | { kind: "text"; text: string }
   | { kind: "rich"; block: RichDisplayBlock }
@@ -472,19 +469,7 @@ function ContentBlocksView({ blocks }: { blocks: RenderableBlock[] }) {
 }
 
 function UnsupportedRichBlock({ block }: { block: RichDisplayBlock }) {
-  if (block.type === "inline_chart") {
-    return <InlineChartCard payload={block} />;
-  }
-  if (!import.meta.env.DEV) {
-    const summary =
-      "a11y_summary" in block && typeof block.a11y_summary === "string"
-        ? block.a11y_summary
-        : "";
-    return summary ? (
-      <div className="sr-only">{summary}</div>
-    ) : null;
-  }
-  return <UnsupportedBlockNotice type={block.type} />;
+  return <ContentBlockView block={block} />;
 }
 
 function UnsupportedBlockNotice({ type }: { type: string }) {

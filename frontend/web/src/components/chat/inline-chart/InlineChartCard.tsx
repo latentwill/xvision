@@ -1,8 +1,9 @@
 import { useNavigate } from "react-router-dom";
 
+import { runInlineAction } from "@/components/chat/cards/actions";
 import { InlineChartSvg } from "./InlineChartSvg";
 import { SERIES_TONES, toneColors } from "./palette";
-import type { InlineAction, InlineChartContentBlock, InlineMetric } from "@/api/chat_rail";
+import type { InlineChartContentBlock, InlineMetric } from "@/api/chat_rail";
 
 export function InlineChartCard({ payload }: { payload: InlineChartContentBlock }) {
   const navigate = useNavigate();
@@ -46,7 +47,7 @@ export function InlineChartCard({ payload }: { payload: InlineChartContentBlock 
               <button
                 key={`${action.label}:${action.href ?? action.command ?? ""}`}
                 type="button"
-                onClick={() => runAction(action, navigate)}
+                onClick={() => runInlineAction(action, navigate)}
                 className="px-2 py-1 rounded border border-border-soft text-[11px] text-text-2 hover:text-text hover:border-border"
               >
                 {action.label}
@@ -117,10 +118,4 @@ function Legend({ payload }: { payload: InlineChartContentBlock }) {
       })}
     </div>
   );
-}
-
-function runAction(action: InlineAction, navigate: (to: string) => void) {
-  if (action.href?.startsWith("/")) {
-    navigate(action.href);
-  }
 }
