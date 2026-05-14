@@ -10,6 +10,7 @@ export function InlineChartCard({ payload }: { payload: InlineChartContentBlock 
 
   return (
     <article
+      role="group"
       className="rounded-md border border-border-soft bg-surface-card overflow-hidden"
       aria-label={payload.a11y_summary}
     >
