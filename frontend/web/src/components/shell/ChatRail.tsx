@@ -47,7 +47,15 @@ const RAIL_OPEN_LS = "xvn.chat_rail.open";
 const RAIL_PROVIDER_LS = "xvn.chat_rail.provider";
 const RAIL_MODEL_LS = "xvn.chat_rail.model";
 
-export function ChatRail() {
+type ChatRailProps = {
+  variant?: "desktop" | "panel";
+  className?: string;
+};
+
+export function ChatRail({
+  variant = "desktop",
+  className = "",
+}: ChatRailProps) {
   const location = useLocation();
   const scope = useMemo<ContextScope>(
     () => scopeFromPath(location.pathname),
@@ -75,7 +83,7 @@ export function ChatRail() {
   const providers = useQuery({
     queryKey: settingsKeys.providers(),
     queryFn: listProviders,
-    enabled: open,
+    enabled: variant === "panel" || open,
   });
   // Auto-pick the first enabled (provider, model) from the intern's
   // default once the catalog loads, so users who configured a provider
@@ -105,14 +113,15 @@ export function ChatRail() {
   // Persist open/close so the rail stays in the user's chosen state across
   // route changes (and reloads).
   useEffect(() => {
+    if (variant !== "desktop") return;
     localStorage.setItem(RAIL_OPEN_LS, open ? "1" : "0");
-  }, [open]);
+  }, [open, variant]);
 
   // When the rail is open and the scope changes, resolve a session for
   // the current scope. The server owns session lifecycle — the rail
   // never holds a stale id across DB resets or fresh deploys.
   useEffect(() => {
-    if (!open) return;
+    if (variant === "desktop" && !open) return;
     if (lastScopeKeyRef.current === key && sessionId) return;
     lastScopeKeyRef.current = key;
 
@@ -132,7 +141,7 @@ export function ChatRail() {
     return () => {
       cancelled = true;
     };
-  }, [open, key, scope, sessionId]);
+  }, [open, key, scope, sessionId, variant]);
 
   // Cancel any in-flight stream when rail closes or component unmounts.
   useEffect(
@@ -195,7 +204,7 @@ export function ChatRail() {
     lastScopeKeyRef.current = null;
   }, [sessionId]);
 
-  if (!open) {
+  if (variant === "desktop" && !open) {
     return (
       <aside
         className="hidden xl:flex w-[44px] flex-col items-center gap-3 h-screen sticky top-0 border-l border-border-soft bg-surface-sidebar py-4"
@@ -214,7 +223,12 @@ export function ChatRail() {
 
   return (
     <aside
-      className="hidden xl:flex w-[360px] flex-col h-screen sticky top-0 border-l border-border-soft bg-surface-sidebar"
+      className={[
+        variant === "desktop"
+          ? "hidden xl:flex w-[380px] flex-col h-screen sticky top-0 border-l border-border-soft bg-surface-sidebar"
+          : "flex w-full flex-col h-full min-h-0 bg-surface-sidebar",
+        className,
+      ].join(" ")}
       aria-label="Chat rail"
     >
       <header className="px-4 py-3 border-b border-border-soft flex items-center justify-between gap-2">
@@ -229,13 +243,15 @@ export function ChatRail() {
           >
             Start fresh
           </button>
-          <button
-            className="text-text-3 hover:text-text"
-            onClick={() => setOpen(false)}
-            title="Collapse rail"
-          >
-            <Icon name="chevR" size={14} />
-          </button>
+          {variant === "desktop" && (
+            <button
+              className="text-text-3 hover:text-text"
+              onClick={() => setOpen(false)}
+              title="Collapse rail"
+            >
+              <Icon name="chevR" size={14} />
+            </button>
+          )}
         </div>
       </header>
 
