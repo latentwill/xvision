@@ -11,10 +11,15 @@ const PRIMARY: Item[] = [
   { to: "/settings", label: "Settings", icon: "sliders" },
 ];
 
-export function Sidebar() {
+export function Sidebar({ className = "" }: { className?: string }) {
   const navigate = useNavigate();
   return (
-    <aside className="bg-surface-sidebar border-r border-border-soft flex flex-col w-[200px] pt-6 pb-4">
+    <aside
+      className={[
+        "bg-surface-sidebar border-r border-border-soft flex flex-col w-[220px] pt-6 pb-4",
+        className,
+      ].join(" ")}
+    >
       <div className="px-6 pb-8">
         <span className="font-serif italic font-medium text-[38px] tracking-tight text-text leading-none">
           xvn
