@@ -66,6 +66,7 @@ Use these as reference only:
 | `qa9-delete-edit-flow-verification` | `.worktrees/qa9-delete-edit-flow-verification` | Verify scenario clone-to-edit, archive, and delete failure flows after live QA stopped before delete/edit coverage | none | no overlap with wizard/strategy-agent tracks; frontend test-only coverage | scenario detail focused frontend tests + typecheck |
 | `qa9-strategy-wizard-persistence` | `.worktrees/qa9-strategy-wizard-persistence` | Fix live QA bug where setup wizard/chat claims asset/cadence/risk edits but Inspector manifest still shows original draft values | none | no overlap with eval/agent attachment tracks; owns wizard authoring manifest persistence | authoring/API/wizard regression tests in CI/non-deploy + frontend typecheck |
 | `qa9-readonly-editability-contract` | `.worktrees/qa9-readonly-editability-contract` | Clarify the setup/Inspector contract so read-only manifest/mechanical fields are not presented as directly editable without a successful setup tool save | none | no overlap with backend persistence; owns copy/tests for read-only contract | setup + authoring focused frontend tests + typecheck |
+| `qa9-strategy-agent-attachment-flow` | `.worktrees/qa9-strategy-agent-attachment-flow` | Validate attaching an existing AgentRef from the Inspector and make attached rows show agent/provider/model metadata before eval | none | no overlap with setup wizard persistence or read-only copy tracks | authoring focused frontend tests + typecheck |
 
 ## Recommended order
 
