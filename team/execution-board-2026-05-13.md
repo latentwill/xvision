@@ -61,6 +61,8 @@ Use these as reference only:
 | `qa8-eval-cli-workflow` | `.worktrees/qa8-eval-cli-workflow` | Make eval runs a first-class CLI workflow: `eval run`, `eval watch`, `eval results`, `eval compare`, clean final metrics, and failure reasons | `qa8-cli-runtime-blockers` preferred | no overlap with eval runtime/event-bus tracks | eval CLI integration tests + metrics output golden tests |
 | `qa8-cli-doctor-help-examples` | `.worktrees/qa8-cli-doctor-help-examples` | Add real CLI examples for create strategy, create scenario, and run eval; expose `doctor` and effective config output so agents can inspect homes/config/DB targets | `qa8-cli-runtime-blockers` preferred | no overlap with docs/help CLI tracks | help snapshot tests + doctor/effective-config tests |
 | `qa8-agent-ux-cli-templates` | `.worktrees/qa8-agent-ux-cli-templates` | Improve agent UX: deterministic strategy scaffolds for simple creation, UI copy-pastable CLI commands, and template registry/version parity between deployed image and local repo | `qa8-template-authoring-flow` preferred | no overlap with template authoring or shell UI tracks | frontend tests for CLI command rendering + template registry API tests |
+| `qa8-scenario-display-name-contract` | `.worktrees/qa8-scenario-display-name-contract` | Fix scenario creation/tooling so custom scenarios always carry a required display name and missing-name validation is actionable | none | no overlap with scenario create/API/CLI tracks | scenario API/CLI validation tests + create-scenario focused frontend/tool tests |
+| `qa8-eval-provider-preflight` | `.worktrees/qa8-eval-provider-preflight` | Prevent Web UI eval and wizard flows from launching with unconfigured `openai`/`anthropic` defaults; require configured provider/model selection or a clear zero-provider setup action | `qa4-settings-zero-provider` preferred | no overlap with eval launcher, chat rail, or provider picker tracks | eval launch/provider preflight tests + chat/wizard zero-provider regression test |
 
 ## Recommended order
 
@@ -90,6 +92,8 @@ Use these as reference only:
 24. `qa8-eval-cli-workflow`
 25. `qa8-cli-doctor-help-examples`
 26. `qa8-agent-ux-cli-templates`
+27. `qa8-scenario-display-name-contract`
+28. `qa8-eval-provider-preflight`
 
 ## Immediate start set
 
@@ -108,6 +112,7 @@ Safe to start now:
 - `qa8-strategy-table-density`
 - `qa8-unbounded-slot-tool-use`
 - `qa8-cli-runtime-blockers`
+- `qa8-scenario-display-name-contract`
 
 Wait for `strategy-agent-backend`:
 
@@ -129,6 +134,10 @@ Wait for CLI runtime blockers:
 - `qa8-cli-doctor-help-examples`
 - `qa8-agent-ux-cli-templates`
 
+Wait for provider settings stabilization:
+
+- `qa8-eval-provider-preflight`
+
 Do not overlap:
 
 - `strategy-agent-backend` with `qa4-surface-consistency`
@@ -143,6 +152,11 @@ Do not overlap:
 - `qa8-cli-noninteractive-core-flows` with `qa8-cli-full-object-create-validate`
 - `qa8-eval-cli-workflow` with `qa8-eval-live-decisions` if both touch eval event/progress contracts
 - `qa8-agent-ux-cli-templates` with `qa8-template-authoring-flow`
+- `qa8-scenario-display-name-contract` with `qa8-cli-full-object-create-validate`
+  if both are reshaping scenario create payloads.
+- `qa8-eval-provider-preflight` with `qa4-chat-eval-launcher`,
+  `qa8-shared-chat-rail-context`, or `qa8-inspector-agent-model-picker` if
+  those tracks are still editing provider/model picker wiring.
 
 ## Cherry-pick policy
 
@@ -386,6 +400,22 @@ Raw items mapped to board tracks:
   endpoint; note product concern that templates can constrain agents, so this
   should support broader registries rather than force a narrow template-only
   path.
+- `qa8-scenario-display-name-contract`: Latest build intake found scenario
+  creation/tooling could omit the scenario display name, leaving the workflow
+  to fail later with unclear validation. Make `display_name` a first-class
+  required field across the Web UI, wizard tool schema, dashboard API, and CLI
+  create/validate paths. If the name is omitted, fail before creating the
+  scenario with a field-specific message that tells the caller to provide a
+  scenario display name.
+- `qa8-eval-provider-preflight`: Latest Web UI eval launch failed with
+  `validation: request: provider 'openai' is not configured. Pick a configured provider/model for the strategy agent before running eval.`
+  and wizard recovery then tried unavailable providers (`anthropic`, then
+  `openai`) until it hit
+  `wizard tool-use loop exceeded 12 iterations`. The UI and wizard should read
+  configured providers/models first, block eval launch when none are usable,
+  and show a setup action instead of retrying guessed providers. Strategies
+  with missing or stale agent provider/model assignments should be flagged in
+  preflight before queueing an eval.
 
 ## Next board intake
 

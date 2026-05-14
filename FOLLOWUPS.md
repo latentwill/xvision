@@ -429,3 +429,25 @@ Hermes Agent (NousResearch) is the OpenClaw successor — its own README documen
   the browser, and hand off eval results through CLI-only workflows.
 - **Blocking:** non-blocking for deploy; quality-of-life for agent and operator
   eval review.
+
+### F40 [Shared]. Latest build eval/scenario intake — required scenario names and provider preflight
+
+- **Trigger:** latest build/operator pass on 2026-05-14 hit two eval-adjacent
+  workflow failures:
+  - scenario creation/tooling omitted the required scenario display name.
+  - Web UI eval launch sent a stale or guessed `openai` provider and failed
+    with `provider 'openai' is not configured`; wizard recovery then tried
+    unavailable providers until it hit the tool-use loop cap.
+- **Scope:** execute the board tracks
+  [`qa8-scenario-display-name-contract`](team/execution-board-2026-05-13.md)
+  and
+  [`qa8-eval-provider-preflight`](team/execution-board-2026-05-13.md).
+  Scenario create flows should require `display_name` before persistence or
+  remote tool execution. Eval launch and wizard flows should read configured
+  providers/models before running, block zero-provider or stale-provider states
+  with an actionable setup path, and avoid retrying guessed providers.
+- **Why noted:** both failures are operator-facing reliability issues in the
+  strategy/scenario/eval loop, and they are small enough to execute as board
+  tickets without opening a broad remediation wrapper.
+- **Blocking:** blocking for treating the Web UI eval launcher and wizard as
+  ready for unattended agent use.
