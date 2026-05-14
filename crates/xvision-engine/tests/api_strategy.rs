@@ -105,6 +105,40 @@ async fn get_returns_not_found_for_unknown_id() {
 }
 
 #[tokio::test]
+async fn delete_removes_strategy_from_store_and_list() {
+    let (ctx, _dir) = test_context().await;
+    let strategy_strategy = create_sample_strategy(&ctx).await;
+    let id = strategy_strategy.manifest.id.clone();
+
+    strategy::delete(&ctx, &id).await.unwrap();
+
+    let get = strategy::get(&ctx, &id).await;
+    assert!(
+        matches!(get, Err(ApiError::NotFound(_))),
+        "expected deleted strategy to 404, got {get:?}",
+    );
+    let list = strategy::list(&ctx).await.unwrap();
+    assert!(
+        list.iter().all(|s| s.agent_id != id),
+        "deleted strategy should not remain in list",
+    );
+    assert!(audit_row_exists(&ctx, "delete", &id).await);
+}
+
+#[tokio::test]
+async fn delete_unknown_strategy_returns_not_found() {
+    let (ctx, _dir) = test_context().await;
+    let err = strategy::delete(&ctx, "01TOTALLYMISSINGAGENTID000")
+        .await
+        .unwrap_err();
+
+    assert!(
+        matches!(err, ApiError::NotFound(_)),
+        "expected NotFound, got {err:?}",
+    );
+}
+
+#[tokio::test]
 async fn list_returns_summaries_for_existing_strategys() {
     use xvision_engine::strategies::{
         manifest::PublicManifest, risk::RiskPreset, store::StrategyStore, store::FilesystemStore,

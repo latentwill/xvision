@@ -71,6 +71,15 @@ pub async fn get(
     Ok(Json(strategy))
 }
 
+/// `DELETE /api/strategy/:id` — delete a draft strategy entity.
+pub async fn delete(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> Result<StatusCode, DashboardError> {
+    strategy::delete(&state.api_context(), &id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 #[derive(Deserialize)]
 pub struct UpdateSlotBody {
     #[serde(default)]

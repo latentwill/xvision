@@ -42,7 +42,10 @@ pub fn build_router(state: AppState) -> Router {
             get(strategies::list).post(strategies::post_create),
         )
         .route("/api/templates", get(strategies::list_templates))
-        .route("/api/strategy/:id", get(strategies::get))
+        .route(
+            "/api/strategy/:id",
+            get(strategies::get).delete(strategies::delete),
+        )
         .route(
             "/api/strategy/:id/slot/:role",
             put(strategies::put_slot),
