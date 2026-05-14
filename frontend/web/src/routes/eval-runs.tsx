@@ -33,6 +33,7 @@ import {
 import {
   listStrategies,
   strategyKeys,
+  type ProviderModelPair,
   type StrategyListItem,
 } from "@/api/strategies";
 import type {
@@ -802,36 +803,21 @@ function evalPreflightError({
   }
 
   if (strategy) {
-    const requiredProviders = strategy.providers ?? [];
-    if (requiredProviders.length === 0) {
+    const requiredPairs = requiredRuntimePairs(strategy);
+    if (requiredPairs.length === 0) {
       return "Pick a provider/model for the strategy agent before running eval.";
     }
-    const requiredModels = strategy.models ?? [];
-    if (requiredModels.length === 0) {
-      return "Pick a provider/model for the strategy agent before running eval.";
-    }
-    const requiredProviderRows = [];
-    for (const providerName of requiredProviders) {
-      const row = rows.find((candidate) => candidate.name === providerName);
+    for (const pair of requiredPairs) {
+      const row = rows.find((candidate) => candidate.name === pair.provider);
       if (!row) {
-        return `provider '${providerName}' is not configured. Pick a configured provider/model for the strategy agent before running eval.`;
+        return `provider '${pair.provider}' is not configured. Pick a configured provider/model for the strategy agent before running eval.`;
       }
       const noAuthProvider = row.api_key_env.trim().length === 0;
       if (!row.api_key_set && !noAuthProvider) {
-        return `provider '${providerName}' has no API key set. Add it in Settings -> Providers before running eval.`;
+        return `provider '${pair.provider}' has no API key set. Add it in Settings -> Providers before running eval.`;
       }
-      requiredProviderRows.push(row);
-    }
-    for (const model of requiredModels) {
-      const providerWithModel = requiredProviderRows.find((row) =>
-        row.enabled_models.includes(model),
-      );
-      if (!providerWithModel) {
-        const providerName =
-          requiredProviderRows.length === 1
-            ? requiredProviderRows[0].name
-            : requiredProviders.join(", ");
-        return `model '${model}' is not enabled for provider '${providerName}'. Enable it in Settings -> Providers before running eval.`;
+      if (!row.enabled_models.includes(pair.model)) {
+        return `model '${pair.model}' is not enabled for provider '${pair.provider}'. Enable it in Settings -> Providers before running eval.`;
       }
     }
   }
@@ -844,7 +830,35 @@ function evalPreflightError({
   return null;
 }
 
-function preflightSetupAction(error: string | null): { to: string; label: string } | null {
+function requiredRuntimePairs(strategy: StrategyListItem): ProviderModelPair[] {
+  if ((strategy.provider_models?.length ?? 0) > 0) {
+    return (strategy.provider_models ?? []).reduce<ProviderModelPair[]>((acc, pair) => {
+      const provider = pair.provider.trim();
+      const model = pair.model.trim();
+      if (provider && model) {
+        acc.push({ provider, model });
+      }
+      return acc;
+    }, []);
+  }
+
+  const providers = strategy.providers ?? [];
+  const models = strategy.models ?? [];
+  const pairs: ProviderModelPair[] = [];
+  const count = Math.min(providers.length, models.length);
+  for (let i = 0; i < count; i++) {
+    const provider = providers[i]?.trim();
+    const model = models[i]?.trim();
+    if (provider && model) {
+      pairs.push({ provider, model });
+    }
+  }
+  return pairs;
+}
+
+function preflightSetupAction(
+  error: string | null,
+): { to: string; label: string } | null {
   if (!error) return null;
   if (error.includes("Settings -> Providers") || error.includes("Settings → Providers")) {
     return { to: "/settings/providers", label: "Settings -> Providers" };
