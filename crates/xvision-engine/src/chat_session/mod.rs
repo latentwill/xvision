@@ -11,7 +11,13 @@
 //! are deferred to follow-up PRs.
 
 pub mod context;
+pub mod rich_blocks;
 pub mod store;
 
 pub use context::ContextScope;
+pub use rich_blocks::{
+    build_inline_chart, ChatActionPayload, ChatRunListItem, ChatRunListPayload,
+    ChatStrategyPayload, InlineAction, InlineChartKind, InlineChartPayload, InlineChartSeries,
+    InlineChartSource, InlineMetric, InlinePoint, InlineTone, RichBlockError, RichContentBlock,
+};
 pub use store::{ChatMessage, ChatSessionStore, ChatSessionSummary};
