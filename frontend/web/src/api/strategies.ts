@@ -1,20 +1,46 @@
 // Strategies API — wraps `engine::api::strategy::*` (PR #4 list/get,
-// PR #47 mutations). Bundle / slot / risk / validation types are
-// hand-rolled because the bundle module doesn't have ts-rs derives yet;
+// PR #47 mutations). Strategy / slot / risk / validation types are
+// hand-rolled because the strategy module doesn't have ts-rs derives yet;
 // if those land later, replace these with `import type { ... } from
 // "./types.gen"`.
 
 import { apiFetch } from "./client";
-import type { StrategySummary } from "./types.gen";
+
+export type StrategyListItem = {
+  agent_id: string;
+  display_name: string;
+  template: string;
+  decision_cadence_minutes: number;
+  tags?: string[];
+  model?: string;
+  providers?: string[];
+  models?: string[];
+};
+
+export type PipelineKind = "single" | "sequential" | "graph";
+export type AgentRef = {
+  agent_id: string;
+  role: string;
+};
+export type PipelineEdge = {
+  from_role: string;
+  to_role: string;
+};
+export type PipelineDef = {
+  kind: PipelineKind;
+  edges?: PipelineEdge[];
+};
 
 export type StrategiesListResponse = {
-  items: StrategySummary[];
+  items: StrategyListItem[];
 };
 
 export type LLMSlot = {
   role: string;
   prompt: string;
   model_requirement: string;
+  provider?: string | null;
+  model?: string | null;
   allowed_tools: string[];
 };
 
@@ -48,17 +74,32 @@ export type Strategy = {
   trader_slot: LLMSlot | null;
   risk: RiskConfig;
   mechanical_params: unknown;
+  agents?: AgentRef[];
+  pipeline?: PipelineDef;
 };
 
 export type UpdateSlotBody = Partial<{
   prompt: string;
   model_requirement: string;
+  provider: string;
+  model: string;
   allowed_tools: string[];
 }>;
 
 export type UpdateSlotOut = {
   id: string;
   updated: string[];
+};
+
+export type StrategyAgentsOut = {
+  strategy_id: string;
+  agents: AgentRef[];
+  pipeline: PipelineDef;
+};
+
+export type SetPipelineBody = {
+  kind: PipelineKind;
+  edges?: PipelineEdge[];
 };
 
 export type PutRiskBody =
@@ -104,7 +145,7 @@ export const strategyKeys = {
   templates: () => [...strategyKeys.all, "templates"] as const,
 };
 
-export function listStrategies(): Promise<StrategySummary[]> {
+export function listStrategies(): Promise<StrategyListItem[]> {
   return apiFetch<StrategiesListResponse>("/api/strategies").then(
     (r) => r.items,
   );
@@ -145,6 +186,56 @@ export function validateDraft(id: string): Promise<ValidateDraftOut> {
   return apiFetch<ValidateDraftOut>(
     `/api/strategy/${encodeURIComponent(id)}/validate`,
     { method: "POST" },
+  );
+}
+
+export function addStrategyAgent(
+  strategyId: string,
+  body: { agent_id: string; role: string },
+): Promise<StrategyAgentsOut> {
+  return apiFetch<StrategyAgentsOut>(
+    `/api/strategy/${encodeURIComponent(strategyId)}/agents`,
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    },
+  );
+}
+
+export function removeStrategyAgent(
+  strategyId: string,
+  role: string,
+): Promise<StrategyAgentsOut> {
+  return apiFetch<StrategyAgentsOut>(
+    `/api/strategy/${encodeURIComponent(strategyId)}/agents/${encodeURIComponent(role)}`,
+    { method: "DELETE" },
+  );
+}
+
+export function renameStrategyAgentRole(
+  strategyId: string,
+  role: string,
+  newRole: string,
+): Promise<StrategyAgentsOut> {
+  return apiFetch<StrategyAgentsOut>(
+    `/api/strategy/${encodeURIComponent(strategyId)}/agents/${encodeURIComponent(role)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ new_role: newRole }),
+    },
+  );
+}
+
+export function setStrategyPipeline(
+  strategyId: string,
+  body: SetPipelineBody,
+): Promise<StrategyAgentsOut> {
+  return apiFetch<StrategyAgentsOut>(
+    `/api/strategy/${encodeURIComponent(strategyId)}/pipeline`,
+    {
+      method: "PUT",
+      body: JSON.stringify(body),
+    },
   );
 }
 

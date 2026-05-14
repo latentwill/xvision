@@ -14,13 +14,12 @@ api_key_env: string,
  */
 api_key_set: boolean, 
 /**
- * True for synthetic rows (name starts with `_`) — read-only.
+ * True for synthetic rows kept for wire compatibility.
  */
 synthetic: boolean, 
 /**
  * True if this provider is the workspace default (referenced by the
- * `[default_llm]` block). UI should disable the delete button when
- * `is_default` is set — removing it would orphan the workspace default.
+ * `[default_llm]` block). Removing it clears the workspace default.
  */
 is_default: boolean, 
 /**

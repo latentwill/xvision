@@ -15,11 +15,19 @@ path = "src/lib.rs"
 xvision-core = { path = "../xvision-core" }
 polars       = { workspace = true }
 anyhow       = { workspace = true }
-serde        = { workspace = true }
+reqwest      = { workspace = true, features = ["json", "query"] }
+serde        = { workspace = true, features = ["derive"] }
 serde_json   = { workspace = true }
 chrono       = { workspace = true, features = ["serde"] }
+tokio        = { workspace = true, features = ["sync", "macros", "rt"] }
+governor     = "0.6"
+nonzero_ext  = "0.3"
+blake3       = "1.5"
+flate2       = "1.0"
 thiserror    = { workspace = true }
 tracing      = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
+wiremock = "0.6"
+tokio    = { workspace = true, features = ["rt", "macros", "test-util"] }

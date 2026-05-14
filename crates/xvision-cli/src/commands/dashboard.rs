@@ -1,6 +1,5 @@
 //! `xvn dashboard serve` — boot the embedded SPA + axum API on localhost.
 
-use std::env;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
@@ -36,20 +35,9 @@ pub async fn run(cmd: DashboardCmd) -> anyhow::Result<()> {
                 .bind
                 .parse()
                 .with_context(|| format!("invalid --bind address: {}", args.bind))?;
-            let home = resolve_home(args.home)?;
+            let home = crate::commands::home::resolve_xvn_home(args.home)?;
             let state = xvision_dashboard::AppState::new(home).await?;
             xvision_dashboard::serve(addr, state).await
         }
     }
-}
-
-fn resolve_home(flag: Option<PathBuf>) -> anyhow::Result<PathBuf> {
-    if let Some(p) = flag {
-        return Ok(p);
-    }
-    if let Ok(p) = env::var("XVN_HOME") {
-        return Ok(PathBuf::from(p));
-    }
-    let h = dirs::home_dir().context("$HOME not set")?;
-    Ok(h.join(".xvn"))
 }

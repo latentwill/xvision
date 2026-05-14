@@ -58,6 +58,8 @@ impl Template for Momentum {
                 prompt: TRADER_PROMPT.into(),
                 model_requirement: "anthropic.claude-sonnet-4.6".into(),
                 allowed_tools: vec!["ohlcv".into(), "indicator_panel".into()],
+                provider: None,
+                model: None,
             }),
             risk: RiskPreset::Balanced.expand(),
             mechanical_params: serde_json::json!({

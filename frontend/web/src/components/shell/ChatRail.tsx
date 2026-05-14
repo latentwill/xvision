@@ -28,12 +28,19 @@ import { Icon } from "@/components/primitives/Icon";
 import { ModelPicker } from "@/components/ModelPicker";
 import { ApiError } from "@/api/client";
 import {
+  safeStorageGet,
+  safeStorageRemove,
+  safeStorageSet,
+} from "@/lib/storage";
+import {
   type ChatMessage,
   type ContentBlock,
   type ContextScope,
   type WizardEvent,
-  deleteSession,
+  createSession,
   headerLabel,
+  listSessions,
+  loadSessionHistory,
   placeholder,
   resolveSession,
   scopeFromPath,
@@ -68,7 +75,7 @@ export function ChatRail({
   const key = useMemo(() => scopeKey(scope), [scope]);
 
   const [open, setOpen] = useState<boolean>(() => {
-    return localStorage.getItem(RAIL_OPEN_LS) === "1";
+    return safeStorageGet(RAIL_OPEN_LS) === "1";
   });
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [bubbles, setBubbles] = useState<Bubble[]>([]);
@@ -76,10 +83,10 @@ export function ChatRail({
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [providerName, setProviderName] = useState<string | null>(
-    () => localStorage.getItem(RAIL_PROVIDER_LS),
+    () => safeStorageGet(RAIL_PROVIDER_LS),
   );
   const [modelId, setModelId] = useState<string>(
-    () => localStorage.getItem(RAIL_MODEL_LS) ?? "",
+    () => safeStorageGet(RAIL_MODEL_LS) ?? "",
   );
   const abortRef = useRef<AbortController | null>(null);
   const lastScopeKeyRef = useRef<string | null>(null);
@@ -89,36 +96,36 @@ export function ChatRail({
     queryFn: listProviders,
     enabled: variant === "panel" || open,
   });
-  // Auto-pick the first enabled (provider, model) from the intern's
-  // default once the catalog loads, so users who configured a provider
-  // can chat without diving into the picker. If the operator hasn't
-  // enabled any models yet, the picker shows a "visit Settings" hint.
+  const sessionsQ = useQuery({
+    queryKey: ["chat-rail", "sessions"],
+    queryFn: listSessions,
+    enabled: variant === "panel" || open,
+    refetchInterval: 5000,
+  });
+  // Auto-pick the first enabled (provider, model) once the catalog loads
+  // so users who configured a provider can chat without diving into the
+  // picker. If the operator hasn't enabled any models yet, the picker
+  // shows a "visit Settings" hint.
   useEffect(() => {
     if (providerName && modelId) return;
     const rows = providers.data?.providers ?? [];
-    const candidates = rows
-      .filter((p) => p.api_key_set && !p.synthetic && p.enabled_models.length > 0)
-      .sort((a, b) =>
-        a.is_default === b.is_default
-          ? 0
-          : a.is_default
-            ? -1
-            : 1,
-      );
+    const candidates = rows.filter(
+      (p) => p.api_key_set && !p.synthetic && p.enabled_models.length > 0,
+    );
     const pick = candidates[0];
     if (!pick) return;
     const m = pick.enabled_models[0];
     setProviderName(pick.name);
     setModelId(m);
-    localStorage.setItem(RAIL_PROVIDER_LS, pick.name);
-    localStorage.setItem(RAIL_MODEL_LS, m);
+    safeStorageSet(RAIL_PROVIDER_LS, pick.name);
+    safeStorageSet(RAIL_MODEL_LS, m);
   }, [providerName, modelId, providers.data]);
 
   // Persist open/close so the rail stays in the user's chosen state across
   // route changes (and reloads).
   useEffect(() => {
     if (variant !== "desktop") return;
-    localStorage.setItem(RAIL_OPEN_LS, open ? "1" : "0");
+    safeStorageSet(RAIL_OPEN_LS, open ? "1" : "0");
   }, [open, variant]);
 
   // When the rail is open and the scope changes, resolve a session for
@@ -176,6 +183,7 @@ export function ChatRail({
             message: userText,
             provider: providerName ?? undefined,
             model: modelId.trim() || undefined,
+            profile: "workspace",
           },
           ctrl.signal,
         )) {
@@ -193,20 +201,26 @@ export function ChatRail({
   );
 
   const startFresh = useCallback(async () => {
-    if (!sessionId) return;
     abortRef.current?.abort();
-    try {
-      await deleteSession(sessionId);
-    } catch {
-      /* best-effort — server may have already dropped it */
-    }
-    setSessionId(null);
+    setInput("");
     setBubbles([]);
     setError(null);
-    // Force the open-effect to re-resolve a session for this scope.
-    // After delete, the next resolve will find no match and create one.
-    lastScopeKeyRef.current = null;
-  }, [sessionId]);
+    try {
+      const created = await createSession(scope);
+      setSessionId(created.session_id);
+      setBubbles(historyToBubbles(created.history));
+      lastScopeKeyRef.current = key;
+      void sessionsQ.refetch();
+    } catch (e) {
+      setError(formatErr(e));
+    }
+  }, [key, scope, sessionsQ]);
+
+  const recentScopeSessions = useMemo(() => {
+    return (sessionsQ.data ?? [])
+      .filter((s) => scopeKey(s.scope) === key)
+      .slice(0, 8);
+  }, [key, sessionsQ.data]);
 
   if (variant === "desktop" && !open) {
     return (
@@ -246,7 +260,7 @@ export function ChatRail({
               onClick={startFresh}
               title="Start a new conversation in this context"
             >
-              Start fresh
+              New chat
             </button>
             {variant === "desktop" && (
               <button
@@ -260,6 +274,34 @@ export function ChatRail({
           </div>
         </header>
       )}
+      {showHeader && recentScopeSessions.length > 0 && (
+        <div className="px-4 py-2 border-b border-border-soft bg-surface-2/20">
+          <div className="text-[11px] text-text-3 mb-1">Conversation history</div>
+          <div className="space-y-1">
+            {recentScopeSessions.map((s) => (
+              <button
+                key={s.id}
+                onClick={async () => {
+                  try {
+                    setSessionId(s.id);
+                    const h = await loadSessionHistory(s.id);
+                    setBubbles(historyToBubbles(h));
+                  } catch (e) {
+                    setError(formatErr(e));
+                  }
+                }}
+                className={`w-full text-left rounded px-2 py-1 text-[11px] border ${
+                  s.id === sessionId
+                    ? "border-gold/40 text-text bg-gold/5"
+                    : "border-border-soft text-text-2 hover:text-text"
+                }`}
+              >
+                {new Date(s.last_activity_at).toLocaleString()}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       <RailModelBar
         rows={providers.data?.providers ?? []}
@@ -269,17 +311,17 @@ export function ChatRail({
         onChange={(p, m) => {
           setProviderName(p);
           setModelId(m);
-          if (p) localStorage.setItem(RAIL_PROVIDER_LS, p);
-          else localStorage.removeItem(RAIL_PROVIDER_LS);
-          if (m) localStorage.setItem(RAIL_MODEL_LS, m);
-          else localStorage.removeItem(RAIL_MODEL_LS);
+          if (p) safeStorageSet(RAIL_PROVIDER_LS, p);
+          else safeStorageRemove(RAIL_PROVIDER_LS);
+          if (m) safeStorageSet(RAIL_MODEL_LS, m);
+          else safeStorageRemove(RAIL_MODEL_LS);
         }}
       />
 
       <ChatThread bubbles={bubbles} isStreaming={isStreaming} />
 
       {error && (
-        <div className="px-4 py-2 border-t border-border text-rose-300 text-[12px]">
+        <div className="px-4 py-2 border-t border-border text-danger text-[12px]">
           {error}
         </div>
       )}
@@ -373,6 +415,7 @@ function applyEvent(
           ...a.tools[slot],
           ok: !result?.error,
           summary: summarizeResult(ev.tool, ev.result),
+          resultSummary: summarizeResult(ev.tool, ev.result),
           pending: false,
           result: ev.result,
         };
@@ -412,23 +455,24 @@ function historyToBubbles(history: ChatMessage[]): Bubble[] {
         if (prior.role === "assistant") {
           for (const tr of toolResults) {
             // Tool result content is the JSON-stringified result; surface
-            // an error chip if it parses to {error: ...}.
-            const parsed = safeParseJson(tr.content);
-            const isErr =
-              parsed &&
-              typeof parsed === "object" &&
-              parsed !== null &&
-              "error" in parsed;
+            // an error line if it parses to {error: ...}.
             // We don't know which tool_use this corresponds to without
             // the assistant's tool_use id; fall back to flipping the
             // most recent unresolved tool chip.
             if (prior.tools.length > 0) {
               const tool = prior.tools[prior.tools.length - 1];
+              const parsedResult = safeParseJson(tr.content);
+              const isErr =
+                parsedResult &&
+                typeof parsedResult === "object" &&
+                parsedResult !== null &&
+                "error" in parsedResult;
               prior.tools[prior.tools.length - 1] = {
                 ...tool,
                 ok: !isErr,
-                summary: tool.summary,
-                result: parsed ?? undefined,
+                summary: summarizeArgs(tool.call, tool.args),
+                resultSummary: summarizeResult(tool.call, parsedResult),
+                result: parsedResult ?? undefined,
               };
             }
           }
@@ -483,6 +527,16 @@ function summarizeArgs(tool: string, args: unknown): string {
       return `${a["template"]} → ${a["name"]}`;
     case "update_slot":
       return String(a["slot"] ?? "");
+    case "update_manifest": {
+      const bits: string[] = [];
+      if (Array.isArray(a["asset_universe"])) {
+        bits.push(`assets=${(a["asset_universe"] as unknown[]).join(",")}`);
+      }
+      if (a["decision_cadence_minutes"]) {
+        bits.push(`cadence=${a["decision_cadence_minutes"]}m`);
+      }
+      return bits.join("; ");
+    }
     case "set_mechanical_param":
       return `${a["key"]} = ${JSON.stringify(a["value"])}`;
     case "set_risk_config":
@@ -513,6 +567,7 @@ function summarizeResult(tool: string, result: unknown): string {
         ? "ok"
         : `${(r.errors as string[] | undefined)?.length ?? 0} error(s)`;
     case "update_slot":
+    case "update_manifest":
       return Array.isArray(r.updated) ? (r.updated as string[]).join(", ") : "";
     case "set_risk_config":
       return r.applied ? String(r.applied) : "";

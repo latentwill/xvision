@@ -26,6 +26,14 @@ pub struct ChatMessage {
     pub ts: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ChatSessionSummary {
+    pub id: String,
+    pub scope: ContextScope,
+    pub started_at: DateTime<Utc>,
+    pub last_activity_at: DateTime<Utc>,
+}
+
 /// Stateless CRUD over `chat_sessions` + `chat_messages`. Holds nothing —
 /// methods take `&SqlitePool` so the same store can be shared across
 /// handlers via the AppState.
@@ -217,6 +225,33 @@ impl ChatSessionStore {
             .await
             .context("delete session")?;
         Ok(())
+    }
+
+    /// List sessions newest-first. Used by the chat rail's history pane.
+    pub async fn list_sessions(pool: &SqlitePool) -> Result<Vec<ChatSessionSummary>> {
+        let rows: Vec<(String, String, String, String)> = sqlx::query_as(
+            "SELECT id, context_scope_json, started_at, last_activity_at \
+             FROM chat_sessions ORDER BY last_activity_at DESC",
+        )
+        .fetch_all(pool)
+        .await
+        .context("list sessions")?;
+
+        rows.into_iter()
+            .map(|(id, scope_json, started_at, last_activity_at)| {
+                let scope = serde_json::from_str(&scope_json).unwrap_or_default();
+                Ok(ChatSessionSummary {
+                    id,
+                    scope,
+                    started_at: DateTime::parse_from_rfc3339(&started_at)
+                        .context("parse started_at")?
+                        .with_timezone(&Utc),
+                    last_activity_at: DateTime::parse_from_rfc3339(&last_activity_at)
+                        .context("parse last_activity_at")?
+                        .with_timezone(&Utc),
+                })
+            })
+            .collect()
     }
 }
 

@@ -1,4 +1,5 @@
 //! Integration tests for the chat rail REST surface:
+//!   POST   /api/chat-rail/sessions
 //!   POST   /api/chat-rail/sessions/resolve
 //!   GET    /api/chat-rail/sessions/:id/history
 //!   DELETE /api/chat-rail/sessions/:id
@@ -44,6 +45,40 @@ async fn resolve_creates_session_on_first_call() {
 }
 
 #[tokio::test]
+async fn create_session_always_starts_new_history_without_deleting_old_session() {
+    let (server, _tmp, state) = boot().await;
+    let scope = ContextScope::Route {
+        route: "/strategies".into(),
+    };
+    let old_id = ChatSessionStore::create_session(&state.pool, &scope)
+        .await
+        .unwrap();
+    ChatSessionStore::append(
+        &state.pool,
+        &old_id,
+        "user",
+        &[json!({"type":"text","text":"previous question"})],
+    )
+    .await
+    .unwrap();
+
+    let resp = server
+        .post("/api/chat-rail/sessions")
+        .json(&json!({"scope": {"scope": "route", "route": "/strategies"}}))
+        .await;
+    resp.assert_status_ok();
+    let body: Value = resp.json();
+    let new_id = body["session_id"].as_str().expect("new id present");
+    assert_ne!(new_id, old_id, "new chat creates a distinct session");
+    assert_eq!(body["history"].as_array().unwrap().len(), 0);
+
+    let old_history = ChatSessionStore::load_history(&state.pool, &old_id)
+        .await
+        .unwrap();
+    assert_eq!(old_history.len(), 1, "old conversation stays available");
+}
+
+#[tokio::test]
 async fn resolve_returns_same_session_for_same_scope() {
     let (server, _tmp, _state) = boot().await;
     let scope = json!({"scope": "run", "run_id": "01HABC"});
@@ -62,6 +97,28 @@ async fn resolve_returns_same_session_for_same_scope() {
         .json::<Value>();
     let second_id = second["session_id"].as_str().unwrap().to_string();
     assert_eq!(first_id, second_id, "same scope → same session");
+}
+
+#[tokio::test]
+async fn resolve_setup_route_session_survives_reload() {
+    let (server, _tmp, _state) = boot().await;
+    let scope = json!({"scope": "route", "route": "/setup"});
+
+    let first = server
+        .post("/api/chat-rail/sessions/resolve")
+        .json(&json!({"scope": scope}))
+        .await
+        .json::<Value>();
+    let first_id = first["session_id"].as_str().unwrap().to_string();
+
+    let second = server
+        .post("/api/chat-rail/sessions/resolve")
+        .json(&json!({"scope": scope}))
+        .await
+        .json::<Value>();
+    let second_id = second["session_id"].as_str().unwrap().to_string();
+
+    assert_eq!(first_id, second_id, "/setup should resolve a stable session");
 }
 
 #[tokio::test]

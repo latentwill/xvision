@@ -48,6 +48,10 @@ pub fn parse_trader_response(body: &str, cycle_id: Uuid) -> Result<TraderDecisio
         stop_loss_pct: llm.stop_loss_pct,
         take_profit_pct: llm.take_profit_pct,
         trader_summary: llm.trader_summary,
+        // F18 partial: Trader-emitted decisions default to None; downstream
+        // consumers resolve to the active scenario's single asset until the
+        // full multi-asset cascade lands.
+        asset: None,
     };
     decision.validate().map_err(TraderError::Validation)?;
     Ok(decision)

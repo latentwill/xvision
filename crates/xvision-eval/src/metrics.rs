@@ -501,6 +501,7 @@ mod tests {
             stop_loss_pct: 2.0,
             take_profit_pct: 4.0,
             trader_summary: "test decision fixture for divergence test".into(),
+            asset: None,
         }
     }
 

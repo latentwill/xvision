@@ -9,7 +9,7 @@
 
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use chrono::{Duration, Utc};
 use clap::Args;
 use sqlx::SqlitePool;
@@ -27,7 +27,7 @@ pub struct EodArgs {
 }
 
 pub async fn run(args: EodArgs) -> Result<()> {
-    let xvn_home = resolve_xvn_home(args.xvn_home.clone())?;
+    let xvn_home = crate::commands::home::resolve_xvn_home(args.xvn_home.clone())?;
     let user = std::env::var("USER")
         .or_else(|_| std::env::var("USERNAME"))
         .unwrap_or_else(|_| "operator".to_string());
@@ -38,17 +38,6 @@ pub async fn run(args: EodArgs) -> Result<()> {
     let report = render_report(&ctx.db, args.hours).await?;
     println!("{report}");
     Ok(())
-}
-
-fn resolve_xvn_home(override_path: Option<PathBuf>) -> Result<PathBuf> {
-    if let Some(p) = override_path {
-        return Ok(p);
-    }
-    if let Ok(p) = std::env::var("XVN_HOME") {
-        return Ok(PathBuf::from(p));
-    }
-    let home = dirs::home_dir().context("HOME not set; pass --xvn-home")?;
-    Ok(home.join(".xvn"))
 }
 
 /// Pure render fn — takes a pool + window and returns the full markdown
@@ -135,13 +124,13 @@ async fn render_per_strategy(pool: &SqlitePool, since_rfc: &str) -> Result<Strin
     let mut s = String::from("## Per-strategy summary\n\n");
 
     let rows: Vec<(String, i64, i64, Option<String>)> = sqlx::query_as(
-        "SELECT strategy_bundle_hash, \
+        "SELECT agent_id, \
                 COUNT(*), \
                 SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END), \
                 MAX(metrics_json) \
          FROM eval_runs \
          WHERE started_at >= ?1 \
-         GROUP BY strategy_bundle_hash \
+         GROUP BY agent_id \
          ORDER BY 2 DESC",
     )
     .bind(since_rfc)
@@ -156,29 +145,29 @@ async fn render_per_strategy(pool: &SqlitePool, since_rfc: &str) -> Result<Strin
 
     s.push_str("| Strategy | Runs | Completed | Best Sharpe | Best return % |\n");
     s.push_str("|---|---|---|---|---|\n");
-    for (bundle, runs, completed, sample_metrics) in rows {
+    for (strategy, runs, completed, sample_metrics) in rows {
         let (best_sharpe, best_return) =
-            best_metrics_for_bundle(pool, &bundle, since_rfc, sample_metrics).await;
+            best_metrics_for_strategy(pool, &strategy, since_rfc, sample_metrics).await;
         s.push_str(&format!(
-            "| `{bundle}` | {runs} | {completed} | {best_sharpe} | {best_return} |\n",
+            "| `{strategy}` | {runs} | {completed} | {best_sharpe} | {best_return} |\n",
         ));
     }
     s.push('\n');
     Ok(s)
 }
 
-async fn best_metrics_for_bundle(
+async fn best_metrics_for_strategy(
     pool: &SqlitePool,
-    bundle: &str,
+    strategy: &str,
     since_rfc: &str,
     _sample: Option<String>,
 ) -> (String, String) {
     let metrics_rows: Vec<(Option<String>,)> = sqlx::query_as(
         "SELECT metrics_json FROM eval_runs \
-         WHERE strategy_bundle_hash = ?1 AND started_at >= ?2 \
+         WHERE agent_id = ?1 AND started_at >= ?2 \
            AND metrics_json IS NOT NULL",
     )
-    .bind(bundle)
+    .bind(strategy)
     .bind(since_rfc)
     .fetch_all(pool)
     .await
@@ -355,9 +344,9 @@ mod tests {
         })
         .to_string();
         sqlx::query(
-            "INSERT INTO eval_runs (id, strategy_bundle_hash, scenario_id, mode, status, \
+            "INSERT INTO eval_runs (id, agent_id, scenario_id, mode, status, \
              started_at, completed_at, metrics_json) \
-             VALUES (?1, 'bundle-abc', 'flash-crash-2024-08', 'backtest', 'completed', ?2, ?2, ?3)",
+             VALUES (?1, 'strategy-abc', 'flash-crash-2024-08', 'backtest', 'completed', ?2, ?2, ?3)",
         )
         .bind("run-1")
         .bind(now.to_rfc3339())
@@ -394,7 +383,7 @@ mod tests {
         assert!(report.contains("- completed: 1"));
         assert!(report.contains("- Total decisions: 1"));
         assert!(report.contains("- Total fills: 1"));
-        assert!(report.contains("`bundle-abc`"));
+        assert!(report.contains("`strategy-abc`"));
         assert!(report.contains("1.700")); // best sharpe
         assert!(report.contains("12.50")); // best return
         assert!(report.contains("- Total calls: 2"));

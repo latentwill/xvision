@@ -19,9 +19,9 @@ import type {
 } from "@/api/types.gen";
 
 const TABS = [
+  { to: "general", label: "General" },
   { to: "providers", label: "Providers" },
   { to: "brokers", label: "Brokers" },
-  { to: "skills", label: "Skills" },
   { to: "danger", label: "Danger zone" },
 ];
 
@@ -55,6 +55,7 @@ export function SettingsLayout() {
   );
 }
 
+export { SettingsGeneralRoute } from "./general";
 export { SettingsProvidersRoute } from "./providers";
 
 export function SettingsBrokersRoute() {
@@ -265,7 +266,7 @@ function AlpacaBrokerCard({ entry }: { entry: BrokerEntry }) {
                 }}
                 className="text-[12px] text-text-2 hover:text-text underline-offset-2 hover:underline"
               >
-                replace
+                Edit replacement
               </button>
               <button
                 type="button"
@@ -347,7 +348,7 @@ function AlpacaBrokerCard({ entry }: { entry: BrokerEntry }) {
               disabled={save.isPending}
               className="px-3 py-1.5 rounded text-[13px] font-medium border border-gold text-gold hover:bg-gold/10 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {save.isPending ? "Saving…" : entry.stored ? "Replace" : "Save"}
+              {save.isPending ? "Saving…" : entry.stored ? "Save replacement" : "Save"}
             </button>
             {entry.stored ? (
               <button
@@ -383,7 +384,7 @@ function AlpacaConnectionResult({
           ? error.message
           : String(error);
     return (
-      <span className="inline-flex items-center gap-1.5 text-rose-300">
+      <span className="inline-flex items-center gap-1.5 text-danger">
         <span aria-hidden>✗</span>
         <span className="font-mono text-text-2">{detail}</span>
       </span>
@@ -392,7 +393,7 @@ function AlpacaConnectionResult({
   if (!data) return null;
   if (data.ok) {
     return (
-      <span className="inline-flex items-center gap-1.5 text-emerald-300">
+      <span className="inline-flex items-center gap-1.5 text-info">
         <span aria-hidden>✓</span>
         <span>
           connected · {data.latency_ms}ms
@@ -403,7 +404,7 @@ function AlpacaConnectionResult({
     );
   }
   return (
-    <span className="inline-flex items-center gap-1.5 text-rose-300">
+    <span className="inline-flex items-center gap-1.5 text-danger">
       <span aria-hidden>✗</span>
       <span className="font-mono text-text-2">
         {data.error ?? "connection failed"}
@@ -472,4 +473,3 @@ function CredentialRow({ cred }: { cred: CredentialRef }) {
     </tr>
   );
 }
-

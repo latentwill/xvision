@@ -66,6 +66,7 @@ mod tests {
             stop_loss_pct: 2.0,
             take_profit_pct: 5.0,
             trader_summary: "Harness smoke test decision.".into(),
+            asset: None,
         }
     }
 

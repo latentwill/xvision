@@ -8,6 +8,8 @@
 //!  - per-tick equity samples are persisted (eval_equity_samples)
 //!  - finalize() lands a MetricsSummary on the run
 
+#![allow(deprecated)] // canonical_scenarios() — see Task 8 (M2) deprecation note.
+
 use std::sync::Arc;
 
 use chrono::{TimeZone, Utc};
@@ -30,14 +32,18 @@ async fn pool_with_migration() -> SqlitePool {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/014_eval_agent_id.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     pool
 }
 
-fn minimal_bundle() -> Strategy {
+fn minimal_strategy() -> Strategy {
     Strategy {
         manifest: PublicManifest {
-            id: "01TESTBUNDLE0000000000000A".into(),
-            display_name: "Test bundle".into(),
+            id: "01TESTSTRATEGY0000000000000A".into(),
+            display_name: "Test strategy".into(),
             plain_summary: "for paper executor tests".into(),
             creator: "@tester".into(),
             template: "mean_reversion".into(),
@@ -49,6 +55,8 @@ fn minimal_bundle() -> Strategy {
             risk_preset_or_config: "balanced".into(),
             published_at: None,
         },
+        agents: Vec::new(),
+        pipeline: Default::default(),
         regime_slot: None,
         intern_slot: None,
         trader_slot: Some(LLMSlot {
@@ -72,7 +80,7 @@ fn short_scenario() -> Scenario {
 }
 
 /// Helper: build a paper-mode harness — pool, store, mock-broker (both
-/// concrete + erased Arcs), executor, mock dispatch, tools, run, bundle,
+/// concrete + erased Arcs), executor, mock dispatch, tools, run, strategy,
 /// scenario. The two broker arcs share the same allocation so
 /// `mock.submitted()` reflects the executor's calls.
 async fn paper_harness(
@@ -93,28 +101,28 @@ async fn paper_harness(
     let mock = Arc::new(MockBrokerSurface::new(initial_balance));
     let broker: Arc<dyn BrokerSurface> = mock.clone();
     let executor = PaperExecutor::new(broker);
-    let bundle = minimal_bundle();
+    let strategy = minimal_strategy();
     let scenario = short_scenario();
     let run = Run::new_queued(
-        "test-bundle-hash".into(),
+        "test-strategy-hash".into(),
         scenario.id.clone(),
         RunMode::Paper,
     );
     store.create(&run).await.unwrap();
     let dispatch: Arc<dyn LlmDispatch> = Arc::new(MockDispatch::echo(canned_trader_json));
     let tools = Arc::new(ToolRegistry::empty());
-    (mock, executor, store, run, bundle, scenario, dispatch, tools)
+    (mock, executor, store, run, strategy, scenario, dispatch, tools)
 }
 
 #[tokio::test]
 async fn paper_executor_runs_to_completion() {
     let canned = r#"{"action":"hold","conviction":0.0,"justification":"test mock decision"}"#;
-    let (_mock, executor, store, mut run, bundle, scenario, dispatch, tools) =
+    let (_mock, executor, store, mut run, strategy, scenario, dispatch, tools) =
         paper_harness(canned, 100_000.0).await;
     let id = run.id.clone();
 
     let metrics = executor
-        .run(&mut run, &bundle, &scenario, dispatch, tools, &store)
+        .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)
         .await
         .expect("run must succeed");
 
@@ -128,11 +136,11 @@ async fn paper_executor_runs_to_completion() {
 #[tokio::test]
 async fn paper_executor_records_a_decision_row_per_tick() {
     let canned = r#"{"action":"hold","conviction":0.0,"justification":"hold"}"#;
-    let (_mock, executor, store, mut run, bundle, scenario, dispatch, tools) =
+    let (_mock, executor, store, mut run, strategy, scenario, dispatch, tools) =
         paper_harness(canned, 100_000.0).await;
 
     executor
-        .run(&mut run, &bundle, &scenario, dispatch, tools, &store)
+        .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)
         .await
         .unwrap();
 
@@ -148,11 +156,11 @@ async fn paper_executor_records_a_decision_row_per_tick() {
 #[tokio::test]
 async fn paper_executor_submits_orders_only_for_actionable_decisions() {
     let canned = r#"{"action":"long_open","conviction":0.7,"justification":"buy"}"#;
-    let (mock, executor, store, mut run, bundle, scenario, dispatch, tools) =
+    let (mock, executor, store, mut run, strategy, scenario, dispatch, tools) =
         paper_harness(canned, 100_000.0).await;
 
     let metrics = executor
-        .run(&mut run, &bundle, &scenario, dispatch, tools, &store)
+        .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)
         .await
         .unwrap();
 
@@ -170,11 +178,11 @@ async fn paper_executor_submits_orders_only_for_actionable_decisions() {
 #[tokio::test]
 async fn paper_executor_skips_broker_for_flat_decisions() {
     let canned = r#"{"action":"flat","conviction":0.0,"justification":"sit"}"#;
-    let (mock, executor, store, mut run, bundle, scenario, dispatch, tools) =
+    let (mock, executor, store, mut run, strategy, scenario, dispatch, tools) =
         paper_harness(canned, 100_000.0).await;
 
     let metrics = executor
-        .run(&mut run, &bundle, &scenario, dispatch, tools, &store)
+        .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)
         .await
         .unwrap();
 
@@ -187,11 +195,11 @@ async fn paper_executor_skips_broker_for_flat_decisions() {
 #[tokio::test]
 async fn paper_executor_records_equity_sample_per_tick() {
     let canned = r#"{"action":"hold","conviction":0.0,"justification":"hold"}"#;
-    let (_mock, executor, store, mut run, bundle, scenario, dispatch, tools) =
+    let (_mock, executor, store, mut run, strategy, scenario, dispatch, tools) =
         paper_harness(canned, 50_000.0).await;
 
     executor
-        .run(&mut run, &bundle, &scenario, dispatch, tools, &store)
+        .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)
         .await
         .unwrap();
 
@@ -205,11 +213,11 @@ async fn paper_executor_records_equity_sample_per_tick() {
 #[tokio::test]
 async fn paper_executor_idempotency_key_includes_run_id_and_decision_index() {
     let canned = r#"{"action":"long_open","conviction":0.5,"justification":"buy"}"#;
-    let (mock, executor, store, mut run, bundle, scenario, dispatch, tools) =
+    let (mock, executor, store, mut run, strategy, scenario, dispatch, tools) =
         paper_harness(canned, 100_000.0).await;
 
     executor
-        .run(&mut run, &bundle, &scenario, dispatch, tools, &store)
+        .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)
         .await
         .unwrap();
 
@@ -230,19 +238,22 @@ async fn paper_executor_idempotency_key_includes_run_id_and_decision_index() {
 }
 
 #[tokio::test]
-async fn paper_executor_handles_unparseable_trader_output_as_flat() {
-    // Mock returns garbage that fails serde parsing → executor should fall
-    // back to a flat decision instead of erroring out the run.
+async fn paper_executor_fails_on_unparseable_trader_output() {
+    // Mock returns garbage that fails serde parsing → executor should fail
+    // the run instead of silently converting it into a flat decision.
     let canned = "definitely not json";
-    let (mock, executor, store, mut run, bundle, scenario, dispatch, tools) =
+    let (mock, executor, store, mut run, strategy, scenario, dispatch, tools) =
         paper_harness(canned, 100_000.0).await;
 
-    let metrics = executor
-        .run(&mut run, &bundle, &scenario, dispatch, tools, &store)
+    let err = executor
+        .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)
         .await
-        .expect("unparseable trader output must not fail the run");
+        .expect_err("unparseable trader output must fail the run");
 
-    assert_eq!(metrics.n_trades, 0, "unparseable → no broker submissions");
-    assert_eq!(metrics.n_decisions, 4);
+    assert!(
+        err.to_string().contains("invalid JSON"),
+        "unexpected error: {err}"
+    );
+    assert_eq!(run.status, RunStatus::Running, "run should stop mid-flight");
     assert_eq!(mock.submitted().len(), 0);
 }

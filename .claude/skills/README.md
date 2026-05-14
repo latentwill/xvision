@@ -4,6 +4,10 @@ Two different kinds of skills live here — they share a directory because both
 follow Anthropic's YAML-frontmatter markdown skill format, but the *consumers*
 are different. Don't confuse them.
 
+If your session is rooted in this repo, Claude Code auto-discovers
+`.claude/skills/xvision/`; that is the first xvision-specific skill an
+external coding agent should load.
+
 | Path | Consumer | Purpose |
 |---|---|---|
 | `xvision/` | **Claude Code** (this CLI, the IDE extensions, agent SDK sessions) — discovered automatically when a session is rooted in this repo | Orient a fresh Claude session in the xvision codebase: `xvn` CLI surface, pipeline vocabulary, deploy / build gotchas. F25 in `FOLLOWUPS.md`. |

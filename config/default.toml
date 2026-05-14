@@ -47,3 +47,9 @@ data_root  = "data"
 vectors    = "data/vectors"
 probes     = "data/probes"
 sqlite_url = "sqlite://data/decisions.db"
+
+# Alpaca market-data fetcher knobs. Default rate limit matches Alpaca's free
+# tier (~200 rpm); bump for paid plans. Read by `ApiContext::open_with_config`
+# and passed to `AlpacaBarsFetcher::with_rate_limit`.
+[data.alpaca]
+rate_limit_rpm = 200

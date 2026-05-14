@@ -1,0 +1,21 @@
+{
+  "run_id": "r_test",
+  "scenario_id": "s_test",
+  "asset": "ETH",
+  "granularity": "1h",
+  "time_window": { "start": "2024-01-01T00:00:00Z", "end": "2024-01-02T00:00:00Z" },
+  "bars": [],
+  "indicators": {
+    "sma_20": [], "sma_50": [], "sma_200": [],
+    "ema_20": [], "ema_50": [], "ema_200": [],
+    "bollinger": { "upper": [], "middle": [], "lower": [] },
+    "donchian": { "upper": [], "lower": [] },
+    "rsi_14": [],
+    "macd": { "line": [], "signal": [], "histogram": [] },
+    "atr_14": []
+  },
+  "equity": [],
+  "drawdown": [],
+  "position": [],
+  "markers": { "trades": [], "vetoes": [], "holds": [] }
+}

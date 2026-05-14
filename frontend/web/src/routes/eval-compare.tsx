@@ -6,11 +6,11 @@ import { Card } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
 import { ApiError } from "@/api/client";
 import { compareRuns, evalKeys } from "@/api/eval";
+import { chartKeys, getCompareChart } from "@/api/chart";
+import { CompareChart } from "@/components/chart/CompareChart";
 import type {
-  ComparisonEquityCurve,
   ComparisonRunSummary,
   Finding,
-  MetricsSummary,
 } from "@/api/types.gen";
 
 const STATUS_TONE: Record<string, "gold" | "warn" | "danger" | "default" | "info"> = {
@@ -37,6 +37,11 @@ export function EvalCompareRoute() {
   const q = useQuery({
     queryKey: evalKeys.compare(ids),
     queryFn: () => compareRuns(ids),
+    enabled: ids.length >= 2,
+  });
+  const chart = useQuery({
+    queryKey: chartKeys.compare(ids),
+    queryFn: () => getCompareChart(ids),
     enabled: ids.length >= 2,
   });
 
@@ -87,7 +92,17 @@ export function EvalCompareRoute() {
         Equity curves
       </h2>
       <Card className="p-5">
-        <EquityOverlay curves={report.equity_curves} runs={report.runs} />
+        {chart.isPending ? (
+          <p className="m-0 text-text-3 text-[13px] text-center py-6">
+            Loading chart…
+          </p>
+        ) : chart.error ? (
+          <p className="m-0 text-danger text-[13px] text-center py-6">
+            Chart unavailable: {String(chart.error)}
+          </p>
+        ) : chart.data ? (
+          <CompareChart payload={chart.data} />
+        ) : null}
       </Card>
       <h2 className="font-serif italic text-[20px] text-text mt-8 mb-3">
         Findings{" "}
@@ -152,7 +167,7 @@ function MetricsTable({ runs }: { runs: ComparisonRunSummary[] }) {
                   <Pill tone={tone}>{r.status}</Pill>
                 </td>
                 <td className="py-2.5 px-3 font-mono text-text-2 text-[12px]">
-                  {r.strategy_bundle_hash.slice(0, 12)}
+                  {r.agent_id.slice(0, 12)}
                 </td>
                 <td className="py-2.5 px-3 text-text-2 text-[12px]">
                   {r.scenario_id}
@@ -185,110 +200,6 @@ function MetricCell({ value, sign }: { value: string; sign?: 1 | -1 | 0 }) {
           ? "text-danger"
           : "text-text-2";
   return <td className={`py-2.5 px-3 text-right font-mono ${tone}`}>{value}</td>;
-}
-
-// Multi-curve overlay. Each curve is normalized to its own [min,max] so
-// shape-comparison reads regardless of absolute equity (one run starting
-// at $100k and another at $10k still align). For absolute-axis comparison
-// the operator clicks through to `/eval-runs/<id>`.
-function EquityOverlay({
-  curves,
-  runs,
-}: {
-  curves: ComparisonEquityCurve[];
-  runs: ComparisonRunSummary[];
-}) {
-  const drawn = curves.filter((c) => c.samples.length > 0);
-  if (drawn.length === 0) {
-    return (
-      <p className="m-0 text-text-3 text-[13px] text-center py-6">
-        no equity samples on any run
-      </p>
-    );
-  }
-  const w = 800;
-  const h = 220;
-  const pad = 6;
-
-  const idToIndex = new Map(runs.map((r, i) => [r.id, i] as const));
-
-  return (
-    <div>
-      <Legend curves={drawn} runs={runs} idToIndex={idToIndex} />
-      <svg
-        viewBox={`0 0 ${w} ${h}`}
-        className="w-full h-[220px]"
-        aria-label={`Equity overlay for ${drawn.length} runs`}
-      >
-        {drawn.map((curve) => {
-          const idx = idToIndex.get(curve.run_id) ?? 0;
-          const palette = CURVE_PALETTE[idx % CURVE_PALETTE.length];
-          const ys = curve.samples.map((s) => s.equity_usd);
-          const min = Math.min(...ys);
-          const max = Math.max(...ys);
-          const range = max - min || 1;
-          const path = curve.samples
-            .map((s, i) => {
-              const x = (i / (curve.samples.length - 1 || 1)) * w;
-              const y =
-                h - pad - ((s.equity_usd - min) / range) * (h - 2 * pad);
-              return `${i === 0 ? "M" : "L"}${x.toFixed(2)},${y.toFixed(2)}`;
-            })
-            .join(" ");
-          return (
-            <path
-              key={curve.run_id}
-              d={path}
-              fill="none"
-              stroke={palette.stroke}
-              strokeWidth="1.4"
-              opacity={0.85}
-            />
-          );
-        })}
-      </svg>
-      <div className="text-[11px] text-text-3 mt-2">
-        Each curve is normalized to its own range — shape comparison only.
-        Click a run id above for absolute-axis detail.
-      </div>
-    </div>
-  );
-}
-
-function Legend({
-  curves,
-  runs,
-  idToIndex,
-}: {
-  curves: ComparisonEquityCurve[];
-  runs: ComparisonRunSummary[];
-  idToIndex: Map<string, number>;
-}) {
-  return (
-    <div className="flex flex-wrap items-center gap-x-5 gap-y-2 mb-3">
-      {curves.map((curve) => {
-        const idx = idToIndex.get(curve.run_id) ?? 0;
-        const palette = CURVE_PALETTE[idx % CURVE_PALETTE.length];
-        const run = runs.find((r) => r.id === curve.run_id);
-        return (
-          <span
-            key={curve.run_id}
-            className="inline-flex items-center gap-2 text-[12px] text-text-2"
-          >
-            <span
-              className="w-3 h-[2px] rounded-sm"
-              style={{ background: palette.stroke }}
-              aria-hidden
-            />
-            <code className="font-mono">{curve.run_id.slice(0, 8)}…</code>
-            <span className="text-text-3">
-              {fmtMetricsBrief(run?.metrics)}
-            </span>
-          </span>
-        );
-      })}
-    </div>
-  );
 }
 
 function FindingsTable({
@@ -499,7 +410,3 @@ function signOf(n: number | null | undefined): 1 | -1 | 0 | undefined {
   return 0;
 }
 
-function fmtMetricsBrief(m: MetricsSummary | null | undefined): string {
-  if (!m) return "(no metrics)";
-  return `${fmtPct(m.total_return_pct)} · sharpe ${m.sharpe.toFixed(2)}`;
-}

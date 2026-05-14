@@ -5,7 +5,12 @@ import { Card } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
 import { Icon } from "@/components/primitives/Icon";
 import { ApiError } from "@/api/client";
-import { listStrategies, strategyKeys } from "@/api/strategies";
+import {
+  listStrategies,
+  strategyKeys,
+  type StrategyListItem,
+} from "@/api/strategies";
+import { formatCadence } from "@/lib/format";
 
 export function StrategiesRoute() {
   const q = useQuery({
@@ -43,50 +48,25 @@ function subtitleFor(q: ReturnType<typeof useQuery>) {
   const data = q.data as { length: number } | undefined;
   if (!data) return "";
   const n = data.length;
-  return `${n} ${n === 1 ? "bundle" : "bundles"}`;
+  return `${n} ${n === 1 ? "strategy" : "strategies"}`;
 }
 
 function FilterBar() {
   return (
-    <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between mb-4 gap-3">
-      <div className="flex flex-col xl:flex-row xl:items-center gap-2.5 min-w-0">
-        <div className="flex items-center gap-2 px-3 py-2 bg-surface-elev border border-border rounded w-full xl:w-[280px] max-w-full text-text-3 opacity-50">
-          <Icon name="search" size={14} />
-          <input
-            className="bg-transparent border-0 outline-0 flex-1 text-[13px] text-text placeholder:text-text-3 disabled:cursor-not-allowed"
-            placeholder="Filter by name…"
-            disabled
-            aria-label="Filter strategies (coming soon)"
-            title="Filtering ships with Plan 5 (Findings + Polish)"
-          />
-        </div>
-        <select
-          className="bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text-2 disabled:opacity-50 disabled:cursor-not-allowed"
-          disabled
-          title="Status filter ships with Plan 5 (Findings + Polish)"
-        >
-          <option>All status</option>
-        </select>
-        <select
-          className="bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text-2 disabled:opacity-50 disabled:cursor-not-allowed"
-          disabled
-          title="Template filter ships with Plan 5 (Findings + Polish)"
-        >
-          <option>All templates</option>
-        </select>
-      </div>
-      <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+    <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="text-[13px] text-text-3">Latest strategy drafts</div>
+      <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
         <Link
           to="/strategies/new"
-          className="inline-flex items-center justify-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium border border-border text-text-2 hover:text-text hover:border-text-3 transition-colors"
-        >
-          <Icon name="plus" size={13} /> New from template
-        </Link>
-        <Link
-          to="/setup"
-          className="inline-flex items-center justify-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft transition-colors"
+          className="inline-flex flex-1 items-center justify-center gap-2 rounded border border-border px-3.5 py-2 text-[13px] font-medium text-text-2 transition-colors hover:border-text-3 hover:text-text sm:flex-none"
         >
           <Icon name="plus" size={13} /> New strategy
+        </Link>
+        <Link
+          to="/strategies/new"
+          className="inline-flex flex-1 items-center justify-center gap-2 rounded bg-gold px-3.5 py-2 text-[13px] font-medium text-bg transition-colors hover:bg-gold-soft sm:flex-none"
+        >
+          <Icon name="plus" size={13} /> Open form
         </Link>
       </div>
     </div>
@@ -96,59 +76,133 @@ function FilterBar() {
 function StrategiesTable({
   items,
 }: {
-  items: {
-    agent_id: string;
-    template: string;
-    model?: string;
-  }[];
+  items: StrategyListItem[];
 }) {
   return (
-    <table className="w-full">
-      <thead>
-        <tr className="text-left text-text-2 text-[12px] border-b border-border-soft">
-          <th className="font-normal py-2.5 px-5">Agent ID</th>
-          <th className="font-normal py-2.5 px-3">Template</th>
-          <th className="font-normal py-2.5 px-3">Model</th>
-          <th className="font-normal py-2.5 px-3">Status</th>
-          <th className="font-normal py-2.5 px-5"></th>
-        </tr>
-      </thead>
-      <tbody>
+    <>
+      <div className="divide-y divide-border-soft md:hidden">
         {items.map((row) => (
-          <tr
-            key={row.agent_id}
-            className="border-b border-border-soft last:border-b-0 hover:bg-surface-hover transition-colors"
-          >
-            <td className="py-3 px-5 font-mono text-text">
-              <Link
-                to={`/authoring/${encodeURIComponent(row.agent_id)}`}
-                className="text-text hover:underline"
-              >
-                {row.agent_id}
-              </Link>
-            </td>
-            <td className="py-3 px-3 text-text-2">{row.template}</td>
-            <td className="py-3 px-3 font-mono text-text-2 text-[12px]">
-              {row.model ?? <span className="text-text-3 italic">—</span>}
-            </td>
-            <td className="py-3 px-3">
-              <Pill tone="gold">
-                <span className="w-1.5 h-1.5 rounded-full bg-gold" /> validated
+          <article key={row.agent_id} className="px-4 py-3">
+            <div className="mb-1.5 flex items-start justify-between gap-2">
+              <div>
+                <Link
+                  to={`/authoring/${encodeURIComponent(row.agent_id)}`}
+                  className="text-[15px] text-text hover:underline"
+                >
+                  {row.display_name || "Untitled strategy"}
+                </Link>
+              </div>
+              <Pill>
+                <span className="h-1.5 w-1.5 rounded-full bg-text-3" /> draft
               </Pill>
-            </td>
-            <td className="py-3 px-5 text-text-3 text-right">
+            </div>
+
+            <div className="mt-1 text-[12px] text-text-2">
+              {row.template} · {formatCadence(row.decision_cadence_minutes)}
+            </div>
+            <div className="mt-1 break-all font-mono text-[12px] text-text-2">
+              {row.model ?? <span className="italic text-text-3">—</span>}
+            </div>
+            <div className="mt-2">
+              <TagList tags={row.tags ?? []} />
+            </div>
+
+            <div className="mt-2.5">
               <Link
                 to={`/authoring/${encodeURIComponent(row.agent_id)}`}
-                className="text-text-3 hover:text-text"
-                aria-label={`Open inspector for ${row.agent_id}`}
+                className="text-[13px] text-text-3 hover:text-text"
+                aria-label={`Open inspector for ${displayName(row)}`}
               >
                 Inspector →
               </Link>
-            </td>
-          </tr>
+            </div>
+          </article>
         ))}
-      </tbody>
-    </table>
+      </div>
+
+      <div className="hidden overflow-x-auto md:block">
+        <table className="w-full">
+          <thead>
+            <tr className="border-b border-border-soft text-left text-[12px] text-text-2">
+              <th className="px-3 py-2.5 font-normal">Name</th>
+              <th className="px-3 py-2.5 font-normal">Template</th>
+              <th className="px-3 py-2.5 font-normal">Tags</th>
+              <th className="px-3 py-2.5 font-normal">Cadence</th>
+              <th className="px-3 py-2.5 font-normal">Model</th>
+              <th className="px-3 py-2.5 font-normal">Status</th>
+              <th className="px-5 py-2.5 font-normal"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((row) => (
+              <tr
+                key={row.agent_id}
+                className="border-b border-border-soft transition-colors last:border-b-0 hover:bg-surface-hover"
+              >
+                <td className="px-3 py-3 text-text">
+                  <Link
+                    to={`/authoring/${encodeURIComponent(row.agent_id)}`}
+                    className="break-all text-text hover:underline"
+                  >
+                    {row.display_name || "Untitled strategy"}
+                  </Link>
+                </td>
+                <td className="px-3 py-3 text-text-2">{row.template}</td>
+                <td className="px-3 py-3">
+                  <TagList tags={row.tags ?? []} />
+                </td>
+                <td className="px-3 py-3 font-mono text-[12px] text-text-2">
+                  {formatCadence(row.decision_cadence_minutes)}
+                </td>
+                <td className="max-w-[180px] px-3 py-3 break-all font-mono text-[12px] text-text-2">
+                  {row.model ?? <span className="italic text-text-3">—</span>}
+                </td>
+                <td className="px-3 py-3">
+                  <Pill>
+                    <span className="h-1.5 w-1.5 rounded-full bg-text-3" /> draft
+                  </Pill>
+                </td>
+                <td className="px-5 py-3 text-right text-text-3">
+                  <Link
+                    to={`/authoring/${encodeURIComponent(row.agent_id)}`}
+                    className="text-text-3 hover:text-text"
+                    aria-label={`Open inspector for ${displayName(row)}`}
+                  >
+                    Inspector →
+                  </Link>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
+  );
+}
+
+function displayName(row: StrategyListItem) {
+  return row.display_name || "Untitled strategy";
+}
+
+function TagList({ tags }: { tags: string[] }) {
+  if (tags.length === 0) {
+    return <span className="text-[12px] italic text-text-3">—</span>;
+  }
+  const visible = tags.slice(0, 3);
+  const extra = tags.length - visible.length;
+  return (
+    <div className="flex max-w-[280px] flex-wrap gap-1.5">
+      {visible.map((tag) => (
+        <span
+          key={tag}
+          className="max-w-[150px] truncate rounded border border-border-soft bg-surface-elev px-1.5 py-0.5 font-mono text-[11px] leading-tight text-text-2"
+          title={tag}
+        >
+          {tag}
+        </span>
+      ))}
+      {extra > 0 ? <Pill tone="default">+{extra}</Pill> : null}
+    </div>
   );
 }
 
@@ -170,7 +224,7 @@ function EmptyState() {
   return (
     <div className="px-6 py-16 text-center text-text-2">
       <div className="font-serif italic text-[28px] text-text-3 mb-3">
-        no bundles yet
+        no strategies yet
       </div>
       <p className="m-0 max-w-md mx-auto leading-snug">
         Strategies you create with{" "}

@@ -3,7 +3,7 @@
 //! Plan #11 Phase C Task 4. The legacy one-shot `/api/wizard/chat` route
 //! creates a new session per request; the rail's endpoints expose the
 //! full session lifecycle so the React rail can resume across routes
-//! and start fresh on demand.
+//! and create a new chat on demand.
 //!
 //! Sessions are owned server-side, keyed by `ContextScope`. The rail
 //! never holds a stale id across DB resets or fresh deploys — it just
@@ -11,6 +11,7 @@
 //!
 //! Endpoints:
 //!
+//! - `POST   /api/chat-rail/sessions`               → `{ session_id, history }`
 //! - `POST   /api/chat-rail/sessions/resolve`       → `{ session_id, history }`
 //! - `GET    /api/chat-rail/sessions/:id/history`   → `Vec<ChatMessage>`
 //! - `DELETE /api/chat-rail/sessions/:id`           → 204
@@ -26,12 +27,14 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::StreamExt;
 
-use xvision_engine::chat_session::{ChatMessage, ChatSessionStore, ContextScope};
+use xvision_engine::chat_session::{
+    ChatMessage, ChatSessionStore, ChatSessionSummary, ContextScope,
+};
 
 use crate::error::DashboardError;
 use crate::llm_dispatch;
 use crate::state::AppState;
-use crate::wizard_loop::{WizardEvent, WizardLoop};
+use crate::wizard_loop::{AgentProfile, WizardEvent, WizardLoop};
 
 #[derive(Debug, Deserialize)]
 pub struct ResolveSessionReq {
@@ -44,6 +47,21 @@ pub struct ResolveSessionReq {
 pub struct ResolveSessionResp {
     pub session_id: String,
     pub history: Vec<ChatMessage>,
+}
+
+/// POST `/api/chat-rail/sessions` — create a fresh empty session for
+/// this scope without deleting previous conversations in the same scope.
+pub async fn create_session(
+    State(state): State<AppState>,
+    Json(req): Json<ResolveSessionReq>,
+) -> Result<Json<ResolveSessionResp>, DashboardError> {
+    let session_id = ChatSessionStore::create_session(&state.pool, &req.scope)
+        .await
+        .map_err(DashboardError::Internal)?;
+    Ok(Json(ResolveSessionResp {
+        session_id,
+        history: Vec::new(),
+    }))
 }
 
 /// POST `/api/chat-rail/sessions/resolve` — the rail's mount-time
@@ -72,6 +90,15 @@ pub async fn history(
     Ok(Json(messages))
 }
 
+pub async fn list_sessions(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<ChatSessionSummary>>, DashboardError> {
+    let sessions = ChatSessionStore::list_sessions(&state.pool)
+        .await
+        .map_err(DashboardError::Internal)?;
+    Ok(Json(sessions))
+}
+
 pub async fn delete_session(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -95,6 +122,10 @@ pub struct ChatBody {
     /// default provider is used (which is what existing clients expect).
     #[serde(default)]
     pub provider: Option<String>,
+    /// Profile selects prompt bias and tool availability for the shared
+    /// agent runtime. The rail defaults to broad workspace behavior.
+    #[serde(default)]
+    pub profile: AgentProfile,
 }
 
 fn default_model() -> &'static str {
@@ -113,6 +144,7 @@ pub async fn chat(
         session_id = %body.session_id,
         provider = ?body.provider,
         model = ?body.model,
+        profile = ?body.profile,
         message_len = body.message.len(),
         "POST /api/chat-rail/chat"
     );
@@ -139,10 +171,20 @@ pub async fn chat(
     let session_id = body.session_id;
     let model = resolved.model;
     let message = body.message;
+    let profile = body.profile;
+    let cli_runner = state.cli_runner();
 
     tokio::spawn(async move {
-        let mut wl = match WizardLoop::new(
-            xvn_home, dispatch, model, pool, session_id, scope, message,
+        let mut wl = match WizardLoop::new_with_profile(
+            xvn_home,
+            dispatch,
+            model,
+            pool,
+            session_id,
+            scope,
+            profile,
+            Some(cli_runner),
+            message,
         )
         .await
         {
@@ -168,4 +210,27 @@ pub async fn chat(
         Ok::<_, std::convert::Infallible>(Event::default().data(json))
     });
     Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15))))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chat_body_defaults_to_workspace_profile() {
+        let body: ChatBody =
+            serde_json::from_str(r#"{"session_id":"s","message":"hi"}"#).unwrap();
+        assert!(body.model.is_none());
+        assert!(body.provider.is_none());
+        assert_eq!(body.profile, AgentProfile::Workspace);
+    }
+
+    #[test]
+    fn chat_body_accepts_strategy_setup_profile() {
+        let body: ChatBody = serde_json::from_str(
+            r#"{"session_id":"s","message":"hi","profile":"strategy_setup"}"#,
+        )
+        .unwrap();
+        assert_eq!(body.profile, AgentProfile::StrategySetup);
+    }
 }

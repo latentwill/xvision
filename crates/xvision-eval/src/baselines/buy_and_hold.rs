@@ -49,6 +49,7 @@ impl Algorithm for BuyAndHold {
                 stop_loss_pct: 5.0,
                 take_profit_pct: 10.0,
                 trader_summary: "BuyAndHold: static long entry — buy once, hold forever.".into(),
+                asset: None,
             })
         } else {
             None

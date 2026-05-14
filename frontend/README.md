@@ -49,17 +49,23 @@ Implemented in `web/src/routes/`:
 
 | Route | File | Purpose |
 |---|---|---|
-| `/` Home | `home.tsx` | Control Tower — KPI tiles, recent runs |
+| `/` Dashboard | `home.tsx` | Workspace status, KPI tiles, recent runs |
 | `/setup` | `setup.tsx` | Wizard (chat-driven onboarding + drafting) |
 | `/strategies` | `strategies.tsx` | Drafts list, lineage column |
-| `/authoring/:id` | `authoring.tsx` | Inspector: bundle tree + slot editor |
+| `/strategies/new` | `strategies-new.tsx` | Template-backed strategy creation |
+| `/agents` | `agents.tsx` | Workspace agent library |
+| `/agents/new`, `/agents/:id` | `agents-edit.tsx` | Create/edit agent slots |
+| `/scenarios` | `scenarios.tsx` | Scenario registry |
+| `/scenarios/new`, `/scenarios/:id` | `scenarios-new.tsx`, `scenarios-detail.tsx` | Create/inspect scenarios |
+| `/authoring/:id` | `authoring.tsx` | Inspector: strategy tree + agent-role editor |
 | `/eval-runs` | `eval-runs.tsx` | Leaderboard with filters + Compare select |
 | `/eval-runs/:id` | `eval-runs-detail.tsx` | Run detail (equity, findings, ledger) |
-| `/eval/compare` | `eval-compare.tsx` | Side-by-side run comparison |
-| `/settings/{providers,brokers,danger}` | `settings/*.tsx` | LLM/broker config |
+| `/eval-runs/compare` | `eval-compare.tsx` | Side-by-side run comparison |
+| `/live/:id` | `live.tsx` | Live chart stream for an active run |
+| `/settings/{providers,brokers,skills,danger}` | `settings/*.tsx` | LLM/broker/skill config and destructive maintenance |
 
-Out of v1: marketplace, autoresearcher dashboard, journal/lab notebook,
-`/live/<id>` flight deck. See `v1-shipping-plan.md` for the cut list.
+Out of v1: marketplace, autoresearcher dashboard, and journal/lab notebook.
+See `v1-shipping-plan.md` for the cut list.
 
 ## Viewing the prototype (reference only)
 
@@ -87,9 +93,9 @@ Defined in `prototype/styles.css` and mirrored in `web/src/styles/`:
 
 ## Domain mapping (prototype → xvision crates)
 
-Per `CLAUDE.md` terminology (`cycle_id`, `agent_id`, `StrategyBundle`):
+Per `CLAUDE.md` terminology (`cycle_id`, `agent_id`, `Strategy`):
 
-- "Strategy" in prototype copy = `StrategyBundle` in code
-- Inspector "Layers" (Data / Regime / Intern / Trader / Entry-Exit / Risk / Execution) map to the pipeline crates: `xvision-data`, `xvision-intern`, `xvision-trader`, `xvision-risk`, `xvision-execution`
+- "Strategy" in prototype copy = `Strategy` bundle in code
+- Inspector "Layers" now map to AgentRefs/PipelineDef over workspace agents, with legacy Regime / Intern / Trader slots still parsed for older bundles.
 - "Run ID" (e.g. `01H8N7Z`) is a ULID; one run produces many `cycle_id`s (briefing → decision → outcome) — see `docs/superpowers/plans/2026-05-10-terminology-rename-option-b.md`
 - The Setup wizard's "Drafting" panel is the user-facing surface of the engine API foundation work in `docs/superpowers/plans/`

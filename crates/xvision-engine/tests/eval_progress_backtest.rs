@@ -7,6 +7,8 @@
 //! executor runs — broadcast doesn't replay, so a late subscribe loses
 //! the RunStarted event.
 
+#![allow(deprecated)] // canonical_scenarios() — see Task 8 (M2) deprecation note.
+
 use std::sync::Arc;
 
 use sqlx::SqlitePool;
@@ -33,6 +35,10 @@ async fn fresh_store() -> RunStore {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/014_eval_agent_id.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     RunStore::new(pool)
 }
 
@@ -42,11 +48,15 @@ fn long_open_dispatch() -> Arc<dyn LlmDispatch> {
     ))
 }
 
-fn build_bundle(agent_id: &str) -> Strategy {
+fn invalid_dispatch() -> Arc<dyn LlmDispatch> {
+    Arc::new(MockDispatch::echo("definitely not json"))
+}
+
+fn build_strategy(agent_id: &str) -> Strategy {
     Strategy {
         manifest: PublicManifest {
             id: agent_id.into(),
-            display_name: "backtest-progress-test bundle".into(),
+            display_name: "backtest-progress-test strategy".into(),
             plain_summary: "for eval::progress backtest tests".into(),
             creator: "@tester".into(),
             template: "mean_reversion".into(),
@@ -58,6 +68,8 @@ fn build_bundle(agent_id: &str) -> Strategy {
             risk_preset_or_config: "balanced".into(),
             published_at: None,
         },
+        agents: Vec::new(),
+        pipeline: Default::default(),
         regime_slot: None,
         intern_slot: None,
         trader_slot: Some(LLMSlot {
@@ -81,10 +93,10 @@ async fn backtest_executor_emits_all_progress_event_types() {
         .into_iter()
         .find(|s| s.id == "flash-crash-2024-08")
         .expect("flash-crash-2024-08 scenario must exist");
-    let bundle = build_bundle("01TESTBUNDLEPROGBT00000001");
+    let strategy = build_strategy("01TESTSTRATEGYPROGBT00000001");
 
     let mut run = Run::new_queued(
-        bundle.manifest.id.clone(),
+        strategy.manifest.id.clone(),
         scenario.id.clone(),
         RunMode::Backtest,
     );
@@ -102,7 +114,7 @@ async fn backtest_executor_emits_all_progress_event_types() {
     let executor = BacktestExecutor::with_progress(tx);
 
     let result = executor
-        .run(&mut run, &bundle, &scenario, dispatch, tools, &store)
+        .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)
         .await;
     assert!(
         result.is_ok(),
@@ -152,8 +164,7 @@ async fn backtest_executor_emits_all_progress_event_types() {
             } => {
                 assert_eq!(run_id, &run.id);
                 // The mock dispatch returns `long_open` so every cycle
-                // should produce that action (or the parser fallback
-                // `flat`, but with valid JSON it won't).
+                // should produce that action.
                 assert_eq!(action, "long_open");
                 saw_decision = true;
             }
@@ -192,6 +203,67 @@ async fn backtest_executor_emits_all_progress_event_types() {
 }
 
 #[tokio::test]
+async fn backtest_executor_emits_run_failed_on_unparseable_trader_output() {
+    ensure_test_fixture("scenario-flash-crash-2024-08").unwrap();
+
+    let store = fresh_store().await;
+    let scenario = canonical_scenarios()
+        .into_iter()
+        .find(|s| s.id == "flash-crash-2024-08")
+        .expect("flash-crash-2024-08 scenario must exist");
+    let strategy = build_strategy("01TESTBUNDLEPROGBT00000004");
+    let mut run = Run::new_queued(
+        strategy.manifest.id.clone(),
+        scenario.id.clone(),
+        RunMode::Backtest,
+    );
+    store.create(&run).await.unwrap();
+
+    let bus = ProgressBus::new(1024);
+    let mut rx = bus.subscribe();
+    let tx = bus.sender();
+
+    let tools = Arc::new(ToolRegistry::empty());
+    let executor = BacktestExecutor::with_progress(tx);
+    let err = executor
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &[],
+            invalid_dispatch(),
+            tools,
+            &store,
+        )
+        .await
+        .expect_err("invalid trader JSON must fail the backtest run");
+    assert!(
+        err.to_string().contains("invalid JSON"),
+        "unexpected error: {err}"
+    );
+
+    use tokio::sync::broadcast::error::TryRecvError;
+    let mut saw_failed = false;
+    let mut saw_completed = false;
+    loop {
+        match rx.try_recv() {
+            Ok(ProgressEvent::RunFailed { run_id, error }) => {
+                assert_eq!(run_id, run.id);
+                assert!(error.contains("invalid JSON"), "unexpected error: {error}");
+                saw_failed = true;
+            }
+            Ok(ProgressEvent::RunCompleted { .. }) => saw_completed = true,
+            Ok(_) => {}
+            Err(TryRecvError::Empty) => break,
+            Err(TryRecvError::Closed) => break,
+            Err(TryRecvError::Lagged(n)) => panic!("bus lagged by {n}"),
+        }
+    }
+    assert!(saw_failed, "expected RunFailed event");
+    assert!(!saw_completed, "RunCompleted must not be emitted on parse failure");
+}
+
+#[tokio::test]
 async fn backtest_executor_runs_clean_with_no_progress_subscriber() {
     // Sanity: passing `with_progress` but having NO active subscriber
     // must not crash the run. broadcast::Sender::send returns Err when
@@ -203,9 +275,9 @@ async fn backtest_executor_runs_clean_with_no_progress_subscriber() {
         .into_iter()
         .find(|s| s.id == "flash-crash-2024-08")
         .expect("flash-crash-2024-08 scenario must exist");
-    let bundle = build_bundle("01TESTBUNDLEPROGBT00000002");
+    let strategy = build_strategy("01TESTSTRATEGYPROGBT00000002");
     let mut run = Run::new_queued(
-        bundle.manifest.id.clone(),
+        strategy.manifest.id.clone(),
         scenario.id.clone(),
         RunMode::Backtest,
     );
@@ -220,7 +292,7 @@ async fn backtest_executor_runs_clean_with_no_progress_subscriber() {
     let executor = BacktestExecutor::with_progress(tx);
 
     executor
-        .run(&mut run, &bundle, &scenario, dispatch, tools, &store)
+        .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)
         .await
         .expect("run should still succeed without a subscriber");
 }
@@ -237,9 +309,9 @@ async fn backtest_executor_default_constructor_is_silent() {
         .into_iter()
         .find(|s| s.id == "flash-crash-2024-08")
         .expect("flash-crash-2024-08 scenario must exist");
-    let bundle = build_bundle("01TESTBUNDLEPROGBT00000003");
+    let strategy = build_strategy("01TESTSTRATEGYPROGBT00000003");
     let mut run = Run::new_queued(
-        bundle.manifest.id.clone(),
+        strategy.manifest.id.clone(),
         scenario.id.clone(),
         RunMode::Backtest,
     );
@@ -250,7 +322,7 @@ async fn backtest_executor_default_constructor_is_silent() {
     let executor = BacktestExecutor::new();
 
     executor
-        .run(&mut run, &bundle, &scenario, dispatch, tools, &store)
+        .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)
         .await
         .expect("BacktestExecutor::new() should run to completion");
 }

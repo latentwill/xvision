@@ -10,11 +10,15 @@ async fn pool_with_migration() -> SqlitePool {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/014_eval_agent_id.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     pool
 }
 
 fn fresh_run(scenario: &str, mode: RunMode) -> Run {
-    Run::new_queued("bundle-hash-x".into(), scenario.into(), mode)
+    Run::new_queued("strategy-hash-x".into(), scenario.into(), mode)
 }
 
 #[tokio::test]
@@ -107,21 +111,21 @@ async fn finalize_sets_metrics_status_and_completed_at() {
 async fn list_with_strategy_filter_only_returns_matching() {
     let store = RunStore::new(pool_with_migration().await);
     let mut a = fresh_run("scenario-a", RunMode::Backtest);
-    a.strategy_bundle_hash = "hash-A".into();
+    a.agent_id = "hash-A".into();
     let mut b = fresh_run("scenario-a", RunMode::Backtest);
-    b.strategy_bundle_hash = "hash-B".into();
+    b.agent_id = "hash-B".into();
     store.create(&a).await.unwrap();
     store.create(&b).await.unwrap();
 
     let out = store
         .list(ListFilter {
-            strategy_bundle_hash: Some("hash-A".into()),
+            agent_id: Some("hash-A".into()),
             ..Default::default()
         })
         .await
         .unwrap();
     assert_eq!(out.len(), 1);
-    assert_eq!(out[0].strategy_bundle_hash, "hash-A");
+    assert_eq!(out[0].agent_id, "hash-A");
 }
 
 #[tokio::test]

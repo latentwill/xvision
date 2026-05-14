@@ -1,0 +1,92 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, render, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router-dom";
+
+import { StrategiesRoute } from "./strategies";
+import * as strategiesApi from "@/api/strategies";
+
+vi.mock("@/api/strategies", async () => {
+  const actual = await vi.importActual<typeof import("@/api/strategies")>(
+    "@/api/strategies",
+  );
+  return {
+    ...actual,
+    listStrategies: vi.fn(),
+  };
+});
+
+function renderRoute() {
+  return render(
+    <MemoryRouter>
+      <QueryClientProvider
+        client={
+          new QueryClient({
+            defaultOptions: { queries: { retry: false } },
+          })
+        }
+      >
+        <StrategiesRoute />
+      </QueryClientProvider>
+    </MemoryRouter>,
+  );
+}
+
+describe("StrategiesRoute", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("renders strategy id, display name, model summary, tags, and humanized cadence", async () => {
+    vi.mocked(strategiesApi.listStrategies).mockResolvedValue([
+      {
+        agent_id: "01TEST",
+        display_name: "Trend 4H",
+        template: "trend_follower",
+        decision_cadence_minutes: 240,
+        model: "claude-sonnet +1",
+        tags: [
+          "trend_follower",
+          "BTC/USD",
+          "trending_bull",
+          "very_long_strategy_tag_that_should_not_make_rows_tall",
+        ],
+      },
+    ]);
+
+    renderRoute();
+
+    expect((await screen.findAllByText("Name")).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Trend 4H").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("4h").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("claude-sonnet +1").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("BTC/USD").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("trending_bull").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Backend ID")).not.toBeInTheDocument();
+    expect(screen.queryByText("01TEST")).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Open inspector for 01TEST"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getAllByLabelText("Open inspector for Trend 4H").length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("does not render NaN for invalid cadence values", async () => {
+    vi.mocked(strategiesApi.listStrategies).mockResolvedValue([
+      {
+        agent_id: "01TEST",
+        display_name: "Open Strategy",
+        template: "custom",
+        decision_cadence_minutes: Number.NaN,
+        model: undefined,
+      },
+    ]);
+
+    renderRoute();
+
+    expect((await screen.findAllByText("Open Strategy")).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/NaN/)).not.toBeInTheDocument();
+    expect(screen.getAllByText("—").length).toBeGreaterThan(0);
+  });
+});

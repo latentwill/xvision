@@ -37,7 +37,7 @@ async fn create_draft(state: &AppState) -> String {
 }
 
 #[tokio::test]
-async fn get_strategy_returns_full_bundle() {
+async fn get_strategy_returns_full_strategy() {
     let (server, _tmp, state) = boot().await;
     let id = create_draft(&state).await;
 
@@ -60,6 +60,27 @@ async fn get_strategy_unknown_returns_404() {
 }
 
 #[tokio::test]
+async fn delete_strategy_removes_draft_and_get_returns_404() {
+    let (server, _tmp, state) = boot().await;
+    let id = create_draft(&state).await;
+
+    let response = server.delete(&format!("/api/strategy/{id}")).await;
+    response.assert_status_no_content();
+
+    let get = server.get(&format!("/api/strategy/{id}")).await;
+    get.assert_status_not_found();
+}
+
+#[tokio::test]
+async fn delete_strategy_unknown_returns_404() {
+    let (server, _tmp, _state) = boot().await;
+    let response = server
+        .delete("/api/strategy/01TOTALLYMISSINGAGENTID000")
+        .await;
+    response.assert_status_not_found();
+}
+
+#[tokio::test]
 async fn put_slot_updates_prompt() {
     let (server, _tmp, state) = boot().await;
     let id = create_draft(&state).await;
@@ -77,10 +98,10 @@ async fn put_slot_updates_prompt() {
         .iter()
         .any(|v| v == "prompt"));
 
-    // Round-trip: fetch the bundle and confirm the prompt changed.
-    let bundle: serde_json::Value =
+    // Round-trip: fetch the strategy and confirm the prompt changed.
+    let strategy: serde_json::Value =
         server.get(&format!("/api/strategy/{id}")).await.json();
-    assert_eq!(bundle["trader_slot"]["prompt"], "Decide carefully.");
+    assert_eq!(strategy["trader_slot"]["prompt"], "Decide carefully.");
 }
 
 #[tokio::test]
@@ -146,4 +167,63 @@ async fn post_validate_unknown_draft_is_404() {
         .post("/api/strategy/01TOTALLYMISSINGAGENTID000/validate")
         .await;
     response.assert_status_not_found();
+}
+
+#[tokio::test]
+async fn strategy_agents_add_rename_remove_round_trip() {
+    let (server, _tmp, state) = boot().await;
+    let strategy_id = create_draft(&state).await;
+
+    // Create an agent first (strategy add-agent validates FK existence).
+    let agent_resp = server
+        .post("/api/agents")
+        .json(&serde_json::json!({
+            "name": "qa-agent",
+            "description": "for inspector route test",
+            "tags": [],
+            "slots": [{
+                "name": "main",
+                "provider": "anthropic",
+                "model": "claude-sonnet-4-6",
+                "system_prompt": "Test slot prompt body for validator.",
+                "skill_ids": [],
+                "max_tokens": 512
+            }]
+        }))
+        .await;
+    agent_resp.assert_status_ok();
+    let agent_body: serde_json::Value = agent_resp.json();
+    let agent_id = agent_body["agent_id"].as_str().unwrap().to_string();
+
+    let add = server
+        .post(&format!("/api/strategy/{strategy_id}/agents"))
+        .json(&serde_json::json!({
+            "agent_id": agent_id,
+            "role": "trader"
+        }))
+        .await;
+    add.assert_status_ok();
+    let add_body: serde_json::Value = add.json();
+    assert_eq!(add_body["agents"][0]["role"], "trader");
+
+    let rename = server
+        .patch(&format!("/api/strategy/{strategy_id}/agents/trader"))
+        .json(&serde_json::json!({
+            "new_role": "signal_trader"
+        }))
+        .await;
+    rename.assert_status_ok();
+    let rename_body: serde_json::Value = rename.json();
+    assert_eq!(rename_body["agents"][0]["role"], "signal_trader");
+
+    let remove = server
+        .delete(&format!("/api/strategy/{strategy_id}/agents/signal_trader"))
+        .await;
+    remove.assert_status_ok();
+    let remove_body: serde_json::Value = remove.json();
+    assert_eq!(
+        remove_body["agents"].as_array().unwrap().len(),
+        0,
+        "strategy should have no attached agents after remove"
+    );
 }

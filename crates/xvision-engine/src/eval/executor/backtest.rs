@@ -1,5 +1,5 @@
 //! `BacktestExecutor` — replays an OHLCV fixture in chronological order,
-//! invoking the bundle's pipeline at each decision boundary and simulating
+//! invoking the strategy's pipeline at each decision boundary and simulating
 //! fills against the next bar's open with linear slippage + taker fees. No
 //! broker is involved; positions and equity are tracked in-memory.
 //!
@@ -20,10 +20,15 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use serde::Deserialize;
+use xvision_core::market::Ohlcv;
 use xvision_data::fixtures::load_ohlcv_fixture;
 
 use crate::agent::llm::LlmDispatch;
-use crate::agent::pipeline::{run_pipeline, PipelineInputs};
+use crate::agent::pipeline::{run_pipeline, PipelineInputs, ResolvedAgentSlot};
+use crate::api::chart::{
+    ChartEquityPoint, HoldMarker, LiveDecisionRow, MarkerEvent, RunChartEvent, RunEventBus,
+    TradeSide, TradeMarker,
+};
 use crate::strategies::Strategy;
 use crate::eval::executor::Executor;
 use crate::eval::metrics::{
@@ -48,11 +53,27 @@ pub struct BacktestExecutor {
     /// is a no-op via `send_event`. Mirrors PR #35's PaperExecutor wiring
     /// so SSE / CLI subscribers see both run modes through the same bus.
     progress: Option<ProgressTx>,
+    /// Optional pre-loaded bars. When `Some`, the executor skips the
+    /// `load_ohlcv_fixture` path and replays the provided bars directly.
+    /// Populated by Task 8's DB-resolved path in `api::eval::run_inner`
+    /// (bars come from the `eval::bars::load_bars` cache wrapper). When
+    /// `None` (the legacy / canonical-scenario fallback), bars are loaded
+    /// from `data/probes/<scenario.bar_cache_policy.cache_key>.parquet`
+    /// via `load_ohlcv_fixture`.
+    injected_bars: Option<Vec<Ohlcv>>,
+    /// Optional live-stream event bus. When `Some`, the executor emits
+    /// `RunChartEvent::Equity` and `RunChartEvent::Marker` events after
+    /// each decision cycle so SSE subscribers at `/live/<run_id>` see
+    /// real-time chart updates. When `None` (most unit tests), emission
+    /// is a no-op.
+    event_bus: Option<Arc<RunEventBus>>,
 }
 
 impl BacktestExecutor {
     /// Constructor without progress wiring. Existing callers
-    /// (`api::eval::run_with_deps` today) keep working unchanged.
+    /// (`api::eval::run_with_deps` today, plus tests against legacy
+    /// `canonical_scenarios()` ids) keep working unchanged — bars get
+    /// loaded from `data/probes/<cache_key>.parquet`.
     pub fn new() -> Self {
         Self::default()
     }
@@ -63,12 +84,54 @@ impl BacktestExecutor {
     pub fn with_progress(progress: ProgressTx) -> Self {
         Self {
             progress: Some(progress),
+            injected_bars: None,
+            event_bus: None,
         }
+    }
+
+    /// Constructor that injects bars directly, bypassing the fixture
+    /// loader. Used by `api::eval::run_inner` when the scenario comes
+    /// from the new DB-backed registry: bars are fetched / cached via
+    /// `eval::bars::load_bars` and handed to the executor pre-loaded.
+    ///
+    /// Bars must be in chronological order and contain enough lookback
+    /// for the warm-up window (`WARMUP_BARS` + 1).
+    pub fn with_bars(bars: Vec<Ohlcv>) -> Self {
+        Self {
+            progress: None,
+            injected_bars: Some(bars),
+            event_bus: None,
+        }
+    }
+
+    /// Both bars + progress.
+    pub fn with_bars_and_progress(bars: Vec<Ohlcv>, progress: ProgressTx) -> Self {
+        Self {
+            progress: Some(progress),
+            injected_bars: Some(bars),
+            event_bus: None,
+        }
+    }
+
+    /// Attach a live-stream event bus to an existing executor. Builder-style
+    /// so callers can chain after `with_bars` / `with_progress`:
+    ///   `BacktestExecutor::with_bars(bars).with_event_bus(bus)`.
+    pub fn with_event_bus(mut self, bus: Arc<RunEventBus>) -> Self {
+        self.event_bus = Some(bus);
+        self
     }
 
     fn emit(&self, event: ProgressEvent) {
         if let Some(tx) = self.progress.as_ref() {
             send_event(tx, event);
+        }
+    }
+
+    /// Emit a `RunChartEvent` onto the event bus if one is configured.
+    /// Inline `.await` is fine here since `run_inner` is already `async`.
+    async fn emit_chart(&self, run_id: &str, event: RunChartEvent) {
+        if let Some(bus) = self.event_bus.as_ref() {
+            bus.emit(run_id, event).await;
         }
     }
 }
@@ -83,12 +146,15 @@ struct TraderOutput {
 }
 
 impl TraderOutput {
-    fn flat() -> Self {
-        Self {
-            action: "flat".into(),
-            conviction: 0.0,
-            justification: "parse error or missing — fell back to flat".into(),
-        }
+    fn parse_strict(raw: &str, run_id: &str, decision_index: u32) -> Result<Self> {
+        serde_json::from_str::<Self>(raw).map_err(|e| {
+            anyhow!(
+                "run {} decision {}: trader output is invalid JSON: {}",
+                run_id,
+                decision_index,
+                e
+            )
+        })
     }
 }
 
@@ -97,8 +163,9 @@ impl Executor for BacktestExecutor {
     async fn run(
         &self,
         run: &mut Run,
-        bundle: &Strategy,
+        strategy: &Strategy,
         scenario: &Scenario,
+        agent_slots: &[ResolvedAgentSlot],
         dispatch: Arc<dyn LlmDispatch>,
         tools: Arc<ToolRegistry>,
         store: &RunStore,
@@ -109,9 +176,17 @@ impl Executor for BacktestExecutor {
             run_id: run.id.clone(),
             estimated_tokens: 0,
         });
+        self.emit_chart(
+            &run.id,
+            RunChartEvent::Status {
+                phase: "running".into(),
+                message: None,
+            },
+        )
+        .await;
 
         let result = self
-            .run_inner(run, bundle, scenario, dispatch, tools, store)
+            .run_inner(run, strategy, scenario, agent_slots, dispatch, tools, store)
             .await;
 
         match &result {
@@ -125,12 +200,48 @@ impl Executor for BacktestExecutor {
                     metrics: metrics.clone(),
                     tokens_used,
                 });
+                self.emit_chart(
+                    &run.id,
+                    RunChartEvent::Status {
+                        phase: "completed".into(),
+                        message: None,
+                    },
+                )
+                .await;
+                if let Some(bus) = self.event_bus.as_ref() {
+                    bus.drop_channel(&run.id).await;
+                }
             }
             Err(e) => {
+                if matches!(store.is_cancelled(&run.id).await, Ok(true)) {
+                    self.emit_chart(
+                        &run.id,
+                        RunChartEvent::Status {
+                            phase: "cancelled".into(),
+                            message: Some("cancelled by user".into()),
+                        },
+                    )
+                    .await;
+                    if let Some(bus) = self.event_bus.as_ref() {
+                        bus.drop_channel(&run.id).await;
+                    }
+                    return result;
+                }
                 self.emit(ProgressEvent::RunFailed {
                     run_id: run.id.clone(),
                     error: e.to_string(),
                 });
+                self.emit_chart(
+                    &run.id,
+                    RunChartEvent::Status {
+                        phase: "failed".into(),
+                        message: Some(e.to_string()),
+                    },
+                )
+                .await;
+                if let Some(bus) = self.event_bus.as_ref() {
+                    bus.drop_channel(&run.id).await;
+                }
             }
         }
         result
@@ -141,8 +252,9 @@ impl BacktestExecutor {
     async fn run_inner(
         &self,
         run: &mut Run,
-        bundle: &Strategy,
+        strategy: &Strategy,
         scenario: &Scenario,
+        agent_slots: &[ResolvedAgentSlot],
         dispatch: Arc<dyn LlmDispatch>,
         tools: Arc<ToolRegistry>,
         store: &RunStore,
@@ -152,26 +264,41 @@ impl BacktestExecutor {
             .await?;
         run.status = RunStatus::Running;
 
+        // TODO(Task 5): pull from Strategy. For v1 we read the first
+        // venue_symbol off the scenario's asset list (BTC/USD for canonicals).
         let asset = scenario
-            .asset_universe
+            .asset
             .first()
-            .ok_or_else(|| anyhow!("scenario {} has empty asset_universe", scenario.id))?
-            .clone();
+            .map(|a| a.venue_symbol.clone())
+            .ok_or_else(|| anyhow!("scenario {} has empty asset list", scenario.id))?;
 
-        let cadence_min = bundle.manifest.decision_cadence_minutes as i64;
+        let cadence_min = strategy.manifest.decision_cadence_minutes as i64;
         if cadence_min <= 0 {
             anyhow::bail!(
-                "bundle {} has non-positive decision_cadence_minutes",
-                bundle.manifest.id
+                "strategy {} has non-positive decision_cadence_minutes",
+                strategy.manifest.id
             );
         }
 
-        let bars = load_ohlcv_fixture(&scenario.data_seed, &asset, usize::MAX)
-            .map_err(|e| anyhow!("load fixture {}: {e}", scenario.data_seed))?;
+        // Bars come from one of two sources:
+        // 1. Injected via `with_bars` — Task 8's DB-resolved path goes
+        //    through `eval::bars::load_bars` and hands a pre-loaded
+        //    `Vec<Ohlcv>` to the executor. This is the path the new
+        //    `api::scenario::get`-based eval::run uses.
+        // 2. Legacy fixture loader — the canonical-scenarios fallback
+        //    still reads from `data/probes/<cache_key>.parquet`. Keeps
+        //    pre-Task-8 tests working without a DB / Alpaca creds.
+        let bars: Vec<Ohlcv> = if let Some(injected) = self.injected_bars.clone() {
+            injected
+        } else {
+            let data_seed = &scenario.bar_cache_policy.cache_key;
+            load_ohlcv_fixture(data_seed, &asset, usize::MAX)
+                .map_err(|e| anyhow!("load fixture {}: {e}", data_seed))?
+        };
         if bars.len() <= WARMUP_BARS + 1 {
             anyhow::bail!(
-                "fixture {} has only {} bars; need > {}",
-                scenario.data_seed,
+                "scenario {} has only {} bars; need > {}",
+                scenario.id,
                 bars.len(),
                 WARMUP_BARS + 1
             );
@@ -183,11 +310,11 @@ impl BacktestExecutor {
         let total_decision_bars = bars.len().saturating_sub(WARMUP_BARS).max(1) as f64;
 
         let initial = scenario.capital.initial;
-        let slip_bps = match &scenario.slippage {
+        let slip_bps = match &scenario.venue.slippage {
             SlippageModel::Linear { bps } => *bps as f64,
             SlippageModel::None => 0.0,
         };
-        let taker_bps = scenario.fees.taker_bps as f64;
+        let taker_bps = scenario.venue.fees.taker_bps as f64;
 
         let mut equity = initial;
         let mut equity_curve: Vec<f64> = vec![initial];
@@ -206,8 +333,11 @@ impl BacktestExecutor {
             if i < WARMUP_BARS {
                 continue;
             }
+            if store.is_cancelled(&run.id).await? {
+                anyhow::bail!("eval run cancelled");
+            }
             // Cadence gate: only fire on bars whose minute-aligned timestamp
-            // is divisible by the bundle's cadence. With hourly bars and
+            // is divisible by the strategy's cadence. With hourly bars and
             // 60-min cadence this always matches.
             if (bar.timestamp.timestamp() / 60) % cadence_min != 0 {
                 continue;
@@ -240,7 +370,8 @@ impl BacktestExecutor {
             });
 
             let outs = run_pipeline(PipelineInputs {
-                bundle,
+                strategy,
+                agent_slots,
                 seed_inputs: seed,
                 dispatch: dispatch.clone(),
                 tools: tools.clone(),
@@ -248,22 +379,32 @@ impl BacktestExecutor {
             .await?;
             total_input_tokens += outs.total_input_tokens as u64;
             total_output_tokens += outs.total_output_tokens as u64;
+            run.actual_input_tokens = Some(total_input_tokens);
+            run.actual_output_tokens = Some(total_output_tokens);
+            store
+                .update_token_usage(&run.id, total_input_tokens, total_output_tokens)
+                .await?;
 
-            let parsed = outs
+            if store.is_cancelled(&run.id).await? {
+                anyhow::bail!("eval run cancelled");
+            }
+
+            let trader = outs
                 .trader
                 .as_ref()
-                .and_then(|t| serde_json::from_str::<TraderOutput>(&t.text()).ok())
-                .unwrap_or_else(TraderOutput::flat);
+                .ok_or_else(|| anyhow!("run {} decision {}: trader output missing", run.id, decision_idx))?;
+            let parsed = TraderOutput::parse_strict(&trader.text(), &run.id, decision_idx)?;
 
+            let pre_fill_position = position;
             let fill = simulate_fill(SimulateFillArgs {
-                pos: position,
+                pos: pre_fill_position,
                 entry: entry_price,
                 action: &parsed.action,
                 next_open: next_bar.open,
                 slip_bps,
                 taker_bps,
                 equity,
-                risk_pct: bundle.risk.risk_pct_per_trade,
+                risk_pct: strategy.risk.risk_pct_per_trade,
             });
             position = fill.new_pos;
             entry_price = fill.new_entry;
@@ -273,26 +414,9 @@ impl BacktestExecutor {
                 n_trades += 1;
 
                 // FillRecorded — only when an actionable decision actually
-                // crossed the book. Side derives from the new position
-                // direction (long_open + reverse-from-short both buy at
-                // next_open; short_open + reverse-from-long sell). For a
-                // pure-close-to-flat the side is the opposite of the
-                // pre-fill position.
-                let side = if parsed.action == "long_open" {
-                    "buy"
-                } else if parsed.action == "short_open" {
-                    "sell"
-                } else if position == 0.0 && fill.realized_pnl.is_finite() {
-                    // pure-close case
-                    if entry_price == 0.0 {
-                        // we just flattened a long
-                        "sell"
-                    } else {
-                        "buy"
-                    }
-                } else {
-                    "buy"
-                };
+                // crossed the book. For close-to-flat decisions, side is
+                // derived from the pre-fill position direction.
+                let side = fill_side_for_action(&parsed.action, pre_fill_position);
                 self.emit(ProgressEvent::FillRecorded {
                     run_id: run.id.clone(),
                     side: side.into(),
@@ -316,27 +440,93 @@ impl BacktestExecutor {
             equity = initial + realized_total
                 + position * (next_bar.open - entry_price);
 
-            store
-                .record_decision(&DecisionRow {
-                    run_id: run.id.clone(),
-                    decision_index: decision_idx,
-                    timestamp: bar.timestamp,
-                    asset: asset.clone(),
-                    action: parsed.action.clone(),
-                    conviction: Some(parsed.conviction),
-                    justification: Some(parsed.justification.clone()),
-                    order_size: fill.fill_size,
-                    fill_price: fill.fill_price,
-                    fill_size: fill.fill_size,
-                    fee: fill.fee,
-                    pnl_realized: if fill.realized_pnl != 0.0 {
-                        Some(fill.realized_pnl)
+            let decision_row = DecisionRow {
+                run_id: run.id.clone(),
+                decision_index: decision_idx,
+                timestamp: bar.timestamp,
+                asset: asset.clone(),
+                action: parsed.action.clone(),
+                conviction: Some(parsed.conviction),
+                justification: Some(parsed.justification.clone()),
+                order_size: fill.fill_size,
+                fill_price: fill.fill_price,
+                fill_size: fill.fill_size,
+                fee: fill.fee,
+                pnl_realized: if fill.realized_pnl != 0.0 {
+                    Some(fill.realized_pnl)
+                } else {
+                    None
+                },
+            };
+            store.record_decision(&decision_row).await?;
+            self.emit_chart(
+                &run.id,
+                RunChartEvent::Decision(LiveDecisionRow::from(&decision_row)),
+            )
+            .await;
+
+            // Emit a marker event derived from this decision. Mirrors the
+            // action → marker-variant mapping in `chart::split_markers`.
+            // Only emit for actions where fill data is present (same guard
+            // as split_markers uses for trade-like actions).
+            let t = bar.timestamp.timestamp();
+            let marker_event = match parsed.action.as_str() {
+                "long_open" => {
+                    if let (Some(price), Some(size)) = (fill.fill_price, fill.fill_size) {
+                        Some(MarkerEvent::Trade(make_trade_marker(
+                            TradeSide::Buy,
+                            t,
+                            price,
+                            size,
+                            fill.fee,
+                            fill.realized_pnl,
+                            decision_idx,
+                            &parsed.justification,
+                        )))
                     } else {
                         None
-                    },
-                })
-                .await?;
+                    }
+                }
+                "short_open" | "flat" => {
+                    if let (Some(price), Some(size)) = (fill.fill_price, fill.fill_size) {
+                        Some(MarkerEvent::Trade(make_trade_marker(
+                            TradeSide::Sell,
+                            t,
+                            price,
+                            size,
+                            fill.fee,
+                            fill.realized_pnl,
+                            decision_idx,
+                            &parsed.justification,
+                        )))
+                    } else {
+                        None
+                    }
+                }
+                "hold" => Some(MarkerEvent::Hold(HoldMarker {
+                    time: t,
+                    price: next_bar.open,
+                    conviction: Some(parsed.conviction),
+                    decision_index: decision_idx,
+                })),
+                _ => None,
+            };
+            if let Some(marker) = marker_event {
+                self.emit_chart(&run.id, RunChartEvent::Marker(marker)).await;
+            }
+
             store.record_equity(&run.id, bar.timestamp, equity).await?;
+
+            // Emit equity event for live-stream subscribers.
+            self.emit_chart(
+                &run.id,
+                RunChartEvent::Equity(ChartEquityPoint {
+                    time: bar.timestamp.timestamp(),
+                    equity_usd: equity,
+                }),
+            )
+            .await;
+
             equity_curve.push(equity);
 
             // Running drawdown — peak updates after each tick so
@@ -359,9 +549,13 @@ impl BacktestExecutor {
             decision_idx += 1;
         }
 
+        if store.is_cancelled(&run.id).await? {
+            anyhow::bail!("eval run cancelled");
+        }
+
         let returns = equity_to_returns(&equity_curve);
         let periods_per_year =
-            annualization_periods_per_year(bundle.manifest.decision_cadence_minutes);
+            annualization_periods_per_year(strategy.manifest.decision_cadence_minutes);
 
         let metrics = MetricsSummary {
             total_return_pct: total_return_pct(initial, equity),
@@ -499,6 +693,47 @@ fn simulate_fill(a: SimulateFillArgs) -> FillOutcome {
     }
 }
 
+/// Build a `TradeMarker` from fill-level data. Extracted to avoid duplicating
+/// the identical field construction across the `long_open` and
+/// `short_open`/`flat` arms of the marker-event match.
+fn make_trade_marker(
+    side: TradeSide,
+    time: i64,
+    price: f64,
+    size: f64,
+    fee: Option<f64>,
+    realized_pnl: f64,
+    decision_index: u32,
+    justification: &str,
+) -> TradeMarker {
+    TradeMarker {
+        time,
+        side,
+        price,
+        size,
+        fee: fee.unwrap_or(0.0),
+        pnl_realized: if realized_pnl != 0.0 {
+            Some(realized_pnl)
+        } else {
+            None
+        },
+        decision_index,
+        justification: Some(justification.to_owned()),
+    }
+}
+
+fn fill_side_for_action(action: &str, pre_fill_position: f64) -> &'static str {
+    if action == "long_open" {
+        "buy"
+    } else if action == "short_open" {
+        "sell"
+    } else if pre_fill_position > 0.0 {
+        "sell"
+    } else {
+        "buy"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -562,5 +797,15 @@ mod tests {
         // realized leg from long close should be positive (60k > 50k entry).
         // After fee, still > 0.
         assert!(out.realized_pnl > 0.0);
+    }
+
+    #[test]
+    fn fill_side_for_flat_close_of_long_is_sell() {
+        assert_eq!(fill_side_for_action("flat", 0.5), "sell");
+    }
+
+    #[test]
+    fn fill_side_for_flat_close_of_short_is_buy() {
+        assert_eq!(fill_side_for_action("flat", -0.5), "buy");
     }
 }

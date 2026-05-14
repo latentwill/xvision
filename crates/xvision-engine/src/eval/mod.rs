@@ -7,6 +7,7 @@
 //! roadmap.
 
 pub mod attestation;
+pub mod bars;
 pub mod compare;
 pub mod executor;
 pub mod findings;
@@ -15,6 +16,8 @@ pub mod postprocess;
 pub mod progress;
 pub mod run;
 pub mod scenario;
+pub mod scenario_seed;
+pub mod scenario_store;
 pub mod store;
 
 pub use attestation::{EvalAttestation, TokensUsed};
@@ -27,7 +30,11 @@ pub use progress::{send_event, ProgressBus, ProgressEvent, ProgressRx, ProgressT
 
 pub use run::{MetricsSummary, Run, RunMode, RunStatus};
 pub use scenario::{
-    canonical_scenarios, Capital, Fees, LatencyModel, Scenario, ScenarioRisk, SlippageModel,
-    TimeWindow,
+    AdjustmentMode, AssetClass, AssetRef, BarCachePolicy, BarGranularity, CalendarRef, DataSource,
+    Fees, FillModel, LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy,
+    ReplayMode, Scenario, ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings,
+    VolumeConstraint, WalkModel,
 };
+#[allow(deprecated)]
+pub use scenario::canonical_scenarios;
 pub use store::{DecisionRow, ListFilter, RunStore};

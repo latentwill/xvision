@@ -16,6 +16,7 @@ RUN cargo chef prepare --recipe-path recipe.json
 # ──────────────────────────────────────────────────────────────────────────
 FROM chef AS builder
 ARG WITH_IDENTITY=0
+ARG BUILD_PROFILE=release
 
 # Build-time system deps:
 #   - perl + make → required by apca's vendored-openssl
@@ -39,9 +40,9 @@ COPY --from=planner /xvision/recipe.json recipe.json
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     if [ "$WITH_IDENTITY" = "1" ]; then \
-        cargo chef cook --release --recipe-path recipe.json --workspace ; \
+        cargo chef cook --profile "$BUILD_PROFILE" --recipe-path recipe.json --workspace ; \
     else \
-        cargo chef cook --release --recipe-path recipe.json ; \
+        cargo chef cook --profile "$BUILD_PROFILE" --recipe-path recipe.json ; \
     fi
 
 COPY . .
@@ -53,11 +54,11 @@ COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     if [ "$WITH_IDENTITY" = "1" ]; then \
-        cargo build --release --workspace --bin xvn ; \
+        cargo build --profile "$BUILD_PROFILE" --workspace --bin xvn ; \
     else \
-        cargo build --release --bin xvn ; \
+        cargo build --profile "$BUILD_PROFILE" --bin xvn ; \
     fi && \
-    cp target/release/xvn /usr/local/bin/xvn
+    cp "target/$BUILD_PROFILE/xvn" /usr/local/bin/xvn
 
 # ──────────────────────────────────────────────────────────────────────────
 # Stage 3 — runtime: minimal slim image, non-root user
