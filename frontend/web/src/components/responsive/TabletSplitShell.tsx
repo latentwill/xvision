@@ -8,9 +8,9 @@ export function TabletSplitShell() {
     <div className="grid grid-cols-[360px_minmax(0,1fr)] h-screen bg-bg text-text overflow-hidden">
       <ChatRail
         variant="panel"
-        className="border-r border-border-soft overflow-hidden"
+        className="min-w-0 border-r border-border-soft overflow-hidden"
       />
-      <main className="min-w-0 overflow-y-auto px-6 pt-6 pb-6">
+      <main className="min-w-0 min-h-0 overflow-y-auto overflow-x-hidden px-6 pt-6 pb-6">
         <Outlet />
       </main>
       <CommandPalette />
