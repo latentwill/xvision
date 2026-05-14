@@ -302,6 +302,9 @@ Hermes Agent (NousResearch) is the OpenClaw successor — its own README documen
 
 ### F30 [Shared]. Custom-scenario eval — operator-authored scenarios + Alpaca crypto unlock
 
+- **Status:** implementation planned and executed in the 2026-05-14 Alpaca
+  slices. Remaining work should follow PR review/merge feedback from those
+  stacked branches rather than reopening the broad F30 scope.
 - **Trigger:** v1-test surface stabilises; multi-asset eval is the gating gap for credible Persona-B framing.
 - **Scope:** see [custom-scenario eval design spec](docs/superpowers/specs/2026-05-11-custom-scenario-eval-design.md). Three milestones: M1 bar cache + Alpaca fetcher + asset unlock (drops the BTC-only wall in `xvision-execution/alpaca.rs`); M2 immutable scenarios table + CLI + capital/risk move-off-scenario + canonical seed; M3 dashboard wizard at `/scenarios/new` + inline-form on `/eval-runs` + run launcher. F18 partial pull-in (`TraderDecision.asset`) lands in M1.
 - **Blocking:** YES for F31 (replay modes — those extend the scenario `ReplayMode` enum). YES for F32 M1 (chart needs bars in cache). Non-blocking otherwise.
@@ -318,6 +321,9 @@ Hermes Agent (NousResearch) is the OpenClaw successor — its own README documen
 
 ### F32 [Shared]. TradingView Lightweight Charts — real charts across six surfaces
 
+- **Status:** implementation planned and executed in the 2026-05-14
+  TradingView slices. Remaining work should follow PR review/merge feedback
+  from those stacked branches and the final QA/performance track.
 - **Trigger:** F30 M1 landed (bar cache populated; chart endpoint can read from it).
 - **Scope:** see [TradingView charts design spec](docs/superpowers/specs/2026-05-11-tradingview-charts-design.md). Drops `lightweight-charts@4.x` via npm, ships six chart surfaces (run detail / compare / scenario detail / strategy detail / live cockpit / wizard preview), kitchen-sink server-computed indicator set (SMA/EMA/Bollinger/Donchian/RSI/MACD/ATR — same math the `xvn-mcp` server exposes to agents), multi-pane stack (price + indicators + equity + drawdown + volume), localStorage layer prefs, SSE-streamed live cockpit. Deletes the existing 30-line SVG sparklines (`eval-runs-detail.tsx:221`, `eval-compare.tsx:194`).
 - **Why pulled forward:** the operator's "see what my strategy did" surface is currently a glorified sparkline; trader-tool framing requires real charts. Pairs naturally with F30 — F30 makes scenarios runnable on any asset / window; F32 makes the results legible.
