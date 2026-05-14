@@ -13,16 +13,18 @@ import {
   useMemo,
   useRef,
   useState,
-  type ReactNode,
+  type Dispatch,
+  type SetStateAction,
 } from "react";
 import { useLocation } from "react-router-dom";
 
 import { useQuery } from "@tanstack/react-query";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 
+import { ChatComposer } from "@/components/chat/ChatComposer";
+import { ChatThread } from "@/components/chat/ChatThread";
+import { QuickRail } from "@/components/chat/QuickRail";
+import type { AssistantBubble, Bubble, Tool } from "@/components/chat/types";
 import { Icon } from "@/components/primitives/Icon";
-import { Pill } from "@/components/primitives/Pill";
 import { ModelPicker } from "@/components/ModelPicker";
 import { ApiError } from "@/api/client";
 import {
@@ -33,7 +35,6 @@ import {
   deleteSession,
   headerLabel,
   placeholder,
-  quickReplies,
   resolveSession,
   scopeFromPath,
   scopeKey,
@@ -45,25 +46,6 @@ import type { ProviderRow } from "@/api/types.gen";
 const RAIL_OPEN_LS = "xvn.chat_rail.open";
 const RAIL_PROVIDER_LS = "xvn.chat_rail.provider";
 const RAIL_MODEL_LS = "xvn.chat_rail.model";
-
-type Tool = {
-  call: string;
-  ok: boolean;
-  summary: string;
-  /** True between tool_call and tool_result; drives the chip spinner. */
-  pending?: boolean;
-  /** Raw args from tool_call; consumed by toolNarrative for inline confirmations. */
-  args?: unknown;
-  /** Raw result from tool_result; consumed by toolNarrative for inline confirmations. */
-  result?: unknown;
-};
-type AssistantBubble = {
-  role: "assistant";
-  text: string;
-  tools: Tool[];
-};
-type UserBubble = { role: "user"; text: string };
-type Bubble = UserBubble | AssistantBubble;
 
 export function ChatRail() {
   const location = useLocation();
@@ -272,7 +254,7 @@ export function ChatRail() {
         }}
       />
 
-      <Thread bubbles={bubbles} isStreaming={isStreaming} />
+      <ChatThread bubbles={bubbles} isStreaming={isStreaming} />
 
       {error && (
         <div className="px-4 py-2 border-t border-border text-rose-300 text-[12px]">
@@ -280,7 +262,7 @@ export function ChatRail() {
         </div>
       )}
 
-      <QuickReplies
+      <QuickRail
         scope={scope}
         disabled={isStreaming || !sessionId}
         onPick={(s) => {
@@ -289,7 +271,7 @@ export function ChatRail() {
         }}
       />
 
-      <Composer
+      <ChatComposer
         value={input}
         placeholder={placeholder(scope)}
         onChange={setInput}
@@ -297,247 +279,6 @@ export function ChatRail() {
         disabled={isStreaming || !sessionId}
       />
     </aside>
-  );
-}
-
-function Thread({
-  bubbles,
-  isStreaming,
-}: {
-  bubbles: Bubble[];
-  isStreaming: boolean;
-}) {
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    ref.current?.scrollTo({
-      top: ref.current.scrollHeight,
-      behavior: "smooth",
-    });
-  }, [bubbles]);
-  return (
-    <div
-      ref={ref}
-      className="flex-1 min-h-0 overflow-y-auto px-4 py-3 flex flex-col gap-2"
-    >
-      {bubbles.length === 0 ? (
-        <div className="text-text-3 italic text-[13px] text-center py-4">
-          No messages yet. Ask the agent something — it has tools for the
-          authoring loop.
-        </div>
-      ) : (
-        bubbles.map((b, i) => (
-          <BubbleView
-            key={i}
-            b={b}
-            isLast={i === bubbles.length - 1}
-            isStreaming={isStreaming}
-          />
-        ))
-      )}
-    </div>
-  );
-}
-
-function BubbleView({
-  b,
-  isLast,
-  isStreaming,
-}: {
-  b: Bubble;
-  isLast: boolean;
-  isStreaming: boolean;
-}) {
-  if (b.role === "user") {
-    return (
-      <div className="self-end max-w-[92%]">
-        <div className="bg-blue-500/10 dark:bg-blue-400/10 border border-blue-500/30 dark:border-blue-400/30 rounded-md px-2.5 py-1.5 text-[13px] whitespace-pre-wrap leading-snug">
-          {b.text}
-        </div>
-      </div>
-    );
-  }
-  const showDots = isStreaming && isLast;
-  const narratives = b.tools
-    .map((t, i) => ({ i, n: toolNarrative(t) }))
-    .filter(
-      (x): x is { i: number; n: { ok: boolean; content: ReactNode } } =>
-        x.n !== null,
-    );
-  return (
-    <div className="self-start max-w-[92%]">
-      <div className="bg-surface-2/60 border border-border rounded-md px-2.5 py-1.5 text-[13px] leading-snug">
-        {b.text ? (
-          <>
-            <MarkdownView text={b.text} />
-            {showDots && <TypingDots inline />}
-          </>
-        ) : showDots ? (
-          <TypingDots />
-        ) : (
-          <span className="text-text-3 italic">thinking…</span>
-        )}
-      </div>
-      {narratives.length > 0 && (
-        <div className="mt-1.5 flex flex-col gap-1">
-          {narratives.map(({ i, n }) => (
-            <div
-              key={`narr-${i}`}
-              className={`text-[12px] flex items-start gap-1.5 ${
-                n.ok ? "text-emerald-300" : "text-rose-300"
-              }`}
-            >
-              <span className="leading-[1.4] flex-shrink-0">
-                {n.ok ? "✓" : "✗"}
-              </span>
-              <span className="leading-[1.4]">{n.content}</span>
-            </div>
-          ))}
-        </div>
-      )}
-      {b.tools.length > 0 && (
-        <div className="mt-1.5 flex flex-wrap gap-1 opacity-60">
-          {b.tools.map((t, i) => (
-            <Pill key={i} tone={t.ok ? "info" : "danger"}>
-              {t.pending && (
-                <span
-                  className="inline-block w-2 h-2 mr-1 border border-current border-t-transparent rounded-full animate-spin align-middle"
-                  aria-label="running"
-                />
-              )}
-              <span className="font-mono">{t.call}</span>
-              {t.summary && (
-                <span className="text-text-3"> · {t.summary}</span>
-              )}
-            </Pill>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function MarkdownView({ text }: { text: string }) {
-  return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      components={{
-        // Inline code keeps a soft background; block code is wrapped in <pre>
-        // which carries its own background — so suppress the inline styling
-        // when ReactMarkdown gives the <code> a language- className (block).
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        code: ({ children, className, ...props }: any) => (
-          <code
-            className={`font-mono text-[12px] ${
-              className ? "" : "bg-surface-2/70 px-1 py-0.5 rounded"
-            }`}
-            {...props}
-          >
-            {children}
-          </code>
-        ),
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        pre: ({ children }: any) => (
-          <pre className="font-mono text-[12px] bg-surface-2/70 p-2 rounded my-1.5 overflow-x-auto">
-            {children}
-          </pre>
-        ),
-        table: ({ children }) => (
-          <div className="overflow-x-auto my-1.5">
-            <table className="border-collapse text-[12px]">{children}</table>
-          </div>
-        ),
-        th: ({ children }) => (
-          <th className="border border-border-soft px-1.5 py-1 text-left font-medium">
-            {children}
-          </th>
-        ),
-        td: ({ children }) => (
-          <td className="border border-border-soft px-1.5 py-1">{children}</td>
-        ),
-        ul: ({ children }) => (
-          <ul className="list-disc pl-4 my-1 space-y-0.5">{children}</ul>
-        ),
-        ol: ({ children }) => (
-          <ol className="list-decimal pl-4 my-1 space-y-0.5">{children}</ol>
-        ),
-        p: ({ children }) => (
-          <p className="my-1 first:mt-0 last:mb-0">{children}</p>
-        ),
-        strong: ({ children }) => (
-          <strong className="text-text font-semibold">{children}</strong>
-        ),
-        h1: ({ children }) => (
-          <h1 className="text-[14px] font-semibold my-1.5">{children}</h1>
-        ),
-        h2: ({ children }) => (
-          <h2 className="text-[14px] font-semibold my-1.5">{children}</h2>
-        ),
-        h3: ({ children }) => (
-          <h3 className="text-[13px] font-semibold my-1">{children}</h3>
-        ),
-        a: ({ children, href }) => (
-          <a
-            href={href}
-            className="text-gold underline decoration-gold/40 hover:decoration-gold"
-            target="_blank"
-            rel="noreferrer"
-          >
-            {children}
-          </a>
-        ),
-      }}
-    >
-      {text}
-    </ReactMarkdown>
-  );
-}
-
-function TypingDots({ inline }: { inline?: boolean }) {
-  return (
-    <span
-      className={`inline-flex items-center gap-1 align-middle ${inline ? "ml-1.5" : ""}`}
-      aria-label="generating"
-    >
-      <span
-        className="w-1.5 h-1.5 rounded-full bg-text-3 animate-pulse"
-        style={{ animationDelay: "0ms" }}
-      />
-      <span
-        className="w-1.5 h-1.5 rounded-full bg-text-3 animate-pulse"
-        style={{ animationDelay: "150ms" }}
-      />
-      <span
-        className="w-1.5 h-1.5 rounded-full bg-text-3 animate-pulse"
-        style={{ animationDelay: "300ms" }}
-      />
-    </span>
-  );
-}
-
-function QuickReplies({
-  scope,
-  disabled,
-  onPick,
-}: {
-  scope: ContextScope;
-  disabled: boolean;
-  onPick: (s: string) => void;
-}) {
-  const replies = quickReplies(scope);
-  if (replies.length === 0) return null;
-  return (
-    <div className="border-t border-border-soft px-3 py-2 flex flex-wrap gap-1">
-      {replies.map((r) => (
-        <button
-          key={r}
-          disabled={disabled}
-          onClick={() => onPick(r)}
-          className="text-[11px] text-text-2 hover:text-text border border-border-soft rounded-full px-2.5 py-1 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {r}
-        </button>
-      ))}
-    </div>
   );
 }
 
@@ -572,50 +313,11 @@ function RailModelBar({
   );
 }
 
-function Composer({
-  value,
-  placeholder,
-  onChange,
-  onSubmit,
-  disabled,
-}: {
-  value: string;
-  placeholder: string;
-  onChange: (s: string) => void;
-  onSubmit: () => void;
-  disabled: boolean;
-}) {
-  return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault();
-        onSubmit();
-      }}
-      className="border-t border-border-soft px-3 py-2.5 flex gap-2 bg-surface-2/30"
-    >
-      <input
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        disabled={disabled}
-        placeholder={placeholder}
-        className="flex-1 bg-transparent border border-border-soft rounded-md px-2.5 py-1.5 text-[13px] placeholder:text-text-3 focus:outline-none focus:ring-1 focus:ring-text-2"
-      />
-      <button
-        type="submit"
-        disabled={disabled || !value.trim()}
-        className="px-2.5 py-1.5 rounded-md text-[12px] border border-border-soft bg-surface-2/60 hover:bg-surface-2 disabled:opacity-50 disabled:cursor-not-allowed"
-      >
-        {disabled ? "…" : "Send"}
-      </button>
-    </form>
-  );
-}
-
 // ---------------------------------------------------------------------------
 // helpers — kept module-local to avoid spilling internals into the API layer.
 
 function applyEvent(
-  setBubbles: React.Dispatch<React.SetStateAction<Bubble[]>>,
+  setBubbles: Dispatch<SetStateAction<Bubble[]>>,
   ev: WizardEvent,
 ) {
   setBubbles((prev) => {
@@ -793,150 +495,6 @@ function summarizeResult(tool: string, result: unknown): string {
       return r.applied ? String(r.applied) : "";
     default:
       return "";
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Tool narratives — human-readable confirmation lines rendered above the
-// (dimmer) raw tool pills. Returns null for tools still pending (the chip
-// spinner is the cue) and for read-only tools whose result is already
-// reflected in the model's prose.
-
-function toolNarrative(
-  t: Tool,
-): { ok: boolean; content: ReactNode } | null {
-  if (t.pending) return null;
-  if (t.call === "get_strategy" || t.call === "list_templates") return null;
-  const args = (t.args ?? {}) as Record<string, unknown>;
-  const result = (t.result ?? {}) as Record<string, unknown>;
-  const errorMsg =
-    typeof result.error === "string" ? result.error : undefined;
-  if (errorMsg) {
-    return {
-      ok: false,
-      content: (
-        <>
-          {friendlyVerb(t.call)} failed: <span>{errorMsg}</span>
-        </>
-      ),
-    };
-  }
-  switch (t.call) {
-    case "create_strategy": {
-      const name = String(args["name"] ?? "(unnamed)");
-      const template = String(args["template"] ?? "");
-      const id = typeof result["id"] === "string" ? result["id"] : "";
-      return {
-        ok: true,
-        content: (
-          <>
-            Created strategy{" "}
-            <strong className="text-text font-semibold">{name}</strong>
-            {template && (
-              <>
-                {" "}from{" "}
-                <code className="font-mono text-text">{template}</code>
-              </>
-            )}
-            {id && (
-              <>
-                {" "}(<code className="font-mono text-text-2">{id}</code>)
-              </>
-            )}
-          </>
-        ),
-      };
-    }
-    case "set_mechanical_param": {
-      const key = String(args["key"] ?? "?");
-      const rawValue = args["value"];
-      const value =
-        rawValue === undefined
-          ? "?"
-          : typeof rawValue === "string"
-            ? rawValue
-            : JSON.stringify(rawValue);
-      return {
-        ok: true,
-        content: (
-          <>
-            Set <code className="font-mono text-text">{key}</code> ={" "}
-            <code className="font-mono text-text">{value}</code>
-          </>
-        ),
-      };
-    }
-    case "set_risk_config": {
-      const preset =
-        typeof args["preset"] === "string"
-          ? (args["preset"] as string)
-          : undefined;
-      return {
-        ok: true,
-        content: preset ? (
-          <>
-            Risk preset:{" "}
-            <strong className="text-text font-semibold">{preset}</strong>
-          </>
-        ) : (
-          <>Risk: explicit settings applied</>
-        ),
-      };
-    }
-    case "validate_draft": {
-      const ok = result["ok"] === true;
-      const errs = Array.isArray(result["errors"])
-        ? (result["errors"] as unknown[]).length
-        : 0;
-      return ok
-        ? { ok: true, content: <>Validation passed</> }
-        : {
-            ok: false,
-            content: (
-              <>
-                Validation failed ({errs} error{errs === 1 ? "" : "s"})
-              </>
-            ),
-          };
-    }
-    case "update_slot": {
-      const slot = String(args["slot"] ?? "?");
-      const updated = Array.isArray(result["updated"])
-        ? (result["updated"] as string[]).join(", ")
-        : "";
-      return {
-        ok: true,
-        content: updated ? (
-          <>
-            Updated <code className="font-mono text-text">{slot}</code>:{" "}
-            {updated}
-          </>
-        ) : (
-          <>
-            Updated <code className="font-mono text-text">{slot}</code>
-          </>
-        ),
-      };
-    }
-    default:
-      return null;
-  }
-}
-
-function friendlyVerb(call: string): string {
-  switch (call) {
-    case "create_strategy":
-      return "Create strategy";
-    case "set_mechanical_param":
-      return "Set parameter";
-    case "set_risk_config":
-      return "Set risk";
-    case "validate_draft":
-      return "Validate";
-    case "update_slot":
-      return "Update slot";
-    default:
-      return call;
   }
 }
 
