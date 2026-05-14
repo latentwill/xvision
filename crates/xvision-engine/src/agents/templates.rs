@@ -47,8 +47,9 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                 model: "".into(),
                 system_prompt:
                     "You are a discretionary trader making one decision per cycle. Given the \
-                     briefing, output a decision in the schema: \
-                     {action: long_open|short_open|flat|hold, conviction: 0..1, justification: string}."
+                     briefing, output exactly one JSON object matching: \
+                     {\"action\":\"long_open|short_open|flat|hold\", \"conviction\":0..1, \
+                     \"justification\":\"string\"}. Do not omit action."
                         .into(),
                 skill_ids: vec![],
                 max_tokens: 4096,
@@ -81,8 +82,9 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     model: "".into(),
                     system_prompt:
                         "You are an executor. Given the analyst's thesis, output a single \
-                         decision in the schema: {action, conviction, justification}. Be \
-                         conservative when the analyst flags contradictions."
+                         JSON decision matching: {\"action\":\"long_open|short_open|flat|hold\", \
+                         \"conviction\":0..1, \"justification\":\"string\"}. Be conservative \
+                         when the analyst flags contradictions. Do not omit action."
                             .into(),
                     skill_ids: vec![],
                     max_tokens: 2048,
@@ -103,8 +105,9 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     provider: "".into(),
                     model: "".into(),
                     system_prompt:
-                        "You are a trader. Propose a decision given the briefing. Output \
-                         {action, conviction, justification, size_hint_pct}."
+                        "You are a trader. Propose a decision given the briefing. Output exactly \
+                         one JSON object matching: {\"action\":\"long_open|short_open|flat|hold\", \
+                         \"conviction\":0..1, \"justification\":\"string\"}. Do not omit action."
                             .into(),
                     skill_ids: vec![],
                     max_tokens: 4096,
@@ -127,8 +130,9 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     model: "".into(),
                     system_prompt:
                         "You are an executor. Given the trader's decision and the risk gate's \
-                         verdict, output the final order: {action, size_pct, stop_loss_pct, \
-                         take_profit_pct}."
+                         verdict, output exactly one JSON object matching: \
+                         {\"action\":\"long_open|short_open|flat|hold\", \"conviction\":0..1, \
+                         \"justification\":\"string\"}. Do not omit action."
                             .into(),
                     skill_ids: vec![],
                     max_tokens: 2048,

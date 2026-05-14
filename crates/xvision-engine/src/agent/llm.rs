@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 // open for WizardLoop, agent-loop tool calls, etc.
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ToolDefinition {
     pub name: String,
     pub description: String,
@@ -45,6 +46,7 @@ pub enum StopReason {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Message {
     /// `user` | `assistant`.
     pub role: String,
@@ -65,6 +67,7 @@ impl Message {
 // ---- request / response ----------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LlmRequest {
     pub model: String,
     pub system_prompt: String,
@@ -76,9 +79,16 @@ pub struct LlmRequest {
     /// Empty when the caller doesn't expose any tools to the model.
     #[serde(default)]
     pub tools: Vec<ToolDefinition>,
+    /// Optional strict JSON response contract for final text output. OpenAI-
+    /// compatible providers receive this as provider-native `json_schema`
+    /// response_format. Anthropic receives it in the system prompt because
+    /// Messages does not expose the same response_format knob.
+    #[serde(default)]
+    pub response_schema: Option<ResponseSchema>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LlmResponse {
     pub content: Vec<ContentBlock>,
     pub stop_reason: StopReason,
@@ -115,9 +125,99 @@ impl LlmResponse {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResponseSchema {
+    pub name: String,
+    pub schema: serde_json::Value,
+}
+
+impl ResponseSchema {
+    pub fn trader_output() -> Self {
+        Self {
+            name: "trader_output".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["long_open", "short_open", "flat", "hold"]
+                    },
+                    "conviction": {
+                        "type": "number",
+                        "minimum": 0.0,
+                        "maximum": 1.0
+                    },
+                    "justification": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "required": ["action", "conviction", "justification"]
+            }),
+        }
+    }
+
+    pub fn openai_response_format(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "json_schema",
+            "json_schema": {
+                "name": self.name,
+                "strict": true,
+                "schema": self.schema,
+            }
+        })
+    }
+
+    fn prompt_contract(&self) -> String {
+        format!(
+            "\n\nYou must respond with exactly one JSON object matching this JSON Schema. \
+             Do not include markdown, prose, or extra keys.\nSchema `{}`:\n{}",
+            self.name, self.schema
+        )
+    }
+}
+
 #[async_trait]
 pub trait LlmDispatch: Send + Sync {
     async fn complete(&self, req: LlmRequest) -> anyhow::Result<LlmResponse>;
+}
+
+#[cfg(test)]
+mod schema_tests {
+    use super::*;
+
+    #[test]
+    fn trader_response_schema_requires_action_and_rejects_extra_fields() {
+        let schema = ResponseSchema::trader_output();
+        let required = schema
+            .schema
+            .get("required")
+            .and_then(|v| v.as_array())
+            .expect("schema required array");
+
+        assert!(required.iter().any(|v| v.as_str() == Some("action")));
+        assert_eq!(
+            schema.schema.pointer("/additionalProperties"),
+            Some(&serde_json::Value::Bool(false))
+        );
+    }
+
+    #[test]
+    fn openai_response_format_uses_strict_json_schema() {
+        let format = ResponseSchema::trader_output().openai_response_format();
+
+        assert_eq!(format.pointer("/type").and_then(|v| v.as_str()), Some("json_schema"));
+        assert_eq!(
+            format.pointer("/json_schema/strict"),
+            Some(&serde_json::Value::Bool(true))
+        );
+        assert_eq!(
+            format.pointer("/json_schema/schema/required/0").and_then(|v| v.as_str()),
+            Some("action")
+        );
+    }
 }
 
 // ---- MockDispatch (testing) -----------------------------------------------
@@ -199,10 +299,15 @@ impl AnthropicDispatch {
 #[async_trait]
 impl LlmDispatch for AnthropicDispatch {
     async fn complete(&self, req: LlmRequest) -> anyhow::Result<LlmResponse> {
+        let system_prompt = if let Some(schema) = &req.response_schema {
+            format!("{}{}", req.system_prompt, schema.prompt_contract())
+        } else {
+            req.system_prompt.clone()
+        };
         let mut body = serde_json::json!({
             "model": req.model,
             "max_tokens": req.max_tokens,
-            "system": req.system_prompt,
+            "system": system_prompt,
             "messages": req.messages,
         });
         if !req.tools.is_empty() {
@@ -376,6 +481,9 @@ impl LlmDispatch for OpenaiCompatDispatch {
                 })
                 .collect();
             body["tools"] = serde_json::Value::Array(mapped);
+        }
+        if let Some(schema) = &req.response_schema {
+            body["response_format"] = schema.openai_response_format();
         }
 
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));

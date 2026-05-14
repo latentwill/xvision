@@ -23,6 +23,7 @@ use crate::api::{ApiContext, ApiError, ApiResult};
     ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
 )]
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ListAgentsRequest {
     pub include_archived: bool,
     pub q: Option<String>,
@@ -35,6 +36,7 @@ pub struct ListAgentsRequest {
     ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
 )]
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CreateAgentRequest {
     pub name: String,
     #[serde(default)]
@@ -50,6 +52,7 @@ pub struct CreateAgentRequest {
     ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
 )]
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct UpdateAgentRequest {
     pub name: Option<String>,
     pub description: Option<String>,
@@ -347,5 +350,20 @@ fn outcome_of<T>(result: &ApiResult<T>) -> Outcome {
     match result {
         Ok(_) => Outcome::Ok,
         Err(e) => Outcome::Error(e.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn create_agent_request_rejects_unknown_fields() {
+        let err = serde_json::from_str::<CreateAgentRequest>(
+            r#"{"name":"agent","description":"","tags":[],"slots":[],"extra":true}"#,
+        )
+        .expect_err("unknown create-agent fields must be rejected");
+
+        assert!(err.to_string().contains("unknown field"));
     }
 }
