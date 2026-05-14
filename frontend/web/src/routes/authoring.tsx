@@ -59,7 +59,7 @@ function InspectorPage({ id }: { id: string }) {
         }
       />
 
-      <InspectorActions strategyId={id} />
+      <InspectorActions strategyId={id} strategy={strategyQ.data ?? null} />
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-5">
         <div className="space-y-5">
@@ -81,7 +81,7 @@ function InspectorPage({ id }: { id: string }) {
         </div>
 
         <aside className="space-y-5">
-          <RunEvalCard agentId={id} />
+          <RunEvalCard agentId={id} strategy={strategyQ.data ?? null} />
           <BackLinkCard />
         </aside>
       </div>
@@ -250,7 +250,7 @@ function AgentsCard({ strategy }: { strategy: Strategy }) {
   }
 
   return (
-    <Card>
+    <Card id="strategy-agents">
       <SectionHeader
         label="Strategy agents"
         hint="Attach reusable AgentRefs and define the pipeline that executes them."
@@ -777,13 +777,20 @@ function BackLinkCard() {
   );
 }
 
-function RunEvalCard({ agentId }: { agentId: string }) {
+function RunEvalCard({
+  agentId,
+  strategy,
+}: {
+  agentId: string;
+  strategy: Strategy | null;
+}) {
   // v1 launches eval runs via CLI; the dashboard surfaces results. This
   // card gives the operator a copy-pasteable command + a direct link to
   // the runs list so the loop "edit → eval → inspect" is reachable from
   // inside the Inspector instead of requiring a route hop.
   const cliCommand = `xvn eval run --strategy ${agentId} --scenario crypto-bull-q1-2025 --mode backtest`;
   const [copied, setCopied] = useState(false);
+  const hasAgents = hasAttachedAgents(strategy);
 
   async function copy() {
     try {
@@ -803,30 +810,59 @@ function RunEvalCard({ agentId }: { agentId: string }) {
         hint="Launch via CLI; results render in /eval-runs."
       />
       <div className="px-5 py-4 space-y-3">
-        <div className="relative">
-          <pre className="m-0 overflow-x-auto whitespace-pre rounded border border-border-soft bg-surface-elev px-3 py-2 font-mono text-[11.5px] text-text">
+        {!strategy ? (
+          <p className="m-0 text-[12px] text-text-3 leading-snug">
+            Checking strategy readiness...
+          </p>
+        ) : !hasAgents ? (
+          <div className="rounded border border-danger/40 bg-danger/5 px-3 py-2 text-[12px] text-danger leading-snug">
+            <p className="m-0">
+              Attach an agent before running eval. Eval launch requires at
+              least one strategy AgentRef with a configured provider/model.
+            </p>
+            <a
+              href="#strategy-agents"
+              className="mt-2 inline-flex text-text hover:text-gold"
+            >
+              Attach agent first
+            </a>
+          </div>
+        ) : (
+          <>
+            <div className="relative">
+              <pre className="m-0 overflow-x-auto whitespace-pre rounded border border-border-soft bg-surface-elev px-3 py-2 font-mono text-[11.5px] text-text">
 {cliCommand}
-          </pre>
-          <button
-            type="button"
-            onClick={copy}
-            className="absolute top-1.5 right-1.5 px-2 py-0.5 text-[11px] text-text-3 hover:text-text bg-surface-card border border-border rounded"
-            title="Copy command"
-          >
-            {copied ? "copied" : "copy"}
-          </button>
-        </div>
-        <p className="m-0 text-[12px] text-text-3 leading-snug">
-          Swap <code className="font-mono text-text-2">crypto-bull-q1-2025</code> for any{" "}
-          <code className="font-mono text-text-2">xvn eval scenarios</code> id. Use{" "}
-          <code className="font-mono text-text-2">--mode paper</code> for Alpaca paper trading.
-        </p>
-        <Link
-          to={`/eval-runs?strategy=${encodeURIComponent(agentId)}&start=1`}
-          className="inline-flex items-center gap-1 text-[13px] text-text hover:text-gold"
-        >
-          Open launcher →
-        </Link>
+              </pre>
+              <button
+                type="button"
+                onClick={copy}
+                className="absolute top-1.5 right-1.5 px-2 py-0.5 text-[11px] text-text-3 hover:text-text bg-surface-card border border-border rounded"
+                title="Copy command"
+              >
+                {copied ? "copied" : "copy"}
+              </button>
+            </div>
+            <p className="m-0 text-[12px] text-text-3 leading-snug">
+              Swap{" "}
+              <code className="font-mono text-text-2">
+                crypto-bull-q1-2025
+              </code>{" "}
+              for any{" "}
+              <code className="font-mono text-text-2">
+                xvn eval scenarios
+              </code>{" "}
+              id. Use{" "}
+              <code className="font-mono text-text-2">--mode paper</code> for
+              Alpaca paper trading.
+            </p>
+            <Link
+              to={`/eval-runs?strategy=${encodeURIComponent(agentId)}&start=1`}
+              className="inline-flex items-center gap-1 text-[13px] text-text hover:text-gold"
+            >
+              Open launcher →
+            </Link>
+          </>
+        )}
       </div>
     </Card>
   );
@@ -845,7 +881,39 @@ function SectionHeader({ label, hint }: { label: string; hint?: string }) {
   );
 }
 
-function InspectorActions({ strategyId }: { strategyId: string }) {
+function InspectorActions({
+  strategyId,
+  strategy,
+}: {
+  strategyId: string;
+  strategy: Strategy | null;
+}) {
+  if (!strategy) {
+    return (
+      <div className="flex items-center justify-end gap-3 mb-5">
+        <span className="text-[12px] text-text-3">
+          Checking eval readiness...
+        </span>
+      </div>
+    );
+  }
+
+  if (!hasAttachedAgents(strategy)) {
+    return (
+      <div className="flex items-center justify-end gap-3 mb-5">
+        <span className="text-[12px] text-danger">
+          No strategy agent is attached yet.
+        </span>
+        <a
+          href="#strategy-agents"
+          className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium border border-border text-text hover:border-text-3"
+        >
+          Go to agents
+        </a>
+      </div>
+    );
+  }
+
   return (
     <div className="flex items-center justify-end gap-3 mb-5">
       <Link
@@ -856,6 +924,10 @@ function InspectorActions({ strategyId }: { strategyId: string }) {
       </Link>
     </div>
   );
+}
+
+function hasAttachedAgents(strategy: Strategy | null): boolean {
+  return (strategy?.agents ?? []).length > 0;
 }
 
 function Field({
