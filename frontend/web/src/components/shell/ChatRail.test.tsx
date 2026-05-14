@@ -111,7 +111,9 @@ describe("ChatRail", () => {
     renderRail();
 
     expect(await screen.findByText("previous question")).toBeInTheDocument();
-    const composer = screen.getByPlaceholderText(/ask anything about your workspace/i);
+    const composer = screen.getByPlaceholderText(
+      /ask anything about your workspace/i,
+    );
     fireEvent.change(composer, {
       target: { value: "draft text" },
     });
@@ -154,6 +156,9 @@ describe("ChatRail", () => {
         throw new DOMException("Blocked", "SecurityError");
       },
       removeItem() {
+        throw new DOMException("Blocked", "SecurityError");
+      },
+      clear() {
         throw new DOMException("Blocked", "SecurityError");
       },
     };
