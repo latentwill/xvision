@@ -162,6 +162,10 @@ export function SetupRoute() {
           </span>{" "}
           or <span className="text-text font-mono">"Mean reversion on BTC"</span>.
         </div>
+        <div className="mt-3 text-[13px] leading-snug text-text-3">
+          Only completed tool calls change the saved draft. Open the Inspector
+          to verify the manifest before eval.
+        </div>
       </Card>
 
       {providers.data && !defaultPick ? (
@@ -182,7 +186,7 @@ export function SetupRoute() {
       <Card className="p-0 overflow-hidden">
         <Thread bubbles={bubbles} streaming={isStreaming} />
         {error && (
-          <div className="border-t border-border px-4 py-3 text-[13px] text-rose-300 dark:text-rose-300 sm:px-5">
+          <div className="border-t border-border px-4 py-3 text-[13px] text-danger sm:px-5">
             {error}
           </div>
         )}
@@ -194,7 +198,7 @@ export function SetupRoute() {
             </div>
             <Link
               to={`/authoring/${draftId}`}
-              className="text-[13px] text-blue-300 hover:underline"
+              className="text-[13px] text-info hover:underline"
             >
               Open in Inspector →
             </Link>
@@ -448,7 +452,7 @@ function BubbleView({ b }: { b: Bubble }) {
   if (b.role === "user") {
     return (
       <div className="max-w-[92%] self-end sm:max-w-[85%]">
-        <div className="whitespace-pre-wrap rounded-md border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-[13px] leading-snug dark:border-blue-400/30 dark:bg-blue-400/10 sm:text-[14px]">
+        <div className="whitespace-pre-wrap rounded-md border border-info/30 bg-info/10 px-3 py-2 text-[13px] leading-snug sm:text-[14px]">
           {b.text}
         </div>
       </div>
@@ -468,7 +472,7 @@ function BubbleView({ b }: { b: Bubble }) {
               <div
                 key={`tool-${i}`}
                 className={`flex items-start gap-1.5 text-[12px] leading-snug sm:text-[13px] ${
-                  row.ok ? "text-emerald-300" : "text-rose-300"
+                  row.ok ? "text-info" : "text-danger"
                 }`}
               >
                 <span className="leading-[1.4] flex-shrink-0">

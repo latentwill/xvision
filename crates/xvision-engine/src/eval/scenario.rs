@@ -9,12 +9,17 @@
 //! (api::eval::scenarios, api::search::upsert_scenarios, dashboard tests)
 //! keep working unchanged.
 
+use std::fmt;
+
 use chrono::{DateTime, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 
 // Re-export from xvision-data so consumers don't need a second import.
-pub use xvision_data::alpaca::BarGranularity;
 pub use xvision_core::Capital;
+pub use xvision_data::alpaca::BarGranularity;
+use xvision_data::asset_whitelist::{
+    alpaca_crypto_asset, alpaca_crypto_history_start_for,
+};
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(
@@ -59,6 +64,102 @@ pub struct Scenario {
     #[cfg_attr(feature = "ts-export", ts(type = "string | null"))]
     pub archived_at: Option<DateTime<Utc>>,
 }
+
+impl Scenario {
+    /// Validate the v1 Alpaca scenario envelope independent of transport
+    /// request types. This keeps DB-loaded and seed-built scenarios subject
+    /// to the same walls as API-created scenarios.
+    pub fn validate_v1(&self) -> Result<(), ScenarioValidationError> {
+        if self.asset.len() != 1 {
+            return Err(ScenarioValidationError::new(
+                "v1 scenarios support a single asset",
+            ));
+        }
+        if self.asset_class != AssetClass::Crypto {
+            return Err(ScenarioValidationError::new(
+                "v1 scenarios support crypto assets only",
+            ));
+        }
+        if self.quote_currency != QuoteCurrency::Usd {
+            return Err(ScenarioValidationError::new(
+                "v1 scenarios support USD quote currency only",
+            ));
+        }
+        if !matches!(self.replay_mode, ReplayMode::Continuous) {
+            return Err(ScenarioValidationError::new(
+                "v1 scenarios support Continuous replay mode only",
+            ));
+        }
+        if self.time_window.start >= self.time_window.end {
+            return Err(ScenarioValidationError::new(
+                "time_window.start must be before time_window.end",
+            ));
+        }
+        if self.time_window.end > Utc::now() {
+            return Err(ScenarioValidationError::new(
+                "time_window.end must be in the past",
+            ));
+        }
+
+        let asset = &self.asset[0];
+        if asset.class != AssetClass::Crypto {
+            return Err(ScenarioValidationError::new(
+                "v1 scenario asset must be crypto",
+            ));
+        }
+        let Some(whitelisted) = alpaca_crypto_asset(&asset.symbol) else {
+            return Err(ScenarioValidationError::new(format!(
+                "asset '{}' is not in the Alpaca crypto whitelist",
+                asset.symbol
+            )));
+        };
+        let Some(venue_asset) = alpaca_crypto_asset(&asset.venue_symbol) else {
+            return Err(ScenarioValidationError::new(format!(
+                "asset '{}' venue_symbol must be '{}'",
+                asset.symbol, whitelisted.venue_symbol
+            )));
+        };
+        if venue_asset.symbol != whitelisted.symbol {
+            return Err(ScenarioValidationError::new(format!(
+                "asset '{}' venue_symbol must be '{}'",
+                asset.symbol, whitelisted.venue_symbol
+            )));
+        }
+        let Some(history_start) = alpaca_crypto_history_start_for(&asset.symbol) else {
+            return Err(ScenarioValidationError::new(format!(
+                "asset '{}' is not in the Alpaca crypto whitelist",
+                asset.symbol
+            )));
+        };
+        if self.time_window.start < history_start {
+            return Err(ScenarioValidationError::new(
+                "time_window.start is before Alpaca crypto history",
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScenarioValidationError {
+    message: String,
+}
+
+impl ScenarioValidationError {
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+impl fmt::Display for ScenarioValidationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for ScenarioValidationError {}
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(

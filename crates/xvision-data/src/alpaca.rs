@@ -255,7 +255,7 @@ struct BarsResponse {
     next_page_token: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct RawBar {
     t: DateTime<Utc>,
     o: f64,
@@ -295,6 +295,15 @@ impl AlpacaBarsFetcher {
         start: DateTime<Utc>,
         end: DateTime<Utc>,
     ) -> Result<Vec<MarketBar>, FetchError> {
+        let asset = crate::asset_whitelist::alpaca_crypto_asset(asset_pair)
+            .ok_or_else(|| FetchError::AssetNotFound(asset_pair.to_string()))?;
+        let history_start = crate::asset_whitelist::alpaca_crypto_history_start();
+        if start < history_start {
+            return Err(FetchError::RangeOutsideHistory {
+                earliest_available: history_start,
+            });
+        }
+
         let mut out = Vec::new();
         let mut page_token: Option<String> = None;
         loop {
@@ -309,7 +318,7 @@ impl AlpacaBarsFetcher {
                 .header("APCA-API-KEY-ID", &self.api_key)
                 .header("APCA-API-SECRET-KEY", &self.api_secret)
                 .query(&[
-                    ("symbols", asset_pair),
+                    ("symbols", asset.venue_symbol),
                     ("timeframe", timeframe.as_str()),
                     ("start", start_rfc3339.as_str()),
                     ("end", end_rfc3339.as_str()),
@@ -320,7 +329,9 @@ impl AlpacaBarsFetcher {
             match resp.status() {
                 StatusCode::OK => {}
                 StatusCode::UNAUTHORIZED => return Err(FetchError::Unauthorized),
-                StatusCode::NOT_FOUND => return Err(FetchError::AssetNotFound(asset_pair.into())),
+                StatusCode::NOT_FOUND => {
+                    return Err(FetchError::AssetNotFound(asset.venue_symbol.into()));
+                }
                 StatusCode::TOO_MANY_REQUESTS => {
                     let retry = resp
                         .headers()
@@ -338,12 +349,7 @@ impl AlpacaBarsFetcher {
                 }
             }
             let payload: BarsResponse = resp.json().await?;
-            let raw = payload
-                .bars
-                .into_iter()
-                .next()
-                .map(|(_, v)| v)
-                .unwrap_or_default();
+            let raw = payload.bars.get(asset.venue_symbol).cloned().unwrap_or_default();
             out.extend(raw.into_iter().map(|b| MarketBar {
                 timestamp: b.t,
                 open: b.o,

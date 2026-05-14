@@ -103,6 +103,8 @@ export function ScenarioForm({
     initial?.venue?.latency?.decision_to_fill_ms ?? 500,
   );
   const [nameError, setNameError] = useState<string | null>(null);
+  const [granularityError, setGranularityError] = useState<string | null>(null);
+  const [timeError, setTimeError] = useState<string | null>(null);
 
   const estimatedBars = estimateBars(from, to, granularity);
 
@@ -121,6 +123,19 @@ export function ScenarioForm({
       return;
     }
     setNameError(null);
+
+    const granularityValue = granularity.trim().toLowerCase();
+    if (!isSupportedGranularity(granularityValue)) {
+      setGranularityError('Choose a supported Alpaca granularity.');
+      return;
+    }
+    setGranularityError(null);
+
+    if (!isValidWindow(from, to)) {
+      setTimeError('End date must be after start date.');
+      return;
+    }
+    setTimeError(null);
 
     const slippage: SlippageModel = { model: 'linear', bps: slippageBps };
     const fillModel: FillModel = {
@@ -143,7 +158,7 @@ export function ScenarioForm({
       quote_currency: QUOTE_CURRENCY,
       time_window: { start: `${from}T00:00:00Z`, end: `${to}T00:00:00Z` },
       capital: SCENARIO_CAPITAL,
-      granularity,
+      granularity: granularityValue,
       timezone: 'UTC',
       calendar: CALENDAR,
       venue: {
@@ -217,7 +232,10 @@ export function ScenarioForm({
               type="date"
               className="input"
               value={from}
-              onChange={(e) => setFrom(e.target.value)}
+              onChange={(e) => {
+                setFrom(e.target.value);
+                if (timeError) setTimeError(null);
+              }}
               required
             />
           </Field>
@@ -226,18 +244,27 @@ export function ScenarioForm({
               type="date"
               className="input"
               value={to}
-              onChange={(e) => setTo(e.target.value)}
+              onChange={(e) => {
+                setTo(e.target.value);
+                if (timeError) setTimeError(null);
+              }}
               required
             />
           </Field>
         </Row>
+        {timeError ? (
+          <div className="mt-1 text-[12px] text-rose-300">{timeError}</div>
+        ) : null}
         <RegimeRangePresets onPick={(start, end) => { setFrom(start); setTo(end); }} />
         <Field label="Granularity">
           <input
             className="input"
             list="scenario-granularity-options"
             value={granularity}
-            onChange={(e) => setGranularity(e.target.value)}
+            onChange={(e) => {
+              setGranularity(e.target.value);
+              if (granularityError) setGranularityError(null);
+            }}
             required
           />
           <datalist id="scenario-granularity-options">
@@ -245,6 +272,9 @@ export function ScenarioForm({
               <option key={g} value={g} />
             ))}
           </datalist>
+          {granularityError ? (
+            <div className="mt-1 text-[12px] text-rose-300">{granularityError}</div>
+          ) : null}
         </Field>
       </Section>
 
@@ -339,6 +369,17 @@ function estimateBars(from: string, to: string, g: ScenarioGranularity): number 
   const barSeconds = granularitySeconds(g);
   if (!barSeconds) return 0;
   return Math.round(ms / 1000 / barSeconds);
+}
+
+function isSupportedGranularity(granularity: string) {
+  return GRANULARITY_OPTIONS.includes(granularity);
+}
+
+function isValidWindow(from: string, to: string) {
+  if (!from || !to) return false;
+  const start = new Date(`${from}T00:00:00Z`).getTime();
+  const end = new Date(`${to}T00:00:00Z`).getTime();
+  return Number.isFinite(start) && Number.isFinite(end) && end > start;
 }
 
 function normalizeGranularity(granularity: string | undefined) {

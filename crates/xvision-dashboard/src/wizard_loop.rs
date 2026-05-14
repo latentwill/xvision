@@ -32,7 +32,7 @@ use xvision_engine::agent::llm::{
 use xvision_engine::api::eval::{self as api_eval, EvalRunRequest};
 use xvision_engine::api::scenario::{CreateScenarioRequest, ListScenariosFilter};
 use xvision_engine::authoring;
-use xvision_engine::chat_session::{ChatSessionStore, ContextScope};
+use xvision_engine::chat_session::{action_confirmation_card, ChatSessionStore, ContextScope, InlineAction};
 use xvision_engine::eval::run::RunMode;
 
 const WIZARD_SYSTEM_PROMPT_BASE: &str = include_str!("../prompts/wizard.md");
@@ -92,6 +92,10 @@ pub enum WizardEvent {
     ToolResult {
         tool: String,
         result: serde_json::Value,
+    },
+    /// A typed rich display block to append to the active assistant bubble.
+    ContentBlock {
+        block: serde_json::Value,
     },
     /// Conversation complete. `draft_id` carries the most recently created
     /// or referenced strategy id (if any), so the front-end can transition
@@ -277,6 +281,7 @@ impl WizardLoop {
             // one user turn.
             let mut tool_result_blocks: Vec<serde_json::Value> =
                 Vec::with_capacity(tool_uses.len());
+            let mut rich_blocks: Vec<serde_json::Value> = Vec::new();
             for (id, name, input) in tool_uses {
                 self.pending.push(WizardEvent::ToolCall {
                     tool: name.clone(),
@@ -292,6 +297,9 @@ impl WizardLoop {
                     tool: name.clone(),
                     result: result_value.clone(),
                 });
+                if let Some(block) = rich_block_for_tool_result(&name, &result_value) {
+                    rich_blocks.push(block);
+                }
                 tool_result_blocks.push(serde_json::json!({
                     "type": "tool_result",
                     "tool_use_id": id,
@@ -305,6 +313,18 @@ impl WizardLoop {
                 &tool_result_blocks,
             )
             .await?;
+            if !rich_blocks.is_empty() {
+                ChatSessionStore::append(
+                    &self.pool,
+                    &self.session_id,
+                    "assistant",
+                    &rich_blocks,
+                )
+                .await?;
+                for block in rich_blocks {
+                    self.pending.push(WizardEvent::ContentBlock { block });
+                }
+            }
 
             if !matches!(resp.stop_reason, StopReason::ToolUse) {
                 // Defensive: the model said EndTurn/MaxTokens but emitted
@@ -334,8 +354,9 @@ impl WizardLoop {
         for cm in history {
             let mut blocks = Vec::with_capacity(cm.content_blocks.len());
             for v in cm.content_blocks {
-                let block: ContentBlock = serde_json::from_value(v)?;
-                blocks.push(block);
+                if let Ok(block) = serde_json::from_value(v) {
+                    blocks.push(block);
+                }
             }
             out.push(Message {
                 role: cm.role,
@@ -589,6 +610,61 @@ impl WizardLoop {
             other => anyhow::bail!("unknown authoring verb: {other}"),
         }
     }
+}
+
+fn rich_block_for_tool_result(
+    tool: &str,
+    result: &serde_json::Value,
+) -> Option<serde_json::Value> {
+    if result.get("error").is_some() {
+        return None;
+    }
+    let card = match tool {
+        "create_strategy" => {
+            let id = result.get("id")?.as_str()?;
+            action_confirmation_card(
+                format!("strategy-created:{id}"),
+                "Strategy draft created",
+                format!("Draft {id} is ready for inspection."),
+                InlineAction {
+                    label: "Open draft".into(),
+                    href: Some(format!("/authoring/{id}")),
+                    command: None,
+                },
+            )
+            .ok()?
+        }
+        "run_eval" => {
+            let id = result.get("run_id")?.as_str()?;
+            action_confirmation_card(
+                format!("eval-started:{id}"),
+                "Eval run started",
+                format!("Run {id} has been queued."),
+                InlineAction {
+                    label: "Open run".into(),
+                    href: Some(format!("/eval-runs/{id}")),
+                    command: None,
+                },
+            )
+            .ok()?
+        }
+        "fetch_bars" => {
+            let id = result.get("job_id")?.as_str()?;
+            action_confirmation_card(
+                format!("bars-fetch:{id}"),
+                "Bar fetch queued",
+                format!("CLI job {id} is warming the local bar cache."),
+                InlineAction {
+                    label: "Open eval runs".into(),
+                    href: Some("/eval-runs".into()),
+                    command: None,
+                },
+            )
+            .ok()?
+        }
+        _ => return None,
+    };
+    serde_json::to_value(card).ok()
 }
 
 pub type AgentChatLoop = WizardLoop;

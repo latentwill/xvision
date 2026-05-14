@@ -131,6 +131,9 @@ pub async fn create(ctx: &ApiContext, req: CreateScenarioRequest) -> ApiResult<S
         created_by: ctx.actor.id().to_string(),
         archived_at: None,
     };
+    scenario
+        .validate_v1()
+        .map_err(|e| ApiError::Validation(e.to_string()))?;
     scenario_store::insert_scenario(ctx, &scenario).await?;
     Ok(scenario)
 }

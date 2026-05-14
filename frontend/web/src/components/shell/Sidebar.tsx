@@ -1,5 +1,6 @@
 import { NavLink } from "react-router-dom";
 import { Icon, type IconName } from "@/components/primitives/Icon";
+import { useTheme } from "@/theme/useTheme";
 
 type Item = { to: string; label: string; icon: IconName };
 
@@ -12,9 +13,17 @@ const PRIMARY: Item[] = [
   { to: "/settings", label: "Settings", icon: "sliders" },
 ];
 
-export function Sidebar() {
+export function Sidebar({ className = "" }: { className?: string }) {
+  const { resolvedTheme, setDarkTheme, setLightTheme } = useTheme();
+  const isLight = resolvedTheme === "light";
+
   return (
-    <aside className="bg-surface-sidebar border-r border-border-soft flex flex-col w-[200px] pt-6 pb-4">
+    <aside
+      className={[
+        "bg-surface-sidebar border-r border-border-soft flex flex-col w-[220px] pt-6 pb-4",
+        className,
+      ].join(" ")}
+    >
       <div className="px-6 pb-8">
         <span className="font-serif italic font-medium text-[38px] tracking-tight text-text leading-none">
           xvn
@@ -47,6 +56,31 @@ export function Sidebar() {
           </NavLink>
         ))}
       </nav>
+
+      <div className="mx-4 mb-3 flex items-center gap-1 rounded border border-border-soft bg-surface-elev p-1">
+        <button
+          type="button"
+          onClick={setLightTheme}
+          aria-label="Switch to light theme"
+          className={[
+            "flex h-7 flex-1 items-center justify-center rounded text-text-3 transition-colors hover:text-text",
+            isLight ? "bg-gold/[0.12] text-gold" : "",
+          ].join(" ")}
+        >
+          <Icon name="sun" size={15} />
+        </button>
+        <button
+          type="button"
+          onClick={setDarkTheme}
+          aria-label="Switch to dark theme"
+          className={[
+            "flex h-7 flex-1 items-center justify-center rounded text-text-3 transition-colors hover:text-text",
+            !isLight ? "bg-gold/[0.12] text-gold" : "",
+          ].join(" ")}
+        >
+          <Icon name="moon" size={15} />
+        </button>
+      </div>
 
       <div className="flex items-center gap-2.5 px-4 py-3.5 border-t border-border-soft mt-auto">
         <div className="w-8 h-8 rounded-full bg-surface-panel border border-border flex items-center justify-center text-[11px] font-semibold text-text">
