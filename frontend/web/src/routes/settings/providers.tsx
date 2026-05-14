@@ -347,7 +347,7 @@ function ConnectionResult({
 }) {
   if (error) {
     return (
-      <span className="inline-flex items-center gap-1.5 text-rose-300">
+      <span className="inline-flex items-center gap-1.5 text-danger">
         <span aria-hidden>✗</span>
         <span className="font-mono text-text-2">{errorMessage(error)}</span>
       </span>
@@ -356,7 +356,7 @@ function ConnectionResult({
   if (!data) return null;
   if (data.ok) {
     return (
-      <span className="inline-flex items-center gap-1.5 text-emerald-300">
+      <span className="inline-flex items-center gap-1.5 text-info">
         <span aria-hidden>✓</span>
         <span>
           connected · {data.latency_ms}ms
@@ -366,7 +366,7 @@ function ConnectionResult({
     );
   }
   return (
-    <span className="inline-flex items-center gap-1.5 text-rose-300">
+    <span className="inline-flex items-center gap-1.5 text-danger">
       <span aria-hidden>✗</span>
       <span className="font-mono text-text-2">
         {data.error ?? "connection failed"}

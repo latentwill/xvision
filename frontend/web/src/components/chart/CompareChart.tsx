@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { createChart, ColorType, CrosshairMode, type UTCTimestamp } from "lightweight-charts";
 import type { CompareChartPayload } from "@/api/types.gen";
-import { chartTheme } from "./chart-theme";
+import type { ResolvedTheme } from "@/theme/themes";
+import { useTheme } from "@/theme/useTheme";
+import { chartTheme, normalizeChartTheme } from "./chart-theme";
 import { ChartContainer, type RangePreset } from "./ChartContainer";
 
 const RUN_COLORS = [
@@ -19,26 +21,30 @@ const RUN_COLORS = [
 
 export function CompareChart({
   payload,
-  themeMode = "dark",
+  theme,
+  themeMode,
 }: {
   payload: CompareChartPayload;
   themeMode?: "dark" | "light";
+  theme?: ResolvedTheme;
 }) {
+  const appTheme = useTheme();
+  const activeTheme = theme ?? normalizeChartTheme(themeMode, appTheme.resolvedTheme);
   const ref = useRef<HTMLDivElement>(null);
   const [range, setRange] = useState<RangePreset>("All");
   const [showBackdrop, setShowBackdrop] = useState(false);
 
   useEffect(() => {
     if (!ref.current) return;
-    const theme = chartTheme(themeMode);
+    const palette = chartTheme(activeTheme);
     const c = createChart(ref.current, {
       layout: {
-        background: { type: ColorType.Solid, color: theme.background },
-        textColor: theme.text,
+        background: { type: ColorType.Solid, color: palette.background },
+        textColor: palette.text,
       },
       grid: {
-        vertLines: { color: theme.grid },
-        horzLines: { color: theme.grid },
+        vertLines: { color: palette.grid },
+        horzLines: { color: palette.grid },
       },
       crosshair: { mode: CrosshairMode.Normal },
     });
@@ -75,7 +81,7 @@ export function CompareChart({
     });
 
     return () => c.remove();
-  }, [payload, themeMode, showBackdrop]);
+  }, [payload, activeTheme, showBackdrop]);
 
   return (
     <ChartContainer

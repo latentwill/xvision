@@ -22,6 +22,7 @@ describe("SettingsLayout", () => {
     );
 
     expect(screen.queryByRole("link", { name: "Skills" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "General" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Providers" })).toBeInTheDocument();
   });
 });
