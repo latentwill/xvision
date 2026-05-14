@@ -34,7 +34,7 @@ use xvision_engine::chat_session::{
 use crate::error::DashboardError;
 use crate::llm_dispatch;
 use crate::state::AppState;
-use crate::wizard_loop::{WizardEvent, WizardLoop};
+use crate::wizard_loop::{AgentProfile, WizardEvent, WizardLoop};
 
 #[derive(Debug, Deserialize)]
 pub struct ResolveSessionReq {
@@ -122,6 +122,10 @@ pub struct ChatBody {
     /// default provider is used (which is what existing clients expect).
     #[serde(default)]
     pub provider: Option<String>,
+    /// Profile selects prompt bias and tool availability for the shared
+    /// agent runtime. The rail defaults to broad workspace behavior.
+    #[serde(default)]
+    pub profile: AgentProfile,
 }
 
 fn default_model() -> &'static str {
@@ -140,6 +144,7 @@ pub async fn chat(
         session_id = %body.session_id,
         provider = ?body.provider,
         model = ?body.model,
+        profile = ?body.profile,
         message_len = body.message.len(),
         "POST /api/chat-rail/chat"
     );
@@ -166,10 +171,20 @@ pub async fn chat(
     let session_id = body.session_id;
     let model = resolved.model;
     let message = body.message;
+    let profile = body.profile;
+    let cli_runner = state.cli_runner();
 
     tokio::spawn(async move {
-        let mut wl = match WizardLoop::new(
-            xvn_home, dispatch, model, pool, session_id, scope, message,
+        let mut wl = match WizardLoop::new_with_profile(
+            xvn_home,
+            dispatch,
+            model,
+            pool,
+            session_id,
+            scope,
+            profile,
+            Some(cli_runner),
+            message,
         )
         .await
         {
@@ -195,4 +210,27 @@ pub async fn chat(
         Ok::<_, std::convert::Infallible>(Event::default().data(json))
     });
     Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15))))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chat_body_defaults_to_workspace_profile() {
+        let body: ChatBody =
+            serde_json::from_str(r#"{"session_id":"s","message":"hi"}"#).unwrap();
+        assert!(body.model.is_none());
+        assert!(body.provider.is_none());
+        assert_eq!(body.profile, AgentProfile::Workspace);
+    }
+
+    #[test]
+    fn chat_body_accepts_strategy_setup_profile() {
+        let body: ChatBody = serde_json::from_str(
+            r#"{"session_id":"s","message":"hi","profile":"strategy_setup"}"#,
+        )
+        .unwrap();
+        assert_eq!(body.profile, AgentProfile::StrategySetup);
+    }
 }

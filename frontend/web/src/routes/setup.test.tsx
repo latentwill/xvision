@@ -21,7 +21,11 @@ vi.mock("@/api/settings", () => ({
   }),
 }));
 
-vi.mock("@/api/wizard", () => ({
+vi.mock("@/api/chat_rail", () => ({
+  resolveSession: vi.fn().mockResolvedValue({
+    session_id: "setup-session",
+    history: [],
+  }),
   streamChat: vi.fn(),
 }));
 
