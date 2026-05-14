@@ -177,4 +177,63 @@ describe("ChatRail", () => {
 
     expect(screen.getByLabelText("Chat rail")).toBeInTheDocument();
   });
+
+  it("keeps the composer editable while a chat response is in flight", async () => {
+    vi.mocked(chatApi.streamChat).mockImplementation(async function* () {
+      await new Promise(() => {});
+    });
+    renderRail();
+
+    const composer = await screen.findByPlaceholderText(
+      /ask anything about your workspace/i,
+    );
+    fireEvent.change(composer, {
+      target: { value: "first request" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => {
+      expect(chatApi.streamChat).toHaveBeenCalled();
+    });
+    fireEvent.change(composer, {
+      target: { value: "next draft while the agent works" },
+    });
+
+    expect(composer).toBeEnabled();
+    expect(composer).toHaveValue("next draft while the agent works");
+  });
+
+  it("aborts the active chat request without clearing draft text", async () => {
+    let capturedSignal: AbortSignal | undefined;
+    vi.mocked(chatApi.streamChat).mockImplementation(async function* (
+      _req,
+      signal,
+    ) {
+      capturedSignal = signal;
+      await new Promise<void>((resolve) => {
+        signal?.addEventListener("abort", () => resolve(), { once: true });
+      });
+      throw Object.assign(new Error("aborted"), { name: "AbortError" });
+    });
+    renderRail();
+
+    const composer = await screen.findByPlaceholderText(
+      /ask anything about your workspace/i,
+    );
+    fireEvent.change(composer, {
+      target: { value: "start long request" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    const stop = await screen.findByRole("button", { name: "Stop response" });
+    fireEvent.change(composer, {
+      target: { value: "keep this draft" },
+    });
+    fireEvent.click(stop);
+
+    await waitFor(() => {
+      expect(capturedSignal?.aborted).toBe(true);
+    });
+    expect(composer).toHaveValue("keep this draft");
+  });
 });
