@@ -100,6 +100,28 @@ async fn resolve_returns_same_session_for_same_scope() {
 }
 
 #[tokio::test]
+async fn resolve_setup_route_session_survives_reload() {
+    let (server, _tmp, _state) = boot().await;
+    let scope = json!({"scope": "route", "route": "/setup"});
+
+    let first = server
+        .post("/api/chat-rail/sessions/resolve")
+        .json(&json!({"scope": scope}))
+        .await
+        .json::<Value>();
+    let first_id = first["session_id"].as_str().unwrap().to_string();
+
+    let second = server
+        .post("/api/chat-rail/sessions/resolve")
+        .json(&json!({"scope": scope}))
+        .await
+        .json::<Value>();
+    let second_id = second["session_id"].as_str().unwrap().to_string();
+
+    assert_eq!(first_id, second_id, "/setup should resolve a stable session");
+}
+
+#[tokio::test]
 async fn resolve_persists_scope_and_returns_history() {
     let (server, _tmp, state) = boot().await;
     let resp = server

@@ -28,10 +28,14 @@ use xvision_engine::chat_session::{ChatSessionStore, ContextScope};
 use crate::error::DashboardError;
 use crate::llm_dispatch;
 use crate::state::AppState;
-use crate::wizard_loop::{WizardEvent, WizardLoop};
+use crate::wizard_loop::{AgentProfile, WizardEvent, WizardLoop};
 
 #[derive(Debug, Deserialize)]
 pub struct ChatBody {
+    /// Optional compatibility path. New clients should resolve a session
+    /// through `/api/chat-rail/sessions/resolve` and call `/api/chat-rail/chat`.
+    #[serde(default)]
+    pub session_id: Option<String>,
     pub message: String,
     /// Optional explicit model id. When `None`, the resolver falls back
     /// to the model declared in `[default_llm]` for the default provider.
@@ -41,10 +45,18 @@ pub struct ChatBody {
     /// `[default_llm]`-referenced provider is used.
     #[serde(default)]
     pub provider: Option<String>,
+    /// Compatibility profile selector. Legacy wizard calls default to
+    /// strategy setup because `/setup` is strategy-focused.
+    #[serde(default = "default_profile")]
+    pub profile: AgentProfile,
 }
 
 fn default_model() -> &'static str {
     "claude-sonnet-4-6"
+}
+
+fn default_profile() -> AgentProfile {
+    AgentProfile::StrategySetup
 }
 
 pub async fn chat(
@@ -58,6 +70,7 @@ pub async fn chat(
         target: "xvision::dashboard::wizard",
         provider = ?body.provider,
         model = ?body.model,
+        profile = ?body.profile,
         message_len = body.message.len(),
         "POST /api/wizard/chat"
     );
@@ -69,12 +82,23 @@ pub async fn chat(
     )
     .await?;
 
-    // One-shot route: create a fresh Workspace-scoped session at request
-    // time. The persistent rail uses POST /api/chat-rail/sessions instead.
-    let session_id =
-        ChatSessionStore::create_session(&state.pool, &ContextScope::Workspace)
+    // Compatibility route: use an explicit session when supplied, otherwise
+    // resolve the stable `/setup` route session. New setup UI uses the shared
+    // chat-rail endpoints directly; this wrapper keeps old callers persistent.
+    let (session_id, scope) = if let Some(session_id) = body.session_id {
+        let scope = ChatSessionStore::load_scope(&state.pool, &session_id)
+            .await
+            .map_err(|_| DashboardError::NotFound(format!("session '{}'", session_id)))?;
+        (session_id, scope)
+    } else {
+        let scope = ContextScope::Route {
+            route: "/setup".into(),
+        };
+        let (session_id, _history) = ChatSessionStore::resolve(&state.pool, &scope)
             .await
             .map_err(DashboardError::Internal)?;
+        (session_id, scope)
+    };
 
     // Bounded channel: the wizard's tool-use loop yields events in
     // bursts (token-then-tool-then-result), so 16 absorbs a full
@@ -86,15 +110,19 @@ pub async fn chat(
     let pool = state.pool.clone();
     let model = resolved.model;
     let message = body.message;
+    let profile = body.profile;
+    let cli_runner = state.cli_runner();
 
     tokio::spawn(async move {
-        let mut wl = match WizardLoop::new(
+        let mut wl = match WizardLoop::new_with_profile(
             xvn_home,
             dispatch,
             model,
             pool,
             session_id,
-            ContextScope::Workspace,
+            scope,
+            profile,
+            Some(cli_runner),
             message,
         )
         .await
