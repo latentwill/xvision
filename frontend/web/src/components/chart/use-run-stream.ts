@@ -6,6 +6,8 @@ import type {
   ChartBar,
   ChartEquityPoint,
   HoldMarker,
+  IndicatorPoint,
+  Indicators,
   RunChartPayload,
   TradeMarker,
   VetoMarker,
@@ -36,6 +38,70 @@ type WireEvent =
     };
 
 const RECONNECT_DELAY_MS = 1000;
+const FLAT_INDICATOR_KEYS = [
+  "sma_20",
+  "sma_30",
+  "sma_50",
+  "sma_60",
+  "sma_90",
+  "sma_200",
+  "ema_20",
+  "ema_30",
+  "ema_50",
+  "ema_60",
+  "ema_90",
+  "ema_200",
+  "rsi_14",
+  "atr_14",
+] as const;
+
+type FlatIndicatorKey = (typeof FLAT_INDICATOR_KEYS)[number];
+type IndicatorTail = Record<string, IndicatorPoint>;
+
+function appendIndicatorTail(
+  indicators: Indicators,
+  tail: IndicatorTail,
+): Indicators {
+  let next = indicators;
+
+  for (const key of FLAT_INDICATOR_KEYS) {
+    const point = tail[key];
+    if (!point) continue;
+    next = {
+      ...next,
+      [key]: [...(next[key as FlatIndicatorKey] ?? []), point],
+    };
+  }
+
+  const appendNested = <
+    Section extends "bollinger" | "donchian" | "macd",
+    Key extends keyof Indicators[Section] & string,
+  >(
+    section: Section,
+    key: Key,
+  ) => {
+    const point = tail[`${section}.${key}`] ?? tail[`${section}_${key}`];
+    if (!point) return;
+    next = {
+      ...next,
+      [section]: {
+        ...next[section],
+        [key]: [...(next[section][key] as IndicatorPoint[]), point],
+      },
+    };
+  };
+
+  appendNested("bollinger", "upper");
+  appendNested("bollinger", "middle");
+  appendNested("bollinger", "lower");
+  appendNested("donchian", "upper");
+  appendNested("donchian", "lower");
+  appendNested("macd", "line");
+  appendNested("macd", "signal");
+  appendNested("macd", "histogram");
+
+  return next;
+}
 
 export function useRunStream(runId: string, initial?: RunChartPayload) {
   const qc = useQueryClient();
@@ -80,6 +146,17 @@ export function useRunStream(runId: string, initial?: RunChartPayload) {
     });
   }, []);
 
+  const mergeIndicatorTail = useCallback((tail: IndicatorTail) => {
+    setData((prev) =>
+      prev
+        ? {
+            ...prev,
+            indicators: appendIndicatorTail(prev.indicators, tail),
+          }
+        : prev,
+    );
+  }, []);
+
   useEffect(() => {
     if (!runId) return;
     let cancelled = false;
@@ -113,6 +190,10 @@ export function useRunStream(runId: string, initial?: RunChartPayload) {
       es.addEventListener("marker", (e) => {
         const parsed = JSON.parse((e as MessageEvent).data) as WireEvent;
         if (parsed.event === "marker") mergeMarker(parsed.data);
+      });
+      es.addEventListener("indicator_tail", (e) => {
+        const parsed = JSON.parse((e as MessageEvent).data) as WireEvent;
+        if (parsed.event === "indicator_tail") mergeIndicatorTail(parsed.data);
       });
       es.addEventListener("status", (e) => {
         const parsed = JSON.parse((e as MessageEvent).data) as WireEvent;

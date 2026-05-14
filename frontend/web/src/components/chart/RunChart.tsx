@@ -8,8 +8,10 @@ import {
   type UTCTimestamp,
 } from "lightweight-charts";
 import type { RunChartPayload, IndicatorPoint } from "@/api/types.gen";
+import type { ResolvedTheme } from "@/theme/themes";
+import { useTheme } from "@/theme/useTheme";
 import { ChartContainer, type RangePreset } from "./ChartContainer";
-import { chartTheme } from "./chart-theme";
+import { chartTheme, normalizeChartTheme } from "./chart-theme";
 import { useChartLayers } from "./use-chart-layers";
 import { ChartLayersPanel } from "./ChartLayersPanel";
 import { type LayerKey } from "./chart-layers";
@@ -19,6 +21,7 @@ type ActiveMarker = { kind: "trade" | "veto" | "hold"; decision_index: number };
 type Props = {
   payload: RunChartPayload;
   themeMode?: "dark" | "light";
+  theme?: ResolvedTheme;
   follow?: boolean;
 };
 
@@ -210,9 +213,12 @@ function applySeriesData(
 
 export function RunChart({
   payload,
-  themeMode = "dark",
+  theme,
+  themeMode,
   follow = false,
 }: Props) {
+  const appTheme = useTheme();
+  const activeTheme = theme ?? normalizeChartTheme(themeMode, appTheme.resolvedTheme);
   const priceRef = useRef<HTMLDivElement>(null);
   const chartSetRef = useRef<IChartApi[]>([]);
   const seriesRef = useRef<RunChartSeries>({});
@@ -236,21 +242,21 @@ export function RunChart({
 
   useEffect(() => {
     const previousPayload = previousPayloadRef.current;
-    const theme = chartTheme(themeMode);
-    applySeriesData(seriesRef.current, payload, layers, theme);
+    const palette = chartTheme(activeTheme);
+    applySeriesData(seriesRef.current, payload, layers, palette);
     payloadRef.current = payload;
     previousPayloadRef.current = payload;
     if (previousPayload !== payload && followRef.current) {
       enterFollowMode(chartSetRef.current);
     }
-  }, [payload, layers, themeMode]);
+  }, [payload, layers, activeTheme]);
 
   useEffect(() => {
     if (!priceRef.current) return;
     const buildVersion = buildVersionRef.current + 1;
     buildVersionRef.current = buildVersion;
-    const theme = chartTheme(themeMode);
-    const opts = buildOpts(theme);
+    const palette = chartTheme(activeTheme);
+    const opts = buildOpts(palette);
 
     const priceChart = createChart(priceRef.current, opts);
     const subChart = subRef.current ? createChart(subRef.current, opts) : null;
@@ -262,46 +268,46 @@ export function RunChart({
     // --- Price pane ---
     if (layers.candles) {
       const candle = priceChart.addCandlestickSeries({
-        upColor: theme.series.candleUp,
-        downColor: theme.series.candleDown,
-        wickUpColor: theme.series.candleUp,
-        wickDownColor: theme.series.candleDown,
+        upColor: palette.series.candleUp,
+        downColor: palette.series.candleDown,
+        wickUpColor: palette.series.candleUp,
+        wickDownColor: palette.series.candleDown,
         borderVisible: false,
       });
       series.candle = candle as SetDataSeries;
     }
     if (layers.sma20)
-      series.sma20 = priceChart.addLineSeries({ color: theme.series.sma20, lineWidth: 1 }) as SetDataSeries;
+      series.sma20 = priceChart.addLineSeries({ color: palette.series.sma20, lineWidth: 1 }) as SetDataSeries;
     if (layers.sma30)
-      series.sma30 = priceChart.addLineSeries({ color: "#a7f3d0", lineWidth: 1 }) as SetDataSeries;
+      series.sma30 = priceChart.addLineSeries({ color: palette.series.sma30, lineWidth: 1 }) as SetDataSeries;
     if (layers.sma50)
-      series.sma50 = priceChart.addLineSeries({ color: theme.series.sma50, lineWidth: 1 }) as SetDataSeries;
+      series.sma50 = priceChart.addLineSeries({ color: palette.series.sma50, lineWidth: 1 }) as SetDataSeries;
     if (layers.sma60)
-      series.sma60 = priceChart.addLineSeries({ color: "#6ee7b7", lineWidth: 1 }) as SetDataSeries;
+      series.sma60 = priceChart.addLineSeries({ color: palette.series.sma60, lineWidth: 1 }) as SetDataSeries;
     if (layers.sma90)
-      series.sma90 = priceChart.addLineSeries({ color: "#34d399", lineWidth: 1 }) as SetDataSeries;
+      series.sma90 = priceChart.addLineSeries({ color: palette.series.sma90, lineWidth: 1 }) as SetDataSeries;
     if (layers.sma200)
-      series.sma200 = priceChart.addLineSeries({ color: theme.series.sma200, lineWidth: 1 }) as SetDataSeries;
+      series.sma200 = priceChart.addLineSeries({ color: palette.series.sma200, lineWidth: 1 }) as SetDataSeries;
     if (layers.ema20)
-      series.ema20 = priceChart.addLineSeries({ color: theme.series.ema20, lineWidth: 1, lineStyle: 2 }) as SetDataSeries;
+      series.ema20 = priceChart.addLineSeries({ color: palette.series.ema20, lineWidth: 1, lineStyle: 2 }) as SetDataSeries;
     if (layers.ema30)
-      series.ema30 = priceChart.addLineSeries({ color: "#bae6fd", lineWidth: 1, lineStyle: 2 }) as SetDataSeries;
+      series.ema30 = priceChart.addLineSeries({ color: palette.series.ema30, lineWidth: 1, lineStyle: 2 }) as SetDataSeries;
     if (layers.ema50)
-      series.ema50 = priceChart.addLineSeries({ color: theme.series.ema50, lineWidth: 1, lineStyle: 2 }) as SetDataSeries;
+      series.ema50 = priceChart.addLineSeries({ color: palette.series.ema50, lineWidth: 1, lineStyle: 2 }) as SetDataSeries;
     if (layers.ema60)
-      series.ema60 = priceChart.addLineSeries({ color: "#7dd3fc", lineWidth: 1, lineStyle: 2 }) as SetDataSeries;
+      series.ema60 = priceChart.addLineSeries({ color: palette.series.ema60, lineWidth: 1, lineStyle: 2 }) as SetDataSeries;
     if (layers.ema90)
-      series.ema90 = priceChart.addLineSeries({ color: "#38bdf8", lineWidth: 1, lineStyle: 2 }) as SetDataSeries;
+      series.ema90 = priceChart.addLineSeries({ color: palette.series.ema90, lineWidth: 1, lineStyle: 2 }) as SetDataSeries;
     if (layers.ema200)
-      series.ema200 = priceChart.addLineSeries({ color: theme.series.ema200, lineWidth: 1, lineStyle: 2 }) as SetDataSeries;
+      series.ema200 = priceChart.addLineSeries({ color: palette.series.ema200, lineWidth: 1, lineStyle: 2 }) as SetDataSeries;
     if (layers.bollinger) {
-      series.bollUpper = priceChart.addLineSeries({ color: theme.series.bollUpper, lineWidth: 1 }) as SetDataSeries;
-      series.bollMiddle = priceChart.addLineSeries({ color: theme.series.bollMiddle, lineWidth: 1 }) as SetDataSeries;
-      series.bollLower = priceChart.addLineSeries({ color: theme.series.bollLower, lineWidth: 1 }) as SetDataSeries;
+      series.bollUpper = priceChart.addLineSeries({ color: palette.series.bollUpper, lineWidth: 1 }) as SetDataSeries;
+      series.bollMiddle = priceChart.addLineSeries({ color: palette.series.bollMiddle, lineWidth: 1 }) as SetDataSeries;
+      series.bollLower = priceChart.addLineSeries({ color: palette.series.bollLower, lineWidth: 1 }) as SetDataSeries;
     }
     if (layers.donchian) {
-      series.donchianUpper = priceChart.addLineSeries({ color: theme.series.donchianUpper, lineWidth: 1 }) as SetDataSeries;
-      series.donchianLower = priceChart.addLineSeries({ color: theme.series.donchianLower, lineWidth: 1 }) as SetDataSeries;
+      series.donchianUpper = priceChart.addLineSeries({ color: palette.series.donchianUpper, lineWidth: 1 }) as SetDataSeries;
+      series.donchianLower = priceChart.addLineSeries({ color: palette.series.donchianLower, lineWidth: 1 }) as SetDataSeries;
     }
 
     // --- Markers on price pane ---
@@ -315,13 +321,13 @@ export function RunChart({
     // --- Position band ---
     if (layers.positionBand) {
       const longSeries = priceChart.addAreaSeries({
-        topColor: theme.series.positionLong,
+        topColor: palette.series.positionLong,
         bottomColor: "transparent",
         lineColor: "transparent",
       });
       series.longPosition = longSeries as SetDataSeries;
       const shortSeries = priceChart.addAreaSeries({
-        topColor: theme.series.positionShort,
+        topColor: palette.series.positionShort,
         bottomColor: "transparent",
         lineColor: "transparent",
       });
@@ -331,40 +337,40 @@ export function RunChart({
     // --- Subpane ---
     if (subChart) {
       if (layers.subpaneRsi) {
-        const rsi = subChart.addLineSeries({ color: "#a78bfa", lineWidth: 1 });
+        const rsi = subChart.addLineSeries({ color: palette.series.rsi, lineWidth: 1 });
         series.rsi = rsi as SetDataSeries;
-        rsi.createPriceLine({ price: 30, color: "#475569", lineWidth: 1, lineStyle: 2 });
-        rsi.createPriceLine({ price: 70, color: "#475569", lineWidth: 1, lineStyle: 2 });
+        rsi.createPriceLine({ price: 30, color: palette.series.guide, lineWidth: 1, lineStyle: 2 });
+        rsi.createPriceLine({ price: 70, color: palette.series.guide, lineWidth: 1, lineStyle: 2 });
       } else if (layers.subpaneMacd) {
-        series.macdLine = subChart.addLineSeries({ color: "#22d3ee", lineWidth: 1 }) as SetDataSeries;
-        series.macdSignal = subChart.addLineSeries({ color: "#f97316", lineWidth: 1 }) as SetDataSeries;
-        series.macdHistogram = subChart.addHistogramSeries({ color: "#94a3b8" }) as SetDataSeries;
+        series.macdLine = subChart.addLineSeries({ color: palette.series.macdLine, lineWidth: 1 }) as SetDataSeries;
+        series.macdSignal = subChart.addLineSeries({ color: palette.series.macdSignal, lineWidth: 1 }) as SetDataSeries;
+        series.macdHistogram = subChart.addHistogramSeries({ color: palette.series.macdHistogram }) as SetDataSeries;
       } else if (layers.subpaneAtr) {
-        series.atr = subChart.addLineSeries({ color: "#fbbf24", lineWidth: 1 }) as SetDataSeries;
+        series.atr = subChart.addLineSeries({ color: palette.series.atr, lineWidth: 1 }) as SetDataSeries;
       }
     }
 
     // --- Equity + drawdown ---
     if (eqChart && layers.equity) {
       const eq = eqChart.addAreaSeries({
-        lineColor: theme.series.equity,
-        topColor: "rgba(34,211,238,0.3)",
-        bottomColor: "rgba(34,211,238,0.0)",
+        lineColor: palette.series.equity,
+        topColor: palette.series.equityTop,
+        bottomColor: palette.series.equityBottom,
       });
       series.equity = eq as SetDataSeries;
     }
     if (ddChart && layers.drawdown) {
       const dd = ddChart.addAreaSeries({
-        lineColor: theme.series.drawdown,
-        topColor: "rgba(239,68,68,0.3)",
-        bottomColor: "rgba(239,68,68,0.0)",
+        lineColor: palette.series.drawdown,
+        topColor: palette.series.drawdownTop,
+        bottomColor: palette.series.drawdownBottom,
       });
       series.drawdown = dd as SetDataSeries;
     }
 
     // --- Volume ---
     if (volChart) {
-      series.volume = volChart.addHistogramSeries({ color: theme.series.candleUp }) as SetDataSeries;
+      series.volume = volChart.addHistogramSeries({ color: palette.series.candleUp }) as SetDataSeries;
     }
 
     // --- Time-scale sync ---
@@ -373,7 +379,7 @@ export function RunChart({
     );
     chartSetRef.current = all;
     seriesRef.current = series;
-    applySeriesData(series, payloadRef.current, layers, theme);
+    applySeriesData(series, payloadRef.current, layers, palette);
 
     all.forEach((c) =>
       c.timeScale().subscribeVisibleLogicalRangeChange((r: LogicalRange | null) => {
@@ -412,7 +418,7 @@ export function RunChart({
       }
       all.forEach((c) => c.remove());
     };
-  }, [layers, themeMode]);
+  }, [layers, activeTheme]);
 
   useLayoutEffect(() => {
     const wasFollowing = layoutFollowRef.current;

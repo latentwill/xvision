@@ -10,6 +10,10 @@ type UiState = {
   cmdkOpen: boolean;
   setCmdkOpen: (open: boolean) => void;
   toggleCmdk: () => void;
+  mobileDrawerOpen: boolean;
+  setMobileDrawerOpen: (open: boolean) => void;
+  mobileFunctionsOpen: boolean;
+  setMobileFunctionsOpen: (open: boolean) => void;
 };
 
 export const useUi = create<UiState>((set) => ({
@@ -19,4 +23,8 @@ export const useUi = create<UiState>((set) => ({
   cmdkOpen: false,
   setCmdkOpen: (open) => set({ cmdkOpen: open }),
   toggleCmdk: () => set((s) => ({ cmdkOpen: !s.cmdkOpen })),
+  mobileDrawerOpen: false,
+  setMobileDrawerOpen: (open) => set({ mobileDrawerOpen: open }),
+  mobileFunctionsOpen: false,
+  setMobileFunctionsOpen: (open) => set({ mobileFunctionsOpen: open }),
 }));

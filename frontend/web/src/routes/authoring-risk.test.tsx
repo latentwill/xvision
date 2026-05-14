@@ -244,6 +244,197 @@ describe("AuthoringRoute risk editor", () => {
 });
 
 describe("AuthoringRoute agent composition", () => {
+  it("surfaces missing agent setup before opening the eval launcher", async () => {
+    vi.mocked(agentApi.listAgents).mockResolvedValue([]);
+    vi.mocked(strategyApi.getStrategy).mockResolvedValue({
+      manifest: {
+        id: "01TEST",
+        display_name: "Agentless Draft",
+        template: "custom",
+        creator: "@t",
+        plain_summary: "",
+        regime_fit: [],
+        asset_universe: [],
+        decision_cadence_minutes: 240,
+        required_models: [],
+        required_tools: [],
+        risk_preset_or_config: "balanced",
+        published_at: null,
+      },
+      agents: [],
+      pipeline: { kind: "single" },
+      regime_slot: null,
+      intern_slot: null,
+      trader_slot: null,
+      risk: {
+        risk_pct_per_trade: 0.015,
+        max_concurrent_positions: 2,
+        max_leverage: 3,
+        stop_loss_atr_multiple: 2,
+        daily_loss_kill_pct: 0.05,
+      },
+      mechanical_params: {},
+    });
+    vi.mocked(strategyApi.validateDraft).mockResolvedValue({
+      id: "01TEST",
+      ok: true,
+      errors: [],
+    });
+
+    renderRoute();
+
+    expect(
+      await screen.findByText(/attach an agent before running eval/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: /attach agent first/i }),
+    ).toHaveAttribute("href", "#strategy-agents");
+    expect(
+      screen.queryByRole("link", { name: /^run eval/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: /open launcher/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("attaches an existing agent with the requested role", async () => {
+    vi.mocked(agentApi.listAgents).mockResolvedValue([
+      {
+        agent_id: "01DEEPSEEK",
+        name: "DeepSeek trader",
+        description: "",
+        tags: [],
+        slots: [
+          {
+            name: "main",
+            provider: "openrouter",
+            model: "deepseek/deepseek-v4-flash",
+            system_prompt: "Trade with discipline.",
+            skill_ids: [],
+            max_tokens: 4096,
+          },
+        ],
+        archived: false,
+        created_at: "2026-05-13T14:52:21Z",
+        updated_at: "2026-05-13T14:52:21Z",
+      },
+    ]);
+    vi.mocked(strategyApi.getStrategy).mockResolvedValue({
+      manifest: {
+        id: "01TEST",
+        display_name: "Agent Stack",
+        template: "custom",
+        creator: "@t",
+        plain_summary: "",
+        regime_fit: [],
+        asset_universe: [],
+        decision_cadence_minutes: 240,
+        required_models: [],
+        required_tools: [],
+        risk_preset_or_config: "balanced",
+        published_at: null,
+      },
+      agents: [],
+      pipeline: { kind: "single" },
+      regime_slot: null,
+      intern_slot: null,
+      trader_slot: null,
+      risk: {
+        risk_pct_per_trade: 0.015,
+        max_concurrent_positions: 2,
+        max_leverage: 3,
+        stop_loss_atr_multiple: 2,
+        daily_loss_kill_pct: 0.05,
+      },
+      mechanical_params: {},
+    });
+    vi.mocked(strategyApi.addStrategyAgent).mockResolvedValue({
+      strategy_id: "01TEST",
+      agents: [{ agent_id: "01DEEPSEEK", role: "trader" }],
+      pipeline: { kind: "single" },
+    });
+
+    renderRoute();
+
+    await screen.findByText("DeepSeek trader · 01DEEPSEEK");
+    fireEvent.change(await screen.findByLabelText("Existing agent"), {
+      target: { value: "01DEEPSEEK" },
+    });
+    fireEvent.change(screen.getByLabelText("Existing agent role"), {
+      target: { value: "trader" },
+    });
+    const addButton = screen.getByRole("button", { name: "Add Agent" });
+    await waitFor(() => expect(addButton).not.toBeDisabled());
+    fireEvent.click(addButton);
+
+    await waitFor(() => {
+      expect(strategyApi.addStrategyAgent).toHaveBeenCalledWith("01TEST", {
+        agent_id: "01DEEPSEEK",
+        role: "trader",
+      });
+    });
+  });
+
+  it("shows attached agent name and provider/model when available", async () => {
+    vi.mocked(agentApi.listAgents).mockResolvedValue([
+      {
+        agent_id: "01DEEPSEEK",
+        name: "DeepSeek trader",
+        description: "",
+        tags: [],
+        slots: [
+          {
+            name: "main",
+            provider: "openrouter",
+            model: "deepseek/deepseek-v4-flash",
+            system_prompt: "Trade with discipline.",
+            skill_ids: [],
+            max_tokens: 4096,
+          },
+        ],
+        archived: false,
+        created_at: "2026-05-13T14:52:21Z",
+        updated_at: "2026-05-13T14:52:21Z",
+      },
+    ]);
+    vi.mocked(strategyApi.getStrategy).mockResolvedValue({
+      manifest: {
+        id: "01TEST",
+        display_name: "Agent Stack",
+        template: "custom",
+        creator: "@t",
+        plain_summary: "",
+        regime_fit: [],
+        asset_universe: [],
+        decision_cadence_minutes: 240,
+        required_models: [],
+        required_tools: [],
+        risk_preset_or_config: "balanced",
+        published_at: null,
+      },
+      agents: [{ agent_id: "01DEEPSEEK", role: "trader" }],
+      pipeline: { kind: "single" },
+      regime_slot: null,
+      intern_slot: null,
+      trader_slot: null,
+      risk: {
+        risk_pct_per_trade: 0.015,
+        max_concurrent_positions: 2,
+        max_leverage: 3,
+        stop_loss_atr_multiple: 2,
+        daily_loss_kill_pct: 0.05,
+      },
+      mechanical_params: {},
+    });
+
+    renderRoute();
+
+    expect(await screen.findByText("DeepSeek trader")).toBeInTheDocument();
+    expect(
+      screen.getByText("openrouter / deepseek/deepseek-v4-flash"),
+    ).toBeInTheDocument();
+  });
+
   it("shows AgentRefs in pipeline order with current pipeline kind", async () => {
     vi.mocked(agentApi.listAgents).mockResolvedValue([]);
     vi.mocked(strategyApi.getStrategy).mockResolvedValue({

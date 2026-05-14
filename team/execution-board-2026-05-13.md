@@ -66,6 +66,8 @@ Use these as reference only:
 | `qa9-delete-edit-flow-verification` | `.worktrees/qa9-delete-edit-flow-verification` | Verify scenario clone-to-edit, archive, and delete failure flows after live QA stopped before delete/edit coverage | none | no overlap with wizard/strategy-agent tracks; frontend test-only coverage | scenario detail focused frontend tests + typecheck |
 | `qa9-strategy-wizard-persistence` | `.worktrees/qa9-strategy-wizard-persistence` | Fix live QA bug where setup wizard/chat claims asset/cadence/risk edits but Inspector manifest still shows original draft values | none | no overlap with eval/agent attachment tracks; owns wizard authoring manifest persistence | authoring/API/wizard regression tests in CI/non-deploy + frontend typecheck |
 | `qa9-readonly-editability-contract` | `.worktrees/qa9-readonly-editability-contract` | Clarify the setup/Inspector contract so read-only manifest/mechanical fields are not presented as directly editable without a successful setup tool save | none | no overlap with backend persistence; owns copy/tests for read-only contract | setup + authoring focused frontend tests + typecheck |
+| `qa9-strategy-agent-attachment-flow` | `.worktrees/qa9-strategy-agent-attachment-flow` | Validate attaching an existing AgentRef from the Inspector and make attached rows show agent/provider/model metadata before eval | none | no overlap with setup wizard persistence or read-only copy tracks | authoring focused frontend tests + typecheck |
+| `color-themes-light-dark` | `.worktrees/color-themes-light-dark` | Execute `docs/superpowers/plans/2026-05-14-color-themes-light-dark-mode.md`: color-only dashboard themes, General settings, sidebar sun/moon toggle, chart palette integration | none | no overlap with broad shell/settings/chart frontend tracks | `corepack pnpm --dir frontend/web test && corepack pnpm --dir frontend/web typecheck && corepack pnpm --dir frontend/web build` |
 
 ## Recommended order
 
@@ -97,6 +99,7 @@ Use these as reference only:
 26. `qa8-agent-ux-cli-templates`
 27. `qa8-scenario-display-name-contract`
 28. `qa8-eval-provider-preflight`
+29. `color-themes-light-dark`
 
 ## Immediate start set
 
@@ -116,6 +119,7 @@ Safe to start now:
 - `qa8-unbounded-slot-tool-use`
 - `qa8-cli-runtime-blockers`
 - `qa8-scenario-display-name-contract`
+- `color-themes-light-dark`
 
 Wait for `strategy-agent-backend`:
 
@@ -160,6 +164,9 @@ Do not overlap:
 - `qa8-eval-provider-preflight` with `qa4-chat-eval-launcher`,
   `qa8-shared-chat-rail-context`, or `qa8-inspector-agent-model-picker` if
   those tracks are still editing provider/model picker wiring.
+- `color-themes-light-dark` with broad shell/settings/chart frontend tracks,
+  especially `qa8-shared-chat-rail-context`, `pr94-chart-stabilization`,
+  `runtime-render-optimization`, or any active Settings layout refactor.
 
 ## Cherry-pick policy
 

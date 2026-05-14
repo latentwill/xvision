@@ -19,6 +19,7 @@ const SetupRoute = lazy(() => import("./routes/setup").then((m) => ({ default: m
 const SettingsLayout = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsLayout })));
 const SettingsBrokersRoute = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsBrokersRoute })));
 const SettingsDangerRoute = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsDangerRoute })));
+const SettingsGeneralRoute = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsGeneralRoute })));
 const SettingsProvidersRoute = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsProvidersRoute })));
 const SettingsSkillsRoute = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsSkillsRoute })));
 
@@ -56,7 +57,8 @@ export const router = createBrowserRouter([
         path: "settings",
         element: page(<SettingsLayout />),
         children: [
-          { index: true, element: <Navigate to="providers" replace /> },
+          { index: true, element: <Navigate to="general" replace /> },
+          { path: "general", element: page(<SettingsGeneralRoute />) },
           { path: "providers", element: page(<SettingsProvidersRoute />) },
           { path: "brokers", element: page(<SettingsBrokersRoute />) },
           { path: "skills", element: <Navigate to="/agents/skills" replace /> },
