@@ -4,6 +4,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { Pill } from "@/components/primitives/Pill";
+import { InlineChartCard } from "@/components/chat/inline-chart/InlineChartCard";
 
 import type { Bubble, RenderableBlock, RichDisplayBlock, Tool } from "./types";
 
@@ -108,6 +109,9 @@ function ContentBlocksView({ blocks }: { blocks: RenderableBlock[] }) {
 }
 
 function UnsupportedRichBlock({ block }: { block: RichDisplayBlock }) {
+  if (block.type === "inline_chart") {
+    return <InlineChartCard payload={block} />;
+  }
   if (!import.meta.env.DEV) {
     const summary =
       "a11y_summary" in block && typeof block.a11y_summary === "string"
