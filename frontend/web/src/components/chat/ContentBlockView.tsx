@@ -41,7 +41,6 @@ function ChoiceChips({
 }
 
 function UnsupportedBlock({ type }: { type?: string }) {
-  if (!import.meta.env.DEV) return null;
   return (
     <div className="rounded border border-border-soft bg-surface-elev px-2 py-1 text-[12px] text-text-3">
       Unsupported chat block: <span className="font-mono">{type ?? "unknown"}</span>
