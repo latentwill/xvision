@@ -164,9 +164,11 @@ function scenario(overrides: Partial<Scenario> = {}): Scenario {
 function mockReady({
   providers = [provider()],
   alpaca = broker(),
+  strategyProviderModels = [{ provider: "openai", model: "gpt-4.1-mini" }],
 }: {
   providers?: ProviderRow[];
   alpaca?: BrokerEntry;
+  strategyProviderModels?: { provider: string; model: string }[];
 } = {}) {
   vi.mocked(evalApi.listRuns).mockResolvedValue([]);
   vi.mocked(scenariosApi.listScenarios).mockResolvedValue([scenario()]);
@@ -194,6 +196,7 @@ function mockReady({
       decision_cadence_minutes: 240,
       providers: ["openai"],
       models: ["gpt-4.1-mini"],
+      provider_models: strategyProviderModels,
     },
   ]);
 }
@@ -369,6 +372,32 @@ describe("EvalRunsRoute", () => {
     fireEvent.click(startButton);
 
     expect(await screen.findByText(/provider 'openai' is not configured/)).toBeInTheDocument();
+    expect(evalApi.startRun).not.toHaveBeenCalled();
+  });
+
+  it("blocks eval launch when the selected strategy uses a disabled model", async () => {
+    mockReady({
+      providers: [provider()],
+      strategyProviderModels: [
+        { provider: "openai", model: "claude-sonnet-4-5" },
+      ],
+    });
+    vi.mocked(evalApi.startRun).mockResolvedValue({} as never);
+
+    renderRoute("/eval-runs?strategy=01TEST&start=1");
+
+    await screen.findByRole("option", { name: /User 4H/ });
+    const scenarioSelect = screen.getByLabelText("Scenario") as HTMLSelectElement;
+    fireEvent.change(scenarioSelect, { target: { value: "user-scenario-4h" } });
+    const startButton = screen.getByRole("button", { name: "Start" });
+    await waitFor(() => expect(startButton).not.toBeDisabled());
+    fireEvent.click(startButton);
+
+    expect(
+      await screen.findByText(
+        /model 'claude-sonnet-4-5' is not enabled for provider 'openai'/,
+      ),
+    ).toBeInTheDocument();
     expect(evalApi.startRun).not.toHaveBeenCalled();
   });
 

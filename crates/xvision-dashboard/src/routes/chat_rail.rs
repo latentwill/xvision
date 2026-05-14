@@ -179,6 +179,8 @@ pub async fn chat(
             xvn_home,
             dispatch,
             model,
+            resolved.provider_name,
+            resolved.model,
             pool,
             session_id,
             scope,

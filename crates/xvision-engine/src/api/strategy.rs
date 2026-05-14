@@ -23,7 +23,10 @@ use crate::strategies::{
     store::{strategy_store_dir, StrategyStore, FilesystemStore},
     Strategy,
 };
+use std::path::PathBuf;
+use ulid::Ulid;
 use std::time::Instant;
+use xvision_core::config::{self, RuntimeConfig};
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(
@@ -48,6 +51,20 @@ pub struct StrategySummary {
     /// Unique model ids required by this strategy's executable slots.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub models: Vec<String>,
+    /// Explicit provider-model pairs required by this strategy's executable slots.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub provider_models: Vec<ProviderModelPair>,
+}
+
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ProviderModelPair {
+    pub provider: String,
+    pub model: String,
 }
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
@@ -110,6 +127,17 @@ pub struct StrategyAgentsOut {
     pub pipeline: PipelineDef,
 }
 
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CloneStrategyReq {
+    #[serde(default)]
+    pub display_name: Option<String>,
+}
+
 pub async fn list(ctx: &ApiContext) -> ApiResult<Vec<StrategySummary>> {
     let started = Instant::now();
     let result = list_inner(ctx).await;
@@ -156,6 +184,7 @@ async fn list_inner(ctx: &ApiContext) -> ApiResult<Vec<StrategySummary>> {
             model,
             providers: inventory.providers,
             models: inventory.models,
+            provider_models: inventory.provider_models,
         });
     }
     Ok(out)
@@ -165,6 +194,7 @@ async fn list_inner(ctx: &ApiContext) -> ApiResult<Vec<StrategySummary>> {
 struct ProviderModelInventory {
     providers: Vec<String>,
     models: Vec<String>,
+    provider_models: Vec<ProviderModelPair>,
 }
 
 async fn provider_model_inventory(
@@ -189,10 +219,42 @@ async fn provider_model_inventory(
             continue;
         };
         for slot in agent.slots {
-            push_unique_trimmed(&mut inventory.providers, slot.provider);
-            push_unique_trimmed(&mut inventory.models, slot.model);
+            collect_summary_runtime_pair(
+                &mut inventory,
+                Some(slot.provider.as_str()),
+                Some(slot.model.as_str()),
+                "agent slot",
+            );
         }
     }
+
+    collect_summary_runtime_pair(
+        &mut inventory,
+        strategy
+            .trader_slot
+            .as_ref()
+            .and_then(|slot| slot.provider.as_deref()),
+        strategy.trader_slot.as_ref().and_then(|slot| slot.model.as_deref()),
+        "trader slot",
+    );
+    collect_summary_runtime_pair(
+        &mut inventory,
+        strategy
+            .intern_slot
+            .as_ref()
+            .and_then(|slot| slot.provider.as_deref()),
+        strategy.intern_slot.as_ref().and_then(|slot| slot.model.as_deref()),
+        "intern slot",
+    );
+    collect_summary_runtime_pair(
+        &mut inventory,
+        strategy
+            .regime_slot
+            .as_ref()
+            .and_then(|slot| slot.provider.as_deref()),
+        strategy.regime_slot.as_ref().and_then(|slot| slot.model.as_deref()),
+        "regime slot",
+    );
 
     if inventory.models.is_empty() && inventory.providers.is_empty() {
         // Legacy slot fallback for older strategy JSON. Trader is the
@@ -213,6 +275,22 @@ async fn provider_model_inventory(
     Ok(inventory)
 }
 
+fn collect_summary_runtime_pair(
+    inventory: &mut ProviderModelInventory,
+    provider: Option<&str>,
+    model: Option<&str>,
+    _label: &str,
+) {
+    let provider = normalized_runtime_value(provider);
+    let model = normalized_runtime_value(model);
+    if provider.is_empty() || model.is_empty() {
+        return;
+    }
+    push_unique_trimmed(&mut inventory.providers, provider.clone());
+    push_unique_trimmed(&mut inventory.models, model.clone());
+    push_unique_provider_model(inventory, provider, model);
+}
+
 fn model_summary(models: &[String]) -> Option<String> {
     match models {
         [] => None,
@@ -228,6 +306,27 @@ fn push_unique_trimmed(items: &mut Vec<String>, value: String) {
     }
     if !items.iter().any(|m| m == value) {
         items.push(value.to_string());
+    }
+}
+
+fn normalized_runtime_value(value: Option<&str>) -> String {
+    value
+        .unwrap_or("")
+        .trim()
+        .to_string()
+}
+
+fn push_unique_provider_model(
+    inventory: &mut ProviderModelInventory,
+    provider: String,
+    model: String,
+) {
+    if !inventory
+        .provider_models
+        .iter()
+        .any(|pair| pair.provider == provider && pair.model == model)
+    {
+        inventory.provider_models.push(ProviderModelPair { provider, model });
     }
 }
 
@@ -312,6 +411,85 @@ fn is_not_found(err: &anyhow::Error) -> bool {
     false
 }
 
+pub async fn delete(ctx: &ApiContext, agent_id: &str) -> ApiResult<()> {
+    let started = Instant::now();
+    let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+    let result = store.remove(agent_id).await.map_err(|e| {
+        if is_not_found(&e) {
+            ApiError::NotFound(format!("strategy '{agent_id}'"))
+        } else {
+            ApiError::Internal(e.to_string())
+        }
+    });
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let _ = audit::record(
+        ctx,
+        "strategy",
+        "delete",
+        Some(agent_id),
+        None,
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    if result.is_ok() {
+        api_search::delete_strategy(ctx, agent_id).await;
+    }
+    result
+}
+
+pub async fn clone_strategy(
+    ctx: &ApiContext,
+    agent_id: &str,
+    req: CloneStrategyReq,
+) -> ApiResult<Strategy> {
+    let started = Instant::now();
+    let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+    let result = async {
+        let mut strategy = get_inner(ctx, agent_id).await?;
+        let clone_id = Ulid::new().to_string();
+        let display_name = req
+            .display_name
+            .unwrap_or_else(|| format!("{} (clone)", strategy.manifest.display_name));
+        strategy.manifest.id = clone_id;
+        strategy.manifest.display_name = display_name;
+        strategy.manifest.published_at = None;
+        // Clones are expected to be user-editable drafts; keep creator
+        // and templates from the parent for continuity.
+        store
+            .save(&strategy)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
+        Ok::<_, ApiError>(strategy)
+    }
+    .await;
+
+    let outcome = match &result {
+        Ok(strategy) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let target = result.as_ref().ok().map(|strategy| strategy.manifest.id.as_str());
+    let _ = audit::record(
+        ctx,
+        "strategy",
+        "clone",
+        target,
+        None,
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+
+    if let Ok(strategy) = &result {
+        index_strategy_after_mutation(ctx, &store, &strategy.manifest.id).await;
+    }
+
+    result
+}
+
 /// Map an `anyhow::Error` from `engine::authoring::*` dispatcher fns to a
 /// typed `ApiError`. The dispatcher emits validation failures as
 /// `anyhow!("...")` strings (no typed enum), so we string-match the prefix
@@ -347,6 +525,191 @@ fn map_authoring_error(err: anyhow::Error, agent_id: Option<&str>) -> ApiError {
         return ApiError::Validation(msg);
     }
     ApiError::Internal(msg)
+}
+
+fn collect_runtime_requirements_for_slot(
+    context: &str,
+    provider: Option<&str>,
+    model: Option<&str>,
+    requirements: &mut Vec<ProviderModelPair>,
+    errors: &mut Vec<String>,
+) {
+    let provider = normalized_runtime_value(provider);
+    let model = normalized_runtime_value(model);
+    match (provider.is_empty(), model.is_empty()) {
+        (false, false) => {
+            let already = requirements
+                .iter()
+                .any(|pair| pair.provider == provider && pair.model == model);
+            if !already {
+                requirements.push(ProviderModelPair { provider, model });
+            }
+        }
+        (false, true) => {
+            errors.push(format!("{context} sets provider '{provider}' but has no model"));
+        }
+        (true, false) => {
+            errors.push(format!("{context} sets model '{model}' but has no provider"));
+        }
+        (true, true) => {}
+    }
+}
+
+async fn collect_strategy_runtime_requirements(
+    ctx: &ApiContext,
+    strategy: &Strategy,
+    agent_store: &AgentStore,
+) -> ApiResult<Vec<String>> {
+    let mut requirements = Vec::new();
+    let mut errors = Vec::new();
+
+    collect_runtime_requirements_for_slot(
+        "trader slot",
+        strategy
+            .trader_slot
+            .as_ref()
+            .and_then(|slot| slot.provider.as_deref()),
+        strategy.trader_slot.as_ref().and_then(|slot| slot.model.as_deref()),
+        &mut requirements,
+        &mut errors,
+    );
+    collect_runtime_requirements_for_slot(
+        "intern slot",
+        strategy
+            .intern_slot
+            .as_ref()
+            .and_then(|slot| slot.provider.as_deref()),
+        strategy.intern_slot.as_ref().and_then(|slot| slot.model.as_deref()),
+        &mut requirements,
+        &mut errors,
+    );
+    collect_runtime_requirements_for_slot(
+        "regime slot",
+        strategy
+            .regime_slot
+            .as_ref()
+            .and_then(|slot| slot.provider.as_deref()),
+        strategy.regime_slot.as_ref().and_then(|slot| slot.model.as_deref()),
+        &mut requirements,
+        &mut errors,
+    );
+
+    for agent_ref in &strategy.agents {
+        if !errors.is_empty() {
+            break;
+        }
+        let agent = agent_store
+            .get(&agent_ref.agent_id)
+            .await
+            .map_err(|e| ApiError::Internal(format!("load agent {}: {e}", agent_ref.agent_id)))?;
+        let Some(agent) = agent else {
+            errors.push(format!(
+                "agent '{}' is attached to strategy '{}' but missing",
+                agent_ref.agent_id,
+                strategy.manifest.id
+            ));
+            continue;
+        };
+        for slot in &agent.slots {
+            let context = if slot.name.trim().is_empty() {
+                format!("agent '{}'", agent_ref.role)
+            } else {
+                format!("agent '{}' slot '{}'", agent_ref.role, slot.name)
+            };
+            collect_runtime_requirements_for_slot(
+                &context,
+                Some(&slot.provider),
+                Some(&slot.model),
+                &mut requirements,
+                &mut errors,
+            );
+            if !errors.is_empty() {
+                break;
+            }
+        }
+    }
+
+    if !errors.is_empty() {
+        return Ok(errors);
+    }
+    if requirements.is_empty() {
+        errors.push(
+            "eval requires an explicit provider + model on a strategy slot or attached agent; no workspace default is assumed"
+                .into(),
+        );
+        return Ok(errors);
+    }
+
+    errors.extend(validate_runtime_requirements(ctx, &requirements).await?);
+    Ok(errors)
+}
+
+fn runtime_config_path(ctx: &ApiContext) -> PathBuf {
+    if let Ok(p) = std::env::var("XVN_CONFIG_PATH") {
+        if !p.is_empty() {
+            return PathBuf::from(p);
+        }
+    }
+    ctx.xvn_home.join("config").join("default.toml")
+}
+
+async fn load_runtime_config(ctx: &ApiContext) -> ApiResult<RuntimeConfig> {
+    let path = runtime_config_path(ctx);
+    tokio::task::spawn_blocking(move || config::load_runtime(&path))
+        .await
+        .map_err(|e| ApiError::Internal(format!("spawn_blocking: {e}")))?
+        .map_err(|e| ApiError::Validation(format!("load config: {e}")))
+}
+
+async fn validate_runtime_requirements(
+    ctx: &ApiContext,
+    requirements: &[ProviderModelPair],
+) -> ApiResult<Vec<String>> {
+    if requirements.is_empty() {
+        return Ok(vec![]);
+    }
+    let cfg = load_runtime_config(ctx).await?;
+    let mut errors = Vec::new();
+    for req in requirements {
+        let Some(entry) = cfg.providers.iter().find(|entry| entry.name == req.provider) else {
+            errors.push(format!(
+                "provider `{}` is not configured. Pick a configured provider/model for the strategy agent before running eval.",
+                req.provider
+            ));
+            continue;
+        };
+        if !entry.enabled_models.iter().any(|m| m == &req.model) {
+            errors.push(format!(
+                "model `{}` is not enabled for provider `{}`. Enable it in Settings -> Providers before running eval.",
+                req.model, req.provider
+            ));
+        }
+    }
+    Ok(errors)
+}
+
+fn update_slot_pair(req: &UpdateSlotReq) -> ApiResult<Option<ProviderModelPair>> {
+    match (&req.provider, &req.model) {
+        (None, None) => Ok(None),
+        (Some(provider), Some(model)) => {
+            let provider = normalized_runtime_value(Some(provider));
+            let model = normalized_runtime_value(Some(model));
+            if provider.is_empty() || model.is_empty() {
+                return Err(ApiError::Validation(
+                    "provider and model must be non-empty when updating either field".into(),
+                ));
+            }
+            Ok(Some(ProviderModelPair { provider, model }))
+        }
+        (Some(_), None) | (None, Some(_)) => Err(ApiError::Validation(
+            "provider and model must be updated together".into(),
+        )),
+    }
+}
+
+fn append_runtime_errors(out: &mut ValidateDraftOut, mut errors: Vec<String>) {
+    out.errors.extend(errors.drain(..));
+    out.ok = out.errors.is_empty();
 }
 
 fn strategy_agents_out(strategy: Strategy) -> StrategyAgentsOut {
@@ -398,6 +761,13 @@ pub async fn update_slot(ctx: &ApiContext, req: UpdateSlotReq) -> ApiResult<Upda
     let agent_id = req.id.clone();
     let args_json = serde_json::to_string(&req).ok();
     let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+    let runtime_pair = update_slot_pair(&req)?;
+    if let Some(pair) = runtime_pair {
+        let errors = validate_runtime_requirements(ctx, std::slice::from_ref(&pair)).await?;
+        if !errors.is_empty() {
+            return Err(ApiError::Validation(errors.join("; ")));
+        }
+    }
     let result = authoring::update_slot(&store, req)
         .await
         .map_err(|e| map_authoring_error(e, Some(&agent_id)));
@@ -676,9 +1046,18 @@ async fn index_strategy_after_mutation(
 pub async fn validate_draft(ctx: &ApiContext, agent_id: &str) -> ApiResult<ValidateDraftOut> {
     let started = Instant::now();
     let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
-    let result = authoring::validate_draft(&store, agent_id)
+    let agent_store = AgentStore::new(ctx.db.clone());
+    let strategy = store
+        .load(agent_id)
+        .await
+        .map_err(|e| map_authoring_error(e, Some(agent_id)))?;
+    let mut result = authoring::validate_draft(&store, agent_id)
         .await
         .map_err(|e| map_authoring_error(e, Some(agent_id)));
+    if let Ok(ref mut out) = result {
+        let errors = collect_strategy_runtime_requirements(ctx, &strategy, &agent_store).await?;
+        append_runtime_errors(out, errors);
+    }
 
     let outcome = match &result {
         Ok(_) => Outcome::Ok,
@@ -928,6 +1307,39 @@ mod tests {
     async fn validate_draft_missing_is_not_found() {
         let (ctx, _d) = ctx_with_audit().await;
         let r = validate_draft(&ctx, "01TOTALLYMISSINGAGENTID000").await;
+        assert!(matches!(r, Err(ApiError::NotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn delete_strategy_removes_file_and_audits() {
+        let (ctx, _d) = ctx_with_audit().await;
+        let created = create_strategy(
+            &ctx,
+            CreateStrategyReq {
+                template: "trend_follower".into(),
+                name: "x".into(),
+                creator: None,
+            },
+        )
+        .await
+        .unwrap();
+        delete(&ctx, &created.id).await.unwrap();
+
+        let list = list(&ctx).await.unwrap();
+        assert!(
+            !list.iter().any(|s| s.agent_id == created.id),
+            "deleted strategy should disappear from list"
+        );
+        assert!(
+            matches!(get(&ctx, &created.id).await, Err(ApiError::NotFound(_)))
+        );
+        assert!(audit_row_exists(&ctx, "delete", &created.id).await);
+    }
+
+    #[tokio::test]
+    async fn delete_unknown_strategy_returns_not_found() {
+        let (ctx, _d) = ctx_with_audit().await;
+        let r = delete(&ctx, "01TOTALLYMISSINGAGENTID000").await;
         assert!(matches!(r, Err(ApiError::NotFound(_))));
     }
 }
