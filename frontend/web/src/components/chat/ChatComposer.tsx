@@ -4,6 +4,8 @@ export function ChatComposer({
   onChange,
   onSubmit,
   disabled,
+  busy = false,
+  onCancel,
   onOpenActions,
 }: {
   value: string;
@@ -11,6 +13,8 @@ export function ChatComposer({
   onChange: (s: string) => void;
   onSubmit: () => void;
   disabled: boolean;
+  busy?: boolean;
+  onCancel?: () => void;
   onOpenActions?: () => void;
 }) {
   return (
@@ -39,12 +43,22 @@ export function ChatComposer({
         placeholder={placeholder}
         className="flex-1 bg-transparent border border-border-soft rounded-md px-2.5 py-1.5 text-[13px] placeholder:text-text-3 focus:outline-none focus:ring-1 focus:ring-text-2"
       />
+      {busy && onCancel && (
+        <button
+          type="button"
+          onClick={onCancel}
+          className="px-2.5 py-1.5 rounded-md text-[12px] border border-warn/60 text-warn bg-surface-2/60 hover:bg-warn/10"
+          aria-label="Stop response"
+        >
+          Stop
+        </button>
+      )}
       <button
         type="submit"
-        disabled={disabled || !value.trim()}
+        disabled={disabled || busy || !value.trim()}
         className="px-2.5 py-1.5 rounded-md text-[12px] border border-border-soft bg-surface-2/60 hover:bg-surface-2 disabled:opacity-50 disabled:cursor-not-allowed"
       >
-        {disabled ? "..." : "Send"}
+        {busy ? "..." : "Send"}
       </button>
     </form>
   );

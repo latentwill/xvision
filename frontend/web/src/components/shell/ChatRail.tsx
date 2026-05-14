@@ -60,7 +60,7 @@ const RAIL_OPEN_LS = "xvn.chat_rail.open";
 const RAIL_PROVIDER_LS = "xvn.chat_rail.provider";
 const RAIL_MODEL_LS = "xvn.chat_rail.model";
 
-type ChatRailProps = {
+export type ChatRailProps = {
   variant?: "desktop" | "panel";
   className?: string;
   showHeader?: boolean;
@@ -206,6 +206,10 @@ export function ChatRail({
     [sessionId, isStreaming, providerName, modelId],
   );
 
+  const stopStreaming = useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
+
   const startFresh = useCallback(async () => {
     abortRef.current?.abort();
     setInput("");
@@ -346,7 +350,9 @@ export function ChatRail({
         placeholder={placeholder(scope)}
         onChange={setInput}
         onSubmit={() => void send(input)}
-        disabled={isStreaming || !sessionId}
+        disabled={!sessionId}
+        busy={isStreaming}
+        onCancel={stopStreaming}
         onOpenActions={onOpenActions}
       />
     </aside>
