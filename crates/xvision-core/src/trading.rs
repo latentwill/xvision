@@ -112,7 +112,9 @@ impl std::str::FromStr for AssetSymbol {
             "BCH" | "BCH/USD" | "BCHUSD" => Ok(Self::Bch),
             "USDT" | "USDT/USD" | "USDTUSD" => Ok(Self::Usdt),
             "USDC" | "USDC/USD" | "USDCUSD" => Ok(Self::Usdc),
-            other => Err(format!("unknown asset '{other}'")),
+            other => Err(format!(
+                "asset '{other}' is not in the Alpaca crypto whitelist"
+            )),
         }
     }
 }
