@@ -50,11 +50,15 @@ const RAIL_MODEL_LS = "xvn.chat_rail.model";
 type ChatRailProps = {
   variant?: "desktop" | "panel";
   className?: string;
+  showHeader?: boolean;
+  onOpenActions?: () => void;
 };
 
 export function ChatRail({
   variant = "desktop",
   className = "",
+  showHeader = true,
+  onOpenActions,
 }: ChatRailProps) {
   const location = useLocation();
   const scope = useMemo<ContextScope>(
@@ -231,29 +235,31 @@ export function ChatRail({
       ].join(" ")}
       aria-label="Chat rail"
     >
-      <header className="px-4 py-3 border-b border-border-soft flex items-center justify-between gap-2">
-        <div className="text-[12px] text-text-2 truncate">
-          Context · <span className="text-text">{headerLabel(scope)}</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <button
-            className="text-[11px] text-text-3 hover:text-text border border-border-soft rounded-sm px-2 py-1"
-            onClick={startFresh}
-            title="Start a new conversation in this context"
-          >
-            Start fresh
-          </button>
-          {variant === "desktop" && (
+      {showHeader && (
+        <header className="px-4 py-3 border-b border-border-soft flex items-center justify-between gap-2">
+          <div className="text-[12px] text-text-2 truncate">
+            Context · <span className="text-text">{headerLabel(scope)}</span>
+          </div>
+          <div className="flex items-center gap-1">
             <button
-              className="text-text-3 hover:text-text"
-              onClick={() => setOpen(false)}
-              title="Collapse rail"
+              className="text-[11px] text-text-3 hover:text-text border border-border-soft rounded-sm px-2 py-1"
+              onClick={startFresh}
+              title="Start a new conversation in this context"
             >
-              <Icon name="chevR" size={14} />
+              Start fresh
             </button>
-          )}
-        </div>
-      </header>
+            {variant === "desktop" && (
+              <button
+                className="text-text-3 hover:text-text"
+                onClick={() => setOpen(false)}
+                title="Collapse rail"
+              >
+                <Icon name="chevR" size={14} />
+              </button>
+            )}
+          </div>
+        </header>
+      )}
 
       <RailModelBar
         rows={providers.data?.providers ?? []}
@@ -293,6 +299,7 @@ export function ChatRail({
         onChange={setInput}
         onSubmit={() => void send(input)}
         disabled={isStreaming || !sessionId}
+        onOpenActions={onOpenActions}
       />
     </aside>
   );
