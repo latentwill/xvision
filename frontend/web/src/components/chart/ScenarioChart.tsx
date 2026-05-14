@@ -167,13 +167,19 @@ export function ScenarioChart({
             radioName="scenario-chart-subpane"
           />
         }
+        dataTable={<ScenarioBarsTable bars={payload.bars} />}
       >
         {payload.bars.length === 0 ? (
           <div className="flex items-center justify-center h-[360px] text-text-3 text-[13px]">
             No bars cached yet. Use Fetch bars to populate this chart.
           </div>
         ) : (
-          <div ref={ref} style={{ height: 360 }} />
+          <div
+            ref={ref}
+            role="img"
+            aria-label={`Scenario price chart for ${payload.scenario.display_name}`}
+            style={{ height: 360 }}
+          />
         )}
       </ChartContainer>
     </div>
@@ -212,4 +218,36 @@ function applyRange(chart: ReturnType<typeof createChart>, range: RangePreset, l
     from: Math.max(0, len - count),
     to: len + 2,
   });
+}
+
+function ScenarioBarsTable({ bars }: { bars: ScenarioChartPayload["bars"] }) {
+  if (bars.length === 0) {
+    return <div className="text-[12px] text-text-3">No cached bars.</div>;
+  }
+  return (
+    <table className="w-full text-left text-[12px]">
+      <thead className="text-text-3">
+        <tr>
+          <th className="px-2 py-1 font-normal">Time</th>
+          <th className="px-2 py-1 font-normal">Open</th>
+          <th className="px-2 py-1 font-normal">High</th>
+          <th className="px-2 py-1 font-normal">Low</th>
+          <th className="px-2 py-1 font-normal">Close</th>
+          <th className="px-2 py-1 font-normal">Volume</th>
+        </tr>
+      </thead>
+      <tbody>
+        {bars.slice(0, 200).map((bar) => (
+          <tr key={bar.time} className="border-t border-border-soft">
+            <td className="px-2 py-1 font-mono">{bar.time}</td>
+            <td className="px-2 py-1 font-mono">{bar.open}</td>
+            <td className="px-2 py-1 font-mono">{bar.high}</td>
+            <td className="px-2 py-1 font-mono">{bar.low}</td>
+            <td className="px-2 py-1 font-mono">{bar.close}</td>
+            <td className="px-2 py-1 font-mono">{bar.volume}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
 }
