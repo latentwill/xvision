@@ -708,6 +708,16 @@ function summarizeArgs(tool: string, args: unknown): string {
       return `${a["template"]} → ${a["name"]}`;
     case "update_slot":
       return String(a["slot"] ?? "");
+    case "update_manifest": {
+      const bits: string[] = [];
+      if (Array.isArray(a["asset_universe"])) {
+        bits.push(`assets=${(a["asset_universe"] as unknown[]).join(",")}`);
+      }
+      if (a["decision_cadence_minutes"]) {
+        bits.push(`cadence=${a["decision_cadence_minutes"]}m`);
+      }
+      return bits.join("; ");
+    }
     case "set_mechanical_param":
       return `${a["key"]} = ${JSON.stringify(a["value"])}`;
     case "set_risk_config":
@@ -738,6 +748,7 @@ function summarizeResult(tool: string, result: unknown): string {
         ? "ok"
         : `${(r.errors as string[] | undefined)?.length ?? 0} error(s)`;
     case "update_slot":
+    case "update_manifest":
       return Array.isArray(r.updated) ? (r.updated as string[]).join(", ") : "";
     case "set_risk_config":
       return r.applied ? String(r.applied) : "";
@@ -898,6 +909,21 @@ function toolLogLine(
         ),
       };
     }
+    case "update_manifest": {
+      const updated = Array.isArray(result["updated"])
+        ? (result["updated"] as string[]).join(", ")
+        : "";
+      return {
+        ok: true,
+        content: t.pending ? (
+          <>Updating manifest...</>
+        ) : updated ? (
+          <>Updated manifest: {updated}</>
+        ) : (
+          <>Updated manifest</>
+        ),
+      };
+    }
     case "run_eval": {
       if (t.pending) {
         return {
@@ -969,6 +995,8 @@ function friendlyVerb(call: string): string {
       return "Validate";
     case "update_slot":
       return "Update slot";
+    case "update_manifest":
+      return "Update manifest";
     default:
       return call;
   }
