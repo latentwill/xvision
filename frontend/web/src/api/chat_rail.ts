@@ -148,7 +148,7 @@ export async function* streamChat(
 // the fallback; a per-route Route { route } scope is attached only for the
 // list pages (so the agent can see "this user is on /strategies", but on a
 // detail page like /authoring/:id the more specific Strategy scope wins).
-export function scopeFromPath(pathname: string): ContextScope {
+export function scopeFromPath(pathname: string, search = ""): ContextScope {
   if (pathname === "/" || pathname === "") return { scope: "workspace" };
 
   const m = (re: RegExp) => pathname.match(re);
@@ -157,7 +157,7 @@ export function scopeFromPath(pathname: string): ContextScope {
   if (r) return { scope: "strategy", draft_id: decodeURIComponent(r[1]) };
 
   r = m(/^\/eval-runs\/compare$/);
-  if (r) return { scope: "compare", run_ids: [] };
+  if (r) return { scope: "compare", run_ids: runIdsFromSearch(search) };
 
   r = m(/^\/eval-runs\/([^/?#]+)$/);
   if (r) return { scope: "run", run_id: decodeURIComponent(r[1]) };
@@ -169,6 +169,12 @@ export function scopeFromPath(pathname: string): ContextScope {
     return { scope: "route", route: "/eval/runs" };
   }
   return { scope: "workspace" };
+}
+
+function runIdsFromSearch(search: string): string[] {
+  const params = new URLSearchParams(search);
+  const ids = params.getAll("ids").flatMap((v) => v.split(","));
+  return ids.map((id) => id.trim()).filter(Boolean);
 }
 
 /// Stable key for caching session_id in localStorage. We keep one session
