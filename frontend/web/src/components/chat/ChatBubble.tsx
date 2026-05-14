@@ -5,7 +5,7 @@ import remarkGfm from "remark-gfm";
 
 import { Pill } from "@/components/primitives/Pill";
 
-import type { Bubble, Tool } from "./types";
+import type { Bubble, RenderableBlock, RichDisplayBlock, Tool } from "./types";
 
 export function ChatBubble({
   bubble,
@@ -27,6 +27,9 @@ export function ChatBubble({
   }
 
   const showDots = isStreaming && isLast;
+  const hasRenderableBlocks = bubble.blocks.some(
+    (block) => block.kind !== "text" || block.text.length > 0,
+  );
   const narratives = bubble.tools
     .map((t, i) => ({ i, n: toolLogLine(t) }))
     .filter(
@@ -37,9 +40,9 @@ export function ChatBubble({
   return (
     <div className="self-start max-w-[92%]">
       <div className="bg-surface-2/60 border border-border rounded-md px-2.5 py-1.5 text-[13px] leading-snug">
-        {bubble.text ? (
+        {hasRenderableBlocks ? (
           <>
-            <MarkdownView text={bubble.text} />
+            <ContentBlocksView blocks={bubble.blocks} />
             {showDots && <TypingDots inline />}
           </>
         ) : showDots ? (
@@ -83,6 +86,42 @@ export function ChatBubble({
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function ContentBlocksView({ blocks }: { blocks: RenderableBlock[] }) {
+  return (
+    <div className="flex flex-col gap-2">
+      {blocks.map((block, index) => {
+        if (block.kind === "text") {
+          if (!block.text) return null;
+          return <MarkdownView key={index} text={block.text} />;
+        }
+        if (block.kind === "rich") {
+          return <UnsupportedRichBlock key={index} block={block.block} />;
+        }
+        return <UnsupportedBlockNotice key={index} type={block.type} />;
+      })}
+    </div>
+  );
+}
+
+function UnsupportedRichBlock({ block }: { block: RichDisplayBlock }) {
+  if (!import.meta.env.DEV) {
+    const summary =
+      "a11y_summary" in block && typeof block.a11y_summary === "string"
+        ? block.a11y_summary
+        : "";
+    return summary ? <div className="sr-only">{summary}</div> : null;
+  }
+  return <UnsupportedBlockNotice type={block.type} />;
+}
+
+function UnsupportedBlockNotice({ type }: { type: string }) {
+  return (
+    <div className="rounded border border-border-soft bg-surface-elev px-2 py-1 text-[12px] text-text-3">
+      Unsupported chat block: <span className="font-mono">{type}</span>
     </div>
   );
 }

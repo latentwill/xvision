@@ -1,3 +1,5 @@
+import type { ContentBlock } from "@/api/chat_rail";
+
 export type Tool = {
   call: string;
   ok: boolean;
@@ -13,10 +15,22 @@ export type Tool = {
 
 export type AssistantBubble = {
   role: "assistant";
-  text: string;
+  blocks: RenderableBlock[];
   tools: Tool[];
 };
 
 export type UserBubble = { role: "user"; text: string };
 
 export type Bubble = UserBubble | AssistantBubble;
+
+export type RichDisplayBlock = Exclude<
+  ContentBlock,
+  | { type: "text"; text: string }
+  | { type: "tool_use"; id: string; name: string; input: unknown }
+  | { type: "tool_result"; tool_use_id: string; content: string }
+>;
+
+export type RenderableBlock =
+  | { kind: "text"; text: string }
+  | { kind: "rich"; block: RichDisplayBlock }
+  | { kind: "unsupported"; type: string };
