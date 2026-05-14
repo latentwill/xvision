@@ -96,7 +96,7 @@ impl std::fmt::Display for AssetSymbol {
 impl std::str::FromStr for AssetSymbol {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_ascii_uppercase().as_str() {
+        match s.trim().to_ascii_uppercase().as_str() {
             "BTC" | "BTC/USD" | "BTCUSD" => Ok(Self::Btc),
             "ETH" | "ETH/USD" | "ETHUSD" => Ok(Self::Eth),
             "LTC" | "LTC/USD" | "LTCUSD" => Ok(Self::Ltc),
@@ -555,6 +555,15 @@ mod tests {
                 "missing variant: {sym}"
             );
         }
+    }
+
+    #[test]
+    fn asset_symbol_accepts_pair_concatenated_lowercase_and_trimmed_forms() {
+        use std::str::FromStr;
+
+        assert_eq!(AssetSymbol::from_str("eth/usd").unwrap(), AssetSymbol::Eth);
+        assert_eq!(AssetSymbol::from_str(" SOLUSD ").unwrap(), AssetSymbol::Sol);
+        assert_eq!(AssetSymbol::from_str("link").unwrap(), AssetSymbol::Link);
     }
 
     proptest::proptest! {
