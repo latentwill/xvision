@@ -109,11 +109,9 @@ async fn run_agent_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pip
     let mut regime = None;
     let mut intern = None;
     let mut trader = None;
-    let mut last = None;
 
-    let last_index = input.agent_slots.len().saturating_sub(1);
-    for (index, resolved) in input.agent_slots.iter().enumerate() {
-        let is_trader_output = resolved.role.eq_ignore_ascii_case("trader") || index == last_index;
+    for resolved in input.agent_slots.iter() {
+        let is_trader_output = resolved.role.trim().eq_ignore_ascii_case("trader");
         let out = execute_slot(SlotInput {
             slot: &resolved.slot,
             upstream_inputs: accumulated.clone(),
@@ -130,19 +128,18 @@ async fn run_agent_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pip
         total_out += out.output_tokens;
         accumulated[format!("{}_output", resolved.role)] = serde_json::Value::String(out.text());
 
-        match resolved.role.as_str() {
+        match resolved.role.trim() {
             "regime" => regime = Some(out.clone()),
             "intern" => intern = Some(out.clone()),
             "trader" => trader = Some(out.clone()),
             _ => {}
         }
-        last = Some(out);
     }
 
     Ok(PipelineOutputs {
         regime,
         intern,
-        trader: trader.or(last),
+        trader,
         total_input_tokens: total_in,
         total_output_tokens: total_out,
     })

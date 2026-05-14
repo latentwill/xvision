@@ -29,7 +29,6 @@ use crate::api::chart::{
     ChartEquityPoint, HoldMarker, LiveDecisionRow, MarkerEvent, RunChartEvent, RunEventBus,
     TradeSide, TradeMarker,
 };
-use crate::strategies::Strategy;
 use crate::eval::executor::Executor;
 use crate::eval::metrics::{
     annualization_periods_per_year, equity_to_returns, max_drawdown_pct, sharpe_from_returns,
@@ -39,6 +38,7 @@ use crate::eval::progress::{send_event, ProgressEvent, ProgressTx};
 use crate::eval::run::{MetricsSummary, Run, RunStatus};
 use crate::eval::scenario::{Scenario, SlippageModel};
 use crate::eval::store::{DecisionRow, RunStore};
+use crate::strategies::Strategy;
 use crate::tools::ToolRegistry;
 
 /// Bars before this index are treated as warm-up history and skipped — gives

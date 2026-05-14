@@ -511,6 +511,7 @@ pub async fn run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<Run> {
         RunMode::Backtest => None,
     };
     let agent_slots = resolve_agent_slots(ctx, &strategy).await?;
+    validate_eval_trader_source(&strategy, &agent_slots)?;
     let dispatch_arc = build_eval_dispatch(ctx, &strategy, &agent_slots).await?;
     let tools_arc = Arc::new(ToolRegistry::default_with_builtins());
     run_with_deps(ctx, req, broker, dispatch_arc, tools_arc).await
@@ -636,6 +637,39 @@ fn runtime_slots<'a>(
     .into_iter()
     .flatten()
     .collect()
+}
+
+fn validate_eval_trader_source(
+    strategy: &crate::strategies::Strategy,
+    agent_slots: &[ResolvedAgentSlot],
+) -> ApiResult<()> {
+    if agent_slots.is_empty() {
+        if strategy.trader_slot.is_some() {
+            return Ok(());
+        }
+        return Err(ApiError::Validation(format!(
+            "eval requires a trader output source for strategy `{}`. Add a legacy trader slot or attach an agent with role `trader`.",
+            strategy.manifest.id
+        )));
+    }
+
+    if agent_slots
+        .iter()
+        .any(|resolved| resolved.role.trim().eq_ignore_ascii_case("trader"))
+    {
+        return Ok(());
+    }
+
+    let roles = agent_slots
+        .iter()
+        .map(|resolved| resolved.role.trim())
+        .filter(|role| !role.is_empty())
+        .collect::<Vec<_>>()
+        .join(", ");
+    Err(ApiError::Validation(format!(
+        "eval requires an attached agent with role `trader` when strategy `{}` uses attached agents. Attached roles: [{}]. Attach a trader agent, or remove attached agents to use the legacy trader slot.",
+        strategy.manifest.id, roles
+    )))
 }
 
 fn validate_eval_provider_models(
@@ -815,6 +849,7 @@ async fn run_inner(
     // 1. Look up the strategy. Propagates ApiError::NotFound cleanly.
     let strategy = api_strategy::get(ctx, &req.agent_id).await?;
     let agent_slots = resolve_agent_slots(ctx, &strategy).await?;
+    validate_eval_trader_source(&strategy, &agent_slots)?;
 
     // 2. Look up the scenario. Primary path is the DB-backed registry
     //    (`api::scenario::get`); legacy path falls back to the compiled-in
@@ -1044,6 +1079,7 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
         RunMode::Backtest => None,
     };
     let agent_slots = resolve_agent_slots(ctx, &strategy).await?;
+    validate_eval_trader_source(&strategy, &agent_slots)?;
     let dispatch = build_eval_dispatch(ctx, &strategy, &agent_slots).await?;
     let tools = Arc::new(ToolRegistry::default_with_builtins());
 
@@ -1508,5 +1544,57 @@ mod tests {
         .expect_err("unknown eval-run fields must be rejected");
 
         assert!(err.to_string().contains("unknown field"));
+    }
+
+    #[test]
+    fn eval_trader_source_accepts_legacy_trader_slot_without_agents() {
+        let legacy_slot = slot(Some("openrouter"), None, "anthropic.claude-sonnet-4.6");
+        let mut strategy = strategy_with_legacy_slot(legacy_slot);
+        strategy.agents.clear();
+
+        validate_eval_trader_source(&strategy, &[]).unwrap();
+    }
+
+    #[test]
+    fn eval_trader_source_rejects_attached_agents_without_trader_role() {
+        let legacy_slot = slot(Some("openrouter"), None, "anthropic.claude-sonnet-4.6");
+        let strategy = strategy_with_legacy_slot(legacy_slot);
+        let agent_slots = vec![ResolvedAgentSlot {
+            role: "seeker".into(),
+            slot: slot(
+                Some("openrouter"),
+                Some("deepseek/deepseek-v4-flash"),
+                "anthropic.claude-sonnet-4.6",
+            ),
+        }];
+
+        let err = validate_eval_trader_source(&strategy, &agent_slots).unwrap_err();
+        let msg = err.to_string();
+
+        assert!(
+            msg.contains("role `trader`"),
+            "expected trader-role guardrail, got {msg}"
+        );
+        assert!(msg.contains("seeker"), "expected attached role in error, got {msg}");
+        assert!(
+            msg.contains("legacy trader slot"),
+            "expected legacy slot remediation in error, got {msg}"
+        );
+    }
+
+    #[test]
+    fn eval_trader_source_accepts_attached_trader_role() {
+        let legacy_slot = slot(Some("openrouter"), None, "anthropic.claude-sonnet-4.6");
+        let strategy = strategy_with_legacy_slot(legacy_slot);
+        let agent_slots = vec![ResolvedAgentSlot {
+            role: "trader".into(),
+            slot: slot(
+                Some("openrouter"),
+                Some("deepseek/deepseek-v4-flash"),
+                "anthropic.claude-sonnet-4.6",
+            ),
+        }];
+
+        validate_eval_trader_source(&strategy, &agent_slots).unwrap();
     }
 }

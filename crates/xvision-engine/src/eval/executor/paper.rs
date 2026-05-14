@@ -18,7 +18,6 @@ use xvision_execution::broker_surface::{BrokerSurface, OrderRequest, Side};
 use crate::agent::llm::LlmDispatch;
 use crate::agent::pipeline::{run_pipeline, PipelineInputs, ResolvedAgentSlot};
 use crate::api::chart::{ChartEquityPoint, LiveDecisionRow, RunChartEvent, RunEventBus};
-use crate::strategies::Strategy;
 use crate::eval::executor::Executor;
 use crate::eval::metrics::{
     annualization_periods_per_year, equity_to_returns, max_drawdown_pct, sharpe_from_returns,
@@ -28,6 +27,7 @@ use crate::eval::progress::{send_event, ProgressEvent, ProgressTx};
 use crate::eval::run::{MetricsSummary, Run, RunStatus};
 use crate::eval::scenario::Scenario;
 use crate::eval::store::{DecisionRow, RunStore};
+use crate::strategies::Strategy;
 use crate::tools::ToolRegistry;
 
 const DEFAULT_REFERENCE_PRICE_USD: f64 = 70_000.0;
