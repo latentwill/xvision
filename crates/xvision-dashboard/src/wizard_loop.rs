@@ -547,6 +547,19 @@ mod tests {
         out
     }
 
+    async fn seed_defaults(pool: &SqlitePool, td: &tempfile::TempDir) {
+        let ctx = ApiContext::new(
+            pool.clone(),
+            Actor::Cli {
+                user: "wizard-test".to_string(),
+            },
+            td.path().to_path_buf(),
+        );
+        xvision_engine::eval::scenario_seed::run_seed_if_needed(&ctx)
+            .await
+            .expect("seed canonical scenarios and default strategy");
+    }
+
     #[tokio::test]
     async fn text_only_response_emits_token_then_done() {
         let mock = Arc::new(MockDispatch::echo("Sure — which template?"));
@@ -584,6 +597,143 @@ mod tests {
         }
         assert!(matches!(&events[2], WizardEvent::Token { text } if text.contains("template")));
         assert!(matches!(&events[3], WizardEvent::Done { .. }));
+    }
+
+    #[tokio::test]
+    async fn tell_me_what_strategies_i_have_lists_existing_strategy() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) =
+            loop_with_session(mock, "tell me what strategies I have", ContextScope::Workspace)
+                .await;
+        wl.run_tool(
+            "create_strategy",
+            serde_json::json!({"template": "mean_reversion", "name": "Wizard Inventory"}),
+        )
+        .await
+        .expect("create strategy");
+
+        let out = wl
+            .run_tool("list_strategies", serde_json::json!({}))
+            .await
+            .expect("list strategies");
+        let rows = out.as_array().expect("list_strategies returns an array");
+        assert!(
+            rows.iter().any(|row| {
+                row.get("display_name").and_then(|v| v.as_str()) == Some("Wizard Inventory")
+            }),
+            "expected created strategy in {out}"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_eval_resolves_the_strategy_we_have_and_crypto_range_bound_to_fetch_bars_action() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, pool, td, _sid) = loop_with_session(
+            mock,
+            "run an eval on the strategy we have scenario crypto range bound",
+            ContextScope::Workspace,
+        )
+        .await;
+        seed_defaults(&pool, &td).await;
+        let created = wl
+            .run_tool(
+                "create_strategy",
+                serde_json::json!({"template": "range_trade", "name": "Only Strategy"}),
+            )
+            .await
+            .expect("create strategy");
+        let agent_id = created["id"].as_str().expect("created id");
+
+        let out = wl
+            .run_tool(
+                "run_eval",
+                serde_json::json!({
+                    "agent_id": "the strategy we have",
+                    "scenario_id": "crypto range bound",
+                    "mode": "backtest"
+                }),
+            )
+            .await
+            .expect("run_eval should return an action instead of erroring");
+
+        assert_eq!(out["agent_id"], agent_id);
+        assert_eq!(out["scenario_id"], "crypto-rangebound-q2-2025");
+        assert_eq!(out["ui_action"]["type"], "fetch_bars");
+        assert_eq!(out["ui_action"]["scenario_id"], "crypto-rangebound-q2-2025");
+    }
+
+    #[tokio::test]
+    async fn ambiguous_strategy_ask_returns_one_clarifying_question() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) =
+            loop_with_session(mock, "run an eval on the strategy", ContextScope::Workspace).await;
+        wl.run_tool(
+            "create_strategy",
+            serde_json::json!({"template": "mean_reversion", "name": "First Strategy"}),
+        )
+        .await
+        .expect("create first strategy");
+        wl.run_tool(
+            "create_strategy",
+            serde_json::json!({"template": "trend_follower", "name": "Second Strategy"}),
+        )
+        .await
+        .expect("create second strategy");
+
+        let out = wl
+            .run_tool(
+                "resolve_strategy",
+                serde_json::json!({"query": "the strategy we have"}),
+            )
+            .await
+            .expect("resolve_strategy should return clarification payload");
+        let clarification = out
+            .get("needs_clarification")
+            .expect("expected needs_clarification");
+        let question = clarification["question"].as_str().expect("question");
+        let options = clarification["options"].as_array().expect("options");
+        assert_eq!(
+            question.matches('?').count(),
+            1,
+            "should ask exactly one question: {question}"
+        );
+        assert_eq!(options.len(), 2, "expected both strategies in {out}");
+    }
+
+    #[tokio::test]
+    async fn missing_bars_returns_fetch_bars_ui_action() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, pool, td, _sid) =
+            loop_with_session(mock, "run eval", ContextScope::Workspace).await;
+        seed_defaults(&pool, &td).await;
+        let created = wl
+            .run_tool(
+                "create_strategy",
+                serde_json::json!({"template": "range_trade", "name": "Needs Bars"}),
+            )
+            .await
+            .expect("create strategy");
+
+        let out = wl
+            .run_tool(
+                "run_eval",
+                serde_json::json!({
+                    "agent_id": created["id"],
+                    "scenario_id": "crypto-rangebound-q2-2025",
+                    "mode": "backtest"
+                }),
+            )
+            .await
+            .expect("run_eval should return an action when bars are missing");
+
+        assert_eq!(out["ui_action"]["type"], "fetch_bars");
+        assert_eq!(out["ui_action"]["label"], "Fetch bars");
+        assert_eq!(out["ui_action"]["argv"][0], "bars");
+        assert_eq!(out["ui_action"]["argv"][1], "fetch");
+        assert_eq!(
+            out["ui_action"]["cache_key"],
+            out["scenario"]["bar_cache_policy"]["cache_key"]
+        );
     }
 
     #[tokio::test]
