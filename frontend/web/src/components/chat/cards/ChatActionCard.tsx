@@ -7,7 +7,11 @@ export function ChatActionCard({ payload }: { payload: ActionCardContentBlock })
   const navigate = useNavigate();
 
   return (
-    <article className="rounded-md border border-gold/30 bg-gold/[0.06] overflow-hidden">
+    <article
+      role="group"
+      aria-label={payload.title}
+      className="rounded-md border border-gold/30 bg-gold/[0.06] overflow-hidden"
+    >
       <header className="px-3 pt-3 pb-1">
         <h3 className="m-0 text-[13px] font-semibold text-text">
           {payload.title}

@@ -11,8 +11,8 @@ export function InlineHistogram({ series }: { series: InlineChartSeries }) {
     <svg
       viewBox={`0 0 ${DEFAULT_VIEWBOX.width} ${DEFAULT_VIEWBOX.height}`}
       className="w-full h-[112px]"
-      role="img"
-      aria-label={`${series.label} histogram`}
+      aria-hidden
+      focusable="false"
     >
       <line
         x1={DEFAULT_VIEWBOX.padX}

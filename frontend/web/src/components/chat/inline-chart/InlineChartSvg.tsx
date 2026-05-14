@@ -1,4 +1,10 @@
-import { areaPath, DEFAULT_VIEWBOX, linePath, normalizePoints, seriesBounds } from "./shape";
+import {
+  areaPath,
+  DEFAULT_VIEWBOX,
+  linePath,
+  normalizePoints,
+  seriesBounds,
+} from "./shape";
 import { SERIES_TONES, toneColors } from "./palette";
 import { InlineHistogram } from "./InlineHistogram";
 import type { InlineChartContentBlock, InlineChartSeries } from "./types";
@@ -36,8 +42,8 @@ function LineSeriesChart({
     <svg
       viewBox={`0 0 ${DEFAULT_VIEWBOX.width} ${DEFAULT_VIEWBOX.height}`}
       className="w-full h-[112px]"
-      role="img"
       aria-hidden
+      focusable="false"
     >
       <GridLines />
       {series.map((item, index) => {

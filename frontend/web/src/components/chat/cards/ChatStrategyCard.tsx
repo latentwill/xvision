@@ -12,7 +12,11 @@ export function ChatStrategyCard({
   const navigate = useNavigate();
 
   return (
-    <article className="rounded-md border border-border-soft bg-surface-card overflow-hidden">
+    <article
+      role="group"
+      aria-label={`Strategy ${payload.title}`}
+      className="rounded-md border border-border-soft bg-surface-card overflow-hidden"
+    >
       <header className="px-3 py-2 border-b border-border-soft">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">

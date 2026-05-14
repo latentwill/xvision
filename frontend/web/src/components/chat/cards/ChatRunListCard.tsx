@@ -8,7 +8,11 @@ export function ChatRunListCard({ payload }: { payload: RunListContentBlock }) {
   const navigate = useNavigate();
 
   return (
-    <article className="rounded-md border border-border-soft bg-surface-card overflow-hidden">
+    <article
+      role="group"
+      aria-label={payload.title}
+      className="rounded-md border border-border-soft bg-surface-card overflow-hidden"
+    >
       <header className="px-3 py-2 border-b border-border-soft">
         <h3 className="m-0 text-[13px] font-semibold text-text">
           {payload.title}
@@ -19,6 +23,7 @@ export function ChatRunListCard({ payload }: { payload: RunListContentBlock }) {
           <button
             key={run.run_id}
             type="button"
+            aria-label={`Open run ${run.run_id}`}
             onClick={() => navigate(`/eval-runs/${encodeURIComponent(run.run_id)}`)}
             className="w-full px-3 py-2 text-left hover:bg-surface-hover flex items-center gap-2"
           >
