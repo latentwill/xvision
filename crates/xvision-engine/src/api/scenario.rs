@@ -212,6 +212,7 @@ pub async fn validate_request(req: &CreateScenarioRequest, ctx: &ApiContext) -> 
             "display_name is required; provide a scenario display name".into(),
         ));
     }
+    ensure_display_name_available(ctx, &req.display_name).await?;
     if req.asset.len() != 1 {
         return Err(ApiError::Validation(format!(
             "asset.len() must be 1 in v1 (got {})",
@@ -265,6 +266,29 @@ pub async fn validate_request(req: &CreateScenarioRequest, ctx: &ApiContext) -> 
                 "parent scenario '{parent}' is archived"
             )));
         }
+    }
+    Ok(())
+}
+
+async fn ensure_display_name_available(ctx: &ApiContext, display_name: &str) -> ApiResult<()> {
+    let candidate = display_name.trim();
+    let existing = scenario_store::list_scenarios(
+        ctx,
+        &scenario_store::ListScenariosFilter {
+            include_archived: false,
+            ..Default::default()
+        },
+    )
+    .await?;
+
+    if let Some(s) = existing
+        .iter()
+        .find(|s| s.display_name.trim().eq_ignore_ascii_case(candidate))
+    {
+        return Err(ApiError::Validation(format!(
+            "display_name already exists for active scenario '{}'; use a distinct display_name or archive/delete scenario '{}' first",
+            s.display_name, s.id
+        )));
     }
     Ok(())
 }

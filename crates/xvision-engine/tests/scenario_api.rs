@@ -1,7 +1,7 @@
 use chrono::{TimeZone, Utc};
 use std::str::FromStr;
 use xvision_data::alpaca::BarGranularity;
-use xvision_engine::api::scenario::{create, CreateScenarioRequest};
+use xvision_engine::api::scenario::{archive, create, CreateScenarioRequest};
 use xvision_engine::api::{ApiContext, ApiError};
 use xvision_engine::eval::scenario::*;
 
@@ -89,6 +89,22 @@ async fn create_rejects_blank_display_name() {
 }
 
 #[tokio::test]
+async fn create_rejects_active_duplicate_display_name() {
+    let ctx = test_ctx().await;
+    let req = valid_request();
+    let created = create(&ctx, req.clone()).await.unwrap();
+
+    let err = create(&ctx, req.clone()).await.unwrap_err();
+
+    assert!(matches!(err, ApiError::Validation(_)));
+    assert!(format!("{err}").contains("display_name already exists"));
+
+    archive(&ctx, &created.id).await.unwrap();
+    let replacement = create(&ctx, req).await.unwrap();
+    assert_eq!(replacement.display_name, "ETH 2024");
+}
+
+#[tokio::test]
 async fn create_succeeds_with_hour4_granularity() {
     let ctx = test_ctx().await;
     let mut req = valid_request();
@@ -122,6 +138,7 @@ async fn create_succeeds_with_minute_and_week_granularities() {
     assert_eq!(minute_scenario.granularity, BarGranularity::Minute5);
 
     let mut week_req = valid_request();
+    week_req.display_name = "ETH weekly 2024".into();
     week_req.granularity = BarGranularity::from_str("1w").unwrap();
     let week_scenario = create(&ctx, week_req).await.unwrap();
     assert_eq!(week_scenario.granularity, BarGranularity::Week1);
