@@ -6,6 +6,10 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::api::eval::{RunDetail, RunSummary};
+use crate::api::strategy::StrategySummary;
+use crate::eval::compare::ComparisonReport;
+
 const MAX_INLINE_CHART_POINTS: usize = 500;
 const KNOWN_COMMANDS: &[&str] = &[
     "open_command_palette",
@@ -334,6 +338,261 @@ pub fn build_inline_chart(
     Ok(payload)
 }
 
+pub fn inline_equity_chart_from_run_detail(
+    detail: &RunDetail,
+) -> Result<RichContentBlock, RichBlockError> {
+    let run = &detail.summary;
+    let payload = InlineChartPayload {
+        chart_id: format!("run:{}:equity", run.id),
+        kind: InlineChartKind::Equity,
+        title: "Equity curve".into(),
+        subtitle: Some(format!("{} / {}", run.agent_id, run.scenario_id)),
+        primary_metric: run.total_return_pct.map(|value| InlineMetric {
+            label: "Return".into(),
+            value: signed_number(value),
+            unit: Some("%".into()),
+            tone: tone_for_signed(value),
+        }),
+        metrics: run_metrics(run),
+        series: vec![InlineChartSeries {
+            id: "equity".into(),
+            label: "Equity".into(),
+            tone: Some(InlineTone::Gold),
+            points: detail
+                .equity_curve
+                .iter()
+                .map(|point| InlinePoint {
+                    x: point.timestamp.timestamp_millis() as f64,
+                    y: point.equity_usd,
+                    label: None,
+                })
+                .collect(),
+        }],
+        source: Some(InlineChartSource {
+            label: format!("Run {}", run.id),
+            href: Some(format!("/eval-runs/{}", run.id)),
+            run_id: Some(run.id.clone()),
+            strategy_id: Some(run.agent_id.clone()),
+        }),
+        actions: vec![InlineAction {
+            label: "Open run".into(),
+            href: Some(format!("/eval-runs/{}", run.id)),
+            command: None,
+        }],
+        a11y_summary: format!(
+            "Equity chart for run {} with {} samples.",
+            run.id,
+            detail.equity_curve.len()
+        ),
+        downsampled: false,
+    };
+    build_inline_chart(payload).map(RichContentBlock::InlineChart)
+}
+
+pub fn inline_compare_chart_from_report(
+    report: &ComparisonReport,
+) -> Result<RichContentBlock, RichBlockError> {
+    let series = report
+        .equity_curves
+        .iter()
+        .take(4)
+        .map(|curve| InlineChartSeries {
+            id: curve.run_id.clone(),
+            label: curve.run_id.clone(),
+            tone: None,
+            points: curve
+                .samples
+                .iter()
+                .map(|sample| InlinePoint {
+                    x: sample.timestamp.timestamp_millis() as f64,
+                    y: sample.equity_usd,
+                    label: None,
+                })
+                .collect(),
+        })
+        .collect::<Vec<_>>();
+
+    let payload = InlineChartPayload {
+        chart_id: format!("compare:{}", report.runs.iter().map(|r| r.id.as_str()).collect::<Vec<_>>().join(",")),
+        kind: InlineChartKind::Compare,
+        title: "Run comparison".into(),
+        subtitle: Some(format!("{} runs", report.runs.len())),
+        primary_metric: None,
+        metrics: vec![InlineMetric {
+            label: "Findings".into(),
+            value: report.findings.len().to_string(),
+            unit: None,
+            tone: Some(InlineTone::Info),
+        }],
+        series,
+        source: None,
+        actions: vec![InlineAction {
+            label: "Open compare".into(),
+            href: Some(format!(
+                "/eval-runs/compare?ids={}",
+                report.runs.iter().map(|r| r.id.as_str()).collect::<Vec<_>>().join(",")
+            )),
+            command: None,
+        }],
+        a11y_summary: format!("Comparison chart for {} runs.", report.runs.len()),
+        downsampled: false,
+    };
+    build_inline_chart(payload).map(RichContentBlock::InlineChart)
+}
+
+pub fn inline_returns_histogram_from_runs(
+    runs: &[RunSummary],
+) -> Result<RichContentBlock, RichBlockError> {
+    let points = runs
+        .iter()
+        .enumerate()
+        .filter_map(|(index, run)| {
+            run.total_return_pct.map(|value| InlinePoint {
+                x: index as f64,
+                y: value,
+                label: Some(run.id.clone()),
+            })
+        })
+        .collect::<Vec<_>>();
+    let payload = InlineChartPayload {
+        chart_id: "runs:return-histogram".into(),
+        kind: InlineChartKind::Histogram,
+        title: "Return distribution".into(),
+        subtitle: Some(format!("{} runs", runs.len())),
+        primary_metric: None,
+        metrics: vec![],
+        series: vec![InlineChartSeries {
+            id: "returns".into(),
+            label: "Return %".into(),
+            tone: Some(InlineTone::Gold),
+            points,
+        }],
+        source: None,
+        actions: vec![InlineAction {
+            label: "Open runs".into(),
+            href: Some("/eval-runs".into()),
+            command: None,
+        }],
+        a11y_summary: format!("Histogram of returns for {} runs.", runs.len()),
+        downsampled: false,
+    };
+    build_inline_chart(payload).map(RichContentBlock::InlineChart)
+}
+
+pub fn run_list_card_from_summaries(runs: &[RunSummary]) -> Result<RichContentBlock, RichBlockError> {
+    let payload = ChatRunListPayload {
+        title: "Eval runs".into(),
+        runs: runs
+            .iter()
+            .take(5)
+            .enumerate()
+            .map(|(index, run)| ChatRunListItem {
+                rank: index as u32 + 1,
+                run_id: run.id.clone(),
+                strategy_id: Some(run.agent_id.clone()),
+                scenario: Some(run.scenario_id.clone()),
+                return_pct: run.total_return_pct,
+                sharpe: run.sharpe,
+                sparkline: None,
+            })
+            .collect(),
+        actions: vec![InlineAction {
+            label: "Open runs".into(),
+            href: Some("/eval-runs".into()),
+            command: None,
+        }],
+    };
+    payload.validate()?;
+    Ok(RichContentBlock::RunList(payload))
+}
+
+pub fn inline_strategy_card_from_summary(
+    summary: &StrategySummary,
+) -> Result<RichContentBlock, RichBlockError> {
+    let payload = ChatStrategyPayload {
+        strategy_id: summary.agent_id.clone(),
+        title: summary.display_name.clone(),
+        subtitle: Some(summary.template.clone()),
+        status: Some("validated".into()),
+        metrics: vec![InlineMetric {
+            label: "Cadence".into(),
+            value: summary.decision_cadence_minutes.to_string(),
+            unit: Some("m".into()),
+            tone: Some(InlineTone::Info),
+        }],
+        tags: summary.tags.clone(),
+        actions: vec![InlineAction {
+            label: "Open strategy".into(),
+            href: Some(format!("/authoring/{}", summary.agent_id)),
+            command: None,
+        }],
+    };
+    payload.validate()?;
+    Ok(RichContentBlock::StrategyCard(payload))
+}
+
+pub fn action_confirmation_card(
+    action_id: impl Into<String>,
+    title: impl Into<String>,
+    body: impl Into<String>,
+    confirm: InlineAction,
+) -> Result<RichContentBlock, RichBlockError> {
+    let payload = ChatActionPayload {
+        action_id: action_id.into(),
+        title: title.into(),
+        body: body.into(),
+        confirm,
+        cancel: None,
+    };
+    payload.validate()?;
+    Ok(RichContentBlock::ActionCard(payload))
+}
+
+fn run_metrics(run: &RunSummary) -> Vec<InlineMetric> {
+    let mut metrics = Vec::new();
+    if let Some(value) = run.sharpe {
+        metrics.push(InlineMetric {
+            label: "Sharpe".into(),
+            value: format!("{value:.2}"),
+            unit: None,
+            tone: Some(InlineTone::Info),
+        });
+    }
+    if let Some(value) = run.max_drawdown_pct {
+        metrics.push(InlineMetric {
+            label: "Max DD".into(),
+            value: format!("{value:.1}"),
+            unit: Some("%".into()),
+            tone: Some(InlineTone::Danger),
+        });
+    }
+    if let Some(value) = run.total_return_pct {
+        metrics.push(InlineMetric {
+            label: "Return".into(),
+            value: signed_number(value),
+            unit: Some("%".into()),
+            tone: tone_for_signed(value),
+        });
+    }
+    metrics
+}
+
+fn signed_number(value: f64) -> String {
+    if value > 0.0 {
+        format!("+{value:.1}")
+    } else {
+        format!("{value:.1}")
+    }
+}
+
+fn tone_for_signed(value: f64) -> Option<InlineTone> {
+    if value < 0.0 {
+        Some(InlineTone::Danger)
+    } else {
+        Some(InlineTone::Gold)
+    }
+}
+
 fn normalize_chart_values(payload: &mut InlineChartPayload) {
     for series in &mut payload.series {
         for point in &mut series.points {
@@ -389,6 +648,14 @@ fn is_spa_href(href: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Utc;
+
+    use crate::api::eval::{EquityPoint, RunDetail};
+    use crate::api::strategy::StrategySummary;
+    use crate::eval::compare::{
+        ComparisonEquityCurve, ComparisonEquitySample, ComparisonReport, ComparisonRunSummary,
+    };
+    use crate::eval::run::{MetricsSummary, RunMode, RunStatus};
 
     #[test]
     fn valid_equity_chart_payload_passes() {
@@ -449,6 +716,118 @@ mod tests {
         assert_eq!(err, RichBlockError::InvalidActionTarget);
     }
 
+    #[test]
+    fn run_detail_builder_produces_equity_chart() {
+        let detail = RunDetail {
+            summary: run_summary("run-a", 12.0),
+            decisions: vec![],
+            equity_curve: vec![
+                EquityPoint {
+                    timestamp: Utc::now(),
+                    equity_usd: 1000.0,
+                },
+                EquityPoint {
+                    timestamp: Utc::now(),
+                    equity_usd: 1120.0,
+                },
+            ],
+        };
+
+        let block = inline_equity_chart_from_run_detail(&detail).expect("equity card");
+
+        match block {
+            RichContentBlock::InlineChart(payload) => {
+                assert_eq!(payload.kind, InlineChartKind::Equity);
+                assert_eq!(payload.series[0].points.len(), 2);
+            }
+            _ => panic!("expected inline chart"),
+        }
+    }
+
+    #[test]
+    fn compare_builder_produces_two_series() {
+        let now = Utc::now();
+        let report = ComparisonReport {
+            runs: vec![
+                comparison_run("run-a", 10.0),
+                comparison_run("run-b", -3.0),
+            ],
+            equity_curves: vec![
+                ComparisonEquityCurve {
+                    run_id: "run-a".into(),
+                    samples: vec![ComparisonEquitySample {
+                        timestamp: now,
+                        equity_usd: 1100.0,
+                    }],
+                },
+                ComparisonEquityCurve {
+                    run_id: "run-b".into(),
+                    samples: vec![ComparisonEquitySample {
+                        timestamp: now,
+                        equity_usd: 970.0,
+                    }],
+                },
+            ],
+            findings: vec![],
+        };
+
+        let block = inline_compare_chart_from_report(&report).expect("compare card");
+
+        match block {
+            RichContentBlock::InlineChart(payload) => {
+                assert_eq!(payload.kind, InlineChartKind::Compare);
+                assert_eq!(payload.series.len(), 2);
+            }
+            _ => panic!("expected inline chart"),
+        }
+    }
+
+    #[test]
+    fn run_summaries_build_histogram_and_run_list() {
+        let runs = vec![run_summary("run-a", 7.5), run_summary("run-b", -1.2)];
+
+        let histogram = inline_returns_histogram_from_runs(&runs).expect("histogram");
+        let list = run_list_card_from_summaries(&runs).expect("run list");
+
+        assert!(matches!(histogram, RichContentBlock::InlineChart(_)));
+        assert!(matches!(list, RichContentBlock::RunList(_)));
+    }
+
+    #[test]
+    fn action_confirmation_builder_validates_card() {
+        let block = action_confirmation_card(
+            "started-run",
+            "Run started",
+            "The eval run has been queued.",
+            InlineAction {
+                label: "Open run".into(),
+                href: Some("/eval-runs/run-a".into()),
+                command: None,
+            },
+        )
+        .expect("action card");
+
+        assert!(matches!(block, RichContentBlock::ActionCard(_)));
+    }
+
+    #[test]
+    fn strategy_summary_builder_creates_card() {
+        let summary = StrategySummary {
+            agent_id: "agent-a".into(),
+            display_name: "Agent A".into(),
+            template: "mean-reversion".into(),
+            decision_cadence_minutes: 60,
+            tags: vec!["btc".into()],
+            model: Some("claude".into()),
+            providers: vec!["anthropic".into()],
+            models: vec!["claude".into()],
+        };
+
+        let block = inline_strategy_card_from_summary(&summary).expect("strategy card");
+
+        assert!(matches!(block, RichContentBlock::StrategyCard(_)));
+    }
+
     fn equity_payload(points: usize) -> InlineChartPayload {
         InlineChartPayload {
             chart_id: "equity-main".into(),
@@ -487,6 +866,45 @@ mod tests {
             }],
             a11y_summary: "Equity rises from 1000 to 1035.95.".into(),
             downsampled: false,
+        }
+    }
+
+    fn run_summary(id: &str, total_return_pct: f64) -> RunSummary {
+        RunSummary {
+            id: id.into(),
+            agent_id: "agent-a".into(),
+            scenario_id: "scenario-a".into(),
+            mode: "backtest".into(),
+            status: "completed".into(),
+            started_at: Utc::now(),
+            completed_at: Some(Utc::now()),
+            sharpe: Some(1.25),
+            max_drawdown_pct: Some(4.2),
+            total_return_pct: Some(total_return_pct),
+            error: None,
+            actual_input_tokens: Some(10),
+            actual_output_tokens: Some(20),
+        }
+    }
+
+    fn comparison_run(id: &str, total_return_pct: f64) -> ComparisonRunSummary {
+        ComparisonRunSummary {
+            id: id.into(),
+            agent_id: "agent-a".into(),
+            scenario_id: "scenario-a".into(),
+            mode: RunMode::Backtest,
+            status: RunStatus::Completed,
+            started_at: Utc::now(),
+            completed_at: Some(Utc::now()),
+            metrics: Some(MetricsSummary {
+                total_return_pct,
+                sharpe: 1.0,
+                max_drawdown_pct: 2.0,
+                win_rate: 0.5,
+                n_trades: 2,
+                n_decisions: 4,
+            }),
+            error: None,
         }
     }
 }
