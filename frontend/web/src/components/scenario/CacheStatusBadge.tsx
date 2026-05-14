@@ -14,7 +14,7 @@ export function CacheStatusBadge({
   if (status.type === "FullyCached") {
     return (
       <span className="px-2 py-0.5 rounded text-[11px] bg-green-500/15 text-green-400 border border-green-500/30">
-        cached: {status.bar_count} bars
+        Fully cached: {status.bar_count} bars
       </span>
     );
   }
