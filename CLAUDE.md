@@ -83,6 +83,27 @@ cargo test --workspace
 
 The workspace expects `cargo` on PATH from `~/.cargo/bin`.
 
+### Local Rust build cache discipline
+
+Rust build output is generated and can become very large. The active local
+checkout may keep its root `target/` directory when preparing deploy images, but
+agents must avoid creating duplicate `target/` trees in temporary clones,
+review branches, or Claude worktrees.
+
+- Prefer building from the main checkout root when possible.
+- Before running `cargo` from any temporary worktree or copied checkout, set a
+  shared target directory instead of letting Cargo create a local `target/`:
+
+  ```bash
+  export CARGO_TARGET_DIR="$HOME/.cargo-target/xvision"
+  ```
+
+- Do not commit, preserve, or archive `target/` directories. They are rebuildable
+  artifacts.
+- If a temporary worktree is no longer active, remove its `target/` before
+  leaving the task. Keep `/Users/edkennedy/Code/xvision/target` only when the
+  user is actively preparing a local build/deploy image.
+
 ## Docker
 
 Slim runtime image of the `xvn` CLI lives at `ghcr.io/latentwill/xvision`.
