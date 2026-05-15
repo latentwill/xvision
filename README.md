@@ -96,7 +96,7 @@ docker run --rm \
   -v xvision-data:/data \
   --env-file .env \
   ghcr.io/latentwill/xvision:latest \
-  store stats --db /data/store.db
+  doctor
 ```
 
 ## Web dashboard
@@ -112,6 +112,7 @@ xvn dashboard serve --bind 127.0.0.1:8788
 
 # in the docker image (the published `:latest` defaults to this)
 docker run --rm -p 8788:8788 -e XVN_AUTOMIGRATE=1 \
+  -v xvision-data:/data \
   ghcr.io/latentwill/xvision:latest
 ```
 

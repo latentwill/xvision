@@ -66,6 +66,29 @@ async fn unknown_api_route_404s() {
 }
 
 #[tokio::test]
+async fn dashboard_boots_after_cli_migrate_path() {
+    use xvision_engine::api::{Actor, ApiContext};
+
+    let tmp = TempDir::new().unwrap();
+    ApiContext::open(
+        tmp.path(),
+        Actor::Cli {
+            user: "test-cli".into(),
+        },
+    )
+    .await
+    .expect("cli migrate path initializes xvn home");
+
+    let state = AppState::new(tmp.path().to_path_buf())
+        .await
+        .expect("dashboard state opens already-migrated home");
+    let server = TestServer::new(build_router(state)).unwrap();
+
+    server.get("/api/scenarios").await.assert_status_ok();
+    server.get("/api/eval/runs").await.assert_status_ok();
+}
+
+#[tokio::test]
 async fn strategies_list_is_empty_on_fresh_home() {
     let (server, _tmp) = boot().await;
 
@@ -855,10 +878,7 @@ sqlite_url = "sqlite://x.db"
     .unwrap();
     let _g = scoped_set("XVN_CONFIG_PATH", cfg.to_str().unwrap());
 
-    server
-        .get("/api/settings/providers")
-        .await
-        .assert_status_ok();
+    server.get("/api/settings/providers").await.assert_status_ok();
     server
         .delete("/api/settings/providers/local-candle")
         .await

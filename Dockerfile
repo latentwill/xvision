@@ -99,6 +99,7 @@ WORKDIR /home/xvision
 VOLUME ["/data"]
 
 ENV XVN_DATA_DIR=/data \
+    XVN_HOME=/data \
     XVN_CONFIG_DIR=/config \
     APCA_API_BASE_URL=https://paper-api.alpaca.markets
 
