@@ -17,10 +17,7 @@ use crate::tools::{ToolName, ToolRegistry};
 /// will add per-tool argument schemas; for now every tool gets `{type:
 /// "object"}` and the model is expected to pass the right shape based on
 /// the tool description and prompt.
-pub fn definitions_for_slot(
-    allowed_tools: &[String],
-    registry: &ToolRegistry,
-) -> Vec<ToolDefinition> {
+pub fn definitions_for_slot(allowed_tools: &[String], registry: &ToolRegistry) -> Vec<ToolDefinition> {
     allowed_tools
         .iter()
         .filter_map(|name| {
@@ -52,15 +49,11 @@ pub async fn invoke(
 
 /// Extract every `ToolUse` block from a response in `(id, name, input)`
 /// triples — the routing surface for `execute_slot`'s loop.
-pub(crate) fn tool_uses(
-    content: &[ContentBlock],
-) -> Vec<(String, String, serde_json::Value)> {
+pub(crate) fn tool_uses(content: &[ContentBlock]) -> Vec<(String, String, serde_json::Value)> {
     content
         .iter()
         .filter_map(|c| match c {
-            ContentBlock::ToolUse { id, name, input } => {
-                Some((id.clone(), name.clone(), input.clone()))
-            }
+            ContentBlock::ToolUse { id, name, input } => Some((id.clone(), name.clone(), input.clone())),
             _ => None,
         })
         .collect()

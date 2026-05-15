@@ -11,8 +11,8 @@ use std::time::Instant;
 use serde::{Deserialize, Serialize};
 
 use crate::agents::{
-    builtin_templates, validate_agent, Agent, AgentSlot, AgentStore, AgentTemplate, ListFilter,
-    NewAgent, UpdateAgent, ValidationDiagnostic,
+    builtin_templates, validate_agent, Agent, AgentSlot, AgentStore, AgentTemplate, ListFilter, NewAgent,
+    UpdateAgent, ValidationDiagnostic,
 };
 use crate::api::audit::{self, Outcome};
 use crate::api::{ApiContext, ApiError, ApiResult};
@@ -141,9 +141,7 @@ async fn create_inner(ctx: &ApiContext, req: CreateAgentRequest) -> ApiResult<Ag
         return Err(ApiError::Validation("name is required".into()));
     }
     if req.slots.is_empty() {
-        return Err(ApiError::Validation(
-            "agent needs at least one slot".into(),
-        ));
+        return Err(ApiError::Validation("agent needs at least one slot".into()));
     }
     if store
         .name_exists(&req.name, None)
@@ -199,11 +197,7 @@ async fn get_inner(ctx: &ApiContext, agent_id: &str) -> ApiResult<Agent> {
         .ok_or_else(|| ApiError::NotFound(format!("agent {}", agent_id)))
 }
 
-pub async fn update(
-    ctx: &ApiContext,
-    agent_id: &str,
-    req: UpdateAgentRequest,
-) -> ApiResult<Agent> {
+pub async fn update(ctx: &ApiContext, agent_id: &str, req: UpdateAgentRequest) -> ApiResult<Agent> {
     let started = Instant::now();
     let result = update_inner(ctx, agent_id, req).await;
     let outcome = outcome_of(&result);
@@ -220,11 +214,7 @@ pub async fn update(
     result
 }
 
-async fn update_inner(
-    ctx: &ApiContext,
-    agent_id: &str,
-    req: UpdateAgentRequest,
-) -> ApiResult<Agent> {
+async fn update_inner(ctx: &ApiContext, agent_id: &str, req: UpdateAgentRequest) -> ApiResult<Agent> {
     let store = AgentStore::new(ctx.db.clone());
 
     if let Some(ref name) = req.name {
@@ -291,10 +281,7 @@ async fn archive_inner(ctx: &ApiContext, agent_id: &str) -> ApiResult<()> {
     Ok(())
 }
 
-pub async fn validate(
-    ctx: &ApiContext,
-    agent_id: &str,
-) -> ApiResult<Vec<ValidationDiagnostic>> {
+pub async fn validate(ctx: &ApiContext, agent_id: &str) -> ApiResult<Vec<ValidationDiagnostic>> {
     let started = Instant::now();
     let result = validate_inner(ctx, agent_id).await;
     let outcome = outcome_of(&result);
@@ -311,10 +298,7 @@ pub async fn validate(
     result
 }
 
-async fn validate_inner(
-    ctx: &ApiContext,
-    agent_id: &str,
-) -> ApiResult<Vec<ValidationDiagnostic>> {
+async fn validate_inner(ctx: &ApiContext, agent_id: &str) -> ApiResult<Vec<ValidationDiagnostic>> {
     let store = AgentStore::new(ctx.db.clone());
     let agent = store
         .get(agent_id)
@@ -338,11 +322,7 @@ pub async fn templates(_ctx: &ApiContext) -> ApiResult<Vec<AgentTemplate>> {
 }
 
 /// V1 stub — returns empty until eval-runs are attributed to agents.
-pub async fn recent_runs(
-    _ctx: &ApiContext,
-    _agent_id: &str,
-    _limit: u32,
-) -> ApiResult<Vec<RunRef>> {
+pub async fn recent_runs(_ctx: &ApiContext, _agent_id: &str, _limit: u32) -> ApiResult<Vec<RunRef>> {
     Ok(Vec::new())
 }
 

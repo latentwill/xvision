@@ -8,24 +8,23 @@
 //! dispatcher. The dashboard's Inspector route calls these; the MCP tool
 //! layer (PR #31) goes through `engine::authoring::*` directly.
 
+use crate::agents::AgentStore;
 use crate::api::{
     audit::{self, Outcome},
     search as api_search, ApiContext, ApiError, ApiResult,
 };
-use crate::agents::AgentStore;
 use crate::authoring::{
     self, AddAgentRefRequest, CreateStrategyOut, CreateStrategyReq, RemoveAgentRefRequest,
-    RenameAgentRoleRequest, SetPipelineRequest, SetRiskConfigOut, SetRiskConfigReq, UpdateSlotOut,
-    UpdateManifestOut, UpdateManifestReq, UpdateSlotReq, ValidateDraftOut,
+    RenameAgentRoleRequest, SetPipelineRequest, SetRiskConfigOut, SetRiskConfigReq, UpdateManifestOut,
+    UpdateManifestReq, UpdateSlotOut, UpdateSlotReq, ValidateDraftOut,
 };
 use crate::strategies::{
-    AgentRef, PipelineDef, PipelineEdge, PipelineKind,
-    store::{strategy_store_dir, StrategyStore, FilesystemStore},
-    Strategy,
+    store::{strategy_store_dir, FilesystemStore, StrategyStore},
+    AgentRef, PipelineDef, PipelineEdge, PipelineKind, Strategy,
 };
 use std::path::PathBuf;
-use ulid::Ulid;
 use std::time::Instant;
+use ulid::Ulid;
 use xvision_core::config::{self, RuntimeConfig};
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
@@ -239,7 +238,10 @@ async fn provider_model_inventory(
             .trader_slot
             .as_ref()
             .and_then(|slot| slot.provider.as_deref()),
-        strategy.trader_slot.as_ref().and_then(|slot| slot.model.as_deref()),
+        strategy
+            .trader_slot
+            .as_ref()
+            .and_then(|slot| slot.model.as_deref()),
         "trader slot",
     );
     collect_summary_runtime_pair(
@@ -248,7 +250,10 @@ async fn provider_model_inventory(
             .intern_slot
             .as_ref()
             .and_then(|slot| slot.provider.as_deref()),
-        strategy.intern_slot.as_ref().and_then(|slot| slot.model.as_deref()),
+        strategy
+            .intern_slot
+            .as_ref()
+            .and_then(|slot| slot.model.as_deref()),
         "intern slot",
     );
     collect_summary_runtime_pair(
@@ -257,7 +262,10 @@ async fn provider_model_inventory(
             .regime_slot
             .as_ref()
             .and_then(|slot| slot.provider.as_deref()),
-        strategy.regime_slot.as_ref().and_then(|slot| slot.model.as_deref()),
+        strategy
+            .regime_slot
+            .as_ref()
+            .and_then(|slot| slot.model.as_deref()),
         "regime slot",
     );
 
@@ -315,23 +323,18 @@ fn push_unique_trimmed(items: &mut Vec<String>, value: String) {
 }
 
 fn normalized_runtime_value(value: Option<&str>) -> String {
-    value
-        .unwrap_or("")
-        .trim()
-        .to_string()
+    value.unwrap_or("").trim().to_string()
 }
 
-fn push_unique_provider_model(
-    inventory: &mut ProviderModelInventory,
-    provider: String,
-    model: String,
-) {
+fn push_unique_provider_model(inventory: &mut ProviderModelInventory, provider: String, model: String) {
     if !inventory
         .provider_models
         .iter()
         .any(|pair| pair.provider == provider && pair.model == model)
     {
-        inventory.provider_models.push(ProviderModelPair { provider, model });
+        inventory
+            .provider_models
+            .push(ProviderModelPair { provider, model });
     }
 }
 
@@ -451,41 +454,7 @@ fn is_not_found(err: &anyhow::Error) -> bool {
     false
 }
 
-pub async fn delete(ctx: &ApiContext, agent_id: &str) -> ApiResult<()> {
-    let started = Instant::now();
-    let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
-    let result = store.remove(agent_id).await.map_err(|e| {
-        if is_not_found(&e) {
-            ApiError::NotFound(format!("strategy '{agent_id}'"))
-        } else {
-            ApiError::Internal(e.to_string())
-        }
-    });
-    let outcome = match &result {
-        Ok(_) => Outcome::Ok,
-        Err(e) => Outcome::Error(e.to_string()),
-    };
-    let _ = audit::record(
-        ctx,
-        "strategy",
-        "delete",
-        Some(agent_id),
-        None,
-        outcome,
-        started.elapsed().as_millis() as i64,
-    )
-    .await;
-    if result.is_ok() {
-        api_search::delete_strategy(ctx, agent_id).await;
-    }
-    result
-}
-
-pub async fn clone_strategy(
-    ctx: &ApiContext,
-    agent_id: &str,
-    req: CloneStrategyReq,
-) -> ApiResult<Strategy> {
+pub async fn clone_strategy(ctx: &ApiContext, agent_id: &str, req: CloneStrategyReq) -> ApiResult<Strategy> {
     let started = Instant::now();
     let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
     let result = async {
@@ -508,7 +477,7 @@ pub async fn clone_strategy(
     .await;
 
     let outcome = match &result {
-        Ok(strategy) => Outcome::Ok,
+        Ok(_) => Outcome::Ok,
         Err(e) => Outcome::Error(e.to_string()),
     };
     let target = result.as_ref().ok().map(|strategy| strategy.manifest.id.as_str());
@@ -612,7 +581,10 @@ async fn collect_strategy_runtime_requirements(
             .trader_slot
             .as_ref()
             .and_then(|slot| slot.provider.as_deref()),
-        strategy.trader_slot.as_ref().and_then(|slot| slot.model.as_deref()),
+        strategy
+            .trader_slot
+            .as_ref()
+            .and_then(|slot| slot.model.as_deref()),
         &mut requirements,
         &mut errors,
     );
@@ -622,7 +594,10 @@ async fn collect_strategy_runtime_requirements(
             .intern_slot
             .as_ref()
             .and_then(|slot| slot.provider.as_deref()),
-        strategy.intern_slot.as_ref().and_then(|slot| slot.model.as_deref()),
+        strategy
+            .intern_slot
+            .as_ref()
+            .and_then(|slot| slot.model.as_deref()),
         &mut requirements,
         &mut errors,
     );
@@ -632,7 +607,10 @@ async fn collect_strategy_runtime_requirements(
             .regime_slot
             .as_ref()
             .and_then(|slot| slot.provider.as_deref()),
-        strategy.regime_slot.as_ref().and_then(|slot| slot.model.as_deref()),
+        strategy
+            .regime_slot
+            .as_ref()
+            .and_then(|slot| slot.model.as_deref()),
         &mut requirements,
         &mut errors,
     );
@@ -648,8 +626,7 @@ async fn collect_strategy_runtime_requirements(
         let Some(agent) = agent else {
             errors.push(format!(
                 "agent '{}' is attached to strategy '{}' but missing",
-                agent_ref.agent_id,
-                strategy.manifest.id
+                agent_ref.agent_id, strategy.manifest.id
             ));
             continue;
         };
@@ -767,10 +744,7 @@ fn strategy_agents_out(strategy: Strategy) -> StrategyAgentsOut {
 /// `authoring::create_strategy` with an audit row keyed on the resulting
 /// `agent_id` (or no target on failure, since the id only exists on
 /// success).
-pub async fn create_strategy(
-    ctx: &ApiContext,
-    req: CreateStrategyReq,
-) -> ApiResult<CreateStrategyOut> {
+pub async fn create_strategy(ctx: &ApiContext, req: CreateStrategyReq) -> ApiResult<CreateStrategyOut> {
     let started = Instant::now();
     let args_json = serde_json::to_string(&req).ok();
     let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
@@ -836,10 +810,7 @@ pub async fn update_slot(ctx: &ApiContext, req: UpdateSlotReq) -> ApiResult<Upda
 }
 
 /// Update manifest fields shown by the Strategy Inspector.
-pub async fn update_manifest(
-    ctx: &ApiContext,
-    req: UpdateManifestReq,
-) -> ApiResult<UpdateManifestOut> {
+pub async fn update_manifest(ctx: &ApiContext, req: UpdateManifestReq) -> ApiResult<UpdateManifestOut> {
     let started = Instant::now();
     let agent_id = req.id.clone();
     let args_json = serde_json::to_string(&req).ok();
@@ -914,10 +885,7 @@ pub async fn add_agent(ctx: &ApiContext, req: AddAgentReq) -> ApiResult<Strategy
     result
 }
 
-pub async fn remove_agent(
-    ctx: &ApiContext,
-    req: RemoveAgentReq,
-) -> ApiResult<StrategyAgentsOut> {
+pub async fn remove_agent(ctx: &ApiContext, req: RemoveAgentReq) -> ApiResult<StrategyAgentsOut> {
     let started = Instant::now();
     let strategy_id = req.strategy_id.clone();
     let args_json = serde_json::to_string(&req).ok();
@@ -953,10 +921,7 @@ pub async fn remove_agent(
     result
 }
 
-pub async fn rename_agent_role(
-    ctx: &ApiContext,
-    req: RenameAgentRoleReq,
-) -> ApiResult<StrategyAgentsOut> {
+pub async fn rename_agent_role(ctx: &ApiContext, req: RenameAgentRoleReq) -> ApiResult<StrategyAgentsOut> {
     let started = Instant::now();
     let strategy_id = req.strategy_id.clone();
     let args_json = serde_json::to_string(&req).ok();
@@ -1068,10 +1033,7 @@ pub async fn set_mechanical_param(
 
 /// Update the strategy's risk config — preset (Conservative / Balanced /
 /// Aggressive) or an explicit `RiskConfig` blob, but not both.
-pub async fn set_risk_config(
-    ctx: &ApiContext,
-    req: SetRiskConfigReq,
-) -> ApiResult<SetRiskConfigOut> {
+pub async fn set_risk_config(ctx: &ApiContext, req: SetRiskConfigReq) -> ApiResult<SetRiskConfigOut> {
     let started = Instant::now();
     let agent_id = req.id.clone();
     let args_json = serde_json::to_string(&req).ok();
@@ -1104,11 +1066,7 @@ pub async fn set_risk_config(
 /// the search index. Best-effort: a failure here is logged inside
 /// `api::search::upsert_strategy` and never bubbled up — the mutation has
 /// already succeeded and the audit row is already written.
-async fn index_strategy_after_mutation(
-    ctx: &ApiContext,
-    store: &FilesystemStore,
-    agent_id: &str,
-) {
+async fn index_strategy_after_mutation(ctx: &ApiContext, store: &FilesystemStore, agent_id: &str) {
     match store.load(agent_id).await {
         Ok(strategy) => api_search::upsert_strategy(ctx, &strategy).await,
         Err(e) => tracing::warn!(error = %e, agent_id, "post-mutation reload for indexer failed"),
@@ -1177,14 +1135,13 @@ mod tests {
     }
 
     async fn audit_row_exists(ctx: &ApiContext, op: &str, target: &str) -> bool {
-        let n: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM api_audit WHERE operation = ?1 AND target = ?2",
-        )
-        .bind(op)
-        .bind(target)
-        .fetch_one(&ctx.db)
-        .await
-        .unwrap();
+        let n: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM api_audit WHERE operation = ?1 AND target = ?2")
+                .bind(op)
+                .bind(target)
+                .fetch_one(&ctx.db)
+                .await
+                .unwrap();
         n > 0
     }
 
@@ -1484,9 +1441,7 @@ mod tests {
             !list.iter().any(|s| s.agent_id == created.id),
             "deleted strategy should disappear from list"
         );
-        assert!(
-            matches!(get(&ctx, &created.id).await, Err(ApiError::NotFound(_)))
-        );
+        assert!(matches!(get(&ctx, &created.id).await, Err(ApiError::NotFound(_))));
         assert!(audit_row_exists(&ctx, "delete", &created.id).await);
     }
 

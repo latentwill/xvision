@@ -7,6 +7,7 @@ export type IconName =
   | "home"
   | "chart"
   | "play"
+  | "stop"
   | "bars"
   | "book"
   | "db"
@@ -39,6 +40,12 @@ const PATHS: Record<IconName, ReactNode> = {
     <>
       <circle cx="10" cy="10" r="7" />
       <path d="M8 7l5 3-5 3V7z" fill="currentColor" stroke="none" />
+    </>
+  ),
+  stop: (
+    <>
+      <circle cx="10" cy="10" r="7" />
+      <path d="M7.5 7.5h5v5h-5z" fill="currentColor" stroke="none" />
     </>
   ),
   bars: <path d="M4 16V8M8 16V5M12 16v-6M16 16v-9" />,

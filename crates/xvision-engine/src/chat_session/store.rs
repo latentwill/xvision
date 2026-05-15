@@ -72,18 +72,16 @@ impl ChatSessionStore {
         let id = Ulid::new().to_string();
         let now = Utc::now();
         let now_rfc = now.to_rfc3339();
-        let blocks_json =
-            serde_json::to_string(blocks).context("serialize content_blocks array")?;
+        let blocks_json = serde_json::to_string(blocks).context("serialize content_blocks array")?;
 
         let mut tx = pool.begin().await.context("begin tx for append")?;
 
-        let next_seq: i64 = sqlx::query_scalar(
-            "SELECT COALESCE(MAX(seq), -1) + 1 FROM chat_messages WHERE session_id = ?1",
-        )
-        .bind(session_id)
-        .fetch_one(&mut *tx)
-        .await
-        .context("compute next seq")?;
+        let next_seq: i64 =
+            sqlx::query_scalar("SELECT COALESCE(MAX(seq), -1) + 1 FROM chat_messages WHERE session_id = ?1")
+                .bind(session_id)
+                .fetch_one(&mut *tx)
+                .await
+                .context("compute next seq")?;
 
         sqlx::query(
             "INSERT INTO chat_messages (id, session_id, seq, role, content_blocks_json, ts) \
@@ -99,14 +97,12 @@ impl ChatSessionStore {
         .await
         .context("insert chat_messages row")?;
 
-        sqlx::query(
-            "UPDATE chat_sessions SET last_activity_at = ?2 WHERE id = ?1",
-        )
-        .bind(session_id)
-        .bind(&now_rfc)
-        .execute(&mut *tx)
-        .await
-        .context("touch session last_activity_at")?;
+        sqlx::query("UPDATE chat_sessions SET last_activity_at = ?2 WHERE id = ?1")
+            .bind(session_id)
+            .bind(&now_rfc)
+            .execute(&mut *tx)
+            .await
+            .context("touch session last_activity_at")?;
 
         tx.commit().await.context("commit append tx")?;
 
@@ -152,14 +148,12 @@ impl ChatSessionStore {
     /// for keep-alive heartbeats from the rail's WebSocket / SSE handler.
     pub async fn touch(pool: &SqlitePool, session_id: &str) -> Result<()> {
         let now = Utc::now().to_rfc3339();
-        sqlx::query(
-            "UPDATE chat_sessions SET last_activity_at = ?2 WHERE id = ?1",
-        )
-        .bind(session_id)
-        .bind(&now)
-        .execute(pool)
-        .await
-        .context("touch session")?;
+        sqlx::query("UPDATE chat_sessions SET last_activity_at = ?2 WHERE id = ?1")
+            .bind(session_id)
+            .bind(&now)
+            .execute(pool)
+            .await
+            .context("touch session")?;
         Ok(())
     }
 
@@ -174,10 +168,7 @@ impl ChatSessionStore {
     /// Replaces the previous "frontend caches a session id and validates
     /// via update_scope" flow — sessions are now owned server-side so
     /// the rail can't hold a stale id across DB resets or fresh deploys.
-    pub async fn resolve(
-        pool: &SqlitePool,
-        scope: &ContextScope,
-    ) -> Result<(String, Vec<ChatMessage>)> {
+    pub async fn resolve(pool: &SqlitePool, scope: &ContextScope) -> Result<(String, Vec<ChatMessage>)> {
         let scope_json = serde_json::to_string(scope).context("serialize ContextScope")?;
         let existing: Option<String> = sqlx::query_scalar(
             "SELECT id FROM chat_sessions \
@@ -206,13 +197,12 @@ impl ChatSessionStore {
     /// parsed (forward-compat: a future variant the local binary doesn't
     /// know yet shouldn't break the read path).
     pub async fn load_scope(pool: &SqlitePool, session_id: &str) -> Result<ContextScope> {
-        let json: Option<String> = sqlx::query_scalar(
-            "SELECT context_scope_json FROM chat_sessions WHERE id = ?1",
-        )
-        .bind(session_id)
-        .fetch_optional(pool)
-        .await
-        .context("read context_scope_json")?;
+        let json: Option<String> =
+            sqlx::query_scalar("SELECT context_scope_json FROM chat_sessions WHERE id = ?1")
+                .bind(session_id)
+                .fetch_optional(pool)
+                .await
+                .context("read context_scope_json")?;
         let json = json.ok_or_else(|| anyhow::anyhow!("session {session_id} not found"))?;
         Ok(serde_json::from_str(&json).unwrap_or_default())
     }
@@ -330,12 +320,11 @@ mod tests {
 
         ChatSessionStore::delete_session(&pool, &sid).await.unwrap();
 
-        let leftover: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM chat_messages WHERE session_id = ?1")
-                .bind(&sid)
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let leftover: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM chat_messages WHERE session_id = ?1")
+            .bind(&sid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         assert_eq!(leftover, 0, "ON DELETE CASCADE should clear messages");
     }
 
@@ -391,17 +380,14 @@ mod tests {
     async fn resolve_differentiates_by_scope() {
         let pool = fresh_pool().await;
         let workspace = ContextScope::Workspace;
-        let strategy = ContextScope::Strategy {
-            draft_id: "x".into(),
-        };
+        let strategy = ContextScope::Strategy { draft_id: "x".into() };
 
         let (workspace_id, _) = ChatSessionStore::resolve(&pool, &workspace).await.unwrap();
         let (strategy_id, _) = ChatSessionStore::resolve(&pool, &strategy).await.unwrap();
         assert_ne!(workspace_id, strategy_id, "scopes get distinct sessions");
 
         // Re-resolving each scope returns its own existing id, not a new one.
-        let (workspace_again, _) =
-            ChatSessionStore::resolve(&pool, &workspace).await.unwrap();
+        let (workspace_again, _) = ChatSessionStore::resolve(&pool, &workspace).await.unwrap();
         assert_eq!(workspace_again, workspace_id);
     }
 
@@ -411,23 +397,21 @@ mod tests {
         let sid = ChatSessionStore::create_session(&pool, &ContextScope::Workspace)
             .await
             .unwrap();
-        let initial: String =
-            sqlx::query_scalar("SELECT last_activity_at FROM chat_sessions WHERE id = ?1")
-                .bind(&sid)
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let initial: String = sqlx::query_scalar("SELECT last_activity_at FROM chat_sessions WHERE id = ?1")
+            .bind(&sid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         // Sleep just enough that the RFC3339 timestamp must differ.
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         ChatSessionStore::append(&pool, &sid, "user", &[block("x")])
             .await
             .unwrap();
-        let after: String =
-            sqlx::query_scalar("SELECT last_activity_at FROM chat_sessions WHERE id = ?1")
-                .bind(&sid)
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let after: String = sqlx::query_scalar("SELECT last_activity_at FROM chat_sessions WHERE id = ?1")
+            .bind(&sid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         assert_ne!(initial, after);
     }
 

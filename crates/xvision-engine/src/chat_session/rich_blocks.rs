@@ -321,9 +321,7 @@ pub enum RichBlockError {
     UnknownCommand,
 }
 
-pub fn build_inline_chart(
-    mut payload: InlineChartPayload,
-) -> Result<InlineChartPayload, RichBlockError> {
+pub fn build_inline_chart(mut payload: InlineChartPayload) -> Result<InlineChartPayload, RichBlockError> {
     normalize_chart_values(&mut payload);
     let total_points: usize = payload.series.iter().map(|s| s.points.len()).sum();
     if total_points > MAX_INLINE_CHART_POINTS {
@@ -338,9 +336,7 @@ pub fn build_inline_chart(
     Ok(payload)
 }
 
-pub fn inline_equity_chart_from_run_detail(
-    detail: &RunDetail,
-) -> Result<RichContentBlock, RichBlockError> {
+pub fn inline_equity_chart_from_run_detail(detail: &RunDetail) -> Result<RichContentBlock, RichBlockError> {
     let run = &detail.summary;
     let payload = InlineChartPayload {
         chart_id: format!("run:{}:equity", run.id),
@@ -413,7 +409,15 @@ pub fn inline_compare_chart_from_report(
         .collect::<Vec<_>>();
 
     let payload = InlineChartPayload {
-        chart_id: format!("compare:{}", report.runs.iter().map(|r| r.id.as_str()).collect::<Vec<_>>().join(",")),
+        chart_id: format!(
+            "compare:{}",
+            report
+                .runs
+                .iter()
+                .map(|r| r.id.as_str())
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
         kind: InlineChartKind::Compare,
         title: "Run comparison".into(),
         subtitle: Some(format!("{} runs", report.runs.len())),
@@ -430,7 +434,12 @@ pub fn inline_compare_chart_from_report(
             label: "Open compare".into(),
             href: Some(format!(
                 "/eval-runs/compare?ids={}",
-                report.runs.iter().map(|r| r.id.as_str()).collect::<Vec<_>>().join(",")
+                report
+                    .runs
+                    .iter()
+                    .map(|r| r.id.as_str())
+                    .collect::<Vec<_>>()
+                    .join(",")
             )),
             command: None,
         }],
@@ -440,9 +449,7 @@ pub fn inline_compare_chart_from_report(
     build_inline_chart(payload).map(RichContentBlock::InlineChart)
 }
 
-pub fn inline_returns_histogram_from_runs(
-    runs: &[RunSummary],
-) -> Result<RichContentBlock, RichBlockError> {
+pub fn inline_returns_histogram_from_runs(runs: &[RunSummary]) -> Result<RichContentBlock, RichBlockError> {
     let points = runs
         .iter()
         .enumerate()
@@ -748,10 +755,7 @@ mod tests {
     fn compare_builder_produces_two_series() {
         let now = Utc::now();
         let report = ComparisonReport {
-            runs: vec![
-                comparison_run("run-a", 10.0),
-                comparison_run("run-b", -3.0),
-            ],
+            runs: vec![comparison_run("run-a", 10.0), comparison_run("run-b", -3.0)],
             equity_curves: vec![
                 ComparisonEquityCurve {
                     run_id: "run-a".into(),
@@ -821,6 +825,7 @@ mod tests {
             model: Some("claude".into()),
             providers: vec!["anthropic".into()],
             models: vec!["claude".into()],
+            provider_models: vec![],
         };
 
         let block = inline_strategy_card_from_summary(&summary).expect("strategy card");

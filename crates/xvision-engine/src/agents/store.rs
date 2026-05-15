@@ -47,8 +47,7 @@ impl AgentStore {
     pub async fn create(&self, new: NewAgent) -> Result<String> {
         let id = Ulid::new().to_string();
         let now = Utc::now().to_rfc3339();
-        let tags_json =
-            serde_json::to_string(&new.tags).context("serialize tags")?;
+        let tags_json = serde_json::to_string(&new.tags).context("serialize tags")?;
 
         let mut tx = self.pool.begin().await?;
 
@@ -178,13 +177,12 @@ impl AgentStore {
 
     pub async fn archive(&self, agent_id: &str) -> Result<bool> {
         let now = Utc::now().to_rfc3339();
-        let result = sqlx::query(
-            "UPDATE agents SET archived = 1, updated_at = ? WHERE agent_id = ? AND archived = 0",
-        )
-        .bind(&now)
-        .bind(agent_id)
-        .execute(&self.pool)
-        .await?;
+        let result =
+            sqlx::query("UPDATE agents SET archived = 1, updated_at = ? WHERE agent_id = ? AND archived = 0")
+                .bind(&now)
+                .bind(agent_id)
+                .execute(&self.pool)
+                .await?;
         Ok(result.rows_affected() > 0)
     }
 
@@ -197,10 +195,12 @@ impl AgentStore {
                     .fetch_optional(&self.pool)
                     .await?
             }
-            None => sqlx::query("SELECT 1 FROM agents WHERE name = ? LIMIT 1")
-                .bind(name)
-                .fetch_optional(&self.pool)
-                .await?,
+            None => {
+                sqlx::query("SELECT 1 FROM agents WHERE name = ? LIMIT 1")
+                    .bind(name)
+                    .fetch_optional(&self.pool)
+                    .await?
+            }
         };
         Ok(row.is_some())
     }
@@ -239,8 +239,7 @@ async fn insert_slot(
     idx: i64,
     slot: &AgentSlot,
 ) -> Result<()> {
-    let skill_ids_json =
-        serde_json::to_string(&slot.skill_ids).context("serialize skill_ids")?;
+    let skill_ids_json = serde_json::to_string(&slot.skill_ids).context("serialize skill_ids")?;
     sqlx::query(
         "INSERT INTO agent_slots \
          (agent_id, slot_index, name, provider, model, system_prompt, skill_ids_json, max_tokens) \
@@ -262,8 +261,7 @@ async fn insert_slot(
 
 fn row_to_agent(row: sqlx::sqlite::SqliteRow, slots: Vec<AgentSlot>) -> Result<Agent> {
     let tags_json: String = row.try_get("tags_json")?;
-    let tags: Vec<String> =
-        serde_json::from_str(&tags_json).context("parse tags_json")?;
+    let tags: Vec<String> = serde_json::from_str(&tags_json).context("parse tags_json")?;
     let archived_int: i64 = row.try_get("archived")?;
     let created_at_s: String = row.try_get("created_at")?;
     let updated_at_s: String = row.try_get("updated_at")?;
@@ -424,10 +422,6 @@ mod tests {
     #[tokio::test]
     async fn get_returns_none_for_missing() {
         let store = AgentStore::new(fresh_pool().await);
-        assert!(store
-            .get("01HZ000000000000000000XXXX")
-            .await
-            .unwrap()
-            .is_none());
+        assert!(store.get("01HZ000000000000000000XXXX").await.unwrap().is_none());
     }
 }

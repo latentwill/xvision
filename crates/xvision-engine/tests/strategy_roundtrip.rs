@@ -28,6 +28,8 @@ fn sample_strategy() -> Strategy {
             prompt: "...".into(),
             model_requirement: "anthropic.claude-sonnet-4.6".into(),
             allowed_tools: vec!["ohlcv".into(), "indicator_panel".into()],
+            provider: None,
+            model: None,
         }),
         intern_slot: None,
         trader_slot: Some(LLMSlot {
@@ -35,6 +37,8 @@ fn sample_strategy() -> Strategy {
             prompt: "...".into(),
             model_requirement: "anthropic.claude-sonnet-4.6".into(),
             allowed_tools: vec!["ohlcv".into()],
+            provider: None,
+            model: None,
         }),
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({"rsi_oversold": 30, "rsi_overbought": 70}),
@@ -48,6 +52,8 @@ fn slot_serializes_to_json_and_back() {
         prompt: "decide: enter long, enter short, or no-op".to_string(),
         model_requirement: "anthropic.claude-sonnet-4.6+".to_string(),
         allowed_tools: vec!["ohlcv".to_string(), "indicator_panel".to_string()],
+        provider: None,
+        model: None,
     };
     let json = serde_json::to_string(&slot).unwrap();
     let parsed: LLMSlot = serde_json::from_str(&json).unwrap();
