@@ -53,6 +53,12 @@ you'd rather skip the login step.
 | `/config` | Baked-in copy of `config/*.toml`; mount your own to override | ro recommended |
 | `/strategies` | Baked-in copy of the `strategies/` tree; mount to override | ro recommended |
 
+Packaged parquet probes from `data/probes/` are baked into the image under
+`/opt/xvision/data/probes/` and copied into `/data/probes/` on container boot
+without overwriting existing files. This keeps backtest fixture lookup tied to
+scenario cache keys while still allowing operators to persist or replace probe
+assets in the data volume.
+
 ## Environment variables
 
 | Var | Purpose | Default |
@@ -60,6 +66,8 @@ you'd rather skip the login step.
 | `XVN_AUTOMIGRATE` | If `1`, run `xvn store migrate` before exec | `0` |
 | `XVN_DATA_DIR` | Override the data dir | `/data` |
 | `XVN_CONFIG_DIR` | Override the config dir | `/config` |
+| `XVN_PROBES_DIR` | Override the parquet probe lookup dir | `$XVN_DATA_DIR/probes` |
+| `XVN_SEED_PROBES_DIR` | Override the packaged probe seed dir | `/opt/xvision/data/probes` |
 | `ANTHROPIC_API_KEY` | Required for `dashboard serve` (wizard + chat-rail SSE) | none |
 | `CREDENTIAL_SECRET` | 32-byte hex; encrypts persisted broker keys | none |
 | `APCA_API_KEY_ID` / `APCA_API_SECRET_KEY` / `APCA_API_BASE_URL` | Alpaca paper creds | base URL defaults to paper |
