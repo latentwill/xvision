@@ -1,0 +1,32 @@
+{
+  "base_template": "breakout",
+  "display_name": "Fibonacci Extension Breakout",
+  "family": "FibonacciStrategy",
+  "mechanical_params": [],
+  "name": "fibonacci_extension_breakout",
+  "plain_summary": "Compression setups often resolve into fast expansion. This strategy looks for a squeeze, then uses Fibonacci extension levels to estimate breakout continuation and exit targets once price escapes the range.",
+  "regime_fit": [
+    "range_bound",
+    "high_volatility",
+    "event_driven"
+  ],
+  "required_tools": [
+    "ohlcv",
+    "indicator_panel",
+    "onchain_panel"
+  ],
+  "schema_version": "xvision.strategy_template.v1",
+  "sections": {
+    "data_dependencies": "- OHLCV bars and indicator panel values\n- Open interest and realized volatility feeds\n- No extra model inputs required",
+    "decision_rule": "- If volatility is compressed and Donchian range is tight, mark a squeeze setup.\n- Enter only after a clean break beyond the range with confirming momentum.\n- Use 1.272, 1.618, and 2.618 extensions as staged targets.\n- If open interest spikes but price cannot hold the breakout, treat it as a false move and exit quickly.\n- If realized volatility is already extreme, reduce position size or ignore the setup.\n\nPseudocode:\n\n```text\nif squeeze and breakout_confirmed and momentum_supports:\n    enter_breakout\n    set_targets([1.272, 1.618, 2.618])\nelse:\n    flat\n```",
+    "expected_regime": "- Low-volatility compression before expansion\n- Assets that frequently trend in impulsive legs\n- Periods where range breakouts outperform mean-reversion",
+    "inputs": "- `IndicatorPanel.bollinger_upper`\n- `IndicatorPanel.bollinger_lower`\n- `IndicatorPanel.atr_14`\n- `IndicatorPanel.rsi_14`\n- `IndicatorPanel.ema_12`\n- `IndicatorPanel.ema_26`\n- `IndicatorPanel.donchian_high`\n- `IndicatorPanel.donchian_low`\n- `OnchainPanel.open_interest_usd`\n- `OnchainPanel.realized_volatility_30d`",
+    "parameters": "- `squeeze_width_max`: narrow Bollinger width threshold\n- `breakout_buffer`: small buffer beyond the recent range before entry\n- `extension_1272`: 1.272 extension target\n- `extension_1618`: 1.618 extension target\n- `extension_2618`: 2.618 extension target for strong trends\n- `atr_stop`: stop distance scaled to ATR",
+    "references": "- `crates/xvision-core/src/market.rs`\n- `decisions/strategy-choices.md`\n- `strategies/x strategy/fibonacci_pullback_reentry.md`",
+    "status": "idea",
+    "thesis": "Compression setups often resolve into fast expansion. This strategy looks for a squeeze, then uses Fibonacci extension levels to estimate breakout continuation and exit targets once price escapes the range."
+  },
+  "source_doc": "strategies/FibonacciStrategy/fibonacci_extension_breakout.md",
+  "status": "idea",
+  "trader_prompt": "You are trading the `Fibonacci Extension Breakout` strategy.\n\nThesis:\nCompression setups often resolve into fast expansion. This strategy looks for a squeeze, then uses Fibonacci extension levels to estimate breakout continuation and exit targets once price escapes the range.\n\nInputs:\n- `IndicatorPanel.bollinger_upper`\n- `IndicatorPanel.bollinger_lower`\n- `IndicatorPanel.atr_14`\n- `IndicatorPanel.rsi_14`\n- `IndicatorPanel.ema_12`\n- `IndicatorPanel.ema_26`\n- `IndicatorPanel.donchian_high`\n- `IndicatorPanel.donchian_low`\n- `OnchainPanel.open_interest_usd`\n- `OnchainPanel.realized_volatility_30d`\n\nDecision rule:\n- If volatility is compressed and Donchian range is tight, mark a squeeze setup.\n- Enter only after a clean break beyond the range with confirming momentum.\n- Use 1.272, 1.618, and 2.618 extensions as staged targets.\n- If open interest spikes but price cannot hold the breakout, treat it as a false move and exit quickly.\n- If realized volatility is already extreme, reduce position size or ignore the setup.\n\nPseudocode:\n\n```text\nif squeeze and breakout_confirmed and momentum_supports:\n    enter_breakout\n    set_targets([1.272, 1.618, 2.618])\nelse:\n    flat\n```\n\nExpected regime:\n- Low-volatility compression before expansion - Assets that frequently trend in impulsive legs - Periods where range breakouts outperform mean-reversion\n\nData dependencies:\n- OHLCV bars and indicator panel values\n- Open interest and realized volatility feeds\n- No extra model inputs required\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
+}

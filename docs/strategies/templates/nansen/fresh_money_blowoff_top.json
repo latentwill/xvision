@@ -1,0 +1,56 @@
+{
+  "base_template": "onchain_smart_money",
+  "display_name": "Fresh Money Blowoff Top",
+  "family": "nansen",
+  "mechanical_params": [
+    {
+      "default": "15%",
+      "name": "min_fresh_buy_volume_pct",
+      "range": "5% \u2013 40%"
+    },
+    {
+      "default": "10%",
+      "name": "min_rally_pct_3d",
+      "range": "5% \u2013 30%"
+    },
+    {
+      "default": "70",
+      "name": "min_rsi_14",
+      "range": "60 \u2013 85"
+    },
+    {
+      "default": "exit",
+      "name": "mode",
+      "range": "exit / short"
+    },
+    {
+      "default": "48",
+      "name": "time_stop_hours",
+      "range": "12 \u2013 168"
+    }
+  ],
+  "name": "fresh_money_blowoff_top",
+  "plain_summary": "When wallets less than 30 days old, with low historical transaction counts, suddenly buy a token in size, the cohort is retail latecomers chasing a move. Historically \u2014 across both equities and crypto \u2014 the late-arrival of unsophisticated capital marks local tops. The Nansen \"Fresh Wallet\" / \"Smart Money Suspect\" labels make this cohort directly queryable.",
+  "regime_fit": [
+    "event_driven"
+  ],
+  "required_tools": [
+    "ohlcv",
+    "indicator_panel",
+    "onchain_panel"
+  ],
+  "schema_version": "xvision.strategy_template.v1",
+  "sections": {
+    "data_dependencies": "- Nansen `wallet_age` and `wallet_smart_score` labels \u2014 used to define\n  \"fresh\" cohort.\n- Mantle-specific wallet-age distribution may be skewed (newer chain) \u2014\n  parameters likely need recalibration vs Ethereum mainnet baselines.",
+    "decision_rule": "```\nif fresh_wallets.buy_volume_pct_24h >= min_fresh_buy_volume_pct\n   and price_change_3d >= min_rally_pct_3d\n   and rsi_14 >= min_rsi_14:\n       if in_long: exit long\n       if mode == \"short\" and is_flat: enter short with time_stop_hours\n```",
+    "expected_regime": "Late-stage rallies in retail-attention names. Fails badly on tokens with\nstrong reflexive narratives (e.g., meme coin parabolics) where\nfresh-wallet inflow accelerates rather than reverts. Avoid on\nnetwork-launch days.",
+    "inputs": "- `OnchainPanel.nansen.fresh_wallets.buy_count_24h` \u2014 number of fresh\n  wallets that bought the token in the last 24h.\n- `OnchainPanel.nansen.fresh_wallets.buy_volume_pct_24h` \u2014 fresh-wallet\n  buy volume as a fraction of total volume in the window.\n- `PriceFrame.close` \u2014 for confirmation that this is a rally context.\n- `IndicatorPanel.rsi_14` \u2014 secondary overbought confirmation.",
+    "parameters": "| Param                     | Default | Range           |\n| ------------------------- | ------- | --------------- |\n| `min_fresh_buy_volume_pct`| 15%     | 5% \u2013 40%        |\n| `min_rally_pct_3d`        | 10%     | 5% \u2013 30%        |\n| `min_rsi_14`              | 70      | 60 \u2013 85         |\n| `mode`                    | `exit`  | `exit` / `short` |\n| `time_stop_hours`         | 48      | 12 \u2013 168        |\n\nA `time_stop_hours` is critical \u2014 fade-the-retail trades that don't\nresolve within 48h often resolve *the wrong way* (the move goes parabolic\nbefore reversing). Bound the loss.",
+    "references": "- Inverse: smart-money / fund-follow strategies \u2014 this strategy fades the\n  cohort that those follow.\n- Equity analog: high-retail-flow names underperform after the flow peak\n  (Barber & Odean, 2000).",
+    "status": "`queued`. Distinct enough from the rest of the population to test as a\ndiversifier even if it doesn't dominate solo.",
+    "thesis": "When wallets less than 30 days old, with low historical transaction\ncounts, suddenly buy a token in size, the cohort is retail latecomers\nchasing a move. Historically \u2014 across both equities and crypto \u2014 the\nlate-arrival of unsophisticated capital marks local tops. The Nansen\n\"Fresh Wallet\" / \"Smart Money Suspect\" labels make this cohort directly\nqueryable.\n\nThis is an explicitly *contrarian* strategy and runs against the\nfollow-the-cohort logic of most other entries in this folder. The\ndistinguishing assumption: this cohort's information is *worse than chance*\nin aggregate, not just uninformative."
+  },
+  "source_doc": "strategies/nansen/fresh_money_blowoff_top.md",
+  "status": "queued",
+  "trader_prompt": "You are trading the `Fresh Money Blowoff Top` strategy.\n\nThesis:\nWhen wallets less than 30 days old, with low historical transaction counts, suddenly buy a token in size, the cohort is retail latecomers chasing a move. Historically \u2014 across both equities and crypto \u2014 the late-arrival of unsophisticated capital marks local tops. The Nansen \"Fresh Wallet\" / \"Smart Money Suspect\" labels make this cohort directly queryable.\n\nInputs:\n- `OnchainPanel.nansen.fresh_wallets.buy_count_24h` \u2014 number of fresh\n  wallets that bought the token in the last 24h.\n- `OnchainPanel.nansen.fresh_wallets.buy_volume_pct_24h` \u2014 fresh-wallet\n  buy volume as a fraction of total volume in the window.\n- `PriceFrame.close` \u2014 for confirmation that this is a rally context.\n- `IndicatorPanel.rsi_14` \u2014 secondary overbought confirmation.\n\nDecision rule:\n```\nif fresh_wallets.buy_volume_pct_24h >= min_fresh_buy_volume_pct\n   and price_change_3d >= min_rally_pct_3d\n   and rsi_14 >= min_rsi_14:\n       if in_long: exit long\n       if mode == \"short\" and is_flat: enter short with time_stop_hours\n```\n\nExpected regime:\nLate-stage rallies in retail-attention names. Fails badly on tokens with strong reflexive narratives (e.g., meme coin parabolics) where fresh-wallet inflow accelerates rather than reverts. Avoid on network-launch days.\n\nData dependencies:\n- Nansen `wallet_age` and `wallet_smart_score` labels \u2014 used to define\n  \"fresh\" cohort.\n- Mantle-specific wallet-age distribution may be skewed (newer chain) \u2014\n  parameters likely need recalibration vs Ethereum mainnet baselines.\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
+}

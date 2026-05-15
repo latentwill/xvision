@@ -1,0 +1,31 @@
+{
+  "base_template": "mean_reversion",
+  "display_name": "Fibonacci Pyramid Scaling",
+  "family": "FibonacciStrategy",
+  "mechanical_params": [],
+  "name": "fibonacci_pyramid_scaling",
+  "plain_summary": "Instead of entering a full position at once, this strategy scales in as the trade proves itself. It adds exposure in Fibonacci-sized increments when the trend persists and volatility stays controlled.",
+  "regime_fit": [
+    "event_driven"
+  ],
+  "required_tools": [
+    "ohlcv",
+    "indicator_panel",
+    "onchain_panel",
+    "funding_rates"
+  ],
+  "schema_version": "xvision.strategy_template.v1",
+  "sections": {
+    "data_dependencies": "- OHLCV bars and indicator panel values\n- Funding and positioning feed\n- No extra model inputs required",
+    "decision_rule": "- Open a small starter position only when trend structure is clear.\n- Add the next layer after a confirmed higher high or lower low plus momentum confirmation.\n- Add larger increments only if funding and long-short positioning do not show dangerous crowding.\n- Stop adding if volatility expands too quickly or momentum weakens.\n- Never let the final exposure exceed the preset risk cap.\n\nPseudocode:\n\n```text\nif trend_confirmed:\n    enter_small\n    if trade_confirms:\n        add(0.382)\n    if trade_confirms_again:\n        add(0.618)\n    if strongest_confirmation:\n        add(1.000)\nelse:\n    flat\n```",
+    "expected_regime": "- Persistent trends with orderly pullbacks\n- Markets where conviction can be built in steps\n- Regimes where overcommitting early is the bigger error",
+    "inputs": "- `IndicatorPanel.ema_12`\n- `IndicatorPanel.ema_26`\n- `IndicatorPanel.rsi_14`\n- `IndicatorPanel.macd_histogram`\n- `IndicatorPanel.atr_14`\n- `OnchainPanel.funding_rate_8h`\n- `OnchainPanel.long_short_ratio`\n- `Regime`",
+    "parameters": "- `base_size`: initial position fraction\n- `add_0382`: next add size as 0.382 of base risk\n- `add_0618`: third add size as 0.618 of base risk\n- `add_1000`: final add size as 1.000 of base risk\n- `trend_strength_floor`: minimum EMA and MACD confirmation\n- `risk_cap`: hard cap on total exposure",
+    "references": "- `crates/xvision-core/src/market.rs`\n- `decisions/strategy-choices.md`\n- `strategies/x strategy/fibonacci_pullback_reentry.md`",
+    "status": "idea",
+    "thesis": "Instead of entering a full position at once, this strategy scales in as the trade proves itself. It adds exposure in Fibonacci-sized increments when the trend persists and volatility stays controlled."
+  },
+  "source_doc": "strategies/FibonacciStrategy/fibonacci_pyramid_scaling.md",
+  "status": "idea",
+  "trader_prompt": "You are trading the `Fibonacci Pyramid Scaling` strategy.\n\nThesis:\nInstead of entering a full position at once, this strategy scales in as the trade proves itself. It adds exposure in Fibonacci-sized increments when the trend persists and volatility stays controlled.\n\nInputs:\n- `IndicatorPanel.ema_12`\n- `IndicatorPanel.ema_26`\n- `IndicatorPanel.rsi_14`\n- `IndicatorPanel.macd_histogram`\n- `IndicatorPanel.atr_14`\n- `OnchainPanel.funding_rate_8h`\n- `OnchainPanel.long_short_ratio`\n- `Regime`\n\nDecision rule:\n- Open a small starter position only when trend structure is clear.\n- Add the next layer after a confirmed higher high or lower low plus momentum confirmation.\n- Add larger increments only if funding and long-short positioning do not show dangerous crowding.\n- Stop adding if volatility expands too quickly or momentum weakens.\n- Never let the final exposure exceed the preset risk cap.\n\nPseudocode:\n\n```text\nif trend_confirmed:\n    enter_small\n    if trade_confirms:\n        add(0.382)\n    if trade_confirms_again:\n        add(0.618)\n    if strongest_confirmation:\n        add(1.000)\nelse:\n    flat\n```\n\nExpected regime:\n- Persistent trends with orderly pullbacks - Markets where conviction can be built in steps - Regimes where overcommitting early is the bigger error\n\nData dependencies:\n- OHLCV bars and indicator panel values\n- Funding and positioning feed\n- No extra model inputs required\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
+}

@@ -1,0 +1,31 @@
+{
+  "base_template": "onchain_smart_money",
+  "display_name": "Stablecoin Inflow Risk Off",
+  "family": "random",
+  "mechanical_params": [],
+  "name": "stablecoin_inflow_risk_off",
+  "plain_summary": "When stablecoin inflows spike, the market is often preparing to deploy capital or rotate into risk. If that inflow coincides with weak trend structure and rising realized volatility, the safer trade can be to de-risk or short the weakest leg.",
+  "regime_fit": [
+    "chop",
+    "event_driven"
+  ],
+  "required_tools": [
+    "ohlcv",
+    "indicator_panel",
+    "onchain_panel"
+  ],
+  "schema_version": "xvision.strategy_template.v1",
+  "sections": {
+    "data_dependencies": "- Stablecoin inflow feed\n- Historical inflow baseline for normalization\n- Volatility and trend indicators already present in `MarketSnapshot`",
+    "decision_rule": "- If stablecoin inflows are elevated and the trend structure is weak, cut risk.\n- If inflows are elevated but trend confirms upward continuation, do not short blindly - hold or scale only lightly.\n- If inflows are normal and trend is clean, do nothing.\n\nPseudocode:\n\n```text\nif inflow_spike and weak_trend and high_volatility:\n    de_risk_or_short_weakness\nelif inflow_spike and strong_trend:\n    hold\nelse:\n    flat_or_normal_size\n```",
+    "expected_regime": "- Transition markets where liquidity is moving before price does\n- Late distribution phases\n- Choppy markets where fresh capital does not immediately translate to clean upside",
+    "inputs": "- `OnchainPanel.stablecoin_inflows_24h_usd`\n- `OnchainPanel.realized_volatility_30d`\n- `IndicatorPanel.sma_50`\n- `IndicatorPanel.sma_200`\n- `IndicatorPanel.macd_hist`\n- `Regime`",
+    "parameters": "- `inflow_z`: 1.5 to 3.0 standard deviations above trailing baseline\n- `volatility_floor`: realized vol above median\n- `trend_confirmation`: SMA50 below SMA200 or MACD histogram negative\n- `risk_cut`: 25% to 100% of normal exposure, depending on severity",
+    "references": "- `crates/xvision-core/src/market.rs`\n- `decisions/0010-hackathon-pivot-strategy-loom.md`\n- `crates/xvision-eval/src/backtest.rs`",
+    "status": "idea",
+    "thesis": "When stablecoin inflows spike, the market is often preparing to deploy capital or rotate into risk. If that inflow coincides with weak trend structure and rising realized volatility, the safer trade can be to de-risk or short the weakest leg."
+  },
+  "source_doc": "strategies/random/stablecoin_inflow_risk_off.md",
+  "status": "idea",
+  "trader_prompt": "You are trading the `Stablecoin Inflow Risk Off` strategy.\n\nThesis:\nWhen stablecoin inflows spike, the market is often preparing to deploy capital or rotate into risk. If that inflow coincides with weak trend structure and rising realized volatility, the safer trade can be to de-risk or short the weakest leg.\n\nInputs:\n- `OnchainPanel.stablecoin_inflows_24h_usd`\n- `OnchainPanel.realized_volatility_30d`\n- `IndicatorPanel.sma_50`\n- `IndicatorPanel.sma_200`\n- `IndicatorPanel.macd_hist`\n- `Regime`\n\nDecision rule:\n- If stablecoin inflows are elevated and the trend structure is weak, cut risk.\n- If inflows are elevated but trend confirms upward continuation, do not short blindly - hold or scale only lightly.\n- If inflows are normal and trend is clean, do nothing.\n\nPseudocode:\n\n```text\nif inflow_spike and weak_trend and high_volatility:\n    de_risk_or_short_weakness\nelif inflow_spike and strong_trend:\n    hold\nelse:\n    flat_or_normal_size\n```\n\nExpected regime:\n- Transition markets where liquidity is moving before price does - Late distribution phases - Choppy markets where fresh capital does not immediately translate to clean upside\n\nData dependencies:\n- Stablecoin inflow feed\n- Historical inflow baseline for normalization\n- Volatility and trend indicators already present in `MarketSnapshot`\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
+}
