@@ -12,8 +12,8 @@ use serde::{Deserialize, Serialize};
 use xvision_engine::api::chart::{self as chart_api, StrategyChartPayload};
 use xvision_engine::api::strategy::{
     self, add_agent, remove_agent, rename_agent_role, set_pipeline, set_risk_config, update_slot,
-    validate_draft, AddAgentReq, RemoveAgentReq, RenameAgentRoleReq, SetPipelineReq, StrategyAgentsOut,
-    StrategySummary,
+    validate_draft, AddAgentReq, CloneStrategyReq, RemoveAgentReq, RenameAgentRoleReq, SetPipelineReq,
+    StrategyAgentsOut, StrategySummary,
 };
 use xvision_engine::authoring::{
     self, CreateStrategyOut, CreateStrategyReq, SetRiskConfigOut, SetRiskConfigReq, TemplateInfo,
@@ -67,6 +67,20 @@ pub async fn get(
 ) -> Result<Json<Strategy>, DashboardError> {
     let strategy = strategy::get(&state.api_context(), &id).await?;
     Ok(Json(strategy))
+}
+
+/// `POST /api/strategy/:id/clone` — duplicate a strategy draft for editing.
+/// An empty body means use the parent display name with a `(clone)` suffix.
+pub async fn clone(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    body: Option<Json<CloneStrategyReq>>,
+) -> Result<(StatusCode, Json<Strategy>), DashboardError> {
+    let req = body
+        .map(|Json(req)| req)
+        .unwrap_or(CloneStrategyReq { display_name: None });
+    let strategy = strategy::clone_strategy(&state.api_context(), &id, req).await?;
+    Ok((StatusCode::CREATED, Json(strategy)))
 }
 
 /// `DELETE /api/strategy/:id` — delete a draft strategy entity.
