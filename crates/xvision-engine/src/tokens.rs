@@ -14,10 +14,7 @@ const CHARS_PER_TOKEN: usize = 4;
 const FIXED_CONTEXT_TOKENS_PER_FIRE: u64 = 600; // ohlcv panel + indicator panel header
 const OUTPUT_TOKENS_PER_FIRE: u64 = 80; // typical small JSON decision
 
-pub fn estimate_pipeline_tokens_from_slots<'a, I>(
-    slots: I,
-    decision_points: u64,
-) -> TokenEstimate
+pub fn estimate_pipeline_tokens_from_slots<'a, I>(slots: I, decision_points: u64) -> TokenEstimate
 where
     I: IntoIterator<Item = &'a LLMSlot>,
 {

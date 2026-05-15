@@ -156,11 +156,7 @@ async fn get_inner(ctx: &ApiContext, skill_id: &str) -> ApiResult<Skill> {
         .ok_or_else(|| ApiError::NotFound(format!("skill {}", skill_id)))
 }
 
-pub async fn update(
-    ctx: &ApiContext,
-    skill_id: &str,
-    req: UpdateSkillRequest,
-) -> ApiResult<Skill> {
+pub async fn update(ctx: &ApiContext, skill_id: &str, req: UpdateSkillRequest) -> ApiResult<Skill> {
     let started = Instant::now();
     let result = update_inner(ctx, skill_id, req).await;
     let outcome = outcome_of(&result);
@@ -177,11 +173,7 @@ pub async fn update(
     result
 }
 
-async fn update_inner(
-    ctx: &ApiContext,
-    skill_id: &str,
-    req: UpdateSkillRequest,
-) -> ApiResult<Skill> {
+async fn update_inner(ctx: &ApiContext, skill_id: &str, req: UpdateSkillRequest) -> ApiResult<Skill> {
     let store = SkillStore::new(ctx.db.clone());
 
     if let Some(ref name) = req.name {

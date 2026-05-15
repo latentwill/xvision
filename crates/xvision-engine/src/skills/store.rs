@@ -133,13 +133,12 @@ impl SkillStore {
 
     pub async fn archive(&self, skill_id: &str) -> Result<bool> {
         let now = Utc::now().to_rfc3339();
-        let result = sqlx::query(
-            "UPDATE skills SET archived = 1, updated_at = ? WHERE skill_id = ? AND archived = 0",
-        )
-        .bind(&now)
-        .bind(skill_id)
-        .execute(&self.pool)
-        .await?;
+        let result =
+            sqlx::query("UPDATE skills SET archived = 1, updated_at = ? WHERE skill_id = ? AND archived = 0")
+                .bind(&now)
+                .bind(skill_id)
+                .execute(&self.pool)
+                .await?;
         Ok(result.rows_affected() > 0)
     }
 
@@ -152,10 +151,12 @@ impl SkillStore {
                     .fetch_optional(&self.pool)
                     .await?
             }
-            None => sqlx::query("SELECT 1 FROM skills WHERE name = ? LIMIT 1")
-                .bind(name)
-                .fetch_optional(&self.pool)
-                .await?,
+            None => {
+                sqlx::query("SELECT 1 FROM skills WHERE name = ? LIMIT 1")
+                    .bind(name)
+                    .fetch_optional(&self.pool)
+                    .await?
+            }
         };
         Ok(row.is_some())
     }
@@ -163,11 +164,10 @@ impl SkillStore {
 
 fn row_to_skill(row: sqlx::sqlite::SqliteRow) -> Result<Skill> {
     let kind_s: String = row.try_get("kind")?;
-    let kind = SkillKind::parse(&kind_s)
-        .ok_or_else(|| anyhow::anyhow!("unknown skill kind in DB: {}", kind_s))?;
+    let kind =
+        SkillKind::parse(&kind_s).ok_or_else(|| anyhow::anyhow!("unknown skill kind in DB: {}", kind_s))?;
     let config_str: String = row.try_get("config_json")?;
-    let config: serde_json::Value =
-        serde_json::from_str(&config_str).context("parse config_json")?;
+    let config: serde_json::Value = serde_json::from_str(&config_str).context("parse config_json")?;
     let archived_int: i64 = row.try_get("archived")?;
     let created_s: String = row.try_get("created_at")?;
     let updated_s: String = row.try_get("updated_at")?;

@@ -16,24 +16,20 @@ use std::time::Instant;
 
 use crate::api::audit::{self, Outcome};
 use crate::api::{ApiContext, ApiError, ApiResult};
-use crate::strategies::store::{strategy_store_dir, StrategyStore, FilesystemStore};
-use crate::strategies::Strategy;
 use crate::eval::findings::Finding;
 use crate::eval::run::{Run, RunMode, RunStatus};
 #[allow(deprecated)]
 use crate::eval::scenario::canonical_scenarios;
 use crate::eval::store::{ListFilter, RunStore};
 use crate::search::{IndexEntry, SearchHit, SearchIndex, SearchKind, SearchQuery};
+use crate::strategies::store::{strategy_store_dir, FilesystemStore, StrategyStore};
+use crate::strategies::Strategy;
 
 /// Query the FTS5 index. Empty `q` returns the most-recently-touched
 /// artifacts so the palette has something to render the moment it opens.
 /// Audited as `search/query` so we can spot pathological queries
 /// (very long, very frequent) in the audit log later.
-pub async fn search(
-    ctx: &ApiContext,
-    q: &str,
-    opts: &SearchQuery,
-) -> ApiResult<Vec<SearchHit>> {
+pub async fn search(ctx: &ApiContext, q: &str, opts: &SearchQuery) -> ApiResult<Vec<SearchHit>> {
     let started = Instant::now();
     let result = SearchIndex::search(&ctx.db, q, opts)
         .await
@@ -102,8 +98,7 @@ pub async fn upsert_scenarios(ctx: &ApiContext) {
     #[allow(deprecated)]
     let scenarios = canonical_scenarios();
     for s in scenarios {
-        let asset_universe: Vec<String> =
-            s.asset.iter().map(|a| a.venue_symbol.clone()).collect();
+        let asset_universe: Vec<String> = s.asset.iter().map(|a| a.venue_symbol.clone()).collect();
         // Extract legacy regime tags off the new combined `tags` field so the
         // ⌘K palette text stays consistent during the refactor.
         let regime_tags: Vec<String> = s
@@ -354,14 +349,9 @@ mod tests {
 
     async fn fresh_ctx() -> (ApiContext, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
-        let ctx = ApiContext::open(
-            dir.path(),
-            Actor::Cli {
-                user: "test".into(),
-            },
-        )
-        .await
-        .unwrap();
+        let ctx = ApiContext::open(dir.path(), Actor::Cli { user: "test".into() })
+            .await
+            .unwrap();
         (ctx, dir)
     }
 
@@ -378,9 +368,7 @@ mod tests {
     async fn search_finds_seeded_action_by_keyword() {
         let (ctx, _dir) = fresh_ctx().await;
         seed_actions(&ctx).await;
-        let hits = search(&ctx, "broker", &SearchQuery::default())
-            .await
-            .unwrap();
+        let hits = search(&ctx, "broker", &SearchQuery::default()).await.unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].artifact_id, "settings-brokers");
     }
@@ -422,9 +410,7 @@ mod tests {
         upsert_finding(&ctx, &f).await;
 
         // By summary token
-        let by_summary = search(&ctx, "drawdowns", &SearchQuery::default())
-            .await
-            .unwrap();
+        let by_summary = search(&ctx, "drawdowns", &SearchQuery::default()).await.unwrap();
         assert!(by_summary.iter().any(|h| h.kind == SearchKind::Finding));
 
         // By kind tag
@@ -446,15 +432,9 @@ mod tests {
     async fn reindex_all_is_idempotent() {
         let (ctx, _dir) = fresh_ctx().await;
         reindex_all(&ctx).await;
-        let count_after_first = search(&ctx, "", &SearchQuery::default())
-            .await
-            .unwrap()
-            .len();
+        let count_after_first = search(&ctx, "", &SearchQuery::default()).await.unwrap().len();
         reindex_all(&ctx).await;
-        let count_after_second = search(&ctx, "", &SearchQuery::default())
-            .await
-            .unwrap()
-            .len();
+        let count_after_second = search(&ctx, "", &SearchQuery::default()).await.unwrap().len();
         assert_eq!(count_after_first, count_after_second);
     }
 }

@@ -4,9 +4,7 @@ use axum::extract::{Json, Path, State};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use serde::{Deserialize, Serialize};
 
-use crate::cli_jobs::runner::{
-    CliJobEvent, DEFAULT_TIMEOUT_SECS, MAX_TIMEOUT_SECS,
-};
+use crate::cli_jobs::runner::{CliJobEvent, DEFAULT_TIMEOUT_SECS, MAX_TIMEOUT_SECS};
 use crate::cli_jobs::store::CliJobStore;
 use crate::error::DashboardError;
 use crate::state::AppState;
@@ -121,8 +119,7 @@ pub async fn cancel(
 pub async fn events(
     State(state): State<AppState>,
     Path(job_id): Path<String>,
-) -> Result<Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>>, DashboardError>
-{
+) -> Result<Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>>, DashboardError> {
     let store = CliJobStore::new(state.pool.clone());
     let Some(job) = store.get(&job_id).await.map_err(DashboardError::Internal)? else {
         return Err(DashboardError::NotFound(format!("cli job '{job_id}'")));
@@ -173,13 +170,11 @@ pub async fn events(
         }
     };
 
-    Ok(
-        Sse::new(sse_stream).keep_alive(
-            KeepAlive::new()
-                .interval(Duration::from_secs(15))
-                .text("keep-alive"),
-        ),
-    )
+    Ok(Sse::new(sse_stream).keep_alive(
+        KeepAlive::new()
+            .interval(Duration::from_secs(15))
+            .text("keep-alive"),
+    ))
 }
 
 fn validate_create_body(body: &CreateCliJobReq) -> Result<(), DashboardError> {
@@ -190,10 +185,7 @@ fn validate_create_body(body: &CreateCliJobReq) -> Result<(), DashboardError> {
         });
     }
 
-    if matches!(
-        body.argv.first().map(String::as_str),
-        Some("dashboard" | "mcp")
-    ) {
+    if matches!(body.argv.first().map(String::as_str), Some("dashboard" | "mcp")) {
         return Err(DashboardError::Validation {
             field: "argv".into(),
             msg: "subcommand is not allowed over remote cli".into(),

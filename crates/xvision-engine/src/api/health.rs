@@ -123,12 +123,7 @@ fn probe_strategies(ctx: &ApiContext) -> Probe {
         Ok(rd) => {
             let count = rd
                 .filter_map(|e| e.ok())
-                .filter(|e| {
-                    e.path()
-                        .extension()
-                        .map(|x| x == "json")
-                        .unwrap_or(false)
-                })
+                .filter(|e| e.path().extension().map(|x| x == "json").unwrap_or(false))
                 .count();
             Probe {
                 name: "strategies".into(),

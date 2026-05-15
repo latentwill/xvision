@@ -6,9 +6,7 @@
 use axum::{extract::State, http::StatusCode, Json};
 use serde::Deserialize;
 
-use xvision_engine::api::settings::danger::{
-    self, FactoryResetReport, RegenIdentityReport, WipeDbReport,
-};
+use xvision_engine::api::settings::danger::{self, FactoryResetReport, RegenIdentityReport, WipeDbReport};
 
 use crate::error::DashboardError;
 use crate::state::AppState;

@@ -81,11 +81,10 @@ async fn test_ctx_with_mock_alpaca() -> (ApiContext, MockServer) {
 async fn bars_cache_schema_has_expected_columns_and_index() {
     let (ctx, _server) = test_ctx_with_mock_alpaca().await;
 
-    let columns: Vec<(String,)> =
-        sqlx::query_as("SELECT name FROM pragma_table_info('bars_cache')")
-            .fetch_all(&ctx.db)
-            .await
-            .unwrap();
+    let columns: Vec<(String,)> = sqlx::query_as("SELECT name FROM pragma_table_info('bars_cache')")
+        .fetch_all(&ctx.db)
+        .await
+        .unwrap();
     let names: Vec<String> = columns.into_iter().map(|(name,)| name).collect();
 
     for expected in [
@@ -106,15 +105,12 @@ async fn bars_cache_schema_has_expected_columns_and_index() {
         );
     }
 
-    let indexes: Vec<(String,)> =
-        sqlx::query_as("SELECT name FROM pragma_index_list('bars_cache')")
-            .fetch_all(&ctx.db)
-            .await
-            .unwrap();
+    let indexes: Vec<(String,)> = sqlx::query_as("SELECT name FROM pragma_index_list('bars_cache')")
+        .fetch_all(&ctx.db)
+        .await
+        .unwrap();
     assert!(
-        indexes
-            .iter()
-            .any(|(name,)| name == "bars_cache_by_asset_window"),
+        indexes.iter().any(|(name,)| name == "bars_cache_by_asset_window"),
         "bars_cache missing asset/window index; got {indexes:?}"
     );
 }
@@ -234,13 +230,16 @@ async fn concurrent_misses_serialize_through_singleflight() {
     let args_a = args.clone();
     let args_b = args.clone();
 
-    let (a, b) = tokio::join!(
-        async move { load_bars(&ctx_a, &args_a).await },
-        async move { load_bars(&ctx_b, &args_b).await },
-    );
+    let (a, b) = tokio::join!(async move { load_bars(&ctx_a, &args_a).await }, async move {
+        load_bars(&ctx_b, &args_b).await
+    },);
     a.unwrap();
     b.unwrap();
 
     let requests = server.received_requests().await.unwrap();
-    assert_eq!(requests.len(), 1, "single-flight should de-dupe concurrent fetches");
+    assert_eq!(
+        requests.len(),
+        1,
+        "single-flight should de-dupe concurrent fetches"
+    );
 }

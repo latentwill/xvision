@@ -99,12 +99,9 @@ impl ApiContext {
     /// `ApiContext` inline against an in-memory pool so they can exercise
     /// individual fns without filesystem state.
     pub async fn open(xvn_home: &Path, actor: Actor) -> ApiResult<Self> {
-        tokio::fs::create_dir_all(xvn_home).await.map_err(|e| {
-            ApiError::Internal(format!(
-                "create xvn_home {}: {e}",
-                xvn_home.display()
-            ))
-        })?;
+        tokio::fs::create_dir_all(xvn_home)
+            .await
+            .map_err(|e| ApiError::Internal(format!("create xvn_home {}: {e}", xvn_home.display())))?;
 
         let db_path = xvn_home.join("xvn.db");
         // `mode=rwc` creates the file if missing.
@@ -227,20 +224,14 @@ async fn migrate_eval_agent_id(pool: &SqlitePool) -> ApiResult<()> {
     let runs_have_agent = table_has_column(pool, "eval_runs", "agent_id").await?;
     if runs_have_legacy && !runs_have_agent {
         let sql = format!("ALTER TABLE eval_runs RENAME COLUMN {legacy_column} TO agent_id");
-        sqlx::query(&sql)
-            .execute(pool)
-            .await?;
+        sqlx::query(&sql).execute(pool).await?;
     }
 
-    let attest_have_legacy =
-        table_has_column(pool, "eval_attestations", &legacy_column).await?;
+    let attest_have_legacy = table_has_column(pool, "eval_attestations", &legacy_column).await?;
     let attest_have_agent = table_has_column(pool, "eval_attestations", "agent_id").await?;
     if attest_have_legacy && !attest_have_agent {
-        let sql =
-            format!("ALTER TABLE eval_attestations RENAME COLUMN {legacy_column} TO agent_id");
-        sqlx::query(&sql)
-            .execute(pool)
-            .await?;
+        let sql = format!("ALTER TABLE eval_attestations RENAME COLUMN {legacy_column} TO agent_id");
+        sqlx::query(&sql).execute(pool).await?;
     }
 
     sqlx::query("DROP INDEX IF EXISTS idx_eval_runs_strategy")

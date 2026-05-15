@@ -46,9 +46,7 @@ pub async fn get(ctx: &ApiContext) -> ApiResult<DaemonReport> {
         note: "v1 is single-shot eval + paper trading; no long-running live \
                daemon ships in this release."
             .into(),
-        deferred_to_plan: Some(
-            "2026-05-08-strategy-engine-2c-scheduler-live-exec.md".into(),
-        ),
+        deferred_to_plan: Some("2026-05-08-strategy-engine-2c-scheduler-live-exec.md".into()),
     };
 
     let _ = audit::record(

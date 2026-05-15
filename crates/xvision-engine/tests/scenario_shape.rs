@@ -96,9 +96,14 @@ fn scenario_serde_roundtrip() {
         },
         venue: VenueSettings {
             venue: Venue::Alpaca,
-            fees: Fees { maker_bps: 10, taker_bps: 25 },
+            fees: Fees {
+                maker_bps: 10,
+                taker_bps: 25,
+            },
             slippage: SlippageModel::Linear { bps: 5 },
-            latency: LatencyModel { decision_to_fill_ms: 500 },
+            latency: LatencyModel {
+                decision_to_fill_ms: 500,
+            },
             fill_model: FillModel {
                 market_order_fill: MarketOrderFill::FullAtClose,
                 limit_order_fill: LimitOrderFill::NeverFills,

@@ -13,8 +13,8 @@ use serde::Deserialize;
 use std::path::PathBuf;
 
 use xvision_engine::api::settings::providers::{
-    self, AddProviderRequest, ProviderModelsReport, ProviderRow, ProvidersReport,
-    TestConnectionReport, UpdateProviderRequest,
+    self, AddProviderRequest, ProviderModelsReport, ProviderRow, ProvidersReport, TestConnectionReport,
+    UpdateProviderRequest,
 };
 
 use crate::error::DashboardError;
@@ -31,9 +31,7 @@ fn config_path() -> PathBuf {
         .join("config/default.toml")
 }
 
-pub async fn list(
-    State(state): State<AppState>,
-) -> Result<Json<ProvidersReport>, DashboardError> {
+pub async fn list(State(state): State<AppState>) -> Result<Json<ProvidersReport>, DashboardError> {
     let report = providers::list(&state.api_context(), &config_path()).await?;
     Ok(Json(report))
 }
@@ -85,13 +83,7 @@ pub async fn set_default(
     Path(name): Path<String>,
     Json(body): Json<SetDefaultBody>,
 ) -> Result<StatusCode, DashboardError> {
-    providers::set_default(
-        &state.api_context(),
-        &config_path(),
-        &name,
-        body.model.as_deref(),
-    )
-    .await?;
+    providers::set_default(&state.api_context(), &config_path(), &name, body.model.as_deref()).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -105,8 +97,7 @@ pub async fn list_models(
     if let Some(cached) = state.models_cache_get(&name) {
         return Ok(Json(cached));
     }
-    let report =
-        providers::fetch_models(&state.api_context(), &config_path(), &name).await?;
+    let report = providers::fetch_models(&state.api_context(), &config_path(), &name).await?;
     state.models_cache_put(name, report.clone());
     Ok(Json(report))
 }
@@ -123,13 +114,7 @@ pub async fn put_enabled_models(
     Path(name): Path<String>,
     Json(body): Json<EnabledModelsBody>,
 ) -> Result<Json<ProviderRow>, DashboardError> {
-    let row = providers::set_enabled_models(
-        &state.api_context(),
-        &config_path(),
-        &name,
-        body.models,
-    )
-    .await?;
+    let row = providers::set_enabled_models(&state.api_context(), &config_path(), &name, body.models).await?;
     Ok(Json(row))
 }
 
@@ -140,7 +125,6 @@ pub async fn test_connection(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> Result<Json<TestConnectionReport>, DashboardError> {
-    let report =
-        providers::test_connection(&state.api_context(), &config_path(), &name).await?;
+    let report = providers::test_connection(&state.api_context(), &config_path(), &name).await?;
     Ok(Json(report))
 }

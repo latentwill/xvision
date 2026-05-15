@@ -67,11 +67,7 @@ mod tests {
 
     #[test]
     fn skill_kind_round_trips() {
-        for k in [
-            SkillKind::Tool,
-            SkillKind::PromptFragment,
-            SkillKind::Evaluator,
-        ] {
+        for k in [SkillKind::Tool, SkillKind::PromptFragment, SkillKind::Evaluator] {
             let s = k.as_str();
             let back = SkillKind::parse(s).unwrap();
             assert_eq!(back, k);
