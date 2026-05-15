@@ -62,10 +62,7 @@ fn default_profile() -> AgentProfile {
 pub async fn chat(
     State(state): State<AppState>,
     Json(body): Json<ChatBody>,
-) -> Result<
-    Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>>,
-    DashboardError,
-> {
+) -> Result<Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>>, DashboardError> {
     tracing::info!(
         target: "xvision::dashboard::wizard",
         provider = ?body.provider,
@@ -75,12 +72,8 @@ pub async fn chat(
         "POST /api/wizard/chat"
     );
 
-    let resolved = llm_dispatch::resolve(
-        body.provider.as_deref(),
-        body.model.as_deref(),
-        default_model(),
-    )
-    .await?;
+    let resolved =
+        llm_dispatch::resolve(body.provider.as_deref(), body.model.as_deref(), default_model()).await?;
 
     // Compatibility route: use an explicit session when supplied, otherwise
     // resolve the stable `/setup` route session. New setup UI uses the shared
@@ -106,9 +99,11 @@ pub async fn chat(
     let (tx, rx) = mpsc::channel::<WizardEvent>(16);
 
     let dispatch = resolved.dispatch;
+    let provider_name = resolved.provider_name;
     let xvn_home = state.xvn_home.clone();
     let pool = state.pool.clone();
     let model = resolved.model;
+    let agent_model = model.clone();
     let message = body.message;
     let profile = body.profile;
     let cli_runner = state.cli_runner();
@@ -118,6 +113,8 @@ pub async fn chat(
             xvn_home,
             dispatch,
             model,
+            Some(provider_name),
+            Some(agent_model),
             pool,
             session_id,
             scope,
@@ -168,19 +165,16 @@ mod tests {
 
     #[test]
     fn chat_body_accepts_explicit_model_and_provider() {
-        let body: ChatBody = serde_json::from_str(
-            r#"{"message":"hi","model":"claude-opus-4-7","provider":"anthropic"}"#,
-        )
-        .unwrap();
+        let body: ChatBody =
+            serde_json::from_str(r#"{"message":"hi","model":"claude-opus-4-7","provider":"anthropic"}"#)
+                .unwrap();
         assert_eq!(body.model.as_deref(), Some("claude-opus-4-7"));
         assert_eq!(body.provider.as_deref(), Some("anthropic"));
     }
 
     #[test]
     fn wizard_event_round_trips_as_json() {
-        let ev = WizardEvent::Token {
-            text: "hello".into(),
-        };
+        let ev = WizardEvent::Token { text: "hello".into() };
         let json = serde_json::to_string(&ev).unwrap();
         let v: Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["type"], "token");

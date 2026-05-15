@@ -91,16 +91,11 @@ async fn validate_returns_diagnostics_for_empty_prompt() {
         .unwrap()
         .to_string();
 
-    let validate_res = server
-        .post(&format!("/api/agents/{}/validate", id))
-        .await;
+    let validate_res = server.post(&format!("/api/agents/{}/validate", id)).await;
     validate_res.assert_status_ok();
     let diags = validate_res.json::<Value>();
     let arr = diags["diagnostics"].as_array().unwrap();
-    let codes: Vec<&str> = arr
-        .iter()
-        .map(|d| d["code"].as_str().unwrap())
-        .collect();
+    let codes: Vec<&str> = arr.iter().map(|d| d["code"].as_str().unwrap()).collect();
     assert!(
         codes.contains(&"slot_prompt_empty"),
         "expected slot_prompt_empty in {:?}",
@@ -128,13 +123,8 @@ async fn archive_then_list_excludes() {
     let items = list_res.json::<Value>()["items"].as_array().unwrap().len();
     assert_eq!(items, 0, "archived agent should not appear in default list");
 
-    let list_archived = server
-        .get("/api/agents?include_archived=true")
-        .await;
-    let items_all = list_archived.json::<Value>()["items"]
-        .as_array()
-        .unwrap()
-        .len();
+    let list_archived = server.get("/api/agents?include_archived=true").await;
+    let items_all = list_archived.json::<Value>()["items"].as_array().unwrap().len();
     assert_eq!(items_all, 1, "include_archived=true should return it");
 }
 
@@ -151,9 +141,7 @@ async fn deployed_in_returns_empty_v1_stub() {
         .unwrap()
         .to_string();
 
-    let res = server
-        .get(&format!("/api/agents/{}/strategies", id))
-        .await;
+    let res = server.get(&format!("/api/agents/{}/strategies", id)).await;
     res.assert_status_ok();
     let items = res.json::<Value>()["items"].as_array().unwrap().len();
     assert_eq!(items, 0, "v1 returns empty until strategies refactor");

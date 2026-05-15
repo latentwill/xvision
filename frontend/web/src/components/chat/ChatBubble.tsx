@@ -254,6 +254,11 @@ function toolLogLine(
       const name = String(args["name"] ?? "(unnamed)");
       const template = String(args["template"] ?? "");
       const id = typeof result["id"] === "string" ? result["id"] : "";
+      const agentResult = result["agent"];
+      const createdAgent =
+        typeof agentResult === "object" &&
+        agentResult !== null &&
+        "agent_id" in agentResult;
       return {
         ok: true,
         content: t.pending ? (
@@ -282,6 +287,42 @@ function toolLogLine(
                 {" "}(<code className="font-mono text-text-2">{id}</code>)
               </>
             )}
+            {createdAgent ? <> and attached a trader agent</> : null}
+          </>
+        ),
+      };
+    }
+    case "create_strategy_agent": {
+      const role = String(args["role"] ?? "trader");
+      const agentId =
+        typeof result["agent_id"] === "string" ? result["agent_id"] : "";
+      return {
+        ok: true,
+        content: t.pending ? (
+          <>
+            Creating <code className="font-mono text-text">{role}</code> agent...
+          </>
+        ) : agentId ? (
+          <>
+            Attached <code className="font-mono text-text">{role}</code> agent{" "}
+            <code className="font-mono text-text-2">{agentId}</code>
+          </>
+        ) : (
+          <>Attached strategy agent</>
+        ),
+      };
+    }
+    case "attach_agent": {
+      const role = String(args["role"] ?? "trader");
+      return {
+        ok: true,
+        content: t.pending ? (
+          <>
+            Attaching <code className="font-mono text-text">{role}</code> agent...
+          </>
+        ) : (
+          <>
+            Attached <code className="font-mono text-text">{role}</code> agent
           </>
         ),
       };
@@ -436,6 +477,10 @@ function friendlyVerb(call: string): string {
   switch (call) {
     case "create_strategy":
       return "Create strategy";
+    case "create_strategy_agent":
+      return "Create agent";
+    case "attach_agent":
+      return "Attach agent";
     case "set_mechanical_param":
       return "Set parameter";
     case "set_risk_config":

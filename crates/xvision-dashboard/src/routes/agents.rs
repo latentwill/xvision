@@ -130,9 +130,7 @@ pub async fn recent_runs(
     Ok(Json(RunRefsResponse { items }))
 }
 
-pub async fn templates(
-    State(state): State<AppState>,
-) -> Result<Json<TemplatesResponse>, DashboardError> {
+pub async fn templates(State(state): State<AppState>) -> Result<Json<TemplatesResponse>, DashboardError> {
     let items = agents::templates(&state.api_context()).await?;
     Ok(Json(TemplatesResponse { items }))
 }

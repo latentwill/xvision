@@ -6,6 +6,7 @@
 //! in-memory db (via `AppState::new`), creates a draft via the underlying
 //! `engine::api::strategy::create_strategy`, and exercises the routes.
 
+use axum::http::StatusCode;
 use axum_test::TestServer;
 use tempfile::TempDir;
 use xvision_dashboard::server::build_router;
@@ -51,9 +52,7 @@ async fn get_strategy_returns_full_strategy() {
 #[tokio::test]
 async fn get_strategy_unknown_returns_404() {
     let (server, _tmp, _state) = boot().await;
-    let response = server
-        .get("/api/strategy/01TOTALLYMISSINGAGENTID000")
-        .await;
+    let response = server.get("/api/strategy/01TOTALLYMISSINGAGENTID000").await;
     response.assert_status_not_found();
     let body: serde_json::Value = response.json();
     assert_eq!(body["code"], "not_found");
@@ -65,7 +64,7 @@ async fn delete_strategy_removes_draft_and_get_returns_404() {
     let id = create_draft(&state).await;
 
     let response = server.delete(&format!("/api/strategy/{id}")).await;
-    response.assert_status_no_content();
+    response.assert_status(StatusCode::NO_CONTENT);
 
     let get = server.get(&format!("/api/strategy/{id}")).await;
     get.assert_status_not_found();
@@ -74,9 +73,7 @@ async fn delete_strategy_removes_draft_and_get_returns_404() {
 #[tokio::test]
 async fn delete_strategy_unknown_returns_404() {
     let (server, _tmp, _state) = boot().await;
-    let response = server
-        .delete("/api/strategy/01TOTALLYMISSINGAGENTID000")
-        .await;
+    let response = server.delete("/api/strategy/01TOTALLYMISSINGAGENTID000").await;
     response.assert_status_not_found();
 }
 
@@ -92,15 +89,10 @@ async fn put_slot_updates_prompt() {
     response.assert_status_ok();
     let body: serde_json::Value = response.json();
     assert_eq!(body["id"], id);
-    assert!(body["updated"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|v| v == "prompt"));
+    assert!(body["updated"].as_array().unwrap().iter().any(|v| v == "prompt"));
 
     // Round-trip: fetch the strategy and confirm the prompt changed.
-    let strategy: serde_json::Value =
-        server.get(&format!("/api/strategy/{id}")).await.json();
+    let strategy: serde_json::Value = server.get(&format!("/api/strategy/{id}")).await.json();
     assert_eq!(strategy["trader_slot"]["prompt"], "Decide carefully.");
 }
 
@@ -150,9 +142,7 @@ async fn post_validate_returns_result_blob() {
     let (server, _tmp, state) = boot().await;
     let id = create_draft(&state).await;
 
-    let response = server
-        .post(&format!("/api/strategy/{id}/validate"))
-        .await;
+    let response = server.post(&format!("/api/strategy/{id}/validate")).await;
     response.assert_status_ok();
     let body: serde_json::Value = response.json();
     assert_eq!(body["id"], id);

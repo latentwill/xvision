@@ -27,9 +27,7 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::StreamExt;
 
-use xvision_engine::chat_session::{
-    ChatMessage, ChatSessionStore, ChatSessionSummary, ContextScope,
-};
+use xvision_engine::chat_session::{ChatMessage, ChatSessionStore, ChatSessionSummary, ContextScope};
 
 use crate::error::DashboardError;
 use crate::llm_dispatch;
@@ -74,10 +72,7 @@ pub async fn resolve_session(
     let (session_id, history) = ChatSessionStore::resolve(&state.pool, &req.scope)
         .await
         .map_err(DashboardError::Internal)?;
-    Ok(Json(ResolveSessionResp {
-        session_id,
-        history,
-    }))
+    Ok(Json(ResolveSessionResp { session_id, history }))
 }
 
 pub async fn history(
@@ -135,10 +130,7 @@ fn default_model() -> &'static str {
 pub async fn chat(
     State(state): State<AppState>,
     Json(body): Json<ChatBody>,
-) -> Result<
-    Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>>,
-    DashboardError,
-> {
+) -> Result<Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>>, DashboardError> {
     tracing::info!(
         target: "xvision::dashboard::chat_rail",
         session_id = %body.session_id,
@@ -149,12 +141,8 @@ pub async fn chat(
         "POST /api/chat-rail/chat"
     );
 
-    let resolved = llm_dispatch::resolve(
-        body.provider.as_deref(),
-        body.model.as_deref(),
-        default_model(),
-    )
-    .await?;
+    let resolved =
+        llm_dispatch::resolve(body.provider.as_deref(), body.model.as_deref(), default_model()).await?;
 
     // Read the session's persisted scope so the system prompt is always
     // in sync with whatever the most recent /scope POST set, even if the
@@ -166,10 +154,12 @@ pub async fn chat(
     let (tx, rx) = mpsc::channel::<WizardEvent>(16);
 
     let dispatch = resolved.dispatch;
+    let provider_name = resolved.provider_name;
     let xvn_home = state.xvn_home.clone();
     let pool = state.pool.clone();
     let session_id = body.session_id;
     let model = resolved.model;
+    let agent_model = model.clone();
     let message = body.message;
     let profile = body.profile;
     let cli_runner = state.cli_runner();
@@ -179,8 +169,8 @@ pub async fn chat(
             xvn_home,
             dispatch,
             model,
-            resolved.provider_name,
-            resolved.model,
+            Some(provider_name),
+            Some(agent_model),
             pool,
             session_id,
             scope,
@@ -220,8 +210,7 @@ mod tests {
 
     #[test]
     fn chat_body_defaults_to_workspace_profile() {
-        let body: ChatBody =
-            serde_json::from_str(r#"{"session_id":"s","message":"hi"}"#).unwrap();
+        let body: ChatBody = serde_json::from_str(r#"{"session_id":"s","message":"hi"}"#).unwrap();
         assert!(body.model.is_none());
         assert!(body.provider.is_none());
         assert_eq!(body.profile, AgentProfile::Workspace);
@@ -229,10 +218,8 @@ mod tests {
 
     #[test]
     fn chat_body_accepts_strategy_setup_profile() {
-        let body: ChatBody = serde_json::from_str(
-            r#"{"session_id":"s","message":"hi","profile":"strategy_setup"}"#,
-        )
-        .unwrap();
+        let body: ChatBody =
+            serde_json::from_str(r#"{"session_id":"s","message":"hi","profile":"strategy_setup"}"#).unwrap();
         assert_eq!(body.profile, AgentProfile::StrategySetup);
     }
 }

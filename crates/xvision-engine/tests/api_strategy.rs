@@ -41,14 +41,12 @@ async fn test_context() -> (ApiContext, tempfile::TempDir) {
 }
 
 async fn audit_row_exists(ctx: &ApiContext, op: &str, target: &str) -> bool {
-    let n: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM api_audit WHERE operation = ?1 AND target = ?2",
-    )
-    .bind(op)
-    .bind(target)
-    .fetch_one(&ctx.db)
-    .await
-    .unwrap();
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM api_audit WHERE operation = ?1 AND target = ?2")
+        .bind(op)
+        .bind(target)
+        .fetch_one(&ctx.db)
+        .await
+        .unwrap();
     n > 0
 }
 
@@ -141,8 +139,7 @@ async fn delete_unknown_strategy_returns_not_found() {
 #[tokio::test]
 async fn list_returns_summaries_for_existing_strategys() {
     use xvision_engine::strategies::{
-        manifest::PublicManifest, risk::RiskPreset, store::StrategyStore, store::FilesystemStore,
-        Strategy,
+        manifest::PublicManifest, risk::RiskPreset, store::FilesystemStore, store::StrategyStore, Strategy,
     };
 
     let (ctx, _d) = ctx_with_strategies_dir().await;
@@ -214,12 +211,7 @@ async fn add_agent_ref_appends_role_and_audits() {
     assert_eq!(out.agents[0].agent_id, agent.agent_id);
     assert_eq!(out.agents[0].role, "trader");
     assert_eq!(out.pipeline.kind, PipelineKind::Single);
-    assert!(audit_row_exists(
-        &ctx,
-        "strategy_add_agent",
-        &out.strategy_id,
-    )
-    .await);
+    assert!(audit_row_exists(&ctx, "strategy_add_agent", &out.strategy_id,).await);
 }
 
 #[tokio::test]

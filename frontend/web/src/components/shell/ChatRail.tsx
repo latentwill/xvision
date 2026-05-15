@@ -582,6 +582,10 @@ function summarizeArgs(tool: string, args: unknown): string {
       return `${a["key"]} = ${JSON.stringify(a["value"])}`;
     case "set_risk_config":
       return a["preset"] ? `preset=${a["preset"]}` : "explicit";
+    case "create_strategy_agent":
+      return `${a["role"] ?? "trader"} · ${a["provider"] ?? "selected provider"} / ${a["model"] ?? "selected model"}`;
+    case "attach_agent":
+      return `${a["agent_id"] ?? ""} as ${a["role"] ?? "trader"}`;
     case "get_strategy":
     case "validate_draft":
       return String(a["id"] ?? "");
@@ -603,6 +607,12 @@ function summarizeResult(tool: string, result: unknown): string {
         : "";
     case "create_strategy":
       return r.id ? String(r.id) : "";
+    case "create_strategy_agent":
+      return r.agent_id ? String(r.agent_id) : "";
+    case "attach_agent":
+      return Array.isArray(r.agents)
+        ? `${(r.agents as unknown[]).length} agent(s)`
+        : "";
     case "validate_draft":
       return r.ok
         ? "ok"

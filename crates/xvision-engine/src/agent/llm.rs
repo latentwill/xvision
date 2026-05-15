@@ -116,9 +116,7 @@ impl LlmResponse {
         self.content
             .iter()
             .filter_map(|c| match c {
-                ContentBlock::ToolUse { id, name, input } => {
-                    Some((id.as_str(), name.as_str(), input))
-                }
+                ContentBlock::ToolUse { id, name, input } => Some((id.as_str(), name.as_str(), input)),
                 _ => None,
             })
             .collect()
@@ -208,13 +206,18 @@ mod schema_tests {
     fn openai_response_format_uses_strict_json_schema() {
         let format = ResponseSchema::trader_output().openai_response_format();
 
-        assert_eq!(format.pointer("/type").and_then(|v| v.as_str()), Some("json_schema"));
+        assert_eq!(
+            format.pointer("/type").and_then(|v| v.as_str()),
+            Some("json_schema")
+        );
         assert_eq!(
             format.pointer("/json_schema/strict"),
             Some(&serde_json::Value::Bool(true))
         );
         assert_eq!(
-            format.pointer("/json_schema/schema/required/0").and_then(|v| v.as_str()),
+            format
+                .pointer("/json_schema/schema/required/0")
+                .and_then(|v| v.as_str()),
             Some("action")
         );
     }
@@ -442,10 +445,7 @@ impl LlmDispatch for OpenaiCompatDispatch {
             if !text_parts.is_empty() || !tool_calls.is_empty() {
                 let mut obj = serde_json::Map::new();
                 obj.insert("role".into(), serde_json::Value::String(m.role.clone()));
-                obj.insert(
-                    "content".into(),
-                    serde_json::Value::String(text_parts.concat()),
-                );
+                obj.insert("content".into(), serde_json::Value::String(text_parts.concat()));
                 if !tool_calls.is_empty() {
                     obj.insert("tool_calls".into(), serde_json::Value::Array(tool_calls));
                 }
@@ -517,11 +517,19 @@ impl LlmDispatch for OpenaiCompatDispatch {
         }
         let resp: serde_json::Value = http_resp.json().await?;
 
-        let choice = resp["choices"]
-            .get(0)
-            .cloned()
-            .unwrap_or(serde_json::Value::Null);
-        let msg = &choice["message"];
+        let choices = resp
+            .get("choices")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| anyhow::anyhow!("OpenAI-compat response missing `choices` array"))?;
+        let choice = choices
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("OpenAI-compat response had no choices"))?;
+        let msg = choice
+            .get("message")
+            .ok_or_else(|| anyhow::anyhow!("OpenAI-compat response choice missing `message`"))?;
+        if let Some(refusal) = msg["refusal"].as_str().filter(|s| !s.trim().is_empty()) {
+            anyhow::bail!("OpenAI-compat model refused structured response: {refusal}");
+        }
         let mut content_blocks: Vec<ContentBlock> = Vec::new();
         if let Some(text) = msg["content"].as_str() {
             if !text.is_empty() {
@@ -535,10 +543,8 @@ impl LlmDispatch for OpenaiCompatDispatch {
                 let id = call["id"].as_str().unwrap_or("").to_string();
                 let name = call["function"]["name"].as_str().unwrap_or("").to_string();
                 let raw_args = call["function"]["arguments"].as_str().unwrap_or("{}");
-                let input: serde_json::Value =
-                    serde_json::from_str(raw_args).unwrap_or(serde_json::Value::Object(
-                        serde_json::Map::new(),
-                    ));
+                let input: serde_json::Value = serde_json::from_str(raw_args)
+                    .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
                 content_blocks.push(ContentBlock::ToolUse { id, name, input });
             }
         }
