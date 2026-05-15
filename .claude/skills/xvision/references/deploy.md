@@ -32,6 +32,25 @@ Two near-identical compose stacks at `/root/deploy/stacks/{xvn,xvnej}/`:
 
 Each stack: `ts-{xvn,xvnej}` (tailscale sidecar, runs `tailscale serve` per `serve.json`) + `{xvn,xvnej}-app` (the xvision image, listens on `:8788`). App shares the sidecar's netns.
 
+## Local image deploy
+
+For local-image deploys, no Docker registry auth is required. Build the image
+locally, then stream it over SSH to the host Docker daemon.
+
+Before deploying, load the standard dev-server key into the local SSH
+agent/keychain:
+
+```bash
+ssh-add --apple-use-keychain ~/.ssh/id_ed25519
+ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes root@100.120.48.1 'echo ok $(hostname)'
+```
+
+Then send the image:
+
+```bash
+scripts/deploy-image.sh --push root@100.120.48.1
+```
+
 Redeploy:
 
 ```bash
