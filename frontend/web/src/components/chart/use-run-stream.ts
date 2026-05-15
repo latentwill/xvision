@@ -2,6 +2,11 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { openRunStream, chartKeys, getRunChart } from "@/api/chart";
+import {
+  createTrace,
+  durationSince,
+  errorSummary,
+} from "@/lib/logger";
 import type {
   ChartBar,
   ChartEquityPoint,
@@ -161,17 +166,51 @@ export function useRunStream(runId: string, initial?: RunChartPayload) {
     if (!runId) return;
     let cancelled = false;
     let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+    let reconnectCount = 0;
+    let eventCount = 0;
+    const trace = createTrace("stream", { run_id: runId });
 
     async function snapshot() {
+      const started = performance.now();
+      trace.info("chart.snapshot.load");
       try {
         const p = await getRunChart(runId);
         if (cancelled) return;
         setData(p);
         setStatus("streaming");
         qc.setQueryData(chartKeys.run(runId), p);
+        trace.info("chart.snapshot.ok", {
+          duration_ms: durationSince(started),
+          bars_count: p.bars.length,
+          equity_count: p.equity.length,
+          trades_count: p.markers.trades.length,
+        });
       } catch {
         if (cancelled) return;
         setStatus("closed");
+        trace.error("chart.snapshot.error", {
+          duration_ms: durationSince(started),
+        });
+      }
+    }
+
+    function parseEvent(e: Event, expected: WireEvent["event"]): WireEvent | null {
+      try {
+        const parsed = JSON.parse((e as MessageEvent).data) as WireEvent;
+        eventCount += 1;
+        trace.debug("stream.event", {
+          event_type: parsed.event,
+          event_count: eventCount,
+        });
+        if (parsed.event !== expected) return null;
+        return parsed;
+      } catch (err) {
+        trace.warn("stream.parse_error", {
+          expected,
+          event_count: eventCount,
+          error: errorSummary(err),
+        });
+        return null;
       }
     }
 
@@ -180,33 +219,51 @@ export function useRunStream(runId: string, initial?: RunChartPayload) {
       esRef.current = es;
 
       es.addEventListener("bar", (e) => {
-        const parsed = JSON.parse((e as MessageEvent).data) as WireEvent;
-        if (parsed.event === "bar") mergeBar(parsed.data);
+        const parsed = parseEvent(e, "bar");
+        if (parsed?.event === "bar") {
+          trace.debug("chart.merge.bar", { time: parsed.data.time });
+          mergeBar(parsed.data);
+        }
       });
       es.addEventListener("equity", (e) => {
-        const parsed = JSON.parse((e as MessageEvent).data) as WireEvent;
-        if (parsed.event === "equity") mergeEquity(parsed.data);
+        const parsed = parseEvent(e, "equity");
+        if (parsed?.event === "equity") {
+          trace.debug("chart.merge.equity", { time: parsed.data.time });
+          mergeEquity(parsed.data);
+        }
       });
       es.addEventListener("marker", (e) => {
-        const parsed = JSON.parse((e as MessageEvent).data) as WireEvent;
-        if (parsed.event === "marker") mergeMarker(parsed.data);
+        const parsed = parseEvent(e, "marker");
+        if (parsed?.event === "marker") {
+          trace.debug("chart.merge.marker", { kind: parsed.data.kind });
+          mergeMarker(parsed.data);
+        }
       });
       es.addEventListener("indicator_tail", (e) => {
-        const parsed = JSON.parse((e as MessageEvent).data) as WireEvent;
-        if (parsed.event === "indicator_tail") mergeIndicatorTail(parsed.data);
+        const parsed = parseEvent(e, "indicator_tail");
+        if (parsed?.event === "indicator_tail") {
+          trace.debug("chart.merge.indicator_tail", {
+            keys: Object.keys(parsed.data),
+          });
+          mergeIndicatorTail(parsed.data);
+        }
       });
       es.addEventListener("status", (e) => {
-        const parsed = JSON.parse((e as MessageEvent).data) as WireEvent;
-        if (parsed.event === "status") {
+        const parsed = parseEvent(e, "status");
+        if (parsed?.event === "status") {
           const phase = parsed.data.phase;
-          if (
-            phase === "completed" ||
-            phase === "failed" ||
-            phase === "cancelled"
-          ) {
+          const terminal =
+            phase === "completed" || phase === "failed" || phase === "cancelled";
+          trace.info(terminal ? "stream.terminal" : "stream.status", {
+            phase,
+            status_message: parsed.data.message,
+            event_count: eventCount,
+          });
+          if (terminal) {
             es.close();
             esRef.current = null;
             setStatus("closed");
+            trace.info("stream.closed", { phase });
           }
         }
       });
@@ -215,10 +272,19 @@ export function useRunStream(runId: string, initial?: RunChartPayload) {
         setStatus("reconnecting");
         es.close();
         esRef.current = null;
+        reconnectCount += 1;
+        trace.warn("stream.error", { reconnect_count: reconnectCount });
         reconnectTimer = setTimeout(() => {
           if (cancelled) return;
+          trace.info("stream.reconnect.snapshot", {
+            reconnect_count: reconnectCount,
+          });
           snapshot().then(() => {
             if (cancelled) return;
+            trace.info("stream.reconnect.schedule", {
+              reconnect_count: reconnectCount,
+              delay_ms: RECONNECT_DELAY_MS,
+            });
             openStream();
           });
         }, RECONNECT_DELAY_MS);

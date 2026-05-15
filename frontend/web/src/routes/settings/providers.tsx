@@ -19,6 +19,7 @@ import type {
   TestConnectionReport,
   UpdateProviderRequest,
 } from "@/api/types.gen";
+import { logInfo, safeUrlHost } from "@/lib/logger";
 
 // Provider presets the form recognises. Each preset fills in a sensible
 // (wire kind, name, base URL) tuple; the user only has to paste an API key.
@@ -742,12 +743,10 @@ function AddProviderForm({
       onSubmit={(e) => {
         e.preventDefault();
         if (!submittable) return;
-        // Surface client-side console logs so the user can see what was sent
-        // when reporting issues — the previous flow was a black box.
-        console.info("[providers] add", {
-          name: trimmedName,
+        logInfo("settings", "settings.provider.form.submit", {
+          provider: trimmedName,
           kind: meta.wireKind,
-          base_url: trimmedBaseUrl,
+          base_url_host: safeUrlHost(trimmedBaseUrl),
           api_key_set: trimmedKey !== "",
         });
         add.mutate({
