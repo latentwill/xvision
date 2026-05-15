@@ -812,6 +812,62 @@ async fn providers_list_returns_seeded_anthropic() {
 }
 
 #[tokio::test]
+async fn providers_can_list_and_remove_local_candle_with_empty_base_url() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let (server, tmp) = boot().await;
+    let cfg = tmp.path().join("default.toml");
+    std::fs::write(
+        &cfg,
+        r#"
+[runtime]
+mode = "backtest"
+executor = "alpaca"
+random_seed = 42
+
+[[providers]]
+name = "local-candle"
+kind = "local-candle"
+base_url = ""
+api_key_env = ""
+
+[trader]
+model_path = "models/x.gguf"
+temperature = 0.0
+forward_paper_temperature = 0.4
+max_tokens = 512
+[trader.vectors]
+enabled = false
+config = "off"
+
+[backtest]
+step = 24
+horizon = 16
+bootstrap_resamples = 1000
+bootstrap_block_size = 8
+
+[paths]
+data_root = "data"
+vectors = "data/vectors"
+probes = "data/probes"
+sqlite_url = "sqlite://x.db"
+"#,
+    )
+    .unwrap();
+    let _g = scoped_set("XVN_CONFIG_PATH", cfg.to_str().unwrap());
+
+    server
+        .get("/api/settings/providers")
+        .await
+        .assert_status_ok();
+    server
+        .delete("/api/settings/providers/local-candle")
+        .await
+        .assert_status(axum::http::StatusCode::NO_CONTENT);
+    let body: serde_json::Value = server.get("/api/settings/providers").await.json();
+    assert!(body["providers"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn providers_show_returns_404_for_unknown() {
     let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let (server, tmp) = boot().await;

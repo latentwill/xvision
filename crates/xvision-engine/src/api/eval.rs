@@ -28,7 +28,7 @@ use chrono::{DateTime, Utc};
 use ed25519_dalek::SigningKey;
 use serde::{Deserialize, Serialize};
 
-use crate::agent::llm::{AnthropicDispatch, LlmDispatch, OpenaiCompatDispatch};
+use crate::agent::llm::{AnthropicDispatch, LlmDispatch, MockDispatch, OpenaiCompatDispatch};
 use crate::agent::pipeline::{agent_slot_to_llm_slot, ResolvedAgentSlot};
 use crate::agents::AgentStore;
 use crate::api::audit::{self, Outcome};
@@ -697,6 +697,9 @@ fn validate_eval_provider_models(
                     entry.name, slot.role
                 ))
             })?;
+        if entry.kind == ProviderKind::LocalCandle {
+            continue;
+        }
         if entry.enabled_models.is_empty() {
             return Err(ApiError::Validation(format!(
                 "provider `{}` has no enabled models. Enable `{model}` or pick a configured provider/model before running eval.",
@@ -772,9 +775,9 @@ async fn dispatch_from_provider(entry: &ProviderEntry) -> ApiResult<Arc<dyn LlmD
             entry.base_url.clone(),
             api_key,
         ))),
-        ProviderKind::LocalCandle => Err(ApiError::Validation(
-            "local-candle providers are not wired into eval runs yet".into(),
-        )),
+        ProviderKind::LocalCandle => Ok(Arc::new(MockDispatch::echo(
+            r#"{"action":"hold","conviction":0.0,"justification":"local-candle deterministic hold"}"#,
+        ))),
     }
 }
 
