@@ -41,8 +41,8 @@ pub async fn extract_findings(
         "equity_curve_summary": equity_summary,
     });
 
-    let user_text = serde_json::to_string_pretty(&user_payload)
-        .context("serialize findings extractor user payload")?;
+    let user_text =
+        serde_json::to_string_pretty(&user_payload).context("serialize findings extractor user payload")?;
     let req = LlmRequest {
         model: model.to_string(),
         system_prompt: PROMPT.to_string(),
@@ -68,8 +68,12 @@ pub async fn extract_findings(
         ));
     }
 
-    let raw: Vec<RawFinding> = serde_json::from_str(&text[json_start..json_end])
-        .with_context(|| format!("parse findings JSON array (sliced text: {:?})", &text[json_start..json_end]))?;
+    let raw: Vec<RawFinding> = serde_json::from_str(&text[json_start..json_end]).with_context(|| {
+        format!(
+            "parse findings JSON array (sliced text: {:?})",
+            &text[json_start..json_end]
+        )
+    })?;
     let now = Utc::now();
     Ok(raw
         .into_iter()

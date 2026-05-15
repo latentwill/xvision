@@ -15,13 +15,13 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use xvision_core::market::MarketSnapshot;
-use xvision_core::trading::{AssetSymbol, RiskDecision, TraderDecision, Regime};
+use xvision_core::trading::{AssetSymbol, Regime, RiskDecision, TraderDecision};
 use xvision_execution::{ExecutionReceipt, Executor};
 use xvision_risk::RiskLayer;
 
+use crate::algorithm::Algorithm;
 use crate::backtest::{BacktestConfig, BacktestExecutor, MarketBar};
 use crate::result::{ArmResult, BacktestResult, EquityPoint};
-use crate::algorithm::Algorithm;
 
 // ---------------------------------------------------------------------------
 // Error
@@ -29,9 +29,7 @@ use crate::algorithm::Algorithm;
 
 #[derive(Debug, Error)]
 pub enum HarnessError {
-    #[error(
-        "step_hours ({step}) must be >= horizon_hours ({horizon}) — Tier 1 fix #4"
-    )]
+    #[error("step_hours ({step}) must be >= horizon_hours ({horizon}) — Tier 1 fix #4")]
     StepLessThanHorizon { step: u32, horizon: u32 },
     #[error("bars must cover snapshot timestamps")]
     BarCoverage,
@@ -235,8 +233,7 @@ impl BacktestRunner {
                     st.regimes.push(snapshot.regime);
 
                     let portfolio = st.exec.portfolio_snapshot();
-                    let risk_outcome =
-                        risk.evaluate(td, &portfolio, self.config.instrument);
+                    let risk_outcome = risk.evaluate(td, &portfolio, self.config.instrument);
                     st.risk_outcomes.push(risk_outcome.clone());
 
                     if risk_outcome.effective().is_some() {
@@ -295,7 +292,7 @@ impl BacktestRunner {
             for (arm_idx, arm) in self.arms.iter().enumerate() {
                 let st = &mut arm_states[arm_idx];
                 let snap_decision_count = st.regimes.len(); // regimes grows in lock-step with decisions
-                // If pnl_per_setup is shorter than decisions, we owe a PnL entry
+                                                            // If pnl_per_setup is shorter than decisions, we owe a PnL entry
                 if st.pnl_per_setup.len() < snap_decision_count {
                     // Find the nav at the start of this snap's tick window
                     // We already ticked — read current NAV
@@ -353,7 +350,7 @@ mod tests {
     use super::*;
     use chrono::TimeZone;
     use uuid::Uuid;
-    use xvision_core::market::{IndicatorPanel, OnchainPanel, Ohlcv};
+    use xvision_core::market::{IndicatorPanel, Ohlcv, OnchainPanel};
     use xvision_core::trading::{Action, AssetSymbol, Direction, Regime, TraderDecision};
 
     // -----------------------------------------------------------------------
@@ -471,10 +468,7 @@ mod tests {
             .collect();
 
         // 2 snapshots at bars 0 and 2
-        let snapshots = vec![
-            snapshot_at(0, 50_000.0),
-            snapshot_at(2 * 3600, 50_200.0),
-        ];
+        let snapshots = vec![snapshot_at(0, 50_000.0), snapshot_at(2 * 3600, 50_200.0)];
 
         let cfg = BacktestRunConfig {
             initial_nav_usd: 100_000.0,
@@ -500,7 +494,10 @@ mod tests {
 
         let risk = default_risk();
         let mut runner = BacktestRunner::new(cfg, arms).expect("valid config");
-        let result = runner.run(&snapshots, &bars, &risk).await.expect("run must succeed");
+        let result = runner
+            .run(&snapshots, &bars, &risk)
+            .await
+            .expect("run must succeed");
 
         assert_eq!(result.cycles_evaluated, 2);
         assert!(result.arms.contains_key("buy_arm"));
@@ -532,9 +529,7 @@ mod tests {
 
     #[tokio::test]
     async fn equity_curves_are_recorded() {
-        let bars: Vec<MarketBar> = (0..6)
-            .map(|i| bar_at(i * 3600, 50_000.0))
-            .collect();
+        let bars: Vec<MarketBar> = (0..6).map(|i| bar_at(i * 3600, 50_000.0)).collect();
         let snapshots = vec![snapshot_at(0, 50_000.0)];
 
         let cfg = BacktestRunConfig {
@@ -561,7 +556,10 @@ mod tests {
 
         let risk = default_risk();
         let mut runner = BacktestRunner::new(cfg, arms).expect("valid config");
-        let result = runner.run(&snapshots, &bars, &risk).await.expect("run must succeed");
+        let result = runner
+            .run(&snapshots, &bars, &risk)
+            .await
+            .expect("run must succeed");
 
         let buy_ec = &result.arms["buy_arm"].equity_curve;
         let flat_ec = &result.arms["flat_arm"].equity_curve;
@@ -577,13 +575,8 @@ mod tests {
 
     #[tokio::test]
     async fn regimes_tagged_with_decisions() {
-        let bars: Vec<MarketBar> = (0..4)
-            .map(|i| bar_at(i * 3600, 50_000.0))
-            .collect();
-        let snapshots = vec![
-            snapshot_at(0, 50_000.0),
-            snapshot_at(3600, 50_000.0),
-        ];
+        let bars: Vec<MarketBar> = (0..4).map(|i| bar_at(i * 3600, 50_000.0)).collect();
+        let snapshots = vec![snapshot_at(0, 50_000.0), snapshot_at(3600, 50_000.0)];
 
         let cfg = BacktestRunConfig {
             initial_nav_usd: 100_000.0,
@@ -603,7 +596,10 @@ mod tests {
 
         let risk = default_risk();
         let mut runner = BacktestRunner::new(cfg, arms).expect("valid config");
-        let result = runner.run(&snapshots, &bars, &risk).await.expect("run must succeed");
+        let result = runner
+            .run(&snapshots, &bars, &risk)
+            .await
+            .expect("run must succeed");
 
         let arm = &result.arms["buy_arm"];
         assert_eq!(

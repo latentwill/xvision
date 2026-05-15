@@ -1,3 +1,4 @@
+use axum::http::StatusCode;
 use axum_test::TestServer;
 use tempfile::TempDir;
 use xvision_dashboard::server::build_router;
@@ -51,10 +52,7 @@ async fn health_db_probe_records_latency() {
         .find(|p| p["name"] == "db")
         .expect("db probe present");
     assert_eq!(db["status"], "ok");
-    assert!(
-        db["latency_ms"].is_number(),
-        "db probe records latency_ms"
-    );
+    assert!(db["latency_ms"].is_number(), "db probe records latency_ms");
 }
 
 #[tokio::test]
@@ -81,8 +79,7 @@ async fn strategies_list_is_empty_on_fresh_home() {
 #[tokio::test]
 async fn strategies_list_returns_seeded_strategy() {
     use xvision_engine::strategies::{
-        manifest::PublicManifest, risk::RiskPreset, store::StrategyStore, store::FilesystemStore,
-        Strategy,
+        manifest::PublicManifest, risk::RiskPreset, store::FilesystemStore, store::StrategyStore, Strategy,
     };
 
     let (server, tmp) = boot().await;
@@ -143,9 +140,7 @@ async fn post_create_strategy_is_visible_in_public_strategies_list() {
         .await;
     response.assert_status(StatusCode::CREATED);
     let created: serde_json::Value = response.json();
-    let created_id = created["id"]
-        .as_str()
-        .expect("create_strategy returns id");
+    let created_id = created["id"].as_str().expect("create_strategy returns id");
 
     let response = server.get("/api/strategies").await;
     response.assert_status_ok();
@@ -179,19 +174,12 @@ async fn eval_runs_list_returns_seeded_run() {
     };
 
     let (server, _tmp) = boot().await;
-    let pool = sqlx::SqlitePool::connect(&format!(
-        "sqlite://{}/xvn.db",
-        _tmp.path().display()
-    ))
-    .await
-    .unwrap();
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}/xvn.db", _tmp.path().display()))
+        .await
+        .unwrap();
     let store = RunStore::new(pool);
 
-    let run = Run::new_queued(
-        "abc12345".into(),
-        "crypto-bull-q1-2025".into(),
-        RunMode::Backtest,
-    );
+    let run = Run::new_queued("abc12345".into(), "crypto-bull-q1-2025".into(), RunMode::Backtest);
     let run_id = run.id.clone();
     store.create(&run).await.expect("seed run");
 
@@ -216,25 +204,14 @@ async fn eval_runs_filter_by_status_skips_others() {
     };
 
     let (server, _tmp) = boot().await;
-    let pool = sqlx::SqlitePool::connect(&format!(
-        "sqlite://{}/xvn.db",
-        _tmp.path().display()
-    ))
-    .await
-    .unwrap();
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}/xvn.db", _tmp.path().display()))
+        .await
+        .unwrap();
     let store = RunStore::new(pool);
 
-    let queued = Run::new_queued(
-        "h1".into(),
-        "crypto-bull-q1-2025".into(),
-        RunMode::Backtest,
-    );
+    let queued = Run::new_queued("h1".into(), "crypto-bull-q1-2025".into(), RunMode::Backtest);
     store.create(&queued).await.unwrap();
-    let mut other = Run::new_queued(
-        "h2".into(),
-        "crypto-bear-q3-2024".into(),
-        RunMode::Backtest,
-    );
+    let mut other = Run::new_queued("h2".into(), "crypto-bear-q3-2024".into(), RunMode::Backtest);
     other.status = RunStatus::Failed;
     store.create(&other).await.unwrap();
 
@@ -273,9 +250,7 @@ async fn settings_brokers_returns_alpaca_and_orderly() {
 
     assert_eq!(body["alpaca"]["kind"], "alpaca");
     assert_eq!(body["alpaca"]["configured"], false);
-    let creds = body["alpaca"]["credentials"]
-        .as_array()
-        .expect("alpaca creds");
+    let creds = body["alpaca"]["credentials"].as_array().expect("alpaca creds");
     let names: Vec<_> = creds
         .iter()
         .map(|c| c["env_var"].as_str().unwrap_or("").to_string())
@@ -303,10 +278,7 @@ async fn settings_brokers_reflects_set_env_vars() {
     for c in creds {
         if c["env_var"] == "APCA_API_KEY_ID" {
             assert_eq!(c["is_set"], true);
-            assert!(
-                c.get("value").is_none(),
-                "env var values must not be returned"
-            );
+            assert!(c.get("value").is_none(), "env var values must not be returned");
         }
     }
 }
@@ -423,19 +395,12 @@ async fn eval_run_detail_returns_summary_decisions_and_equity() {
     };
 
     let (server, _tmp) = boot().await;
-    let pool = sqlx::SqlitePool::connect(&format!(
-        "sqlite://{}/xvn.db",
-        _tmp.path().display()
-    ))
-    .await
-    .unwrap();
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}/xvn.db", _tmp.path().display()))
+        .await
+        .unwrap();
     let store = RunStore::new(pool);
 
-    let run = Run::new_queued(
-        "feedface".into(),
-        "crypto-bull-q1-2025".into(),
-        RunMode::Backtest,
-    );
+    let run = Run::new_queued("feedface".into(), "crypto-bull-q1-2025".into(), RunMode::Backtest);
     let run_id = run.id.clone();
     store.create(&run).await.unwrap();
 
@@ -448,6 +413,7 @@ async fn eval_run_detail_returns_summary_decisions_and_equity() {
             action: "long_open".into(),
             conviction: Some(0.7),
             justification: Some("test".into()),
+            reasoning: None,
             order_size: Some(0.05),
             fill_price: Some(67_000.0),
             fill_size: Some(0.05),
@@ -465,6 +431,7 @@ async fn eval_run_detail_returns_summary_decisions_and_equity() {
             action: "flat".into(),
             conviction: Some(0.4),
             justification: None,
+            reasoning: None,
             order_size: Some(0.05),
             fill_price: Some(68_500.0),
             fill_size: Some(0.05),
@@ -473,14 +440,8 @@ async fn eval_run_detail_returns_summary_decisions_and_equity() {
         })
         .await
         .unwrap();
-    store
-        .record_equity(&run_id, Utc::now(), 100_000.0)
-        .await
-        .unwrap();
-    store
-        .record_equity(&run_id, Utc::now(), 100_075.0)
-        .await
-        .unwrap();
+    store.record_equity(&run_id, Utc::now(), 100_000.0).await.unwrap();
+    store.record_equity(&run_id, Utc::now(), 100_075.0).await.unwrap();
 
     let response = server.get(&format!("/api/eval/runs/{run_id}")).await;
     response.assert_status_ok();
@@ -541,7 +502,9 @@ async fn eval_compare_rejects_missing_ids() {
 #[tokio::test]
 async fn eval_compare_rejects_single_id() {
     let (server, _tmp) = boot().await;
-    let response = server.get("/api/eval/compare?ids=01J0ONLYONE0000000000000001").await;
+    let response = server
+        .get("/api/eval/compare?ids=01J0ONLYONE0000000000000001")
+        .await;
     response.assert_status_bad_request();
     let body: serde_json::Value = response.json();
     assert_eq!(body["code"], "validation");
@@ -567,12 +530,9 @@ async fn eval_compare_returns_report_for_seeded_runs() {
     };
 
     let (server, _tmp) = boot().await;
-    let pool = sqlx::SqlitePool::connect(&format!(
-        "sqlite://{}/xvn.db",
-        _tmp.path().display()
-    ))
-    .await
-    .unwrap();
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}/xvn.db", _tmp.path().display()))
+        .await
+        .unwrap();
     let store = RunStore::new(pool);
 
     // Seed two completed runs against the same canonical scenario so the
@@ -720,15 +680,11 @@ async fn create_scenario_then_archive() {
     assert!(id.starts_with("sc_"), "id has sc_ prefix");
 
     // Archive it.
-    let archive_resp = server
-        .post(&format!("/api/scenarios/{id}/archive"))
-        .await;
+    let archive_resp = server.post(&format!("/api/scenarios/{id}/archive")).await;
     archive_resp.assert_status(axum::http::StatusCode::NO_CONTENT);
 
     // List with include_archived=true — it should show up.
-    let list_resp = server
-        .get("/api/scenarios?include_archived=true")
-        .await;
+    let list_resp = server.get("/api/scenarios?include_archived=true").await;
     list_resp.assert_status_ok();
     let body: serde_json::Value = list_resp.json();
     let items = body["items"].as_array().expect("items");
@@ -767,9 +723,7 @@ async fn clone_scenario_inherits_parent() {
     let (server, _tmp) = boot().await;
 
     // Clone one of the canonical scenarios with no overrides.
-    let clone_resp = server
-        .post("/api/scenarios/crypto-bull-q1-2025/clone")
-        .await;
+    let clone_resp = server.post("/api/scenarios/crypto-bull-q1-2025/clone").await;
     clone_resp.assert_status(axum::http::StatusCode::CREATED);
     let cloned: serde_json::Value = clone_resp.json();
     let id = cloned["id"].as_str().expect("id");
@@ -1062,10 +1016,7 @@ async fn scenario_chart_returns_cache_status_for_canonical() {
     response.assert_status_ok();
     let body: serde_json::Value = response.json();
     // cache_status must be present and type-tagged (NotCached on fresh db).
-    assert!(
-        body["cache_status"].is_object(),
-        "cache_status must be an object"
-    );
+    assert!(body["cache_status"].is_object(), "cache_status must be an object");
     assert!(
         body["cache_status"]["type"].is_string(),
         "cache_status.type must be a string"
@@ -1085,8 +1036,7 @@ async fn scenario_chart_returns_404_for_unknown() {
 #[tokio::test]
 async fn strategy_chart_returns_empty_run_series_for_unused_strategy() {
     use xvision_engine::strategies::{
-        manifest::PublicManifest, risk::RiskPreset, store::FilesystemStore, store::StrategyStore,
-        Strategy,
+        manifest::PublicManifest, risk::RiskPreset, store::FilesystemStore, store::StrategyStore, Strategy,
     };
 
     let (server, tmp) = boot().await;
@@ -1119,15 +1069,10 @@ async fn strategy_chart_returns_empty_run_series_for_unused_strategy() {
         .await
         .unwrap();
 
-    let response = server
-        .get(&format!("/api/strategies/{strategy_id}/chart"))
-        .await;
+    let response = server.get(&format!("/api/strategies/{strategy_id}/chart")).await;
     response.assert_status_ok();
     let body: serde_json::Value = response.json();
-    assert!(
-        body["run_series"].is_array(),
-        "run_series must be array"
-    );
+    assert!(body["run_series"].is_array(), "run_series must be array");
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1220,10 +1165,7 @@ async fn danger_factory_reset_clears_xvn_home_with_confirm() {
 
     // Marker is gone; xvn_home re-created empty.
     assert!(tmp.path().exists(), "xvn_home recreated");
-    assert!(
-        !tmp.path().join("marker").exists(),
-        "marker should be wiped"
-    );
+    assert!(!tmp.path().join("marker").exists(), "marker should be wiped");
 
     // Sibling log written.
     let log_path = std::path::PathBuf::from(body["audit_log_path"].as_str().unwrap());

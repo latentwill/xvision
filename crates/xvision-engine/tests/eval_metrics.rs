@@ -88,10 +88,7 @@ fn max_drawdown_pct_known_input() {
     let samples = vec![100.0, 120.0, 100.0, 80.0, 110.0];
     let dd = max_drawdown_pct(&samples);
     let expected = ((120.0 - 80.0) / 120.0) * 100.0;
-    assert!(
-        (dd - expected).abs() < 1e-9,
-        "expected {expected}%, got {dd}",
-    );
+    assert!((dd - expected).abs() < 1e-9, "expected {expected}%, got {dd}",);
 }
 
 #[test]
@@ -108,10 +105,7 @@ fn max_drawdown_pct_resets_after_new_high() {
     let samples = vec![100.0, 110.0, 90.0, 200.0, 190.0, 180.0];
     let dd = max_drawdown_pct(&samples);
     let expected = ((110.0 - 90.0) / 110.0) * 100.0;
-    assert!(
-        (dd - expected).abs() < 1e-9,
-        "expected {expected}%, got {dd}",
-    );
+    assert!((dd - expected).abs() < 1e-9, "expected {expected}%, got {dd}",);
 }
 
 #[test]

@@ -21,8 +21,7 @@ use serde::{Deserialize, Serialize};
 
 use xvision_engine::api::chart::{self as chart_api, CompareChartPayload, RunChartEvent, RunChartPayload};
 use xvision_engine::api::eval::{
-    self, CompareRunsRequest, EvalRunRequest, ListRunsRequest, RunDetail, RunSummary,
-    ScenarioSummary,
+    self, CompareRunsRequest, EvalRunRequest, ListRunsRequest, RunDetail, RunSummary, ScenarioSummary,
 };
 use xvision_engine::eval::compare::ComparisonReport;
 use xvision_engine::eval::run::RunStatus;
@@ -114,11 +113,7 @@ pub async fn compare(
         .map(str::to_owned)
         .collect();
 
-    let report = eval::compare(
-        &state.api_context(),
-        CompareRunsRequest { run_ids },
-    )
-    .await?;
+    let report = eval::compare(&state.api_context(), CompareRunsRequest { run_ids }).await?;
     Ok(Json(report))
 }
 

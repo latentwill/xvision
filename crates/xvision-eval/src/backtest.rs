@@ -175,8 +175,7 @@ impl BacktestState {
         } else {
             self.bar_count += 1;
             // Wilder smoothing: ATR_new = ATR_prev × (N-1)/N + TR × 1/N
-            self.recent_atr = self.recent_atr * (PERIOD as f64 - 1.0) / PERIOD as f64
-                + tr / PERIOD as f64;
+            self.recent_atr = self.recent_atr * (PERIOD as f64 - 1.0) / PERIOD as f64 + tr / PERIOD as f64;
         }
         self.prev_close = bar.close;
     }
@@ -209,7 +208,7 @@ impl BacktestState {
         override_price: Option<f64>,
     ) -> (f64, f64) {
         let slippage_dir = match pos.direction {
-            Direction::Long => -1.0,  // exit long: sell, price moves against us
+            Direction::Long => -1.0, // exit long: sell, price moves against us
             Direction::Short => 1.0, // exit short: buy, price moves against us
             Direction::Flat => 0.0,
         };
@@ -234,11 +233,11 @@ impl BacktestState {
         let realised_pnl = direction_sign * (fill_px - pos.entry_price) * units - exit_fee;
 
         self.portfolio.equity_usd += realised_pnl + exit_fee; // equity already had exit_fee removed; add pnl
-        // Correct: equity change = pnl (fees already deducted above)
-        // Actually let's be explicit:
-        //   equity_usd -= exit_fee  (done above)
-        //   equity_usd += pnl_gross (where pnl_gross = direction_sign * (fill_px - entry) * units)
-        // We'll undo the double-count here:
+                                                              // Correct: equity change = pnl (fees already deducted above)
+                                                              // Actually let's be explicit:
+                                                              //   equity_usd -= exit_fee  (done above)
+                                                              //   equity_usd += pnl_gross (where pnl_gross = direction_sign * (fill_px - entry) * units)
+                                                              // We'll undo the double-count here:
         self.portfolio.equity_usd -= realised_pnl + exit_fee; // undo double-add
         let pnl_gross = direction_sign * (fill_px - pos.entry_price) * units;
         self.portfolio.equity_usd += pnl_gross;
@@ -454,8 +453,7 @@ impl Executor for BacktestExecutor {
             .map_err(|_| ExecutorError::Internal("mutex poisoned".into()))?;
 
         let slippage_dir = if td.action == Action::Buy { 1.0 } else { -1.0 };
-        let fill_px =
-            st.fill_price(st.current_bar.close, slippage_dir, self.config.slippage_atr_frac);
+        let fill_px = st.fill_price(st.current_bar.close, slippage_dir, self.config.slippage_atr_frac);
 
         let notional = st.portfolio.equity_usd * td.size_bps as f64 / 10_000.0;
         st.apply_entry_fee(notional, self.config.fee_bps);
@@ -472,8 +470,11 @@ impl Executor for BacktestExecutor {
         st.fill_seq += 1;
 
         // Upsize existing position in same asset+direction, or open new.
-        let open_pos = st.portfolio.open_positions.entry(asset).or_insert_with(|| {
-            OpenPosition {
+        let open_pos = st
+            .portfolio
+            .open_positions
+            .entry(asset)
+            .or_insert_with(|| OpenPosition {
                 asset,
                 direction,
                 size_bps: 0,
@@ -482,8 +483,7 @@ impl Executor for BacktestExecutor {
                 stop_loss_pct: td.stop_loss_pct,
                 take_profit_pct: td.take_profit_pct,
                 opened_at: now,
-            }
-        });
+            });
 
         if open_pos.direction == direction {
             // Weighted average entry price when upsizing
@@ -491,8 +491,7 @@ impl Executor for BacktestExecutor {
             let new_notional = old_notional + td.size_bps as f64;
             if new_notional > 0.0 {
                 open_pos.entry_price =
-                    (open_pos.entry_price * old_notional + fill_px * td.size_bps as f64)
-                        / new_notional;
+                    (open_pos.entry_price * old_notional + fill_px * td.size_bps as f64) / new_notional;
             }
             open_pos.size_bps = open_pos.size_bps.saturating_add(td.size_bps).min(2000);
             // Keep the tighter SL / larger TP when upsizing
@@ -533,10 +532,7 @@ impl Executor for BacktestExecutor {
         Ok(receipt)
     }
 
-    async fn close_position(
-        &self,
-        asset: AssetSymbol,
-    ) -> Result<ExecutionReceipt, ExecutorError> {
+    async fn close_position(&self, asset: AssetSymbol) -> Result<ExecutionReceipt, ExecutorError> {
         let mut st = self
             .state
             .lock()
@@ -647,13 +643,7 @@ mod tests {
         }
     }
 
-    fn decision(
-        action: Action,
-        size_bps: u32,
-        direction: Direction,
-        sl: f32,
-        tp: f32,
-    ) -> RiskDecision {
+    fn decision(action: Action, size_bps: u32, direction: Direction, sl: f32, tp: f32) -> RiskDecision {
         RiskDecision::Approved {
             decision: TraderDecision {
                 cycle_id: Uuid::new_v4(),
@@ -677,7 +667,13 @@ mod tests {
             max_history_days: 30,
         };
         // Opening bar: ATR seed = high-low = 500 (100 bps of 50000)
-        let ob = bar(0, opening_close, opening_close + 500.0, opening_close - 500.0, opening_close);
+        let ob = bar(
+            0,
+            opening_close,
+            opening_close + 500.0,
+            opening_close - 500.0,
+            opening_close,
+        );
         BacktestExecutor::new(cfg, ob)
     }
 
@@ -786,10 +782,7 @@ mod tests {
         // State must be unchanged
         let pf = exec.portfolio_snapshot();
         assert!(pf.is_flat(), "state must not mutate on veto");
-        assert_eq!(
-            pf.equity_usd, equity_before,
-            "equity must not change on veto"
-        );
+        assert_eq!(pf.equity_usd, equity_before, "equity must not change on veto");
     }
 
     // -----------------------------------------------------------------------
@@ -851,12 +844,20 @@ mod tests {
 
             // 2. Tick to a bar that closes *lower* than entry — stays inside SL/TP.
             //    Intra-day bar (same UTC day): no rollover.
-            let entry_close = exec.portfolio_snapshot().open_positions
+            let entry_close = exec
+                .portfolio_snapshot()
+                .open_positions
                 .get(&AssetSymbol::Btc)
                 .map(|p| p.entry_price)
                 .unwrap_or(50_000.0);
             let lower_close = entry_close * 0.99; // -1% — well inside 40% SL
-            let intra_bar = bar(intra_ts, lower_close, lower_close * 1.001, lower_close * 0.999, lower_close);
+            let intra_bar = bar(
+                intra_ts,
+                lower_close,
+                lower_close * 1.001,
+                lower_close * 0.999,
+                lower_close,
+            );
             let report_intra = exec.tick(intra_bar).expect("tick ok");
             assert!(
                 report_intra.auto_filled_receipts.is_empty(),
@@ -875,7 +876,13 @@ mod tests {
             );
 
             // 4. Tick to a bar crossing midnight → triggers day_rollover.
-            let midnight_bar = bar(midnight_ts, lower_close, lower_close * 1.001, lower_close * 0.999, lower_close);
+            let midnight_bar = bar(
+                midnight_ts,
+                lower_close,
+                lower_close * 1.001,
+                lower_close * 0.999,
+                lower_close,
+            );
             let report_midnight = exec.tick(midnight_bar).expect("tick ok");
             assert!(
                 report_midnight.day_rollover,
@@ -957,9 +964,7 @@ mod tests {
         exec.submit(&d).await.expect("submit ok");
 
         // Close at the same price (slippage = 0, so fill_px = close = 50000)
-        exec.close_position(AssetSymbol::Btc)
-            .await
-            .expect("close ok");
+        exec.close_position(AssetSymbol::Btc).await.expect("close ok");
 
         let equity_after = exec.portfolio_snapshot().equity_usd;
         let equity_drop = equity_before - equity_after;

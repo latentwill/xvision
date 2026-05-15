@@ -22,19 +22,17 @@ pub mod store;
 
 pub use attestation::{EvalAttestation, TokensUsed};
 pub use compare::{
-    compare_runs, ComparisonEquityCurve, ComparisonEquitySample, ComparisonReport,
-    ComparisonRunSummary,
+    compare_runs, ComparisonEquityCurve, ComparisonEquitySample, ComparisonReport, ComparisonRunSummary,
 };
 pub use findings::{Finding, Severity};
 pub use progress::{send_event, ProgressBus, ProgressEvent, ProgressRx, ProgressTx};
 
 pub use run::{MetricsSummary, Run, RunMode, RunStatus};
-pub use scenario::{
-    AdjustmentMode, AssetClass, AssetRef, BarCachePolicy, BarGranularity, CalendarRef, DataSource,
-    Fees, FillModel, LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy,
-    ReplayMode, Scenario, ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings,
-    VolumeConstraint, WalkModel,
-};
 #[allow(deprecated)]
 pub use scenario::canonical_scenarios;
+pub use scenario::{
+    AdjustmentMode, AssetClass, AssetRef, BarCachePolicy, BarGranularity, CalendarRef, DataSource, Fees,
+    FillModel, LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode,
+    Scenario, ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings, VolumeConstraint, WalkModel,
+};
 pub use store::{DecisionRow, ListFilter, RunStore};

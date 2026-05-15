@@ -44,10 +44,7 @@ fn finalized_run() -> Run {
 #[test]
 fn severity_serializes_snake_case() {
     assert_eq!(serde_json::to_string(&Severity::Info).unwrap(), "\"info\"");
-    assert_eq!(
-        serde_json::to_string(&Severity::Warning).unwrap(),
-        "\"warning\""
-    );
+    assert_eq!(serde_json::to_string(&Severity::Warning).unwrap(), "\"warning\"");
     assert_eq!(
         serde_json::to_string(&Severity::Critical).unwrap(),
         "\"critical\""
@@ -74,15 +71,9 @@ async fn extract_findings_parses_clean_json_array() {
     let summary = serde_json::json!({"long_open_count": 6, "flat_count": 24});
     let equity = serde_json::json!({"start": 10000.0, "end": 9680.0});
 
-    let findings = extract_findings(
-        &run,
-        summary,
-        equity,
-        dispatch,
-        "claude-haiku-4-5-20251001",
-    )
-    .await
-    .expect("extraction must succeed");
+    let findings = extract_findings(&run, summary, equity, dispatch, "claude-haiku-4-5-20251001")
+        .await
+        .expect("extraction must succeed");
 
     assert_eq!(findings.len(), 2);
     assert_eq!(findings[0].kind, "underperformance");

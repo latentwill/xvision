@@ -22,11 +22,7 @@ pub struct ProviderRegistry {
 }
 
 impl ProviderRegistry {
-    pub fn new(
-        rows: Vec<ProviderEntry>,
-        default_intern: SlotRef,
-        default_trader: SlotRef,
-    ) -> Self {
+    pub fn new(rows: Vec<ProviderEntry>, default_intern: SlotRef, default_trader: SlotRef) -> Self {
         Self {
             rows,
             default_intern,
@@ -198,20 +194,13 @@ mod tests {
             SlotRef::new("openai", "gpt-4o"),
             SlotRef::new("openai", "gpt-4o"),
         );
-        let a = reg
-            .intern_backend(&SlotRef::new("openai", "gpt-4o"))
-            .unwrap();
-        let b = reg
-            .intern_backend(&SlotRef::new("openai", "gpt-4o"))
-            .unwrap();
+        let a = reg.intern_backend(&SlotRef::new("openai", "gpt-4o")).unwrap();
+        let b = reg.intern_backend(&SlotRef::new("openai", "gpt-4o")).unwrap();
         assert!(Arc::ptr_eq(&a, &b), "same slot must yield the same Arc");
         let c = reg
             .intern_backend(&SlotRef::new("openai", "gpt-4o-mini"))
             .unwrap();
-        assert!(
-            !Arc::ptr_eq(&a, &c),
-            "different model must yield a different Arc"
-        );
+        assert!(!Arc::ptr_eq(&a, &c), "different model must yield a different Arc");
     }
 
     #[test]
@@ -229,20 +218,13 @@ mod tests {
             SlotRef::new("openai", "gpt-4o"),
             SlotRef::new("openai", "gpt-4o"),
         );
-        let a = reg
-            .trader_backend(&SlotRef::new("openai", "gpt-4o"))
-            .unwrap();
-        let b = reg
-            .trader_backend(&SlotRef::new("openai", "gpt-4o"))
-            .unwrap();
+        let a = reg.trader_backend(&SlotRef::new("openai", "gpt-4o")).unwrap();
+        let b = reg.trader_backend(&SlotRef::new("openai", "gpt-4o")).unwrap();
         assert!(Arc::ptr_eq(&a, &b), "same slot must yield the same Arc");
         let c = reg
             .trader_backend(&SlotRef::new("openai", "gpt-4o-mini"))
             .unwrap();
-        assert!(
-            !Arc::ptr_eq(&a, &c),
-            "different model must yield a different Arc"
-        );
+        assert!(!Arc::ptr_eq(&a, &c), "different model must yield a different Arc");
     }
 
     #[test]
