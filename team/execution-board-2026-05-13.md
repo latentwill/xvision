@@ -63,10 +63,21 @@ Use these as reference only:
 | `qa8-agent-ux-cli-templates` | `.worktrees/qa8-agent-ux-cli-templates` | Improve agent UX: deterministic strategy scaffolds for simple creation, UI copy-pastable CLI commands, and template registry/version parity between deployed image and local repo | `qa8-template-authoring-flow` preferred | no overlap with template authoring or shell UI tracks | frontend tests for CLI command rendering + template registry API tests |
 | `qa8-scenario-display-name-contract` | `.worktrees/qa8-scenario-display-name-contract` | Fix scenario creation/tooling so custom scenarios always carry a required display name and missing-name validation is actionable | none | no overlap with scenario create/API/CLI tracks | scenario API/CLI validation tests + create-scenario focused frontend/tool tests |
 | `qa8-eval-provider-preflight` | `.worktrees/qa8-eval-provider-preflight` | Prevent Web UI eval and wizard flows from launching with unconfigured `openai`/`anthropic` defaults; require configured provider/model selection or a clear zero-provider setup action | `qa4-settings-zero-provider` preferred | no overlap with eval launcher, chat rail, or provider picker tracks | eval launch/provider preflight tests + chat/wizard zero-provider regression test |
+| `qa10-eval-openrouter-slot-resolution` | `.worktrees/qa10-eval-openrouter-slot-resolution` | Fix eval provider/model resolution so the one-month smoke strategy dispatches through `openrouter` instead of falling through to Anthropic; align the strategy slot/provider fields and add a regression for the run path | `qa8-eval-provider-preflight` preferred | no overlap with eval executor/parser tracks | focused eval provider-selection regression + strategy bundle smoke |
+| `qa10-flash-crash-fixture-alignment` | `.worktrees/qa10-flash-crash-fixture-alignment` | Ensure `flash-crash-2024-08` resolves to a real 30-day parquet fixture at the runtime path eval expects, and keep the scenario registry/load path wired to that asset | none | no overlap with CLI/scenario data tracks | scenario fixture smoke + eval run smoke |
 | `qa9-delete-edit-flow-verification` | `.worktrees/qa9-delete-edit-flow-verification` | Verify scenario clone-to-edit, archive, and delete failure flows after live QA stopped before delete/edit coverage | none | no overlap with wizard/strategy-agent tracks; frontend test-only coverage | scenario detail focused frontend tests + typecheck |
 | `qa9-strategy-wizard-persistence` | `.worktrees/qa9-strategy-wizard-persistence` | Fix live QA bug where setup wizard/chat claims asset/cadence/risk edits but Inspector manifest still shows original draft values | none | no overlap with eval/agent attachment tracks; owns wizard authoring manifest persistence | authoring/API/wizard regression tests in CI/non-deploy + frontend typecheck |
 | `qa9-readonly-editability-contract` | `.worktrees/qa9-readonly-editability-contract` | Clarify the setup/Inspector contract so read-only manifest/mechanical fields are not presented as directly editable without a successful setup tool save | none | no overlap with backend persistence; owns copy/tests for read-only contract | setup + authoring focused frontend tests + typecheck |
 | `qa9-strategy-agent-attachment-flow` | `.worktrees/qa9-strategy-agent-attachment-flow` | Validate attaching an existing AgentRef from the Inspector and make attached rows show agent/provider/model metadata before eval | none | no overlap with setup wizard persistence or read-only copy tracks | authoring focused frontend tests + typecheck |
+| `qa10-chat-strategy-agent-authoring-recovery` | current workspace | Recover live chat authoring failure: malformed strategy tool args, no auto-created trader AgentRef, and eval preflight missing provider/model after chat-created strategies | `qa9-strategy-wizard-persistence`, `qa9-strategy-agent-attachment-flow`, `qa8-eval-provider-preflight` | no overlap while editing chat/wizard strategy tooling | `pnpm --dir frontend/web typecheck`; `pnpm --dir frontend/web test -- ChatRail`; Rust cargo checks deferred on deploy hosts |
+| `qa10-eval-trader-empty-output-resilience` | `.worktrees/qa10-eval-trader-empty-output-resilience` | Reproduce and harden eval trader decisions that fail after several ticks with empty/truncated model output (`EOF while parsing a value at line 1 column 0`), preserving raw diagnostics and preventing orders on invalid decisions | `qa9-alpaca-eval-full-run-burndown`, `qa9-json-schema-enforcement` preferred | no overlap with eval executor/parser tracks | eval executor regression for empty output + run failure reason test + paper/backtest parser tests |
+| `qa10-stop-eval-run-control` | `.worktrees/qa10-stop-eval-run-control` | Add an explicit Stop Eval Run control and harden cancellation semantics so queued/running runs stop promptly, failed/cancelled terminal runs cannot keep executing in the background, streams close cleanly, and paper/live executors never place orders after stop/failure | `qa10-eval-trader-empty-output-resilience` preferred | no overlap with eval executor/progress/run-detail tracks | cancellation API tests + executor stop regression + run-detail Stop button test + SSE terminal close test |
+| `qa10-eval-chat-scrollbars-controls` | `.worktrees/qa10-eval-chat-scrollbars-controls` | Implement the `docs/design/XVN_Scrollbars.zip` prototype: always-visible themed scrollbars, eval decision list scrollbar/filter, clear BUY/SELL/HOLD/CLOSE signal boxes with reasoning text, chat rail scrollbar, and square Play/Stop composer control with no highlighted border | `color-themes-light-dark` preferred if theme variables are moving | no overlap with broad shell/chat/eval frontend tracks | `pnpm --dir frontend/web test -- ChatRail eval-runs-detail`; frontend typecheck; visual smoke against the design zip |
+| `qa10-chat-scenario-dsml-recovery` | `.worktrees/qa10-chat-scenario-dsml-recovery` | Fix chat-rail scenario creation from prompts like “try a paper eval on solana in q1 2026”: required `description` must survive tool argument parsing, malformed DSML/partial JSON must fail locally with a short repair path, and tool traces must not stream corrupt markup indefinitely | `qa10-chat-strategy-agent-authoring-recovery`, `qa8-scenario-display-name-contract` | no overlap with chat wizard/tool parser tracks | WizardLoop/chat route regression for SOL Q1 2026 scenario + malformed DSML argument test + ChatRail rendering test |
+| `eval-review-data-model` | `.worktrees/eval-review-data-model` | Add the Eval Review Agent persistence foundation from `docs/superpowers/specs/2026-05-15-eval-review-agent.md`: `eval_reviews`, seeded review agent profiles, and review-linked first-class findings while preserving existing `eval_findings` callers | none | no overlap with eval store/schema migrations | migration tests + RunStore review/findings roundtrip tests |
+| `eval-review-agent-engine` | `.worktrees/eval-review-agent-engine` | Build the review payload collector, strict JSON prompt/response contract, agent-profile dispatch, hallucination/evidence validation, and normalized review persistence for completed eval runs | `eval-review-data-model`, `qa10-eval-trader-empty-output-resilience` preferred | no overlap with eval executor/parser tracks | review contract unit tests + sparse-payload inconclusive test + evidence-reference validation test |
+| `eval-review-api-cli` | `.worktrees/eval-review-api-cli` | Add `POST /api/eval/runs/:id/review`, `GET /api/eval/runs/:id/reviews`, `GET /api/eval/reviews/:id`, plus `xvn eval review <run_id> --agent ... [--force] [--output review.json]` | `eval-review-agent-engine`, `qa8-cli-json-contracts` preferred | no overlap with broad eval CLI/API command refactors | dashboard route tests + CLI golden tests for human and JSON output |
+| `eval-review-run-detail-ui` | `.worktrees/eval-review-run-detail-ui` | Add the `/eval-runs/:id` Review panel with agent picker, status, verdict badge, confidence, regenerate action, summary, findings, risks, next tests, open questions, and evidence links | `eval-review-api-cli`, `qa10-eval-chat-scrollbars-controls` preferred | no overlap with eval run-detail styling tracks | eval-runs-detail focused tests + frontend typecheck + visual smoke |
 | `color-themes-light-dark` | `.worktrees/color-themes-light-dark` | Execute `docs/superpowers/plans/2026-05-14-color-themes-light-dark-mode.md`: color-only dashboard themes, General settings, sidebar sun/moon toggle, chart palette integration | none | no overlap with broad shell/settings/chart frontend tracks | `corepack pnpm --dir frontend/web test && corepack pnpm --dir frontend/web typecheck && corepack pnpm --dir frontend/web build` |
 
 ## Recommended order
@@ -99,7 +110,17 @@ Use these as reference only:
 26. `qa8-agent-ux-cli-templates`
 27. `qa8-scenario-display-name-contract`
 28. `qa8-eval-provider-preflight`
-29. `color-themes-light-dark`
+29. `qa10-eval-openrouter-slot-resolution`
+30. `qa10-flash-crash-fixture-alignment`
+31. `color-themes-light-dark`
+32. `qa10-eval-trader-empty-output-resilience`
+33. `qa10-stop-eval-run-control`
+34. `qa10-chat-scenario-dsml-recovery`
+35. `qa10-eval-chat-scrollbars-controls`
+36. `eval-review-data-model`
+37. `eval-review-agent-engine`
+38. `eval-review-api-cli`
+39. `eval-review-run-detail-ui`
 
 ## Immediate start set
 
@@ -119,7 +140,12 @@ Safe to start now:
 - `qa8-unbounded-slot-tool-use`
 - `qa8-cli-runtime-blockers`
 - `qa8-scenario-display-name-contract`
+- `qa10-eval-openrouter-slot-resolution`
+- `qa10-flash-crash-fixture-alignment`
 - `color-themes-light-dark`
+- `qa10-eval-trader-empty-output-resilience`
+- `qa10-stop-eval-run-control`
+- `eval-review-data-model`
 
 Wait for `strategy-agent-backend`:
 
@@ -145,6 +171,20 @@ Wait for provider settings stabilization:
 
 - `qa8-eval-provider-preflight`
 
+Wait for chat/scenario parser stabilization:
+
+- `qa10-chat-scenario-dsml-recovery`
+
+Wait for theme stabilization:
+
+- `qa10-eval-chat-scrollbars-controls`
+- `eval-review-run-detail-ui`
+
+Wait for eval review foundation:
+
+- `eval-review-agent-engine`
+- `eval-review-api-cli`
+
 Do not overlap:
 
 - `strategy-agent-backend` with `qa4-surface-consistency`
@@ -167,6 +207,24 @@ Do not overlap:
 - `color-themes-light-dark` with broad shell/settings/chart frontend tracks,
   especially `qa8-shared-chat-rail-context`, `pr94-chart-stabilization`,
   `runtime-render-optimization`, or any active Settings layout refactor.
+- `qa10-eval-trader-empty-output-resilience` with `qa9-alpaca-eval-full-run-burndown`,
+  `qa9-json-schema-enforcement`, or any active eval executor/parser refactor.
+- `qa10-stop-eval-run-control` with `qa10-eval-trader-empty-output-resilience`,
+  `qa8-eval-live-decisions`, or any active eval executor/progress/run-detail
+  cancellation refactor.
+- `qa10-chat-scenario-dsml-recovery` with `qa10-chat-strategy-agent-authoring-recovery`,
+  `qa8-scenario-display-name-contract`, or any active WizardLoop/chat tool parser refactor.
+- `qa10-eval-chat-scrollbars-controls` with `color-themes-light-dark`,
+  `qa9-chat-rail-inflight-controls`, `qa8-eval-live-decisions`,
+  `qa10-stop-eval-run-control`, or broad ChatRail/eval route styling refactors.
+- `eval-review-data-model` with broad eval store/schema migrations.
+- `eval-review-agent-engine` with `qa10-eval-trader-empty-output-resilience`
+  or active eval executor/parser refactors if both touch decision payload
+  diagnostics, persisted events, or postprocess hooks.
+- `eval-review-api-cli` with broad eval CLI/API refactors, especially
+  `qa8-eval-cli-workflow`, `qa8-cli-json-contracts`, or eval route reshaping.
+- `eval-review-run-detail-ui` with `qa10-eval-chat-scrollbars-controls`,
+  `qa8-eval-live-decisions`, or any broad `/eval-runs/:id` run-detail rewrite.
 
 ## Cherry-pick policy
 
@@ -426,6 +484,127 @@ Raw items mapped to board tracks:
   and show a setup action instead of retrying guessed providers. Strategies
   with missing or stale agent provider/model assignments should be flagged in
   preflight before queueing an eval.
+
+### Q10 QA intake
+
+New operator QA report on 2026-05-15. Split into implementation-sized tracks
+above; do not merge these into the completed QA8/QA9 status files unless a
+worker is explicitly rebasing unfinished work.
+
+Raw items mapped to board tracks:
+
+- `qa10-eval-trader-empty-output-resilience`: Eval run
+  `01KRMKWZ1KJ2BGRNWGP518ZQ3Q` failed after about four decisions with
+  `run 01KRMKWZ1KJ2BGRNWGP518ZQ3Q decision 4: trader output is invalid JSON: EOF while parsing a value at line 1 column 0`.
+  Treat this as a different failure mode from the earlier missing-`action`
+  schema bugs: the model/tool layer produced an empty or truncated final trader
+  payload after the run had already made progress. Required action: reproduce
+  from the run row/logs where available, persist enough raw provider
+  diagnostics to distinguish empty text, stream abort, timeout, and parser
+  failure, and ensure paper/live executors never submit an order for an invalid
+  or missing trader decision. A bounded retry is acceptable only if it is
+  explicitly idempotent and recorded in run events.
+- `qa10-eval-openrouter-slot-resolution`: The one-month smoke strategy still
+  resolves its executable LLM slot to `anthropic` at runtime, which forces an
+  Anthropic API-key check and 401s even though the strategy policy is
+  OpenRouter DeepSeek. Required action: align the strategy slot/provider fields
+  so eval dispatches through `openrouter` only, and add a regression that proves
+  `xvn eval run --strategy 01KRMYS1N4QT5B9EM32VNXJJ9V --scenario
+  flash-crash-2024-08 --mode paper` selects the OpenRouter path before queueing
+  the run.
+- `qa10-flash-crash-fixture-alignment`: `flash-crash-2024-08` still depends on a
+  real 30-day parquet fixture at the runtime path eval expects. Required
+  action: verify the scenario registry points at a materialized asset, package
+  or symlink it into the deployed data path, and add a smoke check so the eval
+  cannot launch against a missing fixture.
+- `qa10-stop-eval-run-control`: Operators need a clear Stop Eval Run control
+  because failed runs appear to keep going after the UI/run row reports failure.
+  The code already has a `/api/eval/runs/:id/cancel` route and a small Cancel
+  affordance, but this track must verify the full lifecycle rather than only
+  restyling the button. Required action: rename/upgrade the run-detail affordance
+  to an explicit Stop control for queued/running runs; ensure stop requests are
+  visible while pending; make cancellation idempotent for repeated clicks; ensure
+  background tasks check terminal status before every model call, decision
+  persist, fill/order placement, metric update, and postprocess step; make a
+  failed run terminal immediately so no later executor loop can overwrite it or
+  continue streaming; close SSE with a terminal status event; and add an audit
+  trail/event that distinguishes user stop from model/parser failure. If the
+  executor can be active after the DB row is already `failed`, add a safe
+  internal stop signal or terminal-state guard rather than allowing a "failed
+  but still trading" state.
+- `qa10-eval-chat-scrollbars-controls`: Use the attached prototype archive at
+  `docs/design/XVN_Scrollbars.zip` (contains `eval-focus-bundle/*`) as the
+  source for visible scrollbar styling and the eval focus/filter treatment.
+  Add a scrollbar and filter to the decisions section under eval run detail.
+  Preserve the prototype's clear action signal boxes for BUY, SELL, HOLD, and
+  CLOSE, including distinct color/background/border treatment and compact
+  counts in the filter row. Add the decision `reasoning` field to the displayed
+  ledger; if the current persisted/API field is still named `justification`,
+  the UI/API contract should either alias it to `reasoning` or migrate the wire
+  shape without losing existing decision rows. The chat rail scrollbar must be
+  visible at all times and match the same theme treatment. The chat rail stop
+  button should become a square icon-only control with no highlighted border;
+  when no chat/task is active it should render as Play and submit the composer
+  exactly like Enter, and while active it should render as Stop and abort the
+  in-flight request.
+- `qa10-chat-scenario-dsml-recovery`: Chat prompt
+  `try a paper eval on solana in q1 2026` updated the manifest to
+  `asset_universe=SOL/USD` and `decision_cadence_minutes=240m`, then attempted
+  to create `SOL Q1 2026` but failed with `create_scenario failed: missing field
+  \`description\``. The streamed trace showed a `description` parameter followed
+  by malformed/partial DSML around the `asset` payload
+  (`"venue_symbol": "SOL/USD":<|DSML|tool_calls> ...`) and then continued for a
+  long time. Required action: make chat scenario creation validate the decoded
+  tool argument object before invoking the tool, keep required fields
+  (`display_name`, `description`, asset/date/granularity) intact through DSML
+  parsing, surface a compact repair prompt or local validation error on
+  malformed tool markup, and add a regression for SOL Q1 2026 paper-eval
+  scenario creation.
+
+### Eval Review Agent intake
+
+New product spec captured in
+`docs/superpowers/specs/2026-05-15-eval-review-agent.md`. This is not a simple
+metrics summary. It adds an analytical review layer over completed eval runs,
+using selected review agents and storing review findings as first-class objects
+for future autoresearcher, lineage, and reputation work.
+
+Raw spec mapped to board tracks:
+
+- `eval-review-data-model`: Add `eval_reviews`, seed review agent profiles,
+  and preserve/extend `eval_findings` so review findings can link to a review
+  while existing lightweight extractor callers keep working. The repo already
+  has `eval_findings`; do not create a text-only report table that hides
+  findings inside `raw_output_json`.
+- `eval-review-agent-engine`: Build the bounded review payload from current
+  persisted artifacts: `eval_runs.metrics_json`, `eval_decisions`,
+  `eval_equity_samples`, existing findings/events/errors where available, and
+  scenario/agent metadata. The prompt must acknowledge missing artifacts rather
+  than invent orders, positions, market metadata, or logs that are not persisted
+  yet. Enforce strict JSON, evidence references, low-temperature deterministic
+  output, and sparse-payload `inconclusive` behavior.
+- `eval-review-api-cli`: Expose review generation and reads through dashboard
+  API routes and `xvn eval review`. The route shape must match current code:
+  frontend path is `/eval-runs/:id`; API path is `/api/eval/runs/:id/review`,
+  plus review list/detail endpoints.
+- `eval-review-run-detail-ui`: Add the Review panel to existing
+  `frontend/web/src/routes/eval-runs-detail.tsx` instead of creating a parallel
+  page. Required display sections are executive summary, verdict, key findings,
+  risks, evidence, recommended next tests, and open questions. Regeneration with
+  another agent is part of MVP.
+
+MVP acceptance:
+
+- A completed eval run can be reviewed by Fast Trader, Reasoning, Risk, or
+  Research agent profile.
+- Review and normalized findings persist.
+- Run-detail displays summary, verdict, confidence, findings, risks, next
+  tests, and questions.
+- CLI can generate and export the review.
+- The agent does not hallucinate metrics or trades absent from the eval payload.
+- Deferred: autoresearcher loop, mutation, blockchain identity, marketplace
+  publishing, live trading decisions, settlement, multi-agent debate, and memory
+  graph.
 
 ## Next board intake
 
