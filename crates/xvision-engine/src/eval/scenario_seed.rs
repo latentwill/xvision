@@ -10,15 +10,15 @@
 //! chop-Q2-2025, flash-crash-Aug-2024. Capital lives on `Scenario`.
 
 use chrono::{DateTime, TimeZone, Utc};
-use xvision_data::alpaca::BarGranularity;
 use xvision_core::Capital;
+use xvision_data::alpaca::BarGranularity;
 
 use crate::api::{ApiContext, ApiError, ApiResult};
 use crate::eval::bars::compute_cache_key;
 use crate::eval::scenario::{
-    AdjustmentMode, AssetClass, AssetRef, BarCachePolicy, CalendarRef, DataSource, Fees,
-    FillModel, LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy,
-    ReplayMode, Scenario, ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings,
+    AdjustmentMode, AssetClass, AssetRef, BarCachePolicy, CalendarRef, DataSource, Fees, FillModel,
+    LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode, Scenario,
+    ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings,
 };
 use crate::eval::scenario_store;
 
@@ -60,13 +60,7 @@ pub fn canonical_seed_rows() -> Vec<Scenario> {
     ]
 }
 
-fn seed_btc(
-    id: &str,
-    name: &str,
-    regime_tag: &str,
-    start: DateTime<Utc>,
-    end: DateTime<Utc>,
-) -> Scenario {
+fn seed_btc(id: &str, name: &str, regime_tag: &str, start: DateTime<Utc>, end: DateTime<Utc>) -> Scenario {
     let mut s = Scenario {
         id: id.into(),
         parent_scenario_id: None,
@@ -133,12 +127,10 @@ fn seed_btc(
 /// Called from `ApiContext::open` immediately after migrations apply, so
 /// every fresh `xvn_home` ships with the four canonical BTC scenarios.
 pub async fn run_seed_if_needed(ctx: &ApiContext) -> ApiResult<()> {
-    let count: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM scenarios WHERE source = 'canonical'",
-    )
-    .fetch_one(&ctx.db)
-    .await
-    .map_err(|e| ApiError::Internal(format!("count canonical scenarios: {e}")))?;
+    let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM scenarios WHERE source = 'canonical'")
+        .fetch_one(&ctx.db)
+        .await
+        .map_err(|e| ApiError::Internal(format!("count canonical scenarios: {e}")))?;
 
     if count.0 == 0 {
         for s in canonical_seed_rows() {

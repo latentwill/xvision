@@ -67,13 +67,7 @@ pub fn sign(run: &Run, scenario: &Scenario, signing_key: &SigningKey) -> Result<
     };
     let ran_at = run.completed_at.unwrap_or_else(Utc::now);
 
-    let bytes = signable_payload(
-        &run.agent_id,
-        &scenario.id,
-        &metrics,
-        &tokens_used,
-        &ran_at,
-    )?;
+    let bytes = signable_payload(&run.agent_id, &scenario.id, &metrics, &tokens_used, &ran_at)?;
     let signature: Signature = signing_key.sign(&bytes);
     let pubkey: VerifyingKey = signing_key.verifying_key();
 
@@ -89,17 +83,14 @@ pub fn sign(run: &Run, scenario: &Scenario, signing_key: &SigningKey) -> Result<
 }
 
 pub fn verify(att: &EvalAttestation) -> Result<()> {
-    let pubkey_bytes = hex::decode(&att.signing_pubkey_hex)
-        .map_err(|e| anyhow!("decode pubkey hex: {e}"))?;
+    let pubkey_bytes = hex::decode(&att.signing_pubkey_hex).map_err(|e| anyhow!("decode pubkey hex: {e}"))?;
     let pubkey_arr: [u8; 32] = pubkey_bytes
         .as_slice()
         .try_into()
         .map_err(|_| anyhow!("pubkey must be 32 bytes"))?;
-    let pubkey = VerifyingKey::from_bytes(&pubkey_arr)
-        .map_err(|e| anyhow!("decode pubkey: {e}"))?;
+    let pubkey = VerifyingKey::from_bytes(&pubkey_arr).map_err(|e| anyhow!("decode pubkey: {e}"))?;
 
-    let sig_bytes = hex::decode(&att.signature_hex)
-        .map_err(|e| anyhow!("decode signature hex: {e}"))?;
+    let sig_bytes = hex::decode(&att.signature_hex).map_err(|e| anyhow!("decode signature hex: {e}"))?;
     let sig_arr: [u8; 64] = sig_bytes
         .as_slice()
         .try_into()

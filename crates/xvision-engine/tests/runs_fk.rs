@@ -11,14 +11,9 @@ use xvision_engine::api::{Actor, ApiContext};
 #[tokio::test]
 async fn run_insert_with_unknown_scenario_rejected() {
     let dir = tempdir().unwrap();
-    let ctx = ApiContext::open(
-        dir.path(),
-        Actor::Cli {
-            user: "test".into(),
-        },
-    )
-    .await
-    .unwrap();
+    let ctx = ApiContext::open(dir.path(), Actor::Cli { user: "test".into() })
+        .await
+        .unwrap();
 
     let err = sqlx::query(
         "INSERT INTO eval_runs (id, agent_id, scenario_id, mode, status, started_at) \
@@ -44,14 +39,9 @@ async fn run_insert_with_unknown_scenario_rejected() {
 #[tokio::test]
 async fn run_insert_with_seeded_canonical_scenario_succeeds() {
     let dir = tempdir().unwrap();
-    let ctx = ApiContext::open(
-        dir.path(),
-        Actor::Cli {
-            user: "test".into(),
-        },
-    )
-    .await
-    .unwrap();
+    let ctx = ApiContext::open(dir.path(), Actor::Cli { user: "test".into() })
+        .await
+        .unwrap();
 
     // The first-run seed (run_seed_if_needed, called from ApiContext::open)
     // inserts the four canonical scenarios; 'crypto-bull-q1-2025' is one.
@@ -73,14 +63,9 @@ async fn run_insert_with_seeded_canonical_scenario_succeeds() {
 #[tokio::test]
 async fn run_update_to_unknown_scenario_rejected() {
     let dir = tempdir().unwrap();
-    let ctx = ApiContext::open(
-        dir.path(),
-        Actor::Cli {
-            user: "test".into(),
-        },
-    )
-    .await
-    .unwrap();
+    let ctx = ApiContext::open(dir.path(), Actor::Cli { user: "test".into() })
+        .await
+        .unwrap();
 
     // Seed a run pointing at a valid (canonical) scenario.
     sqlx::query(

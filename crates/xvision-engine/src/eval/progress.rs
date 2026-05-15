@@ -96,10 +96,7 @@ pub enum ProgressEvent {
         tokens_used: u64,
     },
     /// Terminal-failure event. After this fires the executor exits.
-    RunFailed {
-        run_id: String,
-        error: String,
-    },
+    RunFailed { run_id: String, error: String },
 }
 
 /// Sender half of the progress channel. Cheap to clone (it's an `Arc`

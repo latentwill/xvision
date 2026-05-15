@@ -19,10 +19,10 @@ use async_trait::async_trait;
 
 use crate::agent::llm::LlmDispatch;
 use crate::agent::pipeline::ResolvedAgentSlot;
-use crate::strategies::Strategy;
 use crate::eval::run::{MetricsSummary, Run};
 use crate::eval::scenario::Scenario;
 use crate::eval::store::RunStore;
+use crate::strategies::Strategy;
 use crate::tools::ToolRegistry;
 
 pub use backtest::BacktestExecutor;

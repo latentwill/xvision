@@ -23,8 +23,8 @@ fn source_tag(s: ScenarioSource) -> &'static str {
 /// Insert a scenario row plus its tags. Rows are immutable post-insert
 /// (enforced by the `scenarios_no_update` trigger from migration 006).
 pub async fn insert_scenario(ctx: &ApiContext, s: &Scenario) -> ApiResult<()> {
-    let body = serde_json::to_string(s)
-        .map_err(|e| ApiError::Internal(format!("serialize scenario: {e}")))?;
+    let body =
+        serde_json::to_string(s).map_err(|e| ApiError::Internal(format!("serialize scenario: {e}")))?;
     sqlx::query(
         "INSERT INTO scenarios (id, parent_scenario_id, source, display_name, description, body_json, created_at, created_by, archived_at) \
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -71,9 +71,7 @@ pub async fn get_scenario(ctx: &ApiContext, id: &str) -> ApiResult<Option<Scenar
             s.archived_at = match archived_at {
                 Some(ts) => Some(
                     chrono::DateTime::parse_from_rfc3339(&ts)
-                        .map_err(|e| {
-                            ApiError::Internal(format!("parse archived_at: {e}"))
-                        })?
+                        .map_err(|e| ApiError::Internal(format!("parse archived_at: {e}")))?
                         .with_timezone(&Utc),
                 ),
                 None => None,
@@ -97,21 +95,17 @@ pub struct ListScenariosFilter {
 
 /// List scenarios newest-first. Filtering happens in-memory after the
 /// JSON pull — fine for v1 (table is bounded by user count).
-pub async fn list_scenarios(
-    ctx: &ApiContext,
-    filter: &ListScenariosFilter,
-) -> ApiResult<Vec<Scenario>> {
-    let rows: Vec<(String, Option<String>)> = sqlx::query_as(
-        "SELECT body_json, archived_at FROM scenarios ORDER BY created_at DESC",
-    )
-    .fetch_all(&ctx.db)
-    .await
-    .map_err(|e| ApiError::Internal(format!("list_scenarios: {e}")))?;
+pub async fn list_scenarios(ctx: &ApiContext, filter: &ListScenariosFilter) -> ApiResult<Vec<Scenario>> {
+    let rows: Vec<(String, Option<String>)> =
+        sqlx::query_as("SELECT body_json, archived_at FROM scenarios ORDER BY created_at DESC")
+            .fetch_all(&ctx.db)
+            .await
+            .map_err(|e| ApiError::Internal(format!("list_scenarios: {e}")))?;
 
     let mut out = Vec::new();
     for (body, archived_at) in rows {
-        let mut s: Scenario = serde_json::from_str(&body)
-            .map_err(|e| ApiError::Internal(format!("deserialize: {e}")))?;
+        let mut s: Scenario =
+            serde_json::from_str(&body).map_err(|e| ApiError::Internal(format!("deserialize: {e}")))?;
         s.archived_at = match archived_at {
             Some(ts) => Some(
                 chrono::DateTime::parse_from_rfc3339(&ts)
@@ -195,8 +189,8 @@ pub async fn list_children(ctx: &ApiContext, parent_id: &str) -> ApiResult<Vec<S
 
     let mut out = Vec::with_capacity(rows.len());
     for (body, archived_at) in rows {
-        let mut s: Scenario = serde_json::from_str(&body)
-            .map_err(|e| ApiError::Internal(format!("deserialize: {e}")))?;
+        let mut s: Scenario =
+            serde_json::from_str(&body).map_err(|e| ApiError::Internal(format!("deserialize: {e}")))?;
         s.archived_at = match archived_at {
             Some(ts) => Some(
                 chrono::DateTime::parse_from_rfc3339(&ts)

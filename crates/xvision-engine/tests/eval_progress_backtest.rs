@@ -14,15 +14,15 @@ use std::sync::Arc;
 use sqlx::SqlitePool;
 use xvision_data::fixtures::ensure_test_fixture;
 use xvision_engine::agent::llm::{LlmDispatch, MockDispatch};
-use xvision_engine::strategies::manifest::PublicManifest;
-use xvision_engine::strategies::risk::RiskPreset;
-use xvision_engine::strategies::slot::LLMSlot;
-use xvision_engine::strategies::Strategy;
 use xvision_engine::eval::executor::{BacktestExecutor, Executor};
 use xvision_engine::eval::progress::{ProgressBus, ProgressEvent};
 use xvision_engine::eval::run::{Run, RunMode};
 use xvision_engine::eval::scenario::canonical_scenarios;
 use xvision_engine::eval::store::RunStore;
+use xvision_engine::strategies::manifest::PublicManifest;
+use xvision_engine::strategies::risk::RiskPreset;
+use xvision_engine::strategies::slot::LLMSlot;
+use xvision_engine::strategies::Strategy;
 use xvision_engine::tools::ToolRegistry;
 
 async fn fresh_store() -> RunStore {
@@ -36,6 +36,10 @@ async fn fresh_store() -> RunStore {
         .await
         .unwrap();
     sqlx::query(include_str!("../migrations/014_eval_agent_id.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/015_eval_decisions_reasoning.sql"))
         .execute(&pool)
         .await
         .unwrap();
@@ -77,6 +81,8 @@ fn build_strategy(agent_id: &str) -> Strategy {
             prompt: "Decide.".into(),
             model_requirement: "anthropic.claude-sonnet-4.6+".into(),
             allowed_tools: vec![],
+            provider: None,
+            model: None,
         }),
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({}),
@@ -116,11 +122,7 @@ async fn backtest_executor_emits_all_progress_event_types() {
     let result = executor
         .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)
         .await;
-    assert!(
-        result.is_ok(),
-        "backtest run should succeed: {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "backtest run should succeed: {:?}", result.err());
 
     // Drain the bus.
     use tokio::sync::broadcast::error::TryRecvError;
@@ -159,9 +161,7 @@ async fn backtest_executor_emits_all_progress_event_types() {
                 );
                 saw_tick = true;
             }
-            ProgressEvent::DecisionEmitted {
-                run_id, action, ..
-            } => {
+            ProgressEvent::DecisionEmitted { run_id, action, .. } => {
                 assert_eq!(run_id, &run.id);
                 // The mock dispatch returns `long_open` so every cycle
                 // should produce that action.
@@ -173,9 +173,7 @@ async fn backtest_executor_emits_all_progress_event_types() {
                 saw_fill = true;
             }
             ProgressEvent::MetricsUpdated {
-                run_id,
-                drawdown_pct,
-                ..
+                run_id, drawdown_pct, ..
             } => {
                 assert_eq!(run_id, &run.id);
                 assert!(
@@ -184,9 +182,7 @@ async fn backtest_executor_emits_all_progress_event_types() {
                 );
                 saw_metrics = true;
             }
-            ProgressEvent::RunCompleted {
-                run_id, metrics, ..
-            } => {
+            ProgressEvent::RunCompleted { run_id, metrics, .. } => {
                 assert_eq!(run_id, &run.id);
                 assert!(metrics.n_decisions > 0);
                 saw_completed = true;
@@ -260,7 +256,10 @@ async fn backtest_executor_emits_run_failed_on_unparseable_trader_output() {
         }
     }
     assert!(saw_failed, "expected RunFailed event");
-    assert!(!saw_completed, "RunCompleted must not be emitted on parse failure");
+    assert!(
+        !saw_completed,
+        "RunCompleted must not be emitted on parse failure"
+    );
 }
 
 #[tokio::test]

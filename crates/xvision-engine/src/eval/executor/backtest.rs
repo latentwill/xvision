@@ -25,8 +25,8 @@ use xvision_data::fixtures::load_ohlcv_fixture;
 use crate::agent::llm::LlmDispatch;
 use crate::agent::pipeline::{run_pipeline, PipelineInputs, ResolvedAgentSlot};
 use crate::api::chart::{
-    ChartEquityPoint, HoldMarker, LiveDecisionRow, MarkerEvent, RunChartEvent, RunEventBus,
-    TradeSide, TradeMarker,
+    ChartEquityPoint, HoldMarker, LiveDecisionRow, MarkerEvent, RunChartEvent, RunEventBus, TradeMarker,
+    TradeSide,
 };
 use crate::eval::executor::Executor;
 use crate::eval::metrics::{
@@ -206,15 +206,19 @@ impl Executor for BacktestExecutor {
                     }
                     return result;
                 }
+                let reason = e.to_string();
+                let _ = store.fail_active(&run.id, &reason).await;
+                run.status = RunStatus::Failed;
+                run.error = Some(reason.clone());
                 self.emit(ProgressEvent::RunFailed {
                     run_id: run.id.clone(),
-                    error: e.to_string(),
+                    error: reason.clone(),
                 });
                 self.emit_chart(
                     &run.id,
                     RunChartEvent::Status {
                         phase: "failed".into(),
-                        message: Some(e.to_string()),
+                        message: Some(reason),
                     },
                 )
                 .await;
@@ -238,11 +242,6 @@ impl BacktestExecutor {
         tools: Arc<ToolRegistry>,
         store: &RunStore,
     ) -> Result<MetricsSummary> {
-        store
-            .update_status(&run.id, RunStatus::Running, None)
-            .await?;
-        run.status = RunStatus::Running;
-
         // TODO(Task 5): pull from Strategy. For v1 we read the first
         // venue_symbol off the scenario's asset list (BTC/USD for canonicals).
         let asset = scenario
@@ -312,8 +311,8 @@ impl BacktestExecutor {
             if i < WARMUP_BARS {
                 continue;
             }
-            if store.is_cancelled(&run.id).await? {
-                anyhow::bail!("eval run cancelled");
+            if store.is_terminal(&run.id).await? {
+                anyhow::bail!("eval run stopped");
             }
             // Cadence gate: only fire on bars whose minute-aligned timestamp
             // is divisible by the strategy's cadence. With hourly bars and
@@ -328,10 +327,8 @@ impl BacktestExecutor {
 
             // RunTick fires before the per-bar pipeline call so dashboards
             // can advance progress bars even when an LLM round-trip is slow.
-            let scenario_progress_pct = ((i.saturating_sub(WARMUP_BARS) as f64
-                / total_decision_bars)
-                * 100.0)
-                .clamp(0.0, 100.0);
+            let scenario_progress_pct =
+                ((i.saturating_sub(WARMUP_BARS) as f64 / total_decision_bars) * 100.0).clamp(0.0, 100.0);
             self.emit(ProgressEvent::RunTick {
                 run_id: run.id.clone(),
                 scenario_progress_pct,
@@ -342,9 +339,24 @@ impl BacktestExecutor {
                 "decision_index": decision_idx,
                 "asset": asset,
                 "timestamp": bar.timestamp,
+                "market_data": {
+                    "asset": asset,
+                    "current_bar": {
+                        "timestamp": bar.timestamp,
+                        "open": bar.open,
+                        "high": bar.high,
+                        "low": bar.low,
+                        "close": bar.close,
+                        "volume": bar.volume,
+                    },
+                    "next_bar_open": next_bar.open,
+                    "reference_price_usd": bar.close,
+                    "reference_price_source": "eval_bar.close",
+                },
                 "portfolio_state": {
                     "position_size": position,
                     "equity": equity,
+                    "mark_price": bar.close,
                 },
             });
 
@@ -364,15 +376,19 @@ impl BacktestExecutor {
                 .update_token_usage(&run.id, total_input_tokens, total_output_tokens)
                 .await?;
 
-            if store.is_cancelled(&run.id).await? {
-                anyhow::bail!("eval run cancelled");
+            if store.is_terminal(&run.id).await? {
+                anyhow::bail!("eval run stopped");
             }
 
             let trader = outs
                 .trader
                 .as_ref()
                 .ok_or_else(|| anyhow!("run {} decision {}: trader output missing", run.id, decision_idx))?;
-            let parsed = TraderOutput::parse_strict(&trader.text(), &run.id, decision_idx)?;
+            let parsed = TraderOutput::parse_response(trader, &run.id, decision_idx)?;
+
+            if store.is_terminal(&run.id).await? {
+                anyhow::bail!("eval run stopped");
+            }
 
             let pre_fill_position = position;
             let fill = simulate_fill(SimulateFillArgs {
@@ -416,8 +432,7 @@ impl BacktestExecutor {
             });
 
             // Mark equity to the next bar's open.
-            equity = initial + realized_total
-                + position * (next_bar.open - entry_price);
+            equity = initial + realized_total + position * (next_bar.open - entry_price);
 
             let decision_row = DecisionRow {
                 run_id: run.id.clone(),
@@ -427,6 +442,7 @@ impl BacktestExecutor {
                 action: parsed.action.clone(),
                 conviction: Some(parsed.conviction),
                 justification: Some(parsed.justification.clone()),
+                reasoning: Some(parsed.justification.clone()),
                 order_size: fill.fill_size,
                 fill_price: fill.fill_price,
                 fill_size: fill.fill_size,
@@ -528,13 +544,12 @@ impl BacktestExecutor {
             decision_idx += 1;
         }
 
-        if store.is_cancelled(&run.id).await? {
-            anyhow::bail!("eval run cancelled");
+        if store.is_terminal(&run.id).await? {
+            anyhow::bail!("eval run stopped");
         }
 
         let returns = equity_to_returns(&equity_curve);
-        let periods_per_year =
-            annualization_periods_per_year(strategy.manifest.decision_cadence_minutes);
+        let periods_per_year = annualization_periods_per_year(strategy.manifest.decision_cadence_minutes);
 
         let metrics = MetricsSummary {
             total_return_pct: total_return_pct(initial, equity),
@@ -589,10 +604,7 @@ fn simulate_fill(a: SimulateFillArgs) -> FillOutcome {
     let want_flat = !want_long && !want_short;
 
     // No-op when target direction matches current position.
-    if (want_long && a.pos > 0.0)
-        || (want_short && a.pos < 0.0)
-        || (want_flat && a.pos == 0.0)
-    {
+    if (want_long && a.pos > 0.0) || (want_short && a.pos < 0.0) || (want_flat && a.pos == 0.0) {
         return FillOutcome {
             new_pos: a.pos,
             new_entry: a.entry,
@@ -656,11 +668,7 @@ fn simulate_fill(a: SimulateFillArgs) -> FillOutcome {
     let notional = traded_units * fill_price;
     let fee = notional * (a.taker_bps / 10_000.0);
 
-    let new_entry = if new_pos_units == 0.0 {
-        0.0
-    } else {
-        fill_price
-    };
+    let new_entry = if new_pos_units == 0.0 { 0.0 } else { fill_price };
 
     FillOutcome {
         new_pos: new_pos_units,
@@ -723,10 +731,10 @@ mod tests {
             entry: 50_000.0,
             action,
             next_open: 60_000.0,
-            slip_bps: 10.0,    // 0.1%
-            taker_bps: 25.0,   // 0.25%
+            slip_bps: 10.0,  // 0.1%
+            taker_bps: 25.0, // 0.25%
             equity: 10_000.0,
-            risk_pct: 0.02,    // 2%
+            risk_pct: 0.02, // 2%
         }
     }
 

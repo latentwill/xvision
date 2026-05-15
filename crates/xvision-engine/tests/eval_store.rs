@@ -1,8 +1,6 @@
 use chrono::{TimeZone, Utc};
 use sqlx::SqlitePool;
-use xvision_engine::eval::{
-    DecisionRow, ListFilter, MetricsSummary, Run, RunMode, RunStatus, RunStore,
-};
+use xvision_engine::eval::{DecisionRow, ListFilter, MetricsSummary, Run, RunMode, RunStatus, RunStore};
 
 async fn pool_with_migration() -> SqlitePool {
     let pool = SqlitePool::connect(":memory:").await.unwrap();
@@ -11,6 +9,10 @@ async fn pool_with_migration() -> SqlitePool {
         .await
         .unwrap();
     sqlx::query(include_str!("../migrations/014_eval_agent_id.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/015_eval_decisions_reasoning.sql"))
         .execute(&pool)
         .await
         .unwrap();
@@ -57,10 +59,7 @@ async fn update_status_transitions_queued_to_running_to_completed() {
     let id = run.id.clone();
     store.create(&run).await.unwrap();
 
-    store
-        .update_status(&id, RunStatus::Running, None)
-        .await
-        .unwrap();
+    store.update_status(&id, RunStatus::Running, None).await.unwrap();
     assert_eq!(store.get(&id).await.unwrap().status, RunStatus::Running);
 
     store
@@ -83,6 +82,73 @@ async fn update_status_failed_persists_error_message() {
     let back = store.get(&id).await.unwrap();
     assert_eq!(back.status, RunStatus::Failed);
     assert_eq!(back.error.as_deref(), Some("alpaca timeout"));
+}
+
+#[tokio::test]
+async fn cancelled_run_cannot_be_revived_or_finalized() {
+    let store = RunStore::new(pool_with_migration().await);
+    let run = fresh_run("scenario-x", RunMode::Backtest);
+    let id = run.id.clone();
+    store.create(&run).await.unwrap();
+
+    assert!(store.cancel_active(&id, "stopped by user").await.unwrap());
+    assert!(!store.begin_running(&id).await.unwrap());
+
+    let metrics = MetricsSummary {
+        total_return_pct: 12.5,
+        sharpe: 1.42,
+        max_drawdown_pct: -8.3,
+        win_rate: 0.58,
+        n_trades: 17,
+        n_decisions: 42,
+    };
+    let err = store.finalize(&id, &metrics).await.unwrap_err();
+    assert!(
+        err.to_string().contains("already cancelled"),
+        "unexpected finalize error: {err:#}",
+    );
+
+    let back = store.get(&id).await.unwrap();
+    assert_eq!(back.status, RunStatus::Cancelled);
+    assert_eq!(back.error.as_deref(), Some("stopped by user"));
+    assert!(back.metrics.is_none());
+}
+
+#[tokio::test]
+async fn fail_active_does_not_overwrite_cancelled_run() {
+    let store = RunStore::new(pool_with_migration().await);
+    let run = fresh_run("scenario-x", RunMode::Backtest);
+    let id = run.id.clone();
+    store.create(&run).await.unwrap();
+
+    assert!(store.cancel_active(&id, "stopped by user").await.unwrap());
+    assert!(!store.fail_active(&id, "late parser failure").await.unwrap());
+
+    let back = store.get(&id).await.unwrap();
+    assert_eq!(back.status, RunStatus::Cancelled);
+    assert_eq!(back.error.as_deref(), Some("stopped by user"));
+}
+
+#[tokio::test]
+async fn update_status_does_not_revive_terminal_run() {
+    let store = RunStore::new(pool_with_migration().await);
+    let run = fresh_run("scenario-x", RunMode::Backtest);
+    let id = run.id.clone();
+    store.create(&run).await.unwrap();
+    store
+        .update_status(&id, RunStatus::Failed, Some("parser failure"))
+        .await
+        .unwrap();
+
+    let err = store
+        .update_status(&id, RunStatus::Running, None)
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("already failed"),
+        "unexpected update_status error: {err:#}",
+    );
+    assert_eq!(store.get(&id).await.unwrap().status, RunStatus::Failed);
 }
 
 #[tokio::test]
@@ -162,12 +228,12 @@ async fn record_decision_and_read_decisions_in_index_order() {
     let row = |idx: u32, action: &str, ts_minutes: i64| DecisionRow {
         run_id: id.clone(),
         decision_index: idx,
-        timestamp: Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap()
-            + chrono::Duration::minutes(ts_minutes),
+        timestamp: Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap() + chrono::Duration::minutes(ts_minutes),
         asset: "BTC/USD".into(),
         action: action.into(),
         conviction: Some(0.7),
         justification: Some(format!("decision {idx}")),
+        reasoning: Some(format!("reasoning {idx}")),
         order_size: Some(0.05),
         fill_price: Some(70_000.0 + (idx as f64) * 100.0),
         fill_size: Some(0.05),
@@ -204,6 +270,7 @@ async fn record_decision_duplicate_index_errors() {
         action: "hold".into(),
         conviction: None,
         justification: None,
+        reasoning: None,
         order_size: None,
         fill_price: None,
         fill_size: None,
@@ -223,9 +290,15 @@ async fn record_and_read_equity_curve_in_timestamp_order() {
     store.create(&run).await.unwrap();
 
     let t0 = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
-    store.record_equity(&id, t0 + chrono::Duration::hours(2), 11_000.0).await.unwrap();
+    store
+        .record_equity(&id, t0 + chrono::Duration::hours(2), 11_000.0)
+        .await
+        .unwrap();
     store.record_equity(&id, t0, 10_000.0).await.unwrap();
-    store.record_equity(&id, t0 + chrono::Duration::hours(1), 10_500.0).await.unwrap();
+    store
+        .record_equity(&id, t0 + chrono::Duration::hours(1), 10_500.0)
+        .await
+        .unwrap();
 
     let curve = store.read_equity_curve(&id).await.unwrap();
     assert_eq!(curve.len(), 3);

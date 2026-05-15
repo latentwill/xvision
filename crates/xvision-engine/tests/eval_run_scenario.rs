@@ -9,8 +9,50 @@
 //! `tests/api_eval_run.rs` suite already exercises the executor end-to-end
 //! via the legacy `canonical_scenarios()` fallback path.
 
-use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::api::scenario as api_scenario;
+use xvision_engine::api::{Actor, ApiContext};
+
+async fn seed_bars_for_scenario(ctx: &ApiContext, scenario: &xvision_engine::eval::Scenario) {
+    let asset = scenario.asset[0].venue_symbol.as_str();
+    let mut blob = Vec::new();
+    let mut ts = scenario.time_window.start;
+    let mut count = 0usize;
+    while ts < scenario.time_window.end {
+        let base = 60_000.0 + count as f64;
+        let line = serde_json::json!({
+            "t": ts.to_rfc3339(),
+            "o": base,
+            "h": base + 100.0,
+            "l": base - 100.0,
+            "c": base + 25.0,
+            "v": 1_000.0 + count as f64,
+        });
+        blob.extend(serde_json::to_vec(&line).unwrap());
+        blob.push(b'\n');
+        ts += chrono::Duration::hours(1);
+        count += 1;
+    }
+
+    sqlx::query(
+        "INSERT OR REPLACE INTO bars_cache \
+         (cache_key, asset, granularity, window_start, window_end, \
+          data_source, fetched_at, bar_count, bars_blob, compression) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&scenario.bar_cache_policy.cache_key)
+    .bind(asset)
+    .bind(scenario.granularity.as_alpaca_str())
+    .bind(scenario.time_window.start.to_rfc3339())
+    .bind(scenario.time_window.end.to_rfc3339())
+    .bind("alpaca-historical-v1")
+    .bind("2026-05-14T00:00:00Z")
+    .bind(count as i64)
+    .bind(blob)
+    .bind("none")
+    .execute(&ctx.db)
+    .await
+    .unwrap();
+}
 
 #[tokio::test]
 async fn fresh_xvn_home_seeds_canonical_scenarios_in_db() {
@@ -18,14 +60,9 @@ async fn fresh_xvn_home_seeds_canonical_scenarios_in_db() {
     // seed (`scenario_seed::run_seed_if_needed`). After open, the four
     // canonical seed rows must be present in the DB.
     let dir = tempfile::tempdir().unwrap();
-    let ctx = ApiContext::open(
-        dir.path(),
-        Actor::Cli {
-            user: "test".into(),
-        },
-    )
-    .await
-    .expect("open should succeed");
+    let ctx = ApiContext::open(dir.path(), Actor::Cli { user: "test".into() })
+        .await
+        .expect("open should succeed");
 
     // The "crypto-bull-q1-2025" id is the canonical bull regime row
     // seeded by `scenario_seed::canonical_seed_rows`.
@@ -47,24 +84,19 @@ async fn eval_run_returns_notfound_for_unseeded_scenario_id() {
     use xvision_engine::agent::llm::{LlmDispatch, MockDispatch};
     use xvision_engine::api::eval::{self, EvalRunRequest};
     use xvision_engine::api::ApiError;
+    use xvision_engine::eval::run::RunMode;
     use xvision_engine::strategies::manifest::PublicManifest;
     use xvision_engine::strategies::risk::RiskPreset;
     use xvision_engine::strategies::slot::LLMSlot;
     use xvision_engine::strategies::store::{strategy_store_dir, FilesystemStore, StrategyStore};
     use xvision_engine::strategies::Strategy;
-    use xvision_engine::eval::run::RunMode;
     use xvision_engine::tools::ToolRegistry;
     use xvision_execution::broker_surface::{BrokerSurface, MockBrokerSurface};
 
     let dir = tempfile::tempdir().unwrap();
-    let ctx = ApiContext::open(
-        dir.path(),
-        Actor::Cli {
-            user: "test".into(),
-        },
-    )
-    .await
-    .unwrap();
+    let ctx = ApiContext::open(dir.path(), Actor::Cli { user: "test".into() })
+        .await
+        .unwrap();
 
     // Seed a strategy on disk so the strategy lookup step passes
     // (otherwise the test trips on NotFound for the strategy, not the
@@ -94,6 +126,8 @@ async fn eval_run_returns_notfound_for_unseeded_scenario_id() {
             prompt: "Decide.".into(),
             model_requirement: "anthropic.claude-sonnet-4.6+".into(),
             allowed_tools: vec![],
+            provider: None,
+            model: None,
         }),
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({}),
@@ -138,24 +172,19 @@ async fn eval_run_resolves_seeded_scenario_via_db_lookup() {
     use std::sync::Arc;
     use xvision_engine::agent::llm::{LlmDispatch, MockDispatch};
     use xvision_engine::api::eval::{self, EvalRunRequest};
+    use xvision_engine::eval::run::{RunMode, RunStatus};
     use xvision_engine::strategies::manifest::PublicManifest;
     use xvision_engine::strategies::risk::RiskPreset;
     use xvision_engine::strategies::slot::LLMSlot;
     use xvision_engine::strategies::store::{strategy_store_dir, FilesystemStore, StrategyStore};
     use xvision_engine::strategies::Strategy;
-    use xvision_engine::eval::run::{RunMode, RunStatus};
     use xvision_engine::tools::ToolRegistry;
     use xvision_execution::broker_surface::{BrokerSurface, MockBrokerSurface};
 
     let dir = tempfile::tempdir().unwrap();
-    let ctx = ApiContext::open(
-        dir.path(),
-        Actor::Cli {
-            user: "test".into(),
-        },
-    )
-    .await
-    .unwrap();
+    let ctx = ApiContext::open(dir.path(), Actor::Cli { user: "test".into() })
+        .await
+        .unwrap();
 
     let agent_id = "01TESTSTRATEGYRUNSCENARIO0XB";
     let strategy = Strategy {
@@ -182,6 +211,8 @@ async fn eval_run_resolves_seeded_scenario_via_db_lookup() {
             prompt: "Decide.".into(),
             model_requirement: "anthropic.claude-sonnet-4.6+".into(),
             allowed_tools: vec![],
+            provider: None,
+            model: None,
         }),
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({}),
@@ -200,6 +231,8 @@ async fn eval_run_resolves_seeded_scenario_via_db_lookup() {
     // from `scenario_seed::canonical_seed_rows`). The lookup must hit
     // the DB, NOT the legacy `canonical_scenarios()` fallback which uses
     // the old "flash-crash-2024-08" id.
+    let seeded = api_scenario::get(&ctx, "flash-crash-aug-2024").await.unwrap();
+    seed_bars_for_scenario(&ctx, &seeded).await;
     let run = eval::run_with_deps(
         &ctx,
         EvalRunRequest {
@@ -234,14 +267,9 @@ async fn backtest_missing_cache_and_fixture_returns_actionable_validation() {
     use xvision_engine::tools::ToolRegistry;
 
     let dir = tempfile::tempdir().unwrap();
-    let ctx = ApiContext::open(
-        dir.path(),
-        Actor::Cli {
-            user: "test".into(),
-        },
-    )
-    .await
-    .unwrap();
+    let ctx = ApiContext::open(dir.path(), Actor::Cli { user: "test".into() })
+        .await
+        .unwrap();
 
     let agent_id = "01TESTBUNDLEMISSINGFIXTURE";
     let bundle = Strategy {

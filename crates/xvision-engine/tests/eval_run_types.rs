@@ -27,10 +27,15 @@ fn run_new_queued_id_is_a_ulid() {
 fn run_status_round_trips_for_every_variant() {
     assert_eq!(serde_json::to_string(&RunStatus::Queued).unwrap(), "\"queued\"");
     assert_eq!(serde_json::to_string(&RunStatus::Running).unwrap(), "\"running\"");
-    assert_eq!(serde_json::to_string(&RunStatus::Completed).unwrap(), "\"completed\"");
+    assert_eq!(
+        serde_json::to_string(&RunStatus::Completed).unwrap(),
+        "\"completed\""
+    );
     assert_eq!(serde_json::to_string(&RunStatus::Failed).unwrap(), "\"failed\"");
-    assert_eq!(serde_json::to_string(&RunStatus::Cancelled).unwrap(), "\"cancelled\"");
-
+    assert_eq!(
+        serde_json::to_string(&RunStatus::Cancelled).unwrap(),
+        "\"cancelled\""
+    );
 
     for status in [
         RunStatus::Queued,

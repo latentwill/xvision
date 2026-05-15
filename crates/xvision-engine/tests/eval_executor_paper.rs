@@ -14,15 +14,14 @@ use std::sync::Arc;
 
 use chrono::{TimeZone, Utc};
 use sqlx::SqlitePool;
+use xvision_core::market::Ohlcv;
 use xvision_engine::agent::llm::{LlmDispatch, MockDispatch};
+use xvision_engine::eval::executor::{Executor, PaperExecutor};
+use xvision_engine::eval::{canonical_scenarios, Run, RunMode, RunStatus, RunStore, Scenario};
 use xvision_engine::strategies::manifest::PublicManifest;
 use xvision_engine::strategies::risk::RiskPreset;
 use xvision_engine::strategies::slot::LLMSlot;
 use xvision_engine::strategies::Strategy;
-use xvision_engine::eval::executor::{Executor, PaperExecutor};
-use xvision_engine::eval::{
-    canonical_scenarios, Run, RunMode, RunStatus, RunStore, Scenario,
-};
 use xvision_engine::tools::ToolRegistry;
 use xvision_execution::broker_surface::{BrokerSurface, MockBrokerSurface};
 
@@ -33,6 +32,10 @@ async fn pool_with_migration() -> SqlitePool {
         .await
         .unwrap();
     sqlx::query(include_str!("../migrations/014_eval_agent_id.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/015_eval_decisions_reasoning.sql"))
         .execute(&pool)
         .await
         .unwrap();
@@ -64,6 +67,8 @@ fn minimal_strategy() -> Strategy {
             prompt: "Decide.".into(),
             model_requirement: "anthropic.claude-sonnet-4.6+".into(),
             allowed_tools: vec![],
+            provider: None,
+            model: None,
         }),
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({}),
@@ -77,6 +82,26 @@ fn short_scenario() -> Scenario {
     s.time_window.start = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
     s.time_window.end = Utc.with_ymd_and_hms(2025, 1, 1, 4, 0, 0).unwrap();
     s
+}
+
+fn short_bars(scenario: &Scenario) -> Vec<Ohlcv> {
+    let mut bars = Vec::new();
+    let mut ts = scenario.time_window.start;
+    let mut i = 0.0;
+    while ts < scenario.time_window.end {
+        let close = 50_000.0 + i * 100.0;
+        bars.push(Ohlcv {
+            timestamp: ts,
+            open: close - 25.0,
+            high: close + 50.0,
+            low: close - 75.0,
+            close,
+            volume: 100.0 + i,
+        });
+        ts += chrono::Duration::hours(1);
+        i += 1.0;
+    }
+    bars
 }
 
 /// Helper: build a paper-mode harness — pool, store, mock-broker (both
@@ -100,14 +125,10 @@ async fn paper_harness(
     let store = RunStore::new(pool);
     let mock = Arc::new(MockBrokerSurface::new(initial_balance));
     let broker: Arc<dyn BrokerSurface> = mock.clone();
-    let executor = PaperExecutor::new(broker);
     let strategy = minimal_strategy();
     let scenario = short_scenario();
-    let run = Run::new_queued(
-        "test-strategy-hash".into(),
-        scenario.id.clone(),
-        RunMode::Paper,
-    );
+    let executor = PaperExecutor::with_bars(broker, short_bars(&scenario));
+    let run = Run::new_queued("test-strategy-hash".into(), scenario.id.clone(), RunMode::Paper);
     store.create(&run).await.unwrap();
     let dispatch: Arc<dyn LlmDispatch> = Arc::new(MockDispatch::echo(canned_trader_json));
     let tools = Arc::new(ToolRegistry::empty());
@@ -165,14 +186,22 @@ async fn paper_executor_submits_orders_only_for_actionable_decisions() {
         .unwrap();
 
     let submitted = mock.submitted();
-    assert_eq!(submitted.len(), 4, "broker should see one submit per actionable tick");
+    assert_eq!(
+        submitted.len(),
+        4,
+        "broker should see one submit per actionable tick"
+    );
     assert_eq!(metrics.n_trades, 4);
     assert_eq!(metrics.n_decisions, 4);
 
     let mut keys: Vec<String> = submitted.iter().map(|r| r.idempotency_key.clone()).collect();
     keys.sort();
     keys.dedup();
-    assert_eq!(keys.len(), 4, "every submission must use a unique idempotency key");
+    assert_eq!(
+        keys.len(),
+        4,
+        "every submission must use a unique idempotency key"
+    );
 }
 
 #[tokio::test]
@@ -254,6 +283,17 @@ async fn paper_executor_fails_on_unparseable_trader_output() {
         err.to_string().contains("invalid JSON"),
         "unexpected error: {err}"
     );
-    assert_eq!(run.status, RunStatus::Running, "run should stop mid-flight");
+    assert_eq!(run.status, RunStatus::Failed, "run should stop as failed");
+    let persisted = store.get(&run.id).await.unwrap();
+    assert_eq!(persisted.status, RunStatus::Failed);
+    assert!(
+        persisted
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("invalid JSON"),
+        "unexpected persisted error: {:?}",
+        persisted.error
+    );
     assert_eq!(mock.submitted().len(), 0);
 }

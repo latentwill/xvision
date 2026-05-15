@@ -112,17 +112,13 @@ pub async fn load_bars(ctx: &ApiContext, args: &BarCacheArgs) -> ApiResult<Vec<M
     Ok(bars)
 }
 
-async fn read_bars_cache(
-    ctx: &ApiContext,
-    cache_key: &str,
-) -> ApiResult<Option<Vec<MarketBar>>> {
-    let row: Option<(Vec<u8>, String)> = sqlx::query_as(
-        "SELECT bars_blob, compression FROM bars_cache WHERE cache_key = ?",
-    )
-    .bind(cache_key)
-    .fetch_optional(&ctx.db)
-    .await
-    .map_err(|e| ApiError::Internal(format!("read_bars_cache: {e}")))?;
+async fn read_bars_cache(ctx: &ApiContext, cache_key: &str) -> ApiResult<Option<Vec<MarketBar>>> {
+    let row: Option<(Vec<u8>, String)> =
+        sqlx::query_as("SELECT bars_blob, compression FROM bars_cache WHERE cache_key = ?")
+            .bind(cache_key)
+            .fetch_optional(&ctx.db)
+            .await
+            .map_err(|e| ApiError::Internal(format!("read_bars_cache: {e}")))?;
     let Some((blob, compression)) = row else {
         return Ok(None);
     };
@@ -203,8 +199,7 @@ fn serialise_bars(bars: &[MarketBar]) -> Vec<u8> {
 
 fn gzip(input: &[u8]) -> Vec<u8> {
     let mut enc = GzEncoder::new(Vec::new(), Compression::default());
-    enc.write_all(input)
-        .expect("gzip encoder cannot fail on Vec<u8>");
+    enc.write_all(input).expect("gzip encoder cannot fail on Vec<u8>");
     enc.finish().expect("gzip finish cannot fail on Vec<u8>")
 }
 

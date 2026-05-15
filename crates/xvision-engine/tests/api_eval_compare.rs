@@ -43,11 +43,7 @@ async fn seed_completed_run(
     metrics: MetricsSummary,
     n_equity_samples: usize,
 ) -> Run {
-    let mut run = Run::new_queued(
-        agent_id.into(),
-        scenario_id.into(),
-        RunMode::Backtest,
-    );
+    let mut run = Run::new_queued(agent_id.into(), scenario_id.into(), RunMode::Backtest);
     run.status = RunStatus::Completed;
     store.create(&run).await.unwrap();
 
@@ -70,6 +66,7 @@ async fn seed_completed_run(
             action: "long_open".into(),
             conviction: Some(0.75),
             justification: Some("seeded".into()),
+            reasoning: Some("seeded".into()),
             order_size: Some(0.1),
             fill_price: Some(40_000.0),
             fill_size: Some(0.1),
@@ -139,10 +136,7 @@ async fn compare_returns_two_runs_with_curves_and_findings() {
     assert_eq!(report.runs[1].agent_id, "h-B");
 
     // Metrics carry through.
-    assert_eq!(
-        report.runs[0].metrics.as_ref().unwrap().total_return_pct,
-        15.0
-    );
+    assert_eq!(report.runs[0].metrics.as_ref().unwrap().total_return_pct, 15.0);
     assert_eq!(report.runs[1].metrics.as_ref().unwrap().sharpe, 0.7);
 
     // Equity curves are paired with the right run_id and sized correctly.
@@ -185,12 +179,9 @@ async fn compare_returns_not_found_for_unknown_run() {
 #[tokio::test]
 async fn compare_rejects_empty_run_ids() {
     let (ctx, _d) = ctx_with_eval_tables().await;
-    let err = eval::compare(
-        &ctx,
-        CompareRunsRequest { run_ids: vec![] },
-    )
-    .await
-    .unwrap_err();
+    let err = eval::compare(&ctx, CompareRunsRequest { run_ids: vec![] })
+        .await
+        .unwrap_err();
     match err {
         ApiError::Validation(msg) => assert!(
             msg.to_lowercase().contains("at least one"),

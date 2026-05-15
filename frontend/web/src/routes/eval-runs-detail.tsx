@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
@@ -87,13 +87,7 @@ export function EvalRunDetailRoute() {
       <h2 className="font-serif italic text-[20px] text-text mt-8 mb-3">
         Decisions <span className="text-text-3 text-[14px]">({detail.decisions.length})</span>
       </h2>
-      <Card>
-        {detail.decisions.length === 0 ? (
-          <EmptyDecisions />
-        ) : (
-          <DecisionsTable rows={detail.decisions} />
-        )}
-      </Card>
+      <DecisionsPanel rows={detail.decisions} />
 
       <h2 className="font-serif italic text-[20px] text-text mt-8 mb-3">
         Equity
@@ -234,12 +228,12 @@ function SummaryCard({
           {inflight ? (
             <button
               type="button"
-              aria-label={`Cancel run ${summary.id}`}
+              aria-label={`Stop eval run ${summary.id}`}
               onClick={onCancel}
               disabled={cancelling}
-              className="text-[12px] text-warn hover:text-text disabled:opacity-50"
+              className="rounded-sm border border-warn/40 bg-warn/[0.08] px-2.5 py-1 text-[12px] text-warn hover:border-warn/70 hover:bg-warn/[0.14] hover:text-text disabled:opacity-50"
             >
-              {cancelling ? "Cancelling..." : "Cancel"}
+              {cancelling ? "Stopping..." : "Stop eval"}
             </button>
           ) : null}
           <Pill tone={tone}>
@@ -297,11 +291,50 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
+type DecisionFilter = "all" | "buy" | "sell" | "hold" | "close";
+
+function DecisionsPanel({ rows }: { rows: DecisionRowDto[] }) {
+  const [filter, setFilter] = useState<DecisionFilter>("all");
+  const counts = useMemo(() => decisionCounts(rows), [rows]);
+  const filtered = useMemo(
+    () => rows.filter((row) => filter === "all" || decisionKind(row.action) === filter),
+    [rows, filter],
+  );
+
+  return (
+    <Card>
+      {rows.length === 0 ? (
+        <EmptyDecisions />
+      ) : (
+        <>
+          <div className="flex flex-wrap items-center gap-2 border-b border-border-soft px-4 py-3">
+            {(["all", "buy", "sell", "hold", "close"] as DecisionFilter[]).map((value) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setFilter(value)}
+                className={`dec-filter ${filter === value ? "dec-filter--active" : ""}`}
+                aria-pressed={filter === value}
+              >
+                <span>{decisionFilterLabel(value)}</span>
+                <span className="dec-filter__count">{counts[value]}</span>
+              </button>
+            ))}
+          </div>
+          <div className="xvn-scroll xvn-scroll--always max-h-[520px] overflow-x-auto">
+            <DecisionsTable rows={filtered} />
+          </div>
+        </>
+      )}
+    </Card>
+  );
+}
+
 function DecisionsTable({ rows }: { rows: DecisionRowDto[] }) {
   return (
-    <table className="w-full">
+    <table className="w-full min-w-[980px]">
       <thead>
-        <tr className="text-left text-text-2 text-[12px] border-b border-border-soft">
+        <tr className="sticky top-0 z-10 bg-surface-card text-left text-text-2 text-[12px] border-b border-border-soft">
           <th className="font-normal py-2.5 px-5">#</th>
           <th className="font-normal py-2.5 px-3">Time</th>
           <th className="font-normal py-2.5 px-3">Asset</th>
@@ -310,6 +343,7 @@ function DecisionsTable({ rows }: { rows: DecisionRowDto[] }) {
           <th className="font-normal py-2.5 px-3 text-right">Size</th>
           <th className="font-normal py-2.5 px-3 text-right">Fill</th>
           <th className="font-normal py-2.5 px-3 text-right">PnL</th>
+          <th className="font-normal py-2.5 px-3">Reasoning</th>
         </tr>
       </thead>
       <tbody>
@@ -325,7 +359,9 @@ function DecisionsTable({ rows }: { rows: DecisionRowDto[] }) {
               {fmtTime(r.timestamp)}
             </td>
             <td className="py-2.5 px-3 font-mono text-text-2">{r.asset}</td>
-            <td className="py-2.5 px-3 text-text">{r.action}</td>
+            <td className="py-2.5 px-3">
+              <DecisionSignal action={r.action} />
+            </td>
             <td className="py-2.5 px-3 text-right font-mono">
               {fmtNumber(r.conviction)}
             </td>
@@ -340,11 +376,60 @@ function DecisionsTable({ rows }: { rows: DecisionRowDto[] }) {
             >
               {fmtNumber(r.pnl_realized)}
             </td>
+            <td className="py-2.5 px-3 text-text-2 text-[12px] leading-snug max-w-[320px]">
+              {decisionReasoning(r)}
+            </td>
           </tr>
         ))}
       </tbody>
     </table>
   );
+}
+
+function DecisionSignal({ action }: { action: string }) {
+  const kind = decisionKind(action);
+  return (
+    <span className={`dec-pill dec-pill--${kind}`}>
+      <span className="dec-pill__label">{decisionActionLabel(kind)}</span>
+      <span className="dec-pill__raw">{action}</span>
+    </span>
+  );
+}
+
+function decisionKind(action: string): Exclude<DecisionFilter, "all"> {
+  if (action === "long_open") return "buy";
+  if (action === "short_open") return "sell";
+  if (action === "flat") return "close";
+  return "hold";
+}
+
+function decisionCounts(rows: DecisionRowDto[]): Record<DecisionFilter, number> {
+  return rows.reduce<Record<DecisionFilter, number>>(
+    (acc, row) => {
+      acc.all += 1;
+      acc[decisionKind(row.action)] += 1;
+      return acc;
+    },
+    { all: 0, buy: 0, sell: 0, hold: 0, close: 0 },
+  );
+}
+
+function decisionFilterLabel(filter: DecisionFilter): string {
+  return filter === "all" ? "All" : decisionActionLabel(filter);
+}
+
+function decisionActionLabel(filter: Exclude<DecisionFilter, "all">): string {
+  return {
+    buy: "BUY",
+    sell: "SELL",
+    hold: "HOLD",
+    close: "CLOSE",
+  }[filter];
+}
+
+function decisionReasoning(row: DecisionRowDto): string {
+  const extended = row as DecisionRowDto & { reasoning?: string | null };
+  return extended.reasoning?.trim() || row.justification?.trim() || "—";
 }
 
 function pnlClass(n: number | null | undefined): string {

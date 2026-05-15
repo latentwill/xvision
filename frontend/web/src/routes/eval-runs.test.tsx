@@ -19,7 +19,6 @@ import type {
   BrokerEntry,
   ProviderRow,
   Scenario,
-  StrategySummary,
 } from "@/api/types.gen";
 
 vi.mock("@/api/eval", async () => {

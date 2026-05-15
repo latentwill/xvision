@@ -103,11 +103,7 @@ pub struct Run {
 
 impl Run {
     /// Construct a fresh `Queued` run with a generated ULID and `started_at = now`.
-    pub fn new_queued(
-        agent_id: String,
-        scenario_id: String,
-        mode: RunMode,
-    ) -> Self {
+    pub fn new_queued(agent_id: String, scenario_id: String, mode: RunMode) -> Self {
         Self {
             id: Ulid::new().to_string(),
             agent_id,

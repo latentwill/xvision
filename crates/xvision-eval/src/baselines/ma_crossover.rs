@@ -114,7 +114,7 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use uuid::Uuid;
-    use xvision_core::market::{IndicatorPanel, OnchainPanel, Ohlcv};
+    use xvision_core::market::{IndicatorPanel, Ohlcv, OnchainPanel};
     use xvision_core::trading::{AssetSymbol, Regime};
 
     /// Build a snapshot with `n` bars each at `close_price`.
@@ -193,7 +193,10 @@ mod tests {
 
         // Second call: golden cross setup
         let cross_snap = snapshot_golden_cross();
-        let dec = strat.decide(&cross_snap).await.expect("golden cross must return Some");
+        let dec = strat
+            .decide(&cross_snap)
+            .await
+            .expect("golden cross must return Some");
         assert_eq!(dec.cycle_id, cross_snap.cycle_id, "cycle_id must propagate");
         assert_eq!(dec.action, Action::Buy);
         assert_eq!(dec.direction, Direction::Long);
