@@ -199,15 +199,19 @@ impl Executor for PaperExecutor {
                     }
                     return result;
                 }
+                let reason = e.to_string();
+                let _ = store.fail_active(&run.id, &reason).await;
+                run.status = RunStatus::Failed;
+                run.error = Some(reason.clone());
                 self.emit(ProgressEvent::RunFailed {
                     run_id: run.id.clone(),
-                    error: e.to_string(),
+                    error: reason.clone(),
                 });
                 self.emit_chart(
                     &run.id,
                     RunChartEvent::Status {
                         phase: "failed".into(),
-                        message: Some(e.to_string()),
+                        message: Some(reason),
                     },
                 )
                 .await;

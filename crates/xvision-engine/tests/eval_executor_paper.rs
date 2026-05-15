@@ -283,6 +283,17 @@ async fn paper_executor_fails_on_unparseable_trader_output() {
         err.to_string().contains("invalid JSON"),
         "unexpected error: {err}"
     );
-    assert_eq!(run.status, RunStatus::Running, "run should stop mid-flight");
+    assert_eq!(run.status, RunStatus::Failed, "run should stop as failed");
+    let persisted = store.get(&run.id).await.unwrap();
+    assert_eq!(persisted.status, RunStatus::Failed);
+    assert!(
+        persisted
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("invalid JSON"),
+        "unexpected persisted error: {:?}",
+        persisted.error
+    );
     assert_eq!(mock.submitted().len(), 0);
 }
