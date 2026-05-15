@@ -1,0 +1,31 @@
+{
+  "base_template": "mean_reversion",
+  "display_name": "Fibonacci Pullback Reentry",
+  "family": "FibonacciStrategy",
+  "mechanical_params": [],
+  "name": "fibonacci_pullback_reentry",
+  "plain_summary": "Strong trends often retrace before continuing. This strategy waits for a pullback into common Fibonacci retracement zones, then re-enters only when trend structure is still intact and momentum stops weakening.",
+  "regime_fit": [
+    "event_driven"
+  ],
+  "required_tools": [
+    "ohlcv",
+    "indicator_panel",
+    "onchain_panel",
+    "funding_rates"
+  ],
+  "schema_version": "xvision.strategy_template.v1",
+  "sections": {
+    "data_dependencies": "- OHLCV bars from the market snapshot\n- Existing indicator panel values\n- Funding rate feed for crowding context\n- No extra model inputs required",
+    "decision_rule": "- If `Regime` is not trending, stay flat.\n- If price retraces into the 0.382 to 0.618 zone and the EMA trend still points the same way, look for re-entry.\n- Require RSI to stop falling and MACD histogram to flatten or turn back.\n- If retracement depth is too shallow, skip it. If it is too deep and trend structure breaks, skip it.\n- If funding shows severe crowding against the trend, tighten the filter or stand aside.\n\nPseudocode:\n\n```text\nif regime != Trend:\n    flat\nelif pullback_in_zone and trend_intact and momentum_turns:\n    reenter_with_trend\nelse:\n    flat\n```",
+    "expected_regime": "- Clean directional markets with orderly pullbacks\n- Markets where the move advances in waves instead of in one straight line\n- Periods where trend continuation is stronger than mean reversion",
+    "inputs": "- `IndicatorPanel.ema_12`\n- `IndicatorPanel.ema_26`\n- `IndicatorPanel.rsi_14`\n- `IndicatorPanel.macd_histogram`\n- `IndicatorPanel.bollinger_upper`\n- `IndicatorPanel.bollinger_lower`\n- `OnchainPanel.funding_rate_8h`\n- `Regime`",
+    "parameters": "- `retracement_382`: 0.382 of the recent impulse range\n- `retracement_500`: 0.500 of the recent impulse range\n- `retracement_618`: 0.618 of the recent impulse range\n- `rsi_pullback_floor`: 40 to 50 in an uptrend, 50 to 60 in a downtrend\n- `ema_trend_gap`: require short EMA above long EMA for longs, below for shorts\n- `funding_filter`: avoid fading a retracement when funding is already extremely crowded",
+    "references": "- `crates/xvision-core/src/market.rs`\n- `decisions/strategy-choices.md`\n- `strategies/x strategy/funding_skew_fade.md`",
+    "status": "idea",
+    "thesis": "Strong trends often retrace before continuing. This strategy waits for a pullback into common Fibonacci retracement zones, then re-enters only when trend structure is still intact and momentum stops weakening."
+  },
+  "source_doc": "strategies/FibonacciStrategy/fibonacci_pullback_reentry.md",
+  "status": "idea",
+  "trader_prompt": "You are trading the `Fibonacci Pullback Reentry` strategy.\n\nThesis:\nStrong trends often retrace before continuing. This strategy waits for a pullback into common Fibonacci retracement zones, then re-enters only when trend structure is still intact and momentum stops weakening.\n\nInputs:\n- `IndicatorPanel.ema_12`\n- `IndicatorPanel.ema_26`\n- `IndicatorPanel.rsi_14`\n- `IndicatorPanel.macd_histogram`\n- `IndicatorPanel.bollinger_upper`\n- `IndicatorPanel.bollinger_lower`\n- `OnchainPanel.funding_rate_8h`\n- `Regime`\n\nDecision rule:\n- If `Regime` is not trending, stay flat.\n- If price retraces into the 0.382 to 0.618 zone and the EMA trend still points the same way, look for re-entry.\n- Require RSI to stop falling and MACD histogram to flatten or turn back.\n- If retracement depth is too shallow, skip it. If it is too deep and trend structure breaks, skip it.\n- If funding shows severe crowding against the trend, tighten the filter or stand aside.\n\nPseudocode:\n\n```text\nif regime != Trend:\n    flat\nelif pullback_in_zone and trend_intact and momentum_turns:\n    reenter_with_trend\nelse:\n    flat\n```\n\nExpected regime:\n- Clean directional markets with orderly pullbacks - Markets where the move advances in waves instead of in one straight line - Periods where trend continuation is stronger than mean reversion\n\nData dependencies:\n- OHLCV bars from the market snapshot\n- Existing indicator panel values\n- Funding rate feed for crowding context\n- No extra model inputs required\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
+}

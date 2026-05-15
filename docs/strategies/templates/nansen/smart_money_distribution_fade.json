@@ -1,0 +1,56 @@
+{
+  "base_template": "mean_reversion",
+  "display_name": "Smart Money Distribution Fade",
+  "family": "nansen",
+  "mechanical_params": [
+    {
+      "default": "24",
+      "name": "flow_window_hours",
+      "range": "4 \u2013 72"
+    },
+    {
+      "default": "-0.5%",
+      "name": "max_net_flow_pct",
+      "range": "-2.0% \u2013 -0.1%"
+    },
+    {
+      "default": "5",
+      "name": "min_active_wallets",
+      "range": "3 \u2013 20"
+    },
+    {
+      "default": "exit",
+      "name": "mode",
+      "range": "exit / short"
+    },
+    {
+      "default": "2.5",
+      "name": "short_stop_atr_mult",
+      "range": "1.5 \u2013 4.0"
+    }
+  ],
+  "name": "smart_money_distribution_fade",
+  "plain_summary": "The natural pair of smart_money_accumulation. When the same cohort whose inflow signals conviction long exits a token, the information that drove their accumulation has either been consumed by realized PnL or has changed sign. Distribution by smart money is the cleanest exit signal available on-chain. Fading the cohort directly (open shorts) is a stronger claim than just exiting; the strategy supports both modes.",
+  "regime_fit": [
+    "trending_bear",
+    "event_driven"
+  ],
+  "required_tools": [
+    "ohlcv",
+    "onchain_panel"
+  ],
+  "schema_version": "xvision.strategy_template.v1",
+  "sections": {
+    "data_dependencies": "Same as `smart_money_accumulation` plus `realized_pnl_token` field from\nNansen Smart Money endpoint.",
+    "decision_rule": "```\nif in_long_position and smart_money.net_flow_pct(window=24h) <= max_net_flow_pct:\n       exit long\n       if mode == \"short\" and smart_money.active_wallets >= min_active_wallets:\n           enter short, size = risk_pct / atr_stop_distance\nelif is_flat and mode == \"short\" and smart_money.net_flow_pct(window=24h) <= max_net_flow_pct:\n       enter short (cohort distributing into a flat book)\n```",
+    "expected_regime": "Late-trend or distribution tops. The fade-side underperforms in markets\nwhere smart money rotates token-to-token without a broader risk-off\n(distribution from one name into another); pair with `sm_rotation_chase`\nto disambiguate.",
+    "inputs": "- `OnchainPanel.nansen.smart_money.net_flow_token_24h` \u2014 same series as\n  the accumulation strategy, evaluated for net-negative.\n- `OnchainPanel.nansen.smart_money.realized_pnl_token` \u2014 has the cohort\n  taken profit, or are they cutting? PnL-positive distribution is healthy\n  rotation; PnL-negative distribution is panic \u2014 both bearish, but the\n  short-side conviction is higher in the panic case.\n- `PriceFrame.close`.",
+    "parameters": "| Param                    | Default | Range           |\n| ------------------------ | ------- | --------------- |\n| `flow_window_hours`      | 24      | 4 \u2013 72          |\n| `max_net_flow_pct`       | -0.5%   | -2.0% \u2013 -0.1%   |\n| `min_active_wallets`     | 5       | 3 \u2013 20          |\n| `mode`                   | `exit`  | `exit` / `short` |\n| `short_stop_atr_mult`    | 2.5     | 1.5 \u2013 4.0       |",
+    "references": "- Pair: [`smart_money_accumulation`](smart_money_accumulation.md).\n- Disambiguator: `sm_rotation_chase` (idea pool) \u2014 distinguishes\n  rotation-distribution from regime-change-distribution.",
+    "status": "`queued` \u2014 implement alongside `smart_money_accumulation` so the long/short\npair is symmetric in the evaluation harness.",
+    "thesis": "The natural pair of `smart_money_accumulation`. When the same cohort whose\ninflow signals conviction long *exits* a token, the information that drove\ntheir accumulation has either been consumed by realized PnL or has changed\nsign. Distribution by smart money is the cleanest exit signal available\non-chain. Fading the cohort directly (open shorts) is a stronger claim than\njust exiting; the strategy supports both modes."
+  },
+  "source_doc": "strategies/nansen/smart_money_distribution_fade.md",
+  "status": "queued",
+  "trader_prompt": "You are trading the `Smart Money Distribution Fade` strategy.\n\nThesis:\nThe natural pair of smart_money_accumulation. When the same cohort whose inflow signals conviction long exits a token, the information that drove their accumulation has either been consumed by realized PnL or has changed sign. Distribution by smart money is the cleanest exit signal available on-chain. Fading the cohort directly (open shorts) is a stronger claim than just exiting; the strategy supports both modes.\n\nInputs:\n- `OnchainPanel.nansen.smart_money.net_flow_token_24h` \u2014 same series as\n  the accumulation strategy, evaluated for net-negative.\n- `OnchainPanel.nansen.smart_money.realized_pnl_token` \u2014 has the cohort\n  taken profit, or are they cutting? PnL-positive distribution is healthy\n  rotation; PnL-negative distribution is panic \u2014 both bearish, but the\n  short-side conviction is higher in the panic case.\n- `PriceFrame.close`.\n\nDecision rule:\n```\nif in_long_position and smart_money.net_flow_pct(window=24h) <= max_net_flow_pct:\n       exit long\n       if mode == \"short\" and smart_money.active_wallets >= min_active_wallets:\n           enter short, size = risk_pct / atr_stop_distance\nelif is_flat and mode == \"short\" and smart_money.net_flow_pct(window=24h) <= max_net_flow_pct:\n       enter short (cohort distributing into a flat book)\n```\n\nExpected regime:\nLate-trend or distribution tops. The fade-side underperforms in markets where smart money rotates token-to-token without a broader risk-off (distribution from one name into another); pair with sm_rotation_chase to disambiguate.\n\nData dependencies:\nSame as `smart_money_accumulation` plus `realized_pnl_token` field from\nNansen Smart Money endpoint.\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
+}

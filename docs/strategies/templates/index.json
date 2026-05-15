@@ -1,0 +1,403 @@
+{
+  "schema_version": "xvision.strategy_template_index.v1",
+  "source_root": "strategies",
+  "template_count": 44,
+  "templates": [
+    {
+      "base_template": "trend_follower",
+      "display_name": "EMA 50 200 Golden Cross",
+      "family": "EMA",
+      "name": "ema_50_200_golden_cross",
+      "path": "docs/strategies/templates/EMA/ema_50_200_golden_cross.json",
+      "source_doc": "strategies/EMA/ema_50_200_golden_cross.md",
+      "status": "queued"
+    },
+    {
+      "base_template": "mean_reversion",
+      "display_name": "EMA Acceleration Reversal",
+      "family": "EMA",
+      "name": "ema_acceleration_reversal",
+      "path": "docs/strategies/templates/EMA/ema_acceleration_reversal.json",
+      "source_doc": "strategies/EMA/ema_acceleration_reversal.md",
+      "status": "queued"
+    },
+    {
+      "base_template": "trend_follower",
+      "display_name": "EMA Bullbear Regime Filter",
+      "family": "EMA",
+      "name": "ema_bullbear_regime_filter",
+      "path": "docs/strategies/templates/EMA/ema_bullbear_regime_filter.json",
+      "source_doc": "strategies/EMA/ema_bullbear_regime_filter.md",
+      "status": "queued (filter / meta-strategy, not standalone entry)"
+    },
+    {
+      "base_template": "trend_follower",
+      "display_name": "EMA Pullback Bounce",
+      "family": "EMA",
+      "name": "ema_pullback_bounce",
+      "path": "docs/strategies/templates/EMA/ema_pullback_bounce.json",
+      "source_doc": "strategies/EMA/ema_pullback_bounce.md",
+      "status": "queued"
+    },
+    {
+      "base_template": "trend_follower",
+      "display_name": "EMA Ribbon Alignment",
+      "family": "EMA",
+      "name": "ema_ribbon_alignment",
+      "path": "docs/strategies/templates/EMA/ema_ribbon_alignment.json",
+      "source_doc": "strategies/EMA/ema_ribbon_alignment.md",
+      "status": "queued"
+    },
+    {
+      "base_template": "momentum",
+      "display_name": "EMA Slope Momentum",
+      "family": "EMA",
+      "name": "ema_slope_momentum",
+      "path": "docs/strategies/templates/EMA/ema_slope_momentum.json",
+      "source_doc": "strategies/EMA/ema_slope_momentum.md",
+      "status": "queued"
+    },
+    {
+      "base_template": "breakout",
+      "display_name": "EMA Squeeze Breakout",
+      "family": "EMA",
+      "name": "ema_squeeze_breakout",
+      "path": "docs/strategies/templates/EMA/ema_squeeze_breakout.json",
+      "source_doc": "strategies/EMA/ema_squeeze_breakout.md",
+      "status": "queued"
+    },
+    {
+      "base_template": "mean_reversion",
+      "display_name": "Price EMA Distance Meanrev",
+      "family": "EMA",
+      "name": "price_ema_distance_meanrev",
+      "path": "docs/strategies/templates/EMA/price_ema_distance_meanrev.json",
+      "source_doc": "strategies/EMA/price_ema_distance_meanrev.md",
+      "status": "queued"
+    },
+    {
+      "base_template": "mean_reversion",
+      "display_name": "Fibonacci Cycle Alignment",
+      "family": "FibonacciStrategy",
+      "name": "fibonacci_cycle_alignment",
+      "path": "docs/strategies/templates/FibonacciStrategy/fibonacci_cycle_alignment.json",
+      "source_doc": "strategies/FibonacciStrategy/fibonacci_cycle_alignment.md",
+      "status": "idea"
+    },
+    {
+      "base_template": "breakout",
+      "display_name": "Fibonacci Extension Breakout",
+      "family": "FibonacciStrategy",
+      "name": "fibonacci_extension_breakout",
+      "path": "docs/strategies/templates/FibonacciStrategy/fibonacci_extension_breakout.json",
+      "source_doc": "strategies/FibonacciStrategy/fibonacci_extension_breakout.md",
+      "status": "idea"
+    },
+    {
+      "base_template": "mean_reversion",
+      "display_name": "Fibonacci Liquidity Retracement Filter",
+      "family": "FibonacciStrategy",
+      "name": "fibonacci_liquidity_retracement_filter",
+      "path": "docs/strategies/templates/FibonacciStrategy/fibonacci_liquidity_retracement_filter.json",
+      "source_doc": "strategies/FibonacciStrategy/fibonacci_liquidity_retracement_filter.md",
+      "status": "idea"
+    },
+    {
+      "base_template": "mean_reversion",
+      "display_name": "Fibonacci Pullback Reentry",
+      "family": "FibonacciStrategy",
+      "name": "fibonacci_pullback_reentry",
+      "path": "docs/strategies/templates/FibonacciStrategy/fibonacci_pullback_reentry.json",
+      "source_doc": "strategies/FibonacciStrategy/fibonacci_pullback_reentry.md",
+      "status": "idea"
+    },
+    {
+      "base_template": "mean_reversion",
+      "display_name": "Fibonacci Pyramid Scaling",
+      "family": "FibonacciStrategy",
+      "name": "fibonacci_pyramid_scaling",
+      "path": "docs/strategies/templates/FibonacciStrategy/fibonacci_pyramid_scaling.json",
+      "source_doc": "strategies/FibonacciStrategy/fibonacci_pyramid_scaling.md",
+      "status": "idea"
+    },
+    {
+      "base_template": "mean_reversion",
+      "display_name": "Fibonacci Strategy Index",
+      "family": "FibonacciStrategy",
+      "name": "fibonacci_strategy_index",
+      "path": "docs/strategies/templates/FibonacciStrategy/fibonacci_strategy_index.json",
+      "source_doc": "strategies/FibonacciStrategy/fibonacci_strategy_index.md",
+      "status": "idea"
+    },
+    {
+      "base_template": "range_trade",
+      "display_name": "BB Adaptive Volatility",
+      "family": "bollinger",
+      "name": "bb_adaptive_volatility",
+      "path": "docs/strategies/templates/bollinger/bb_adaptive_volatility.json",
+      "source_doc": "strategies/bollinger/bb_adaptive_volatility.md",
+      "status": "queued"
+    },
+    {
+      "base_template": "breakout",
+      "display_name": "BB Asymmetric Breakouts",
+      "family": "bollinger",
+      "name": "bb_asymmetric_breakouts",
+      "path": "docs/strategies/templates/bollinger/bb_asymmetric_breakouts.json",
+      "source_doc": "strategies/bollinger/bb_asymmetric_breakouts.md",
+      "status": "queued"
+    },
+    {
+      "base_template": "range_trade",
+      "display_name": "BB Band Walk Follow",
+      "family": "bollinger",
+      "name": "bb_band_walk_follow",
+      "path": "docs/strategies/templates/bollinger/bb_band_walk_follow.json",
+      "source_doc": "strategies/bollinger/bb_band_walk_follow.md",
+      "status": "queued"
+    },
+    {
+      "base_template": "mean_reversion",
+      "display_name": "BB Climax Fade",
+      "family": "bollinger",
+      "name": "bb_climax_fade",
+      "path": "docs/strategies/templates/bollinger/bb_climax_fade.json",
+      "source_doc": "strategies/bollinger/bb_climax_fade.md",
+      "status": "queued"
+    },
+    {
+      "base_template": "mean_reversion",
+      "display_name": "BB Meanrev Zscore",
+      "family": "bollinger",
+      "name": "bb_meanrev_zscore",
+      "path": "docs/strategies/templates/bollinger/bb_meanrev_zscore.json",
+      "source_doc": "strategies/bollinger/bb_meanrev_zscore.md",
+      "status": "queued"
+    },
+    {
+      "base_template": "range_trade",
+      "display_name": "BB Multi Sigma Stack",
+      "family": "bollinger",
+      "name": "bb_multi_sigma_stack",
+      "path": "docs/strategies/templates/bollinger/bb_multi_sigma_stack.json",
+      "source_doc": "strategies/bollinger/bb_multi_sigma_stack.md",
+      "status": "queued"
+    },
+    {
+      "base_template": "range_trade",
+      "display_name": "BB Pctb Oscillator",
+      "family": "bollinger",
+      "name": "bb_pctb_oscillator",
+      "path": "docs/strategies/templates/bollinger/bb_pctb_oscillator.json",
+      "source_doc": "strategies/bollinger/bb_pctb_oscillator.md",
+      "status": "queued"
+    },
+    {
+      "base_template": "breakout",
+      "display_name": "BB Squeeze Breakout",
+      "family": "bollinger",
+      "name": "bb_squeeze_breakout",
+      "path": "docs/strategies/templates/bollinger/bb_squeeze_breakout.json",
+      "source_doc": "strategies/bollinger/bb_squeeze_breakout.md",
+      "status": "queued"
+    },
+    {
+      "base_template": "breakout",
+      "display_name": "BB Squeeze Failure Fade",
+      "family": "bollinger",
+      "name": "bb_squeeze_failure_fade",
+      "path": "docs/strategies/templates/bollinger/bb_squeeze_failure_fade.json",
+      "source_doc": "strategies/bollinger/bb_squeeze_failure_fade.md",
+      "status": "queued"
+    },
+    {
+      "base_template": "onchain_smart_money",
+      "display_name": "CEX Inflow Riskoff",
+      "family": "nansen",
+      "name": "cex_inflow_riskoff",
+      "path": "docs/strategies/templates/nansen/cex_inflow_riskoff.json",
+      "source_doc": "strategies/nansen/cex_inflow_riskoff.md",
+      "status": "queued"
+    },
+    {
+      "base_template": "onchain_smart_money",
+      "display_name": "CEX Outflow Accumulation",
+      "family": "nansen",
+      "name": "cex_outflow_accumulation",
+      "path": "docs/strategies/templates/nansen/cex_outflow_accumulation.json",
+      "source_doc": "strategies/nansen/cex_outflow_accumulation.md",
+      "status": "queued"
+    },
+    {
+      "base_template": "onchain_smart_money",
+      "display_name": "Fresh Money Blowoff Top",
+      "family": "nansen",
+      "name": "fresh_money_blowoff_top",
+      "path": "docs/strategies/templates/nansen/fresh_money_blowoff_top.json",
+      "source_doc": "strategies/nansen/fresh_money_blowoff_top.md",
+      "status": "queued"
+    },
+    {
+      "base_template": "onchain_smart_money",
+      "display_name": "Fund Concentration Signal",
+      "family": "nansen",
+      "name": "fund_concentration_signal",
+      "path": "docs/strategies/templates/nansen/fund_concentration_signal.json",
+      "source_doc": "strategies/nansen/fund_concentration_signal.md",
+      "status": "queued"
+    },
+    {
+      "base_template": "onchain_smart_money",
+      "display_name": "Insider Distribution Riskoff",
+      "family": "nansen",
+      "name": "insider_distribution_riskoff",
+      "path": "docs/strategies/templates/nansen/insider_distribution_riskoff.json",
+      "source_doc": "strategies/nansen/insider_distribution_riskoff.md",
+      "status": "queued"
+    },
+    {
+      "base_template": "onchain_smart_money",
+      "display_name": "Smart Money Accumulation",
+      "family": "nansen",
+      "name": "smart_money_accumulation",
+      "path": "docs/strategies/templates/nansen/smart_money_accumulation.json",
+      "source_doc": "strategies/nansen/smart_money_accumulation.md",
+      "status": "queued"
+    },
+    {
+      "base_template": "mean_reversion",
+      "display_name": "Smart Money Distribution Fade",
+      "family": "nansen",
+      "name": "smart_money_distribution_fade",
+      "path": "docs/strategies/templates/nansen/smart_money_distribution_fade.json",
+      "source_doc": "strategies/nansen/smart_money_distribution_fade.md",
+      "status": "queued"
+    },
+    {
+      "base_template": "onchain_smart_money",
+      "display_name": "Stablecoin Inflow Riskon",
+      "family": "nansen",
+      "name": "stablecoin_inflow_riskon",
+      "path": "docs/strategies/templates/nansen/stablecoin_inflow_riskon.json",
+      "source_doc": "strategies/nansen/stablecoin_inflow_riskon.md",
+      "status": "queued"
+    },
+    {
+      "base_template": "mean_reversion",
+      "display_name": "Funding Skew Fade",
+      "family": "random",
+      "name": "funding_skew_fade",
+      "path": "docs/strategies/templates/random/funding_skew_fade.json",
+      "source_doc": "strategies/random/funding_skew_fade.md",
+      "status": "idea"
+    },
+    {
+      "base_template": "mean_reversion",
+      "display_name": "Liquidation Cascade Reversal",
+      "family": "random",
+      "name": "liquidation_cascade_reversal",
+      "path": "docs/strategies/templates/random/liquidation_cascade_reversal.json",
+      "source_doc": "strategies/random/liquidation_cascade_reversal.md",
+      "status": "idea"
+    },
+    {
+      "base_template": "custom",
+      "display_name": "Multi Timeframe Trend Pyramid",
+      "family": "random",
+      "name": "multi_timeframe_trend_pyramid",
+      "path": "docs/strategies/templates/random/multi_timeframe_trend_pyramid.json",
+      "source_doc": "strategies/random/multi_timeframe_trend_pyramid.md",
+      "status": "idea"
+    },
+    {
+      "base_template": "onchain_smart_money",
+      "display_name": "Stablecoin Inflow Risk Off",
+      "family": "random",
+      "name": "stablecoin_inflow_risk_off",
+      "path": "docs/strategies/templates/random/stablecoin_inflow_risk_off.json",
+      "source_doc": "strategies/random/stablecoin_inflow_risk_off.md",
+      "status": "idea"
+    },
+    {
+      "base_template": "breakout",
+      "display_name": "Volatility Squeeze Breakout",
+      "family": "random",
+      "name": "volatility_squeeze_breakout",
+      "path": "docs/strategies/templates/random/volatility_squeeze_breakout.json",
+      "source_doc": "strategies/random/volatility_squeeze_breakout.md",
+      "status": "idea"
+    },
+    {
+      "base_template": "mean_reversion",
+      "display_name": "MFI Money Flow Index",
+      "family": "rsi_volume",
+      "name": "mfi_money_flow_index",
+      "path": "docs/strategies/templates/rsi_volume/mfi_money_flow_index.json",
+      "source_doc": "strategies/rsi_volume/mfi_money_flow_index.md",
+      "status": "queued"
+    },
+    {
+      "base_template": "mean_reversion",
+      "display_name": "RSI Capitulation Long",
+      "family": "rsi_volume",
+      "name": "rsi_capitulation_long",
+      "path": "docs/strategies/templates/rsi_volume/rsi_capitulation_long.json",
+      "source_doc": "strategies/rsi_volume/rsi_capitulation_long.md",
+      "status": "queued"
+    },
+    {
+      "base_template": "mean_reversion",
+      "display_name": "RSI Dry Bottom Long",
+      "family": "rsi_volume",
+      "name": "rsi_dry_bottom_long",
+      "path": "docs/strategies/templates/rsi_volume/rsi_dry_bottom_long.json",
+      "source_doc": "strategies/rsi_volume/rsi_dry_bottom_long.md",
+      "status": "queued"
+    },
+    {
+      "base_template": "mean_reversion",
+      "display_name": "RSI Dry Top Fade",
+      "family": "rsi_volume",
+      "name": "rsi_dry_top_fade",
+      "path": "docs/strategies/templates/rsi_volume/rsi_dry_top_fade.json",
+      "source_doc": "strategies/rsi_volume/rsi_dry_top_fade.md",
+      "status": "queued"
+    },
+    {
+      "base_template": "mean_reversion",
+      "display_name": "RSI Euphoria Short",
+      "family": "rsi_volume",
+      "name": "rsi_euphoria_short",
+      "path": "docs/strategies/templates/rsi_volume/rsi_euphoria_short.json",
+      "source_doc": "strategies/rsi_volume/rsi_euphoria_short.md",
+      "status": "queued"
+    },
+    {
+      "base_template": "mean_reversion",
+      "display_name": "RSI Volume Bearish Divergence",
+      "family": "rsi_volume",
+      "name": "rsi_volume_bearish_divergence",
+      "path": "docs/strategies/templates/rsi_volume/rsi_volume_bearish_divergence.json",
+      "source_doc": "strategies/rsi_volume/rsi_volume_bearish_divergence.md",
+      "status": "queued"
+    },
+    {
+      "base_template": "breakout",
+      "display_name": "Volume Breakout RSI Confirm",
+      "family": "rsi_volume",
+      "name": "volume_breakout_rsi_confirm",
+      "path": "docs/strategies/templates/rsi_volume/volume_breakout_rsi_confirm.json",
+      "source_doc": "strategies/rsi_volume/volume_breakout_rsi_confirm.md",
+      "status": "queued"
+    },
+    {
+      "base_template": "mean_reversion",
+      "display_name": "Volume Weighted RSI",
+      "family": "rsi_volume",
+      "name": "volume_weighted_rsi",
+      "path": "docs/strategies/templates/rsi_volume/volume_weighted_rsi.json",
+      "source_doc": "strategies/rsi_volume/volume_weighted_rsi.md",
+      "status": "queued"
+    }
+  ]
+}
