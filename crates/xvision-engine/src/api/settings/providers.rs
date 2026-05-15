@@ -738,10 +738,12 @@ async fn update_inner(
     }
     let parsed_kind = parse_kind(&req.kind)?;
     let trimmed_base_url = req.base_url.trim();
-    if trimmed_base_url.is_empty() {
+    if trimmed_base_url.is_empty() && parsed_kind != ProviderKind::LocalCandle {
         return Err(ApiError::Validation("base_url is empty".into()));
     }
-    if !(trimmed_base_url.starts_with("http://") || trimmed_base_url.starts_with("https://")) {
+    if !trimmed_base_url.is_empty()
+        && !(trimmed_base_url.starts_with("http://") || trimmed_base_url.starts_with("https://"))
+    {
         return Err(ApiError::Validation(format!(
             "base_url must start with http:// or https:// (got `{trimmed_base_url}`)"
         )));

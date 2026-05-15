@@ -46,7 +46,10 @@ pub struct ProviderEntry {
     pub name: String,
     #[garde(skip)]
     pub kind: ProviderKind,
-    #[garde(length(min = 1, max = 512))]
+    // `local-candle` is an in-process/no-network provider, so an empty
+    // base_url is valid for that kind. Route-level provider CRUD still
+    // rejects empty URLs for auth-bearing network providers before writing.
+    #[garde(length(max = 512))]
     pub base_url: String,
     #[garde(length(max = 64))]
     pub api_key_env: String,
@@ -686,6 +689,50 @@ sqlite_url = "sqlite://x.db"
         assert_eq!(cfg.providers.len(), 2);
         assert!(cfg.providers.iter().any(|p| p.name == "anthropic"));
         assert!(cfg.providers.iter().any(|p| p.name == "ollama-local"));
+    }
+
+    #[test]
+    fn runtime_config_loads_local_candle_with_empty_base_url() {
+        let toml_src = r#"
+[runtime]
+mode = "backtest"
+executor = "alpaca"
+random_seed = 42
+
+[[providers]]
+name = "local-candle"
+kind = "local-candle"
+base_url = ""
+api_key_env = ""
+
+[trader]
+model_path = "models/x.gguf"
+temperature = 0.0
+forward_paper_temperature = 0.4
+max_tokens = 512
+[trader.vectors]
+enabled = false
+config = "off"
+
+[backtest]
+step = 24
+horizon = 16
+bootstrap_resamples = 1000
+bootstrap_block_size = 8
+
+[paths]
+data_root = "data"
+vectors = "data/vectors"
+probes = "data/probes"
+sqlite_url = "sqlite://x.db"
+"#;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("local-candle.toml");
+        std::fs::write(&path, toml_src).unwrap();
+        let cfg = load_runtime(&path).unwrap();
+        assert_eq!(cfg.providers.len(), 1);
+        assert_eq!(cfg.providers[0].kind, ProviderKind::LocalCandle);
+        assert_eq!(cfg.providers[0].base_url, "");
     }
 
     #[test]
