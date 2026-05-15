@@ -16,15 +16,15 @@ use xvision_intern::BriefingCache;
 use xvision_risk::RiskLayer;
 use xvision_trader::TraderParams;
 
+use crate::algorithm::Algorithm;
 use crate::backtest::MarketBar;
 use crate::baselines::{
-    AlwaysLong, AlwaysShort, BuyAndHold, MaCrossover, MacdMomentum, PortfolioProvider,
-    RandomDirection, RsiMeanReversion, TraderArm,
+    AlwaysLong, AlwaysShort, BuyAndHold, MaCrossover, MacdMomentum, PortfolioProvider, RandomDirection,
+    RsiMeanReversion, TraderArm,
 };
 use crate::harness::{ArmConfig, BacktestRunConfig, BacktestRunner};
 use crate::provider_registry::ProviderRegistry;
 use crate::result::BacktestResult;
-use crate::algorithm::Algorithm;
 
 /// One arm spec parsed from the CLI.
 #[derive(Debug, Clone)]
@@ -49,9 +49,14 @@ pub enum ArmKind {
     BuyAndHold,
     AlwaysLong,
     AlwaysShort,
-    RandomDirection { seed: u64 },
+    RandomDirection {
+        seed: u64,
+    },
     RsiMeanReversion,
-    MaCrossover { fast: usize, slow: usize },
+    MaCrossover {
+        fast: usize,
+        slow: usize,
+    },
     MacdMomentum,
 }
 
@@ -171,8 +176,7 @@ pub fn auto_suffix_arm_names(specs: &mut [ArmSpec]) {
 
     // Pass 2: detect collisions on the candidate suffix and promote to
     // `<model>@<provider>` when needed. Only applies among `Trader` specs.
-    let mut by_suffix: std::collections::HashMap<String, Vec<usize>> =
-        std::collections::HashMap::new();
+    let mut by_suffix: std::collections::HashMap<String, Vec<usize>> = std::collections::HashMap::new();
     for (i, s) in suffixes.iter().enumerate() {
         if let Some(s) = s {
             by_suffix.entry(s.clone()).or_default().push(i);
@@ -269,10 +273,8 @@ pub async fn run_ab_compare(
             let static_name: &'static str = Box::leak(spec.name.clone().into_boxed_str());
             let strategy: Box<dyn Algorithm> = match spec.kind {
                 ArmKind::Trader { intern, trader } => {
-                    let intern_slot =
-                        intern.unwrap_or_else(|| registry.default_intern.clone());
-                    let trader_slot =
-                        trader.unwrap_or_else(|| registry.default_trader.clone());
+                    let intern_slot = intern.unwrap_or_else(|| registry.default_intern.clone());
+                    let trader_slot = trader.unwrap_or_else(|| registry.default_trader.clone());
                     let intern_backend = registry.intern_backend(&intern_slot)?;
                     let trader_backend = registry.trader_backend(&trader_slot)?;
                     // Resolve the empty-provider sentinel (from `intern_model=` /
@@ -372,10 +374,10 @@ mod tests {
 
     #[test]
     fn auto_suffix_strips_provider_path_from_model_id() {
-        let mut specs = vec![parse_arm_spec(
-            "trader_arm:trader=together/meta-llama/Llama-3.3-70B-Instruct-Turbo",
-        )
-        .unwrap()];
+        let mut specs =
+            vec![
+                parse_arm_spec("trader_arm:trader=together/meta-llama/Llama-3.3-70B-Instruct-Turbo").unwrap(),
+            ];
         auto_suffix_arm_names(&mut specs);
         assert_eq!(specs[0].name, "trader_arm[Llama-3.3-70B-Instruct-Turbo]");
     }
@@ -455,10 +457,7 @@ mod tests {
 
     #[test]
     fn parses_trader_arm_with_both_slots() {
-        let a = parse_arm_spec(
-            "trader_arm:intern=anthropic/claude-haiku-4-5:trader=openai/gpt-4o",
-        )
-        .unwrap();
+        let a = parse_arm_spec("trader_arm:intern=anthropic/claude-haiku-4-5:trader=openai/gpt-4o").unwrap();
         match a.kind {
             ArmKind::Trader { intern, trader } => {
                 assert_eq!(intern.unwrap().model, "claude-haiku-4-5");
@@ -484,8 +483,7 @@ mod tests {
 
     #[test]
     fn rejects_intern_and_intern_model_together() {
-        let err =
-            parse_arm_spec("trader_arm:intern=anthropic/x:intern_model=y").unwrap_err();
+        let err = parse_arm_spec("trader_arm:intern=anthropic/x:intern_model=y").unwrap_err();
         assert!(format!("{err}").contains("mutually exclusive"));
     }
 

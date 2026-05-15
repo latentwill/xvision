@@ -13,17 +13,20 @@
 
 use std::sync::Arc;
 
+use chrono::Duration;
 use sqlx::SqlitePool;
+use xvision_core::market::Ohlcv;
 use xvision_engine::agent::llm::{LlmDispatch, MockDispatch};
-use xvision_engine::strategies::manifest::PublicManifest;
-use xvision_engine::strategies::risk::RiskPreset;
-use xvision_engine::strategies::slot::LLMSlot;
-use xvision_engine::strategies::Strategy;
 use xvision_engine::eval::executor::{Executor, PaperExecutor};
 use xvision_engine::eval::progress::{ProgressBus, ProgressEvent};
 use xvision_engine::eval::run::{Run, RunMode};
 use xvision_engine::eval::scenario::canonical_scenarios;
 use xvision_engine::eval::store::RunStore;
+use xvision_engine::eval::Scenario;
+use xvision_engine::strategies::manifest::PublicManifest;
+use xvision_engine::strategies::risk::RiskPreset;
+use xvision_engine::strategies::slot::LLMSlot;
+use xvision_engine::strategies::Strategy;
 use xvision_engine::tools::ToolRegistry;
 use xvision_execution::broker_surface::{BrokerSurface, MockBrokerSurface};
 
@@ -75,10 +78,32 @@ fn build_strategy(agent_id: &str) -> Strategy {
             prompt: "Decide.".into(),
             model_requirement: "anthropic.claude-sonnet-4.6+".into(),
             allowed_tools: vec![],
+            provider: None,
+            model: None,
         }),
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({}),
     }
+}
+
+fn scenario_bars(scenario: &Scenario) -> Vec<Ohlcv> {
+    let mut bars = Vec::new();
+    let mut ts = scenario.time_window.start;
+    let mut i = 0.0;
+    while ts < scenario.time_window.end {
+        let close = 60_000.0 + i * 25.0;
+        bars.push(Ohlcv {
+            timestamp: ts,
+            open: close - 10.0,
+            high: close + 20.0,
+            low: close - 30.0,
+            close,
+            volume: 250.0 + i,
+        });
+        ts += Duration::hours(1);
+        i += 1.0;
+    }
+    bars
 }
 
 #[tokio::test]
@@ -90,11 +115,7 @@ async fn paper_executor_emits_all_progress_event_types() {
         .expect("flash-crash-2024-08 scenario must exist");
     let strategy = build_strategy("01TESTSTRATEGYPROGRESS00000A");
 
-    let mut run = Run::new_queued(
-        strategy.manifest.id.clone(),
-        scenario.id.clone(),
-        RunMode::Paper,
-    );
+    let mut run = Run::new_queued(strategy.manifest.id.clone(), scenario.id.clone(), RunMode::Paper);
     store.create(&run).await.unwrap();
 
     // Subscribe BEFORE running so RunStarted isn't lost.
@@ -106,7 +127,7 @@ async fn paper_executor_emits_all_progress_event_types() {
     let broker: Arc<dyn BrokerSurface> = mock_broker;
     let dispatch = long_open_dispatch();
     let tools = Arc::new(ToolRegistry::empty());
-    let executor = PaperExecutor::with_progress(broker, tx);
+    let executor = PaperExecutor::with_bars_and_progress(broker, scenario_bars(&scenario), tx);
 
     let result = executor
         .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)
@@ -145,9 +166,7 @@ async fn paper_executor_emits_all_progress_event_types() {
                 assert_eq!(run_id, &run.id);
                 saw_tick = true;
             }
-            ProgressEvent::DecisionEmitted {
-                run_id, action, ..
-            } => {
+            ProgressEvent::DecisionEmitted { run_id, action, .. } => {
                 assert_eq!(run_id, &run.id);
                 assert_eq!(action, "long_open");
                 saw_decision = true;
@@ -187,11 +206,7 @@ async fn paper_executor_runs_clean_with_no_progress_subscriber() {
         .find(|s| s.id == "flash-crash-2024-08")
         .expect("flash-crash-2024-08 scenario must exist");
     let strategy = build_strategy("01TESTSTRATEGYPROGRESS00000B");
-    let mut run = Run::new_queued(
-        strategy.manifest.id.clone(),
-        scenario.id.clone(),
-        RunMode::Paper,
-    );
+    let mut run = Run::new_queued(strategy.manifest.id.clone(), scenario.id.clone(), RunMode::Paper);
     store.create(&run).await.unwrap();
 
     let bus = ProgressBus::new(8);
@@ -202,7 +217,7 @@ async fn paper_executor_runs_clean_with_no_progress_subscriber() {
     let broker: Arc<dyn BrokerSurface> = mock_broker;
     let dispatch = long_open_dispatch();
     let tools = Arc::new(ToolRegistry::empty());
-    let executor = PaperExecutor::with_progress(broker, tx);
+    let executor = PaperExecutor::with_bars_and_progress(broker, scenario_bars(&scenario), tx);
 
     executor
         .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)

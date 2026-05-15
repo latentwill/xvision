@@ -34,9 +34,7 @@ async fn ctx_with_eval_tables() -> (ApiContext, tempfile::TempDir) {
 #[tokio::test]
 async fn list_returns_empty_for_fresh_pool() {
     let (ctx, _d) = ctx_with_eval_tables().await;
-    let runs = eval::list(&ctx, ListRunsRequest::default())
-        .await
-        .unwrap();
+    let runs = eval::list(&ctx, ListRunsRequest::default()).await.unwrap();
     assert!(runs.is_empty());
 }
 
@@ -49,9 +47,7 @@ async fn list_returns_persisted_runs() {
     store.create(&r1).await.unwrap();
     store.create(&r2).await.unwrap();
 
-    let runs = eval::list(&ctx, ListRunsRequest::default())
-        .await
-        .unwrap();
+    let runs = eval::list(&ctx, ListRunsRequest::default()).await.unwrap();
     assert_eq!(runs.len(), 2);
 }
 
@@ -120,10 +116,23 @@ async fn get_returns_persisted_run() {
 async fn get_returns_not_found_for_unknown_id() {
     let (ctx, _d) = ctx_with_eval_tables().await;
     let r = eval::get(&ctx, "missing").await;
-    assert!(matches!(
-        r,
-        Err(xvision_engine::api::ApiError::NotFound(_))
-    ));
+    assert!(matches!(r, Err(xvision_engine::api::ApiError::NotFound(_))));
+}
+
+#[tokio::test]
+async fn cancel_is_idempotent_after_run_is_cancelled() {
+    let (ctx, _d) = ctx_with_eval_tables().await;
+    let store = RunStore::new(ctx.db.clone());
+    let run = Run::new_queued("h".into(), "s".into(), RunMode::Paper);
+    let id = run.id.clone();
+    store.create(&run).await.unwrap();
+
+    let first = eval::cancel(&ctx, &id).await.unwrap();
+    assert_eq!(first.status, RunStatus::Cancelled);
+
+    let second = eval::cancel(&ctx, &id).await.unwrap();
+    assert_eq!(second.status, RunStatus::Cancelled);
+    assert_eq!(second.error.as_deref(), Some("cancelled by user"));
 }
 
 #[tokio::test]
@@ -167,12 +176,11 @@ async fn get_writes_audit_row() {
     store.create(&run).await.unwrap();
     let _ = eval::get(&ctx, &id).await.unwrap();
 
-    let (domain, op, target, outcome): (String, String, Option<String>, String) = sqlx::query_as(
-        "SELECT domain, operation, target, outcome FROM api_audit WHERE operation = 'get'",
-    )
-    .fetch_one(&ctx.db)
-    .await
-    .unwrap();
+    let (domain, op, target, outcome): (String, String, Option<String>, String) =
+        sqlx::query_as("SELECT domain, operation, target, outcome FROM api_audit WHERE operation = 'get'")
+            .fetch_one(&ctx.db)
+            .await
+            .unwrap();
     assert_eq!(domain, "eval");
     assert_eq!(op, "get");
     assert_eq!(target.as_deref(), Some(id.as_str()));

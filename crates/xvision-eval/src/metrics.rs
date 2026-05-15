@@ -59,11 +59,7 @@ pub fn sharpe_annualized(returns: &[f32], periods_per_year: f32) -> f32 {
         return 0.0;
     }
     let mean = returns.iter().copied().sum::<f32>() / n as f32;
-    let var = returns
-        .iter()
-        .map(|&r| (r - mean) * (r - mean))
-        .sum::<f32>()
-        / (n - 1) as f32;
+    let var = returns.iter().map(|&r| (r - mean) * (r - mean)).sum::<f32>() / (n - 1) as f32;
     let std = var.sqrt();
     // Guard: treat std as zero if it's not finite or if it is negligibly small
     // relative to the mean magnitude. f32 arithmetic on identical values
@@ -244,10 +240,7 @@ pub fn compute_pre_committed(
 /// Decision divergence rate: walks decisions of arm_a and arm_b paired by
 /// index (same cycle ordering guaranteed by the harness). Denominator is the
 /// total number of paired cycles from arm_a (not union of both arms).
-fn compute_divergence_rate(
-    a: &crate::result::ArmResult,
-    b: &crate::result::ArmResult,
-) -> f32 {
+fn compute_divergence_rate(a: &crate::result::ArmResult, b: &crate::result::ArmResult) -> f32 {
     let n = a.decisions.len().min(b.decisions.len());
     if n == 0 {
         return 0.0;
@@ -417,7 +410,10 @@ mod tests {
         // Constant positive return with tiny noise → positive Sharpe
         let returns: Vec<f32> = (0..100).map(|i| 0.01 + (i as f32) * 0.0001).collect();
         let s = sharpe_annualized(&returns, 252.0);
-        assert!(s > 0.0, "Sharpe should be positive for consistently positive returns");
+        assert!(
+            s > 0.0,
+            "Sharpe should be positive for consistently positive returns"
+        );
     }
 
     // -----------------------------------------------------------------------

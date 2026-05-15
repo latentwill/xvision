@@ -213,8 +213,8 @@ mod tests {
     #[test]
     fn same_arm_point_estimate_is_zero() {
         let returns: Vec<f32> = (0..50).map(|i| 0.001 * (i as f32 % 7.0 - 3.0)).collect();
-        let result = paired_bootstrap_sharpe_delta(&returns, &returns, 500, None, PY, 42)
-            .expect("must succeed");
+        let result =
+            paired_bootstrap_sharpe_delta(&returns, &returns, 500, None, PY, 42).expect("must succeed");
         assert!(
             result.point_estimate.abs() < 1e-5,
             "same-arm Δ-Sharpe should be ~0, got {}",
@@ -231,16 +231,11 @@ mod tests {
         let a: Vec<f32> = (0..40).map(|i| 0.002 * (i as f32) - 0.04).collect();
         let b: Vec<f32> = (0..40).map(|i| 0.001 * (i as f32) - 0.02).collect();
 
-        let r1 = paired_bootstrap_sharpe_delta(&a, &b, 200, None, PY, 0xdeadbeef)
-            .expect("must succeed");
-        let r2 = paired_bootstrap_sharpe_delta(&a, &b, 200, None, PY, 0xdeadbeef)
-            .expect("must succeed");
+        let r1 = paired_bootstrap_sharpe_delta(&a, &b, 200, None, PY, 0xdeadbeef).expect("must succeed");
+        let r2 = paired_bootstrap_sharpe_delta(&a, &b, 200, None, PY, 0xdeadbeef).expect("must succeed");
 
         // Bit-identical floats
-        assert_eq!(
-            r1.point_estimate.to_bits(),
-            r2.point_estimate.to_bits()
-        );
+        assert_eq!(r1.point_estimate.to_bits(), r2.point_estimate.to_bits());
         assert_eq!(r1.ci_low.to_bits(), r2.ci_low.to_bits());
         assert_eq!(r1.ci_high.to_bits(), r2.ci_high.to_bits());
     }
@@ -263,11 +258,9 @@ mod tests {
             .map(|i| if (i / 10) % 2 == 0 { 0.015 } else { -0.015 })
             .collect();
 
-        let iid = paired_bootstrap_sharpe_delta(&autocorr, &b, 1000, None, PY, 99)
-            .expect("iid must succeed");
+        let iid = paired_bootstrap_sharpe_delta(&autocorr, &b, 1000, None, PY, 99).expect("iid must succeed");
         let block =
-            paired_bootstrap_sharpe_delta(&autocorr, &b, 1000, Some(10), PY, 99)
-                .expect("block must succeed");
+            paired_bootstrap_sharpe_delta(&autocorr, &b, 1000, Some(10), PY, 99).expect("block must succeed");
 
         let iid_width = iid.ci_high - iid.ci_low;
         let block_width = block.ci_high - block.ci_low;
@@ -326,8 +319,7 @@ mod tests {
         // can fall outside the bootstrap distribution but is usually within it.
         let a: Vec<f32> = (0..60).map(|i| 0.003 * (i as f32) - 0.09).collect();
         let b: Vec<f32> = (0..60).map(|i| 0.001 * (i as f32) - 0.03).collect();
-        let r = paired_bootstrap_sharpe_delta(&a, &b, 500, None, PY, 7)
-            .expect("must succeed");
+        let r = paired_bootstrap_sharpe_delta(&a, &b, 500, None, PY, 7).expect("must succeed");
         assert!(r.ci_low <= r.ci_high, "ci_low must be <= ci_high");
         assert_eq!(r.n_resamples, 500);
         assert!(r.block_size.is_none());

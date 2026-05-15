@@ -82,14 +82,7 @@ async fn extract_and_record_inner(
     let decisions_summary = summarise_decisions(&decisions);
     let equity_summary = summarise_equity(&equity);
 
-    let findings = extract_findings(
-        &run,
-        decisions_summary,
-        equity_summary,
-        dispatch,
-        model,
-    )
-    .await?;
+    let findings = extract_findings(&run, decisions_summary, equity_summary, dispatch, model).await?;
 
     let mut persisted = 0usize;
     for f in findings {
@@ -134,8 +127,7 @@ fn summarise_decisions(rows: &[DecisionRow]) -> serde_json::Value {
         }
     }
 
-    let assets: std::collections::BTreeSet<&str> =
-        rows.iter().map(|r| r.asset.as_str()).collect();
+    let assets: std::collections::BTreeSet<&str> = rows.iter().map(|r| r.asset.as_str()).collect();
     let win_rate = if realized_count > 0 {
         wins as f64 / realized_count as f64
     } else {
@@ -162,14 +154,8 @@ fn summarise_equity(curve: &[(chrono::DateTime<chrono::Utc>, f64)]) -> serde_jso
     }
     let start = curve.first().map(|(_, v)| *v).unwrap_or(0.0);
     let end = curve.last().map(|(_, v)| *v).unwrap_or(0.0);
-    let min = curve
-        .iter()
-        .map(|(_, v)| *v)
-        .fold(f64::INFINITY, f64::min);
-    let max = curve
-        .iter()
-        .map(|(_, v)| *v)
-        .fold(f64::NEG_INFINITY, f64::max);
+    let min = curve.iter().map(|(_, v)| *v).fold(f64::INFINITY, f64::min);
+    let max = curve.iter().map(|(_, v)| *v).fold(f64::NEG_INFINITY, f64::max);
 
     // Peak-to-trough max drawdown — running peak then largest drop below it.
     let mut peak = f64::NEG_INFINITY;
@@ -204,14 +190,9 @@ mod tests {
 
     async fn fresh_ctx() -> (ApiContext, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
-        let ctx = ApiContext::open(
-            dir.path(),
-            Actor::Cli {
-                user: "test".into(),
-            },
-        )
-        .await
-        .unwrap();
+        let ctx = ApiContext::open(dir.path(), Actor::Cli { user: "test".into() })
+            .await
+            .unwrap();
         (ctx, dir)
     }
 
@@ -286,8 +267,7 @@ mod tests {
             .unwrap();
 
         // Mock returns garbage that the extractor's JSON-array slicer can't parse.
-        let dispatch: Arc<dyn LlmDispatch> =
-            Arc::new(MockDispatch::echo("definitely not a json array"));
+        let dispatch: Arc<dyn LlmDispatch> = Arc::new(MockDispatch::echo("definitely not a json array"));
 
         let n = extract_and_record(&ctx, &run.id, dispatch, DEFAULT_FINDINGS_MODEL).await;
         assert_eq!(n, 0, "extractor failure must surface as 0, not a panic");
@@ -348,6 +328,7 @@ mod tests {
                 action: "long_open".into(),
                 conviction: Some(0.7),
                 justification: None,
+                reasoning: None,
                 order_size: Some(1.0),
                 fill_price: Some(60000.0),
                 fill_size: Some(1.0),
@@ -362,6 +343,7 @@ mod tests {
                 action: "flat".into(),
                 conviction: None,
                 justification: None,
+                reasoning: None,
                 order_size: None,
                 fill_price: None,
                 fill_size: None,

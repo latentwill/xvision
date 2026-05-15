@@ -40,11 +40,7 @@ async fn ctx_with_eval_tables() -> (ApiContext, tempfile::TempDir) {
 }
 
 async fn seed_completed_run(store: &RunStore, scenario_id: &str) -> Run {
-    let mut run = Run::new_queued(
-        "h-strategy".into(),
-        scenario_id.into(),
-        RunMode::Backtest,
-    );
+    let mut run = Run::new_queued("h-strategy".into(), scenario_id.into(), RunMode::Backtest);
     run.status = RunStatus::Completed;
     store.create(&run).await.unwrap();
 
@@ -113,11 +109,7 @@ async fn attest_rejects_run_without_metrics() {
     let store = RunStore::new(ctx.db.clone());
     let scenario_id = canonical_scenarios()[0].id.clone();
     // Queued — no metrics computed.
-    let mut run = Run::new_queued(
-        "h-strategy".into(),
-        scenario_id,
-        RunMode::Backtest,
-    );
+    let mut run = Run::new_queued("h-strategy".into(), scenario_id, RunMode::Backtest);
     store.create(&run).await.unwrap();
     run = store.get(&run.id).await.unwrap();
 

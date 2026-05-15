@@ -136,10 +136,8 @@ mod tests {
     use chrono::{TimeZone, Utc};
     use uuid::Uuid;
 
-    use xvision_core::market::{IndicatorPanel, OnchainPanel, Ohlcv};
-    use xvision_core::trading::{
-        AssetSymbol, EvidenceTag, InternBriefing, Regime,
-    };
+    use xvision_core::market::{IndicatorPanel, Ohlcv, OnchainPanel};
+    use xvision_core::trading::{AssetSymbol, EvidenceTag, InternBriefing, Regime};
     use xvision_intern::backend::InternError;
 
     /// Mock Intern that returns a fixed briefing — exercises the cache key
@@ -213,13 +211,7 @@ mod tests {
 
         let intern = MockIntern;
         let briefing = intern
-            .brief(
-                "p",
-                snap.cycle_id,
-                snap.asset,
-                snap.regime,
-                snap.horizon_hours,
-            )
+            .brief("p", snap.cycle_id, snap.asset, snap.regime, snap.horizon_hours)
             .await
             .expect("mock intern always succeeds");
         cache.insert(key.clone(), briefing.clone());
@@ -258,13 +250,7 @@ mod tests {
 
         let intern = MockIntern;
         let briefing = intern
-            .brief(
-                "p",
-                snap.cycle_id,
-                snap.asset,
-                snap.regime,
-                snap.horizon_hours,
-            )
+            .brief("p", snap.cycle_id, snap.asset, snap.regime, snap.horizon_hours)
             .await
             .unwrap();
         cache.insert(key_haiku.clone(), briefing.clone());

@@ -34,7 +34,7 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use uuid::Uuid;
-    use xvision_core::market::{IndicatorPanel, OnchainPanel, Ohlcv};
+    use xvision_core::market::{IndicatorPanel, Ohlcv, OnchainPanel};
     use xvision_core::trading::{AssetSymbol, Regime};
 
     fn fixture_snapshot() -> MarketSnapshot {

@@ -34,11 +34,7 @@ fn canonical_scenarios_are_btc_only() {
     // v1-shipping-plan.md §Preconditions: Alpaca paper is BTC-only for v1.
     // Every canonical scenario MUST reference BTC/USD only.
     for s in canonical_scenarios() {
-        assert!(
-            !s.asset.is_empty(),
-            "scenario {} has empty asset list",
-            s.id
-        );
+        assert!(!s.asset.is_empty(), "scenario {} has empty asset list", s.id);
         for a in &s.asset {
             assert_eq!(
                 a.venue_symbol, "BTC/USD",

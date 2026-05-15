@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 
@@ -15,6 +15,7 @@ vi.mock("@/api/eval", async () => {
   return {
     ...actual,
     getRun: vi.fn(),
+    cancelRun: vi.fn(),
   };
 });
 
@@ -81,6 +82,7 @@ function decision(overrides: Partial<DecisionRowDto> = {}): DecisionRowDto {
     action: "long_open",
     conviction: 0.77,
     justification: "breakout confirmed",
+    reasoning: null,
     order_size: 0.1,
     fill_price: 69000,
     fill_size: 0.1,
@@ -119,6 +121,12 @@ describe("EvalRunDetailRoute", () => {
     FakeEventSource.instances = [];
     vi.stubGlobal("EventSource", FakeEventSource);
     vi.mocked(chartApi.getRunChart).mockResolvedValue(null as never);
+    vi.mocked(evalApi.cancelRun).mockResolvedValue({
+      ...detail().summary,
+      status: "cancelled",
+      completed_at: "2026-05-13T14:01:00Z",
+      error: "cancelled by user",
+    });
     vi.mocked(chartApi.openRunStream).mockImplementation(
       (runId: string) => new EventSource(`/stream/${runId}`),
     );
@@ -145,5 +153,21 @@ describe("EvalRunDetailRoute", () => {
     expect(await screen.findByText("long_open")).toBeInTheDocument();
     expect(screen.getByText("BTC/USD")).toBeInTheDocument();
     expect(screen.getByText("0.77")).toBeInTheDocument();
+  });
+
+  it("shows an explicit stop control for active runs", async () => {
+    vi.mocked(evalApi.getRun).mockResolvedValue(detail());
+
+    renderDetail();
+
+    const stop = await screen.findByRole("button", {
+      name: "Stop eval run 01LIVE",
+    });
+    expect(stop).toHaveTextContent("Stop eval");
+
+    fireEvent.click(stop);
+
+    await waitFor(() => expect(evalApi.cancelRun).toHaveBeenCalled());
+    expect(vi.mocked(evalApi.cancelRun).mock.calls[0]?.[0]).toBe("01LIVE");
   });
 });

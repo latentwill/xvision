@@ -78,10 +78,7 @@ pub struct ComparisonEquitySample {
 /// Errors propagate as `anyhow::Error` from the store. The api layer
 /// (`api::eval::compare`) maps a missing-run error to typed `NotFound`
 /// so the wire surface returns a 404-shaped error.
-pub async fn compare_runs(
-    run_ids: &[String],
-    store: &RunStore,
-) -> Result<ComparisonReport> {
+pub async fn compare_runs(run_ids: &[String], store: &RunStore) -> Result<ComparisonReport> {
     let mut runs = Vec::with_capacity(run_ids.len());
     let mut curves = Vec::with_capacity(run_ids.len());
     let mut findings = Vec::new();

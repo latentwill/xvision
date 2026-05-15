@@ -17,9 +17,7 @@ use serde::{Deserialize, Serialize};
 // Re-export from xvision-data so consumers don't need a second import.
 pub use xvision_core::Capital;
 pub use xvision_data::alpaca::BarGranularity;
-use xvision_data::asset_whitelist::{
-    alpaca_crypto_asset, alpaca_crypto_history_start_for,
-};
+use xvision_data::asset_whitelist::{alpaca_crypto_asset, alpaca_crypto_history_start_for};
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(
@@ -103,9 +101,7 @@ impl Scenario {
 
         let asset = &self.asset[0];
         if asset.class != AssetClass::Crypto {
-            return Err(ScenarioValidationError::new(
-                "v1 scenario asset must be crypto",
-            ));
+            return Err(ScenarioValidationError::new("v1 scenario asset must be crypto"));
         }
         let Some(whitelisted) = alpaca_crypto_asset(&asset.symbol) else {
             return Err(ScenarioValidationError::new(format!(
@@ -482,10 +478,7 @@ pub fn canonical_scenarios() -> Vec<Scenario> {
             source: ScenarioSource::Canonical,
             display_name: display_name.into(),
             description: description.into(),
-            tags: regime_tags
-                .iter()
-                .map(|t| format!("regime:{}", t))
-                .collect(),
+            tags: regime_tags.iter().map(|t| format!("regime:{}", t)).collect(),
             notes: None,
             asset_class: AssetClass::Crypto,
             asset: canonical_btc_asset(),

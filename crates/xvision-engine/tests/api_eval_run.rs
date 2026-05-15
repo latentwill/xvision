@@ -13,13 +13,13 @@ use xvision_data::fixtures::ensure_test_fixture;
 use xvision_engine::agent::llm::{LlmDispatch, MockDispatch};
 use xvision_engine::api::eval::{self, EvalRunRequest};
 use xvision_engine::api::{Actor, ApiContext, ApiError};
+use xvision_engine::eval::canonical_scenarios;
+use xvision_engine::eval::run::{RunMode, RunStatus};
 use xvision_engine::strategies::manifest::PublicManifest;
 use xvision_engine::strategies::risk::RiskPreset;
 use xvision_engine::strategies::slot::LLMSlot;
-use xvision_engine::strategies::store::{StrategyStore, FilesystemStore};
+use xvision_engine::strategies::store::{FilesystemStore, StrategyStore};
 use xvision_engine::strategies::Strategy;
-use xvision_engine::eval::canonical_scenarios;
-use xvision_engine::eval::run::{RunMode, RunStatus};
 use xvision_engine::tools::ToolRegistry;
 use xvision_execution::broker_surface::{BrokerSurface, MockBrokerSurface};
 
@@ -135,9 +135,14 @@ fn hold_dispatch() -> Arc<dyn LlmDispatch> {
     ))
 }
 
+fn ensure_flash_fixture() {
+    ensure_test_fixture("scenario-flash-crash-2024-08").unwrap();
+}
+
 #[tokio::test]
 async fn run_with_deps_completes_paper_run_with_mocks() {
     let (ctx, _d) = ctx_with_tables().await;
+    ensure_flash_fixture();
     let agent_id = "01TESTSTRATEGY0000000000000A";
     save_test_strategy(&ctx, agent_id).await;
 
@@ -285,7 +290,7 @@ async fn run_with_deps_completes_backtest_run_with_mocks() {
 
     // Generate the synthetic fixture the flash-crash scenario points at.
     // ensure_test_fixture is idempotent so this is safe to call repeatedly.
-    ensure_test_fixture("scenario-flash-crash-2024-08").unwrap();
+    ensure_flash_fixture();
 
     let dispatch: Arc<dyn LlmDispatch> = Arc::new(MockDispatch::echo(
         r#"{"action":"long_open","conviction":0.5,"justification":"test"}"#,
@@ -354,6 +359,7 @@ async fn run_rejects_paper_mode_without_broker() {
 #[tokio::test]
 async fn run_writes_audit_row_on_completion() {
     let (ctx, _d) = ctx_with_tables().await;
+    ensure_flash_fixture();
     let agent_id = "01TESTSTRATEGY0000000000000D";
     save_test_strategy(&ctx, agent_id).await;
 
@@ -391,6 +397,7 @@ async fn run_writes_audit_row_on_completion() {
 #[tokio::test]
 async fn run_persists_run_to_runstore_so_get_finds_it() {
     let (ctx, _d) = ctx_with_tables().await;
+    ensure_flash_fixture();
     let agent_id = "01TESTSTRATEGY0000000000000E";
     save_test_strategy(&ctx, agent_id).await;
 

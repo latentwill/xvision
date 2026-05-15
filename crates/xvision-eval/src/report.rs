@@ -15,9 +15,7 @@ use std::fmt::Write;
 
 use crate::bootstrap::paired_bootstrap_sharpe_delta;
 use crate::gate::{anti_overfit_verdict, GateVerdict};
-use crate::metrics::{
-    compute_pre_committed, max_drawdown_pct, profit_factor, sharpe_annualized, win_rate,
-};
+use crate::metrics::{compute_pre_committed, max_drawdown_pct, profit_factor, sharpe_annualized, win_rate};
 use crate::result::BacktestResult;
 
 #[derive(Debug, Clone)]
@@ -64,12 +62,7 @@ pub fn render(result: &BacktestResult, cfg: &ReportConfig) -> anyhow::Result<Str
         anyhow::anyhow!(
             "baseline arm `{}` not present in BacktestResult; available: {}",
             cfg.baseline_arm,
-            result
-                .arms
-                .keys()
-                .cloned()
-                .collect::<Vec<_>>()
-                .join(", ")
+            result.arms.keys().cloned().collect::<Vec<_>>().join(", ")
         )
     })?;
 
@@ -195,9 +188,10 @@ pub fn render(result: &BacktestResult, cfg: &ReportConfig) -> anyhow::Result<Str
 
         let verdict = anti_overfit_verdict(&metrics);
         match verdict {
-            GateVerdict::PassesBothRegimes => {
-                writeln!(s, "**Gate: PassesBothRegimes** — Δ-Sharpe CI > 0 in every recorded regime.")?
-            }
+            GateVerdict::PassesBothRegimes => writeln!(
+                s,
+                "**Gate: PassesBothRegimes** — Δ-Sharpe CI > 0 in every recorded regime."
+            )?,
             GateVerdict::SingleRegimeEvidence {
                 winning_regime,
                 losing_regime,

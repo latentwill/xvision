@@ -39,6 +39,7 @@ pub struct DecisionRow {
     pub action: String, // 'long_open' | 'short_open' | 'flat' | 'hold'
     pub conviction: Option<f64>,
     pub justification: Option<String>,
+    pub reasoning: Option<String>,
     pub order_size: Option<f64>,
     pub fill_price: Option<f64>,
     pub fill_size: Option<f64>,
@@ -93,34 +94,49 @@ impl RunStore {
     }
 
     /// UPDATE eval_runs SET status = ?, error = ? WHERE id = ?.
-    pub async fn update_status(
-        &self,
-        id: &str,
-        status: RunStatus,
-        error: Option<&str>,
-    ) -> Result<()> {
-        let res = sqlx::query("UPDATE eval_runs SET status = ?, error = ? WHERE id = ?")
-            .bind(status.as_str())
-            .bind(error)
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .context("update eval_runs status")?;
+    pub async fn update_status(&self, id: &str, status: RunStatus, error: Option<&str>) -> Result<()> {
+        let res = sqlx::query(
+            "UPDATE eval_runs \
+             SET status = ?, error = ? \
+             WHERE id = ? \
+               AND (status NOT IN ('completed', 'failed', 'cancelled') OR status = ?)",
+        )
+        .bind(status.as_str())
+        .bind(error)
+        .bind(id)
+        .bind(status.as_str())
+        .execute(&self.pool)
+        .await
+        .context("update eval_runs status")?;
         if res.rows_affected() == 0 {
-            anyhow::bail!("update_status: no run with id '{id}'");
+            let current = self.status(id).await?;
+            anyhow::bail!("update_status: run '{id}' is already {}", current.as_str());
         }
         Ok(())
+    }
+
+    /// Transition a queued run to running. Returns false when the run already
+    /// reached a terminal state before the executor could start.
+    pub async fn begin_running(&self, id: &str) -> Result<bool> {
+        let res = sqlx::query(
+            "UPDATE eval_runs SET status = 'running', error = NULL WHERE id = ? AND status = 'queued'",
+        )
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .context("begin running eval_run")?;
+        if res.rows_affected() > 0 {
+            return Ok(true);
+        }
+
+        let status = self.status(id).await?;
+        Ok(matches!(status, RunStatus::Running))
     }
 
     /// Persist live LLM token usage for an in-flight run. Executors call this
     /// after each completed pipeline cycle so dashboards can show actual token
     /// progress before finalization.
-    pub async fn update_token_usage(
-        &self,
-        id: &str,
-        input_tokens: u64,
-        output_tokens: u64,
-    ) -> Result<()> {
+    pub async fn update_token_usage(&self, id: &str, input_tokens: u64, output_tokens: u64) -> Result<()> {
         let res = sqlx::query(
             "UPDATE eval_runs \
              SET actual_input_tokens = ?, actual_output_tokens = ? \
@@ -157,15 +173,41 @@ impl RunStore {
     }
 
     pub async fn is_cancelled(&self, id: &str) -> Result<bool> {
+        Ok(self.status(id).await? == RunStatus::Cancelled)
+    }
+
+    pub async fn is_terminal(&self, id: &str) -> Result<bool> {
+        Ok(self.status(id).await?.is_terminal())
+    }
+
+    pub async fn status(&self, id: &str) -> Result<RunStatus> {
         let row = sqlx::query("SELECT status FROM eval_runs WHERE id = ?")
             .bind(id)
             .fetch_optional(&self.pool)
             .await
             .context("select eval_run status")?;
-        Ok(row
+        let status = row
             .and_then(|r| r.try_get::<String, _>("status").ok())
-            .as_deref()
-            == Some("cancelled"))
+            .ok_or_else(|| anyhow::anyhow!("run not found: {id}"))?;
+        RunStatus::parse(&status).ok_or_else(|| anyhow::anyhow!("unknown RunStatus {status:?}"))
+    }
+
+    /// Mark a queued/running run failed. Returns false if the run already
+    /// reached a terminal state first.
+    pub async fn fail_active(&self, id: &str, reason: &str) -> Result<bool> {
+        let now = Utc::now().to_rfc3339();
+        let res = sqlx::query(
+            "UPDATE eval_runs \
+             SET status = 'failed', completed_at = ?, error = ? \
+             WHERE id = ? AND status IN ('queued', 'running')",
+        )
+        .bind(&now)
+        .bind(reason)
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .context("fail active eval_run")?;
+        Ok(res.rows_affected() > 0)
     }
 
     /// Sweep any runs left in `Queued` or `Running` status from a
@@ -189,17 +231,15 @@ impl RunStore {
         Ok(res.rows_affected())
     }
 
-    /// Mark a run completed: persist metrics_json, set completed_at = now,
-    /// flip status to Completed. Idempotent if called twice (the second call
-    /// just refreshes completed_at).
+    /// Mark an active run completed: persist metrics_json, set completed_at =
+    /// now, flip status to Completed. Terminal rows are never revived.
     pub async fn finalize(&self, id: &str, metrics: &MetricsSummary) -> Result<()> {
-        let metrics_json =
-            serde_json::to_string(metrics).context("serialize metrics for finalize")?;
+        let metrics_json = serde_json::to_string(metrics).context("serialize metrics for finalize")?;
         let now = Utc::now().to_rfc3339();
         let res = sqlx::query(
             "UPDATE eval_runs \
              SET status = 'completed', completed_at = ?, metrics_json = ? \
-             WHERE id = ?",
+             WHERE id = ? AND status IN ('queued', 'running')",
         )
         .bind(&now)
         .bind(&metrics_json)
@@ -208,7 +248,8 @@ impl RunStore {
         .await
         .context("finalize eval_runs")?;
         if res.rows_affected() == 0 {
-            anyhow::bail!("finalize: no run with id '{id}'");
+            let status = self.status(id).await?;
+            anyhow::bail!("finalize: run '{id}' is already {}", status.as_str());
         }
         Ok(())
     }
@@ -305,9 +346,9 @@ impl RunStore {
     pub async fn record_decision(&self, row: &DecisionRow) -> Result<()> {
         sqlx::query(
             "INSERT INTO eval_decisions \
-             (run_id, decision_index, timestamp, asset, action, conviction, justification, \
+             (run_id, decision_index, timestamp, asset, action, conviction, justification, reasoning, \
               order_size, fill_price, fill_size, fee, pnl_realized) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&row.run_id)
         .bind(row.decision_index as i64)
@@ -316,6 +357,7 @@ impl RunStore {
         .bind(&row.action)
         .bind(row.conviction)
         .bind(&row.justification)
+        .bind(&row.reasoning)
         .bind(row.order_size)
         .bind(row.fill_price)
         .bind(row.fill_size)
@@ -334,7 +376,7 @@ impl RunStore {
 
     pub async fn read_decisions(&self, run_id: &str) -> Result<Vec<DecisionRow>> {
         let rows = sqlx::query(
-            "SELECT run_id, decision_index, timestamp, asset, action, conviction, justification, \
+            "SELECT run_id, decision_index, timestamp, asset, action, conviction, justification, reasoning, \
                     order_size, fill_price, fill_size, fee, pnl_realized \
              FROM eval_decisions WHERE run_id = ? ORDER BY decision_index ASC",
         )
@@ -345,21 +387,14 @@ impl RunStore {
         rows.iter().map(row_to_decision).collect()
     }
 
-    pub async fn record_equity(
-        &self,
-        run_id: &str,
-        timestamp: DateTime<Utc>,
-        equity_usd: f64,
-    ) -> Result<()> {
-        sqlx::query(
-            "INSERT INTO eval_equity_samples (run_id, timestamp, equity_usd) VALUES (?, ?, ?)",
-        )
-        .bind(run_id)
-        .bind(timestamp.to_rfc3339())
-        .bind(equity_usd)
-        .execute(&self.pool)
-        .await
-        .with_context(|| format!("insert eval_equity_samples run_id={run_id}"))?;
+    pub async fn record_equity(&self, run_id: &str, timestamp: DateTime<Utc>, equity_usd: f64) -> Result<()> {
+        sqlx::query("INSERT INTO eval_equity_samples (run_id, timestamp, equity_usd) VALUES (?, ?, ?)")
+            .bind(run_id)
+            .bind(timestamp.to_rfc3339())
+            .bind(equity_usd)
+            .execute(&self.pool)
+            .await
+            .with_context(|| format!("insert eval_equity_samples run_id={run_id}"))?;
         Ok(())
     }
 
@@ -374,9 +409,7 @@ impl RunStore {
         .context("read eval_equity_samples")?;
         rows.iter()
             .map(|r| {
-                let ts: String = r
-                    .try_get("timestamp")
-                    .context("read equity timestamp")?;
+                let ts: String = r.try_get("timestamp").context("read equity timestamp")?;
                 let equity: f64 = r.try_get("equity_usd").context("read equity_usd")?;
                 let parsed = DateTime::parse_from_rfc3339(&ts)
                     .with_context(|| format!("parse equity timestamp {ts:?}"))?
@@ -389,11 +422,7 @@ impl RunStore {
     /// Persist a signed attestation against the given run. The store
     /// serializes the metrics + tokens block to the `signed_metrics_json`
     /// column; pubkey + signature go to their dedicated columns.
-    pub async fn record_attestation(
-        &self,
-        run_id: &str,
-        att: &EvalAttestation,
-    ) -> Result<()> {
+    pub async fn record_attestation(&self, run_id: &str, att: &EvalAttestation) -> Result<()> {
         let id = Ulid::new().to_string();
         let signed_payload = serde_json::json!({
             "metrics": att.metrics,
@@ -438,24 +467,21 @@ impl RunStore {
         .context("select eval_attestations")?;
         let Some(row) = row else { return Ok(None) };
 
-        let agent_id: String = row
-            .try_get("agent_id")
-            .context("read attestation agent_id")?;
+        let agent_id: String = row.try_get("agent_id").context("read attestation agent_id")?;
         let scenario_id: String = row
             .try_get("scenario_id")
             .context("read attestation scenario_id")?;
         let signed_metrics_json: String = row
             .try_get("signed_metrics_json")
             .context("read signed_metrics_json")?;
-        let signature_hex: String =
-            row.try_get("signature_hex").context("read signature_hex")?;
+        let signature_hex: String = row.try_get("signature_hex").context("read signature_hex")?;
         let signing_pubkey_hex: String = row
             .try_get("signing_pubkey_hex")
             .context("read signing_pubkey_hex")?;
         let signed_at_str: String = row.try_get("signed_at").context("read signed_at")?;
 
-        let signed_payload: serde_json::Value = serde_json::from_str(&signed_metrics_json)
-            .context("deserialize signed_metrics_json")?;
+        let signed_payload: serde_json::Value =
+            serde_json::from_str(&signed_metrics_json).context("deserialize signed_metrics_json")?;
         let metrics: MetricsSummary = serde_json::from_value(
             signed_payload
                 .get("metrics")
@@ -490,8 +516,7 @@ impl RunStore {
     /// in-memory id rather than auto-generating one — extractor.rs already
     /// stamps a ULID on every finding, so the store preserves it.
     pub async fn record_finding(&self, finding: &Finding) -> Result<()> {
-        let evidence_json = serde_json::to_string(&finding.evidence)
-            .context("serialize finding evidence")?;
+        let evidence_json = serde_json::to_string(&finding.evidence).context("serialize finding evidence")?;
         sqlx::query(
             "INSERT INTO eval_findings \
              (id, run_id, kind, severity, summary, evidence_json, extracted_at, schema_version) \
@@ -507,12 +532,7 @@ impl RunStore {
         .bind(&finding.schema_version)
         .execute(&self.pool)
         .await
-        .with_context(|| {
-            format!(
-                "insert eval_findings run_id={} id={}",
-                finding.run_id, finding.id
-            )
-        })?;
+        .with_context(|| format!("insert eval_findings run_id={} id={}", finding.run_id, finding.id))?;
         Ok(())
     }
 
@@ -544,9 +564,7 @@ fn row_to_finding(row: &sqlx::sqlite::SqliteRow) -> Result<Finding> {
         .context("read finding evidence_json")?;
     let evidence: serde_json::Value =
         serde_json::from_str(&evidence_json).context("deserialize finding evidence")?;
-    let extracted_at_str: String = row
-        .try_get("extracted_at")
-        .context("read finding extracted_at")?;
+    let extracted_at_str: String = row.try_get("extracted_at").context("read finding extracted_at")?;
     let extracted_at = DateTime::parse_from_rfc3339(&extracted_at_str)
         .with_context(|| format!("parse finding extracted_at {extracted_at_str:?}"))?
         .with_timezone(&Utc);
@@ -582,11 +600,10 @@ fn row_to_run(row: &sqlx::sqlite::SqliteRow) -> Result<Run> {
         .transpose()?;
 
     let mode_str: String = row.try_get("mode").context("read mode")?;
-    let mode = RunMode::parse(&mode_str)
-        .ok_or_else(|| anyhow::anyhow!("unknown RunMode {mode_str:?}"))?;
+    let mode = RunMode::parse(&mode_str).ok_or_else(|| anyhow::anyhow!("unknown RunMode {mode_str:?}"))?;
     let status_str: String = row.try_get("status").context("read status")?;
-    let status = RunStatus::parse(&status_str)
-        .ok_or_else(|| anyhow::anyhow!("unknown RunStatus {status_str:?}"))?;
+    let status =
+        RunStatus::parse(&status_str).ok_or_else(|| anyhow::anyhow!("unknown RunStatus {status_str:?}"))?;
 
     let params_override: Option<Value> = row
         .try_get::<Option<String>, _>("params_override_json")
@@ -602,9 +619,7 @@ fn row_to_run(row: &sqlx::sqlite::SqliteRow) -> Result<Run> {
 
     Ok(Run {
         id: row.try_get("id").context("read id")?,
-        agent_id: row
-            .try_get("agent_id")
-            .context("read agent_id")?,
+        agent_id: row.try_get("agent_id").context("read agent_id")?,
         scenario_id: row.try_get("scenario_id").context("read scenario_id")?,
         params_override,
         mode,
@@ -643,6 +658,7 @@ fn row_to_decision(row: &sqlx::sqlite::SqliteRow) -> Result<DecisionRow> {
         action: row.try_get("action").context("read action")?,
         conviction: row.try_get("conviction").context("read conviction")?,
         justification: row.try_get("justification").context("read justification")?,
+        reasoning: row.try_get("reasoning").context("read reasoning")?,
         order_size: row.try_get("order_size").context("read order_size")?,
         fill_price: row.try_get("fill_price").context("read fill_price")?,
         fill_size: row.try_get("fill_size").context("read fill_size")?,
