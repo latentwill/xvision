@@ -1,0 +1,50 @@
+{
+  "base_template": "onchain_smart_money",
+  "display_name": "Stablecoin Inflow Riskon",
+  "family": "nansen",
+  "mechanical_params": [
+    {
+      "default": "24",
+      "name": "flow_window_hours",
+      "range": "4 \u2013 72"
+    },
+    {
+      "default": "1.0%",
+      "name": "min_inflow_pct_tvl",
+      "range": "0.2% \u2013 5.0%"
+    },
+    {
+      "default": "0.5",
+      "name": "bias_strength",
+      "range": "0.0 \u2013 1.0"
+    },
+    {
+      "default": "BTC",
+      "name": "apply_to",
+      "range": "per token / index"
+    }
+  ],
+  "name": "stablecoin_inflow_riskon",
+  "plain_summary": "Stablecoin balances flowing into DEX pools (or into wallets known to trade DEXes) are buy-side ammunition. The lifted form is the same as \"investors moving cash from money-market funds into equities\" \u2014 the cash is being de-risked into a position-building mode. Unlike inflows of token positions (which may be neutral rotation), stablecoin inflows to DEX infrastructure are unambiguously risk-on.",
+  "regime_fit": [
+    "event_driven"
+  ],
+  "required_tools": [
+    "ohlcv",
+    "onchain_panel"
+  ],
+  "schema_version": "xvision.strategy_template.v1",
+  "sections": {
+    "data_dependencies": "- Nansen `stablecoin_flows` endpoint with Mantle DEX pool addresses\n  whitelisted (Merchant Moe / Agni / Fluxion).\n- Mantle DEX TVL (DefiLlama) for normalisation.",
+    "decision_rule": "```\nrisk_on_score = stables.net_flow_pct_tvl(window=24h) / min_inflow_pct_tvl\n\nif risk_on_score >= 1.0:\n    apply long bias to all directional decisions, scaled by bias_strength\n    e.g. multiply long-side position size by (1 + bias_strength * risk_on_score)\n         multiply short-side position size by (1 - bias_strength * risk_on_score)\n```",
+    "expected_regime": "A regime-shift signal. Most useful on swing-to-trend horizons (1d\u20131w).\nUnderperforms intraday \u2014 stablecoin flows don't transmit to price\nwithin hours; they set the *floor* for buy pressure over days.",
+    "inputs": "- `OnchainPanel.nansen.stables.net_flow_to_dex_24h` \u2014 net stablecoin\n  units (USDC / USDT / DAI / equivalents) flowing into Mantle DEX pools.\n- `OnchainPanel.nansen.stables.flow_pct_dex_tvl` \u2014 flow as fraction of\n  current DEX stablecoin TVL.\n- (Optional) per-token stable inflow \u2014 flowing into specific token's pools\n  is a directional ammo signal (`stbl_token_rotation` in idea pool).",
+    "parameters": "| Param                     | Default | Range          |\n| ------------------------- | ------- | -------------- |\n| `flow_window_hours`       | 24      | 4 \u2013 72         |\n| `min_inflow_pct_tvl`      | 1.0%    | 0.2% \u2013 5.0%    |\n| `bias_strength`           | 0.5     | 0.0 \u2013 1.0      |\n| `apply_to`                | `BTC`   | per token / index |\n\n`bias_strength` is a portfolio-level tilt \u2014 this strategy is most\nnaturally a *bias modifier* on other strategies' decisions rather than a\nstandalone entry trigger.",
+    "references": "- Pair: `stbl_riskoff` (idea pool) \u2014 outflow inverse.\n- Related: `stbl_token_rotation` (idea pool) \u2014 per-token directional version.",
+    "status": "`queued` \u2014 implements the regime-tilt slot in the strategy ensemble.\nBest evaluated as a modifier (axis 6 \u2014 sizing) rather than a standalone\nentry rule.",
+    "thesis": "Stablecoin balances flowing *into* DEX pools (or into wallets known to\ntrade DEXes) are buy-side ammunition. The lifted form is the same as\n\"investors moving cash from money-market funds into equities\" \u2014 the cash\nis being de-risked into a position-building mode. Unlike inflows of token\npositions (which may be neutral rotation), stablecoin inflows to DEX\ninfrastructure are unambiguously risk-on.\n\nOn Mantle specifically, this signal is high-leverage because stablecoin\nliquidity on Merchant Moe / Agni / Fluxion is small enough that\nsignificant inflows are detectable as a fraction of TVL."
+  },
+  "source_doc": "strategies/nansen/stablecoin_inflow_riskon.md",
+  "status": "queued",
+  "trader_prompt": "You are trading the `Stablecoin Inflow Riskon` strategy.\n\nThesis:\nStablecoin balances flowing into DEX pools (or into wallets known to trade DEXes) are buy-side ammunition. The lifted form is the same as \"investors moving cash from money-market funds into equities\" \u2014 the cash is being de-risked into a position-building mode. Unlike inflows of token positions (which may be neutral rotation), stablecoin inflows to DEX infrastructure are unambiguously risk-on.\n\nInputs:\n- `OnchainPanel.nansen.stables.net_flow_to_dex_24h` \u2014 net stablecoin\n  units (USDC / USDT / DAI / equivalents) flowing into Mantle DEX pools.\n- `OnchainPanel.nansen.stables.flow_pct_dex_tvl` \u2014 flow as fraction of\n  current DEX stablecoin TVL.\n- (Optional) per-token stable inflow \u2014 flowing into specific token's pools\n  is a directional ammo signal (`stbl_token_rotation` in idea pool).\n\nDecision rule:\n```\nrisk_on_score = stables.net_flow_pct_tvl(window=24h) / min_inflow_pct_tvl\n\nif risk_on_score >= 1.0:\n    apply long bias to all directional decisions, scaled by bias_strength\n    e.g. multiply long-side position size by (1 + bias_strength * risk_on_score)\n         multiply short-side position size by (1 - bias_strength * risk_on_score)\n```\n\nExpected regime:\nA regime-shift signal. Most useful on swing-to-trend horizons (1d\u20131w). Underperforms intraday \u2014 stablecoin flows don't transmit to price within hours; they set the floor for buy pressure over days.\n\nData dependencies:\n- Nansen `stablecoin_flows` endpoint with Mantle DEX pool addresses\n  whitelisted (Merchant Moe / Agni / Fluxion).\n- Mantle DEX TVL (DefiLlama) for normalisation.\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
+}

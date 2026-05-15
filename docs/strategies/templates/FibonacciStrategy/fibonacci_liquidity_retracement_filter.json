@@ -1,0 +1,33 @@
+{
+  "base_template": "mean_reversion",
+  "display_name": "Fibonacci Liquidity Retracement Filter",
+  "family": "FibonacciStrategy",
+  "mechanical_params": [],
+  "name": "fibonacci_liquidity_retracement_filter",
+  "plain_summary": "Not every retracement is healthy. This strategy uses market liquidity context to decide whether a Fibonacci pullback is just a pause in a trend or the start of a liquidation cascade.",
+  "regime_fit": [
+    "chop",
+    "event_driven"
+  ],
+  "required_tools": [
+    "ohlcv",
+    "indicator_panel",
+    "onchain_panel",
+    "funding_rates",
+    "liquidations"
+  ],
+  "schema_version": "xvision.strategy_template.v1",
+  "sections": {
+    "data_dependencies": "- OHLCV bars and indicator panel values\n- Onchain liquidity and liquidation feeds\n- No extra model inputs required",
+    "decision_rule": "- If price pulls back into a Fibonacci zone but liquidations are accelerating and open interest is fragile, stay flat.\n- If price retraces into 0.382 to 0.618 while stablecoin inflows are rising and funding is not extreme, consider the pullback constructive.\n- If retracement happens on heavy liquidation stress, wait for the flush to finish or look for a reversal only after support returns.\n- Use the liquidity panel as a filter, not as a standalone trigger.\n\nPseudocode:\n\n```text\nif fib_pullback and liquidity_healthy and trend_intact:\n    buy_pullback\nelif fib_pullback and liquidation_stress_high:\n    wait\nelse:\n    flat\n```",
+    "expected_regime": "- Markets where onchain positioning matters as much as chart structure\n- Trend pullbacks with noisy leverage dynamics\n- Assets prone to liquidation-driven overshoots",
+    "inputs": "- `OnchainPanel.funding_rate_8h`\n- `OnchainPanel.open_interest_usd`\n- `OnchainPanel.long_short_ratio`\n- `OnchainPanel.liquidations_24h_usd`\n- `OnchainPanel.stablecoin_inflows_24h_usd`\n- `IndicatorPanel.ema_12`\n- `IndicatorPanel.ema_26`\n- `IndicatorPanel.rsi_14`\n- `Regime`",
+    "parameters": "- `retracement_382`: healthy pullback zone if liquidity is supportive\n- `retracement_618`: deeper retracement that needs extra caution\n- `liquidation_stress_max`: cap for tolerated liquidation pressure\n- `oi_spike_limit`: open interest spike threshold\n- `stablecoin_support_min`: minimum inflow support for long entries\n- `crowding_limit`: funding and long-short crowding ceiling",
+    "references": "- `crates/xvision-core/src/market.rs`\n- `decisions/strategy-choices.md`\n- `strategies/x strategy/fibonacci_extension_breakout.md`",
+    "status": "idea",
+    "thesis": "Not every retracement is healthy. This strategy uses market liquidity context to decide whether a Fibonacci pullback is just a pause in a trend or the start of a liquidation cascade."
+  },
+  "source_doc": "strategies/FibonacciStrategy/fibonacci_liquidity_retracement_filter.md",
+  "status": "idea",
+  "trader_prompt": "You are trading the `Fibonacci Liquidity Retracement Filter` strategy.\n\nThesis:\nNot every retracement is healthy. This strategy uses market liquidity context to decide whether a Fibonacci pullback is just a pause in a trend or the start of a liquidation cascade.\n\nInputs:\n- `OnchainPanel.funding_rate_8h`\n- `OnchainPanel.open_interest_usd`\n- `OnchainPanel.long_short_ratio`\n- `OnchainPanel.liquidations_24h_usd`\n- `OnchainPanel.stablecoin_inflows_24h_usd`\n- `IndicatorPanel.ema_12`\n- `IndicatorPanel.ema_26`\n- `IndicatorPanel.rsi_14`\n- `Regime`\n\nDecision rule:\n- If price pulls back into a Fibonacci zone but liquidations are accelerating and open interest is fragile, stay flat.\n- If price retraces into 0.382 to 0.618 while stablecoin inflows are rising and funding is not extreme, consider the pullback constructive.\n- If retracement happens on heavy liquidation stress, wait for the flush to finish or look for a reversal only after support returns.\n- Use the liquidity panel as a filter, not as a standalone trigger.\n\nPseudocode:\n\n```text\nif fib_pullback and liquidity_healthy and trend_intact:\n    buy_pullback\nelif fib_pullback and liquidation_stress_high:\n    wait\nelse:\n    flat\n```\n\nExpected regime:\n- Markets where onchain positioning matters as much as chart structure - Trend pullbacks with noisy leverage dynamics - Assets prone to liquidation-driven overshoots\n\nData dependencies:\n- OHLCV bars and indicator panel values\n- Onchain liquidity and liquidation feeds\n- No extra model inputs required\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
+}

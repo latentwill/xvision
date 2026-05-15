@@ -1,0 +1,50 @@
+{
+  "base_template": "onchain_smart_money",
+  "display_name": "CEX Inflow Riskoff",
+  "family": "nansen",
+  "mechanical_params": [
+    {
+      "default": "24",
+      "name": "flow_window_hours",
+      "range": "4 \u2013 72"
+    },
+    {
+      "default": "0.05%",
+      "name": "min_inflow_pct_supply",
+      "range": "0.01% \u2013 0.3%"
+    },
+    {
+      "default": "5%",
+      "name": "min_rally_pct_7d",
+      "range": "0% \u2013 20%"
+    },
+    {
+      "default": "exit",
+      "name": "mode",
+      "range": "exit / short"
+    }
+  ],
+  "name": "cex_inflow_riskoff",
+  "plain_summary": "The mirror of cex_outflow_accumulation. Tokens flowing into CEX hot wallets are pre-positioned for sale \u2014 wallets do not deposit to centralized exchanges to hold long-term. Sustained inflow above a threshold indicates distribution risk, especially when paired with a non-trivial price rally (holders selling into strength).",
+  "regime_fit": [
+    "event_driven"
+  ],
+  "required_tools": [
+    "ohlcv",
+    "onchain_panel"
+  ],
+  "schema_version": "xvision.strategy_template.v1",
+  "sections": {
+    "data_dependencies": "Same as `cex_outflow_accumulation`.",
+    "decision_rule": "```\nif cex.net_flow_pct_supply(window=24h) >= min_inflow_pct_supply\n   and price_change_7d >= min_rally_pct_7d:\n       if in_long_position: exit long\n       if mode == \"short\" and is_flat: enter short\n```",
+    "expected_regime": "Distribution tops in trending markets. Underperforms during capitulation\nevents \u2014 distinguish via the `min_rally_pct_7d` gate.",
+    "inputs": "- `OnchainPanel.nansen.cex.net_flow_token_24h` (positive = inflow).\n- `OnchainPanel.nansen.cex.flow_pct_supply`.\n- `PriceFrame.close` \u2014 for rally context.\n- (Optional) `OnchainPanel.nansen.smart_money.net_flow_token_24h` \u2014 fade\n  is highest-conviction when smart money is *also* distributing.",
+    "parameters": "| Param                    | Default | Range           |\n| ------------------------ | ------- | --------------- |\n| `flow_window_hours`      | 24      | 4 \u2013 72          |\n| `min_inflow_pct_supply`  | 0.05%   | 0.01% \u2013 0.3%    |\n| `min_rally_pct_7d`       | 5%      | 0% \u2013 20%        |\n| `mode`                   | `exit`  | `exit` / `short` |\n\n`min_rally_pct_7d` ensures the inflow is selling-into-strength, not\npanic-deposit-during-crash (the latter often marks a low and would invert\nthe signal).",
+    "references": "- Pair: [`cex_outflow_accumulation`](cex_outflow_accumulation.md).\n- Disambiguator: 7d rally gate \u2014 without it, the strategy reverses sign\n  on capitulation flushes.",
+    "status": "`queued` \u2014 pair with `cex_outflow_accumulation` for symmetric long/short\ncoverage of CEX flow.",
+    "thesis": "The mirror of `cex_outflow_accumulation`. Tokens flowing *into* CEX hot\nwallets are pre-positioned for sale \u2014 wallets do not deposit to centralized\nexchanges to hold long-term. Sustained inflow above a threshold indicates\ndistribution risk, especially when paired with a non-trivial price rally\n(holders selling into strength).\n\nSign-inverted vs the smart-money / fund / stables rows: **inflow is bearish**."
+  },
+  "source_doc": "strategies/nansen/cex_inflow_riskoff.md",
+  "status": "queued",
+  "trader_prompt": "You are trading the `CEX Inflow Riskoff` strategy.\n\nThesis:\nThe mirror of cex_outflow_accumulation. Tokens flowing into CEX hot wallets are pre-positioned for sale \u2014 wallets do not deposit to centralized exchanges to hold long-term. Sustained inflow above a threshold indicates distribution risk, especially when paired with a non-trivial price rally (holders selling into strength).\n\nInputs:\n- `OnchainPanel.nansen.cex.net_flow_token_24h` (positive = inflow).\n- `OnchainPanel.nansen.cex.flow_pct_supply`.\n- `PriceFrame.close` \u2014 for rally context.\n- (Optional) `OnchainPanel.nansen.smart_money.net_flow_token_24h` \u2014 fade\n  is highest-conviction when smart money is *also* distributing.\n\nDecision rule:\n```\nif cex.net_flow_pct_supply(window=24h) >= min_inflow_pct_supply\n   and price_change_7d >= min_rally_pct_7d:\n       if in_long_position: exit long\n       if mode == \"short\" and is_flat: enter short\n```\n\nExpected regime:\nDistribution tops in trending markets. Underperforms during capitulation events \u2014 distinguish via the min_rally_pct_7d gate.\n\nData dependencies:\nSame as `cex_outflow_accumulation`.\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
+}

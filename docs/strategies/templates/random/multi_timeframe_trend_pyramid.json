@@ -1,0 +1,28 @@
+{
+  "base_template": "custom",
+  "display_name": "Multi Timeframe Trend Pyramid",
+  "family": "random",
+  "mechanical_params": [],
+  "name": "multi_timeframe_trend_pyramid",
+  "plain_summary": "Strong trends usually reward patience and scaling. This strategy only participates when the higher-timeframe structure agrees, then adds on shallow pullbacks instead of trying to predict tops.",
+  "regime_fit": [
+    "any"
+  ],
+  "required_tools": [
+    "indicator_panel"
+  ],
+  "schema_version": "xvision.strategy_template.v1",
+  "sections": {
+    "data_dependencies": "- MA, EMA, and MACD inputs already in the snapshot\n- Recent bars for pullback detection\n- No extra feeds required",
+    "decision_rule": "- Only enter when the moving average stack and MACD agree with the trade direction.\n- Use the first entry to establish exposure.\n- Add on shallow pullbacks that hold above the trend anchor.\n- Exit when the stack compresses or the regime flips out of trend.\n\nPseudocode:\n\n```text\nif trend_stack_aligned and macd_confirmed:\n    enter_small\n    on_pullback_hold: add_small\n    on_trend_failure: exit\nelse:\n    flat\n```",
+    "expected_regime": "- Persistent directional markets\n- Periods where pullbacks are orderly, not violent\n- Markets where trend persistence beats mean reversion",
+    "inputs": "- `IndicatorPanel.sma_20`\n- `IndicatorPanel.sma_50`\n- `IndicatorPanel.sma_200`\n- `IndicatorPanel.ema_12`\n- `IndicatorPanel.ema_26`\n- `IndicatorPanel.macd`\n- `IndicatorPanel.macd_signal`\n- `Regime`\n- `MarketSnapshot.recent_bars`",
+    "parameters": "- `trend_stack`: SMA20 above SMA50 above SMA200 for longs, reverse for shorts\n- `pullback_depth`: 0.5 to 1.5 ATR retracement from the local impulse\n- `add_size_fraction`: 0.25 to 0.5 of initial size on each confirmed pullback\n- `max_adds`: 1 to 3",
+    "references": "- `crates/xvision-core/src/market.rs`\n- `crates/xvision-eval/src/baselines/buy_and_hold.rs`\n- `crates/xvision-eval/src/baselines/ma_crossover.rs`",
+    "status": "idea",
+    "thesis": "Strong trends usually reward patience and scaling. This strategy only participates when the higher-timeframe structure agrees, then adds on shallow pullbacks instead of trying to predict tops."
+  },
+  "source_doc": "strategies/random/multi_timeframe_trend_pyramid.md",
+  "status": "idea",
+  "trader_prompt": "You are trading the `Multi Timeframe Trend Pyramid` strategy.\n\nThesis:\nStrong trends usually reward patience and scaling. This strategy only participates when the higher-timeframe structure agrees, then adds on shallow pullbacks instead of trying to predict tops.\n\nInputs:\n- `IndicatorPanel.sma_20`\n- `IndicatorPanel.sma_50`\n- `IndicatorPanel.sma_200`\n- `IndicatorPanel.ema_12`\n- `IndicatorPanel.ema_26`\n- `IndicatorPanel.macd`\n- `IndicatorPanel.macd_signal`\n- `Regime`\n- `MarketSnapshot.recent_bars`\n\nDecision rule:\n- Only enter when the moving average stack and MACD agree with the trade direction.\n- Use the first entry to establish exposure.\n- Add on shallow pullbacks that hold above the trend anchor.\n- Exit when the stack compresses or the regime flips out of trend.\n\nPseudocode:\n\n```text\nif trend_stack_aligned and macd_confirmed:\n    enter_small\n    on_pullback_hold: add_small\n    on_trend_failure: exit\nelse:\n    flat\n```\n\nExpected regime:\n- Persistent directional markets - Periods where pullbacks are orderly, not violent - Markets where trend persistence beats mean reversion\n\nData dependencies:\n- MA, EMA, and MACD inputs already in the snapshot\n- Recent bars for pullback detection\n- No extra feeds required\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
+}

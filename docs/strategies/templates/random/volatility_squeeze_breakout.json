@@ -1,0 +1,30 @@
+{
+  "base_template": "breakout",
+  "display_name": "Volatility Squeeze Breakout",
+  "family": "random",
+  "mechanical_params": [],
+  "name": "volatility_squeeze_breakout",
+  "plain_summary": "Compression often precedes expansion. This strategy waits for low volatility, then enters with the breakout when price escapes a tight range and the direction agrees with the higher-level trend.",
+  "regime_fit": [
+    "range_bound",
+    "high_volatility"
+  ],
+  "required_tools": [
+    "ohlcv",
+    "indicator_panel"
+  ],
+  "schema_version": "xvision.strategy_template.v1",
+  "sections": {
+    "data_dependencies": "- Bollinger Bands and ATR already in the indicator panel\n- Recent bar history for range and confirmation logic",
+    "decision_rule": "- Identify a compression regime using narrow Bollinger width and low ATR.\n- Require a breakout through the Donchian band.\n- Confirm direction with the short and medium moving averages.\n- If the breakout fails quickly and price returns inside the squeeze, exit fast.\n\nPseudocode:\n\n```text\nif squeeze_detected and breakout_up and trend_aligned:\n    buy\nelif squeeze_detected and breakout_down and trend_aligned:\n    sell\nelif breakout_failed:\n    flat\n```",
+    "expected_regime": "- Low-volatility compression followed by expansion\n- Clean intraday or swing breakouts\n- Assets that often trend after range contraction",
+    "inputs": "- `IndicatorPanel.bb_upper`\n- `IndicatorPanel.bb_middle`\n- `IndicatorPanel.bb_lower`\n- `IndicatorPanel.atr_14`\n- `IndicatorPanel.donchian_upper`\n- `IndicatorPanel.donchian_lower`\n- `IndicatorPanel.sma_20`\n- `IndicatorPanel.sma_50`\n- `MarketSnapshot.recent_bars`",
+    "parameters": "- `squeeze_window`: 10 to 30 bars\n- `atr_percentile_cutoff`: bottom 20% to 35% of trailing ATR values\n- `donchian_breakout_buffer`: 0 to 0.25 ATR\n- `trend_alignment`: SMA20 above SMA50 for longs, below for shorts",
+    "references": "- `crates/xvision-core/src/market.rs`\n- `crates/xvision-eval/src/baselines/ma_crossover.rs`\n- `crates/xvision-eval/src/baselines/macd_momentum.rs`",
+    "status": "idea",
+    "thesis": "Compression often precedes expansion. This strategy waits for low volatility, then enters with the breakout when price escapes a tight range and the direction agrees with the higher-level trend."
+  },
+  "source_doc": "strategies/random/volatility_squeeze_breakout.md",
+  "status": "idea",
+  "trader_prompt": "You are trading the `Volatility Squeeze Breakout` strategy.\n\nThesis:\nCompression often precedes expansion. This strategy waits for low volatility, then enters with the breakout when price escapes a tight range and the direction agrees with the higher-level trend.\n\nInputs:\n- `IndicatorPanel.bb_upper`\n- `IndicatorPanel.bb_middle`\n- `IndicatorPanel.bb_lower`\n- `IndicatorPanel.atr_14`\n- `IndicatorPanel.donchian_upper`\n- `IndicatorPanel.donchian_lower`\n- `IndicatorPanel.sma_20`\n- `IndicatorPanel.sma_50`\n- `MarketSnapshot.recent_bars`\n\nDecision rule:\n- Identify a compression regime using narrow Bollinger width and low ATR.\n- Require a breakout through the Donchian band.\n- Confirm direction with the short and medium moving averages.\n- If the breakout fails quickly and price returns inside the squeeze, exit fast.\n\nPseudocode:\n\n```text\nif squeeze_detected and breakout_up and trend_aligned:\n    buy\nelif squeeze_detected and breakout_down and trend_aligned:\n    sell\nelif breakout_failed:\n    flat\n```\n\nExpected regime:\n- Low-volatility compression followed by expansion - Clean intraday or swing breakouts - Assets that often trend after range contraction\n\nData dependencies:\n- Bollinger Bands and ATR already in the indicator panel\n- Recent bar history for range and confirmation logic\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
+}

@@ -1,0 +1,30 @@
+{
+  "base_template": "mean_reversion",
+  "display_name": "Fibonacci Cycle Alignment",
+  "family": "FibonacciStrategy",
+  "mechanical_params": [],
+  "name": "fibonacci_cycle_alignment",
+  "plain_summary": "Some markets move in nested waves. This strategy only acts when short-term, medium-term, and higher-timeframe structure line up, using Fibonacci-like spacing as a way to think about cycle rhythm and confirmation.",
+  "regime_fit": [
+    "event_driven"
+  ],
+  "required_tools": [
+    "ohlcv",
+    "indicator_panel",
+    "onchain_panel"
+  ],
+  "schema_version": "xvision.strategy_template.v1",
+  "sections": {
+    "data_dependencies": "- OHLCV bars and indicator panel values\n- Realized volatility feed\n- No extra model inputs required",
+    "decision_rule": "- If the regime is noisy or the EMAs disagree, stay flat.\n- If the short trend, medium trend, and momentum all agree, take the signal.\n- Prefer entries after a measured pullback instead of chasing the first impulse.\n- If volatility spikes without alignment, treat the move as random noise.\n- If a higher-timeframe trend is present, allow the lower timeframe to time the entry.\n\nPseudocode:\n\n```text\nif regime == Trend and timeframe_stack_aligned and momentum_confirmed:\n    trade_with_cycle\nelse:\n    flat\n```",
+    "expected_regime": "- Nested trends with recurring pullback rhythm\n- Markets where structure matters more than raw speed\n- Swing setups that benefit from confirmation across horizons",
+    "inputs": "- `IndicatorPanel.ema_12`\n- `IndicatorPanel.ema_26`\n- `IndicatorPanel.macd_histogram`\n- `IndicatorPanel.rsi_14`\n- `IndicatorPanel.atr_14`\n- `IndicatorPanel.bollinger_upper`\n- `IndicatorPanel.bollinger_lower`\n- `Regime`\n- `OnchainPanel.realized_volatility_30d`",
+    "parameters": "- `trend_alignment_min`: required alignment across short and medium EMAs\n- `momentum_confirmation`: MACD and RSI confirmation floor\n- `cycle_spacing`: preferred spacing between pullbacks and resumption points\n- `volatility_filter`: avoid acting when volatility is too chaotic\n- `timeframe_stack`: minimum number of aligned horizons before entry",
+    "references": "- `crates/xvision-core/src/market.rs`\n- `decisions/strategy-choices.md`\n- `strategies/x strategy/fibonacci_pullback_reentry.md`",
+    "status": "idea",
+    "thesis": "Some markets move in nested waves. This strategy only acts when short-term, medium-term, and higher-timeframe structure line up, using Fibonacci-like spacing as a way to think about cycle rhythm and confirmation."
+  },
+  "source_doc": "strategies/FibonacciStrategy/fibonacci_cycle_alignment.md",
+  "status": "idea",
+  "trader_prompt": "You are trading the `Fibonacci Cycle Alignment` strategy.\n\nThesis:\nSome markets move in nested waves. This strategy only acts when short-term, medium-term, and higher-timeframe structure line up, using Fibonacci-like spacing as a way to think about cycle rhythm and confirmation.\n\nInputs:\n- `IndicatorPanel.ema_12`\n- `IndicatorPanel.ema_26`\n- `IndicatorPanel.macd_histogram`\n- `IndicatorPanel.rsi_14`\n- `IndicatorPanel.atr_14`\n- `IndicatorPanel.bollinger_upper`\n- `IndicatorPanel.bollinger_lower`\n- `Regime`\n- `OnchainPanel.realized_volatility_30d`\n\nDecision rule:\n- If the regime is noisy or the EMAs disagree, stay flat.\n- If the short trend, medium trend, and momentum all agree, take the signal.\n- Prefer entries after a measured pullback instead of chasing the first impulse.\n- If volatility spikes without alignment, treat the move as random noise.\n- If a higher-timeframe trend is present, allow the lower timeframe to time the entry.\n\nPseudocode:\n\n```text\nif regime == Trend and timeframe_stack_aligned and momentum_confirmed:\n    trade_with_cycle\nelse:\n    flat\n```\n\nExpected regime:\n- Nested trends with recurring pullback rhythm - Markets where structure matters more than raw speed - Swing setups that benefit from confirmation across horizons\n\nData dependencies:\n- OHLCV bars and indicator panel values\n- Realized volatility feed\n- No extra model inputs required\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
+}

@@ -1,0 +1,33 @@
+{
+  "base_template": "mean_reversion",
+  "display_name": "Liquidation Cascade Reversal",
+  "family": "random",
+  "mechanical_params": [],
+  "name": "liquidation_cascade_reversal",
+  "plain_summary": "Big liquidation spikes often mark emotional exhaustion. After the flush, price frequently mean-reverts if the move was too fast relative to the recent range.",
+  "regime_fit": [
+    "range_bound",
+    "high_volatility",
+    "event_driven"
+  ],
+  "required_tools": [
+    "ohlcv",
+    "indicator_panel",
+    "onchain_panel",
+    "liquidations"
+  ],
+  "schema_version": "xvision.strategy_template.v1",
+  "sections": {
+    "data_dependencies": "- Liquidation feed\n- OHLCV history\n- Donchian and ATR indicators computed upstream",
+    "decision_rule": "- Detect a liquidation spike relative to the recent baseline.\n- Check whether the latest close re-enters the prior range after the flush.\n- If price closes back inside the Donchian band and the move was a cascade, buy the bounce after downside flushes or sell the fade after upside squeezes.\n- If the close remains outside the band with accelerating volatility, stay out until price stabilizes.\n\nPseudocode:\n\n```text\nif liquidation_spike and close_reentered_range and volatility_spike:\n    fade_the_flush\nelif liquidation_spike and range_not_recovered:\n    flat\n```",
+    "expected_regime": "- High-volatility selloffs and short squeezes\n- Markets with strong liquidation data and thin order books\n- Post-news whipsaws that overextend beyond the local range",
+    "inputs": "- `IndicatorPanel.atr_14`\n- `IndicatorPanel.donchian_upper`\n- `IndicatorPanel.donchian_lower`\n- `OnchainPanel.liquidations_24h_usd`\n- `MarketSnapshot.recent_bars`\n- `Regime`",
+    "parameters": "- `liquidation_spike_mult`: 2x to 4x above 20-day baseline\n- `atr_expand_mult`: 1.2x to 1.8x relative to trailing ATR median\n- `range_reentry_buffer`: 0.1x to 0.3x ATR\n- `lookback_bars`: 20 to 50",
+    "references": "- `crates/xvision-core/src/market.rs`\n- `crates/xvision-eval/src/baselines/macd_momentum.rs`\n- `FOLLOWUPS.md`",
+    "status": "idea",
+    "thesis": "Big liquidation spikes often mark emotional exhaustion. After the flush, price frequently mean-reverts if the move was too fast relative to the recent range."
+  },
+  "source_doc": "strategies/random/liquidation_cascade_reversal.md",
+  "status": "idea",
+  "trader_prompt": "You are trading the `Liquidation Cascade Reversal` strategy.\n\nThesis:\nBig liquidation spikes often mark emotional exhaustion. After the flush, price frequently mean-reverts if the move was too fast relative to the recent range.\n\nInputs:\n- `IndicatorPanel.atr_14`\n- `IndicatorPanel.donchian_upper`\n- `IndicatorPanel.donchian_lower`\n- `OnchainPanel.liquidations_24h_usd`\n- `MarketSnapshot.recent_bars`\n- `Regime`\n\nDecision rule:\n- Detect a liquidation spike relative to the recent baseline.\n- Check whether the latest close re-enters the prior range after the flush.\n- If price closes back inside the Donchian band and the move was a cascade, buy the bounce after downside flushes or sell the fade after upside squeezes.\n- If the close remains outside the band with accelerating volatility, stay out until price stabilizes.\n\nPseudocode:\n\n```text\nif liquidation_spike and close_reentered_range and volatility_spike:\n    fade_the_flush\nelif liquidation_spike and range_not_recovered:\n    flat\n```\n\nExpected regime:\n- High-volatility selloffs and short squeezes - Markets with strong liquidation data and thin order books - Post-news whipsaws that overextend beyond the local range\n\nData dependencies:\n- Liquidation feed\n- OHLCV history\n- Donchian and ATR indicators computed upstream\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
+}
