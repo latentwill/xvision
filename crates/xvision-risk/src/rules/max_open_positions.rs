@@ -45,9 +45,11 @@ impl RiskRule for MaxOpenPositions {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tests_common::{flat_portfolio, make_decision, portfolio_with_btc, portfolio_with_n_positions};
-    use xvision_core::{Action, AssetSymbol, Direction, OpenPosition};
+    use crate::tests_common::{
+        flat_portfolio, make_decision, portfolio_with_btc, portfolio_with_n_positions,
+    };
     use chrono::Utc;
+    use xvision_core::{Action, AssetSymbol, Direction, OpenPosition};
 
     fn rule() -> MaxOpenPositions {
         MaxOpenPositions { max: 5 }

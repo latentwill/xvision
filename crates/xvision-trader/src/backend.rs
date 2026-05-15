@@ -101,8 +101,8 @@ impl TraderBackend for OpenAiCompatBackend {
                 body: text,
             });
         }
-        let parsed: serde_json::Value = serde_json::from_str(&text)
-            .map_err(|e| TraderError::Parse(format!("response envelope: {e}")))?;
+        let parsed: serde_json::Value =
+            serde_json::from_str(&text).map_err(|e| TraderError::Parse(format!("response envelope: {e}")))?;
         let content = parsed
             .pointer("/choices/0/message/content")
             .and_then(|v| v.as_str())
@@ -128,9 +128,7 @@ mod tests {
     impl MockBackend {
         pub fn new(responses: Vec<&str>) -> Self {
             Self {
-                responses: std::sync::Mutex::new(
-                    responses.into_iter().map(String::from).collect(),
-                ),
+                responses: std::sync::Mutex::new(responses.into_iter().map(String::from).collect()),
                 calls: std::sync::Mutex::new(vec![]),
             }
         }

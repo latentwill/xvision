@@ -50,8 +50,11 @@ Hard deployment rules for agents:
 
 1. Never run `cargo` on server/deploy hosts.
 2. Never do production image builds on server/deploy hosts.
-3. Use GHCR via `.github/workflows/docker.yml` (`workflow_dispatch`) for deploy builds.
-4. Prefer `scripts/deploy-ghcr.sh` as the canonical deployment trigger/watch flow.
+3. Build deploy images on a build/control host, then ship or pull the runtime image.
+4. Prefer `scripts/deploy-image.sh --push user@host` for cost-sensitive dev
+   deploys that should skip GHCR and GitHub Actions.
+5. Use GHCR via `.github/workflows/docker.yml` (`workflow_dispatch`) when you
+   need a registry-backed, reproducible image shared across servers.
 
 ## Quickstart (for first users)
 

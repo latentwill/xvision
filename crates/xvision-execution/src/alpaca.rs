@@ -58,10 +58,7 @@ fn asset_symbol_from_alpaca(sym: &str) -> Option<AssetSymbol> {
 #[async_trait]
 pub trait AlpacaApi: Send + Sync {
     /// POST /v2/orders
-    async fn create_order(
-        &self,
-        req: OrderRequest,
-    ) -> Result<AlpacaOrder, ExecutorError>;
+    async fn create_order(&self, req: OrderRequest) -> Result<AlpacaOrder, ExecutorError>;
 
     /// GET /v2/orders/{id}
     async fn get_order(&self, order_id: &str) -> Result<AlpacaOrder, ExecutorError>;
@@ -171,9 +168,7 @@ impl ApacClientApi {
 ///   authentication and authorisation failures. `apca` folds both into
 ///   `NotPermitted`. We treat `NotPermitted` as `Auth` since for a trading bot
 ///   "forbidden" almost always means a bad key.
-fn map_apca_err<E: std::fmt::Debug + std::fmt::Display>(
-    e: apca::RequestError<E>,
-) -> ExecutorError {
+fn map_apca_err<E: std::fmt::Debug + std::fmt::Display>(e: apca::RequestError<E>) -> ExecutorError {
     match e {
         apca::RequestError::Hyper(h) => ExecutorError::Network(h.to_string()),
         apca::RequestError::HyperUtil(h) => ExecutorError::Network(h.to_string()),
@@ -188,7 +183,7 @@ fn map_apca_err<E: std::fmt::Debug + std::fmt::Display>(
             } else {
                 ExecutorError::Rejected(msg)
             }
-        },
+        }
     }
 }
 
@@ -215,16 +210,16 @@ impl AlpacaApi for ApacClientApi {
             (Some(tp), Some(sl)) => {
                 let tp_str = format!("{:.2}", tp);
                 let sl_str = format!("{:.2}", sl);
-                let tp_num = Num::from_str(&tp_str)
-                    .map_err(|e| ExecutorError::Internal(format!("bad tp: {e}")))?;
-                let sl_num = Num::from_str(&sl_str)
-                    .map_err(|e| ExecutorError::Internal(format!("bad sl: {e}")))?;
+                let tp_num =
+                    Num::from_str(&tp_str).map_err(|e| ExecutorError::Internal(format!("bad tp: {e}")))?;
+                let sl_num =
+                    Num::from_str(&sl_str).map_err(|e| ExecutorError::Internal(format!("bad sl: {e}")))?;
                 (
                     Class::Bracket,
                     Some(TakeProfit::Limit(tp_num)),
                     Some(StopLoss::Stop(sl_num)),
                 )
-            },
+            }
             _ => (Class::Simple, None, None),
         };
 
@@ -255,11 +250,7 @@ impl AlpacaApi for ApacClientApi {
         let uuid = Uuid::parse_str(order_id)
             .map_err(|e| ExecutorError::Internal(format!("invalid order id: {e}")))?;
         let id = Id(uuid);
-        let order = self
-            .client
-            .issue::<Get>(&id)
-            .await
-            .map_err(map_apca_err)?;
+        let order = self.client.issue::<Get>(&id).await.map_err(map_apca_err)?;
 
         Ok(apca_order_to_plain(&order))
     }
@@ -267,11 +258,7 @@ impl AlpacaApi for ApacClientApi {
     async fn get_account(&self) -> Result<AlpacaAccount, ExecutorError> {
         use apca::api::v2::account::Get;
 
-        let acct = self
-            .client
-            .issue::<Get>(&())
-            .await
-            .map_err(map_apca_err)?;
+        let acct = self.client.issue::<Get>(&()).await.map_err(map_apca_err)?;
 
         let equity = acct.equity.to_f64().unwrap_or(0.0);
         let last_equity = acct.last_equity.to_f64().unwrap_or(0.0);
@@ -282,18 +269,14 @@ impl AlpacaApi for ApacClientApi {
     async fn list_positions(&self) -> Result<Vec<AlpacaPosition>, ExecutorError> {
         use apca::api::v2::positions::List;
 
-        let positions = self
-            .client
-            .issue::<List>(&())
-            .await
-            .map_err(map_apca_err)?;
+        let positions = self.client.issue::<List>(&()).await.map_err(map_apca_err)?;
 
         Ok(positions.iter().map(apca_position_to_plain).collect())
     }
 
     async fn get_position(&self, symbol: &str) -> Result<Option<AlpacaPosition>, ExecutorError> {
-        use apca::api::v2::position::Get;
         use apca::api::v2::asset::Symbol as ApacSymbol;
+        use apca::api::v2::position::Get;
 
         let sym = ApacSymbol::Sym(symbol.to_string());
         match self.client.issue::<Get>(&sym).await {
@@ -308,7 +291,7 @@ impl AlpacaApi for ApacClientApi {
                 } else {
                     Err(ExecutorError::Internal(msg))
                 }
-            },
+            }
             Err(e) => Err(ExecutorError::Network(e.to_string())),
         }
     }
@@ -357,8 +340,7 @@ impl AlpacaExecutor<ApacClientApi> {
     /// `APCA_API_BASE_URL`). Falls back to Alpaca paper-trading URL if
     /// `APCA_API_BASE_URL` is absent.
     pub fn from_env() -> Result<Self, ExecutorError> {
-        let api_info =
-            apca::ApiInfo::from_env().map_err(|e| ExecutorError::Auth(e.to_string()))?;
+        let api_info = apca::ApiInfo::from_env().map_err(|e| ExecutorError::Auth(e.to_string()))?;
         let client = apca::Client::new(api_info);
         Ok(Self {
             api: ApacClientApi::new(client),
@@ -367,11 +349,7 @@ impl AlpacaExecutor<ApacClientApi> {
     }
 
     /// Build from explicit credentials.
-    pub fn from_credentials(
-        key_id: &str,
-        secret: &str,
-        base_url: &str,
-    ) -> Result<Self, ExecutorError> {
+    pub fn from_credentials(key_id: &str, secret: &str, base_url: &str) -> Result<Self, ExecutorError> {
         let api_info = apca::ApiInfo::from_parts(base_url, key_id, secret)
             .map_err(|e| ExecutorError::Auth(e.to_string()))?;
         let client = apca::Client::new(api_info);
@@ -460,10 +438,8 @@ impl<A: AlpacaApi + 'static> Executor for AlpacaExecutor<A> {
         // 1. Extract the actionable decision or bail.
         let td = match decision {
             RiskDecision::Vetoed { .. } => {
-                return Err(ExecutorError::NotActionable(
-                    "decision was vetoed".to_string(),
-                ));
-            },
+                return Err(ExecutorError::NotActionable("decision was vetoed".to_string()));
+            }
             RiskDecision::Approved { decision: td } => td,
             RiskDecision::Modified { modified: td, .. } => td,
         };
@@ -474,15 +450,15 @@ impl<A: AlpacaApi + 'static> Executor for AlpacaExecutor<A> {
                 return Err(ExecutorError::NotActionable(
                     "flat decision is not a submit; call close_position instead".to_string(),
                 ));
-            },
+            }
             Action::Close => {
                 // Delegate — close_position works by asset from the decision.
                 // TraderDecision doesn't yet carry the asset directly (F18 /
                 // scenario-eval Task 11), so we fall back to this executor's
                 // configured `default_asset`.
                 return self.close_position(self.default_asset).await;
-            },
-            Action::Buy | Action::Sell => {}, // fall through
+            }
+            Action::Buy | Action::Sell => {} // fall through
         }
 
         // 3. Determine Alpaca symbol from the executor's configured asset
@@ -535,18 +511,10 @@ impl<A: AlpacaApi + 'static> Executor for AlpacaExecutor<A> {
         // 7. Wait for fill.
         let filled = self.await_fill(&order_id).await?;
 
-        Ok(Self::build_receipt(
-            td.cycle_id,
-            asset,
-            &filled,
-            account.equity,
-        ))
+        Ok(Self::build_receipt(td.cycle_id, asset, &filled, account.equity))
     }
 
-    async fn close_position(
-        &self,
-        asset: AssetSymbol,
-    ) -> Result<ExecutionReceipt, ExecutorError> {
+    async fn close_position(&self, asset: AssetSymbol) -> Result<ExecutionReceipt, ExecutorError> {
         let symbol = alpaca_symbol_for(asset);
 
         // Check for an existing position.
@@ -591,19 +559,11 @@ impl<A: AlpacaApi + 'static> Executor for AlpacaExecutor<A> {
         let order_id = order.id.clone();
         let filled = self.await_fill(&order_id).await?;
 
-        Ok(Self::build_receipt(
-            Uuid::nil(),
-            asset,
-            &filled,
-            account.equity,
-        ))
+        Ok(Self::build_receipt(Uuid::nil(), asset, &filled, account.equity))
     }
 
     async fn portfolio(&self) -> Result<PortfolioState, ExecutorError> {
-        let (account, positions) = tokio::try_join!(
-            self.api.get_account(),
-            self.api.list_positions()
-        )?;
+        let (account, positions) = tokio::try_join!(self.api.get_account(), self.api.list_positions())?;
 
         let realized_pnl = account.equity - account.last_equity;
 
@@ -732,10 +692,7 @@ mod tests {
             Ok(self.positions.clone())
         }
 
-        async fn get_position(
-            &self,
-            _symbol: &str,
-        ) -> Result<Option<AlpacaPosition>, ExecutorError> {
+        async fn get_position(&self, _symbol: &str) -> Result<Option<AlpacaPosition>, ExecutorError> {
             Ok(self.positions.first().cloned())
         }
     }

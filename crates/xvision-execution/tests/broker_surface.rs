@@ -14,8 +14,7 @@ use xvision_execution::alpaca::{
     AlpacaAccount, AlpacaApi, AlpacaOrder, AlpacaPosition, OrderRequest as ApacOrderRequest,
 };
 use xvision_execution::broker_surface::{
-    AlpacaPaperSurface, BrokerKind, BrokerSurface, MockBrokerSurface, OrderConfirmation,
-    OrderRequest, Side,
+    AlpacaPaperSurface, BrokerKind, BrokerSurface, MockBrokerSurface, OrderConfirmation, OrderRequest, Side,
 };
 use xvision_execution::executor::ExecutorError;
 
@@ -48,10 +47,7 @@ impl MockAlpacaApi {
 
 #[async_trait]
 impl AlpacaApi for MockAlpacaApi {
-    async fn create_order(
-        &self,
-        req: ApacOrderRequest,
-    ) -> Result<AlpacaOrder, ExecutorError> {
+    async fn create_order(&self, req: ApacOrderRequest) -> Result<AlpacaOrder, ExecutorError> {
         *self.captured.lock().unwrap() = Some(req);
         self.create_order_result
             .lock()
@@ -76,10 +72,7 @@ impl AlpacaApi for MockAlpacaApi {
         Ok(self.positions.clone())
     }
 
-    async fn get_position(
-        &self,
-        _symbol: &str,
-    ) -> Result<Option<AlpacaPosition>, ExecutorError> {
+    async fn get_position(&self, _symbol: &str) -> Result<Option<AlpacaPosition>, ExecutorError> {
         Ok(self.positions.first().cloned())
     }
 }
@@ -143,6 +136,7 @@ fn order_request_has_expected_fields() {
         asset: "BTC/USD".into(),
         side: Side::Buy,
         size: 0.05,
+        reference_price_usd: 71_000.0,
         stop_loss_pct: Some(2.0),
         take_profit_pct: Some(5.0),
         idempotency_key: "test-key-1".into(),
@@ -172,12 +166,7 @@ async fn alpaca_paper_submit_buy_returns_confirmation() {
     let pending = fixture_pending_order();
     let filled = fixture_filled_order(client_id);
 
-    let mock = MockAlpacaApi::new(
-        fixture_account(),
-        vec![fixture_position()],
-        pending,
-        filled,
-    );
+    let mock = MockAlpacaApi::new(fixture_account(), vec![fixture_position()], pending, filled);
     let captured = Arc::clone(&mock.captured);
 
     let surface = AlpacaPaperSurface::with_api(Arc::new(mock));
@@ -186,6 +175,7 @@ async fn alpaca_paper_submit_buy_returns_confirmation() {
         asset: "BTC/USD".into(),
         side: Side::Buy,
         size: 0.05,
+        reference_price_usd: 71_000.0,
         stop_loss_pct: Some(2.0),
         take_profit_pct: Some(5.0),
         idempotency_key: client_id.into(),
@@ -202,6 +192,37 @@ async fn alpaca_paper_submit_buy_returns_confirmation() {
     assert_eq!(cap.client_order_id, client_id);
     assert!(cap.take_profit_price.is_some());
     assert!(cap.stop_loss_price.is_some());
+}
+
+#[tokio::test]
+async fn alpaca_paper_submit_uses_order_reference_price_when_flat() {
+    let client_id = "test-flat-buy-1";
+    let pending = fixture_pending_order();
+    let filled = fixture_filled_order(client_id);
+
+    let mock = MockAlpacaApi::new(fixture_account(), vec![], pending, filled);
+    let captured = Arc::clone(&mock.captured);
+
+    let surface = AlpacaPaperSurface::with_api(Arc::new(mock));
+
+    let req = OrderRequest {
+        asset: "BTC/USD".into(),
+        side: Side::Buy,
+        size: 0.05,
+        reference_price_usd: 70_000.0,
+        stop_loss_pct: Some(2.0),
+        take_profit_pct: Some(5.0),
+        idempotency_key: client_id.into(),
+    };
+
+    let conf = surface.submit_order(req).await.expect("submit must succeed");
+    assert_eq!(conf.fill_size, 0.05);
+
+    let cap = captured.lock().unwrap().clone().unwrap();
+    assert_eq!(cap.client_order_id, client_id);
+    assert_eq!(cap.notional, 3_500.0);
+    assert_eq!(cap.take_profit_price, Some(73_500.0));
+    assert_eq!(cap.stop_loss_price, Some(68_600.0));
 }
 
 #[tokio::test]
@@ -252,6 +273,7 @@ async fn mock_broker_surface_records_submissions() {
         asset: "BTC/USD".into(),
         side: Side::Buy,
         size: 0.1,
+        reference_price_usd: 71_250.0,
         stop_loss_pct: Some(2.0),
         take_profit_pct: Some(5.0),
         idempotency_key: "mock-1".into(),
@@ -286,6 +308,7 @@ async fn mock_broker_surface_buy_increments_position() {
         asset: "BTC/USD".into(),
         side: Side::Buy,
         size: 0.2,
+        reference_price_usd: 71_250.0,
         stop_loss_pct: None,
         take_profit_pct: None,
         idempotency_key: "k".into(),
@@ -302,6 +325,7 @@ async fn mock_broker_surface_sell_decrements_position() {
         asset: "BTC/USD".into(),
         side: Side::Buy,
         size: 0.5,
+        reference_price_usd: 71_250.0,
         stop_loss_pct: None,
         take_profit_pct: None,
         idempotency_key: "buy".into(),
@@ -312,6 +336,7 @@ async fn mock_broker_surface_sell_decrements_position() {
         asset: "BTC/USD".into(),
         side: Side::Sell,
         size: 0.2,
+        reference_price_usd: 71_500.0,
         stop_loss_pct: None,
         take_profit_pct: None,
         idempotency_key: "sell".into(),

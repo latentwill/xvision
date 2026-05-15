@@ -75,10 +75,8 @@ impl RiskLayer {
     pub(crate) fn with_default_rules(config: RiskConfig, whitelist: Whitelist) -> Self {
         use rules::*;
 
-        let max_pos_bps =
-            (config.limits.max_position_pct_nav * 100.0).round() as u32;
-        let max_exp_bps =
-            (config.limits.max_total_exposure_pct * 100.0).round() as u32;
+        let max_pos_bps = (config.limits.max_position_pct_nav * 100.0).round() as u32;
+        let max_exp_bps = (config.limits.max_total_exposure_pct * 100.0).round() as u32;
 
         let rules: Vec<Box<dyn RiskRule>> = vec![
             Box::new(AssetWhitelist {
@@ -108,7 +106,11 @@ impl RiskLayer {
             }),
         ];
 
-        Self { rules, config, whitelist }
+        Self {
+            rules,
+            config,
+            whitelist,
+        }
     }
 
     /// Evaluate all rules in order.
@@ -165,10 +167,8 @@ pub(crate) mod tests_common {
     use std::collections::BTreeMap;
 
     use chrono::Utc;
-    use xvision_core::{
-        Action, AssetSymbol, Direction, OpenPosition, PortfolioState, TraderDecision,
-    };
     use uuid::Uuid;
+    use xvision_core::{Action, AssetSymbol, Direction, OpenPosition, PortfolioState, TraderDecision};
 
     use crate::whitelist::{AssetEntry, Whitelist};
 
@@ -355,7 +355,13 @@ mod integration {
         let portfolio = flat_portfolio();
         let result = layer.evaluate(decision, &portfolio, AssetSymbol::Btc);
         assert!(
-            matches!(result, RiskDecision::Vetoed { reason: VetoReason::PositionTooLarge, .. }),
+            matches!(
+                result,
+                RiskDecision::Vetoed {
+                    reason: VetoReason::PositionTooLarge,
+                    ..
+                }
+            ),
             "expected Vetoed(PositionTooLarge), got {result:?}"
         );
     }
@@ -394,7 +400,13 @@ mod integration {
         let decision = make_decision(Action::Buy, Direction::Long, 500, 2.0, 5.0);
         let result = layer.evaluate(decision, &flat_portfolio(), AssetSymbol::Eth);
         assert!(
-            matches!(result, RiskDecision::Vetoed { reason: VetoReason::AssetNotWhitelisted, .. }),
+            matches!(
+                result,
+                RiskDecision::Vetoed {
+                    reason: VetoReason::AssetNotWhitelisted,
+                    ..
+                }
+            ),
             "ETH is disabled; expected Vetoed(AssetNotWhitelisted), got {result:?}"
         );
     }

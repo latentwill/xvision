@@ -387,7 +387,6 @@ mod tests {
         assert!(matches!(err, InternError::Validation(_)), "got: {err:?}");
     }
 
-
     #[test]
     fn evidence_unknown_kind_falls_back_to_sentiment() {
         let item = EvidenceItem {

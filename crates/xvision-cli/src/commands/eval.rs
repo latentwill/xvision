@@ -19,12 +19,10 @@ use crate::exit::{CliError, CliResult, ResultExt, XvnExit};
 /// back to the default Upstream coercion.
 fn api_to_cli(prefix: &str, e: ApiError) -> CliError {
     let exit = match &e {
-        ApiError::NotFound(_)   => XvnExit::NotFound,
+        ApiError::NotFound(_) => XvnExit::NotFound,
         ApiError::Validation(_) => XvnExit::Usage,
-        ApiError::Conflict(_)   => XvnExit::Conflict,
-        ApiError::Internal(_)
-        | ApiError::Db(_)
-        | ApiError::Other(_)    => XvnExit::Upstream,
+        ApiError::Conflict(_) => XvnExit::Conflict,
+        ApiError::Internal(_) | ApiError::Db(_) | ApiError::Other(_) => XvnExit::Upstream,
     };
     CliError {
         exit,
@@ -205,7 +203,9 @@ fn parse_mode(s: &str) -> Result<RunMode> {
 }
 
 async fn run_run(args: RunArgs) -> CliResult<()> {
-    let ctx = open_ctx(args.xvn_home.clone()).await.exit_with(XvnExit::Upstream)?;
+    let ctx = open_ctx(args.xvn_home.clone())
+        .await
+        .exit_with(XvnExit::Upstream)?;
     let mode = parse_mode(&args.mode).exit_with(XvnExit::Usage)?;
     let req = EvalRunRequest {
         agent_id: args.strategy.clone(),
@@ -226,7 +226,10 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
         .map_err(|e| api_to_cli("eval run", e))?;
 
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&run).exit_with(XvnExit::Upstream)?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&run).exit_with(XvnExit::Upstream)?
+        );
         return Ok(());
     }
 
@@ -267,17 +270,27 @@ fn parse_status(s: &str) -> Result<RunStatus> {
 }
 
 async fn run_list(args: ListArgs) -> CliResult<()> {
-    let ctx = open_ctx(args.xvn_home.clone()).await.exit_with(XvnExit::Upstream)?;
+    let ctx = open_ctx(args.xvn_home.clone())
+        .await
+        .exit_with(XvnExit::Upstream)?;
     let req = ListRunsRequest {
         agent_id: args.strategy,
         scenario_id: args.scenario,
-        status: args.status.as_deref().map(parse_status).transpose().exit_with(XvnExit::Usage)?,
+        status: args
+            .status
+            .as_deref()
+            .map(parse_status)
+            .transpose()
+            .exit_with(XvnExit::Usage)?,
     };
     let runs = eval::list(&ctx, req)
         .await
         .map_err(|e| api_to_cli("eval list", e))?;
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&runs).exit_with(XvnExit::Upstream)?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&runs).exit_with(XvnExit::Upstream)?
+        );
         return Ok(());
     }
     if runs.is_empty() {
@@ -300,12 +313,17 @@ async fn run_list(args: ListArgs) -> CliResult<()> {
 }
 
 async fn run_show(args: ShowArgs) -> CliResult<()> {
-    let ctx = open_ctx(args.xvn_home.clone()).await.exit_with(XvnExit::Upstream)?;
+    let ctx = open_ctx(args.xvn_home.clone())
+        .await
+        .exit_with(XvnExit::Upstream)?;
     let run = eval::get(&ctx, &args.run_id)
         .await
         .map_err(|e| api_to_cli("eval get", e))?;
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&run).exit_with(XvnExit::Upstream)?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&run).exit_with(XvnExit::Upstream)?
+        );
         return Ok(());
     }
     println!("id              {}", run.id);
@@ -384,7 +402,9 @@ fn print_run_status_line(run: &xvision_engine::eval::run::Run) {
 }
 
 async fn run_compare(args: CompareArgs) -> CliResult<()> {
-    let ctx = open_ctx(args.xvn_home.clone()).await.exit_with(XvnExit::Upstream)?;
+    let ctx = open_ctx(args.xvn_home.clone())
+        .await
+        .exit_with(XvnExit::Upstream)?;
     let report = eval::compare(
         &ctx,
         CompareRunsRequest {
@@ -395,7 +415,10 @@ async fn run_compare(args: CompareArgs) -> CliResult<()> {
     .map_err(|e| api_to_cli("eval compare", e))?;
 
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&report).exit_with(XvnExit::Upstream)?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).exit_with(XvnExit::Upstream)?
+        );
         return Ok(());
     }
 
@@ -502,12 +525,17 @@ async fn run_scenarios(args: ScenariosArgs) -> CliResult<()> {
 }
 
 async fn run_attest(args: AttestArgs) -> CliResult<()> {
-    let ctx = open_ctx(args.xvn_home.clone()).await.exit_with(XvnExit::Upstream)?;
+    let ctx = open_ctx(args.xvn_home.clone())
+        .await
+        .exit_with(XvnExit::Upstream)?;
     let att = eval::attest(&ctx, &args.run_id)
         .await
         .map_err(|e| api_to_cli("eval attest", e))?;
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&att).exit_with(XvnExit::Upstream)?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&att).exit_with(XvnExit::Upstream)?
+        );
         return Ok(());
     }
     let sig_prefix: String = att.signature_hex.chars().take(16).collect();

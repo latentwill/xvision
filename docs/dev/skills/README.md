@@ -7,3 +7,4 @@ This folder contains repo-local copies of the xvision QA skills used by the QA a
 - `xvision-chat-rail-qa` — browser chat-rail QA for Strategy, Scenario, and Eval flows
 - `xvision-cli-qa` — raw API / HTTP contract QA for Strategy, Scenario, and Eval flows
 - `xvision-ui-sweep` — full browser sweep across the standard xvision UI
+- `xvision-alpaca-paper-eval` — Alpaca paper eval debugging, quote/reference-price handling, and broker-surface diagnostics

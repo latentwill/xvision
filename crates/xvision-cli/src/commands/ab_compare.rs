@@ -55,18 +55,10 @@ pub async fn run(
     trader_model: String,
     trader_api_key_env: String,
 ) -> anyhow::Result<()> {
-    let asset_sym = AssetSymbol::from_str(&asset)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let asset_sym = AssetSymbol::from_str(&asset).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     let snapshots: Vec<MarketSnapshot> = serde_json::from_slice(&std::fs::read(&cycles)?)?;
-    let bars_vec: Vec<MarketBar> = load_bars_input(
-        bars.as_ref(),
-        from,
-        to,
-        &granularity,
-        asset_sym,
-    )
-    .await?;
+    let bars_vec: Vec<MarketBar> = load_bars_input(bars.as_ref(), from, to, &granularity, asset_sym).await?;
 
     let mut arm_specs: Vec<_> = if arms.trim().is_empty() {
         default_arms()
@@ -186,12 +178,8 @@ async fn load_bars_input(
     let file_window = bars_path.is_some();
 
     match (cache_window, file_window) {
-        (true, true) => anyhow::bail!(
-            "--bars is mutually exclusive with --from/--to; pick one source"
-        ),
-        (false, false) => anyhow::bail!(
-            "must supply either --bars <path> OR --from <date> + --to <date>"
-        ),
+        (true, true) => anyhow::bail!("--bars is mutually exclusive with --from/--to; pick one source"),
+        (false, false) => anyhow::bail!("must supply either --bars <path> OR --from <date> + --to <date>"),
         (true, false) => {
             // Cache-backed path. asset already validated by caller.
             let g = granularity
@@ -246,10 +234,9 @@ async fn load_bars_input(
             // Legacy JSON-file path. Safe unwrap: file_window match arm
             // guarantees Some.
             let path = bars_path.unwrap();
-            let raw = std::fs::read(path)
-                .map_err(|e| anyhow::anyhow!("read bars {}: {e}", path.display()))?;
-            serde_json::from_slice(&raw)
-                .map_err(|e| anyhow::anyhow!("parse bars {}: {e}", path.display()))
+            let raw =
+                std::fs::read(path).map_err(|e| anyhow::anyhow!("read bars {}: {e}", path.display()))?;
+            serde_json::from_slice(&raw).map_err(|e| anyhow::anyhow!("parse bars {}: {e}", path.display()))
         }
     }
 }

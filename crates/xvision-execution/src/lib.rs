@@ -12,8 +12,8 @@ pub mod orderly;
 
 pub use alpaca::AlpacaExecutor;
 pub use broker_surface::{
-    AlpacaLiveSurface, AlpacaPaperSurface, BrokerKind, BrokerSurface, MockBrokerSurface,
-    OrderConfirmation, OrderRequest as BrokerOrderRequest, OrderlyLiveSurface, Side,
+    AlpacaLiveSurface, AlpacaPaperSurface, BrokerKind, BrokerSurface, MockBrokerSurface, OrderConfirmation,
+    OrderRequest as BrokerOrderRequest, OrderlyLiveSurface, Side,
 };
 pub use executor::{ExecutionReceipt, Executor, ExecutorError};
 pub use orderly::OrderlyExecutor;

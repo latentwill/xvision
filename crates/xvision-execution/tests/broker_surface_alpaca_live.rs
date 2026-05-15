@@ -28,7 +28,10 @@ use xvision_execution::broker_surface::{AlpacaPaperSurface, BrokerSurface};
 #[test]
 fn alpaca_paper_surface_accepts_unlocked_crypto_symbols() {
     assert_eq!(AssetSymbol::from_str("ETH").unwrap().as_alpaca_pair(), "ETH/USD");
-    assert_eq!(AssetSymbol::from_str("SOL/USD").unwrap().as_alpaca_pair(), "SOL/USD");
+    assert_eq!(
+        AssetSymbol::from_str("SOL/USD").unwrap().as_alpaca_pair(),
+        "SOL/USD"
+    );
 }
 
 #[test]
@@ -42,10 +45,7 @@ fn alpaca_paper_surface_rejects_unsupported_crypto_symbols() {
 async fn alpaca_paper_balance_returns_positive() {
     let surface = AlpacaPaperSurface::from_env().expect("from_env must succeed");
     let bal = surface.balance().await.expect("balance must succeed");
-    assert!(
-        bal >= 0.0,
-        "alpaca paper equity must be non-negative, got {bal}"
-    );
+    assert!(bal >= 0.0, "alpaca paper equity must be non-negative, got {bal}");
     eprintln!("alpaca paper equity: ${bal:.2}");
 }
 
@@ -53,10 +53,7 @@ async fn alpaca_paper_balance_returns_positive() {
 #[ignore = "requires live Alpaca paper credentials (APCA_API_KEY_ID, APCA_API_SECRET_KEY)"]
 async fn alpaca_paper_position_btc_returns_finite() {
     let surface = AlpacaPaperSurface::from_env().expect("from_env must succeed");
-    let qty = surface
-        .position("BTC/USD")
-        .await
-        .expect("position must succeed");
+    let qty = surface.position("BTC/USD").await.expect("position must succeed");
     assert!(qty.is_finite(), "position must be finite, got {qty}");
     eprintln!("alpaca paper BTC/USD position: {qty}");
 }

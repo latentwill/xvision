@@ -102,9 +102,38 @@ Deploy image (SPA baked in, defaults to `dashboard serve`):
 ./scripts/deploy-image.sh --platform linux/arm64    # for ARM servers
 ```
 
-The deploy image is what GHCR publishes as `:latest` from `gh workflow run
-docker.yml`. Use the script when Actions credits are scarce or when you want
-to skip the registry round-trip.
+The deploy image is the same shape GHCR publishes as `:latest` from
+`gh workflow run docker.yml`. Use the script when Actions credits are scarce
+or when you want to skip the registry round-trip. `--push` streams the image
+over SSH with `docker save | gzip | ssh ... docker load`, then tags it on the
+server as `xvision:deploy-latest`.
+
+After that, redeploy every Docker Compose or Coolify service that consumes
+`xvision:deploy-latest`; loading the image alone does not restart running
+containers.
+
+For a server started from this direct path, point Compose at the loaded image:
+
+```yaml
+services:
+  xvn:
+    image: xvision:deploy-latest
+    ports:
+      - "8788:8788"
+    environment:
+      XVN_AUTOMIGRATE: "1"
+    volumes:
+      - xvision-data:/data
+```
+
+Then restart on the server:
+
+```bash
+docker compose up -d
+docker compose logs -f xvn
+```
+
+See `docs/dev/local-image-deploy.md` for the operator checklist.
 
 ## Troubleshooting
 

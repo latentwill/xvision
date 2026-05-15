@@ -137,7 +137,10 @@ impl RegistryAddresses {
 
     /// Construct addresses for a local `anvil` instance or custom deployment.
     pub fn custom(identity_registry: Address, reputation_registry: Address) -> Self {
-        Self { identity_registry, reputation_registry }
+        Self {
+            identity_registry,
+            reputation_registry,
+        }
     }
 }
 
@@ -315,10 +318,7 @@ impl IdentityClient {
             .iter()
             .find_map(|log| {
                 let topics = log.topics();
-                if topics.len() == 4
-                    && topics[0] == erc721_transfer_sig
-                    && topics[1] == B256::ZERO
-                {
+                if topics.len() == 4 && topics[0] == erc721_transfer_sig && topics[1] == B256::ZERO {
                     Some(U256::from_be_bytes::<32>(topics[3].0))
                 } else {
                     None
@@ -362,8 +362,8 @@ impl IdentityClient {
             .await
             .map_err(|e| IdentityError::Rpc(e.to_string()))?;
 
-        let feedback_json = serde_json::to_string(&outcome)
-            .map_err(|e| IdentityError::Encode(e.to_string()))?;
+        let feedback_json =
+            serde_json::to_string(&outcome).map_err(|e| IdentityError::Encode(e.to_string()))?;
         let feedback_hash = B256::from(keccak256(feedback_json.as_bytes()).0);
         let value_raw = (outcome.realized_pnl_usd * 1_000_000.0) as i128;
 
@@ -396,12 +396,8 @@ impl IdentityClient {
     ///
     /// `feedbackURI` is expected to contain the inline JSON serialisation of
     /// [`TradeOutcome`] as written by [`Self::post_reputation`].
-    pub async fn read_reputation(
-        &self,
-        agent: TokenId,
-    ) -> Result<Vec<ReputationEntry>, IdentityError> {
-        let contract =
-            IReputationRegistry::new(self.addresses.reputation_registry, &self.provider);
+    pub async fn read_reputation(&self, agent: TokenId) -> Result<Vec<ReputationEntry>, IdentityError> {
+        let contract = IReputationRegistry::new(self.addresses.reputation_registry, &self.provider);
 
         let count_u256 = contract
             .getFeedbackCount(agent.0)
@@ -419,9 +415,8 @@ impl IdentityClient {
                 .await
                 .map_err(|e| IdentityError::Contract(format!("getFeedback[{i}]: {e}")))?;
 
-            let outcome: TradeOutcome = serde_json::from_str(&fb.feedbackURI).map_err(|e| {
-                IdentityError::Manifest(format!("bad feedback JSON at index {i}: {e}"))
-            })?;
+            let outcome: TradeOutcome = serde_json::from_str(&fb.feedbackURI)
+                .map_err(|e| IdentityError::Manifest(format!("bad feedback JSON at index {i}: {e}")))?;
 
             entries.push(ReputationEntry {
                 cycle_id: outcome.cycle_id,
@@ -530,8 +525,7 @@ mod tests {
     #[ignore = "requires local anvil (chain 31337); run: `anvil &` then `cargo test -p xvision-identity -- --ignored`"]
     #[tokio::test]
     async fn anvil_connect_chain_id() {
-        let addrs =
-            RegistryAddresses::custom(Address::from([0x11u8; 20]), Address::from([0x22u8; 20]));
+        let addrs = RegistryAddresses::custom(Address::from([0x11u8; 20]), Address::from([0x22u8; 20]));
 
         let client = IdentityClient::connect("http://127.0.0.1:8545", addrs, 31337)
             .await
@@ -557,13 +551,11 @@ mod tests {
         use chrono::Utc;
 
         // anvil default account 0 private key (publicly known, safe for tests)
-        let signer: PrivateKeySigner =
-            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-                .parse()
-                .expect("valid anvil key");
+        let signer: PrivateKeySigner = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+            .parse()
+            .expect("valid anvil key");
 
-        let addrs =
-            RegistryAddresses::custom(Address::from([0x11u8; 20]), Address::from([0x22u8; 20]));
+        let addrs = RegistryAddresses::custom(Address::from([0x11u8; 20]), Address::from([0x22u8; 20]));
 
         let client = IdentityClient::connect("http://127.0.0.1:8545", addrs, 31337)
             .await

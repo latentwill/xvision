@@ -22,9 +22,9 @@ use std::process::ExitCode;
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum XvnExit {
-    Success  = 0,
-    Usage    = 2,
-    Auth     = 3,
+    Success = 0,
+    Usage = 2,
+    Auth = 3,
     NotFound = 4,
     Upstream = 5,
     Conflict = 7,
@@ -56,19 +56,34 @@ impl std::error::Error for CliError {
 
 impl CliError {
     pub fn usage(e: impl Into<anyhow::Error>) -> Self {
-        Self { exit: XvnExit::Usage, source: e.into() }
+        Self {
+            exit: XvnExit::Usage,
+            source: e.into(),
+        }
     }
     pub fn auth(e: impl Into<anyhow::Error>) -> Self {
-        Self { exit: XvnExit::Auth, source: e.into() }
+        Self {
+            exit: XvnExit::Auth,
+            source: e.into(),
+        }
     }
     pub fn not_found(e: impl Into<anyhow::Error>) -> Self {
-        Self { exit: XvnExit::NotFound, source: e.into() }
+        Self {
+            exit: XvnExit::NotFound,
+            source: e.into(),
+        }
     }
     pub fn upstream(e: impl Into<anyhow::Error>) -> Self {
-        Self { exit: XvnExit::Upstream, source: e.into() }
+        Self {
+            exit: XvnExit::Upstream,
+            source: e.into(),
+        }
     }
     pub fn conflict(e: impl Into<anyhow::Error>) -> Self {
-        Self { exit: XvnExit::Conflict, source: e.into() }
+        Self {
+            exit: XvnExit::Conflict,
+            source: e.into(),
+        }
     }
 }
 
@@ -79,7 +94,10 @@ impl CliError {
 /// stronger "not found" or "auth", which would mislead retry logic.
 impl From<anyhow::Error> for CliError {
     fn from(e: anyhow::Error) -> Self {
-        Self { exit: XvnExit::Upstream, source: e }
+        Self {
+            exit: XvnExit::Upstream,
+            source: e,
+        }
     }
 }
 
@@ -97,7 +115,10 @@ pub trait ResultExt<T> {
 
 impl<T, E: Into<anyhow::Error>> ResultExt<T> for Result<T, E> {
     fn exit_with(self, code: XvnExit) -> CliResult<T> {
-        self.map_err(|e| CliError { exit: code, source: e.into() })
+        self.map_err(|e| CliError {
+            exit: code,
+            source: e.into(),
+        })
     }
 }
 
@@ -107,9 +128,9 @@ mod tests {
 
     #[test]
     fn xvn_exit_code_values() {
-        assert_eq!(XvnExit::Success as u8,  0);
-        assert_eq!(XvnExit::Usage as u8,    2);
-        assert_eq!(XvnExit::Auth as u8,     3);
+        assert_eq!(XvnExit::Success as u8, 0);
+        assert_eq!(XvnExit::Usage as u8, 2);
+        assert_eq!(XvnExit::Auth as u8, 3);
         assert_eq!(XvnExit::NotFound as u8, 4);
         assert_eq!(XvnExit::Upstream as u8, 5);
         assert_eq!(XvnExit::Conflict as u8, 7);
@@ -135,8 +156,8 @@ mod tests {
 
     #[test]
     fn cli_error_helpers_set_correct_category() {
-        assert_eq!(CliError::usage(anyhow::anyhow!("x")).exit,    XvnExit::Usage);
-        assert_eq!(CliError::auth(anyhow::anyhow!("x")).exit,     XvnExit::Auth);
+        assert_eq!(CliError::usage(anyhow::anyhow!("x")).exit, XvnExit::Usage);
+        assert_eq!(CliError::auth(anyhow::anyhow!("x")).exit, XvnExit::Auth);
         assert_eq!(CliError::not_found(anyhow::anyhow!("x")).exit, XvnExit::NotFound);
         assert_eq!(CliError::upstream(anyhow::anyhow!("x")).exit, XvnExit::Upstream);
         assert_eq!(CliError::conflict(anyhow::anyhow!("x")).exit, XvnExit::Conflict);

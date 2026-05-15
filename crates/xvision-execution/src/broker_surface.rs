@@ -20,9 +20,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::alpaca::{
-    AlpacaApi, ApacClientApi, OrderRequest as ApacOrderRequest, OrderSide as ApacSide,
-};
+use crate::alpaca::{AlpacaApi, ApacClientApi, OrderRequest as ApacOrderRequest, OrderSide as ApacSide};
 
 // ── Public types ─────────────────────────────────────────────────────────────
 
@@ -49,6 +47,11 @@ pub struct OrderRequest {
     /// whatever unit its API requires (notional for Alpaca, base qty for
     /// Orderly).
     pub size: f64,
+    /// Reference price chosen by the caller for base-size to notional
+    /// conversion and bracket-leg derivation. Paper evals pass the current
+    /// historical replay bar close here so execution is tied to the scenario,
+    /// not to live quotes.
+    pub reference_price_usd: f64,
     pub stop_loss_pct: Option<f32>,
     pub take_profit_pct: Option<f32>,
     /// Echoed to the broker as `client_order_id`. Brokers dedupe on this so
@@ -101,8 +104,8 @@ impl AlpacaPaperSurface {
     /// paper-trading URL if `APCA_API_BASE_URL` is absent. Production entry
     /// point for eval paper mode.
     pub fn from_env() -> anyhow::Result<Self> {
-        let api_info = apca::ApiInfo::from_env()
-            .map_err(|e| anyhow::anyhow!("alpaca ApiInfo::from_env: {e}"))?;
+        let api_info =
+            apca::ApiInfo::from_env().map_err(|e| anyhow::anyhow!("alpaca ApiInfo::from_env: {e}"))?;
         let client = apca::Client::new(api_info);
         Ok(Self {
             api: Arc::new(ApacClientApi::new(client)),
@@ -111,11 +114,7 @@ impl AlpacaPaperSurface {
 
     /// Build from explicit credentials. Useful for tests that hit the real
     /// paper API without relying on the process environment.
-    pub fn from_credentials(
-        key_id: &str,
-        secret: &str,
-        base_url: &str,
-    ) -> anyhow::Result<Self> {
+    pub fn from_credentials(key_id: &str, secret: &str, base_url: &str) -> anyhow::Result<Self> {
         let api_info = apca::ApiInfo::from_parts(base_url, key_id, secret)
             .map_err(|e| anyhow::anyhow!("alpaca ApiInfo::from_parts: {e}"))?;
         let client = apca::Client::new(api_info);
@@ -131,25 +130,30 @@ const ALPACA_FILL_POLL_DELAY_MS: u64 = 200;
 #[async_trait]
 impl BrokerSurface for AlpacaPaperSurface {
     async fn submit_order(&self, req: OrderRequest) -> anyhow::Result<OrderConfirmation> {
-        // 1. Resolve a reference price for size→notional conversion + bracket
-        //    leg derivation. Prefer the open position's current_price; fall
-        //    back to avg_entry_price; if neither, error out — without a price
-        //    we can't size the notional safely.
-        let pos = self.api.get_position(&req.asset).await.map_err(|e| {
-            anyhow::anyhow!("alpaca get_position({}) failed: {e}", req.asset)
-        })?;
-        let reference_price = pos
-            .as_ref()
-            .and_then(|p| p.current_price)
-            .or_else(|| pos.as_ref().map(|p| p.avg_entry_price))
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "alpaca: cannot derive reference price for {} (no open position and no quote)",
-                    req.asset
-                )
-            })?;
+        // 1. Use the caller-selected reference price for size→notional
+        //    conversion + bracket leg derivation. Paper evals source this
+        //    from the historical replay bar so a flat Alpaca account does
+        //    not force a live quote or a hard-coded BTC price.
+        let reference_price = if req.reference_price_usd > 0.0 && req.reference_price_usd.is_finite() {
+            req.reference_price_usd
+        } else {
+            anyhow::bail!(
+                "alpaca paper order missing positive reference_price_usd for {}",
+                req.asset
+            );
+        };
 
         let notional = req.size * reference_price;
+        tracing::debug!(
+            target: "xvision::alpaca",
+            asset = %req.asset,
+            side = ?req.side,
+            size = req.size,
+            reference_price_usd = reference_price,
+            reference_price_source = "eval_bar",
+            notional,
+            "alpaca paper order notional resolved"
+        );
 
         // 2. Bracket legs.
         let (take_profit_price, stop_loss_price) = match (req.take_profit_pct, req.stop_loss_pct) {
@@ -203,14 +207,9 @@ impl BrokerSurface for AlpacaPaperSurface {
             .get_position(asset)
             .await
             .map_err(|e| anyhow::anyhow!("alpaca get_position: {e}"))?;
-        Ok(pos.map(|p| {
-            if p.side == "long" {
-                p.qty
-            } else {
-                -p.qty
-            }
-        })
-        .unwrap_or(0.0))
+        Ok(pos
+            .map(|p| if p.side == "long" { p.qty } else { -p.qty })
+            .unwrap_or(0.0))
     }
 
     async fn balance(&self) -> anyhow::Result<f64> {
@@ -224,10 +223,7 @@ impl BrokerSurface for AlpacaPaperSurface {
 }
 
 impl AlpacaPaperSurface {
-    async fn await_fill(
-        &self,
-        order_id: &str,
-    ) -> anyhow::Result<crate::alpaca::AlpacaOrder> {
+    async fn await_fill(&self, order_id: &str) -> anyhow::Result<crate::alpaca::AlpacaOrder> {
         for _ in 0..ALPACA_FILL_POLL_MAX {
             let order = self
                 .api
@@ -359,7 +355,7 @@ impl BrokerSurface for MockBrokerSurface {
 
         Ok(OrderConfirmation {
             broker_order_id: format!("mock-{}", req.idempotency_key),
-            fill_price: Some(self.fill_price),
+            fill_price: Some(req.reference_price_usd),
             fill_size: req.size,
             fee: None,
         })

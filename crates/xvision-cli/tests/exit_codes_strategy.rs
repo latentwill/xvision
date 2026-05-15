@@ -58,7 +58,10 @@ fn strategy_show_unknown_id_returns_4_not_found() {
 #[test]
 fn strategy_validate_unknown_id_returns_4_not_found() {
     let dir = tempdir().unwrap();
-    let out = xvn(&["strategy", "validate", "01ZZZZZZZZZZZZZZZZZZZZZZZZ"], dir.path());
+    let out = xvn(
+        &["strategy", "validate", "01ZZZZZZZZZZZZZZZZZZZZZZZZ"],
+        dir.path(),
+    );
     assert_eq!(code(&out), 4);
 }
 
@@ -99,7 +102,15 @@ fn strategy_run_missing_anthropic_key_returns_3_auth() {
     // Force ANTHROPIC_API_KEY unset — must use a Command that explicitly
     // removes the env var, since the parent process may have it set.
     let out = Command::new(env!("CARGO_BIN_EXE_xvn"))
-        .args(["strategy", "run", &id, "--fixture", "test-fixture-btc-2024-01", "--decisions", "1"])
+        .args([
+            "strategy",
+            "run",
+            &id,
+            "--fixture",
+            "test-fixture-btc-2024-01",
+            "--decisions",
+            "1",
+        ])
         .env("XVN_HOME", dir.path())
         .env_remove("ANTHROPIC_API_KEY")
         .output()

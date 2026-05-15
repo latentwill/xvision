@@ -54,8 +54,8 @@ mod tests {
     use std::collections::BTreeMap;
     use std::path::Path;
 
-    use xvision_core::{Action, AssetSymbol, Direction, TraderDecision};
     use uuid::Uuid;
+    use xvision_core::{Action, AssetSymbol, Direction, TraderDecision};
 
     fn fixture_decision() -> TraderDecision {
         TraderDecision {
@@ -83,14 +83,8 @@ mod tests {
 
     #[test]
     fn harness_apply_risk_approves_clean_decision() {
-        let layer = load_risk_layer(Path::new("../.."))
-            .expect("workspace config should load");
-        let result = apply_risk(
-            fixture_decision(),
-            &flat_portfolio(),
-            AssetSymbol::Btc,
-            &layer,
-        );
+        let layer = load_risk_layer(Path::new("../..")).expect("workspace config should load");
+        let result = apply_risk(fixture_decision(), &flat_portfolio(), AssetSymbol::Btc, &layer);
         assert!(
             matches!(result, RiskDecision::Approved { .. }),
             "expected Approved, got {result:?}"

@@ -133,7 +133,10 @@ mod tests {
     fn veto_when_cluster_at_max() {
         // 2 positions already in "btc" cluster; adding a 3rd (SOL) trips the cap.
         let wl = same_cluster_whitelist();
-        let rule = CorrelationCluster { max: 2, whitelist: wl };
+        let rule = CorrelationCluster {
+            max: 2,
+            whitelist: wl,
+        };
         let portfolio = two_position_portfolio();
         let d = make_decision(Action::Buy, Direction::Long, 500, 2.0, 5.0);
         assert!(matches!(

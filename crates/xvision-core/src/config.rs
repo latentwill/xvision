@@ -93,17 +93,13 @@ fn validate_provider_name(name: &String, _ctx: &()) -> garde::Result {
     }
     if name.starts_with('_') {
         // The leading-underscore namespace is reserved for internal rows.
-        return Err(garde::Error::new(
-            "provider names starting with '_' are reserved",
-        ));
+        return Err(garde::Error::new("provider names starting with '_' are reserved"));
     }
     if !name
         .chars()
         .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
     {
-        return Err(garde::Error::new(
-            "provider name must match [a-z0-9-]+",
-        ));
+        return Err(garde::Error::new("provider name must match [a-z0-9-]+"));
     }
     Ok(())
 }
@@ -715,8 +711,7 @@ sqlite_url = "sqlite://x.db"
 
     #[test]
     fn does_not_auto_derive_default_llm_provider() {
-        let cfg = load_runtime(&project_root().join("config/default.toml"))
-            .expect("must load");
+        let cfg = load_runtime(&project_root().join("config/default.toml")).expect("must load");
         assert!(cfg.providers.iter().all(|p| p.name != "_default_llm"));
     }
 

@@ -81,9 +81,7 @@ fn sma_longer_series_hand_computed() {
     // out[6] = 5.5, out[7] = 6.5, out[8] = 7.5, out[9] = 8.5
     let prices: Vec<f64> = (1..=10).map(|i| i as f64).collect();
     let actual = sma(&prices, 4);
-    let expected = [
-        f64::NAN, f64::NAN, f64::NAN, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5,
-    ];
+    let expected = [f64::NAN, f64::NAN, f64::NAN, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5];
     assert_series_eq("sma_longer", &actual, &expected, 1e-12);
 }
 
@@ -204,10 +202,10 @@ fn rsi_period2_hand_computed() {
     assert!(actual[0].is_nan(), "rsi[0] must be NaN");
     assert!(actual[1].is_nan(), "rsi[1] must be NaN");
     let expected_valid = [
-        100.0 - 100.0 / (1.0 + 1.0 / 0.5),     // [2] ≈ 66.6667
-        100.0 - 100.0 / (1.0 + 2.0 / 0.25),     // [3] ≈ 88.8889
-        100.0 - 100.0 / (1.0 + 1.0 / 0.625),    // [4] ≈ 61.5385
-        100.0 - 100.0 / (1.0 + 2.0 / 0.3125),   // [5] ≈ 86.4865
+        100.0 - 100.0 / (1.0 + 1.0 / 0.5),    // [2] ≈ 66.6667
+        100.0 - 100.0 / (1.0 + 2.0 / 0.25),   // [3] ≈ 88.8889
+        100.0 - 100.0 / (1.0 + 1.0 / 0.625),  // [4] ≈ 61.5385
+        100.0 - 100.0 / (1.0 + 2.0 / 0.3125), // [5] ≈ 86.4865
     ];
     for (offset, &exp) in expected_valid.iter().enumerate() {
         let i = 2 + offset;
@@ -227,8 +225,8 @@ fn rsi_period14_wilder_reference() {
     // Convention: Wilder seeds with simple avg of first 14 deltas; then applies
     // alpha=1/14 smoothing. First valid output at index 14.
     let prices = [
-        44.34, 44.09, 44.15, 43.61, 44.33, 44.83, 45.10, 45.42, 45.84, 46.08, 45.89, 46.03,
-        45.61, 46.28, 46.28, 46.00, 46.03, 46.41, 46.22, 45.64,
+        44.34, 44.09, 44.15, 43.61, 44.33, 44.83, 45.10, 45.42, 45.84, 46.08, 45.89, 46.03, 45.61, 46.28,
+        46.28, 46.00, 46.03, 46.41, 46.22, 45.64,
     ];
     let actual = rsi(&prices, 14);
 
@@ -259,10 +257,7 @@ fn rsi_period14_wilder_reference() {
     // All valid values must be in [0, 100].
     for (i, &v) in actual.iter().enumerate() {
         if !v.is_nan() {
-            assert!(
-                v >= 0.0 && v <= 100.0,
-                "rsi_period14[{i}] out of range: {v}"
-            );
+            assert!(v >= 0.0 && v <= 100.0, "rsi_period14[{i}] out of range: {v}");
         }
     }
 }
@@ -335,14 +330,26 @@ fn bollinger_period3_k2_hand_computed() {
     assert_series_eq(
         "bb_upper",
         &bb.upper,
-        &[f64::NAN, f64::NAN, 4.0 + 2.0 * sigma, 6.0 + 2.0 * sigma, 8.0 + 2.0 * sigma],
+        &[
+            f64::NAN,
+            f64::NAN,
+            4.0 + 2.0 * sigma,
+            6.0 + 2.0 * sigma,
+            8.0 + 2.0 * sigma,
+        ],
         1e-12,
     );
     // lower
     assert_series_eq(
         "bb_lower",
         &bb.lower,
-        &[f64::NAN, f64::NAN, 4.0 - 2.0 * sigma, 6.0 - 2.0 * sigma, 8.0 - 2.0 * sigma],
+        &[
+            f64::NAN,
+            f64::NAN,
+            4.0 - 2.0 * sigma,
+            6.0 - 2.0 * sigma,
+            8.0 - 2.0 * sigma,
+        ],
         1e-12,
     );
 }
@@ -416,9 +423,9 @@ fn atr_period2_hand_computed() {
     // alpha = 1/2 = 0.5
     // ATR[3] = 0.5*2.5 + 0.5*4 = 1.25 + 2.0 = 3.25
     // ATR[4] = 0.5*3.25 + 0.5*2 = 1.625 + 1.0 = 2.625
-    let high  = [10.0_f64, 12.0, 11.0, 14.0, 13.0];
-    let low   = [ 8.0_f64,  9.0,  9.0, 10.0, 11.0];
-    let close = [ 9.0_f64, 11.0, 10.0, 12.0, 12.0];
+    let high = [10.0_f64, 12.0, 11.0, 14.0, 13.0];
+    let low = [8.0_f64, 9.0, 9.0, 10.0, 11.0];
+    let close = [9.0_f64, 11.0, 10.0, 12.0, 12.0];
     let actual = atr(&high, &low, &close, 2);
     let expected = [f64::NAN, f64::NAN, 2.5, 3.25, 2.625];
     assert_series_eq("atr_period2", &actual, &expected, 1e-10);
@@ -443,8 +450,8 @@ fn atr_period3_hand_computed() {
     // alpha = 1/3
     // ATR[4] = (2/3)*3.0 + (1/3)*3 = 3.0
     // ATR[5] = (2/3)*3.0 + (1/3)*3 = 3.0
-    let high  = [20.0_f64, 22.0, 21.0, 23.0, 22.0, 24.0];
-    let low   = [18.0_f64, 19.0, 18.0, 20.0, 19.0, 21.0];
+    let high = [20.0_f64, 22.0, 21.0, 23.0, 22.0, 24.0];
+    let low = [18.0_f64, 19.0, 18.0, 20.0, 19.0, 21.0];
     let close = [19.0_f64, 21.0, 20.0, 22.0, 21.0, 23.0];
     let actual = atr(&high, &low, &close, 3);
     let expected = [f64::NAN, f64::NAN, f64::NAN, 3.0, 3.0, 3.0];
@@ -635,7 +642,7 @@ fn donchian_period3_hand_computed() {
     // upper[5] = max(5,4,7) = 7;  lower[5] = min(4,3,6) = 3
     // upper[6] = max(4,7,6) = 7;  lower[6] = min(3,6,5) = 3
     let high = [1.0_f64, 3.0, 2.0, 5.0, 4.0, 7.0, 6.0];
-    let low  = [0.0_f64, 2.0, 1.0, 4.0, 3.0, 6.0, 5.0];
+    let low = [0.0_f64, 2.0, 1.0, 4.0, 3.0, 6.0, 5.0];
     let d = donchian(&high, &low, 3);
 
     let expected_upper = [f64::NAN, f64::NAN, 3.0, 5.0, 5.0, 7.0, 7.0];
@@ -648,7 +655,7 @@ fn donchian_period3_hand_computed() {
 fn donchian_period1_equals_input() {
     // period=1 → window is just the current bar → upper=high, lower=low
     let high = [5.0_f64, 3.0, 8.0, 1.0];
-    let low  = [2.0_f64, 1.0, 4.0, 0.5];
+    let low = [2.0_f64, 1.0, 4.0, 0.5];
     let d = donchian(&high, &low, 1);
     assert_series_eq("donchian_upper_p1", &d.upper, &high, 1e-12);
     assert_series_eq("donchian_lower_p1", &d.lower, &low, 1e-12);
@@ -658,7 +665,7 @@ fn donchian_period1_equals_input() {
 fn donchian_period_equals_length() {
     // period = n → only out[n-1] is valid; equals global max/min
     let high = [3.0_f64, 7.0, 2.0, 9.0, 4.0];
-    let low  = [1.0_f64, 5.0, 0.0, 6.0, 2.0];
+    let low = [1.0_f64, 5.0, 0.0, 6.0, 2.0];
     let d = donchian(&high, &low, 5);
     for i in 0..4 {
         assert!(d.upper[i].is_nan(), "donchian_upper[{i}] must be NaN");
@@ -759,6 +766,14 @@ fn fib_uses_lookback_window_not_full_series() {
     let prices = [100.0_f64, 10.0, 15.0, 12.0, 20.0];
     let f = fib_retracements(&prices, 3).expect("should compute");
     // Window = [15, 12, 20] → high=20, low=12
-    assert!((f.high - 20.0).abs() < 1e-9, "should use window high=20, got {}", f.high);
-    assert!((f.low - 12.0).abs() < 1e-9, "should use window low=12, got {}", f.low);
+    assert!(
+        (f.high - 20.0).abs() < 1e-9,
+        "should use window high=20, got {}",
+        f.high
+    );
+    assert!(
+        (f.low - 12.0).abs() < 1e-9,
+        "should use window low=12, got {}",
+        f.low
+    );
 }

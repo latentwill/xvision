@@ -72,7 +72,13 @@ fn scenario_validate_from_file_does_not_create_row() {
     std::fs::write(&file, out.stdout).unwrap();
 
     let out = xvn(
-        &["scenario", "validate", "--from-file", file.to_str().unwrap(), "--json"],
+        &[
+            "scenario",
+            "validate",
+            "--from-file",
+            file.to_str().unwrap(),
+            "--json",
+        ],
         dir.path(),
     );
     assert!(
