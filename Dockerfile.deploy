@@ -105,12 +105,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system --gid 1000 xvision \
     && useradd  --system --uid 1000 --gid xvision --home /home/xvision --create-home xvision \
-    && mkdir -p /data /config /strategies \
-    && chown -R xvision:xvision /data /config /strategies
+    && mkdir -p /data /config /strategies /opt/xvision/data/probes \
+    && chown -R xvision:xvision /data /config /strategies /opt/xvision
 
 COPY --from=builder /usr/local/bin/xvn /usr/local/bin/xvn
 COPY --chown=xvision:xvision config/        /config/
 COPY --chown=xvision:xvision strategies/    /strategies/
+COPY --chown=xvision:xvision data/probes/   /opt/xvision/data/probes/
 COPY --chown=xvision:xvision docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 

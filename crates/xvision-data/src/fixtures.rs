@@ -1,9 +1,8 @@
 //! Test-fixture loader and generator for OHLCV parquet files.
 //!
-//! Fixtures live at `data/probes/<fixture>.parquet` under the workspace root.
-//! The workspace root is located at compile time via `CARGO_MANIFEST_DIR`
-//! (this crate is at `<workspace>/crates/xvision-data`), so we go two levels
-//! up to reach the workspace root.
+//! Fixtures live at `data/probes/<fixture>.parquet` under the workspace root
+//! for local runs, or under `$XVN_DATA_DIR/probes` / `$XVN_PROBES_DIR` in
+//! deployments.
 
 use std::path::PathBuf;
 
@@ -11,10 +10,19 @@ use chrono::{DateTime, TimeZone, Utc};
 use polars::prelude::*;
 use xvision_core::market::Ohlcv;
 
-/// Absolute path to the workspace-root `data/probes` directory.
-/// Built from `CARGO_MANIFEST_DIR` at compile time so it is correct
-/// regardless of the cwd at test-run time.
-fn workspace_probe_dir() -> PathBuf {
+/// Absolute path to the probe fixture directory.
+///
+/// Runtime deployments mount writable state under `XVN_DATA_DIR`, while local
+/// tests still expect the workspace-root `data/probes` directory. Prefer the
+/// deployed data path when configured, then fall back to the workspace copy.
+fn probe_dir() -> PathBuf {
+    if let Some(path) = std::env::var_os("XVN_PROBES_DIR") {
+        return PathBuf::from(path);
+    }
+    if let Some(path) = std::env::var_os("XVN_DATA_DIR") {
+        return PathBuf::from(path).join("probes");
+    }
+
     // CARGO_MANIFEST_DIR = <workspace>/crates/xvision-data  (two levels deep)
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..") // crates/
@@ -25,7 +33,7 @@ fn workspace_probe_dir() -> PathBuf {
 
 /// Absolute path to a named fixture parquet file.
 pub fn fixture_path(fixture: &str) -> PathBuf {
-    workspace_probe_dir().join(format!("{fixture}.parquet"))
+    probe_dir().join(format!("{fixture}.parquet"))
 }
 
 /// Load a parquet OHLCV fixture. Returns the LAST `lookback_bars` bars in
@@ -72,7 +80,7 @@ pub fn ensure_test_fixture(fixture: &str) -> anyhow::Result<PathBuf> {
     if path.exists() {
         return Ok(path);
     }
-    std::fs::create_dir_all(workspace_probe_dir())?;
+    std::fs::create_dir_all(probe_dir())?;
 
     let n = 300usize;
     let mut ts: Vec<String> = Vec::with_capacity(n);
