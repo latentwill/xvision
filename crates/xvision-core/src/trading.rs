@@ -112,9 +112,7 @@ impl std::str::FromStr for AssetSymbol {
             "BCH" | "BCH/USD" | "BCHUSD" => Ok(Self::Bch),
             "USDT" | "USDT/USD" | "USDTUSD" => Ok(Self::Usdt),
             "USDC" | "USDC/USD" | "USDCUSD" => Ok(Self::Usdc),
-            other => Err(format!(
-                "asset '{other}' is not in the Alpaca crypto whitelist"
-            )),
+            other => Err(format!("asset '{other}' is not in the Alpaca crypto whitelist")),
         }
     }
 }
@@ -547,13 +545,10 @@ mod tests {
     fn asset_symbol_covers_alpaca_crypto_whitelist() {
         use std::str::FromStr;
         for sym in &[
-            "BTC", "ETH", "LTC", "SOL", "AVAX", "LINK", "AAVE", "UNI", "DOT", "DOGE", "SHIB",
-            "MATIC", "BCH", "USDT", "USDC",
+            "BTC", "ETH", "LTC", "SOL", "AVAX", "LINK", "AAVE", "UNI", "DOT", "DOGE", "SHIB", "MATIC", "BCH",
+            "USDT", "USDC",
         ] {
-            assert!(
-                AssetSymbol::from_str(sym).is_ok(),
-                "missing variant: {sym}"
-            );
+            assert!(AssetSymbol::from_str(sym).is_ok(), "missing variant: {sym}");
         }
     }
 

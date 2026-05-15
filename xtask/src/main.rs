@@ -34,8 +34,8 @@ fn main() -> Result<()> {
 
 fn workspace_root() -> Result<PathBuf> {
     // CARGO_MANIFEST_DIR points at xtask/; the workspace root is the parent.
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
-        .context("CARGO_MANIFEST_DIR unset; run via `cargo xtask`")?;
+    let manifest_dir =
+        std::env::var("CARGO_MANIFEST_DIR").context("CARGO_MANIFEST_DIR unset; run via `cargo xtask`")?;
     PathBuf::from(manifest_dir)
         .parent()
         .map(|p| p.to_path_buf())
@@ -61,21 +61,12 @@ fn gen_types(sh: &Shell) -> Result<()> {
     let entries: Vec<_> = std::fs::read_dir(out_dir)
         .with_context(|| format!("read {out_dir}"))?
         .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.path().extension().map(|x| x == "ts").unwrap_or(false)
-                && e.file_name() != "index.ts"
-        })
+        .filter(|e| e.path().extension().map(|x| x == "ts").unwrap_or(false) && e.file_name() != "index.ts")
         .collect();
 
     let mut stems: Vec<_> = entries
         .iter()
-        .map(|e| {
-            e.path()
-                .file_stem()
-                .unwrap()
-                .to_string_lossy()
-                .into_owned()
-        })
+        .map(|e| e.path().file_stem().unwrap().to_string_lossy().into_owned())
         .collect();
     stems.sort();
 

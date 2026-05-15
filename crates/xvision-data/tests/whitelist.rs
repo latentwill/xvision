@@ -1,10 +1,10 @@
 use chrono::{TimeZone, Utc};
 use std::str::FromStr;
-use xvision_data::asset_whitelist::{
-    alpaca_crypto_asset, alpaca_crypto_history_start, alpaca_crypto_history_start_for,
-    alpaca_crypto_symbols, is_alpaca_crypto_supported,
-};
 use xvision_core::AssetSymbol;
+use xvision_data::asset_whitelist::{
+    alpaca_crypto_asset, alpaca_crypto_history_start, alpaca_crypto_history_start_for, alpaca_crypto_symbols,
+    is_alpaca_crypto_supported,
+};
 
 #[test]
 fn alpaca_crypto_whitelist_accepts_expected_symbols() {
@@ -63,6 +63,9 @@ fn alpaca_crypto_history_floor_rejects_unknown_asset() {
 fn core_asset_symbol_parser_matches_whitelist() {
     for symbol in alpaca_crypto_symbols() {
         let asset = AssetSymbol::from_str(symbol).unwrap();
-        assert_eq!(asset.as_alpaca_pair(), alpaca_crypto_asset(symbol).unwrap().venue_symbol);
+        assert_eq!(
+            asset.as_alpaca_pair(),
+            alpaca_crypto_asset(symbol).unwrap().venue_symbol
+        );
     }
 }

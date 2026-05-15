@@ -30,8 +30,7 @@ pub struct MigrateCmd {
 }
 
 pub async fn run(cmd: MigrateCmd) -> CliResult<()> {
-    let xvn_home =
-        crate::commands::home::resolve_xvn_home(cmd.xvn_home).exit_with(XvnExit::Usage)?;
+    let xvn_home = crate::commands::home::resolve_xvn_home(cmd.xvn_home).exit_with(XvnExit::Usage)?;
 
     if cmd.dry_run {
         run_dry(xvn_home).await.exit_with(XvnExit::Upstream)
@@ -57,9 +56,7 @@ async fn run_dry(xvn_home: PathBuf) -> Result<()> {
 
     // DB exists — open read-only to inspect state.
     let url = format!("sqlite://{}?mode=ro", db_path.display());
-    let pool = SqlitePool::connect(&url)
-        .await
-        .context("open xvn.db read-only")?;
+    let pool = SqlitePool::connect(&url).await.context("open xvn.db read-only")?;
 
     // Check which expected tables exist.
     let table_rows: Vec<(String,)> = sqlx::query_as(
@@ -92,22 +89,17 @@ async fn run_dry(xvn_home: PathBuf) -> Result<()> {
             "migrations: {} of {} core tables present; missing: {}",
             present_tables.len(),
             expected_unique.len(),
-            missing_tables
-                .iter()
-                .map(|t| **t)
-                .collect::<Vec<_>>()
-                .join(", ")
+            missing_tables.iter().map(|t| **t).collect::<Vec<_>>().join(", ")
         );
     }
 
     // Check canonical scenario seed.
     let scenario_tables_present = present_tables.iter().any(|p| p == "scenarios");
     if scenario_tables_present {
-        let count: (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM scenarios WHERE source = 'canonical'")
-                .fetch_one(&pool)
-                .await
-                .context("count canonical scenarios")?;
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM scenarios WHERE source = 'canonical'")
+            .fetch_one(&pool)
+            .await
+            .context("count canonical scenarios")?;
         let n = count.0;
         if n < 4 {
             println!("seed: + seed canonical scenarios (currently {n}/4)");

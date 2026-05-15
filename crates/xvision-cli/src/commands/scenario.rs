@@ -10,9 +10,9 @@ use xvision_core::AssetSymbol;
 use xvision_engine::api::scenario as api_scenario;
 use xvision_engine::api::{Actor, ApiContext, ApiError};
 use xvision_engine::eval::scenario::{
-    AssetClass, AssetRef, BarGranularity, CalendarRef, Capital, DataSource, AdjustmentMode, FillModel,
-    Fees, LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, ReplayMode, Scenario,
-    ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings,
+    AdjustmentMode, AssetClass, AssetRef, BarGranularity, CalendarRef, Capital, DataSource, Fees, FillModel,
+    LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, ReplayMode, Scenario, ScenarioSource,
+    SlippageModel, TimeWindow, Venue, VenueSettings,
 };
 use xvision_engine::eval::scenario_store;
 
@@ -172,9 +172,7 @@ pub struct ValidateArgs {
 }
 
 pub async fn run(cmd: ScenarioCmd) -> CliResult<()> {
-    let ctx = open_ctx(cmd.xvn_home.clone())
-        .await
-        .map_err(CliError::upstream)?;
+    let ctx = open_ctx(cmd.xvn_home.clone()).await.map_err(CliError::upstream)?;
     match cmd.op {
         ScenarioOp::Create(a) => run_create(&ctx, a).await,
         ScenarioOp::Ls(a) => run_ls(&ctx, a).await,
@@ -217,9 +215,9 @@ fn parse_granularity(s: &str) -> CliResult<BarGranularity> {
 
 fn parse_slippage(s: &str) -> CliResult<SlippageModel> {
     if let Some(bps_str) = s.strip_prefix("linear:") {
-        let bps: u32 = bps_str.parse().map_err(|_| {
-            CliError::usage(anyhow::anyhow!("bad slippage '{s}' — expected linear:<bps>"))
-        })?;
+        let bps: u32 = bps_str
+            .parse()
+            .map_err(|_| CliError::usage(anyhow::anyhow!("bad slippage '{s}' — expected linear:<bps>")))?;
         Ok(SlippageModel::Linear { bps })
     } else if s == "none" {
         Ok(SlippageModel::None)
@@ -288,8 +286,8 @@ async fn run_create(ctx: &ApiContext, a: CreateArgs) -> CliResult<()> {
     if let Some(path) = a.from_file {
         let body = std::fs::read_to_string(&path)
             .map_err(|e| CliError::usage(anyhow::anyhow!("read {}: {e}", path.display())))?;
-        let req: api_scenario::CreateScenarioRequest = toml::from_str(&body)
-            .map_err(|e| CliError::usage(anyhow::anyhow!("parse TOML: {e}")))?;
+        let req: api_scenario::CreateScenarioRequest =
+            toml::from_str(&body).map_err(|e| CliError::usage(anyhow::anyhow!("parse TOML: {e}")))?;
         let s = api_scenario::create(ctx, req)
             .await
             .map_err(|e| api_to_cli("scenario create", e))?;
@@ -305,8 +303,7 @@ async fn run_create(ctx: &ApiContext, a: CreateArgs) -> CliResult<()> {
         return Ok(());
     }
 
-    let asset_sym = AssetSymbol::from_str(&a.asset)
-        .map_err(|e| CliError::usage(anyhow::anyhow!("{e}")))?;
+    let asset_sym = AssetSymbol::from_str(&a.asset).map_err(|e| CliError::usage(anyhow::anyhow!("{e}")))?;
     let granularity = parse_granularity(&a.granularity)?;
     let slippage = parse_slippage(&a.slippage)?;
     let venue = parse_venue(&a.venue)?;
@@ -464,8 +461,7 @@ async fn run_clone(ctx: &ApiContext, a: CloneArgs) -> CliResult<()> {
         .asset
         .as_deref()
         .map(|sym_str| {
-            let sym = AssetSymbol::from_str(sym_str)
-                .map_err(|e| CliError::usage(anyhow::anyhow!("{e}")))?;
+            let sym = AssetSymbol::from_str(sym_str).map_err(|e| CliError::usage(anyhow::anyhow!("{e}")))?;
             Ok::<_, CliError>(vec![asset_ref_from_sym(&sym)])
         })
         .transpose()?;
@@ -491,8 +487,8 @@ async fn run_clone(ctx: &ApiContext, a: CloneArgs) -> CliResult<()> {
 async fn run_validate(ctx: &ApiContext, a: ValidateArgs) -> CliResult<()> {
     let body = std::fs::read_to_string(&a.from_file)
         .map_err(|e| CliError::usage(anyhow::anyhow!("read {}: {e}", a.from_file.display())))?;
-    let req: api_scenario::CreateScenarioRequest = toml::from_str(&body)
-        .map_err(|e| CliError::usage(anyhow::anyhow!("parse TOML: {e}")))?;
+    let req: api_scenario::CreateScenarioRequest =
+        toml::from_str(&body).map_err(|e| CliError::usage(anyhow::anyhow!("parse TOML: {e}")))?;
     api_scenario::validate_request(&req, ctx)
         .await
         .map_err(|e| api_to_cli("scenario validate", e))?;
@@ -529,7 +525,14 @@ async fn run_tree(ctx: &ApiContext, id: String) -> CliResult<()> {
         } else {
             ""
         };
-        println!("{}{} ({}){}{}", "  ".repeat(i), node.id, node.display_name, archived, marker);
+        println!(
+            "{}{} ({}){}{}",
+            "  ".repeat(i),
+            node.id,
+            node.display_name,
+            archived,
+            marker
+        );
     }
 
     // Print immediate children one level down.
@@ -543,7 +546,10 @@ async fn run_tree(ctx: &ApiContext, id: String) -> CliResult<()> {
         } else {
             ""
         };
-        println!("{}{} ({}){}", child_indent, child.id, child.display_name, archived);
+        println!(
+            "{}{} ({}){}",
+            child_indent, child.id, child.display_name, archived
+        );
     }
 
     if chain.len() == 1 && children.is_empty() {

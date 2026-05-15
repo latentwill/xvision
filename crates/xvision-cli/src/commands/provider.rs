@@ -16,9 +16,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::{Args, Subcommand};
 
-use xvision_engine::api::settings::providers::{
-    self, AddProviderRequest, ProviderRow,
-};
+use xvision_engine::api::settings::providers::{self, AddProviderRequest, ProviderRow};
 use xvision_engine::api::{Actor, ApiContext};
 
 #[derive(Args, Debug)]
@@ -149,12 +147,7 @@ async fn show(ctx: &ApiContext, config_path: &std::path::Path, name: &str) -> Re
     Ok(())
 }
 
-async fn check(
-    ctx: &ApiContext,
-    config_path: &std::path::Path,
-    name: &str,
-    probe: bool,
-) -> Result<()> {
+async fn check(ctx: &ApiContext, config_path: &std::path::Path, name: &str, probe: bool) -> Result<()> {
     // CLI-only — the engine API doesn't run live network probes in v1.
     let row: ProviderRow = providers::show(ctx, config_path, name)
         .await
@@ -209,8 +202,7 @@ fn url_parse_minimal(s: &str) -> Result<MinimalUrl> {
     let (host, port) = match host_port_path.split_once(':') {
         Some((h, p)) => (
             h.to_string(),
-            p.parse::<u16>()
-                .map_err(|e| anyhow::anyhow!("port parse: {e}"))?,
+            p.parse::<u16>().map_err(|e| anyhow::anyhow!("port parse: {e}"))?,
         ),
         None => (
             host_port_path.to_string(),
@@ -258,14 +250,9 @@ mod tests {
     use xvision_engine::api::Actor;
 
     async fn test_ctx(dir: &tempfile::TempDir) -> ApiContext {
-        ApiContext::open(
-            dir.path(),
-            Actor::Cli {
-                user: "test".into(),
-            },
-        )
-        .await
-        .unwrap()
+        ApiContext::open(dir.path(), Actor::Cli { user: "test".into() })
+            .await
+            .unwrap()
     }
 
     fn write_min_config(dir: &tempfile::TempDir) -> std::path::PathBuf {

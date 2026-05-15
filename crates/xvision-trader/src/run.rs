@@ -67,9 +67,7 @@ mod tests {
     use chrono::TimeZone;
     use std::collections::{BTreeMap, VecDeque};
     use std::sync::Mutex;
-    use xvision_core::trading::{
-        Action, AssetSymbol, EvidenceTag, InternBriefing, PortfolioState, Regime,
-    };
+    use xvision_core::trading::{Action, AssetSymbol, EvidenceTag, InternBriefing, PortfolioState, Regime};
 
     /// Mock backend that pops scripted responses off a queue.
     struct ScriptedBackend {
@@ -303,9 +301,6 @@ mod tests {
             "after-retry parse rate {}/100 below 99%",
             clean_count + retried_count
         );
-        assert!(
-            hard_failed <= 1,
-            "hard-fail count {hard_failed} above tolerance"
-        );
+        assert!(hard_failed <= 1, "hard-fail count {hard_failed} above tolerance");
     }
 }

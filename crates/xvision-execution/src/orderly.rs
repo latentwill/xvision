@@ -269,9 +269,9 @@ impl ReqwestOrderlyApi {
     ) -> Result<T, ExecutorError> {
         let status = resp.status();
         if status.is_success() {
-            resp.json::<T>().await.map_err(|e| {
-                ExecutorError::Internal(format!("orderly response parse: {e}"))
-            })
+            resp.json::<T>()
+                .await
+                .map_err(|e| ExecutorError::Internal(format!("orderly response parse: {e}")))
         } else {
             let code = status.as_u16();
             let body = resp.text().await.unwrap_or_default();
@@ -387,8 +387,8 @@ impl OrderlyApi for ReqwestOrderlyApi {
             body["reduce_only"] = serde_json::Value::Bool(ro);
         }
 
-        let body_str = serde_json::to_string(&body)
-            .map_err(|e| ExecutorError::Internal(format!("json: {e}")))?;
+        let body_str =
+            serde_json::to_string(&body).map_err(|e| ExecutorError::Internal(format!("json: {e}")))?;
 
         let resp = self
             .signed_request(reqwest::Method::POST, "/v1/order", Some(&body_str))
@@ -436,27 +436,21 @@ impl OrderlyApi for ReqwestOrderlyApi {
             body["reduce_only"] = serde_json::Value::Bool(ro);
         }
 
-        let body_str = serde_json::to_string(&body)
-            .map_err(|e| ExecutorError::Internal(format!("json: {e}")))?;
+        let body_str =
+            serde_json::to_string(&body).map_err(|e| ExecutorError::Internal(format!("json: {e}")))?;
 
         let resp = self
             .signed_request(reqwest::Method::POST, "/v1/algo-order", Some(&body_str))
             .await?;
 
         let env: OkEnvelope<AlgoOrderData> = Self::parse_response(resp).await?;
-        let id = env
-            .data
-            .algo_order_id
-            .parse::<u64>()
-            .unwrap_or(0);
+        let id = env.data.algo_order_id.parse::<u64>().unwrap_or(0);
         Ok(id)
     }
 
     async fn get_order(&self, order_id: u64) -> Result<OrderlyOrder, ExecutorError> {
         let path = format!("/v1/order/{}", order_id);
-        let resp = self
-            .signed_request(reqwest::Method::GET, &path, None)
-            .await?;
+        let resp = self.signed_request(reqwest::Method::GET, &path, None).await?;
 
         let env: OkEnvelope<GetOrderWrapper> = Self::parse_response(resp).await?;
         Ok(order_from_data(env.data.order))
@@ -469,10 +463,8 @@ impl OrderlyApi for ReqwestOrderlyApi {
             self.signed_request(reqwest::Method::GET, "/v1/positions", None),
         )?;
 
-        let holding_env: OkEnvelope<HoldingData> =
-            Self::parse_response(holding_resp).await?;
-        let pos_env: OkEnvelope<PositionsData> =
-            Self::parse_response(pos_resp).await?;
+        let holding_env: OkEnvelope<HoldingData> = Self::parse_response(holding_resp).await?;
+        let pos_env: OkEnvelope<PositionsData> = Self::parse_response(pos_resp).await?;
 
         let usdc_holding = holding_env
             .data
@@ -482,12 +474,7 @@ impl OrderlyApi for ReqwestOrderlyApi {
             .map(|h| h.holding)
             .unwrap_or(0.0);
 
-        let unrealized_pnl: f64 = pos_env
-            .data
-            .rows
-            .iter()
-            .map(|p| p.unsettled_pnl)
-            .sum();
+        let unrealized_pnl: f64 = pos_env.data.rows.iter().map(|p| p.unsettled_pnl).sum();
 
         Ok(OrderlyAccount {
             usdc_holding,
@@ -531,10 +518,7 @@ impl OrderlyExecutor<ReqwestOrderlyApi> {
     /// Build from explicit credentials.
     ///
     /// `base_url` defaults to `https://api-evm.orderly.org` when `None`.
-    pub fn connect(
-        creds: Credentials,
-        base_url: Option<&str>,
-    ) -> Result<Self, ExecutorError> {
+    pub fn connect(creds: Credentials, base_url: Option<&str>) -> Result<Self, ExecutorError> {
         let url = base_url.unwrap_or(ORDERLY_MAINNET_BASE).to_string();
         let http = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
@@ -634,9 +618,7 @@ impl<A: OrderlyApi + 'static> Executor for OrderlyExecutor<A> {
         // 1. Bail on vetoed decisions immediately.
         let td = match decision {
             RiskDecision::Vetoed { .. } => {
-                return Err(ExecutorError::NotActionable(
-                    "decision was vetoed".to_string(),
-                ));
+                return Err(ExecutorError::NotActionable("decision was vetoed".to_string()));
             }
             RiskDecision::Approved { decision: td } => td,
             RiskDecision::Modified { modified: td, .. } => td,
@@ -695,13 +677,7 @@ impl<A: OrderlyApi + 'static> Executor for OrderlyExecutor<A> {
         // 5. Place entry order (client_order_id = cycle_id for idempotency).
         let entry = self
             .api
-            .create_order(
-                &self.symbol,
-                side,
-                qty,
-                Some(td.cycle_id.to_string()),
-                None,
-            )
+            .create_order(&self.symbol, side, qty, Some(td.cycle_id.to_string()), None)
             .await?;
 
         // 6. Poll for fill.
@@ -833,10 +809,7 @@ impl<A: OrderlyApi + 'static> Executor for OrderlyExecutor<A> {
     }
 
     async fn portfolio(&self) -> Result<PortfolioState, ExecutorError> {
-        let (account, positions) = tokio::try_join!(
-            self.api.get_account(),
-            self.api.get_positions(),
-        )?;
+        let (account, positions) = tokio::try_join!(self.api.get_account(), self.api.get_positions(),)?;
 
         let equity = account.equity();
         let mut open_positions = BTreeMap::new();
@@ -1114,8 +1087,16 @@ mod tests {
         assert_eq!(sl.side, OrderSide::Sell, "close side is Sell");
 
         // TP/SL client ids start with expected prefixes.
-        assert!(tp.client_order_id.as_deref().map(|s| s.starts_with("tp-")).unwrap_or(false));
-        assert!(sl.client_order_id.as_deref().map(|s| s.starts_with("sl-")).unwrap_or(false));
+        assert!(tp
+            .client_order_id
+            .as_deref()
+            .map(|s| s.starts_with("tp-"))
+            .unwrap_or(false));
+        assert!(sl
+            .client_order_id
+            .as_deref()
+            .map(|s| s.starts_with("sl-"))
+            .unwrap_or(false));
     }
 
     // ── Test 2 ───────────────────────────────────────────────────────────────
@@ -1127,10 +1108,26 @@ mod tests {
 
         #[async_trait]
         impl OrderlyApi for PanicApi {
-            async fn create_order(&self, _: &str, _: OrderSide, _: f64, _: Option<String>, _: Option<bool>) -> Result<OrderlyOrder, ExecutorError> {
+            async fn create_order(
+                &self,
+                _: &str,
+                _: OrderSide,
+                _: f64,
+                _: Option<String>,
+                _: Option<bool>,
+            ) -> Result<OrderlyOrder, ExecutorError> {
                 panic!("create_order must not be called")
             }
-            async fn create_algo_order(&self, _: &str, _: AlgoKind, _: OrderSide, _: f64, _: f64, _: Option<String>, _: Option<bool>) -> Result<u64, ExecutorError> {
+            async fn create_algo_order(
+                &self,
+                _: &str,
+                _: AlgoKind,
+                _: OrderSide,
+                _: f64,
+                _: f64,
+                _: Option<String>,
+                _: Option<bool>,
+            ) -> Result<u64, ExecutorError> {
                 panic!("create_algo_order must not be called")
             }
             async fn get_order(&self, _: u64) -> Result<OrderlyOrder, ExecutorError> {
@@ -1317,8 +1314,7 @@ mod tests {
             orderly_account_id: "0xdeadbeef".into(),
         };
 
-        let executor = OrderlyExecutor::connect(creds, Some(&server.url()))
-            .expect("connect must succeed");
+        let executor = OrderlyExecutor::connect(creds, Some(&server.url())).expect("connect must succeed");
 
         let err = executor
             .submit(&fixture_buy_decision(Uuid::new_v4()))

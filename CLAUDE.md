@@ -6,10 +6,12 @@ and override anything in conflict with the workspace file.
 
 ## Deployment guardrails (hard rules)
 
-These rules are mandatory for agents operating on deploy hosts and this repo.
+These rules are mandatory for agents operating on remote/deploy hosts. They do
+not apply to local development workstations.
 
-- NEVER run `cargo`, `cargo build`, `cargo check`, or `cargo test` on server/deploy hosts.
-- NEVER build Docker images on server/deploy hosts for production rollout.
+- On remote/deploy hosts, NEVER run `cargo`, `cargo build`, `cargo check`, or
+  `cargo test`.
+- On remote/deploy hosts, NEVER build Docker images for production rollout.
 - ALWAYS publish runtime images through GitHub Actions workflow `.github/workflows/docker.yml`.
 - ALWAYS use `workflow_dispatch` inputs explicitly when triggering GHCR builds:
   - `dockerfile=Dockerfile.deploy`

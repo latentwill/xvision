@@ -221,13 +221,19 @@ impl Cli {
     pub async fn run(self) -> Result<(), crate::exit::CliError> {
         match self.command {
             Command::ShowMetrics { report } => commands::show_metrics::run(report).map_err(Into::into),
-            Command::ShowDecision { cycle_id, db } => commands::show_decision::run(cycle_id, db).await.map_err(Into::into),
-            Command::ShowBriefing { cycle_id, db } => commands::show_briefing::run(cycle_id, db).await.map_err(Into::into),
+            Command::ShowDecision { cycle_id, db } => commands::show_decision::run(cycle_id, db)
+                .await
+                .map_err(Into::into),
+            Command::ShowBriefing { cycle_id, db } => commands::show_briefing::run(cycle_id, db)
+                .await
+                .map_err(Into::into),
             Command::RunSetup {
                 snapshot,
                 intern,
                 model,
-            } => commands::run_setup::run(snapshot, intern, model).await.map_err(Into::into),
+            } => commands::run_setup::run(snapshot, intern, model)
+                .await
+                .map_err(Into::into),
             Command::Report { input, output } => commands::report::run(input, output).map_err(Into::into),
             Command::Metrics {
                 report,
@@ -235,14 +241,16 @@ impl Cli {
                 baseline,
                 n_resamples,
                 block_size,
-            } => commands::metrics::run_metrics(report, treatment, baseline, n_resamples, block_size).map_err(Into::into),
+            } => commands::metrics::run_metrics(report, treatment, baseline, n_resamples, block_size)
+                .map_err(Into::into),
             Command::Gate {
                 report,
                 treatment,
                 baseline,
                 n_resamples,
                 block_size,
-            } => commands::metrics::run_gate(report, treatment, baseline, n_resamples, block_size).map_err(Into::into),
+            } => commands::metrics::run_gate(report, treatment, baseline, n_resamples, block_size)
+                .map_err(Into::into),
             Command::FireTrade {
                 venue,
                 side,
@@ -250,13 +258,13 @@ impl Cli {
                 stop_loss_pct,
                 take_profit_pct,
                 summary,
-            } => {
-                commands::fire_trade::run(venue, side, size_bps, stop_loss_pct, take_profit_pct, summary)
-                    .await
-                    .map_err(Into::into)
-            }
+            } => commands::fire_trade::run(venue, side, size_bps, stop_loss_pct, take_profit_pct, summary)
+                .await
+                .map_err(Into::into),
             Command::Portfolio { venue } => commands::venue::portfolio(venue).await.map_err(Into::into),
-            Command::ClosePosition { venue, asset } => commands::venue::close_position(venue, asset).await.map_err(Into::into),
+            Command::ClosePosition { venue, asset } => commands::venue::close_position(venue, asset)
+                .await
+                .map_err(Into::into),
             Command::AbCompare {
                 cycles,
                 bars,
@@ -275,29 +283,27 @@ impl Cli {
                 trader_base_url,
                 trader_model,
                 trader_api_key_env,
-            } => {
-                commands::ab_compare::run(
-                    cycles,
-                    bars,
-                    from,
-                    to,
-                    granularity,
-                    arms,
-                    output,
-                    initial_nav_usd,
-                    fee_bps,
-                    step_hours,
-                    horizon_hours,
-                    asset,
-                    intern,
-                    intern_model,
-                    trader_base_url,
-                    trader_model,
-                    trader_api_key_env,
-                )
-                .await
-                .map_err(Into::into)
-            }
+            } => commands::ab_compare::run(
+                cycles,
+                bars,
+                from,
+                to,
+                granularity,
+                arms,
+                output,
+                initial_nav_usd,
+                fee_bps,
+                step_hours,
+                horizon_hours,
+                asset,
+                intern,
+                intern_model,
+                trader_base_url,
+                trader_model,
+                trader_api_key_env,
+            )
+            .await
+            .map_err(Into::into),
             Command::Strategy(cmd) => commands::strategy::run(cmd).await,
             Command::Intern(cmd) => commands::intern::run(cmd).await.map_err(Into::into),
             Command::Trader(cmd) => commands::trader::run(cmd).await.map_err(Into::into),

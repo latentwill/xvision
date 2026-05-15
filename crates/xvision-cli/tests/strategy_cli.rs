@@ -229,12 +229,10 @@ fn templates_json_exposes_registry_version_and_summaries() {
         .find(|template| template["name"] == "mean_reversion")
         .expect("mean_reversion template");
     assert_eq!(mean_reversion["display_name"], "Buys dips");
-    assert!(
-        mean_reversion["plain_summary"]
-            .as_str()
-            .expect("plain_summary")
-            .contains("sideways markets")
-    );
+    assert!(mean_reversion["plain_summary"]
+        .as_str()
+        .expect("plain_summary")
+        .contains("sideways markets"));
 }
 
 #[test]
@@ -298,13 +296,7 @@ fn add_agent_set_pipeline_and_remove_agent_roundtrip() {
     );
 
     let out = xvn(
-        &[
-            "strategy",
-            "set-pipeline",
-            &strategy_id,
-            "--kind",
-            "sequential",
-        ],
+        &["strategy", "set-pipeline", &strategy_id, "--kind", "sequential"],
         dir.path(),
     );
     assert!(
@@ -315,10 +307,7 @@ fn add_agent_set_pipeline_and_remove_agent_roundtrip() {
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(stdout.contains("sequential"), "stdout: {stdout}");
 
-    let out = xvn(
-        &["strategy", "show", &strategy_id],
-        dir.path(),
-    );
+    let out = xvn(&["strategy", "show", &strategy_id], dir.path());
     assert!(out.status.success());
     let json = String::from_utf8(out.stdout).unwrap();
     assert!(json.contains("\"agents\""), "json: {json}");

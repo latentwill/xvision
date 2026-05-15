@@ -91,10 +91,7 @@ pub fn is_alpaca_crypto_supported(symbol: &str) -> bool {
 }
 
 pub fn alpaca_crypto_symbols() -> Vec<&'static str> {
-    ALPACA_CRYPTO_WHITELIST
-        .iter()
-        .map(|asset| asset.symbol)
-        .collect()
+    ALPACA_CRYPTO_WHITELIST.iter().map(|asset| asset.symbol).collect()
 }
 
 pub fn alpaca_crypto_asset(raw: &str) -> Option<&'static AlpacaCryptoAsset> {
