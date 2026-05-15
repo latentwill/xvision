@@ -151,10 +151,7 @@ async fn wipe_db_inner(ctx: &ApiContext, confirm: &str) -> ApiResult<WipeDbRepor
 
 // ─── regen_identity ──────────────────────────────────────────────────────
 
-pub async fn regen_identity(
-    ctx: &ApiContext,
-    confirm: &str,
-) -> ApiResult<RegenIdentityReport> {
+pub async fn regen_identity(ctx: &ApiContext, confirm: &str) -> ApiResult<RegenIdentityReport> {
     let started = Instant::now();
     let result = regen_identity_inner(ctx, confirm).await;
     let outcome = audit_outcome(&result);
@@ -171,10 +168,7 @@ pub async fn regen_identity(
     result
 }
 
-async fn regen_identity_inner(
-    _ctx: &ApiContext,
-    confirm: &str,
-) -> ApiResult<RegenIdentityReport> {
+async fn regen_identity_inner(_ctx: &ApiContext, confirm: &str) -> ApiResult<RegenIdentityReport> {
     check_confirm(confirm)?;
 
     // v1 ships without the `xvision-identity` member. Regen is intentionally
@@ -189,10 +183,7 @@ async fn regen_identity_inner(
 
 // ─── factory_reset ───────────────────────────────────────────────────────
 
-pub async fn factory_reset(
-    ctx: &ApiContext,
-    confirm: &str,
-) -> ApiResult<FactoryResetReport> {
+pub async fn factory_reset(ctx: &ApiContext, confirm: &str) -> ApiResult<FactoryResetReport> {
     let started = Instant::now();
     // For factory_reset the audit trail can't survive in `xvn.db` (we're
     // about to delete the file). We record to the in-DB audit row FIRST
@@ -226,10 +217,7 @@ pub async fn factory_reset(
     result
 }
 
-async fn factory_reset_inner(
-    ctx: &ApiContext,
-    confirm: &str,
-) -> ApiResult<FactoryResetReport> {
+async fn factory_reset_inner(ctx: &ApiContext, confirm: &str) -> ApiResult<FactoryResetReport> {
     check_confirm(confirm)?;
     let xvn_home = ctx.xvn_home.clone();
 
@@ -263,13 +251,13 @@ async fn factory_reset_inner(
     // The actual wipe. `remove_dir_all` is idempotent enough here —
     // if the path is missing we treat it as already-clean.
     if xvn_home.exists() {
-        tokio::fs::remove_dir_all(&xvn_home).await.map_err(|e| {
-            ApiError::Internal(format!("remove {}: {e}", xvn_home.display()))
-        })?;
+        tokio::fs::remove_dir_all(&xvn_home)
+            .await
+            .map_err(|e| ApiError::Internal(format!("remove {}: {e}", xvn_home.display())))?;
     }
-    tokio::fs::create_dir_all(&xvn_home).await.map_err(|e| {
-        ApiError::Internal(format!("recreate {}: {e}", xvn_home.display()))
-    })?;
+    tokio::fs::create_dir_all(&xvn_home)
+        .await
+        .map_err(|e| ApiError::Internal(format!("recreate {}: {e}", xvn_home.display())))?;
 
     Ok(FactoryResetReport {
         xvn_home: xvn_home.display().to_string(),
@@ -303,14 +291,9 @@ mod tests {
     use tempfile::TempDir;
 
     async fn ctx_in(dir: &TempDir) -> ApiContext {
-        ApiContext::open(
-            dir.path(),
-            Actor::Cli {
-                user: "test".into(),
-            },
-        )
-        .await
-        .unwrap()
+        ApiContext::open(dir.path(), Actor::Cli { user: "test".into() })
+            .await
+            .unwrap()
     }
 
     async fn count_rows(pool: &SqlitePool, table: &str) -> i64 {
@@ -347,16 +330,7 @@ mod tests {
         assert_eq!(count_rows(&ctx.db, "chat_sessions").await, 2);
 
         // Also fire an audit row so the post-wipe count is verifiable.
-        let _ = audit::record(
-            &ctx,
-            "test",
-            "seed",
-            None,
-            None,
-            Outcome::Ok,
-            0,
-        )
-        .await;
+        let _ = audit::record(&ctx, "test", "seed", None, None, Outcome::Ok, 0).await;
 
         let report = wipe_db(&ctx, CONFIRM_TOKEN).await.unwrap();
 
@@ -422,29 +396,17 @@ mod tests {
         tokio::fs::create_dir_all(&xvn_home).await.unwrap();
         tokio::fs::write(xvn_home.join("marker"), b"hi").await.unwrap();
 
-        let ctx = ApiContext::open(
-            &xvn_home,
-            Actor::Cli {
-                user: "test".into(),
-            },
-        )
-        .await
-        .unwrap();
+        let ctx = ApiContext::open(&xvn_home, Actor::Cli { user: "test".into() })
+            .await
+            .unwrap();
 
         let report = factory_reset(&ctx, CONFIRM_TOKEN).await.unwrap();
 
         // Marker gone, dir re-created empty (ApiContext::open didn't
         // re-run since we don't re-open after the reset — the dir is
         // empty but exists).
-        assert!(
-            xvn_home.exists(),
-            "xvn_home re-created at {}",
-            xvn_home.display()
-        );
-        assert!(
-            !xvn_home.join("marker").exists(),
-            "marker should have been wiped"
-        );
+        assert!(xvn_home.exists(), "xvn_home re-created at {}", xvn_home.display());
+        assert!(!xvn_home.join("marker").exists(), "marker should have been wiped");
 
         // Sibling log got our line.
         let log_path = PathBuf::from(&report.audit_log_path);

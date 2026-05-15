@@ -8,9 +8,7 @@ use std::sync::Arc;
 
 use tokio::time::{timeout, Duration};
 
-use xvision_engine::api::chart::{
-    ChartEquityPoint, HoldMarker, MarkerEvent, RunChartEvent, RunEventBus,
-};
+use xvision_engine::api::chart::{ChartEquityPoint, HoldMarker, MarkerEvent, RunChartEvent, RunEventBus};
 
 #[tokio::test]
 async fn bus_delivers_equity_and_marker_events_to_subscriber() {
@@ -104,5 +102,8 @@ async fn bus_isolates_events_per_run_id() {
     assert!(matches!(ev, RunChartEvent::Status { .. }));
 
     // run-B subscriber should see nothing yet (non-blocking check).
-    assert!(rx_b.try_recv().is_err(), "run-B should not have received anything");
+    assert!(
+        rx_b.try_recv().is_err(),
+        "run-B should not have received anything"
+    );
 }

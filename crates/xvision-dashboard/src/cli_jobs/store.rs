@@ -263,8 +263,8 @@ impl CliJobStore {
             other => return Err(anyhow!("unknown cli job stream '{other}'")),
         };
 
-        let current_bytes: u64 = u64::try_from(row.try_get::<i64, _>(bytes_col)?)
-            .context("negative stream byte count")?;
+        let current_bytes: u64 =
+            u64::try_from(row.try_get::<i64, _>(bytes_col)?).context("negative stream byte count")?;
         let current_truncated = row.try_get::<i64, _>(truncated_col)? != 0;
         let payload_bytes = payload.as_bytes().len() as u64;
         let next_bytes = current_bytes.saturating_add(payload_bytes);
@@ -340,8 +340,7 @@ fn row_to_job(row: sqlx::sqlite::SqliteRow) -> Result<CliJob> {
         job_id: row.try_get("job_id")?,
         argv: serde_json::from_str(&row.try_get::<String, _>("argv_json")?)
             .context("deserialize argv_json")?,
-        status: CliJobStatus::from_db(&status)
-            .ok_or_else(|| anyhow!("unknown cli job status '{status}'"))?,
+        status: CliJobStatus::from_db(&status).ok_or_else(|| anyhow!("unknown cli job status '{status}'"))?,
         created_at: row.try_get("created_at")?,
         started_at: row.try_get("started_at")?,
         finished_at: row.try_get("finished_at")?,

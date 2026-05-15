@@ -196,11 +196,7 @@ pub async fn list(ctx: &ApiContext, config_path: &Path) -> ApiResult<ProvidersRe
     result
 }
 
-pub async fn show(
-    ctx: &ApiContext,
-    config_path: &Path,
-    name: &str,
-) -> ApiResult<ProviderRow> {
+pub async fn show(ctx: &ApiContext, config_path: &Path, name: &str) -> ApiResult<ProviderRow> {
     let started = Instant::now();
     let result = show_inner(config_path, &ctx.xvn_home, name).await;
 
@@ -218,11 +214,7 @@ pub async fn show(
     result
 }
 
-pub async fn add(
-    ctx: &ApiContext,
-    config_path: &Path,
-    req: AddProviderRequest,
-) -> ApiResult<ProviderRow> {
+pub async fn add(ctx: &ApiContext, config_path: &Path, req: AddProviderRequest) -> ApiResult<ProviderRow> {
     let started = Instant::now();
     // Strip the api_key from the audited args — the secret never lands in
     // api_audit. Everything else is fair game.
@@ -282,11 +274,7 @@ pub async fn update(
     result
 }
 
-pub async fn remove(
-    ctx: &ApiContext,
-    config_path: &Path,
-    name: &str,
-) -> ApiResult<()> {
+pub async fn remove(ctx: &ApiContext, config_path: &Path, name: &str) -> ApiResult<()> {
     let started = Instant::now();
     let result = remove_inner(config_path, &ctx.xvn_home, name).await;
 
@@ -372,10 +360,7 @@ pub async fn test_connection(
     Ok(report)
 }
 
-async fn fetch_models_inner(
-    config_path: &Path,
-    name: &str,
-) -> ApiResult<ProviderModelsReport> {
+async fn fetch_models_inner(config_path: &Path, name: &str) -> ApiResult<ProviderModelsReport> {
     let cfg = load_cfg(config_path).await?;
     let entry = cfg
         .providers
@@ -416,9 +401,7 @@ async fn fetch_models_inner(
 
     let models = match kind {
         ProviderKind::Anthropic => fetch_anthropic_models(&client, &api_key).await?,
-        ProviderKind::OpenaiCompat => {
-            fetch_openai_compat_models(&client, &base_url, &api_key).await?
-        }
+        ProviderKind::OpenaiCompat => fetch_openai_compat_models(&client, &base_url, &api_key).await?,
         ProviderKind::LocalCandle => {
             return Err(ApiError::Validation(
                 "local-candle providers don't expose a catalog endpoint".into(),
@@ -485,9 +468,7 @@ async fn fetch_openai_compat_models(
     let status = resp.status();
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        return Err(ApiError::Validation(format!(
-            "GET {url} {status}: {body}"
-        )));
+        return Err(ApiError::Validation(format!("GET {url} {status}: {body}")));
     }
     let v: serde_json::Value = resp
         .json()
@@ -585,12 +566,10 @@ async fn list_inner(config_path: &Path, xvn_home: &Path) -> ApiResult<ProvidersR
         .map(|p| row_from_entry(p, &cfg, &secrets))
         .collect();
     let default_model = {
-        cfg.default_llm
-            .as_ref()
-            .and_then(|default_llm| {
-                let m = default_llm.model.trim();
-                (!m.is_empty()).then(|| m.to_string())
-            })
+        cfg.default_llm.as_ref().and_then(|default_llm| {
+            let m = default_llm.model.trim();
+            (!m.is_empty()).then(|| m.to_string())
+        })
     };
     Ok(ProvidersReport {
         providers,
@@ -598,11 +577,7 @@ async fn list_inner(config_path: &Path, xvn_home: &Path) -> ApiResult<ProvidersR
     })
 }
 
-async fn show_inner(
-    config_path: &Path,
-    xvn_home: &Path,
-    name: &str,
-) -> ApiResult<ProviderRow> {
+async fn show_inner(config_path: &Path, xvn_home: &Path, name: &str) -> ApiResult<ProviderRow> {
     let cfg = load_cfg(config_path).await?;
     let secrets = load_providers_secrets(xvn_home).await?;
     let entry = cfg
@@ -613,11 +588,7 @@ async fn show_inner(
     Ok(row_from_entry(entry, &cfg, &secrets))
 }
 
-async fn add_inner(
-    config_path: &Path,
-    xvn_home: &Path,
-    req: AddProviderRequest,
-) -> ApiResult<ProviderRow> {
+async fn add_inner(config_path: &Path, xvn_home: &Path, req: AddProviderRequest) -> ApiResult<ProviderRow> {
     let AddProviderRequest {
         name,
         kind,
@@ -649,9 +620,7 @@ async fn add_inner(
         } else {
             api_key_env.clone()
         };
-        let env_set = std::env::var(&env_var)
-            .map(|v| !v.is_empty())
-            .unwrap_or(false);
+        let env_set = std::env::var(&env_var).map(|v| !v.is_empty()).unwrap_or(false);
         if !env_set {
             return Err(ApiError::Validation(format!(
                 "api_key is required for `{name}` — paste a key or export {env_var} before adding"
@@ -690,12 +659,11 @@ async fn add_inner(
     task::spawn_blocking(move || -> ApiResult<()> {
         use toml_edit::{value, ArrayOfTables, DocumentMut, Table};
 
-        let raw = std::fs::read_to_string(&path).map_err(|e| {
-            ApiError::Internal(format!("read {}: {e}", path.display()))
-        })?;
-        let mut doc: DocumentMut = raw.parse().map_err(|e| {
-            ApiError::Internal(format!("parse {}: {e}", path.display()))
-        })?;
+        let raw = std::fs::read_to_string(&path)
+            .map_err(|e| ApiError::Internal(format!("read {}: {e}", path.display())))?;
+        let mut doc: DocumentMut = raw
+            .parse()
+            .map_err(|e| ApiError::Internal(format!("parse {}: {e}", path.display())))?;
         let providers = match doc
             .entry("providers")
             .or_insert_with(|| toml_edit::Item::ArrayOfTables(ArrayOfTables::new()))
@@ -711,9 +679,7 @@ async fn add_inner(
             .iter()
             .any(|t| t.get("name").and_then(|v| v.as_str()) == Some(&n))
         {
-            return Err(ApiError::Conflict(format!(
-                "provider `{n}` already exists"
-            )));
+            return Err(ApiError::Conflict(format!("provider `{n}` already exists")));
         }
         let mut row = Table::new();
         row.insert("name", value(n));
@@ -722,9 +688,8 @@ async fn add_inner(
         row.insert("api_key_env", value(e));
         providers.push(row);
 
-        std::fs::write(&path, doc.to_string()).map_err(|e| {
-            ApiError::Internal(format!("write {}: {e}", path.display()))
-        })?;
+        std::fs::write(&path, doc.to_string())
+            .map_err(|e| ApiError::Internal(format!("write {}: {e}", path.display())))?;
         Ok(())
     })
     .await
@@ -801,12 +766,11 @@ async fn update_inner(
     let default_model = cfg.default_llm.as_ref().map(|d| d.model.clone());
     task::spawn_blocking(move || -> ApiResult<()> {
         use toml_edit::{value, Array, DocumentMut};
-        let raw = std::fs::read_to_string(&path).map_err(|e| {
-            ApiError::Internal(format!("read {}: {e}", path.display()))
-        })?;
-        let mut doc: DocumentMut = raw.parse().map_err(|e| {
-            ApiError::Internal(format!("parse {}: {e}", path.display()))
-        })?;
+        let raw = std::fs::read_to_string(&path)
+            .map_err(|e| ApiError::Internal(format!("read {}: {e}", path.display())))?;
+        let mut doc: DocumentMut = raw
+            .parse()
+            .map_err(|e| ApiError::Internal(format!("parse {}: {e}", path.display())))?;
         if let Some(toml_edit::Item::ArrayOfTables(arr)) = doc.get_mut("providers") {
             let mut matched = false;
             for tbl in arr.iter_mut() {
@@ -845,9 +809,8 @@ async fn update_inner(
                 default_model.as_deref(),
             )?;
         }
-        std::fs::write(&path, doc.to_string()).map_err(|e| {
-            ApiError::Internal(format!("write {}: {e}", path.display()))
-        })?;
+        std::fs::write(&path, doc.to_string())
+            .map_err(|e| ApiError::Internal(format!("write {}: {e}", path.display())))?;
         Ok(())
     })
     .await
@@ -880,12 +843,11 @@ async fn remove_inner(config_path: &Path, xvn_home: &Path, name: &str) -> ApiRes
     let n = name.to_string();
     task::spawn_blocking(move || -> ApiResult<()> {
         use toml_edit::DocumentMut;
-        let raw = std::fs::read_to_string(&path).map_err(|e| {
-            ApiError::Internal(format!("read {}: {e}", path.display()))
-        })?;
-        let mut doc: DocumentMut = raw.parse().map_err(|e| {
-            ApiError::Internal(format!("parse {}: {e}", path.display()))
-        })?;
+        let raw = std::fs::read_to_string(&path)
+            .map_err(|e| ApiError::Internal(format!("read {}: {e}", path.display())))?;
+        let mut doc: DocumentMut = raw
+            .parse()
+            .map_err(|e| ApiError::Internal(format!("parse {}: {e}", path.display())))?;
         if let Some(toml_edit::Item::ArrayOfTables(arr)) = doc.get_mut("providers") {
             let before = arr.len();
             arr.retain(|t| t.get("name").and_then(|v| v.as_str()) != Some(&n));
@@ -903,9 +865,8 @@ async fn remove_inner(config_path: &Path, xvn_home: &Path, name: &str) -> ApiRes
         if was_default {
             clear_default_llm(&mut doc);
         }
-        std::fs::write(&path, doc.to_string()).map_err(|e| {
-            ApiError::Internal(format!("write {}: {e}", path.display()))
-        })?;
+        std::fs::write(&path, doc.to_string())
+            .map_err(|e| ApiError::Internal(format!("write {}: {e}", path.display())))?;
         Ok(())
     })
     .await
@@ -990,11 +951,7 @@ async fn set_enabled_models_inner(
     show_inner(config_path, xvn_home, name).await
 }
 
-async fn set_default_inner(
-    config_path: &Path,
-    name: &str,
-    model: Option<&str>,
-) -> ApiResult<()> {
+async fn set_default_inner(config_path: &Path, name: &str, model: Option<&str>) -> ApiResult<()> {
     let cfg = load_cfg(config_path).await?;
     let entry = cfg
         .providers
@@ -1017,22 +974,14 @@ async fn set_default_inner(
     let path: PathBuf = config_path.to_path_buf();
     task::spawn_blocking(move || -> ApiResult<()> {
         use toml_edit::DocumentMut;
-        let raw = std::fs::read_to_string(&path).map_err(|e| {
-            ApiError::Internal(format!("read {}: {e}", path.display()))
-        })?;
-        let mut doc: DocumentMut = raw.parse().map_err(|e| {
-            ApiError::Internal(format!("parse {}: {e}", path.display()))
-        })?;
-        write_default_llm(
-            &mut doc,
-            new_kind,
-            &new_base,
-            &new_env,
-            model_owned.as_deref(),
-        )?;
-        std::fs::write(&path, doc.to_string()).map_err(|e| {
-            ApiError::Internal(format!("write {}: {e}", path.display()))
-        })?;
+        let raw = std::fs::read_to_string(&path)
+            .map_err(|e| ApiError::Internal(format!("read {}: {e}", path.display())))?;
+        let mut doc: DocumentMut = raw
+            .parse()
+            .map_err(|e| ApiError::Internal(format!("parse {}: {e}", path.display())))?;
+        write_default_llm(&mut doc, new_kind, &new_base, &new_env, model_owned.as_deref())?;
+        std::fs::write(&path, doc.to_string())
+            .map_err(|e| ApiError::Internal(format!("write {}: {e}", path.display())))?;
         Ok(())
     })
     .await
@@ -1053,11 +1002,7 @@ async fn load_cfg(config_path: &Path) -> ApiResult<RuntimeConfig> {
         .map_err(|e| ApiError::Validation(format!("load config: {e}")))
 }
 
-fn row_from_entry(
-    entry: &ProviderEntry,
-    cfg: &RuntimeConfig,
-    secrets: &ProvidersSecretsFile,
-) -> ProviderRow {
+fn row_from_entry(entry: &ProviderEntry, cfg: &RuntimeConfig, secrets: &ProvidersSecretsFile) -> ProviderRow {
     let api_key_set = if entry.api_key_env.is_empty() {
         false
     } else {
@@ -1169,10 +1114,9 @@ fn default_api_key_env_for(kind: ProviderKind, name: &str) -> String {
     match kind {
         ProviderKind::Anthropic => "ANTHROPIC_API_KEY".to_string(),
         ProviderKind::OpenaiCompat if name == "openai" => "OPENAI_API_KEY".to_string(),
-        ProviderKind::OpenaiCompat => format!(
-            "XVN_PROVIDER_{}_KEY",
-            name.to_ascii_uppercase().replace('-', "_")
-        ),
+        ProviderKind::OpenaiCompat => {
+            format!("XVN_PROVIDER_{}_KEY", name.to_ascii_uppercase().replace('-', "_"))
+        }
         ProviderKind::LocalCandle => String::new(),
     }
 }
@@ -1216,25 +1160,17 @@ async fn load_providers_secrets(xvn_home: &Path) -> ApiResult<ProvidersSecretsFi
     match tokio::fs::read_to_string(&path).await {
         Ok(s) => toml::from_str::<ProvidersSecretsFile>(&s)
             .map_err(|e| ApiError::Internal(format!("parse {}: {e}", path.display()))),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            Ok(ProvidersSecretsFile::default())
-        }
-        Err(e) => Err(ApiError::Internal(format!(
-            "read {}: {e}",
-            path.display()
-        ))),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(ProvidersSecretsFile::default()),
+        Err(e) => Err(ApiError::Internal(format!("read {}: {e}", path.display()))),
     }
 }
 
-async fn save_providers_secrets(
-    xvn_home: &Path,
-    file: &ProvidersSecretsFile,
-) -> ApiResult<()> {
+async fn save_providers_secrets(xvn_home: &Path, file: &ProvidersSecretsFile) -> ApiResult<()> {
     let path = providers_secrets_path(xvn_home);
     if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent).await.map_err(|e| {
-            ApiError::Internal(format!("mkdir {}: {e}", parent.display()))
-        })?;
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| ApiError::Internal(format!("mkdir {}: {e}", parent.display())))?;
     }
     let serialized = toml::to_string_pretty(file)
         .map_err(|e| ApiError::Internal(format!("serialize providers secrets: {e}")))?;
@@ -1245,12 +1181,7 @@ async fn save_providers_secrets(
     Ok(())
 }
 
-async fn upsert_provider_secret(
-    xvn_home: &Path,
-    name: &str,
-    env_var: &str,
-    api_key: &str,
-) -> ApiResult<()> {
+async fn upsert_provider_secret(xvn_home: &Path, name: &str, env_var: &str, api_key: &str) -> ApiResult<()> {
     let mut file = load_providers_secrets(xvn_home).await?;
     file.provider.insert(
         name.to_string(),
@@ -1274,9 +1205,8 @@ async fn forget_provider_secret(xvn_home: &Path, name: &str) -> ApiResult<()> {
 fn set_owner_only(path: &Path) -> ApiResult<()> {
     use std::os::unix::fs::PermissionsExt;
     let perms = std::fs::Permissions::from_mode(0o600);
-    std::fs::set_permissions(path, perms).map_err(|e| {
-        ApiError::Internal(format!("chmod 600 {}: {e}", path.display()))
-    })
+    std::fs::set_permissions(path, perms)
+        .map_err(|e| ApiError::Internal(format!("chmod 600 {}: {e}", path.display())))
 }
 
 #[cfg(not(unix))]
@@ -1387,13 +1317,7 @@ sqlite_url = "sqlite://x.db"
             .execute(&pool)
             .await
             .unwrap();
-        ApiContext::new(
-            pool,
-            Actor::Cli {
-                user: "test".into(),
-            },
-            dir.path().to_path_buf(),
-        )
+        ApiContext::new(pool, Actor::Cli { user: "test".into() }, dir.path().to_path_buf())
     }
 
     fn write_min_config(dir: &TempDir) -> std::path::PathBuf {

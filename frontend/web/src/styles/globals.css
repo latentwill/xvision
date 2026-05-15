@@ -43,4 +43,127 @@
   .input {
     @apply w-full bg-surface-elev border border-border rounded px-2.5 py-1.5 text-[13px] text-text placeholder:text-text-3 focus:outline-none focus:border-text-3;
   }
+
+  .xvn-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--text-3) 58%, transparent)
+      color-mix(in srgb, var(--surface-elev) 72%, transparent);
+  }
+
+  .xvn-scroll::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  .xvn-scroll::-webkit-scrollbar-track {
+    background: color-mix(in srgb, var(--surface-elev) 72%, transparent);
+    border-left: 1px solid var(--border-soft);
+  }
+
+  .xvn-scroll::-webkit-scrollbar-thumb {
+    min-height: 40px;
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--gold) 42%, var(--text-3)),
+      color-mix(in srgb, var(--text-3) 70%, transparent)
+    );
+    border: 2px solid color-mix(in srgb, var(--surface-elev) 82%, transparent);
+    border-radius: 999px;
+  }
+
+  .xvn-scroll::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--gold) 68%, var(--text-2)),
+      color-mix(in srgb, var(--text-2) 84%, transparent)
+    );
+  }
+
+  .xvn-scroll--always {
+    overflow-y: scroll;
+    scrollbar-gutter: stable;
+  }
+
+  .rail {
+    scrollbar-color: color-mix(in srgb, var(--gold) 56%, var(--text-3))
+      color-mix(in srgb, var(--surface-sidebar) 78%, var(--surface-elev));
+  }
+
+  .dec-filter {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    min-height: 28px;
+    padding: 0.25rem 0.55rem;
+    border: 1px solid var(--border-soft);
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--surface-elev) 64%, transparent);
+    color: var(--text-2);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .dec-filter:hover,
+  .dec-filter--active {
+    border-color: color-mix(in srgb, var(--gold) 46%, var(--border));
+    color: var(--text);
+    background: color-mix(in srgb, var(--gold) 10%, var(--surface-elev));
+  }
+
+  .dec-filter__count {
+    min-width: 1.35rem;
+    padding: 0 0.3rem;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--surface-panel) 82%, transparent);
+    color: var(--text-3);
+    font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+    text-align: center;
+  }
+
+  .dec-pill {
+    display: inline-flex;
+    align-items: stretch;
+    overflow: hidden;
+    min-width: 106px;
+    border: 1px solid var(--border-soft);
+    border-radius: 4px;
+    background: var(--surface-elev);
+    font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+    font-size: 11px;
+    line-height: 1;
+  }
+
+  .dec-pill__label,
+  .dec-pill__raw {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.35rem 0.45rem;
+  }
+
+  .dec-pill__label {
+    color: var(--bg);
+    font-weight: 700;
+  }
+
+  .dec-pill__raw {
+    color: var(--text-2);
+    background: color-mix(in srgb, var(--surface-card) 86%, transparent);
+  }
+
+  .dec-pill--buy .dec-pill__label {
+    background: color-mix(in srgb, var(--gold) 86%, #88d498);
+  }
+
+  .dec-pill--sell .dec-pill__label {
+    background: color-mix(in srgb, var(--danger) 86%, #ffb1a7);
+  }
+
+  .dec-pill--hold .dec-pill__label {
+    background: color-mix(in srgb, var(--info) 78%, #b8d9ff);
+  }
+
+  .dec-pill--close .dec-pill__label {
+    background: color-mix(in srgb, var(--warn) 86%, #ffdd8a);
+  }
 }

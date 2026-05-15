@@ -4,12 +4,12 @@
 //! and archive flow.
 
 use chrono::{TimeZone, Utc};
-use xvision_engine::api::{Actor, ApiContext};
 use xvision_data::alpaca::BarGranularity;
+use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::eval::scenario::{
-    AdjustmentMode, AssetClass, AssetRef, BarCachePolicy, CalendarRef, DataSource, Fees, FillModel,
-    LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode,
-    Scenario, ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings, Capital,
+    AdjustmentMode, AssetClass, AssetRef, BarCachePolicy, CalendarRef, Capital, DataSource, Fees, FillModel,
+    LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode, Scenario,
+    ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings,
 };
 use xvision_engine::eval::scenario_store as store;
 
@@ -72,14 +72,9 @@ fn make_test_scenario(id: &str) -> Scenario {
 
 async fn test_ctx() -> ApiContext {
     let dir = Box::leak(Box::new(tempfile::tempdir().unwrap()));
-    ApiContext::open(
-        dir.path(),
-        Actor::Cli {
-            user: "test".into(),
-        },
-    )
-    .await
-    .unwrap()
+    ApiContext::open(dir.path(), Actor::Cli { user: "test".into() })
+        .await
+        .unwrap()
 }
 
 #[tokio::test]
@@ -104,10 +99,7 @@ async fn immutable_update_rejected() {
         .await
         .unwrap_err();
     let msg = format!("{err}");
-    assert!(
-        msg.contains("immutable"),
-        "expected immutability trigger: {msg}"
-    );
+    assert!(msg.contains("immutable"), "expected immutability trigger: {msg}");
 }
 
 #[tokio::test]
@@ -116,10 +108,7 @@ async fn archive_succeeds() {
     let s = make_test_scenario("sc_archive");
     store::insert_scenario(&ctx, &s).await.unwrap();
     store::archive_scenario(&ctx, "sc_archive").await.unwrap();
-    let back = store::get_scenario(&ctx, "sc_archive")
-        .await
-        .unwrap()
-        .unwrap();
+    let back = store::get_scenario(&ctx, "sc_archive").await.unwrap().unwrap();
     assert!(back.archived_at.is_some());
 }
 
@@ -232,9 +221,7 @@ async fn delete_blocked_when_runs_reference_scenario() {
     .await
     .unwrap();
 
-    let err = store::delete_scenario(&ctx, "sc_with_run")
-        .await
-        .unwrap_err();
+    let err = store::delete_scenario(&ctx, "sc_with_run").await.unwrap_err();
     let msg = format!("{err}");
     assert!(
         msg.contains("Archive instead") || msg.contains("reference"),

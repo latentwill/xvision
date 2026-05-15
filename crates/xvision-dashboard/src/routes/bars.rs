@@ -38,14 +38,10 @@ pub async fn cache_row(
     .bind(&cache_key)
     .fetch_optional(&ctx.db)
     .await
-    .map_err(|e| {
-        DashboardError::Internal(anyhow::anyhow!("bars cache_row query: {e}"))
-    })?;
+    .map_err(|e| DashboardError::Internal(anyhow::anyhow!("bars cache_row query: {e}")))?;
 
     match row {
-        None => Err(DashboardError::NotFound(format!(
-            "bars cache key '{cache_key}'"
-        ))),
+        None => Err(DashboardError::NotFound(format!("bars cache key '{cache_key}'"))),
         Some((asset, granularity, window_start, window_end, bar_count, fetched_at)) => {
             Ok(Json(BarsCacheRowResponse {
                 cache_key,
@@ -74,9 +70,7 @@ pub async fn evict(
         .map_err(|e| DashboardError::Internal(anyhow::anyhow!("bars evict: {e}")))?;
 
     if result.rows_affected() == 0 {
-        Err(DashboardError::NotFound(format!(
-            "bars cache key '{cache_key}'"
-        )))
+        Err(DashboardError::NotFound(format!("bars cache key '{cache_key}'")))
     } else {
         Ok(StatusCode::NO_CONTENT)
     }

@@ -7,8 +7,8 @@ use axum::{
 use tower_http::{compression::CompressionLayer, trace::TraceLayer};
 
 use crate::routes::{
-    agents, bars, chat_rail, cli, eval_runs, health::health, scenarios, search as search_route,
-    settings, skills, static_files, strategies, wizard,
+    agents, bars, chat_rail, cli, eval_runs, health::health, scenarios, search as search_route, settings,
+    skills, static_files, strategies, wizard,
 };
 use crate::state::AppState;
 use xvision_engine::api::eval as api_eval;

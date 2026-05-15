@@ -166,11 +166,7 @@ pub async fn list(ctx: &ApiContext, filter: ListScenariosFilter) -> ApiResult<Ve
 /// Derive a new scenario from an existing one, applying `mutations`.
 /// Inherits every unset field from `parent`, stamps `parent_scenario_id`,
 /// and marks `source = Clone`. Refuses to clone an archived parent.
-pub async fn clone(
-    ctx: &ApiContext,
-    parent: &str,
-    mutations: ScenarioMutations,
-) -> ApiResult<Scenario> {
+pub async fn clone(ctx: &ApiContext, parent: &str, mutations: ScenarioMutations) -> ApiResult<Scenario> {
     let parent_s = get(ctx, parent).await?;
     if parent_s.archived_at.is_some() {
         return Err(ApiError::Validation(format!(
@@ -228,14 +224,10 @@ pub async fn validate_request(req: &CreateScenarioRequest, ctx: &ApiContext) -> 
         )));
     }
     if !matches!(req.asset_class, AssetClass::Crypto) {
-        return Err(ApiError::Validation(
-            "asset_class must be Crypto in v1".into(),
-        ));
+        return Err(ApiError::Validation("asset_class must be Crypto in v1".into()));
     }
     if !matches!(req.quote_currency, QuoteCurrency::Usd) {
-        return Err(ApiError::Validation(
-            "quote_currency must be Usd in v1".into(),
-        ));
+        return Err(ApiError::Validation("quote_currency must be Usd in v1".into()));
     }
     if !matches!(req.replay_mode, ReplayMode::Continuous) {
         return Err(ApiError::Validation(
@@ -248,9 +240,7 @@ pub async fn validate_request(req: &CreateScenarioRequest, ctx: &ApiContext) -> 
         ));
     }
     if req.time_window.end > Utc::now() {
-        return Err(ApiError::Validation(
-            "time_window.end must be <= now".into(),
-        ));
+        return Err(ApiError::Validation("time_window.end must be <= now".into()));
     }
     let floor = alpaca_crypto_history_start();
     if req.time_window.start < floor {

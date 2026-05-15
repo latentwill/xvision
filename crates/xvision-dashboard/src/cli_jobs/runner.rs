@@ -133,10 +133,7 @@ impl CliJobRunner {
 
     async fn run(self, job: CliJob) {
         let (cancel_tx, cancel_rx) = watch::channel(false);
-        self.cancels
-            .lock()
-            .await
-            .insert(job.job_id.clone(), cancel_tx);
+        self.cancels.lock().await.insert(job.job_id.clone(), cancel_tx);
 
         let run_result = self.run_inner(job.clone(), cancel_rx).await;
         if let Err(error) = run_result {
@@ -323,12 +320,7 @@ impl CliJobRunner {
         }
 
         store
-            .finish(
-                &job.job_id,
-                final_status,
-                exit_code,
-                error_message.clone(),
-            )
+            .finish(&job.job_id, final_status, exit_code, error_message.clone())
             .await?;
         self.emit_finished(
             &job.job_id,
@@ -396,10 +388,7 @@ where
         }
 
         let chunk = String::from_utf8_lossy(&buf[..read]).into_owned();
-        if tx
-            .send(StreamMessage::Chunk { stream, chunk })
-            .is_err()
-        {
+        if tx.send(StreamMessage::Chunk { stream, chunk }).is_err() {
             return Ok(());
         }
     }

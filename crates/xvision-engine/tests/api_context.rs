@@ -23,9 +23,7 @@ fn actor_enum_covers_all_callers() {
         Mcp {
             session_id: "s".into(),
         },
-        AgentRunner {
-            run_id: "r".into(),
-        },
+        AgentRunner { run_id: "r".into() },
         Scheduler {
             schedule_id: "sch".into(),
         },
@@ -42,13 +40,7 @@ fn actor_kind_returns_caller_type() {
         .kind(),
         "mcp"
     );
-    assert_eq!(
-        Actor::AgentRunner {
-            run_id: "r".into()
-        }
-        .kind(),
-        "agent_runner"
-    );
+    assert_eq!(Actor::AgentRunner { run_id: "r".into() }.kind(), "agent_runner");
     assert_eq!(
         Actor::Scheduler {
             schedule_id: "sch".into()
@@ -81,9 +73,14 @@ fn actor_id_returns_inner_string() {
 #[tokio::test]
 async fn api_context_open_creates_db_and_runs_migrations() {
     let dir = tempfile::tempdir().unwrap();
-    let ctx = ApiContext::open(dir.path(), Actor::Cli { user: "operator".into() })
-        .await
-        .expect("open must succeed against a fresh xvn_home");
+    let ctx = ApiContext::open(
+        dir.path(),
+        Actor::Cli {
+            user: "operator".into(),
+        },
+    )
+    .await
+    .expect("open must succeed against a fresh xvn_home");
     assert_eq!(ctx.xvn_home, dir.path());
 
     // Migrations 001 (api_audit) and 002 (eval_runs) must both have run —
@@ -107,10 +104,7 @@ async fn api_context_open_creates_xvn_db_file_under_xvn_home() {
         .await
         .unwrap();
     let db_path = dir.path().join("xvn.db");
-    assert!(
-        db_path.exists(),
-        "xvn.db should exist under xvn_home after open"
-    );
+    assert!(db_path.exists(), "xvn.db should exist under xvn_home after open");
 }
 
 #[tokio::test]
@@ -172,9 +166,9 @@ async fn api_context_open_accepts_already_renamed_eval_agent_schema() {
 
     let columns: Vec<(i64, String, String, i64, Option<String>, i64)> =
         sqlx::query_as("PRAGMA table_info(eval_runs)")
-        .fetch_all(&ctx.db)
-        .await
-        .unwrap();
+            .fetch_all(&ctx.db)
+            .await
+            .unwrap();
     assert!(columns.iter().any(|(_, name, _, _, _, _)| name == "agent_id"));
     assert!(!columns
         .iter()

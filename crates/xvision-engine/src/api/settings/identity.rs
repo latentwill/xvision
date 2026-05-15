@@ -54,12 +54,8 @@ pub async fn get(ctx: &ApiContext) -> ApiResult<IdentityReport> {
         // v1; the wallet plan will replace this with a real check.
         feature_compiled_in: false,
         wallet: WalletStatus {
-            rpc_url_set: env::var("MANTLE_RPC_URL")
-                .map(|v| !v.is_empty())
-                .unwrap_or(false),
-            wallet_key_set: env::var("XVN_WALLET_KEY")
-                .map(|v| !v.is_empty())
-                .unwrap_or(false),
+            rpc_url_set: env::var("MANTLE_RPC_URL").map(|v| !v.is_empty()).unwrap_or(false),
+            wallet_key_set: env::var("XVN_WALLET_KEY").map(|v| !v.is_empty()).unwrap_or(false),
         },
         note: "v1 surfaces are read-only. ERC-8004 mint, attestation, and \
                reputation flows live in the blockchain wallet plan."

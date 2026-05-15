@@ -11,9 +11,7 @@ use xvision_engine::api::health::{self, HealthReport};
 use crate::error::DashboardError;
 use crate::state::AppState;
 
-pub async fn health(
-    State(state): State<AppState>,
-) -> Result<Json<HealthReport>, DashboardError> {
+pub async fn health(State(state): State<AppState>) -> Result<Json<HealthReport>, DashboardError> {
     let report = health::check(&state.api_context()).await?;
     Ok(Json(report))
 }
