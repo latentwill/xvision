@@ -252,7 +252,7 @@ async fn build_scenario_preview_validates_dates_and_assets() {
             asset: "ETH".into(),
             from: "2024-02-03".into(),
             to: "2024-02-10".into(),
-            granularity: "5m".into(),
+            granularity: "2h".into(),
             baseline: None,
         },
     )
