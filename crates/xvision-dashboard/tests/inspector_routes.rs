@@ -1,5 +1,6 @@
 //! Integration tests for the Inspector backend routes:
-//! `GET /api/strategy/:id`, `PUT /api/strategy/:id/slot/:role`,
+//! `GET /api/strategy/:id`, `POST /api/strategy/:id/clone`,
+//! `DELETE /api/strategy/:id`, `PUT /api/strategy/:id/slot/:role`,
 //! `PUT /api/strategy/:id/risk`, `POST /api/strategy/:id/validate`.
 //!
 //! Each test boots a real dashboard router against a tempdir XVN_HOME +
@@ -56,6 +57,37 @@ async fn get_strategy_unknown_returns_404() {
     response.assert_status_not_found();
     let body: serde_json::Value = response.json();
     assert_eq!(body["code"], "not_found");
+}
+
+#[tokio::test]
+async fn clone_strategy_creates_editable_copy() {
+    let (server, _tmp, state) = boot().await;
+    let id = create_draft(&state).await;
+
+    let response = server
+        .post(&format!("/api/strategy/{id}/clone"))
+        .json(&serde_json::json!({ "display_name": "BTC Momentum Copy" }))
+        .await;
+    response.assert_status(StatusCode::CREATED);
+    let body: serde_json::Value = response.json();
+    let clone_id = body["manifest"]["id"].as_str().expect("clone id");
+    assert_ne!(clone_id, id);
+    assert_eq!(body["manifest"]["display_name"], "BTC Momentum Copy");
+    assert_eq!(body["manifest"]["template"], "trend_follower");
+    assert!(body["manifest"]["published_at"].is_null());
+
+    let fetched = server.get(&format!("/api/strategy/{clone_id}")).await;
+    fetched.assert_status_ok();
+}
+
+#[tokio::test]
+async fn clone_strategy_unknown_returns_404() {
+    let (server, _tmp, _state) = boot().await;
+    let response = server
+        .post("/api/strategy/01TOTALLYMISSINGAGENTID000/clone")
+        .json(&serde_json::json!({}))
+        .await;
+    response.assert_status_not_found();
 }
 
 #[tokio::test]

@@ -46,6 +46,7 @@ pub fn build_router(state: AppState) -> Router {
             "/api/strategy/:id",
             get(strategies::get).delete(strategies::delete),
         )
+        .route("/api/strategy/:id/clone", post(strategies::clone))
         .route(
             "/api/strategy/:id/slot/:role",
             put(strategies::put_slot),
