@@ -14,14 +14,11 @@ use std::collections::{HashMap, HashSet};
 use ulid::Ulid;
 
 use crate::strategies::{
-    AgentRef,
-    PipelineDef,
-    PipelineKind,
     risk::{RiskConfig, RiskPreset},
     slot::LLMSlot,
     store::StrategyStore,
     validate::validate_strategy,
-    Strategy,
+    AgentRef, PipelineDef, PipelineKind, Strategy,
 };
 use crate::templates::registry as template_registry;
 
@@ -164,12 +161,8 @@ pub async fn create_strategy(
     store: &dyn StrategyStore,
     req: CreateStrategyReq,
 ) -> anyhow::Result<CreateStrategyOut> {
-    let tpl = template_registry::get(&req.template).ok_or_else(|| {
-        anyhow::anyhow!(
-            "unknown template '{}' — try list_templates",
-            req.template
-        )
-    })?;
+    let tpl = template_registry::get(&req.template)
+        .ok_or_else(|| anyhow::anyhow!("unknown template '{}' — try list_templates", req.template))?;
     let id = Ulid::new().to_string();
     let creator = req.creator.unwrap_or_else(|| "@anonymous".to_string());
     let draft = tpl.new_draft(id.clone(), req.name, creator);
@@ -177,25 +170,17 @@ pub async fn create_strategy(
     Ok(CreateStrategyOut { id })
 }
 
-pub async fn get_strategy(
-    store: &dyn StrategyStore,
-    id: &str,
-) -> anyhow::Result<Strategy> {
+pub async fn get_strategy(store: &dyn StrategyStore, id: &str) -> anyhow::Result<Strategy> {
     store.load(id).await
 }
 
-pub async fn update_slot(
-    store: &dyn StrategyStore,
-    req: UpdateSlotReq,
-) -> anyhow::Result<UpdateSlotOut> {
+pub async fn update_slot(store: &dyn StrategyStore, req: UpdateSlotReq) -> anyhow::Result<UpdateSlotOut> {
     let mut strategy = store.load(&req.id).await?;
     let slot_field = match req.slot.as_str() {
         "regime" => &mut strategy.regime_slot,
         "intern" => &mut strategy.intern_slot,
         "trader" => &mut strategy.trader_slot,
-        other => anyhow::bail!(
-            "unknown slot `{other}` — must be one of: regime, intern, trader"
-        ),
+        other => anyhow::bail!("unknown slot `{other}` — must be one of: regime, intern, trader"),
     };
     let slot = slot_field.get_or_insert_with(|| LLMSlot {
         role: req.slot.clone(),
@@ -232,10 +217,7 @@ pub async fn update_slot(
         );
     }
     store.save(&strategy).await?;
-    Ok(UpdateSlotOut {
-        id: req.id,
-        updated,
-    })
+    Ok(UpdateSlotOut { id: req.id, updated })
 }
 
 pub async fn update_manifest(
@@ -272,22 +254,14 @@ pub async fn update_manifest(
     }
 
     if updated.is_empty() {
-        anyhow::bail!(
-            "no manifest fields to update — supply asset_universe and/or decision_cadence_minutes"
-        );
+        anyhow::bail!("no manifest fields to update — supply asset_universe and/or decision_cadence_minutes");
     }
 
     store.save(&strategy).await?;
-    Ok(UpdateManifestOut {
-        id: req.id,
-        updated,
-    })
+    Ok(UpdateManifestOut { id: req.id, updated })
 }
 
-pub async fn add_agent_ref(
-    store: &dyn StrategyStore,
-    req: AddAgentRefRequest,
-) -> anyhow::Result<Strategy> {
+pub async fn add_agent_ref(store: &dyn StrategyStore, req: AddAgentRefRequest) -> anyhow::Result<Strategy> {
     let mut strategy = store.load(&req.strategy_id).await?;
     let role = req.role.trim();
     if role.is_empty() {
@@ -374,10 +348,7 @@ pub async fn rename_agent_role(
     Ok(strategy)
 }
 
-pub async fn set_pipeline(
-    store: &dyn StrategyStore,
-    req: SetPipelineRequest,
-) -> anyhow::Result<Strategy> {
+pub async fn set_pipeline(store: &dyn StrategyStore, req: SetPipelineRequest) -> anyhow::Result<Strategy> {
     if req.pipeline.kind != PipelineKind::Graph && !req.pipeline.edges.is_empty() {
         anyhow::bail!("pipeline edges are only valid for graph pipelines");
     }
@@ -460,9 +431,7 @@ pub async fn set_mechanical_param(
 ) -> anyhow::Result<()> {
     let mut strategy = store.load(&req.id).await?;
     let map = strategy.mechanical_params.as_object_mut().ok_or_else(|| {
-        anyhow::anyhow!(
-            "mechanical_params is not a JSON object — template invariant violation"
-        )
+        anyhow::anyhow!("mechanical_params is not a JSON object — template invariant violation")
     })?;
     map.insert(req.key, req.value);
     store.save(&strategy).await
@@ -498,10 +467,7 @@ pub async fn set_risk_config(
     })
 }
 
-pub async fn validate_draft(
-    store: &dyn StrategyStore,
-    id: &str,
-) -> anyhow::Result<ValidateDraftOut> {
+pub async fn validate_draft(store: &dyn StrategyStore, id: &str) -> anyhow::Result<ValidateDraftOut> {
     let strategy = store.load(id).await?;
     let mut errors = match validate_strategy(&strategy) {
         Ok(()) => vec![],

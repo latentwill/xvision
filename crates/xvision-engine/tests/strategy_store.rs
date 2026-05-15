@@ -2,7 +2,7 @@ use tempfile::tempdir;
 use xvision_engine::strategies::manifest::{PublicManifest, RegimeFit};
 use xvision_engine::strategies::risk::RiskPreset;
 use xvision_engine::strategies::slot::LLMSlot;
-use xvision_engine::strategies::store::{StrategyStore, FilesystemStore};
+use xvision_engine::strategies::store::{FilesystemStore, StrategyStore};
 use xvision_engine::strategies::Strategy;
 
 fn sample_strategy(id: &str) -> Strategy {
@@ -30,6 +30,8 @@ fn sample_strategy(id: &str) -> Strategy {
             prompt: "decide".into(),
             model_requirement: "anthropic.claude-sonnet-4.6".into(),
             allowed_tools: vec!["ohlcv".into()],
+            provider: None,
+            model: None,
         }),
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({}),

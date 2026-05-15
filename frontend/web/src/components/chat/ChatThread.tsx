@@ -27,7 +27,7 @@ export function ChatThread({
   return (
     <div
       ref={ref}
-      className="flex-1 min-h-0 overflow-y-auto px-4 py-3 flex flex-col gap-2"
+      className="xvn-scroll xvn-scroll--always rail flex-1 min-h-0 px-4 py-3 flex flex-col gap-2"
     >
       {bubbles.length === 0 ? (
         <div className="text-text-3 italic text-[13px] text-center py-4">

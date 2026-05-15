@@ -129,10 +129,7 @@ async fn resolve_persists_scope_and_returns_history() {
         .json(&json!({"scope": {"scope": "run", "run_id": "01HABC"}}))
         .await;
     resp.assert_status_ok();
-    let id = resp.json::<Value>()["session_id"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    let id = resp.json::<Value>()["session_id"].as_str().unwrap().to_string();
     let scope = ChatSessionStore::load_scope(&state.pool, &id).await.unwrap();
     assert_eq!(
         scope,
@@ -142,14 +139,9 @@ async fn resolve_persists_scope_and_returns_history() {
     );
 
     // Append a message and re-resolve — the response now includes it.
-    ChatSessionStore::append(
-        &state.pool,
-        &id,
-        "user",
-        &[json!({"type":"text","text":"hi"})],
-    )
-    .await
-    .unwrap();
+    ChatSessionStore::append(&state.pool, &id, "user", &[json!({"type":"text","text":"hi"})])
+        .await
+        .unwrap();
     let after = server
         .post("/api/chat-rail/sessions/resolve")
         .json(&json!({"scope": {"scope": "run", "run_id": "01HABC"}}))
@@ -167,9 +159,7 @@ async fn history_returns_empty_array_for_fresh_session() {
     let id = ChatSessionStore::create_session(&state.pool, &ContextScope::Workspace)
         .await
         .unwrap();
-    let resp = server
-        .get(&format!("/api/chat-rail/sessions/{id}/history"))
-        .await;
+    let resp = server.get(&format!("/api/chat-rail/sessions/{id}/history")).await;
     resp.assert_status_ok();
     let history: Value = resp.json();
     assert_eq!(history.as_array().unwrap().len(), 0);
@@ -181,14 +171,9 @@ async fn history_returns_persisted_messages_in_seq_order() {
     let id = ChatSessionStore::create_session(&state.pool, &ContextScope::Workspace)
         .await
         .unwrap();
-    ChatSessionStore::append(
-        &state.pool,
-        &id,
-        "user",
-        &[json!({"type":"text","text":"hi"})],
-    )
-    .await
-    .unwrap();
+    ChatSessionStore::append(&state.pool, &id, "user", &[json!({"type":"text","text":"hi"})])
+        .await
+        .unwrap();
     ChatSessionStore::append(
         &state.pool,
         &id,
@@ -198,9 +183,7 @@ async fn history_returns_persisted_messages_in_seq_order() {
     .await
     .unwrap();
 
-    let resp = server
-        .get(&format!("/api/chat-rail/sessions/{id}/history"))
-        .await;
+    let resp = server.get(&format!("/api/chat-rail/sessions/{id}/history")).await;
     resp.assert_status_ok();
     let history: Value = resp.json();
     let arr = history.as_array().unwrap();
@@ -217,25 +200,16 @@ async fn delete_session_clears_history() {
     let id = ChatSessionStore::create_session(&state.pool, &ContextScope::Workspace)
         .await
         .unwrap();
-    ChatSessionStore::append(
-        &state.pool,
-        &id,
-        "user",
-        &[json!({"type":"text","text":"hi"})],
-    )
-    .await
-    .unwrap();
+    ChatSessionStore::append(&state.pool, &id, "user", &[json!({"type":"text","text":"hi"})])
+        .await
+        .unwrap();
 
-    let resp = server
-        .delete(&format!("/api/chat-rail/sessions/{id}"))
-        .await;
+    let resp = server.delete(&format!("/api/chat-rail/sessions/{id}")).await;
     assert_eq!(resp.status_code(), StatusCode::NO_CONTENT);
 
     // Deleted: load_scope errors, history is empty (cascade dropped rows).
     let load = ChatSessionStore::load_scope(&state.pool, &id).await;
     assert!(load.is_err(), "session should be gone");
-    let history = ChatSessionStore::load_history(&state.pool, &id)
-        .await
-        .unwrap();
+    let history = ChatSessionStore::load_history(&state.pool, &id).await.unwrap();
     assert_eq!(history.len(), 0);
 }

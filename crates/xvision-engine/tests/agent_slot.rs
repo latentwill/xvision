@@ -11,6 +11,8 @@ async fn execute_slot_returns_parsed_output() {
         prompt: "decide".into(),
         model_requirement: "anthropic.claude-sonnet-4.6".into(),
         allowed_tools: vec!["ohlcv".into()],
+        provider: None,
+        model: None,
     };
     let dispatch = Arc::new(MockDispatch::echo(
         r#"{"action":"long_open","conviction":0.7,"justification":"oversold"}"#,
@@ -37,6 +39,8 @@ async fn execute_slot_loops_through_tool_use_to_final_text() {
         prompt: "decide".into(),
         model_requirement: "anthropic.claude-sonnet-4.6".into(),
         allowed_tools: vec!["ohlcv".into()],
+        provider: None,
+        model: None,
     };
 
     // Sequence: turn 1 emits tool_use(ohlcv); turn 2 emits final text.
@@ -48,8 +52,7 @@ async fn execute_slot_loops_through_tool_use_to_final_text() {
         ),
         LlmResponse {
             content: vec![ContentBlock::Text {
-                text: r#"{"action":"long_open","conviction":0.7,"justification":"oversold"}"#
-                    .into(),
+                text: r#"{"action":"long_open","conviction":0.7,"justification":"oversold"}"#.into(),
             }],
             stop_reason: StopReason::EndTurn,
             input_tokens: 50,
@@ -82,6 +85,8 @@ async fn execute_slot_allows_more_than_eight_productive_tool_calls() {
         prompt: "decide".into(),
         model_requirement: "anthropic.claude-sonnet-4.6".into(),
         allowed_tools: vec!["ohlcv".into()],
+        provider: None,
+        model: None,
     };
 
     let mut responses = (0..9)
@@ -98,7 +103,9 @@ async fn execute_slot_allows_more_than_eight_productive_tool_calls() {
         .collect::<Vec<_>>();
     responses.push(LlmResponse {
         content: vec![ContentBlock::Text {
-            text: r#"{"action":"long_open","conviction":0.7,"justification":"complete after deeper research"}"#.into(),
+            text:
+                r#"{"action":"long_open","conviction":0.7,"justification":"complete after deeper research"}"#
+                    .into(),
         }],
         stop_reason: StopReason::EndTurn,
         input_tokens: 50,
@@ -132,6 +139,8 @@ async fn execute_slot_succeeds_even_when_caller_passes_extra_inputs() {
         prompt: "decide".into(),
         model_requirement: "anthropic.claude-sonnet-4.6".into(),
         allowed_tools: vec!["ohlcv".into()],
+        provider: None,
+        model: None,
     };
     let dispatch = Arc::new(MockDispatch::echo("ok"));
     let tools = Arc::new(ToolRegistry::default_with_builtins());

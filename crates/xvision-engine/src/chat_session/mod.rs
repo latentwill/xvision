@@ -18,9 +18,9 @@ pub use context::ContextScope;
 pub use rich_blocks::{
     action_confirmation_card, build_inline_chart, inline_compare_chart_from_report,
     inline_equity_chart_from_run_detail, inline_returns_histogram_from_runs,
-    inline_strategy_card_from_summary, run_list_card_from_summaries, ChatActionPayload,
-    ChatRunListItem, ChatRunListPayload, ChatStrategyPayload, InlineAction, InlineChartKind,
-    InlineChartPayload, InlineChartSeries, InlineChartSource, InlineMetric, InlinePoint,
-    InlineTone, RichBlockError, RichContentBlock,
+    inline_strategy_card_from_summary, run_list_card_from_summaries, ChatActionPayload, ChatRunListItem,
+    ChatRunListPayload, ChatStrategyPayload, InlineAction, InlineChartKind, InlineChartPayload,
+    InlineChartSeries, InlineChartSource, InlineMetric, InlinePoint, InlineTone, RichBlockError,
+    RichContentBlock,
 };
 pub use store::{ChatMessage, ChatSessionStore, ChatSessionSummary};

@@ -190,7 +190,7 @@ describe("ChatRail", () => {
     fireEvent.change(composer, {
       target: { value: "first request" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
 
     await waitFor(() => {
       expect(chatApi.streamChat).toHaveBeenCalled();
@@ -223,7 +223,7 @@ describe("ChatRail", () => {
     fireEvent.change(composer, {
       target: { value: "start long request" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
 
     const stop = await screen.findByRole("button", { name: "Stop response" });
     fireEvent.change(composer, {

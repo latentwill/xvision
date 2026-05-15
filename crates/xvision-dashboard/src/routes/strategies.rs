@@ -12,12 +12,12 @@ use serde::{Deserialize, Serialize};
 use xvision_engine::api::chart::{self as chart_api, StrategyChartPayload};
 use xvision_engine::api::strategy::{
     self, add_agent, remove_agent, rename_agent_role, set_pipeline, set_risk_config, update_slot,
-    validate_draft, AddAgentReq, RemoveAgentReq, RenameAgentRoleReq, SetPipelineReq,
-    StrategyAgentsOut, StrategySummary,
+    validate_draft, AddAgentReq, RemoveAgentReq, RenameAgentRoleReq, SetPipelineReq, StrategyAgentsOut,
+    StrategySummary,
 };
 use xvision_engine::authoring::{
-    self, CreateStrategyOut, CreateStrategyReq, SetRiskConfigOut, SetRiskConfigReq,
-    TemplateInfo, UpdateSlotOut, UpdateSlotReq, ValidateDraftOut,
+    self, CreateStrategyOut, CreateStrategyReq, SetRiskConfigOut, SetRiskConfigReq, TemplateInfo,
+    UpdateSlotOut, UpdateSlotReq, ValidateDraftOut,
 };
 use xvision_engine::strategies::risk::RiskConfig;
 use xvision_engine::strategies::Strategy;
@@ -30,9 +30,7 @@ pub struct StrategiesListResponse {
     pub items: Vec<StrategySummary>,
 }
 
-pub async fn list(
-    State(state): State<AppState>,
-) -> Result<Json<StrategiesListResponse>, DashboardError> {
+pub async fn list(State(state): State<AppState>) -> Result<Json<StrategiesListResponse>, DashboardError> {
     let items = strategy::list(&state.api_context()).await?;
     Ok(Json(StrategiesListResponse { items }))
 }

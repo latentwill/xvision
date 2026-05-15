@@ -97,10 +97,7 @@ impl ContextScope {
                 "What do they have in common?",
                 "Draft a variant that synthesizes them",
             ],
-            ContextScope::Seed { .. } => &[
-                "Use this seed as the starting point",
-                "Show what was different",
-            ],
+            ContextScope::Seed { .. } => &["Use this seed as the starting point", "Show what was different"],
             ContextScope::Route { route } => match route.as_str() {
                 "/strategies" => &[
                     "Help me pick which to work on",
@@ -144,9 +141,7 @@ mod tests {
 
     #[test]
     fn run_scope_has_three_quick_replies() {
-        let s = ContextScope::Run {
-            run_id: "abc".into(),
-        };
+        let s = ContextScope::Run { run_id: "abc".into() };
         assert_eq!(s.quick_replies().len(), 3);
     }
 
@@ -185,18 +180,13 @@ mod tests {
     #[test]
     fn placeholder_differs_per_scope() {
         let workspace = ContextScope::Workspace.placeholder();
-        let run = ContextScope::Run {
-            run_id: "x".into(),
-        }
-        .placeholder();
+        let run = ContextScope::Run { run_id: "x".into() }.placeholder();
         assert_ne!(workspace, run);
     }
 
     #[test]
     fn json_round_trips_with_serde_tag() {
-        let s = ContextScope::Run {
-            run_id: "abc".into(),
-        };
+        let s = ContextScope::Run { run_id: "abc".into() };
         let json = serde_json::to_string(&s).unwrap();
         assert!(json.contains("\"scope\":\"run\""));
         let back: ContextScope = serde_json::from_str(&json).unwrap();

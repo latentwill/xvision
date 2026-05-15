@@ -1,6 +1,4 @@
-use xvision_engine::agent::llm::{
-    ContentBlock, LlmDispatch, LlmRequest, Message, MockDispatch, StopReason,
-};
+use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmRequest, Message, MockDispatch, StopReason};
 
 #[tokio::test]
 async fn mock_dispatch_returns_text_block() {

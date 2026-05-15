@@ -37,20 +37,18 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
         AgentTemplate {
             id: "single-trader".into(),
             name: "Single-prompt trader".into(),
-            description:
-                "One slot, one model, one prompt. The 80% case — start here unless you're \
+            description: "One slot, one model, one prompt. The 80% case — start here unless you're \
                  building a multi-stage pipeline."
-                    .into(),
+                .into(),
             slots: vec![AgentSlot {
                 name: "main".into(),
                 provider: "".into(),
                 model: "".into(),
-                system_prompt:
-                    "You are a discretionary trader making one decision per cycle. Given the \
+                system_prompt: "You are a discretionary trader making one decision per cycle. Given the \
                      briefing, output exactly one JSON object matching: \
                      {\"action\":\"long_open|short_open|flat|hold\", \"conviction\":0..1, \
                      \"justification\":\"string\"}. Do not omit action."
-                        .into(),
+                    .into(),
                 skill_ids: vec![],
                 max_tokens: 4096,
             }],
@@ -58,21 +56,19 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
         AgentTemplate {
             id: "analyst-executor".into(),
             name: "Analyst → Executor".into(),
-            description:
-                "Two slots demonstrating sequential composition. First slot analyzes the \
+            description: "Two slots demonstrating sequential composition. First slot analyzes the \
                  briefing into a thesis; second slot turns the thesis into an executable \
                  decision."
-                    .into(),
+                .into(),
             slots: vec![
                 AgentSlot {
                     name: "analyst".into(),
                     provider: "".into(),
                     model: "".into(),
-                    system_prompt:
-                        "You are a market analyst. Read the briefing and output a structured \
+                    system_prompt: "You are a market analyst. Read the briefing and output a structured \
                          thesis: regime, dominant signal, contradicting signals, expected \
                          volatility, time horizon."
-                            .into(),
+                        .into(),
                     skill_ids: vec![],
                     max_tokens: 4096,
                 },
@@ -80,12 +76,11 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     name: "executor".into(),
                     provider: "".into(),
                     model: "".into(),
-                    system_prompt:
-                        "You are an executor. Given the analyst's thesis, output a single \
+                    system_prompt: "You are an executor. Given the analyst's thesis, output a single \
                          JSON decision matching: {\"action\":\"long_open|short_open|flat|hold\", \
                          \"conviction\":0..1, \"justification\":\"string\"}. Be conservative \
                          when the analyst flags contradictions. Do not omit action."
-                            .into(),
+                        .into(),
                     skill_ids: vec![],
                     max_tokens: 2048,
                 },
@@ -94,21 +89,19 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
         AgentTemplate {
             id: "risk-checked-trader".into(),
             name: "Risk-checked trader".into(),
-            description:
-                "Three slots showing one conventional pattern: trader proposes, risk_check \
+            description: "Three slots showing one conventional pattern: trader proposes, risk_check \
                  vetoes or modifies, executor commits. Demonstrates how named slots can model \
                  a multi-stage pipeline without enforcing those names."
-                    .into(),
+                .into(),
             slots: vec![
                 AgentSlot {
                     name: "trader".into(),
                     provider: "".into(),
                     model: "".into(),
-                    system_prompt:
-                        "You are a trader. Propose a decision given the briefing. Output exactly \
+                    system_prompt: "You are a trader. Propose a decision given the briefing. Output exactly \
                          one JSON object matching: {\"action\":\"long_open|short_open|flat|hold\", \
                          \"conviction\":0..1, \"justification\":\"string\"}. Do not omit action."
-                            .into(),
+                        .into(),
                     skill_ids: vec![],
                     max_tokens: 4096,
                 },
@@ -116,11 +109,10 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     name: "risk_check".into(),
                     provider: "".into(),
                     model: "".into(),
-                    system_prompt:
-                        "You are a risk gate. Given the trader's proposed decision and the \
+                    system_prompt: "You are a risk gate. Given the trader's proposed decision and the \
                          current portfolio state, output {verdict: approve|modify|veto, \
                          size_cap_pct, reason}."
-                            .into(),
+                        .into(),
                     skill_ids: vec![],
                     max_tokens: 2048,
                 },
@@ -128,12 +120,11 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     name: "executor".into(),
                     provider: "".into(),
                     model: "".into(),
-                    system_prompt:
-                        "You are an executor. Given the trader's decision and the risk gate's \
+                    system_prompt: "You are an executor. Given the trader's decision and the risk gate's \
                          verdict, output exactly one JSON object matching: \
                          {\"action\":\"long_open|short_open|flat|hold\", \"conviction\":0..1, \
                          \"justification\":\"string\"}. Do not omit action."
-                            .into(),
+                        .into(),
                     skill_ids: vec![],
                     max_tokens: 2048,
                 },

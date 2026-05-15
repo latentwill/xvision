@@ -19,21 +19,26 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use chrono::{TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
 use crate::cli_jobs::runner::CliJobRunner;
 use crate::cli_jobs::store::CliJobStore;
-use xvision_engine::api::{Actor, ApiContext};
-use xvision_engine::api::scenario as api_scenario;
 use xvision_engine::agent::llm::{
     ContentBlock, LlmDispatch, LlmRequest, LlmResponse, Message, StopReason, ToolDefinition,
 };
+use xvision_engine::agents::AgentSlot;
+use xvision_engine::api::agents as api_agents;
 use xvision_engine::api::eval::{self as api_eval, EvalRunRequest};
+use xvision_engine::api::scenario as api_scenario;
 use xvision_engine::api::scenario::{CreateScenarioRequest, ListScenariosFilter};
+use xvision_engine::api::strategy as api_strategy;
+use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::authoring;
 use xvision_engine::chat_session::{action_confirmation_card, ChatSessionStore, ContextScope, InlineAction};
 use xvision_engine::eval::run::RunMode;
+use xvision_engine::eval::scenario::Scenario;
 
 const WIZARD_SYSTEM_PROMPT_BASE: &str = include_str!("../prompts/wizard.md");
 
@@ -68,8 +73,12 @@ impl AgentProfile {
                 "## Agent profile: strategy setup\n\
                  You are focused on strategy setup: creating, editing, validating, and evaluating \
                  strategies. Use existing strategies and existing scenarios before falling back to \
-                 templates or asking broad questions. Ask one targeted clarification only when the \
-                 available strategies/scenarios are genuinely ambiguous."
+                 templates or asking broad questions. When you create a strategy, ensure it has a \
+                 trader agent with an explicit provider/model before claiming it is eval-ready. \
+                 Do not say a tool change succeeded until the tool_result says it succeeded. For \
+                 strategy tools, pass `id` or `strategy_id` as a top-level field, never nested under \
+                 the tool name. Ask one targeted clarification only when the available strategies/scenarios \
+                 are genuinely ambiguous."
             }
         }
     }
@@ -83,20 +92,12 @@ pub enum WizardEvent {
     Token { text: String },
     /// The agent is about to call an authoring verb. Front-end uses this
     /// to render a "running tool" indicator.
-    ToolCall {
-        tool: String,
-        args: serde_json::Value,
-    },
+    ToolCall { tool: String, args: serde_json::Value },
     /// Result of the most-recent tool call. Front-end uses this to update
     /// the displayed draft state.
-    ToolResult {
-        tool: String,
-        result: serde_json::Value,
-    },
+    ToolResult { tool: String, result: serde_json::Value },
     /// A typed rich display block to append to the active assistant bubble.
-    ContentBlock {
-        block: serde_json::Value,
-    },
+    ContentBlock { block: serde_json::Value },
     /// Conversation complete. `draft_id` carries the most recently created
     /// or referenced strategy id (if any), so the front-end can transition
     /// to the inspector view.
@@ -109,6 +110,8 @@ pub struct WizardLoop {
     api_context: ApiContext,
     dispatch: Arc<dyn LlmDispatch>,
     model: String,
+    agent_provider: Option<String>,
+    agent_model: Option<String>,
     pool: SqlitePool,
     session_id: String,
     scope: ContextScope,
@@ -120,6 +123,47 @@ pub struct WizardLoop {
     /// Pending events queued during the current `next_event` invocation.
     pending: Vec<WizardEvent>,
     is_done: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateStrategyAgentReq {
+    #[serde(default)]
+    strategy_id: Option<String>,
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    role: Option<String>,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    provider: Option<String>,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    system_prompt: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AttachAgentReq {
+    #[serde(default)]
+    strategy_id: Option<String>,
+    #[serde(default)]
+    id: Option<String>,
+    agent_id: String,
+    #[serde(default)]
+    role: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+enum StrategyResolution {
+    Resolved(api_strategy::StrategySummary),
+    NeedsClarification(serde_json::Value),
+}
+
+#[derive(Debug, Clone)]
+enum ScenarioResolution {
+    Resolved(Scenario),
+    NeedsClarification(serde_json::Value),
 }
 
 impl WizardLoop {
@@ -142,6 +186,8 @@ impl WizardLoop {
             xvn_home,
             dispatch,
             model,
+            None,
+            None,
             pool,
             session_id,
             scope,
@@ -156,6 +202,8 @@ impl WizardLoop {
         xvn_home: PathBuf,
         dispatch: Arc<dyn LlmDispatch>,
         model: String,
+        agent_provider: Option<String>,
+        agent_model: Option<String>,
         pool: SqlitePool,
         session_id: String,
         scope: ContextScope,
@@ -176,6 +224,8 @@ impl WizardLoop {
             api_context,
             dispatch,
             model,
+            agent_provider,
+            agent_model,
             pool,
             session_id,
             scope,
@@ -213,10 +263,25 @@ impl WizardLoop {
         // knows what the user is asking about (workspace, a specific run,
         // a draft, etc.). Tool calls remain available for deeper info.
         format!(
-            "{base}\n\n## Current context\n{header}\n",
+            "{base}\n\n## Current context\n{header}\n\n{runtime}\n",
             base = WIZARD_SYSTEM_PROMPT_BASE,
-            header = format!("{}\n\n{}", self.scope.header_label(), self.profile.prompt_section())
+            header = format!(
+                "{}\n\n{}",
+                self.scope.header_label(),
+                self.profile.prompt_section()
+            ),
+            runtime = self.agent_runtime_prompt_section(),
         )
+    }
+
+    fn agent_runtime_prompt_section(&self) -> String {
+        match (&self.agent_provider, &self.agent_model) {
+            (Some(provider), Some(model)) => format!(
+                "## Selected strategy-agent runtime\n\
+                 New strategy agents may use provider `{provider}` and model `{model}` unless the user asks for a different configured pair."
+            ),
+            _ => "## Selected strategy-agent runtime\nNo provider/model pair is selected for new strategy agents; ask for one before creating an eval-ready agent.".into(),
+        }
     }
 
     async fn run_one_turn(&mut self) -> anyhow::Result<()> {
@@ -240,20 +305,13 @@ impl WizardLoop {
                 .iter()
                 .map(serde_json::to_value)
                 .collect::<Result<Vec<_>, _>>()?;
-            ChatSessionStore::append(
-                &self.pool,
-                &self.session_id,
-                "assistant",
-                &assistant_blocks,
-            )
-            .await?;
+            ChatSessionStore::append(&self.pool, &self.session_id, "assistant", &assistant_blocks).await?;
 
             // Emit Token events for any text blocks the model produced.
             for block in &resp.content {
                 if let ContentBlock::Text { text } = block {
                     if !text.is_empty() {
-                        self.pending
-                            .push(WizardEvent::Token { text: text.clone() });
+                        self.pending.push(WizardEvent::Token { text: text.clone() });
                     }
                 }
             }
@@ -280,8 +338,7 @@ impl WizardLoop {
             // Run each tool, build a tool_result block per call, emit
             // ToolCall + ToolResult WizardEvents, persist all results as
             // one user turn.
-            let mut tool_result_blocks: Vec<serde_json::Value> =
-                Vec::with_capacity(tool_uses.len());
+            let mut tool_result_blocks: Vec<serde_json::Value> = Vec::with_capacity(tool_uses.len());
             let mut rich_blocks: Vec<serde_json::Value> = Vec::new();
             for (id, name, input) in tool_uses {
                 self.pending.push(WizardEvent::ToolCall {
@@ -307,21 +364,9 @@ impl WizardLoop {
                     "content": result_value.to_string(),
                 }));
             }
-            ChatSessionStore::append(
-                &self.pool,
-                &self.session_id,
-                "user",
-                &tool_result_blocks,
-            )
-            .await?;
+            ChatSessionStore::append(&self.pool, &self.session_id, "user", &tool_result_blocks).await?;
             if !rich_blocks.is_empty() {
-                ChatSessionStore::append(
-                    &self.pool,
-                    &self.session_id,
-                    "assistant",
-                    &rich_blocks,
-                )
-                .await?;
+                ChatSessionStore::append(&self.pool, &self.session_id, "assistant", &rich_blocks).await?;
                 for block in rich_blocks {
                     self.pending.push(WizardEvent::ContentBlock { block });
                 }
@@ -349,8 +394,7 @@ impl WizardLoop {
     /// shape matches `ContentBlock`'s tagged-union derive — round-trip
     /// via `from_value`.
     async fn load_messages_from_store(&self) -> anyhow::Result<Vec<Message>> {
-        let history =
-            ChatSessionStore::load_history(&self.pool, &self.session_id).await?;
+        let history = ChatSessionStore::load_history(&self.pool, &self.session_id).await?;
         let mut out = Vec::with_capacity(history.len());
         for cm in history {
             let mut blocks = Vec::with_capacity(cm.content_blocks.len());
@@ -372,6 +416,10 @@ impl WizardLoop {
             self.last_draft_id = Some(id.to_string());
             return;
         }
+        if let Some(id) = result.get("strategy_id").and_then(|v| v.as_str()) {
+            self.last_draft_id = Some(id.to_string());
+            return;
+        }
         // For get_strategy the strategy's manifest.id is what we want.
         if tool == "get_strategy" {
             if let Some(id) = result
@@ -384,14 +432,11 @@ impl WizardLoop {
         }
     }
 
-    async fn run_tool(
-        &self,
-        name: &str,
-        input: serde_json::Value,
-    ) -> anyhow::Result<serde_json::Value> {
+    async fn run_tool(&self, name: &str, input: serde_json::Value) -> anyhow::Result<serde_json::Value> {
         if !agent_tool_defs(self.profile).iter().any(|d| d.name == name) {
             anyhow::bail!("tool '{name}' is not available in {:?} profile", self.profile);
         }
+        let input = normalize_tool_input(name, input);
         match name {
             "list_templates" => {
                 let out = authoring::list_templates();
@@ -399,20 +444,25 @@ impl WizardLoop {
             }
             "create_strategy" => {
                 let req: authoring::CreateStrategyReq = serde_json::from_value(input)?;
-                let out = xvision_engine::api::strategy::create_strategy(&self.api_context, req)
-                    .await?;
-                Ok(serde_json::to_value(out)?)
+                let out = api_strategy::create_strategy(&self.api_context, req).await?;
+                let mut value = serde_json::to_value(&out)?;
+                if let Some(agent) = self.create_default_strategy_agent(&out.id).await? {
+                    if let Some(obj) = value.as_object_mut() {
+                        obj.insert("agent".into(), agent);
+                    }
+                }
+                Ok(value)
             }
             "get_strategy" => {
                 let id = input
                     .get("id")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow::anyhow!("get_strategy: missing `id`"))?;
-                let out = xvision_engine::api::strategy::get(&self.api_context, id).await?;
+                let out = api_strategy::get(&self.api_context, id).await?;
                 Ok(serde_json::to_value(out)?)
             }
             "list_strategies" => {
-                let out = xvision_engine::api::strategy::list(&self.api_context).await?;
+                let out = api_strategy::list(&self.api_context).await?;
                 Ok(serde_json::to_value(out)?)
             }
             "list_scenarios" => {
@@ -441,61 +491,85 @@ impl WizardLoop {
             }
             "update_slot" => {
                 let req: authoring::UpdateSlotReq = serde_json::from_value(input)?;
-                let out = xvision_engine::api::strategy::update_slot(&self.api_context, req)
-                    .await?;
+                let out = api_strategy::update_slot(&self.api_context, req).await?;
                 Ok(serde_json::to_value(out)?)
             }
             "update_manifest" => {
                 let req: authoring::UpdateManifestReq = serde_json::from_value(input)?;
-                let out = xvision_engine::api::strategy::update_manifest(
-                    &self.api_context,
-                    req,
-                )
-                .await?;
+                let out = api_strategy::update_manifest(&self.api_context, req).await?;
                 Ok(serde_json::to_value(out)?)
             }
             "set_mechanical_param" => {
                 let req: authoring::SetMechanicalParamReq = serde_json::from_value(input)?;
-                let out =
-                    xvision_engine::api::strategy::set_mechanical_param(&self.api_context, req)
-                        .await?;
+                let out = api_strategy::set_mechanical_param(&self.api_context, req).await?;
                 Ok(serde_json::to_value(out)?)
             }
             "set_risk_config" => {
                 let req: authoring::SetRiskConfigReq = serde_json::from_value(input)?;
-                let out =
-                    xvision_engine::api::strategy::set_risk_config(&self.api_context, req).await?;
+                let out = api_strategy::set_risk_config(&self.api_context, req).await?;
                 Ok(serde_json::to_value(out)?)
+            }
+            "create_strategy_agent" => {
+                let req: CreateStrategyAgentReq = serde_json::from_value(input)?;
+                let out = self.create_and_attach_strategy_agent(req).await?;
+                Ok(out)
+            }
+            "attach_agent" => {
+                let req: AttachAgentReq = serde_json::from_value(input)?;
+                let out = self.attach_existing_agent(req).await?;
+                Ok(serde_json::to_value(out)?)
+            }
+            "resolve_strategy" => {
+                let query = input
+                    .get("query")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("resolve_strategy: missing `query`"))?;
+                match self.resolve_strategy_query(query).await? {
+                    StrategyResolution::Resolved(strategy) => Ok(strategy_resolution_json(&strategy)),
+                    StrategyResolution::NeedsClarification(payload) => Ok(payload),
+                }
             }
             "validate_draft" => {
                 let id = input
                     .get("id")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow::anyhow!("validate_draft: missing `id`"))?;
-                let out = xvision_engine::api::strategy::validate_draft(&self.api_context, id)
-                    .await?;
+                let out = api_strategy::validate_draft(&self.api_context, id).await?;
                 Ok(serde_json::to_value(out)?)
             }
             "run_eval" => {
-                let agent_id = input
+                let agent_query = input
                     .get("agent_id")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow::anyhow!("run_eval: missing `agent_id`"))?;
-                let scenario_id = input
+                let scenario_query = input
                     .get("scenario_id")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow::anyhow!("run_eval: missing `scenario_id`"))?;
-                let mode = input
-                    .get("mode")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("backtest");
+                let strategy = match self.resolve_strategy_query(agent_query).await? {
+                    StrategyResolution::Resolved(strategy) => strategy,
+                    StrategyResolution::NeedsClarification(payload) => return Ok(payload),
+                };
+                let scenario = match self.resolve_scenario_query(scenario_query).await? {
+                    ScenarioResolution::Resolved(scenario) => scenario,
+                    ScenarioResolution::NeedsClarification(payload) => return Ok(payload),
+                };
+                let mode = input.get("mode").and_then(|v| v.as_str()).unwrap_or("backtest");
                 let mode = match mode {
                     "paper" => RunMode::Paper,
                     _ => RunMode::Backtest,
                 };
+                if mode == RunMode::Backtest && scenario_needs_bars(&scenario) {
+                    return Ok(serde_json::json!({
+                        "agent_id": strategy.agent_id.clone(),
+                        "scenario_id": scenario.id.clone(),
+                        "scenario": scenario.clone(),
+                        "ui_action": fetch_bars_ui_action(&scenario)
+                    }));
+                }
                 let req = EvalRunRequest {
-                    agent_id: agent_id.to_string(),
-                    scenario_id: scenario_id.to_string(),
+                    agent_id: strategy.agent_id,
+                    scenario_id: scenario.id,
                     mode,
                     params_override: None,
                 };
@@ -529,10 +603,7 @@ impl WizardLoop {
                     .get("to")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow::anyhow!("fetch_bars: missing `to`"))?;
-                let granularity = input
-                    .get("granularity")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("1h");
+                let granularity = input.get("granularity").and_then(|v| v.as_str()).unwrap_or("1h");
                 if !matches!(granularity, "1h" | "1d") {
                     anyhow::bail!("fetch_bars: granularity must be `1h` or `1d`");
                 }
@@ -611,12 +682,667 @@ impl WizardLoop {
             other => anyhow::bail!("unknown authoring verb: {other}"),
         }
     }
+
+    async fn resolve_strategy_query(&self, query: &str) -> anyhow::Result<StrategyResolution> {
+        let query = query.trim();
+        let strategies = api_strategy::list(&self.api_context).await?;
+        if strategies.is_empty() {
+            anyhow::bail!("no strategies exist yet; create a strategy before running eval");
+        }
+
+        if is_generic_strategy_query(query) {
+            return if strategies.len() == 1 {
+                Ok(StrategyResolution::Resolved(strategies[0].clone()))
+            } else {
+                Ok(StrategyResolution::NeedsClarification(
+                    strategy_clarification_payload(&strategies),
+                ))
+            };
+        }
+
+        let matches: Vec<_> = strategies
+            .iter()
+            .filter(|strategy| strategy_matches_query(strategy, query))
+            .cloned()
+            .collect();
+        match matches.len() {
+            1 => Ok(StrategyResolution::Resolved(matches[0].clone())),
+            n if n > 1 => Ok(StrategyResolution::NeedsClarification(
+                strategy_clarification_payload(&matches),
+            )),
+            _ if strategies.len() == 1 => Ok(StrategyResolution::Resolved(strategies[0].clone())),
+            _ => anyhow::bail!("strategy '{query}' was not found"),
+        }
+    }
+
+    async fn resolve_scenario_query(&self, query: &str) -> anyhow::Result<ScenarioResolution> {
+        let query = query.trim();
+        let scenarios = self.known_scenarios().await?;
+        if scenarios.is_empty() {
+            anyhow::bail!("no scenarios exist yet; create or seed a scenario before running eval");
+        }
+
+        let matches: Vec<_> = scenarios
+            .iter()
+            .filter(|scenario| scenario_matches_query(scenario, query))
+            .cloned()
+            .collect();
+        match matches.len() {
+            1 => Ok(ScenarioResolution::Resolved(matches[0].clone())),
+            n if n > 1 => Ok(ScenarioResolution::NeedsClarification(
+                scenario_clarification_payload(&matches),
+            )),
+            _ => anyhow::bail!("scenario '{query}' was not found"),
+        }
+    }
+
+    async fn known_scenarios(&self) -> anyhow::Result<Vec<Scenario>> {
+        let mut scenarios = api_scenario::list(
+            &self.api_context,
+            ListScenariosFilter {
+                source: None,
+                tags: vec![],
+                include_archived: false,
+                parent_scenario_id: None,
+            },
+        )
+        .await?;
+        for seeded in xvision_engine::eval::scenario_seed::canonical_seed_rows() {
+            if !scenarios.iter().any(|scenario| scenario.id == seeded.id) {
+                scenarios.push(seeded);
+            }
+        }
+        Ok(scenarios)
+    }
+
+    async fn create_default_strategy_agent(
+        &self,
+        strategy_id: &str,
+    ) -> anyhow::Result<Option<serde_json::Value>> {
+        if self.agent_provider.is_none() || self.agent_model.is_none() {
+            return Ok(None);
+        }
+        let out = self
+            .create_and_attach_strategy_agent(CreateStrategyAgentReq {
+                strategy_id: Some(strategy_id.to_string()),
+                id: None,
+                role: Some("trader".into()),
+                name: None,
+                provider: None,
+                model: None,
+                system_prompt: None,
+            })
+            .await?;
+        Ok(Some(out))
+    }
+
+    async fn create_and_attach_strategy_agent(
+        &self,
+        req: CreateStrategyAgentReq,
+    ) -> anyhow::Result<serde_json::Value> {
+        let strategy_id = req
+            .strategy_id
+            .or(req.id)
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("create_strategy_agent: missing `strategy_id`"))?;
+        let role = req.role.unwrap_or_else(|| "trader".into()).trim().to_string();
+        if role.is_empty() {
+            anyhow::bail!("create_strategy_agent: role is required");
+        }
+        let strategy = api_strategy::get(&self.api_context, &strategy_id).await?;
+        if let Some(existing_ref) = strategy.agents.iter().find(|agent| agent.role == role) {
+            let existing_agent_id = existing_ref.agent_id.clone();
+            let agents = strategy.agents.clone();
+            let pipeline = strategy.pipeline.clone();
+            let agent = api_agents::get(&self.api_context, &existing_agent_id).await?;
+            let (provider, model) = agent
+                .slots
+                .first()
+                .map(|slot| (slot.provider.clone(), slot.model.clone()))
+                .unwrap_or_else(|| ("".into(), "".into()));
+            return Ok(serde_json::json!({
+                "strategy_id": strategy_id,
+                "agent_id": existing_agent_id,
+                "role": role,
+                "provider": provider,
+                "model": model,
+                "agents": agents,
+                "pipeline": pipeline,
+                "already_attached": true
+            }));
+        }
+        let (provider, model) = self.resolve_agent_runtime(req.provider, req.model)?;
+        let name = req
+            .name
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| {
+                let suffix = strategy_id
+                    .chars()
+                    .rev()
+                    .take(6)
+                    .collect::<String>()
+                    .chars()
+                    .rev()
+                    .collect::<String>();
+                format!("{} {role} agent {suffix}", strategy.manifest.display_name)
+            });
+        let system_prompt = req
+            .system_prompt
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .or_else(|| prompt_for_strategy_role(&strategy, &role))
+            .unwrap_or_default();
+        let agent = api_agents::create(
+            &self.api_context,
+            api_agents::CreateAgentRequest {
+                name,
+                description: format!(
+                    "Auto-created for strategy {} as role `{role}`.",
+                    strategy.manifest.id
+                ),
+                tags: vec!["strategy-agent".into(), role.clone()],
+                slots: vec![AgentSlot {
+                    name: "main".into(),
+                    provider: provider.clone(),
+                    model: model.clone(),
+                    system_prompt,
+                    skill_ids: vec![],
+                    max_tokens: 4096,
+                }],
+            },
+        )
+        .await?;
+        let attached = api_strategy::add_agent(
+            &self.api_context,
+            api_strategy::AddAgentReq {
+                strategy_id: strategy_id.clone(),
+                agent_id: agent.agent_id.clone(),
+                role: role.clone(),
+            },
+        )
+        .await?;
+        Ok(serde_json::json!({
+            "strategy_id": strategy_id,
+            "agent_id": agent.agent_id,
+            "role": role,
+            "provider": provider,
+            "model": model,
+            "agents": attached.agents,
+            "pipeline": attached.pipeline
+        }))
+    }
+
+    async fn attach_existing_agent(
+        &self,
+        req: AttachAgentReq,
+    ) -> anyhow::Result<xvision_engine::api::strategy::StrategyAgentsOut> {
+        let strategy_id = req
+            .strategy_id
+            .or(req.id)
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("attach_agent: missing `strategy_id`"))?;
+        let role = req.role.unwrap_or_else(|| "trader".into()).trim().to_string();
+        if role.is_empty() {
+            anyhow::bail!("attach_agent: role is required");
+        }
+        let out = api_strategy::add_agent(
+            &self.api_context,
+            api_strategy::AddAgentReq {
+                strategy_id,
+                agent_id: req.agent_id,
+                role,
+            },
+        )
+        .await?;
+        Ok(out)
+    }
+
+    fn resolve_agent_runtime(
+        &self,
+        provider: Option<String>,
+        model: Option<String>,
+    ) -> anyhow::Result<(String, String)> {
+        let provider = provider
+            .or_else(|| self.agent_provider.clone())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("create_strategy_agent: missing provider; pick a provider/model in the chat model picker or pass provider explicitly"))?;
+        let model = model
+            .or_else(|| self.agent_model.clone())
+            .or_else(|| Some(self.model.clone()))
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("create_strategy_agent: missing model; pick a provider/model in the chat model picker or pass model explicitly"))?;
+        Ok((provider, model))
+    }
 }
 
-fn rich_block_for_tool_result(
-    tool: &str,
-    result: &serde_json::Value,
-) -> Option<serde_json::Value> {
+fn prompt_for_strategy_role(strategy: &xvision_engine::strategies::Strategy, role: &str) -> Option<String> {
+    let role = role.trim().to_ascii_lowercase();
+    if role == "trader" {
+        return strategy.trader_slot.as_ref().map(|slot| slot.prompt.clone());
+    }
+    if role == "intern" {
+        return strategy.intern_slot.as_ref().map(|slot| slot.prompt.clone());
+    }
+    if role == "regime" {
+        return strategy.regime_slot.as_ref().map(|slot| slot.prompt.clone());
+    }
+    None
+}
+
+fn strategy_resolution_json(strategy: &api_strategy::StrategySummary) -> serde_json::Value {
+    serde_json::json!({
+        "agent_id": &strategy.agent_id,
+        "display_name": &strategy.display_name,
+        "template": &strategy.template,
+        "providers": &strategy.providers,
+        "models": &strategy.models,
+        "provider_models": &strategy.provider_models
+    })
+}
+
+fn strategy_clarification_payload(strategies: &[api_strategy::StrategySummary]) -> serde_json::Value {
+    let options: Vec<_> = strategies
+        .iter()
+        .map(|strategy| {
+            serde_json::json!({
+                "agent_id": &strategy.agent_id,
+                "display_name": &strategy.display_name,
+                "template": &strategy.template
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "needs_clarification": {
+            "question": "Which strategy do you want to use?",
+            "options": options
+        }
+    })
+}
+
+fn scenario_clarification_payload(scenarios: &[Scenario]) -> serde_json::Value {
+    let options: Vec<_> = scenarios
+        .iter()
+        .map(|scenario| {
+            serde_json::json!({
+                "scenario_id": &scenario.id,
+                "display_name": &scenario.display_name
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "needs_clarification": {
+            "question": "Which scenario do you want to use?",
+            "options": options
+        }
+    })
+}
+
+fn is_generic_strategy_query(query: &str) -> bool {
+    matches!(
+        search_key(query).as_str(),
+        "" | "strategy" | "the strategy" | "the strategy we have" | "strategy we have"
+    )
+}
+
+fn strategy_matches_query(strategy: &api_strategy::StrategySummary, query: &str) -> bool {
+    if strategy.agent_id == query {
+        return true;
+    }
+    let haystack = search_key(&format!(
+        "{} {} {} {}",
+        strategy.agent_id,
+        strategy.display_name,
+        strategy.template,
+        strategy.tags.join(" ")
+    ));
+    query_tokens_match(query, &haystack)
+}
+
+fn scenario_matches_query(scenario: &Scenario, query: &str) -> bool {
+    if scenario.id == query {
+        return true;
+    }
+    let haystack = search_key(&format!(
+        "{} {} {}",
+        scenario.id,
+        scenario.display_name,
+        scenario.tags.join(" ")
+    ));
+    query_tokens_match(query, &haystack)
+}
+
+fn query_tokens_match(query: &str, haystack: &str) -> bool {
+    let query_key = search_key(query);
+    !query_key.is_empty() && query_key.split_whitespace().all(|token| haystack.contains(token))
+}
+
+fn search_key(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for ch in input.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_lowercase());
+        } else {
+            out.push(' ');
+        }
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn scenario_needs_bars(scenario: &Scenario) -> bool {
+    scenario.bar_cache_policy.data_fetched_at.is_none() && !legacy_fixture_exists(scenario)
+}
+
+fn legacy_fixture_exists(scenario: &Scenario) -> bool {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("data")
+        .join("probes")
+        .join(format!("{}.parquet", scenario.bar_cache_policy.cache_key))
+        .exists()
+}
+
+fn fetch_bars_ui_action(scenario: &Scenario) -> serde_json::Value {
+    let asset = scenario
+        .asset
+        .first()
+        .map(|asset| asset.symbol.clone())
+        .unwrap_or_else(|| "BTC".into());
+    serde_json::json!({
+        "type": "fetch_bars",
+        "label": "Fetch bars",
+        "scenario_id": &scenario.id,
+        "cache_key": &scenario.bar_cache_policy.cache_key,
+        "argv": [
+            "bars",
+            "fetch",
+            "--asset",
+            asset,
+            "--from",
+            scenario.time_window.start.date_naive().to_string(),
+            "--to",
+            scenario.time_window.end.date_naive().to_string(),
+            "--granularity",
+            scenario.granularity.to_string()
+        ]
+    })
+}
+
+fn normalize_tool_input(tool: &str, input: serde_json::Value) -> serde_json::Value {
+    let mut input = match input {
+        serde_json::Value::Object(mut obj) => {
+            if let Some(nested) = obj.remove(tool).filter(|v| v.is_object()) {
+                nested
+            } else if let Some(nested) = obj.remove("input").filter(|v| v.is_object()) {
+                nested
+            } else {
+                serde_json::Value::Object(obj)
+            }
+        }
+        other => other,
+    };
+
+    if let serde_json::Value::Object(obj) = &mut input {
+        if expects_id(tool) && !obj.contains_key("id") {
+            if let Some(strategy_id) = obj.get("strategy_id").cloned() {
+                obj.insert("id".into(), strategy_id);
+            }
+        }
+        if matches!(tool, "create_strategy_agent" | "attach_agent") && !obj.contains_key("strategy_id") {
+            if let Some(id) = obj.get("id").cloned() {
+                obj.insert("strategy_id".into(), id);
+            }
+        }
+        if tool == "create_scenario" {
+            normalize_create_scenario_input(obj);
+        }
+    }
+    input
+}
+
+fn normalize_create_scenario_input(obj: &mut serde_json::Map<String, serde_json::Value>) {
+    if let Some(name) = string_field(obj, "name").filter(|_| !obj.contains_key("display_name")) {
+        obj.insert("display_name".into(), serde_json::Value::String(name));
+    }
+    let display_name = string_field(obj, "display_name").unwrap_or_else(|| "Chat scenario".into());
+
+    if missing_string(obj, "description") {
+        obj.insert(
+            "description".into(),
+            serde_json::Value::String(format!("{display_name} scenario generated from chat.")),
+        );
+    }
+    ensure_string(obj, "asset_class", "Crypto");
+    normalize_enum_string(obj, "asset_class", &[("crypto", "Crypto")]);
+    ensure_string(obj, "quote_currency", "Usd");
+    normalize_enum_string(
+        obj,
+        "quote_currency",
+        &[("usd", "Usd"), ("usdt", "Usdt"), ("usdc", "Usdc")],
+    );
+    ensure_string(obj, "granularity", "4h");
+    ensure_string(obj, "timezone", "UTC");
+    ensure_array(obj, "tags");
+    ensure_null(obj, "notes");
+    ensure_null(obj, "parent_scenario_id");
+    ensure_string(obj, "source", "Generated");
+    normalize_enum_string(
+        obj,
+        "source",
+        &[
+            ("generated", "Generated"),
+            ("user", "User"),
+            ("canonical", "Canonical"),
+            ("clone", "Clone"),
+        ],
+    );
+
+    match obj.get_mut("asset") {
+        Some(serde_json::Value::Array(assets)) if !assets.is_empty() => {
+            for asset in assets {
+                normalize_asset_ref(asset);
+            }
+        }
+        Some(asset @ serde_json::Value::Object(_)) => {
+            normalize_asset_ref(asset);
+            let normalized = asset.clone();
+            *asset = serde_json::Value::Array(vec![normalized]);
+        }
+        _ => {
+            let symbol = string_field(obj, "asset")
+                .or_else(|| string_field(obj, "symbol"))
+                .or_else(|| infer_asset_symbol(&display_name))
+                .unwrap_or_else(|| "BTC".into());
+            obj.insert("asset".into(), serde_json::json!([asset_ref_json(&symbol)]));
+        }
+    }
+
+    if !obj.get("time_window").is_some_and(|v| v.is_object()) {
+        if let Some(window) = infer_time_window(&display_name) {
+            obj.insert("time_window".into(), window);
+        }
+    }
+    obj.entry("capital")
+        .or_insert_with(|| serde_json::json!({"initial": 100000.0, "currency": "USD"}));
+    obj.entry("calendar")
+        .or_insert_with(|| serde_json::json!("Continuous24x7"));
+    obj.entry("venue").or_insert_with(default_venue_json);
+    obj.entry("data_source").or_insert_with(
+        || serde_json::json!({"type": "AlpacaHistorical", "feed": null, "adjustment": "Raw"}),
+    );
+    obj.entry("replay_mode")
+        .or_insert_with(|| serde_json::json!({"mode": "Continuous"}));
+
+    if matches!(obj.get("replay_mode"), Some(serde_json::Value::String(_))) {
+        obj.insert("replay_mode".into(), serde_json::json!({"mode": "Continuous"}));
+    }
+}
+
+fn normalize_asset_ref(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::String(symbol) => {
+            *value = asset_ref_json(symbol);
+        }
+        serde_json::Value::Object(obj) => {
+            if missing_string(obj, "symbol") {
+                obj.insert("symbol".into(), serde_json::Value::String("BTC".into()));
+            }
+            if missing_string(obj, "venue_symbol") {
+                let symbol = string_field(obj, "symbol").unwrap_or_else(|| "BTC".into());
+                obj.insert(
+                    "venue_symbol".into(),
+                    serde_json::Value::String(venue_symbol(&symbol)),
+                );
+            }
+            if missing_string(obj, "class") {
+                obj.insert("class".into(), serde_json::Value::String("Crypto".into()));
+            }
+            normalize_enum_string(obj, "class", &[("crypto", "Crypto")]);
+        }
+        _ => {
+            *value = asset_ref_json("BTC");
+        }
+    }
+}
+
+fn asset_ref_json(symbol: &str) -> serde_json::Value {
+    let base = base_symbol(symbol);
+    serde_json::json!({
+        "class": "Crypto",
+        "symbol": base,
+        "venue_symbol": venue_symbol(&base)
+    })
+}
+
+fn venue_symbol(symbol: &str) -> String {
+    let base = base_symbol(symbol);
+    if symbol.contains('/') {
+        symbol.to_ascii_uppercase()
+    } else {
+        format!("{base}/USD")
+    }
+}
+
+fn base_symbol(symbol: &str) -> String {
+    symbol
+        .trim()
+        .split('/')
+        .next()
+        .unwrap_or("BTC")
+        .trim()
+        .to_ascii_uppercase()
+}
+
+fn infer_asset_symbol(display_name: &str) -> Option<String> {
+    let lower = display_name.to_ascii_lowercase();
+    if lower.contains("solana") || lower.split_whitespace().any(|part| part == "sol") {
+        return Some("SOL".into());
+    }
+    if lower.contains("bitcoin") || lower.split_whitespace().any(|part| part == "btc") {
+        return Some("BTC".into());
+    }
+    None
+}
+
+fn infer_time_window(display_name: &str) -> Option<serde_json::Value> {
+    let lower = display_name.to_ascii_lowercase();
+    let quarter = lower
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .find_map(|part| part.strip_prefix('q')?.parse::<u32>().ok())
+        .filter(|q| (1..=4).contains(q))?;
+    let year = lower
+        .split(|c: char| !c.is_ascii_digit())
+        .find_map(|part| (part.len() == 4).then(|| part.parse::<i32>().ok()).flatten())?;
+    let month = (quarter - 1) * 3 + 1;
+    let start = Utc.with_ymd_and_hms(year, month, 1, 0, 0, 0).single()?;
+    let end_month = if quarter == 4 { 1 } else { month + 3 };
+    let end_year = if quarter == 4 { year + 1 } else { year };
+    let end = Utc.with_ymd_and_hms(end_year, end_month, 1, 0, 0, 0).single()?;
+    Some(serde_json::json!({
+        "start": start.to_rfc3339(),
+        "end": end.to_rfc3339()
+    }))
+}
+
+fn default_venue_json() -> serde_json::Value {
+    serde_json::json!({
+        "venue": "Alpaca",
+        "fees": {"maker_bps": 0, "taker_bps": 10},
+        "slippage": {"model": "linear", "bps": 2},
+        "latency": {"decision_to_fill_ms": 500},
+        "fill_model": {
+            "market_order_fill": "NextBarOpen",
+            "limit_order_fill": "NeverFills",
+            "partial_fills": false,
+            "volume_constraints": null
+        }
+    })
+}
+
+fn ensure_string(obj: &mut serde_json::Map<String, serde_json::Value>, key: &str, default: &str) {
+    if missing_string(obj, key) {
+        obj.insert(key.into(), serde_json::Value::String(default.into()));
+    }
+}
+
+fn ensure_array(obj: &mut serde_json::Map<String, serde_json::Value>, key: &str) {
+    if !obj.get(key).is_some_and(|v| v.is_array()) {
+        obj.insert(key.into(), serde_json::Value::Array(vec![]));
+    }
+}
+
+fn ensure_null(obj: &mut serde_json::Map<String, serde_json::Value>, key: &str) {
+    obj.entry(key).or_insert(serde_json::Value::Null);
+}
+
+fn missing_string(obj: &serde_json::Map<String, serde_json::Value>, key: &str) -> bool {
+    obj.get(key)
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .is_none()
+}
+
+fn string_field(obj: &serde_json::Map<String, serde_json::Value>, key: &str) -> Option<String> {
+    obj.get(key)
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(str::to_string)
+}
+
+fn normalize_enum_string(
+    obj: &mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    aliases: &[(&str, &str)],
+) {
+    let Some(value) = string_field(obj, key) else {
+        return;
+    };
+    let lower = value.to_ascii_lowercase();
+    if let Some((_, canonical)) = aliases.iter().find(|(alias, _)| *alias == lower) {
+        obj.insert(key.into(), serde_json::Value::String((*canonical).into()));
+    }
+}
+
+fn expects_id(tool: &str) -> bool {
+    matches!(
+        tool,
+        "get_strategy"
+            | "update_slot"
+            | "update_manifest"
+            | "set_mechanical_param"
+            | "set_risk_config"
+            | "validate_draft"
+    )
+}
+
+fn rich_block_for_tool_result(tool: &str, result: &serde_json::Value) -> Option<serde_json::Value> {
     if result.get("error").is_some() {
         return None;
     }
@@ -810,6 +1536,48 @@ fn strategy_tool_defs() -> Vec<ToolDefinition> {
                     "explicit": {"type": "object"}
                 },
                 "required": ["id"]
+            }),
+        },
+        ToolDefinition {
+            name: "create_strategy_agent".into(),
+            description: "Create a reusable Agent with an explicit provider/model and attach it to a strategy. Use role `trader` for eval-ready single-agent strategies. If provider/model are omitted, the currently selected chat provider/model is used.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "strategy_id": {"type": "string"},
+                    "id": {"type": "string", "description": "Alias for strategy_id"},
+                    "role": {"type": "string", "default": "trader"},
+                    "name": {"type": "string"},
+                    "provider": {"type": "string"},
+                    "model": {"type": "string"},
+                    "system_prompt": {"type": "string"}
+                },
+                "required": ["strategy_id"]
+            }),
+        },
+        ToolDefinition {
+            name: "attach_agent".into(),
+            description: "Attach an existing Agent to a strategy as a role. Use role `trader` for eval-ready single-agent strategies.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "strategy_id": {"type": "string"},
+                    "id": {"type": "string", "description": "Alias for strategy_id"},
+                    "agent_id": {"type": "string"},
+                    "role": {"type": "string", "default": "trader"}
+                },
+                "required": ["strategy_id", "agent_id"]
+            }),
+        },
+        ToolDefinition {
+            name: "resolve_strategy".into(),
+            description: "Resolve a user phrase like `the strategy we have` to one strategy id, or return a single clarification question when ambiguous.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"}
+                },
+                "required": ["query"]
             }),
         },
         ToolDefinition {
@@ -1009,8 +1777,7 @@ mod tests {
     async fn tell_me_what_strategies_i_have_lists_existing_strategy() {
         let mock = Arc::new(MockDispatch::echo("ok"));
         let (wl, _pool, _td, _sid) =
-            loop_with_session(mock, "tell me what strategies I have", ContextScope::Workspace)
-                .await;
+            loop_with_session(mock, "tell me what strategies I have", ContextScope::Workspace).await;
         wl.run_tool(
             "create_strategy",
             serde_json::json!({"template": "mean_reversion", "name": "Wizard Inventory"}),
@@ -1024,9 +1791,8 @@ mod tests {
             .expect("list strategies");
         let rows = out.as_array().expect("list_strategies returns an array");
         assert!(
-            rows.iter().any(|row| {
-                row.get("display_name").and_then(|v| v.as_str()) == Some("Wizard Inventory")
-            }),
+            rows.iter()
+                .any(|row| { row.get("display_name").and_then(|v| v.as_str()) == Some("Wizard Inventory") }),
             "expected created strategy in {out}"
         );
     }
@@ -1062,6 +1828,106 @@ mod tests {
             .expect("get strategy");
         assert_eq!(strategy["manifest"]["asset_universe"][0], "BTC/USD");
         assert_eq!(strategy["manifest"]["decision_cadence_minutes"], 360);
+    }
+
+    #[tokio::test]
+    async fn wizard_update_manifest_accepts_nested_tool_input_and_strategy_id_alias() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) =
+            loop_with_session(mock, "make this BTC 4h", ContextScope::Workspace).await;
+        let created = wl
+            .run_tool(
+                "create_strategy",
+                serde_json::json!({"template": "mean_reversion", "name": "Nested Input"}),
+            )
+            .await
+            .expect("create strategy");
+        let id = created["id"].as_str().expect("created id");
+
+        wl.run_tool(
+            "update_manifest",
+            serde_json::json!({
+                "update_manifest": {
+                    "strategy_id": id,
+                    "asset_universe": ["BTC/USD"],
+                    "decision_cadence_minutes": 240
+                }
+            }),
+        )
+        .await
+        .expect("update manifest");
+
+        let strategy = wl
+            .run_tool("get_strategy", serde_json::json!({"id": id}))
+            .await
+            .expect("get strategy");
+        assert_eq!(strategy["manifest"]["asset_universe"][0], "BTC/USD");
+        assert_eq!(strategy["manifest"]["decision_cadence_minutes"], 240);
+    }
+
+    #[tokio::test]
+    async fn create_scenario_recovers_missing_description_and_sol_q1_shape() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) = loop_with_session(
+            mock,
+            "try a paper eval on solana in q1 2026",
+            ContextScope::Workspace,
+        )
+        .await;
+
+        let out = wl
+            .run_tool(
+                "create_scenario",
+                serde_json::json!({
+                    "create_scenario": {
+                        "display_name": "SOL Q1 2026",
+                        "asset": "SOL",
+                        "granularity": "4h"
+                    }
+                }),
+            )
+            .await
+            .expect("create scenario should repair missing description and defaults");
+
+        assert_eq!(out["display_name"], "SOL Q1 2026");
+        assert_eq!(out["description"], "SOL Q1 2026 scenario generated from chat.");
+        assert_eq!(out["asset"][0]["symbol"], "SOL");
+        assert_eq!(out["asset"][0]["venue_symbol"], "SOL/USD");
+        assert_eq!(out["time_window"]["start"], "2026-01-01T00:00:00Z");
+        assert_eq!(out["time_window"]["end"], "2026-04-01T00:00:00Z");
+    }
+
+    #[tokio::test]
+    async fn create_strategy_agent_tool_creates_and_attaches_trader_agent() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) = loop_with_session(mock, "attach agent", ContextScope::Workspace).await;
+        let created = wl
+            .run_tool(
+                "create_strategy",
+                serde_json::json!({"template": "ma_crossover_baseline", "name": "MA Agent"}),
+            )
+            .await
+            .expect("create strategy");
+        let id = created["id"].as_str().expect("created id");
+
+        let out = wl
+            .run_tool(
+                "create_strategy_agent",
+                serde_json::json!({
+                    "strategy_id": id,
+                    "role": "trader",
+                    "provider": "openai",
+                    "model": "gpt-4.1-mini"
+                }),
+            )
+            .await
+            .expect("create strategy agent");
+
+        assert_eq!(out["strategy_id"], id);
+        assert_eq!(out["role"], "trader");
+        assert_eq!(out["provider"], "openai");
+        assert_eq!(out["model"], "gpt-4.1-mini");
+        assert_eq!(out["agents"][0]["role"], "trader");
     }
 
     #[tokio::test]
@@ -1142,8 +2008,7 @@ mod tests {
     #[tokio::test]
     async fn missing_bars_returns_fetch_bars_ui_action() {
         let mock = Arc::new(MockDispatch::echo("ok"));
-        let (wl, pool, td, _sid) =
-            loop_with_session(mock, "run eval", ContextScope::Workspace).await;
+        let (wl, pool, td, _sid) = loop_with_session(mock, "run eval", ContextScope::Workspace).await;
         seed_defaults(&pool, &td).await;
         let created = wl
             .run_tool(
@@ -1232,9 +2097,7 @@ mod tests {
             .iter()
             .rev()
             .find_map(|e| match e {
-                WizardEvent::Done {
-                    draft_id: Some(id),
-                } => Some(id.clone()),
+                WizardEvent::Done { draft_id: Some(id) } => Some(id.clone()),
                 _ => None,
             })
             .expect("wizard should emit a draft id");
@@ -1301,8 +2164,7 @@ mod tests {
                 output_tokens: 5,
             },
         ]));
-        let (mut wl, _pool, _td, _sid) =
-            loop_with_session(mock, "go", ContextScope::Workspace).await;
+        let (mut wl, _pool, _td, _sid) = loop_with_session(mock, "go", ContextScope::Workspace).await;
         let events = drain(&mut wl).await;
         let result = events
             .iter()
@@ -1337,8 +2199,7 @@ mod tests {
                 output_tokens: 5,
             },
         ]));
-        let (mut wl, pool, _td, _sid) =
-            loop_with_session(mock, "fetch bars", ContextScope::Workspace).await;
+        let (mut wl, pool, _td, _sid) = loop_with_session(mock, "fetch bars", ContextScope::Workspace).await;
         let events = drain(&mut wl).await;
         let job_id = events
             .iter()
@@ -1384,6 +2245,8 @@ mod tests {
             "update_manifest",
             "set_mechanical_param",
             "set_risk_config",
+            "create_strategy_agent",
+            "attach_agent",
             "validate_draft",
             "run_eval",
         ] {
@@ -1429,8 +2292,7 @@ mod tests {
     #[tokio::test]
     async fn user_message_persists_immediately_at_construction() {
         let mock = Arc::new(MockDispatch::echo("ok"));
-        let (mut _wl, pool, _td, sid) =
-            loop_with_session(mock, "hi there", ContextScope::Workspace).await;
+        let (mut _wl, pool, _td, sid) = loop_with_session(mock, "hi there", ContextScope::Workspace).await;
         let history = ChatSessionStore::load_history(&pool, &sid).await.unwrap();
         // After ::new and BEFORE any next_event call, the user message is
         // already in the store.
@@ -1442,8 +2304,7 @@ mod tests {
     #[tokio::test]
     async fn assistant_response_persists_after_drain() {
         let mock = Arc::new(MockDispatch::echo("got it"));
-        let (mut wl, pool, _td, sid) =
-            loop_with_session(mock, "hi", ContextScope::Workspace).await;
+        let (mut wl, pool, _td, sid) = loop_with_session(mock, "hi", ContextScope::Workspace).await;
         drain(&mut wl).await;
         let history = ChatSessionStore::load_history(&pool, &sid).await.unwrap();
         // user "hi" + assistant "got it" + (stop_reason was EndTurn so no
@@ -1467,8 +2328,7 @@ mod tests {
                 output_tokens: 1,
             },
         ]));
-        let (mut wl, pool, _td, sid) =
-            loop_with_session(mock, "list", ContextScope::Workspace).await;
+        let (mut wl, pool, _td, sid) = loop_with_session(mock, "list", ContextScope::Workspace).await;
         drain(&mut wl).await;
         let history = ChatSessionStore::load_history(&pool, &sid).await.unwrap();
         // Expected: user "list" → assistant tool_use → user tool_result →
@@ -1489,8 +2349,7 @@ mod tests {
     async fn second_message_resumes_session_history() {
         // First turn establishes history.
         let mock1 = Arc::new(MockDispatch::echo("first reply"));
-        let (mut wl1, pool, td, sid) =
-            loop_with_session(mock1, "first", ContextScope::Workspace).await;
+        let (mut wl1, pool, td, sid) = loop_with_session(mock1, "first", ContextScope::Workspace).await;
         drain(&mut wl1).await;
 
         // Second turn against the SAME session — the loop should see the

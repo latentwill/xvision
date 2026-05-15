@@ -137,11 +137,7 @@ mod tests {
         let mut a = good_agent();
         a.slots[0].system_prompt = "You are a trader.".into();
         let diags = validate_agent(&a);
-        assert!(
-            diags.is_empty(),
-            "expected no diagnostics, got {:?}",
-            diags
-        );
+        assert!(diags.is_empty(), "expected no diagnostics, got {:?}", diags);
     }
 
     #[test]

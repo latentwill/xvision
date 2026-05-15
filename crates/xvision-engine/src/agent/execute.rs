@@ -10,8 +10,7 @@
 use std::sync::Arc;
 
 use crate::agent::llm::{
-    ContentBlock, LlmDispatch, LlmRequest, LlmResponse, Message, ResponseSchema,
-    StopReason,
+    ContentBlock, LlmDispatch, LlmRequest, LlmResponse, Message, ResponseSchema, StopReason,
 };
 use crate::agent::tool_call;
 use crate::strategies::slot::LLMSlot;
@@ -32,14 +31,11 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
         serde_json::to_string_pretty(&input.upstream_inputs)?
     );
 
-    let tool_defs =
-        tool_call::definitions_for_slot(&input.slot.allowed_tools, &input.tools);
+    let tool_defs = tool_call::definitions_for_slot(&input.slot.allowed_tools, &input.tools);
 
     let mut messages = vec![Message {
         role: "user".into(),
-        content: vec![ContentBlock::Text {
-            text: initial_user,
-        }],
+        content: vec![ContentBlock::Text { text: initial_user }],
     }];
 
     let mut total_input_tokens = 0u32;
@@ -67,12 +63,7 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
         // MaxTokens (defensive — Anthropic shouldn't emit ToolUse with
         // those stop reasons, but we trust the stop_reason as the
         // authoritative signal).
-        if uses.is_empty()
-            || matches!(
-                resp.stop_reason,
-                StopReason::EndTurn | StopReason::MaxTokens
-            )
-        {
+        if uses.is_empty() || matches!(resp.stop_reason, StopReason::EndTurn | StopReason::MaxTokens) {
             return Ok(LlmResponse {
                 content: resp.content,
                 stop_reason: resp.stop_reason,
@@ -93,11 +84,10 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
         // whole slot on a single bad tool call.
         let mut results = Vec::with_capacity(uses.len());
         for (tu_id, tu_name, tu_input) in uses {
-            let content =
-                match tool_call::invoke(&tu_name, tu_input, input.tools.clone()).await {
-                    Ok(s) => s,
-                    Err(e) => format!("tool error: {e}"),
-                };
+            let content = match tool_call::invoke(&tu_name, tu_input, input.tools.clone()).await {
+                Ok(s) => s,
+                Err(e) => format!("tool error: {e}"),
+            };
             results.push(ContentBlock::ToolResult {
                 tool_use_id: tu_id,
                 content,
