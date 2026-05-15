@@ -2,16 +2,19 @@
 # xvision container entrypoint.
 #
 # Behavior:
-#   - ensures /data exists (it's the canonical mount for store.db, traces, vectors)
+#   - ensures /data exists (it's the canonical mount for xvn.db, traces, vectors)
 #   - seeds packaged probe fixtures into /data/probes if the image includes any
-#   - if XVN_AUTOMIGRATE=1, runs `xvn store migrate --db /data/store.db` before exec
+#   - seeds packaged strategies into $XVN_HOME/strategies without overwriting
+#   - if XVN_AUTOMIGRATE=1, runs `xvn migrate --xvn-home $XVN_HOME` before exec
 #   - execs `xvn` with the caller's args; default arg is `--help`
 #
 # Env vars consumed:
-#   XVN_AUTOMIGRATE       if "1", run store migrate before exec (default: 0)
+#   XVN_AUTOMIGRATE       if "1", run xvn migrate before exec (default: 0)
 #   XVN_DATA_DIR          override /data (default: /data)
+#   XVN_HOME              override xvn runtime home (default: $XVN_DATA_DIR)
 #   XVN_CONFIG_DIR        override /config (default: /config)
 #   XVN_SEED_PROBES_DIR   override packaged probe seed dir (default: /opt/xvision/data/probes)
+#   XVN_SEED_STRATEGIES_DIR override packaged strategy seed dir (default: /strategies)
 #   APCA_API_KEY_ID       Alpaca paper key (passed through to xvn)
 #   APCA_API_SECRET_KEY   Alpaca paper secret
 #   APCA_API_BASE_URL     defaults to paper-api.alpaca.markets
@@ -20,14 +23,22 @@
 set -euo pipefail
 
 DATA_DIR="${XVN_DATA_DIR:-/data}"
+export XVN_HOME="${XVN_HOME:-$DATA_DIR}"
 CONFIG_DIR="${XVN_CONFIG_DIR:-/config}"
 SEED_PROBES_DIR="${XVN_SEED_PROBES_DIR:-/opt/xvision/data/probes}"
+SEED_STRATEGIES_DIR="${XVN_SEED_STRATEGIES_DIR:-/strategies}"
 
 mkdir -p "$DATA_DIR"
+mkdir -p "$XVN_HOME"
 
 if [[ -d "$SEED_PROBES_DIR" ]]; then
   mkdir -p "$DATA_DIR/probes"
   cp -Rn "$SEED_PROBES_DIR"/. "$DATA_DIR/probes"/
+fi
+
+if [[ -d "$SEED_STRATEGIES_DIR" ]]; then
+  mkdir -p "$XVN_HOME/strategies"
+  cp -Rn "$SEED_STRATEGIES_DIR"/. "$XVN_HOME/strategies"/
 fi
 
 # The image bakes a read-only seed config under $CONFIG_DIR (mounted :ro in
@@ -45,8 +56,8 @@ fi
 export XVN_CONFIG_PATH="$WRITABLE_CONFIG_PATH"
 
 if [[ "${XVN_AUTOMIGRATE:-0}" == "1" ]]; then
-  echo "[entrypoint] running store migrate against $DATA_DIR/store.db" >&2
-  xvn store migrate --db "$DATA_DIR/store.db"
+  echo "[entrypoint] running xvn migrate against $XVN_HOME/xvn.db" >&2
+  xvn migrate --xvn-home "$XVN_HOME"
 fi
 
 if [[ $# -eq 0 ]]; then

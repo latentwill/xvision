@@ -7,7 +7,6 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
-use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::SqlitePool;
 
 use crate::cli_jobs::runner::CliJobRunner;
@@ -46,36 +45,15 @@ impl AppState {
     /// engine API migrations. Safe to call from `xvn dashboard serve` and from
     /// integration tests against a tempdir.
     pub async fn new(xvn_home: PathBuf) -> anyhow::Result<Self> {
-        std::fs::create_dir_all(&xvn_home)
-            .with_context(|| format!("create XVN_HOME dir {}", xvn_home.display()))?;
-
-        let db_path = xvn_home.join("xvn.db");
-        let opts = SqliteConnectOptions::new()
-            .filename(&db_path)
-            .create_if_missing(true);
-        let pool = SqlitePool::connect_with(opts)
-            .await
-            .with_context(|| format!("open sqlite {}", db_path.display()))?;
-
-        sqlx::migrate!("../xvision-engine/migrations")
-            .run(&pool)
-            .await
-            .context("run xvision-engine migrations")?;
-
-        // First-run seed: canonical scenarios.
-        // Mirrors `ApiContext::open` so dashboard-only bootstrap paths
-        // (xvn dashboard serve + integration tests) hit the same baseline
-        // state. Idempotent — short-circuits when canonical rows exist.
-        let seed_ctx = ApiContext::new(
-            pool.clone(),
+        let bootstrap_ctx = ApiContext::open(
+            &xvn_home,
             Actor::Cli {
                 user: "dashboard-bootstrap".into(),
             },
-            xvn_home.clone(),
-        );
-        xvision_engine::eval::scenario_seed::run_seed_if_needed(&seed_ctx)
-            .await
-            .context("seed canonical scenarios")?;
+        )
+        .await
+        .with_context(|| format!("open ApiContext at {}", xvn_home.display()))?;
+        let pool = bootstrap_ctx.db.clone();
 
         // Hydrate the process env with persisted provider API keys so backend
         // constructors that call std::env::var(api_key_env) see the keys the

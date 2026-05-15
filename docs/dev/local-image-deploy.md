@@ -54,6 +54,7 @@ services:
     environment:
       XVN_AUTOMIGRATE: "1"
       XVN_DATA_DIR: /data
+      XVN_HOME: /data
     volumes:
       - xvision-data:/data
 ```
