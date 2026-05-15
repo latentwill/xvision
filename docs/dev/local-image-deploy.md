@@ -25,6 +25,22 @@ image as both `xvision:deploy-<sha>` and `xvision:deploy-latest`.
 
 ## Build and push over SSH
 
+Before pushing, make sure the standard dev-server SSH key is loaded into the
+local SSH agent/keychain:
+
+```bash
+ssh-add --apple-use-keychain ~/.ssh/id_ed25519
+```
+
+If that succeeds, verify the host before starting the image transfer:
+
+```bash
+ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes root@100.120.48.1 'echo ok $(hostname)'
+```
+
+This local-image path does not need Docker registry auth. It only needs access
+to the local Docker daemon and SSH access to the target host.
+
 ```bash
 # Most VPS hosts are amd64.
 scripts/deploy-image.sh --push root@your-server
