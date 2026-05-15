@@ -99,9 +99,7 @@ pub async fn resolve(
 
     let dispatch: Arc<dyn LlmDispatch> = match entry.kind {
         ProviderKind::Anthropic => Arc::new(AnthropicDispatch::new(api_key)),
-        ProviderKind::OpenaiCompat => {
-            Arc::new(OpenaiCompatDispatch::new(entry.base_url.clone(), api_key))
-        }
+        ProviderKind::OpenaiCompat => Arc::new(OpenaiCompatDispatch::new(entry.base_url.clone(), api_key)),
         ProviderKind::LocalCandle => {
             return Err(DashboardError::Validation {
                 field: "provider".into(),

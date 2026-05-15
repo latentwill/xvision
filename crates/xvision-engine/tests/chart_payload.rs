@@ -25,9 +25,7 @@ async fn test_ctx() -> ApiContext {
 }
 
 async fn seed_cached_bars(ctx: &ApiContext, cache_key: &str, asset: &str, count: usize) {
-    let start = chrono::Utc
-        .with_ymd_and_hms(2025, 1, 1, 0, 0, 0)
-        .unwrap();
+    let start = chrono::Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
     let mut blob = Vec::new();
     for i in 0..count {
         let ts = start + chrono::Duration::hours(i as i64);
@@ -116,9 +114,7 @@ async fn build_compare_payload_caps_at_10_runs() {
 async fn build_scenario_payload_returns_not_cached_for_seeded_scenario() {
     use xvision_engine::api::chart::{build_scenario_payload, CacheStatus};
     let ctx = test_ctx().await;
-    let payload = build_scenario_payload(&ctx, "crypto-bull-q1-2025")
-        .await
-        .unwrap();
+    let payload = build_scenario_payload(&ctx, "crypto-bull-q1-2025").await.unwrap();
     assert_eq!(payload.scenario.id, "crypto-bull-q1-2025");
     assert!(
         matches!(payload.cache_status, CacheStatus::NotCached { .. }),
@@ -134,9 +130,7 @@ async fn build_scenario_payload_loads_cached_bars_and_indicators() {
     use xvision_engine::api::scenario as api_scenario;
 
     let ctx = test_ctx().await;
-    let scenario = api_scenario::get(&ctx, "crypto-bull-q1-2025")
-        .await
-        .unwrap();
+    let scenario = api_scenario::get(&ctx, "crypto-bull-q1-2025").await.unwrap();
     seed_cached_bars(
         &ctx,
         &scenario.bar_cache_policy.cache_key,
@@ -188,9 +182,7 @@ async fn build_scenario_payload_returns_not_found_for_unknown() {
 async fn build_strategy_payload_empty_for_unused_strategy() {
     use xvision_engine::api::chart::build_strategy_payload;
     let ctx = test_ctx().await;
-    let payload = build_strategy_payload(&ctx, "unused-strategy")
-        .await
-        .unwrap();
+    let payload = build_strategy_payload(&ctx, "unused-strategy").await.unwrap();
     assert!(
         payload.run_series.is_empty(),
         "expected no runs for unused strategy"
@@ -260,7 +252,7 @@ async fn build_scenario_preview_validates_dates_and_assets() {
             asset: "ETH".into(),
             from: "2024-02-03".into(),
             to: "2024-02-10".into(),
-            granularity: "5m".into(),
+            granularity: "banana".into(),
             baseline: None,
         },
     )

@@ -317,12 +317,10 @@ pub async fn build_run_payload(ctx: &ApiContext, run_id: &str) -> ApiResult<RunC
             other => other,
         })?;
 
-    let asset_ref = scenario.asset.first().ok_or_else(|| {
-        ApiError::Internal(format!(
-            "scenario '{}' has empty asset list",
-            scenario.id
-        ))
-    })?;
+    let asset_ref = scenario
+        .asset
+        .first()
+        .ok_or_else(|| ApiError::Internal(format!("scenario '{}' has empty asset list", scenario.id)))?;
 
     // 3. Load bars from the cache (cache-miss triggers an Alpaca fetch).
     let bars = crate::eval::bars::load_bars(
@@ -452,16 +450,15 @@ fn compute_indicators(bars: &[MarketBar]) -> Indicators {
 /// NaN entries. `times` and `values` must be the same length (both come from
 /// iterating the same bar slice, so this invariant is guaranteed by the caller).
 fn series(times: &[i64], values: Vec<f64>) -> Vec<IndicatorPoint> {
-    assert_eq!(
-        times.len(),
-        values.len(),
-        "series: times/values length mismatch"
-    );
+    assert_eq!(times.len(), values.len(), "series: times/values length mismatch");
     values
         .into_iter()
         .enumerate()
         .filter(|(_, v)| !v.is_nan())
-        .map(|(i, v)| IndicatorPoint { time: times[i], value: v })
+        .map(|(i, v)| IndicatorPoint {
+            time: times[i],
+            value: v,
+        })
         .collect()
 }
 
@@ -493,10 +490,7 @@ fn compute_drawdown(equity: &[ChartEquityPoint]) -> Vec<DrawdownPoint> {
 /// - `"short_open"` with `fill_size` → size -= fill_size
 /// - `"flat"` with `fill_size`       → size = 0.0 (close-out)
 /// - `"hold"`                         → no change
-fn compute_position(
-    decisions: &[crate::eval::store::DecisionRow],
-    bars: &[MarketBar],
-) -> Vec<PositionPoint> {
+fn compute_position(decisions: &[crate::eval::store::DecisionRow], bars: &[MarketBar]) -> Vec<PositionPoint> {
     let mut out = Vec::with_capacity(bars.len());
     let mut size: f64 = 0.0;
     let mut decision_iter = decisions.iter().peekable();
@@ -550,15 +544,10 @@ fn compute_position(
 ///
 /// For `HoldMarker.price` we look up the bar whose timestamp matches the
 /// decision timestamp; if not found we fall back to 0.0.
-fn split_markers(
-    decisions: &[crate::eval::store::DecisionRow],
-    bars: &[MarketBar],
-) -> ChartMarkers {
+fn split_markers(decisions: &[crate::eval::store::DecisionRow], bars: &[MarketBar]) -> ChartMarkers {
     // Build a timestamp → close price index for hold-marker price lookup.
-    let bar_close: std::collections::HashMap<i64, f64> = bars
-        .iter()
-        .map(|b| (b.timestamp.timestamp(), b.close))
-        .collect();
+    let bar_close: std::collections::HashMap<i64, f64> =
+        bars.iter().map(|b| (b.timestamp.timestamp(), b.close)).collect();
 
     let mut trades: Vec<TradeMarker> = Vec::new();
     // Vetoes aren't recorded as a distinct action in v1 — add `verdict`
@@ -630,7 +619,11 @@ fn split_markers(
         }
     }
 
-    ChartMarkers { trades, vetoes, holds }
+    ChartMarkers {
+        trades,
+        vetoes,
+        holds,
+    }
 }
 
 // ── Task 5 — ScenarioChartPayload + CacheStatus ────────────────────────────
@@ -678,10 +671,7 @@ pub struct ScenarioChartPayload {
 /// loads bars (cache-hit returns immediately; cache-miss fetches from
 /// Alpaca and back-fills — which will fail in tests without credentials,
 /// so `NotCached` is returned directly when no cached row exists).
-pub async fn build_scenario_payload(
-    ctx: &ApiContext,
-    id: &str,
-) -> ApiResult<ScenarioChartPayload> {
+pub async fn build_scenario_payload(ctx: &ApiContext, id: &str) -> ApiResult<ScenarioChartPayload> {
     use crate::api::scenario as api_scenario;
 
     let scenario = api_scenario::get(ctx, id).await?;
@@ -701,7 +691,10 @@ pub async fn build_scenario_payload(
         None => CacheStatus::NotCached { expected_count },
         Some((bar_count, fetched_at)) => {
             if bar_count >= expected_count {
-                CacheStatus::FullyCached { bar_count, fetched_at }
+                CacheStatus::FullyCached {
+                    bar_count,
+                    fetched_at,
+                }
             } else {
                 CacheStatus::PartiallyCached {
                     fetched_count: bar_count,
@@ -712,13 +705,14 @@ pub async fn build_scenario_payload(
     };
 
     // Load bars only if cached; otherwise return empty series.
-    let market_bars = if matches!(cache_status, CacheStatus::FullyCached { .. } | CacheStatus::PartiallyCached { .. }) {
-        let asset_ref = scenario.asset.first().ok_or_else(|| {
-            ApiError::Internal(format!(
-                "scenario '{}' has empty asset list",
-                scenario.id
-            ))
-        })?;
+    let market_bars = if matches!(
+        cache_status,
+        CacheStatus::FullyCached { .. } | CacheStatus::PartiallyCached { .. }
+    ) {
+        let asset_ref = scenario
+            .asset
+            .first()
+            .ok_or_else(|| ApiError::Internal(format!("scenario '{}' has empty asset list", scenario.id)))?;
         crate::eval::bars::load_bars(
             ctx,
             &crate::eval::bars::BarCacheArgs {
@@ -751,13 +745,12 @@ async fn query_bars_cache_meta(
     ctx: &ApiContext,
     cache_key: &str,
 ) -> ApiResult<Option<(u32, chrono::DateTime<chrono::Utc>)>> {
-    let row: Option<(i64, String)> = sqlx::query_as(
-        "SELECT bar_count, fetched_at FROM bars_cache WHERE cache_key = ?",
-    )
-    .bind(cache_key)
-    .fetch_optional(&ctx.db)
-    .await
-    .map_err(|e| ApiError::Internal(format!("query_bars_cache_meta: {e}")))?;
+    let row: Option<(i64, String)> =
+        sqlx::query_as("SELECT bar_count, fetched_at FROM bars_cache WHERE cache_key = ?")
+            .bind(cache_key)
+            .fetch_optional(&ctx.db)
+            .await
+            .map_err(|e| ApiError::Internal(format!("query_bars_cache_meta: {e}")))?;
 
     match row {
         None => Ok(None),
@@ -809,10 +802,7 @@ pub struct StrategyChartPayload {
 /// (final PnL, max drawdown, Sharpe from `metrics_json`).
 /// Runs with empty equity curves are included as zero-series rather than
 /// omitted, so the frontend always gets a row per run.
-pub async fn build_strategy_payload(
-    ctx: &ApiContext,
-    strategy_id: &str,
-) -> ApiResult<StrategyChartPayload> {
+pub async fn build_strategy_payload(ctx: &ApiContext, strategy_id: &str) -> ApiResult<StrategyChartPayload> {
     use crate::eval::store::{ListFilter, RunStore};
 
     let store = RunStore::new(ctx.db.clone());
@@ -935,6 +925,7 @@ pub struct LiveDecisionRow {
     pub action: String,
     pub conviction: Option<f64>,
     pub justification: Option<String>,
+    pub reasoning: Option<String>,
     pub order_size: Option<f64>,
     pub fill_price: Option<f64>,
     pub fill_size: Option<f64>,
@@ -951,6 +942,7 @@ impl From<&DecisionRow> for LiveDecisionRow {
             action: row.action.clone(),
             conviction: row.conviction,
             justification: row.justification.clone(),
+            reasoning: row.reasoning.clone(),
             order_size: row.order_size,
             fill_price: row.fill_price,
             fill_size: row.fill_size,
@@ -1022,10 +1014,7 @@ impl RunEventBus {
 ///
 /// Returns `ApiError::Validation` if more than 10 ids are provided.
 /// Returns `ApiError::NotFound` for the first id not found in the store.
-pub async fn build_compare_payload(
-    ctx: &ApiContext,
-    run_ids: &[String],
-) -> ApiResult<CompareChartPayload> {
+pub async fn build_compare_payload(ctx: &ApiContext, run_ids: &[String]) -> ApiResult<CompareChartPayload> {
     if run_ids.len() > 10 {
         return Err(ApiError::Validation(format!(
             "compare view caps at 10 runs (got {}); narrow your filter",
@@ -1072,18 +1061,17 @@ pub async fn build_compare_payload(
     // is from the same scenario.
     let (shared_scenario, price_backdrop) = if scenario_ids.len() == 1 {
         let sid = scenario_ids.into_iter().next().unwrap();
-        let scenario = crate::api::scenario::get(ctx, &sid)
-            .await
-            .map_err(|e| match e {
-                ApiError::NotFound(_) => {
-                    ApiError::NotFound(format!("scenario '{sid}' referenced by compared runs"))
-                }
-                other => other,
-            })?;
-
-        let asset_ref = scenario.asset.first().ok_or_else(|| {
-            ApiError::Internal(format!("scenario '{sid}' has empty asset list"))
+        let scenario = crate::api::scenario::get(ctx, &sid).await.map_err(|e| match e {
+            ApiError::NotFound(_) => {
+                ApiError::NotFound(format!("scenario '{sid}' referenced by compared runs"))
+            }
+            other => other,
         })?;
+
+        let asset_ref = scenario
+            .asset
+            .first()
+            .ok_or_else(|| ApiError::Internal(format!("scenario '{sid}' has empty asset list")))?;
 
         let bars = crate::eval::bars::load_bars(
             ctx,
@@ -1131,16 +1119,13 @@ pub struct ScenarioPreviewPayload {
 #[derive(Debug, Clone, Deserialize)]
 pub struct PreviewQuery {
     pub asset: String,
-    pub from: String,        // YYYY-MM-DD
+    pub from: String, // YYYY-MM-DD
     pub to: String,
     pub granularity: String,
     pub baseline: Option<bool>,
 }
 
-pub async fn build_scenario_preview(
-    ctx: &ApiContext,
-    q: PreviewQuery,
-) -> ApiResult<ScenarioPreviewPayload> {
+pub async fn build_scenario_preview(ctx: &ApiContext, q: PreviewQuery) -> ApiResult<ScenarioPreviewPayload> {
     use chrono::NaiveDate;
 
     // Validate dates.
@@ -1181,7 +1166,10 @@ pub async fn build_scenario_preview(
         None => CacheStatus::NotCached { expected_count },
         Some((bar_count, fetched_at)) => {
             if bar_count >= expected_count {
-                CacheStatus::FullyCached { bar_count, fetched_at }
+                CacheStatus::FullyCached {
+                    bar_count,
+                    fetched_at,
+                }
             } else {
                 CacheStatus::PartiallyCached {
                     fetched_count: bar_count,

@@ -6,9 +6,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
-use xvision_engine::api::skills::{
-    self, CreateSkillRequest, ListSkillsRequest, UpdateSkillRequest,
-};
+use xvision_engine::api::skills::{self, CreateSkillRequest, ListSkillsRequest, UpdateSkillRequest};
 use xvision_engine::skills::Skill;
 
 use crate::error::DashboardError;

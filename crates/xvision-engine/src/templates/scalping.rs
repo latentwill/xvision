@@ -5,13 +5,13 @@ use crate::strategies::{PipelineDef, Strategy};
 use crate::templates::Template;
 
 const TRADER_PROMPT: &str = r#"You are a scalping crypto trader. Inputs:
-- ohlcv_history: last 200 bars (1m + 5m timeframes available)
+- ohlcv_history: last 200 bars (5m timeframe)
 - indicator_panel: EMA(5), EMA(13), ATR(14), spread + recent fee estimate
 - portfolio_state: open positions, available capital
 
 Decide ONE of: long_open | short_open | flat | hold.
 Scalping logic:
-  enter long  on a 1m/5m EMA(5) > EMA(13) crossover (uptrend kickoff);
+  enter long  on a 5m EMA(5) > EMA(13) crossover (uptrend kickoff);
   enter short on the inverse cross;
   use TIGHT stops: 0.3% from entry, take-profit 0.6% — fast in, fast out.
   Conviction MUST reflect spread + fee awareness. If estimated round-trip

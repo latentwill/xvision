@@ -41,6 +41,7 @@ const MIGRATION_010_BARS_CACHE: &str = include_str!("../../migrations/010_bars_c
 const MIGRATION_011_SCENARIOS: &str = include_str!("../../migrations/011_scenarios.sql");
 const MIGRATION_012_RUNS_FK: &str = include_str!("../../migrations/012_runs_scenario_fk.sql");
 const MIGRATION_013_CLI_JOBS: &str = include_str!("../../migrations/013_cli_jobs.sql");
+const MIGRATION_015_EVAL_REASONING: &str = include_str!("../../migrations/015_eval_decisions_reasoning.sql");
 
 /// Map of cache_key → per-key mutex used by `eval::bars::load_bars` to
 /// serialize concurrent misses for the same window. Kept inside an outer
@@ -99,12 +100,9 @@ impl ApiContext {
     /// `ApiContext` inline against an in-memory pool so they can exercise
     /// individual fns without filesystem state.
     pub async fn open(xvn_home: &Path, actor: Actor) -> ApiResult<Self> {
-        tokio::fs::create_dir_all(xvn_home).await.map_err(|e| {
-            ApiError::Internal(format!(
-                "create xvn_home {}: {e}",
-                xvn_home.display()
-            ))
-        })?;
+        tokio::fs::create_dir_all(xvn_home)
+            .await
+            .map_err(|e| ApiError::Internal(format!("create xvn_home {}: {e}", xvn_home.display())))?;
 
         let db_path = xvn_home.join("xvn.db");
         // `mode=rwc` creates the file if missing.
@@ -113,7 +111,7 @@ impl ApiContext {
 
         // Multi-statement SQL — sqlx::query executes the whole text.
         sqlx::query(MIGRATION_001).execute(&pool).await?;
-        sqlx::query(MIGRATION_002).execute(&pool).await?;
+        apply_eval_foundation_migration(&pool).await?;
         sqlx::query(MIGRATION_003).execute(&pool).await?;
         sqlx::query(MIGRATION_004).execute(&pool).await?;
         sqlx::query(MIGRATION_005_AGENTS).execute(&pool).await?;
@@ -123,6 +121,7 @@ impl ApiContext {
         sqlx::query(MIGRATION_012_RUNS_FK).execute(&pool).await?;
         sqlx::query(MIGRATION_013_CLI_JOBS).execute(&pool).await?;
         migrate_eval_agent_id(&pool).await?;
+        migrate_eval_decisions_reasoning(&pool).await?;
 
         let ctx = Self::new(pool, actor, xvn_home.to_path_buf());
 
@@ -210,6 +209,15 @@ impl ApiContext {
     }
 }
 
+async fn table_exists(pool: &SqlitePool, table: &str) -> ApiResult<bool> {
+    let count: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?")
+            .bind(table)
+            .fetch_one(pool)
+            .await?;
+    Ok(count.0 > 0)
+}
+
 async fn table_has_column(pool: &SqlitePool, table: &str, column: &str) -> ApiResult<bool> {
     let sql = format!("PRAGMA table_info({table})");
     let rows: Vec<(i64, String, String, i64, Option<String>, i64)> =
@@ -221,26 +229,123 @@ fn legacy_eval_strategy_column() -> String {
     ["strategy", "_bun", "dle", "_hash"].concat()
 }
 
+async fn apply_eval_foundation_migration(pool: &SqlitePool) -> ApiResult<()> {
+    let legacy_column = legacy_eval_strategy_column();
+    let runs_exists = table_exists(pool, "eval_runs").await?;
+    let runs_have_legacy = runs_exists && table_has_column(pool, "eval_runs", &legacy_column).await?;
+
+    if !runs_exists || runs_have_legacy {
+        sqlx::query(MIGRATION_002).execute(pool).await?;
+        return Ok(());
+    }
+
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_eval_runs_scenario ON eval_runs(scenario_id)")
+        .execute(pool)
+        .await?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_eval_runs_status ON eval_runs(status)")
+        .execute(pool)
+        .await?;
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS eval_decisions (
+            run_id TEXT NOT NULL,
+            decision_index INTEGER NOT NULL,
+            timestamp TEXT NOT NULL,
+            asset TEXT NOT NULL,
+            action TEXT NOT NULL,
+            conviction REAL,
+            justification TEXT,
+            order_size REAL,
+            fill_price REAL,
+            fill_size REAL,
+            fee REAL,
+            pnl_realized REAL,
+            PRIMARY KEY (run_id, decision_index)
+        )",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_decisions_run ON eval_decisions(run_id)")
+        .execute(pool)
+        .await?;
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS eval_equity_samples (
+            run_id TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            equity_usd REAL NOT NULL,
+            PRIMARY KEY (run_id, timestamp)
+        )",
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS eval_findings (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            severity TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            evidence_json TEXT NOT NULL,
+            extracted_at TEXT NOT NULL,
+            schema_version TEXT NOT NULL DEFAULT '1'
+        )",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_findings_run ON eval_findings(run_id)")
+        .execute(pool)
+        .await?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_findings_kind ON eval_findings(kind)")
+        .execute(pool)
+        .await?;
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS eval_scenarios (
+            id TEXT PRIMARY KEY,
+            display_name TEXT NOT NULL,
+            description TEXT,
+            config_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )",
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS eval_attestations (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            agent_id TEXT NOT NULL,
+            scenario_id TEXT NOT NULL,
+            signed_metrics_json TEXT NOT NULL,
+            signature_hex TEXT NOT NULL,
+            signing_pubkey_hex TEXT NOT NULL,
+            signed_at TEXT NOT NULL,
+            FOREIGN KEY (run_id) REFERENCES eval_runs(id)
+        )",
+    )
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
 async fn migrate_eval_agent_id(pool: &SqlitePool) -> ApiResult<()> {
     let legacy_column = legacy_eval_strategy_column();
     let runs_have_legacy = table_has_column(pool, "eval_runs", &legacy_column).await?;
     let runs_have_agent = table_has_column(pool, "eval_runs", "agent_id").await?;
     if runs_have_legacy && !runs_have_agent {
         let sql = format!("ALTER TABLE eval_runs RENAME COLUMN {legacy_column} TO agent_id");
-        sqlx::query(&sql)
-            .execute(pool)
-            .await?;
+        sqlx::query(&sql).execute(pool).await?;
     }
 
-    let attest_have_legacy =
-        table_has_column(pool, "eval_attestations", &legacy_column).await?;
+    let attest_have_legacy = table_has_column(pool, "eval_attestations", &legacy_column).await?;
     let attest_have_agent = table_has_column(pool, "eval_attestations", "agent_id").await?;
     if attest_have_legacy && !attest_have_agent {
-        let sql =
-            format!("ALTER TABLE eval_attestations RENAME COLUMN {legacy_column} TO agent_id");
-        sqlx::query(&sql)
-            .execute(pool)
-            .await?;
+        let sql = format!("ALTER TABLE eval_attestations RENAME COLUMN {legacy_column} TO agent_id");
+        sqlx::query(&sql).execute(pool).await?;
     }
 
     sqlx::query("DROP INDEX IF EXISTS idx_eval_runs_strategy")
@@ -249,6 +354,14 @@ async fn migrate_eval_agent_id(pool: &SqlitePool) -> ApiResult<()> {
     sqlx::query("CREATE INDEX IF NOT EXISTS idx_eval_runs_agent ON eval_runs(agent_id)")
         .execute(pool)
         .await?;
+
+    Ok(())
+}
+
+async fn migrate_eval_decisions_reasoning(pool: &SqlitePool) -> ApiResult<()> {
+    if !table_has_column(pool, "eval_decisions", "reasoning").await? {
+        sqlx::query(MIGRATION_015_EVAL_REASONING).execute(pool).await?;
+    }
 
     Ok(())
 }

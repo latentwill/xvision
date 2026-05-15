@@ -7,18 +7,18 @@ pub mod agents;
 pub mod api;
 pub mod authoring;
 pub mod baselines;
-pub mod strategies;
 pub mod chat_session;
 pub mod error;
 pub mod eval;
 pub mod search;
 pub mod skills;
+pub mod strategies;
 pub mod templates;
 pub mod tokens;
 pub mod tools;
 
-pub use strategies::Strategy;
 pub use error::EngineError;
+pub use strategies::Strategy;
 
 // Re-export strategy risk types so consumers don't have to depend on
 // xvision-core directly just to construct a Strategy.

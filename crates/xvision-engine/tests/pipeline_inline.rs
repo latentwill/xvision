@@ -1,8 +1,6 @@
 use std::sync::Arc;
 use xvision_engine::agent::llm::{ContentBlock, LlmResponse, MockDispatch, StopReason};
-use xvision_engine::agent::pipeline::{
-    run_pipeline, PipelineInputs, PipelineOutputs, ResolvedAgentSlot,
-};
+use xvision_engine::agent::pipeline::{run_pipeline, PipelineInputs, PipelineOutputs, ResolvedAgentSlot};
 use xvision_engine::strategies::manifest::{PublicManifest, RegimeFit};
 use xvision_engine::strategies::risk::RiskPreset;
 use xvision_engine::strategies::slot::LLMSlot;

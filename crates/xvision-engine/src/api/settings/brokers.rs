@@ -173,10 +173,7 @@ async fn get_inner(xvn_home: &Path) -> ApiResult<BrokersReport> {
 }
 
 fn alpaca_entry(stored: Option<&AlpacaCredentials>) -> BrokerEntry {
-    let credentials = vec![
-        cred("APCA_API_KEY_ID"),
-        cred("APCA_API_SECRET_KEY"),
-    ];
+    let credentials = vec![cred("APCA_API_KEY_ID"), cred("APCA_API_SECRET_KEY")];
     let env_configured = credentials.iter().all(|c| c.is_set);
     let stored_present = stored.is_some();
     let stored_key_id_suffix = stored.map(|c| last4(&c.api_key_id));
@@ -226,7 +223,14 @@ fn last4(s: &str) -> String {
     if trimmed.len() <= 4 {
         return "·".repeat(trimmed.len());
     }
-    trimmed.chars().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect()
+    trimmed
+        .chars()
+        .rev()
+        .take(4)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -244,25 +248,17 @@ async fn load_brokers_secrets(xvn_home: &Path) -> ApiResult<BrokersSecretsFile> 
     match tokio::fs::read_to_string(&path).await {
         Ok(s) => toml::from_str::<BrokersSecretsFile>(&s)
             .map_err(|e| ApiError::Internal(format!("parse {}: {e}", path.display()))),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            Ok(BrokersSecretsFile::default())
-        }
-        Err(e) => Err(ApiError::Internal(format!(
-            "read {}: {e}",
-            path.display()
-        ))),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(BrokersSecretsFile::default()),
+        Err(e) => Err(ApiError::Internal(format!("read {}: {e}", path.display()))),
     }
 }
 
-async fn save_brokers_secrets(
-    xvn_home: &Path,
-    file: &BrokersSecretsFile,
-) -> ApiResult<()> {
+async fn save_brokers_secrets(xvn_home: &Path, file: &BrokersSecretsFile) -> ApiResult<()> {
     let path = brokers_secrets_path(xvn_home);
     if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent).await.map_err(|e| {
-            ApiError::Internal(format!("mkdir {}: {e}", parent.display()))
-        })?;
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| ApiError::Internal(format!("mkdir {}: {e}", parent.display())))?;
     }
     let serialized = toml::to_string_pretty(file)
         .map_err(|e| ApiError::Internal(format!("serialize brokers secrets: {e}")))?;
@@ -280,9 +276,8 @@ async fn save_brokers_secrets(
 fn set_owner_only(path: &Path) -> ApiResult<()> {
     use std::os::unix::fs::PermissionsExt;
     let perms = std::fs::Permissions::from_mode(0o600);
-    std::fs::set_permissions(path, perms).map_err(|e| {
-        ApiError::Internal(format!("chmod 600 {}: {e}", path.display()))
-    })
+    std::fs::set_permissions(path, perms)
+        .map_err(|e| ApiError::Internal(format!("chmod 600 {}: {e}", path.display())))
 }
 
 #[cfg(not(unix))]
@@ -292,9 +287,7 @@ fn set_owner_only(_path: &Path) -> ApiResult<()> {
 
 /// Read the persisted Alpaca credentials, if any. Used by
 /// `api::eval::run` to construct a paper broker without env vars.
-pub async fn load_alpaca_credentials(
-    xvn_home: &Path,
-) -> ApiResult<Option<AlpacaCredentials>> {
+pub async fn load_alpaca_credentials(xvn_home: &Path) -> ApiResult<Option<AlpacaCredentials>> {
     let file = load_brokers_secrets(xvn_home).await?;
     Ok(file.alpaca)
 }
@@ -302,10 +295,7 @@ pub async fn load_alpaca_credentials(
 /// Persist a new set of Alpaca credentials, overwriting any existing
 /// entry. Validates that key id and secret are non-empty before
 /// writing — empty strings are a footgun for downstream consumers.
-pub async fn set_alpaca(
-    ctx: &ApiContext,
-    req: SetAlpacaReq,
-) -> ApiResult<AlpacaStored> {
+pub async fn set_alpaca(ctx: &ApiContext, req: SetAlpacaReq) -> ApiResult<AlpacaStored> {
     let started = Instant::now();
     let result = set_alpaca_inner(&ctx.xvn_home, req.clone()).await;
 
@@ -332,10 +322,7 @@ pub async fn set_alpaca(
     result
 }
 
-async fn set_alpaca_inner(
-    xvn_home: &Path,
-    req: SetAlpacaReq,
-) -> ApiResult<AlpacaStored> {
+async fn set_alpaca_inner(xvn_home: &Path, req: SetAlpacaReq) -> ApiResult<AlpacaStored> {
     if req.api_key_id.trim().is_empty() {
         return Err(ApiError::Validation("api_key_id is empty".into()));
     }
@@ -442,9 +429,7 @@ pub async fn test_alpaca(ctx: &ApiContext) -> ApiResult<AlpacaTestReport> {
     Ok(report)
 }
 
-async fn test_alpaca_inner(
-    xvn_home: &Path,
-) -> ApiResult<(Option<String>, Option<String>)> {
+async fn test_alpaca_inner(xvn_home: &Path) -> ApiResult<(Option<String>, Option<String>)> {
     // Resolve credentials: stored wins; env vars are the fallback.
     let stored = load_alpaca_credentials(xvn_home).await?;
     let (key_id, secret, base_url) = if let Some(c) = stored {
@@ -461,9 +446,7 @@ async fn test_alpaca_inner(
             )
         })?;
         let secret = env::var("APCA_API_SECRET_KEY").map_err(|_| {
-            ApiError::Validation(
-                "no Alpaca credentials configured (APCA_API_SECRET_KEY unset)".into(),
-            )
+            ApiError::Validation("no Alpaca credentials configured (APCA_API_SECRET_KEY unset)".into())
         })?;
         let base = env::var("APCA_API_BASE_URL")
             .ok()
@@ -510,14 +493,9 @@ mod tests {
 
     async fn fresh_ctx() -> (ApiContext, TempDir) {
         let dir = TempDir::new().unwrap();
-        let ctx = ApiContext::open(
-            dir.path(),
-            Actor::Cli {
-                user: "test".into(),
-            },
-        )
-        .await
-        .unwrap();
+        let ctx = ApiContext::open(dir.path(), Actor::Cli { user: "test".into() })
+            .await
+            .unwrap();
         (ctx, dir)
     }
 
@@ -532,12 +510,9 @@ mod tests {
     #[tokio::test]
     async fn set_and_load_alpaca_round_trips() {
         let (ctx, _dir) = fresh_ctx().await;
-        let out = set_alpaca(
-            &ctx,
-            req("AKIAEXAMPLE0001", "secretsecretsecret", None),
-        )
-        .await
-        .unwrap();
+        let out = set_alpaca(&ctx, req("AKIAEXAMPLE0001", "secretsecretsecret", None))
+            .await
+            .unwrap();
         assert!(out.stored);
         assert_eq!(out.stored_key_id_suffix.as_deref(), Some("0001"));
 
@@ -563,16 +538,10 @@ mod tests {
         set_alpaca(&ctx, req("FIRST00000000000", "s1", None))
             .await
             .unwrap();
-        set_alpaca(
-            &ctx,
-            req("SECOND0000000000", "s2", Some("https://example.com")),
-        )
-        .await
-        .unwrap();
-        let creds = load_alpaca_credentials(&ctx.xvn_home)
+        set_alpaca(&ctx, req("SECOND0000000000", "s2", Some("https://example.com")))
             .await
-            .unwrap()
             .unwrap();
+        let creds = load_alpaca_credentials(&ctx.xvn_home).await.unwrap().unwrap();
         assert_eq!(creds.api_key_id, "SECOND0000000000");
         assert_eq!(creds.api_secret_key, "s2");
         assert_eq!(creds.base_url.as_deref(), Some("https://example.com"));
@@ -606,10 +575,7 @@ mod tests {
         let report = get(&ctx).await.unwrap();
         assert!(report.alpaca.stored);
         assert!(report.alpaca.configured);
-        assert_eq!(
-            report.alpaca.stored_key_id_suffix.as_deref(),
-            Some("0000")
-        );
+        assert_eq!(report.alpaca.stored_key_id_suffix.as_deref(), Some("0000"));
     }
 
     #[cfg(unix)]

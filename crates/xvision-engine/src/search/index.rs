@@ -103,14 +103,12 @@ impl SearchIndex {
     /// Insert or replace a row keyed by `(artifact_id, kind)`.
     pub async fn upsert(pool: &SqlitePool, entry: &IndexEntry) -> Result<()> {
         let mut tx = pool.begin().await.context("begin tx for upsert")?;
-        sqlx::query(
-            "DELETE FROM search_index WHERE artifact_id = ?1 AND kind = ?2",
-        )
-        .bind(&entry.artifact_id)
-        .bind(entry.kind.as_str())
-        .execute(&mut *tx)
-        .await
-        .context("delete prior row")?;
+        sqlx::query("DELETE FROM search_index WHERE artifact_id = ?1 AND kind = ?2")
+            .bind(&entry.artifact_id)
+            .bind(entry.kind.as_str())
+            .execute(&mut *tx)
+            .await
+            .context("delete prior row")?;
         sqlx::query(
             "INSERT INTO search_index (artifact_id, kind, title, summary, tags, updated_at, href) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
@@ -130,25 +128,19 @@ impl SearchIndex {
 
     /// Remove a row by `(artifact_id, kind)`. No-op if missing.
     pub async fn delete(pool: &SqlitePool, kind: SearchKind, artifact_id: &str) -> Result<()> {
-        sqlx::query(
-            "DELETE FROM search_index WHERE artifact_id = ?1 AND kind = ?2",
-        )
-        .bind(artifact_id)
-        .bind(kind.as_str())
-        .execute(pool)
-        .await
-        .context("delete search_index row")?;
+        sqlx::query("DELETE FROM search_index WHERE artifact_id = ?1 AND kind = ?2")
+            .bind(artifact_id)
+            .bind(kind.as_str())
+            .execute(pool)
+            .await
+            .context("delete search_index row")?;
         Ok(())
     }
 
     /// Run an FTS5 MATCH query. Empty queries fall back to a recency
     /// listing so the UI's "just opened, no input yet" state can show the
     /// most-recently-touched artifacts.
-    pub async fn search(
-        pool: &SqlitePool,
-        q: &str,
-        opts: &SearchQuery,
-    ) -> Result<Vec<SearchHit>> {
+    pub async fn search(pool: &SqlitePool, q: &str, opts: &SearchQuery) -> Result<Vec<SearchHit>> {
         let limit = opts.limit.unwrap_or(DEFAULT_LIMIT) as i64;
         let trimmed = q.trim();
         if trimmed.is_empty() {
@@ -164,9 +156,7 @@ impl SearchIndex {
         let escaped = trimmed.replace('"', "\"\"");
         let match_arg = format!("\"{escaped}\"");
 
-        let rows: Vec<(String, String, String, String, String, String, String, f64)> = match opts
-            .kind
-        {
+        let rows: Vec<(String, String, String, String, String, String, String, f64)> = match opts.kind {
             Some(kind) => sqlx::query_as(
                 "SELECT artifact_id, kind, title, summary, tags, updated_at, href, bm25(search_index) \
                  FROM search_index \
@@ -197,13 +187,8 @@ impl SearchIndex {
         rows.into_iter().map(parse_row).collect()
     }
 
-    async fn recent(
-        pool: &SqlitePool,
-        opts: &SearchQuery,
-        limit: i64,
-    ) -> Result<Vec<SearchHit>> {
-        let rows: Vec<(String, String, String, String, String, String, String)> = match opts.kind
-        {
+    async fn recent(pool: &SqlitePool, opts: &SearchQuery, limit: i64) -> Result<Vec<SearchHit>> {
+        let rows: Vec<(String, String, String, String, String, String, String)> = match opts.kind {
             Some(kind) => sqlx::query_as(
                 "SELECT artifact_id, kind, title, summary, tags, updated_at, href \
                  FROM search_index \
@@ -273,10 +258,7 @@ fn parse_row(
 }
 
 fn split_tags(joined: &str) -> Vec<String> {
-    joined
-        .split_whitespace()
-        .map(str::to_string)
-        .collect()
+    joined.split_whitespace().map(str::to_string).collect()
 }
 
 #[cfg(test)]
@@ -368,18 +350,12 @@ mod tests {
     #[tokio::test]
     async fn kind_filter_excludes_other_kinds() {
         let pool = fresh_pool().await;
-        SearchIndex::upsert(
-            &pool,
-            &entry("s1", SearchKind::Strategy, "btc thing", "x", &[]),
-        )
-        .await
-        .unwrap();
-        SearchIndex::upsert(
-            &pool,
-            &entry("r1", SearchKind::Run, "btc thing", "x", &[]),
-        )
-        .await
-        .unwrap();
+        SearchIndex::upsert(&pool, &entry("s1", SearchKind::Strategy, "btc thing", "x", &[]))
+            .await
+            .unwrap();
+        SearchIndex::upsert(&pool, &entry("r1", SearchKind::Run, "btc thing", "x", &[]))
+            .await
+            .unwrap();
 
         let only_runs = SearchIndex::search(
             &pool,
@@ -415,12 +391,9 @@ mod tests {
     #[tokio::test]
     async fn delete_removes_row() {
         let pool = fresh_pool().await;
-        SearchIndex::upsert(
-            &pool,
-            &entry("s1", SearchKind::Strategy, "doomed", "x", &[]),
-        )
-        .await
-        .unwrap();
+        SearchIndex::upsert(&pool, &entry("s1", SearchKind::Strategy, "doomed", "x", &[]))
+            .await
+            .unwrap();
         SearchIndex::delete(&pool, SearchKind::Strategy, "s1")
             .await
             .unwrap();

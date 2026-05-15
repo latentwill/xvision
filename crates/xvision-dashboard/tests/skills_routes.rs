@@ -84,10 +84,7 @@ async fn archive_then_list_excludes() {
     assert_eq!(len, 0);
 
     let with_archived = server.get("/api/skills?include_archived=true").await;
-    let len_all = with_archived.json::<Value>()["items"]
-        .as_array()
-        .unwrap()
-        .len();
+    let len_all = with_archived.json::<Value>()["items"].as_array().unwrap().len();
     assert_eq!(len_all, 1);
 }
 
@@ -108,10 +105,7 @@ async fn update_changes_kind_and_config() {
         "kind": "prompt_fragment",
         "config": { "text": "You are a careful trader." }
     });
-    let res = server
-        .put(&format!("/api/skills/{}", id))
-        .json(&patch)
-        .await;
+    let res = server.put(&format!("/api/skills/{}", id)).json(&patch).await;
     res.assert_status_ok();
     let updated: Value = res.json();
     assert_eq!(updated["kind"], "prompt_fragment");

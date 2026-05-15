@@ -10,9 +10,7 @@ async fn test_ctx() -> ApiContext {
     let dir = Box::leak(Box::new(tempdir().unwrap()));
     ApiContext::open(
         dir.path(),
-        xvision_engine::api::Actor::Cli {
-            user: "test".into(),
-        },
+        xvision_engine::api::Actor::Cli { user: "test".into() },
     )
     .await
     .unwrap()

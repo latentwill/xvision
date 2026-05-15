@@ -38,12 +38,11 @@ async fn audit_records_ok_outcome() {
         .await
         .unwrap();
 
-    let row: (String, String, String, String, String) = sqlx::query_as(
-        "SELECT actor, actor_id, domain, operation, outcome FROM api_audit",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let row: (String, String, String, String, String) =
+        sqlx::query_as("SELECT actor, actor_id, domain, operation, outcome FROM api_audit")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(row.0, "cli");
     assert_eq!(row.1, "operator");
     assert_eq!(row.2, "strategy");
@@ -74,11 +73,10 @@ async fn audit_records_error_outcome() {
     .await
     .unwrap();
 
-    let (outcome, error): (String, Option<String>) =
-        sqlx::query_as("SELECT outcome, error FROM api_audit")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let (outcome, error): (String, Option<String>) = sqlx::query_as("SELECT outcome, error FROM api_audit")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(outcome, "error");
     assert_eq!(error.as_deref(), Some("validation failed"));
 }
@@ -112,12 +110,10 @@ async fn audit_records_target_and_args_json() {
         i64,
         String,
         Option<String>,
-    ) = sqlx::query_as(
-        "SELECT target, args_json, duration_ms, actor, actor_id FROM api_audit",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    ) = sqlx::query_as("SELECT target, args_json, duration_ms, actor, actor_id FROM api_audit")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(target.as_deref(), Some("run-42"));
     assert_eq!(args_json.as_deref(), Some(r#"{"scenario":"btc-2024"}"#));
     assert_eq!(duration_ms, 100);
@@ -184,13 +180,9 @@ async fn audit_records_concurrent_writes_yield_distinct_ulids() {
         .unwrap();
     assert_eq!(count, 10, "expected 10 rows, got {count}");
 
-    let (distinct_ids,): (i64,) =
-        sqlx::query_as("SELECT COUNT(DISTINCT id) FROM api_audit")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    assert_eq!(
-        distinct_ids, 10,
-        "expected 10 distinct ULIDs, got {distinct_ids}"
-    );
+    let (distinct_ids,): (i64,) = sqlx::query_as("SELECT COUNT(DISTINCT id) FROM api_audit")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(distinct_ids, 10, "expected 10 distinct ULIDs, got {distinct_ids}");
 }

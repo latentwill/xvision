@@ -32,9 +32,7 @@ async fn boot_server() -> (String, TempDir, AppState) {
     let base_url = format!("http://{addr}");
 
     tokio::spawn(async move {
-        axum::serve(listener, router)
-            .await
-            .expect("axum serve failed");
+        axum::serve(listener, router).await.expect("axum serve failed");
     });
 
     (base_url, tmp, state)
@@ -86,7 +84,8 @@ async fn sse_stream_emits_equity_and_status_then_closes() {
             .expect("GET /api/eval/runs/test-run/stream");
 
         assert_eq!(resp.status(), reqwest::StatusCode::OK);
-        let content_type = resp.headers()
+        let content_type = resp
+            .headers()
             .get("content-type")
             .and_then(|v| v.to_str().ok())
             .unwrap_or("");
@@ -147,10 +146,7 @@ async fn sse_stream_late_subscriber_gets_immediate_close_for_completed_run() {
         .expect("mark run completed");
 
     // Simulate the executor having already cleaned up the bus channel.
-    state
-        .event_bus
-        .drop_channel("test-run-completed")
-        .await;
+    state.event_bus.drop_channel("test-run-completed").await;
 
     let url = format!("{base_url}/api/eval/runs/test-run-completed/stream");
     let client = reqwest::Client::new();

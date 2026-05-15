@@ -68,7 +68,9 @@ impl AppState {
         // state. Idempotent — short-circuits when canonical rows exist.
         let seed_ctx = ApiContext::new(
             pool.clone(),
-            Actor::Cli { user: "dashboard-bootstrap".into() },
+            Actor::Cli {
+                user: "dashboard-bootstrap".into(),
+            },
             xvn_home.clone(),
         );
         xvision_engine::eval::scenario_seed::run_seed_if_needed(&seed_ctx)
@@ -79,10 +81,8 @@ impl AppState {
         // constructors that call std::env::var(api_key_env) see the keys the
         // operator pasted via Settings → Providers. Env vars set in the shell
         // win — we don't clobber them.
-        if let Err(e) = xvision_engine::api::settings::providers::load_providers_secrets_into_env(
-            &xvn_home,
-        )
-        .await
+        if let Err(e) =
+            xvision_engine::api::settings::providers::load_providers_secrets_into_env(&xvn_home).await
         {
             tracing::warn!(error = %e, "could not hydrate provider secrets into env");
         }
