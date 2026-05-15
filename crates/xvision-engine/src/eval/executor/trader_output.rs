@@ -1,6 +1,8 @@
 use anyhow::{anyhow, Result};
 use serde::Deserialize;
 
+use crate::agent::llm::LlmResponse;
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct TraderOutput {
@@ -10,13 +12,49 @@ pub(crate) struct TraderOutput {
 }
 
 impl TraderOutput {
+    pub(crate) fn parse_response(
+        response: &LlmResponse,
+        run_id: &str,
+        decision_index: u32,
+    ) -> Result<Self> {
+        let raw = response.text();
+        let metadata = format!(
+            "stop_reason={:?}, input_tokens={}, output_tokens={}",
+            response.stop_reason, response.input_tokens, response.output_tokens
+        );
+
+        if raw.trim().is_empty() {
+            anyhow::bail!(
+                "run {} decision {}: trader output is empty: provider returned no final text ({})",
+                run_id,
+                decision_index,
+                metadata
+            );
+        }
+
+        Self::parse_with_metadata(&raw, run_id, decision_index, Some(metadata.as_str()))
+    }
+
     pub(crate) fn parse_strict(raw: &str, run_id: &str, decision_index: u32) -> Result<Self> {
+        Self::parse_with_metadata(raw, run_id, decision_index, None)
+    }
+
+    fn parse_with_metadata(
+        raw: &str,
+        run_id: &str,
+        decision_index: u32,
+        metadata: Option<&str>,
+    ) -> Result<Self> {
         let parsed = serde_json::from_str::<Self>(raw).map_err(|e| {
+            let mut detail = trader_output_error_detail(&e);
+            if let Some(metadata) = metadata {
+                detail = format!("{detail} ({metadata})");
+            }
             anyhow!(
                 "run {} decision {}: trader output is invalid JSON: {}",
                 run_id,
                 decision_index,
-                trader_output_error_detail(&e)
+                detail
             )
         })?;
         parsed.validate(run_id, decision_index)?;
@@ -67,6 +105,8 @@ fn trader_output_error_detail(error: &serde_json::Error) -> String {
 
 #[cfg(test)]
 mod tests {
+    use crate::agent::llm::{ContentBlock, LlmResponse, StopReason};
+
     use super::TraderOutput;
 
     #[test]
@@ -115,5 +155,48 @@ mod tests {
         assert!(err
             .to_string()
             .contains("trader output justification is required"));
+    }
+
+    #[test]
+    fn empty_response_has_provider_diagnostic_instead_of_json_eof() {
+        let response = LlmResponse {
+            content: Vec::new(),
+            stop_reason: StopReason::EndTurn,
+            input_tokens: 981,
+            output_tokens: 0,
+        };
+
+        let err = TraderOutput::parse_response(&response, "01KRMKWZ1KJ2BGRNWGP518ZQ3Q", 4)
+            .expect_err("empty trader text must fail before JSON parsing");
+        let message = err.to_string();
+
+        assert!(message.contains("trader output is empty"));
+        assert!(message.contains("decision 4"));
+        assert!(message.contains("stop_reason=EndTurn"));
+        assert!(message.contains("output_tokens=0"));
+        assert!(
+            !message.contains("EOF while parsing"),
+            "empty response should not be reported as JSON EOF: {message}"
+        );
+    }
+
+    #[test]
+    fn response_parse_errors_include_provider_metadata() {
+        let response = LlmResponse {
+            content: vec![ContentBlock::Text {
+                text: "{".into(),
+            }],
+            stop_reason: StopReason::MaxTokens,
+            input_tokens: 1000,
+            output_tokens: 1000,
+        };
+
+        let err = TraderOutput::parse_response(&response, "01TEST", 2)
+            .expect_err("truncated trader JSON must fail");
+        let message = err.to_string();
+
+        assert!(message.contains("invalid JSON"));
+        assert!(message.contains("stop_reason=MaxTokens"));
+        assert!(message.contains("output_tokens=1000"));
     }
 }

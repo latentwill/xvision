@@ -67,6 +67,9 @@ Use these as reference only:
 | `qa9-strategy-wizard-persistence` | `.worktrees/qa9-strategy-wizard-persistence` | Fix live QA bug where setup wizard/chat claims asset/cadence/risk edits but Inspector manifest still shows original draft values | none | no overlap with eval/agent attachment tracks; owns wizard authoring manifest persistence | authoring/API/wizard regression tests in CI/non-deploy + frontend typecheck |
 | `qa9-readonly-editability-contract` | `.worktrees/qa9-readonly-editability-contract` | Clarify the setup/Inspector contract so read-only manifest/mechanical fields are not presented as directly editable without a successful setup tool save | none | no overlap with backend persistence; owns copy/tests for read-only contract | setup + authoring focused frontend tests + typecheck |
 | `qa9-strategy-agent-attachment-flow` | `.worktrees/qa9-strategy-agent-attachment-flow` | Validate attaching an existing AgentRef from the Inspector and make attached rows show agent/provider/model metadata before eval | none | no overlap with setup wizard persistence or read-only copy tracks | authoring focused frontend tests + typecheck |
+| `qa10-eval-trader-empty-output-resilience` | `.worktrees/qa10-eval-trader-empty-output-resilience` | Reproduce and harden eval trader decisions that fail after several ticks with empty/truncated model output (`EOF while parsing a value at line 1 column 0`), preserving raw diagnostics and preventing orders on invalid decisions | `qa9-alpaca-eval-full-run-burndown`, `qa9-json-schema-enforcement` preferred | no overlap with eval executor/parser tracks | eval executor regression for empty output + run failure reason test + paper/backtest parser tests |
+| `qa10-eval-chat-scrollbars-controls` | `.worktrees/qa10-eval-chat-scrollbars-controls` | Implement the `docs/design/XVN_Scrollbars.zip` prototype: always-visible themed scrollbars, eval decision list scrollbar/filter, clear BUY/SELL/HOLD/CLOSE signal boxes with reasoning text, chat rail scrollbar, and square Play/Stop composer control with no highlighted border | `color-themes-light-dark` preferred if theme variables are moving | no overlap with broad shell/chat/eval frontend tracks | `pnpm --dir frontend/web test -- ChatRail eval-runs-detail`; frontend typecheck; visual smoke against the design zip |
+| `qa10-chat-scenario-dsml-recovery` | `.worktrees/qa10-chat-scenario-dsml-recovery` | Fix chat-rail scenario creation from prompts like “try a paper eval on solana in q1 2026”: required `description` must survive tool argument parsing, malformed/partial JSON must fail locally with a short repair path, and tool traces must not stream corrupt markup indefinitely | `qa10-chat-strategy-agent-authoring-recovery`, `qa8-scenario-display-name-contract` | no overlap with chat wizard/tool parser tracks | WizardLoop/chat route regression for SOL Q1 2026 scenario + malformed DSML argument test + ChatRail rendering test |
 | `color-themes-light-dark` | `.worktrees/color-themes-light-dark` | Execute `docs/superpowers/plans/2026-05-14-color-themes-light-dark-mode.md`: color-only dashboard themes, General settings, sidebar sun/moon toggle, chart palette integration | none | no overlap with broad shell/settings/chart frontend tracks | `corepack pnpm --dir frontend/web test && corepack pnpm --dir frontend/web typecheck && corepack pnpm --dir frontend/web build` |
 
 ## Recommended order
@@ -100,6 +103,9 @@ Use these as reference only:
 27. `qa8-scenario-display-name-contract`
 28. `qa8-eval-provider-preflight`
 29. `color-themes-light-dark`
+30. `qa10-eval-trader-empty-output-resilience`
+31. `qa10-chat-scenario-dsml-recovery`
+32. `qa10-eval-chat-scrollbars-controls`
 
 ## Immediate start set
 
@@ -120,6 +126,7 @@ Safe to start now:
 - `qa8-cli-runtime-blockers`
 - `qa8-scenario-display-name-contract`
 - `color-themes-light-dark`
+- `qa10-eval-trader-empty-output-resilience`
 
 Wait for `strategy-agent-backend`:
 
@@ -145,6 +152,14 @@ Wait for provider settings stabilization:
 
 - `qa8-eval-provider-preflight`
 
+Wait for chat/scenario parser stabilization:
+
+- `qa10-chat-scenario-dsml-recovery`
+
+Wait for theme stabilization:
+
+- `qa10-eval-chat-scrollbars-controls`
+
 Do not overlap:
 
 - `strategy-agent-backend` with `qa4-surface-consistency`
@@ -167,6 +182,13 @@ Do not overlap:
 - `color-themes-light-dark` with broad shell/settings/chart frontend tracks,
   especially `qa8-shared-chat-rail-context`, `pr94-chart-stabilization`,
   `runtime-render-optimization`, or any active Settings layout refactor.
+- `qa10-eval-trader-empty-output-resilience` with `qa9-alpaca-eval-full-run-burndown`,
+  `qa9-json-schema-enforcement`, or any active eval executor/parser refactor.
+- `qa10-chat-scenario-dsml-recovery` with `qa10-chat-strategy-agent-authoring-recovery`,
+  `qa8-scenario-display-name-contract`, or any active WizardLoop/chat tool parser refactor.
+- `qa10-eval-chat-scrollbars-controls` with `color-themes-light-dark`,
+  `qa9-chat-rail-inflight-controls`, `qa8-eval-live-decisions`, or broad
+  ChatRail/eval route styling refactors.
 
 ## Cherry-pick policy
 
@@ -181,6 +203,48 @@ Avoid:
 - Merging `origin/codex/qa-pass-4` wholesale
 - Reviving `2026-05-12-pr91-94-unworked-features.md` as an execution branch
 - Carrying forward old strategy-shape compatibility unless a live caller forces it
+
+### Q10 QA intake
+
+- `qa10-eval-trader-empty-output-resilience`: Eval run
+  `01KRMKWZ1KJ2BGRNWGP518ZQ3Q` failed after about four decisions with
+  `run 01KRMKWZ1KJ2BGRNWGP518ZQ3Q decision 4: trader output is invalid JSON: EOF while parsing a value at line 1 column 0`.
+  Treat this as a different failure mode from the earlier missing-`action`
+  schema bugs: the model/tool layer produced an empty or truncated final trader
+  payload after the run had already made progress. Required action: reproduce
+  from the run row/logs where available, persist enough raw provider
+  diagnostics to distinguish empty text, stream abort, timeout, and parser
+  failure, and ensure paper/live executors never submit an order for an invalid
+  or missing trader decision. A bounded retry is acceptable only if it is
+  explicitly idempotent and recorded in run events.
+- `qa10-eval-chat-scrollbars-controls`: Use the attached prototype archive at
+  `docs/design/XVN_Scrollbars.zip` (contains `eval-focus-bundle/*`) as the
+  source for visible scrollbar styling and the eval focus/filter treatment.
+  Add a scrollbar and filter to the decisions section under eval run detail.
+  Preserve the prototype's clear action signal boxes for BUY, SELL, HOLD, and
+  CLOSE, including distinct color/background/border treatment and compact
+  counts in the filter row. Add the decision `reasoning` field to the displayed
+  ledger; if the current persisted/API field is still named `justification`,
+  the UI/API contract should either alias it to `reasoning` or migrate the wire
+  shape without losing existing decision rows. The chat rail scrollbar must be
+  visible at all times and match the same theme treatment. The chat rail stop
+  button should become a square icon-only control with no highlighted border;
+  when no chat/task is active it should render as Play and submit the composer
+  exactly like Enter, and while active it should render as Stop and abort the
+  in-flight request.
+- `qa10-chat-scenario-dsml-recovery`: Chat prompt
+  `try a paper eval on solana in q1 2026` updated the manifest to
+  `asset_universe=SOL/USD` and `decision_cadence_minutes=240m`, then attempted
+  to create `SOL Q1 2026` but failed with `create_scenario failed: missing field
+  \`description\``. The streamed trace showed a `description` parameter followed
+  by malformed/partial DSML around the `asset` payload
+  (`\"venue_symbol\": \"SOL/USD\":<|DSML|tool_calls> ...`) and then continued for a
+  long time. Required action: make chat scenario creation validate the decoded
+  tool argument object before invoking the tool, keep required fields
+  (`display_name`, `description`, asset/date/granularity`) intact through DSML
+  parsing, surface a compact repair prompt or local validation error on
+  malformed tool markup, and add a regression for SOL Q1 2026 paper-eval
+  scenario creation.
 
 ## Track notes
 

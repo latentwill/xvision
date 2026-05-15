@@ -274,7 +274,7 @@ impl PaperExecutor {
                 .trader
                 .as_ref()
                 .ok_or_else(|| anyhow!("run {} decision {}: trader output missing", run.id, decision_idx))?;
-            let parsed = TraderOutput::parse_strict(&trader.text(), &run.id, decision_idx)?;
+            let parsed = TraderOutput::parse_response(trader, &run.id, decision_idx)?;
 
             let mut order_size: Option<f64> = None;
             let mut fill_price: Option<f64> = None;

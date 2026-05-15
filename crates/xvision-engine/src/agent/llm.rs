@@ -517,11 +517,19 @@ impl LlmDispatch for OpenaiCompatDispatch {
         }
         let resp: serde_json::Value = http_resp.json().await?;
 
-        let choice = resp["choices"]
-            .get(0)
-            .cloned()
-            .unwrap_or(serde_json::Value::Null);
-        let msg = &choice["message"];
+        let choices = resp
+            .get("choices")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| anyhow::anyhow!("OpenAI-compat response missing `choices` array"))?;
+        let choice = choices
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("OpenAI-compat response had no choices"))?;
+        let msg = choice
+            .get("message")
+            .ok_or_else(|| anyhow::anyhow!("OpenAI-compat response choice missing `message`"))?;
+        if let Some(refusal) = msg["refusal"].as_str().filter(|s| !s.trim().is_empty()) {
+            anyhow::bail!("OpenAI-compat model refused structured response: {refusal}");
+        }
         let mut content_blocks: Vec<ContentBlock> = Vec::new();
         if let Some(text) = msg["content"].as_str() {
             if !text.is_empty() {

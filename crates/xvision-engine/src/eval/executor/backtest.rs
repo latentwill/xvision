@@ -372,7 +372,7 @@ impl BacktestExecutor {
                 .trader
                 .as_ref()
                 .ok_or_else(|| anyhow!("run {} decision {}: trader output missing", run.id, decision_idx))?;
-            let parsed = TraderOutput::parse_strict(&trader.text(), &run.id, decision_idx)?;
+            let parsed = TraderOutput::parse_response(trader, &run.id, decision_idx)?;
 
             let pre_fill_position = position;
             let fill = simulate_fill(SimulateFillArgs {
