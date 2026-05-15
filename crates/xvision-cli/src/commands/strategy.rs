@@ -10,13 +10,11 @@ use xvision_engine::agent::pipeline::{
     agent_slot_to_llm_slot, run_pipeline, PipelineInputs, ResolvedAgentSlot,
 };
 use xvision_engine::agents::{AgentSlot, AgentStore};
-use xvision_engine::api::{
-    agents as api_agents, strategy as api_strategy, Actor, ApiContext, ApiError,
-};
+use xvision_engine::api::{agents as api_agents, strategy as api_strategy, Actor, ApiContext, ApiError};
 use xvision_engine::strategies::slot::LLMSlot;
-use xvision_engine::strategies::{AgentRef, PipelineDef, PipelineEdge, PipelineKind};
-use xvision_engine::strategies::store::{strategy_store_dir, StrategyStore, FilesystemStore};
+use xvision_engine::strategies::store::{strategy_store_dir, FilesystemStore, StrategyStore};
 use xvision_engine::strategies::validate::validate_strategy;
+use xvision_engine::strategies::{AgentRef, PipelineDef, PipelineEdge, PipelineKind};
 use xvision_engine::templates::registry;
 use xvision_engine::tokens::{estimate_pipeline_tokens, estimate_pipeline_tokens_from_slots};
 use xvision_engine::tools::ToolRegistry;
@@ -127,19 +125,24 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
         StrategyAction::Ls { json } => ls(json).await,
         StrategyAction::Show { id } => show(&id).await,
         StrategyAction::Templates { json } => templates(json).await,
-        StrategyAction::AddAgent { strategy_id, agent_id, role } => {
-            add_agent(&strategy_id, &agent_id, &role).await
-        }
-        StrategyAction::RemoveAgent { strategy_id, role } => {
-            remove_agent(&strategy_id, &role).await
-        }
-        StrategyAction::SetPipeline { strategy_id, kind, edges } => {
-            set_pipeline(&strategy_id, &kind, &edges).await
-        }
+        StrategyAction::AddAgent {
+            strategy_id,
+            agent_id,
+            role,
+        } => add_agent(&strategy_id, &agent_id, &role).await,
+        StrategyAction::RemoveAgent { strategy_id, role } => remove_agent(&strategy_id, &role).await,
+        StrategyAction::SetPipeline {
+            strategy_id,
+            kind,
+            edges,
+        } => set_pipeline(&strategy_id, &kind, &edges).await,
         StrategyAction::MigrateAgents { dry_run } => migrate_agents(dry_run).await,
-        StrategyAction::Run { id, fixture, decisions, mock } => {
-            run_inline(&id, &fixture, decisions, mock).await
-        }
+        StrategyAction::Run {
+            id,
+            fixture,
+            decisions,
+            mock,
+        } => run_inline(&id, &fixture, decisions, mock).await,
     }
 }
 
@@ -213,10 +216,7 @@ async fn new(
     if let Some(path) = from_file {
         let strategy = load_strategy_file(&path)?;
         validate_strategy(&strategy).exit_with(XvnExit::Usage)?;
-        store()
-            .save(&strategy)
-            .await
-            .exit_with(XvnExit::Upstream)?;
+        store().save(&strategy).await.exit_with(XvnExit::Upstream)?;
         let id = strategy.manifest.id.clone();
         if json {
             let out = serde_json::json!({
@@ -311,10 +311,10 @@ fn load_strategy_file(path: &std::path::Path) -> CliResult<xvision_engine::strat
     let body = std::fs::read_to_string(path)
         .map_err(|e| CliError::usage(anyhow::anyhow!("read {}: {e}", path.display())))?;
     match path.extension().and_then(|ext| ext.to_str()) {
-        Some("toml") => toml::from_str(&body)
-            .map_err(|e| CliError::usage(anyhow::anyhow!("parse TOML: {e}"))),
-        _ => serde_json::from_str(&body)
-            .map_err(|e| CliError::usage(anyhow::anyhow!("parse JSON: {e}"))),
+        Some("toml") => {
+            toml::from_str(&body).map_err(|e| CliError::usage(anyhow::anyhow!("parse TOML: {e}")))
+        }
+        _ => serde_json::from_str(&body).map_err(|e| CliError::usage(anyhow::anyhow!("parse JSON: {e}"))),
     }
 }
 
@@ -461,7 +461,10 @@ async fn migrate_agents(dry_run: bool) -> CliResult<()> {
             .collect::<Vec<_>>()
             .join(", ");
         if dry_run {
-            println!("{id}: would migrate {} legacy slots [{roles}]", legacy_slots.len());
+            println!(
+                "{id}: would migrate {} legacy slots [{roles}]",
+                legacy_slots.len()
+            );
             migrated += 1;
             continue;
         }
@@ -473,10 +476,7 @@ async fn migrate_agents(dry_run: bool) -> CliResult<()> {
                 ctx,
                 api_agents::CreateAgentRequest {
                     name: format!("{} {role}", strategy.manifest.display_name),
-                    description: format!(
-                        "Migrated from strategy {} role {role}",
-                        strategy.manifest.id
-                    ),
+                    description: format!("Migrated from strategy {} role {role}", strategy.manifest.id),
                     tags: vec![
                         "strategy-migrated".to_string(),
                         strategy.manifest.template.clone(),
@@ -538,9 +538,10 @@ fn slot_to_agent_slot(slot: &LLMSlot) -> AgentSlot {
 }
 
 fn provider_model_from_slot(slot: &LLMSlot) -> (String, String) {
-    let parsed = slot.model_requirement.split_once('.').map(|(provider, model)| {
-        (provider.trim().to_string(), model.trim().to_string())
-    });
+    let parsed = slot
+        .model_requirement
+        .split_once('.')
+        .map(|(provider, model)| (provider.trim().to_string(), model.trim().to_string()));
     let provider = slot
         .provider
         .as_ref()
@@ -676,7 +677,10 @@ async fn resolve_agent_slots_for_cli(
             .map_err(|e| CliError::upstream(anyhow::anyhow!("load agent {}: {e}", agent_ref.agent_id)))?
             .ok_or_else(|| CliError::not_found(anyhow::anyhow!("agent {}", agent_ref.agent_id)))?;
         let slot = agent.slots.first().ok_or_else(|| {
-            CliError::usage(anyhow::anyhow!("agent {} has no executable slots", agent.agent_id))
+            CliError::usage(anyhow::anyhow!(
+                "agent {} has no executable slots",
+                agent.agent_id
+            ))
         })?;
         out.push(ResolvedAgentSlot {
             role: agent_ref.role.clone(),

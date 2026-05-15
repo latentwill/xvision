@@ -57,10 +57,7 @@ fn eval_get_alias_unknown_run_returns_4_not_found() {
 #[test]
 fn eval_results_unknown_run_returns_4_not_found() {
     let dir = tempdir().unwrap();
-    let out = xvn(
-        &["eval", "results", "01ZZZZZZZZZZZZZZZZZZZZZZZZ"],
-        dir.path(),
-    );
+    let out = xvn(&["eval", "results", "01ZZZZZZZZZZZZZZZZZZZZZZZZ"], dir.path());
     assert_eq!(code(&out), 4);
 }
 
@@ -68,13 +65,7 @@ fn eval_results_unknown_run_returns_4_not_found() {
 fn eval_watch_unknown_run_returns_4_not_found() {
     let dir = tempdir().unwrap();
     let out = xvn(
-        &[
-            "eval",
-            "watch",
-            "01ZZZZZZZZZZZZZZZZZZZZZZZZ",
-            "--once",
-            "--json",
-        ],
+        &["eval", "watch", "01ZZZZZZZZZZZZZZZZZZZZZZZZ", "--once", "--json"],
         dir.path(),
     );
     assert_eq!(code(&out), 4);
@@ -128,8 +119,12 @@ fn eval_compare_single_id_returns_2_clap_usage() {
 fn eval_compare_two_unknown_ids_returns_4_not_found() {
     let dir = tempdir().unwrap();
     let out = xvn(
-        &["eval", "compare",
-          "01ZZZZZZZZZZZZZZZZZZZZZZZZ", "02ZZZZZZZZZZZZZZZZZZZZZZZZ"],
+        &[
+            "eval",
+            "compare",
+            "01ZZZZZZZZZZZZZZZZZZZZZZZZ",
+            "02ZZZZZZZZZZZZZZZZZZZZZZZZ",
+        ],
         dir.path(),
     );
     assert_eq!(code(&out), 4);

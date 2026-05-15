@@ -16,6 +16,6 @@ pub use market::{IndicatorPanel, MarketSnapshot, Ohlcv, OnchainPanel, SkillRef};
 pub use risk::{Capital, RiskCaps};
 
 pub use trading::{
-    Action, AssetSymbol, Direction, EvidenceTag, InternBriefing, OpenPosition, PortfolioState,
-    Regime, RiskDecision, TraderDecision, VetoReason,
+    Action, AssetSymbol, Direction, EvidenceTag, InternBriefing, OpenPosition, PortfolioState, Regime,
+    RiskDecision, TraderDecision, VetoReason,
 };

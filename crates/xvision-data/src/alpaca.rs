@@ -231,7 +231,9 @@ pub enum FetchError {
     RateLimited { retry_after_secs: u32 },
     #[error("asset '{0}' not found on Alpaca")]
     AssetNotFound(String),
-    #[error("requested range starts before Alpaca crypto history (earliest available: {earliest_available})")]
+    #[error(
+        "requested range starts before Alpaca crypto history (earliest available: {earliest_available})"
+    )]
     RangeOutsideHistory { earliest_available: DateTime<Utc> },
     #[error("network error: {0}")]
     Network(#[from] reqwest::Error),
@@ -270,15 +272,8 @@ impl AlpacaBarsFetcher {
         Self::with_rate_limit(base_url, api_key, api_secret, 200)
     }
 
-    pub fn with_rate_limit(
-        base_url: String,
-        api_key: String,
-        api_secret: String,
-        rpm: u32,
-    ) -> Self {
-        let quota = Quota::per_minute(
-            std::num::NonZeroU32::new(rpm.max(1)).unwrap_or(nonzero!(200u32)),
-        );
+    pub fn with_rate_limit(base_url: String, api_key: String, api_secret: String, rpm: u32) -> Self {
+        let quota = Quota::per_minute(std::num::NonZeroU32::new(rpm.max(1)).unwrap_or(nonzero!(200u32)));
         Self {
             base_url,
             api_key,

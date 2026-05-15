@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Path A deploy flow: build the dashboard-baked xvision image locally, then
 # ship it to a remote host over SSH (no GHCR / no GitHub Actions credits).
+# After the image lands, any Docker Compose or Coolify service that consumes
+# `xvision:deploy-latest` must be recreated/redeployed so the running container
+# actually switches to the new image.
 #
 # Avoids the OOM trap when the deploy host is small (4 GB RAM / 38 GB disk):
 # the Rust + Vite build runs on the build host, and only the ~150 MB runtime
@@ -111,8 +114,9 @@ Loaded $TAG on $PUSH_HOST and tagged xvision:deploy-latest.
 
 Next on the server:
   ssh $PUSH_HOST
-  cd /root/deploy/stacks/xvn
-  # Make sure docker-compose.yml references image: xvision:deploy-latest
-  docker compose up -d
-  docker compose logs -f xvn
+  # Recreate every stack that points at xvision:deploy-latest.
+  # Example compose stacks:
+  #   cd /root/deploy/stacks/xvn && docker compose up -d
+  #   cd /root/deploy/stacks/xvnej && docker compose up -d
+  # For Coolify-managed apps, trigger a redeploy there instead.
 EOF

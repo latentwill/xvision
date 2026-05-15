@@ -73,9 +73,7 @@ pub struct FetchArgs {
 }
 
 pub async fn run(cmd: BarsCmd) -> CliResult<()> {
-    let ctx = open_ctx(cmd.xvn_home.clone())
-        .await
-        .map_err(CliError::upstream)?;
+    let ctx = open_ctx(cmd.xvn_home.clone()).await.map_err(CliError::upstream)?;
     match cmd.op {
         BarsOp::Fetch(a) => run_fetch(&ctx, a).await,
         BarsOp::Ls => run_ls(&ctx).await,
@@ -108,20 +106,18 @@ async fn open_ctx(override_path: Option<PathBuf>) -> Result<ApiContext> {
 }
 
 async fn run_fetch(ctx: &ApiContext, a: FetchArgs) -> CliResult<()> {
-    let asset = AssetSymbol::from_str(&a.asset)
-        .map_err(|e| CliError::usage(anyhow::anyhow!("{e}")))?;
-    let granularity = BarGranularity::from_str(&a.granularity)
-        .map_err(|e| CliError::usage(anyhow::anyhow!("{e}")))?;
+    let asset = AssetSymbol::from_str(&a.asset).map_err(|e| CliError::usage(anyhow::anyhow!("{e}")))?;
+    let granularity =
+        BarGranularity::from_str(&a.granularity).map_err(|e| CliError::usage(anyhow::anyhow!("{e}")))?;
     let start = a
         .from
         .and_hms_opt(0, 0, 0)
         .ok_or_else(|| CliError::usage(anyhow::anyhow!("invalid --from date")))?
         .and_utc();
-    let end = a
-        .to
-        .and_hms_opt(0, 0, 0)
-        .ok_or_else(|| CliError::usage(anyhow::anyhow!("invalid --to date")))?
-        .and_utc();
+    let end =
+        a.to.and_hms_opt(0, 0, 0)
+            .ok_or_else(|| CliError::usage(anyhow::anyhow!("invalid --to date")))?
+            .and_utc();
     if end <= start {
         return Err(CliError::usage(anyhow::anyhow!(
             "--to must be strictly after --from"
@@ -186,9 +182,7 @@ fn parse_duration(s: &str) -> CliResult<chrono::Duration> {
         }
         Ok(chrono::Duration::days(n))
     } else {
-        Err(CliError::usage(anyhow::anyhow!(
-            "only Nd supported (got '{s}')"
-        )))
+        Err(CliError::usage(anyhow::anyhow!("only Nd supported (got '{s}')")))
     }
 }
 

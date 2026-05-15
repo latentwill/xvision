@@ -6,22 +6,13 @@ use xvision_data::alpaca::{AlpacaBarsFetcher, BarGranularity, FetchError};
 
 #[test]
 fn bar_granularity_parses_supported_alpaca_timeframes() {
-    assert_eq!(
-        BarGranularity::from_str("1m").unwrap().as_alpaca_str(),
-        "1Min"
-    );
+    assert_eq!(BarGranularity::from_str("1m").unwrap().as_alpaca_str(), "1Min");
     assert_eq!(
         BarGranularity::from_str("59Min").unwrap().as_alpaca_str(),
         "59Min"
     );
-    assert_eq!(
-        BarGranularity::from_str("23h").unwrap().as_alpaca_str(),
-        "23Hour"
-    );
-    assert_eq!(
-        BarGranularity::from_str("1w").unwrap().as_alpaca_str(),
-        "1Week"
-    );
+    assert_eq!(BarGranularity::from_str("23h").unwrap().as_alpaca_str(), "23Hour");
+    assert_eq!(BarGranularity::from_str("1w").unwrap().as_alpaca_str(), "1Week");
     assert_eq!(
         BarGranularity::from_str("12mo").unwrap().as_alpaca_str(),
         "12Month"
@@ -71,11 +62,7 @@ async fn fetch_crypto_bars_single_page() {
         .mount(&server)
         .await;
 
-    let fetcher = AlpacaBarsFetcher::new(
-        server.uri(),
-        "key".into(),
-        "secret".into(),
-    );
+    let fetcher = AlpacaBarsFetcher::new(server.uri(), "key".into(), "secret".into());
     let bars = fetcher
         .fetch_crypto_bars(
             "ETH/USD",
@@ -104,17 +91,28 @@ async fn fetch_crypto_bars_paginated() {
         "next_page_token": null
     });
 
-    Mock::given(method("GET")).and(path("/v1beta3/crypto/us/bars")).and(query_param("page_token", ""))
+    Mock::given(method("GET"))
+        .and(path("/v1beta3/crypto/us/bars"))
+        .and(query_param("page_token", ""))
         .respond_with(ResponseTemplate::new(200).set_body_json(page1))
-        .mount(&server).await;
-    Mock::given(method("GET")).and(path("/v1beta3/crypto/us/bars")).and(query_param("page_token", "TOKEN_2"))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/v1beta3/crypto/us/bars"))
+        .and(query_param("page_token", "TOKEN_2"))
         .respond_with(ResponseTemplate::new(200).set_body_json(page2))
-        .mount(&server).await;
+        .mount(&server)
+        .await;
 
     let bars = AlpacaBarsFetcher::new(server.uri(), "k".into(), "s".into())
-        .fetch_crypto_bars("ETH/USD", BarGranularity::Hour1,
-            Utc.with_ymd_and_hms(2024,2,3,0,0,0).unwrap(),
-            Utc.with_ymd_and_hms(2024,2,3,2,0,0).unwrap()).await.unwrap();
+        .fetch_crypto_bars(
+            "ETH/USD",
+            BarGranularity::Hour1,
+            Utc.with_ymd_and_hms(2024, 2, 3, 0, 0, 0).unwrap(),
+            Utc.with_ymd_and_hms(2024, 2, 3, 2, 0, 0).unwrap(),
+        )
+        .await
+        .unwrap();
 
     assert_eq!(bars.len(), 2);
     assert_eq!(bars[0].open, 1.0);
@@ -124,22 +122,31 @@ async fn fetch_crypto_bars_paginated() {
 #[tokio::test]
 async fn fetch_returns_unauthorized_on_401() {
     let server = MockServer::start().await;
-    Mock::given(method("GET")).and(path("/v1beta3/crypto/us/bars"))
+    Mock::given(method("GET"))
+        .and(path("/v1beta3/crypto/us/bars"))
         .respond_with(ResponseTemplate::new(401))
-        .mount(&server).await;
+        .mount(&server)
+        .await;
     let err = AlpacaBarsFetcher::new(server.uri(), "k".into(), "s".into())
-        .fetch_crypto_bars("ETH/USD", BarGranularity::Hour1,
-            Utc.with_ymd_and_hms(2024,2,3,0,0,0).unwrap(),
-            Utc.with_ymd_and_hms(2024,2,3,1,0,0).unwrap()).await.unwrap_err();
+        .fetch_crypto_bars(
+            "ETH/USD",
+            BarGranularity::Hour1,
+            Utc.with_ymd_and_hms(2024, 2, 3, 0, 0, 0).unwrap(),
+            Utc.with_ymd_and_hms(2024, 2, 3, 1, 0, 0).unwrap(),
+        )
+        .await
+        .unwrap_err();
     assert!(matches!(err, FetchError::Unauthorized));
 }
 
 #[tokio::test]
 async fn fetch_returns_asset_not_found_on_404() {
     let server = MockServer::start().await;
-    Mock::given(method("GET")).and(path("/v1beta3/crypto/us/bars"))
+    Mock::given(method("GET"))
+        .and(path("/v1beta3/crypto/us/bars"))
         .respond_with(ResponseTemplate::new(404))
-        .mount(&server).await;
+        .mount(&server)
+        .await;
     let err = AlpacaBarsFetcher::new(server.uri(), "k".into(), "s".into())
         .fetch_crypto_bars(
             "ETH/USD",
@@ -185,12 +192,19 @@ async fn fetch_rejects_pre_history_window_before_http() {
 #[tokio::test]
 async fn fetch_returns_rate_limited_on_429() {
     let server = MockServer::start().await;
-    Mock::given(method("GET")).and(path("/v1beta3/crypto/us/bars"))
+    Mock::given(method("GET"))
+        .and(path("/v1beta3/crypto/us/bars"))
         .respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "30"))
-        .mount(&server).await;
+        .mount(&server)
+        .await;
     let err = AlpacaBarsFetcher::new(server.uri(), "k".into(), "s".into())
-        .fetch_crypto_bars("ETH/USD", BarGranularity::Hour1,
-            Utc.with_ymd_and_hms(2024,2,3,0,0,0).unwrap(),
-            Utc.with_ymd_and_hms(2024,2,3,1,0,0).unwrap()).await.unwrap_err();
+        .fetch_crypto_bars(
+            "ETH/USD",
+            BarGranularity::Hour1,
+            Utc.with_ymd_and_hms(2024, 2, 3, 0, 0, 0).unwrap(),
+            Utc.with_ymd_and_hms(2024, 2, 3, 1, 0, 0).unwrap(),
+        )
+        .await
+        .unwrap_err();
     assert!(matches!(err, FetchError::RateLimited { retry_after_secs: 30 }));
 }

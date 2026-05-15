@@ -22,12 +22,9 @@ use xvision_data as xvn;
 use xvision_engine::api::eval::{self as api_eval, CompareRunsRequest, ListRunsRequest};
 use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::authoring;
-use xvision_engine::strategies::{
-    risk::RiskConfig,
-    store::{StrategyStore, FilesystemStore},
-};
 use xvision_engine::eval::run::RunStatus;
 use xvision_engine::eval::store::RunStore;
+use xvision_engine::strategies::{risk::RiskConfig, store::FilesystemStore};
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -142,6 +139,12 @@ pub struct UpdateSlotReq {
     /// Model requirement (e.g., `anthropic.claude-sonnet-4.6+`).
     #[serde(default)]
     pub model_requirement: Option<String>,
+    /// Explicit provider name for this slot.
+    #[serde(default)]
+    pub provider: Option<String>,
+    /// Explicit model name for this slot.
+    #[serde(default)]
+    pub model: Option<String>,
     /// Tools the slot is allowed to call.
     #[serde(default)]
     pub allowed_tools: Option<Vec<String>>,
@@ -422,6 +425,8 @@ impl XvisionTools {
                 slot: req.slot,
                 prompt: req.prompt,
                 model_requirement: req.model_requirement,
+                provider: req.provider,
+                model: req.model,
                 allowed_tools: req.allowed_tools,
             },
         )
@@ -521,9 +526,7 @@ impl XvisionTools {
     /// agent_id + scenario_id + mode + status + started_at +
     /// completed_at + headline metrics). Optional filters narrow the
     /// result to a strategy / scenario / status.
-    #[tool(
-        description = "List eval runs (slim shape). Optional filters: agent_id, scenario_id, status."
-    )]
+    #[tool(description = "List eval runs (slim shape). Optional filters: agent_id, scenario_id, status.")]
     async fn xvn_eval_list(
         &self,
         Parameters(req): Parameters<EvalListReq>,
@@ -757,6 +760,8 @@ mod tests {
                 slot: "trader".into(),
                 prompt: Some("New prompt".into()),
                 model_requirement: None,
+                provider: None,
+                model: None,
                 allowed_tools: None,
             }))
             .await
@@ -790,6 +795,8 @@ mod tests {
                 slot: "nope".into(),
                 prompt: Some("p".into()),
                 model_requirement: None,
+                provider: None,
+                model: None,
                 allowed_tools: None,
             }))
             .await

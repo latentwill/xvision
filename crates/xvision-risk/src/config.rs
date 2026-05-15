@@ -54,24 +54,16 @@ impl RiskConfig {
             ));
         }
         if l.max_open_positions == 0 {
-            return Err(RiskError::Config(
-                "max_open_positions must be > 0".into(),
-            ));
+            return Err(RiskError::Config("max_open_positions must be > 0".into()));
         }
         if !(l.max_daily_loss_pct > 0.0 && l.max_daily_loss_pct <= 100.0) {
-            return Err(RiskError::Config(
-                "max_daily_loss_pct must be in (0, 100]".into(),
-            ));
+            return Err(RiskError::Config("max_daily_loss_pct must be in (0, 100]".into()));
         }
         if l.max_correlation_cluster == 0 {
-            return Err(RiskError::Config(
-                "max_correlation_cluster must be > 0".into(),
-            ));
+            return Err(RiskError::Config("max_correlation_cluster must be > 0".into()));
         }
         if s.stop_loss_min_pct <= 0.0 {
-            return Err(RiskError::Config(
-                "stop_loss_min_pct must be > 0".into(),
-            ));
+            return Err(RiskError::Config("stop_loss_min_pct must be > 0".into()));
         }
         if s.stop_loss_max_pct <= s.stop_loss_min_pct {
             return Err(RiskError::Config(
@@ -79,9 +71,7 @@ impl RiskConfig {
             ));
         }
         if s.take_profit_min_rr <= 0.0 {
-            return Err(RiskError::Config(
-                "take_profit_min_rr must be > 0".into(),
-            ));
+            return Err(RiskError::Config("take_profit_min_rr must be > 0".into()));
         }
         Ok(())
     }

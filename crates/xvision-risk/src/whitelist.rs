@@ -47,9 +47,8 @@ impl Whitelist {
 
         let mut assets = BTreeMap::new();
         for a in file.assets {
-            let sym = parse_symbol(&a.symbol).ok_or_else(|| {
-                RiskError::Config(format!("unknown asset symbol: {}", a.symbol))
-            })?;
+            let sym = parse_symbol(&a.symbol)
+                .ok_or_else(|| RiskError::Config(format!("unknown asset symbol: {}", a.symbol)))?;
             assets.insert(
                 sym,
                 AssetEntry {
