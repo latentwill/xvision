@@ -16,8 +16,10 @@ frontend/web/*.tsbuildinfo
 coverage
 **/coverage
 
-# Runtime data (never ship as part of the image)
-data
+# Runtime data (never ship as part of the image), except packaged probe assets.
+data/*
+!data/probes/
+!data/probes/**
 *.db
 *.db-journal
 *.db-wal

@@ -26,7 +26,7 @@ env/
 *.sqlite
 *.sqlite3
 *.db
-data/
+data/*
 !data/probes/
 !data/probes/**
 logs/

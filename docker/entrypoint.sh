@@ -3,6 +3,7 @@
 #
 # Behavior:
 #   - ensures /data exists (it's the canonical mount for store.db, traces, vectors)
+#   - seeds packaged probe fixtures into /data/probes if the image includes any
 #   - if XVN_AUTOMIGRATE=1, runs `xvn store migrate --db /data/store.db` before exec
 #   - execs `xvn` with the caller's args; default arg is `--help`
 #
@@ -10,6 +11,7 @@
 #   XVN_AUTOMIGRATE       if "1", run store migrate before exec (default: 0)
 #   XVN_DATA_DIR          override /data (default: /data)
 #   XVN_CONFIG_DIR        override /config (default: /config)
+#   XVN_SEED_PROBES_DIR   override packaged probe seed dir (default: /opt/xvision/data/probes)
 #   APCA_API_KEY_ID       Alpaca paper key (passed through to xvn)
 #   APCA_API_SECRET_KEY   Alpaca paper secret
 #   APCA_API_BASE_URL     defaults to paper-api.alpaca.markets
@@ -19,8 +21,14 @@ set -euo pipefail
 
 DATA_DIR="${XVN_DATA_DIR:-/data}"
 CONFIG_DIR="${XVN_CONFIG_DIR:-/config}"
+SEED_PROBES_DIR="${XVN_SEED_PROBES_DIR:-/opt/xvision/data/probes}"
 
 mkdir -p "$DATA_DIR"
+
+if [[ -d "$SEED_PROBES_DIR" ]]; then
+  mkdir -p "$DATA_DIR/probes"
+  cp -Rn "$SEED_PROBES_DIR"/. "$DATA_DIR/probes"/
+fi
 
 # The image bakes a read-only seed config under $CONFIG_DIR (mounted :ro in
 # docker-compose). Provider mutations from Settings → Providers must write
