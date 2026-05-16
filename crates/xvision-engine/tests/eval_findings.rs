@@ -19,6 +19,18 @@ async fn pool_with_migration() -> SqlitePool {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/015_eval_decisions_reasoning.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/016_eval_reviews.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/017_eval_findings_review_columns.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     pool
 }
 
@@ -150,7 +162,12 @@ async fn run_store_record_finding_and_read_findings_round_trip() {
     let pool = pool_with_migration().await;
     let store = RunStore::new(pool);
 
-    let run = finalized_run();
+    let mut run = finalized_run();
+    // `finalized_run()` returns the in-memory shape we want to *see* after
+    // finalize, but the on-disk row must start as queued/running so the
+    // status-machine guards in `RunStore::finalize` accept the transition.
+    run.status = RunStatus::Queued;
+    run.completed_at = None;
     store.create(&run).await.unwrap();
     store
         .finalize(&run.id, run.metrics.as_ref().unwrap())
@@ -166,6 +183,13 @@ async fn run_store_record_finding_and_read_findings_round_trip() {
         evidence: serde_json::json!({"value": -3.2}),
         extracted_at: Utc::now(),
         schema_version: "1".into(),
+        eval_review_id: None,
+        review_type: None,
+        confidence: None,
+        title: None,
+        description: None,
+        recommendation: None,
+        created_at: None,
     };
     let f2 = Finding {
         id: ulid::Ulid::new().to_string(),
@@ -176,6 +200,13 @@ async fn run_store_record_finding_and_read_findings_round_trip() {
         evidence: serde_json::json!({"value": 18.0}),
         extracted_at: Utc::now(),
         schema_version: "1".into(),
+        eval_review_id: None,
+        review_type: None,
+        confidence: None,
+        title: None,
+        description: None,
+        recommendation: None,
+        created_at: None,
     };
     store.record_finding(&f1).await.unwrap();
     store.record_finding(&f2).await.unwrap();
@@ -206,6 +237,13 @@ fn finding_serde_round_trip() {
         evidence: serde_json::json!({"sigma": 4.2}),
         extracted_at: Utc.with_ymd_and_hms(2025, 4, 1, 12, 0, 0).unwrap(),
         schema_version: "1".into(),
+        eval_review_id: None,
+        review_type: None,
+        confidence: None,
+        title: None,
+        description: None,
+        recommendation: None,
+        created_at: None,
     };
     let json = serde_json::to_string(&f).unwrap();
     let back: Finding = serde_json::from_str(&json).unwrap();

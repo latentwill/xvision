@@ -14,6 +14,7 @@ pub mod findings;
 pub mod metrics;
 pub mod postprocess;
 pub mod progress;
+pub mod review;
 pub mod run;
 pub mod scenario;
 pub mod scenario_seed;
@@ -26,6 +27,7 @@ pub use compare::{
 };
 pub use findings::{Finding, Severity};
 pub use progress::{send_event, ProgressBus, ProgressEvent, ProgressRx, ProgressTx};
+pub use review::{AgentProfile, EvalReview, ReviewStatus, ReviewVerdict};
 
 pub use run::{MetricsSummary, Run, RunMode, RunStatus};
 #[allow(deprecated)]
