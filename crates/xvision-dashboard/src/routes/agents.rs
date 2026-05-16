@@ -134,3 +134,121 @@ pub async fn templates(State(state): State<AppState>) -> Result<Json<TemplatesRe
     let items = agents::templates(&state.api_context()).await?;
     Ok(Json(TemplatesResponse { items }))
 }
+
+#[cfg(test)]
+pub mod get {
+    //! Shape: `cargo test -p xvision-dashboard agents::get` (q15-
+    //! object-json-output contract verification).
+    //!
+    //! Parity guard: `GET /api/agents/:id` returns the same Rust
+    //! `Agent` struct that `EvalRunExport.agents[]` carries. The
+    //! seed wires a real Agent → Strategy(AgentRef) → completed Run
+    //! so the export resolves the agent via its real load path
+    //! (strategy → agent_ref → agent_store::get) — comparing against
+    //! that surface catches drift if the export ever post-processes
+    //! agents before serializing.
+
+    use xvision_engine::agents::AgentSlot;
+    use xvision_engine::api::agents::{self as agents_api, CreateAgentRequest};
+    use xvision_engine::api::strategy::{self as api_strategy, AddAgentReq};
+    use xvision_engine::api::{Actor, ApiContext};
+    use xvision_engine::authoring::CreateStrategyReq;
+    use xvision_engine::eval::export as eval_export;
+    use xvision_engine::eval::run::{Run, RunMode, RunStatus};
+    use xvision_engine::eval::store::RunStore;
+    use xvision_engine::templates::registry;
+
+    #[tokio::test]
+    async fn route_shape_matches_eval_export_agents_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = ApiContext::open(
+            dir.path(),
+            Actor::Cli {
+                user: "object-json-test".into(),
+            },
+        )
+        .await
+        .expect("open ApiContext");
+
+        let agent = agents_api::create(
+            &ctx,
+            CreateAgentRequest {
+                name: "object-shape-fixture".into(),
+                description: "route parity fixture".into(),
+                tags: vec!["test".into()],
+                slots: vec![AgentSlot {
+                    name: "main".into(),
+                    provider: "openai".into(),
+                    model: "gpt-4o-mini".into(),
+                    system_prompt: "Trade.".into(),
+                    skill_ids: vec![],
+                    max_tokens: Some(2048),
+                }],
+            },
+        )
+        .await
+        .expect("create agent");
+
+        let tpl_name = registry::list_template_names()
+            .first()
+            .cloned()
+            .expect("at least one template registered");
+        let strategy = api_strategy::create_strategy(
+            &ctx,
+            CreateStrategyReq {
+                template: tpl_name,
+                name: "route-parity-fixture-strategy".into(),
+                creator: None,
+            },
+        )
+        .await
+        .expect("create strategy");
+
+        api_strategy::add_agent(
+            &ctx,
+            AddAgentReq {
+                strategy_id: strategy.id.clone(),
+                agent_id: agent.agent_id.clone(),
+                role: "main".into(),
+            },
+        )
+        .await
+        .expect("add_agent");
+
+        let store = RunStore::new(ctx.db.clone());
+        let mut run = Run::new_queued(
+            strategy.id.clone(),
+            "crypto-bull-q1-2025".into(),
+            RunMode::Backtest,
+        );
+        run.status = RunStatus::Completed;
+        store.create(&run).await.expect("seed run");
+        store
+            .update_status(&run.id, RunStatus::Completed, None)
+            .await
+            .expect("transition");
+
+        // The route handler is `Json(agents::get(ctx, &id).await?)`.
+        // The export resolves the same agent through a different path
+        // (strategy → AgentRef → agent_store::get). Asserting parity
+        // against the real export output is what catches drift.
+        let direct = agents_api::get(&ctx, &agent.agent_id)
+            .await
+            .expect("agent get");
+        let export = eval_export::build_export(&ctx, &run.id)
+            .await
+            .expect("build_export");
+        let from_export = export
+            .agents
+            .iter()
+            .find(|a| a.agent_id == agent.agent_id)
+            .expect("seeded agent must appear in EvalRunExport.agents[]");
+
+        let route_json = serde_json::to_value(&direct).expect("agent->json");
+        let export_json = serde_json::to_value(from_export).expect("export.agent->json");
+        assert_eq!(
+            route_json, export_json,
+            "GET /api/agents/:id shape must equal `EvalRunExport.agents[]`",
+        );
+    }
+}

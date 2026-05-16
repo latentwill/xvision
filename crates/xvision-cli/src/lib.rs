@@ -7,6 +7,7 @@
 
 pub mod commands;
 pub mod exit;
+pub mod json;
 
 use std::path::PathBuf;
 
@@ -215,6 +216,8 @@ pub enum Command {
     Bars(commands::bars::BarsCmd),
     /// Apply pending migrations + seed, or report state with --dry-run.
     Migrate(commands::migrate::MigrateCmd),
+    /// Inspect agent records from the workspace agent library.
+    Agent(commands::agent::AgentCmd),
 }
 
 impl Cli {
@@ -318,6 +321,7 @@ impl Cli {
             Command::Provider(cmd) => commands::provider::run(cmd).await.map_err(Into::into),
             Command::Bars(cmd) => commands::bars::run(cmd).await,
             Command::Migrate(cmd) => commands::migrate::run(cmd).await,
+            Command::Agent(cmd) => commands::agent::run(cmd).await,
         }
     }
 }

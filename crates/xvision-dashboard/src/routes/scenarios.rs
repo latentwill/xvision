@@ -125,3 +125,62 @@ pub async fn preview(
     let payload = chart_api::build_scenario_preview(&state.api_context(), q).await?;
     Ok(Json(payload))
 }
+
+#[cfg(test)]
+pub mod get {
+    //! Shape: `cargo test -p xvision-dashboard scenarios::get` (q15-
+    //! object-json-output contract verification).
+
+    use xvision_engine::api::scenario as api_scenario;
+    use xvision_engine::api::{Actor, ApiContext};
+    use xvision_engine::eval::export as eval_export;
+    use xvision_engine::eval::run::{Run, RunMode, RunStatus};
+    use xvision_engine::eval::store::RunStore;
+
+    #[tokio::test]
+    async fn route_shape_matches_eval_export_scenario_slot() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = ApiContext::open(
+            dir.path(),
+            Actor::Cli {
+                user: "object-json-test".into(),
+            },
+        )
+        .await
+        .expect("open ApiContext");
+
+        let scenario_id = "crypto-bull-q1-2025";
+
+        let store = RunStore::new(ctx.db.clone());
+        let mut run = Run::new_queued(
+            "agent-fixture".into(),
+            scenario_id.into(),
+            RunMode::Backtest,
+        );
+        run.status = RunStatus::Completed;
+        store.create(&run).await.expect("seed run");
+        store
+            .update_status(&run.id, RunStatus::Completed, None)
+            .await
+            .expect("transition");
+
+        let direct = api_scenario::get(&ctx, scenario_id)
+            .await
+            .expect("scenario get");
+        let export = eval_export::build_export(&ctx, &run.id)
+            .await
+            .expect("build_export");
+
+        let route_json = serde_json::to_value(&direct).expect("scenario->json");
+        let from_export = export
+            .scenario
+            .as_ref()
+            .map(serde_json::to_value)
+            .expect("export.scenario present")
+            .expect("export.scenario->json");
+        assert_eq!(
+            route_json, from_export,
+            "GET /api/scenarios/:id shape must equal `EvalRunExport.scenario`",
+        );
+    }
+}
