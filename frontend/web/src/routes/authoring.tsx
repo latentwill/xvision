@@ -488,7 +488,7 @@ function AgentsCard({ strategy }: { strategy: Strategy }) {
   );
 }
 
-type AttachedAgentRowProps = {
+export type AttachedAgentRowProps = {
   strategyId: string;
   agentRef: { agent_id: string; role: string };
   index: number;
@@ -497,7 +497,7 @@ type AttachedAgentRowProps = {
   onRemove: () => void;
 };
 
-function AttachedAgentRow({
+export function AttachedAgentRow({
   strategyId,
   agentRef,
   index,
@@ -510,6 +510,16 @@ function AttachedAgentRow({
     return safeStorageGet(storageKey) === "1";
   });
   const [popoutOpen, setPopoutOpen] = useState(false);
+
+  // The React key for each row is `${agent_id}:${role}` — stable across
+  // strategies that attach the same agent under the same role. When the
+  // user navigates between such strategies, the same component instance
+  // is reused, so we must resync `collapsed` from the new strategy-scoped
+  // storage key rather than relying on the lazy `useState` initializer.
+  useEffect(() => {
+    setCollapsed(safeStorageGet(storageKey) === "1");
+    setPopoutOpen(false);
+  }, [storageKey]);
   const primarySlot = agent?.slots[0];
   const modelLabel = primarySlot
     ? `${primarySlot.provider} / ${primarySlot.model}`
