@@ -4,7 +4,8 @@ One conductor at a time. Owns process artifacts; does not write feature code.
 
 ## Owned artifacts
 
-- `team/board.md` (active board index)
+- `team/board.md` (current-wave board)
+- `team/board-v2.md` (V2 roadmap board)
 - `team/MANIFEST.md` (top-level pointers)
 - `team/OWNERSHIP.md`
 - `team/CONFLICT_ZONES.md`

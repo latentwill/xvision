@@ -6,25 +6,55 @@ and override anything in conflict with the workspace file.
 
 ## Deployment guardrails (hard rules)
 
-These rules are mandatory for agents operating on remote/deploy hosts. They do
-not apply to local development workstations.
+Two deployment paths exist. **Local image build is preferred.** GHCR is reserved
+for remote deployment when no local build host is available.
 
-- On remote/deploy hosts, NEVER run `cargo`, `cargo build`, `cargo check`, or
-  `cargo test`.
-- On remote/deploy hosts, NEVER build Docker images for production rollout.
-- ALWAYS publish runtime images through GitHub Actions workflow `.github/workflows/docker.yml`.
-- ALWAYS use `workflow_dispatch` inputs explicitly when triggering GHCR builds:
-  - `dockerfile=Dockerfile.deploy`
-  - `build_identity=false` (unless identity image is intentionally requested)
-  - `build_profile=release` for production; `staging` only for manual test images
-- ALWAYS source `.op_env` before using `gh` or `op` so GitHub and 1Password access come from the expected deploy-host environment.
-- ALWAYS verify rollout by checking running container image digest matches the GHCR digest you just published.
+### Preferred: local image build → ship over SSH
 
-Preferred command path from repo root:
+Builds the Rust workspace + Vite SPA on the local build host and transfers the
+~150 MB runtime image to the target. Avoids GitHub Actions minutes and the
+OOM trap on small (4 GB) deploy hosts.
+
+```bash
+scripts/deploy-image.sh                          # build only, tag xvision:deploy-<sha>
+scripts/deploy-image.sh --push root@host         # build + transfer + docker load
+scripts/deploy-image.sh --with-identity          # include xvision-identity (Mantle)
+scripts/deploy-image.sh --platform linux/arm64   # for ARM hosts (Graviton, Oracle ARM)
+```
+
+The target host only needs `docker`. After the image lands, the consuming
+service (Compose, Coolify) must be recreated/redeployed so the running
+container switches to the new image.
+
+### Fallback: GHCR via GitHub Actions
+
+Use only when there is no local build host capable of running the full
+Rust+Vite build (e.g. iterating on a remote dev box with no Docker locally).
 
 ```bash
 scripts/deploy-ghcr.sh
 ```
+
+When triggering GHCR builds, pass `workflow_dispatch` inputs explicitly:
+
+- `dockerfile=Dockerfile.deploy`
+- `build_identity=false` (unless identity image is intentionally requested)
+- `build_profile=release` for production; `staging` only for manual test images
+
+### Rules that apply to both paths
+
+- On remote/deploy hosts (small VPS, Coolify nodes), NEVER run `cargo`,
+  `cargo build`, `cargo check`, or `cargo test`. The Rust toolchain is not
+  installed there and a stray invocation can OOM the box.
+- On remote/deploy hosts, NEVER build Docker images. Builds happen on the
+  local build host or in GHCR.
+- ALWAYS source `.op_env` before using `gh` or `op` so GitHub and 1Password
+  access come from the expected environment.
+- ALWAYS verify rollout by checking the running container's image digest
+  matches the digest you just built (local) or published (GHCR).
+
+These rules do not apply to local development workstations doing
+`cargo test` or `docker compose build` for normal dev work.
 
 ## Terminology
 
