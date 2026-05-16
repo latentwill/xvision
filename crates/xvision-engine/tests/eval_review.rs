@@ -410,3 +410,189 @@ fn review_verdict_round_trips_for_every_variant() {
         assert_eq!(parsed, v);
     }
 }
+
+#[tokio::test]
+async fn complete_review_rejects_out_of_range_confidence() {
+    let pool = pool_with_migrations().await;
+    let store = RunStore::new(pool);
+    let run = finalized_run(&store).await;
+
+    let review = EvalReview::new_queued(run.id.clone(), "reasoning-agent".into());
+    store.create_review(&review).await.unwrap();
+    store.begin_review_running(&review.id).await.unwrap();
+
+    for bad in [-0.0001, 1.0001, -1.0, 2.0, f64::NAN] {
+        let err = store
+            .complete_review(&review.id, ReviewVerdict::Promising, bad, 50, "x", "{}")
+            .await
+            .expect_err(&format!("confidence {bad} must be rejected"));
+        let msg = err.to_string();
+        assert!(
+            msg.contains("confidence"),
+            "error must name confidence (got: {msg})"
+        );
+    }
+
+    // After every rejected attempt, the review must still be in `running`
+    // — the validation guard short-circuits before the UPDATE.
+    let got = store.get_review(&review.id).await.unwrap().unwrap();
+    assert_eq!(got.status, ReviewStatus::Running);
+}
+
+#[tokio::test]
+async fn complete_review_rejects_out_of_range_score() {
+    let pool = pool_with_migrations().await;
+    let store = RunStore::new(pool);
+    let run = finalized_run(&store).await;
+
+    let review = EvalReview::new_queued(run.id.clone(), "reasoning-agent".into());
+    store.create_review(&review).await.unwrap();
+    store.begin_review_running(&review.id).await.unwrap();
+
+    for bad in [-1, 101, i32::MIN, i32::MAX] {
+        let err = store
+            .complete_review(&review.id, ReviewVerdict::Promising, 0.5, bad, "x", "{}")
+            .await
+            .expect_err(&format!("score {bad} must be rejected"));
+        let msg = err.to_string();
+        assert!(msg.contains("score"), "error must name score (got: {msg})");
+    }
+}
+
+#[tokio::test]
+async fn complete_review_accepts_bounds_inclusive() {
+    let pool = pool_with_migrations().await;
+    let store = RunStore::new(pool);
+    let run = finalized_run(&store).await;
+
+    // confidence = 0.0, score = 0 (lower bound)
+    let lo = EvalReview::new_queued(run.id.clone(), "reasoning-agent".into());
+    store.create_review(&lo).await.unwrap();
+    store.begin_review_running(&lo.id).await.unwrap();
+    let ok = store
+        .complete_review(&lo.id, ReviewVerdict::Failed, 0.0, 0, "low end", "{}")
+        .await
+        .expect("0.0 / 0 must be accepted");
+    assert!(ok);
+
+    // confidence = 1.0, score = 100 (upper bound)
+    let hi = EvalReview::new_queued(run.id.clone(), "risk-agent".into());
+    store.create_review(&hi).await.unwrap();
+    store.begin_review_running(&hi.id).await.unwrap();
+    let ok = store
+        .complete_review(
+            &hi.id,
+            ReviewVerdict::Promising,
+            1.0,
+            100,
+            "high end",
+            "{}",
+        )
+        .await
+        .expect("1.0 / 100 must be accepted");
+    assert!(ok);
+}
+
+#[tokio::test]
+async fn db_check_constraint_rejects_out_of_range_confidence_score_on_raw_insert() {
+    // Belt-and-suspenders: even if a bypass path constructs SQL that
+    // skips `complete_review`'s validation, the DB CHECK constraints
+    // from migration 016 must reject the row.
+    let pool = pool_with_migrations().await;
+
+    let run = {
+        let store = RunStore::new(pool.clone());
+        finalized_run(&store).await
+    };
+
+    for (confidence, score, label) in [
+        (Some(-0.5_f64), Some(50_i64), "negative confidence"),
+        (Some(1.5_f64), Some(50_i64), "confidence > 1.0"),
+        (Some(0.5_f64), Some(-1_i64), "negative score"),
+        (Some(0.5_f64), Some(101_i64), "score > 100"),
+    ] {
+        let id = ulid::Ulid::new().to_string();
+        let now = chrono::Utc::now().to_rfc3339();
+        let res = sqlx::query(
+            "INSERT INTO eval_reviews \
+             (id, eval_run_id, agent_profile_id, status, verdict, confidence, score, \
+              summary, raw_output_json, error, created_at, updated_at) \
+             VALUES (?, ?, ?, 'completed', 'promising', ?, ?, NULL, NULL, NULL, ?, ?)",
+        )
+        .bind(&id)
+        .bind(&run.id)
+        .bind("reasoning-agent")
+        .bind(confidence)
+        .bind(score)
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await;
+        assert!(res.is_err(), "{label} must be rejected by CHECK constraint");
+    }
+}
+
+#[tokio::test]
+async fn row_to_review_fails_on_corrupted_score_overflow() {
+    // SQLite stores INTEGER as i64; if a buggy migration or external
+    // tool slips a value larger than i32 into `score`, the read path
+    // must surface a clear error rather than silently wrap.
+    let pool = pool_with_migrations().await;
+
+    // Disable the CHECK constraint by inserting through a connection
+    // that has `PRAGMA ignore_check_constraints = true`. Easier: use
+    // a pool without the migration's CHECK and exercise just the read
+    // logic. We need a fresh table without the CHECK to plant the bad
+    // row.
+    use sqlx::SqlitePool;
+    let raw_pool = SqlitePool::connect(":memory:").await.unwrap();
+    sqlx::query(
+        "CREATE TABLE eval_reviews (
+            id TEXT PRIMARY KEY,
+            eval_run_id TEXT NOT NULL,
+            agent_profile_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            verdict TEXT,
+            confidence REAL,
+            score INTEGER,
+            summary TEXT,
+            raw_output_json TEXT,
+            error TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )",
+    )
+    .execute(&raw_pool)
+    .await
+    .unwrap();
+    let now = chrono::Utc::now().to_rfc3339();
+    sqlx::query(
+        "INSERT INTO eval_reviews \
+         (id, eval_run_id, agent_profile_id, status, verdict, confidence, score, \
+          summary, raw_output_json, error, created_at, updated_at) \
+         VALUES (?, ?, ?, 'completed', 'promising', 0.5, ?, NULL, NULL, NULL, ?, ?)",
+    )
+    .bind("01CORRUPT0000000000000000")
+    .bind("01RUN00000000000000000000")
+    .bind("reasoning-agent")
+    .bind((i32::MAX as i64) + 1)
+    .bind(&now)
+    .bind(&now)
+    .execute(&raw_pool)
+    .await
+    .unwrap();
+
+    let store = RunStore::new(raw_pool);
+    let err = store
+        .get_review("01CORRUPT0000000000000000")
+        .await
+        .expect_err("overflowed score must surface a read error");
+    let msg = format!("{err:?}");
+    assert!(msg.contains("score"), "error must name score (got: {msg})");
+    assert!(
+        msg.contains("does not fit"),
+        "error must explain narrowing failure (got: {msg})"
+    );
+    // Quiet the unused-pool warning.
+    let _ = pool;
+}

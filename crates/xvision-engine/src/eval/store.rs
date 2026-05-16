@@ -699,6 +699,13 @@ impl RunStore {
     /// confidence, score, summary, and audit copy of the raw model JSON.
     /// Returns false when the review is already terminal (the engine
     /// track treats that as a stale callback).
+    ///
+    /// `confidence` must be in `[0.0, 1.0]` and `score` in `[0, 100]` —
+    /// matches the spec's review-output contract. The store fails fast
+    /// on out-of-range inputs so a buggy engine call cannot persist
+    /// malformed numbers that downstream readers would have to handle.
+    /// The DB also CHECK-enforces these bounds (migration 016) as a
+    /// belt-and-suspenders against bypass paths.
     pub async fn complete_review(
         &self,
         id: &str,
@@ -708,6 +715,16 @@ impl RunStore {
         summary: &str,
         raw_output_json: &str,
     ) -> Result<bool> {
+        if !(0.0..=1.0).contains(&confidence) {
+            anyhow::bail!(
+                "complete_review: confidence {confidence} out of range [0.0, 1.0] (review id={id})"
+            );
+        }
+        if !(0..=100).contains(&score) {
+            anyhow::bail!(
+                "complete_review: score {score} out of range [0, 100] (review id={id})"
+            );
+        }
         let now = Utc::now().to_rfc3339();
         let res = sqlx::query(
             "UPDATE eval_reviews \
@@ -833,6 +850,9 @@ fn row_to_agent_profile(row: &sqlx::sqlite::SqliteRow) -> Result<AgentProfile> {
     let updated_at = DateTime::parse_from_rfc3339(&updated_at_str)
         .with_context(|| format!("parse agent_profile updated_at {updated_at_str:?}"))?
         .with_timezone(&Utc);
+    let max_tokens_u32: u32 = u32::try_from(max_tokens).with_context(|| {
+        format!("agent_profile {id}: max_tokens={max_tokens} does not fit in u32 (DB corruption?)")
+    })?;
     Ok(AgentProfile {
         id,
         name,
@@ -840,7 +860,7 @@ fn row_to_agent_profile(row: &sqlx::sqlite::SqliteRow) -> Result<AgentProfile> {
         provider,
         model,
         temperature,
-        max_tokens: max_tokens as u32,
+        max_tokens: max_tokens_u32,
         system_prompt,
         enabled: enabled != 0,
         created_at,
@@ -868,7 +888,14 @@ fn row_to_review(row: &sqlx::sqlite::SqliteRow) -> Result<EvalReview> {
         })
         .transpose()?;
     let confidence: Option<f64> = row.try_get("confidence").context("read eval_review confidence")?;
-    let score: Option<i64> = row.try_get("score").context("read eval_review score")?;
+    let score_i64: Option<i64> = row.try_get("score").context("read eval_review score")?;
+    let score = score_i64
+        .map(|n| {
+            i32::try_from(n).with_context(|| {
+                format!("eval_review {id}: score={n} does not fit in i32 (DB corruption?)")
+            })
+        })
+        .transpose()?;
     let summary: Option<String> = row.try_get("summary").context("read eval_review summary")?;
     let raw_output_json: Option<String> = row
         .try_get("raw_output_json")
@@ -893,7 +920,7 @@ fn row_to_review(row: &sqlx::sqlite::SqliteRow) -> Result<EvalReview> {
         status,
         verdict,
         confidence,
-        score: score.map(|n| n as i32),
+        score,
         summary,
         raw_output_json,
         error,

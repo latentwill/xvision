@@ -37,8 +37,8 @@ CREATE TABLE IF NOT EXISTS eval_reviews (
     agent_profile_id    TEXT NOT NULL,
     status              TEXT NOT NULL,                    -- 'queued' | 'running' | 'completed' | 'failed'
     verdict             TEXT,                             -- 'promising' | 'weak' | 'failed' | 'inconclusive'
-    confidence          REAL,                             -- [0.0, 1.0]
-    score               INTEGER,                          -- 0..100
+    confidence          REAL    CHECK (confidence IS NULL OR (confidence >= 0.0 AND confidence <= 1.0)),
+    score               INTEGER CHECK (score      IS NULL OR (score      >= 0   AND score      <= 100)),
     summary             TEXT,                             -- executive summary the model produced
     raw_output_json     TEXT,                             -- audit copy of the model's strict-JSON reply
     error               TEXT,                             -- populated when status = 'failed'
