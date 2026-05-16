@@ -847,6 +847,12 @@ async fn run_inner(
     //    migration 006 yet (and for un-migrated legacy ids).
     let (scenario, from_db) = resolve_scenario_with_source(ctx, &req.scenario_id).await?;
 
+    // 2b. QA15 warmup preflight: warn if the scenario doesn't carry as
+    //     many warmup bars as the strategy's indicator periods imply.
+    //     Soft signal — the run continues; the executor will just see a
+    //     shorter `bar_history` slice at bar 1.
+    warn_on_warmup_mismatch(&scenario, &strategy);
+
     // 3. Pick the executor for this run mode. For backtest mode, when the
     //    scenario came from the DB we try to source bars through the
     //    cache wrapper (`eval::bars::load_bars`); on miss / fetch error
@@ -991,6 +997,42 @@ async fn load_bars_for_scenario(
     .await
 }
 
+/// Pre-fetch the warmup window for a scenario. Returns an empty Vec when
+/// `scenario.warmup_bars == 0`. Errors surface as
+/// `ApiError::Validation(..)` with the actionable "run `xvn bars fetch`
+/// first" hint so eval preflight can wrap them into the QA15 cache-miss
+/// preflight error.
+async fn load_warmup_for_scenario(
+    ctx: &ApiContext,
+    scenario: &Scenario,
+) -> ApiResult<Vec<xvision_data::alpaca::MarketBar>> {
+    let asset = scenario
+        .asset
+        .first()
+        .ok_or_else(|| ApiError::Validation(format!("scenario '{}' has empty asset list", scenario.id)))?
+        .venue_symbol
+        .clone();
+    crate::eval::bars::load_warmup_bars(
+        ctx,
+        &asset,
+        scenario.granularity,
+        scenario.time_window.start,
+        scenario.warmup_bars,
+    )
+    .await
+    .map_err(|e| match e {
+        ApiError::Validation(msg) => ApiError::Validation(format!(
+            "warmup-bars preflight failed for scenario '{}': {}. Pre-fetch the warmup window with `xvn bars fetch --asset {} --granularity {} --from <warmup_start> --to {}` before running.",
+            scenario.id,
+            msg,
+            asset,
+            scenario.granularity.as_alpaca_str(),
+            scenario.time_window.start.to_rfc3339(),
+        )),
+        other => other,
+    })
+}
+
 fn market_bars_to_ohlcv(bars: Vec<xvision_data::alpaca::MarketBar>) -> Vec<Ohlcv> {
     bars.into_iter()
         .map(|b| Ohlcv {
@@ -1046,8 +1088,20 @@ async fn build_paper_executor(
     broker: Arc<dyn BrokerSurface>,
 ) -> ApiResult<Box<dyn Executor>> {
     let bars = load_ohlcv_for_scenario(ctx, scenario, from_db).await?;
+    let warmup = if from_db {
+        market_bars_to_ohlcv(load_warmup_for_scenario(ctx, scenario).await?)
+    } else {
+        // Legacy / fixture path: no separate warmup cache wrapper. The
+        // fixture is already a wider window, and the trader sees only the
+        // current bar in the seed today, so we don't synthesize warmup
+        // here — that's only meaningful for DB-resolved scenarios that
+        // can pull a real pre-window from the bars cache.
+        Vec::new()
+    };
     Ok(Box::new(
-        PaperExecutor::with_bars(broker, bars).with_event_bus(ctx.event_bus.clone()),
+        PaperExecutor::with_bars(broker, bars)
+            .with_warmup(warmup)
+            .with_event_bus(ctx.event_bus.clone()),
     ))
 }
 
@@ -1070,8 +1124,14 @@ async fn build_backtest_executor(
                         volume: b.volume,
                     })
                     .collect();
+                // Warmup is a hard preflight error when DB-resolved: an
+                // operator who set `warmup_bars > 0` expects real
+                // pre-window context, not silent emptiness.
+                let warmup = market_bars_to_ohlcv(load_warmup_for_scenario(ctx, scenario).await?);
                 return Ok(Box::new(
-                    BacktestExecutor::with_bars(ohlcv).with_event_bus(ctx.event_bus.clone()),
+                    BacktestExecutor::with_bars(ohlcv)
+                        .with_warmup(warmup)
+                        .with_event_bus(ctx.event_bus.clone()),
                 ));
             }
             Err(e) => {
@@ -1092,6 +1152,23 @@ async fn build_backtest_executor(
     Ok(Box::new(
         BacktestExecutor::new().with_event_bus(ctx.event_bus.clone()),
     ))
+}
+
+/// Emit a warning (via `tracing::warn`) when the scenario's
+/// `warmup_bars` is below the strategy's `min_warmup_bars`. The QA15
+/// spec calls for this to surface in eval preflight; today the operator
+/// sees it in logs / SSE while we wire a richer surface in a follow-up.
+fn warn_on_warmup_mismatch(scenario: &Scenario, strategy: &crate::strategies::Strategy) {
+    let strat_min = strategy.min_warmup_bars();
+    if scenario.warmup_bars < strat_min {
+        tracing::warn!(
+            scenario_id = %scenario.id,
+            strategy_id = %strategy.manifest.id,
+            scenario_warmup = scenario.warmup_bars,
+            strategy_min_warmup = strat_min,
+            "scenario warmup_bars below strategy min_warmup_bars; indicators may lack history at bar 1",
+        );
+    }
 }
 
 fn legacy_fixture_exists(scenario: &Scenario) -> bool {

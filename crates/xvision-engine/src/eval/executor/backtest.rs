@@ -58,6 +58,12 @@ pub struct BacktestExecutor {
     /// from `data/probes/<scenario.bar_cache_policy.cache_key>.parquet`
     /// via `load_ohlcv_fixture`.
     injected_bars: Option<Vec<Ohlcv>>,
+    /// Optional warmup bars to prepend before the scenario window. These
+    /// are not iterated for decisions — they only feed the rolling
+    /// `bar_history` window in each per-decision seed so the trader LLM
+    /// (and any indicator tools it invokes) has real context at bar 1.
+    /// See `crates/xvision-engine/src/eval/bars.rs::load_warmup_bars`.
+    warmup_bars: Vec<Ohlcv>,
     /// Optional live-stream event bus. When `Some`, the executor emits
     /// `RunChartEvent::Equity` and `RunChartEvent::Marker` events after
     /// each decision cycle so SSE subscribers at `/live/<run_id>` see
@@ -82,6 +88,7 @@ impl BacktestExecutor {
         Self {
             progress: Some(progress),
             injected_bars: None,
+            warmup_bars: Vec::new(),
             event_bus: None,
         }
     }
@@ -97,6 +104,7 @@ impl BacktestExecutor {
         Self {
             progress: None,
             injected_bars: Some(bars),
+            warmup_bars: Vec::new(),
             event_bus: None,
         }
     }
@@ -106,6 +114,7 @@ impl BacktestExecutor {
         Self {
             progress: Some(progress),
             injected_bars: Some(bars),
+            warmup_bars: Vec::new(),
             event_bus: None,
         }
     }
@@ -115,6 +124,15 @@ impl BacktestExecutor {
     ///   `BacktestExecutor::with_bars(bars).with_event_bus(bus)`.
     pub fn with_event_bus(mut self, bus: Arc<RunEventBus>) -> Self {
         self.event_bus = Some(bus);
+        self
+    }
+
+    /// Pre-window warmup bars. The decision loop never iterates these;
+    /// they only feed the per-decision rolling `bar_history` window in
+    /// the seed. Chains with `with_bars` / `with_progress` / `with_event_bus`:
+    ///   `BacktestExecutor::with_bars(bars).with_warmup(warmup)`.
+    pub fn with_warmup(mut self, warmup_bars: Vec<Ohlcv>) -> Self {
+        self.warmup_bars = warmup_bars;
         self
     }
 
@@ -282,6 +300,18 @@ impl BacktestExecutor {
         // bar to fill against, so the final bar is reserved as the fill source.
         let total_decision_bars = bars.len().saturating_sub(1).max(1) as f64;
 
+        // Per-decision rolling-history window. Warmup bars (from
+        // `eval::bars::load_warmup_bars`) are concatenated in front of the
+        // scenario bars so we can slice the last `scenario.warmup_bars`
+        // bars at each decision and surface them in the seed as
+        // `market_data.bar_history`. The slice excludes `current_bar`
+        // (already in the seed). This is the mechanism the QA15 fix
+        // relies on: bar 1 of a 30-bar EMA5/EMA13 scenario sees N≥13
+        // prior bars when the scenario has `warmup_bars >= 13`.
+        let warmup_count = self.warmup_bars.len();
+        let combined_bars: Vec<&Ohlcv> = self.warmup_bars.iter().chain(bars.iter()).collect();
+        let history_window = scenario.warmup_bars as usize;
+
         let initial = scenario.capital.initial;
         let slip_bps = match &scenario.venue.slippage {
             SlippageModel::Linear { bps } => *bps as f64,
@@ -326,6 +356,18 @@ impl BacktestExecutor {
                 current_ts: bar.timestamp,
             });
 
+            // History slice: last `history_window` bars strictly before
+            // the current bar. `combined_idx` points at `bar` inside the
+            // combined `[warmup..., bars...]` series. When the run starts
+            // and `warmup_count` covers it, the slice contains
+            // `history_window` real prior bars (the QA15 fix).
+            let combined_idx = warmup_count + i;
+            let history_start = combined_idx.saturating_sub(history_window);
+            let bar_history: Vec<serde_json::Value> = combined_bars[history_start..combined_idx]
+                .iter()
+                .map(|b| ohlcv_to_json(b))
+                .collect();
+
             let seed = serde_json::json!({
                 "decision_index": decision_idx,
                 "asset": asset,
@@ -343,6 +385,7 @@ impl BacktestExecutor {
                     "next_bar_open": next_bar.open,
                     "reference_price_usd": bar.close,
                     "reference_price_source": "eval_bar.close",
+                    "bar_history": bar_history,
                 },
                 "portfolio_state": {
                     "position_size": position,
@@ -712,6 +755,21 @@ fn fill_side_for_action(action: &str, pre_fill_position: f64) -> &'static str {
     } else {
         "buy"
     }
+}
+
+/// Serialize an Ohlcv bar as the same JSON shape used for
+/// `market_data.current_bar` so `bar_history` entries are
+/// homogeneous with the current-bar shape the trader prompt already
+/// knows about.
+fn ohlcv_to_json(bar: &Ohlcv) -> serde_json::Value {
+    serde_json::json!({
+        "timestamp": bar.timestamp,
+        "open": bar.open,
+        "high": bar.high,
+        "low": bar.low,
+        "close": bar.close,
+        "volume": bar.volume,
+    })
 }
 
 #[cfg(test)]
