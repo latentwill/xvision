@@ -9,7 +9,8 @@
 
 | Artifact | Purpose |
 |---|---|
-| `team/board.md` | Active execution board — one line per active track |
+| `team/board.md` | Active execution board — current wave (one line per active track) |
+| `team/board-v2.md` | V2 roadmap board — V2A active, V2B/V2C/V3/V4 not yet decomposed |
 | `team/CONDUCTOR.md` | Conductor role + daily checklist |
 | `team/OWNERSHIP.md` | File-glob → owning track map |
 | `team/CONFLICT_ZONES.md` | Single-writer file registry |
@@ -30,7 +31,8 @@ Spec that defined this layout:
 ```bash
 cd /Users/edkennedy/Code/xvision
 git fetch --prune origin
-cat team/board.md                 # find your track
+cat team/board.md                 # current wave
+cat team/board-v2.md              # V2 roadmap + V2A active
 cat team/contracts/<track>.md     # read the contract
 cat team/briefings/_template.md   # do the sync ritual
 ```

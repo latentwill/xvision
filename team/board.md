@@ -7,28 +7,21 @@
 > Last updated: 2026-05-16.
 > Previous board: `team/archive/2026-05-16-migration/execution-board-2026-05-13.md`.
 
-## Active
+V2 work (V2A onboarding + docs, V2B–V4 roadmap) lives on its own board:
+**`team/board-v2.md`**.
 
-### Wave: eval-review
+## Active — eval-review wave
 
 - [eval-review-agent-engine](contracts/eval-review-agent-engine.md) — foundation · ready · depends on `eval-review-data-model` (merged #176)
 - [eval-review-api-cli](contracts/eval-review-api-cli.md) — leaf · ready · depends on `eval-review-agent-engine`
 - [eval-review-run-detail-ui](contracts/eval-review-run-detail-ui.md) — leaf · ready · depends on `eval-review-api-cli`
-
-### Wave: v2a (onboarding & docs)
-
-- [v2a-driver-tour](contracts/v2a-driver-tour.md) — leaf · ready · independent
-- [v2a-in-app-docs](contracts/v2a-in-app-docs.md) — leaf · ready · independent
-- [v2a-example-artifacts](contracts/v2a-example-artifacts.md) — leaf · ready · independent
 
 ## Immediate start set
 
 Safe to claim right now (no unresolved Foundation dependency):
 
 - `eval-review-agent-engine` (Foundation for the rest of the eval-review wave)
-- `v2a-driver-tour`
-- `v2a-in-app-docs`
-- `v2a-example-artifacts`
+- V2A leaves — see `team/board-v2.md`
 
 ## Waiting
 
@@ -38,7 +31,7 @@ Safe to claim right now (no unresolved Foundation dependency):
 ## Recommended order
 
 1. `eval-review-agent-engine` (unblocks api-cli + ui)
-2. Any v2a track in parallel
+2. Any V2A track in parallel (from `team/board-v2.md`)
 3. `eval-review-api-cli`
 4. `eval-review-run-detail-ui`
 

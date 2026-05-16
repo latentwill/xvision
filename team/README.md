@@ -6,8 +6,9 @@ plain git-tracked files; no external coordination tool is required.
 
 ## Start here
 
-- **Workers:** read `MANIFEST.md` → `board.md` → your contract under
-  `contracts/<track>.md` → the briefing template at `briefings/_template.md`.
+- **Workers:** read `MANIFEST.md` → `board.md` (or `board-v2.md` for V2 work)
+  → your contract under `contracts/<track>.md` → the briefing template at
+  `briefings/_template.md`.
 - **Conductors:** read `CONDUCTOR.md`.
 - **Reviewers:** every PR should link to its `contracts/<track>.md`. A PR
   whose diff falls outside its contract's `allowed_paths` is closed, not
@@ -19,7 +20,8 @@ plain git-tracked files; no external coordination tool is required.
 team/
 ├── README.md           # this file
 ├── MANIFEST.md         # top-level pointers
-├── board.md            # active execution board (one line per track)
+├── board.md            # current-wave board
+├── board-v2.md         # V2 roadmap board (V2A active, V2B+ roadmap)
 ├── CONDUCTOR.md        # conductor role + daily checklist
 ├── OWNERSHIP.md        # file-glob → owning track
 ├── CONFLICT_ZONES.md   # single-writer file registry
