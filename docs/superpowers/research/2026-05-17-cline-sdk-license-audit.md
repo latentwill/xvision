@@ -143,3 +143,33 @@ GPL/AGPL/LGPL/SSPL/BUSL found.
 3. Address the packaging gap on `@cline/llms`, `@cline/shared`, `@cline/core` (no LICENSE
    in tarball) — add a NOTICE referencing `https://github.com/cline/cline/blob/main/sdk/LICENSE`
    to the xvision distribution.
+
+---
+
+## 2026-05-17 status — deferred, wave 1 continues without `@cline/sdk` import
+
+**Decision:** Per user direction on 2026-05-17, the licensing baseline (Wave 1 Task 2 of
+`docs/superpowers/plans/2026-05-17-cline-sdk-agent-replacement-wave1.md`) is **deferred**.
+Wave 1 continues with the sidecar adapter scaffold (Tasks 3–10), which does **not** import
+`@cline/sdk` or any of its transitive proprietary chain. The deferred work and the open
+questions below must be resolved before Wave 2 imports the SDK.
+
+**Open follow-ups to resolve before Wave 2:**
+
+- [ ] **F1 — provider exclusion path.** Investigate whether `@cline/sdk` can be consumed
+  without `ai-sdk-provider-claude-code`. Specifically:
+  - Does `@cline/llms`'s `registerProvider` API permit excluding the Claude Code provider
+    at runtime via tree-shaking or conditional imports?
+  - If not, is there an upstream issue/PR to make the Claude Code chain an optional dep?
+- [ ] **F2 — Anthropic redistribution.** If F1 is not viable, obtain written redistribution
+  terms from Anthropic covering `@anthropic-ai/claude-agent-sdk` in our deploy image,
+  or replace the affected provider.
+- [ ] **F3 — Cline NOTICE gap.** `@cline/llms`, `@cline/shared`, `@cline/core` ship no
+  `LICENSE` file in their npm tarballs. When we eventually add `NOTICE`, reference
+  `https://github.com/cline/cline/blob/main/sdk/LICENSE` explicitly.
+- [ ] **F4 — Wave 1 Task 2 deferred.** The repo licensing baseline (`LICENSE`, `NOTICE`,
+  `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, `THIRD_PARTY_LICENSES.md`,
+  `deny.toml`, `.github/workflows/license.yml`) is deferred. Land it as a precondition
+  to Wave 2 once F1/F2 are resolved.
+
+These follow-ups block Wave 2's `@cline/sdk` import, not Wave 1's adapter scaffold.
