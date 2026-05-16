@@ -105,6 +105,57 @@ export function compareRuns(ids: string[]): Promise<ComparisonReport> {
   return apiFetch<ComparisonReport>(`/api/eval/compare?ids=${qs}`);
 }
 
+/// Fetch the full `EvalRunExport` JSON for a terminal run. Returned as
+/// `unknown` because the shape mirrors the spec §3 envelope verbatim and
+/// isn't ts-rs-exported — consumers should treat it as opaque JSON for
+/// QA round-trip rather than reading individual fields. Server is
+/// authoritative; the engine's `xvision_engine::eval::export` builds
+/// this for both this route and `xvn eval export`.
+export function fetchEvalRunExport(id: string): Promise<unknown> {
+  return apiFetch<unknown>(`/api/eval/runs/${encodeURIComponent(id)}/export`);
+}
+
+/// Trigger a browser download of an eval run's export JSON. Used by
+/// the "Download JSON" button on run-detail for terminal runs (q15 §3).
+/// Stays a pure frontend helper so the dashboard route can keep
+/// `Content-Type: application/json` (rather than forcing
+/// `Content-Disposition: attachment` server-side — that breaks
+/// `xvn eval export` / curl piping use cases).
+export async function downloadEvalRunExport(id: string): Promise<void> {
+  const trace = createTrace("eval", { run_id: id, op: "download_export" });
+  const started = performance.now();
+  trace.info("eval.export.download.start");
+  try {
+    const payload = await fetchEvalRunExport(id);
+    const json = JSON.stringify(payload, null, 2);
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    try {
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `eval-run-${id}.json`;
+      a.style.display = "none";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } finally {
+      // Release the object URL on the next tick; some browsers cancel
+      // the download if we revoke synchronously.
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+    }
+    trace.info("eval.export.download.ok", {
+      duration_ms: durationSince(started),
+      bytes: blob.size,
+    });
+  } catch (err) {
+    trace.error("eval.export.download.error", {
+      duration_ms: durationSince(started),
+      error: errorSummary(err),
+    });
+    throw err;
+  }
+}
+
 /// Kick off a new eval run (non-blocking). Returns the queued `RunDetail`
 /// (status = `Queued`); the actual run drives in a background task and
 /// progresses to `Running` then `Completed` / `Failed`. Frontend polls

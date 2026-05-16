@@ -10,6 +10,7 @@ pub mod attestation;
 pub mod bars;
 pub mod compare;
 pub mod executor;
+pub mod export;
 pub mod findings;
 pub mod metrics;
 pub mod postprocess;
