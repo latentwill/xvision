@@ -218,6 +218,8 @@ pub enum Command {
     Migrate(commands::migrate::MigrateCmd),
     /// Inspect agent records from the workspace agent library.
     Agent(commands::agent::AgentCmd),
+    /// Agent-run observability operations (retention, janitor).
+    Obs(commands::obs::ObsCmd),
 }
 
 impl Cli {
@@ -322,6 +324,7 @@ impl Cli {
             Command::Bars(cmd) => commands::bars::run(cmd).await,
             Command::Migrate(cmd) => commands::migrate::run(cmd).await,
             Command::Agent(cmd) => commands::agent::run(cmd).await,
+            Command::Obs(cmd) => commands::obs::run(cmd).await.map_err(Into::into),
         }
     }
 }

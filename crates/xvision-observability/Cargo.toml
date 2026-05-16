@@ -27,8 +27,9 @@ hex         = "0.4"
 uuid        = { workspace = true }
 
 [dev-dependencies]
-tempfile = "3"
-tokio    = { workspace = true, features = ["rt", "macros"] }
+tempfile           = "3"
+tokio              = { workspace = true, features = ["rt", "macros"] }
+tracing-subscriber = { workspace = true }
 
 [features]
 default = []
