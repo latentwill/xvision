@@ -12,7 +12,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use xvision_core::market::Ohlcv;
-use xvision_execution::broker_surface::{BrokerSurface, OrderRequest, Side};
+use xvision_execution::broker_surface::{is_alpaca_crypto, BrokerSurface, OrderRequest, Side};
 
 use crate::agent::llm::LlmDispatch;
 use crate::agent::pipeline::{run_pipeline, PipelineInputs, ResolvedAgentSlot};
@@ -431,7 +431,36 @@ impl PaperExecutor {
             let mut fill_size: Option<f64> = None;
             let mut fee: Option<f64> = None;
 
-            if is_actionable(&parsed.action) {
+            // Plan the broker submission for this decision. Three cases:
+            //
+            //   1. Non-actionable action (`hold`, `flat`, etc.) → no
+            //      submission.
+            //   2. `short_open` on an Alpaca crypto asset → the broker is
+            //      long-only, so we reinterpret the signal as "close any
+            //      open long" (matches the reverse-from-long semantics in
+            //      `backtest::simulate_fill`, collapsed to flat because
+            //      the venue can't hold a short). Query the broker; if
+            //      a long is open, submit a sell sized to the long
+            //      (full close). If flat or short, skip — the LLM's
+            //      intent still shows up in the decisions table and the
+            //      run doesn't fail on broker rejection.
+            //   3. Anything else actionable → submit a market order
+            //      sized by `risk_pct_per_trade`.
+            let plan: Option<(Side, f64)> = if !is_actionable(&parsed.action) {
+                None
+            } else if parsed.action == "short_open" && is_alpaca_crypto(&asset) {
+                let pos = self.broker.position(&asset).await.with_context(|| {
+                    format!(
+                        "paper eval broker position query failed: run_id={} decision_index={} asset={}",
+                        run.id, decision_idx, asset
+                    )
+                })?;
+                if pos > 0.0 {
+                    Some((Side::Sell, pos))
+                } else {
+                    None
+                }
+            } else {
                 let usd_at_risk = balance * strategy.risk.risk_pct_per_trade;
                 let size = (usd_at_risk / reference_price_usd).max(0.0);
                 let side = if parsed.action == "long_open" {
@@ -439,6 +468,10 @@ impl PaperExecutor {
                 } else {
                     Side::Sell
                 };
+                Some((side, size))
+            };
+
+            if let Some((side, size)) = plan {
                 let req = OrderRequest {
                     asset: asset.clone(),
                     side,
