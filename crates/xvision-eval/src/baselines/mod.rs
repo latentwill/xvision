@@ -14,6 +14,7 @@
 //! | RsiMeanReversion    | RSI-14 < 30 → long, > 70 → short         |
 //! | MaCrossover         | SMA(fast) × SMA(slow) crossover           |
 //! | MacdMomentum        | MACD hist zero-line crossover             |
+//! | BollingerATRBreakout| BB breakout confirmed by ATR              |
 //!
 //! ## v1.1 follow-ups (not implemented — defer)
 //! - Bollinger Band squeeze / expansion breakout
@@ -27,6 +28,7 @@
 
 pub mod always_long;
 pub mod always_short;
+pub mod bollinger_atr_breakout;
 pub mod buy_and_hold;
 pub mod ma_crossover;
 pub mod macd_momentum;
@@ -36,6 +38,7 @@ pub mod trader_arm;
 
 pub use always_long::AlwaysLong;
 pub use always_short::AlwaysShort;
+pub use bollinger_atr_breakout::BollingerATRBreakout;
 pub use buy_and_hold::BuyAndHold;
 pub use ma_crossover::MaCrossover;
 pub use macd_momentum::MacdMomentum;
@@ -47,9 +50,10 @@ use crate::algorithm::Algorithm;
 
 /// Construct the canonical v1 baseline set in evaluation order.
 ///
-/// The returned `Vec` is always length 7 with distinct `name()` strings:
+/// The returned `Vec` is always length 8 with distinct `name()` strings:
 /// `["buy_and_hold", "always_long", "always_short", "random_direction",
-///   "rsi_mean_reversion", "ma_crossover", "macd_momentum"]`
+///   "rsi_mean_reversion", "ma_crossover", "macd_momentum",
+///   "bollinger_atr_breakout"]`
 ///
 /// `seed` controls the `RandomDirection` RNG — pass a fixed value for
 /// reproducible backtests.
@@ -62,6 +66,7 @@ pub fn default_v1_set(seed: u64) -> Vec<Box<dyn Algorithm>> {
         Box::new(RsiMeanReversion::new()),
         Box::new(MaCrossover::new(30, 90)),
         Box::new(MacdMomentum::new()),
+        Box::new(BollingerATRBreakout::new()),
     ]
 }
 
@@ -71,9 +76,9 @@ mod tests {
     use std::collections::HashSet;
 
     #[test]
-    fn default_v1_set_has_seven_baselines() {
+    fn default_v1_set_has_eight_baselines() {
         let set = default_v1_set(42);
-        assert_eq!(set.len(), 7, "must return exactly 7 baselines");
+        assert_eq!(set.len(), 8, "must return exactly 8 baselines");
     }
 
     #[test]
@@ -82,8 +87,8 @@ mod tests {
         let names: HashSet<&'static str> = set.iter().map(|s| s.name()).collect();
         assert_eq!(
             names.len(),
-            7,
-            "all 7 baseline names must be distinct; got: {:?}",
+            8,
+            "all 8 baseline names must be distinct; got: {:?}",
             names
         );
     }
@@ -102,6 +107,7 @@ mod tests {
                 "rsi_mean_reversion",
                 "ma_crossover",
                 "macd_momentum",
+                "bollinger_atr_breakout",
             ]
         );
     }
