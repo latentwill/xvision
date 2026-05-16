@@ -6,6 +6,7 @@ import {
   addProvider,
   listProviderModels,
   listProviders,
+  refreshProviderCatalog,
   removeProvider,
   setEnabledModels,
   settingsKeys,
@@ -14,6 +15,7 @@ import {
 } from "@/api/settings";
 import type {
   AddProviderRequest,
+  Catalog,
   ProviderModelEntry,
   ProviderRow,
   TestConnectionReport,
@@ -237,8 +239,25 @@ function ProviderRowView({
 }) {
   const [managing, setManaging] = useState(false);
   const [editing, setEditing] = useState(false);
+  const qc = useQueryClient();
   const test = useMutation<TestConnectionReport, unknown, void>({
     mutationFn: () => testProviderConnection(row.name),
+  });
+  // Refresh fetches the provider's `/v1/models` upstream and writes the
+  // full catalog (context window, max output tokens, pricing) to disk.
+  // Invalidating both query keys keeps the chat-rail dropdown and the
+  // SlotForm placeholder ("Auto: 384,000") in sync without a manual
+  // page reload.
+  const refresh = useMutation<Catalog, unknown, void>({
+    mutationFn: () => refreshProviderCatalog(row.name),
+    onSuccess: () => {
+      qc.invalidateQueries({
+        queryKey: settingsKeys.providerCatalog(row.name),
+      });
+      qc.invalidateQueries({
+        queryKey: settingsKeys.providerModels(row.name),
+      });
+    },
   });
   return (
     <>
@@ -275,6 +294,20 @@ function ProviderRowView({
                 className="px-2 py-1 rounded text-[12px] border border-border text-text-2 hover:text-text hover:border-text-3 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {test.isPending ? "Testing…" : "Test"}
+              </button>
+            ) : null}
+            {row.api_key_set ? (
+              <button
+                onClick={() => refresh.mutate()}
+                disabled={refresh.isPending}
+                title="Fetch the provider's /v1/models catalog and persist context window + max output tokens + pricing for every model"
+                className="px-2 py-1 rounded text-[12px] border border-border text-text-2 hover:text-text hover:border-text-3 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {refresh.isPending
+                  ? "Refreshing…"
+                  : refresh.isSuccess
+                    ? `Refreshed · ${refresh.data?.models.length}`
+                    : "Refresh"}
               </button>
             ) : null}
             {row.api_key_set ? (

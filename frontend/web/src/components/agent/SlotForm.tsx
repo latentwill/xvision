@@ -4,10 +4,20 @@
 
 import { useQuery } from "@tanstack/react-query";
 import type { AgentSlot } from "@/api/agents";
-import { listProviders, settingsKeys } from "@/api/settings";
+import {
+  getProviderCatalog,
+  listProviders,
+  settingsKeys,
+} from "@/api/settings";
+import type { ModelEntry } from "@/api/types.gen";
 import { ModelPicker } from "@/components/ModelPicker";
 import { Icon } from "@/components/primitives/Icon";
-import { autoMaxTokens, isReasoning, lookupModel } from "./modelMetadata";
+import {
+  autoMaxTokens,
+  hasModelMetadata,
+  isReasoning,
+  lookupModel,
+} from "./modelMetadata";
 
 export function SlotForm({
   slot,
@@ -31,6 +41,8 @@ export function SlotForm({
   const providerRows = providersQ.data?.providers ?? [];
   const providerNames =
     providerRows.map((p) => p.name) ?? [];
+  const slotProviderRow = providerRows.find((p) => p.name === slot.provider);
+  const slotProviderKind = slotProviderRow?.kind ?? null;
 
   function patch<K extends keyof AgentSlot>(key: K, value: AgentSlot[K]) {
     onChange({ ...slot, [key]: value });
@@ -142,7 +154,11 @@ export function SlotForm({
 
       <div className="grid grid-cols-2 gap-4 mt-4">
         <Field label="Max tokens">
-          <MaxTokensInput slot={slot} onChange={onChange} />
+          <MaxTokensInput
+            slot={slot}
+            onChange={onChange}
+            providerKind={slotProviderKind}
+          />
         </Field>
         {slot.skill_ids.length > 0 ? (
           <Field label="Skills">
@@ -175,23 +191,106 @@ function Field({
 }
 
 // MaxTokensInput — renders the per-slot max_tokens override with an
-// "Auto from model" pill when unset. The placeholder is the auto value
-// Anthropic would fall back to today; switching models updates it live
-// so operators can see the budget without saving. Unset means "let the
-// provider pick" (OpenAI-compat omits the field; Anthropic falls back
-// to the per-model auto because the API requires it). Operator values
-// pass through verbatim — no client-side ceiling clamp.
+// "Auto" pill when unset.
+//
+// Catalog-first resolution (PR #199):
+//
+//   1. Look up the model in the provider's catalog (the persisted
+//      `/v1/models` response). If the entry carries an explicit
+//      `max_output_tokens`, that's what we surface — the provider just
+//      told us the ceiling, end of homework.
+//
+//   2. Catalog miss falls back to the editorial `modelMetadata.ts`
+//      table — fine for the canonical models that still live there.
+//
+//   3. When BOTH catalog and editorial miss AND the provider's kind is
+//      OpenAI-compat, the placeholder used to lie ("Auto: 4096"). It now
+//      reads "Provider default" because the dispatcher omits `max_tokens`
+//      on that path and lets the provider apply its own large default.
+//      For Anthropic-kind providers (where the API requires the field),
+//      we still show the editorial fallback number. A known OpenAI-compat
+//      model that's merely missing from the catalog response keeps its
+//      editorial number — only true editorial misses fall to "Provider
+//      default".
+//
+// Operator values pass through verbatim — no client-side ceiling
+// clamp; the dispatcher does the right thing per #195.
 function MaxTokensInput({
   slot,
   onChange,
+  providerKind,
 }: {
   slot: AgentSlot;
   onChange: (next: AgentSlot) => void;
+  providerKind: string | null;
 }) {
-  const meta = lookupModel(slot.model);
-  const auto = autoMaxTokens(meta);
+  const catalogQ = useQuery({
+    queryKey: settingsKeys.providerCatalog(slot.provider),
+    queryFn: () => getProviderCatalog(slot.provider),
+    // Only fire when the slot actually has a provider name to query;
+    // empty during the brief moment after "+ New slot" before the
+    // provider dropdown is touched. Treat 404 as a soft state.
+    enabled: slot.provider.trim().length > 0,
+    retry: false,
+    staleTime: 5 * 60 * 1000,
+  });
+  const catalogEntry: ModelEntry | undefined = catalogQ.data?.models.find(
+    (m) => m.id === slot.model,
+  );
+
   const isUnset = slot.max_tokens == null;
-  const reasoning = isReasoning(meta);
+  const editorialMeta = lookupModel(slot.model);
+  const editorialKnown = hasModelMetadata(slot.model);
+  const editorialAuto = autoMaxTokens(editorialMeta);
+  const isOpenAiCompat = providerKind === "openai-compat";
+
+  const catalogMax = catalogEntry?.max_output_tokens ?? null;
+  const catalogCtx = catalogEntry?.context_window ?? null;
+  const catalogReasoning = catalogEntry?.supports_reasoning ?? null;
+  const editorialReasoning = isReasoning(editorialMeta);
+
+  // The "Provider default" fallback only applies when BOTH the live
+  // catalog and the editorial table miss the model. A known OpenAI-compat
+  // model that's merely absent from the catalog response (e.g. provider
+  // didn't list it on /v1/models, or hasn't been refreshed) still gets
+  // its editorial auto number rather than the vaguer copy.
+  const useProviderDefault =
+    catalogMax === null && !editorialKnown && isOpenAiCompat;
+
+  // Three resolution paths in order of trust:
+  // 1. Catalog says exact ceiling: use it.
+  // 2. Editorial table has this model: use its auto number.
+  // 3. Catalog miss + editorial miss + openai-compat provider: show
+  //    "Provider default" copy with no specific number, because the
+  //    dispatcher will omit `max_tokens` and let the upstream provider
+  //    pick its own default.
+  const placeholder =
+    catalogMax !== null
+      ? `Auto: ${catalogMax.toLocaleString()}`
+      : useProviderDefault
+        ? "Provider default"
+        : `Auto: ${editorialAuto.toLocaleString()}`;
+
+  const pillLabel =
+    catalogMax !== null
+      ? "Auto from catalog"
+      : useProviderDefault
+        ? "Provider default"
+        : "Auto from model";
+
+  const pillTitle = catalogMax !== null
+    ? buildCatalogTooltip({
+        modelId: slot.model,
+        ctx: catalogCtx,
+        max: catalogMax,
+        reasoning: catalogReasoning ?? editorialReasoning,
+      })
+    : useProviderDefault
+      ? "Provider applies its own default — no client-side limit. " +
+        "Click Refresh in Settings → Providers to fetch the model's actual ceiling."
+      : editorialReasoning
+        ? `Reasoning model — auto includes ${editorialMeta.reasoning_token_default} reasoning + ${editorialMeta.recommended_visible_output} visible (ceiling ${editorialMeta.output_token_ceiling}).`
+        : `Standard model — auto is ${editorialMeta.recommended_visible_output} visible (ceiling ${editorialMeta.output_token_ceiling}).`;
 
   return (
     <div className="flex items-stretch gap-2">
@@ -199,7 +298,7 @@ function MaxTokensInput({
         type="number"
         value={slot.max_tokens ?? ""}
         min={1}
-        placeholder={`Auto: ${auto}`}
+        placeholder={placeholder}
         onChange={(e) => {
           const raw = e.target.value;
           if (raw === "") {
@@ -216,20 +315,16 @@ function MaxTokensInput({
       />
       {isUnset ? (
         <span
-          title={
-            reasoning
-              ? `Reasoning model — auto includes ${meta.reasoning_token_default} reasoning + ${meta.recommended_visible_output} visible (ceiling ${meta.output_token_ceiling}).`
-              : `Standard model — auto is ${meta.recommended_visible_output} visible (ceiling ${meta.output_token_ceiling}).`
-          }
+          title={pillTitle}
           className="inline-flex items-center px-2 py-1 rounded-sm text-[11px] font-mono uppercase tracking-wide bg-surface-card border border-border-soft text-text-3"
         >
-          Auto from model
+          {pillLabel}
         </span>
       ) : (
         <button
           type="button"
           onClick={() => onChange({ ...slot, max_tokens: null })}
-          title="Clear override and let the model's metadata pick the budget"
+          title="Clear override and resolve from the provider's catalog (or model metadata)."
           className="inline-flex items-center px-2 py-1 rounded-sm text-[11px] font-mono uppercase tracking-wide bg-surface-card border border-border-soft text-text-3 hover:text-text"
         >
           Reset
@@ -237,4 +332,26 @@ function MaxTokensInput({
       )}
     </div>
   );
+}
+
+function buildCatalogTooltip({
+  modelId,
+  ctx,
+  max,
+  reasoning,
+}: {
+  modelId: string;
+  ctx: number | null;
+  max: number;
+  reasoning: boolean | null;
+}): string {
+  const parts: string[] = [`${modelId} (from provider catalog)`];
+  if (ctx !== null) {
+    parts.push(`context ${ctx.toLocaleString()}`);
+  }
+  parts.push(`max output ${max.toLocaleString()}`);
+  if (reasoning) {
+    parts.push("reasoning class");
+  }
+  return parts.join(" — ");
 }
