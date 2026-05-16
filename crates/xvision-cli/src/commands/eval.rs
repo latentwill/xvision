@@ -10,6 +10,7 @@ use clap::{Args, Subcommand};
 use xvision_engine::api::eval::{self, CompareRunsRequest, EvalRunRequest, ListRunsRequest};
 use xvision_engine::api::{scenario as api_scenario, strategy as api_strategy};
 use xvision_engine::api::{Actor, ApiContext, ApiError};
+use xvision_engine::eval::export as eval_export;
 use xvision_engine::eval::run::{RunMode, RunStatus};
 
 use crate::exit::{CliError, CliResult, ResultExt, XvnExit};
@@ -57,6 +58,11 @@ pub enum Op {
     Validate(ValidateArgs),
     /// Sign + persist an EvalAttestation for a completed run.
     Attest(AttestArgs),
+    /// Export a completed run as a single `EvalRunExport` JSON object
+    /// (q15 §3). Writes to stdout by default; pass `--output FILE` to
+    /// write to disk. Byte-identical to
+    /// `GET /api/eval/runs/:id/export`.
+    Export(ExportArgs),
 }
 
 #[derive(Args, Debug)]
@@ -171,6 +177,22 @@ pub struct ValidateArgs {
 }
 
 #[derive(Args, Debug)]
+pub struct ExportArgs {
+    /// Run id (ULID) of the run to export.
+    pub run_id: String,
+    /// Override the xvn home directory.
+    #[arg(long)]
+    pub xvn_home: Option<PathBuf>,
+    /// Write the export to this file instead of stdout. Parent
+    /// directories must already exist.
+    #[arg(long)]
+    pub output: Option<PathBuf>,
+    /// Emit pretty-printed JSON (default: compact one-line form).
+    #[arg(long)]
+    pub pretty: bool,
+}
+
+#[derive(Args, Debug)]
 pub struct AttestArgs {
     /// Run id (ULID) of a completed run with metrics.
     pub run_id: String,
@@ -195,7 +217,43 @@ pub async fn run(cmd: EvalCmd) -> CliResult<()> {
         Op::Compare(args) => run_compare(args).await,
         Op::Validate(args) => run_validate(args).await,
         Op::Attest(args) => run_attest(args).await,
+        Op::Export(args) => run_export(args).await,
     }
+}
+
+async fn run_export(args: ExportArgs) -> CliResult<()> {
+    let ctx = open_ctx(args.xvn_home.clone())
+        .await
+        .exit_with(XvnExit::Upstream)?;
+    let export = eval_export::build_export(&ctx, &args.run_id)
+        .await
+        .map_err(|e| api_to_cli("eval export", e))?;
+
+    let bytes = if args.pretty {
+        serde_json::to_vec_pretty(&export).exit_with(XvnExit::Upstream)?
+    } else {
+        serde_json::to_vec(&export).exit_with(XvnExit::Upstream)?
+    };
+
+    match args.output {
+        Some(path) => {
+            std::fs::write(&path, &bytes).with_context(|| format!("write export to {path:?}"))
+                .exit_with(XvnExit::Upstream)?;
+            eprintln!("eval export → {} ({} bytes)", path.display(), bytes.len());
+        }
+        None => {
+            use std::io::Write;
+            std::io::stdout()
+                .write_all(&bytes)
+                .exit_with(XvnExit::Upstream)?;
+            // Trailing newline for shell-friendly redirection; the JSON
+            // itself contains no newlines in compact form.
+            if !args.pretty {
+                println!();
+            }
+        }
+    }
+    Ok(())
 }
 
 fn parse_mode(s: &str) -> Result<RunMode> {

@@ -24,6 +24,7 @@ use xvision_engine::api::eval::{
     self, CompareRunsRequest, EvalRunRequest, ListRunsRequest, RunDetail, RunSummary, ScenarioSummary,
 };
 use xvision_engine::eval::compare::ComparisonReport;
+use xvision_engine::eval::export::{self, EvalRunExport};
 use xvision_engine::eval::run::RunStatus;
 use xvision_engine::eval::store::RunStore;
 
@@ -75,6 +76,18 @@ pub async fn get(
 ) -> Result<Json<RunDetail>, DashboardError> {
     let detail = eval::get_run(&state.api_context(), &id).await?;
     Ok(Json(detail))
+}
+
+/// `GET /api/eval/runs/:id/export` — full `EvalRunExport` snapshot of a
+/// completed run. Mirrors `xvn eval export <id>` byte-for-byte; the UI
+/// hits this endpoint for the "Download JSON" button on the run-detail
+/// page (q15 §3).
+pub async fn export(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<EvalRunExport>, DashboardError> {
+    let body = export::build_export(&state.api_context(), &id).await?;
+    Ok(Json(body))
 }
 
 pub async fn delete_run(

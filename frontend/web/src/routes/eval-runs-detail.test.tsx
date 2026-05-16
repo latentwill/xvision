@@ -16,6 +16,7 @@ vi.mock("@/api/eval", async () => {
     ...actual,
     getRun: vi.fn(),
     cancelRun: vi.fn(),
+    downloadEvalRunExport: vi.fn(),
   };
 });
 
@@ -169,5 +170,67 @@ describe("EvalRunDetailRoute", () => {
 
     await waitFor(() => expect(evalApi.cancelRun).toHaveBeenCalled());
     expect(vi.mocked(evalApi.cancelRun).mock.calls[0]?.[0]).toBe("01LIVE");
+  });
+
+  it("hides Download JSON while a run is still active", async () => {
+    vi.mocked(evalApi.getRun).mockResolvedValue(detail());
+
+    renderDetail();
+
+    // Confirm the page rendered (queued/running render the Stop button).
+    await screen.findByRole("button", { name: /stop eval run/i });
+    expect(
+      screen.queryByRole("button", { name: /download .* json/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("offers Download JSON on terminal runs and routes through the export helper", async () => {
+    vi.mocked(evalApi.getRun).mockResolvedValue(
+      detail({
+        summary: {
+          ...detail().summary,
+          status: "completed",
+          completed_at: "2026-05-13T14:01:00Z",
+        },
+      }),
+    );
+    vi.mocked(evalApi.downloadEvalRunExport).mockResolvedValue();
+
+    renderDetail();
+
+    const download = await screen.findByRole("button", {
+      name: /download eval run 01LIVE as json/i,
+    });
+    fireEvent.click(download);
+
+    await waitFor(() =>
+      expect(evalApi.downloadEvalRunExport).toHaveBeenCalledWith("01LIVE"),
+    );
+  });
+
+  it("surfaces an inline error when the export helper rejects", async () => {
+    vi.mocked(evalApi.getRun).mockResolvedValue(
+      detail({
+        summary: {
+          ...detail().summary,
+          status: "completed",
+          completed_at: "2026-05-13T14:01:00Z",
+        },
+      }),
+    );
+    vi.mocked(evalApi.downloadEvalRunExport).mockRejectedValue(
+      new Error("server unreachable"),
+    );
+
+    renderDetail();
+
+    const download = await screen.findByRole("button", {
+      name: /download eval run 01LIVE as json/i,
+    });
+    fireEvent.click(download);
+
+    expect(
+      await screen.findByText(/download failed: server unreachable/i),
+    ).toBeInTheDocument();
   });
 });

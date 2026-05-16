@@ -44,7 +44,7 @@ fn create_agent(home: &std::path::Path, name: &str) -> String {
                     model: "gpt-4.1-mini".into(),
                     system_prompt: "Trade carefully.".into(),
                     skill_ids: vec![],
-                    max_tokens: 1024,
+                    max_tokens: Some(1024),
                 }],
             },
         )

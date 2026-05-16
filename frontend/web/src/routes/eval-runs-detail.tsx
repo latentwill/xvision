@@ -5,7 +5,7 @@ import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
 import { ApiError } from "@/api/client";
-import { cancelRun, evalKeys, getRun } from "@/api/eval";
+import { cancelRun, downloadEvalRunExport, evalKeys, getRun } from "@/api/eval";
 import { chartKeys, getRunChart, openRunStream } from "@/api/chart";
 import { RunChart } from "@/components/chart/RunChart";
 import type {
@@ -212,6 +212,22 @@ function SummaryCard({
 }) {
   const tone = STATUS_TONE[summary.status] ?? "default";
   const inflight = summary.status === "queued" || summary.status === "running";
+  const terminal = isTerminalStatus(summary.status);
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+
+  async function handleDownload() {
+    setDownloadError(null);
+    setDownloading(true);
+    try {
+      await downloadEvalRunExport(summary.id);
+    } catch (err) {
+      setDownloadError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDownloading(false);
+    }
+  }
+
   return (
     <Card className="p-5">
       <div className="flex items-center justify-between mb-4">
@@ -236,6 +252,17 @@ function SummaryCard({
               {cancelling ? "Stopping..." : "Stop eval"}
             </button>
           ) : null}
+          {terminal ? (
+            <button
+              type="button"
+              aria-label={`Download eval run ${summary.id} as JSON`}
+              onClick={handleDownload}
+              disabled={downloading}
+              className="rounded-sm border border-border bg-surface-elev px-2.5 py-1 text-[12px] text-text-2 hover:border-gold/40 hover:text-text disabled:opacity-50"
+            >
+              {downloading ? "Preparing JSON…" : "Download JSON"}
+            </button>
+          ) : null}
           <Pill tone={tone}>
             <span
               className="w-1.5 h-1.5 rounded-full"
@@ -245,6 +272,11 @@ function SummaryCard({
           </Pill>
         </div>
       </div>
+      {downloadError ? (
+        <div className="mb-4 rounded-sm border border-danger/30 bg-danger/[0.06] px-2 py-1 text-[12px] text-danger">
+          Download failed: {downloadError}
+        </div>
+      ) : null}
 
       {inflight ? (
         <div className="mb-4 inline-flex items-center gap-1.5 rounded-sm border border-info/30 bg-info/[0.06] px-2 py-1 text-[12px] text-info">
