@@ -16,6 +16,8 @@ use xvision_engine::api::settings::providers::{
     self, AddProviderRequest, ProviderModelsReport, ProviderRow, ProvidersReport, TestConnectionReport,
     UpdateProviderRequest,
 };
+use xvision_engine::api::settings::providers_catalog::{self, RefreshOutcome};
+use xvision_core::providers::Catalog;
 
 use crate::error::DashboardError;
 use crate::state::AppState;
@@ -127,4 +129,56 @@ pub async fn test_connection(
 ) -> Result<Json<TestConnectionReport>, DashboardError> {
     let report = providers::test_connection(&state.api_context(), &config_path(), &name).await?;
     Ok(Json(report))
+}
+
+/// GET `/api/settings/providers/:name/catalog` — read the persisted
+/// catalog (provider-supplied model metadata: context window, max
+/// output tokens, pricing) without hitting the network. Returns 404
+/// when the catalog hasn't been fetched yet; the UI then prompts the
+/// operator to click "Refresh".
+///
+/// Distinct from `list_models` above, which goes through the older
+/// `fetch_models` path and only carries `id`/`display_name`/`context_length`.
+/// Once the catalog covers everything `fetch_models` does, the older
+/// route collapses into this one (PR #2).
+pub async fn get_catalog(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<Catalog>, DashboardError> {
+    let cat = providers_catalog::get(&state.api_context(), &name).await?;
+    match cat {
+        Some(arc) => Ok(Json((*arc).clone())),
+        None => Err(DashboardError::NotFound(format!(
+            "no cached catalog for `{name}`; POST /catalog/refresh first"
+        ))),
+    }
+}
+
+/// POST `/api/settings/providers/:name/catalog/refresh` — force a
+/// fetch + cache write for one provider. Returns the fresh catalog.
+pub async fn refresh_catalog(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<Catalog>, DashboardError> {
+    let cat = providers_catalog::refresh(&state.api_context(), &config_path(), &name).await?;
+    // Keep the in-process `models_cache` (the legacy per-name lru) in
+    // sync so the chat-rail dropdown reflects the refresh immediately.
+    state.models_cache_invalidate(&name);
+    Ok(Json((*cat).clone()))
+}
+
+/// POST `/api/settings/providers/catalog/refresh-all` — refresh every
+/// non-local-candle provider in parallel. Always 200 with a per-row
+/// status array; transient per-provider failures (auth, network) ride
+/// through as `ok=false` rows so the UI can render a partial result.
+pub async fn refresh_all_catalogs(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<RefreshOutcome>>, DashboardError> {
+    let rows = providers_catalog::refresh_all(&state.api_context(), &config_path()).await?;
+    for row in &rows {
+        if row.ok {
+            state.models_cache_invalidate(&row.provider);
+        }
+    }
+    Ok(Json(rows))
 }
