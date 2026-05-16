@@ -7,18 +7,21 @@ use tokio::process::{Child, Command};
 
 use crate::errors::{AgentClientError, Result};
 
-pub struct Supervisor {
+pub(crate) struct Supervisor {
+    // Option so Drop can take() ownership and avoid double-kill after
+    // explicit shutdown. `take()` leaves None; Drop's guard sees None
+    // and skips the second kill.
     child: Option<Child>,
-    pub socket_path: PathBuf,
+    pub(crate) socket_path: PathBuf,
 }
 
 impl Supervisor {
-    pub async fn spawn(bin: &Path, socket_path: &Path) -> Result<Self> {
+    pub(crate) async fn spawn(bin: &Path, socket_path: &Path) -> Result<Self> {
         let mut cmd = Command::new("node");
         cmd.arg(bin)
             .arg("--socket")
             .arg(socket_path)
-            .stdout(Stdio::piped())
+            .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
 
@@ -30,6 +33,10 @@ impl Supervisor {
             .take()
             .ok_or(AgentClientError::TransportClosed)?;
         let mut lines = BufReader::new(stderr).lines();
+        // Once we find the ready line, `lines` is dropped and stderr is no
+        // longer drained. Post-ready stderr from the sidecar (Node runtime
+        // errors, panics) buffers in the pipe and is not surfaced here.
+        // Task 7+ will spawn a background reader that forwards to tracing.
 
         let ready = tokio::time::timeout(Duration::from_secs(5), async {
             while let Some(line) = lines.next_line().await? {
@@ -43,6 +50,9 @@ impl Supervisor {
         })
         .await;
 
+        // Wave 1: coarse error mapping. Timeout, EOF, and missing stderr all
+        // collapse to TransportClosed. Task 7 will introduce
+        // SidecarSpawnFailed { reason } so callers can distinguish them.
         match ready {
             Ok(Ok(())) => Ok(Self {
                 child: Some(child),
@@ -55,7 +65,7 @@ impl Supervisor {
         }
     }
 
-    pub async fn shutdown(mut self) -> Result<()> {
+    pub(crate) async fn shutdown(mut self) -> Result<()> {
         if let Some(mut child) = self.child.take() {
             let _ = child.start_kill();
             let _ = tokio::time::timeout(Duration::from_secs(2), child.wait()).await;

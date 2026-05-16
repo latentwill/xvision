@@ -1,7 +1,10 @@
 pub mod client;
 pub mod errors;
 pub mod protocol;
-pub mod supervisor;
+pub(crate) mod supervisor;
+/// JSON-RPC over UDS transport. Public for the crate's integration tests
+/// (which compile as a separate crate) and for downstream consumers that
+/// want raw transport access without spawning a sidecar.
 pub mod transport;
 
 pub use client::AgentClient;
