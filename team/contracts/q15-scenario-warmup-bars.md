@@ -5,45 +5,53 @@ wave: q15
 worktree: .worktrees/q15-scenario-warmup-bars
 branch: task/q15-scenario-warmup-bars
 base: origin/main
-status: ready
+status: in-progress
 depends_on: []
 blocks: []
 stacking: none
 allowed_paths:
   - crates/xvision-engine/src/eval/executor/backtest.rs
   - crates/xvision-engine/src/eval/executor/paper.rs
-  - crates/xvision-engine/src/scenarios/**
-  - crates/xvision-engine/src/strategies/**            # min_warmup_bars derivation only
-  - crates/xvision-engine/src/bars/cache.rs
-  - crates/xvision-cli/src/commands/scenario/**
-  - crates/xvision-dashboard/src/routes/scenarios/**
-  - frontend/web/src/features/scenarios/**
+  - crates/xvision-engine/src/eval/scenario.rs              # scenarios live under eval/, not src/scenarios/
+  - crates/xvision-engine/src/eval/scenario_store.rs
+  - crates/xvision-engine/src/eval/bars.rs                  # bars cache wrapper lives at eval/bars.rs, not bars/cache.rs
+  - crates/xvision-engine/src/api/scenario.rs
+  - crates/xvision-engine/src/api/eval.rs                   # warmup wiring + preflight surface
+  - crates/xvision-engine/src/strategies/**                 # min_warmup_bars derivation only
+  - crates/xvision-cli/src/commands/scenario.rs            # single-file CLI module, not a subdirectory
+  - crates/xvision-dashboard/src/routes/scenarios.rs
+  - frontend/web/src/routes/scenarios-new.tsx              # SPA uses routes/+components, not features/scenarios/
+  - frontend/web/src/routes/scenarios-detail.tsx
+  - frontend/web/src/components/scenario/**
+  - frontend/web/src/api/scenarios.ts
+  - frontend/web/src/api/types.gen/**                      # ts-export regenerates type bindings
 forbidden_paths:
-  - crates/xvision-engine/migrations/**                # add migration via separate reservation step
-  - frontend/web/src/features/eval-runs/**
-  - frontend/web/src/features/chat-rail/**
+  - crates/xvision-engine/migrations/**                    # add migration via separate reservation step
+  - frontend/web/src/routes/eval-runs-detail.tsx
+  - frontend/web/src/components/chat-rail/**
 interfaces_used:
-  - BarsCache::range
-  - BacktestExecutor::iterate_decisions
-  - ScenarioRecord
-  - StrategyManifest::indicator_config
+  - eval::bars::load_bars / BarCacheArgs
+  - Scenario (eval/scenario.rs)
+  - BacktestExecutor::with_bars
+  - PaperExecutor::with_bars
+  - PublicManifest (strategies/manifest.rs)
 parallel_safe: false
 parallel_conflicts:
   - q15-agent-max-tokens-from-model   # both may touch eval executor (loosely)
 verification:
   - cargo test -p xvision-engine eval::executor::warmup
-  - cargo test -p xvision-engine scenarios::warmup_bars
-  - cargo test -p xvision-cli scenario::warmup
-  - corepack pnpm --dir frontend/web test -- scenarios-create
+  - cargo test -p xvision-engine eval::scenario::warmup_bars
+  - cargo test -p xvision-cli scenario_warmup
+  - corepack pnpm --dir frontend/web test -- scenario-form-warmup
 acceptance:
-  - Scenario record carries optional `warmup_bars: u32` (default 200 for new scenarios).
-  - Backtest executor fetches `warmup_bars` of pre-window bars and feeds them to indicators marked `is_warmup = true`; decision loop iterates only non-warmup bars.
-  - Strategy manifest exposes `min_warmup_bars` derived from indicator config (e.g. longest EMA period × 2).
+  - Scenario record carries `warmup_bars: u32` (default 200 for new scenarios; legacy rows hydrate to 200 via serde default).
+  - Backtest + paper executors fetch `warmup_bars` of pre-window bars and feed them into the per-decision seed as `bar_history`; the decision loop iterates only the scenario-window bars.
+  - Strategy manifest exposes `min_warmup_bars` (with a helper that derives a sensible default from `mechanical_params` indicator periods).
   - Eval preflight warns when `scenario.warmup_bars < strategy.min_warmup_bars`.
-  - QA15 reproducer (30-bar 1d window, EMA5/EMA13 strategy) produces a real crossover decision at bar 1 once `warmup_bars >= 13`.
-  - Bars-cache miss for the warmup window fails preflight with an actionable error.
-  - `xvn scenario create --warmup-bars N` and `--update --warmup-bars N` round-trip.
-  - Scenario authoring UI surfaces a "Context bars" field with helper text.
+  - QA15 reproducer (30-bar 1d window, EMA5/EMA13 strategy) sees ≥ 13 history bars in the bar-1 seed once `warmup_bars >= 13` — unit-tested at the executor level.
+  - Bars-cache miss for the warmup window fails preflight with an actionable error pointing at `xvn bars fetch`.
+  - `xvn scenario create --warmup-bars N` and `xvn scenario clone --warmup-bars N` round-trip the value (scenarios are immutable post-insert; clone is the mutation path).
+  - Scenario authoring UI surfaces a "Context bars" field with helper text linking to `min_warmup_bars`.
 ---
 
 # Scope
@@ -72,7 +80,22 @@ git worktree add .worktrees/q15-scenario-warmup-bars -b task/q15-scenario-warmup
 
 # Notes
 
-- If a new DB column is needed on `scenarios`, reserve migration 006 via
-  `team/MANIFEST.md` and `v1-shipping-plan.md` in the same commit.
+- `Scenario` rows are immutable (enforced by the `scenarios_no_update`
+  trigger from migration `011_scenarios.sql`). `warmup_bars` is stored
+  inside `body_json` via a serde-default field; no DB migration is needed.
+  Mutating `warmup_bars` after creation is intentionally not supported —
+  clone is the only mutation path.
 - The QA15 reproducer transcript ("No EMA cross evident from single bar...")
-  is in `team/intake/2026-05-16-q15.md` and should be the canary test.
+  is in `team/intake/2026-05-16-q15.md`. The canary test is at the
+  executor level: it asserts that the per-decision seed includes ≥ N prior
+  bars when `warmup_bars = N`, which is the mechanism that lets the
+  trader LLM detect crossovers at bar 1.
+- Contract paths were corrected on 2026-05-16 to match actual repo layout
+  (scenarios live under `eval/`, bars cache at `eval/bars.rs`, frontend
+  uses `routes/+components/+api` rather than `features/scenarios/`).
+  See OWNERSHIP.md for the updated map.
+
+# Checkpoints
+
+- 2026-05-16: claimed; worktree at `.worktrees/q15-scenario-warmup-bars`,
+  branch `task/q15-scenario-warmup-bars`.

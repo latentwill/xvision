@@ -56,11 +56,29 @@ pub struct Scenario {
 
     pub bar_cache_policy: BarCachePolicy,
 
+    /// Number of bars to pre-fetch from immediately before
+    /// `time_window.start` so per-decision context (indicators, trader
+    /// `bar_history` slice) has real history at bar 1. Defaults to
+    /// [`DEFAULT_WARMUP_BARS`] for new scenarios; legacy rows whose
+    /// `body_json` predates this field hydrate to the same default via
+    /// `serde(default)`.
+    #[serde(default = "default_warmup_bars")]
+    pub warmup_bars: u32,
+
     #[cfg_attr(feature = "ts-export", ts(type = "string"))]
     pub created_at: DateTime<Utc>,
     pub created_by: String,
     #[cfg_attr(feature = "ts-export", ts(type = "string | null"))]
     pub archived_at: Option<DateTime<Utc>>,
+}
+
+/// Default warmup-bar count for new scenarios. Matches the value of the
+/// artificial 200-bar gate removed in PR #177 — but as a pre-fetched
+/// context window rather than a blocker on short scenarios.
+pub const DEFAULT_WARMUP_BARS: u32 = 200;
+
+fn default_warmup_bars() -> u32 {
+    DEFAULT_WARMUP_BARS
 }
 
 impl Scenario {
@@ -510,6 +528,7 @@ pub fn canonical_scenarios() -> Vec<Scenario> {
                 refresh_policy: RefreshPolicy::NeverRefresh,
                 data_fetched_at: None,
             },
+            warmup_bars: DEFAULT_WARMUP_BARS,
             created_at,
             created_by: creator.clone(),
             archived_at: None,

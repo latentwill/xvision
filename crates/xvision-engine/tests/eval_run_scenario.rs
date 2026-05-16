@@ -116,6 +116,8 @@ async fn eval_run_returns_notfound_for_unseeded_scenario_id() {
             required_tools: vec![],
             risk_preset_or_config: "balanced".into(),
             published_at: None,
+
+            min_warmup_bars: None,
         },
         agents: Vec::new(),
         pipeline: Default::default(),
@@ -201,6 +203,8 @@ async fn eval_run_resolves_seeded_scenario_via_db_lookup() {
             required_tools: vec![],
             risk_preset_or_config: "balanced".into(),
             published_at: None,
+
+            min_warmup_bars: None,
         },
         agents: Vec::new(),
         pipeline: Default::default(),
@@ -286,6 +290,8 @@ async fn backtest_missing_cache_and_fixture_returns_actionable_validation() {
             required_tools: vec![],
             risk_preset_or_config: "balanced".into(),
             published_at: None,
+
+            min_warmup_bars: None,
         },
         agents: Vec::new(),
         pipeline: Default::default(),

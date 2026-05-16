@@ -61,6 +61,47 @@ fn is_default_pipeline(p: &PipelineDef) -> bool {
     p.kind == PipelineKind::Single && p.edges.is_empty()
 }
 
+/// Fallback warmup-bar count when neither `manifest.min_warmup_bars` nor
+/// any indicator period can be derived from `mechanical_params`.
+pub const FALLBACK_MIN_WARMUP_BARS: u32 = 0;
+
+impl Strategy {
+    /// Minimum prior-bar context this strategy needs at decision t=0.
+    ///
+    /// Resolution order:
+    /// 1. `manifest.min_warmup_bars`, if set.
+    /// 2. The largest positive integer in `mechanical_params` (scanned
+    ///    recursively), times 2. Covers `ema_slow=50` → 100,
+    ///    `donchian_period=20` → 40, etc.
+    /// 3. [`FALLBACK_MIN_WARMUP_BARS`].
+    pub fn min_warmup_bars(&self) -> u32 {
+        if let Some(explicit) = self.manifest.min_warmup_bars {
+            return explicit;
+        }
+        match max_indicator_period(&self.mechanical_params) {
+            Some(p) => p.saturating_mul(2),
+            None => FALLBACK_MIN_WARMUP_BARS,
+        }
+    }
+}
+
+/// Recursively walk a `serde_json::Value` and return the largest positive
+/// integer found. Used as a heuristic to derive a strategy's
+/// `min_warmup_bars` from the indicator periods baked into
+/// `mechanical_params` (`ema_fast`, `ema_slow`, `donchian_period`, etc.).
+fn max_indicator_period(value: &serde_json::Value) -> Option<u32> {
+    use serde_json::Value;
+    match value {
+        Value::Number(n) => {
+            let as_u64 = n.as_u64().or_else(|| n.as_i64().filter(|x| *x > 0).map(|x| x as u64));
+            as_u64.and_then(|n| u32::try_from(n).ok()).filter(|n| *n > 0)
+        }
+        Value::Array(arr) => arr.iter().filter_map(max_indicator_period).max(),
+        Value::Object(map) => map.values().filter_map(max_indicator_period).max(),
+        Value::Null | Value::Bool(_) | Value::String(_) => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -82,6 +123,7 @@ mod tests {
             required_tools: vec![],
             risk_preset_or_config: "balanced".into(),
             published_at: None,
+            min_warmup_bars: None,
         }
     }
 
