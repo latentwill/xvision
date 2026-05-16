@@ -186,16 +186,23 @@ async fn alpaca_paper_submit_buy_returns_confirmation() {
     assert_eq!(conf.fill_size, 0.05, "fill_size matches the mock filled qty");
     assert_eq!(conf.fill_price, Some(70_500.0));
 
-    // Captured request should have the idempotency key as client_order_id
-    // and bracket legs derived from current_price.
+    // Crypto orders must NOT carry bracket legs — Alpaca's crypto API
+    // rejects `Class::Bracket`. The TP/SL pcts in the OrderRequest are
+    // dropped before submission and the simple market order goes through.
     let cap = captured.lock().unwrap().clone().unwrap();
     assert_eq!(cap.client_order_id, client_id);
-    assert!(cap.take_profit_price.is_some());
-    assert!(cap.stop_loss_price.is_some());
+    assert!(
+        cap.take_profit_price.is_none(),
+        "crypto submit must omit take_profit_price"
+    );
+    assert!(
+        cap.stop_loss_price.is_none(),
+        "crypto submit must omit stop_loss_price"
+    );
 }
 
 #[tokio::test]
-async fn alpaca_paper_submit_uses_order_reference_price_when_flat() {
+async fn alpaca_paper_submit_crypto_drops_bracket_legs_when_flat() {
     let client_id = "test-flat-buy-1";
     let pending = fixture_pending_order();
     let filled = fixture_filled_order(client_id);
@@ -221,8 +228,167 @@ async fn alpaca_paper_submit_uses_order_reference_price_when_flat() {
     let cap = captured.lock().unwrap().clone().unwrap();
     assert_eq!(cap.client_order_id, client_id);
     assert_eq!(cap.notional, 3_500.0);
-    assert_eq!(cap.take_profit_price, Some(73_500.0));
-    assert_eq!(cap.stop_loss_price, Some(68_600.0));
+    // Even with TP/SL pcts supplied, crypto submissions strip them out
+    // because Alpaca's crypto API does not support bracket orders.
+    assert!(
+        cap.take_profit_price.is_none(),
+        "crypto submit must omit take_profit_price even with TP pct set"
+    );
+    assert!(
+        cap.stop_loss_price.is_none(),
+        "crypto submit must omit stop_loss_price even with SL pct set"
+    );
+}
+
+#[tokio::test]
+async fn alpaca_paper_submit_non_crypto_keeps_bracket_legs() {
+    // Future-proof: non-crypto symbols (e.g. equities, once wired up)
+    // must still carry bracket legs. The helper resolves crypto-ness
+    // via `AssetSymbol::from_str`, so a symbol that doesn't parse —
+    // here `"AAPL"` — falls through to the bracket-leg path.
+    let client_id = "test-equity-buy-1";
+    let pending = fixture_pending_order();
+    let filled = fixture_filled_order(client_id);
+
+    let mock = MockAlpacaApi::new(fixture_account(), vec![], pending, filled);
+    let captured = Arc::clone(&mock.captured);
+
+    let surface = AlpacaPaperSurface::with_api(Arc::new(mock));
+
+    let req = OrderRequest {
+        asset: "AAPL".into(),
+        side: Side::Buy,
+        size: 10.0,
+        reference_price_usd: 200.0,
+        stop_loss_pct: Some(2.0),
+        take_profit_pct: Some(5.0),
+        idempotency_key: client_id.into(),
+    };
+
+    surface.submit_order(req).await.expect("submit must succeed");
+
+    let cap = captured.lock().unwrap().clone().unwrap();
+    assert_eq!(cap.notional, 2_000.0);
+    assert_eq!(cap.take_profit_price, Some(210.0));
+    assert_eq!(cap.stop_loss_price, Some(196.0));
+}
+
+#[tokio::test]
+async fn alpaca_paper_submit_crypto_short_from_flat_is_refused() {
+    // Selling crypto without an existing long position is not supported
+    // on Alpaca (crypto is long-only). The surface refuses the request
+    // before round-tripping to Alpaca, with a classifier-friendly message.
+    let mock = MockAlpacaApi::new(
+        fixture_account(),
+        vec![], // no open position
+        fixture_pending_order(),
+        fixture_filled_order("never-filled"),
+    );
+    let surface = AlpacaPaperSurface::with_api(Arc::new(mock));
+
+    let req = OrderRequest {
+        asset: "BTC/USD".into(),
+        side: Side::Sell,
+        size: 0.05,
+        reference_price_usd: 70_000.0,
+        stop_loss_pct: None,
+        take_profit_pct: None,
+        idempotency_key: "test-crypto-short-1".into(),
+    };
+
+    let err = surface
+        .submit_order(req)
+        .await
+        .expect_err("crypto short_open from flat must be refused");
+    let msg = format!("{:#}", err);
+    assert!(
+        msg.contains("broker_unsupported"),
+        "error must carry the broker_unsupported tag, got: {msg}"
+    );
+    assert!(
+        msg.contains("short_open is not supported") || msg.contains("not shortable"),
+        "error must explain why the order is refused, got: {msg}"
+    );
+}
+
+#[tokio::test]
+async fn alpaca_paper_submit_crypto_sell_closes_existing_long() {
+    // Selling crypto WITH an existing long position is a position close,
+    // not a short_open. The surface lets it through.
+    let client_id = "test-crypto-close-1";
+    let pending = fixture_pending_order();
+    let filled = fixture_filled_order(client_id);
+
+    let mock = MockAlpacaApi::new(
+        fixture_account(),
+        vec![fixture_position()], // long 0.5 BTC
+        pending,
+        filled,
+    );
+    let captured = Arc::clone(&mock.captured);
+    let surface = AlpacaPaperSurface::with_api(Arc::new(mock));
+
+    let req = OrderRequest {
+        asset: "BTC/USD".into(),
+        side: Side::Sell,
+        size: 0.05,
+        reference_price_usd: 70_000.0,
+        stop_loss_pct: None,
+        take_profit_pct: None,
+        idempotency_key: client_id.into(),
+    };
+
+    surface
+        .submit_order(req)
+        .await
+        .expect("crypto sell that closes an existing long must succeed");
+
+    let cap = captured.lock().unwrap().clone().unwrap();
+    assert_eq!(cap.client_order_id, client_id);
+    assert!(cap.take_profit_price.is_none());
+    assert!(cap.stop_loss_price.is_none());
+}
+
+#[tokio::test]
+async fn alpaca_paper_submit_crypto_sell_oversize_long_is_refused() {
+    // A sell larger than the open long would net into a short on fill,
+    // which Alpaca crypto does not support. The preflight must refuse
+    // the order before round-tripping to Alpaca rather than rely on the
+    // server to reject it.
+    let mut pos = fixture_position();
+    pos.qty = 0.05; // long 0.05 BTC
+
+    let mock = MockAlpacaApi::new(
+        fixture_account(),
+        vec![pos],
+        fixture_pending_order(),
+        fixture_filled_order("never-filled"),
+    );
+    let surface = AlpacaPaperSurface::with_api(Arc::new(mock));
+
+    let req = OrderRequest {
+        asset: "BTC/USD".into(),
+        side: Side::Sell,
+        size: 0.10, // > 0.05 long
+        reference_price_usd: 70_000.0,
+        stop_loss_pct: None,
+        take_profit_pct: None,
+        idempotency_key: "test-oversize-sell".into(),
+    };
+
+    let err = surface
+        .submit_order(req)
+        .await
+        .expect_err("oversize crypto sell must be refused");
+    let msg = format!("{:#}", err);
+    assert!(
+        msg.contains("broker_unsupported"),
+        "error must carry the broker_unsupported tag, got: {msg}"
+    );
+    assert!(
+        msg.contains("exceeds open long position") || msg.contains("would net into a short"),
+        "error must explain the oversize-sell case, got: {msg}"
+    );
 }
 
 #[tokio::test]

@@ -57,3 +57,52 @@ async fn alpaca_paper_position_btc_returns_finite() {
     assert!(qty.is_finite(), "position must be finite, got {qty}");
     eprintln!("alpaca paper BTC/USD position: {qty}");
 }
+
+/// Operator-run regression for the crypto bracket-omission fix. Submits a
+/// minimal BTC/USD buy with TP/SL pcts on the `OrderRequest` and asserts
+/// Alpaca paper accepts it (the surface drops the bracket legs before
+/// submission). Run once after a deploy to verify the fix end-to-end.
+///
+/// `--ignored` and double-gated by an env-var opt-in so the test is
+/// inert by default — it places a real paper order on the operator's
+/// account.
+#[tokio::test]
+#[ignore = "requires live Alpaca paper credentials and places a real (paper) order; opt in with XVN_ALPACA_LIVE_SUBMIT=1"]
+async fn alpaca_paper_crypto_submit_simple_market() {
+    use xvision_execution::broker_surface::{OrderRequest, Side};
+
+    if std::env::var("XVN_ALPACA_LIVE_SUBMIT").ok().as_deref() != Some("1") {
+        eprintln!("skipping: set XVN_ALPACA_LIVE_SUBMIT=1 to opt in");
+        return;
+    }
+
+    let surface = AlpacaPaperSurface::from_env().expect("from_env must succeed");
+
+    let key = format!(
+        "xvn-live-{}",
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+    );
+
+    let req = OrderRequest {
+        asset: "BTC/USD".into(),
+        side: Side::Buy,
+        size: 0.0001,
+        reference_price_usd: 70_000.0,
+        stop_loss_pct: Some(2.0),
+        take_profit_pct: Some(5.0),
+        idempotency_key: key.clone(),
+    };
+
+    let conf = surface
+        .submit_order(req)
+        .await
+        .expect("crypto buy with bracket pcts must succeed (bracket legs are dropped)");
+    eprintln!(
+        "alpaca paper crypto submit_order ok: broker_order_id={} fill_size={} fill_price={:?}",
+        conf.broker_order_id, conf.fill_size, conf.fill_price
+    );
+    assert!(
+        !conf.broker_order_id.is_empty(),
+        "expected a non-empty broker_order_id"
+    );
+}

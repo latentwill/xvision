@@ -14,13 +14,34 @@
 //! for the original spec, and `team/briefings/broker-surface.md` for the v1
 //! scope cut (Alpaca paper surface fully implemented; live surfaces stubbed).
 
+use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+use xvision_core::AssetSymbol;
+
 use crate::alpaca::{AlpacaApi, ApacClientApi, OrderRequest as ApacOrderRequest, OrderSide as ApacSide};
+
+/// Returns `true` when `asset` parses as an Alpaca crypto whitelist symbol
+/// (`"BTC"`, `"BTC/USD"`, `"BTCUSD"`, etc.). Used by `AlpacaPaperSurface` and
+/// downstream callers (the eval paper executor) to gate behaviour that
+/// differs between Alpaca's crypto and (future) equities API surfaces:
+///
+/// - Crypto orders never use bracket / OCO / OTOCO classes — only simple
+///   market or limit orders. Bracket take-profit / stop-loss legs are
+///   silently dropped before submission.
+/// - Crypto is long-only on Alpaca; opening a short position from flat is
+///   not supported. Callers should refuse `short_open` for crypto assets
+///   rather than round-tripping through the API.
+///
+/// Non-crypto symbols (e.g. a future `"AAPL"` equity) return `false` and
+/// take the legacy bracket + bidirectional code path.
+pub fn is_alpaca_crypto(asset: &str) -> bool {
+    AssetSymbol::from_str(asset).is_ok()
+}
 
 // ── Public types ─────────────────────────────────────────────────────────────
 
@@ -143,6 +164,40 @@ impl BrokerSurface for AlpacaPaperSurface {
             );
         };
 
+        // 2. Crypto pre-flight. Alpaca's crypto API only accepts simple
+        //    market/limit orders and is long-only; selling from flat is
+        //    rejected by the server and selling more than the open long
+        //    would net into a short on fill. We refuse both cases here
+        //    with a classifier-friendly message ("broker_unsupported")
+        //    so the eval executor surfaces a clean class tag if it ever
+        //    reaches the surface. The eval paper executor sizes
+        //    crypto sells against the open long before this point in
+        //    normal operation; this guard is the hard backstop.
+        let asset_is_crypto = is_alpaca_crypto(&req.asset);
+        if asset_is_crypto && matches!(req.side, Side::Sell) {
+            let current_position = self
+                .api
+                .get_position(&req.asset)
+                .await
+                .map_err(|e| anyhow::anyhow!("alpaca get_position: {e}"))?
+                .map(|p| if p.side == "long" { p.qty } else { -p.qty })
+                .unwrap_or(0.0);
+            if current_position <= 0.0 {
+                anyhow::bail!(
+                    "alpaca crypto broker_unsupported: short_open is not supported for {} (asset is not shortable on Alpaca crypto)",
+                    req.asset
+                );
+            }
+            if req.size > current_position {
+                anyhow::bail!(
+                    "alpaca crypto broker_unsupported: sell size {} exceeds open long position {} for {} (would net into a short, which Alpaca crypto does not support)",
+                    req.size,
+                    current_position,
+                    req.asset
+                );
+            }
+        }
+
         let notional = req.size * reference_price;
         tracing::debug!(
             target: "xvision::alpaca",
@@ -155,19 +210,35 @@ impl BrokerSurface for AlpacaPaperSurface {
             "alpaca paper order notional resolved"
         );
 
-        // 2. Bracket legs.
-        let (take_profit_price, stop_loss_price) = match (req.take_profit_pct, req.stop_loss_pct) {
-            (Some(tp_pct), Some(sl_pct)) => match req.side {
-                Side::Buy => (
-                    Some(reference_price * (1.0 + tp_pct as f64 / 100.0)),
-                    Some(reference_price * (1.0 - sl_pct as f64 / 100.0)),
-                ),
-                Side::Sell => (
-                    Some(reference_price * (1.0 - tp_pct as f64 / 100.0)),
-                    Some(reference_price * (1.0 + sl_pct as f64 / 100.0)),
-                ),
-            },
-            _ => (None, None),
+        // 3. Bracket legs — only for non-crypto. Alpaca's crypto API rejects
+        //    `Class::Bracket` outright; submit a simple market order instead.
+        //    Strategies that wire stop/tp percentages still see them at
+        //    decision time, but they are not enforced server-side for
+        //    crypto (a follow-up track can model client-side TP/SL
+        //    tracking if needed).
+        let (take_profit_price, stop_loss_price) = if asset_is_crypto {
+            if req.take_profit_pct.is_some() || req.stop_loss_pct.is_some() {
+                tracing::debug!(
+                    target: "xvision::alpaca",
+                    asset = %req.asset,
+                    "alpaca crypto does not support bracket orders; dropping take_profit / stop_loss legs"
+                );
+            }
+            (None, None)
+        } else {
+            match (req.take_profit_pct, req.stop_loss_pct) {
+                (Some(tp_pct), Some(sl_pct)) => match req.side {
+                    Side::Buy => (
+                        Some(reference_price * (1.0 + tp_pct as f64 / 100.0)),
+                        Some(reference_price * (1.0 - sl_pct as f64 / 100.0)),
+                    ),
+                    Side::Sell => (
+                        Some(reference_price * (1.0 - tp_pct as f64 / 100.0)),
+                        Some(reference_price * (1.0 + sl_pct as f64 / 100.0)),
+                    ),
+                },
+                _ => (None, None),
+            }
         };
 
         // 3. Submit via existing AlpacaApi.
@@ -368,5 +439,29 @@ impl BrokerSurface for MockBrokerSurface {
 
     async fn balance(&self) -> anyhow::Result<f64> {
         Ok(self.state.lock().unwrap().balance)
+    }
+}
+
+#[cfg(test)]
+mod helper_tests {
+    use super::*;
+
+    #[test]
+    fn is_alpaca_crypto_accepts_whitelist_forms() {
+        for ok in [
+            "BTC", "BTC/USD", "BTCUSD", "btc", "btc/usd", "ETH/USD", "SOL/USD", "DOGE", "USDC/USD",
+        ] {
+            assert!(is_alpaca_crypto(ok), "{ok} must be classified as crypto");
+        }
+    }
+
+    #[test]
+    fn is_alpaca_crypto_rejects_equities_and_unknown_symbols() {
+        for not_ok in ["", "AAPL", "TSLA", "SPY", "XRP", "XRP/USD"] {
+            assert!(
+                !is_alpaca_crypto(not_ok),
+                "{not_ok} must NOT be classified as crypto"
+            );
+        }
     }
 }

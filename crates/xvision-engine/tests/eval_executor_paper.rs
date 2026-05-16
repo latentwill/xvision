@@ -26,7 +26,7 @@ use xvision_engine::strategies::risk::RiskPreset;
 use xvision_engine::strategies::slot::LLMSlot;
 use xvision_engine::strategies::Strategy;
 use xvision_engine::tools::ToolRegistry;
-use xvision_execution::broker_surface::{BrokerSurface, MockBrokerSurface};
+use xvision_execution::broker_surface::{BrokerSurface, MockBrokerSurface, Side};
 
 async fn pool_with_migration() -> SqlitePool {
     let pool = SqlitePool::connect(":memory:").await.unwrap();
@@ -224,6 +224,119 @@ async fn paper_executor_skips_broker_for_flat_decisions() {
     assert_eq!(submitted.len(), 0, "flat decisions must NOT hit the broker");
     assert_eq!(metrics.n_trades, 0);
     assert_eq!(metrics.n_decisions, 4);
+}
+
+#[tokio::test]
+async fn paper_executor_skips_broker_for_crypto_short_open() {
+    // Alpaca crypto is long-only — `short_open` from flat is not a
+    // valid order. The executor records the decision as a no-op and
+    // continues the run instead of failing on broker rejection.
+    let canned = r#"{"action":"short_open","conviction":0.8,"justification":"trader wants to short"}"#;
+    let (mock, executor, store, mut run, strategy, scenario, dispatch, tools) =
+        paper_harness(canned, 100_000.0).await;
+
+    let metrics = executor
+        .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)
+        .await
+        .expect("crypto short_open must not fail the run");
+
+    let submitted = mock.submitted();
+    assert_eq!(
+        submitted.len(),
+        0,
+        "crypto short_open must not hit the broker"
+    );
+    assert_eq!(metrics.n_trades, 0);
+    assert_eq!(metrics.n_decisions, 4);
+
+    let decisions = store.read_decisions(&run.id).await.unwrap();
+    assert_eq!(decisions.len(), 4);
+    for d in &decisions {
+        assert_eq!(d.action, "short_open");
+        assert!(
+            d.order_size.is_none(),
+            "no order_size recorded when broker is skipped"
+        );
+        assert!(d.fill_price.is_none());
+        assert!(d.fill_size.is_none());
+    }
+}
+
+#[tokio::test]
+async fn paper_executor_crypto_short_open_closes_existing_long() {
+    // Alpaca crypto is long-only — but `short_open` semantics include
+    // reversing a long position back to flat (see
+    // `backtest::simulate_fill`). On the paper surface the executor must
+    // submit a sell against any open long when the trader emits
+    // `short_open`, sized to the long (full close). Once the broker is
+    // flat, subsequent short_open ticks must remain no-ops.
+    let long_response = LlmResponse {
+        content: vec![ContentBlock::Text {
+            text: r#"{"action":"long_open","conviction":0.6,"justification":"buy"}"#.into(),
+        }],
+        stop_reason: StopReason::EndTurn,
+        input_tokens: 1,
+        output_tokens: 1,
+    };
+    let short_response = || LlmResponse {
+        content: vec![ContentBlock::Text {
+            text: r#"{"action":"short_open","conviction":0.7,"justification":"sell"}"#.into(),
+        }],
+        stop_reason: StopReason::EndTurn,
+        input_tokens: 1,
+        output_tokens: 1,
+    };
+    let responses = vec![
+        long_response,
+        short_response(),
+        short_response(),
+        short_response(),
+    ];
+
+    let pool = pool_with_migration().await;
+    let store = RunStore::new(pool);
+    let mock = Arc::new(MockBrokerSurface::new(100_000.0));
+    let broker: Arc<dyn BrokerSurface> = mock.clone();
+    let strategy = minimal_strategy();
+    let scenario = short_scenario();
+    let executor = PaperExecutor::with_bars(broker, short_bars(&scenario));
+    let mut run = Run::new_queued("test-strategy-hash".into(), scenario.id.clone(), RunMode::Paper);
+    store.create(&run).await.unwrap();
+    let dispatch: Arc<dyn LlmDispatch> = Arc::new(MockDispatch::sequence(responses));
+    let tools = Arc::new(ToolRegistry::empty());
+
+    let metrics = executor
+        .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)
+        .await
+        .expect("mixed long/short_open run must complete");
+
+    let submitted = mock.submitted();
+    assert_eq!(
+        submitted.len(),
+        2,
+        "expected exactly two broker submits: open long, then close long; got: {submitted:?}"
+    );
+    assert!(
+        matches!(submitted[0].side, Side::Buy),
+        "first submit must be a long_open buy"
+    );
+    let open_size = submitted[0].size;
+    assert!(
+        matches!(submitted[1].side, Side::Sell),
+        "second submit must be the close-long sell"
+    );
+    assert!(
+        (submitted[1].size - open_size).abs() < 1e-9,
+        "close-long sell must size to the open long ({open_size}), got {}",
+        submitted[1].size
+    );
+    assert_eq!(metrics.n_trades, 2);
+    assert_eq!(metrics.n_decisions, 4);
+    assert_eq!(
+        mock.position("BTC/USD").await.unwrap(),
+        0.0,
+        "broker must be flat after the close-long sell"
+    );
 }
 
 #[tokio::test]

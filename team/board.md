@@ -12,14 +12,18 @@ V2 work (V2A onboarding + docs, V2B–V4 roadmap) lives on its own board:
 
 ## Active
 
-Nothing under Q15 or eval-review. Q15 leaves (#184, #185, #187, #189) and the
-full eval-review wave (#186, #188, #190) all landed on 2026-05-16. The only
-remaining v1 work is the V2A onboarding leaves on `team/board-v2.md`.
+- [alpaca-paper-crypto-submit](contracts/alpaca-paper-crypto-submit.md) — integration · ready 2026-05-16. Fix paper-eval `submit_order` failures on Alpaca crypto: drop bracket legs for crypto, convert `short_open` on crypto to a recorded no-op, preserve broker error chain, add `broker_*` classes to `classify_run_failure`. Motivated by `[unclassified] paper eval submit_order failed` on runs `01KRRA4CB1073KRRPPD06W6EEB` (Buy) and `01KRRA1PJCTDR9NBEP8J2309DW` (Sell), strategy `01KRQGPDHFN5C8CWB4ED757ER0`.
+
+Q15 and eval-review waves closed on 2026-05-16. Remaining v1 work is the V2A
+onboarding leaves on `team/board-v2.md`.
 
 ## Immediate start set
 
 Safe to claim right now (no unresolved Foundation dependency):
 
+- `alpaca-paper-crypto-submit` — single-track; parallel-safe with V2A leaves
+  (touches only `crates/xvision-execution/**` and
+  `crates/xvision-engine/src/eval/executor/**`).
 - V2A leaves — see `team/board-v2.md` (`v2a-driver-tour`, `v2a-in-app-docs`,
   `v2a-example-artifacts`; independent, parallel-safe).
 
