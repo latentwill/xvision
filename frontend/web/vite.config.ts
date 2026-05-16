@@ -24,13 +24,19 @@ export default defineConfig({
     port: 5180,
     strictPort: true,
     // host: true binds 0.0.0.0 so the dev server is reachable from other
-    // devices (e.g. a phone over Tailscale, or another machine on the LAN).
-    // allowedHosts adds Tailscale MagicDNS names (*.ts.net) past Vite's
-    // DNS-rebinding protection; loopback and private-IP access remain
-    // implicitly allowed. See frontend/MOBILE.md §6 for the rationale and
-    // frontend/README.md for the security caveat (no auth on the API).
+    // devices (a phone over Tailscale, another machine on the LAN, or via
+    // Bonjour .local). allowedHosts: true disables Vite 5's DNS-rebinding
+    // protection so any hostname resolves — needed because iPhone Safari
+    // on the same Wi-Fi hits the Mac via Bonjour (e.g. Eds-MacBook-Pro.local),
+    // which Vite would otherwise reject with a "Blocked request" 403 and
+    // surface to the user as "doesn't load." The dashboard has no auth
+    // either way (DESIGN.md §8.4); the actual trust boundary is the network
+    // (tailnet ACL or trusted LAN), not the dev-server allowlist. Do not
+    // run `pnpm dev` on an untrusted shared network. See frontend/MOBILE.md
+    // §6 and frontend/README.md for the security caveat, and FOLLOWUPS F35
+    // for the API-auth track that gates wider-bind production deployments.
     host: true,
-    allowedHosts: [".ts.net"],
+    allowedHosts: true,
     proxy: {
       "/api": "http://127.0.0.1:8788",
     },

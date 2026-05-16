@@ -31,7 +31,7 @@ export function MobileShell({
   }, [location.pathname, location.search]);
 
   return (
-    <div className="h-screen bg-bg text-text overflow-hidden flex flex-col">
+    <div className="h-[100dvh] bg-bg text-text overflow-hidden flex flex-col">
       <MobileTopBar
         title={isHome ? undefined : title}
         onMenu={() => setDrawerOpen(true)}

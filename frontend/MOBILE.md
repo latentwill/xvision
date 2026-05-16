@@ -346,14 +346,20 @@ server: {
   port: 5180,
   strictPort: true,
   host: true,                          // bind 0.0.0.0
-  allowedHosts: [".ts.net"],           // accept Tailscale MagicDNS hostnames
+  allowedHosts: true,                  // any hostname (Bonjour .local, Tailscale, LAN IP)
   proxy: { "/api": "http://127.0.0.1:8788" },
 }
 ```
 
-Without `host: true`, Vite binds to localhost only. Without `allowedHosts`,
-Vite ≥5 will reject requests by hostname with "Blocked request. This host is
-not allowed." Both checks must pass.
+Without `host: true`, Vite binds to localhost only. With Vite 5's default
+`allowedHosts` (loopback + private-IP only), the server rejects any hostname
+it doesn't recognize with `Blocked request. This host ("…") is not allowed.`
+— which is what iPhone Safari sees when reaching the Mac via Bonjour
+(`Eds-MacBook-Pro.local:5180`) on a shared Wi-Fi or via a custom DNS name.
+Setting `allowedHosts: true` disables that check so any hostname resolves;
+the dashboard has no auth either way (DESIGN.md §8.4), so the real trust
+boundary is the network (tailnet ACL or trusted LAN), not Vite's allowlist.
+Don't run `pnpm dev` on an untrusted shared network.
 
 Trust model: the dashboard has no auth (DESIGN.md §8.4). Tailscale's identity
 layer is the authentication. Don't expose `0.0.0.0` to a non-Tailscale
