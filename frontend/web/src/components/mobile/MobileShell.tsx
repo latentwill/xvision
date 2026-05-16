@@ -31,7 +31,7 @@ export function MobileShell({
   }, [location.pathname, location.search]);
 
   return (
-    <div className="h-screen bg-bg text-text overflow-hidden flex flex-col">
+    <div className="h-[100dvh] bg-bg text-text overflow-hidden flex flex-col">
       <MobileTopBar
         title={isHome ? undefined : title}
         onMenu={() => setDrawerOpen(true)}
@@ -122,7 +122,7 @@ function MobileChatOverlay({
 }) {
   return (
     <section className="fixed inset-0 z-40 md:hidden bg-bg flex flex-col">
-      <header className="h-[52px] flex items-center gap-3 px-3 border-b border-border-soft bg-bg flex-shrink-0">
+      <header className="h-[calc(52px+env(safe-area-inset-top))] pt-[env(safe-area-inset-top)] flex items-center gap-3 px-3 border-b border-border-soft bg-bg flex-shrink-0">
         <button
           type="button"
           onClick={onClose}
