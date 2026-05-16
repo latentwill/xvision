@@ -36,7 +36,7 @@ export function MobileDrawer() {
         aria-label="Close navigation"
         onClick={() => setOpen(false)}
       />
-      <aside className="absolute top-0 bottom-0 left-0 w-[84vw] max-w-[340px] bg-surface-sidebar border-r border-border-soft flex flex-col py-4">
+      <aside className="absolute top-0 bottom-0 left-0 w-[84vw] max-w-[340px] bg-surface-sidebar border-r border-border-soft flex flex-col py-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(0px,env(safe-area-inset-bottom))] pl-[max(0px,env(safe-area-inset-left))]">
         <div className="px-5 pb-5 flex items-center justify-between">
           <span className="font-serif italic font-medium text-[34px] tracking-tight text-text">
             xvn
