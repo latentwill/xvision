@@ -763,11 +763,8 @@ mod tests {
     #[test]
     fn provider_model_from_slot_respects_cli_provider_and_model_overrides() {
         let slot = template_anthropic_slot();
-        let (provider, model) = provider_model_from_slot(
-            &slot,
-            Some("openrouter"),
-            Some("deepseek/deepseek-chat"),
-        );
+        let (provider, model) =
+            provider_model_from_slot(&slot, Some("openrouter"), Some("deepseek/deepseek-chat"));
         assert_eq!(provider, "openrouter");
         assert_eq!(model, "deepseek/deepseek-chat");
     }
@@ -785,11 +782,7 @@ mod tests {
     #[test]
     fn slot_to_agent_slot_uses_overrides_for_seeded_agent() {
         let slot = template_anthropic_slot();
-        let agent_slot = slot_to_agent_slot(
-            &slot,
-            Some("openrouter"),
-            Some("deepseek/deepseek-chat"),
-        );
+        let agent_slot = slot_to_agent_slot(&slot, Some("openrouter"), Some("deepseek/deepseek-chat"));
         assert_eq!(agent_slot.provider, "openrouter");
         assert_eq!(agent_slot.model, "deepseek/deepseek-chat");
     }
