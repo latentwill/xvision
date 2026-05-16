@@ -106,6 +106,20 @@ pub async fn cancel_run(
     Ok(Json(eval::summarise_run(run)))
 }
 
+/// `POST /api/eval/runs/:id/retry` — enqueue a fresh run that clones the
+/// source's `(agent_id, scenario_id, mode, params_override)` inputs.
+/// Returns `202 Accepted` with the freshly-persisted `RunDetail` (status
+/// = `Queued`). `400` if the source isn't in a `failed` state; idempotent
+/// on the source's `(agent_id, scenario_id, mode)` fingerprint while a
+/// previous retry is still queued or running.
+pub async fn retry_run(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<(StatusCode, Json<RunDetail>), DashboardError> {
+    let detail = eval::retry(&state.api_context(), &id).await?;
+    Ok((StatusCode::ACCEPTED, Json(detail)))
+}
+
 #[derive(Debug, Deserialize)]
 pub struct CompareParams {
     /// Comma-separated run ids: `?ids=01J…,01K…`. Whitespace around commas

@@ -100,6 +100,37 @@ export function cancelRun(id: string): Promise<RunSummary> {
     });
 }
 
+/// Re-queue a failed eval run with the same inputs as the source.
+/// Resolves to the `RunDetail` of the freshly-queued run (or the
+/// existing in-flight retry if one was already queued/running for the
+/// same fingerprint).
+export function retryRun(id: string): Promise<RunDetail> {
+  const trace = createTrace("eval", { source_run_id: id });
+  const started = performance.now();
+  trace.info("eval.retry.start");
+  return apiFetch<RunDetail>(
+    `/api/eval/runs/${encodeURIComponent(id)}/retry`,
+    {
+      method: "POST",
+    },
+  )
+    .then((detail) => {
+      trace.info("eval.retry.queued", {
+        new_run_id: detail.summary.id,
+        status: detail.summary.status,
+        duration_ms: durationSince(started),
+      });
+      return detail;
+    })
+    .catch((err) => {
+      trace.error("eval.retry.error", {
+        duration_ms: durationSince(started),
+        error: errorSummary(err),
+      });
+      throw err;
+    });
+}
+
 export function compareRuns(ids: string[]): Promise<ComparisonReport> {
   const qs = ids.map(encodeURIComponent).join(",");
   return apiFetch<ComparisonReport>(`/api/eval/compare?ids=${qs}`);

@@ -79,6 +79,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/eval/runs/:id", get(eval_runs::get).delete(eval_runs::delete_run))
         .route("/api/eval/runs/:id/export", get(eval_runs::export))
         .route("/api/eval/runs/:id/cancel", post(eval_runs::cancel_run))
+        .route("/api/eval/runs/:id/retry", post(eval_runs::retry_run))
         .route("/api/eval/runs/:id/chart", get(eval_runs::chart))
         .route("/api/eval/runs/:id/stream", get(eval_runs::stream))
         .route("/api/eval/compare", get(eval_runs::compare))
