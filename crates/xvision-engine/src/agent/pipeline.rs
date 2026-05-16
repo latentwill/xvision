@@ -6,6 +6,7 @@ use crate::agents::AgentSlot;
 use crate::strategies::slot::LLMSlot;
 use crate::strategies::{PipelineKind, Strategy};
 use crate::tools::ToolRegistry;
+use xvision_core::providers::lookup_model;
 
 #[derive(Debug, Clone)]
 pub struct ResolvedAgentSlot {
@@ -194,11 +195,63 @@ pub fn resolve_agent_slot(role: &str, slot: &AgentSlot) -> ResolvedAgentSlot {
 }
 
 /// Legacy `LLMSlot` path (regime/intern/trader slots on the older
-/// `Strategy` shape) has no operator-side `max_tokens` field, so we
-/// always pass `None` to the dispatcher — each dispatcher handles the
-/// fallback (OpenAI-compat omits the field, Anthropic uses the
-/// per-model auto). The operator can still pin a budget by switching to
-/// the agent-slots strategy shape.
-fn default_max_tokens_for(_slot: &LLMSlot) -> Option<u32> {
-    None
+/// `Strategy` shape) has no operator-side `max_tokens` field. To keep
+/// existing legacy strategies on their previous budget after the q15
+/// `Option<u32>` rework, we auto-derive from the slot's model metadata
+/// so the dispatcher sees a concrete value — matching the pre-change
+/// behaviour exactly. (The agent-slot path, by contrast, exposes the
+/// `Option<u32>` to the operator and only fills in a fallback inside
+/// the Anthropic dispatcher where the API requires the field.)
+fn default_max_tokens_for(slot: &LLMSlot) -> Option<u32> {
+    let model = slot.effective_model();
+    let model = model.trim();
+    if model.is_empty() {
+        // No resolvable model id — fall back to the unknown-model auto
+        // (4096), which is what the legacy path used to return for
+        // empty/unrecognised slots.
+        return Some(xvision_core::providers::ModelMetadata::unknown_default("").auto_max_tokens());
+    }
+    Some(lookup_model(model).auto_max_tokens())
+}
+
+#[cfg(test)]
+mod legacy_max_tokens_tests {
+    use super::*;
+
+    fn slot_with_model(model: &str) -> LLMSlot {
+        LLMSlot {
+            role: "trader".into(),
+            prompt: "p".into(),
+            model_requirement: model.to_string(),
+            allowed_tools: Vec::new(),
+            provider: None,
+            model: Some(model.to_string()),
+        }
+    }
+
+    #[test]
+    fn legacy_slot_with_known_model_returns_per_model_auto() {
+        let slot = slot_with_model("claude-sonnet-4-6");
+        let meta = lookup_model("claude-sonnet-4-6");
+        assert_eq!(
+            default_max_tokens_for(&slot),
+            Some(meta.auto_max_tokens()),
+            "legacy slots must keep producing the per-model auto so existing OpenAI-compat \
+             strategies don't silently shift to the provider's own default",
+        );
+    }
+
+    #[test]
+    fn legacy_slot_with_unknown_model_returns_unknown_default_auto() {
+        let slot = slot_with_model("acme-private-model-9000");
+        assert_eq!(default_max_tokens_for(&slot), Some(4096));
+    }
+
+    #[test]
+    fn legacy_slot_with_no_resolvable_model_returns_unknown_default_auto() {
+        let mut slot = slot_with_model("");
+        slot.model = None;
+        slot.model_requirement = "".into();
+        assert_eq!(default_max_tokens_for(&slot), Some(4096));
+    }
 }
