@@ -601,9 +601,12 @@ async fn select_eval_provider(
         }
     }
 
-    Err(ApiError::Validation(
-        "eval requires an explicit provider/model on a strategy slot or attached agent; no workspace default is assumed".into(),
-    ))
+    Err(ApiError::Validation(format!(
+        "eval requires an explicit provider/model on a strategy slot or attached agent; \
+         no workspace default is assumed. Strategy `{}` has no slot or attached agent with a non-empty provider. \
+         Re-create with `xvn strategy new --provider <name> --model <id>`, set the provider/model on the AgentSlot, or attach an agent that has them configured.",
+        strategy.manifest.id,
+    )))
 }
 
 fn runtime_slots<'a>(

@@ -41,6 +41,17 @@ enum StrategyAction {
         name: Option<String>,
         #[arg(long)]
         creator: Option<String>,
+        /// Provider name to seed onto auto-created template agents
+        /// (e.g. `openrouter`, `anthropic`). Required when the template
+        /// produces legacy slots that get seeded as AgentRefs — without
+        /// this flag the seeded `AgentSlot` is created with an empty
+        /// provider/model so the user has to configure it before eval.
+        #[arg(long)]
+        provider: Option<String>,
+        /// Model id to seed onto auto-created template agents
+        /// (e.g. `deepseek/deepseek-chat`). See `--provider`.
+        #[arg(long)]
+        model: Option<String>,
         /// Emit the created strategy as JSON.
         #[arg(long)]
         json: bool,
@@ -119,8 +130,10 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
             template,
             name,
             creator,
+            provider,
+            model,
             json,
-        } => new(from_file, template, name, creator, json).await,
+        } => new(from_file, template, name, creator, provider, model, json).await,
         StrategyAction::Validate { id } => validate(&id).await,
         StrategyAction::Ls { json } => ls(json).await,
         StrategyAction::Show { id } => show(&id).await,
@@ -211,6 +224,8 @@ async fn new(
     template: Option<String>,
     name: Option<String>,
     creator: Option<String>,
+    provider_override: Option<String>,
+    model_override: Option<String>,
     json: bool,
 ) -> CliResult<()> {
     if let Some(path) = from_file {
@@ -270,7 +285,11 @@ async fn new(
                         "strategy-template-seed".to_string(),
                         draft.manifest.template.clone(),
                     ],
-                    slots: vec![slot_to_agent_slot(&slot)],
+                    slots: vec![slot_to_agent_slot(
+                        &slot,
+                        provider_override.as_deref(),
+                        model_override.as_deref(),
+                    )],
                 },
             )
             .await
@@ -481,7 +500,7 @@ async fn migrate_agents(dry_run: bool) -> CliResult<()> {
                         "strategy-migrated".to_string(),
                         strategy.manifest.template.clone(),
                     ],
-                    slots: vec![slot_to_agent_slot(&slot)],
+                    slots: vec![slot_to_agent_slot(&slot, None, None)],
                 },
             )
             .await
@@ -525,8 +544,12 @@ fn legacy_slots(strategy: &xvision_engine::strategies::Strategy) -> Vec<(String,
     slots
 }
 
-fn slot_to_agent_slot(slot: &LLMSlot) -> AgentSlot {
-    let (provider, model) = provider_model_from_slot(slot);
+fn slot_to_agent_slot(
+    slot: &LLMSlot,
+    provider_override: Option<&str>,
+    model_override: Option<&str>,
+) -> AgentSlot {
+    let (provider, model) = provider_model_from_slot(slot, provider_override, model_override);
     AgentSlot {
         name: "main".to_string(),
         provider,
@@ -537,25 +560,43 @@ fn slot_to_agent_slot(slot: &LLMSlot) -> AgentSlot {
     }
 }
 
-fn provider_model_from_slot(slot: &LLMSlot) -> (String, String) {
-    let parsed = slot
-        .model_requirement
-        .split_once('.')
-        .map(|(provider, model)| (provider.trim().to_string(), model.trim().to_string()));
-    let provider = slot
-        .provider
-        .as_ref()
-        .filter(|provider| !provider.trim().is_empty())
-        .cloned()
-        .or_else(|| parsed.as_ref().map(|(provider, _)| provider.clone()))
-        .unwrap_or_else(|| "manual".to_string());
-    let model = slot
-        .model
-        .as_ref()
-        .filter(|model| !model.trim().is_empty())
-        .cloned()
-        .or_else(|| parsed.map(|(_, model)| model))
-        .unwrap_or_else(|| slot.model_requirement.clone());
+/// Resolve the `(provider, model)` pair to seed onto an auto-created
+/// AgentSlot. Order of precedence: explicit `--provider` / `--model`
+/// override > slot's `provider` / `model` fields > empty string.
+///
+/// The legacy `model_requirement` string ("anthropic.claude-sonnet-4.6")
+/// is intentionally NOT parsed as a fallback. That field captures the
+/// template's policy/constraint, not the user's provider choice — using
+/// it to seed an Anthropic-locked AgentSlot caused QA10's "smoke
+/// strategy resolves to anthropic at runtime" failure even when the
+/// user's intent was OpenRouter (see `qa10-eval-openrouter-slot-resolution`).
+fn provider_model_from_slot(
+    slot: &LLMSlot,
+    provider_override: Option<&str>,
+    model_override: Option<&str>,
+) -> (String, String) {
+    let provider = provider_override
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            slot.provider
+                .as_ref()
+                .map(|p| p.trim().to_string())
+                .filter(|p| !p.is_empty())
+        })
+        .unwrap_or_default();
+    let model = model_override
+        .map(str::trim)
+        .filter(|m| !m.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            slot.model
+                .as_ref()
+                .map(|m| m.trim().to_string())
+                .filter(|m| !m.is_empty())
+        })
+        .unwrap_or_default();
     (provider, model)
 }
 
@@ -688,4 +729,61 @@ async fn resolve_agent_slots_for_cli(
         });
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use xvision_engine::strategies::slot::LLMSlot;
+
+    fn template_anthropic_slot() -> LLMSlot {
+        // Shape that `tpl.new_draft` produces for templates like
+        // `mean_reversion`, `trend_follower`, etc.
+        LLMSlot {
+            role: "trader".into(),
+            prompt: String::new(),
+            model_requirement: "anthropic.claude-sonnet-4.6".into(),
+            allowed_tools: Vec::new(),
+            provider: None,
+            model: None,
+        }
+    }
+
+    #[test]
+    fn provider_model_from_slot_does_not_bake_anthropic_from_template_model_requirement() {
+        let slot = template_anthropic_slot();
+        let (provider, model) = provider_model_from_slot(&slot, None, None);
+        // Pre-QA10 behavior parsed `model_requirement` into ("anthropic",
+        // "claude-sonnet-4.6") which silently locked seeded AgentSlots
+        // to Anthropic even when the user's intent was OpenRouter.
+        assert_eq!(provider, "");
+        assert_eq!(model, "");
+    }
+
+    #[test]
+    fn provider_model_from_slot_respects_cli_provider_and_model_overrides() {
+        let slot = template_anthropic_slot();
+        let (provider, model) =
+            provider_model_from_slot(&slot, Some("openrouter"), Some("deepseek/deepseek-chat"));
+        assert_eq!(provider, "openrouter");
+        assert_eq!(model, "deepseek/deepseek-chat");
+    }
+
+    #[test]
+    fn provider_model_from_slot_prefers_slot_fields_over_template_label() {
+        let mut slot = template_anthropic_slot();
+        slot.provider = Some("openrouter".into());
+        slot.model = Some("deepseek/deepseek-chat".into());
+        let (provider, model) = provider_model_from_slot(&slot, None, None);
+        assert_eq!(provider, "openrouter");
+        assert_eq!(model, "deepseek/deepseek-chat");
+    }
+
+    #[test]
+    fn slot_to_agent_slot_uses_overrides_for_seeded_agent() {
+        let slot = template_anthropic_slot();
+        let agent_slot = slot_to_agent_slot(&slot, Some("openrouter"), Some("deepseek/deepseek-chat"));
+        assert_eq!(agent_slot.provider, "openrouter");
+        assert_eq!(agent_slot.model, "deepseek/deepseek-chat");
+    }
 }
