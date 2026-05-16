@@ -849,7 +849,10 @@ impl WizardLoop {
                     model: model.clone(),
                     system_prompt,
                     skill_ids: vec![],
-                    max_tokens: 4096,
+                    // Default to "auto from model"; the dispatcher
+                    // resolves this from the model's metadata at
+                    // request time (q15 §1).
+                    max_tokens: None,
                 }],
             },
         )

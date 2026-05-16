@@ -132,6 +132,33 @@ fn is_actionable(action: &str) -> bool {
     matches!(action, "long_open" | "short_open")
 }
 
+/// Find the trader slot's model id, used to decorate trader-output
+/// failures with the reasoning-class hint (q15 §1). Prefers an attached
+/// agent with role `trader`, then falls back to the legacy
+/// `strategy.trader_slot`. Returns `None` when neither is present or
+/// neither has a model pinned.
+fn trader_model_id(
+    agent_slots: &[ResolvedAgentSlot],
+    strategy: &Strategy,
+) -> Option<String> {
+    if let Some(resolved) = agent_slots
+        .iter()
+        .find(|r| r.role.eq_ignore_ascii_case("trader"))
+    {
+        let model = resolved.slot.effective_model();
+        if !model.trim().is_empty() {
+            return Some(model);
+        }
+    }
+    if let Some(slot) = strategy.trader_slot.as_ref() {
+        let model = slot.effective_model();
+        if !model.trim().is_empty() {
+            return Some(model);
+        }
+    }
+    None
+}
+
 fn bar_seed(asset: &str, bar: &Ohlcv, bar_history: Vec<serde_json::Value>) -> serde_json::Value {
     serde_json::json!({
         "asset": asset,
@@ -391,7 +418,9 @@ impl PaperExecutor {
                     return Err(TraderOutput::missing_response_error(&run.id, decision_idx).into());
                 }
             };
-            let parsed = TraderOutput::parse_response(trader, &run.id, decision_idx)?;
+            let trader_model_id = trader_model_id(agent_slots, strategy);
+            let parsed = TraderOutput::parse_response(trader, &run.id, decision_idx)
+                .map_err(|e| e.with_model_hint(trader_model_id.as_deref()))?;
 
             if store.is_terminal(&run.id).await? {
                 anyhow::bail!("eval run stopped");

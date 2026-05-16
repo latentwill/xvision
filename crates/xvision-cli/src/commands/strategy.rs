@@ -565,7 +565,10 @@ fn slot_to_agent_slot(
         model,
         system_prompt: slot.prompt.clone(),
         skill_ids: Vec::new(),
-        max_tokens: 4096,
+        // Auto-resolved from the model's metadata at dispatch time
+        // (q15 §1). Old auto-create paths can let this stay `None` so
+        // the operator-facing UX is consistent with `+ New agent`.
+        max_tokens: None,
     }
 }
 
@@ -735,6 +738,7 @@ async fn resolve_agent_slots_for_cli(
         out.push(ResolvedAgentSlot {
             role: agent_ref.role.clone(),
             slot: agent_slot_to_llm_slot(&agent_ref.role, slot),
+            max_tokens: slot.resolve_max_tokens(),
         });
     }
     Ok(out)

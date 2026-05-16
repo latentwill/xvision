@@ -2,15 +2,22 @@ use std::sync::Arc;
 
 use crate::agent::execute::{execute_slot, SlotInput};
 use crate::agent::llm::{LlmDispatch, LlmResponse, ResponseSchema};
-use crate::agents::AgentSlot;
+use crate::agents::{resolve_max_tokens, AgentSlot};
 use crate::strategies::slot::LLMSlot;
 use crate::strategies::{PipelineKind, Strategy};
 use crate::tools::ToolRegistry;
+use xvision_core::providers::lookup_model;
 
 #[derive(Debug, Clone)]
 pub struct ResolvedAgentSlot {
     pub role: String,
     pub slot: LLMSlot,
+    /// Effective `max_tokens` budget the dispatcher should send. Derived
+    /// from the source `AgentSlot.max_tokens` via the per-model metadata
+    /// table (q15 §1) — `None` slots resolve to
+    /// `recommended_visible_output + reasoning_token_default`, explicit
+    /// values are clamped to the model's `output_token_ceiling`.
+    pub max_tokens: u32,
 }
 
 pub struct PipelineInputs<'a> {
@@ -40,12 +47,14 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
     let mut total_out = 0u32;
 
     let regime = if let Some(slot) = &input.strategy.regime_slot {
+        let max_tokens = default_max_tokens_for(slot);
         let out = execute_slot(SlotInput {
             slot,
             upstream_inputs: accumulated.clone(),
             dispatch: input.dispatch.clone(),
             tools: input.tools.clone(),
             response_schema: None,
+            max_tokens,
         })
         .await?;
         total_in += out.input_tokens;
@@ -57,12 +66,14 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
     };
 
     let intern = if let Some(slot) = &input.strategy.intern_slot {
+        let max_tokens = default_max_tokens_for(slot);
         let out = execute_slot(SlotInput {
             slot,
             upstream_inputs: accumulated.clone(),
             dispatch: input.dispatch.clone(),
             tools: input.tools.clone(),
             response_schema: None,
+            max_tokens,
         })
         .await?;
         total_in += out.input_tokens;
@@ -74,12 +85,14 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
     };
 
     let trader = if let Some(slot) = &input.strategy.trader_slot {
+        let max_tokens = default_max_tokens_for(slot);
         let out = execute_slot(SlotInput {
             slot,
             upstream_inputs: accumulated.clone(),
             dispatch: input.dispatch.clone(),
             tools: input.tools.clone(),
             response_schema: Some(ResponseSchema::trader_output()),
+            max_tokens,
         })
         .await?;
         total_in += out.input_tokens;
@@ -122,6 +135,7 @@ async fn run_agent_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pip
             } else {
                 None
             },
+            max_tokens: resolved.max_tokens,
         })
         .await?;
         total_in += out.input_tokens;
@@ -166,4 +180,32 @@ pub fn agent_slot_to_llm_slot(role: &str, slot: &AgentSlot) -> LLMSlot {
             Some(slot.model.clone())
         },
     }
+}
+
+/// Build a `ResolvedAgentSlot` from an `AgentSlot`, resolving the
+/// effective `max_tokens` once at strategy-construction time. Callers in
+/// `api/eval.rs` use this so the eval executor never has to look at
+/// `AgentSlot` directly.
+pub fn resolve_agent_slot(role: &str, slot: &AgentSlot) -> ResolvedAgentSlot {
+    ResolvedAgentSlot {
+        role: role.to_string(),
+        slot: agent_slot_to_llm_slot(role, slot),
+        max_tokens: slot.resolve_max_tokens(),
+    }
+}
+
+/// Best-effort default `max_tokens` for the legacy `LLMSlot` path
+/// (regime/intern/trader slots on the older Strategy shape). Reads the
+/// model id off the slot via `effective_model()` and consults the
+/// canonical model metadata. Falls back to the unknown-model default
+/// when the slot has no resolvable model.
+fn default_max_tokens_for(slot: &LLMSlot) -> u32 {
+    let model = slot.effective_model();
+    if model.trim().is_empty() {
+        // No model pinned — the unknown default is the safe choice and
+        // matches the legacy behaviour (4096) on `unknown_default`.
+        return resolve_max_tokens(None, &xvision_core::providers::ModelMetadata::unknown_default(""));
+    }
+    let meta = lookup_model(&model);
+    resolve_max_tokens(None, &meta)
 }

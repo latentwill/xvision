@@ -420,7 +420,9 @@ impl BacktestExecutor {
                     return Err(TraderOutput::missing_response_error(&run.id, decision_idx).into());
                 }
             };
-            let parsed = TraderOutput::parse_response(trader, &run.id, decision_idx)?;
+            let trader_model_id = trader_model_id(agent_slots, strategy);
+            let parsed = TraderOutput::parse_response(trader, &run.id, decision_idx)
+                .map_err(|e| e.with_model_hint(trader_model_id.as_deref()))?;
 
             if store.is_terminal(&run.id).await? {
                 anyhow::bail!("eval run stopped");
@@ -634,6 +636,33 @@ struct FillOutcome {
 /// - `long_open`: hold long, reverse short → long, or open long from flat.
 /// - `short_open`: hold short, reverse long → short, or open short from flat.
 /// - `flat` (or any unknown action): close any open position; otherwise no-op.
+/// Find the trader slot's model id, used to decorate trader-output
+/// failures with the reasoning-class hint (q15 §1). Prefers an attached
+/// agent with role `trader`, then falls back to the legacy
+/// `strategy.trader_slot`. Returns `None` when neither is present or
+/// neither has a model pinned.
+fn trader_model_id(
+    agent_slots: &[ResolvedAgentSlot],
+    strategy: &Strategy,
+) -> Option<String> {
+    if let Some(resolved) = agent_slots
+        .iter()
+        .find(|r| r.role.eq_ignore_ascii_case("trader"))
+    {
+        let model = resolved.slot.effective_model();
+        if !model.trim().is_empty() {
+            return Some(model);
+        }
+    }
+    if let Some(slot) = strategy.trader_slot.as_ref() {
+        let model = slot.effective_model();
+        if !model.trim().is_empty() {
+            return Some(model);
+        }
+    }
+    None
+}
+
 fn simulate_fill(a: SimulateFillArgs) -> FillOutcome {
     let want_long = a.action == "long_open";
     let want_short = a.action == "short_open";

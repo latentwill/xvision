@@ -3,6 +3,8 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use xvision_core::providers::{lookup_model, ModelMetadata};
+
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(
     feature = "ts-export",
@@ -44,7 +46,35 @@ pub struct AgentSlot {
     /// registry landing without a schema migration. Not related to the
     /// Plan 2b `xvn skill` surface that was removed in ADR 0012.
     pub skill_ids: Vec<String>,
-    pub max_tokens: u32,
+    /// Optional operator override for the per-request token budget.
+    /// `None` means "auto from the selected model" — the dispatcher
+    /// resolves it via `agents::model_metadata::resolve_max_tokens`.
+    /// `Some(n)` is honored and clamped to the model's
+    /// `output_token_ceiling`.
+    ///
+    /// Stored in SQLite as a non-null integer with `0` as the sentinel
+    /// for `None`; the store layer maps between the sentinel and the
+    /// Rust-side `Option`.
+    #[serde(default)]
+    #[cfg_attr(feature = "ts-export", ts(type = "number | null"))]
+    pub max_tokens: Option<u32>,
+}
+
+impl AgentSlot {
+    /// Canonical model metadata lookup for this slot's model id. Falls
+    /// back to `ModelMetadata::unknown_default` when the id isn't in the
+    /// canonical table.
+    pub fn model_metadata(&self) -> ModelMetadata {
+        lookup_model(&self.model)
+    }
+
+    /// Resolve the effective `max_tokens` budget the dispatcher should
+    /// hand to the provider. `None` (or the storage sentinel `Some(0)`)
+    /// auto-derives from the model; any explicit `Some(n)` is honored
+    /// and clamped to the model's `output_token_ceiling`. See q15 §1.
+    pub fn resolve_max_tokens(&self) -> u32 {
+        self.model_metadata().resolve(self.max_tokens)
+    }
 }
 
 impl Agent {
@@ -68,7 +98,7 @@ impl Agent {
                 model: model.into(),
                 system_prompt: String::new(),
                 skill_ids: Vec::new(),
-                max_tokens: 4096,
+                max_tokens: None,
             }],
             archived: false,
             created_at: now,
@@ -91,7 +121,9 @@ mod tests {
         );
         assert_eq!(a.slots.len(), 1);
         assert_eq!(a.slots[0].name, "main");
-        assert_eq!(a.slots[0].max_tokens, 4096);
+        // New slots default to "auto from model"; the dispatcher resolves
+        // this from the model's metadata at request time.
+        assert_eq!(a.slots[0].max_tokens, None);
         assert!(a.slots[0].system_prompt.is_empty());
         assert!(!a.archived);
         assert!(a.tags.is_empty());

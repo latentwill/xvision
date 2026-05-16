@@ -35,7 +35,9 @@ const BLANK_SLOT: AgentSlot = {
   model: "",
   system_prompt: "",
   skill_ids: [],
-  max_tokens: 4096,
+  // null → "Auto from model"; the dispatcher resolves this from the
+  // model's metadata at request time (q15 §1).
+  max_tokens: null,
 };
 
 const BLANK_AGENT_DRAFT = {

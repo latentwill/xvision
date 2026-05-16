@@ -516,7 +516,7 @@ async fn save_openrouter_strategy_with_agent_ref(ctx: &ApiContext, strategy_id: 
                 model: "deepseek/deepseek-v4-flash".into(),
                 system_prompt: "Decide.".into(),
                 skill_ids: vec![],
-                max_tokens: 4096,
+                max_tokens: Some(4096),
             }],
         })
         .await
