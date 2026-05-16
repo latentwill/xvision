@@ -122,6 +122,39 @@ impl TraderOutputError {
         self.kind.tag()
     }
 
+    /// Replace the generic `detail` with an actionable hint when the
+    /// failure is a reasoning-class model running out of budget before
+    /// any visible text emerged — the QA15 item 5 footprint. No-op when:
+    ///
+    /// - `kind` is not `Truncated`
+    /// - `raw_excerpt` is anything other than the `<empty>` sentinel
+    /// - the model id is unknown or non-reasoning
+    /// - `model_id` is `None`
+    ///
+    /// Designed as a fluent post-hoc wrapper so `parse_response` can stay
+    /// model-blind and callers attach the hint only where they actually
+    /// have the trader's model id (eval executor).
+    pub fn with_model_hint(mut self, model_id: Option<&str>) -> Self {
+        const EMPTY_RAW_SENTINEL: &str = "<empty>";
+        if self.kind != TraderFailureKind::Truncated || self.raw_excerpt != EMPTY_RAW_SENTINEL {
+            return self;
+        }
+        let Some(id) = model_id.map(str::trim).filter(|s| !s.is_empty()) else {
+            return self;
+        };
+        let meta = xvision_core::providers::lookup_model(id);
+        if !meta.is_reasoning() {
+            return self;
+        }
+        self.detail = format!(
+            "trader output truncated before any text emerged on reasoning-class model `{id}` \
+             (hidden reasoning likely consumed the budget). Raise the agent's max_tokens \
+             above {} or pick a non-reasoning model.",
+            self.output_tokens,
+        );
+        self
+    }
+
     fn diagnostics(&self) -> String {
         let stop = self
             .stop_reason
@@ -666,4 +699,127 @@ mod tests {
         assert!(message.contains("trader pipeline returned no trader response slot"));
         assert!(message.contains("raw_excerpt=\"<no_response>\""));
     }
+
+    /// Reasoning-class truncation hint (q15 §1 acceptance). The eval
+    /// executor decorates a `Truncated` + empty-raw error with the
+    /// model-specific "raise max_tokens or pick a non-reasoning model"
+    /// hint when (and only when) the trader's model is reasoning-class.
+    mod truncated_hint {
+        use super::*;
+
+        fn truncated_empty(run_id: &str) -> super::super::TraderOutputError {
+            // Reproduce the QA15 "stop_reason=MaxTokens / output_tokens=N
+            // / raw_excerpt=<empty>" failure shape.
+            let response = LlmResponse {
+                content: Vec::new(),
+                stop_reason: StopReason::MaxTokens,
+                input_tokens: 422,
+                output_tokens: 1000,
+            };
+            TraderOutput::parse_response(&response, run_id, 0)
+                .expect_err("truncated empty response must fail")
+        }
+
+        #[test]
+        fn reasoning_class_model_swaps_in_actionable_hint() {
+            // DeepSeek R1 is canonical reasoning-class in the metadata
+            // table. Sonnet 4.6 is conservatively kept as Standard until
+            // a future revision tracks Anthropic's `thinking` toggle
+            // explicitly — operators on that path can still raise
+            // max_tokens manually based on the generic Truncated message.
+            let hinted = truncated_empty("01HINT").with_model_hint(Some("deepseek-r1"));
+            let msg = hinted.to_string();
+
+            assert_eq!(hinted.kind, TraderFailureKind::Truncated);
+            assert!(
+                msg.contains("reasoning-class model"),
+                "expected reasoning-class hint, got: {msg}",
+            );
+            assert!(
+                msg.contains("max_tokens"),
+                "expected actionable max_tokens guidance, got: {msg}",
+            );
+            assert!(
+                msg.contains("non-reasoning"),
+                "expected fallback-model suggestion, got: {msg}",
+            );
+            // The provider diagnostics are still preserved.
+            assert!(msg.contains("stop_reason=MaxTokens"));
+            assert!(msg.contains("output_tokens=1000"));
+            assert!(msg.contains("raw_excerpt=\"<empty>\""));
+        }
+
+        #[test]
+        fn non_reasoning_model_leaves_generic_message() {
+            let hinted = truncated_empty("01HINT").with_model_hint(Some("claude-haiku-4-5"));
+            let msg = hinted.to_string();
+
+            assert!(
+                msg.contains("truncated at MaxTokens"),
+                "non-reasoning models keep the generic detail, got: {msg}",
+            );
+            assert!(
+                !msg.contains("reasoning-class model"),
+                "must not promise reasoning-class context for a non-reasoning model, got: {msg}",
+            );
+        }
+
+        #[test]
+        fn unknown_model_falls_back_to_generic_message() {
+            let hinted = truncated_empty("01HINT").with_model_hint(Some("acme/nightly-7b"));
+            let msg = hinted.to_string();
+            // Unknown ids default to non-reasoning class — the hint is a no-op.
+            assert!(msg.contains("truncated at MaxTokens"));
+            assert!(!msg.contains("reasoning-class model"));
+        }
+
+        #[test]
+        fn missing_model_id_is_a_noop() {
+            let baseline = truncated_empty("01HINT").to_string();
+            let hinted = truncated_empty("01HINT").with_model_hint(None);
+            assert_eq!(baseline, hinted.to_string());
+        }
+
+        #[test]
+        fn non_truncated_kinds_are_not_decorated() {
+            // ToolUseOnly carries a different detail; the hint must not
+            // hijack it even when the model id is reasoning-class.
+            let response = LlmResponse {
+                content: vec![ContentBlock::ToolUse {
+                    id: "abc".into(),
+                    name: "fetch_bars".into(),
+                    input: serde_json::json!({}),
+                }],
+                stop_reason: StopReason::ToolUse,
+                input_tokens: 100,
+                output_tokens: 5,
+            };
+            let err = TraderOutput::parse_response(&response, "01HINT", 0)
+                .expect_err("tool-use-only must fail")
+                .with_model_hint(Some("claude-sonnet-4-6"));
+            assert_eq!(err.kind, TraderFailureKind::ToolUseOnly);
+            assert!(err.to_string().contains("only tool_use blocks"));
+        }
+
+        #[test]
+        fn truncated_with_partial_text_is_not_a_reasoning_hint_case() {
+            // The hint targets the QA15 footprint where raw_excerpt is
+            // `<empty>`. When the model emitted partial text before the
+            // cut-off, the raw_excerpt is non-empty and the generic
+            // truncation message stays — operators see what came back.
+            let response = LlmResponse {
+                content: vec![ContentBlock::Text { text: "{".into() }],
+                stop_reason: StopReason::MaxTokens,
+                input_tokens: 1000,
+                output_tokens: 1000,
+            };
+            let err = TraderOutput::parse_response(&response, "01HINT", 0)
+                .expect_err("truncated partial text must fail")
+                .with_model_hint(Some("deepseek-r1"));
+            assert_eq!(err.kind, TraderFailureKind::Truncated);
+            assert!(!err.to_string().contains("reasoning-class model"));
+        }
+    }
 }
+
+

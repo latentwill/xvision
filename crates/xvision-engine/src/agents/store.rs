@@ -219,14 +219,18 @@ impl AgentStore {
             let skill_ids_json: String = row.try_get("skill_ids_json")?;
             let skill_ids: Vec<String> =
                 serde_json::from_str(&skill_ids_json).context("parse skill_ids_json")?;
-            let max_tokens: i64 = row.try_get("max_tokens")?;
+            // `max_tokens` is stored as a non-null integer; `0` is the
+            // sentinel for "unset" so the resolver pulls from the model's
+            // metadata at dispatch time (q15 §1).
+            let stored: i64 = row.try_get("max_tokens")?;
+            let max_tokens = if stored <= 0 { None } else { Some(stored as u32) };
             out.push(AgentSlot {
                 name: row.try_get("name")?,
                 provider: row.try_get("provider")?,
                 model: row.try_get("model")?,
                 system_prompt: row.try_get("system_prompt")?,
                 skill_ids,
-                max_tokens: max_tokens as u32,
+                max_tokens,
             });
         }
         Ok(out)
@@ -252,7 +256,9 @@ async fn insert_slot(
     .bind(&slot.model)
     .bind(&slot.system_prompt)
     .bind(&skill_ids_json)
-    .bind(slot.max_tokens as i64)
+    // `None` persists as the sentinel `0`; `Some(0)` is also treated as
+    // unset to keep round-trips stable.
+    .bind(slot.max_tokens.unwrap_or(0) as i64)
     .execute(&mut **tx)
     .await
     .with_context(|| format!("insert slot {} for agent {}", slot.name, agent_id))?;
@@ -299,7 +305,7 @@ mod tests {
             model: "claude-sonnet-4-6".to_string(),
             system_prompt: "You are a trader.".to_string(),
             skill_ids: vec![],
-            max_tokens: 4096,
+            max_tokens: Some(4096),
         }
     }
 
@@ -423,5 +429,43 @@ mod tests {
     async fn get_returns_none_for_missing() {
         let store = AgentStore::new(fresh_pool().await);
         assert!(store.get("01HZ000000000000000000XXXX").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn none_max_tokens_round_trips_as_unset() {
+        let store = AgentStore::new(fresh_pool().await);
+        let id = store
+            .create(NewAgent {
+                name: "auto-tokens".to_string(),
+                description: String::new(),
+                tags: vec![],
+                slots: vec![AgentSlot {
+                    max_tokens: None,
+                    ..sample_slot()
+                }],
+            })
+            .await
+            .unwrap();
+        let loaded = store.get(&id).await.unwrap().expect("exists");
+        assert_eq!(loaded.slots[0].max_tokens, None);
+    }
+
+    #[tokio::test]
+    async fn explicit_max_tokens_round_trips() {
+        let store = AgentStore::new(fresh_pool().await);
+        let id = store
+            .create(NewAgent {
+                name: "manual-tokens".to_string(),
+                description: String::new(),
+                tags: vec![],
+                slots: vec![AgentSlot {
+                    max_tokens: Some(6000),
+                    ..sample_slot()
+                }],
+            })
+            .await
+            .unwrap();
+        let loaded = store.get(&id).await.unwrap().expect("exists");
+        assert_eq!(loaded.slots[0].max_tokens, Some(6000));
     }
 }

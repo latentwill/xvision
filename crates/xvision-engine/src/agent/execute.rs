@@ -22,6 +22,11 @@ pub struct SlotInput<'a> {
     pub dispatch: Arc<dyn LlmDispatch>,
     pub tools: Arc<ToolRegistry>,
     pub response_schema: Option<ResponseSchema>,
+    /// Effective per-request token budget, resolved upstream from the
+    /// AgentSlot (or LLMSlot) via the model metadata table (q15 §1).
+    /// Replaces the legacy hardcoded 1000 that caused the QA15 empty-
+    /// output truncation.
+    pub max_tokens: u32,
 }
 
 pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmResponse> {
@@ -46,7 +51,7 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
             model: input.slot.effective_model(),
             system_prompt: input.slot.prompt.clone(),
             messages: messages.clone(),
-            max_tokens: 1000,
+            max_tokens: input.max_tokens,
             tools: tool_defs.clone(),
             response_schema: input
                 .response_schema

@@ -50,7 +50,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                      \"justification\":\"string\"}. Do not omit action."
                     .into(),
                 skill_ids: vec![],
-                max_tokens: 4096,
+                max_tokens: None,
             }],
         },
         AgentTemplate {
@@ -70,7 +70,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                          volatility, time horizon."
                         .into(),
                     skill_ids: vec![],
-                    max_tokens: 4096,
+                    max_tokens: None,
                 },
                 AgentSlot {
                     name: "executor".into(),
@@ -82,7 +82,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                          when the analyst flags contradictions. Do not omit action."
                         .into(),
                     skill_ids: vec![],
-                    max_tokens: 2048,
+                    max_tokens: None,
                 },
             ],
         },
@@ -103,7 +103,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                          \"conviction\":0..1, \"justification\":\"string\"}. Do not omit action."
                         .into(),
                     skill_ids: vec![],
-                    max_tokens: 4096,
+                    max_tokens: None,
                 },
                 AgentSlot {
                     name: "risk_check".into(),
@@ -114,7 +114,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                          size_cap_pct, reason}."
                         .into(),
                     skill_ids: vec![],
-                    max_tokens: 2048,
+                    max_tokens: None,
                 },
                 AgentSlot {
                     name: "executor".into(),
@@ -126,7 +126,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                          \"justification\":\"string\"}. Do not omit action."
                         .into(),
                     skill_ids: vec![],
-                    max_tokens: 2048,
+                    max_tokens: None,
                 },
             ],
         },

@@ -105,14 +105,11 @@ pub fn validate_agent(agent: &Agent) -> Vec<ValidationDiagnostic> {
             });
         }
 
-        if slot.max_tokens == 0 {
-            out.push(ValidationDiagnostic {
-                code: "slot_max_tokens_zero".into(),
-                severity: Severity::Error,
-                message: format!("Slot '{}' has max_tokens = 0.", slot.name),
-                field: Some(format!("{}.max_tokens", field_prefix)),
-            });
-        }
+        // `max_tokens` is now `Option<u32>`; `None` means
+        // "auto from the selected model" at dispatch time (see
+        // `agents::model_metadata::resolve_max_tokens`). The previous
+        // `slot_max_tokens_zero` error fired against the old u32 field
+        // and is no longer reachable.
     }
 
     out
@@ -161,7 +158,7 @@ mod tests {
                 model: "x".into(),
                 system_prompt: "p".into(),
                 skill_ids: vec![],
-                max_tokens: 4096,
+                max_tokens: Some(4096),
             },
             AgentSlot {
                 name: "TRADER".into(), // case-insensitive duplicate
@@ -169,7 +166,7 @@ mod tests {
                 model: "x".into(),
                 system_prompt: "p".into(),
                 skill_ids: vec![],
-                max_tokens: 4096,
+                max_tokens: Some(4096),
             },
         ];
         let diags = validate_agent(&a);
