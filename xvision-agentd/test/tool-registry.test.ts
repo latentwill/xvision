@@ -40,4 +40,26 @@ describe("tool.registry", () => {
     resetRegistry()
     expect(() => handleToolRegistrySet({ tools: [{ name: "x" } as never] })).toThrow()
   })
+
+  it("rejects invalid side_effect_level value", () => {
+    resetRegistry()
+    const bad = { ...sample, side_effect_level: "garbage" }
+    expect(() => handleToolRegistrySet({ tools: [bad] })).toThrow(/side_effect_level must be one of/)
+  })
+
+  it("rejects non-positive, non-integer, or oversized timeout_ms", () => {
+    resetRegistry()
+    for (const t of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 600_001]) {
+      const bad = { ...sample, timeout_ms: t }
+      expect(() => handleToolRegistrySet({ tools: [bad] })).toThrow(/timeout_ms/)
+    }
+  })
+
+  it("rejects array-typed schemas", () => {
+    resetRegistry()
+    const badIn = { ...sample, input_schema: [] }
+    expect(() => handleToolRegistrySet({ tools: [badIn] })).toThrow(/input_schema must be a non-array object/)
+    const badOut = { ...sample, output_schema: [] }
+    expect(() => handleToolRegistrySet({ tools: [badOut] })).toThrow(/output_schema must be a non-array object/)
+  })
 })
