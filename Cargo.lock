@@ -8519,6 +8519,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "xvision-observability"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "hex",
+ "regex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "toml",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "xvision-risk"
 version = "0.1.0"
 dependencies = [

@@ -45,6 +45,8 @@ const MIGRATION_015_EVAL_REASONING: &str = include_str!("../../migrations/015_ev
 const MIGRATION_016_EVAL_REVIEWS: &str = include_str!("../../migrations/016_eval_reviews.sql");
 const MIGRATION_017_EVAL_FINDINGS_REVIEW_COLUMNS: &str =
     include_str!("../../migrations/017_eval_findings_review_columns.sql");
+const MIGRATION_018_AGENT_RUN_OBSERVABILITY: &str =
+    include_str!("../../migrations/018_agent_run_observability.sql");
 
 /// Map of cache_key → per-key mutex used by `eval::bars::load_bars` to
 /// serialize concurrent misses for the same window. Kept inside an outer
@@ -127,6 +129,7 @@ impl ApiContext {
         migrate_eval_decisions_reasoning(&pool).await?;
         sqlx::query(MIGRATION_016_EVAL_REVIEWS).execute(&pool).await?;
         migrate_eval_findings_review_columns(&pool).await?;
+        sqlx::query(MIGRATION_018_AGENT_RUN_OBSERVABILITY).execute(&pool).await?;
 
         let ctx = Self::new(pool, actor, xvn_home.to_path_buf());
 
