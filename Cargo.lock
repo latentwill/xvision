@@ -8314,6 +8314,7 @@ dependencies = [
  "xvision-execution",
  "xvision-harness",
  "xvision-intern",
+ "xvision-observability",
  "xvision-risk",
  "xvision-trader",
 ]
@@ -8537,6 +8538,7 @@ dependencies = [
  "tokio",
  "toml",
  "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 
