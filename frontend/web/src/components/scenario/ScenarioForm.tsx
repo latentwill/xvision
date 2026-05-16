@@ -90,6 +90,9 @@ export function ScenarioForm({
     const normalized = normalizeGranularity(initial?.granularity);
     return normalized && isSupportedGranularity(normalized) ? normalized : '1h';
   });
+  const granularityOptions = GRANULARITY_OPTIONS.includes(granularity)
+    ? GRANULARITY_OPTIONS
+    : [granularity, ...GRANULARITY_OPTIONS];
   const [tags, setTags] = useState<string[]>(initial?.tags ?? []);
   const [notes, setNotes] = useState(initial?.notes ?? '');
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -267,7 +270,7 @@ export function ScenarioForm({
             }}
             required
           >
-            {GRANULARITY_OPTIONS.map((g) => (
+            {granularityOptions.map((g) => (
               <option key={g} value={g}>
                 {g}
               </option>
@@ -372,8 +375,25 @@ function estimateBars(from: string, to: string, g: ScenarioGranularity): number 
   return Math.round(ms / 1000 / barSeconds);
 }
 
+// Mirrors `BarGranularity::is_supported` in crates/xvision-data/src/alpaca.rs.
+// Accepts any canonical value the backend would accept, not just the UI palette.
 function isSupportedGranularity(granularity: string) {
-  return GRANULARITY_OPTIONS.includes(granularity);
+  const match = granularity.trim().toLowerCase().match(/^(\d+)(m|h|d|w|mo)$/);
+  if (!match) return false;
+  const amount = Number(match[1]);
+  if (!Number.isFinite(amount) || amount <= 0) return false;
+  switch (match[2]) {
+    case 'm':
+      return amount >= 1 && amount <= 59;
+    case 'h':
+      return amount >= 1 && amount <= 23;
+    case 'd':
+    case 'w':
+      return amount === 1;
+    case 'mo':
+      return amount === 1 || amount === 2 || amount === 3 || amount === 4 || amount === 6 || amount === 12;
+  }
+  return false;
 }
 
 function isValidWindow(from: string, to: string) {
@@ -383,25 +403,42 @@ function isValidWindow(from: string, to: string) {
   return Number.isFinite(start) && Number.isFinite(end) && end > start;
 }
 
+// Accepts the forms `BarGranularity` accepts on the backend (see
+// `BarGranularity::FromStr` in crates/xvision-data/src/alpaca.rs):
+//   - canonical, e.g. "1m", "30m", "1h", "12h", "1d", "1w", "1mo", "12mo"
+//   - Rust constant form, e.g. "Minute5", "Hour4", "Day1", "Week1", "Month3"
+//   - Alpaca string form, e.g. "1Min", "1Hour", "1Day", "1Week", "12Month"
+// Returns `undefined` if the input is not a recognized granularity string.
 function normalizeGranularity(granularity: string | undefined) {
-  switch (granularity) {
-    case 'Minute1':
-      return '1m';
-    case 'Minute5':
-      return '5m';
-    case 'Minute15':
-      return '15m';
-    case 'Hour1':
-      return '1h';
-    case 'Hour4':
-      return '4h';
-    case 'Hour6':
-      return '6h';
-    case 'Day1':
-      return '1d';
-    default:
-      return granularity;
+  if (!granularity) return undefined;
+  const trimmed = granularity.trim();
+  if (!trimmed) return undefined;
+
+  if (/^\d+(m|h|d|w|mo)$/i.test(trimmed)) {
+    return trimmed.toLowerCase();
   }
+
+  const unitFirst = /^(Minute|Hour|Day|Week|Month)(\d+)$/i.exec(trimmed);
+  if (unitFirst) return unitToCanonical(unitFirst[1], Number(unitFirst[2]));
+
+  const amountFirst =
+    /^(\d+)(Min|Mins|Minute|Minutes|Hour|Hours|Day|Days|Week|Weeks|Month|Months)$/i.exec(
+      trimmed,
+    );
+  if (amountFirst) return unitToCanonical(amountFirst[2], Number(amountFirst[1]));
+
+  return undefined;
+}
+
+function unitToCanonical(unit: string, amount: number) {
+  if (!Number.isFinite(amount) || amount <= 0) return undefined;
+  const u = unit.toLowerCase();
+  if (u === 'minute' || u === 'minutes' || u === 'min' || u === 'mins') return `${amount}m`;
+  if (u === 'hour' || u === 'hours') return `${amount}h`;
+  if (u === 'day' || u === 'days') return `${amount}d`;
+  if (u === 'week' || u === 'weeks') return `${amount}w`;
+  if (u === 'month' || u === 'months') return `${amount}mo`;
+  return undefined;
 }
 
 function granularitySeconds(granularity: string) {

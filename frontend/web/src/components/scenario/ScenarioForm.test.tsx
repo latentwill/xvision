@@ -91,16 +91,71 @@ describe("ScenarioForm", () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
-  it("coerces an unsupported initial granularity to the default", () => {
-    const onSubmit = vi.fn();
+  it.each([
+    ["Minute1", "1m"],
+    ["Minute5", "5m"],
+    ["Minute15", "15m"],
+    ["Hour1", "1h"],
+    ["Hour4", "4h"],
+    ["Hour6", "6h"],
+    ["Hour12", "12h"],
+    ["Day1", "1d"],
+    ["Week1", "1w"],
+    ["Month1", "1mo"],
+    ["Month3", "3mo"],
+    ["1Min", "1m"],
+    ["5Min", "5m"],
+    ["1Hour", "1h"],
+    ["12Hour", "12h"],
+    ["1Day", "1d"],
+    ["1Week", "1w"],
+    ["1Month", "1mo"],
+    ["12Month", "12mo"],
+  ])("normalizes legacy granularity %s to %s", (legacy, canonical) => {
+    render(
+      <ScenarioForm
+        onSubmit={vi.fn()}
+        initial={{ granularity: legacy } as Partial<CreateScenarioRequest>}
+      />,
+    );
+    const select = screen.getByLabelText("Granularity") as HTMLSelectElement;
+    expect(select.value).toBe(canonical);
+  });
 
+  it("renders backend-valid out-of-palette values as a synthetic option without coercion", () => {
+    const onSubmit = vi.fn();
     render(
       <ScenarioForm
         onSubmit={onSubmit}
-        initial={{ granularity: "2w" } as Partial<CreateScenarioRequest>}
+        initial={{ granularity: "2mo" } as Partial<CreateScenarioRequest>}
       />,
     );
+    const select = screen.getByLabelText("Granularity") as HTMLSelectElement;
+    expect(select.value).toBe("2mo");
+    expect(Array.from(select.options).map((o) => o.value)).toContain("2mo");
 
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "ETH 2mo" } });
+    fireEvent.change(screen.getByLabelText("From"), { target: { value: "2024-01-01" } });
+    fireEvent.change(screen.getByLabelText("To"), { target: { value: "2024-06-01" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create →" }));
+
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({ granularity: "2mo" }),
+    );
+  });
+
+  it.each([
+    "2w",       // Week amount must be 1 on the backend
+    "5mo",      // Month amount must be in {1, 2, 3, 4, 6, 12}
+    "garbage",  // unrecognized form
+    "",         // empty
+  ])("coerces unsupported initial granularity %s to the 1h default", (bad) => {
+    render(
+      <ScenarioForm
+        onSubmit={vi.fn()}
+        initial={{ granularity: bad } as Partial<CreateScenarioRequest>}
+      />,
+    );
     const select = screen.getByLabelText("Granularity") as HTMLSelectElement;
     expect(select.value).toBe("1h");
   });
