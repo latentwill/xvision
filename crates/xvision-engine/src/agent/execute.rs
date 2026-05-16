@@ -22,11 +22,12 @@ pub struct SlotInput<'a> {
     pub dispatch: Arc<dyn LlmDispatch>,
     pub tools: Arc<ToolRegistry>,
     pub response_schema: Option<ResponseSchema>,
-    /// Effective per-request token budget, resolved upstream from the
-    /// AgentSlot (or LLMSlot) via the model metadata table (q15 §1).
-    /// Replaces the legacy hardcoded 1000 that caused the QA15 empty-
-    /// output truncation.
-    pub max_tokens: u32,
+    /// Operator's per-request output-token budget. `None` lets the
+    /// dispatcher decide: OpenAI-compat omits the field entirely (the
+    /// provider applies its own default); Anthropic falls back to the
+    /// per-model auto value because the API requires the field. Explicit
+    /// values pass through verbatim — no clamping.
+    pub max_tokens: Option<u32>,
 }
 
 pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmResponse> {

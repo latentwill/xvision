@@ -191,7 +191,7 @@ async fn call_model(
         model: profile.model.clone(),
         system_prompt,
         messages: vec![Message::user_text(user_text)],
-        max_tokens: profile.max_tokens.min(HARD_MAX_TOKENS),
+        max_tokens: Some(profile.max_tokens.min(HARD_MAX_TOKENS)),
         tools: vec![],
         // Profile-driven temperature is the determinism knob: review
         // personas are seeded at 0.2 and operators may tighten further.
@@ -666,7 +666,7 @@ mod tests {
         let seen = cap.seen.lock().unwrap().clone().expect("dispatch called");
         // reasoning-agent is seeded with max_tokens=8000, temperature=0.2,
         // and the seeded model name — verify each rides on the request.
-        assert_eq!(seen.max_tokens, 8000);
+        assert_eq!(seen.max_tokens, Some(8000));
         assert_eq!(seen.model, "claude-sonnet-4-6");
         // Determinism knob: the profile's temperature must actually be
         // forwarded so reviews don't fall back to the provider default
