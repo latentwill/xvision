@@ -5,7 +5,8 @@ wave: q15
 worktree: .worktrees/q15-agent-max-tokens-from-model
 branch: task/q15-agent-max-tokens-from-model
 base: origin/main
-status: in-progress
+status: pr-open
+pr: 185
 depends_on: []
 blocks: []
 stacking: none
