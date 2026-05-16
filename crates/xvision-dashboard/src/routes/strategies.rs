@@ -260,3 +260,93 @@ pub async fn put_pipeline(
     .await?;
     Ok(Json(out))
 }
+
+#[cfg(test)]
+pub mod get {
+    //! Shape: `cargo test -p xvision-dashboard strategies::get` (per the
+    //! q15-object-json-output contract verification block).
+    //!
+    //! Parity guard: `GET /api/strategies/:id` returns the same Rust
+    //! `Strategy` struct that `EvalRunExport.strategy` carries. The
+    //! route handler is a one-liner over `api::strategy::get`, so this
+    //! test exercises the same engine path the route hits and asserts
+    //! structural JSON equality with the export embedding.
+
+    use xvision_engine::api::strategy as api_strategy;
+    use xvision_engine::api::{Actor, ApiContext};
+    use xvision_engine::authoring::CreateStrategyReq;
+    use xvision_engine::eval::export as eval_export;
+    use xvision_engine::eval::run::{Run, RunMode, RunStatus};
+    use xvision_engine::eval::store::RunStore;
+    use xvision_engine::templates::registry;
+
+    async fn seed_strategy_and_completed_run(ctx: &ApiContext) -> (String, String) {
+        let tpl_name = registry::list_template_names()
+            .first()
+            .cloned()
+            .expect("at least one template registered");
+        let out = api_strategy::create_strategy(
+            ctx,
+            CreateStrategyReq {
+                template: tpl_name,
+                name: "object-shape-fixture".into(),
+                creator: None,
+            },
+        )
+        .await
+        .expect("create strategy");
+
+        let store = RunStore::new(ctx.db.clone());
+        let mut run = Run::new_queued(
+            out.id.clone(),
+            "crypto-bull-q1-2025".into(),
+            RunMode::Backtest,
+        );
+        run.status = RunStatus::Completed;
+        store.create(&run).await.expect("seed run");
+        store
+            .update_status(&run.id, RunStatus::Completed, None)
+            .await
+            .expect("transition");
+
+        (out.id, run.id)
+    }
+
+    #[tokio::test]
+    async fn route_shape_matches_eval_export_strategy_slot() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = ApiContext::open(
+            dir.path(),
+            Actor::Cli {
+                user: "object-json-test".into(),
+            },
+        )
+        .await
+        .expect("open ApiContext");
+
+        let (strategy_id, run_id) = seed_strategy_and_completed_run(&ctx).await;
+
+        // What `GET /api/strategies/:id` returns is exactly
+        // `Json(api_strategy::get(...))` — same struct as the export
+        // embeds. Compare structurally so format differences don't
+        // affect equality.
+        let direct = api_strategy::get(&ctx, &strategy_id)
+            .await
+            .expect("strategy get");
+        let export = eval_export::build_export(&ctx, &run_id)
+            .await
+            .expect("build_export");
+
+        let route_json = serde_json::to_value(&direct).expect("strategy->json");
+        let from_export = export
+            .strategy
+            .as_ref()
+            .map(serde_json::to_value)
+            .expect("export.strategy present")
+            .expect("export.strategy->json");
+        assert_eq!(
+            route_json, from_export,
+            "GET /api/strategies/:id shape must equal `EvalRunExport.strategy`",
+        );
+    }
+}
