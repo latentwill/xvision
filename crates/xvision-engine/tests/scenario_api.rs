@@ -61,6 +61,7 @@ fn valid_request() -> CreateScenarioRequest {
         notes: None,
         parent_scenario_id: None,
         source: ScenarioSource::User,
+        warmup_bars: None,
     }
 }
 

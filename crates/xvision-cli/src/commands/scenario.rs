@@ -109,6 +109,11 @@ pub struct CreateArgs {
     /// Optional notes.
     #[arg(long)]
     pub notes: Option<String>,
+    /// Pre-window context bars. Defaults to 200. Backtest/paper executors
+    /// pre-fetch this many bars before `--from` so indicators and the
+    /// trader LLM see real history at bar 1 of the decision window.
+    #[arg(long)]
+    pub warmup_bars: Option<u32>,
     /// Emit the created Scenario as JSON.
     #[arg(long)]
     pub json: bool,
@@ -159,6 +164,11 @@ pub struct CloneArgs {
     /// Override the asset ticker.
     #[arg(long)]
     pub asset: Option<String>,
+    /// Override the pre-window warmup bars. Scenarios are immutable
+    /// post-insert; cloning with a different `--warmup-bars` is the
+    /// supported mutation path.
+    #[arg(long)]
+    pub warmup_bars: Option<u32>,
 }
 
 #[derive(Args, Debug)]
@@ -276,6 +286,7 @@ fn scenario_to_create_request(s: &Scenario) -> api_scenario::CreateScenarioReque
         notes: s.notes.clone(),
         parent_scenario_id: s.parent_scenario_id.clone(),
         source: s.source,
+        warmup_bars: Some(s.warmup_bars),
     }
 }
 
@@ -356,6 +367,7 @@ async fn run_create(ctx: &ApiContext, a: CreateArgs) -> CliResult<()> {
         notes: a.notes,
         parent_scenario_id: None,
         source: ScenarioSource::User,
+        warmup_bars: a.warmup_bars,
     };
 
     let s = api_scenario::create(ctx, req)
@@ -475,6 +487,7 @@ async fn run_clone(ctx: &ApiContext, a: CloneArgs) -> CliResult<()> {
         venue: None,
         tags: None,
         notes: None,
+        warmup_bars: a.warmup_bars,
     };
 
     let s = api_scenario::clone(ctx, &a.id, mutations)

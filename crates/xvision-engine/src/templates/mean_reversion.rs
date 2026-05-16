@@ -51,6 +51,8 @@ impl Template for MeanReversion {
                 required_tools: vec!["ohlcv".into(), "indicator_panel".into()],
                 risk_preset_or_config: "balanced".into(),
                 published_at: None,
+
+                min_warmup_bars: None,
             },
             agents: Vec::new(),
             pipeline: PipelineDef::default(),

@@ -8,7 +8,21 @@ import type { QuoteCurrency } from "./QuoteCurrency";
 import type { ReplayMode } from "./ReplayMode";
 import type { ScenarioSource } from "./ScenarioSource";
 import type { TimeWindow } from "./TimeWindow";
-import type { Capital } from "./Capital";
 import type { VenueSettings } from "./VenueSettings";
 
-export type Scenario = { id: string, parent_scenario_id: string | null, source: ScenarioSource, display_name: string, description: string, tags: Array<string>, notes: string | null, asset_class: AssetClass, asset: Array<AssetRef>, quote_currency: QuoteCurrency, time_window: TimeWindow, granularity: string, timezone: string, calendar: CalendarRef, data_source: DataSource, venue: VenueSettings, replay_mode: ReplayMode, capital: Capital, bar_cache_policy: BarCachePolicy, created_at: string, created_by: string, archived_at: string | null, };
+export type Scenario = { id: string, parent_scenario_id: string | null, source: ScenarioSource, display_name: string, description: string, tags: Array<string>, notes: string | null, asset_class: AssetClass, asset: Array<AssetRef>, quote_currency: QuoteCurrency, time_window: TimeWindow, granularity: string, timezone: string, calendar: CalendarRef, data_source: DataSource, venue: VenueSettings, replay_mode: ReplayMode, 
+/**
+ * Initial trading capital for this evaluation scenario. Moved back onto
+ * Scenario (from Strategy) so backtest results are reproducible
+ * independent of which strategy is run against the scenario.
+ */
+capital: { initial: number, currency: string }, bar_cache_policy: BarCachePolicy, 
+/**
+ * Number of bars to pre-fetch from immediately before
+ * `time_window.start` so per-decision context (indicators, trader
+ * `bar_history` slice) has real history at bar 1. Defaults to
+ * [`DEFAULT_WARMUP_BARS`] for new scenarios; legacy rows whose
+ * `body_json` predates this field hydrate to the same default via
+ * `serde(default)`.
+ */
+warmup_bars: number, created_at: string, created_by: string, archived_at: string | null, };

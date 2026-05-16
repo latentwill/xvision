@@ -64,6 +64,55 @@ pub fn compute_cache_key(
     h.finalize().to_hex().to_string()
 }
 
+/// Tag distinguishing warmup-window cache rows from the main scenario
+/// window. Used as the `data_source_tag` argument to [`compute_cache_key`]
+/// so warmup and main bars never collide on a shared key.
+pub const WARMUP_DATA_SOURCE_TAG: &str = "alpaca-historical-v1-warmup";
+
+/// Compute the `[start, end)` window for fetching `count` bars
+/// immediately before `scenario_start`. End matches `scenario_start`
+/// exactly so the warmup window is contiguous with the decision window.
+pub fn warmup_window_for(
+    granularity: BarGranularity,
+    scenario_start: DateTime<Utc>,
+    count: u32,
+) -> (DateTime<Utc>, DateTime<Utc>) {
+    let secs = (granularity.seconds() as i64) * (count as i64);
+    let warmup_start = scenario_start - chrono::Duration::seconds(secs);
+    (warmup_start, scenario_start)
+}
+
+/// Load `count` bars immediately before `scenario_start` via the same
+/// singleflight cache wrapper as [`load_bars`]. Returns an empty Vec
+/// when `count == 0`. Cache key is derived from the warmup window plus
+/// [`WARMUP_DATA_SOURCE_TAG`] so warmup rows live alongside (but never
+/// collide with) the main scenario-window rows.
+pub async fn load_warmup_bars(
+    ctx: &ApiContext,
+    asset_pair: &str,
+    granularity: BarGranularity,
+    scenario_start: DateTime<Utc>,
+    count: u32,
+) -> ApiResult<Vec<MarketBar>> {
+    if count == 0 {
+        return Ok(Vec::new());
+    }
+    let (start, end) = warmup_window_for(granularity, scenario_start, count);
+    let cache_key = compute_cache_key(asset_pair, granularity, start, end, WARMUP_DATA_SOURCE_TAG);
+    load_bars(
+        ctx,
+        &BarCacheArgs {
+            cache_key,
+            asset_pair: asset_pair.to_string(),
+            granularity,
+            start,
+            end,
+            data_source_tag: WARMUP_DATA_SOURCE_TAG.into(),
+        },
+    )
+    .await
+}
+
 /// Read bars for the window described by `args`, going through the
 /// `bars_cache` table. On miss, calls the Alpaca fetcher on the context
 /// and back-fills the cache before returning. Concurrent misses for the

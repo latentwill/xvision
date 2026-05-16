@@ -54,6 +54,11 @@ pub struct CreateScenarioRequest {
     pub notes: Option<String>,
     pub parent_scenario_id: Option<String>,
     pub source: ScenarioSource,
+    /// Pre-window context bars. `None` → `DEFAULT_WARMUP_BARS` (200).
+    /// Stored inside `body_json` on the scenario row.
+    #[serde(default)]
+    #[cfg_attr(feature = "ts-export", ts(type = "number | null"))]
+    pub warmup_bars: Option<u32>,
 }
 
 /// Filter for `list`. All fields are AND-composed; `Default` means "no
@@ -92,6 +97,10 @@ pub struct ScenarioMutations {
     pub venue: Option<VenueSettings>,
     pub tags: Option<Vec<String>>,
     pub notes: Option<String>,
+    /// Override the parent's warmup window when cloning. `None` inherits
+    /// the parent's `warmup_bars`.
+    #[cfg_attr(feature = "ts-export", ts(type = "number | null"))]
+    pub warmup_bars: Option<u32>,
 }
 
 /// Create a new scenario after validating the request. Returns the
@@ -132,6 +141,7 @@ pub async fn create(ctx: &ApiContext, req: CreateScenarioRequest) -> ApiResult<S
             refresh_policy: RefreshPolicy::NeverRefresh,
             data_fetched_at: None,
         },
+        warmup_bars: req.warmup_bars.unwrap_or(DEFAULT_WARMUP_BARS),
         created_at: Utc::now(),
         created_by: ctx.actor.id().to_string(),
         archived_at: None,
@@ -193,6 +203,7 @@ pub async fn clone(ctx: &ApiContext, parent: &str, mutations: ScenarioMutations)
         notes: mutations.notes,
         parent_scenario_id: Some(parent.to_string()),
         source: ScenarioSource::Clone,
+        warmup_bars: Some(mutations.warmup_bars.unwrap_or(parent_s.warmup_bars)),
     };
     create(ctx, req).await
 }

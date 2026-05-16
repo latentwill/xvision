@@ -37,6 +37,12 @@ pub struct PaperExecutor {
     /// broker reference prices. Paper mode sends orders to Alpaca paper, but
     /// the agent and sizing still run against the scenario replay timeline.
     injected_bars: Option<Vec<Ohlcv>>,
+    /// Pre-window warmup bars prepended to the decision seed's rolling
+    /// `bar_history` window. Same role as `BacktestExecutor::warmup_bars`
+    /// — they never drive decisions; they only feed context so the trader
+    /// LLM can compute crossovers / momentum from real prior bars at
+    /// bar 1 of the paper window. See `eval::bars::load_warmup_bars`.
+    warmup_bars: Vec<Ohlcv>,
     /// Optional progress channel. When `None` the executor is silent
     /// (today's `eval::run` callers); when `Some`, every significant
     /// action emits a `ProgressEvent`. Send-when-no-subscribers is a
@@ -53,6 +59,7 @@ impl PaperExecutor {
         Self {
             broker,
             injected_bars: None,
+            warmup_bars: Vec::new(),
             progress: None,
             event_bus: None,
         }
@@ -62,6 +69,7 @@ impl PaperExecutor {
         Self {
             broker,
             injected_bars: Some(bars),
+            warmup_bars: Vec::new(),
             progress: None,
             event_bus: None,
         }
@@ -74,6 +82,7 @@ impl PaperExecutor {
         Self {
             broker,
             injected_bars: None,
+            warmup_bars: Vec::new(),
             progress: Some(progress),
             event_bus: None,
         }
@@ -87,6 +96,7 @@ impl PaperExecutor {
         Self {
             broker,
             injected_bars: Some(bars),
+            warmup_bars: Vec::new(),
             progress: Some(progress),
             event_bus: None,
         }
@@ -94,6 +104,14 @@ impl PaperExecutor {
 
     pub fn with_event_bus(mut self, bus: Arc<RunEventBus>) -> Self {
         self.event_bus = Some(bus);
+        self
+    }
+
+    /// Pre-window warmup bars for the seed's rolling `bar_history`. Never
+    /// iterated for decisions. Chains with `with_bars` / `with_progress` /
+    /// `with_event_bus`.
+    pub fn with_warmup(mut self, warmup_bars: Vec<Ohlcv>) -> Self {
+        self.warmup_bars = warmup_bars;
         self
     }
 
@@ -114,19 +132,28 @@ fn is_actionable(action: &str) -> bool {
     matches!(action, "long_open" | "short_open")
 }
 
-fn bar_seed(asset: &str, bar: &Ohlcv) -> serde_json::Value {
+fn bar_seed(asset: &str, bar: &Ohlcv, bar_history: Vec<serde_json::Value>) -> serde_json::Value {
     serde_json::json!({
         "asset": asset,
-        "current_bar": {
-            "timestamp": bar.timestamp,
-            "open": bar.open,
-            "high": bar.high,
-            "low": bar.low,
-            "close": bar.close,
-            "volume": bar.volume,
-        },
+        "current_bar": ohlcv_to_json(bar),
+        "next_bar_open": serde_json::Value::Null,
         "reference_price_usd": bar.close,
         "reference_price_source": "eval_bar.close",
+        "bar_history": bar_history,
+    })
+}
+
+/// Serialize an Ohlcv bar as the same JSON shape used for
+/// `market_data.current_bar` so `bar_history` entries are homogeneous
+/// with the trader prompt's existing current-bar shape.
+fn ohlcv_to_json(bar: &Ohlcv) -> serde_json::Value {
+    serde_json::json!({
+        "timestamp": bar.timestamp,
+        "open": bar.open,
+        "high": bar.high,
+        "low": bar.low,
+        "close": bar.close,
+        "volume": bar.volume,
     })
 }
 
@@ -278,6 +305,16 @@ impl PaperExecutor {
 
         let total_decision_bars = decision_bars.len().max(1) as f64;
 
+        // Per-decision rolling-history window. Warmup bars (from
+        // `eval::bars::load_warmup_bars`) sit in front of the scenario
+        // bars so we can slice the last `scenario.warmup_bars` items at
+        // each decision and surface them in the seed as
+        // `market_data.bar_history`. Same mechanism as BacktestExecutor.
+        let warmup_count = self.warmup_bars.len();
+        let combined_bars: Vec<&Ohlcv> =
+            self.warmup_bars.iter().chain(decision_bars.iter()).collect();
+        let history_window = scenario.warmup_bars as usize;
+
         let initial_balance = self.broker.balance().await?;
         let mut equity_samples: Vec<f64> = Vec::new();
         let mut decision_idx = 0u32;
@@ -288,7 +325,7 @@ impl PaperExecutor {
         // initial balance so the first tick's drawdown is well-defined.
         let mut peak_equity = initial_balance.max(0.0);
 
-        for bar in decision_bars {
+        for (i, bar) in decision_bars.iter().enumerate() {
             if store.is_terminal(&run.id).await? {
                 anyhow::bail!("eval run stopped");
             }
@@ -302,9 +339,19 @@ impl PaperExecutor {
                 current_ts: bar.timestamp,
             });
 
+            // Slice the last `history_window` bars strictly before the
+            // current bar from the combined `[warmup..., decision...]`
+            // series.
+            let combined_idx = warmup_count + i;
+            let history_start = combined_idx.saturating_sub(history_window);
+            let bar_history: Vec<serde_json::Value> = combined_bars[history_start..combined_idx]
+                .iter()
+                .map(|b| ohlcv_to_json(b))
+                .collect();
+
             let position = self.broker.position(&asset).await?;
             let balance = self.broker.balance().await?;
-            let market_data = bar_seed(&asset, &bar);
+            let market_data = bar_seed(&asset, bar, bar_history);
             let reference_price_usd = bar.close;
             let seed = serde_json::json!({
                 "decision_index": decision_idx,

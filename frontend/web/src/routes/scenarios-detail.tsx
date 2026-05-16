@@ -62,6 +62,7 @@ export function ScenariosDetailRoute() {
         venue: null,
         tags: null,
         notes: null,
+        warmup_bars: null,
       }),
     onSuccess: (newScenario) => {
       qc.invalidateQueries({ queryKey: scenarioKeys.all });

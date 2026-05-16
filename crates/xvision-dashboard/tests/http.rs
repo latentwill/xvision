@@ -123,6 +123,8 @@ async fn strategies_list_returns_seeded_strategy() {
                 required_tools: vec![],
                 risk_preset_or_config: "balanced".into(),
                 published_at: None,
+
+                min_warmup_bars: None,
             },
             agents: Vec::new(),
             pipeline: Default::default(),
@@ -1133,6 +1135,8 @@ async fn strategy_chart_returns_empty_run_series_for_unused_strategy() {
                 required_tools: vec![],
                 risk_preset_or_config: "balanced".into(),
                 published_at: None,
+
+                min_warmup_bars: None,
             },
             agents: Vec::new(),
             pipeline: Default::default(),

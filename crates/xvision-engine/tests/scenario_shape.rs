@@ -51,6 +51,8 @@ fn valid_crypto_scenario(symbol: &str) -> Scenario {
             refresh_policy: RefreshPolicy::NeverRefresh,
             data_fetched_at: None,
         },
+
+        warmup_bars: xvision_engine::eval::scenario::DEFAULT_WARMUP_BARS,
         created_at: Utc.with_ymd_and_hms(2026, 5, 11, 0, 0, 0).unwrap(),
         created_by: "edkenne@gmail.com".into(),
         archived_at: None,
@@ -117,6 +119,8 @@ fn scenario_serde_roundtrip() {
             refresh_policy: RefreshPolicy::NeverRefresh,
             data_fetched_at: None,
         },
+
+        warmup_bars: xvision_engine::eval::scenario::DEFAULT_WARMUP_BARS,
         created_at: Utc.with_ymd_and_hms(2026, 5, 11, 0, 0, 0).unwrap(),
         created_by: "edkenne@gmail.com".into(),
         archived_at: None,

@@ -9,7 +9,7 @@ use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::eval::scenario::{
     AdjustmentMode, AssetClass, AssetRef, BarCachePolicy, CalendarRef, Capital, DataSource, Fees, FillModel,
     LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode, Scenario,
-    ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings,
+    ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings, DEFAULT_WARMUP_BARS,
 };
 use xvision_engine::eval::scenario_store as store;
 
@@ -64,6 +64,7 @@ fn make_test_scenario(id: &str) -> Scenario {
             refresh_policy: RefreshPolicy::NeverRefresh,
             data_fetched_at: None,
         },
+        warmup_bars: DEFAULT_WARMUP_BARS,
         created_at: Utc.with_ymd_and_hms(2026, 5, 11, 0, 0, 0).unwrap(),
         created_by: "test".into(),
         archived_at: None,

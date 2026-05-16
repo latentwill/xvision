@@ -67,6 +67,12 @@ const GRANULARITY_OPTIONS = [
   '12mo',
 ];
 
+/// Default for the "Context bars" field; mirrors
+/// `xvision_engine::eval::scenario::DEFAULT_WARMUP_BARS` (200). Kept
+/// inline rather than imported from `types.gen` because that module
+/// only exports type aliases, not constants.
+const DEFAULT_WARMUP_BARS = 200;
+
 export function ScenarioForm({
   initial,
   submitting,
@@ -106,9 +112,13 @@ export function ScenarioForm({
   const [latencyMs, setLatencyMs] = useState(
     initial?.venue?.latency?.decision_to_fill_ms ?? 500,
   );
+  const [warmupBars, setWarmupBars] = useState(
+    initial?.warmup_bars ?? DEFAULT_WARMUP_BARS,
+  );
   const [nameError, setNameError] = useState<string | null>(null);
   const [granularityError, setGranularityError] = useState<string | null>(null);
   const [timeError, setTimeError] = useState<string | null>(null);
+  const [warmupError, setWarmupError] = useState<string | null>(null);
 
   const estimatedBars = estimateBars(from, to, granularity);
 
@@ -140,6 +150,12 @@ export function ScenarioForm({
       return;
     }
     setTimeError(null);
+
+    if (!Number.isFinite(warmupBars) || warmupBars < 0) {
+      setWarmupError('Context bars must be a non-negative integer.');
+      return;
+    }
+    setWarmupError(null);
 
     const slippage: SlippageModel = { model: 'linear', bps: slippageBps };
     const fillModel: FillModel = {
@@ -178,6 +194,7 @@ export function ScenarioForm({
       notes: notes.trim() || null,
       parent_scenario_id: null,
       source: SCENARIO_SOURCE,
+      warmup_bars: warmupBars,
     };
 
     onSubmit(req);
@@ -280,6 +297,30 @@ export function ScenarioForm({
             <div className="mt-1 text-[12px] text-rose-300">{granularityError}</div>
           ) : null}
         </Field>
+        <div className="block text-[12px] text-text-3">
+          <label className="block">
+            <div className="mb-1">Context bars</div>
+            <input
+              type="number"
+              min={0}
+              className="input"
+              value={warmupBars}
+              onChange={(e) => {
+                const next = parseInt(e.target.value, 10);
+                setWarmupBars(Number.isFinite(next) ? next : 0);
+                if (warmupError) setWarmupError(null);
+              }}
+            />
+          </label>
+          <div className="mt-1 text-[12px] text-text-3">
+            Bars pre-fetched before the scenario window so indicators / the trader
+            LLM have history at decision t=0. Should be ≥ the strategy's
+            longest indicator period (e.g. 26-bar EMA → ≥ 26).
+          </div>
+          {warmupError ? (
+            <div className="mt-1 text-[12px] text-rose-300">{warmupError}</div>
+          ) : null}
+        </div>
       </Section>
 
       <Section title="Venue (Alpaca)">
