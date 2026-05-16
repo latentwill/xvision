@@ -1,12 +1,43 @@
-// CLI entrypoint. Wave 1: prints version and exits.
-// Wave 1 Task 4 wires up the JSON-RPC server.
+import { startUdsServer } from "./transport/uds-server.js"
 import { PROTOCOL_VERSION, SIDECAR_VERSION } from "./version.js"
 
-const args = process.argv.slice(2)
-if (args[0] === "--version") {
-  console.log(JSON.stringify({ protocol_version: PROTOCOL_VERSION, sidecar_version: SIDECAR_VERSION }))
-  process.exit(0)
+async function main(): Promise<void> {
+  const args = process.argv.slice(2)
+
+  if (args[0] === "--version") {
+    console.log(JSON.stringify({ protocol_version: PROTOCOL_VERSION, sidecar_version: SIDECAR_VERSION }))
+    process.exit(0)
+  }
+
+  const socketIdx = args.indexOf("--socket")
+  if (socketIdx === -1 || !args[socketIdx + 1]) {
+    console.error("xvision-agentd: missing --socket <path>")
+    process.exit(2)
+  }
+  const socketPath = args[socketIdx + 1]!
+
+  const server = await startUdsServer(socketPath)
+  const shutdown = async (): Promise<void> => {
+    await server.close()
+    process.exit(0)
+  }
+  process.on("SIGTERM", shutdown)
+  process.on("SIGINT", shutdown)
+
+  // Parent-PID liveness monitor. Exit if our parent goes away.
+  // .unref() lets the interval not keep the event loop alive on its own —
+  // graceful shutdown via SIGTERM still works.
+  const parentPid = process.ppid
+  setInterval(() => {
+    try {
+      process.kill(parentPid, 0)
+    } catch {
+      void shutdown()
+    }
+  }, 1000).unref()
+
+  // Structured "ready" log on stderr so the Rust supervisor can sync.
+  process.stderr.write(JSON.stringify({ event: "ready", socket: socketPath }) + "\n")
 }
 
-console.error("xvision-agentd: no socket path provided")
-process.exit(2)
+void main()
