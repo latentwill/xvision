@@ -65,6 +65,7 @@ Use these as reference only:
 | `qa8-eval-provider-preflight` | `.worktrees/qa8-eval-provider-preflight` | Prevent Web UI eval and wizard flows from launching with unconfigured `openai`/`anthropic` defaults; require configured provider/model selection or a clear zero-provider setup action | `qa4-settings-zero-provider` preferred | no overlap with eval launcher, chat rail, or provider picker tracks | eval launch/provider preflight tests + chat/wizard zero-provider regression test |
 | `qa10-eval-openrouter-slot-resolution` | `.worktrees/qa10-eval-openrouter-slot-resolution` | Fix eval provider/model resolution so the one-month smoke strategy dispatches through `openrouter` instead of falling through to Anthropic; align the strategy slot/provider fields and add a regression for the run path | `qa8-eval-provider-preflight` preferred | no overlap with eval executor/parser tracks | focused eval provider-selection regression + strategy bundle smoke |
 | `qa10-flash-crash-fixture-alignment` | `.worktrees/qa10-flash-crash-fixture-alignment` | Ensure `flash-crash-2024-08` resolves to a real 30-day parquet fixture at the runtime path eval expects, and keep the scenario registry/load path wired to that asset | none | no overlap with CLI/scenario data tracks | scenario fixture smoke + eval run smoke |
+| `qa10-backtest-short-window-replay` | current workspace | Remove the hard 200-bar backtest warmup gate so literal 30-day/day-1 eval windows can run from available bars; keep only the next-bar fill requirement | none | no overlap unless another worker edits `crates/xvision-engine/src/eval/executor/backtest.rs` | focused backtest executor regression for 30 daily bars |
 | `qa9-delete-edit-flow-verification` | `.worktrees/qa9-delete-edit-flow-verification` | Verify scenario clone-to-edit, archive, and delete failure flows after live QA stopped before delete/edit coverage | none | no overlap with wizard/strategy-agent tracks; frontend test-only coverage | scenario detail focused frontend tests + typecheck |
 | `qa9-strategy-wizard-persistence` | `.worktrees/qa9-strategy-wizard-persistence` | Fix live QA bug where setup wizard/chat claims asset/cadence/risk edits but Inspector manifest still shows original draft values | none | no overlap with eval/agent attachment tracks; owns wizard authoring manifest persistence | authoring/API/wizard regression tests in CI/non-deploy + frontend typecheck |
 | `qa9-readonly-editability-contract` | `.worktrees/qa9-readonly-editability-contract` | Clarify the setup/Inspector contract so read-only manifest/mechanical fields are not presented as directly editable without a successful setup tool save | none | no overlap with backend persistence; owns copy/tests for read-only contract | setup + authoring focused frontend tests + typecheck |
@@ -112,15 +113,16 @@ Use these as reference only:
 28. `qa8-eval-provider-preflight`
 29. `qa10-eval-openrouter-slot-resolution`
 30. `qa10-flash-crash-fixture-alignment`
-31. `color-themes-light-dark`
-32. `qa10-eval-trader-empty-output-resilience`
-33. `qa10-stop-eval-run-control`
-34. `qa10-chat-scenario-dsml-recovery`
-35. `qa10-eval-chat-scrollbars-controls`
-36. `eval-review-data-model`
-37. `eval-review-agent-engine`
-38. `eval-review-api-cli`
-39. `eval-review-run-detail-ui`
+31. `qa10-backtest-short-window-replay`
+32. `color-themes-light-dark`
+33. `qa10-eval-trader-empty-output-resilience`
+34. `qa10-stop-eval-run-control`
+35. `qa10-chat-scenario-dsml-recovery`
+36. `qa10-eval-chat-scrollbars-controls`
+37. `eval-review-data-model`
+38. `eval-review-agent-engine`
+39. `eval-review-api-cli`
+40. `eval-review-run-detail-ui`
 
 ## Immediate start set
 
@@ -142,6 +144,7 @@ Safe to start now:
 - `qa8-scenario-display-name-contract`
 - `qa10-eval-openrouter-slot-resolution`
 - `qa10-flash-crash-fixture-alignment`
+- `qa10-backtest-short-window-replay`
 - `color-themes-light-dark`
 - `qa10-eval-trader-empty-output-resilience`
 - `qa10-stop-eval-run-control`
@@ -517,6 +520,14 @@ Raw items mapped to board tracks:
   action: verify the scenario registry points at a materialized asset, package
   or symlink it into the deployed data path, and add a smoke check so the eval
   cannot launch against a missing fixture.
+- `qa10-backtest-short-window-replay`: QA report
+  `/home/agents/qa/xvision-eval-2026-05-15/report.md` found the provider bug is
+  fixed and local-candle eval works, but a literal 30-day Day1 eval cannot
+  complete because `BacktestExecutor` hard-skips a 200-bar warmup. Required
+  action: remove that artificial warmup restriction from the executor and add a
+  regression proving a 30 daily-bar fixture starts decisions from day 1. Keep
+  only constraints that are mechanically required, such as needing a following
+  bar when fills execute at next open.
 - `qa10-stop-eval-run-control`: Operators need a clear Stop Eval Run control
   because failed runs appear to keep going after the UI/run row reports failure.
   The code already has a `/api/eval/runs/:id/cancel` route and a small Cancel
