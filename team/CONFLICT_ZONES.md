@@ -24,6 +24,10 @@ Conductor: see `team/CONDUCTOR.md`.
 | `crates/xvision-cli/src/commands/eval/mod.rs` | `eval-review-api-cli`, then `q15-eval-json-export` | eval-review / q15 | `xvn eval review` + `xvn eval export` registered |
 | `frontend/web/src/routes/eval-runs-detail.tsx` | `eval-review-run-detail-ui`, then `q15-eval-json-export` (Download JSON), then `q15-eval-retry-button` | eval-review / q15 | Three feature additions landed in series |
 | `crates/xvision-cli/src/json/object_shapes.rs` | `q15-eval-json-export` (defines), `q15-object-json-output` (consumes) | q15 | Shared shape landed |
+| `crates/xvision-dashboard/src/server.rs` | `q15-tailscale-serve-api-reachability` | q15 | Bind/Origin fix landed |
+| `crates/xvision-dashboard/src/lib.rs` | `q15-tailscale-serve-api-reachability` | q15 | Bind/Origin fix landed |
+| `frontend/web/vite.config.ts` | `q15-tailscale-serve-api-reachability` | q15 | Tailscale serve adjustments landed |
+| `frontend/web/src/api/client.ts` | `q15-tailscale-serve-api-reachability` | q15 | API client adjustments landed (if any) |
 | `crates/xvision-cli/src/commands/mod.rs` | `v2a-example-artifacts` | v2a | `xvn example` registered |
 | `team/MANIFEST.md` | conductor | — | Always conductor-only |
 | `team/OWNERSHIP.md` | conductor | — | Always conductor-only |

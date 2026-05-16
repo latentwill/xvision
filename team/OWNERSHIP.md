@@ -43,6 +43,14 @@ through their contracts' `parallel_conflicts`.
 | `crates/xvision-dashboard/src/routes/agents/get.rs` | `q15-object-json-output` | q15 |
 | `frontend/web/src/features/eval-runs/export/**` | `q15-eval-json-export` | q15 |
 | `frontend/web/src/features/eval-runs/retry-button.tsx` | `q15-eval-retry-button` | q15 |
+| `frontend/web/vite.config.ts` | `q15-tailscale-serve-api-reachability` | q15 |
+| `frontend/web/src/api/client.ts` | `q15-tailscale-serve-api-reachability` | q15 |
+| `frontend/web/MOBILE.md` | `q15-tailscale-serve-api-reachability` | q15 |
+| `crates/xvision-dashboard/src/server.rs` | `q15-tailscale-serve-api-reachability` | q15 |
+| `crates/xvision-dashboard/src/lib.rs` | `q15-tailscale-serve-api-reachability` | q15 |
+| `crates/xvision-dashboard/src/state.rs` | `q15-tailscale-serve-api-reachability` (if Host/Origin allowlist lives here) | q15 |
+| `scripts/serve-tailscale.sh` | `q15-tailscale-serve-api-reachability` (new, optional) | q15 |
+| `docs/runbook/tailscale-serve.md` | `q15-tailscale-serve-api-reachability` (new file) | q15 |
 | `crates/xvision-engine/migrations/**` | (none — frozen until a new migration is reserved in `v1-shipping-plan.md`) | — |
 | `crates/xvision-engine/src/eval/review/**` | `eval-review-agent-engine` | eval-review |
 | `crates/xvision-engine/src/eval/store.rs` | `eval-review-agent-engine` (review helpers only) | eval-review |
