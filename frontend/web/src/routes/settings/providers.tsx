@@ -529,6 +529,14 @@ function ModelManager({
         modelSearchHaystack(m).includes(filter.trim().toLowerCase()),
       )
     : list;
+  // Partition by the persisted enabled set (not the local checkbox working
+  // set) so toggling a checkbox doesn't make rows jump under the cursor.
+  const persistedEnabled = useMemo(
+    () => new Set(row.enabled_models),
+    [persistedKey],
+  );
+  const enabledRows = filtered.filter((m) => persistedEnabled.has(m.id));
+  const otherRows = filtered.filter((m) => !persistedEnabled.has(m.id));
   const selectedCount = selected.size;
   const dirty = setsDiffer(selected, new Set(row.enabled_models));
 
@@ -591,7 +599,32 @@ function ModelManager({
         <div className="max-h-[300px] overflow-y-auto border border-border-soft rounded">
           <table className="w-full">
             <tbody>
-              {filtered.map((m) => (
+              {enabledRows.length > 0 ? (
+                <>
+                  <SectionHeading
+                    label={`Selected (${enabledRows.length})`}
+                  />
+                  {enabledRows.map((m) => (
+                    <ModelRow
+                      key={m.id}
+                      model={m}
+                      checked={selected.has(m.id)}
+                      onToggle={(on) => {
+                        setSelected((prev) => {
+                          const next = new Set(prev);
+                          if (on) next.add(m.id);
+                          else next.delete(m.id);
+                          return next;
+                        });
+                      }}
+                    />
+                  ))}
+                  {otherRows.length > 0 ? (
+                    <SectionHeading label="All models" />
+                  ) : null}
+                </>
+              ) : null}
+              {otherRows.map((m) => (
                 <ModelRow
                   key={m.id}
                   model={m}
@@ -642,6 +675,19 @@ function ModelManager({
         ) : null}
       </div>
     </div>
+  );
+}
+
+function SectionHeading({ label }: { label: string }) {
+  return (
+    <tr className="bg-surface-elev/40 first:border-t-0">
+      <td
+        colSpan={3}
+        className="py-1 px-3 text-[10px] uppercase tracking-wider text-text-3 font-medium"
+      >
+        {label}
+      </td>
+    </tr>
   );
 }
 
