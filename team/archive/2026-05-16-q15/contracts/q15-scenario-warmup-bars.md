@@ -5,7 +5,7 @@ wave: q15
 worktree: .worktrees/q15-scenario-warmup-bars
 branch: task/q15-scenario-warmup-bars
 base: origin/main
-status: in-progress
+status: merged
 depends_on: []
 blocks: []
 stacking: none
@@ -95,6 +95,7 @@ git worktree add .worktrees/q15-scenario-warmup-bars -b task/q15-scenario-warmup
   (scenarios live under `eval/`, bars cache at `eval/bars.rs`, frontend
   uses `routes/+components/+api` rather than `features/scenarios/`).
   See OWNERSHIP.md for the updated map.
+- PR: https://github.com/latentwill/xvision/pull/183 (merged 2026-05-16).
 
 # Checkpoints
 

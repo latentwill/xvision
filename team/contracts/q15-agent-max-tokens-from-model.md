@@ -5,7 +5,7 @@ wave: q15
 worktree: .worktrees/q15-agent-max-tokens-from-model
 branch: task/q15-agent-max-tokens-from-model
 base: origin/main
-status: pr-open
+status: merged
 pr: 185
 depends_on: []
 blocks: []
@@ -103,7 +103,6 @@ git worktree add .worktrees/q15-agent-max-tokens-from-model -b task/q15-agent-ma
 
   Coordinate with `q15-scenario-warmup-bars` if both end up wanting to
   edit the eval dispatcher signature.
-
 - **Storage compatibility.** `agent_slots.max_tokens` stays `INTEGER
   NOT NULL DEFAULT 0` (no migration). The Rust-side `Option<u32>` maps
   `None ↔ 0` at the store boundary; the resolver treats `Some(0)` as
@@ -117,3 +116,14 @@ git worktree add .worktrees/q15-agent-max-tokens-from-model -b task/q15-agent-ma
   `max_tokens` manually based on the generic Truncated message until a
   future revision wires the toggle. DeepSeek R1 and the OpenAI o-series
   are the active reasoning-class entries.
+
+- **Legacy LLMSlot dotted form.** Review on #185 surfaced that pre-agent
+  strategies still ship `model_requirement` values like
+  `anthropic.claude-sonnet-4.6` (provider-qualified with `.`, version
+  separator with `.`). The follow-up commit extends `lookup_model` to
+  strip a known-provider dot prefix and to retry with `.` → `-` on the
+  tail, so those legacy slots resolve to the canonical row instead of
+  falling through to `unknown_default`.
+
+- **Merged via PR #185** (2026-05-16).
+
