@@ -36,6 +36,11 @@ use serde::{Deserialize, Serialize};
 ///
 /// `raw` keeps the provider's original entry so future fields can be
 /// surfaced without re-fetching.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ModelEntry {
     /// Provider-side model id as returned by the API. Used verbatim in
@@ -83,6 +88,7 @@ pub struct ModelEntry {
     /// Provider's raw row, preserved verbatim. Lets future fields ride
     /// out without a re-fetch and gives the dashboard a debug surface.
     #[serde(default)]
+    #[cfg_attr(feature = "ts-export", ts(type = "unknown"))]
     pub raw: serde_json::Value,
 }
 
@@ -110,6 +116,11 @@ impl ModelEntry {
 /// `fetched_at` is the source-of-truth for staleness checks. The cache
 /// layer uses this to decide when to refresh; consumers can also display
 /// "fetched N minutes ago" in the UI.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Catalog {
     /// Matches `ProviderEntry.name`. The provider this catalog belongs
@@ -119,6 +130,7 @@ pub struct Catalog {
 
     /// Wall-clock time of the most recent successful fetch, in UTC.
     /// Cache freshness is computed against this.
+    #[cfg_attr(feature = "ts-export", ts(type = "string"))]
     pub fetched_at: chrono::DateTime<chrono::Utc>,
 
     /// The HTTP URL the fetcher hit. Stored for transparency and to

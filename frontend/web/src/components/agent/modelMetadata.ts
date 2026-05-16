@@ -168,9 +168,9 @@ function lookupExactOrPrefix(key: string): ModelMetadata | null {
   return null;
 }
 
-export function lookupModel(modelId: string): ModelMetadata {
+function lookupModelOptional(modelId: string): ModelMetadata | null {
   const trimmed = modelId.trim().toLowerCase();
-  if (!trimmed) return UNKNOWN_DEFAULT;
+  if (!trimmed) return null;
   // OpenRouter-style `vendor/model` — keep only the trailing segment.
   const lastSlash = trimmed.lastIndexOf("/");
   const afterSlash = lastSlash >= 0 ? trimmed.slice(lastSlash + 1) : trimmed;
@@ -190,7 +190,20 @@ export function lookupModel(modelId: string): ModelMetadata {
     if (dashed) return dashed;
   }
 
-  return UNKNOWN_DEFAULT;
+  return null;
+}
+
+export function lookupModel(modelId: string): ModelMetadata {
+  return lookupModelOptional(modelId) ?? UNKNOWN_DEFAULT;
+}
+
+// True iff the editorial table knows this model. SlotForm uses this to
+// decide whether the "Provider default" placeholder applies — the
+// fallback copy is for OpenAI-compat models the editorial table has
+// never heard of, not for known models that happen to be missing from
+// the live catalog fetch.
+export function hasModelMetadata(modelId: string): boolean {
+  return lookupModelOptional(modelId) !== null;
 }
 
 /// Mirrors `ModelMetadata::auto_max_tokens` on the Rust side: visible
