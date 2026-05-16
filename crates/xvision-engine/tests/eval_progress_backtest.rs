@@ -11,7 +11,9 @@
 
 use std::sync::Arc;
 
+use chrono::{Duration, TimeZone, Utc};
 use sqlx::SqlitePool;
+use xvision_core::market::Ohlcv;
 use xvision_data::fixtures::ensure_test_fixture;
 use xvision_engine::agent::llm::{LlmDispatch, MockDispatch};
 use xvision_engine::eval::executor::{BacktestExecutor, Executor};
@@ -87,6 +89,64 @@ fn build_strategy(agent_id: &str) -> Strategy {
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({}),
     }
+}
+
+fn daily_bars(count: usize) -> Vec<Ohlcv> {
+    let start = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+    (0..count)
+        .map(|i| {
+            let px = 50_000.0 + i as f64 * 100.0;
+            Ohlcv {
+                timestamp: start + Duration::days(i as i64),
+                open: px,
+                high: px + 250.0,
+                low: px - 250.0,
+                close: px + 50.0,
+                volume: 1_000.0 + i as f64,
+            }
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn backtest_executor_runs_30_day_fixture_without_200_bar_warmup() {
+    let store = fresh_store().await;
+    let scenario = canonical_scenarios()
+        .into_iter()
+        .find(|s| s.id == "flash-crash-2024-08")
+        .expect("flash-crash-2024-08 scenario must exist");
+    let mut strategy = build_strategy("01TESTSTRATEGYWARMUP000000001");
+    strategy.manifest.decision_cadence_minutes = 1_440;
+
+    let mut run = Run::new_queued(
+        strategy.manifest.id.clone(),
+        scenario.id.clone(),
+        RunMode::Backtest,
+    );
+    store.create(&run).await.unwrap();
+
+    let bars = daily_bars(30);
+    let first_bar_ts = bars[0].timestamp;
+    let dispatch = long_open_dispatch();
+    let tools = Arc::new(ToolRegistry::empty());
+    let executor = BacktestExecutor::with_bars(bars);
+
+    let metrics = executor
+        .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)
+        .await
+        .expect("30 daily bars should not require 200 warmup bars");
+
+    assert_eq!(
+        metrics.n_decisions, 29,
+        "30 bars should produce one decision for each bar with a next-open fill"
+    );
+    let decisions = store.read_decisions(&run.id).await.unwrap();
+    assert_eq!(decisions.len() as u32, metrics.n_decisions);
+    assert_eq!(
+        decisions.first().map(|d| d.timestamp),
+        Some(first_bar_ts),
+        "replay should start on the first bar instead of skipping a 200-bar warmup"
+    );
 }
 
 #[tokio::test]

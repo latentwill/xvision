@@ -42,10 +42,6 @@ use crate::tools::ToolRegistry;
 
 use super::trader_output::TraderOutput;
 
-/// Bars before this index are treated as warm-up history and skipped — gives
-/// any future indicator-panel computation enough lookback.
-const WARMUP_BARS: usize = 200;
-
 #[derive(Default)]
 pub struct BacktestExecutor {
     /// Optional progress channel. When `None` the executor is silent
@@ -95,8 +91,8 @@ impl BacktestExecutor {
     /// from the new DB-backed registry: bars are fetched / cached via
     /// `eval::bars::load_bars` and handed to the executor pre-loaded.
     ///
-    /// Bars must be in chronological order and contain enough lookback
-    /// for the warm-up window (`WARMUP_BARS` + 1).
+    /// Bars must be in chronological order and contain at least two entries:
+    /// one decision bar and one next bar to fill against.
     pub fn with_bars(bars: Vec<Ohlcv>) -> Self {
         Self {
             progress: None,
@@ -273,19 +269,18 @@ impl BacktestExecutor {
             load_ohlcv_fixture(data_seed, &asset, usize::MAX)
                 .map_err(|e| anyhow!("load fixture {}: {e}", data_seed))?
         };
-        if bars.len() <= WARMUP_BARS + 1 {
+        if bars.len() < 2 {
             anyhow::bail!(
-                "scenario {} has only {} bars; need > {}",
+                "scenario {} has only {} bars; need at least 2",
                 scenario.id,
                 bars.len(),
-                WARMUP_BARS + 1
             );
         }
 
-        // Used by RunTick to report progress as a percentage of bars
-        // post-warmup. The denominator is 1-indexed worth of "decision
-        // bars remaining"; under-reporting on slow fixtures is fine.
-        let total_decision_bars = bars.len().saturating_sub(WARMUP_BARS).max(1) as f64;
+        // Used by RunTick to report bar-clock progress. Cadence can make
+        // actual decisions sparser, but every decision still needs a following
+        // bar to fill against, so the final bar is reserved as the fill source.
+        let total_decision_bars = bars.len().saturating_sub(1).max(1) as f64;
 
         let initial = scenario.capital.initial;
         let slip_bps = match &scenario.venue.slippage {
@@ -308,9 +303,6 @@ impl BacktestExecutor {
         let mut peak_equity = initial.max(0.0);
 
         for (i, bar) in bars.iter().enumerate() {
-            if i < WARMUP_BARS {
-                continue;
-            }
             if store.is_terminal(&run.id).await? {
                 anyhow::bail!("eval run stopped");
             }
@@ -327,8 +319,7 @@ impl BacktestExecutor {
 
             // RunTick fires before the per-bar pipeline call so dashboards
             // can advance progress bars even when an LLM round-trip is slow.
-            let scenario_progress_pct =
-                ((i.saturating_sub(WARMUP_BARS) as f64 / total_decision_bars) * 100.0).clamp(0.0, 100.0);
+            let scenario_progress_pct = ((i as f64 / total_decision_bars) * 100.0).clamp(0.0, 100.0);
             self.emit(ProgressEvent::RunTick {
                 run_id: run.id.clone(),
                 scenario_progress_pct,
