@@ -12,7 +12,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use xvision_core::market::Ohlcv;
-use xvision_execution::broker_surface::{BrokerSurface, OrderRequest, Side};
+use xvision_execution::broker_surface::{is_alpaca_crypto, BrokerSurface, OrderRequest, Side};
 
 use crate::agent::llm::LlmDispatch;
 use crate::agent::pipeline::{run_pipeline, PipelineInputs, ResolvedAgentSlot};
@@ -431,7 +431,15 @@ impl PaperExecutor {
             let mut fill_size: Option<f64> = None;
             let mut fee: Option<f64> = None;
 
-            if is_actionable(&parsed.action) {
+            // Crypto short_open is unreachable through Alpaca paper —
+            // crypto is long-only on Alpaca. Record the decision as a
+            // no-op (broker not called, no fill, n_trades unchanged) and
+            // let the run continue; the LLM's intent still shows up in
+            // the decisions table, and the eval doesn't fail on broker
+            // rejection.
+            let blocked_by_broker =
+                parsed.action == "short_open" && is_alpaca_crypto(&asset);
+            if is_actionable(&parsed.action) && !blocked_by_broker {
                 let usd_at_risk = balance * strategy.risk.risk_pct_per_trade;
                 let size = (usd_at_risk / reference_price_usd).max(0.0);
                 let side = if parsed.action == "long_open" {

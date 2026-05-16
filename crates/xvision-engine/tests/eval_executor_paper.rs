@@ -227,6 +227,42 @@ async fn paper_executor_skips_broker_for_flat_decisions() {
 }
 
 #[tokio::test]
+async fn paper_executor_skips_broker_for_crypto_short_open() {
+    // Alpaca crypto is long-only — `short_open` from flat is not a
+    // valid order. The executor records the decision as a no-op and
+    // continues the run instead of failing on broker rejection.
+    let canned = r#"{"action":"short_open","conviction":0.8,"justification":"trader wants to short"}"#;
+    let (mock, executor, store, mut run, strategy, scenario, dispatch, tools) =
+        paper_harness(canned, 100_000.0).await;
+
+    let metrics = executor
+        .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)
+        .await
+        .expect("crypto short_open must not fail the run");
+
+    let submitted = mock.submitted();
+    assert_eq!(
+        submitted.len(),
+        0,
+        "crypto short_open must not hit the broker"
+    );
+    assert_eq!(metrics.n_trades, 0);
+    assert_eq!(metrics.n_decisions, 4);
+
+    let decisions = store.read_decisions(&run.id).await.unwrap();
+    assert_eq!(decisions.len(), 4);
+    for d in &decisions {
+        assert_eq!(d.action, "short_open");
+        assert!(
+            d.order_size.is_none(),
+            "no order_size recorded when broker is skipped"
+        );
+        assert!(d.fill_price.is_none());
+        assert!(d.fill_size.is_none());
+    }
+}
+
+#[tokio::test]
 async fn paper_executor_records_equity_sample_per_tick() {
     let canned = r#"{"action":"hold","conviction":0.0,"justification":"hold"}"#;
     let (_mock, executor, store, mut run, strategy, scenario, dispatch, tools) =
