@@ -164,7 +164,9 @@ function MetricsTable({ runs }: { runs: ComparisonRunSummary[] }) {
                   </Link>
                 </td>
                 <td className="py-2.5 px-3">
-                  <Pill tone={tone}>{r.status}</Pill>
+                  <Pill tone={tone} animated={r.status === "running"}>
+                    {r.status}
+                  </Pill>
                 </td>
                 <td className="py-2.5 px-3 font-mono text-text-2 text-[12px]">
                   {r.agent_id.slice(0, 12)}

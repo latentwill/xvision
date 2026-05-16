@@ -287,7 +287,10 @@ function RecentRunsCard({
                   {fmtPctOrDash(r.total_return_pct)}
                 </td>
                 <td className="py-2 pr-0 text-right">
-                  <Pill tone={STATUS_TONE[r.status] ?? "default"}>
+                  <Pill
+                    tone={STATUS_TONE[r.status] ?? "default"}
+                    animated={r.status === "running"}
+                  >
                     {r.status}
                   </Pill>
                 </td>

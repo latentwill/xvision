@@ -13,13 +13,22 @@ const TONE_CLASSES: Record<Tone, string> = {
 
 export function Pill({
   tone = "default",
+  animated = false,
   children,
   className = "",
   ...rest
-}: { tone?: Tone; children: ReactNode } & HTMLAttributes<HTMLSpanElement>) {
+}: {
+  tone?: Tone;
+  animated?: boolean;
+  children: ReactNode;
+} & HTMLAttributes<HTMLSpanElement>) {
+  const animatedClass = animated ? "xvn-pill-animated" : "";
+  const busy = animated ? { "aria-busy": true as const } : undefined;
   return (
     <span
-      className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-sm text-[11px] tracking-wide whitespace-nowrap border ${TONE_CLASSES[tone]} ${className}`}
+      data-running={animated || undefined}
+      className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-sm text-[11px] tracking-wide whitespace-nowrap border ${TONE_CLASSES[tone]} ${animatedClass} ${className}`}
+      {...busy}
       {...rest}
     >
       {children}

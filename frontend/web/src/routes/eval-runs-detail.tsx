@@ -308,7 +308,7 @@ function SummaryCard({
               {downloading ? "Preparing JSON…" : "Download JSON"}
             </button>
           ) : null}
-          <Pill tone={tone}>
+          <Pill tone={tone} animated={summary.status === "running"}>
             <span
               className="w-1.5 h-1.5 rounded-full"
               style={dotColor(tone)}
