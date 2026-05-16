@@ -1,4 +1,5 @@
 import { PROTOCOL_VERSION, SIDECAR_VERSION } from "../version.js"
+import { registerMethod } from "./index.js"
 
 export interface RuntimeHealthResult {
   protocol_version: string
@@ -15,3 +16,5 @@ export function handleRuntimeHealth(): RuntimeHealthResult {
     status: "ok",
   }
 }
+
+registerMethod("runtime.health", () => handleRuntimeHealth())

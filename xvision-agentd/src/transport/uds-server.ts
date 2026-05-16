@@ -1,20 +1,14 @@
 import * as net from "node:net"
 import { NdjsonDecoder, encodeNdjson } from "./ndjson.js"
 import {
-  JsonRpcRequest,
   JsonRpcResponse,
   RPC_ERROR_CODES,
 } from "./jsonrpc.js"
-import { handleRuntimeHealth } from "../methods/runtime-health.js"
+import "../methods/runtime-health.js"
+import { getMethodHandler } from "../methods/index.js"
 
 export interface UdsServerHandle {
   close(): Promise<void>
-}
-
-type MethodHandler = (params: unknown) => Promise<unknown> | unknown
-
-const methods: Record<string, MethodHandler> = {
-  "runtime.health": () => handleRuntimeHealth(),
 }
 
 export async function startUdsServer(socketPath: string): Promise<UdsServerHandle> {
@@ -62,22 +56,59 @@ async function dispatch(raw: unknown): Promise<JsonRpcResponse | null> {
       error: { code: RPC_ERROR_CODES.InvalidRequest, message: "invalid request" },
     }
   }
-  const req = raw as JsonRpcRequest
-  const handler = methods[req.method]
+
+  const msg = raw as Record<string, unknown>
+  const method = msg["method"]
+  const id = msg["id"]
+
+  // Validate method field.
+  if (typeof method !== "string") {
+    return {
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: RPC_ERROR_CODES.InvalidRequest, message: "invalid request" },
+    }
+  }
+
+  // Validate id field when present.
+  if (id !== undefined && typeof id !== "number" && typeof id !== "string") {
+    return {
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: RPC_ERROR_CODES.InvalidRequest, message: "invalid request" },
+    }
+  }
+
+  // JSON-RPC 2.0 notifications (id absent) MUST NOT receive a response.
+  // Return null to signal "no reply"; the caller skips the write.
+  if (id === undefined) {
+    const handler = getMethodHandler(method)
+    if (handler) {
+      try {
+        await handler(msg["params"])
+      } catch {
+        // Notifications have no channel to report errors on; swallow.
+      }
+    }
+    return null
+  }
+
+  const reqId = id as number | string
+  const handler = getMethodHandler(method)
   if (!handler) {
     return {
       jsonrpc: "2.0",
-      id: req.id,
-      error: { code: RPC_ERROR_CODES.MethodNotFound, message: `unknown method: ${req.method}` },
+      id: reqId,
+      error: { code: RPC_ERROR_CODES.MethodNotFound, message: `unknown method: ${method}` },
     }
   }
   try {
-    const result = await handler(req.params)
-    return { jsonrpc: "2.0", id: req.id, result }
+    const result = await handler(msg["params"])
+    return { jsonrpc: "2.0", id: reqId, result }
   } catch (err) {
     return {
       jsonrpc: "2.0",
-      id: req.id,
+      id: reqId,
       error: {
         code: RPC_ERROR_CODES.InternalError,
         message: err instanceof Error ? err.message : String(err),

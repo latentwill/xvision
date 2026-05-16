@@ -9,15 +9,17 @@ import type { JsonRpcResponse } from "../src/transport/jsonrpc.js"
 
 let socketPath: string
 let server: { close: () => Promise<void> }
+let dir: string
 
 beforeEach(async () => {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "xvision-agentd-"))
+  dir = await fs.mkdtemp(path.join(os.tmpdir(), "xvision-agentd-"))
   socketPath = path.join(dir, "sock")
   server = await startUdsServer(socketPath)
 })
 
 afterEach(async () => {
   await server.close()
+  await fs.rm(dir, { recursive: true, force: true })
 })
 
 async function rpc<T>(method: string, params?: unknown): Promise<JsonRpcResponse<T>> {
@@ -68,5 +70,32 @@ describe("uds-server", () => {
       sock.on("error", reject)
     })
     expect(result).toMatchObject({ error: { code: -32700 } })
+  })
+
+  it("does not respond to notifications", async () => {
+    // A JSON-RPC 2.0 notification has no id field. The server MUST NOT reply.
+    const received = await new Promise<boolean>((resolve) => {
+      const sock = net.createConnection(socketPath)
+      const decoder = new NdjsonDecoder()
+      const timeout = setTimeout(() => {
+        sock.end()
+        resolve(false) // timeout fired first — no response received (correct)
+      }, 100)
+      decoder.on("message", () => {
+        clearTimeout(timeout)
+        sock.end()
+        resolve(true) // a response arrived — incorrect per spec
+      })
+      sock.on("data", (chunk) => decoder.push(chunk))
+      sock.on("error", () => {
+        clearTimeout(timeout)
+        resolve(false)
+      })
+      sock.on("connect", () => {
+        // Send a notification: jsonrpc + method, no id
+        sock.write(encodeNdjson({ jsonrpc: "2.0", method: "runtime.health" }))
+      })
+    })
+    expect(received).toBe(false)
   })
 })
