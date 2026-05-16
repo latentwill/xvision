@@ -166,12 +166,13 @@ impl BrokerSurface for AlpacaPaperSurface {
 
         // 2. Crypto pre-flight. Alpaca's crypto API only accepts simple
         //    market/limit orders and is long-only; selling from flat is
-        //    rejected by the server. We refuse the call here with a
-        //    classifier-friendly message ("broker_unsupported" / "not
-        //    shortable") so the eval executor surfaces a clean class tag
-        //    if it ever reaches the surface. The eval paper executor
-        //    short-circuits crypto short_open before this point in
-        //    normal operation.
+        //    rejected by the server and selling more than the open long
+        //    would net into a short on fill. We refuse both cases here
+        //    with a classifier-friendly message ("broker_unsupported")
+        //    so the eval executor surfaces a clean class tag if it ever
+        //    reaches the surface. The eval paper executor sizes
+        //    crypto sells against the open long before this point in
+        //    normal operation; this guard is the hard backstop.
         let asset_is_crypto = is_alpaca_crypto(&req.asset);
         if asset_is_crypto && matches!(req.side, Side::Sell) {
             let current_position = self
@@ -184,6 +185,14 @@ impl BrokerSurface for AlpacaPaperSurface {
             if current_position <= 0.0 {
                 anyhow::bail!(
                     "alpaca crypto broker_unsupported: short_open is not supported for {} (asset is not shortable on Alpaca crypto)",
+                    req.asset
+                );
+            }
+            if req.size > current_position {
+                anyhow::bail!(
+                    "alpaca crypto broker_unsupported: sell size {} exceeds open long position {} for {} (would net into a short, which Alpaca crypto does not support)",
+                    req.size,
+                    current_position,
                     req.asset
                 );
             }

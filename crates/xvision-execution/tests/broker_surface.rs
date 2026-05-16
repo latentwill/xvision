@@ -350,6 +350,48 @@ async fn alpaca_paper_submit_crypto_sell_closes_existing_long() {
 }
 
 #[tokio::test]
+async fn alpaca_paper_submit_crypto_sell_oversize_long_is_refused() {
+    // A sell larger than the open long would net into a short on fill,
+    // which Alpaca crypto does not support. The preflight must refuse
+    // the order before round-tripping to Alpaca rather than rely on the
+    // server to reject it.
+    let mut pos = fixture_position();
+    pos.qty = 0.05; // long 0.05 BTC
+
+    let mock = MockAlpacaApi::new(
+        fixture_account(),
+        vec![pos],
+        fixture_pending_order(),
+        fixture_filled_order("never-filled"),
+    );
+    let surface = AlpacaPaperSurface::with_api(Arc::new(mock));
+
+    let req = OrderRequest {
+        asset: "BTC/USD".into(),
+        side: Side::Sell,
+        size: 0.10, // > 0.05 long
+        reference_price_usd: 70_000.0,
+        stop_loss_pct: None,
+        take_profit_pct: None,
+        idempotency_key: "test-oversize-sell".into(),
+    };
+
+    let err = surface
+        .submit_order(req)
+        .await
+        .expect_err("oversize crypto sell must be refused");
+    let msg = format!("{:#}", err);
+    assert!(
+        msg.contains("broker_unsupported"),
+        "error must carry the broker_unsupported tag, got: {msg}"
+    );
+    assert!(
+        msg.contains("exceeds open long position") || msg.contains("would net into a short"),
+        "error must explain the oversize-sell case, got: {msg}"
+    );
+}
+
+#[tokio::test]
 async fn alpaca_paper_position_returns_qty() {
     let mock = MockAlpacaApi::new(
         fixture_account(),
