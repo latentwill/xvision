@@ -1,108 +1,66 @@
 # xvision v1 — Team Manifest
 
-> Single source of truth for current phase and per-track ownership. Updated
-> whenever a track lands a phase boundary or a new track spawns.
+> Single source of truth for top-level coordination pointers. The conductor
+> owns this file (see `team/CONDUCTOR.md`).
 >
-> Last updated: 2026-05-13 by `integration-next-build` (execution-board integration)
+> Last updated: 2026-05-16.
 
-## Current recovery board
+## Live coordination
 
-For the current deduped recovery/rework tracks and integration order, start
-with:
+| Artifact | Purpose |
+|---|---|
+| `team/board.md` | Active execution board — one line per active track |
+| `team/CONDUCTOR.md` | Conductor role + daily checklist |
+| `team/OWNERSHIP.md` | File-glob → owning track map |
+| `team/CONFLICT_ZONES.md` | Single-writer file registry |
+| `team/contracts/<track>.md` | Per-track contract (one file per active track) |
+| `team/contracts/_template.md` | Contract template |
+| `team/status/<track>.md` | Per-track current status (worker-owned) |
+| `team/queue/<from>__<utc>__<topic>.md` | Append-only inter-track messages |
+| `team/briefings/_template.md` | Sync-before-work briefing template |
+| `team/intake/<date>-<wave>.md` | Raw wave intake before decomposition |
+| `team/archive/<date>-<wave>/` | Frozen state of closed-out waves |
+| `scripts/board-lint.sh` | CI/local consistency check |
 
-- `team/execution-board-2026-05-13.md`
+Spec that defined this layout:
+`docs/superpowers/specs/2026-05-16-execution-board-process-overhaul.md`.
 
-That board supersedes the overlapping wrapper plans from 2026-05-12 as the
-execution source of truth. All ten board tracks have checkpoint branches; the
-`integration-next-build` branch aggregates them for the next build.
-
-### Integration branch
-
-| Track | Worktree | Branch | Source |
-|---|---|---|---|
-| `integration-next-build` | `.worktrees/integration-next-build` | `integration-next-build` | `team/execution-board-2026-05-13.md` |
-
-## Current phase
-
-**Phase A — Foundation** ✅ **complete**
-**Phase B — Build-out** ✅ **landed on `main` (historical table below)**
-
-Most of the original Phase B tracks in this manifest have since merged. The
-row table below is retained as historical context for plan lineage, not as
-live assignment state.
-
-### Live execution-board state (current)
-
-- Open board work: none; see `team/execution-board-2026-05-13.md` closeout.
-- Integration work: `integration-next-build` combines completed checkpoint
-  branches for the next build.
-- Active ownership should be read from `team/status/*.md` + `team/queue/*.md`.
-- New work claims should use `team/queue/<track>__<utc>__claim.md` and update
-  `team/status/<track>.md` immediately.
-
-All four foundation tracks merged to `main`:
-
-| Track | PR | Merge commit | Notes |
-|---|---|---|---|
-| `engine-api` | [#4](https://github.com/latentwill/xvision/pull/4) | `adc8d4a` | typed engine API + audit + migration 001 |
-| `broker-surface` | [#5](https://github.com/latentwill/xvision/pull/5) | `9cc93cb` | unified BrokerSurface + AlpacaPaper + MockBrokerSurface |
-| `frontend-foundation` | [#7](https://github.com/latentwill/xvision/pull/7) | merged | xvision-dashboard + Vite/Tailwind shell |
-| `docker-image` | [#6](https://github.com/latentwill/xvision/pull/6) | `76b24b5` | slim runtime image + GHCR workflow |
-
-**Phase B — Build-out** (historical snapshot)
-
-Phase A unblocked all of Phase B. Pick a row from the build order, claim it via
-`team/queue/<track>__<utc>__claim.md`, edit the row below, and start.
-
-| Track | Worktree | Branch | Owner CLI | Plan | Status |
-|---|---|---|---|---|---|
-| `coordinator` | `xvision/` (main) | `main` | session 1 | — | active — coordinator + integration |
-| `eval-engine-3b` | `.worktrees/eval-engine-3b` | `feature/eval-engine-3b-executors` | session 1 | [Plan #5](../docs/superpowers/plans/2026-05-08-eval-engine-plan.md) Phase 3.B (executors) | active — Phase 3.A merged via PR #10 |
-| `frontend-2-home-and-health` | `.worktrees/frontend-foundation` | `feature/frontend-2-home-and-health` | session 2 | [Frontend Plan 2](../docs/superpowers/plans/2026-05-10-frontend-2-read-only-screens.md) | active — Phase B merged via PR #9 |
-| `llm-providers` | (merged) | `feature/llm-providers-phase-1` | session 3 | [Plan #7](../docs/superpowers/plans/2026-05-10-llm-providers-and-per-arm-models-plan.md) Phase 1 — config schema | ✅ merged via PR #14 |
-| `llm-providers-2` | (merged) | `feature/llm-providers-phase-2` | session 3 | [Plan #7](../docs/superpowers/plans/2026-05-10-llm-providers-and-per-arm-models-plan.md) Phase 2 — SlotRef + Arm grammar | ✅ merged via PR #16 |
-| `llm-providers-3` | `.worktrees/llm-providers-3` | `feature/llm-providers-phase-3-registry` | session 3 | [Plan #7](../docs/superpowers/plans/2026-05-10-llm-providers-and-per-arm-models-plan.md) Phase 3 Tasks 9–10 — ProviderRegistry skeleton | active — purely additive |
-
-## Build order (post-Phase-A)
-
-Phase A unlocks Phase B. See `v1-shipping-plan.md` for the full sequence.
-
-| # | Phase | Plan | Depends on (Phase A item) |
-|---|---|---|---|
-| B.1 | Eval Engine | [#5](../docs/superpowers/plans/2026-05-08-eval-engine-plan.md) | engine-api, broker-surface |
-| B.2 | Strategy 2a — MCP + tools + templates | [#6](../docs/superpowers/plans/2026-05-08-strategy-engine-2a-mcp-tools-templates.md) | engine-api |
-| B.3 | LLM Providers + per-arm models | [#7](../docs/superpowers/plans/2026-05-10-llm-providers-and-per-arm-models-plan.md) | engine-api |
-| B.4 | Strategy 2b — Skills | [#8](../docs/superpowers/plans/2026-05-08-strategy-engine-2b-skills.md) | engine-api |
-| B.5 | Strategy 2d — Dashboard + Wizard | [#9](../docs/superpowers/plans/2026-05-08-strategy-engine-2d-dashboard-wizard.md) | engine-api, frontend-foundation |
-| B.6 | Settings & Onboarding | [#10](../docs/superpowers/plans/2026-05-10-settings-and-onboarding-plan.md) | engine-api |
-| B.7 | Chat Rail Persistence | [#11](../docs/superpowers/plans/2026-05-10-chat-rail-persistence-plan.md) | engine-api |
-| B.8 | Command Palette | [#12](../docs/superpowers/plans/2026-05-10-command-palette-plan.md) | engine-api |
-| B.9 | Leverage items | [#13](../docs/superpowers/plans/2026-05-10-leverage-items.md) | none (docs+CLI) |
-| B.10 | Frontend Plan 2–5 | [front-2](../docs/superpowers/plans/2026-05-10-frontend-2-read-only-screens.md) … [front-5](../docs/superpowers/plans/2026-05-10-frontend-5-findings-compare-polish.md) | per-plan deps in their files |
-| B.11 | Docker image | [#14](../docs/superpowers/plans/2026-05-10-docker-image.md) | none (independent — packages whatever is on `main`) |
-
-## How to spawn a CLI on a track
+## Worker onboarding (cold start)
 
 ```bash
-# from anywhere
-cd /Users/edkennedy/Code/xvision/.worktrees/<track>
-claude
-# inside Claude:
-#   1. Read team/MANIFEST.md
-#   2. Read team/briefings/<track>.md
-#   3. Begin work
+cd /Users/edkennedy/Code/xvision
+git fetch --prune origin
+cat team/board.md                 # find your track
+cat team/contracts/<track>.md     # read the contract
+cat team/briefings/_template.md   # do the sync ritual
 ```
 
-## Migration reservations
+Then write `team/status/<track>.md` and begin.
 
-See `v1-shipping-plan.md` §"Migration reservations". Live registry:
+## Migration registry
+
+Reserved DB migration numbers. Never claim a new number without editing this
+table AND `v1-shipping-plan.md` in the same commit.
 
 | # | Owner | Status |
 |---|---|---|
-| 001_api_audit.sql | engine-api | claimed by Phase A |
-| 002_eval.sql | eval-engine (B.1) | reserved |
-| 003_chat_sessions.sql | chat-rail (B.7) | reserved |
-| 004_search_index.sql | command-palette (B.8) | reserved |
+| 001 | engine-api | merged |
+| 002 | eval-engine | merged |
+| 003 | chat-rail | merged |
+| 004 | command-palette | merged |
+| 005 | eval-review-data-model | merged (#176) |
 
-Never claim a new number without editing this table AND `v1-shipping-plan.md`
-in the same commit.
+The next available number is 006. The conductor must approve and reserve in
+this table before a track touches `crates/xvision-engine/migrations/`.
+
+## Historical context
+
+Phase A/B and the QA waves Q4/Q8/Q9/Q10 are archived under
+`team/archive/2026-05-16-migration/`. For one-time historical lookups, read
+those files; do not revive them as live work.
+
+## Stand-down
+
+If the conductor changes, update `team/CONDUCTOR.md` "Current conductor"
+line first, then this paragraph: previous conductor `@latentwill` 2026-05-16
+→ TBD.

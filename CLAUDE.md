@@ -119,16 +119,32 @@ docker compose run --rm xvn --version
 
 See `docker/README.md` for env vars and mounts.
 
+## Team coordination
+
+Parallel agent/worker coordination lives under `team/`. Start with:
+
+- `team/board.md` — active execution board (one line per active track).
+- `team/MANIFEST.md` — top-level pointers.
+- `team/CONDUCTOR.md` — conductor role + daily checklist.
+- `team/OWNERSHIP.md` — file-glob → owning track.
+- `team/CONFLICT_ZONES.md` — single-writer file registry.
+- `team/contracts/<track>.md` — per-track contract (allowed/forbidden paths,
+  interfaces, verification, acceptance).
+- `team/briefings/_template.md` — sync-before-work ritual.
+
+Process spec: `docs/superpowers/specs/2026-05-16-execution-board-process-overhaul.md`.
+
+Run `bash scripts/board-lint.sh` before pushing a contract edit.
+
+The dated 2026-05-13 execution board is archived under
+`team/archive/2026-05-16-migration/`. Do not revive it as live work.
+
 ## Active plans
 
-See `docs/superpowers/plans/` for executable implementation plans:
-- `2026-05-10-terminology-rename-option-b.md` (rename, complete)
-- `2026-05-10-blockchain-1-non-custodial-wallets-amendments.md` (wallet plan v1.1)
-- `2026-05-10-leverage-items.md` (1-pager, README, MANUAL.md, eod report)
-- `2026-05-10-blockchain-1-non-custodial-wallets-plan.md` (original wallet plan)
-- `2026-05-11-agents-page-v1.md` (agents page v1, complete — merged in PR #83)
-- `2026-05-11-perps-eval-simulator.md` (perps backtest sim, follow-up)
-- `2026-05-12-strategies-refactor-agent-composition.md` (Strategy → agent composition, big follow-up)
-- `2026-05-12-eval-per-agent-metrics.md` (per-agent attribution, depends on strategies refactor)
-- AR-1/AR-2/AR-3 (autoresearcher)
-- 2c (scheduler), 2d (dashboard), and others
+See `docs/superpowers/plans/` and `docs/superpowers/specs/` for executable
+implementation plans/specs. The current wave intake is
+`team/intake/2026-05-16-eval-review-and-v2a.md`.
+
+Next-wave roadmap source: `docs/superpowers/plans/2026-05-13-v2-v4-action-plan.md`.
+The conductor decomposes one wave at a time; do not freelance contracts from
+that list without going through intake.
