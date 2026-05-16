@@ -63,13 +63,6 @@ Safe to claim right now (no unresolved Foundation dependency):
 7. `eval-review-agent-engine` → `eval-review-api-cli` → `eval-review-run-detail-ui`.
 8. V2A from `team/board-v2.md` in parallel.
 
-## Pre-overhaul, in-flight
-
-PRs opened before the 2026-05-16 conductor model rolled out. Tracked here
-through merge but not retroactively contracted.
-
-- [PR #181](https://github.com/latentwill/xvision/pull/181) — fix(web): unblock iPhone Safari mobile load (Bonjour 403 + safe-area + dvh) — `fix/mobile-safari-iphone-bonjour-viewport`. Status: pr-open.
-
 ## Recently closed waves
 
 Archived 2026-05-16:
@@ -80,7 +73,7 @@ Archived 2026-05-16:
 - **Q10** — all `qa10-*` PRs merged (#166–#180); chat/runtime recovery via #169 and #170.
 - **eval-review data-model** — merged via #176; remainder of the wave above.
 - **color-themes-light-dark** — merged via #135.
-- **mobile-safari-load** — merged via #147.
+- **mobile-safari-load** — merged via #147; iPhone Safari follow-up via #181.
 
 See `team/archive/2026-05-16-migration/` for the historical board snapshot.
 
