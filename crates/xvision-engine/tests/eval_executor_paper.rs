@@ -14,9 +14,12 @@ use std::sync::Arc;
 
 use chrono::{TimeZone, Utc};
 use sqlx::SqlitePool;
+use async_trait::async_trait;
 use xvision_core::market::Ohlcv;
-use xvision_engine::agent::llm::{LlmDispatch, MockDispatch};
-use xvision_engine::eval::executor::{Executor, PaperExecutor};
+use xvision_engine::agent::llm::{
+    ContentBlock, LlmDispatch, LlmRequest, LlmResponse, MockDispatch, StopReason,
+};
+use xvision_engine::eval::executor::{classify_run_failure, Executor, PaperExecutor};
 use xvision_engine::eval::{canonical_scenarios, Run, RunMode, RunStatus, RunStore, Scenario};
 use xvision_engine::strategies::manifest::PublicManifest;
 use xvision_engine::strategies::risk::RiskPreset;
@@ -296,4 +299,210 @@ async fn paper_executor_fails_on_unparseable_trader_output() {
         persisted.error
     );
     assert_eq!(mock.submitted().len(), 0);
+}
+
+/// `LlmDispatch` that returns a caller-provided `LlmResponse` verbatim every
+/// call. The default `MockDispatch::echo` always wraps text in a healthy
+/// EndTurn response, which masks the empty/truncated cases this regression
+/// exercises.
+struct CannedResponseDispatch {
+    response: LlmResponse,
+}
+
+impl CannedResponseDispatch {
+    fn new(response: LlmResponse) -> Self {
+        Self { response }
+    }
+}
+
+#[async_trait]
+impl LlmDispatch for CannedResponseDispatch {
+    async fn complete(&self, _req: LlmRequest) -> anyhow::Result<LlmResponse> {
+        Ok(self.response.clone())
+    }
+}
+
+async fn paper_harness_with_dispatch(
+    dispatch: Arc<dyn LlmDispatch>,
+) -> (
+    Arc<MockBrokerSurface>,
+    PaperExecutor,
+    RunStore,
+    Run,
+    Strategy,
+    Scenario,
+    Arc<ToolRegistry>,
+) {
+    let pool = pool_with_migration().await;
+    let store = RunStore::new(pool);
+    let mock = Arc::new(MockBrokerSurface::new(100_000.0));
+    let broker: Arc<dyn BrokerSurface> = mock.clone();
+    let strategy = minimal_strategy();
+    let scenario = short_scenario();
+    let executor = PaperExecutor::with_bars(broker, short_bars(&scenario));
+    let run = Run::new_queued("test-strategy-hash".into(), scenario.id.clone(), RunMode::Paper);
+    store.create(&run).await.unwrap();
+    let tools = Arc::new(ToolRegistry::empty());
+    let _ = dispatch; // value passed into the test only for clarity
+    (mock, executor, store, run, strategy, scenario, tools)
+}
+
+/// Regression for the QA10 report on run `01KRMKWZ1KJ2BGRNWGP518ZQ3Q`
+/// decision 4: the provider returned `EndTurn` with no text content. The
+/// executor must:
+///  - fail the run with a `[empty]`-tagged reason,
+///  - leave `mock.submitted()` empty,
+///  - persist zero `eval_decisions` rows for the run.
+#[tokio::test]
+async fn paper_executor_fails_with_empty_class_on_empty_trader_output() {
+    let response = LlmResponse {
+        content: Vec::new(),
+        stop_reason: StopReason::EndTurn,
+        input_tokens: 981,
+        output_tokens: 0,
+    };
+    let dispatch: Arc<dyn LlmDispatch> = Arc::new(CannedResponseDispatch::new(response));
+    let (mock, executor, store, mut run, strategy, scenario, tools) =
+        paper_harness_with_dispatch(dispatch.clone()).await;
+
+    let err = executor
+        .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)
+        .await
+        .expect_err("empty trader output must fail the run");
+
+    let err_str = err.to_string();
+    assert_eq!(classify_run_failure(&err), "empty");
+    assert!(
+        err_str.contains("trader_output[empty]"),
+        "expected trader_output[empty] tag in error: {err_str}"
+    );
+    assert!(
+        err_str.contains("stop_reason=EndTurn"),
+        "expected stop_reason diagnostic in error: {err_str}"
+    );
+
+    let persisted = store.get(&run.id).await.unwrap();
+    assert_eq!(persisted.status, RunStatus::Failed);
+    let reason = persisted.error.as_deref().unwrap_or_default();
+    assert!(
+        reason.starts_with("[empty]"),
+        "persisted error must lead with the [empty] class prefix: {reason:?}"
+    );
+    assert!(
+        reason.contains("trader_output[empty]"),
+        "persisted error must keep the trader_output kind tag: {reason:?}"
+    );
+    assert!(
+        reason.contains("output_tokens=0"),
+        "persisted error must include output_tokens for review: {reason:?}"
+    );
+
+    assert!(
+        mock.submitted().is_empty(),
+        "paper executor must NEVER submit an order for an empty trader output"
+    );
+
+    let decisions = store.read_decisions(&run.id).await.unwrap();
+    assert!(
+        decisions.is_empty(),
+        "no decision row should be persisted when the trader output is empty"
+    );
+}
+
+#[tokio::test]
+async fn paper_executor_fails_with_truncated_class_on_max_tokens_no_text() {
+    let response = LlmResponse {
+        content: Vec::new(),
+        stop_reason: StopReason::MaxTokens,
+        input_tokens: 2000,
+        output_tokens: 0,
+    };
+    let dispatch: Arc<dyn LlmDispatch> = Arc::new(CannedResponseDispatch::new(response));
+    let (mock, executor, store, mut run, strategy, scenario, tools) =
+        paper_harness_with_dispatch(dispatch.clone()).await;
+
+    let err = executor
+        .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)
+        .await
+        .expect_err("max-tokens empty output must fail the run");
+
+    assert_eq!(classify_run_failure(&err), "truncated");
+    let err_str = err.to_string();
+    assert!(
+        err_str.contains("trader_output[truncated]"),
+        "expected trader_output[truncated] tag: {err_str}"
+    );
+    assert!(err_str.contains("stop_reason=MaxTokens"));
+
+    let persisted = store.get(&run.id).await.unwrap();
+    let reason = persisted.error.as_deref().unwrap_or_default();
+    assert!(
+        reason.starts_with("[truncated]"),
+        "persisted error must lead with [truncated] class: {reason:?}"
+    );
+
+    assert!(mock.submitted().is_empty());
+    assert!(store.read_decisions(&run.id).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn paper_executor_fails_with_tool_use_only_class_when_no_final_text() {
+    // The agent loop exits on EndTurn even if the response carries only
+    // tool_use blocks (`execute.rs` treats the stop_reason as authoritative
+    // over the content shape). The trader pipeline then needs a final text
+    // payload and finds none. The run must fail with the `tool_use_only`
+    // class — not a generic JSON parse error — and no order may be placed.
+    let response = LlmResponse {
+        content: vec![ContentBlock::ToolUse {
+            id: "tu_1".into(),
+            name: "fetch_bars".into(),
+            input: serde_json::json!({}),
+        }],
+        stop_reason: StopReason::EndTurn,
+        input_tokens: 500,
+        output_tokens: 30,
+    };
+    let dispatch: Arc<dyn LlmDispatch> = Arc::new(CannedResponseDispatch::new(response));
+    let (mock, executor, store, mut run, strategy, scenario, tools) =
+        paper_harness_with_dispatch(dispatch.clone()).await;
+
+    let err = executor
+        .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)
+        .await
+        .expect_err("tool-use-only trader response must fail the run");
+
+    assert_eq!(classify_run_failure(&err), "tool_use_only");
+    let err_str = err.to_string();
+    assert!(err_str.contains("trader_output[tool_use_only]"));
+
+    let persisted = store.get(&run.id).await.unwrap();
+    let reason = persisted.error.as_deref().unwrap_or_default();
+    assert!(reason.starts_with("[tool_use_only]"), "{reason:?}");
+
+    assert!(mock.submitted().is_empty());
+    assert!(store.read_decisions(&run.id).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn paper_executor_invalid_json_failure_preserves_invalid_json_class() {
+    // Sanity: the existing "definitely not json" failure (covered by the
+    // legacy test) now persists with the `[invalid_json]` class prefix.
+    let canned = "definitely not json";
+    let (mock, executor, store, mut run, strategy, scenario, dispatch, tools) =
+        paper_harness(canned, 100_000.0).await;
+
+    let err = executor
+        .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)
+        .await
+        .expect_err("garbage must fail the run");
+
+    assert_eq!(classify_run_failure(&err), "invalid_json");
+    let persisted = store.get(&run.id).await.unwrap();
+    let reason = persisted.error.as_deref().unwrap_or_default();
+    assert!(
+        reason.starts_with("[invalid_json]"),
+        "persisted error must lead with [invalid_json] class: {reason:?}"
+    );
+    assert!(reason.contains("invalid JSON"), "{reason:?}");
+    assert!(mock.submitted().is_empty());
 }

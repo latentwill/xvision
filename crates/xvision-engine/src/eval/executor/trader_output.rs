@@ -1,8 +1,8 @@
-use anyhow::{anyhow, Result};
-use serde::Deserialize;
-use serde_json::Value;
+use std::fmt;
 
-use crate::agent::llm::LlmResponse;
+use serde::{Deserialize, Serialize};
+
+use crate::agent::llm::{LlmResponse, StopReason};
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -12,87 +12,331 @@ pub(crate) struct TraderOutput {
     pub(crate) justification: String,
 }
 
+/// Stable classification of trader-output failure modes. Persisted as part
+/// of `eval_runs.error` via the `trader_output[<tag>]:` prefix on the
+/// `TraderOutputError` Display, so review/UI consumers can grep the class
+/// without parsing the full error message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TraderFailureKind {
+    /// Provider returned a response with no text content (and no tool use).
+    EmptyText,
+    /// Response carries only ToolUse blocks; no final text trader payload.
+    ToolUseOnly,
+    /// Response stopped at `MaxTokens`; raw text was empty or unparseable.
+    Truncated,
+    /// Text was present but not valid JSON.
+    InvalidJson,
+    /// JSON parsed but a required field was missing.
+    MissingField,
+    /// Fields present but failed validation (unknown action, conviction out
+    /// of range, empty justification, ...).
+    InvalidField,
+    /// The trader pipeline produced no response slot at all.
+    MissingResponse,
+}
+
+impl TraderFailureKind {
+    pub fn tag(self) -> &'static str {
+        match self {
+            Self::EmptyText => "empty",
+            Self::ToolUseOnly => "tool_use_only",
+            Self::Truncated => "truncated",
+            Self::InvalidJson => "invalid_json",
+            Self::MissingField => "missing_field",
+            Self::InvalidField => "invalid_field",
+            Self::MissingResponse => "missing_response",
+        }
+    }
+
+    pub fn from_tag(tag: &str) -> Option<Self> {
+        match tag {
+            "empty" => Some(Self::EmptyText),
+            "tool_use_only" => Some(Self::ToolUseOnly),
+            "truncated" => Some(Self::Truncated),
+            "invalid_json" => Some(Self::InvalidJson),
+            "missing_field" => Some(Self::MissingField),
+            "invalid_field" => Some(Self::InvalidField),
+            "missing_response" => Some(Self::MissingResponse),
+            _ => None,
+        }
+    }
+}
+
+/// Typed trader-output failure carrying enough raw provider diagnostics to
+/// distinguish empty / truncated / parser-failure cases at review time.
+/// Display is stable: `run <id> decision <n>: trader_output[<tag>]: <detail>
+/// (stop_reason=..., input_tokens=..., output_tokens=..., raw_excerpt=...)`.
+#[derive(Debug, Clone)]
+pub struct TraderOutputError {
+    pub kind: TraderFailureKind,
+    pub run_id: String,
+    pub decision_index: u32,
+    pub stop_reason: Option<StopReason>,
+    pub input_tokens: u32,
+    pub output_tokens: u32,
+    /// First N characters of the raw provider text. `<no_response>` when the
+    /// upstream pipeline produced no trader slot at all; `<empty>` when the
+    /// response was present but text-empty.
+    pub raw_excerpt: String,
+    pub detail: String,
+}
+
+impl TraderOutputError {
+    const RAW_EXCERPT_LIMIT: usize = 240;
+
+    fn build(
+        kind: TraderFailureKind,
+        run_id: &str,
+        decision_index: u32,
+        response: Option<&LlmResponse>,
+        raw_text: Option<&str>,
+        detail: String,
+    ) -> Self {
+        let raw_excerpt = match raw_text {
+            Some(text) if text.is_empty() => "<empty>".to_string(),
+            Some(text) => {
+                let mut excerpt: String = text.chars().take(Self::RAW_EXCERPT_LIMIT).collect();
+                if text.chars().count() > Self::RAW_EXCERPT_LIMIT {
+                    excerpt.push('…');
+                }
+                excerpt
+            }
+            None => "<no_response>".to_string(),
+        };
+        Self {
+            kind,
+            run_id: run_id.to_string(),
+            decision_index,
+            stop_reason: response.map(|r| r.stop_reason),
+            input_tokens: response.map(|r| r.input_tokens).unwrap_or(0),
+            output_tokens: response.map(|r| r.output_tokens).unwrap_or(0),
+            raw_excerpt,
+            detail,
+        }
+    }
+
+    /// Stable wire-format tag for this failure class. Persisted callers
+    /// parse the `trader_output[<tag>]:` slice on `eval_runs.error`.
+    pub fn class_tag(&self) -> &'static str {
+        self.kind.tag()
+    }
+
+    fn diagnostics(&self) -> String {
+        let stop = self
+            .stop_reason
+            .map(|s| format!("{s:?}"))
+            .unwrap_or_else(|| "none".to_string());
+        format!(
+            "stop_reason={stop}, input_tokens={}, output_tokens={}, raw_excerpt={:?}",
+            self.input_tokens, self.output_tokens, self.raw_excerpt
+        )
+    }
+}
+
+impl fmt::Display for TraderOutputError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "run {run} decision {idx}: trader_output[{tag}]: {detail} ({diag})",
+            run = self.run_id,
+            idx = self.decision_index,
+            tag = self.kind.tag(),
+            detail = self.detail,
+            diag = self.diagnostics(),
+        )
+    }
+}
+
+impl std::error::Error for TraderOutputError {}
+
 impl TraderOutput {
-    pub(crate) fn parse_response(response: &LlmResponse, run_id: &str, decision_index: u32) -> Result<Self> {
+    pub(crate) fn parse_response(
+        response: &LlmResponse,
+        run_id: &str,
+        decision_index: u32,
+    ) -> Result<Self, TraderOutputError> {
         let raw = response.text();
-        let metadata = format!(
-            "stop_reason={:?}, input_tokens={}, output_tokens={}",
-            response.stop_reason, response.input_tokens, response.output_tokens
-        );
 
         if raw.trim().is_empty() {
-            anyhow::bail!(
-                "run {} decision {}: trader output is empty: provider returned no final text ({})",
+            // No usable final text. Distinguish three causes:
+            //  - Response has only tool_use blocks: model wanted more tool
+            //    calls but its loop exited.
+            //  - stop_reason == MaxTokens: response was truncated before
+            //    text was emitted.
+            //  - otherwise: model returned end_turn with empty content
+            //    (provider returned "no final text").
+            let has_tool_use = response
+                .content
+                .iter()
+                .any(|c| matches!(c, crate::agent::llm::ContentBlock::ToolUse { .. }));
+            let kind = if has_tool_use {
+                TraderFailureKind::ToolUseOnly
+            } else if response.stop_reason == StopReason::MaxTokens {
+                TraderFailureKind::Truncated
+            } else {
+                TraderFailureKind::EmptyText
+            };
+            let detail = match kind {
+                TraderFailureKind::ToolUseOnly => {
+                    "trader output had only tool_use blocks; expected final text".to_string()
+                }
+                TraderFailureKind::Truncated => {
+                    "trader output truncated at MaxTokens before any text was emitted".to_string()
+                }
+                _ => "trader output is empty: provider returned no final text".to_string(),
+            };
+            return Err(TraderOutputError::build(
+                kind,
                 run_id,
                 decision_index,
-                metadata
-            );
+                Some(response),
+                Some(raw.as_str()),
+                detail,
+            ));
         }
 
-        Self::parse_with_metadata(&raw, run_id, decision_index, Some(metadata.as_str()))
+        Self::parse_with_response(&raw, run_id, decision_index, response)
+    }
+
+    /// Build a `MissingResponse` error for the case where the pipeline never
+    /// produced a trader slot at all.
+    pub(crate) fn missing_response_error(run_id: &str, decision_index: u32) -> TraderOutputError {
+        TraderOutputError::build(
+            TraderFailureKind::MissingResponse,
+            run_id,
+            decision_index,
+            None,
+            None,
+            "trader pipeline returned no trader response slot".to_string(),
+        )
     }
 
     #[cfg(test)]
-    pub(crate) fn parse_strict(raw: &str, run_id: &str, decision_index: u32) -> Result<Self> {
-        Self::parse_with_metadata(raw, run_id, decision_index, None)
-    }
-
-    fn parse_with_metadata(
+    pub(crate) fn parse_strict(
         raw: &str,
         run_id: &str,
         decision_index: u32,
-        metadata: Option<&str>,
-    ) -> Result<Self> {
-        let mut first_error: Option<String> = None;
+    ) -> Result<Self, TraderOutputError> {
+        Self::parse_with_response_inner(raw, run_id, decision_index, None)
+    }
+
+    fn parse_with_response(
+        raw: &str,
+        run_id: &str,
+        decision_index: u32,
+        response: &LlmResponse,
+    ) -> Result<Self, TraderOutputError> {
+        Self::parse_with_response_inner(raw, run_id, decision_index, Some(response))
+    }
+
+    fn parse_with_response_inner(
+        raw: &str,
+        run_id: &str,
+        decision_index: u32,
+        response: Option<&LlmResponse>,
+    ) -> Result<Self, TraderOutputError> {
+        let mut first_error: Option<(String, bool)> = None; // (message, was_missing_field)
         for candidate in trader_output_candidates(raw) {
             match serde_json::from_str::<Self>(&candidate) {
                 Ok(parsed) => {
-                    parsed.validate(run_id, decision_index)?;
+                    parsed.validate(run_id, decision_index, response, raw)?;
                     return Ok(parsed);
                 }
                 Err(e) => {
                     if first_error.is_none() {
-                        first_error = Some(trader_output_error_detail(&e));
+                        let msg = e.to_string();
+                        let missing_field = msg.contains("missing field");
+                        first_error = Some((trader_output_error_detail(&e), missing_field));
                     }
                 }
             }
         }
 
-        let mut detail = first_error.unwrap_or_else(|| "no JSON object found".into());
-        if let Some(metadata) = metadata {
-            detail = format!("{detail} ({metadata})");
-        }
-        Err(anyhow!(
-            "run {} decision {}: trader output is invalid JSON: {}",
+        let (detail_inner, missing_field) =
+            first_error.unwrap_or_else(|| ("no JSON object found".into(), false));
+
+        // Classify: if the response stopped at MaxTokens, blame truncation
+        // even when the partial text doesn't parse — operators usually want
+        // to fix max_tokens before investigating the JSON shape. Otherwise
+        // pick MissingField vs InvalidJson based on the serde error.
+        let stopped_at_max = response
+            .map(|r| r.stop_reason == StopReason::MaxTokens)
+            .unwrap_or(false);
+        let (kind, detail) = if stopped_at_max {
+            (
+                TraderFailureKind::Truncated,
+                format!(
+                    "trader output truncated at MaxTokens; final text was invalid JSON: {detail_inner}"
+                ),
+            )
+        } else if missing_field {
+            (
+                TraderFailureKind::MissingField,
+                format!("trader output is invalid JSON: {detail_inner}"),
+            )
+        } else {
+            (
+                TraderFailureKind::InvalidJson,
+                format!("trader output is invalid JSON: {detail_inner}"),
+            )
+        };
+
+        Err(TraderOutputError::build(
+            kind,
             run_id,
             decision_index,
-            detail
+            response,
+            Some(raw),
+            detail,
         ))
     }
 
-    fn validate(&self, run_id: &str, decision_index: u32) -> Result<()> {
-        if !matches!(self.action.as_str(), "long_open" | "short_open" | "flat" | "hold") {
-            anyhow::bail!(
-                "run {} decision {}: trader output action must be one of long_open, short_open, flat, hold (got `{}`)",
+    fn validate(
+        &self,
+        run_id: &str,
+        decision_index: u32,
+        response: Option<&LlmResponse>,
+        raw: &str,
+    ) -> Result<(), TraderOutputError> {
+        if !matches!(
+            self.action.as_str(),
+            "long_open" | "short_open" | "flat" | "hold"
+        ) {
+            return Err(TraderOutputError::build(
+                TraderFailureKind::InvalidField,
                 run_id,
                 decision_index,
-                self.action
-            );
+                response,
+                Some(raw),
+                format!(
+                    "trader output action must be one of long_open, short_open, flat, hold (got `{}`)",
+                    self.action
+                ),
+            ));
         }
         if !(0.0..=1.0).contains(&self.conviction) {
-            anyhow::bail!(
-                "run {} decision {}: trader output conviction must be between 0 and 1 (got {})",
+            return Err(TraderOutputError::build(
+                TraderFailureKind::InvalidField,
                 run_id,
                 decision_index,
-                self.conviction
-            );
+                response,
+                Some(raw),
+                format!(
+                    "trader output conviction must be between 0 and 1 (got {})",
+                    self.conviction
+                ),
+            ));
         }
         if self.justification.trim().is_empty() {
-            anyhow::bail!(
-                "run {} decision {}: trader output justification is required",
+            return Err(TraderOutputError::build(
+                TraderFailureKind::InvalidField,
                 run_id,
-                decision_index
-            );
+                decision_index,
+                response,
+                Some(raw),
+                "trader output justification is required".to_string(),
+            ));
         }
         Ok(())
     }
@@ -112,7 +356,7 @@ fn trader_output_candidates(raw: &str) -> Vec<String> {
     let mut i = 0;
     while i < out.len() {
         let candidate = out[i].clone();
-        if let Ok(value) = serde_json::from_str::<Value>(&candidate) {
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&candidate) {
             append_wrapped_candidates(&mut out, &value);
         }
         i += 1;
@@ -120,7 +364,7 @@ fn trader_output_candidates(raw: &str) -> Vec<String> {
     out
 }
 
-fn append_wrapped_candidates(out: &mut Vec<String>, value: &Value) {
+fn append_wrapped_candidates(out: &mut Vec<String>, value: &serde_json::Value) {
     let Some(obj) = value.as_object() else {
         return;
     };
@@ -213,9 +457,9 @@ fn trader_output_error_detail(error: &serde_json::Error) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::agent::llm::{LlmResponse, StopReason};
+    use crate::agent::llm::{ContentBlock, LlmResponse, StopReason};
 
-    use super::TraderOutput;
+    use super::{TraderFailureKind, TraderOutput};
 
     #[test]
     fn missing_action_has_field_level_diagnostic() {
@@ -228,8 +472,10 @@ mod tests {
             .expect_err("missing action must fail");
             let message = err.to_string();
 
+            assert_eq!(err.kind, TraderFailureKind::MissingField);
             assert!(message.contains(run_id));
             assert!(message.contains("decision 0"));
+            assert!(message.contains("trader_output[missing_field]"));
             assert!(message.contains("missing required trader field `action`"));
         }
     }
@@ -243,6 +489,7 @@ mod tests {
         )
         .expect_err("invalid action must fail");
 
+        assert_eq!(err.kind, TraderFailureKind::InvalidField);
         assert!(err
             .to_string()
             .contains("action must be one of long_open, short_open, flat, hold"));
@@ -257,6 +504,7 @@ mod tests {
         )
         .expect_err("empty justification must fail");
 
+        assert_eq!(err.kind, TraderFailureKind::InvalidField);
         assert!(err
             .to_string()
             .contains("trader output justification is required"));
@@ -275,6 +523,8 @@ mod tests {
             .expect_err("empty trader text must fail before JSON parsing");
         let message = err.to_string();
 
+        assert_eq!(err.kind, TraderFailureKind::EmptyText);
+        assert!(message.contains("trader_output[empty]"));
         assert!(message.contains("trader output is empty"));
         assert!(message.contains("decision 4"));
         assert!(message.contains("stop_reason=EndTurn"));
@@ -286,9 +536,52 @@ mod tests {
     }
 
     #[test]
+    fn tool_use_only_response_classifies_as_tool_use_only() {
+        let response = LlmResponse {
+            content: vec![ContentBlock::ToolUse {
+                id: "abc".into(),
+                name: "fetch_bars".into(),
+                input: serde_json::json!({}),
+            }],
+            stop_reason: StopReason::ToolUse,
+            input_tokens: 200,
+            output_tokens: 12,
+        };
+
+        let err = TraderOutput::parse_response(&response, "01TOOL", 7)
+            .expect_err("tool-use-only response should not parse");
+
+        assert_eq!(err.kind, TraderFailureKind::ToolUseOnly);
+        let message = err.to_string();
+        assert!(message.contains("trader_output[tool_use_only]"));
+        assert!(message.contains("only tool_use blocks"));
+        assert!(message.contains("stop_reason=ToolUse"));
+    }
+
+    #[test]
+    fn max_tokens_empty_response_classifies_as_truncated() {
+        let response = LlmResponse {
+            content: Vec::new(),
+            stop_reason: StopReason::MaxTokens,
+            input_tokens: 1000,
+            output_tokens: 0,
+        };
+
+        let err = TraderOutput::parse_response(&response, "01TRUNC", 2)
+            .expect_err("max-tokens empty response should not parse");
+
+        assert_eq!(err.kind, TraderFailureKind::Truncated);
+        let message = err.to_string();
+        assert!(message.contains("trader_output[truncated]"));
+        assert!(message.contains("truncated at MaxTokens"));
+        assert!(message.contains("stop_reason=MaxTokens"));
+        assert!(message.contains("output_tokens=0"));
+    }
+
+    #[test]
     fn response_parse_errors_include_provider_metadata() {
         let response = LlmResponse {
-            content: vec![crate::agent::llm::ContentBlock::Text { text: "{".into() }],
+            content: vec![ContentBlock::Text { text: "{".into() }],
             stop_reason: StopReason::MaxTokens,
             input_tokens: 1000,
             output_tokens: 1000,
@@ -298,9 +591,16 @@ mod tests {
             .expect_err("truncated trader JSON must fail");
         let message = err.to_string();
 
+        // MaxTokens + unparseable text → Truncated kind (the operator should
+        // raise max_tokens before reasoning about the JSON shape).
+        assert_eq!(err.kind, TraderFailureKind::Truncated);
+        assert!(message.contains("trader_output[truncated]"));
         assert!(message.contains("invalid JSON"));
         assert!(message.contains("stop_reason=MaxTokens"));
         assert!(message.contains("output_tokens=1000"));
+        // The raw partial text is preserved so reviewers can see what came
+        // back before the cut-off.
+        assert!(message.contains("raw_excerpt"));
     }
 
     #[test]
@@ -327,5 +627,43 @@ mod tests {
 
         assert_eq!(parsed.action, "long_open");
         assert_eq!(parsed.conviction, 0.8);
+    }
+
+    #[test]
+    fn raw_excerpt_is_truncated_at_limit() {
+        // 300-char single-line string of garbage — should be truncated to
+        // 240 chars with an ellipsis. The exact length isn't asserted (the
+        // ellipsis adds a char), only that the marker is present.
+        let garbage = "z".repeat(300);
+        let err =
+            TraderOutput::parse_strict(&garbage, "01TEST", 0).expect_err("garbage must not parse");
+        let message = err.to_string();
+        assert!(message.contains('…'), "expected truncation marker in {message}");
+    }
+
+    #[test]
+    fn failure_kind_round_trips_through_tag() {
+        for kind in [
+            TraderFailureKind::EmptyText,
+            TraderFailureKind::ToolUseOnly,
+            TraderFailureKind::Truncated,
+            TraderFailureKind::InvalidJson,
+            TraderFailureKind::MissingField,
+            TraderFailureKind::InvalidField,
+            TraderFailureKind::MissingResponse,
+        ] {
+            let tag = kind.tag();
+            assert_eq!(TraderFailureKind::from_tag(tag), Some(kind), "tag {tag}");
+        }
+    }
+
+    #[test]
+    fn missing_response_helper_classifies_as_missing_response() {
+        let err = TraderOutput::missing_response_error("01TEST", 9);
+        assert_eq!(err.kind, TraderFailureKind::MissingResponse);
+        let message = err.to_string();
+        assert!(message.contains("trader_output[missing_response]"));
+        assert!(message.contains("trader pipeline returned no trader response slot"));
+        assert!(message.contains("raw_excerpt=\"<no_response>\""));
     }
 }
