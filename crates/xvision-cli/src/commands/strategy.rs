@@ -20,6 +20,7 @@ use xvision_engine::tokens::{estimate_pipeline_tokens, estimate_pipeline_tokens_
 use xvision_engine::tools::ToolRegistry;
 
 use crate::exit::{CliError, CliResult, ResultExt, XvnExit};
+use crate::json::{emit_object, ObjectFormat};
 
 #[derive(Args, Debug)]
 pub struct StrategyCmd {
@@ -64,8 +65,17 @@ enum StrategyAction {
         #[arg(long)]
         json: bool,
     },
-    /// Show a saved strategy as JSON.
-    Show { id: String },
+    /// Show a saved strategy as JSON. Output shape matches the
+    /// `strategy` slot in `EvalRunExport` (q15 §3 / §6) — same
+    /// Rust `Strategy` struct, same Serialize impl.
+    #[command(visible_alias = "get")]
+    Show {
+        id: String,
+        /// Output format. `json` (default) is pretty-printed;
+        /// `json-compact` is single-line for shell pipes.
+        #[arg(long, value_enum, default_value_t = ObjectFormat::Json)]
+        format: ObjectFormat,
+    },
     /// List available strategy templates.
     Templates {
         /// Emit the template registry and entries as JSON.
@@ -136,7 +146,7 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
         } => new(from_file, template, name, creator, provider, model, json).await,
         StrategyAction::Validate { id } => validate(&id).await,
         StrategyAction::Ls { json } => ls(json).await,
-        StrategyAction::Show { id } => show(&id).await,
+        StrategyAction::Show { id, format } => show(&id, format).await,
         StrategyAction::Templates { json } => templates(json).await,
         StrategyAction::AddAgent {
             strategy_id,
@@ -368,11 +378,9 @@ async fn ls(json: bool) -> CliResult<()> {
     Ok(())
 }
 
-async fn show(id: &str) -> CliResult<()> {
+async fn show(id: &str, format: ObjectFormat) -> CliResult<()> {
     let strategy = store().load(id).await.exit_with(XvnExit::NotFound)?;
-    let json = serde_json::to_string_pretty(&strategy).exit_with(XvnExit::Upstream)?;
-    println!("{json}");
-    Ok(())
+    emit_object(&strategy, format)
 }
 
 async fn templates(json: bool) -> CliResult<()> {
@@ -798,5 +806,114 @@ mod tests {
         let agent_slot = slot_to_agent_slot(&slot, Some("openrouter"), Some("deepseek/deepseek-chat"));
         assert_eq!(agent_slot.provider, "openrouter");
         assert_eq!(agent_slot.model, "deepseek/deepseek-chat");
+    }
+}
+
+#[cfg(test)]
+pub mod get {
+    //! Shape: `cargo test -p xvision-cli strategy::get::json` (per the
+    //! q15-object-json-output contract verification block).
+    //!
+    //! Parity guard: the `xvn strategy get` CLI emits the same Rust
+    //! `Strategy` struct that `EvalRunExport.strategy` carries. Asserting
+    //! structural equality here keeps the two surfaces from drifting as
+    //! either side evolves.
+
+    pub mod json {
+        use xvision_engine::api::strategy as api_strategy;
+        use xvision_engine::api::{Actor, ApiContext};
+        use xvision_engine::authoring::CreateStrategyReq;
+        use xvision_engine::eval::export as eval_export;
+        use xvision_engine::eval::run::{Run, RunMode, RunStatus};
+        use xvision_engine::eval::store::RunStore;
+        use xvision_engine::templates::registry;
+
+        async fn seed_strategy_and_completed_run(ctx: &ApiContext) -> (String, String) {
+            // Pick any registered template — the canonical `mean_reversion`
+            // exists in the seeded registry and produces a fully-typed
+            // `Strategy` we can round-trip without bespoke fixture wiring.
+            let tpl_name = registry::list_template_names()
+                .first()
+                .cloned()
+                .expect("at least one template registered");
+            let req = CreateStrategyReq {
+                template: tpl_name,
+                name: "object-shape-fixture".into(),
+                creator: None,
+            };
+            let out = api_strategy::create_strategy(ctx, req)
+                .await
+                .expect("create strategy");
+            let strategy_id = out.id;
+
+            let store = RunStore::new(ctx.db.clone());
+            let mut run = Run::new_queued(
+                strategy_id.clone(),
+                "crypto-bull-q1-2025".into(),
+                RunMode::Backtest,
+            );
+            run.status = RunStatus::Completed;
+            store.create(&run).await.expect("seed run");
+            store
+                .update_status(&run.id, RunStatus::Completed, None)
+                .await
+                .expect("transition");
+
+            (strategy_id, run.id)
+        }
+
+        #[tokio::test]
+        async fn strategy_get_shape_matches_eval_export_strategy_slot() {
+            let dir = tempfile::tempdir().unwrap();
+            let ctx = ApiContext::open(
+                dir.path(),
+                Actor::Cli {
+                    user: "object-json-test".into(),
+                },
+            )
+            .await
+            .expect("open ApiContext");
+
+            let (strategy_id, run_id) = seed_strategy_and_completed_run(&ctx).await;
+
+            let direct = api_strategy::get(&ctx, &strategy_id)
+                .await
+                .expect("strategy get");
+            let export = eval_export::build_export(&ctx, &run_id)
+                .await
+                .expect("build_export");
+
+            let direct_json = serde_json::to_value(&direct).expect("strategy->json");
+            let from_export = export
+                .strategy
+                .as_ref()
+                .map(serde_json::to_value)
+                .expect("export.strategy present")
+                .expect("export.strategy->json");
+            assert_eq!(
+                direct_json, from_export,
+                "strategy shape from `xvn strategy get` must equal `EvalRunExport.strategy`",
+            );
+        }
+
+        #[test]
+        fn strategy_get_visible_alias_is_present() {
+            // Sanity: clap exposes `get` as a visible alias for `show`.
+            // If a refactor removes the alias, the CLI surface for
+            // operators flips silently — this test pins the contract.
+            use clap::CommandFactory;
+            let cmd = crate::Cli::command();
+            let strategy = cmd
+                .find_subcommand("strategy")
+                .expect("strategy subcommand");
+            let show = strategy
+                .find_subcommand("show")
+                .expect("show subcommand");
+            let aliases: Vec<&str> = show.get_visible_aliases().collect();
+            assert!(
+                aliases.contains(&"get"),
+                "expected `get` visible alias on `xvn strategy show`; aliases: {aliases:?}",
+            );
+        }
     }
 }

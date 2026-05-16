@@ -292,6 +292,7 @@ impl WizardLoop {
                 system_prompt: self.system_prompt(),
                 messages,
                 max_tokens: 1500,
+                temperature: None,
                 tools: agent_tool_defs(self.profile),
                 response_schema: None,
             };

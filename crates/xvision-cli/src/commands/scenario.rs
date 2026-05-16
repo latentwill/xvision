@@ -47,7 +47,9 @@ pub enum ScenarioOp {
     Create(CreateArgs),
     /// List scenarios (newest first, archived excluded by default).
     Ls(LsArgs),
-    /// Show a scenario by id.
+    /// Show a scenario by id. JSON shape matches the `scenario` slot
+    /// inside `EvalRunExport` (q15 §3 / §6).
+    #[command(visible_alias = "get")]
     Show(ShowArgs),
     /// Clone an existing scenario, optionally overriding fields.
     Clone(CloneArgs),
@@ -144,8 +146,16 @@ pub struct ShowArgs {
     /// Scenario id.
     pub id: String,
     /// Emit as TOML (CreateScenarioRequest shape, suitable for `--from-file`).
+    /// Mutually exclusive with `--format`; when set, the format flag is
+    /// ignored (kept for backward compat with scripts that used
+    /// `xvn scenario show --toml`).
     #[arg(long)]
     pub toml: bool,
+    /// Output format for JSON mode. `json` (default) is pretty-printed;
+    /// `json-compact` is single-line for shell pipes. Ignored when
+    /// `--toml` is also set.
+    #[arg(long, value_enum, default_value_t = crate::json::ObjectFormat::Json)]
+    pub format: crate::json::ObjectFormat,
 }
 
 #[derive(Args, Debug)]
@@ -437,15 +447,11 @@ async fn run_show(ctx: &ApiContext, a: ShowArgs) -> CliResult<()> {
         let out = toml::to_string_pretty(&req)
             .map_err(|e| CliError::upstream(anyhow::anyhow!("serialize TOML: {e}")))?;
         println!("{out}");
-    } else {
-        // Default: emit pretty JSON.
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&s)
-                .map_err(|e| CliError::upstream(anyhow::anyhow!("serialize: {e}")))?
-        );
+        return Ok(());
     }
-    Ok(())
+    // Default: emit JSON in the shared shape (matches the
+    // `scenario` slot inside `EvalRunExport`).
+    crate::json::emit_object(&s, a.format)
 }
 
 async fn run_clone(ctx: &ApiContext, a: CloneArgs) -> CliResult<()> {
@@ -570,4 +576,89 @@ async fn run_tree(ctx: &ApiContext, id: String) -> CliResult<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+pub mod get {
+    //! Shape: `cargo test -p xvision-cli scenario::get::json` (per the
+    //! q15-object-json-output contract verification block).
+    //!
+    //! Parity guard: the `xvn scenario get` CLI emits the same
+    //! `Scenario` struct that `EvalRunExport.scenario` carries.
+
+    pub mod json {
+        use xvision_engine::api::scenario as api_scenario;
+        use xvision_engine::api::{Actor, ApiContext};
+        use xvision_engine::eval::export as eval_export;
+        use xvision_engine::eval::run::{Run, RunMode, RunStatus};
+        use xvision_engine::eval::store::RunStore;
+
+        #[tokio::test]
+        async fn scenario_get_shape_matches_eval_export_scenario_slot() {
+            let dir = tempfile::tempdir().unwrap();
+            let ctx = ApiContext::open(
+                dir.path(),
+                Actor::Cli {
+                    user: "object-json-test".into(),
+                },
+            )
+            .await
+            .expect("open ApiContext");
+
+            // Canonical scenarios land via the migrate-on-first-open
+            // hook; pick the always-present one.
+            let scenario_id = "crypto-bull-q1-2025";
+
+            // Seed a completed run so `EvalRunExport.scenario` is
+            // populated for the parity compare.
+            let store = RunStore::new(ctx.db.clone());
+            let mut run = Run::new_queued(
+                "agent-fixture".into(),
+                scenario_id.into(),
+                RunMode::Backtest,
+            );
+            run.status = RunStatus::Completed;
+            store.create(&run).await.expect("seed run");
+            store
+                .update_status(&run.id, RunStatus::Completed, None)
+                .await
+                .expect("transition");
+
+            let direct = api_scenario::get(&ctx, scenario_id)
+                .await
+                .expect("scenario get");
+            let export = eval_export::build_export(&ctx, &run.id)
+                .await
+                .expect("build_export");
+
+            let direct_json = serde_json::to_value(&direct).expect("scenario->json");
+            let from_export = export
+                .scenario
+                .as_ref()
+                .map(serde_json::to_value)
+                .expect("export.scenario present")
+                .expect("export.scenario->json");
+            assert_eq!(
+                direct_json, from_export,
+                "scenario shape from `xvn scenario get` must equal `EvalRunExport.scenario`",
+            );
+        }
+
+        #[test]
+        fn scenario_show_has_get_alias() {
+            use clap::CommandFactory;
+            let cmd = crate::Cli::command();
+            let scenario = cmd
+                .find_subcommand("scenario")
+                .expect("scenario subcommand");
+            let show = scenario
+                .find_subcommand("show")
+                .expect("show subcommand");
+            let aliases: Vec<&str> = show.get_visible_aliases().collect();
+            assert!(
+                aliases.contains(&"get"),
+                "expected `get` visible alias on `xvn scenario show`; aliases: {aliases:?}",
+            );
+        }
+    }
 }
