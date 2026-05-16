@@ -129,10 +129,25 @@ async fn refresh_all_inner(
         .collect())
 }
 
-/// Read the cached catalog for a provider. Returns `None` if no cache
-/// exists yet — the caller decides whether to surface "never fetched"
-/// or trigger a refresh.
-pub async fn get(ctx: &ApiContext, name: &str) -> ApiResult<Option<Arc<Catalog>>> {
+/// Read the cached catalog for a provider.
+///
+/// Returns:
+/// - `Err(NotFound)` when `name` isn't in the current config. This
+///   prevents stale catalog files from removed providers being served
+///   indefinitely, and it slams the door on `--name ../etc/passwd`
+///   style inputs before they reach the cache layer's filename check.
+/// - `Ok(None)` when the provider is configured but its catalog has
+///   never been fetched. The caller surfaces "click refresh" UX.
+/// - `Ok(Some(arc))` on a cache hit.
+pub async fn get(
+    ctx: &ApiContext,
+    config_path: &Path,
+    name: &str,
+) -> ApiResult<Option<Arc<Catalog>>> {
+    // Validate before touching disk — `load_provider` returns
+    // `ApiError::NotFound` when the name isn't registered, which the
+    // dashboard maps to 404 and the CLI surfaces as a clear error.
+    let _ = load_provider(config_path, name)?;
     let svc = CatalogService::new(ctx.xvn_home.clone())
         .map_err(|e| ApiError::Internal(format!("init catalog service: {e}")))?;
     svc.get_or_load(name)
@@ -240,10 +255,29 @@ sqlite_url = "sqlite://x.db"
     }
 
     #[tokio::test]
-    async fn get_returns_none_when_no_cache() {
-        let (_tmp, ctx) = fresh_ctx().await;
-        let result = get(&ctx, "anthropic").await.unwrap();
+    async fn get_returns_none_when_provider_configured_but_no_cache() {
+        let (tmp, ctx) = fresh_ctx().await;
+        let cfg = write_config(tmp.path(), BASE_CONFIG);
+        let result = get(&ctx, &cfg, "anthropic").await.unwrap();
         assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn get_returns_not_found_for_unconfigured_provider() {
+        // Regression for the PR #198 review: `get` used to read disk
+        // by raw name without checking config, so stale catalog files
+        // from removed providers stayed readable forever and there
+        // was no defense against `--name ../something` reaching the
+        // cache layer.
+        let (tmp, ctx) = fresh_ctx().await;
+        let cfg = write_config(tmp.path(), BASE_CONFIG);
+        let err = get(&ctx, &cfg, "openrouter-not-configured")
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, ApiError::NotFound(_)),
+            "expected NotFound, got: {err:?}"
+        );
     }
 
     #[tokio::test]

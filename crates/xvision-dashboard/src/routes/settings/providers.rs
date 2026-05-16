@@ -145,7 +145,11 @@ pub async fn get_catalog(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> Result<Json<Catalog>, DashboardError> {
-    let cat = providers_catalog::get(&state.api_context(), &name).await?;
+    // `get` returns NotFound for unconfigured providers — that maps to
+    // a 404 via DashboardError::from(ApiError), which the UI surfaces
+    // as "provider was removed; refresh the page" rather than feeding
+    // a phantom catalog from a stale disk file.
+    let cat = providers_catalog::get(&state.api_context(), &config_path(), &name).await?;
     match cat {
         Some(arc) => Ok(Json((*arc).clone())),
         None => Err(DashboardError::NotFound(format!(

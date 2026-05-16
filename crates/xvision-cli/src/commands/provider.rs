@@ -105,7 +105,7 @@ pub async fn run(cmd: ProviderCmd) -> Result<()> {
         ProviderAction::RefreshModels { name } => {
             refresh_models(&ctx, &config_path, name.as_deref()).await
         }
-        ProviderAction::Models { name } => models(&ctx, &name).await,
+        ProviderAction::Models { name } => models(&ctx, &config_path, &name).await,
     }
 }
 
@@ -306,8 +306,12 @@ async fn refresh_models(
     Ok(())
 }
 
-async fn models(ctx: &ApiContext, name: &str) -> Result<()> {
-    let cat = providers_catalog::get(ctx, name)
+async fn models(
+    ctx: &ApiContext,
+    config_path: &std::path::Path,
+    name: &str,
+) -> Result<()> {
+    let cat = providers_catalog::get(ctx, config_path, name)
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
     let cat = match cat {
