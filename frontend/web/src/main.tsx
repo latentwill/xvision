@@ -12,6 +12,13 @@ import "@fontsource/jetbrains-mono/latin-500.css";
 import "./styles/tokens.css";
 import "./styles/globals.css";
 import { App } from "./App";
+import { installBrowserLogging, logInfo, runtimeMode } from "./lib/logger";
+
+installBrowserLogging();
+logInfo("app", "app.boot", {
+  mode: runtimeMode(),
+  user_agent: navigator.userAgent,
+});
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

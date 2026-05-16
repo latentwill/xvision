@@ -1,6 +1,7 @@
 // Chart API — typed fetchers for the chart payload endpoints.
 
 import { apiFetch } from "./client";
+import { logInfo } from "@/lib/logger";
 import type {
   CompareChartPayload,
   RunChartPayload,
@@ -52,7 +53,9 @@ export function getStrategyChart(
 }
 
 export function openRunStream(runId: string): EventSource {
-  return new EventSource(`/api/eval/runs/${encodeURIComponent(runId)}/stream`);
+  const path = `/api/eval/runs/${encodeURIComponent(runId)}/stream`;
+  logInfo("stream", "stream.open", { run_id: runId, path });
+  return new EventSource(path);
 }
 
 export async function getScenarioPreview(params: {

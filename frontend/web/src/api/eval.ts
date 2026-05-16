@@ -1,6 +1,11 @@
 // Eval API — typed fetchers against `engine::api::eval::*`.
 
 import { apiFetch } from "./client";
+import {
+  createTrace,
+  durationSince,
+  errorSummary,
+} from "@/lib/logger";
 import type {
   ComparisonReport,
   RunDetail,
@@ -70,12 +75,29 @@ export function deleteRun(id: string): Promise<void> {
 }
 
 export function cancelRun(id: string): Promise<RunSummary> {
+  const trace = createTrace("eval", { run_id: id });
+  const started = performance.now();
+  trace.info("eval.cancel.start");
   return apiFetch<RunSummary>(
     `/api/eval/runs/${encodeURIComponent(id)}/cancel`,
     {
       method: "POST",
     },
-  );
+  )
+    .then((run) => {
+      trace.info("eval.cancel.ok", {
+        status: run.status,
+        duration_ms: durationSince(started),
+      });
+      return run;
+    })
+    .catch((err) => {
+      trace.error("eval.cancel.error", {
+        duration_ms: durationSince(started),
+        error: errorSummary(err),
+      });
+      throw err;
+    });
 }
 
 export function compareRuns(ids: string[]): Promise<ComparisonReport> {
@@ -88,8 +110,30 @@ export function compareRuns(ids: string[]): Promise<ComparisonReport> {
 /// progresses to `Running` then `Completed` / `Failed`. Frontend polls
 /// `GET /api/eval/runs/:id` until terminal.
 export function startRun(req: StartRunReq): Promise<RunDetail> {
+  const trace = createTrace("eval", {
+    strategy_id: req.agent_id,
+    scenario_id: req.scenario_id,
+    mode: req.mode,
+  });
+  const started = performance.now();
+  trace.info("eval.launch.start");
   return apiFetch<RunDetail>("/api/eval/runs", {
     method: "POST",
     body: JSON.stringify(req),
-  });
+  })
+    .then((run) => {
+      trace.info("eval.launch.queued", {
+        run_id: run.summary.id,
+        status: run.summary.status,
+        duration_ms: durationSince(started),
+      });
+      return run;
+    })
+    .catch((err) => {
+      trace.error("eval.launch.error", {
+        duration_ms: durationSince(started),
+        error: errorSummary(err),
+      });
+      throw err;
+    });
 }
