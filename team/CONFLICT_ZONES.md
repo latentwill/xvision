@@ -17,10 +17,10 @@ Conductor: see `team/CONDUCTOR.md`.
 | `frontend/web/src/routes/index.tsx` | `v2a-driver-tour` | v2a | Tour mount point landed |
 | `crates/xvision-engine/src/eval/store.rs` | (none — released by eval-review-agent-engine #186 and q15-eval-json-export #187 merges) | — | — |
 | `crates/xvision-engine/src/eval/executor/backtest.rs` | (none — released by `q15-scenario-warmup-bars` PR #183 merge) | — | — |
-| `crates/xvision-engine/src/eval/executor/paper.rs` | `alpaca-paper-crypto-submit` | post-q15 | Crypto short-open no-op branch landed |
-| `crates/xvision-engine/src/eval/executor/mod.rs` | `alpaca-paper-crypto-submit` | post-q15 | `format_failure_reason` + `broker_*` classes landed |
-| `crates/xvision-execution/src/broker_surface.rs` | `alpaca-paper-crypto-submit` | post-q15 | Crypto bracket-omission + crypto-short rejection landed |
-| `crates/xvision-execution/src/alpaca.rs` | `alpaca-paper-crypto-submit` | post-q15 | Surface-level changes coordinated with `broker_surface.rs` |
+| `crates/xvision-engine/src/eval/executor/paper.rs` | (none — released by `alpaca-paper-crypto-submit` PR #191 merge) | — | — |
+| `crates/xvision-engine/src/eval/executor/mod.rs` | (none — released by `alpaca-paper-crypto-submit` PR #191 merge) | — | — |
+| `crates/xvision-execution/src/broker_surface.rs` | (none — released by `alpaca-paper-crypto-submit` PR #191 merge) | — | — |
+| `crates/xvision-execution/src/alpaca.rs` | (none — released by `alpaca-paper-crypto-submit` PR #191 merge) | — | — |
 | `crates/xvision-engine/src/eval/dispatcher.rs` | (none — released by `q15-agent-max-tokens-from-model` PR #185 merge) | — | — |
 | `crates/xvision-engine/src/eval/trader_output.rs` | (none — released by `q15-agent-max-tokens-from-model` PR #185 merge) | — | — |
 | `crates/xvision-dashboard/src/routes/eval/mod.rs` | (none — released by #187 / #188 / #184 merges) | — | — |
