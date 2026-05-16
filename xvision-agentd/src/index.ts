@@ -1,5 +1,6 @@
 import { startUdsServer } from "./transport/uds-server.js"
 import { PROTOCOL_VERSION, SIDECAR_VERSION } from "./version.js"
+import { setCallbackSocketPath } from "./transport/callback-client.js"
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2)
@@ -15,6 +16,11 @@ async function main(): Promise<void> {
     process.exit(2)
   }
   const socketPath = args[socketIdx + 1]!
+
+  const cbIdx = args.indexOf("--callback-socket")
+  if (cbIdx !== -1 && args[cbIdx + 1]) {
+    setCallbackSocketPath(args[cbIdx + 1])
+  }
 
   const server = await startUdsServer(socketPath)
   const shutdown = async (): Promise<void> => {

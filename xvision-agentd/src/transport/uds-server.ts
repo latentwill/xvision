@@ -6,6 +6,7 @@ import {
 } from "./jsonrpc.js"
 import "../methods/runtime-health.js"
 import "../methods/tool-registry.js"
+import "../methods/tool-invoke.js"
 import { getMethodHandler } from "../methods/index.js"
 
 export interface UdsServerHandle {

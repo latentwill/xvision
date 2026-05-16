@@ -16,12 +16,15 @@ pub(crate) struct Supervisor {
 }
 
 impl Supervisor {
-    pub(crate) async fn spawn(bin: &Path, socket_path: &Path) -> Result<Self> {
+    pub(crate) async fn spawn(bin: &Path, socket_path: &Path, callback_socket_path: Option<&Path>) -> Result<Self> {
         let mut cmd = Command::new("node");
         cmd.arg(bin)
             .arg("--socket")
-            .arg(socket_path)
-            .stdout(Stdio::null())
+            .arg(socket_path);
+        if let Some(cb) = callback_socket_path {
+            cmd.arg("--callback-socket").arg(cb);
+        }
+        cmd.stdout(Stdio::null())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
 

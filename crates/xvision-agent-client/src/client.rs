@@ -1,6 +1,8 @@
 use std::path::Path;
+use std::sync::Arc;
 
 use crate::errors::{AgentClientError, Result};
+use crate::tool_dispatch::{serve_callbacks, ToolDispatch};
 use crate::protocol::{
     RuntimeHealthResult, ToolDescriptor, ToolRegistryGetResult, ToolRegistrySetParams,
     ToolRegistrySetResult, SUPPORTED_PROTOCOL_VERSION,
@@ -16,7 +18,7 @@ pub struct AgentClient {
 
 impl AgentClient {
     pub async fn spawn(bin: &Path, socket_path: &Path) -> Result<Self> {
-        let supervisor = Supervisor::spawn(bin, socket_path).await?;
+        let supervisor = Supervisor::spawn(bin, socket_path, None).await?;
         let transport = UdsTransport::connect(&supervisor.socket_path).await?;
         let versions = Self::handshake(&transport).await?;
         Ok(Self { transport, supervisor, versions })
@@ -57,6 +59,31 @@ impl AgentClient {
     pub async fn list_tools(&self) -> Result<ToolRegistryGetResult> {
         self.transport
             .call::<(), ToolRegistryGetResult>("tool.registry.get", None)
+            .await
+    }
+
+    pub async fn spawn_with_callbacks(
+        bin: &Path,
+        socket_path: &Path,
+        callback_socket_path: &Path,
+        dispatch: Arc<dyn ToolDispatch>,
+    ) -> Result<Self> {
+        serve_callbacks(callback_socket_path, dispatch).await?;
+        let supervisor = Supervisor::spawn(bin, socket_path, Some(callback_socket_path)).await?;
+        let transport = UdsTransport::connect(&supervisor.socket_path).await?;
+        let versions = Self::handshake(&transport).await?;
+        Ok(Self { transport, supervisor, versions })
+    }
+
+    pub async fn invoke_tool_via_sidecar(
+        &self,
+        name: &str,
+        input: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        #[derive(serde::Serialize)]
+        struct P<'a> { name: &'a str, input: serde_json::Value }
+        self.transport
+            .call::<P, serde_json::Value>("tool.invoke", Some(P { name, input }))
             .await
     }
 }
