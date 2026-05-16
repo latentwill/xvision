@@ -75,7 +75,16 @@ pub struct LlmRequest {
     /// one Text block; tool-use loops append assistant + user
     /// (tool_result) messages each iteration.
     pub messages: Vec<Message>,
-    pub max_tokens: u32,
+    /// Per-request output token budget. `None` lets each dispatcher decide:
+    /// OpenAI-compat dispatchers omit the field entirely (so the provider
+    /// applies its own default — usually much larger than 4096). Anthropic
+    /// requires the field at the API boundary, so the dispatcher fills in
+    /// a per-model fallback via `lookup_model(...).auto_max_tokens()` when
+    /// this is `None`. Explicit `Some(n)` values are passed through to the
+    /// provider verbatim — no clamping. Operators who want a specific
+    /// ceiling set it on the agent slot; we don't second-guess.
+    #[serde(default)]
+    pub max_tokens: Option<u32>,
     /// Empty when the caller doesn't expose any tools to the model.
     #[serde(default)]
     pub tools: Vec<ToolDefinition>,
@@ -306,26 +315,43 @@ impl AnthropicDispatch {
     }
 }
 
+/// Build the Anthropic `/v1/messages` request body from an `LlmRequest`.
+/// Pure function — extracted so the body shape (especially the
+/// `max_tokens` fallback) is unit-testable without an HTTP round-trip.
+///
+/// Anthropic requires `max_tokens` at the API boundary, so a `None` on
+/// the request falls back to the per-model auto value from the canonical
+/// metadata table. Explicit operator values pass through verbatim — no
+/// clamping. See `crates/xvision-core/src/providers/model_metadata.rs`
+/// for the per-model defaults.
+pub fn anthropic_request_body(req: &LlmRequest) -> serde_json::Value {
+    let system_prompt = if let Some(schema) = &req.response_schema {
+        format!("{}{}", req.system_prompt, schema.prompt_contract())
+    } else {
+        req.system_prompt.clone()
+    };
+    let max_tokens = req
+        .max_tokens
+        .unwrap_or_else(|| xvision_core::providers::lookup_model(&req.model).auto_max_tokens());
+    let mut body = serde_json::json!({
+        "model": req.model,
+        "max_tokens": max_tokens,
+        "system": system_prompt,
+        "messages": req.messages,
+    });
+    if !req.tools.is_empty() {
+        body["tools"] = serde_json::to_value(&req.tools).unwrap_or(serde_json::Value::Null);
+    }
+    if let Some(t) = req.temperature {
+        body["temperature"] = serde_json::json!(t);
+    }
+    body
+}
+
 #[async_trait]
 impl LlmDispatch for AnthropicDispatch {
     async fn complete(&self, req: LlmRequest) -> anyhow::Result<LlmResponse> {
-        let system_prompt = if let Some(schema) = &req.response_schema {
-            format!("{}{}", req.system_prompt, schema.prompt_contract())
-        } else {
-            req.system_prompt.clone()
-        };
-        let mut body = serde_json::json!({
-            "model": req.model,
-            "max_tokens": req.max_tokens,
-            "system": system_prompt,
-            "messages": req.messages,
-        });
-        if !req.tools.is_empty() {
-            body["tools"] = serde_json::to_value(&req.tools)?;
-        }
-        if let Some(t) = req.temperature {
-            body["temperature"] = serde_json::json!(t);
-        }
+        let body = anthropic_request_body(&req);
 
         tracing::debug!(
             target: "xvision::llm",
@@ -415,89 +441,98 @@ impl OpenaiCompatDispatch {
     }
 }
 
+/// Build the OpenAI-compat `/chat/completions` request body. Pure
+/// function — see `anthropic_request_body` for the symmetric Anthropic
+/// path and the reason this is split out.
+///
+/// `max_tokens` is omitted entirely when the request has `None`, so the
+/// provider applies its own (usually much larger) default. Explicit
+/// operator values pass through verbatim — no clamping.
+pub fn openai_compat_request_body(req: &LlmRequest) -> serde_json::Value {
+    let mut messages: Vec<serde_json::Value> = Vec::with_capacity(req.messages.len() + 1);
+    if !req.system_prompt.is_empty() {
+        messages.push(serde_json::json!({
+            "role": "system",
+            "content": req.system_prompt,
+        }));
+    }
+    for m in &req.messages {
+        let mut text_parts: Vec<&str> = Vec::new();
+        let mut tool_calls: Vec<serde_json::Value> = Vec::new();
+        let mut tool_results: Vec<(&str, &str)> = Vec::new();
+        for c in &m.content {
+            match c {
+                ContentBlock::Text { text } => text_parts.push(text.as_str()),
+                ContentBlock::ToolUse { id, name, input } => {
+                    tool_calls.push(serde_json::json!({
+                        "id": id,
+                        "type": "function",
+                        "function": {
+                            "name": name,
+                            "arguments": serde_json::to_string(input).unwrap_or_else(|_| "{}".to_string()),
+                        },
+                    }));
+                }
+                ContentBlock::ToolResult { tool_use_id, content } => {
+                    tool_results.push((tool_use_id.as_str(), content.as_str()));
+                }
+            }
+        }
+        if !text_parts.is_empty() || !tool_calls.is_empty() {
+            let mut obj = serde_json::Map::new();
+            obj.insert("role".into(), serde_json::Value::String(m.role.clone()));
+            obj.insert("content".into(), serde_json::Value::String(text_parts.concat()));
+            if !tool_calls.is_empty() {
+                obj.insert("tool_calls".into(), serde_json::Value::Array(tool_calls));
+            }
+            messages.push(serde_json::Value::Object(obj));
+        }
+        for (id, content) in tool_results {
+            messages.push(serde_json::json!({
+                "role": "tool",
+                "tool_call_id": id,
+                "content": content,
+            }));
+        }
+    }
+
+    let mut body = serde_json::json!({
+        "model": req.model,
+        "messages": messages,
+    });
+    if let Some(n) = req.max_tokens {
+        body["max_tokens"] = serde_json::json!(n);
+    }
+    if !req.tools.is_empty() {
+        let mapped: Vec<serde_json::Value> = req
+            .tools
+            .iter()
+            .map(|t| {
+                serde_json::json!({
+                    "type": "function",
+                    "function": {
+                        "name": t.name,
+                        "description": t.description,
+                        "parameters": t.input_schema,
+                    },
+                })
+            })
+            .collect();
+        body["tools"] = serde_json::Value::Array(mapped);
+    }
+    if let Some(schema) = &req.response_schema {
+        body["response_format"] = schema.openai_response_format();
+    }
+    if let Some(t) = req.temperature {
+        body["temperature"] = serde_json::json!(t);
+    }
+    body
+}
+
 #[async_trait]
 impl LlmDispatch for OpenaiCompatDispatch {
     async fn complete(&self, req: LlmRequest) -> anyhow::Result<LlmResponse> {
-        // Translate Anthropic-style messages into OpenAI chat-completions format.
-        // System prompt rides as the first message (role=system).
-        let mut messages: Vec<serde_json::Value> = Vec::with_capacity(req.messages.len() + 1);
-        if !req.system_prompt.is_empty() {
-            messages.push(serde_json::json!({
-                "role": "system",
-                "content": req.system_prompt,
-            }));
-        }
-        for m in &req.messages {
-            // Split each Anthropic message by ContentBlock type. text/tool_use
-            // belong to "assistant" messages; tool_result blocks each become
-            // their own "tool" message in OpenAI's shape.
-            let mut text_parts: Vec<&str> = Vec::new();
-            let mut tool_calls: Vec<serde_json::Value> = Vec::new();
-            let mut tool_results: Vec<(&str, &str)> = Vec::new();
-            for c in &m.content {
-                match c {
-                    ContentBlock::Text { text } => text_parts.push(text.as_str()),
-                    ContentBlock::ToolUse { id, name, input } => {
-                        tool_calls.push(serde_json::json!({
-                            "id": id,
-                            "type": "function",
-                            "function": {
-                                "name": name,
-                                "arguments": serde_json::to_string(input).unwrap_or_else(|_| "{}".to_string()),
-                            },
-                        }));
-                    }
-                    ContentBlock::ToolResult { tool_use_id, content } => {
-                        tool_results.push((tool_use_id.as_str(), content.as_str()));
-                    }
-                }
-            }
-            if !text_parts.is_empty() || !tool_calls.is_empty() {
-                let mut obj = serde_json::Map::new();
-                obj.insert("role".into(), serde_json::Value::String(m.role.clone()));
-                obj.insert("content".into(), serde_json::Value::String(text_parts.concat()));
-                if !tool_calls.is_empty() {
-                    obj.insert("tool_calls".into(), serde_json::Value::Array(tool_calls));
-                }
-                messages.push(serde_json::Value::Object(obj));
-            }
-            for (id, content) in tool_results {
-                messages.push(serde_json::json!({
-                    "role": "tool",
-                    "tool_call_id": id,
-                    "content": content,
-                }));
-            }
-        }
-
-        let mut body = serde_json::json!({
-            "model": req.model,
-            "messages": messages,
-            "max_tokens": req.max_tokens,
-        });
-        if !req.tools.is_empty() {
-            let mapped: Vec<serde_json::Value> = req
-                .tools
-                .iter()
-                .map(|t| {
-                    serde_json::json!({
-                        "type": "function",
-                        "function": {
-                            "name": t.name,
-                            "description": t.description,
-                            "parameters": t.input_schema,
-                        },
-                    })
-                })
-                .collect();
-            body["tools"] = serde_json::Value::Array(mapped);
-        }
-        if let Some(schema) = &req.response_schema {
-            body["response_format"] = schema.openai_response_format();
-        }
-        if let Some(t) = req.temperature {
-            body["temperature"] = serde_json::json!(t);
-        }
+        let body = openai_compat_request_body(&req);
 
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
         tracing::debug!(
@@ -575,5 +610,88 @@ impl LlmDispatch for OpenaiCompatDispatch {
             input_tokens,
             output_tokens,
         })
+    }
+}
+
+#[cfg(test)]
+mod max_tokens_body_tests {
+    //! Verify the new `LlmRequest.max_tokens: Option<u32>` contract at
+    //! the request-body boundary. The contract:
+    //!
+    //! - OpenAI-compat omits `max_tokens` entirely when `None` so the
+    //!   provider applies its own (usually much larger) default. This
+    //!   replaces the old behaviour where an unknown model id collapsed
+    //!   the operator's value to the `unknown_default` ceiling of 4096.
+    //! - Anthropic always includes `max_tokens` (API-required) and falls
+    //!   back to the per-model auto value when the operator didn't set
+    //!   one. Operator-provided values pass through verbatim — no clamp.
+    use super::*;
+    use crate::agent::llm::{LlmRequest, Message};
+
+    fn req_with(model: &str, max_tokens: Option<u32>) -> LlmRequest {
+        LlmRequest {
+            model: model.to_string(),
+            system_prompt: "test".into(),
+            messages: vec![Message::user_text("decide")],
+            max_tokens,
+            tools: vec![],
+            temperature: None,
+            response_schema: None,
+        }
+    }
+
+    #[test]
+    fn openai_compat_body_omits_max_tokens_when_unset() {
+        let body = openai_compat_request_body(&req_with("deepseek-anything-flash", None));
+        assert!(
+            body.get("max_tokens").is_none(),
+            "max_tokens must be absent when operator left it unset; got body: {body}",
+        );
+    }
+
+    #[test]
+    fn openai_compat_body_passes_explicit_value_verbatim_even_for_unknown_model() {
+        // The QA15 regression: an unknown model id used to clamp the
+        // operator's 200_000 down to 4096 via `unknown_default`. The
+        // new contract sends the operator's value through unchanged so
+        // the provider can apply its own ceiling.
+        let body = openai_compat_request_body(&req_with("deepseek-anything-flash", Some(200_000)));
+        assert_eq!(
+            body["max_tokens"], 200_000,
+            "operator's max_tokens must pass through verbatim; got body: {body}",
+        );
+    }
+
+    #[test]
+    fn anthropic_body_always_includes_max_tokens() {
+        // Anthropic Messages requires the field — omitting it 400s. With
+        // no operator value we fall back to the model's auto, so the
+        // field is always present.
+        let body = anthropic_request_body(&req_with("claude-sonnet-4-6", None));
+        assert!(
+            body.get("max_tokens").is_some(),
+            "Anthropic body must always include max_tokens; got: {body}",
+        );
+    }
+
+    #[test]
+    fn anthropic_body_falls_back_to_model_auto_when_none() {
+        let model = "claude-sonnet-4-6";
+        let body = anthropic_request_body(&req_with(model, None));
+        let expected = xvision_core::providers::lookup_model(model).auto_max_tokens();
+        assert_eq!(
+            body["max_tokens"],
+            serde_json::json!(expected),
+            "None falls back to the canonical metadata auto value",
+        );
+    }
+
+    #[test]
+    fn anthropic_body_passes_explicit_value_verbatim_no_clamp() {
+        let body = anthropic_request_body(&req_with("claude-sonnet-4-6", Some(200_000)));
+        assert_eq!(
+            body["max_tokens"], 200_000,
+            "operator's max_tokens must pass through verbatim — no ceiling clamp",
+        );
     }
 }

@@ -955,6 +955,7 @@ mod tests {
                 action: "long_open".into(),
                 conviction: Some(0.7),
                 justification: Some("seed".into()),
+                reasoning: None,
                 order_size: Some(0.1),
                 fill_price: Some(40_000.0),
                 fill_size: Some(0.1),

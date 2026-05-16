@@ -503,7 +503,7 @@ mod tests {
             model: "stub".into(),
             system_prompt: "".into(),
             messages: vec![xvision_engine::agent::llm::Message::user_text("hi")],
-            max_tokens: 64,
+            max_tokens: Some(64),
             tools: vec![],
             temperature: None,
             response_schema: None,

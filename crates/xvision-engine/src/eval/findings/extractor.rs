@@ -47,7 +47,7 @@ pub async fn extract_findings(
         model: model.to_string(),
         system_prompt: PROMPT.to_string(),
         messages: vec![Message::user_text(user_text)],
-        max_tokens: 2000,
+        max_tokens: Some(2000),
         tools: vec![],
         temperature: None,
         response_schema: None,
