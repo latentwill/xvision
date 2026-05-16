@@ -79,6 +79,13 @@ pub struct LlmRequest {
     /// Empty when the caller doesn't expose any tools to the model.
     #[serde(default)]
     pub tools: Vec<ToolDefinition>,
+    /// Optional sampling temperature. `None` lets the provider apply its
+    /// own default (Anthropic ~1.0, OpenAI 1.0 unless overridden). Callers
+    /// that need deterministic output (eval review, eval baselines) set a
+    /// low value here; agent-loop callers that want creative variance
+    /// leave it unset.
+    #[serde(default)]
+    pub temperature: Option<f64>,
     /// Optional strict JSON response contract for final text output. OpenAI-
     /// compatible providers receive this as provider-native `json_schema`
     /// response_format. Anthropic receives it in the system prompt because
@@ -316,6 +323,9 @@ impl LlmDispatch for AnthropicDispatch {
         if !req.tools.is_empty() {
             body["tools"] = serde_json::to_value(&req.tools)?;
         }
+        if let Some(t) = req.temperature {
+            body["temperature"] = serde_json::json!(t);
+        }
 
         tracing::debug!(
             target: "xvision::llm",
@@ -484,6 +494,9 @@ impl LlmDispatch for OpenaiCompatDispatch {
         }
         if let Some(schema) = &req.response_schema {
             body["response_format"] = schema.openai_response_format();
+        }
+        if let Some(t) = req.temperature {
+            body["temperature"] = serde_json::json!(t);
         }
 
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));

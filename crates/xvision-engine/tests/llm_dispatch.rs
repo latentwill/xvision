@@ -10,6 +10,7 @@ async fn mock_dispatch_returns_text_block() {
             messages: vec![Message::user_text("decide")],
             max_tokens: 200,
             tools: vec![],
+            temperature: None,
             response_schema: None,
         })
         .await
@@ -45,6 +46,7 @@ async fn mock_dispatch_sequence_drives_tool_use_loop() {
         messages: vec![Message::user_text("make me a trend follower")],
         max_tokens: 200,
         tools: vec![],
+        temperature: None,
         response_schema: None,
     };
 
@@ -72,6 +74,7 @@ async fn anthropic_dispatch_returns_real_text() {
             messages: vec![Message::user_text("say 'hello' and nothing else")],
             max_tokens: 50,
             tools: vec![],
+            temperature: None,
             response_schema: None,
         })
         .await
