@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 
 import { EvalRunDetailRoute } from "./eval-runs-detail";
 import * as chartApi from "@/api/chart";
 import * as evalApi from "@/api/eval";
+import * as evalReviewApi from "@/api/eval-review";
 import type { DecisionRowDto, RunDetail } from "@/api/types.gen";
 
 vi.mock("@/api/eval", async () => {
@@ -17,6 +18,18 @@ vi.mock("@/api/eval", async () => {
     getRun: vi.fn(),
     cancelRun: vi.fn(),
     downloadEvalRunExport: vi.fn(),
+  };
+});
+
+vi.mock("@/api/eval-review", async () => {
+  const actual = await vi.importActual<typeof import("@/api/eval-review")>(
+    "@/api/eval-review",
+  );
+  return {
+    ...actual,
+    listReviewsForRun: vi.fn(),
+    getReview: vi.fn(),
+    generateReview: vi.fn(),
   };
 });
 
@@ -93,6 +106,30 @@ function decision(overrides: Partial<DecisionRowDto> = {}): DecisionRowDto {
   };
 }
 
+function makeReview(
+  overrides: Partial<evalReviewApi.EvalReview> = {},
+): evalReviewApi.EvalReview {
+  return {
+    id: "01REVIEW",
+    eval_run_id: "01LIVE",
+    agent_profile_id: "reasoning-agent",
+    status: "completed",
+    verdict: "promising",
+    confidence: 0.72,
+    score: 75,
+    summary: "Looks plausible.",
+    raw_output_json: JSON.stringify({
+      risks: ["concentration risk"],
+      next_tests: ["test on longer window", "stress test", "out-of-sample"],
+      questions: ["does this survive 2022 chop?"],
+    }),
+    error: null,
+    created_at: "2026-05-13T14:01:30Z",
+    updated_at: "2026-05-13T14:02:00Z",
+    ...overrides,
+  };
+}
+
 function detail(overrides: Partial<RunDetail> = {}): RunDetail {
   return {
     summary: {
@@ -131,6 +168,18 @@ describe("EvalRunDetailRoute", () => {
     vi.mocked(chartApi.openRunStream).mockImplementation(
       (runId: string) => new EventSource(`/stream/${runId}`),
     );
+    // ReviewPanel queries listReviewsForRun whenever runIsCompleted is
+    // true; default to an empty list so tests that don't care about the
+    // review surface don't have to set this up.
+    vi.mocked(evalReviewApi.listReviewsForRun).mockResolvedValue([]);
+    vi.mocked(evalReviewApi.getReview).mockResolvedValue({
+      review: makeReview(),
+      findings: [],
+    });
+    vi.mocked(evalReviewApi.generateReview).mockResolvedValue({
+      review: makeReview(),
+      findings: [],
+    });
   });
 
   afterEach(() => {
@@ -231,6 +280,283 @@ describe("EvalRunDetailRoute", () => {
 
     expect(
       await screen.findByText(/download failed: server unreachable/i),
+    ).toBeInTheDocument();
+  });
+
+  // ── review panel ──────────────────────────────────────────────────────
+
+  it("hides the review panel while the run is still active", async () => {
+    vi.mocked(evalApi.getRun).mockResolvedValue(detail());
+    renderDetail();
+    // The route renders an "Reviews are available after the run finishes"
+    // empty state until status === "completed".
+    await screen.findByRole("button", { name: /stop eval run/i });
+    expect(
+      screen.getByText(/reviews are available after the run finishes/i),
+    ).toBeInTheDocument();
+    // listReviewsForRun must not fire for non-completed runs.
+    expect(evalReviewApi.listReviewsForRun).not.toHaveBeenCalled();
+  });
+
+  it("shows the empty state with an agent picker on a fresh completed run", async () => {
+    vi.mocked(evalApi.getRun).mockResolvedValue(
+      detail({
+        summary: {
+          ...detail().summary,
+          status: "completed",
+          completed_at: "2026-05-13T14:01:00Z",
+        },
+      }),
+    );
+    vi.mocked(evalReviewApi.listReviewsForRun).mockResolvedValue([]);
+
+    renderDetail();
+
+    expect(
+      await screen.findByText(/no review yet for this run/i),
+    ).toBeInTheDocument();
+    // Agent picker shows the four canonical personas.
+    expect(
+      screen.getByRole("button", { name: "Fast Trader" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Reasoning" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Risk" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Research" }),
+    ).toBeInTheDocument();
+  });
+
+  it("calls generateReview with force=true when the operator picks an agent", async () => {
+    vi.mocked(evalApi.getRun).mockResolvedValue(
+      detail({
+        summary: {
+          ...detail().summary,
+          status: "completed",
+          completed_at: "2026-05-13T14:01:00Z",
+        },
+      }),
+    );
+    vi.mocked(evalReviewApi.listReviewsForRun).mockResolvedValue([]);
+
+    renderDetail();
+
+    const button = await screen.findByRole("button", { name: "Reasoning" });
+    fireEvent.click(button);
+
+    await waitFor(() =>
+      expect(evalReviewApi.generateReview).toHaveBeenCalledWith("01LIVE", {
+        agent_profile_id: "reasoning-agent",
+        force: true,
+      }),
+    );
+  });
+
+  it("renders verdict + summary + sections + findings for a completed review", async () => {
+    vi.mocked(evalApi.getRun).mockResolvedValue(
+      detail({
+        summary: {
+          ...detail().summary,
+          status: "completed",
+          completed_at: "2026-05-13T14:01:00Z",
+        },
+      }),
+    );
+    const review = makeReview();
+    vi.mocked(evalReviewApi.listReviewsForRun).mockResolvedValue([review]);
+    vi.mocked(evalReviewApi.getReview).mockResolvedValue({
+      review,
+      findings: [
+        {
+          id: "f1",
+          run_id: "01LIVE",
+          kind: "performance",
+          severity: "medium",
+          summary: "Modest sharpe",
+          evidence: [{ kind: "metric", reference: "metric:sharpe" }],
+          extracted_at: "2026-05-13T14:02:00Z",
+          schema_version: "2",
+          eval_review_id: "01REVIEW",
+          type: "performance",
+          confidence: 0.6,
+          title: "Modest sharpe",
+          description: "Sharpe 1.2 is modest given the 5% return.",
+          recommendation: "Test on a longer window.",
+        },
+      ],
+    });
+
+    renderDetail();
+
+    // Verdict badge + summary + section headers.
+    expect(await screen.findByText("Promising")).toBeInTheDocument();
+    expect(screen.getByText("Looks plausible.")).toBeInTheDocument();
+    expect(screen.getByText("Executive summary")).toBeInTheDocument();
+    expect(screen.getByText("Key findings")).toBeInTheDocument();
+    expect(screen.getByText("Risks")).toBeInTheDocument();
+    expect(screen.getByText("Recommended next tests")).toBeInTheDocument();
+    expect(screen.getByText("Open questions")).toBeInTheDocument();
+    // Risk + next-test bullet from raw_output_json.
+    expect(screen.getByText("concentration risk")).toBeInTheDocument();
+    expect(screen.getByText("test on longer window")).toBeInTheDocument();
+    // Finding card renders title + recommendation.
+    expect(screen.getByText("Modest sharpe")).toBeInTheDocument();
+    expect(
+      screen.getByText("Test on a longer window."),
+    ).toBeInTheDocument();
+  });
+
+  it("does not leak the previous run's selected review when navigating to a new run", async () => {
+    // Two completed runs, each with one review. Render run A first,
+    // then navigate to run B (different :runId) and assert the panel
+    // displays run B's review id — not run A's. The fix uses
+    // `key={runId}` on ReviewPanel to remount the component on
+    // navigation; without it, `selectedId` survives and pins the
+    // panel to the previous run.
+    const runADetail: RunDetail = detail({
+      summary: {
+        ...detail().summary,
+        id: "01RUN_A",
+        status: "completed",
+        completed_at: "2026-05-13T14:01:00Z",
+      },
+    });
+    const runBDetail: RunDetail = detail({
+      summary: {
+        ...detail().summary,
+        id: "01RUN_B",
+        status: "completed",
+        completed_at: "2026-05-13T15:01:00Z",
+      },
+    });
+    const reviewA = makeReview({
+      id: "01REVIEW_A",
+      eval_run_id: "01RUN_A",
+      summary: "Review for run A.",
+    });
+    const reviewB = makeReview({
+      id: "01REVIEW_B",
+      eval_run_id: "01RUN_B",
+      summary: "Review for run B.",
+    });
+
+    vi.mocked(evalApi.getRun).mockImplementation(async (id: string) =>
+      id === "01RUN_A" ? runADetail : runBDetail,
+    );
+    vi.mocked(evalReviewApi.listReviewsForRun).mockImplementation(
+      async (id: string) => (id === "01RUN_A" ? [reviewA] : [reviewB]),
+    );
+    vi.mocked(evalReviewApi.getReview).mockImplementation(
+      async (reviewId: string) => ({
+        review: reviewId === "01REVIEW_A" ? reviewA : reviewB,
+        findings: [],
+      }),
+    );
+
+    // Render-with-navigation helper: a child route + nav button so the
+    // test can drive `useParams` updates without manually unmounting.
+    function NavApp() {
+      return (
+        <MemoryRouter initialEntries={["/eval-runs/01RUN_A"]}>
+          <QueryClientProvider
+            client={
+              new QueryClient({
+                defaultOptions: { queries: { retry: false } },
+              })
+            }
+          >
+            <Routes>
+              <Route
+                path="/eval-runs/:runId"
+                element={
+                  <>
+                    <Link to="/eval-runs/01RUN_B">go to B</Link>
+                    <EvalRunDetailRoute />
+                  </>
+                }
+              />
+            </Routes>
+          </QueryClientProvider>
+        </MemoryRouter>
+      );
+    }
+
+    render(<NavApp />);
+
+    // Run A is current → its review summary renders.
+    expect(await screen.findByText("Review for run A.")).toBeInTheDocument();
+
+    // Navigate to B via a same-origin link click.
+    fireEvent.click(screen.getByRole("link", { name: "go to B" }));
+
+    // Run B's review must render, A's must be gone.
+    expect(await screen.findByText("Review for run B.")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Review for run A."),
+    ).not.toBeInTheDocument();
+  });
+
+  it("surfaces a review list error inline with a retry control", async () => {
+    vi.mocked(evalApi.getRun).mockResolvedValue(
+      detail({
+        summary: {
+          ...detail().summary,
+          status: "completed",
+          completed_at: "2026-05-13T14:01:00Z",
+        },
+      }),
+    );
+    vi.mocked(evalReviewApi.listReviewsForRun).mockRejectedValueOnce(
+      new Error("reviews endpoint unreachable"),
+    );
+
+    renderDetail();
+
+    // The error alert is rendered with role=alert. The picker stays
+    // visible so the operator can still trigger a generate, but the
+    // failure is not silent.
+    expect(
+      await screen.findByText(/couldn't load review history/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/reviews endpoint unreachable/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Reasoning" }),
+    ).toBeInTheDocument();
+  });
+
+  it("renders the inconclusive-state explanation when verdict is inconclusive with no findings", async () => {
+    vi.mocked(evalApi.getRun).mockResolvedValue(
+      detail({
+        summary: {
+          ...detail().summary,
+          status: "completed",
+          completed_at: "2026-05-13T14:01:00Z",
+        },
+      }),
+    );
+    const review = makeReview({
+      verdict: "inconclusive",
+      summary: "Payload was sparse.",
+      raw_output_json: JSON.stringify({
+        risks: [],
+        next_tests: [],
+        questions: [],
+      }),
+    });
+    vi.mocked(evalReviewApi.listReviewsForRun).mockResolvedValue([review]);
+    vi.mocked(evalReviewApi.getReview).mockResolvedValue({
+      review,
+      findings: [],
+    });
+
+    renderDetail();
+
+    expect(await screen.findByText("Inconclusive")).toBeInTheDocument();
+    expect(
+      screen.getByText(/verdict was inconclusive — no findings were produced/i),
     ).toBeInTheDocument();
   });
 });
