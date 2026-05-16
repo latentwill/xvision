@@ -86,6 +86,13 @@ pub async fn extract_findings(
             evidence: r.evidence,
             extracted_at: now,
             schema_version: "1".into(),
+            eval_review_id: None,
+            review_type: None,
+            confidence: None,
+            title: None,
+            description: None,
+            recommendation: None,
+            created_at: None,
         })
         .collect())
 }

@@ -406,6 +406,13 @@ mod tests {
             evidence: serde_json::json!({}),
             extracted_at: chrono::Utc::now(),
             schema_version: "v1".into(),
+            eval_review_id: None,
+            review_type: None,
+            confidence: None,
+            title: None,
+            description: None,
+            recommendation: None,
+            created_at: None,
         };
         upsert_finding(&ctx, &f).await;
 

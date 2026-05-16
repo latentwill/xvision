@@ -15,6 +15,7 @@ use sqlx::{Row, SqlitePool};
 
 use crate::eval::attestation::EvalAttestation;
 use crate::eval::findings::{Finding, Severity};
+use crate::eval::review::{AgentProfile, EvalReview, ReviewStatus, ReviewVerdict};
 use crate::eval::run::{MetricsSummary, Run, RunMode, RunStatus};
 use ulid::Ulid;
 
@@ -515,12 +516,18 @@ impl RunStore {
     /// callers iterate `extract_findings` results. Uses the Finding's
     /// in-memory id rather than auto-generating one — extractor.rs already
     /// stamps a ULID on every finding, so the store preserves it.
+    ///
+    /// Review-linked v2 columns (`eval_review_id`, `type`, `confidence`,
+    /// `title`, `description`, `recommendation`, `created_at`) are written
+    /// when present on the in-memory `Finding`. Legacy extractor callers
+    /// leave them `None`, so their rows look the same as before.
     pub async fn record_finding(&self, finding: &Finding) -> Result<()> {
         let evidence_json = serde_json::to_string(&finding.evidence).context("serialize finding evidence")?;
         sqlx::query(
             "INSERT INTO eval_findings \
-             (id, run_id, kind, severity, summary, evidence_json, extracted_at, schema_version) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+             (id, run_id, kind, severity, summary, evidence_json, extracted_at, schema_version, \
+              eval_review_id, type, confidence, title, description, recommendation, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&finding.id)
         .bind(&finding.run_id)
@@ -530,6 +537,13 @@ impl RunStore {
         .bind(evidence_json)
         .bind(finding.extracted_at.to_rfc3339())
         .bind(&finding.schema_version)
+        .bind(&finding.eval_review_id)
+        .bind(&finding.review_type)
+        .bind(finding.confidence)
+        .bind(&finding.title)
+        .bind(&finding.description)
+        .bind(&finding.recommendation)
+        .bind(finding.created_at.map(|t| t.to_rfc3339()))
         .execute(&self.pool)
         .await
         .with_context(|| format!("insert eval_findings run_id={} id={}", finding.run_id, finding.id))?;
@@ -540,7 +554,8 @@ impl RunStore {
     /// vec when the run has none (or doesn't exist).
     pub async fn read_findings(&self, run_id: &str) -> Result<Vec<Finding>> {
         let rows = sqlx::query(
-            "SELECT id, run_id, kind, severity, summary, evidence_json, extracted_at, schema_version \
+            "SELECT id, run_id, kind, severity, summary, evidence_json, extracted_at, schema_version, \
+                    eval_review_id, type, confidence, title, description, recommendation, created_at \
              FROM eval_findings WHERE run_id = ? ORDER BY extracted_at ASC, id ASC",
         )
         .bind(run_id)
@@ -548,6 +563,187 @@ impl RunStore {
         .await
         .context("read eval_findings")?;
         rows.iter().map(row_to_finding).collect()
+    }
+
+    /// Read all findings linked to a review, ordered by extraction time ASC.
+    /// The eval-review engine track persists normalized review findings via
+    /// `record_finding` with `eval_review_id` set; this is the read path
+    /// the API/UI uses to render the Review panel.
+    pub async fn read_findings_for_review(&self, eval_review_id: &str) -> Result<Vec<Finding>> {
+        let rows = sqlx::query(
+            "SELECT id, run_id, kind, severity, summary, evidence_json, extracted_at, schema_version, \
+                    eval_review_id, type, confidence, title, description, recommendation, created_at \
+             FROM eval_findings WHERE eval_review_id = ? ORDER BY extracted_at ASC, id ASC",
+        )
+        .bind(eval_review_id)
+        .fetch_all(&self.pool)
+        .await
+        .context("read eval_findings by review")?;
+        rows.iter().map(row_to_finding).collect()
+    }
+
+    // --- Agent profiles --------------------------------------------------
+
+    /// Read a single seeded or operator-defined agent profile by id.
+    /// Returns `Ok(None)` when the profile has been removed; the engine
+    /// track treats "missing profile" as a 404 at the API layer rather
+    /// than an internal error.
+    pub async fn get_agent_profile(&self, id: &str) -> Result<Option<AgentProfile>> {
+        let row = sqlx::query(
+            "SELECT id, name, type, provider, model, temperature, max_tokens, \
+                    system_prompt, enabled, created_at, updated_at \
+             FROM agent_profiles WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .context("select agent_profiles by id")?;
+        row.map(|r| row_to_agent_profile(&r)).transpose()
+    }
+
+    /// List agent profiles, optionally filtered to enabled rows. Returned
+    /// in `name ASC` order — the four seeded personas are stable.
+    pub async fn list_agent_profiles(&self, enabled_only: bool) -> Result<Vec<AgentProfile>> {
+        let sql = if enabled_only {
+            "SELECT id, name, type, provider, model, temperature, max_tokens, \
+                    system_prompt, enabled, created_at, updated_at \
+             FROM agent_profiles WHERE enabled = 1 ORDER BY name ASC"
+        } else {
+            "SELECT id, name, type, provider, model, temperature, max_tokens, \
+                    system_prompt, enabled, created_at, updated_at \
+             FROM agent_profiles ORDER BY name ASC"
+        };
+        let rows = sqlx::query(sql)
+            .fetch_all(&self.pool)
+            .await
+            .context("list agent_profiles")?;
+        rows.iter().map(row_to_agent_profile).collect()
+    }
+
+    // --- Eval reviews ----------------------------------------------------
+
+    /// INSERT INTO eval_reviews. Callers construct via
+    /// `EvalReview::new_queued` and let the engine track advance status
+    /// through `update_review_status` / `complete_review` / `fail_review`.
+    pub async fn create_review(&self, review: &EvalReview) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO eval_reviews \
+             (id, eval_run_id, agent_profile_id, status, verdict, confidence, score, \
+              summary, raw_output_json, error, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&review.id)
+        .bind(&review.eval_run_id)
+        .bind(&review.agent_profile_id)
+        .bind(review.status.as_str())
+        .bind(review.verdict.map(|v| v.as_str()))
+        .bind(review.confidence)
+        .bind(review.score.map(|s| s as i64))
+        .bind(&review.summary)
+        .bind(&review.raw_output_json)
+        .bind(&review.error)
+        .bind(review.created_at.to_rfc3339())
+        .bind(review.updated_at.to_rfc3339())
+        .execute(&self.pool)
+        .await
+        .with_context(|| format!("insert eval_reviews id={}", review.id))?;
+        Ok(())
+    }
+
+    /// Read a single review by id. Returns `Ok(None)` for unknown ids.
+    pub async fn get_review(&self, id: &str) -> Result<Option<EvalReview>> {
+        let row = sqlx::query(
+            "SELECT id, eval_run_id, agent_profile_id, status, verdict, confidence, score, \
+                    summary, raw_output_json, error, created_at, updated_at \
+             FROM eval_reviews WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .context("select eval_reviews by id")?;
+        row.map(|r| row_to_review(&r)).transpose()
+    }
+
+    /// List reviews for a run, newest first. Empty when no review has been
+    /// requested for the run yet.
+    pub async fn list_reviews_for_run(&self, eval_run_id: &str) -> Result<Vec<EvalReview>> {
+        let rows = sqlx::query(
+            "SELECT id, eval_run_id, agent_profile_id, status, verdict, confidence, score, \
+                    summary, raw_output_json, error, created_at, updated_at \
+             FROM eval_reviews WHERE eval_run_id = ? ORDER BY created_at DESC, id DESC",
+        )
+        .bind(eval_run_id)
+        .fetch_all(&self.pool)
+        .await
+        .context("list eval_reviews for run")?;
+        rows.iter().map(row_to_review).collect()
+    }
+
+    /// Advance a queued review to running. Returns false when the review
+    /// is already terminal or otherwise no longer pending.
+    pub async fn begin_review_running(&self, id: &str) -> Result<bool> {
+        let now = Utc::now().to_rfc3339();
+        let res = sqlx::query(
+            "UPDATE eval_reviews SET status = 'running', updated_at = ?, error = NULL \
+             WHERE id = ? AND status = 'queued'",
+        )
+        .bind(&now)
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .context("begin review running")?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    /// Persist a completed review: status → 'completed' plus the verdict,
+    /// confidence, score, summary, and audit copy of the raw model JSON.
+    /// Returns false when the review is already terminal (the engine
+    /// track treats that as a stale callback).
+    pub async fn complete_review(
+        &self,
+        id: &str,
+        verdict: ReviewVerdict,
+        confidence: f64,
+        score: i32,
+        summary: &str,
+        raw_output_json: &str,
+    ) -> Result<bool> {
+        let now = Utc::now().to_rfc3339();
+        let res = sqlx::query(
+            "UPDATE eval_reviews \
+             SET status = 'completed', verdict = ?, confidence = ?, score = ?, \
+                 summary = ?, raw_output_json = ?, error = NULL, updated_at = ? \
+             WHERE id = ? AND status IN ('queued', 'running')",
+        )
+        .bind(verdict.as_str())
+        .bind(confidence)
+        .bind(score as i64)
+        .bind(summary)
+        .bind(raw_output_json)
+        .bind(&now)
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .context("complete eval_review")?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    /// Mark a review failed with an error string. Returns false when
+    /// already terminal.
+    pub async fn fail_review(&self, id: &str, reason: &str) -> Result<bool> {
+        let now = Utc::now().to_rfc3339();
+        let res = sqlx::query(
+            "UPDATE eval_reviews \
+             SET status = 'failed', error = ?, updated_at = ? \
+             WHERE id = ? AND status IN ('queued', 'running')",
+        )
+        .bind(reason)
+        .bind(&now)
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .context("fail eval_review")?;
+        Ok(res.rows_affected() > 0)
     }
 }
 
@@ -571,6 +767,25 @@ fn row_to_finding(row: &sqlx::sqlite::SqliteRow) -> Result<Finding> {
     let schema_version: String = row
         .try_get("schema_version")
         .context("read finding schema_version")?;
+    let eval_review_id: Option<String> = row
+        .try_get("eval_review_id")
+        .context("read finding eval_review_id")?;
+    let review_type: Option<String> = row.try_get("type").context("read finding type")?;
+    let confidence: Option<f64> = row.try_get("confidence").context("read finding confidence")?;
+    let title: Option<String> = row.try_get("title").context("read finding title")?;
+    let description: Option<String> = row.try_get("description").context("read finding description")?;
+    let recommendation: Option<String> = row
+        .try_get("recommendation")
+        .context("read finding recommendation")?;
+    let created_at: Option<DateTime<Utc>> = row
+        .try_get::<Option<String>, _>("created_at")
+        .context("read finding created_at")?
+        .map(|s| {
+            DateTime::parse_from_rfc3339(&s)
+                .with_context(|| format!("parse finding created_at {s:?}"))
+                .map(|t| t.with_timezone(&Utc))
+        })
+        .transpose()?;
     Ok(Finding {
         id,
         run_id,
@@ -580,6 +795,110 @@ fn row_to_finding(row: &sqlx::sqlite::SqliteRow) -> Result<Finding> {
         evidence,
         extracted_at,
         schema_version,
+        eval_review_id,
+        review_type,
+        confidence,
+        title,
+        description,
+        recommendation,
+        created_at,
+    })
+}
+
+fn row_to_agent_profile(row: &sqlx::sqlite::SqliteRow) -> Result<AgentProfile> {
+    let id: String = row.try_get("id").context("read agent_profile id")?;
+    let name: String = row.try_get("name").context("read agent_profile name")?;
+    let profile_type: String = row.try_get("type").context("read agent_profile type")?;
+    let provider: String = row.try_get("provider").context("read agent_profile provider")?;
+    let model: String = row.try_get("model").context("read agent_profile model")?;
+    let temperature: f64 = row
+        .try_get("temperature")
+        .context("read agent_profile temperature")?;
+    let max_tokens: i64 = row
+        .try_get("max_tokens")
+        .context("read agent_profile max_tokens")?;
+    let system_prompt: String = row
+        .try_get("system_prompt")
+        .context("read agent_profile system_prompt")?;
+    let enabled: i64 = row.try_get("enabled").context("read agent_profile enabled")?;
+    let created_at_str: String = row
+        .try_get("created_at")
+        .context("read agent_profile created_at")?;
+    let created_at = DateTime::parse_from_rfc3339(&created_at_str)
+        .with_context(|| format!("parse agent_profile created_at {created_at_str:?}"))?
+        .with_timezone(&Utc);
+    let updated_at_str: String = row
+        .try_get("updated_at")
+        .context("read agent_profile updated_at")?;
+    let updated_at = DateTime::parse_from_rfc3339(&updated_at_str)
+        .with_context(|| format!("parse agent_profile updated_at {updated_at_str:?}"))?
+        .with_timezone(&Utc);
+    Ok(AgentProfile {
+        id,
+        name,
+        profile_type,
+        provider,
+        model,
+        temperature,
+        max_tokens: max_tokens as u32,
+        system_prompt,
+        enabled: enabled != 0,
+        created_at,
+        updated_at,
+    })
+}
+
+fn row_to_review(row: &sqlx::sqlite::SqliteRow) -> Result<EvalReview> {
+    let id: String = row.try_get("id").context("read eval_review id")?;
+    let eval_run_id: String = row
+        .try_get("eval_run_id")
+        .context("read eval_review eval_run_id")?;
+    let agent_profile_id: String = row
+        .try_get("agent_profile_id")
+        .context("read eval_review agent_profile_id")?;
+    let status_str: String = row.try_get("status").context("read eval_review status")?;
+    let status = ReviewStatus::parse(&status_str)
+        .ok_or_else(|| anyhow::anyhow!("unknown ReviewStatus {status_str:?}"))?;
+    let verdict_str: Option<String> = row.try_get("verdict").context("read eval_review verdict")?;
+    let verdict = verdict_str
+        .as_deref()
+        .map(|s| {
+            ReviewVerdict::parse(s)
+                .ok_or_else(|| anyhow::anyhow!("unknown ReviewVerdict {s:?}"))
+        })
+        .transpose()?;
+    let confidence: Option<f64> = row.try_get("confidence").context("read eval_review confidence")?;
+    let score: Option<i64> = row.try_get("score").context("read eval_review score")?;
+    let summary: Option<String> = row.try_get("summary").context("read eval_review summary")?;
+    let raw_output_json: Option<String> = row
+        .try_get("raw_output_json")
+        .context("read eval_review raw_output_json")?;
+    let error: Option<String> = row.try_get("error").context("read eval_review error")?;
+    let created_at_str: String = row
+        .try_get("created_at")
+        .context("read eval_review created_at")?;
+    let created_at = DateTime::parse_from_rfc3339(&created_at_str)
+        .with_context(|| format!("parse eval_review created_at {created_at_str:?}"))?
+        .with_timezone(&Utc);
+    let updated_at_str: String = row
+        .try_get("updated_at")
+        .context("read eval_review updated_at")?;
+    let updated_at = DateTime::parse_from_rfc3339(&updated_at_str)
+        .with_context(|| format!("parse eval_review updated_at {updated_at_str:?}"))?
+        .with_timezone(&Utc);
+    Ok(EvalReview {
+        id,
+        eval_run_id,
+        agent_profile_id,
+        status,
+        verdict,
+        confidence,
+        score: score.map(|n| n as i32),
+        summary,
+        raw_output_json,
+        error,
+        created_at,
+        updated_at,
     })
 }
 

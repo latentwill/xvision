@@ -42,6 +42,9 @@ const MIGRATION_011_SCENARIOS: &str = include_str!("../../migrations/011_scenari
 const MIGRATION_012_RUNS_FK: &str = include_str!("../../migrations/012_runs_scenario_fk.sql");
 const MIGRATION_013_CLI_JOBS: &str = include_str!("../../migrations/013_cli_jobs.sql");
 const MIGRATION_015_EVAL_REASONING: &str = include_str!("../../migrations/015_eval_decisions_reasoning.sql");
+const MIGRATION_016_EVAL_REVIEWS: &str = include_str!("../../migrations/016_eval_reviews.sql");
+const MIGRATION_017_EVAL_FINDINGS_REVIEW_COLUMNS: &str =
+    include_str!("../../migrations/017_eval_findings_review_columns.sql");
 
 /// Map of cache_key → per-key mutex used by `eval::bars::load_bars` to
 /// serialize concurrent misses for the same window. Kept inside an outer
@@ -122,6 +125,8 @@ impl ApiContext {
         sqlx::query(MIGRATION_013_CLI_JOBS).execute(&pool).await?;
         migrate_eval_agent_id(&pool).await?;
         migrate_eval_decisions_reasoning(&pool).await?;
+        sqlx::query(MIGRATION_016_EVAL_REVIEWS).execute(&pool).await?;
+        migrate_eval_findings_review_columns(&pool).await?;
 
         let ctx = Self::new(pool, actor, xvn_home.to_path_buf());
 
@@ -361,6 +366,20 @@ async fn migrate_eval_agent_id(pool: &SqlitePool) -> ApiResult<()> {
 async fn migrate_eval_decisions_reasoning(pool: &SqlitePool) -> ApiResult<()> {
     if !table_has_column(pool, "eval_decisions", "reasoning").await? {
         sqlx::query(MIGRATION_015_EVAL_REASONING).execute(pool).await?;
+    }
+
+    Ok(())
+}
+
+/// Apply the review-linked column additions to `eval_findings`. SQLite has
+/// no `ALTER TABLE ADD COLUMN IF NOT EXISTS`, so we gate on the first new
+/// column (`eval_review_id`) — every column in the migration ships
+/// together, so detecting one is sufficient.
+async fn migrate_eval_findings_review_columns(pool: &SqlitePool) -> ApiResult<()> {
+    if !table_has_column(pool, "eval_findings", "eval_review_id").await? {
+        sqlx::query(MIGRATION_017_EVAL_FINDINGS_REVIEW_COLUMNS)
+            .execute(pool)
+            .await?;
     }
 
     Ok(())
