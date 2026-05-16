@@ -5,7 +5,8 @@ wave: q15
 worktree: .worktrees/q15-eval-retry-button
 branch: task/q15-eval-retry-button
 base: origin/main
-status: pr-open
+status: merged
+pr: 184
 depends_on: []
 blocks: []
 stacking: none

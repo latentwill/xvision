@@ -5,7 +5,8 @@ wave: q15
 worktree: .worktrees/q15-eval-json-export
 branch: task/q15-eval-json-export
 base: origin/main
-status: in-progress
+status: merged
+pr: 187
 depends_on: []
 blocks:
   - q15-object-json-output             # consumer of per-object shapes standardized here
@@ -74,3 +75,5 @@ git worktree add .worktrees/q15-eval-json-export -b task/q15-eval-json-export or
 - Coordinate with `eval-review-api-cli` and `eval-review-run-detail-ui` —
   they share the eval route registration files and eval-runs-detail.tsx.
 - Pin `schema_version: "1"` from day one. Future breaking changes bump it.
+
+- PR: https://github.com/latentwill/xvision/pull/187 (merged 2026-05-16).

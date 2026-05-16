@@ -3,8 +3,8 @@
 #
 # Checks:
 #   1. Every active contract under team/contracts/ has frontmatter required fields.
-#   2. Every active contract's branch exists on origin OR the contract is `status: ready`.
-#   3. Every active contract's worktree directory exists OR the contract is `status: ready`/`archived`/`merged`.
+#   2. Every active contract's branch exists on origin OR the contract is `status: ready|archived|merged|deferred`.
+#   3. Every active contract's worktree directory exists OR the contract is `status: ready|archived|merged|deferred`.
 #   4. team/status/<track>.md `phase:` (if present) is in the allowed vocabulary.
 #   5. No two active contracts list the same allowed_path glob unless declared
 #      multi-owner in team/OWNERSHIP.md or stacked in CONFLICT_ZONES.md.
@@ -21,7 +21,7 @@ STATUS_DIR="team/status"
 OWNERSHIP_FILE="team/OWNERSHIP.md"
 CONFLICT_FILE="team/CONFLICT_ZONES.md"
 
-ALLOWED_STATUS_RE='^(ready|claimed|in-progress|pr-open|needs-rebase|merged|archived|blocked|scope-violation)$'
+ALLOWED_STATUS_RE='^(ready|claimed|in-progress|pr-open|needs-rebase|merged|archived|blocked|deferred|scope-violation)$'
 ALLOWED_LANE_RE='^(foundation|leaf|integration)$'
 
 violations=0
@@ -71,7 +71,7 @@ for f in "$CONTRACTS_DIR"/*.md; do
 
   # 2. Branch existence on origin — only enforced for non-ready/non-archived
   case "$status" in
-    ready|archived|merged) ;;
+    ready|archived|merged|deferred) ;;
     *)
       if ! git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
         bail "$f: branch '$branch' missing on origin (status=$status)"
@@ -81,7 +81,7 @@ for f in "$CONTRACTS_DIR"/*.md; do
 
   # 3. Worktree existence — same logic
   case "$status" in
-    ready|archived|merged) ;;
+    ready|archived|merged|deferred) ;;
     *)
       if [ ! -d "$worktree" ]; then
         bail "$f: worktree '$worktree' missing on disk (status=$status)"

@@ -5,7 +5,8 @@ wave: q15
 worktree: .worktrees/q15-object-json-output
 branch: task/q15-object-json-output
 base: origin/main
-status: in-progress
+status: merged
+pr: 189
 depends_on:
   - q15-eval-json-export             # standardizes the per-object shape used here
 blocks: []
@@ -70,3 +71,5 @@ git worktree add .worktrees/q15-object-json-output -b task/q15-object-json-outpu
 
 - Wait on `q15-eval-json-export` to land the shared `JsonObjectShape` trait
   before standardizing here, OR stack via `stacking: declared:q15-eval-json-export`.
+
+- PR: https://github.com/latentwill/xvision/pull/189 (merged 2026-05-16).

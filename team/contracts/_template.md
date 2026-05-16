@@ -5,7 +5,7 @@ wave: <q-or-feature-cohort>
 worktree: .worktrees/<slug>
 branch: task/<slug>
 base: origin/main
-status: ready          # ready | claimed | in-progress | pr-open | needs-rebase | merged | archived | blocked | scope-violation
+status: ready          # ready | claimed | in-progress | pr-open | needs-rebase | merged | archived | blocked | deferred | scope-violation
 depends_on: []
 blocks: []
 stacking: none         # none | declared:<parent-track>

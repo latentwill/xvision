@@ -5,7 +5,8 @@ wave: eval-review
 worktree: .worktrees/eval-review-run-detail-ui
 branch: task/eval-review-run-detail-ui
 base: origin/main
-status: ready
+status: merged
+pr: 190
 depends_on:
   - eval-review-api-cli
 blocks: []
@@ -67,3 +68,5 @@ git worktree add .worktrees/eval-review-run-detail-ui -b task/eval-review-run-de
   active track touching that file before starting.
 - The visible scrollbar treatment from `qa10-eval-chat-scrollbars-controls`
   is now baseline; reuse those styles for the review panel scroll container.
+
+- PR: https://github.com/latentwill/xvision/pull/190 (merged 2026-05-16).
