@@ -39,10 +39,11 @@ parallel_safe: false
 parallel_conflicts:
   - q15-agent-max-tokens-from-model   # both may touch eval executor (loosely)
 verification:
-  - cargo test -p xvision-engine eval::executor::warmup
-  - cargo test -p xvision-engine eval::scenario::warmup_bars
-  - cargo test -p xvision-cli scenario_warmup
-  - corepack pnpm --dir frontend/web test -- scenario-form-warmup
+  - cargo test -p xvision-engine --test eval_executor_warmup
+  - cargo test -p xvision-engine --lib eval::scenario::warmup_bars_tests
+  - cargo test -p xvision-engine --lib strategies::tests::min_warmup_bars
+  - cargo test -p xvision-cli --test scenario_cli scenario_warmup
+  - pnpm --dir frontend/web test -- ScenarioForm
 acceptance:
   - Scenario record carries `warmup_bars: u32` (default 200 for new scenarios; legacy rows hydrate to 200 via serde default).
   - Backtest + paper executors fetch `warmup_bars` of pre-window bars and feed them into the per-decision seed as `bar_history`; the decision loop iterates only the scenario-window bars.
