@@ -1227,6 +1227,88 @@ async fn danger_factory_reset_rejects_missing_confirm() {
     response.assert_status_bad_request();
 }
 
+// ── eval retry endpoint ─────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn eval_retry_returns_404_for_unknown_run() {
+    let (server, _tmp) = boot().await;
+    let response = server.post("/api/eval/runs/01NOPE/retry").await;
+    response.assert_status_not_found();
+}
+
+#[tokio::test]
+async fn eval_retry_rejects_completed_run() {
+    use xvision_engine::eval::{
+        run::{Run, RunMode, RunStatus},
+        store::RunStore,
+    };
+
+    let (server, tmp) = boot().await;
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}/xvn.db", tmp.path().display()))
+        .await
+        .unwrap();
+    let store = RunStore::new(pool);
+    let run = Run::new_queued("agent-x".into(), "crypto-bull-q1-2025".into(), RunMode::Backtest);
+    let run_id = run.id.clone();
+    store.create(&run).await.unwrap();
+    store
+        .update_status(&run_id, RunStatus::Completed, None)
+        .await
+        .unwrap();
+
+    let response = server
+        .post(&format!("/api/eval/runs/{run_id}/retry"))
+        .await;
+    response.assert_status_bad_request();
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["code"], "validation");
+}
+
+#[tokio::test]
+async fn eval_retry_returns_inflight_sibling_without_starting_a_third_run() {
+    use xvision_engine::eval::{
+        run::{Run, RunMode, RunStatus},
+        store::RunStore,
+    };
+
+    let (server, tmp) = boot().await;
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}/xvn.db", tmp.path().display()))
+        .await
+        .unwrap();
+    let store = RunStore::new(pool);
+
+    let mut failed = Run::new_queued("agent-x".into(), "crypto-bull-q1-2025".into(), RunMode::Backtest);
+    failed.status = RunStatus::Failed;
+    store.create(&failed).await.unwrap();
+    store
+        .update_status(&failed.id, RunStatus::Failed, Some("provider 5xx"))
+        .await
+        .unwrap();
+
+    let sibling = Run::new_queued(
+        failed.agent_id.clone(),
+        failed.scenario_id.clone(),
+        failed.mode,
+    );
+    let sibling_id = sibling.id.clone();
+    store.create(&sibling).await.unwrap();
+
+    let response = server
+        .post(&format!("/api/eval/runs/{}/retry", failed.id))
+        .await;
+    response.assert_status(axum::http::StatusCode::ACCEPTED);
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["summary"]["id"], sibling_id);
+
+    // No third run was created — just the failed source and the queued sibling.
+    let list = server.get("/api/eval/runs").await;
+    let items = list.json::<serde_json::Value>()["items"]
+        .as_array()
+        .unwrap()
+        .len();
+    assert_eq!(items, 2, "expected 2 runs (failed + sibling), got {items}");
+}
+
 #[tokio::test]
 async fn danger_factory_reset_clears_xvn_home_with_confirm() {
     let (server, tmp) = boot().await;

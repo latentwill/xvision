@@ -18,6 +18,7 @@ vi.mock("@/api/eval", async () => {
     getRun: vi.fn(),
     cancelRun: vi.fn(),
     downloadEvalRunExport: vi.fn(),
+    retryRun: vi.fn(),
   };
 });
 
@@ -558,5 +559,87 @@ describe("EvalRunDetailRoute", () => {
     expect(
       screen.getByText(/verdict was inconclusive — no findings were produced/i),
     ).toBeInTheDocument();
+  });
+
+  it("shows a Retry button on failed terminal runs", async () => {
+    vi.mocked(evalApi.getRun).mockResolvedValue(
+      detail({
+        summary: {
+          ...detail().summary,
+          status: "failed",
+          completed_at: "2026-05-13T14:30:00Z",
+          error: "provider 5xx",
+        },
+      }),
+    );
+
+    renderDetail();
+
+    expect(
+      await screen.findByRole("button", { name: "Retry eval run 01LIVE" }),
+    ).toBeInTheDocument();
+    // Stop button is gone on a terminal run.
+    expect(
+      screen.queryByRole("button", { name: "Stop eval run 01LIVE" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it.each(["completed", "queued", "running", "cancelled"] as const)(
+    "hides the Retry button on %s runs",
+    async (status) => {
+      vi.mocked(evalApi.getRun).mockResolvedValue(
+        detail({
+          summary: {
+            ...detail().summary,
+            status,
+            completed_at:
+              status === "running" || status === "queued"
+                ? null
+                : "2026-05-13T14:30:00Z",
+          },
+        }),
+      );
+
+      renderDetail();
+
+      // Wait for some content to render (the id is enough to confirm load).
+      await screen.findByText("01LIVE");
+      expect(
+        screen.queryByRole("button", { name: "Retry eval run 01LIVE" }),
+      ).not.toBeInTheDocument();
+    },
+  );
+
+  it("clicking Retry posts and navigates to the new run id", async () => {
+    const failedDetail = detail({
+      summary: {
+        ...detail().summary,
+        status: "failed",
+        completed_at: "2026-05-13T14:30:00Z",
+        error: "provider 5xx",
+      },
+    });
+    const newRunDetail = detail({
+      summary: { ...detail().summary, id: "01NEWRUN", status: "queued" },
+    });
+    vi.mocked(evalApi.getRun).mockImplementation(async (id: string) =>
+      id === "01NEWRUN" ? newRunDetail : failedDetail,
+    );
+    vi.mocked(evalApi.retryRun).mockResolvedValue(newRunDetail);
+
+    renderDetail();
+
+    const retry = await screen.findByRole("button", {
+      name: "Retry eval run 01LIVE",
+    });
+    fireEvent.click(retry);
+
+    await waitFor(() => expect(evalApi.retryRun).toHaveBeenCalled());
+    expect(vi.mocked(evalApi.retryRun).mock.calls[0]?.[0]).toBe("01LIVE");
+    await waitFor(() =>
+      expect(
+        vi.mocked(evalApi.getRun).mock.calls.some(([id]) => id === "01NEWRUN"),
+      ).toBe(true),
+    );
   });
 });

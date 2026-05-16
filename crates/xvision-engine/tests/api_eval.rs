@@ -20,6 +20,10 @@ async fn ctx_with_eval_tables() -> (ApiContext, tempfile::TempDir) {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/015_eval_decisions_reasoning.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     let dir = tempfile::tempdir().unwrap();
     let ctx = ApiContext::new(
         pool,
@@ -198,4 +202,104 @@ async fn scenarios_writes_audit_row() {
             .unwrap();
     assert_eq!(domain, "eval");
     assert_eq!(op, "scenarios");
+}
+
+// ── eval::retry ─────────────────────────────────────────────────────────────
+
+use xvision_engine::api::ApiError;
+
+async fn seed_run(ctx: &ApiContext, status: RunStatus) -> Run {
+    let store = RunStore::new(ctx.db.clone());
+    let run = Run::new_queued("agent-x".into(), "scenario-x".into(), RunMode::Backtest);
+    store.create(&run).await.unwrap();
+    if status != RunStatus::Queued {
+        let err = if status == RunStatus::Failed {
+            Some("provider 5xx")
+        } else {
+            None
+        };
+        store.update_status(&run.id, status, err).await.unwrap();
+    }
+    store.get(&run.id).await.unwrap()
+}
+
+#[tokio::test]
+async fn retry_rejects_unknown_run() {
+    let (ctx, _d) = ctx_with_eval_tables().await;
+    let err = eval::retry(&ctx, "01NOPE").await.unwrap_err();
+    assert!(matches!(err, ApiError::NotFound(_)), "got {err:?}");
+}
+
+#[tokio::test]
+async fn retry_rejects_completed_run() {
+    let (ctx, _d) = ctx_with_eval_tables().await;
+    let run = seed_run(&ctx, RunStatus::Completed).await;
+    let err = eval::retry(&ctx, &run.id).await.unwrap_err();
+    let ApiError::Validation(msg) = err else {
+        panic!("expected Validation, got {err:?}");
+    };
+    assert!(msg.contains("completed"), "{msg}");
+}
+
+#[tokio::test]
+async fn retry_rejects_running_run() {
+    let (ctx, _d) = ctx_with_eval_tables().await;
+    let run = seed_run(&ctx, RunStatus::Running).await;
+    let err = eval::retry(&ctx, &run.id).await.unwrap_err();
+    let ApiError::Validation(msg) = err else {
+        panic!("expected Validation, got {err:?}");
+    };
+    assert!(msg.contains("running"), "{msg}");
+}
+
+#[tokio::test]
+async fn retry_rejects_cancelled_run() {
+    // Cancellation is intentional; retry is not the right verb.
+    let (ctx, _d) = ctx_with_eval_tables().await;
+    let run = seed_run(&ctx, RunStatus::Cancelled).await;
+    let err = eval::retry(&ctx, &run.id).await.unwrap_err();
+    let ApiError::Validation(msg) = err else {
+        panic!("expected Validation, got {err:?}");
+    };
+    assert!(msg.contains("cancelled"), "{msg}");
+}
+
+#[tokio::test]
+async fn retry_returns_inflight_sibling_idempotently() {
+    // A failed run plus a Queued sibling sharing (agent_id, scenario_id, mode):
+    // the retry endpoint must return the sibling rather than start a third run.
+    let (ctx, _d) = ctx_with_eval_tables().await;
+    let failed = seed_run(&ctx, RunStatus::Failed).await;
+    let store = RunStore::new(ctx.db.clone());
+    let sibling = Run::new_queued(
+        failed.agent_id.clone(),
+        failed.scenario_id.clone(),
+        failed.mode,
+    );
+    store.create(&sibling).await.unwrap();
+
+    let detail = eval::retry(&ctx, &failed.id).await.unwrap();
+    assert_eq!(detail.summary.id, sibling.id);
+    assert_eq!(detail.summary.status, "queued");
+
+    // No third run created.
+    let runs = eval::list(&ctx, ListRunsRequest::default()).await.unwrap();
+    assert_eq!(runs.len(), 2, "expected 2 runs (failed + sibling), got {}", runs.len());
+}
+
+#[tokio::test]
+async fn retry_writes_audit_row_on_rejection() {
+    let (ctx, _d) = ctx_with_eval_tables().await;
+    let run = seed_run(&ctx, RunStatus::Completed).await;
+    let _ = eval::retry(&ctx, &run.id).await;
+
+    let (domain, op, target, outcome): (String, String, Option<String>, String) =
+        sqlx::query_as("SELECT domain, operation, target, outcome FROM api_audit WHERE operation = 'retry'")
+            .fetch_one(&ctx.db)
+            .await
+            .unwrap();
+    assert_eq!(domain, "eval");
+    assert_eq!(op, "retry");
+    assert_eq!(target.as_deref(), Some(run.id.as_str()));
+    assert!(outcome.starts_with("error"), "got outcome {outcome}");
 }

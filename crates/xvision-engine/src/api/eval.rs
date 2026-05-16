@@ -311,6 +311,73 @@ async fn get_inner(ctx: &ApiContext, run_id: &str) -> ApiResult<Run> {
     })
 }
 
+/// Retry a failed eval run by enqueueing a new run with the same
+/// `(agent_id, scenario_id, mode, params_override)` inputs.
+///
+/// Rejected with `ApiError::Validation` if the source run is not in
+/// `Failed` state — Cancelled runs are intentional and Completed runs
+/// don't need retrying. Idempotent on the source-run fingerprint: if any
+/// run with the same `(agent_id, scenario_id, mode)` is already queued
+/// or running, returns that run's detail instead of starting another to
+/// avoid retry storms when the operator double-clicks the Retry button.
+pub async fn retry(ctx: &ApiContext, source_id: &str) -> ApiResult<RunDetail> {
+    let started = Instant::now();
+    let result = retry_inner(ctx, source_id).await;
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let _ = audit::record(
+        ctx,
+        "eval",
+        "retry",
+        Some(source_id),
+        None,
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    result
+}
+
+async fn retry_inner(ctx: &ApiContext, source_id: &str) -> ApiResult<RunDetail> {
+    let source = get_inner(ctx, source_id).await?;
+    if source.status != RunStatus::Failed {
+        return Err(ApiError::Validation(format!(
+            "run '{source_id}' cannot be retried from status {}; retry requires a 'failed' run",
+            source.status.as_str()
+        )));
+    }
+
+    // Idempotency: if any run with the same fingerprint is still in
+    // flight, return it instead of starting another. Prevents retry
+    // storms when the operator double-clicks the Retry button.
+    let store = RunStore::new(ctx.db.clone());
+    let siblings = store
+        .list(ListFilter {
+            agent_id: Some(source.agent_id.clone()),
+            scenario_id: Some(source.scenario_id.clone()),
+            status: None,
+        })
+        .await
+        .map_err(|e| ApiError::Internal(format!("list runs for retry idempotency: {e}")))?;
+    if let Some(existing) = siblings.into_iter().find(|r| {
+        r.id != source.id
+            && r.mode == source.mode
+            && matches!(r.status, RunStatus::Queued | RunStatus::Running)
+    }) {
+        return get_run(ctx, &existing.id).await;
+    }
+
+    let req = EvalRunRequest {
+        agent_id: source.agent_id,
+        scenario_id: source.scenario_id,
+        mode: source.mode,
+        params_override: source.params_override,
+    };
+    start_run(ctx, req).await
+}
+
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CompareRunsRequest {
