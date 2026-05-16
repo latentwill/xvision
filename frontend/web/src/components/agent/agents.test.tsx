@@ -2,21 +2,59 @@
 // model" pill and the placeholder that updates when the slot's model
 // changes.
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   cleanup,
   fireEvent,
   render,
   screen,
+  waitFor,
 } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { AgentSlot } from "@/api/agents";
 import { SlotForm } from "./SlotForm";
 import {
   autoMaxTokens,
+  hasModelMetadata,
   isReasoning,
   lookupModel,
 } from "./modelMetadata";
+import * as settingsApi from "@/api/settings";
+
+vi.mock("@/api/settings", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/api/settings")>();
+  return {
+    ...actual,
+    listProviders: vi.fn(),
+    getProviderCatalog: vi.fn(),
+  };
+});
+
+function makeProviderRow(overrides: Record<string, unknown> = {}) {
+  return {
+    name: "anthropic",
+    kind: "anthropic",
+    base_url: "",
+    api_key_env: "ANTHROPIC_API_KEY",
+    api_key_set: true,
+    synthetic: false,
+    is_default: false,
+    enabled_models: [],
+    ...overrides,
+  };
+}
+
+beforeEach(() => {
+  vi.mocked(settingsApi.listProviders).mockResolvedValue({
+    providers: [],
+  } as never);
+  vi.mocked(settingsApi.getProviderCatalog).mockResolvedValue({
+    provider: "",
+    models: [],
+    fetched_at: null,
+    source: "live",
+  } as never);
+});
 
 function makeSlot(overrides: Partial<AgentSlot> = {}): AgentSlot {
   return {
@@ -101,6 +139,17 @@ describe("modelMetadata table", () => {
     expect(m.output_token_ceiling).toBe(32768);
     expect(m.class).toBe("standard");
   });
+
+  it("hasModelMetadata distinguishes known models from the UNKNOWN fallback", () => {
+    // SlotForm relies on this to decide whether the "Provider default"
+    // copy applies — known OpenAI-compat models that are missing from a
+    // live catalog response must NOT collapse to the vaguer copy.
+    expect(hasModelMetadata("claude-sonnet-4-6")).toBe(true);
+    expect(hasModelMetadata("anthropic/claude-sonnet-4-6")).toBe(true);
+    expect(hasModelMetadata("gpt-4.1")).toBe(true);
+    expect(hasModelMetadata("acme-co/nightly-7b")).toBe(false);
+    expect(hasModelMetadata("")).toBe(false);
+  });
 });
 
 describe("SlotForm max_tokens UX", () => {
@@ -176,5 +225,75 @@ describe("SlotForm max_tokens UX", () => {
         `Auto: ${autoMaxTokens(haiku).toLocaleString()}`,
       ),
     ).toBeTruthy();
+  });
+
+  it("keeps the editorial number for a known model on an openai-compat provider with a catalog miss", async () => {
+    // Regression: previously, any OpenAI-compat catalog miss collapsed to
+    // "Provider default", even when the editorial table knew the model.
+    // The fallback copy is reserved for true editorial misses.
+    vi.mocked(settingsApi.listProviders).mockResolvedValue({
+      providers: [
+        makeProviderRow({
+          name: "openrouter",
+          kind: "openai-compat",
+          base_url: "https://openrouter.ai/api/v1",
+          api_key_env: "OPENROUTER_API_KEY",
+        }),
+      ],
+    } as never);
+    vi.mocked(settingsApi.getProviderCatalog).mockResolvedValue({
+      provider: "openrouter",
+      models: [],
+      fetched_at: null,
+      source: "live",
+    } as never);
+
+    renderSlotForm(
+      makeSlot({
+        provider: "openrouter",
+        model: "claude-sonnet-4-6",
+        max_tokens: null,
+      }),
+    );
+
+    const meta = lookupModel("claude-sonnet-4-6");
+    const expected = `Auto: ${autoMaxTokens(meta).toLocaleString()}`;
+    await waitFor(() => {
+      expect(screen.getByText("Auto from model")).toBeTruthy();
+    });
+    expect(screen.getByPlaceholderText(expected)).toBeTruthy();
+    expect(screen.queryByText("Provider default")).toBeNull();
+  });
+
+  it("shows Provider default only when both catalog and editorial miss on openai-compat", async () => {
+    vi.mocked(settingsApi.listProviders).mockResolvedValue({
+      providers: [
+        makeProviderRow({
+          name: "openrouter",
+          kind: "openai-compat",
+          base_url: "https://openrouter.ai/api/v1",
+          api_key_env: "OPENROUTER_API_KEY",
+        }),
+      ],
+    } as never);
+    vi.mocked(settingsApi.getProviderCatalog).mockResolvedValue({
+      provider: "openrouter",
+      models: [],
+      fetched_at: null,
+      source: "live",
+    } as never);
+
+    renderSlotForm(
+      makeSlot({
+        provider: "openrouter",
+        model: "acme-co/nightly-7b",
+        max_tokens: null,
+      }),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Provider default")).toBeTruthy();
+    });
+    expect(screen.getByPlaceholderText("Provider default")).toBeTruthy();
   });
 });

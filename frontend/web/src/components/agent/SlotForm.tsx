@@ -12,7 +12,12 @@ import {
 import type { ModelEntry } from "@/api/types.gen";
 import { ModelPicker } from "@/components/ModelPicker";
 import { Icon } from "@/components/primitives/Icon";
-import { autoMaxTokens, isReasoning, lookupModel } from "./modelMetadata";
+import {
+  autoMaxTokens,
+  hasModelMetadata,
+  isReasoning,
+  lookupModel,
+} from "./modelMetadata";
 
 export function SlotForm({
   slot,
@@ -198,12 +203,15 @@ function Field({
 //   2. Catalog miss falls back to the editorial `modelMetadata.ts`
 //      table — fine for the canonical models that still live there.
 //
-//   3. When both miss AND the provider's kind is OpenAI-compat, the
-//      placeholder used to lie ("Auto: 4096"). It now reads "Provider
-//      default" because the dispatcher omits `max_tokens` on that path
-//      and lets the provider apply its own large default. For
-//      Anthropic-kind providers (where the API requires the field),
-//      we still show the editorial fallback number.
+//   3. When BOTH catalog and editorial miss AND the provider's kind is
+//      OpenAI-compat, the placeholder used to lie ("Auto: 4096"). It now
+//      reads "Provider default" because the dispatcher omits `max_tokens`
+//      on that path and lets the provider apply its own large default.
+//      For Anthropic-kind providers (where the API requires the field),
+//      we still show the editorial fallback number. A known OpenAI-compat
+//      model that's merely missing from the catalog response keeps its
+//      editorial number — only true editorial misses fall to "Provider
+//      default".
 //
 // Operator values pass through verbatim — no client-side ceiling
 // clamp; the dispatcher does the right thing per #195.
@@ -232,6 +240,7 @@ function MaxTokensInput({
 
   const isUnset = slot.max_tokens == null;
   const editorialMeta = lookupModel(slot.model);
+  const editorialKnown = hasModelMetadata(slot.model);
   const editorialAuto = autoMaxTokens(editorialMeta);
   const isOpenAiCompat = providerKind === "openai-compat";
 
@@ -239,6 +248,14 @@ function MaxTokensInput({
   const catalogCtx = catalogEntry?.context_window ?? null;
   const catalogReasoning = catalogEntry?.supports_reasoning ?? null;
   const editorialReasoning = isReasoning(editorialMeta);
+
+  // The "Provider default" fallback only applies when BOTH the live
+  // catalog and the editorial table miss the model. A known OpenAI-compat
+  // model that's merely absent from the catalog response (e.g. provider
+  // didn't list it on /v1/models, or hasn't been refreshed) still gets
+  // its editorial auto number rather than the vaguer copy.
+  const useProviderDefault =
+    catalogMax === null && !editorialKnown && isOpenAiCompat;
 
   // Three resolution paths in order of trust:
   // 1. Catalog says exact ceiling: use it.
@@ -250,14 +267,14 @@ function MaxTokensInput({
   const placeholder =
     catalogMax !== null
       ? `Auto: ${catalogMax.toLocaleString()}`
-      : isOpenAiCompat && !catalogEntry
+      : useProviderDefault
         ? "Provider default"
         : `Auto: ${editorialAuto.toLocaleString()}`;
 
   const pillLabel =
     catalogMax !== null
       ? "Auto from catalog"
-      : isOpenAiCompat && !catalogEntry
+      : useProviderDefault
         ? "Provider default"
         : "Auto from model";
 
@@ -268,7 +285,7 @@ function MaxTokensInput({
         max: catalogMax,
         reasoning: catalogReasoning ?? editorialReasoning,
       })
-    : isOpenAiCompat && !catalogEntry
+    : useProviderDefault
       ? "Provider applies its own default — no client-side limit. " +
         "Click Refresh in Settings → Providers to fetch the model's actual ceiling."
       : editorialReasoning

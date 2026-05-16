@@ -64,20 +64,16 @@ fn gen_types(sh: &Shell) -> Result<()> {
     // doesn't prevent the type emissions we care about. If we hard-failed
     // here, every flaky test in the workspace would block barrel
     // regeneration — exactly the bug that left `Catalog`/`ModelEntry`
-    // out of `types.gen.ts` after they were merged. The barrel-rebuild
-    // step below verifies the type files actually landed.
-    cmd!(
-        sh,
-        "cargo test -p xvision-core --features ts-export --lib --quiet"
-    )
-    .run()
-    .ok();
-    cmd!(
-        sh,
-        "cargo test -p xvision-engine --features ts-export --lib --quiet"
-    )
-    .run()
-    .ok();
+    // out of `types.gen.ts` after they were merged.
+    //
+    // The "tests already wrote the file" rationale collapses when the
+    // package fails to compile — no test runs, no file is written. After
+    // each invocation we therefore require: either the command exited 0,
+    // or it produced at least one new .ts file. A failing compile that
+    // emits nothing fails the task loudly instead of leaving the barrel
+    // silently incomplete.
+    run_ts_export(sh, "xvision-core", out_dir)?;
+    run_ts_export(sh, "xvision-engine", out_dir)?;
 
     let entries: Vec<_> = std::fs::read_dir(out_dir)
         .with_context(|| format!("read {out_dir}"))?
@@ -101,4 +97,37 @@ fn gen_types(sh: &Shell) -> Result<()> {
     std::fs::write("frontend/web/src/api/types.gen.ts", barrel)?;
     println!("wrote {} type exports", stems.len());
     Ok(())
+}
+
+/// Run `cargo test --features ts-export --lib` for a single crate and require
+/// that *something* came out of it. A compile failure that emits nothing fails
+/// the task loudly so a later barrel rebuild can't paper over a missing crate's
+/// types. A test-assertion failure after files were already written is treated
+/// as benign — ts-rs writes its `.ts` files from the test body before any
+/// assertion fires, so the bindings we care about are already on disk.
+fn run_ts_export(sh: &Shell, pkg: &str, out_dir: &str) -> Result<()> {
+    let before = count_ts_files(out_dir);
+    let result = cmd!(
+        sh,
+        "cargo test -p {pkg} --features ts-export --lib --quiet"
+    )
+    .run();
+    let after = count_ts_files(out_dir);
+    if result.is_err() && after <= before {
+        anyhow::bail!(
+            "cargo test -p {pkg} --features ts-export failed and produced no new .ts files \
+             (likely a compile error). Run that command manually to see the failure."
+        );
+    }
+    Ok(())
+}
+
+fn count_ts_files(out_dir: &str) -> usize {
+    match std::fs::read_dir(out_dir) {
+        Ok(rd) => rd
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().map(|x| x == "ts").unwrap_or(false))
+            .count(),
+        Err(_) => 0,
+    }
 }
