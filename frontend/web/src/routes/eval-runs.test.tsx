@@ -288,6 +288,69 @@ describe("EvalRunsRoute", () => {
     expect(screen.getAllByText("1,545").length).toBeGreaterThan(0);
   });
 
+  it("marks the running status pill with the animation hook and leaves completed pills static", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([
+      {
+        id: "01RUN000000000000000000001",
+        agent_id: "01TEST",
+        scenario_id: "crypto-bull-q1-2025",
+        mode: "backtest",
+        status: "running",
+        started_at: "2026-05-13T07:00:00Z",
+        completed_at: null,
+        sharpe: null,
+        max_drawdown_pct: null,
+        total_return_pct: null,
+        error: null,
+        actual_input_tokens: 100,
+        actual_output_tokens: 50,
+      },
+      {
+        id: "01RUN000000000000000000002",
+        agent_id: "01TEST",
+        scenario_id: "crypto-bull-q1-2025",
+        mode: "backtest",
+        status: "completed",
+        started_at: "2026-05-13T07:00:00Z",
+        completed_at: "2026-05-13T08:15:00Z",
+        sharpe: 1.2,
+        max_drawdown_pct: 4.5,
+        total_return_pct: 8.1,
+        error: null,
+        actual_input_tokens: 1000,
+        actual_output_tokens: 250,
+      },
+    ] as never);
+
+    renderRoute();
+
+    await screen.findByText("2 runs");
+    // EvalRunsRoute renders runs in both a card grid and a table, so each
+    // row's pill appears twice. With one running row and one completed row,
+    // exactly the running-row pills should carry the animation hook.
+    const animatedPills = document.querySelectorAll("[data-running='true']");
+    expect(animatedPills.length).toBeGreaterThanOrEqual(1);
+    for (const pill of Array.from(animatedPills)) {
+      expect(pill).toHaveAttribute("aria-busy", "true");
+      expect(pill.className).toContain("xvn-pill-animated");
+      expect(pill.textContent).toContain("running");
+    }
+    const staticPills = document.querySelectorAll(
+      ".xvn-pill-animated[data-running='false']",
+    );
+    expect(staticPills.length).toBe(0);
+    // The completed pill must not pick up the animation hook.
+    const completedPills = Array.from(
+      document.querySelectorAll("span"),
+    ).filter((el) => el.textContent?.trim() === "completed");
+    expect(completedPills.length).toBeGreaterThan(0);
+    for (const pill of completedPills) {
+      expect(pill).not.toHaveAttribute("data-running");
+      expect(pill).not.toHaveAttribute("aria-busy");
+      expect(pill.className).not.toContain("xvn-pill-animated");
+    }
+  });
+
   it("cancels an in-flight eval run from the list", async () => {
     vi.mocked(evalApi.listRuns).mockResolvedValue([
       {

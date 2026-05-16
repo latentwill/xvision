@@ -166,4 +166,50 @@
   .dec-pill--close .dec-pill__label {
     background: color-mix(in srgb, var(--warn) 86%, #ffdd8a);
   }
+
+  /* In-flight pill animation. Driven by Pill's `animated` prop, used by the
+     four eval-status surfaces (eval-runs list, eval-runs-detail, eval-compare,
+     home) to make a "running" row visually distinct from completed rows.
+     Reads `currentColor`, so the pulse picks up whichever tone the pill is
+     rendered in (info for running, etc.). */
+  .xvn-pill-animated {
+    position: relative;
+    animation: xvn-pill-pulse 1.6s ease-in-out infinite;
+    background: color-mix(in srgb, currentColor 8%, transparent);
+  }
+  .xvn-pill-animated > span:first-child:not(:only-child) {
+    animation: xvn-pill-dot-pulse 1.6s ease-in-out infinite;
+  }
+
+  @keyframes xvn-pill-pulse {
+    0%,
+    100% {
+      box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 42%, transparent);
+    }
+    70% {
+      box-shadow: 0 0 0 4px color-mix(in srgb, currentColor 0%, transparent);
+    }
+  }
+  @keyframes xvn-pill-dot-pulse {
+    0%,
+    100% {
+      transform: scale(1);
+      opacity: 1;
+    }
+    50% {
+      transform: scale(1.45);
+      opacity: 0.82;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .xvn-pill-animated,
+    .xvn-pill-animated > span:first-child:not(:only-child) {
+      animation: none;
+    }
+    .xvn-pill-animated {
+      /* Static fallback: keep the row visually distinct without motion. */
+      box-shadow: 0 0 0 1px color-mix(in srgb, currentColor 30%, transparent);
+    }
+  }
 }

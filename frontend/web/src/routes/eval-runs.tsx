@@ -888,7 +888,7 @@ function errorDetail(err: unknown): string {
 function StatusPill({ status }: { status: string }) {
   const tone = STATUS_TONE[status] ?? "default";
   return (
-    <Pill tone={tone}>
+    <Pill tone={tone} animated={status === "running"}>
       <span className="w-1.5 h-1.5 rounded-full" style={dotColor(tone)} />
       {status}
     </Pill>
