@@ -1251,3 +1251,88 @@ async fn danger_factory_reset_clears_xvn_home_with_confirm() {
     let log_path = std::path::PathBuf::from(body["audit_log_path"].as_str().unwrap());
     assert!(log_path.exists(), "sibling audit log written");
 }
+
+// ---- eval export (q15 §3) ---------------------------------------------------
+
+#[tokio::test]
+async fn eval_export_returns_full_envelope_for_seeded_run() {
+    use xvision_engine::eval::{
+        run::{Run, RunMode, RunStatus},
+        store::RunStore,
+    };
+
+    let (server, tmp) = boot().await;
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}/xvn.db", tmp.path().display()))
+        .await
+        .unwrap();
+    let store = RunStore::new(pool);
+
+    let run = Run::new_queued("agent-export".into(), "crypto-bull-q1-2025".into(), RunMode::Backtest);
+    let run_id = run.id.clone();
+    store.create(&run).await.expect("seed run");
+    // Export is terminal-only — drive the seeded run to Completed
+    // so the route returns a snapshot instead of 422 Validation.
+    store
+        .update_status(&run_id, RunStatus::Completed, None)
+        .await
+        .expect("transition to terminal");
+
+    let response = server.get(&format!("/api/eval/runs/{run_id}/export")).await;
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+
+    // Spec §3 top-level keys must all be present so consumers can rely
+    // on the shape without optional-chaining every field.
+    for key in [
+        "schema_version",
+        "run",
+        "scenario",
+        "strategy",
+        "agents",
+        "metrics",
+        "decisions",
+        "equity_samples",
+        "events",
+        "errors",
+        "reviews",
+        "provider_diagnostics",
+    ] {
+        assert!(body.get(key).is_some(), "missing top-level key `{key}` in {body}");
+    }
+    assert_eq!(body["schema_version"], "1");
+    assert_eq!(body["run"]["id"], run_id);
+}
+
+#[tokio::test]
+async fn eval_export_rejects_in_flight_run() {
+    use xvision_engine::eval::{
+        run::{Run, RunMode},
+        store::RunStore,
+    };
+
+    let (server, tmp) = boot().await;
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}/xvn.db", tmp.path().display()))
+        .await
+        .unwrap();
+    let store = RunStore::new(pool);
+
+    // A run that stays in `Queued` is not terminal — the export
+    // surface must reject it rather than capture a moving snapshot.
+    let run = Run::new_queued("agent-export".into(), "crypto-bull-q1-2025".into(), RunMode::Backtest);
+    let run_id = run.id.clone();
+    store.create(&run).await.expect("seed run");
+
+    let response = server.get(&format!("/api/eval/runs/{run_id}/export")).await;
+    assert!(
+        !response.status_code().is_success(),
+        "expected error status for in-flight export, got {}",
+        response.status_code(),
+    );
+}
+
+#[tokio::test]
+async fn eval_export_unknown_run_id_is_404() {
+    let (server, _tmp) = boot().await;
+    let response = server.get("/api/eval/runs/01NOSUCHRUN0000000000000/export").await;
+    response.assert_status(StatusCode::NOT_FOUND);
+}

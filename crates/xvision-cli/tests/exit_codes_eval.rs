@@ -129,3 +129,21 @@ fn eval_compare_two_unknown_ids_returns_4_not_found() {
     );
     assert_eq!(code(&out), 4);
 }
+
+// ---- eval export (q15 §3) ---------------------------------------------------
+
+#[test]
+fn eval_export_unknown_run_returns_4_not_found() {
+    let dir = tempdir().unwrap();
+    let out = xvn(&["eval", "export", "01NOSUCHRUN0000000000000"], dir.path());
+    assert_eq!(code(&out), 4);
+}
+
+#[test]
+fn eval_export_missing_run_id_returns_2_clap_usage() {
+    // clap requires the positional run_id; missing it → exit 2 before
+    // reaching the engine.
+    let dir = tempdir().unwrap();
+    let out = xvn(&["eval", "export"], dir.path());
+    assert_eq!(code(&out), 2);
+}

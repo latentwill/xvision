@@ -5,7 +5,7 @@ wave: q15
 worktree: .worktrees/q15-eval-json-export
 branch: task/q15-eval-json-export
 base: origin/main
-status: ready
+status: in-progress
 depends_on: []
 blocks:
   - q15-object-json-output             # consumer of per-object shapes standardized here
