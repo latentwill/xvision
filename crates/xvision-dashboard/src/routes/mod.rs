@@ -2,6 +2,7 @@ pub mod agents;
 pub mod bars;
 pub mod chat_rail;
 pub mod cli;
+pub mod eval;
 pub mod eval_runs;
 pub mod health;
 pub mod scenarios;

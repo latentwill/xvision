@@ -7,8 +7,8 @@ use axum::{
 use tower_http::{compression::CompressionLayer, trace::TraceLayer};
 
 use crate::routes::{
-    agents, bars, chat_rail, cli, eval_runs, health::health, scenarios, search as search_route, settings,
-    skills, static_files, strategies, wizard,
+    agents, bars, chat_rail, cli, eval::review as eval_review, eval_runs, health::health,
+    scenarios, search as search_route, settings, skills, static_files, strategies, wizard,
 };
 use crate::state::AppState;
 use xvision_engine::api::eval as api_eval;
@@ -83,6 +83,16 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/eval/runs/:id/stream", get(eval_runs::stream))
         .route("/api/eval/compare", get(eval_runs::compare))
         .route("/api/eval/scenarios", get(eval_runs::list_scenarios))
+        // Eval-review routes (see routes/eval_review.rs).
+        .route(
+            "/api/eval/runs/:id/review",
+            post(eval_review::generate),
+        )
+        .route(
+            "/api/eval/runs/:id/reviews",
+            get(eval_review::list_for_run),
+        )
+        .route("/api/eval/reviews/:id", get(eval_review::get))
         .route("/api/bars/:cache_key", get(bars::cache_row))
         .route("/api/cli/jobs", post(cli::create))
         .route("/api/cli/jobs/:id", get(cli::get))

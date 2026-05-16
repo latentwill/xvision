@@ -1,6 +1,12 @@
 //! `xvn eval` — launch, browse, inspect, compare, and attest eval runs.
 //! `run` is part of the shipped surface and uses the same engine API as
 //! the dashboard-backed eval routes.
+//!
+//! Subcommand registration only at the bottom of the file (`Op::*` →
+//! `run_*` dispatch arm). The `review` sibling lives in
+//! `commands/eval/review.rs`; everything else stays here.
+
+pub mod review;
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -18,7 +24,7 @@ use crate::exit::{CliError, CliResult, ResultExt, XvnExit};
 /// Map an engine ApiError to our exit-code-bearing CliError. Variants
 /// carry meaning that's worth preserving on the wire, so we don't fall
 /// back to the default Upstream coercion.
-fn api_to_cli(prefix: &str, e: ApiError) -> CliError {
+pub(super) fn api_to_cli(prefix: &str, e: ApiError) -> CliError {
     let exit = match &e {
         ApiError::NotFound(_) => XvnExit::NotFound,
         ApiError::Validation(_) => XvnExit::Usage,
@@ -63,6 +69,8 @@ pub enum Op {
     /// write to disk. Byte-identical to
     /// `GET /api/eval/runs/:id/export`.
     Export(ExportArgs),
+    /// Generate an analytical review of a completed run.
+    Review(review::ReviewArgs),
 }
 
 #[derive(Args, Debug)]
@@ -218,6 +226,7 @@ pub async fn run(cmd: EvalCmd) -> CliResult<()> {
         Op::Validate(args) => run_validate(args).await,
         Op::Attest(args) => run_attest(args).await,
         Op::Export(args) => run_export(args).await,
+        Op::Review(args) => review::run_review_cmd(args).await,
     }
 }
 
@@ -311,7 +320,7 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
     Ok(())
 }
 
-async fn open_ctx(override_path: Option<PathBuf>) -> Result<ApiContext> {
+pub(super) async fn open_ctx(override_path: Option<PathBuf>) -> Result<ApiContext> {
     let xvn_home = crate::commands::home::resolve_xvn_home(override_path)?;
     let user = std::env::var("USER")
         .or_else(|_| std::env::var("USERNAME"))
