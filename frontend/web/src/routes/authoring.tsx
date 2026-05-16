@@ -16,11 +16,18 @@ import {
   type RiskConfig,
   type Strategy,
 } from "@/api/strategies";
-import { createAgent, listAgents } from "@/api/agents";
+import { createAgent, listAgents, type Agent } from "@/api/agents";
 import { listProviders, settingsKeys } from "@/api/settings";
 import { getStrategyChart, strategyChartKeys } from "@/api/chart";
 import { StrategyChart } from "@/components/chart/StrategyChart";
 import { ModelPicker } from "@/components/ModelPicker";
+import { safeStorageGet, safeStorageSet } from "@/lib/storage";
+
+const AGENT_COLLAPSE_KEY_PREFIX = "xvn:authoring:agent-collapsed";
+
+function agentCollapseKey(strategyId: string, role: string): string {
+  return `${AGENT_COLLAPSE_KEY_PREFIX}:${strategyId}:${role}`;
+}
 
 export function AuthoringRoute() {
   const params = useParams<{ id?: string }>();
@@ -311,71 +318,20 @@ function AgentsCard({ strategy }: { strategy: Strategy }) {
           </p>
         ) : (
           <div className="space-y-2">
-            {attached.map((a) => {
-              const agent = agentById.get(a.agent_id);
-              const primarySlot = agent?.slots[0];
-              return (
-                <div
-                  key={`${a.agent_id}:${a.role}`}
-                  className="border border-border-soft rounded p-3"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-3 text-[13px]">
-                      <span className="inline-flex items-center justify-center w-6 h-6 rounded-full border border-border-soft text-[12px] text-text-2 font-mono">
-                        {attached.indexOf(a) + 1}
-                      </span>
-                      <div>
-                        <div>
-                          <span className="break-all font-mono text-text">
-                            {a.role}
-                          </span>
-                          <span className="text-text-3"> · </span>
-                          <span className="break-all font-mono text-text-2">
-                            {a.agent_id}
-                          </span>
-                        </div>
-                        {agent ? (
-                          <div className="mt-1 text-[12px] text-text-2">
-                            <span className="text-text">{agent.name}</span>
-                            {primarySlot ? (
-                              <>
-                                <span className="text-text-3"> · </span>
-                                <span className="font-mono">
-                                  {primarySlot.provider} / {primarySlot.model}
-                                </span>
-                              </>
-                            ) : null}
-                          </div>
-                        ) : null}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        className="text-[12px] text-text-2 hover:text-text"
-                        onClick={() => {
-                          setRenameRoleFrom(a.role);
-                          setRenameRoleTo(a.role);
-                        }}
-                      >
-                        Rename role
-                      </button>
-                      <Link
-                        className="text-[12px] text-text-2 hover:text-text"
-                        to={`/agents/${encodeURIComponent(a.agent_id)}`}
-                      >
-                        Edit agent
-                      </Link>
-                      <button
-                        className="text-[12px] text-danger"
-                        onClick={() => removeMut.mutate(a.role)}
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
+            {attached.map((a, idx) => (
+              <AttachedAgentRow
+                key={`${a.agent_id}:${a.role}`}
+                strategyId={strategy.manifest.id}
+                agentRef={a}
+                index={idx + 1}
+                agent={agentById.get(a.agent_id)}
+                onRenameRole={() => {
+                  setRenameRoleFrom(a.role);
+                  setRenameRoleTo(a.role);
+                }}
+                onRemove={() => removeMut.mutate(a.role)}
+              />
+            ))}
           </div>
         )}
 
@@ -529,6 +485,219 @@ function AgentsCard({ strategy }: { strategy: Strategy }) {
         </div>
       </div>
     </Card>
+  );
+}
+
+type AttachedAgentRowProps = {
+  strategyId: string;
+  agentRef: { agent_id: string; role: string };
+  index: number;
+  agent: Agent | undefined;
+  onRenameRole: () => void;
+  onRemove: () => void;
+};
+
+function AttachedAgentRow({
+  strategyId,
+  agentRef,
+  index,
+  agent,
+  onRenameRole,
+  onRemove,
+}: AttachedAgentRowProps) {
+  const storageKey = agentCollapseKey(strategyId, agentRef.role);
+  const [collapsed, setCollapsed] = useState<boolean>(() => {
+    return safeStorageGet(storageKey) === "1";
+  });
+  const [popoutOpen, setPopoutOpen] = useState(false);
+  const primarySlot = agent?.slots[0];
+  const modelLabel = primarySlot
+    ? `${primarySlot.provider} / ${primarySlot.model}`
+    : null;
+
+  function toggleCollapsed() {
+    setCollapsed((prev) => {
+      const next = !prev;
+      safeStorageSet(storageKey, next ? "1" : "0");
+      return next;
+    });
+  }
+
+  function closePopout() {
+    setPopoutOpen(false);
+  }
+
+  return (
+    <div
+      data-testid={`attached-agent-row-${agentRef.role}`}
+      className="border border-border-soft rounded"
+    >
+      <div className="flex items-center justify-between gap-2 px-3 py-2">
+        <div className="flex items-center gap-3 text-[13px] min-w-0">
+          <button
+            type="button"
+            aria-label={collapsed ? "Expand agent" : "Collapse agent"}
+            aria-expanded={!collapsed}
+            onClick={toggleCollapsed}
+            className="inline-flex items-center justify-center w-5 h-5 rounded text-text-2 hover:text-text border border-transparent hover:border-border-soft text-[11px]"
+          >
+            {collapsed ? "▶" : "▼"}
+          </button>
+          <span className="inline-flex items-center justify-center w-6 h-6 rounded-full border border-border-soft text-[12px] text-text-2 font-mono shrink-0">
+            {index}
+          </span>
+          <div className="min-w-0">
+            <div className="truncate">
+              <span className="break-all font-mono text-text">
+                {agentRef.role}
+              </span>
+              {agent ? (
+                <>
+                  <span className="text-text-3"> · </span>
+                  <span className="text-text">{agent.name}</span>
+                </>
+              ) : null}
+              {modelLabel ? (
+                <>
+                  <span className="text-text-3"> · </span>
+                  <span className="font-mono text-text-2 text-[12px]">
+                    {modelLabel}
+                  </span>
+                </>
+              ) : null}
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            className="text-[12px] text-text-2 hover:text-text"
+            onClick={() => setPopoutOpen(true)}
+            aria-label="Open agent in window"
+          >
+            Open in window
+          </button>
+        </div>
+      </div>
+
+      {!collapsed ? (
+        <div className="border-t border-border-soft px-3 py-2 space-y-2 text-[12px] text-text-2">
+          <div className="break-all font-mono">{agentRef.agent_id}</div>
+          <div className="flex items-center gap-3 pt-1">
+            <button
+              type="button"
+              className="text-[12px] text-text-2 hover:text-text"
+              onClick={onRenameRole}
+            >
+              Rename role
+            </button>
+            <Link
+              className="text-[12px] text-text-2 hover:text-text"
+              to={`/agents/${encodeURIComponent(agentRef.agent_id)}`}
+            >
+              Edit agent
+            </Link>
+            <button
+              type="button"
+              className="text-[12px] text-danger"
+              onClick={onRemove}
+            >
+              Remove
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {popoutOpen ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Agent ${agentRef.role} details`}
+          className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-6"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) closePopout();
+          }}
+        >
+          <div className="w-[min(560px,92vw)] mt-[10vh] bg-surface-card border border-border rounded-card shadow-2xl overflow-hidden">
+            <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-border-soft">
+              <div className="text-[13px]">
+                <span className="font-mono text-text">{agentRef.role}</span>
+                {agent ? (
+                  <>
+                    <span className="text-text-3"> · </span>
+                    <span className="text-text">{agent.name}</span>
+                  </>
+                ) : null}
+              </div>
+              <button
+                type="button"
+                className="text-[12px] text-text-2 hover:text-text"
+                onClick={closePopout}
+                aria-label="Close agent window"
+              >
+                Close
+              </button>
+            </div>
+            <div className="px-4 py-3 space-y-3 text-[13px]">
+              <div>
+                <div className="text-[11px] uppercase tracking-wide text-text-3">
+                  Agent id
+                </div>
+                <div className="break-all font-mono text-text-2">
+                  {agentRef.agent_id}
+                </div>
+              </div>
+              {modelLabel ? (
+                <div>
+                  <div className="text-[11px] uppercase tracking-wide text-text-3">
+                    Model
+                  </div>
+                  <div className="font-mono text-text-2">{modelLabel}</div>
+                </div>
+              ) : null}
+              {primarySlot?.system_prompt ? (
+                <div>
+                  <div className="text-[11px] uppercase tracking-wide text-text-3">
+                    System prompt
+                  </div>
+                  <pre className="whitespace-pre-wrap font-mono text-[12px] text-text-2 bg-surface-elev border border-border-soft rounded p-2 max-h-[40vh] overflow-y-auto">
+                    {primarySlot.system_prompt}
+                  </pre>
+                </div>
+              ) : null}
+              <div className="flex items-center gap-3 pt-1">
+                <button
+                  type="button"
+                  className="text-[12px] text-text-2 hover:text-text"
+                  onClick={() => {
+                    closePopout();
+                    onRenameRole();
+                  }}
+                >
+                  Rename role
+                </button>
+                <Link
+                  className="text-[12px] text-text-2 hover:text-text"
+                  to={`/agents/${encodeURIComponent(agentRef.agent_id)}`}
+                >
+                  Edit agent
+                </Link>
+                <button
+                  type="button"
+                  className="text-[12px] text-danger"
+                  onClick={() => {
+                    closePopout();
+                    onRemove();
+                  }}
+                >
+                  Remove
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
