@@ -10,6 +10,7 @@ pub mod baselines;
 pub mod chat_session;
 pub mod error;
 pub mod eval;
+pub mod providers;
 pub mod search;
 pub mod skills;
 pub mod strategies;

@@ -138,6 +138,18 @@ pub fn build_router(state: AppState) -> Router {
             "/api/settings/providers/:name/test-connection",
             post(settings::providers::test_connection),
         )
+        .route(
+            "/api/settings/providers/:name/catalog",
+            get(settings::providers::get_catalog),
+        )
+        .route(
+            "/api/settings/providers/:name/catalog/refresh",
+            post(settings::providers::refresh_catalog),
+        )
+        .route(
+            "/api/settings/providers/catalog/refresh-all",
+            post(settings::providers::refresh_all_catalogs),
+        )
         .route("/api/settings/danger/wipe-db", post(settings::danger::wipe_db))
         .route(
             "/api/settings/danger/regen-identity",

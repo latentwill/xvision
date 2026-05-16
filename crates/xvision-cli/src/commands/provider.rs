@@ -17,6 +17,7 @@ use anyhow::Result;
 use clap::{Args, Subcommand};
 
 use xvision_engine::api::settings::providers::{self, AddProviderRequest, ProviderRow};
+use xvision_engine::api::settings::providers_catalog;
 use xvision_engine::api::{Actor, ApiContext};
 
 #[derive(Args, Debug)]
@@ -65,6 +66,18 @@ enum ProviderAction {
         #[arg(long)]
         name: String,
     },
+    /// Refresh the catalog for one provider (or all if `--name` omitted)
+    /// by hitting its `/v1/models` endpoint and writing to disk.
+    RefreshModels {
+        #[arg(long)]
+        name: Option<String>,
+    },
+    /// Show the cached catalog for a provider. Does NOT hit the network —
+    /// run `refresh-models` first if you want a fresh fetch.
+    Models {
+        #[arg(long)]
+        name: String,
+    },
 }
 
 pub async fn run(cmd: ProviderCmd) -> Result<()> {
@@ -89,6 +102,10 @@ pub async fn run(cmd: ProviderCmd) -> Result<()> {
             api_key,
         } => add(&ctx, &config_path, name, kind, base_url, api_key_env, api_key).await,
         ProviderAction::Remove { name } => remove(&ctx, &config_path, &name).await,
+        ProviderAction::RefreshModels { name } => {
+            refresh_models(&ctx, &config_path, name.as_deref()).await
+        }
+        ProviderAction::Models { name } => models(&ctx, &config_path, &name).await,
     }
 }
 
@@ -241,6 +258,96 @@ async fn remove(ctx: &ApiContext, config_path: &std::path::Path, name: &str) -> 
     providers::remove(ctx, config_path, name)
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
+    Ok(())
+}
+
+async fn refresh_models(
+    ctx: &ApiContext,
+    config_path: &std::path::Path,
+    name: Option<&str>,
+) -> Result<()> {
+    match name {
+        Some(n) => {
+            let cat = providers_catalog::refresh(ctx, config_path, n)
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            println!(
+                "{:<18} {:>5} models   fetched_at={}   source={}",
+                cat.provider,
+                cat.models.len(),
+                cat.fetched_at.to_rfc3339(),
+                cat.source_url
+            );
+        }
+        None => {
+            let rows = providers_catalog::refresh_all(ctx, config_path)
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            println!(
+                "{:<18} {:<6} {:>6}  {}",
+                "PROVIDER", "STATUS", "MODELS", "SOURCE / ERROR"
+            );
+            for row in rows {
+                let status = if row.ok { "ok" } else { "fail" };
+                let count = row
+                    .model_count
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|| "—".into());
+                let trailing = row
+                    .source_url
+                    .unwrap_or_else(|| row.error.unwrap_or_default());
+                println!(
+                    "{:<18} {:<6} {:>6}  {}",
+                    row.provider, status, count, trailing
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn models(
+    ctx: &ApiContext,
+    config_path: &std::path::Path,
+    name: &str,
+) -> Result<()> {
+    let cat = providers_catalog::get(ctx, config_path, name)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let cat = match cat {
+        Some(c) => c,
+        None => {
+            anyhow::bail!(
+                "no cached catalog for `{name}` — run `xvn provider refresh-models --name {name}` first"
+            );
+        }
+    };
+    println!(
+        "{} ({} models, fetched {})",
+        cat.provider,
+        cat.models.len(),
+        cat.fetched_at.to_rfc3339()
+    );
+    println!(
+        "{:<48} {:>10} {:>10} {:>6}",
+        "ID", "CONTEXT", "MAX_OUT", "REASON"
+    );
+    for m in &cat.models {
+        let ctx_str = m
+            .context_window
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| "—".into());
+        let out_str = m
+            .max_output_tokens
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| "—".into());
+        let reason = match m.supports_reasoning {
+            Some(true) => "yes",
+            Some(false) => "no",
+            None => "—",
+        };
+        println!("{:<48} {:>10} {:>10} {:>6}", m.id, ctx_str, out_str, reason);
+    }
     Ok(())
 }
 
