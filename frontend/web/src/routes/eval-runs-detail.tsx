@@ -110,7 +110,15 @@ export function EvalRunDetailRoute() {
       <h2 className="font-serif italic text-[20px] text-text mt-8 mb-3">
         Review
       </h2>
+      {/*
+        `key={detail.summary.id}` resets every piece of local state in
+        ReviewPanel when the route is reused for a different run id —
+        otherwise selectedId/generate-mutation state can bleed across
+        navigations because the route element is mounted once and just
+        re-renders with a new :runId.
+      */}
       <ReviewPanel
+        key={detail.summary.id}
         runId={detail.summary.id}
         runIsCompleted={detail.summary.status === "completed"}
       />

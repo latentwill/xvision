@@ -113,6 +113,25 @@ export function ReviewPanel({
         </div>
       )}
 
+      {listQuery.isError && (
+        <div
+          role="alert"
+          className="border border-danger/40 rounded-card p-3 mb-3 text-danger text-[13px]"
+        >
+          Couldn't load review history:{" "}
+          {listQuery.error instanceof Error
+            ? listQuery.error.message
+            : String(listQuery.error)}
+          <button
+            type="button"
+            onClick={() => listQuery.refetch()}
+            className="ml-2 underline decoration-dotted underline-offset-2 text-danger hover:text-danger/80"
+          >
+            retry
+          </button>
+        </div>
+      )}
+
       {listQuery.isSuccess && !hasReviews && !generate.isPending && (
         <div className="text-text-2 text-[13px]">
           No review yet for this run. Pick an agent above to generate one.
@@ -132,6 +151,25 @@ export function ReviewPanel({
 
       {detailQuery.isPending && effectiveId && (
         <div className="text-text-3 text-[13px] italic">Loading review…</div>
+      )}
+
+      {detailQuery.isError && effectiveId && (
+        <div
+          role="alert"
+          className="border border-danger/40 rounded-card p-3 mb-3 text-danger text-[13px]"
+        >
+          Couldn't load review details:{" "}
+          {detailQuery.error instanceof Error
+            ? detailQuery.error.message
+            : String(detailQuery.error)}
+          <button
+            type="button"
+            onClick={() => detailQuery.refetch()}
+            className="ml-2 underline decoration-dotted underline-offset-2 text-danger hover:text-danger/80"
+          >
+            retry
+          </button>
+        </div>
       )}
 
       {detail && detailReview && (

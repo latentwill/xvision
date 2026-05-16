@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 
 import { EvalRunDetailRoute } from "./eval-runs-detail";
 import * as chartApi from "@/api/chart";
@@ -404,6 +404,126 @@ describe("EvalRunDetailRoute", () => {
     expect(screen.getByText("Modest sharpe")).toBeInTheDocument();
     expect(
       screen.getByText("Test on a longer window."),
+    ).toBeInTheDocument();
+  });
+
+  it("does not leak the previous run's selected review when navigating to a new run", async () => {
+    // Two completed runs, each with one review. Render run A first,
+    // then navigate to run B (different :runId) and assert the panel
+    // displays run B's review id — not run A's. The fix uses
+    // `key={runId}` on ReviewPanel to remount the component on
+    // navigation; without it, `selectedId` survives and pins the
+    // panel to the previous run.
+    const runADetail: RunDetail = detail({
+      summary: {
+        ...detail().summary,
+        id: "01RUN_A",
+        status: "completed",
+        completed_at: "2026-05-13T14:01:00Z",
+      },
+    });
+    const runBDetail: RunDetail = detail({
+      summary: {
+        ...detail().summary,
+        id: "01RUN_B",
+        status: "completed",
+        completed_at: "2026-05-13T15:01:00Z",
+      },
+    });
+    const reviewA = makeReview({
+      id: "01REVIEW_A",
+      eval_run_id: "01RUN_A",
+      summary: "Review for run A.",
+    });
+    const reviewB = makeReview({
+      id: "01REVIEW_B",
+      eval_run_id: "01RUN_B",
+      summary: "Review for run B.",
+    });
+
+    vi.mocked(evalApi.getRun).mockImplementation(async (id: string) =>
+      id === "01RUN_A" ? runADetail : runBDetail,
+    );
+    vi.mocked(evalReviewApi.listReviewsForRun).mockImplementation(
+      async (id: string) => (id === "01RUN_A" ? [reviewA] : [reviewB]),
+    );
+    vi.mocked(evalReviewApi.getReview).mockImplementation(
+      async (reviewId: string) => ({
+        review: reviewId === "01REVIEW_A" ? reviewA : reviewB,
+        findings: [],
+      }),
+    );
+
+    // Render-with-navigation helper: a child route + nav button so the
+    // test can drive `useParams` updates without manually unmounting.
+    function NavApp() {
+      return (
+        <MemoryRouter initialEntries={["/eval-runs/01RUN_A"]}>
+          <QueryClientProvider
+            client={
+              new QueryClient({
+                defaultOptions: { queries: { retry: false } },
+              })
+            }
+          >
+            <Routes>
+              <Route
+                path="/eval-runs/:runId"
+                element={
+                  <>
+                    <Link to="/eval-runs/01RUN_B">go to B</Link>
+                    <EvalRunDetailRoute />
+                  </>
+                }
+              />
+            </Routes>
+          </QueryClientProvider>
+        </MemoryRouter>
+      );
+    }
+
+    render(<NavApp />);
+
+    // Run A is current → its review summary renders.
+    expect(await screen.findByText("Review for run A.")).toBeInTheDocument();
+
+    // Navigate to B via a same-origin link click.
+    fireEvent.click(screen.getByRole("link", { name: "go to B" }));
+
+    // Run B's review must render, A's must be gone.
+    expect(await screen.findByText("Review for run B.")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Review for run A."),
+    ).not.toBeInTheDocument();
+  });
+
+  it("surfaces a review list error inline with a retry control", async () => {
+    vi.mocked(evalApi.getRun).mockResolvedValue(
+      detail({
+        summary: {
+          ...detail().summary,
+          status: "completed",
+          completed_at: "2026-05-13T14:01:00Z",
+        },
+      }),
+    );
+    vi.mocked(evalReviewApi.listReviewsForRun).mockRejectedValueOnce(
+      new Error("reviews endpoint unreachable"),
+    );
+
+    renderDetail();
+
+    // The error alert is rendered with role=alert. The picker stays
+    // visible so the operator can still trigger a generate, but the
+    // failure is not silent.
+    expect(
+      await screen.findByText(/couldn't load review history/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/reviews endpoint unreachable/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Reasoning" }),
     ).toBeInTheDocument();
   });
 
