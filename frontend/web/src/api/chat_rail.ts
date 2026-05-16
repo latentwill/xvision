@@ -8,6 +8,7 @@ import { ApiError, apiFetch } from "./client";
 import {
   createTrace,
   durationSince,
+  safeId,
 } from "@/lib/logger";
 
 // ContextScope mirrors `xvision_engine::chat_session::ContextScope`'s
@@ -232,7 +233,7 @@ export async function* streamChat(
   signal?: AbortSignal,
 ): AsyncGenerator<WizardEvent> {
   const trace = createTrace("chat", {
-    stream_id: crypto.randomUUID?.().slice(0, 8),
+    stream_id: safeId(),
     session_id: req.session_id,
     provider: req.provider,
     model: req.model,

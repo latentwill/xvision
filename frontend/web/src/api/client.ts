@@ -11,6 +11,7 @@ import {
   createTrace,
   durationSince,
   errorSummary,
+  safeId,
   safePath,
 } from "@/lib/logger";
 
@@ -37,7 +38,7 @@ export async function apiFetch<T>(
 ): Promise<T> {
   const method = init?.method ?? "GET";
   const trace = createTrace("api", {
-    request_id: crypto.randomUUID?.().slice(0, 8),
+    request_id: safeId(),
     method,
     path: safePath(path),
     ...bodySummary(init?.body),

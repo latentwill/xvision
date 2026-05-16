@@ -377,7 +377,7 @@ export function runtimeMode(): string {
   return appMode();
 }
 
-function safeId(): string {
+export function safeId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
     return crypto.randomUUID().slice(0, 8);
   }
