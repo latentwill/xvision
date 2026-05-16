@@ -107,11 +107,12 @@ async function dispatch(raw: unknown): Promise<JsonRpcResponse | null> {
     const result = await handler(msg["params"])
     return { jsonrpc: "2.0", id: reqId, result }
   } catch (err) {
+    const isTypeError = err instanceof TypeError
     return {
       jsonrpc: "2.0",
       id: reqId,
       error: {
-        code: RPC_ERROR_CODES.InternalError,
+        code: isTypeError ? RPC_ERROR_CODES.InvalidParams : RPC_ERROR_CODES.InternalError,
         message: err instanceof Error ? err.message : String(err),
       },
     }

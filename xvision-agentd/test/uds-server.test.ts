@@ -72,6 +72,17 @@ describe("uds-server", () => {
     expect(result).toMatchObject({ error: { code: -32700 } })
   })
 
+  it("maps TypeError validation errors to InvalidParams (-32602)", async () => {
+    // tool.registry.set requires `tools: array of descriptors`. Sending
+    // a malformed payload (e.g. params=null) triggers a TypeError in the
+    // handler, which the dispatcher must map to -32602 InvalidParams.
+    const resp = await rpc("tool.registry.set", null)
+    expect("error" in resp).toBe(true)
+    if ("error" in resp) {
+      expect(resp.error.code).toBe(-32602)
+    }
+  })
+
   it("does not respond to notifications", async () => {
     // A JSON-RPC 2.0 notification has no id field. The server MUST NOT reply.
     const received = await new Promise<boolean>((resolve) => {
