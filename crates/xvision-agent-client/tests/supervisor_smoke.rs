@@ -23,9 +23,7 @@ async fn spawns_and_calls_health() {
     let dir = TempDir::new().unwrap();
     let sock = dir.path().join("sock");
 
-    let client = AgentClient::spawn(&bin, &sock)
-        .await
-        .expect("spawn sidecar");
+    let client = AgentClient::spawn(&bin, &sock).await.expect("spawn sidecar");
 
     let h = client.health().await.expect("health");
     assert_eq!(h.status, "ok");

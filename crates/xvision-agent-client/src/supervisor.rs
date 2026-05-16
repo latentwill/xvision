@@ -16,11 +16,13 @@ pub(crate) struct Supervisor {
 }
 
 impl Supervisor {
-    pub(crate) async fn spawn(bin: &Path, socket_path: &Path, callback_socket_path: Option<&Path>) -> Result<Self> {
+    pub(crate) async fn spawn(
+        bin: &Path,
+        socket_path: &Path,
+        callback_socket_path: Option<&Path>,
+    ) -> Result<Self> {
         let mut cmd = Command::new("node");
-        cmd.arg(bin)
-            .arg("--socket")
-            .arg(socket_path);
+        cmd.arg(bin).arg("--socket").arg(socket_path);
         if let Some(cb) = callback_socket_path {
             cmd.arg("--callback-socket").arg(cb);
         }
@@ -31,10 +33,7 @@ impl Supervisor {
         let mut child = cmd.spawn()?;
 
         // Wait for the structured `ready` event on stderr.
-        let stderr = child
-            .stderr
-            .take()
-            .ok_or(AgentClientError::TransportClosed)?;
+        let stderr = child.stderr.take().ok_or(AgentClientError::TransportClosed)?;
         let mut lines = BufReader::new(stderr).lines();
         // Once we find the ready line, `lines` is dropped and stderr is no
         // longer drained. Post-ready stderr from the sidecar (Node runtime

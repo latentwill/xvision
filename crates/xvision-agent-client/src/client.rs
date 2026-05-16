@@ -2,19 +2,28 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::errors::{AgentClientError, Result};
-use crate::tool_dispatch::{serve_callbacks, ToolDispatch};
 use crate::protocol::{
-    RuntimeHealthResult, ToolDescriptor, ToolRegistryGetResult, ToolRegistrySetParams,
-    ToolRegistrySetResult, SUPPORTED_PROTOCOL_VERSION,
+    RuntimeHealthResult, ToolDescriptor, ToolRegistryGetResult, ToolRegistrySetParams, ToolRegistrySetResult,
+    SUPPORTED_PROTOCOL_VERSION,
 };
 use crate::supervisor::Supervisor;
+use crate::tool_dispatch::{serve_callbacks, ToolDispatch};
 use crate::transport::UdsTransport;
 
+/// Combines a spawned `xvision-agentd` sidecar with a JSON-RPC transport.
+///
+/// Callers are expected to invoke [`AgentClient::shutdown`] when done.
+/// `shutdown` aborts the callback listener, removes the callback socket
+/// file (if any), and kills the sidecar process. The sidecar is also
+/// killed via tokio's `kill_on_drop(true)` if the client is dropped
+/// without `shutdown`, but the callback socket file will leak in that
+/// case — call `shutdown` explicitly for production use.
 pub struct AgentClient {
     transport: UdsTransport,
     supervisor: Supervisor,
     versions: RuntimeHealthResult,
     callback_handle: Option<tokio::task::JoinHandle<()>>,
+    callback_socket_path: Option<std::path::PathBuf>,
 }
 
 impl AgentClient {
@@ -22,7 +31,13 @@ impl AgentClient {
         let supervisor = Supervisor::spawn(bin, socket_path, None).await?;
         let transport = UdsTransport::connect(&supervisor.socket_path).await?;
         let versions = Self::handshake(&transport).await?;
-        Ok(Self { transport, supervisor, versions, callback_handle: None })
+        Ok(Self {
+            transport,
+            supervisor,
+            versions,
+            callback_handle: None,
+            callback_socket_path: None,
+        })
     }
 
     pub async fn handshake(transport: &UdsTransport) -> Result<RuntimeHealthResult> {
@@ -47,6 +62,9 @@ impl AgentClient {
     pub async fn shutdown(self) -> Result<()> {
         if let Some(h) = &self.callback_handle {
             h.abort();
+        }
+        if let Some(path) = &self.callback_socket_path {
+            let _ = std::fs::remove_file(path);
         }
         self.supervisor.shutdown().await
     }
@@ -101,7 +119,13 @@ impl AgentClient {
                 return Err(e);
             }
         };
-        Ok(Self { transport, supervisor, versions, callback_handle: Some(callback_handle) })
+        Ok(Self {
+            transport,
+            supervisor,
+            versions,
+            callback_handle: Some(callback_handle),
+            callback_socket_path: Some(callback_socket_path.to_path_buf()),
+        })
     }
 
     pub async fn invoke_tool_via_sidecar(
@@ -110,7 +134,10 @@ impl AgentClient {
         input: serde_json::Value,
     ) -> Result<serde_json::Value> {
         #[derive(serde::Serialize)]
-        struct P<'a> { name: &'a str, input: serde_json::Value }
+        struct P<'a> {
+            name: &'a str,
+            input: serde_json::Value,
+        }
         self.transport
             .call::<P, serde_json::Value>("tool.invoke", Some(P { name, input }))
             .await

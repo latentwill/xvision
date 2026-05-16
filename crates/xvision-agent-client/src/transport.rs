@@ -39,7 +39,12 @@ impl UdsTransport {
         params: Option<P>,
     ) -> Result<R> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let req = JsonRpcRequest { jsonrpc: "2.0", id, method, params };
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0",
+            id,
+            method,
+            params,
+        };
 
         let mut guard = self.inner.lock().await;
         let mut line = serde_json::to_vec(&req)?;

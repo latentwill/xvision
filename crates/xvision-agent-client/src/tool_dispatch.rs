@@ -11,8 +11,11 @@ use tokio::net::UnixListener;
 /// `ToolRegistry` in a later wave; Wave 1 tests provide their own.
 #[async_trait]
 pub trait ToolDispatch: Send + Sync + 'static {
-    async fn invoke(&self, name: &str, input: serde_json::Value)
-        -> std::result::Result<serde_json::Value, ToolDispatchError>;
+    async fn invoke(
+        &self,
+        name: &str,
+        input: serde_json::Value,
+    ) -> std::result::Result<serde_json::Value, ToolDispatchError>;
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -25,7 +28,8 @@ pub enum ToolDispatchError {
 
 #[derive(Debug, Deserialize)]
 struct InvokeRequest {
-    #[allow(dead_code)] jsonrpc: String,
+    #[allow(dead_code)]
+    jsonrpc: String,
     id: u64,
     method: String,
     params: InvokeParams,
@@ -38,13 +42,24 @@ struct InvokeParams {
 }
 
 #[derive(Debug, Serialize)]
-struct RpcOk { jsonrpc: &'static str, id: u64, result: serde_json::Value }
+struct RpcOk {
+    jsonrpc: &'static str,
+    id: u64,
+    result: serde_json::Value,
+}
 
 #[derive(Debug, Serialize)]
-struct RpcErr { jsonrpc: &'static str, id: u64, error: ErrorBody }
+struct RpcErr {
+    jsonrpc: &'static str,
+    id: u64,
+    error: ErrorBody,
+}
 
 #[derive(Debug, Serialize)]
-struct ErrorBody { code: i64, message: String }
+struct ErrorBody {
+    code: i64,
+    message: String,
+}
 
 pub async fn serve_callbacks(
     socket_path: &Path,
@@ -53,7 +68,9 @@ pub async fn serve_callbacks(
     let listener = UnixListener::bind(socket_path)?;
     let handle = tokio::spawn(async move {
         loop {
-            let Ok((conn, _)) = listener.accept().await else { continue };
+            let Ok((conn, _)) = listener.accept().await else {
+                continue;
+            };
             let dispatch = dispatch.clone();
             tokio::spawn(async move {
                 let (r, mut w) = conn.into_split();
@@ -64,30 +81,52 @@ pub async fn serve_callbacks(
                         Ok(req) if req.method == "tool.invoke" => {
                             match dispatch.invoke(&req.params.name, req.params.input).await {
                                 Ok(out) => serde_json::to_vec(&RpcOk {
-                                    jsonrpc: "2.0", id: req.id, result: out,
-                                }).unwrap_or_default(),
+                                    jsonrpc: "2.0",
+                                    id: req.id,
+                                    result: out,
+                                })
+                                .unwrap_or_default(),
                                 Err(ToolDispatchError::UnknownTool(n)) => serde_json::to_vec(&RpcErr {
-                                    jsonrpc: "2.0", id: req.id,
-                                    error: ErrorBody { code: -32001, message: format!("unknown tool: {n}") },
-                                }).unwrap_or_default(),
+                                    jsonrpc: "2.0",
+                                    id: req.id,
+                                    error: ErrorBody {
+                                        code: -32001,
+                                        message: format!("unknown tool: {n}"),
+                                    },
+                                })
+                                .unwrap_or_default(),
                                 Err(ToolDispatchError::Failed(m)) => serde_json::to_vec(&RpcErr {
-                                    jsonrpc: "2.0", id: req.id,
-                                    error: ErrorBody { code: -32001, message: m },
-                                }).unwrap_or_default(),
+                                    jsonrpc: "2.0",
+                                    id: req.id,
+                                    error: ErrorBody {
+                                        code: -32001,
+                                        message: m,
+                                    },
+                                })
+                                .unwrap_or_default(),
                             }
                         }
                         Ok(req) => serde_json::to_vec(&RpcErr {
-                            jsonrpc: "2.0", id: req.id,
-                            error: ErrorBody { code: -32601, message: format!("unknown method: {}", req.method) },
-                        }).unwrap_or_default(),
+                            jsonrpc: "2.0",
+                            id: req.id,
+                            error: ErrorBody {
+                                code: -32601,
+                                message: format!("unknown method: {}", req.method),
+                            },
+                        })
+                        .unwrap_or_default(),
                         Err(e) => {
                             // Parse error has no parsed id. Use 0 as a sentinel — the
                             // sidecar treats this as an unsolicited error response.
                             let mut bytes = serde_json::to_vec(&RpcErr {
                                 jsonrpc: "2.0",
                                 id: 0,
-                                error: ErrorBody { code: -32700, message: e.to_string() },
-                            }).unwrap_or_default();
+                                error: ErrorBody {
+                                    code: -32700,
+                                    message: e.to_string(),
+                                },
+                            })
+                            .unwrap_or_default();
                             bytes.push(b'\n');
                             let _ = w.write_all(&bytes).await;
                             let _ = w.flush().await;

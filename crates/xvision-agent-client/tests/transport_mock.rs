@@ -56,10 +56,7 @@ async fn calls_runtime_health_against_mock() {
     let _server = start_mock_server(sock.clone()).await;
 
     let t = UdsTransport::connect(&sock).await.expect("connect");
-    let h: RuntimeHealthResult = t
-        .call::<(), _>("runtime.health", None)
-        .await
-        .expect("rpc");
+    let h: RuntimeHealthResult = t.call::<(), _>("runtime.health", None).await.expect("rpc");
     assert_eq!(h.protocol_version, "0.1.0");
     assert_eq!(h.cline_sdk_version, "unbound");
     assert_eq!(h.status, "ok");
