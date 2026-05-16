@@ -6,6 +6,7 @@
 
 pub mod config;
 pub mod market;
+pub mod providers;
 pub mod risk;
 pub mod slot;
 pub mod store;

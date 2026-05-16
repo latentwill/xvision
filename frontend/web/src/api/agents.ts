@@ -15,7 +15,11 @@ export type AgentSlot = {
   // until `/agents/skills` ships. Not related to the Plan 2b `xvn skill`
   // surface removed in ADR 0012.
   skill_ids: string[];
-  max_tokens: number;
+  /// `null` means "auto from the selected model" — the engine resolves
+  /// the effective budget at dispatch time from the canonical model
+  /// metadata table (q15 §1). A number is honored verbatim, clamped to
+  /// the model's per-request ceiling server-side.
+  max_tokens: number | null;
 };
 
 export type Agent = {

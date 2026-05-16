@@ -7,6 +7,7 @@ import type { AgentSlot } from "@/api/agents";
 import { listProviders, settingsKeys } from "@/api/settings";
 import { ModelPicker } from "@/components/ModelPicker";
 import { Icon } from "@/components/primitives/Icon";
+import { autoMaxTokens, isReasoning, lookupModel } from "./modelMetadata";
 
 export function SlotForm({
   slot,
@@ -141,15 +142,7 @@ export function SlotForm({
 
       <div className="grid grid-cols-2 gap-4 mt-4">
         <Field label="Max tokens">
-          <input
-            type="number"
-            value={slot.max_tokens}
-            min={1}
-            onChange={(e) =>
-              patch("max_tokens", Math.max(1, parseInt(e.target.value, 10) || 0))
-            }
-            className="w-full px-3 py-2 bg-surface-card border border-border rounded-sm text-[13.5px] text-text font-mono focus:outline-none focus:border-gold/40"
-          />
+          <MaxTokensInput slot={slot} onChange={onChange} />
         </Field>
         {slot.skill_ids.length > 0 ? (
           <Field label="Skills">
@@ -178,5 +171,68 @@ function Field({
       </span>
       {children}
     </label>
+  );
+}
+
+// MaxTokensInput — renders the per-slot max_tokens override with an
+// "Auto from model" pill when unset. The placeholder is the auto value
+// the dispatcher would resolve to today; switching models updates it
+// live so operators can see the budget without saving (q15 §1).
+function MaxTokensInput({
+  slot,
+  onChange,
+}: {
+  slot: AgentSlot;
+  onChange: (next: AgentSlot) => void;
+}) {
+  const meta = lookupModel(slot.model);
+  const auto = autoMaxTokens(meta);
+  const isUnset = slot.max_tokens == null;
+  const reasoning = isReasoning(meta);
+
+  return (
+    <div className="flex items-stretch gap-2">
+      <input
+        type="number"
+        value={slot.max_tokens ?? ""}
+        min={1}
+        max={meta.output_token_ceiling}
+        placeholder={`Auto: ${auto}`}
+        onChange={(e) => {
+          const raw = e.target.value;
+          if (raw === "") {
+            onChange({ ...slot, max_tokens: null });
+            return;
+          }
+          const parsed = parseInt(raw, 10);
+          onChange({
+            ...slot,
+            max_tokens: Number.isFinite(parsed) && parsed > 0 ? parsed : null,
+          });
+        }}
+        className="flex-1 px-3 py-2 bg-surface-card border border-border rounded-sm text-[13.5px] text-text font-mono focus:outline-none focus:border-gold/40"
+      />
+      {isUnset ? (
+        <span
+          title={
+            reasoning
+              ? `Reasoning model — auto includes ${meta.reasoning_token_default} reasoning + ${meta.recommended_visible_output} visible (ceiling ${meta.output_token_ceiling}).`
+              : `Standard model — auto is ${meta.recommended_visible_output} visible (ceiling ${meta.output_token_ceiling}).`
+          }
+          className="inline-flex items-center px-2 py-1 rounded-sm text-[11px] font-mono uppercase tracking-wide bg-surface-card border border-border-soft text-text-3"
+        >
+          Auto from model
+        </span>
+      ) : (
+        <button
+          type="button"
+          onClick={() => onChange({ ...slot, max_tokens: null })}
+          title="Clear override and let the model's metadata pick the budget"
+          className="inline-flex items-center px-2 py-1 rounded-sm text-[11px] font-mono uppercase tracking-wide bg-surface-card border border-border-soft text-text-3 hover:text-text"
+        >
+          Reset
+        </button>
+      )}
+    </div>
   );
 }

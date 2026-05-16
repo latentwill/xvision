@@ -750,6 +750,7 @@ async fn resolve_agent_slots(
         out.push(ResolvedAgentSlot {
             role: agent_ref.role.clone(),
             slot: agent_slot_to_llm_slot(&agent_ref.role, slot),
+            max_tokens: slot.resolve_max_tokens(),
         });
     }
     Ok(out)
@@ -1651,6 +1652,7 @@ mod tests {
                 Some("deepseek/deepseek-v4-flash"),
                 "anthropic.claude-sonnet-4.6",
             ),
+            max_tokens: 4096,
         }];
 
         let slots = runtime_slots(&strategy, &agent_slots);
@@ -1689,6 +1691,7 @@ mod tests {
                 Some("deepseek/deepseek-v4-flash"),
                 "anthropic.claude-sonnet-4.6",
             ),
+            max_tokens: 4096,
         }];
 
         let err = validate_eval_trader_source(&strategy, &agent_slots).unwrap_err();
@@ -1719,6 +1722,7 @@ mod tests {
                 Some("deepseek/deepseek-v4-flash"),
                 "anthropic.claude-sonnet-4.6",
             ),
+            max_tokens: 4096,
         }];
 
         validate_eval_trader_source(&strategy, &agent_slots).unwrap();

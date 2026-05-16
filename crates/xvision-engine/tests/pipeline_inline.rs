@@ -126,6 +126,7 @@ async fn resolved_agent_pipeline_uses_trader_role_as_decision_output() {
                 provider: None,
                 model: None,
             },
+            max_tokens: 4096,
         },
         ResolvedAgentSlot {
             role: "trader".into(),
@@ -137,6 +138,7 @@ async fn resolved_agent_pipeline_uses_trader_role_as_decision_output() {
                 provider: None,
                 model: None,
             },
+            max_tokens: 4096,
         },
     ];
 
@@ -175,6 +177,7 @@ async fn resolved_agent_pipeline_does_not_treat_non_trader_as_decision_output() 
                 provider: None,
                 model: None,
             },
+            max_tokens: 4096,
         },
         ResolvedAgentSlot {
             role: "final_decider".into(),
@@ -186,6 +189,7 @@ async fn resolved_agent_pipeline_does_not_treat_non_trader_as_decision_output() 
                 provider: None,
                 model: None,
             },
+            max_tokens: 4096,
         },
     ];
 

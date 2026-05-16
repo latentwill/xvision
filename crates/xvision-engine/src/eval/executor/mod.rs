@@ -11,7 +11,7 @@
 
 pub mod backtest;
 pub mod paper;
-mod trader_output;
+pub mod trader_output;
 
 use std::sync::Arc;
 
