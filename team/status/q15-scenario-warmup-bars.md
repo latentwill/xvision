@@ -1,6 +1,6 @@
 ---
 track: q15-scenario-warmup-bars
-status: in-progress
+status: ready-for-pr
 worktree: .worktrees/q15-scenario-warmup-bars
 branch: task/q15-scenario-warmup-bars
 claimed_at: 2026-05-16
@@ -58,3 +58,58 @@ claimed_by: claude (Opus 4.7, 1M ctx)
 8. UI: Context bars field in `ScenarioForm.tsx` with helper text.
 9. Tests across executor seed shape, scenario serde defaults, CLI flag,
    and `ScenarioForm` warmup field.
+
+## 2026-05-16 — implementation complete, ready for PR
+
+Three commits on `task/q15-scenario-warmup-bars`:
+
+1. `eb3b4c0` — data-model substrate (warmup_bars + min_warmup_bars,
+   contract path correction, OWNERSHIP update, status file).
+2. `39f6cc7` — `eval::bars::load_warmup_bars`, backtest+paper
+   `with_warmup` builders, per-decision `bar_history` slice, preflight
+   wiring with actionable cache-miss error.
+3. `6bdf74d` — Context-bars UI field, `--warmup-bars` CLI flag, full
+   test suite (2 executor canaries + 2 scenario serde tests + 4 strategy
+   helper tests + 3 CLI round-trip tests + 9 `ScenarioForm` tests).
+
+### Verification (all green)
+
+- `cargo test -p xvision-engine --test eval_executor_warmup` → 2/2 pass
+- `cargo test -p xvision-engine --lib eval::scenario::warmup_bars_tests` → 2/2
+- `cargo test -p xvision-engine --lib strategies::tests::min_warmup_bars` → 4/4
+- `cargo test -p xvision-cli --test scenario_cli scenario_warmup` → 3/3
+- `pnpm --dir frontend/web test -- ScenarioForm` → 9/9
+- `bash scripts/board-lint.sh` → clean
+- `pnpm --dir frontend/web typecheck` → clean
+
+### Pre-existing failures (NOT introduced by this work)
+
+- `crates/xvision-mcp` lib test: `missing field reasoning in DecisionRow`
+  — out-of-scope; fails on `origin/main`.
+- `xvision-engine` lib: `authoring::validate_draft_reports_missing_agent_for_fresh_template`
+  + 3 `eval::postprocess::tests::*` — fail on `origin/main`.
+- `eval_run_scenario::backtest_missing_cache_and_fixture_returns_actionable_validation`
+  — fails on `origin/main` (test depends on cache state that is shared
+  across runs).
+
+### Out-of-scope captured in PR description
+
+- Scopes touched outside this contract's `allowed_paths`: tests scattered
+  across the engine + dashboard crates and `eval-runs.test.tsx` had to
+  gain the new `warmup_bars` / `min_warmup_bars` fields to keep the
+  workspace compiling. These were mechanical struct-literal updates;
+  no test logic changed.
+- `frontend/web/src/api/types.gen/` regenerated only the three files I
+  intentionally touched (`Scenario`, `CreateScenarioRequest`,
+  `ScenarioMutations`); other auto-regenerated files were reverted to
+  avoid drift in the `ts(optional)` vs `: T | null` convention used
+  elsewhere.
+
+### Followups (not blocking this PR)
+
+- The `xvision-mcp` `reasoning` field error + `eval::postprocess` test
+  flakes look like Q10 leftover — worth a tracking note in FOLLOWUPS.md.
+- Surfacing the `warn_on_warmup_mismatch` warning to the dashboard
+  preflight UI (today it only lands in `tracing::warn`).
+- A real DB migration is unnecessary for warmup_bars but eval-review
+  may want a column for indexing/filtering later.
