@@ -39,6 +39,13 @@ through their contracts' `parallel_conflicts`.
 | `frontend/web/src/api/docs.ts` | `v2a-in-app-docs` | v2a |
 | `frontend/web/package.json` | `v2a-driver-tour` (adds `driver.js` only) | v2a |
 | `frontend/web/src/themes/**` | (closed-out wave: `color-themes-light-dark`) — request specific token additions through a contract update | — |
+| `crates/xvision-execution/src/alpaca.rs` | `alpaca-paper-crypto-submit` | post-q15 |
+| `crates/xvision-execution/src/broker_surface.rs` | `alpaca-paper-crypto-submit` | post-q15 |
+| `crates/xvision-execution/tests/broker_surface.rs` | `alpaca-paper-crypto-submit` | post-q15 |
+| `crates/xvision-execution/tests/broker_surface_alpaca_live.rs` | `alpaca-paper-crypto-submit` (adds one `--ignored` operator test) | post-q15 |
+| `crates/xvision-engine/src/eval/executor/mod.rs` | `alpaca-paper-crypto-submit` (classifier + format_failure_reason) | post-q15 |
+| `crates/xvision-engine/src/eval/executor/paper.rs` | `alpaca-paper-crypto-submit` (crypto short-open no-op branch) | post-q15 |
+| `crates/xvision-engine/src/eval/executor/trader_output.rs` | `alpaca-paper-crypto-submit` (only if a new failure-class enum sibling is added) | post-q15 |
 
 ## Multi-owner exemptions
 
