@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useNavigate, useParams, Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
 import { ApiError } from "@/api/client";
-import { cancelRun, downloadEvalRunExport, evalKeys, getRun } from "@/api/eval";
+import { cancelRun, downloadEvalRunExport, evalKeys, getRun, retryRun } from "@/api/eval";
 import { chartKeys, getRunChart, openRunStream } from "@/api/chart";
 import { RunChart } from "@/components/chart/RunChart";
 import { ReviewPanel } from "@/features/eval-runs/review";
@@ -42,10 +42,20 @@ export function EvalRunDetailRoute() {
     queryFn: () => getRunChart(id),
     enabled: !!id,
   });
+  const navigate = useNavigate();
   const cancel = useMutation({
     mutationFn: cancelRun,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: evalKeys.all });
+    },
+  });
+  const retry = useMutation({
+    mutationFn: retryRun,
+    onSuccess: (detail) => {
+      qc.invalidateQueries({ queryKey: evalKeys.all });
+      if (detail.summary.id !== id) {
+        navigate(`/eval-runs/${detail.summary.id}`);
+      }
     },
   });
   useLiveRunStream(id, q.data, qc);
@@ -83,6 +93,8 @@ export function EvalRunDetailRoute() {
         summary={detail.summary}
         onCancel={() => cancel.mutate(detail.summary.id)}
         cancelling={cancel.variables === detail.summary.id && cancel.isPending}
+        onRetry={() => retry.mutate(detail.summary.id)}
+        retrying={retry.variables === detail.summary.id && retry.isPending}
       />
 
       <h2 className="font-serif italic text-[20px] text-text mt-8 mb-3">
@@ -222,14 +234,19 @@ function SummaryCard({
   summary,
   onCancel,
   cancelling,
+  onRetry,
+  retrying,
 }: {
   summary: RunSummary;
   onCancel: () => void;
   cancelling: boolean;
+  onRetry: () => void;
+  retrying: boolean;
 }) {
   const tone = STATUS_TONE[summary.status] ?? "default";
   const inflight = summary.status === "queued" || summary.status === "running";
   const terminal = isTerminalStatus(summary.status);
+  const canRetry = summary.status === "failed";
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
 
@@ -267,6 +284,17 @@ function SummaryCard({
               className="rounded-sm border border-warn/40 bg-warn/[0.08] px-2.5 py-1 text-[12px] text-warn hover:border-warn/70 hover:bg-warn/[0.14] hover:text-text disabled:opacity-50"
             >
               {cancelling ? "Stopping..." : "Stop eval"}
+            </button>
+          ) : null}
+          {canRetry ? (
+            <button
+              type="button"
+              aria-label={`Retry eval run ${summary.id}`}
+              onClick={onRetry}
+              disabled={retrying}
+              className="rounded-sm border border-info/40 bg-info/[0.08] px-2.5 py-1 text-[12px] text-info hover:border-info/70 hover:bg-info/[0.14] hover:text-text disabled:opacity-50"
+            >
+              {retrying ? "Retrying..." : "Retry"}
             </button>
           ) : null}
           {terminal ? (

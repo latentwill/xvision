@@ -10,10 +10,14 @@ depends_on: []
 blocks: []
 stacking: none
 allowed_paths:
-  - crates/xvision-dashboard/src/routes/eval/retry.rs
-  - crates/xvision-dashboard/src/routes/eval/mod.rs    # route registration only
-  - frontend/web/src/features/eval-runs/retry-button.tsx
-  - frontend/web/src/routes/eval-runs-detail.tsx       # mount button only
+  - crates/xvision-engine/src/api/eval.rs              # eval::retry function
+  - crates/xvision-engine/tests/api_eval.rs            # retry unit tests
+  - crates/xvision-dashboard/src/routes/eval_runs.rs   # retry_run handler
+  - crates/xvision-dashboard/src/server.rs             # route registration only
+  - crates/xvision-dashboard/tests/http.rs             # retry HTTP integration tests
+  - frontend/web/src/api/eval.ts                       # retryRun client
+  - frontend/web/src/routes/eval-runs-detail.tsx       # mount button
+  - frontend/web/src/routes/eval-runs-detail.test.tsx  # button render + click tests
 forbidden_paths:
   - crates/xvision-engine/migrations/**
   - crates/xvision-engine/src/eval/executor/**
@@ -27,8 +31,9 @@ parallel_conflicts:
   - eval-review-api-cli
   - eval-review-run-detail-ui
 verification:
-  - cargo test -p xvision-dashboard eval::retry
-  - corepack pnpm --dir frontend/web test -- eval-runs-detail retry
+  - cargo test -p xvision-engine --test api_eval retry
+  - cargo test -p xvision-dashboard --test http eval_retry
+  - corepack pnpm --dir frontend/web test -- eval-runs-detail
 acceptance:
   - `POST /api/eval/runs/:id/retry` re-queues a new run with the same strategy/scenario/mode inputs as the source run and returns the new run id.
   - Retry endpoint is idempotent on a per-source-run basis only if the source's most recent retry is still queued/running (no infinite-retry storm).
@@ -63,4 +68,14 @@ git worktree add .worktrees/q15-eval-retry-button -b task/q15-eval-retry-button 
 - `eval-runs-detail.tsx` is on the conflict-zone list and shared with the
   eval-review UI track and `q15-eval-json-export`. Land in series, not
   parallel.
+- 2026-05-16: contract `allowed_paths` were aspirational — there is no
+  `routes/eval/` subdirectory in `xvision-dashboard`. Routes live in
+  `routes/eval_runs.rs` (single file) registered in `server.rs`. The
+  engine-side public API for retry lives in `crates/xvision-engine/src/api/eval.rs`
+  next to `cancel` and `start_run`. Paths updated to reflect reality.
+- Idempotency implemented as "no two retries of the same
+  `(agent_id, scenario_id, mode)` fingerprint in flight at once." A
+  source-run-id parent column would be cleaner but would need a migration —
+  intentionally deferred. Returning the existing in-flight run keeps the
+  client-side `useMutation` flow simple.
 - PR: https://github.com/latentwill/xvision/pull/184 (opened, awaiting review).
