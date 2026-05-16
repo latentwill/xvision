@@ -14,6 +14,7 @@ pub struct AgentClient {
     transport: UdsTransport,
     supervisor: Supervisor,
     versions: RuntimeHealthResult,
+    callback_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl AgentClient {
@@ -21,7 +22,7 @@ impl AgentClient {
         let supervisor = Supervisor::spawn(bin, socket_path, None).await?;
         let transport = UdsTransport::connect(&supervisor.socket_path).await?;
         let versions = Self::handshake(&transport).await?;
-        Ok(Self { transport, supervisor, versions })
+        Ok(Self { transport, supervisor, versions, callback_handle: None })
     }
 
     pub async fn handshake(transport: &UdsTransport) -> Result<RuntimeHealthResult> {
@@ -44,6 +45,9 @@ impl AgentClient {
     }
 
     pub async fn shutdown(self) -> Result<()> {
+        if let Some(h) = &self.callback_handle {
+            h.abort();
+        }
         self.supervisor.shutdown().await
     }
 
@@ -68,11 +72,36 @@ impl AgentClient {
         callback_socket_path: &Path,
         dispatch: Arc<dyn ToolDispatch>,
     ) -> Result<Self> {
-        serve_callbacks(callback_socket_path, dispatch).await?;
-        let supervisor = Supervisor::spawn(bin, socket_path, Some(callback_socket_path)).await?;
-        let transport = UdsTransport::connect(&supervisor.socket_path).await?;
-        let versions = Self::handshake(&transport).await?;
-        Ok(Self { transport, supervisor, versions })
+        let callback_handle = serve_callbacks(callback_socket_path, dispatch).await?;
+
+        // If anything below fails, abort the accept loop and unlink the
+        // callback socket file so a retry with the same path doesn't hit
+        // EADDRINUSE.
+        let supervisor = match Supervisor::spawn(bin, socket_path, Some(callback_socket_path)).await {
+            Ok(s) => s,
+            Err(e) => {
+                callback_handle.abort();
+                let _ = std::fs::remove_file(callback_socket_path);
+                return Err(e);
+            }
+        };
+        let transport = match UdsTransport::connect(&supervisor.socket_path).await {
+            Ok(t) => t,
+            Err(e) => {
+                callback_handle.abort();
+                let _ = std::fs::remove_file(callback_socket_path);
+                return Err(e);
+            }
+        };
+        let versions = match Self::handshake(&transport).await {
+            Ok(v) => v,
+            Err(e) => {
+                callback_handle.abort();
+                let _ = std::fs::remove_file(callback_socket_path);
+                return Err(e);
+            }
+        };
+        Ok(Self { transport, supervisor, versions, callback_handle: Some(callback_handle) })
     }
 
     pub async fn invoke_tool_via_sidecar(

@@ -15,4 +15,8 @@ describe("tool.invoke params validation", () => {
     setCallbackSocketPath(undefined)
     await expect(handleToolInvoke({ name: "x", input: {} })).rejects.toThrow(/callback socket/)
   })
+  it("rejects array-typed input", async () => {
+    setCallbackSocketPath(undefined)
+    await expect(handleToolInvoke({ name: "x", input: [] })).rejects.toThrow(/non-array object/)
+  })
 })

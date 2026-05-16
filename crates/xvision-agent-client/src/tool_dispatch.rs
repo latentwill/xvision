@@ -49,9 +49,9 @@ struct ErrorBody { code: i64, message: String }
 pub async fn serve_callbacks(
     socket_path: &Path,
     dispatch: Arc<dyn ToolDispatch>,
-) -> std::io::Result<()> {
+) -> std::io::Result<tokio::task::JoinHandle<()>> {
     let listener = UnixListener::bind(socket_path)?;
-    tokio::spawn(async move {
+    let handle = tokio::spawn(async move {
         loop {
             let Ok((conn, _)) = listener.accept().await else { continue };
             let dispatch = dispatch.clone();
@@ -68,7 +68,7 @@ pub async fn serve_callbacks(
                                 }).unwrap_or_default(),
                                 Err(ToolDispatchError::UnknownTool(n)) => serde_json::to_vec(&RpcErr {
                                     jsonrpc: "2.0", id: req.id,
-                                    error: ErrorBody { code: -32601, message: format!("unknown tool: {n}") },
+                                    error: ErrorBody { code: -32001, message: format!("unknown tool: {n}") },
                                 }).unwrap_or_default(),
                                 Err(ToolDispatchError::Failed(m)) => serde_json::to_vec(&RpcErr {
                                     jsonrpc: "2.0", id: req.id,
@@ -81,10 +81,16 @@ pub async fn serve_callbacks(
                             error: ErrorBody { code: -32601, message: format!("unknown method: {}", req.method) },
                         }).unwrap_or_default(),
                         Err(e) => {
-                            let _ = w.write_all(format!(
-                                "{{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{{\"code\":-32700,\"message\":\"{}\"}}}}\n",
-                                e
-                            ).as_bytes()).await;
+                            // Parse error has no parsed id. Use 0 as a sentinel — the
+                            // sidecar treats this as an unsolicited error response.
+                            let mut bytes = serde_json::to_vec(&RpcErr {
+                                jsonrpc: "2.0",
+                                id: 0,
+                                error: ErrorBody { code: -32700, message: e.to_string() },
+                            }).unwrap_or_default();
+                            bytes.push(b'\n');
+                            let _ = w.write_all(&bytes).await;
+                            let _ = w.flush().await;
                             line.clear();
                             continue;
                         }
@@ -97,5 +103,5 @@ pub async fn serve_callbacks(
             });
         }
     });
-    Ok(())
+    Ok(handle)
 }
