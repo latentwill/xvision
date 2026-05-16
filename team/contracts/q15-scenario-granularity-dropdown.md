@@ -5,13 +5,13 @@ wave: q15
 worktree: .worktrees/q15-scenario-granularity-dropdown
 branch: task/q15-scenario-granularity-dropdown
 base: origin/main
-status: ready
+status: pr-open
 depends_on: []
 blocks: []
 stacking: none
 allowed_paths:
-  - frontend/web/src/features/scenarios/authoring/**
-  - frontend/web/src/features/scenarios/granularity-select.tsx
+  - frontend/web/src/components/scenario/ScenarioForm.tsx
+  - frontend/web/src/components/scenario/ScenarioForm.test.tsx
 forbidden_paths:
   - crates/**
   - frontend/web/src/features/eval-runs/**
@@ -53,3 +53,11 @@ git worktree add .worktrees/q15-scenario-granularity-dropdown -b task/q15-scenar
 
 - Diagnose first; if the dropdown is rendering off-screen or behind another
   layer, fix the portal/z-index rather than rewriting the component.
+- 2026-05-16: contract `allowed_paths` were aspirational (referenced
+  `features/scenarios/authoring/granularity-select.tsx`, which does not
+  exist). Actual control lives in `components/scenario/ScenarioForm.tsx`
+  as an HTML `<input list="…">` + `<datalist>` — not Radix. Root cause is
+  the `<datalist>` API itself (iPhone Safari never shows a popdown; desktop
+  Safari only opens via the tiny indicator). Fix: replace with a native
+  `<select>` matching the Asset field pattern in the same form. Paths
+  updated to reflect reality.
