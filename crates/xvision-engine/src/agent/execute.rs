@@ -53,6 +53,7 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
             messages: messages.clone(),
             max_tokens: input.max_tokens,
             tools: tool_defs.clone(),
+            temperature: None,
             response_schema: input
                 .response_schema
                 .clone()
