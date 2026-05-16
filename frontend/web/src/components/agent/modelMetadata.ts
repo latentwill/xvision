@@ -121,25 +121,75 @@ const LLAMA3_META: ModelMetadata = {
   class: "standard",
 };
 
-export function lookupModel(modelId: string): ModelMetadata {
-  const trimmed = modelId.trim().toLowerCase();
-  if (!trimmed) return UNKNOWN_DEFAULT;
-  // Strip OpenRouter-style vendor prefix so "anthropic/claude-sonnet-4-6"
-  // matches "claude-sonnet-4-6".
-  const lastSlash = trimmed.lastIndexOf("/");
-  const key = lastSlash >= 0 ? trimmed.slice(lastSlash + 1) : trimmed;
+// Pre-sorted, longest-prefix-first view of TABLE, computed once at module
+// load. Every SlotForm render and every placeholder recomputation used to
+// rebuild and sort this from scratch — fine on its own, but the cost
+// scaled with slot count × rerenders × providers query refetches. Hoist.
+const PREFIX_MATCHES: Array<[string, ModelMetadata]> = [...TABLE].sort(
+  (a, b) => b[0].length - a[0].length,
+);
 
-  // Exact match wins.
+// Provider prefixes that the legacy `LLMSlot.model_requirement` form
+// uses to qualify a model id (e.g. `"anthropic.claude-sonnet-4.6"`).
+// Mirrors `KNOWN_PROVIDER_PREFIXES` in
+// `crates/xvision-core/src/providers/model_metadata.rs`. Drift between
+// these two lists silently regresses the placeholder UX for legacy
+// strategies; keep them in sync.
+const KNOWN_PROVIDER_PREFIXES = new Set<string>([
+  "anthropic",
+  "openai",
+  "openai-compat",
+  "openrouter",
+  "deepseek",
+  "groq",
+  "together",
+  "mistral",
+  "meta",
+  "xai",
+  "local-candle",
+  "ollama",
+]);
+
+function stripKnownProviderPrefix(key: string): string {
+  const dot = key.indexOf(".");
+  if (dot < 0) return key;
+  const head = key.slice(0, dot);
+  return KNOWN_PROVIDER_PREFIXES.has(head) ? key.slice(dot + 1) : key;
+}
+
+function lookupExactOrPrefix(key: string): ModelMetadata | null {
   for (const [id, meta] of TABLE) {
     if (id === key) return meta;
   }
-  // Prefix match for date-stamped or fine-grained variants. Iterate
-  // longest-id-first so claude-sonnet-4-6 wins over claude-sonnet-4.
-  const sorted = [...TABLE].sort((a, b) => b[0].length - a[0].length);
-  for (const [id, meta] of sorted) {
+  for (const [id, meta] of PREFIX_MATCHES) {
     if (key.startsWith(id)) return meta;
   }
   if (key.startsWith("llama-3") || key.startsWith("llama3")) return LLAMA3_META;
+  return null;
+}
+
+export function lookupModel(modelId: string): ModelMetadata {
+  const trimmed = modelId.trim().toLowerCase();
+  if (!trimmed) return UNKNOWN_DEFAULT;
+  // OpenRouter-style `vendor/model` — keep only the trailing segment.
+  const lastSlash = trimmed.lastIndexOf("/");
+  const afterSlash = lastSlash >= 0 ? trimmed.slice(lastSlash + 1) : trimmed;
+  // Pre-agent templates write `LLMSlot.model_requirement` as
+  // `provider.model-x.y`; strip the prefix when it matches a known
+  // provider name.
+  const tail = stripKnownProviderPrefix(afterSlash);
+
+  const direct = lookupExactOrPrefix(tail);
+  if (direct) return direct;
+
+  // Legacy version-separator form (`claude-sonnet-4.6`). Retry once
+  // with `.` normalized to `-` so the canonical dashed id wins.
+  if (tail.indexOf(".") >= 0) {
+    const normalized = tail.replace(/\./g, "-");
+    const dashed = lookupExactOrPrefix(normalized);
+    if (dashed) return dashed;
+  }
+
   return UNKNOWN_DEFAULT;
 }
 

@@ -109,18 +109,75 @@ impl ModelMetadata {
     }
 }
 
+/// Known provider-name prefixes that the legacy `LLMSlot.model_requirement`
+/// path uses to qualify a model id (e.g. `"anthropic.claude-sonnet-4.6"`).
+/// Lookup strips one of these prefixes when it would otherwise prevent a
+/// hit. Order doesn't matter; the comparison is exact on the segment
+/// before the first `.`.
+const KNOWN_PROVIDER_PREFIXES: &[&str] = &[
+    "anthropic",
+    "openai",
+    "openai-compat",
+    "openrouter",
+    "deepseek",
+    "groq",
+    "together",
+    "mistral",
+    "meta",
+    "xai",
+    "local-candle",
+    "ollama",
+];
+
 /// Look up metadata for a model id, falling back to
 /// `ModelMetadata::unknown_default` when the id isn't in the canonical
-/// table. The match is case-insensitive, whitespace-trimmed, and strips
-/// the OpenRouter `vendor/model` prefix so
-/// `"anthropic/claude-sonnet-4-6"` resolves to the same row as the bare
-/// id. Date-stamped variants (`"claude-sonnet-4-6-20260101"`) fall
-/// through the canonical row via the `starts_with` arms below.
+/// table. The match is case-insensitive, whitespace-trimmed, and
+/// normalizes three legacy spellings:
+///
+/// - OpenRouter `vendor/model` is reduced to `model`.
+/// - Pre-refactor `LLMSlot.model_requirement` values qualify the id with
+///   a provider prefix and a dot — `"anthropic.claude-sonnet-4.6"`. When
+///   the prefix matches a known provider, it's stripped.
+/// - The same legacy form also writes version separators with `.`
+///   (`"claude-sonnet-4.6"`) where the canonical table uses `-`
+///   (`"claude-sonnet-4-6"`). When the initial lookup misses, the tail
+///   is retried with dots normalized to dashes.
+///
+/// Date-stamped variants (`"claude-sonnet-4-6-20260101"`) keep
+/// resolving via the `starts_with` arms in `lookup_model_inner`.
 pub fn lookup_model(id: &str) -> ModelMetadata {
     let trimmed = id.trim().to_lowercase();
-    // Strip OpenRouter-style vendor prefix.
-    let key = trimmed.rsplit('/').next().unwrap_or(trimmed.as_str());
-    lookup_model_inner(key).unwrap_or_else(|| ModelMetadata::unknown_default(id))
+    // OpenRouter-style `vendor/model` — keep only the trailing segment.
+    let after_slash = trimmed.rsplit('/').next().unwrap_or(trimmed.as_str());
+    // `provider.model-x.y` — strip the prefix when the first segment is
+    // a known provider. The remaining tail can still contain dots, which
+    // is the legacy version-separator convention handled below.
+    let tail = strip_known_provider_prefix(after_slash);
+
+    if let Some(meta) = lookup_model_inner(tail) {
+        return meta;
+    }
+    // Legacy dotted version form: `claude-sonnet-4.6` → `claude-sonnet-4-6`.
+    // Only retry when there is at least one dot to normalize — keeps the
+    // happy path a single match call.
+    if tail.contains('.') {
+        let normalized: String = tail.chars().map(|c| if c == '.' { '-' } else { c }).collect();
+        if let Some(meta) = lookup_model_inner(&normalized) {
+            return meta;
+        }
+    }
+    ModelMetadata::unknown_default(id)
+}
+
+fn strip_known_provider_prefix(key: &str) -> &str {
+    let Some((head, tail)) = key.split_once('.') else {
+        return key;
+    };
+    if KNOWN_PROVIDER_PREFIXES.contains(&head) {
+        tail
+    } else {
+        key
+    }
 }
 
 fn lookup_model_inner(key: &str) -> Option<ModelMetadata> {
@@ -338,6 +395,58 @@ mod tests {
         let m = lookup_model("claude-sonnet-4-6-20260101");
         assert_eq!(m.output_token_ceiling, 8192);
         assert_eq!(m.recommended_visible_output, 4096);
+    }
+
+    #[test]
+    fn legacy_dotted_model_requirement_resolves_to_canonical_row() {
+        // Pre-agent templates carry `LLMSlot.model_requirement` strings
+        // like `"anthropic.claude-sonnet-4.6"` (see e.g. the mean-reversion
+        // template). The lookup must strip the provider prefix and
+        // normalize the dotted version separator so legacy strategies
+        // get the new per-model budget instead of falling through to
+        // `unknown_default` and keeping the old 4096.
+        let m = lookup_model("anthropic.claude-sonnet-4.6");
+        assert_eq!(m.output_token_ceiling, 8192);
+        assert_eq!(m.recommended_visible_output, 4096);
+        let canonical = lookup_model("claude-sonnet-4-6");
+        assert_eq!(m.output_token_ceiling, canonical.output_token_ceiling);
+        assert_eq!(m.recommended_visible_output, canonical.recommended_visible_output);
+        assert_eq!(m.class, canonical.class);
+    }
+
+    #[test]
+    fn legacy_dotted_form_works_for_other_providers() {
+        // The same legacy convention applies across providers; cover the
+        // common ones so a future addition doesn't silently regress.
+        let openai = lookup_model("openai.gpt-4o");
+        assert_eq!(openai.output_token_ceiling, lookup_model("gpt-4o").output_token_ceiling);
+
+        let deepseek = lookup_model("deepseek.deepseek-r1");
+        let r1 = lookup_model("deepseek-r1");
+        assert!(deepseek.is_reasoning());
+        assert_eq!(deepseek.output_token_ceiling, r1.output_token_ceiling);
+        assert_eq!(deepseek.reasoning_token_default, r1.reasoning_token_default);
+    }
+
+    #[test]
+    fn dotted_id_with_unknown_prefix_is_left_alone() {
+        // `gpt-4.1` is itself a real model id — the lookup must not
+        // mistake `gpt-4` for a provider prefix and strip it. The dot
+        // here is a version separator, not a provider split.
+        let m = lookup_model("gpt-4.1");
+        assert_eq!(m.output_token_ceiling, 32_768);
+        assert!(!m.is_reasoning());
+    }
+
+    #[test]
+    fn legacy_dotted_form_still_returns_unknown_for_unknown_models() {
+        // A provider prefix shouldn't turn an otherwise-unknown model
+        // into a known one. The stripped tail should miss the table and
+        // fall back to the safe default.
+        let m = lookup_model("anthropic.totally-fake-9000");
+        assert_eq!(m.output_token_ceiling, 4096);
+        assert_eq!(m.recommended_visible_output, 4096);
+        assert!(!m.is_reasoning());
     }
 
     #[test]

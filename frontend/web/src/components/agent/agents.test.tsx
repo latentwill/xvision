@@ -80,6 +80,27 @@ describe("modelMetadata table", () => {
     const dated = lookupModel("claude-sonnet-4-6-20260101");
     expect(dated.output_token_ceiling).toBe(exact.output_token_ceiling);
   });
+
+  it("resolves the legacy LLMSlot model_requirement dotted form", () => {
+    // Pre-agent templates store `model_requirement` as
+    // `"anthropic.claude-sonnet-4.6"`. The placeholder UX must match
+    // what the engine resolves so operators don't see a 4096 default
+    // for legacy strategies that the dispatcher actually budgets at the
+    // model's real ceiling.
+    const legacy = lookupModel("anthropic.claude-sonnet-4.6");
+    const canonical = lookupModel("claude-sonnet-4-6");
+    expect(legacy.output_token_ceiling).toBe(canonical.output_token_ceiling);
+    expect(legacy.recommended_visible_output).toBe(canonical.recommended_visible_output);
+    expect(legacy.class).toBe(canonical.class);
+  });
+
+  it("does not misread version dots in real model ids as provider prefixes", () => {
+    // `gpt-4.1` is an actual OpenAI model id; the lookup must not treat
+    // `gpt-4` as a provider prefix and strip it.
+    const m = lookupModel("gpt-4.1");
+    expect(m.output_token_ceiling).toBe(32768);
+    expect(m.class).toBe("standard");
+  });
 });
 
 describe("SlotForm max_tokens UX", () => {
