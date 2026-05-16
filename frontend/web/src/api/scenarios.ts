@@ -1,6 +1,11 @@
 // Scenarios API — typed fetchers against `engine::api::scenarios::*`.
 
 import { apiFetch } from "./client";
+import {
+  createTrace,
+  durationSince,
+  errorSummary,
+} from "@/lib/logger";
 import type {
   CreateScenarioRequest,
   ListScenariosFilter,
@@ -36,30 +41,103 @@ export function getScenario(id: string): Promise<Scenario> {
 }
 
 export function createScenario(req: CreateScenarioRequest): Promise<Scenario> {
+  const trace = createTrace("scenario", {
+    asset: req.asset.map((a) => a.symbol),
+    granularity: req.granularity,
+    from: req.time_window.start,
+    to: req.time_window.end,
+  });
+  const started = performance.now();
+  trace.info("scenario.create.start");
   return apiFetch<Scenario>("/api/scenarios", {
     method: "POST",
     body: JSON.stringify(req),
-  });
+  })
+    .then((scenario) => {
+      trace.info("scenario.create.ok", {
+        scenario_id: scenario.id,
+        duration_ms: durationSince(started),
+      });
+      return scenario;
+    })
+    .catch((err) => {
+      trace.error("scenario.create.error", {
+        duration_ms: durationSince(started),
+        error: errorSummary(err),
+      });
+      throw err;
+    });
 }
 
 export function cloneScenario(
   id: string,
   mutations: ScenarioMutations,
 ): Promise<Scenario> {
+  const trace = createTrace("scenario", { scenario_id: id });
+  const started = performance.now();
+  trace.info("scenario.clone.start", {
+    mutation_keys: Object.keys(mutations),
+  });
   return apiFetch<Scenario>(`/api/scenarios/${encodeURIComponent(id)}/clone`, {
     method: "POST",
     body: JSON.stringify(mutations),
-  });
+  })
+    .then((scenario) => {
+      trace.info("scenario.clone.ok", {
+        scenario_id: scenario.id,
+        duration_ms: durationSince(started),
+      });
+      return scenario;
+    })
+    .catch((err) => {
+      trace.error("scenario.clone.error", {
+        duration_ms: durationSince(started),
+        error: errorSummary(err),
+      });
+      throw err;
+    });
 }
 
 export function archiveScenario(id: string): Promise<void> {
+  const trace = createTrace("scenario", { scenario_id: id });
+  const started = performance.now();
+  trace.info("scenario.archive.start");
   return apiFetch<void>(`/api/scenarios/${encodeURIComponent(id)}/archive`, {
     method: "POST",
-  });
+  })
+    .then((result) => {
+      trace.info("scenario.archive.ok", {
+        duration_ms: durationSince(started),
+      });
+      return result;
+    })
+    .catch((err) => {
+      trace.error("scenario.archive.error", {
+        duration_ms: durationSince(started),
+        error: errorSummary(err),
+      });
+      throw err;
+    });
 }
 
 export function deleteScenario(id: string): Promise<void> {
+  const trace = createTrace("scenario", { scenario_id: id });
+  const started = performance.now();
+  trace.info("scenario.delete.start");
   return apiFetch<void>(`/api/scenarios/${encodeURIComponent(id)}`, {
     method: "DELETE",
-  });
+  })
+    .then((result) => {
+      trace.info("scenario.delete.ok", {
+        duration_ms: durationSince(started),
+      });
+      return result;
+    })
+    .catch((err) => {
+      trace.error("scenario.delete.error", {
+        duration_ms: durationSince(started),
+        error: errorSummary(err),
+      });
+      throw err;
+    });
 }

@@ -5,6 +5,11 @@
 // EventSource is GET-only and we need to POST the chat body.
 
 import { ApiError, apiFetch } from "./client";
+import {
+  createTrace,
+  durationSince,
+  safeId,
+} from "@/lib/logger";
 
 // ContextScope mirrors `xvision_engine::chat_session::ContextScope`'s
 // serde tagged-union shape: `{ scope: <variant>, ...fields }`.
@@ -227,13 +232,18 @@ export async function* streamChat(
   },
   signal?: AbortSignal,
 ): AsyncGenerator<WizardEvent> {
-  console.info("[chat-rail] streamChat", {
+  const trace = createTrace("chat", {
+    stream_id: safeId(),
     session_id: req.session_id,
     provider: req.provider,
     model: req.model,
     profile: req.profile,
     message_len: req.message.length,
   });
+  const started = performance.now();
+  let eventIndex = 0;
+  trace.info("chat.stream.start");
+
   const res = await fetch("/api/chat-rail/chat", {
     method: "POST",
     headers: {
@@ -250,10 +260,11 @@ export async function* streamChat(
     } catch {
       // not JSON
     }
-    console.error("[chat-rail] streamChat failed", {
+    trace.error("chat.stream.error", {
       status: res.status,
       code: body?.code,
-      message: body?.message,
+      error_message: body?.message,
+      duration_ms: durationSince(started),
     });
     throw new ApiError(
       res.status,
@@ -261,27 +272,83 @@ export async function* streamChat(
       body?.message ?? res.statusText ?? `HTTP ${res.status}`,
     );
   }
+  trace.debug("chat.stream.response", {
+    status: res.status,
+    duration_ms: durationSince(started),
+  });
 
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buf = "";
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    const frames = buf.split("\n\n");
-    buf = frames.pop() ?? "";
-    for (const frame of frames) {
-      const dataLine = frame.split("\n").find((l) => l.startsWith("data:"));
-      if (!dataLine) continue;
-      const json = dataLine.slice(5).trim();
-      if (!json) continue;
-      try {
-        yield JSON.parse(json) as WizardEvent;
-      } catch {
-        // skip malformed
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const frames = buf.split("\n\n");
+      buf = frames.pop() ?? "";
+      for (const frame of frames) {
+        const dataLine = frame.split("\n").find((l) => l.startsWith("data:"));
+        if (!dataLine) continue;
+        const json = dataLine.slice(5).trim();
+        if (!json) continue;
+        try {
+          const parsed = JSON.parse(json) as WizardEvent;
+          eventIndex += 1;
+          trace.debug("chat.stream.event", {
+            event_index: eventIndex,
+            type: parsed.type,
+          });
+          if (parsed.type === "tool_call") {
+            trace.info("chat.tool.started", {
+              event_index: eventIndex,
+              tool: parsed.tool,
+            });
+          } else if (parsed.type === "tool_result") {
+            trace.info("chat.tool.completed", {
+              event_index: eventIndex,
+              tool: parsed.tool,
+            });
+          } else if (parsed.type === "error") {
+          trace.error("chat.stream.error", {
+            event_index: eventIndex,
+            error_message: parsed.message,
+          });
+          }
+          yield parsed;
+        } catch {
+          trace.warn("chat.stream.malformed_frame", {
+            event_index: eventIndex + 1,
+            payload_bytes: json.length,
+          });
+        }
       }
     }
+  } catch (err) {
+    if (signal?.aborted) {
+      trace.warn("chat.stream.abort", {
+        events_count: eventIndex,
+        duration_ms: durationSince(started),
+      });
+    } else {
+      trace.error("chat.stream.error", {
+        events_count: eventIndex,
+        duration_ms: durationSince(started),
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+    throw err;
+  }
+  if (signal?.aborted) {
+    trace.warn("chat.stream.abort", {
+      events_count: eventIndex,
+      duration_ms: durationSince(started),
+    });
+  } else {
+    trace.info("chat.stream.done", {
+      events_count: eventIndex,
+      duration_ms: durationSince(started),
+    });
   }
 }
 

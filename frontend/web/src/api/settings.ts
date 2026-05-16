@@ -3,6 +3,12 @@
 // in this module.
 
 import { apiFetch } from "./client";
+import {
+  createTrace,
+  durationSince,
+  errorSummary,
+  safeUrlHost,
+} from "@/lib/logger";
 import type {
   AddProviderRequest,
   AlpacaTestReport,
@@ -31,7 +37,24 @@ export const settingsKeys = {
 };
 
 export function getBrokers(): Promise<BrokersReport> {
-  return apiFetch<BrokersReport>("/api/settings/brokers");
+  const trace = createTrace("settings");
+  const started = performance.now();
+  trace.debug("settings.broker.load");
+  return apiFetch<BrokersReport>("/api/settings/brokers")
+    .then((report) => {
+      trace.debug("settings.broker.load.ok", {
+        duration_ms: durationSince(started),
+        broker_count: 2,
+      });
+      return report;
+    })
+    .catch((err) => {
+      trace.error("settings.broker.load.error", {
+        duration_ms: durationSince(started),
+        error: errorSummary(err),
+      });
+      throw err;
+    });
 }
 
 // ─── Brokers (Alpaca) CRUD ─────────────────────────────────────────────────
@@ -55,10 +78,30 @@ export type AlpacaStored = {
 export function setAlpacaCredentials(
   body: SetAlpacaRequest,
 ): Promise<AlpacaStored> {
+  const trace = createTrace("settings", {
+    broker: "alpaca",
+    base_url_host: safeUrlHost(body.base_url),
+  });
+  const started = performance.now();
+  trace.info("settings.broker.save");
   return apiFetch<AlpacaStored>("/api/settings/brokers/alpaca", {
     method: "POST",
     body: JSON.stringify(body),
-  });
+  })
+    .then((stored) => {
+      trace.info("settings.broker.save.ok", {
+        stored: stored.stored,
+        duration_ms: durationSince(started),
+      });
+      return stored;
+    })
+    .catch((err) => {
+      trace.error("settings.broker.save.error", {
+        duration_ms: durationSince(started),
+        error: errorSummary(err),
+      });
+      throw err;
+    });
 }
 
 export function clearAlpacaCredentials(): Promise<void> {
@@ -71,38 +114,98 @@ export function clearAlpacaCredentials(): Promise<void> {
 /// (or env-var fallback) credentials. Network/auth failures surface in
 /// `error` rather than as HTTP errors so the UI renders an inline pill.
 export function testAlpacaConnection(): Promise<AlpacaTestReport> {
+  const trace = createTrace("settings", { broker: "alpaca" });
+  const started = performance.now();
+  trace.info("settings.broker.test");
   return apiFetch<AlpacaTestReport>(
     "/api/settings/brokers/alpaca/test-connection",
     { method: "POST" },
-  );
+  ).then((report) => {
+    trace.info("settings.broker.test.ok", {
+      ok: report.ok,
+      duration_ms: durationSince(started),
+    });
+    return report;
+  });
 }
 
 // ─── Providers CRUD ────────────────────────────────────────────────────────
 
 export function listProviders(): Promise<ProvidersReport> {
-  return apiFetch<ProvidersReport>("/api/settings/providers");
+  const trace = createTrace("settings");
+  const started = performance.now();
+  trace.debug("settings.providers.load");
+  return apiFetch<ProvidersReport>("/api/settings/providers").then((report) => {
+    trace.debug("settings.providers.load.ok", {
+      duration_ms: durationSince(started),
+      provider_count: report.providers.length,
+    });
+    return report;
+  });
 }
 
 export function addProvider(
   body: AddProviderRequest,
 ): Promise<ProviderRow> {
+  const trace = createTrace("settings", {
+    provider: body.name,
+    kind: body.kind,
+    base_url_host: safeUrlHost(body.base_url),
+  });
+  const started = performance.now();
+  trace.info("settings.provider.create");
   return apiFetch<ProviderRow>("/api/settings/providers", {
     method: "POST",
     body: JSON.stringify(body),
-  });
+  })
+    .then((row) => {
+      trace.info("settings.provider.create.ok", {
+        enabled_model_count: row.enabled_models.length,
+        duration_ms: durationSince(started),
+      });
+      return row;
+    })
+    .catch((err) => {
+      trace.error("settings.provider.create.error", {
+        duration_ms: durationSince(started),
+        error: errorSummary(err),
+      });
+      throw err;
+    });
 }
 
 export function updateProvider(
   name: string,
   body: UpdateProviderRequest,
 ): Promise<ProviderRow> {
+  const trace = createTrace("settings", {
+    provider: name,
+    kind: body.kind,
+    base_url_host: safeUrlHost(body.base_url),
+  });
+  const started = performance.now();
+  trace.info("settings.provider.update");
   return apiFetch<ProviderRow>(
     `/api/settings/providers/${encodeURIComponent(name)}`,
     {
       method: "PUT",
       body: JSON.stringify(body),
     },
-  );
+  )
+    .then((row) => {
+      trace.info("settings.provider.update.ok", {
+        enabled_model_count: row.enabled_models.length,
+        duration_ms: durationSince(started),
+      });
+      return row;
+    })
+    .catch((err) => {
+      trace.error("settings.provider.update.error", {
+        duration_ms: durationSince(started),
+        error: errorSummary(err),
+      });
+      throw err;
+    });
 }
 
 export function removeProvider(name: string): Promise<void> {
@@ -118,9 +221,26 @@ export function removeProvider(name: string): Promise<void> {
 export function listProviderModels(
   name: string,
 ): Promise<ProviderModelsReport> {
+  const trace = createTrace("settings", { provider: name });
+  const started = performance.now();
+  trace.debug("settings.provider.models.load");
   return apiFetch<ProviderModelsReport>(
     `/api/settings/providers/${encodeURIComponent(name)}/models`,
-  );
+  )
+    .then((report) => {
+      trace.debug("settings.provider.models.load.ok", {
+        model_count: report.models.length,
+        duration_ms: durationSince(started),
+      });
+      return report;
+    })
+    .catch((err) => {
+      trace.error("settings.provider.models.load.error", {
+        duration_ms: durationSince(started),
+        error: errorSummary(err),
+      });
+      throw err;
+    });
 }
 
 /// Persist the operator's curated subset of models for a provider.
@@ -146,10 +266,20 @@ export function setEnabledModels(
 export function testProviderConnection(
   name: string,
 ): Promise<TestConnectionReport> {
+  const trace = createTrace("settings", { provider: name });
+  const started = performance.now();
+  trace.info("settings.provider.test.start");
   return apiFetch<TestConnectionReport>(
     `/api/settings/providers/${encodeURIComponent(name)}/test-connection`,
     { method: "POST" },
-  );
+  ).then((report) => {
+    trace.info(report.ok ? "settings.provider.test.ok" : "settings.provider.test.error", {
+      ok: report.ok,
+      model_count: report.model_count,
+      duration_ms: durationSince(started),
+    });
+    return report;
+  });
 }
 
 // ─── Danger ops ────────────────────────────────────────────────────────────

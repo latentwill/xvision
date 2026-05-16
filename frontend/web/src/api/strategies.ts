@@ -5,6 +5,11 @@
 // "./types.gen"`.
 
 import { apiFetch } from "./client";
+import {
+  createTrace,
+  durationSince,
+  errorSummary,
+} from "@/lib/logger";
 
 export type StrategyListItem = {
   agent_id: string;
@@ -166,23 +171,61 @@ export function setRiskConfig(
 }
 
 export function validateDraft(id: string): Promise<ValidateDraftOut> {
+  const trace = createTrace("strategy", { strategy_id: id });
+  const started = performance.now();
+  trace.info("strategy.validate.start");
   return apiFetch<ValidateDraftOut>(
     `/api/strategy/${encodeURIComponent(id)}/validate`,
     { method: "POST" },
-  );
+  )
+    .then((result) => {
+      trace.info("strategy.validate.ok", {
+        ok: result.ok,
+        diagnostic_count: result.errors.length,
+        duration_ms: durationSince(started),
+      });
+      return result;
+    })
+    .catch((err) => {
+      trace.error("strategy.validate.error", {
+        duration_ms: durationSince(started),
+        error: errorSummary(err),
+      });
+      throw err;
+    });
 }
 
 export function addStrategyAgent(
   strategyId: string,
   body: { agent_id: string; role: string },
 ): Promise<StrategyAgentsOut> {
+  const trace = createTrace("strategy", {
+    strategy_id: strategyId,
+    agent_id: body.agent_id,
+    role: body.role,
+  });
+  const started = performance.now();
+  trace.info("strategy.agent.attach.start");
   return apiFetch<StrategyAgentsOut>(
     `/api/strategy/${encodeURIComponent(strategyId)}/agents`,
     {
       method: "POST",
       body: JSON.stringify(body),
     },
-  );
+  )
+    .then((result) => {
+      trace.info("strategy.agent.attach.ok", {
+        duration_ms: durationSince(started),
+      });
+      return result;
+    })
+    .catch((err) => {
+      trace.error("strategy.agent.attach.error", {
+        duration_ms: durationSince(started),
+        error: errorSummary(err),
+      });
+      throw err;
+    });
 }
 
 export function removeStrategyAgent(
@@ -236,24 +279,79 @@ export function listTemplates(): Promise<TemplateInfo[]> {
 export function createStrategy(
   body: CreateStrategyReq,
 ): Promise<CreateStrategyOut> {
+  const trace = createTrace("strategy", {
+    template: body.template,
+    display_name_len: body.name.length,
+  });
+  const started = performance.now();
+  trace.info("strategy.create.start");
   return apiFetch<CreateStrategyOut>("/api/strategies", {
     method: "POST",
     body: JSON.stringify(body),
-  });
+  })
+    .then((result) => {
+      trace.info("strategy.create.ok", {
+        strategy_id: result.id,
+        duration_ms: durationSince(started),
+      });
+      return result;
+    })
+    .catch((err) => {
+      trace.error("strategy.create.error", {
+        duration_ms: durationSince(started),
+        error: errorSummary(err),
+      });
+      throw err;
+    });
 }
 
 export function cloneStrategy(
   id: string,
   req: CloneStrategyReq,
 ): Promise<Strategy> {
+  const trace = createTrace("strategy", { strategy_id: id });
+  const started = performance.now();
+  trace.info("strategy.clone.start", {
+    display_name_len: req.display_name?.length ?? 0,
+  });
   return apiFetch<Strategy>(`/api/strategy/${encodeURIComponent(id)}/clone`, {
     method: "POST",
     body: JSON.stringify(req),
-  });
+  })
+    .then((strategy) => {
+      trace.info("strategy.clone.ok", {
+        strategy_id: strategy.manifest.id,
+        duration_ms: durationSince(started),
+      });
+      return strategy;
+    })
+    .catch((err) => {
+      trace.error("strategy.clone.error", {
+        duration_ms: durationSince(started),
+        error: errorSummary(err),
+      });
+      throw err;
+    });
 }
 
 export function deleteStrategy(id: string): Promise<void> {
+  const trace = createTrace("strategy", { strategy_id: id });
+  const started = performance.now();
+  trace.info("strategy.delete.start");
   return apiFetch<void>(`/api/strategy/${encodeURIComponent(id)}`, {
     method: "DELETE",
-  });
+  })
+    .then((result) => {
+      trace.info("strategy.delete.ok", {
+        duration_ms: durationSince(started),
+      });
+      return result;
+    })
+    .catch((err) => {
+      trace.error("strategy.delete.error", {
+        duration_ms: durationSince(started),
+        error: errorSummary(err),
+      });
+      throw err;
+    });
 }
