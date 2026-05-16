@@ -51,12 +51,33 @@ fn gen_types(sh: &Shell) -> Result<()> {
     // ts-rs emits files as the side effect of running unit tests under the
     // `ts-export` feature. `--lib` because the auto-generated test functions
     // live alongside the type definitions.
+    //
+    // We run the export test in both crates because ts-rs registers its
+    // export hook inside the crate where the type is defined: types like
+    // `LlmRequest` live in `xvision-engine`, while `Catalog`/`ModelEntry`
+    // live in `xvision-core`. Skipping core would silently drop those
+    // bindings.
+    //
+    // We deliberately use `.ok()` rather than `?` for the run() result.
+    // ts-rs writes its `.ts` file from each test's body BEFORE assertions
+    // fire, so an unrelated failing test elsewhere in the same package
+    // doesn't prevent the type emissions we care about. If we hard-failed
+    // here, every flaky test in the workspace would block barrel
+    // regeneration — exactly the bug that left `Catalog`/`ModelEntry`
+    // out of `types.gen.ts` after they were merged. The barrel-rebuild
+    // step below verifies the type files actually landed.
+    cmd!(
+        sh,
+        "cargo test -p xvision-core --features ts-export --lib --quiet"
+    )
+    .run()
+    .ok();
     cmd!(
         sh,
         "cargo test -p xvision-engine --features ts-export --lib --quiet"
     )
     .run()
-    .context("ts-rs export run failed")?;
+    .ok();
 
     let entries: Vec<_> = std::fs::read_dir(out_dir)
         .with_context(|| format!("read {out_dir}"))?

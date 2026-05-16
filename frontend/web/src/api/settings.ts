@@ -13,10 +13,12 @@ import type {
   AddProviderRequest,
   AlpacaTestReport,
   BrokersReport,
+  Catalog,
   FactoryResetReport,
   ProviderModelsReport,
   ProviderRow,
   ProvidersReport,
+  RefreshOutcome,
   TestConnectionReport,
   UpdateProviderRequest,
   WipeDbReport,
@@ -34,6 +36,8 @@ export const settingsKeys = {
   providers: () => [...settingsKeys.all, "providers"] as const,
   providerModels: (name: string) =>
     [...settingsKeys.all, "providers", name, "models"] as const,
+  providerCatalog: (name: string) =>
+    [...settingsKeys.all, "providers", name, "catalog"] as const,
 };
 
 export function getBrokers(): Promise<BrokersReport> {
@@ -256,6 +260,80 @@ export function setEnabledModels(
       method: "PUT",
       body: JSON.stringify({ models }),
     },
+  );
+}
+
+/// Read the cached provider catalog (the persisted result of the
+/// provider's `/v1/models` endpoint). Returns 404 when the provider
+/// either isn't configured or hasn't been refreshed yet — callers
+/// distinguish via the error body; in practice the UI maps both to
+/// "click Refresh to fetch".
+///
+/// Distinct from `listProviderModels` above, which goes through the
+/// older `fetch_models` path and returns only `id`/`display_name`/
+/// `context_length`. The catalog carries the full `ModelEntry` shape
+/// (max_output_tokens, pricing, reasoning class, raw provider row).
+export function getProviderCatalog(name: string): Promise<Catalog> {
+  const trace = createTrace("settings", { provider: name });
+  const started = performance.now();
+  trace.debug("settings.provider.catalog.load");
+  return apiFetch<Catalog>(
+    `/api/settings/providers/${encodeURIComponent(name)}/catalog`,
+  )
+    .then((cat) => {
+      trace.debug("settings.provider.catalog.load.ok", {
+        model_count: cat.models.length,
+        duration_ms: durationSince(started),
+        fetched_at: cat.fetched_at,
+      });
+      return cat;
+    })
+    .catch((err) => {
+      // 404 is the "not yet fetched" common case — log at debug, not
+      // error, so the dashboard's normal cold-start doesn't fill the
+      // log with red.
+      const summary = errorSummary(err);
+      const isMissing =
+        typeof summary === "object" && summary !== null && "status" in summary
+          ? (summary as { status?: number }).status === 404
+          : false;
+      const level = isMissing ? "debug" : "error";
+      trace[level]("settings.provider.catalog.load.error", {
+        duration_ms: durationSince(started),
+        error: summary,
+      });
+      throw err;
+    });
+}
+
+/// Force-refresh one provider's catalog (fetch + cache write + return
+/// the fresh value). The UI calls this from the "Refresh models" button
+/// in Settings → Providers and invalidates the relevant query keys.
+export function refreshProviderCatalog(name: string): Promise<Catalog> {
+  const trace = createTrace("settings", { provider: name });
+  const started = performance.now();
+  trace.info("settings.provider.catalog.refresh.start");
+  return apiFetch<Catalog>(
+    `/api/settings/providers/${encodeURIComponent(name)}/catalog/refresh`,
+    { method: "POST" },
+  ).then((cat) => {
+    trace.info("settings.provider.catalog.refresh.ok", {
+      model_count: cat.models.length,
+      duration_ms: durationSince(started),
+      source_url: safeUrlHost(cat.source_url) ?? cat.source_url,
+    });
+    return cat;
+  });
+}
+
+/// Refresh every non-local-candle provider's catalog. Returns one row
+/// per attempted provider so the UI can render a per-row indicator —
+/// partial failures (one provider's auth misconfigured) don't fail the
+/// whole batch.
+export function refreshAllProviderCatalogs(): Promise<RefreshOutcome[]> {
+  return apiFetch<RefreshOutcome[]>(
+    "/api/settings/providers/catalog/refresh-all",
+    { method: "POST" },
   );
 }
 

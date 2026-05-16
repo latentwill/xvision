@@ -21,6 +21,16 @@ uuid       = { workspace = true }
 thiserror  = { workspace = true }
 sqlx       = { workspace = true }
 tokio      = { workspace = true }
+# Optional, feature-gated. Pulled in via `--features ts-export` so the
+# `xtask gen-types` run can export `ModelEntry` / `Catalog` to TypeScript
+# without forcing every consumer of xvision-core to compile ts-rs.
+ts-rs      = { version = "9", optional = true }
+
+[features]
+# Enable to emit `#[derive(ts_rs::TS)]` for types in this crate that are
+# reachable from the dashboard API surface. Driven by `xtask gen-types`
+# (`cargo test --features ts-export --lib`).
+ts-export = ["dep:ts-rs"]
 
 [dev-dependencies]
 proptest = { workspace = true }

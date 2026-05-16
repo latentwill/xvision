@@ -107,7 +107,10 @@ describe("SlotForm max_tokens UX", () => {
   it("shows the Auto pill and per-model placeholder when max_tokens is null", () => {
     renderSlotForm(makeSlot({ max_tokens: null }));
     const meta = lookupModel("claude-sonnet-4-6");
-    const expected = `Auto: ${autoMaxTokens(meta)}`;
+    // Number is locale-formatted (so 384,000 reads as a number, not a
+    // git sha). Build the expected placeholder the same way the
+    // component does.
+    const expected = `Auto: ${autoMaxTokens(meta).toLocaleString()}`;
     expect(screen.getByText("Auto from model")).toBeTruthy();
     expect(screen.getByPlaceholderText(expected)).toBeTruthy();
   });
@@ -148,7 +151,9 @@ describe("SlotForm max_tokens UX", () => {
 
     const { rerender } = renderSlotForm(makeSlot({ model: "claude-sonnet-4-6" }));
     expect(
-      screen.getByPlaceholderText(`Auto: ${autoMaxTokens(sonnet)}`),
+      screen.getByPlaceholderText(
+        `Auto: ${autoMaxTokens(sonnet).toLocaleString()}`,
+      ),
     ).toBeTruthy();
 
     const client = new QueryClient({
@@ -167,7 +172,9 @@ describe("SlotForm max_tokens UX", () => {
       </QueryClientProvider>,
     );
     expect(
-      screen.getByPlaceholderText(`Auto: ${autoMaxTokens(haiku)}`),
+      screen.getByPlaceholderText(
+        `Auto: ${autoMaxTokens(haiku).toLocaleString()}`,
+      ),
     ).toBeTruthy();
   });
 });
