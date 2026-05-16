@@ -9,7 +9,7 @@ import {
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 
-import { AuthoringRoute } from "./authoring";
+import { AttachedAgentRow, AuthoringRoute } from "./authoring";
 import * as strategyApi from "@/api/strategies";
 import * as agentApi from "@/api/agents";
 import * as settingsApi from "@/api/settings";
@@ -229,5 +229,58 @@ describe("AuthoringRoute attached-agent row collapse + popout", () => {
         screen.queryByRole("dialog", { name: "Agent trader details" }),
       ).not.toBeInTheDocument();
     });
+  });
+});
+
+describe("AttachedAgentRow cross-strategy resync", () => {
+  const sharedAgentRef = { agent_id: "01DEEPSEEK", role: "trader" };
+
+  function renderRow(strategyId: string) {
+    return render(
+      <MemoryRouter>
+        <AttachedAgentRow
+          strategyId={strategyId}
+          agentRef={sharedAgentRef}
+          index={1}
+          agent={baseAgent}
+          onRenameRole={() => {}}
+          onRemove={() => {}}
+        />
+      </MemoryRouter>,
+    );
+  }
+
+  it("reloads collapse state from storage when strategyId changes", async () => {
+    // Strategy A: collapsed. Strategy B: expanded (no storage entry).
+    localStorage.setItem("xvn:authoring:agent-collapsed:01STRAT_A:trader", "1");
+
+    const { rerender } = renderRow("01STRAT_A");
+
+    expect(
+      screen.getByRole("button", { name: "Expand agent" }),
+    ).toHaveAttribute("aria-expanded", "false");
+    // Detail body (agent_id text) only renders when expanded — confirm hidden.
+    expect(screen.queryByText("01DEEPSEEK")).not.toBeInTheDocument();
+
+    // Same React key (`${agent_id}:${role}`) — component instance reused.
+    rerender(
+      <MemoryRouter>
+        <AttachedAgentRow
+          strategyId="01STRAT_B"
+          agentRef={sharedAgentRef}
+          index={1}
+          agent={baseAgent}
+          onRenameRole={() => {}}
+          onRemove={() => {}}
+        />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "Collapse agent" }),
+      ).toHaveAttribute("aria-expanded", "true");
+    });
+    expect(screen.getByText("01DEEPSEEK")).toBeInTheDocument();
   });
 });
