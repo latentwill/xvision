@@ -78,6 +78,8 @@ async fn save_test_strategy(ctx: &ApiContext, agent_id: &str) -> Strategy {
             required_tools: vec![],
             risk_preset_or_config: "balanced".into(),
             published_at: None,
+
+            min_warmup_bars: None,
         },
         agents: Vec::new(),
         pipeline: Default::default(),
@@ -534,6 +536,8 @@ async fn save_openrouter_strategy_with_agent_ref(ctx: &ApiContext, strategy_id: 
             required_tools: vec![],
             risk_preset_or_config: "balanced".into(),
             published_at: None,
+
+            min_warmup_bars: None,
         },
         agents: vec![AgentRef {
             agent_id,

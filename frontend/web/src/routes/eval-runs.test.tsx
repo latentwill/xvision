@@ -154,6 +154,7 @@ function scenario(overrides: Partial<Scenario> = {}): Scenario {
       refresh_policy: { policy: "NeverRefresh" },
       data_fetched_at: null,
     },
+    warmup_bars: 200,
     created_at: "2025-01-01T00:00:00Z",
     created_by: "test",
     archived_at: null,

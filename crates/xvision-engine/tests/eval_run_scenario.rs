@@ -9,6 +9,7 @@
 //! `tests/api_eval_run.rs` suite already exercises the executor end-to-end
 //! via the legacy `canonical_scenarios()` fallback path.
 
+use xvision_data::fixtures::ensure_test_fixture;
 use xvision_engine::api::scenario as api_scenario;
 use xvision_engine::api::{Actor, ApiContext};
 
@@ -116,6 +117,8 @@ async fn eval_run_returns_notfound_for_unseeded_scenario_id() {
             required_tools: vec![],
             risk_preset_or_config: "balanced".into(),
             published_at: None,
+
+            min_warmup_bars: None,
         },
         agents: Vec::new(),
         pipeline: Default::default(),
@@ -201,6 +204,8 @@ async fn eval_run_resolves_seeded_scenario_via_db_lookup() {
             required_tools: vec![],
             risk_preset_or_config: "balanced".into(),
             published_at: None,
+
+            min_warmup_bars: None,
         },
         agents: Vec::new(),
         pipeline: Default::default(),
@@ -286,6 +291,8 @@ async fn backtest_missing_cache_and_fixture_returns_actionable_validation() {
             required_tools: vec![],
             risk_preset_or_config: "balanced".into(),
             published_at: None,
+
+            min_warmup_bars: None,
         },
         agents: Vec::new(),
         pipeline: Default::default(),
@@ -330,6 +337,106 @@ async fn backtest_missing_cache_and_fixture_returns_actionable_validation() {
             assert!(msg.contains("missing bars cache"));
             assert!(msg.contains("Fetch bars"));
             assert!(msg.contains("crypto-rangebound-q2-2025"));
+        }
+        other => panic!("expected Validation, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn backtest_db_scenario_with_warmup_does_not_fallback_to_legacy_fixture() {
+    use std::sync::Arc;
+    use xvision_engine::agent::llm::{LlmDispatch, MockDispatch};
+    use xvision_engine::api::eval::{self, EvalRunRequest};
+    use xvision_engine::api::ApiError;
+    use xvision_engine::eval::run::RunMode;
+    use xvision_engine::strategies::manifest::PublicManifest;
+    use xvision_engine::strategies::risk::RiskPreset;
+    use xvision_engine::strategies::slot::LLMSlot;
+    use xvision_engine::strategies::store::{strategy_store_dir, FilesystemStore, StrategyStore};
+    use xvision_engine::strategies::Strategy;
+    use xvision_engine::tools::ToolRegistry;
+
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = ApiContext::open(dir.path(), Actor::Cli { user: "test".into() })
+        .await
+        .unwrap();
+
+    let agent_id = "01TESTWARMUPNOFALLBACKFIX";
+    let bundle = Strategy {
+        manifest: PublicManifest {
+            id: agent_id.into(),
+            display_name: "Warmup fallback guard".into(),
+            plain_summary: "for warmup fallback preflight".into(),
+            creator: "@tester".into(),
+            template: "custom".into(),
+            regime_fit: vec![],
+            asset_universe: vec!["BTC/USD".into()],
+            decision_cadence_minutes: 60,
+            required_models: vec![],
+            required_tools: vec![],
+            risk_preset_or_config: "balanced".into(),
+            published_at: None,
+            min_warmup_bars: None,
+        },
+        agents: Vec::new(),
+        pipeline: Default::default(),
+        regime_slot: None,
+        intern_slot: None,
+        trader_slot: Some(LLMSlot {
+            role: "trader".into(),
+            prompt: "Decide.".into(),
+            model_requirement: "anthropic.claude-sonnet-4.6+".into(),
+            allowed_tools: vec![],
+            provider: None,
+            model: None,
+        }),
+        risk: RiskPreset::Balanced.expand(),
+        mechanical_params: serde_json::json!({}),
+    };
+    let bundle_store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+    bundle_store.save(&bundle).await.unwrap();
+
+    let cloned = api_scenario::clone(
+        &ctx,
+        "flash-crash-aug-2024",
+        api_scenario::ScenarioMutations {
+            display_name: Some("flash crash warmup clone".into()),
+            warmup_bars: Some(13),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    // Guard against the old behavior: even if a legacy fixture exists for
+    // this cache key, DB-backed runs with configured warmup must fail
+    // preflight instead of silently replaying without warmup context.
+    ensure_test_fixture(&cloned.bar_cache_policy.cache_key).unwrap();
+
+    let dispatch: Arc<dyn LlmDispatch> = Arc::new(MockDispatch::echo(
+        r#"{"action":"hold","conviction":0.0,"justification":"hold"}"#,
+    ));
+    let tools = Arc::new(ToolRegistry::empty());
+
+    let err = eval::run_with_deps(
+        &ctx,
+        EvalRunRequest {
+            agent_id: agent_id.into(),
+            scenario_id: cloned.id.clone(),
+            mode: RunMode::Backtest,
+            params_override: None,
+        },
+        None,
+        dispatch,
+        tools,
+    )
+    .await
+    .expect_err("warmup-backed DB scenario should not fall back to fixture");
+
+    match err {
+        ApiError::Validation(msg) => {
+            assert!(msg.contains("missing bars cache"), "unexpected message: {msg}");
+            assert!(msg.contains(&cloned.id), "scenario id should be named: {msg}");
         }
         other => panic!("expected Validation, got {other:?}"),
     }

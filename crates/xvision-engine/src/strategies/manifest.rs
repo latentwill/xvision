@@ -15,6 +15,13 @@ pub struct PublicManifest {
     pub required_tools: Vec<String>,
     pub risk_preset_or_config: String, // "conservative" | "balanced" | "aggressive" | "custom"
     pub published_at: Option<DateTime<Utc>>,
+    /// Minimum context bars this strategy needs before bar 1 of the
+    /// decision window. `None` means "derive from `mechanical_params`"
+    /// (see [`super::Strategy::min_warmup_bars`]). Set explicitly when the
+    /// derivation is wrong or when the strategy relies on indicators not
+    /// reflected in `mechanical_params`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_warmup_bars: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

@@ -18,7 +18,7 @@ use crate::eval::bars::compute_cache_key;
 use crate::eval::scenario::{
     AdjustmentMode, AssetClass, AssetRef, BarCachePolicy, CalendarRef, DataSource, Fees, FillModel,
     LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode, Scenario,
-    ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings,
+    ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings, DEFAULT_WARMUP_BARS,
 };
 use crate::eval::scenario_store;
 
@@ -108,6 +108,7 @@ fn seed_btc(id: &str, name: &str, regime_tag: &str, start: DateTime<Utc>, end: D
             refresh_policy: RefreshPolicy::NeverRefresh,
             data_fetched_at: None,
         },
+        warmup_bars: DEFAULT_WARMUP_BARS,
         created_at: Utc.with_ymd_and_hms(2026, 5, 11, 0, 0, 0).unwrap(),
         created_by: "system".into(),
         archived_at: None,

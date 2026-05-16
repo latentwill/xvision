@@ -158,6 +158,8 @@ async fn list_returns_summaries_for_existing_strategys() {
             required_tools: vec![],
             risk_preset_or_config: "balanced".into(),
             published_at: None,
+
+            min_warmup_bars: None,
         },
         agents: Vec::new(),
         pipeline: xvision_engine::strategies::PipelineDef::default(),

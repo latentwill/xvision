@@ -56,6 +56,8 @@ impl Template for MaCrossover {
                 required_tools: vec!["ohlcv".into(), "indicator_panel".into()],
                 risk_preset_or_config: "conservative".into(),
                 published_at: None,
+
+                min_warmup_bars: None,
             },
             agents: Vec::new(),
             pipeline: PipelineDef::default(),

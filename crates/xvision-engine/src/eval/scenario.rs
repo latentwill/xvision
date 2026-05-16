@@ -56,11 +56,150 @@ pub struct Scenario {
 
     pub bar_cache_policy: BarCachePolicy,
 
+    /// Number of bars to pre-fetch from immediately before
+    /// `time_window.start` so per-decision context (indicators, trader
+    /// `bar_history` slice) has real history at bar 1. Defaults to
+    /// [`DEFAULT_WARMUP_BARS`] for new scenarios; legacy rows whose
+    /// `body_json` predates this field hydrate to the same default via
+    /// `serde(default)`.
+    #[serde(default = "default_warmup_bars")]
+    pub warmup_bars: u32,
+
     #[cfg_attr(feature = "ts-export", ts(type = "string"))]
     pub created_at: DateTime<Utc>,
     pub created_by: String,
     #[cfg_attr(feature = "ts-export", ts(type = "string | null"))]
     pub archived_at: Option<DateTime<Utc>>,
+}
+
+/// Default warmup-bar count for new scenarios. Matches the value of the
+/// artificial 200-bar gate removed in PR #177 — but as a pre-fetched
+/// context window rather than a blocker on short scenarios.
+pub const DEFAULT_WARMUP_BARS: u32 = 200;
+
+fn default_warmup_bars() -> u32 {
+    DEFAULT_WARMUP_BARS
+}
+
+#[cfg(test)]
+mod warmup_bars_tests {
+    use super::*;
+
+    /// q15: a Scenario body_json written before the `warmup_bars` field
+    /// existed must hydrate with the default value rather than failing
+    /// the parse. This is the migration substitute (the immutable-row
+    /// trigger means we can't ALTER existing body_json blobs).
+    #[test]
+    fn legacy_body_json_without_warmup_bars_hydrates_to_default() {
+        let raw = serde_json::json!({
+            "id": "sc_legacy",
+            "parent_scenario_id": null,
+            "source": "User",
+            "display_name": "legacy",
+            "description": "",
+            "tags": [],
+            "notes": null,
+            "asset_class": "Crypto",
+            "asset": [{"class": "Crypto", "symbol": "BTC", "venue_symbol": "BTC/USD"}],
+            "quote_currency": "Usd",
+            "time_window": {
+                "start": "2025-01-01T00:00:00Z",
+                "end": "2025-01-02T00:00:00Z"
+            },
+            "granularity": "1Hour",
+            "timezone": "UTC",
+            "calendar": "Continuous24x7",
+            "data_source": {"type": "AlpacaHistorical", "feed": null, "adjustment": "Raw"},
+            "venue": {
+                "venue": "Alpaca",
+                "fees": {"maker_bps": 10, "taker_bps": 25},
+                "slippage": {"model": "none"},
+                "latency": {"decision_to_fill_ms": 0},
+                "fill_model": {
+                    "market_order_fill": "FullAtClose",
+                    "limit_order_fill": "NeverFills",
+                    "partial_fills": false,
+                    "volume_constraints": null
+                }
+            },
+            "replay_mode": {"mode": "Continuous"},
+            "capital": {"initial": 10000.0, "currency": "USD"},
+            "bar_cache_policy": {
+                "cache_key": "legacy",
+                "refresh_policy": {"policy": "NeverRefresh"},
+                "data_fetched_at": null
+            },
+            "created_at": "2025-01-01T00:00:00Z",
+            "created_by": "legacy",
+            "archived_at": null
+            // NOTE: no `warmup_bars` key — pre-q15 body_json shape.
+        });
+        let s: Scenario = serde_json::from_value(raw).expect("legacy body_json must hydrate");
+        assert_eq!(
+            s.warmup_bars, DEFAULT_WARMUP_BARS,
+            "missing warmup_bars must hydrate to {}",
+            DEFAULT_WARMUP_BARS,
+        );
+    }
+
+    /// q15: explicit `warmup_bars` on a new body_json round-trips
+    /// through serde without coercion.
+    #[test]
+    fn explicit_warmup_bars_round_trips() {
+        let scenario = Scenario {
+            id: "sc_test".into(),
+            parent_scenario_id: None,
+            source: ScenarioSource::User,
+            display_name: "test".into(),
+            description: "".into(),
+            tags: vec![],
+            notes: None,
+            asset_class: AssetClass::Crypto,
+            asset: vec![AssetRef {
+                class: AssetClass::Crypto,
+                symbol: "BTC".into(),
+                venue_symbol: "BTC/USD".into(),
+            }],
+            quote_currency: QuoteCurrency::Usd,
+            time_window: TimeWindow {
+                start: Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
+                end: Utc.with_ymd_and_hms(2025, 1, 2, 0, 0, 0).unwrap(),
+            },
+            granularity: BarGranularity::Hour1,
+            timezone: "UTC".into(),
+            calendar: CalendarRef::Continuous24x7,
+            data_source: DataSource::AlpacaHistorical {
+                feed: None,
+                adjustment: AdjustmentMode::Raw,
+            },
+            venue: VenueSettings {
+                venue: Venue::Alpaca,
+                fees: Fees { maker_bps: 10, taker_bps: 25 },
+                slippage: SlippageModel::None,
+                latency: LatencyModel { decision_to_fill_ms: 0 },
+                fill_model: FillModel {
+                    market_order_fill: MarketOrderFill::FullAtClose,
+                    limit_order_fill: LimitOrderFill::NeverFills,
+                    partial_fills: false,
+                    volume_constraints: None,
+                },
+            },
+            replay_mode: ReplayMode::Continuous,
+            capital: Capital::default(),
+            bar_cache_policy: BarCachePolicy {
+                cache_key: "k".into(),
+                refresh_policy: RefreshPolicy::NeverRefresh,
+                data_fetched_at: None,
+            },
+            warmup_bars: 42,
+            created_at: Utc::now(),
+            created_by: "t".into(),
+            archived_at: None,
+        };
+        let json = serde_json::to_string(&scenario).unwrap();
+        let parsed: Scenario = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.warmup_bars, 42);
+    }
 }
 
 impl Scenario {
@@ -510,6 +649,7 @@ pub fn canonical_scenarios() -> Vec<Scenario> {
                 refresh_policy: RefreshPolicy::NeverRefresh,
                 data_fetched_at: None,
             },
+            warmup_bars: DEFAULT_WARMUP_BARS,
             created_at,
             created_by: creator.clone(),
             archived_at: None,

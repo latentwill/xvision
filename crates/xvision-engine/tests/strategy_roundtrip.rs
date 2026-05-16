@@ -20,6 +20,8 @@ fn sample_strategy() -> Strategy {
             required_tools: vec!["ohlcv".to_string()],
             risk_preset_or_config: "balanced".to_string(),
             published_at: None,
+
+            min_warmup_bars: None,
         },
         agents: Vec::new(),
         pipeline: Default::default(),
@@ -95,6 +97,7 @@ fn manifest_roundtrip_with_required_fields() {
         required_tools: vec!["ohlcv".to_string(), "indicator_panel".to_string()],
         risk_preset_or_config: "balanced".to_string(),
         published_at: None,
+        min_warmup_bars: None,
     };
     let json = serde_json::to_string(&m).unwrap();
     let parsed: PublicManifest = serde_json::from_str(&json).unwrap();
