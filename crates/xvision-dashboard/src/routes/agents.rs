@@ -142,13 +142,21 @@ pub mod get {
     //!
     //! Parity guard: `GET /api/agents/:id` returns the same Rust
     //! `Agent` struct that `EvalRunExport.agents[]` carries. The
-    //! Serialize impl is shared, so structural equality holds even
-    //! when the export's per-strategy `agents[]` resolution path isn't
-    //! exercised here.
+    //! seed wires a real Agent → Strategy(AgentRef) → completed Run
+    //! so the export resolves the agent via its real load path
+    //! (strategy → agent_ref → agent_store::get) — comparing against
+    //! that surface catches drift if the export ever post-processes
+    //! agents before serializing.
 
     use xvision_engine::agents::AgentSlot;
     use xvision_engine::api::agents::{self as agents_api, CreateAgentRequest};
+    use xvision_engine::api::strategy::{self as api_strategy, AddAgentReq};
     use xvision_engine::api::{Actor, ApiContext};
+    use xvision_engine::authoring::CreateStrategyReq;
+    use xvision_engine::eval::export as eval_export;
+    use xvision_engine::eval::run::{Run, RunMode, RunStatus};
+    use xvision_engine::eval::store::RunStore;
+    use xvision_engine::templates::registry;
 
     #[tokio::test]
     async fn route_shape_matches_eval_export_agents_entry() {
@@ -181,17 +189,65 @@ pub mod get {
         .await
         .expect("create agent");
 
+        let tpl_name = registry::list_template_names()
+            .first()
+            .cloned()
+            .expect("at least one template registered");
+        let strategy = api_strategy::create_strategy(
+            &ctx,
+            CreateStrategyReq {
+                template: tpl_name,
+                name: "route-parity-fixture-strategy".into(),
+                creator: None,
+            },
+        )
+        .await
+        .expect("create strategy");
+
+        api_strategy::add_agent(
+            &ctx,
+            AddAgentReq {
+                strategy_id: strategy.id.clone(),
+                agent_id: agent.agent_id.clone(),
+                role: "main".into(),
+            },
+        )
+        .await
+        .expect("add_agent");
+
+        let store = RunStore::new(ctx.db.clone());
+        let mut run = Run::new_queued(
+            strategy.id.clone(),
+            "crypto-bull-q1-2025".into(),
+            RunMode::Backtest,
+        );
+        run.status = RunStatus::Completed;
+        store.create(&run).await.expect("seed run");
+        store
+            .update_status(&run.id, RunStatus::Completed, None)
+            .await
+            .expect("transition");
+
         // The route handler is `Json(agents::get(ctx, &id).await?)`.
-        // Structural parity against a single-element `Vec<Agent>` is
-        // the strongest check that doesn't require seeding a Strategy
-        // that references the agent.
-        let direct = agents_api::get(&ctx, &agent.agent_id).await.expect("agent get");
+        // The export resolves the same agent through a different path
+        // (strategy → AgentRef → agent_store::get). Asserting parity
+        // against the real export output is what catches drift.
+        let direct = agents_api::get(&ctx, &agent.agent_id)
+            .await
+            .expect("agent get");
+        let export = eval_export::build_export(&ctx, &run.id)
+            .await
+            .expect("build_export");
+        let from_export = export
+            .agents
+            .iter()
+            .find(|a| a.agent_id == agent.agent_id)
+            .expect("seeded agent must appear in EvalRunExport.agents[]");
+
         let route_json = serde_json::to_value(&direct).expect("agent->json");
-        let agents_slice: Vec<xvision_engine::agents::Agent> = vec![direct.clone()];
-        let from_slice =
-            serde_json::to_value(&agents_slice[0]).expect("agents_slice[0]->json");
+        let export_json = serde_json::to_value(from_export).expect("export.agent->json");
         assert_eq!(
-            route_json, from_slice,
+            route_json, export_json,
             "GET /api/agents/:id shape must equal `EvalRunExport.agents[]`",
         );
     }

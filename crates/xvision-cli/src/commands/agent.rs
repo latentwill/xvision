@@ -99,15 +99,23 @@ pub mod get {
     use super::*;
     use xvision_engine::agents::AgentSlot;
     use xvision_engine::api::agents::{self as agents_api, CreateAgentRequest};
+    use xvision_engine::api::strategy::{self as api_strategy, AddAgentReq};
     use xvision_engine::api::{Actor, ApiContext};
+    use xvision_engine::authoring::CreateStrategyReq;
     use xvision_engine::eval::export as eval_export;
     use xvision_engine::eval::run::{Run, RunMode, RunStatus};
     use xvision_engine::eval::store::RunStore;
+    use xvision_engine::templates::registry;
 
     pub mod json {
         use super::*;
 
-        async fn seed_completed_run_with_agent(
+        /// Seed an Agent → Strategy(AgentRef) → completed Run wiring
+        /// so `EvalRunExport.agents[]` actually resolves through the
+        /// real strategy → agent_ref → agent_store path. Without this,
+        /// the parity test below compares the agent to itself and the
+        /// export surface can drift silently (review feedback on #189).
+        async fn seed_agent_in_strategy_and_completed_run(
             ctx: &ApiContext,
         ) -> (String, String) {
             let agent = agents_api::create(
@@ -129,11 +137,35 @@ pub mod get {
             .await
             .expect("create agent");
 
-            // Seed a completed run that references the agent, so the
-            // EvalRunExport.agents[] slot is populated.
+            let tpl_name = registry::list_template_names()
+                .first()
+                .cloned()
+                .expect("at least one template registered");
+            let strategy = api_strategy::create_strategy(
+                ctx,
+                CreateStrategyReq {
+                    template: tpl_name,
+                    name: "object-shape-fixture-strategy".into(),
+                    creator: None,
+                },
+            )
+            .await
+            .expect("create strategy");
+
+            api_strategy::add_agent(
+                ctx,
+                AddAgentReq {
+                    strategy_id: strategy.id.clone(),
+                    agent_id: agent.agent_id.clone(),
+                    role: "main".into(),
+                },
+            )
+            .await
+            .expect("add_agent");
+
             let store = RunStore::new(ctx.db.clone());
             let mut run = Run::new_queued(
-                agent.agent_id.clone(),
+                strategy.id.clone(),
                 "crypto-bull-q1-2025".into(),
                 RunMode::Backtest,
             );
@@ -159,7 +191,7 @@ pub mod get {
             .await
             .expect("open ApiContext");
 
-            let (agent_id, _run_id) = seed_completed_run_with_agent(&ctx).await;
+            let (agent_id, _run_id) = seed_agent_in_strategy_and_completed_run(&ctx).await;
             let agent = agents_api::get(&ctx, &agent_id).await.expect("get agent");
 
             // The CLI emit path is `emit_object(&agent, format)` which
@@ -179,10 +211,12 @@ pub mod get {
         async fn agent_get_shape_matches_eval_export_agents_entry() {
             // Contract acceptance: the per-object `xvn agent get`
             // output is structurally identical to the `agents[]` entry
-            // in `EvalRunExport` — same Rust `Agent` struct, same
-            // Serialize impl. Asserting this against `serde_json::Value`
-            // (not the wire bytes) so pretty vs compact formatting
-            // doesn't affect equality.
+            // that `build_export` actually produces. The seed wires a
+            // real Strategy(AgentRef) → completed Run so the export
+            // resolves the agent through its real load path
+            // (strategy → agent_ref → agent_store::get). Comparing
+            // against that surface catches drift if the export ever
+            // post-processes agents before serializing.
             let dir = tempfile::tempdir().unwrap();
             let ctx = ApiContext::open(
                 dir.path(),
@@ -193,29 +227,28 @@ pub mod get {
             .await
             .expect("open ApiContext");
 
-            let (agent_id, _run_id) = seed_completed_run_with_agent(&ctx).await;
+            let (agent_id, run_id) = seed_agent_in_strategy_and_completed_run(&ctx).await;
             let direct = agents_api::get(&ctx, &agent_id).await.expect("agent get");
+            let export = eval_export::build_export(&ctx, &run_id)
+                .await
+                .expect("build_export");
 
-            // Build a fake one-element `Vec<Agent>` of the same shape
-            // the export wraps. Asserting JSON-equality against a slice
-            // element is the strongest parity check available without
-            // needing a full Strategy+Run wiring (which would couple
-            // this test to the strategy-store fixture).
-            let agents_slice: Vec<xvision_engine::agents::Agent> = vec![direct.clone()];
+            // Find the agent inside the export's resolved `agents[]`.
+            // The export pulls it via the strategy's AgentRef, not via
+            // the same call path the CLI uses — that's the whole
+            // point of the parity guard.
+            let from_export = export
+                .agents
+                .iter()
+                .find(|a| a.agent_id == agent_id)
+                .expect("seeded agent must appear in EvalRunExport.agents[]");
+
             let direct_json = serde_json::to_value(&direct).expect("agent->json");
-            let from_slice = serde_json::to_value(&agents_slice[0]).expect("slice[0]->json");
+            let export_json =
+                serde_json::to_value(from_export).expect("export.agent->json");
             assert_eq!(
-                direct_json, from_slice,
+                direct_json, export_json,
                 "agent shape from `xvn agent get` must equal `EvalRunExport.agents[]`",
-            );
-
-            // Smoke: same Serialize over the same value must produce
-            // byte-identical compact JSON. If a future refactor
-            // introduces a per-call randomization (e.g. flattening
-            // skill_ids inconsistently), this fails.
-            assert_eq!(
-                serde_json::to_string(&direct).unwrap(),
-                serde_json::to_string(&agents_slice[0]).unwrap(),
             );
         }
     }
