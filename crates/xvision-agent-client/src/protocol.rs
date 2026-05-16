@@ -36,3 +36,41 @@ pub struct RuntimeHealthResult {
 }
 
 pub const SUPPORTED_PROTOCOL_VERSION: &str = "0.1.0";
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ToolDescriptor {
+    pub name: String,
+    pub version: String,
+    pub description: String,
+    pub input_schema: serde_json::Value,
+    pub output_schema: serde_json::Value,
+    pub timeout_ms: u32,
+    pub side_effect_level: SideEffectLevel,
+    pub requires_approval: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SideEffectLevel {
+    Pure,
+    ReadOnly,
+    ExternalRead,
+    ExternalWrite,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ToolRegistrySetParams {
+    pub tools: Vec<ToolDescriptor>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ToolRegistrySetResult {
+    pub count: usize,
+    pub registry_hash: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ToolRegistryGetResult {
+    pub tools: Vec<ToolDescriptor>,
+    pub registry_hash: String,
+}

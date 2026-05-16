@@ -5,6 +5,7 @@ import {
   RPC_ERROR_CODES,
 } from "./jsonrpc.js"
 import "../methods/runtime-health.js"
+import "../methods/tool-registry.js"
 import { getMethodHandler } from "../methods/index.js"
 
 export interface UdsServerHandle {

@@ -1,7 +1,10 @@
 use std::path::Path;
 
 use crate::errors::{AgentClientError, Result};
-use crate::protocol::{RuntimeHealthResult, SUPPORTED_PROTOCOL_VERSION};
+use crate::protocol::{
+    RuntimeHealthResult, ToolDescriptor, ToolRegistryGetResult, ToolRegistrySetParams,
+    ToolRegistrySetResult, SUPPORTED_PROTOCOL_VERSION,
+};
 use crate::supervisor::Supervisor;
 use crate::transport::UdsTransport;
 
@@ -40,5 +43,20 @@ impl AgentClient {
 
     pub async fn shutdown(self) -> Result<()> {
         self.supervisor.shutdown().await
+    }
+
+    pub async fn register_tools(&self, tools: Vec<ToolDescriptor>) -> Result<ToolRegistrySetResult> {
+        self.transport
+            .call::<ToolRegistrySetParams, ToolRegistrySetResult>(
+                "tool.registry.set",
+                Some(ToolRegistrySetParams { tools }),
+            )
+            .await
+    }
+
+    pub async fn list_tools(&self) -> Result<ToolRegistryGetResult> {
+        self.transport
+            .call::<(), ToolRegistryGetResult>("tool.registry.get", None)
+            .await
     }
 }

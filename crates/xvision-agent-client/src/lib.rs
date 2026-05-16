@@ -9,5 +9,8 @@ pub mod transport;
 
 pub use client::AgentClient;
 pub use errors::{AgentClientError, Result};
-pub use protocol::{RuntimeHealthResult, SUPPORTED_PROTOCOL_VERSION};
+pub use protocol::{
+    RuntimeHealthResult, SideEffectLevel, ToolDescriptor, ToolRegistryGetResult,
+    ToolRegistrySetResult, SUPPORTED_PROTOCOL_VERSION,
+};
 pub use transport::UdsTransport;
