@@ -225,19 +225,16 @@ pub struct BackpressureDroppedEvent {
 
 impl RunEvent {
     /// Convenience for tests + recorder routing. Returns the run id this
-    /// event belongs to.
+    /// event belongs to, or `""` if the event only carries a `span_id`
+    /// (see [`Self::span_id`] for those variants — the bus resolves them
+    /// via its span→run map).
     pub fn run_id(&self) -> &str {
         match self {
             Self::RunStarted(e) => &e.run_id,
             Self::RunFinished(e) => &e.run_id,
             Self::RunInterrupted(e) => &e.run_id,
             Self::SpanStarted(e) => &e.run_id,
-            Self::SpanFinished(_e) => {
-                // SpanFinished doesn't carry run_id directly to keep the
-                // event small. The bus routes by span_id → run_id via the
-                // recorder's open-span table. For tests, fall back to "".
-                ""
-            }
+            Self::SpanFinished(_e) => "",
             Self::ModelCallFinished(_) => "",
             Self::ToolCallStarted(_) => "",
             Self::ToolCallFinished(_) => "",
@@ -250,5 +247,43 @@ impl RunEvent {
             Self::SidecarError(e) => &e.run_id,
             Self::BackpressureDropped(e) => &e.run_id,
         }
+    }
+
+    /// Returns the span this event is scoped to, if any. Span-scoped
+    /// events omit `run_id` to keep the payload small; the bus routes
+    /// them to a run via the span→run map it builds from `SpanStarted`.
+    pub fn span_id(&self) -> Option<&str> {
+        match self {
+            Self::SpanStarted(e) => Some(&e.span_id),
+            Self::SpanFinished(e) => Some(&e.span_id),
+            Self::ModelCallFinished(e) => Some(&e.span_id),
+            Self::ToolCallStarted(e) => Some(&e.span_id),
+            Self::ToolCallFinished(e) => Some(&e.span_id),
+            Self::ToolCallFailed(e) => Some(&e.span_id),
+            Self::ToolCallCancelled(e) => Some(&e.span_id),
+            Self::CheckpointWritten(e) => Some(&e.span_id),
+            Self::AssistantTextDelta(e) => Some(&e.span_id),
+            Self::RunStarted(_)
+            | Self::RunFinished(_)
+            | Self::RunInterrupted(_)
+            | Self::SupervisorNote(_)
+            | Self::ArtifactWritten(_)
+            | Self::SidecarError(_)
+            | Self::BackpressureDropped(_) => None,
+        }
+    }
+
+    /// Lifecycle-critical events that must never be silently dropped:
+    /// losing one of them leaves the run/spans open in SQLite forever
+    /// or hides a sidecar crash. The bus delivers these with
+    /// backpressure (awaits a slot) rather than `try_send`.
+    pub fn is_lifecycle_critical(&self) -> bool {
+        matches!(
+            self,
+            Self::RunStarted(_)
+                | Self::RunFinished(_)
+                | Self::RunInterrupted(_)
+                | Self::SidecarError(_)
+        )
     }
 }
