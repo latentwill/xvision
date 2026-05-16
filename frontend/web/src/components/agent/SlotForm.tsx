@@ -176,8 +176,11 @@ function Field({
 
 // MaxTokensInput — renders the per-slot max_tokens override with an
 // "Auto from model" pill when unset. The placeholder is the auto value
-// the dispatcher would resolve to today; switching models updates it
-// live so operators can see the budget without saving (q15 §1).
+// Anthropic would fall back to today; switching models updates it live
+// so operators can see the budget without saving. Unset means "let the
+// provider pick" (OpenAI-compat omits the field; Anthropic falls back
+// to the per-model auto because the API requires it). Operator values
+// pass through verbatim — no client-side ceiling clamp.
 function MaxTokensInput({
   slot,
   onChange,
@@ -196,7 +199,6 @@ function MaxTokensInput({
         type="number"
         value={slot.max_tokens ?? ""}
         min={1}
-        max={meta.output_token_ceiling}
         placeholder={`Auto: ${auto}`}
         onChange={(e) => {
           const raw = e.target.value;

@@ -2,22 +2,21 @@ use std::sync::Arc;
 
 use crate::agent::execute::{execute_slot, SlotInput};
 use crate::agent::llm::{LlmDispatch, LlmResponse, ResponseSchema};
-use crate::agents::{resolve_max_tokens, AgentSlot};
+use crate::agents::AgentSlot;
 use crate::strategies::slot::LLMSlot;
 use crate::strategies::{PipelineKind, Strategy};
 use crate::tools::ToolRegistry;
-use xvision_core::providers::lookup_model;
 
 #[derive(Debug, Clone)]
 pub struct ResolvedAgentSlot {
     pub role: String,
     pub slot: LLMSlot,
-    /// Effective `max_tokens` budget the dispatcher should send. Derived
-    /// from the source `AgentSlot.max_tokens` via the per-model metadata
-    /// table (q15 §1) — `None` slots resolve to
-    /// `recommended_visible_output + reasoning_token_default`, explicit
-    /// values are clamped to the model's `output_token_ceiling`.
-    pub max_tokens: u32,
+    /// Operator's per-request output-token budget. `None` lets the
+    /// dispatcher decide: OpenAI-compat omits the field entirely (the
+    /// provider applies its own default); Anthropic falls back to the
+    /// per-model auto value because the API requires the field. Explicit
+    /// values pass through verbatim — no clamping.
+    pub max_tokens: Option<u32>,
 }
 
 pub struct PipelineInputs<'a> {
@@ -194,18 +193,12 @@ pub fn resolve_agent_slot(role: &str, slot: &AgentSlot) -> ResolvedAgentSlot {
     }
 }
 
-/// Best-effort default `max_tokens` for the legacy `LLMSlot` path
-/// (regime/intern/trader slots on the older Strategy shape). Reads the
-/// model id off the slot via `effective_model()` and consults the
-/// canonical model metadata. Falls back to the unknown-model default
-/// when the slot has no resolvable model.
-fn default_max_tokens_for(slot: &LLMSlot) -> u32 {
-    let model = slot.effective_model();
-    if model.trim().is_empty() {
-        // No model pinned — the unknown default is the safe choice and
-        // matches the legacy behaviour (4096) on `unknown_default`.
-        return resolve_max_tokens(None, &xvision_core::providers::ModelMetadata::unknown_default(""));
-    }
-    let meta = lookup_model(&model);
-    resolve_max_tokens(None, &meta)
+/// Legacy `LLMSlot` path (regime/intern/trader slots on the older
+/// `Strategy` shape) has no operator-side `max_tokens` field, so we
+/// always pass `None` to the dispatcher — each dispatcher handles the
+/// fallback (OpenAI-compat omits the field, Anthropic uses the
+/// per-model auto). The operator can still pin a budget by switching to
+/// the agent-slots strategy shape.
+fn default_max_tokens_for(_slot: &LLMSlot) -> Option<u32> {
+    None
 }

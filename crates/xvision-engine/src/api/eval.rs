@@ -1719,7 +1719,7 @@ mod tests {
                 Some("deepseek/deepseek-v4-flash"),
                 "anthropic.claude-sonnet-4.6",
             ),
-            max_tokens: 4096,
+            max_tokens: Some(4096),
         }];
 
         let slots = runtime_slots(&strategy, &agent_slots);
@@ -1758,7 +1758,7 @@ mod tests {
                 Some("deepseek/deepseek-v4-flash"),
                 "anthropic.claude-sonnet-4.6",
             ),
-            max_tokens: 4096,
+            max_tokens: Some(4096),
         }];
 
         let err = validate_eval_trader_source(&strategy, &agent_slots).unwrap_err();
@@ -1789,7 +1789,7 @@ mod tests {
                 Some("deepseek/deepseek-v4-flash"),
                 "anthropic.claude-sonnet-4.6",
             ),
-            max_tokens: 4096,
+            max_tokens: Some(4096),
         }];
 
         validate_eval_trader_source(&strategy, &agent_slots).unwrap();

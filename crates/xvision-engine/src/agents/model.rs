@@ -68,12 +68,24 @@ impl AgentSlot {
         lookup_model(&self.model)
     }
 
-    /// Resolve the effective `max_tokens` budget the dispatcher should
-    /// hand to the provider. `None` (or the storage sentinel `Some(0)`)
-    /// auto-derives from the model; any explicit `Some(n)` is honored
-    /// and clamped to the model's `output_token_ceiling`. See q15 §1.
-    pub fn resolve_max_tokens(&self) -> u32 {
-        self.model_metadata().resolve(self.max_tokens)
+    /// Resolve the operator's `max_tokens` to the wire-level
+    /// `Option<u32>` the dispatcher hands to the provider.
+    ///
+    /// - `None` (or the SQLite storage sentinel `Some(0)`) → `None`.
+    ///   Each dispatcher decides what to do with `None`: OpenAI-compat
+    ///   omits the field entirely so the provider applies its own
+    ///   default; Anthropic falls back to the per-model auto value
+    ///   because the API requires the field.
+    /// - `Some(n > 0)` passes through verbatim. No clamping — the
+    ///   operator's intent wins. (The earlier q15 design clamped to the
+    ///   model's `output_token_ceiling`, but that silently collapsed
+    ///   operator values to 4096 for any model id missing from the
+    ///   canonical metadata table.)
+    pub fn resolve_max_tokens(&self) -> Option<u32> {
+        match self.max_tokens {
+            Some(n) if n > 0 => Some(n),
+            _ => None,
+        }
     }
 }
 

@@ -291,7 +291,7 @@ impl WizardLoop {
                 model: self.model.clone(),
                 system_prompt: self.system_prompt(),
                 messages,
-                max_tokens: 1500,
+                max_tokens: Some(1500),
                 temperature: None,
                 tools: agent_tool_defs(self.profile),
                 response_schema: None,
