@@ -1,20 +1,30 @@
-//! Eval Review Agent data model. See
+//! Eval Review Agent. See
 //! `docs/superpowers/specs/2026-05-15-eval-review-agent.md`.
 //!
-//! Scope for this module is the persistence-layer shape only:
+//! This module hosts both the persistence-layer shape (`AgentProfile`,
+//! `EvalReview`, `ReviewStatus`, `ReviewVerdict` — seeded by migration 016)
+//! and the runtime engine that:
 //!
-//! * [`AgentProfile`] — review-agent persona seeded by migration 016
-//!   (`fast-trader-agent`, `reasoning-agent`, `risk-agent`,
-//!   `research-agent`). The engine track composes the operational prompt
-//!   from `system_prompt` + a strict-JSON contract at request time.
-//! * [`EvalReview`] — parent artifact persisted per (run × profile)
-//!   review request. Status transitions: queued → running → (completed |
-//!   failed). The raw model JSON is preserved on `raw_output_json` for
-//!   audit; normalized findings live on `eval_findings` rows linked back
-//!   via `eval_review_id`.
+//! 1. Builds a bounded review payload from persisted run artifacts
+//!    (`payload`).
+//! 2. Renders the strict-JSON prompt contract for the model (`prompt`).
+//! 3. Parses + validates the response, including evidence-reference
+//!    presence checks (`parser`).
+//! 4. Persists the review and normalized findings (`engine`).
 //!
-//! Review-linked finding columns are added to [`super::Finding`] so review
+//! Review-linked finding columns live on [`super::Finding`] so review
 //! findings remain first-class rows, not nested inside `raw_output_json`.
+
+pub mod engine;
+pub mod parser;
+pub mod payload;
+pub mod prompt;
+
+pub use engine::{run_review, ReviewError, ReviewOutcome};
+pub use parser::{parse_review_output, ParsedReview, ReviewFinding, ReviewParseError};
+pub use payload::{
+    build_review_payload, ReviewPayload, ReviewProfileSummary, ReviewScenarioSummary,
+};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
