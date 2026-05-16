@@ -26,6 +26,8 @@ through their contracts' `parallel_conflicts`.
 | `crates/xvision-cli/src/commands/scenario/**` | `q15-scenario-warmup-bars` (warmup), `q15-object-json-output` (get only) | q15 |
 | `crates/xvision-dashboard/src/routes/scenarios/**` | `q15-scenario-warmup-bars` (warmup), `q15-object-json-output` (get only) | q15 |
 | `frontend/web/src/features/scenarios/**` | `q15-scenario-warmup-bars` (warmup field), `q15-scenario-granularity-dropdown` (granularity-select) | q15 |
+| `frontend/web/src/components/scenario/ScenarioForm.tsx` | `q15-scenario-warmup-bars` (warmup field), `q15-scenario-granularity-dropdown` (granularity control) | q15 |
+| `frontend/web/src/components/scenario/ScenarioForm.test.tsx` | `q15-scenario-warmup-bars`, `q15-scenario-granularity-dropdown` | q15 |
 | `crates/xvision-core/src/providers/**` | `q15-agent-max-tokens-from-model` | q15 |
 | `crates/xvision-core/src/models.rs` | `q15-agent-max-tokens-from-model` | q15 |
 | `crates/xvision-engine/src/agents/**` | `q15-agent-max-tokens-from-model` | q15 |
@@ -82,6 +84,7 @@ Rows that may be edited by more than one active contract, with a coordination ru
 | `crates/xvision-cli/src/commands/mod.rs` | `v2a-example-artifacts` | Subcommand registration only. One PR at a time. |
 | `frontend/web/src/routes/index.tsx` | `v2a-driver-tour` | Mount points only; no refactor. |
 | `frontend/web/src/routes/eval-runs-detail.tsx` | `eval-review-run-detail-ui`, `q15-eval-json-export` (Download JSON button), `q15-eval-retry-button` | Single-writer; serialize PRs through the conflict-zone registry. |
+| `frontend/web/src/components/scenario/ScenarioForm.tsx` | `q15-scenario-warmup-bars` (adds Context bars field), `q15-scenario-granularity-dropdown` (replaces datalist with native select) | Independent regions of the form; merge in either order. |
 | `crates/xvision-engine/src/eval/store.rs` | `eval-review-agent-engine` (review helpers), `q15-eval-json-export` (read-only load helpers) | Append-only additions; do not refactor existing fns. |
 | `crates/xvision-cli/src/json/object_shapes.rs` | `q15-eval-json-export` (defines), `q15-object-json-output` (consumes) | Definer lands first; consumer stacks if needed. |
 

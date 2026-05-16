@@ -91,27 +91,72 @@ describe("ScenarioForm", () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
-  it("blocks unsupported granularity before submit", () => {
+  it("coerces an unsupported initial granularity to the default", () => {
     const onSubmit = vi.fn();
 
-    render(<ScenarioForm onSubmit={onSubmit} />);
+    render(
+      <ScenarioForm
+        onSubmit={onSubmit}
+        initial={{ granularity: "2w" } as Partial<CreateScenarioRequest>}
+      />,
+    );
+
+    const select = screen.getByLabelText("Granularity") as HTMLSelectElement;
+    expect(select.value).toBe("1h");
+  });
+
+  it("renders granularity as a native select with all supported options", () => {
+    render(<ScenarioForm onSubmit={vi.fn()} />);
+
+    const select = screen.getByLabelText("Granularity") as HTMLSelectElement;
+    expect(select.tagName).toBe("SELECT");
+
+    const optionValues = Array.from(select.options).map((o) => o.value);
+    expect(optionValues).toEqual([
+      "1m",
+      "5m",
+      "15m",
+      "30m",
+      "1h",
+      "4h",
+      "6h",
+      "12h",
+      "1d",
+      "1w",
+      "1mo",
+      "3mo",
+      "6mo",
+      "12mo",
+    ]);
+  });
+
+  it("flows granularity selection through draft and submit", () => {
+    const onSubmit = vi.fn();
+    const onDraftChange = vi.fn();
+
+    render(<ScenarioForm onSubmit={onSubmit} onDraftChange={onDraftChange} />);
 
     fireEvent.change(screen.getByLabelText("Name"), {
-      target: { value: "ETH custom" },
+      target: { value: "ETH 1d" },
     });
     fireEvent.change(screen.getByLabelText("From"), {
       target: { value: "2024-01-01" },
     });
     fireEvent.change(screen.getByLabelText("To"), {
-      target: { value: "2024-01-03" },
+      target: { value: "2024-01-10" },
     });
     fireEvent.change(screen.getByLabelText("Granularity"), {
-      target: { value: "2w" },
+      target: { value: "1d" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Create →" }));
 
-    expect(screen.getByText("Choose a supported Alpaca granularity.")).toBeInTheDocument();
-    expect(onSubmit).not.toHaveBeenCalled();
+    expect(onDraftChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({ granularity: "1d" }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Create →" }));
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({ granularity: "1d" }),
+    );
   });
 
   it("requires the end date to be after the start date", () => {

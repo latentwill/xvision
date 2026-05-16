@@ -86,9 +86,10 @@ export function ScenarioForm({
   const [to, setTo] = useState(
     initial?.time_window?.end?.slice(0, 10) ?? '',
   );
-  const [granularity, setGranularity] = useState<ScenarioGranularity>(
-    normalizeGranularity(initial?.granularity) ?? '1h',
-  );
+  const [granularity, setGranularity] = useState<ScenarioGranularity>(() => {
+    const normalized = normalizeGranularity(initial?.granularity);
+    return normalized && isSupportedGranularity(normalized) ? normalized : '1h';
+  });
   const [tags, setTags] = useState<string[]>(initial?.tags ?? []);
   const [notes, setNotes] = useState(initial?.notes ?? '');
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -257,21 +258,21 @@ export function ScenarioForm({
         ) : null}
         <RegimeRangePresets onPick={(start, end) => { setFrom(start); setTo(end); }} />
         <Field label="Granularity">
-          <input
+          <select
             className="input"
-            list="scenario-granularity-options"
             value={granularity}
             onChange={(e) => {
               setGranularity(e.target.value);
               if (granularityError) setGranularityError(null);
             }}
             required
-          />
-          <datalist id="scenario-granularity-options">
+          >
             {GRANULARITY_OPTIONS.map((g) => (
-              <option key={g} value={g} />
+              <option key={g} value={g}>
+                {g}
+              </option>
             ))}
-          </datalist>
+          </select>
           {granularityError ? (
             <div className="mt-1 text-[12px] text-rose-300">{granularityError}</div>
           ) : null}
