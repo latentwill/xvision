@@ -229,6 +229,15 @@ async fn new(
     json: bool,
 ) -> CliResult<()> {
     if let Some(path) = from_file {
+        // --provider/--model only seed auto-created template agents.
+        // With --from-file the strategy comes through verbatim, so
+        // silently accepting the flags would mislead operators into
+        // thinking the loaded strategy got re-seeded.
+        if provider_override.is_some() || model_override.is_some() {
+            return Err(CliError::usage(anyhow::anyhow!(
+                "--provider and --model only apply to template-seeded strategies and cannot be combined with --from-file. Edit the strategy file directly to change agent provider/model."
+            )));
+        }
         let strategy = load_strategy_file(&path)?;
         validate_strategy(&strategy).exit_with(XvnExit::Usage)?;
         store().save(&strategy).await.exit_with(XvnExit::Upstream)?;
