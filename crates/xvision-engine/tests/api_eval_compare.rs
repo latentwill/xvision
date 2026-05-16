@@ -25,6 +25,18 @@ async fn ctx_with_eval_tables() -> (ApiContext, tempfile::TempDir) {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/015_eval_decisions_reasoning.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/016_eval_reviews.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/017_eval_findings_review_columns.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     let dir = tempfile::tempdir().unwrap();
     let ctx = ApiContext::new(
         pool,
@@ -43,8 +55,7 @@ async fn seed_completed_run(
     metrics: MetricsSummary,
     n_equity_samples: usize,
 ) -> Run {
-    let mut run = Run::new_queued(agent_id.into(), scenario_id.into(), RunMode::Backtest);
-    run.status = RunStatus::Completed;
+    let run = Run::new_queued(agent_id.into(), scenario_id.into(), RunMode::Backtest);
     store.create(&run).await.unwrap();
 
     // Equity samples — synthetic monotonically-increasing curve so we can
@@ -90,6 +101,13 @@ async fn seed_finding(store: &RunStore, run_id: &str, summary: &str) -> Finding 
         evidence: serde_json::json!({"foo": "bar"}),
         extracted_at: Utc::now(),
         schema_version: "v1".into(),
+        eval_review_id: None,
+        review_type: None,
+        confidence: None,
+        title: None,
+        description: None,
+        recommendation: None,
+        created_at: None,
     };
     store.record_finding(&f).await.unwrap();
     f

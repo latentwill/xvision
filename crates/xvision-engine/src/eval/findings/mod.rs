@@ -1,6 +1,7 @@
 //! Phase 3.C findings — LLM-extracted structured insights about a
 //! completed eval run. The shape mirrors the `eval_findings` table from
-//! migration 002.
+//! migration 002 plus the review-linked columns added in migration 017
+//! (see `docs/superpowers/specs/2026-05-15-eval-review-agent.md`).
 
 pub mod extractor;
 
@@ -30,6 +31,27 @@ pub struct Finding {
     #[cfg_attr(feature = "ts-export", ts(type = "string"))]
     pub extracted_at: DateTime<Utc>,
     pub schema_version: String,
+    // --- Review-linked v2 fields (migration 017). All optional so legacy
+    // extractor rows continue to round-trip unchanged and so callers that
+    // only need the v1 shape can leave them unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eval_review_id: Option<String>,
+    /// Review finding category: `performance | risk | regime | behavior |
+    /// execution | data_quality | anomaly | opportunity` (open enum). The
+    /// engine track maps this to legacy `kind` for compatibility.
+    #[serde(default, rename = "type", skip_serializing_if = "Option::is_none")]
+    pub review_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recommendation: Option<String>,
+    #[cfg_attr(feature = "ts-export", ts(type = "string | null"))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<DateTime<Utc>>,
 }
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
