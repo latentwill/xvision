@@ -8,6 +8,8 @@ pub enum AgentClientError {
     Serde(#[from] serde_json::Error),
     #[error("rpc error {code}: {message}")]
     Rpc { code: i64, message: String },
+    #[error("malformed response: missing both result and error")]
+    MalformedResponse,
     #[error("incompatible version: {0}")]
     IncompatibleVersion(String),
     #[error("sidecar transport closed")]

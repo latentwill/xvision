@@ -38,7 +38,7 @@ impl UdsTransport {
         method: &str,
         params: Option<P>,
     ) -> Result<R> {
-        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let req = JsonRpcRequest { jsonrpc: "2.0", id, method, params };
 
         let mut guard = self.inner.lock().await;
@@ -57,6 +57,6 @@ impl UdsTransport {
             let JsonRpcErrorBody { code, message, .. } = err;
             return Err(AgentClientError::Rpc { code, message });
         }
-        resp.result.ok_or(AgentClientError::TransportClosed)
+        resp.result.ok_or(AgentClientError::MalformedResponse)
     }
 }

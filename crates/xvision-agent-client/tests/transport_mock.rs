@@ -10,6 +10,9 @@ use xvision_agent_client::{RuntimeHealthResult, UdsTransport};
 async fn start_mock_server(socket_path: PathBuf) -> tokio::task::JoinHandle<()> {
     let listener = UnixListener::bind(&socket_path).expect("bind");
     tokio::spawn(async move {
+        // Single-connection mock — sufficient through Task 8. Each test
+        // creates its own socket so reuse is not required. The JoinHandle
+        // is detached; the tokio test runtime cancels it on teardown.
         if let Ok((conn, _)) = listener.accept().await {
             let (r, mut w) = conn.into_split();
             let mut br = BufReader::new(r);
@@ -52,9 +55,6 @@ async fn calls_runtime_health_against_mock() {
     let sock = dir.path().join("sock");
     let _server = start_mock_server(sock.clone()).await;
 
-    // Tiny wait to let the listener be ready.
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-
     let t = UdsTransport::connect(&sock).await.expect("connect");
     let h: RuntimeHealthResult = t
         .call::<(), _>("runtime.health", None)
@@ -70,7 +70,6 @@ async fn surfaces_method_not_found_as_rpc_error() {
     let dir = TempDir::new().unwrap();
     let sock = dir.path().join("sock");
     let _server = start_mock_server(sock.clone()).await;
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let t = UdsTransport::connect(&sock).await.unwrap();
     let err = t

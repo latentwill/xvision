@@ -1166,6 +1166,8 @@ pub enum AgentClientError {
     Serde(#[from] serde_json::Error),
     #[error("rpc error {code}: {message}")]
     Rpc { code: i64, message: String },
+    #[error("malformed response: missing both result and error")]
+    MalformedResponse,
     #[error("incompatible version: {0}")]
     IncompatibleVersion(String),
     #[error("sidecar transport closed")]
@@ -1189,13 +1191,14 @@ pub struct JsonRpcRequest<'a, P: Serialize> {
     pub params: Option<P>,
 }
 
+// `Option<T>` already deserializes as `None` when the field is absent;
+// `#[serde(default)]` would force serde's derive to add an `R: Default`
+// bound to JsonRpcResponse<R>, breaking calls with non-Default `R`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct JsonRpcResponse<R> {
     pub jsonrpc: String,
     pub id: Option<serde_json::Value>,
-    #[serde(default)]
     pub result: Option<R>,
-    #[serde(default)]
     pub error: Option<JsonRpcErrorBody>,
 }
 
@@ -1261,7 +1264,7 @@ impl UdsTransport {
         method: &str,
         params: Option<P>,
     ) -> Result<R> {
-        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let req = JsonRpcRequest { jsonrpc: "2.0", id, method, params };
 
         let mut guard = self.inner.lock().await;
@@ -1280,7 +1283,7 @@ impl UdsTransport {
             let JsonRpcErrorBody { code, message, .. } = err;
             return Err(AgentClientError::Rpc { code, message });
         }
-        resp.result.ok_or(AgentClientError::TransportClosed)
+        resp.result.ok_or(AgentClientError::MalformedResponse)
     }
 }
 ```

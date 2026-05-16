@@ -29,6 +29,8 @@ pub struct JsonRpcErrorBody {
 pub struct RuntimeHealthResult {
     pub protocol_version: String,
     pub sidecar_version: String,
+    // Protocol field name; must match `cline_sdk_version` in xvision-agentd.
+    // Do not rename independently of the JSON-RPC spec.
     pub cline_sdk_version: String,
     pub status: String,
 }
