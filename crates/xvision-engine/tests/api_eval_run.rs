@@ -11,6 +11,7 @@ use std::sync::Arc;
 use sqlx::SqlitePool;
 use xvision_data::fixtures::ensure_test_fixture;
 use xvision_engine::agent::llm::{LlmDispatch, MockDispatch};
+use xvision_engine::agents::{AgentSlot, AgentStore, NewAgent};
 use xvision_engine::api::eval::{self, EvalRunRequest};
 use xvision_engine::api::{Actor, ApiContext, ApiError};
 use xvision_engine::eval::canonical_scenarios;
@@ -19,7 +20,7 @@ use xvision_engine::strategies::manifest::PublicManifest;
 use xvision_engine::strategies::risk::RiskPreset;
 use xvision_engine::strategies::slot::LLMSlot;
 use xvision_engine::strategies::store::{FilesystemStore, StrategyStore};
-use xvision_engine::strategies::Strategy;
+use xvision_engine::strategies::{AgentRef, PipelineDef, Strategy};
 use xvision_engine::tools::ToolRegistry;
 use xvision_execution::broker_surface::{BrokerSurface, MockBrokerSurface};
 
@@ -37,6 +38,10 @@ async fn ctx_with_tables() -> (ApiContext, tempfile::TempDir) {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/015_eval_decisions_reasoning.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("strategies")).unwrap();
     let ctx = ApiContext::new(
@@ -46,6 +51,15 @@ async fn ctx_with_tables() -> (ApiContext, tempfile::TempDir) {
         },
         dir.path().to_path_buf(),
     );
+    (ctx, dir)
+}
+
+async fn ctx_with_agents_table() -> (ApiContext, tempfile::TempDir) {
+    let (ctx, dir) = ctx_with_tables().await;
+    sqlx::query(include_str!("../migrations/005_agents.sql"))
+        .execute(&ctx.db)
+        .await
+        .unwrap();
     (ctx, dir)
 }
 
@@ -425,4 +439,176 @@ async fn run_persists_run_to_runstore_so_get_finds_it() {
     let back = eval::get(&ctx, &run.id).await.expect("get must succeed");
     assert_eq!(back.id, run.id);
     assert_eq!(back.status, RunStatus::Completed);
+}
+
+// QA10 regression: a strategy whose attached agent is configured for
+// `openrouter` must dispatch through the OpenRouter path. Prior to this
+// fix, `xvn strategy new` baked `provider="anthropic"` into the
+// auto-created `AgentSlot` by parsing the template's legacy
+// `model_requirement` string ("anthropic.claude-sonnet-4.6"). Even when
+// the operator later picked OpenRouter in settings, eval still resolved
+// the executable slot to Anthropic and 401'd against an Anthropic key.
+//
+// This regression encodes the QA10 requirement that `eval::run` for a
+// strategy whose AgentRef points at an `openrouter`-configured agent
+// (a) selects the OpenRouter provider before queueing, and (b) never
+// returns an error that names the Anthropic provider.
+fn write_openrouter_only_config_with_deepseek(xvn_home: &std::path::Path) {
+    let config_dir = xvn_home.join("config");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    let path = config_dir.join("default.toml");
+    std::fs::write(
+        &path,
+        r#"
+[runtime]
+mode = "backtest"
+executor = "alpaca"
+random_seed = 42
+
+[[providers]]
+name = "openrouter"
+kind = "openai-compat"
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "OPENROUTER_API_KEY"
+enabled_models = ["deepseek/deepseek-v4-flash"]
+
+[trader]
+model_path = "models/x.gguf"
+temperature = 0.0
+forward_paper_temperature = 0.4
+max_tokens = 512
+[trader.vectors]
+enabled = false
+config = "off"
+
+[backtest]
+step = 24
+horizon = 16
+bootstrap_resamples = 1000
+bootstrap_block_size = 8
+
+[paths]
+data_root = "data"
+vectors = "data/vectors"
+probes = "data/probes"
+sqlite_url = "sqlite://x.db"
+"#,
+    )
+    .unwrap();
+}
+async fn save_openrouter_strategy_with_agent_ref(ctx: &ApiContext, strategy_id: &str) {
+    let agent_store = AgentStore::new(ctx.db.clone());
+    let agent_id = agent_store
+        .create(NewAgent {
+            name: format!("trader-for-{strategy_id}"),
+            description: "auto-created OpenRouter trader".into(),
+            tags: vec!["strategy-template-seed".into(), "trader".into()],
+            slots: vec![AgentSlot {
+                name: "main".into(),
+                provider: "openrouter".into(),
+                // Matches the enabled_models in
+                // `write_openrouter_only_config_with_deepseek`. Picked
+                // deliberately so the model id contains no Anthropic
+                // substring — keeps the regression assertion that the
+                // dispatch path never names Anthropic actionable.
+                model: "deepseek/deepseek-v4-flash".into(),
+                system_prompt: "Decide.".into(),
+                skill_ids: vec![],
+                max_tokens: 4096,
+            }],
+        })
+        .await
+        .expect("agent_store.create must succeed");
+
+    let strategy = Strategy {
+        manifest: PublicManifest {
+            id: strategy_id.to_string(),
+            display_name: "One-month smoke".into(),
+            plain_summary: "QA10 regression strategy".into(),
+            creator: "@tester".into(),
+            template: "trend_follower".into(),
+            regime_fit: vec![],
+            asset_universe: vec!["BTC/USD".into()],
+            decision_cadence_minutes: 60,
+            required_models: vec![],
+            required_tools: vec![],
+            risk_preset_or_config: "balanced".into(),
+            published_at: None,
+        },
+        agents: vec![AgentRef {
+            agent_id,
+            role: "trader".into(),
+        }],
+        pipeline: PipelineDef::default(),
+        regime_slot: None,
+        intern_slot: None,
+        trader_slot: None,
+        risk: RiskPreset::Balanced.expand(),
+        mechanical_params: serde_json::json!({}),
+    };
+    let store = FilesystemStore::new(ctx.xvn_home.join("strategies"));
+    store.save(&strategy).await.unwrap();
+}
+
+#[tokio::test]
+async fn eval_run_dispatches_through_openrouter_for_openrouter_agent_ref() {
+    let (ctx, tmp) = ctx_with_agents_table().await;
+    write_openrouter_only_config_with_deepseek(tmp.path());
+    let strategy_id = "01KRMYS1N4QT5B9EM32VNXJJ9V";
+    save_openrouter_strategy_with_agent_ref(&ctx, strategy_id).await;
+
+    // Force OPENROUTER_API_KEY to be unset for the duration of this
+    // test so dispatch construction returns a deterministic
+    // openrouter-specific error rather than reaching out to the real
+    // network. The `write_openrouter_config` provider entry references
+    // `OPENROUTER_API_KEY` as its `api_key_env`, so an unset value
+    // yields ApiError::Validation("no API key for provider `openrouter`
+    // (env var OPENROUTER_API_KEY is unset). ...").
+    let prev_openrouter = std::env::var("OPENROUTER_API_KEY").ok();
+    std::env::remove_var("OPENROUTER_API_KEY");
+    // ANTHROPIC_API_KEY is intentionally not removed: even if it is
+    // configured in the host environment, the resolution path must not
+    // select Anthropic. The provider config only declares `openrouter`,
+    // so a regression that selected Anthropic would surface as
+    // "provider `anthropic` is not configured".
+
+    let r = eval::run(
+        &ctx,
+        EvalRunRequest {
+            agent_id: strategy_id.into(),
+            scenario_id: "flash-crash-2024-08".into(),
+            mode: RunMode::Backtest,
+            params_override: None,
+        },
+    )
+    .await;
+
+    if let Some(prev) = prev_openrouter {
+        std::env::set_var("OPENROUTER_API_KEY", prev);
+    }
+
+    let err = r.expect_err("missing OPENROUTER_API_KEY must surface a validation error");
+    let msg = err.to_string();
+    assert!(
+        matches!(err, ApiError::Validation(_)),
+        "expected Validation, got {err:?}",
+    );
+    assert!(
+        msg.contains("openrouter"),
+        "error must name the OpenRouter provider so we can prove it was selected: {msg}",
+    );
+    assert!(
+        msg.contains("OPENROUTER_API_KEY"),
+        "error must reference the openrouter env var: {msg}",
+    );
+    assert!(
+        !msg.to_lowercase().contains("anthropic"),
+        "regression: eval must never fall through to the Anthropic path for an OpenRouter-configured strategy. Error was: {msg}",
+    );
+
+    let queued: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM eval_runs")
+        .fetch_one(&ctx.db)
+        .await
+        .unwrap();
+    assert_eq!(queued, 0, "provider preflight must fail before queueing");
 }
