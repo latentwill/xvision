@@ -136,3 +136,141 @@ fn scenario_validate_from_file_reports_missing_display_name_actionably() {
         "stderr: {stderr}"
     );
 }
+
+// ── q15-scenario-warmup-bars CLI round-trip ─────────────────────────────
+
+#[test]
+fn scenario_warmup_create_round_trips_through_show() {
+    let dir = tempdir().unwrap();
+    let out = xvn(
+        &[
+            "scenario",
+            "create",
+            "--name",
+            "ETH warmup-50",
+            "--asset",
+            "ETH",
+            "--from",
+            "2024-02-03",
+            "--to",
+            "2024-02-10",
+            "--granularity",
+            "1h",
+            "--warmup-bars",
+            "50",
+            "--json",
+        ],
+        dir.path(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let body: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(body["warmup_bars"].as_u64(), Some(50));
+    let id = body["id"].as_str().unwrap();
+
+    let show = xvn(&["scenario", "show", id], dir.path());
+    assert!(show.status.success());
+    let shown: serde_json::Value = serde_json::from_slice(&show.stdout).unwrap();
+    assert_eq!(
+        shown["warmup_bars"].as_u64(),
+        Some(50),
+        "warmup_bars must round-trip through create + show: {shown:?}",
+    );
+}
+
+#[test]
+fn scenario_warmup_create_defaults_to_200_when_flag_omitted() {
+    let dir = tempdir().unwrap();
+    let out = xvn(
+        &[
+            "scenario",
+            "create",
+            "--name",
+            "ETH default-warmup",
+            "--asset",
+            "ETH",
+            "--from",
+            "2024-02-03",
+            "--to",
+            "2024-02-10",
+            "--granularity",
+            "1h",
+            "--json",
+        ],
+        dir.path(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let body: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        body["warmup_bars"].as_u64(),
+        Some(200),
+        "scenario.warmup_bars must default to 200 when --warmup-bars is omitted: {body:?}",
+    );
+}
+
+#[test]
+fn scenario_warmup_clone_overrides_parent_value() {
+    let dir = tempdir().unwrap();
+    let parent = xvn(
+        &[
+            "scenario",
+            "create",
+            "--name",
+            "ETH parent-warmup",
+            "--asset",
+            "ETH",
+            "--from",
+            "2024-02-03",
+            "--to",
+            "2024-02-10",
+            "--granularity",
+            "1h",
+            "--warmup-bars",
+            "100",
+            "--json",
+        ],
+        dir.path(),
+    );
+    let parent_body: serde_json::Value = serde_json::from_slice(&parent.stdout).unwrap();
+    let parent_id = parent_body["id"].as_str().unwrap();
+
+    let cloned = xvn(
+        &[
+            "scenario",
+            "clone",
+            parent_id,
+            "--warmup-bars",
+            "25",
+            "--name",
+            "ETH clone-warmup",
+        ],
+        dir.path(),
+    );
+    assert!(
+        cloned.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&cloned.stderr)
+    );
+    // `scenario clone` prints `cloned to <id> (parent: <parent_id>)`
+    // — pull the child id out so we can `scenario show` it.
+    let stdout = String::from_utf8_lossy(&cloned.stdout);
+    let child_id = stdout
+        .split_whitespace()
+        .nth(2)
+        .expect("cloned-to line shape: 'cloned to <id> (parent: ...)'");
+    let show = xvn(&["scenario", "show", child_id], dir.path());
+    assert!(show.status.success());
+    let child_body: serde_json::Value = serde_json::from_slice(&show.stdout).unwrap();
+    assert_eq!(
+        child_body["warmup_bars"].as_u64(),
+        Some(25),
+        "clone --warmup-bars must override the parent's value: {child_body:?}",
+    );
+}

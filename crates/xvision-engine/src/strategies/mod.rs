@@ -106,8 +106,63 @@ fn max_indicator_period(value: &serde_json::Value) -> Option<u32> {
 mod tests {
     use super::*;
     use crate::strategies::manifest::PublicManifest;
+    #[allow(unused_imports)]
     use crate::strategies::risk::{RiskConfig, RiskPreset};
     use serde_json::json;
+
+    // ── q15-scenario-warmup-bars — min_warmup_bars derivation ──────────
+
+    fn strategy_with_params(min_explicit: Option<u32>, params: serde_json::Value) -> Strategy {
+        Strategy {
+            manifest: PublicManifest {
+                min_warmup_bars: min_explicit,
+                ..make_manifest()
+            },
+            agents: Vec::new(),
+            pipeline: PipelineDef::default(),
+            regime_slot: None,
+            intern_slot: None,
+            trader_slot: None,
+            risk: RiskPreset::Balanced.expand(),
+            mechanical_params: params,
+        }
+    }
+
+    #[test]
+    fn min_warmup_bars_prefers_explicit_manifest_value() {
+        let s = strategy_with_params(Some(42), json!({"ema_slow": 50}));
+        // Explicit wins over the derived max-period heuristic.
+        assert_eq!(s.min_warmup_bars(), 42);
+    }
+
+    #[test]
+    fn min_warmup_bars_derives_from_max_indicator_period_when_unset() {
+        let s = strategy_with_params(
+            None,
+            json!({"ema_fast": 12, "ema_mid": 26, "ema_slow": 50}),
+        );
+        // Max period is 50 -> doubled to 100.
+        assert_eq!(s.min_warmup_bars(), 100);
+    }
+
+    #[test]
+    fn min_warmup_bars_walks_nested_objects_and_arrays() {
+        let s = strategy_with_params(
+            None,
+            json!({
+                "outer": {"inner_period": 25},
+                "list": [3, 5, 30, 7],
+                "non_int": "ignored",
+            }),
+        );
+        assert_eq!(s.min_warmup_bars(), 60);
+    }
+
+    #[test]
+    fn min_warmup_bars_falls_back_when_no_periods_present() {
+        let s = strategy_with_params(None, json!({}));
+        assert_eq!(s.min_warmup_bars(), FALLBACK_MIN_WARMUP_BARS);
+    }
 
     fn make_manifest() -> PublicManifest {
         PublicManifest {

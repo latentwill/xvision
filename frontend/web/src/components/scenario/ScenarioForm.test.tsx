@@ -270,4 +270,74 @@ describe("ScenarioForm", () => {
       }),
     );
   });
+
+  // ── q15-scenario-warmup-bars ─────────────────────────────────────────
+  // The "Context bars" field is the operator surface for the warmup
+  // window. These tests pin: (1) the default value, (2) round-trip
+  // through onSubmit, and (3) the helper text mentioning the
+  // strategy's min_warmup_bars guidance.
+
+  it("scenario-form-warmup: defaults Context bars to 200 and submits it", () => {
+    const onSubmit = vi.fn();
+
+    render(<ScenarioForm onSubmit={onSubmit} />);
+
+    const warmupField = screen.getByLabelText("Context bars") as HTMLInputElement;
+    expect(warmupField.value).toBe("200");
+
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "ETH default warmup" },
+    });
+    fireEvent.change(screen.getByLabelText("From"), {
+      target: { value: "2024-01-01" },
+    });
+    fireEvent.change(screen.getByLabelText("To"), {
+      target: { value: "2024-01-03" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create →" }));
+
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        warmup_bars: 200,
+      } satisfies Partial<CreateScenarioRequest>),
+    );
+  });
+
+  it("scenario-form-warmup: round-trips a custom Context bars value through onSubmit", () => {
+    const onSubmit = vi.fn();
+
+    render(<ScenarioForm onSubmit={onSubmit} />);
+
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "ETH custom warmup" },
+    });
+    fireEvent.change(screen.getByLabelText("From"), {
+      target: { value: "2024-01-01" },
+    });
+    fireEvent.change(screen.getByLabelText("To"), {
+      target: { value: "2024-01-03" },
+    });
+    fireEvent.change(screen.getByLabelText("Context bars"), {
+      target: { value: "50" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create →" }));
+
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        warmup_bars: 50,
+      } satisfies Partial<CreateScenarioRequest>),
+    );
+  });
+
+  it("scenario-form-warmup: surfaces strategy-min_warmup_bars helper text", () => {
+    render(<ScenarioForm onSubmit={vi.fn()} />);
+    // Helper copy lives directly under the Context bars input. Match
+    // a stable substring so future copy tweaks don't snap the test.
+    expect(
+      screen.getByText(/Bars pre-fetched before the scenario window/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/longest indicator period/i),
+    ).toBeInTheDocument();
+  });
 });
