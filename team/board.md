@@ -42,6 +42,13 @@ Safe to claim right now (no unresolved Foundation dependency):
 3. `eval-review-api-cli`
 4. `eval-review-run-detail-ui`
 
+## Pre-overhaul, in-flight
+
+PRs opened before the 2026-05-16 conductor model rolled out. Tracked here
+through merge but not retroactively contracted.
+
+- [PR #181](https://github.com/latentwill/xvision/pull/181) — fix(web): unblock iPhone Safari mobile load (Bonjour 403 + safe-area + dvh) — `fix/mobile-safari-iphone-bonjour-viewport`. Status: pr-open.
+
 ## Recently closed waves
 
 Archived 2026-05-16:
