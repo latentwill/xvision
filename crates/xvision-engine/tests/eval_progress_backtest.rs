@@ -11,12 +11,13 @@
 
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use chrono::{Duration, TimeZone, Utc};
 use sqlx::SqlitePool;
 use xvision_core::market::Ohlcv;
 use xvision_data::fixtures::ensure_test_fixture;
-use xvision_engine::agent::llm::{LlmDispatch, MockDispatch};
-use xvision_engine::eval::executor::{BacktestExecutor, Executor};
+use xvision_engine::agent::llm::{LlmDispatch, LlmRequest, LlmResponse, MockDispatch, StopReason};
+use xvision_engine::eval::executor::{classify_run_failure, BacktestExecutor, Executor};
 use xvision_engine::eval::progress::{ProgressBus, ProgressEvent};
 use xvision_engine::eval::run::{Run, RunMode};
 use xvision_engine::eval::scenario::canonical_scenarios;
@@ -354,6 +355,123 @@ async fn backtest_executor_runs_clean_with_no_progress_subscriber() {
         .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)
         .await
         .expect("run should still succeed without a subscriber");
+}
+
+/// LlmDispatch that returns a caller-provided LlmResponse every call. Used
+/// to exercise the empty-trader-output failure path; `MockDispatch::echo`
+/// always returns a healthy EndTurn text response.
+struct CannedResponseDispatch {
+    response: LlmResponse,
+}
+
+#[async_trait]
+impl LlmDispatch for CannedResponseDispatch {
+    async fn complete(&self, _req: LlmRequest) -> anyhow::Result<LlmResponse> {
+        Ok(self.response.clone())
+    }
+}
+
+/// QA10 regression for run `01KRMKWZ1KJ2BGRNWGP518ZQ3Q` decision 4: the
+/// trader pipeline returned EndTurn with no text content. The previous
+/// behavior was to surface a confusing `EOF while parsing a value at line
+/// 1 column 0` JSON parse error. The new contract:
+///  - run fails fast with a `[empty]`-classified reason,
+///  - no decision row is persisted,
+///  - no FillRecorded event fires,
+///  - the persisted `eval_runs.error` carries the `trader_output[empty]`
+///    tag plus the raw provider diagnostics (stop_reason + token counts).
+#[tokio::test]
+async fn backtest_executor_fails_with_empty_class_on_empty_trader_output() {
+    ensure_test_fixture("scenario-flash-crash-2024-08").unwrap();
+
+    let store = fresh_store().await;
+    let scenario = canonical_scenarios()
+        .into_iter()
+        .find(|s| s.id == "flash-crash-2024-08")
+        .expect("flash-crash-2024-08 scenario must exist");
+    let strategy = build_strategy("01TESTBUNDLEPROGBT00000005");
+    let mut run = Run::new_queued(
+        strategy.manifest.id.clone(),
+        scenario.id.clone(),
+        RunMode::Backtest,
+    );
+    store.create(&run).await.unwrap();
+
+    let bus = ProgressBus::new(1024);
+    let mut rx = bus.subscribe();
+    let tx = bus.sender();
+
+    let dispatch: Arc<dyn LlmDispatch> = Arc::new(CannedResponseDispatch {
+        response: LlmResponse {
+            content: Vec::new(),
+            stop_reason: StopReason::EndTurn,
+            input_tokens: 1024,
+            output_tokens: 0,
+        },
+    });
+    let tools = Arc::new(ToolRegistry::empty());
+    let executor = BacktestExecutor::with_progress(tx);
+    let err = executor
+        .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)
+        .await
+        .expect_err("empty trader output must fail the backtest run");
+
+    assert_eq!(classify_run_failure(&err), "empty");
+    let err_str = err.to_string();
+    assert!(err_str.contains("trader_output[empty]"), "{err_str}");
+    assert!(err_str.contains("stop_reason=EndTurn"), "{err_str}");
+    assert!(err_str.contains("output_tokens=0"), "{err_str}");
+    assert!(
+        !err_str.contains("EOF while parsing"),
+        "empty output must NOT be reported as a JSON EOF error: {err_str}"
+    );
+
+    // No decision row was persisted — the executor short-circuited before
+    // record_decision could fire.
+    let after = store.get(&run.id).await.unwrap();
+    assert_eq!(after.status, xvision_engine::eval::run::RunStatus::Failed);
+    let reason = after.error.as_deref().unwrap_or_default();
+    assert!(
+        reason.starts_with("[empty]"),
+        "persisted error must lead with [empty] class prefix: {reason:?}"
+    );
+    assert!(
+        reason.contains("trader_output[empty]"),
+        "persisted error must keep trader_output kind tag: {reason:?}"
+    );
+
+    use tokio::sync::broadcast::error::TryRecvError;
+    let mut saw_failed = false;
+    let mut saw_fill = false;
+    let mut saw_decision = false;
+    loop {
+        match rx.try_recv() {
+            Ok(ProgressEvent::RunFailed { run_id, error }) => {
+                assert_eq!(run_id, run.id);
+                assert!(
+                    error.starts_with("[empty]"),
+                    "RunFailed.error must lead with [empty] class: {error}"
+                );
+                assert!(error.contains("trader_output[empty]"), "{error}");
+                saw_failed = true;
+            }
+            Ok(ProgressEvent::FillRecorded { .. }) => saw_fill = true,
+            Ok(ProgressEvent::DecisionEmitted { .. }) => saw_decision = true,
+            Ok(_) => {}
+            Err(TryRecvError::Empty) => break,
+            Err(TryRecvError::Closed) => break,
+            Err(TryRecvError::Lagged(n)) => panic!("bus lagged by {n}"),
+        }
+    }
+    assert!(saw_failed, "expected RunFailed event");
+    assert!(
+        !saw_fill,
+        "FillRecorded must NOT fire when the trader output is empty"
+    );
+    assert!(
+        !saw_decision,
+        "DecisionEmitted must NOT fire when the trader output is empty"
+    );
 }
 
 #[tokio::test]

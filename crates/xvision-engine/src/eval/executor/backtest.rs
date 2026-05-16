@@ -202,7 +202,7 @@ impl Executor for BacktestExecutor {
                     }
                     return result;
                 }
-                let reason = e.to_string();
+                let reason = super::format_failure_reason(e);
                 let _ = store.fail_active(&run.id, &reason).await;
                 run.status = RunStatus::Failed;
                 run.error = Some(reason.clone());
@@ -371,10 +371,12 @@ impl BacktestExecutor {
                 anyhow::bail!("eval run stopped");
             }
 
-            let trader = outs
-                .trader
-                .as_ref()
-                .ok_or_else(|| anyhow!("run {} decision {}: trader output missing", run.id, decision_idx))?;
+            let trader = match outs.trader.as_ref() {
+                Some(t) => t,
+                None => {
+                    return Err(TraderOutput::missing_response_error(&run.id, decision_idx).into());
+                }
+            };
             let parsed = TraderOutput::parse_response(trader, &run.id, decision_idx)?;
 
             if store.is_terminal(&run.id).await? {
