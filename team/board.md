@@ -24,6 +24,10 @@ Leaves:
 - [q15-eval-retry-button](contracts/q15-eval-retry-button.md) — leaf · ready · serialize with eval-runs-detail.tsx editors
 - [q15-object-json-output](contracts/q15-object-json-output.md) — leaf · ready · depends on `q15-eval-json-export`
 
+Integration:
+
+- [q15-tailscale-serve-api-reachability](contracts/q15-tailscale-serve-api-reachability.md) — integration · ready · unblocks phone/QA over tailnet (HTTP errors on chat/strategies/agents/eval/settings)
+
 Intake: `team/intake/2026-05-16-q15.md`. Spec for the meaty items:
 `docs/superpowers/specs/2026-05-16-q15-eval-resilience-and-contracts.md`.
 
@@ -37,7 +41,8 @@ Intake: `team/intake/2026-05-16-q15.md`. Spec for the meaty items:
 
 Safe to claim right now (no unresolved Foundation dependency):
 
-- `q15-scenario-warmup-bars` (highest QA priority)
+- `q15-tailscale-serve-api-reachability` (unblocks mobile/QA testing over tailnet)
+- `q15-scenario-warmup-bars` (highest QA priority for eval correctness)
 - `q15-agent-max-tokens-from-model`
 - `q15-eval-json-export`
 - `q15-scenario-granularity-dropdown` (independent leaf)
@@ -54,14 +59,15 @@ Safe to claim right now (no unresolved Foundation dependency):
 
 ## Recommended order
 
-1. `q15-scenario-warmup-bars` (operator-facing fix — biggest leverage).
-2. `q15-agent-max-tokens-from-model` (stops the empty-output failure mode).
-3. `q15-eval-json-export` (anchors the JSON contract).
-4. `q15-scenario-granularity-dropdown` in parallel (UI fix).
-5. `q15-object-json-output` once #3 lands.
-6. `q15-eval-retry-button` in series with the eval-runs-detail editors.
-7. `eval-review-agent-engine` → `eval-review-api-cli` → `eval-review-run-detail-ui`.
-8. V2A from `team/board-v2.md` in parallel.
+1. `q15-tailscale-serve-api-reachability` (diagnose-first integration — unblocks phone/QA before any other Q15 work can be validated end-to-end).
+2. `q15-scenario-warmup-bars` (operator-facing fix — biggest leverage).
+3. `q15-agent-max-tokens-from-model` (stops the empty-output failure mode).
+4. `q15-eval-json-export` (anchors the JSON contract).
+5. `q15-scenario-granularity-dropdown` in parallel (UI fix).
+6. `q15-object-json-output` once #4 lands.
+7. `q15-eval-retry-button` in series with the eval-runs-detail editors.
+8. `eval-review-agent-engine` → `eval-review-api-cli` → `eval-review-run-detail-ui`.
+9. V2A from `team/board-v2.md` in parallel.
 
 ## Recently closed waves
 
