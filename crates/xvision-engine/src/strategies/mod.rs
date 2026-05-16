@@ -70,15 +70,16 @@ impl Strategy {
     ///
     /// Resolution order:
     /// 1. `manifest.min_warmup_bars`, if set.
-    /// 2. The largest positive integer in `mechanical_params` (scanned
-    ///    recursively), times 2. Covers `ema_slow=50` → 100,
-    ///    `donchian_period=20` → 40, etc.
+    /// 2. The largest positive integer in period-like
+    ///    `mechanical_params` fields, times 2. Covers `ema_slow=50`
+    ///    → 100, `donchian_period=20` → 40, etc., without mistaking
+    ///    thresholds like `rsi_overbought=70` for lookback windows.
     /// 3. [`FALLBACK_MIN_WARMUP_BARS`].
     pub fn min_warmup_bars(&self) -> u32 {
         if let Some(explicit) = self.manifest.min_warmup_bars {
             return explicit;
         }
-        match max_indicator_period(&self.mechanical_params) {
+        match max_indicator_period(&self.mechanical_params, None) {
             Some(p) => p.saturating_mul(2),
             None => FALLBACK_MIN_WARMUP_BARS,
         }
@@ -86,20 +87,38 @@ impl Strategy {
 }
 
 /// Recursively walk a `serde_json::Value` and return the largest positive
-/// integer found. Used as a heuristic to derive a strategy's
-/// `min_warmup_bars` from the indicator periods baked into
-/// `mechanical_params` (`ema_fast`, `ema_slow`, `donchian_period`, etc.).
-fn max_indicator_period(value: &serde_json::Value) -> Option<u32> {
+/// integer found in period-like fields. Used as a heuristic to derive a
+/// strategy's `min_warmup_bars` from indicator lookbacks baked into
+/// `mechanical_params` (`ema_fast`, `ema_slow`, `donchian_period`,
+/// `lookback_bars`, etc.) while ignoring thresholds like `rsi_overbought`.
+fn max_indicator_period(value: &serde_json::Value, key: Option<&str>) -> Option<u32> {
     use serde_json::Value;
     match value {
-        Value::Number(n) => {
+        Value::Number(n) if key.is_some_and(is_period_like_key) => {
             let as_u64 = n.as_u64().or_else(|| n.as_i64().filter(|x| *x > 0).map(|x| x as u64));
             as_u64.and_then(|n| u32::try_from(n).ok()).filter(|n| *n > 0)
         }
-        Value::Array(arr) => arr.iter().filter_map(max_indicator_period).max(),
-        Value::Object(map) => map.values().filter_map(max_indicator_period).max(),
+        Value::Number(_) => None,
+        Value::Array(arr) => arr.iter().filter_map(|v| max_indicator_period(v, key)).max(),
+        Value::Object(map) => map
+            .iter()
+            .filter_map(|(child_key, child_value)| max_indicator_period(child_value, Some(child_key)))
+            .max(),
         Value::Null | Value::Bool(_) | Value::String(_) => None,
     }
+}
+
+fn is_period_like_key(key: &str) -> bool {
+    let key = key.to_ascii_lowercase();
+    key.contains("period")
+        || key.contains("lookback")
+        || key.contains("window")
+        || key.ends_with("_bars")
+        || key.starts_with("ema_")
+        || key.starts_with("sma_")
+        || key.starts_with("macd_")
+        || key.starts_with("atr_")
+        || key.starts_with("adx_")
 }
 
 #[cfg(test)]
@@ -151,11 +170,29 @@ mod tests {
             None,
             json!({
                 "outer": {"inner_period": 25},
-                "list": [3, 5, 30, 7],
+                "list": [
+                    {"fast_window": 3},
+                    {"slow_window": 30},
+                    {"threshold": 70}
+                ],
                 "non_int": "ignored",
             }),
         );
         assert_eq!(s.min_warmup_bars(), 60);
+    }
+
+    #[test]
+    fn min_warmup_bars_ignores_non_period_thresholds() {
+        let s = strategy_with_params(
+            None,
+            json!({
+                "rsi_oversold": 30,
+                "rsi_overbought": 70,
+                "bollinger_period": 20,
+                "atr_period": 14
+            }),
+        );
+        assert_eq!(s.min_warmup_bars(), 40);
     }
 
     #[test]

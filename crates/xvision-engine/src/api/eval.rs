@@ -1135,13 +1135,13 @@ async fn build_backtest_executor(
                 ));
             }
             Err(e) => {
-                if !legacy_fixture_exists(scenario) {
+                if scenario.warmup_bars > 0 || !legacy_fixture_exists(scenario) {
                     return Err(missing_bars_validation(scenario, Some(e.to_string())));
                 }
                 tracing::warn!(
                     scenario_id = %scenario.id,
                     error = %e,
-                    "load_bars failed; falling back to fixture loader",
+                    "load_bars failed; falling back to fixture loader without warmup context",
                 );
             }
         }
