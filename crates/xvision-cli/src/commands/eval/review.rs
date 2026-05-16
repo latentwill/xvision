@@ -18,18 +18,28 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Context;
-use clap::Args;
+use clap::{Args, ValueEnum};
 use xvision_core::config::{self, ProviderEntry, ProviderKind};
 use xvision_engine::agent::llm::{
     AnthropicDispatch, LlmDispatch, MockDispatch, OpenaiCompatDispatch,
 };
-use xvision_engine::api::{ApiContext, ApiError};
-use xvision_engine::eval::review::{self, ReviewError, ReviewStatus};
+use xvision_engine::api::{scenario as api_scenario, ApiContext, ApiError};
+use xvision_engine::eval::review::{self, ReviewError, ReviewScenarioSummary, ReviewStatus};
 use xvision_engine::eval::store::RunStore;
 
 use crate::exit::{CliError, CliResult, ResultExt, XvnExit};
 
 use super::{api_to_cli, open_ctx};
+
+/// Output rendering modes the CLI advertises. Backed by `clap::ValueEnum`
+/// so `--format <invalid>` errors at parse time with a clap-rendered
+/// "possible values" message instead of silently falling back to human
+/// output.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+pub enum OutputFormat {
+    Human,
+    Json,
+}
 
 #[derive(Args, Debug)]
 pub struct ReviewArgs {
@@ -44,9 +54,10 @@ pub struct ReviewArgs {
     pub force: bool,
     /// Output format. `human` (default) prints a readable summary;
     /// `json` prints the full review + findings as stable JSON. Setting
-    /// `--output` implies `--format json`.
-    #[arg(long, default_value = "human")]
-    pub format: String,
+    /// `--output` implies `--format json`. Unknown values are a usage
+    /// error (typed enum, not free-form string).
+    #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
+    pub format: OutputFormat,
     /// Write the JSON review to this file instead of stdout. Implies
     /// `--format json`.
     #[arg(long)]
@@ -68,9 +79,10 @@ pub async fn run_review_cmd(args: ReviewArgs) -> CliResult<()> {
         .exit_with(XvnExit::Upstream)?;
     let store = RunStore::new(ctx.db.clone());
 
-    // Idempotency: if --force is not set and a review for this (run,
-    // profile) pair already exists, return that one instead of
-    // re-dispatching.
+    // Idempotency: only short-circuit on a Completed or in-flight
+    // review for this (run, profile) pair. A prior Failed row is
+    // retry-eligible — returning it would make transient dispatch
+    // errors sticky on subsequent calls.
     let existing = if args.force {
         None
     } else {
@@ -82,7 +94,9 @@ pub async fn run_review_cmd(args: ReviewArgs) -> CliResult<()> {
                 source: anyhow::anyhow!("list reviews for {}: {e}", args.run_id),
             })?
             .into_iter()
-            .find(|r| r.agent_profile_id == args.agent)
+            .find(|r| {
+                r.agent_profile_id == args.agent && !matches!(r.status, ReviewStatus::Failed)
+            })
     };
 
     let outcome_id = if let Some(prior) = existing {
@@ -109,9 +123,19 @@ pub async fn run_review_cmd(args: ReviewArgs) -> CliResult<()> {
         }
         let dispatch = build_dispatch_for_profile(&ctx, &profile.provider)
             .map_err(|e| api_to_cli("eval review", e))?;
-        let outcome = review::run_review(&store, dispatch, &args.run_id, &profile.id, None)
-            .await
-            .map_err(map_review_error)?;
+        // Resolve scenario metadata so the payload carries asset /
+        // granularity / time-window context (the engine docstring asks
+        // the caller to provide this when available).
+        let scenario_summary = resolve_scenario_summary(&ctx, &args.run_id).await;
+        let outcome = review::run_review(
+            &store,
+            dispatch,
+            &args.run_id,
+            &profile.id,
+            scenario_summary,
+        )
+        .await
+        .map_err(map_review_error)?;
         outcome.review_id
     };
 
@@ -137,8 +161,8 @@ pub async fn run_review_cmd(args: ReviewArgs) -> CliResult<()> {
     let out = CliReviewOutput { review, findings };
 
     // JSON output: stdout by default, file when --output. --output
-    // implies --format json regardless of the flag string.
-    let want_json = args.format.eq_ignore_ascii_case("json") || args.output.is_some();
+    // implies --format json regardless of the chosen mode.
+    let want_json = matches!(args.format, OutputFormat::Json) || args.output.is_some();
     if want_json {
         let json = serde_json::to_string_pretty(&out).context("serialize review JSON")?;
         if let Some(path) = args.output.as_ref() {
@@ -207,6 +231,32 @@ fn print_human(out: &CliReviewOutput) {
 }
 
 // --- helpers -----------------------------------------------------------
+
+/// Resolve `(run.scenario_id → ReviewScenarioSummary)` so the review
+/// payload carries scenario context. Returns `None` on any
+/// resolution failure — we don't want a scenario-lookup hiccup to take
+/// down the review request itself; the engine treats scenario metadata
+/// as optional.
+///
+/// Duplicated with the dashboard route handler. A future track that
+/// touches `xvision-engine/src/api/eval.rs` should centralize both the
+/// scenario resolver and the provider-dispatch builder there.
+async fn resolve_scenario_summary(
+    ctx: &ApiContext,
+    run_id: &str,
+) -> Option<ReviewScenarioSummary> {
+    let store = RunStore::new(ctx.db.clone());
+    let run = store.get(run_id).await.ok()?;
+    let scenario = api_scenario::get(ctx, &run.scenario_id).await.ok()?;
+    Some(ReviewScenarioSummary {
+        id: scenario.id.clone(),
+        name: Some(scenario.display_name.clone()),
+        asset: scenario.asset.first().map(|a| a.symbol.clone()),
+        granularity: Some(scenario.granularity.to_string()),
+        start: Some(scenario.time_window.start.to_rfc3339()),
+        end: Some(scenario.time_window.end.to_rfc3339()),
+    })
+}
 
 fn map_review_error(e: ReviewError) -> CliError {
     match e {
@@ -327,6 +377,11 @@ mod tests {
     }
 
     async fn seed_run(pool: &SqlitePool) -> String {
+        // The `pool_with_migrations()` path doesn't seed canonical
+        // scenarios (it bypasses ApiContext::open), so we insert one
+        // explicitly here. The `fresh_home()` path that exercises
+        // resolve_scenario_summary uses ApiContext::open, which seeds
+        // canonical rows on its own.
         sqlx::query(
             "INSERT INTO scenarios (id, parent_scenario_id, source, display_name, description, body_json, created_at, created_by, archived_at) \
              VALUES (?, NULL, 'built', 'test', '', '{}', ?, 'test', NULL)",
@@ -455,6 +510,95 @@ mod tests {
         };
         let resp = dispatch.complete(req).await.expect("dispatch");
         assert!(resp.text().contains("local-candle stub"));
+    }
+
+    #[tokio::test]
+    async fn resolve_scenario_summary_fills_id_name_window_for_canonical() {
+        // ApiContext::open seeds canonical scenarios; build a run that
+        // points at one and confirm the resolver returns a populated
+        // ReviewScenarioSummary (not None).
+        let (_tmp, xvn_home) = fresh_home().await;
+        let ctx = ApiContext::open(
+            &xvn_home,
+            xvision_engine::api::Actor::Cli {
+                user: "test".into(),
+            },
+        )
+        .await
+        .expect("open ctx");
+
+        let scenario_id = xvision_engine::eval::canonical_scenarios()
+            .into_iter()
+            .next()
+            .expect("at least one canonical scenario")
+            .id;
+        let store = RunStore::new(ctx.db.clone());
+        let run = Run::new_queued("agent-1".into(), scenario_id.clone(), RunMode::Backtest);
+        store.create(&run).await.unwrap();
+
+        let summary = resolve_scenario_summary(&ctx, &run.id)
+            .await
+            .expect("canonical scenario should resolve");
+        assert_eq!(summary.id, scenario_id);
+        assert!(summary.name.is_some());
+        assert!(summary.granularity.is_some());
+        assert!(summary.start.is_some());
+        assert!(summary.end.is_some());
+    }
+
+    #[test]
+    fn format_flag_rejects_unknown_values_at_parse_time() {
+        // clap's ValueEnum catches `--format yaml` before run_review_cmd
+        // runs; previously the CLI silently treated anything-but-json as
+        // human output, hiding typos.
+        use clap::Parser;
+
+        #[derive(clap::Parser)]
+        struct TestApp {
+            #[command(flatten)]
+            args: ReviewArgs,
+        }
+
+        let good = TestApp::try_parse_from(["x", "--agent", "reasoning-agent", "--format", "json", "RUN"]);
+        assert!(good.is_ok(), "json should parse");
+        let bad =
+            TestApp::try_parse_from(["x", "--agent", "reasoning-agent", "--format", "yaml", "RUN"]);
+        assert!(bad.is_err(), "yaml should be rejected as invalid value");
+        let typo =
+            TestApp::try_parse_from(["x", "--agent", "reasoning-agent", "--format", "jsno", "RUN"]);
+        assert!(typo.is_err(), "typo should be rejected as invalid value");
+    }
+
+    #[tokio::test]
+    async fn idempotency_skips_failed_reviews_in_cli_path() {
+        // Pre-seed a Failed review for (run, profile); ensure the
+        // CLI path's existence-check ignores it and dispatches a
+        // fresh attempt. We exercise the same find-logic the CLI
+        // command uses via direct store calls.
+        let pool = pool_with_migrations().await;
+        let store = RunStore::new(pool.clone());
+        let run_id = seed_run(&pool).await;
+
+        let mut failed = xvision_engine::eval::review::EvalReview::new_queued(
+            run_id.clone(),
+            "reasoning-agent".to_string(),
+        );
+        failed.status = ReviewStatus::Failed;
+        store.create_review(&failed).await.unwrap();
+        store
+            .fail_review(&failed.id, "synthetic prior failure")
+            .await
+            .unwrap();
+
+        let existing = store
+            .list_reviews_for_run(&run_id)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|r| {
+                r.agent_profile_id == "reasoning-agent" && !matches!(r.status, ReviewStatus::Failed)
+            });
+        assert!(existing.is_none(), "Failed rows must not be reused");
     }
 
     #[tokio::test]

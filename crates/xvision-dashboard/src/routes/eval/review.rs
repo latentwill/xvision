@@ -35,9 +35,11 @@ use serde::{Deserialize, Serialize};
 
 use xvision_core::config::{self, ProviderEntry, ProviderKind};
 use xvision_engine::agent::llm::{AnthropicDispatch, LlmDispatch, MockDispatch, OpenaiCompatDispatch};
-use xvision_engine::api::{ApiContext, ApiError};
+use xvision_engine::api::{scenario as api_scenario, ApiContext, ApiError};
 use xvision_engine::eval::findings::Finding;
-use xvision_engine::eval::review::{self, AgentProfile, EvalReview, ReviewStatus};
+use xvision_engine::eval::review::{
+    self, AgentProfile, EvalReview, ReviewScenarioSummary, ReviewStatus,
+};
 use xvision_engine::eval::store::RunStore;
 
 use crate::error::DashboardError;
@@ -72,10 +74,13 @@ pub async fn generate(
     let ctx = state.api_context();
     let store = RunStore::new(ctx.db.clone());
 
-    // Idempotency: if a completed (or queued/running) review already
-    // exists for this (run, profile) and `force` is not set, return it.
+    // Idempotency: only short-circuit on a Completed or in-flight
+    // (Queued / Running) review. A prior Failed row is retry-eligible —
+    // returning it here would make transient dispatch errors sticky.
     if !body.force {
-        if let Some(existing) = find_latest_review(&store, &run_id, &body.agent_profile_id).await? {
+        if let Some(existing) =
+            find_reusable_review(&store, &run_id, &body.agent_profile_id).await?
+        {
             let findings = store
                 .read_findings_for_review(&existing.id)
                 .await
@@ -109,7 +114,14 @@ pub async fn generate(
 
     let dispatch = build_dispatch_for_profile(&ctx, &profile).await?;
 
-    let outcome = review::run_review(&store, dispatch, &run_id, &profile.id, None)
+    // Resolve scenario metadata so the review payload carries asset /
+    // granularity / time-window context. The engine treats this as
+    // optional, but the engine docstring asks the API layer to provide
+    // it when available — without this every review is run on a payload
+    // that omits the scenario block entirely.
+    let scenario_summary = resolve_scenario_summary(&ctx, &run_id).await;
+
+    let outcome = review::run_review(&store, dispatch, &run_id, &profile.id, scenario_summary)
         .await
         .map_err(map_review_error)?;
 
@@ -181,7 +193,12 @@ pub async fn get(
 
 // --- helpers -----------------------------------------------------------
 
-async fn find_latest_review(
+/// Find a reusable prior review for this (run, profile) pair. We
+/// consider a review reusable when it is `Completed` (success or
+/// `Inconclusive`) or in-flight (`Queued` / `Running`); `Failed` rows
+/// are skipped so a transient dispatch error doesn't permanently pin
+/// the operator to the failure.
+async fn find_reusable_review(
     store: &RunStore,
     run_id: &str,
     profile_id: &str,
@@ -190,7 +207,46 @@ async fn find_latest_review(
         .list_reviews_for_run(run_id)
         .await
         .map_err(|e| DashboardError::Internal(e))?;
-    Ok(all.into_iter().find(|r| r.agent_profile_id == profile_id))
+    Ok(all.into_iter().find(|r| {
+        r.agent_profile_id == profile_id && !matches!(r.status, ReviewStatus::Failed)
+    }))
+}
+
+/// Resolve `(run.scenario_id → ReviewScenarioSummary)` so the review
+/// payload carries scenario context. Returns `None` silently when the
+/// scenario row is missing or the run lookup fails — we don't want a
+/// scenario-resolution hiccup to take down the review request itself.
+async fn resolve_scenario_summary(
+    ctx: &ApiContext,
+    run_id: &str,
+) -> Option<ReviewScenarioSummary> {
+    let store = RunStore::new(ctx.db.clone());
+    let run = match store.get(run_id).await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::debug!(run_id, error = %e, "scenario summary: run lookup failed");
+            return None;
+        }
+    };
+    let scenario = match api_scenario::get(ctx, &run.scenario_id).await {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::debug!(
+                scenario_id = %run.scenario_id,
+                error = %e,
+                "scenario summary: scenario lookup failed",
+            );
+            return None;
+        }
+    };
+    Some(ReviewScenarioSummary {
+        id: scenario.id.clone(),
+        name: Some(scenario.display_name.clone()),
+        asset: scenario.asset.first().map(|a| a.symbol.clone()),
+        granularity: Some(scenario.granularity.to_string()),
+        start: Some(scenario.time_window.start.to_rfc3339()),
+        end: Some(scenario.time_window.end.to_rfc3339()),
+    })
 }
 
 fn map_review_error(e: review::ReviewError) -> DashboardError {
@@ -316,19 +372,16 @@ mod tests {
     }
 
     async fn seed_completed_run(pool: &SqlitePool) -> String {
-        // Seed scenario for FK
-        sqlx::query(
-            "INSERT INTO scenarios (id, parent_scenario_id, source, display_name, description, body_json, created_at, created_by, archived_at) \
-             VALUES (?, NULL, 'built', 'test', '', '{}', ?, 'test', NULL)",
-        )
-        .bind("sc-1")
-        .bind(Utc::now().to_rfc3339())
-        .execute(pool)
-        .await
-        .unwrap();
-
+        // ApiContext::open already seeded canonical scenarios into this
+        // pool; pick the first one for the run's FK + the resolver
+        // tests (which need a body_json that parses as a real Scenario).
+        let scenario_id = xvision_engine::eval::canonical_scenarios()
+            .into_iter()
+            .next()
+            .expect("at least one canonical scenario")
+            .id;
         let store = RunStore::new(pool.clone());
-        let run = Run::new_queued("agent-1".into(), "sc-1".into(), RunMode::Backtest);
+        let run = Run::new_queued("agent-1".into(), scenario_id.clone(), RunMode::Backtest);
         store.create(&run).await.unwrap();
         store.begin_running(&run.id).await.unwrap();
         store
@@ -466,6 +519,89 @@ mod tests {
             .get("/api/eval/reviews/does-not-exist")
             .await
             .assert_status_not_found();
+    }
+
+    #[tokio::test]
+    async fn post_review_resolves_scenario_summary_from_db() {
+        // The dashboard route enriches the engine call with scenario
+        // metadata so the review payload's `scenario` block isn't empty.
+        // We verify the resolver directly because the route's effect on
+        // the payload isn't observable from outside the engine.
+        let (_server, _tmp, state) = boot().await;
+        let run_id = seed_completed_run(&state.pool).await;
+        let ctx = state.api_context();
+
+        // Walk the steps the resolver walks so a failure here points at
+        // the exact layer that broke (run lookup vs scenario lookup vs
+        // body_json round-trip) rather than at the bare `None` the
+        // resolver returns.
+        let store = RunStore::new(ctx.db.clone());
+        let run = store
+            .get(&run_id)
+            .await
+            .expect("seeded run should be retrievable");
+        let scenario = api_scenario::get(&ctx, &run.scenario_id)
+            .await
+            .expect("seeded scenario should deserialize");
+        assert!(!scenario.id.is_empty());
+
+        let summary = resolve_scenario_summary(&ctx, &run_id)
+            .await
+            .expect("seeded canonical scenario should resolve");
+        // id and name come from the canonical scenario; granularity +
+        // window come from the parsed body_json.
+        assert_eq!(summary.id, scenario.id);
+        assert_eq!(summary.name.as_deref(), Some(scenario.display_name.as_str()));
+        assert!(summary.granularity.is_some(), "granularity should be set");
+        assert!(summary.start.is_some(), "time_window.start should be set");
+        assert!(summary.end.is_some(), "time_window.end should be set");
+    }
+
+    #[tokio::test]
+    async fn resolve_scenario_summary_returns_none_for_unknown_run() {
+        // Missing run → None, no panic. Guards the "scenario-resolution
+        // hiccup shouldn't take down the review request" contract.
+        let (_server, _tmp, state) = boot().await;
+        let ctx = state.api_context();
+        assert!(resolve_scenario_summary(&ctx, "does-not-exist")
+            .await
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn idempotency_skips_failed_reviews_and_runs_fresh_attempt() {
+        let (server, _tmp, state) = boot().await;
+        let run_id = seed_completed_run(&state.pool).await;
+        let store = RunStore::new(state.pool.clone());
+
+        // Pre-seed a Failed review for this (run, profile) pair, then
+        // POST without --force. The route must NOT return the failed
+        // row; it must run a fresh review.
+        let mut failed = xvision_engine::eval::review::EvalReview::new_queued(
+            run_id.clone(),
+            "reasoning-agent".to_string(),
+        );
+        failed.status = ReviewStatus::Failed;
+        failed.error = Some("synthetic prior failure".into());
+        store.create_review(&failed).await.unwrap();
+        // Bump it to failed via the typed update path so timestamps
+        // reflect the transition.
+        store
+            .fail_review(&failed.id, "synthetic prior failure")
+            .await
+            .unwrap();
+
+        let resp: serde_json::Value = server
+            .post(&format!("/api/eval/runs/{run_id}/review"))
+            .json(&serde_json::json!({"agent_profile_id": "reasoning-agent"}))
+            .await
+            .json();
+        let new_id = resp["review"]["id"].as_str().unwrap();
+        assert_ne!(
+            new_id, failed.id,
+            "must run a fresh review instead of returning the failed row"
+        );
+        assert_eq!(resp["review"]["verdict"].as_str(), Some("inconclusive"));
     }
 
     #[tokio::test]
