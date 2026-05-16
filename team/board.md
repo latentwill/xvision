@@ -14,14 +14,12 @@ V2 work (V2A onboarding + docs, V2B–V4 roadmap) lives on its own board:
 
 Foundation:
 
-- [q15-scenario-warmup-bars](contracts/q15-scenario-warmup-bars.md) — foundation · ready · highest priority (bar-1 decisions in a vacuum)
-- [q15-agent-max-tokens-from-model](contracts/q15-agent-max-tokens-from-model.md) — foundation · ready · stops empty-output truncation
+- [q15-agent-max-tokens-from-model](contracts/q15-agent-max-tokens-from-model.md) — foundation · pr-open (#185) · stops empty-output truncation
 - [q15-eval-json-export](contracts/q15-eval-json-export.md) — foundation · ready · anchors per-object JSON shape
 
 Leaves:
 
-- [q15-scenario-granularity-dropdown](contracts/q15-scenario-granularity-dropdown.md) — leaf · ready · independent
-- [q15-eval-retry-button](contracts/q15-eval-retry-button.md) — leaf · ready · serialize with eval-runs-detail.tsx editors
+- [q15-eval-retry-button](contracts/q15-eval-retry-button.md) — leaf · pr-open (#184) · serialize with eval-runs-detail.tsx editors
 - [q15-object-json-output](contracts/q15-object-json-output.md) — leaf · ready · depends on `q15-eval-json-export`
 
 Integration:
@@ -42,10 +40,7 @@ Intake: `team/intake/2026-05-16-q15.md`. Spec for the meaty items:
 Safe to claim right now (no unresolved Foundation dependency):
 
 - `q15-tailscale-serve-api-reachability` (unblocks mobile/QA testing over tailnet)
-- `q15-scenario-warmup-bars` (highest QA priority for eval correctness)
-- `q15-agent-max-tokens-from-model`
 - `q15-eval-json-export`
-- `q15-scenario-granularity-dropdown` (independent leaf)
 - `eval-review-agent-engine`
 - V2A leaves — see `team/board-v2.md`
 
@@ -60,14 +55,12 @@ Safe to claim right now (no unresolved Foundation dependency):
 ## Recommended order
 
 1. `q15-tailscale-serve-api-reachability` (diagnose-first integration — unblocks phone/QA before any other Q15 work can be validated end-to-end).
-2. `q15-scenario-warmup-bars` (operator-facing fix — biggest leverage).
-3. `q15-agent-max-tokens-from-model` (stops the empty-output failure mode).
-4. `q15-eval-json-export` (anchors the JSON contract).
-5. `q15-scenario-granularity-dropdown` in parallel (UI fix).
-6. `q15-object-json-output` once #4 lands.
-7. `q15-eval-retry-button` in series with the eval-runs-detail editors.
-8. `eval-review-agent-engine` → `eval-review-api-cli` → `eval-review-run-detail-ui`.
-9. V2A from `team/board-v2.md` in parallel.
+2. Land #185 (`q15-agent-max-tokens-from-model`) — stops the empty-output failure mode.
+3. `q15-eval-json-export` (anchors the JSON contract).
+4. `q15-object-json-output` once #3 lands.
+5. Land #184 (`q15-eval-retry-button`) — in series with the eval-runs-detail editors.
+6. `eval-review-agent-engine` → `eval-review-api-cli` → `eval-review-run-detail-ui`.
+7. V2A from `team/board-v2.md` in parallel.
 
 ## Recently closed waves
 
@@ -80,6 +73,8 @@ Archived 2026-05-16:
 - **eval-review data-model** — merged via #176; remainder of the wave above.
 - **color-themes-light-dark** — merged via #135.
 - **mobile-safari-load** — merged via #147; iPhone Safari follow-up via #181.
+- **q15-scenario-granularity-dropdown** — merged via #182; archived under `team/archive/2026-05-16-q15/`.
+- **q15-scenario-warmup-bars** — merged via #183; archived under `team/archive/2026-05-16-q15/`.
 
 See `team/archive/2026-05-16-migration/` for the historical board snapshot.
 

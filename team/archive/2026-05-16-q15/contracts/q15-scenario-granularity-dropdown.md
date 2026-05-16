@@ -5,7 +5,7 @@ wave: q15
 worktree: .worktrees/q15-scenario-granularity-dropdown
 branch: task/q15-scenario-granularity-dropdown
 base: origin/main
-status: pr-open
+status: merged
 depends_on: []
 blocks: []
 stacking: none
@@ -61,3 +61,4 @@ git worktree add .worktrees/q15-scenario-granularity-dropdown -b task/q15-scenar
   Safari only opens via the tiny indicator). Fix: replace with a native
   `<select>` matching the Asset field pattern in the same form. Paths
   updated to reflect reality.
+- PR: https://github.com/latentwill/xvision/pull/182 (merged 2026-05-16).

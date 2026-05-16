@@ -5,7 +5,7 @@ wave: q15
 worktree: .worktrees/q15-eval-retry-button
 branch: task/q15-eval-retry-button
 base: origin/main
-status: ready
+status: pr-open
 depends_on: []
 blocks: []
 stacking: none
@@ -63,3 +63,4 @@ git worktree add .worktrees/q15-eval-retry-button -b task/q15-eval-retry-button 
 - `eval-runs-detail.tsx` is on the conflict-zone list and shared with the
   eval-review UI track and `q15-eval-json-export`. Land in series, not
   parallel.
+- PR: https://github.com/latentwill/xvision/pull/184 (opened, awaiting review).

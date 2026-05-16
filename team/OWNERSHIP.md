@@ -19,19 +19,8 @@ through their contracts' `parallel_conflicts`.
 
 | Path | Owning track(s) | Wave |
 |---|---|---|
-| `crates/xvision-engine/src/eval/executor/backtest.rs` | `q15-scenario-warmup-bars` | q15 |
-| `crates/xvision-engine/src/eval/executor/paper.rs` | `q15-scenario-warmup-bars` | q15 |
-| `crates/xvision-engine/src/eval/scenario.rs` | `q15-scenario-warmup-bars` | q15 |
-| `crates/xvision-engine/src/eval/scenario_store.rs` | `q15-scenario-warmup-bars` | q15 |
-| `crates/xvision-engine/src/eval/bars.rs` | `q15-scenario-warmup-bars` | q15 |
-| `crates/xvision-engine/src/api/scenario.rs` | `q15-scenario-warmup-bars` | q15 |
-| `crates/xvision-engine/src/api/eval.rs` | `q15-scenario-warmup-bars` (preflight + warmup wiring) | q15 |
-| `crates/xvision-cli/src/commands/scenario.rs` | `q15-scenario-warmup-bars` (warmup), `q15-object-json-output` (get only) | q15 |
-| `crates/xvision-dashboard/src/routes/scenarios.rs` | `q15-scenario-warmup-bars` (warmup), `q15-object-json-output` (get only) | q15 |
-| `frontend/web/src/routes/scenarios-new.tsx` | `q15-scenario-warmup-bars`, `q15-scenario-granularity-dropdown` | q15 |
-| `frontend/web/src/routes/scenarios-detail.tsx` | `q15-scenario-warmup-bars`, `q15-scenario-granularity-dropdown` | q15 |
-| `frontend/web/src/components/scenario/**` | `q15-scenario-warmup-bars` (warmup field), `q15-scenario-granularity-dropdown` (granularity-select) | q15 |
-| `frontend/web/src/api/scenarios.ts` | `q15-scenario-warmup-bars`, `q15-object-json-output` | q15 |
+| `crates/xvision-cli/src/commands/scenario/**` | `q15-object-json-output` (get only) | q15 |
+| `crates/xvision-dashboard/src/routes/scenarios/**` | `q15-object-json-output` (get only) | q15 |
 | `frontend/web/src/api/types.gen/**` | (regenerated; touched by any track that edits a ts-export Rust type) | — |
 | `crates/xvision-core/src/providers/**` | `q15-agent-max-tokens-from-model` | q15 |
 | `crates/xvision-core/src/models.rs` | `q15-agent-max-tokens-from-model` | q15 |

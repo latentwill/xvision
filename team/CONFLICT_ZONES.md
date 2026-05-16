@@ -16,8 +16,8 @@ Conductor: see `team/CONDUCTOR.md`.
 | `frontend/web/pnpm-lock.yaml` | `v2a-driver-tour` | v2a | Driver.js install committed |
 | `frontend/web/src/routes/index.tsx` | `v2a-driver-tour` | v2a | Tour mount point landed |
 | `crates/xvision-engine/src/eval/store.rs` | `eval-review-agent-engine` (review helpers), then `q15-eval-json-export` (read-only load) | eval-review / q15 | Review + export helpers landed |
-| `crates/xvision-engine/src/eval/executor/backtest.rs` | `q15-scenario-warmup-bars` | q15 | Warmup-bars threading landed |
-| `crates/xvision-engine/src/eval/executor/paper.rs` | `q15-scenario-warmup-bars` | q15 | Paper warmup parity landed |
+| `crates/xvision-engine/src/eval/executor/backtest.rs` | (none — released by `q15-scenario-warmup-bars` PR #183 merge) | — | — |
+| `crates/xvision-engine/src/eval/executor/paper.rs` | (none — released by `q15-scenario-warmup-bars` PR #183 merge) | — | — |
 | `crates/xvision-engine/src/eval/dispatcher.rs` | `q15-agent-max-tokens-from-model` | q15 | Resolved max-tokens through dispatcher |
 | `crates/xvision-engine/src/eval/trader_output.rs` | `q15-agent-max-tokens-from-model` (hint surface only) | q15 | Truncation hint landed |
 | `crates/xvision-dashboard/src/routes/eval/mod.rs` | `eval-review-api-cli`, then `q15-eval-json-export`, then `q15-eval-retry-button` | eval-review / q15 | All three route groups registered |
