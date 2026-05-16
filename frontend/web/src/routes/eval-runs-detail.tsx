@@ -8,6 +8,7 @@ import { ApiError } from "@/api/client";
 import { cancelRun, downloadEvalRunExport, evalKeys, getRun } from "@/api/eval";
 import { chartKeys, getRunChart, openRunStream } from "@/api/chart";
 import { RunChart } from "@/components/chart/RunChart";
+import { ReviewPanel } from "@/features/eval-runs/review";
 import type {
   DecisionRowDto,
   RunDetail,
@@ -105,6 +106,14 @@ export function EvalRunDetailRoute() {
         )}
         {chart.data && <RunChart payload={chart.data} />}
       </Card>
+
+      <h2 className="font-serif italic text-[20px] text-text mt-8 mb-3">
+        Review
+      </h2>
+      <ReviewPanel
+        runId={detail.summary.id}
+        runIsCompleted={detail.summary.status === "completed"}
+      />
     </>
   );
 }
