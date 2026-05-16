@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/xvision-agent-client",
     "crates/xvision-core",
     "crates/xvision-data",
     "crates/xvision-intern",
@@ -24,6 +25,7 @@ members = [
 # trading-pipeline core. Explicit `cargo build -p xvision-identity` and
 # `cargo test --workspace` still include it.
 default-members = [
+    "crates/xvision-agent-client",
     "crates/xvision-core",
     "crates/xvision-data",
     "crates/xvision-intern",
