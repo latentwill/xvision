@@ -1,7 +1,22 @@
 # xvn Agent Run System
 
 **Date:** 2026-05-15
-**Status:** Draft for evaluation
+**Status:** Evaluated 2026-05-17 — see implementation plan
+`docs/superpowers/plans/2026-05-17-agent-run-observability-plan.md`.
+Three open questions resolved by operator decision (recorded in the plan):
+
+1. **Harness:** adopt Cline SDK as the agent harness adapter.
+2. **Span storage:** SQLite is the canonical local execution ledger;
+   OpenTelemetry export is an optional sink derived from the same events.
+   Spans use a shared skeleton table plus specialized detail tables
+   (`model_calls`, `tool_calls`, `approvals`, …) — not one giant JSON row.
+3. **Prompt retention:** first-class three-mode policy
+   (`hash_only` default | `redacted` | `full_debug`), with explicit
+   config / env-var / CLI-flag precedence and a startup warning on
+   `full_debug`. Full payloads are never stored implicitly.
+
+The body of this spec is preserved as the design rationale. Where the spec
+and the plan disagree, the plan wins (it is the implementation contract).
 
 ## Goal
 
