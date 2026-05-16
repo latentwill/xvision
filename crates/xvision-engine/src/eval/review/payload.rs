@@ -228,8 +228,13 @@ fn build_evidence_allowlist(
         }
     }
 
-    for (i, _) in decisions.iter().enumerate() {
-        refs.insert(format!("decision:{i}"));
+    // Use the source-of-truth `decision_index` (the column the engine
+    // recorded), not the array position. The prompt promises citations
+    // of the form `decision:<decision_index>`, and runs with non-zero-
+    // based or sparse indices would otherwise produce correctly-grounded
+    // citations that the parser would reject as hallucinations.
+    for d in decisions.iter() {
+        refs.insert(format!("decision:{}", d.decision_index));
     }
 
     if !equity_curve.is_empty() {
@@ -338,6 +343,25 @@ mod tests {
         let payload = build_review_payload(&run, vec![], vec![], None, &profile);
         assert!(payload.is_sparse);
         assert!(payload.metrics.is_null());
+    }
+
+    #[test]
+    fn evidence_allowlist_uses_source_decision_index_not_array_position() {
+        // If a run records decisions with non-zero-based or sparse
+        // indices, the allowlist must follow the recorded indices —
+        // otherwise correctly grounded citations get rejected.
+        let profile = sample_profile();
+        let run = sample_run();
+        let t0 = Utc.with_ymd_and_hms(2026, 5, 1, 12, 0, 0).unwrap();
+        let mut d0 = sample_decision(0, t0);
+        d0.decision_index = 12;
+        let mut d1 = sample_decision(0, t0);
+        d1.decision_index = 47;
+        let payload = build_review_payload(&run, vec![d0, d1], vec![], None, &profile);
+        assert!(payload.valid_evidence_refs.contains("decision:12"));
+        assert!(payload.valid_evidence_refs.contains("decision:47"));
+        assert!(!payload.valid_evidence_refs.contains("decision:0"));
+        assert!(!payload.valid_evidence_refs.contains("decision:1"));
     }
 
     #[test]

@@ -30,7 +30,7 @@ use ulid::Ulid;
 
 use crate::agent::llm::{LlmDispatch, LlmRequest, Message};
 use crate::eval::findings::{Finding, Severity};
-use crate::eval::review::parser::{parse_review_output, ParsedReview, ReviewParseError};
+use crate::eval::review::parser::{parse_review_output, ParsedReview};
 use crate::eval::review::payload::{
     build_review_payload, ReviewPayload, ReviewScenarioSummary,
 };
@@ -53,14 +53,17 @@ pub struct ReviewOutcome {
 
 #[derive(Debug, Error)]
 pub enum ReviewError {
-    #[error("eval run `{0}` not found")]
-    RunNotFound(String),
     #[error("agent profile `{0}` not found")]
     ProfileNotFound(String),
     #[error("agent profile `{0}` is disabled")]
     ProfileDisabled(String),
     #[error("review run requires a completed eval run, got status `{0}`")]
     RunNotCompleted(String),
+    /// Wraps any underlying store error, including the
+    /// `RunStore::get` "run not found" string. We don't unwrap that into
+    /// a typed `RunNotFound` here because the store's not-found path
+    /// itself is untyped; a typed variant would only ever be reachable
+    /// through brittle error-string parsing.
     #[error(transparent)]
     Db(#[from] anyhow::Error),
     #[error("llm dispatch failed: {0}")]
@@ -190,6 +193,11 @@ async fn call_model(
         messages: vec![Message::user_text(user_text)],
         max_tokens: profile.max_tokens.min(HARD_MAX_TOKENS),
         tools: vec![],
+        // Profile-driven temperature is the determinism knob: review
+        // personas are seeded at 0.2 and operators may tighten further.
+        // Passing `Some(t)` overrides the provider default; passing
+        // `None` (what other callers do) keeps the provider default.
+        temperature: Some(profile.temperature),
         response_schema: None,
     };
     let resp = dispatch
@@ -656,10 +664,14 @@ mod tests {
             .expect("review runs");
 
         let seen = cap.seen.lock().unwrap().clone().expect("dispatch called");
-        // reasoning-agent is seeded with max_tokens=8000 and the seeded
-        // model name — verify the request reflects those.
+        // reasoning-agent is seeded with max_tokens=8000, temperature=0.2,
+        // and the seeded model name — verify each rides on the request.
         assert_eq!(seen.max_tokens, 8000);
         assert_eq!(seen.model, "claude-sonnet-4-6");
+        // Determinism knob: the profile's temperature must actually be
+        // forwarded so reviews don't fall back to the provider default
+        // (~1.0). Migration 016 seeds reasoning-agent at 0.2.
+        assert_eq!(seen.temperature, Some(0.2));
         assert!(seen.system_prompt.contains("Reasoning"));
         // The strict-JSON contract is appended after the persona prompt.
         assert!(seen.system_prompt.contains("\"verdict\": \"promising\""));
