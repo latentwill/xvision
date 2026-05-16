@@ -52,7 +52,7 @@ use crate::api::{self, ApiContext, ApiError, ApiResult};
 use crate::eval::attestation::{EvalAttestation, TokensUsed};
 use crate::eval::findings::Finding;
 use crate::eval::review::EvalReview;
-use crate::eval::run::{MetricsSummary, Run};
+use crate::eval::run::{MetricsSummary, Run, RunStatus};
 use crate::eval::scenario::Scenario;
 use crate::eval::scenario_store;
 use crate::eval::store::{DecisionRow, RunStore};
@@ -161,12 +161,18 @@ pub struct ReviewExportRow {
 /// Provider-side diagnostics persisted alongside the run.
 ///
 /// `attestation` is only present when the run was attested (a separate
-/// `xvn eval attest` step). `tokens_used` mirrors the `actual_*_tokens`
-/// fields on `Run` for runs that didn't get attested, so the per-call
-/// truncation footprint (e.g. QA15 item 5) is still surfaced.
+/// `xvn eval attest` step). When an attestation is attached, its
+/// `tokens_used` is authoritative — the same bytes are part of the
+/// signed payload, so duplicating a divergent number elsewhere in the
+/// export would let a tampered export pass a casual eyeball check. For
+/// non-attested runs the counters fall back to `run.actual_*_tokens`
+/// so the QA-round-trip footprint (e.g. QA15 item 5's `output_tokens=1000`
+/// truncation) is still surfaced.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderDiagnostics {
-    /// Aggregate input/output/total tokens for the run.
+    /// Aggregate input/output/total tokens for the run. Sourced from the
+    /// attestation when present (authoritative), else from the run's
+    /// observed counters.
     pub tokens_used: TokensUsed,
     /// Original run timestamp (attestation `ran_at` when present, else
     /// `run.started_at`).
@@ -183,8 +189,16 @@ pub struct ProviderDiagnostics {
     pub trader_output_failure: Option<String>,
 }
 
-/// Build the export for a terminal run id. Read-only — uses the same
-/// `RunStore` and helper functions the dashboard/CLI already lean on.
+/// Build the export for a *terminal* run id (`completed` / `failed` /
+/// `cancelled`). Read-only — uses the same `RunStore` and helper
+/// functions the dashboard/CLI already lean on.
+///
+/// Rejects non-terminal runs (`queued` / `running`) with
+/// `ApiError::Validation` so the snapshot can't capture a moving
+/// in-flight state. The contract scope explicitly excludes streaming
+/// export for in-flight runs; the UI gates the "Download JSON" button
+/// the same way, and this guard makes the rule load-bearing rather
+/// than convention-only.
 ///
 /// Returns `ApiError::NotFound` when the run id is unknown. Other
 /// failures (deleted scenario, deleted agents, etc.) degrade the
@@ -194,6 +208,13 @@ pub struct ProviderDiagnostics {
 pub async fn build_export(ctx: &ApiContext, run_id: &str) -> ApiResult<EvalRunExport> {
     let store = RunStore::new(ctx.db.clone());
     let run = api::eval::get(ctx, run_id).await?;
+    if !is_terminal(run.status) {
+        return Err(ApiError::Validation(format!(
+            "run {} is in status `{}`; export is only defined for terminal runs (completed/failed/cancelled)",
+            run.id,
+            run.status.as_str(),
+        )));
+    }
 
     // Scenario / strategy / agents are best-effort; cleanup paths may
     // have removed them after the run completed.
@@ -283,23 +304,30 @@ fn build_provider_diagnostics(
     run: &Run,
     attestation: Option<EvalAttestation>,
 ) -> Option<ProviderDiagnostics> {
-    let tokens_used = match (run.actual_input_tokens, run.actual_output_tokens) {
-        (Some(input), Some(output)) => TokensUsed {
-            input,
-            output,
-            total: input.saturating_add(output),
-        },
-        _ => attestation.as_ref().map(|a| a.tokens_used.clone()).unwrap_or(
+    // Attestation wins when present — its `tokens_used` is part of the
+    // signed payload, so the export must mirror it exactly. Falling
+    // back to `run.actual_*_tokens` only when the run hasn't been
+    // attested keeps the export usable as a QA artifact for un-attested
+    // runs without ever shipping a tokens_used envelope that disagrees
+    // with the attached signed attestation.
+    let tokens_used = match attestation.as_ref() {
+        Some(att) => att.tokens_used.clone(),
+        None => match (run.actual_input_tokens, run.actual_output_tokens) {
+            (Some(input), Some(output)) => TokensUsed {
+                input,
+                output,
+                total: input.saturating_add(output),
+            },
             // Run has no observed usage and no attestation. Surface a
             // zeroed envelope so consumers can still rely on the field
             // shape — the `trader_output_failure` slot below stays
             // useful even when token counts weren't captured.
-            TokensUsed {
+            _ => TokensUsed {
                 input: 0,
                 output: 0,
                 total: 0,
             },
-        ),
+        },
     };
     let ran_at = attestation
         .as_ref()
@@ -329,6 +357,13 @@ fn build_provider_diagnostics(
         attestation,
         trader_output_failure,
     })
+}
+
+fn is_terminal(status: RunStatus) -> bool {
+    matches!(
+        status,
+        RunStatus::Completed | RunStatus::Failed | RunStatus::Cancelled,
+    )
 }
 
 /// Pull the stable `trader_output[<class>]:` tag out of a persisted
@@ -541,5 +576,145 @@ mod roundtrip {
             .provider_diagnostics
             .expect("provider_diagnostics on a failed run");
         assert_eq!(diag.trader_output_failure.as_deref(), Some("truncated"));
+    }
+
+    #[tokio::test]
+    async fn queued_run_export_is_validation_error() {
+        // Snapshotting an in-flight run would produce a moving,
+        // partial envelope. The contract scope is terminal-only;
+        // build_export enforces it instead of relying on the UI to
+        // hide the button.
+        let (ctx, _d) = ctx_with_eval_tables().await;
+        let store = RunStore::new(ctx.db.clone());
+        let run = Run::new_queued("a".into(), "crypto-bull-q1-2025".into(), RunMode::Backtest);
+        store.create(&run).await.unwrap();
+        // No update_status call — the run stays in Queued.
+
+        let err = build_export(&ctx, &run.id)
+            .await
+            .expect_err("queued run must be rejected");
+        match err {
+            ApiError::Validation(msg) => {
+                assert!(msg.contains("queued"), "expected status in message, got: {msg}");
+                assert!(msg.contains("terminal"), "expected terminal-only hint, got: {msg}");
+            }
+            other => panic!("expected Validation, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn running_run_export_is_validation_error() {
+        let (ctx, _d) = ctx_with_eval_tables().await;
+        let store = RunStore::new(ctx.db.clone());
+        let run = Run::new_queued("a".into(), "crypto-bull-q1-2025".into(), RunMode::Backtest);
+        store.create(&run).await.unwrap();
+        store
+            .update_status(&run.id, RunStatus::Running, None)
+            .await
+            .unwrap();
+
+        let err = build_export(&ctx, &run.id)
+            .await
+            .expect_err("running run must be rejected");
+        assert!(matches!(err, ApiError::Validation(_)), "got: {err:?}");
+    }
+
+    #[tokio::test]
+    async fn cancelled_run_exports_successfully() {
+        // `cancelled` is a terminal status; export must succeed even
+        // when the run never produced metrics.
+        let (ctx, _d) = ctx_with_eval_tables().await;
+        let store = RunStore::new(ctx.db.clone());
+        let run = Run::new_queued("a".into(), "crypto-bull-q1-2025".into(), RunMode::Backtest);
+        store.create(&run).await.unwrap();
+        store
+            .update_status(&run.id, RunStatus::Cancelled, Some("operator stop"))
+            .await
+            .unwrap();
+
+        let export = build_export(&ctx, &run.id).await.expect("cancelled exports");
+        assert_eq!(export.run.status.as_str(), "cancelled");
+    }
+
+    #[tokio::test]
+    async fn provider_diagnostics_mirrors_attestation_when_present() {
+        // When a signed attestation is attached, `tokens_used` must
+        // equal `attestation.tokens_used` — the same bytes are part of
+        // the signed payload, and the export must not ship a divergent
+        // number in a sibling field.
+        let (ctx, _d) = ctx_with_eval_tables().await;
+        let store = RunStore::new(ctx.db.clone());
+
+        // Run reports 422/1000 (the QA15 footprint) but the attached
+        // attestation reports a different total (e.g. a later re-run
+        // or an aggregator update). The attestation wins.
+        let mut run = Run::new_queued("a".into(), "crypto-bull-q1-2025".into(), RunMode::Backtest);
+        run.actual_input_tokens = Some(422);
+        run.actual_output_tokens = Some(1000);
+        store.create(&run).await.unwrap();
+        store
+            .update_status(&run.id, RunStatus::Completed, None)
+            .await
+            .unwrap();
+
+        let attested_tokens = TokensUsed {
+            input: 7_000,
+            output: 3_000,
+            total: 10_000,
+        };
+        let attestation = EvalAttestation {
+            agent_id: run.agent_id.clone(),
+            scenario_id: run.scenario_id.clone(),
+            metrics: MetricsSummary {
+                total_return_pct: 0.0,
+                sharpe: 0.0,
+                max_drawdown_pct: 0.0,
+                win_rate: 0.0,
+                n_trades: 0,
+                n_decisions: 0,
+            },
+            tokens_used: attested_tokens.clone(),
+            ran_at: run.started_at,
+            signing_pubkey_hex: "ed25519-test".into(),
+            signature_hex: "sig-test".into(),
+        };
+        store.record_attestation(&run.id, &attestation).await.unwrap();
+
+        let export = build_export(&ctx, &run.id).await.expect("build_export");
+        let diag = export
+            .provider_diagnostics
+            .expect("provider_diagnostics when attestation is present");
+        assert_eq!(
+            diag.tokens_used, attested_tokens,
+            "tokens_used must mirror the signed attestation payload, not run.actual_*"
+        );
+        let att = diag.attestation.expect("attestation attached");
+        assert_eq!(att.tokens_used, attested_tokens);
+    }
+
+    #[tokio::test]
+    async fn provider_diagnostics_falls_back_to_run_counters_without_attestation() {
+        // Un-attested runs still surface the per-call truncation
+        // footprint via the run's observed counters — QA15 reproducer
+        // case.
+        let (ctx, _d) = ctx_with_eval_tables().await;
+        let store = RunStore::new(ctx.db.clone());
+        let mut run = Run::new_queued("a".into(), "crypto-bull-q1-2025".into(), RunMode::Backtest);
+        run.actual_input_tokens = Some(422);
+        run.actual_output_tokens = Some(1000);
+        store.create(&run).await.unwrap();
+        store
+            .update_status(&run.id, RunStatus::Completed, None)
+            .await
+            .unwrap();
+
+        let export = build_export(&ctx, &run.id).await.expect("build_export");
+        let diag = export
+            .provider_diagnostics
+            .expect("provider_diagnostics with observed counters");
+        assert_eq!(diag.tokens_used.input, 422);
+        assert_eq!(diag.tokens_used.output, 1000);
+        assert_eq!(diag.tokens_used.total, 1422);
+        assert!(diag.attestation.is_none(), "no attestation attached");
     }
 }

@@ -6,7 +6,7 @@ use std::process::Command;
 
 use tempfile::tempdir;
 use xvision_engine::api::{Actor, ApiContext};
-use xvision_engine::eval::run::{Run, RunMode};
+use xvision_engine::eval::run::{Run, RunMode, RunStatus};
 use xvision_engine::eval::store::RunStore;
 
 fn xvn(args: &[&str], home: &std::path::Path) -> std::process::Output {
@@ -40,6 +40,13 @@ async fn seed_run(home: &std::path::Path) -> String {
     );
     let id = run.id.clone();
     store.create(&run).await.expect("seed run");
+    // Export is terminal-only — drive the seeded run to Completed so
+    // the CLI returns the snapshot instead of an exit-3 validation
+    // error.
+    store
+        .update_status(&id, RunStatus::Completed, None)
+        .await
+        .expect("transition to terminal");
     id
 }
 
@@ -118,4 +125,45 @@ fn eval_export_output_flag_writes_byte_identical_file() {
     assert!(stderr.contains("eval export"), "stderr: {stderr}");
     let bytes_marker = format!("{} bytes", file_bytes.len());
     assert!(stderr.contains(&bytes_marker), "stderr: {stderr}");
+}
+
+#[test]
+fn eval_export_in_flight_run_returns_2_usage() {
+    // A Queued run is not terminal — export must reject upstream
+    // (ApiError::Validation -> XvnExit::Usage = 2) instead of writing
+    // a moving snapshot.
+    let dir = tempdir().unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let run_id = rt.block_on(async {
+        let ctx = ApiContext::open(
+            dir.path(),
+            Actor::Cli {
+                user: "eval-export-cli-test".into(),
+            },
+        )
+        .await
+        .expect("open ApiContext");
+        let store = RunStore::new(ctx.db.clone());
+        // Leave the run in Queued — no update_status transition.
+        let run = Run::new_queued(
+            "agent-X".into(),
+            "crypto-bull-q1-2025".into(),
+            RunMode::Backtest,
+        );
+        let id = run.id.clone();
+        store.create(&run).await.expect("seed run");
+        id
+    });
+
+    let out = xvn(&["eval", "export", &run_id], dir.path());
+    let code = out.status.code().expect("child terminated by signal");
+    assert_eq!(
+        code,
+        2,
+        "expected XvnExit::Usage on terminal-only violation, stderr: {}",
+        String::from_utf8_lossy(&out.stderr),
+    );
 }
