@@ -1,7 +1,33 @@
 # xvn Agent Run System
 
 **Date:** 2026-05-15
-**Status:** Draft for evaluation
+**Status:** Evaluated 2026-05-17 — see implementation plan
+`docs/superpowers/plans/2026-05-17-agent-run-observability-plan.md`
+and the Cline SDK sidecar design
+`docs/superpowers/specs/2026-05-17-cline-sdk-agent-replacement-design.md`.
+
+Three open questions resolved by operator decision (recorded in the plan):
+
+1. **Harness:** adopt Cline SDK via a Node sidecar (`xvision-agentd`) with
+   a new Rust agent client crate (`xvision-agent-client`). The original
+   `crates/xvision-engine/src/agent/` directory is being **deleted** as
+   part of the Cline migration; observability emits from the IPC callback
+   path in the new client, not from in-process agent code.
+2. **Span storage:** SQLite is the canonical local execution ledger;
+   OpenTelemetry export is an optional sink derived from the same events.
+   Spans use a shared skeleton table plus specialized detail tables
+   (`model_calls`, `tool_calls`, `approvals`, …) — not one giant JSON
+   row. OTel attributes carry hashes / counts / ids only; full prompts
+   never leave SQLite.
+3. **Prompt retention:** first-class three-mode policy
+   (`hash_only` default | `redacted` | `full_debug`), with explicit
+   config / env-var / CLI-flag precedence and a startup warning on
+   `full_debug`. Full payloads are never stored implicitly.
+
+The body of this spec is preserved as the design rationale. Where this
+spec and the plan disagree, the plan wins. Where the plan and the Cline
+SDK sidecar design disagree, the Cline spec wins on architecture and the
+observability plan wins on data model.
 
 ## Goal
 
