@@ -5,7 +5,7 @@ wave: q15
 worktree: .worktrees/q15-tailscale-serve-api-reachability
 branch: task/q15-tailscale-serve-api-reachability
 base: origin/main
-status: ready
+status: deferred
 depends_on: []
 blocks: []
 stacking: none
@@ -121,3 +121,8 @@ git worktree add .worktrees/q15-tailscale-serve-api-reachability -b task/q15-tai
   (API reachability, streaming, bind address, dashboard-side checks).
 - The runbook should sit at `docs/runbook/tailscale-serve.md` (new
   directory). Worker may create that directory.
+
+- **Deferred 2026-05-16** (acting conductor decision). Mobile/QA over the
+  tailnet is parked, not archived. Revive by flipping `status:` back to
+  `ready` and re-adding the row to the Q15 wave block on `team/board.md`.
+  CONFLICT_ZONES claims released; OWNERSHIP rows annotated.

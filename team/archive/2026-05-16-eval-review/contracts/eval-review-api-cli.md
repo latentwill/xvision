@@ -5,7 +5,8 @@ wave: eval-review
 worktree: .worktrees/eval-review-api-cli
 branch: task/eval-review-api-cli
 base: origin/main
-status: ready
+status: merged
+pr: 188
 depends_on:
   - eval-review-agent-engine
 blocks:
@@ -64,3 +65,5 @@ git worktree add .worktrees/eval-review-api-cli -b task/eval-review-api-cli orig
   a new contract shape.
 - The CLI must work both when xvn is in remote-CLI mode and when running
   locally against the embedded store.
+
+- PR: https://github.com/latentwill/xvision/pull/188 (merged 2026-05-16).

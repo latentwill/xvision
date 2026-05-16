@@ -15,19 +15,19 @@ Conductor: see `team/CONDUCTOR.md`.
 | `frontend/web/package.json` | `v2a-driver-tour` | v2a | Driver.js dep landed |
 | `frontend/web/pnpm-lock.yaml` | `v2a-driver-tour` | v2a | Driver.js install committed |
 | `frontend/web/src/routes/index.tsx` | `v2a-driver-tour` | v2a | Tour mount point landed |
-| `crates/xvision-engine/src/eval/store.rs` | `eval-review-agent-engine` (review helpers), then `q15-eval-json-export` (read-only load) | eval-review / q15 | Review + export helpers landed |
+| `crates/xvision-engine/src/eval/store.rs` | (none — released by eval-review-agent-engine #186 and q15-eval-json-export #187 merges) | — | — |
 | `crates/xvision-engine/src/eval/executor/backtest.rs` | (none — released by `q15-scenario-warmup-bars` PR #183 merge) | — | — |
 | `crates/xvision-engine/src/eval/executor/paper.rs` | (none — released by `q15-scenario-warmup-bars` PR #183 merge) | — | — |
-| `crates/xvision-engine/src/eval/dispatcher.rs` | `q15-agent-max-tokens-from-model` | q15 | Resolved max-tokens through dispatcher |
-| `crates/xvision-engine/src/eval/trader_output.rs` | `q15-agent-max-tokens-from-model` (hint surface only) | q15 | Truncation hint landed |
-| `crates/xvision-dashboard/src/routes/eval/mod.rs` | `eval-review-api-cli`, then `q15-eval-json-export`, then `q15-eval-retry-button` | eval-review / q15 | All three route groups registered |
-| `crates/xvision-cli/src/commands/eval/mod.rs` | `eval-review-api-cli`, then `q15-eval-json-export` | eval-review / q15 | `xvn eval review` + `xvn eval export` registered |
-| `frontend/web/src/routes/eval-runs-detail.tsx` | `eval-review-run-detail-ui`, then `q15-eval-json-export` (Download JSON), then `q15-eval-retry-button` | eval-review / q15 | Three feature additions landed in series |
-| `crates/xvision-cli/src/json/object_shapes.rs` | `q15-eval-json-export` (defines), `q15-object-json-output` (consumes) | q15 | Shared shape landed |
-| `crates/xvision-dashboard/src/server.rs` | `q15-tailscale-serve-api-reachability` | q15 | Bind/Origin fix landed |
-| `crates/xvision-dashboard/src/lib.rs` | `q15-tailscale-serve-api-reachability` | q15 | Bind/Origin fix landed |
-| `frontend/web/vite.config.ts` | `q15-tailscale-serve-api-reachability` | q15 | Tailscale serve adjustments landed |
-| `frontend/web/src/api/client.ts` | `q15-tailscale-serve-api-reachability` | q15 | API client adjustments landed (if any) |
+| `crates/xvision-engine/src/eval/dispatcher.rs` | (none — released by `q15-agent-max-tokens-from-model` PR #185 merge) | — | — |
+| `crates/xvision-engine/src/eval/trader_output.rs` | (none — released by `q15-agent-max-tokens-from-model` PR #185 merge) | — | — |
+| `crates/xvision-dashboard/src/routes/eval/mod.rs` | (none — released by #187 / #188 / #184 merges) | — | — |
+| `crates/xvision-cli/src/commands/eval/mod.rs` | (none — released by #187 / #188 merges) | — | — |
+| `frontend/web/src/routes/eval-runs-detail.tsx` | (none — released by #190 / #187 / #184 merges) | — | — |
+| `crates/xvision-cli/src/json/object_shapes.rs` | (none — released by #187 / #189 merges) | — | — |
+| `crates/xvision-dashboard/src/server.rs` | (none — `q15-tailscale-serve-api-reachability` deferred 2026-05-16) | — | — |
+| `crates/xvision-dashboard/src/lib.rs` | (none — `q15-tailscale-serve-api-reachability` deferred 2026-05-16) | — | — |
+| `frontend/web/vite.config.ts` | (none — `q15-tailscale-serve-api-reachability` deferred 2026-05-16) | — | — |
+| `frontend/web/src/api/client.ts` | (none — `q15-tailscale-serve-api-reachability` deferred 2026-05-16) | — | — |
 | `crates/xvision-cli/src/commands/mod.rs` | `v2a-example-artifacts` | v2a | `xvn example` registered |
 | `team/MANIFEST.md` | conductor | — | Always conductor-only |
 | `team/OWNERSHIP.md` | conductor | — | Always conductor-only |

@@ -5,7 +5,8 @@ wave: eval-review
 worktree: .worktrees/eval-review-agent-engine
 branch: task/eval-review-agent-engine
 base: origin/main
-status: ready
+status: merged
+pr: 186
 depends_on:
   - eval-review-data-model      # merged via #176
 blocks:
@@ -74,3 +75,5 @@ git worktree add .worktrees/eval-review-agent-engine -b task/eval-review-agent-e
   it does not — preventing the model from inventing orders, fills, or logs.
 - A bounded retry on parse failure is allowed only if it is idempotent and
   recorded in `eval_events`.
+
+- PR: https://github.com/latentwill/xvision/pull/186 (merged 2026-05-16).
