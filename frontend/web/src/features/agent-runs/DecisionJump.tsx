@@ -1,7 +1,8 @@
 // frontend/web/src/features/agent-runs/DecisionJump.tsx
 import { useEffect, useState } from "react";
+import type { DecisionRef } from "./decisions";
 
-export type DecisionRef = { i: number };
+export type { DecisionRef } from "./decisions";
 
 export function DecisionJump({
   value,
