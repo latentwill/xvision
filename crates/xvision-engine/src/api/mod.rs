@@ -74,6 +74,14 @@ pub struct ApiContext {
     /// that construct `ApiContext::new` directly still work without extra
     /// wiring.
     pub event_bus: Arc<chart::RunEventBus>,
+    /// Optional observability bus for the agent-run trace surface
+    /// (`qa-eval-observability-wiring`, 2026-05-17). When `Some`, eval
+    /// runs emit `RunStarted` / `ModelCall` spans / `RunFinished` so
+    /// failures surface in `/api/agent-runs/<run_id>` and the trace
+    /// dock (PR #238 renders the error message). The dashboard's
+    /// `AppState::api_context` injects this; CLI and tests leave it
+    /// `None` so the recorder path is a no-op.
+    pub obs_event_bus: Option<Arc<xvision_observability::RunEventBus>>,
 }
 
 // `AlpacaBarsFetcher` doesn't derive Debug (it holds a reqwest::Client
@@ -160,6 +168,7 @@ impl ApiContext {
             )),
             bars_singleflight: Arc::new(Mutex::new(HashMap::new())),
             event_bus: Arc::new(chart::RunEventBus::new()),
+            obs_event_bus: None,
         }
     }
 
@@ -177,6 +186,19 @@ impl ApiContext {
     /// get an isolated per-test bus via the default in `new`.
     pub fn with_event_bus(mut self, bus: Arc<chart::RunEventBus>) -> Self {
         self.event_bus = bus;
+        self
+    }
+
+    /// Builder for the agent-run observability bus
+    /// (`qa-eval-observability-wiring`). `AppState::api_context` calls
+    /// this with the dashboard's singleton `ObsRunEventBus`; CLI and
+    /// unit tests leave it `None` and the eval path no-ops the
+    /// emission.
+    pub fn with_obs_event_bus(
+        mut self,
+        bus: Arc<xvision_observability::RunEventBus>,
+    ) -> Self {
+        self.obs_event_bus = Some(bus);
         self
     }
 

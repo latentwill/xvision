@@ -18,7 +18,7 @@ can render actual text under `redacted` / `full_debug` retention.
 # Done in this PR
 
 - `xvision-observability::find_blob_owner` — single
-  parameterized SQL via `UNION ALL` across `model_calls`,
+  parameterized SQL lookup across `model_calls`,
   `tool_calls`, and `checkpoints`. Returns the run's
   `retention_mode` string when the ref is owned by the run,
   `None` otherwise. 5 unit tests cover: model-call prompt/response
@@ -44,7 +44,7 @@ can render actual text under `redacted` / `full_debug` retention.
   (collapse + re-expand doesn't re-fetch). `runId` is read from
   the `trace-dock` store's `activeRunId` so the inspector stays
   a leaf prop-wise.
-- 8 new tests on the frontend: 4 `fetchAgentRunBlob` (200 round
+- 6 new tests on the frontend: 4 `fetchAgentRunBlob` (200 round
   trip, URL encoding, 403 + 404 → `ApiError`), 2 SpanInspector
   (expand → fetch → body shown; 403 → inline error). Total
   suite: 258 → 266; all green.

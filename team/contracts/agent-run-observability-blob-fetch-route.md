@@ -38,7 +38,7 @@ verification:
   - (cd frontend/web && pnpm test --run)
   - (cd frontend/web && pnpm build)
 acceptance:
-  - New helper `find_blob_owner(&pool, run_id, ref) -> Result<Option<RetentionMode>, ExportError>` in xvision-observability looks up whether `ref` is referenced by any `model_calls.{prompt,response}_payload_ref`, `tool_calls.{input,output}_payload_ref`, or `checkpoints.{input,output}_payload_ref` row whose owning `run_id` matches. Returns the run's `retention_mode` on hit. SQL is one query via UNION ALL, parameterized.
+  - New helper `find_blob_owner(&pool, run_id, ref) -> Result<Option<String>, ExportError>` in xvision-observability looks up whether `ref` is referenced by any `model_calls.{prompt,response}_payload_ref`, `tool_calls.{input,output}_payload_ref`, or `checkpoints.{input,output}_payload_ref` row whose owning `run_id` matches. Returns the run's `retention_mode` on hit. SQL is one parameterized query.
   - New route `GET /api/agent-runs/:id/blobs/:ref` in `xvision-dashboard`. Auth gating follows the existing `agent-runs::get` pattern (covered by the `qa-dashboard-auth-hardening` gate). Behavior:
       - Validate `:ref` matches `^[0-9a-f]{64}$`; 400 otherwise (defense in depth against path traversal).
       - Call `find_blob_owner`. 404 if `None`.

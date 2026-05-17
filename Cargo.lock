@@ -7993,6 +7993,7 @@ dependencies = [
  "xvision-core",
  "xvision-data",
  "xvision-execution",
+ "xvision-observability",
 ]
 
 [[package]]

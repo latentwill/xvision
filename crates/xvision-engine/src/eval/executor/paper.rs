@@ -15,6 +15,7 @@ use xvision_core::market::Ohlcv;
 use xvision_execution::broker_surface::{is_alpaca_crypto, BrokerSurface, OrderRequest, Side};
 
 use crate::agent::llm::LlmDispatch;
+use crate::agent::observability::ObsEmitter;
 use crate::agent::pipeline::{run_pipeline, PipelineInputs, ResolvedAgentSlot};
 use crate::api::chart::{ChartEquityPoint, LiveDecisionRow, RunChartEvent, RunEventBus};
 use crate::eval::executor::Executor;
@@ -51,6 +52,9 @@ pub struct PaperExecutor {
     progress: Option<ProgressTx>,
     /// Optional live-stream event bus for dashboard SSE subscribers.
     event_bus: Option<Arc<RunEventBus>>,
+    /// Optional observability emitter (`qa-eval-observability-wiring`).
+    /// See `BacktestExecutor::obs_emitter`.
+    obs_emitter: Option<ObsEmitter>,
 }
 
 impl PaperExecutor {
@@ -63,6 +67,7 @@ impl PaperExecutor {
             warmup_bars: Vec::new(),
             progress: None,
             event_bus: None,
+            obs_emitter: None,
         }
     }
 
@@ -73,6 +78,7 @@ impl PaperExecutor {
             warmup_bars: Vec::new(),
             progress: None,
             event_bus: None,
+            obs_emitter: None,
         }
     }
 
@@ -86,6 +92,7 @@ impl PaperExecutor {
             warmup_bars: Vec::new(),
             progress: Some(progress),
             event_bus: None,
+            obs_emitter: None,
         }
     }
 
@@ -100,11 +107,18 @@ impl PaperExecutor {
             warmup_bars: Vec::new(),
             progress: Some(progress),
             event_bus: None,
+            obs_emitter: None,
         }
     }
 
     pub fn with_event_bus(mut self, bus: Arc<RunEventBus>) -> Self {
         self.event_bus = Some(bus);
+        self
+    }
+
+    /// Attach an observability emitter (`qa-eval-observability-wiring`).
+    pub fn with_observability(mut self, emitter: ObsEmitter) -> Self {
+        self.obs_emitter = Some(emitter);
         self
     }
 
@@ -404,6 +418,7 @@ impl PaperExecutor {
                 seed_inputs: seed,
                 dispatch: dispatch.clone(),
                 tools: tools.clone(),
+                obs: self.obs_emitter.clone(),
             })
             .await?;
             total_input_tokens += outs.total_input_tokens as u64;

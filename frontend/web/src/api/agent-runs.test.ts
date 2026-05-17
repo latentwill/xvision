@@ -9,6 +9,8 @@ import {
   validateAgentRunDetail,
 } from "./agent-runs";
 import { MOCK_RUN_COMPLETED, MOCK_RUN_FULL_DEBUG } from "@/features/agent-runs/mock-fixtures";
+import { useTraceDock } from "@/stores/trace-dock";
+import type { AgentRunStreamEvent } from "./types-agent-runs";
 
 const EXPORT_PAYLOAD = {
   schema_version: "xvn.agent_run.v1",
@@ -322,6 +324,132 @@ describe("agent-runs real-mode branch", () => {
       close();
     } finally {
       (globalThis as { EventSource: unknown }).EventSource = original;
+    }
+  });
+
+  test("openAgentRunStream maps SSE event names → typed events and dispatches to store", () => {
+    type Listener = (ev: MessageEvent) => void;
+    const listeners: Record<string, Listener[]> = {};
+    class MockES {
+      constructor(_url: string) {}
+      addEventListener(name: string, fn: EventListener) {
+        (listeners[name] ??= []).push(fn as unknown as Listener);
+      }
+      removeEventListener() {}
+      close() {}
+    }
+    const original = globalThis.EventSource;
+    (globalThis as { EventSource: unknown }).EventSource =
+      MockES as unknown as typeof EventSource;
+
+    // Make sure prior test state doesn't bleed in.
+    useTraceDock.getState().setActiveRun(null, "post-hoc");
+
+    const received: AgentRunStreamEvent[] = [];
+    const close = openAgentRunStream("run_stream_1", (ev) => received.push(ev));
+
+    function fire(name: string, payload: unknown) {
+      const data = typeof payload === "string" ? payload : JSON.stringify(payload);
+      const ev = new MessageEvent(name, { data });
+      for (const fn of listeners[name] ?? []) fn(ev);
+    }
+
+    try {
+      // 1) Snapshot — must parse via validateAgentRunDetail and dispatch.
+      fire("snapshot", MOCK_RUN_COMPLETED);
+
+      // 2) Span lifecycle.
+      fire("span_started", {
+        kind: "kind-tag-ignored",
+        span_id: "s_live",
+        run_id: "run_stream_1",
+        parent_span_id: null,
+        kind_dup: "ignored",
+        name: "model.call streaming",
+        started_at: "2026-05-17T10:00:00.000Z",
+      });
+      // Tweak: the real payload uses `kind`, not `kind_dup`. Send a proper one too.
+      fire("span_started", {
+        span_id: "s_live2",
+        run_id: "run_stream_1",
+        parent_span_id: null,
+        kind: "tool.call",
+        name: "execute_slot",
+        started_at: "2026-05-17T10:00:01.000Z",
+      });
+
+      // 3) Delta + lag.
+      fire("assistant_text_delta", {
+        span_id: "s_live2",
+        run_id: "run_stream_1",
+        delta_len: 11,
+      });
+      fire("lagged", { dropped: 7 });
+
+      // 4) Terminal span event.
+      fire("span_finished", {
+        span_id: "s_live2",
+        ended_at: "2026-05-17T10:00:01.500Z",
+        status: "ok",
+      });
+
+      // Callback sees one typed event per SSE frame, in order.
+      expect(received.map((e) => e.event)).toEqual([
+        "snapshot",
+        "span_started",
+        "span_started",
+        "assistant_text_delta",
+        "lagged",
+        "span_finished",
+      ]);
+
+      // Store side effects applied.
+      const s = useTraceDock.getState().streamingState;
+      expect(s.deltaCharsBySpan.s_live2 ?? 0).toBe(11);
+      expect(s.droppedEvents).toBe(7);
+      // s_live2 was opened then closed.
+      expect(s.activeSpanIds.has("s_live2")).toBe(false);
+    } finally {
+      close();
+      (globalThis as { EventSource: unknown }).EventSource = original;
+      useTraceDock.getState().setActiveRun(null, "post-hoc");
+    }
+  });
+
+  test("openAgentRunStream drops malformed snapshot frames without crashing", () => {
+    type Listener = (ev: MessageEvent) => void;
+    const listeners: Record<string, Listener[]> = {};
+    class MockES {
+      constructor(_url: string) {}
+      addEventListener(name: string, fn: EventListener) {
+        (listeners[name] ??= []).push(fn as unknown as Listener);
+      }
+      removeEventListener() {}
+      close() {}
+    }
+    const original = globalThis.EventSource;
+    (globalThis as { EventSource: unknown }).EventSource =
+      MockES as unknown as typeof EventSource;
+
+    useTraceDock.getState().setActiveRun(null, "post-hoc");
+    const received: AgentRunStreamEvent[] = [];
+    const close = openAgentRunStream("run_stream_bad", (ev) => received.push(ev));
+
+    function fire(name: string, raw: string) {
+      const ev = new MessageEvent(name, { data: raw });
+      for (const fn of listeners[name] ?? []) fn(ev);
+    }
+    try {
+      fire("snapshot", "{not json");
+      fire("span_started", "{also not json");
+      // A subsequent valid lagged event should still flow.
+      fire("lagged", JSON.stringify({ dropped: 1 }));
+      expect(received.map((e) => e.event)).toEqual(["lagged"]);
+      expect(useTraceDock.getState().streamingState.droppedEvents).toBe(1);
+    } finally {
+      close();
+      (globalThis as { EventSource: unknown }).EventSource = original;
+      useTraceDock.getState().setActiveRun(null, "post-hoc");
     }
   });
 });

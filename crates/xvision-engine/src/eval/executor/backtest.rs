@@ -23,6 +23,7 @@ use xvision_core::market::Ohlcv;
 use xvision_data::fixtures::load_ohlcv_fixture;
 
 use crate::agent::llm::LlmDispatch;
+use crate::agent::observability::ObsEmitter;
 use crate::agent::pipeline::{run_pipeline, PipelineInputs, ResolvedAgentSlot};
 use crate::api::chart::{
     ChartEquityPoint, HoldMarker, LiveDecisionRow, MarkerEvent, RunChartEvent, RunEventBus, TradeMarker,
@@ -71,6 +72,13 @@ pub struct BacktestExecutor {
     /// real-time chart updates. When `None` (most unit tests), emission
     /// is a no-op.
     event_bus: Option<Arc<RunEventBus>>,
+    /// Optional observability emitter (`qa-eval-observability-wiring`,
+    /// 2026-05-17). When `Some`, every LLM dispatch inside this run
+    /// emits SpanStarted / SpanFinished + ModelCallFinished on the
+    /// agent-run observability bus, so failures surface in
+    /// `/api/agent-runs/<run_id>` and the trace dock. `None` keeps
+    /// existing unit-test paths silent.
+    obs_emitter: Option<ObsEmitter>,
 }
 
 impl BacktestExecutor {
@@ -91,6 +99,7 @@ impl BacktestExecutor {
             injected_bars: None,
             warmup_bars: Vec::new(),
             event_bus: None,
+            obs_emitter: None,
         }
     }
 
@@ -107,6 +116,7 @@ impl BacktestExecutor {
             injected_bars: Some(bars),
             warmup_bars: Vec::new(),
             event_bus: None,
+            obs_emitter: None,
         }
     }
 
@@ -117,6 +127,7 @@ impl BacktestExecutor {
             injected_bars: Some(bars),
             warmup_bars: Vec::new(),
             event_bus: None,
+            obs_emitter: None,
         }
     }
 
@@ -125,6 +136,14 @@ impl BacktestExecutor {
     ///   `BacktestExecutor::with_bars(bars).with_event_bus(bus)`.
     pub fn with_event_bus(mut self, bus: Arc<RunEventBus>) -> Self {
         self.event_bus = Some(bus);
+        self
+    }
+
+    /// Attach an observability emitter (`qa-eval-observability-wiring`).
+    /// The emitter is bound to a run id and threaded down into every
+    /// `execute_slot` invocation via `PipelineInputs.obs`.
+    pub fn with_observability(mut self, emitter: ObsEmitter) -> Self {
+        self.obs_emitter = Some(emitter);
         self
     }
 
@@ -406,6 +425,7 @@ impl BacktestExecutor {
                 seed_inputs: seed,
                 dispatch: dispatch.clone(),
                 tools: tools.clone(),
+                obs: self.obs_emitter.clone(),
             })
             .await?;
             total_input_tokens += outs.total_input_tokens as u64;
