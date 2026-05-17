@@ -220,6 +220,8 @@ pub enum Command {
     Agent(commands::agent::AgentCmd),
     /// Seed curated example strategies, scenarios, and tutorial artifacts.
     Example(commands::example::ExampleCmd),
+    /// Agent-run observability operations (retention, janitor).
+    Obs(commands::obs::ObsCmd),
 }
 
 impl Cli {
@@ -325,6 +327,7 @@ impl Cli {
             Command::Migrate(cmd) => commands::migrate::run(cmd).await,
             Command::Agent(cmd) => commands::agent::run(cmd).await,
             Command::Example(cmd) => commands::example::run(cmd).await,
+            Command::Obs(cmd) => commands::obs::run(cmd).await.map_err(Into::into),
         }
     }
 }
