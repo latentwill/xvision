@@ -273,7 +273,16 @@ function SummaryCard({
     <Card className="p-5">
       <div className="flex items-center justify-between mb-4">
         <div>
-          <div className="text-text-3 text-[12px] font-mono">{summary.id}</div>
+          <div className="flex items-center">
+            <div className="text-text-3 text-[12px] font-mono">{summary.id}</div>
+            {/* TODO(agent-run-observability): use summary.agent_run_id when backend adds it */}
+            <Link
+              to="/agent-runs/run_abc1234"
+              className="text-[12px] text-info hover:underline ml-3"
+            >
+              View agent trace →
+            </Link>
+          </div>
           <div className="text-text-2 text-[12px] mt-1">
             strategy{" "}
             <code className="font-mono text-text">
