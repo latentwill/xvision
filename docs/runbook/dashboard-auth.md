@@ -38,13 +38,23 @@ channels you'd use for an API key.
 
 ## Presenting the secret
 
-Three channels are accepted (constant-time compared, equivalent
+Four channels are accepted (constant-time compared, equivalent
 priority — first match wins):
 
 1. **Authorization header:** `Authorization: Bearer <token>`
 2. **Dedicated header:** `X-Xvision-Token: <token>`
-3. **Query parameter:** `?token=<token>` (URL-encoded). Useful for SSE
+3. **Bootstrap cookie:** `xvn_dashboard_token=<token>`, scoped to `/`,
+   `HttpOnly`, `SameSite=Lax`. The dashboard sets this automatically
+   after a valid header or query-token request so browser page loads can
+   fetch `/assets/*` and same-origin `/api/*` routes without appending the
+   token to every request.
+4. **Query parameter:** `?token=<token>` (URL-encoded). Useful for SSE
    subscriptions and download links where attaching a header is awkward.
+
+For browser use on a non-loopback bind, open the dashboard once with
+`?token=<token>` or arrive through a proxy that injects one of the
+headers. The response sets the bootstrap cookie; subsequent HTML assets
+and same-origin API calls authenticate through that cookie.
 
 Failed authentication returns HTTP 401 with a JSON body:
 
@@ -100,9 +110,9 @@ This wave does not ship:
   dashboard's plain HTTP port.
 - Per-user identities / RBAC — the shared secret authenticates the
   caller but doesn't identify them. Richer auth lands in V2B+.
-- Session cookies, OAuth, SSO. The `Authorization: Bearer` channel is
-  available for integration with token-issuing systems if needed; the
-  dashboard itself doesn't issue tokens.
+- Per-user session management, OAuth, SSO. The bootstrap cookie only
+  carries the configured shared secret for browser ergonomics; it is not
+  a per-user identity/session system.
 
 ## Quick smoke test
 
@@ -120,4 +130,5 @@ export XVN_DASHBOARD_TOKEN="$(openssl rand -hex 32)"
 xvn dashboard serve --bind 0.0.0.0:8788 &
 curl -sS http://<host>:8788/api/health        # → 401
 curl -sS -H "Authorization: Bearer $XVN_DASHBOARD_TOKEN" http://<host>:8788/api/health
+curl -i "http://<host>:8788/?token=$XVN_DASHBOARD_TOKEN" # → Set-Cookie: xvn_dashboard_token=...
 ```

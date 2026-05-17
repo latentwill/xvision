@@ -15,7 +15,10 @@
 //! - **Non-loopback** binds require a shared secret configured via the
 //!   `XVN_DASHBOARD_TOKEN` env var. Requests must present the secret via
 //!   `Authorization: Bearer <token>`, the dedicated `X-Xvision-Token`
-//!   header, or `?token=<token>` query parameter.
+//!   header, a scoped auth cookie, or `?token=<token>` query parameter.
+//!   A valid header/query token sets the cookie so browser loads can fetch
+//!   static assets and same-origin API calls without appending the token to
+//!   every URL.
 //! - **Missing secret on a non-loopback bind is a startup error.** The
 //!   server refuses to start in that configuration rather than silently
 //!   accepting unauthenticated traffic. The runbook documents how to set
@@ -50,6 +53,9 @@ pub const AUTH_TOKEN_HEADER: &str = "x-xvision-token";
 /// downloads where the browser can't easily attach a header.
 pub const AUTH_TOKEN_QUERY_PARAM: &str = "token";
 
+/// Cookie name used after a successful header/query-token bootstrap.
+const AUTH_COOKIE_NAME: &str = "xvn_dashboard_token";
+
 /// Auth posture for the running server. Cheap to clone because the
 /// inner token is wrapped in `Arc`.
 #[derive(Clone, Debug)]
@@ -68,9 +74,7 @@ impl AuthState {
     /// Auth posture for a loopback-only bind: no token required.
     pub fn loopback_only() -> Self {
         Self {
-            inner: std::sync::Arc::new(AuthStateInner {
-                required_token: None,
-            }),
+            inner: std::sync::Arc::new(AuthStateInner { required_token: None }),
         }
     }
 
@@ -113,34 +117,43 @@ impl AuthState {
     /// requests from loopback are exempt even when the server is bound
     /// to a public interface (this preserves localhost dev access via
     /// SSH tunnel etc).
-    fn authenticate(&self, client_ip: IpAddr, headers: &HeaderMap, query: Option<&str>) -> bool {
+    fn authenticate(&self, client_ip: IpAddr, headers: &HeaderMap, query: Option<&str>) -> AuthDecision {
         let Some(expected) = self.inner.required_token.as_deref() else {
-            return true;
+            return AuthDecision::Allow;
         };
         if client_ip.is_loopback() {
-            return true;
+            return AuthDecision::Allow;
         }
 
         if let Some(presented) = read_bearer(headers) {
             if constant_time_eq(presented, expected) {
-                return true;
+                return AuthDecision::AllowAndPersistCookie;
             }
         }
-        if let Some(presented) = headers
-            .get(AUTH_TOKEN_HEADER)
-            .and_then(|v| v.to_str().ok())
-        {
+        if let Some(presented) = headers.get(AUTH_TOKEN_HEADER).and_then(|v| v.to_str().ok()) {
             if constant_time_eq(presented, expected) {
-                return true;
+                return AuthDecision::AllowAndPersistCookie;
+            }
+        }
+        if let Some(presented) = read_cookie_token(headers) {
+            if constant_time_eq(&presented, expected) {
+                return AuthDecision::Allow;
             }
         }
         if let Some(presented) = read_query_token(query) {
             if constant_time_eq(&presented, expected) {
-                return true;
+                return AuthDecision::AllowAndPersistCookie;
             }
         }
-        false
+        AuthDecision::Reject
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AuthDecision {
+    Allow,
+    AllowAndPersistCookie,
+    Reject,
 }
 
 /// Axum middleware factory. Returns a `from_fn_with_state`-compatible
@@ -153,10 +166,16 @@ pub async fn auth_middleware(
 ) -> Result<Response, Response> {
     let headers = request.headers().clone();
     let query = request.uri().query().map(|q| q.to_string());
-    if state.authenticate(addr.ip(), &headers, query.as_deref()) {
-        Ok(next.run(request).await)
-    } else {
-        Err(unauthorized_response())
+    match state.authenticate(addr.ip(), &headers, query.as_deref()) {
+        AuthDecision::Allow => Ok(next.run(request).await),
+        AuthDecision::AllowAndPersistCookie => {
+            let mut response = next.run(request).await;
+            response
+                .headers_mut()
+                .insert(header::SET_COOKIE, auth_cookie_header(&state));
+            Ok(response)
+        }
+        AuthDecision::Reject => Err(unauthorized_response()),
     }
 }
 
@@ -173,7 +192,9 @@ fn unauthorized_response() -> Response {
     );
     resp.headers_mut().insert(
         header::WWW_AUTHENTICATE,
-        "Bearer realm=\"xvision-dashboard\"".parse().expect("valid header"),
+        "Bearer realm=\"xvision-dashboard\""
+            .parse()
+            .expect("valid header"),
     );
     resp.into_response()
 }
@@ -195,6 +216,29 @@ fn read_query_token(query: Option<&str>) -> Option<String> {
         }
     }
     None
+}
+
+fn read_cookie_token(headers: &HeaderMap) -> Option<String> {
+    let raw = headers.get(header::COOKIE)?.to_str().ok()?;
+    for pair in raw.split(';') {
+        let trimmed = pair.trim();
+        let Some((name, value)) = trimmed.split_once('=') else {
+            continue;
+        };
+        if name == AUTH_COOKIE_NAME {
+            return Some(percent_decode(value));
+        }
+    }
+    None
+}
+
+fn auth_cookie_header(state: &AuthState) -> axum::http::HeaderValue {
+    let token = state.inner.required_token.as_deref().unwrap_or("");
+    let value = format!(
+        "{AUTH_COOKIE_NAME}={}; Path=/; HttpOnly; SameSite=Lax",
+        percent_encode_cookie_value(token),
+    );
+    axum::http::HeaderValue::from_str(&value).expect("auth cookie value must be valid header")
 }
 
 /// Minimal percent-decode: handles `+` → space and `%XX` byte escapes.
@@ -228,6 +272,19 @@ fn percent_decode(input: &str) -> String {
         }
     }
     String::from_utf8_lossy(&out).into_owned()
+}
+
+fn percent_encode_cookie_value(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for b in input.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                out.push(b as char);
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }
 
 fn is_loopback(addr: &SocketAddr) -> bool {
@@ -277,18 +334,36 @@ mod tests {
         h
     }
 
+    fn allowed(decision: AuthDecision) -> bool {
+        matches!(
+            decision,
+            AuthDecision::Allow | AuthDecision::AllowAndPersistCookie,
+        )
+    }
+
     #[test]
     fn loopback_only_lets_everything_through() {
         let state = AuthState::loopback_only();
-        assert!(state.authenticate(ip("127.0.0.1"), &HeaderMap::new(), None));
-        assert!(state.authenticate(ip("203.0.113.5"), &HeaderMap::new(), None));
+        assert!(allowed(state.authenticate(
+            ip("127.0.0.1"),
+            &HeaderMap::new(),
+            None,
+        )));
+        assert!(allowed(state.authenticate(
+            ip("203.0.113.5"),
+            &HeaderMap::new(),
+            None,
+        )));
         assert!(!state.is_gated());
     }
 
     #[test]
     fn non_loopback_rejects_when_token_missing() {
         let state = AuthState::with_required_token("s3cr3t".into());
-        assert!(!state.authenticate(ip("203.0.113.5"), &HeaderMap::new(), None));
+        assert_eq!(
+            state.authenticate(ip("203.0.113.5"), &HeaderMap::new(), None),
+            AuthDecision::Reject,
+        );
         assert!(state.is_gated());
     }
 
@@ -296,34 +371,48 @@ mod tests {
     fn non_loopback_accepts_with_bearer_header() {
         let state = AuthState::with_required_token("s3cr3t".into());
         let headers = headers_with("authorization", "Bearer s3cr3t");
-        assert!(state.authenticate(ip("203.0.113.5"), &headers, None));
+        assert_eq!(
+            state.authenticate(ip("203.0.113.5"), &headers, None),
+            AuthDecision::AllowAndPersistCookie,
+        );
     }
 
     #[test]
     fn non_loopback_accepts_with_xvision_token_header() {
         let state = AuthState::with_required_token("s3cr3t".into());
         let headers = headers_with(AUTH_TOKEN_HEADER, "s3cr3t");
-        assert!(state.authenticate(ip("203.0.113.5"), &headers, None));
+        assert_eq!(
+            state.authenticate(ip("203.0.113.5"), &headers, None),
+            AuthDecision::AllowAndPersistCookie,
+        );
+    }
+
+    #[test]
+    fn non_loopback_accepts_with_auth_cookie_without_resetting_cookie() {
+        let state = AuthState::with_required_token("s3cr3t".into());
+        let headers = headers_with("cookie", "theme=dark; xvn_dashboard_token=s3cr3t; other=1");
+        assert_eq!(
+            state.authenticate(ip("203.0.113.5"), &headers, None),
+            AuthDecision::Allow,
+        );
     }
 
     #[test]
     fn non_loopback_accepts_with_query_token() {
         let state = AuthState::with_required_token("s3cr3t".into());
-        assert!(state.authenticate(
-            ip("203.0.113.5"),
-            &HeaderMap::new(),
-            Some("token=s3cr3t&foo=bar"),
-        ));
+        assert_eq!(
+            state.authenticate(ip("203.0.113.5"), &HeaderMap::new(), Some("token=s3cr3t&foo=bar"),),
+            AuthDecision::AllowAndPersistCookie,
+        );
     }
 
     #[test]
     fn query_token_must_url_decode() {
         let state = AuthState::with_required_token("a b".into());
-        assert!(state.authenticate(
-            ip("203.0.113.5"),
-            &HeaderMap::new(),
-            Some("token=a%20b"),
-        ));
+        assert_eq!(
+            state.authenticate(ip("203.0.113.5"), &HeaderMap::new(), Some("token=a%20b")),
+            AuthDecision::AllowAndPersistCookie,
+        );
     }
 
     #[test]
@@ -331,22 +420,43 @@ mod tests {
         let state = AuthState::with_required_token("s3cr3t".into());
         // Even though the server bound to 0.0.0.0, a request from 127.0.0.1
         // is treated as trusted (loopback is the operator's own machine).
-        assert!(state.authenticate(ip("127.0.0.1"), &HeaderMap::new(), None));
-        assert!(state.authenticate(ip("::1"), &HeaderMap::new(), None));
+        assert_eq!(
+            state.authenticate(ip("127.0.0.1"), &HeaderMap::new(), None),
+            AuthDecision::Allow,
+        );
+        assert_eq!(
+            state.authenticate(ip("::1"), &HeaderMap::new(), None),
+            AuthDecision::Allow,
+        );
     }
 
     #[test]
     fn wrong_token_is_rejected_via_every_channel() {
         let state = AuthState::with_required_token("right".into());
         let header_wrong = headers_with("authorization", "Bearer wrong");
-        assert!(!state.authenticate(ip("203.0.113.5"), &header_wrong, None));
+        assert_eq!(
+            state.authenticate(ip("203.0.113.5"), &header_wrong, None),
+            AuthDecision::Reject,
+        );
         let h2 = headers_with(AUTH_TOKEN_HEADER, "wrong");
-        assert!(!state.authenticate(ip("203.0.113.5"), &h2, None));
-        assert!(!state.authenticate(
-            ip("203.0.113.5"),
-            &HeaderMap::new(),
-            Some("token=wrong"),
-        ));
+        assert_eq!(
+            state.authenticate(ip("203.0.113.5"), &h2, None),
+            AuthDecision::Reject,
+        );
+        assert_eq!(
+            state.authenticate(ip("203.0.113.5"), &HeaderMap::new(), Some("token=wrong")),
+            AuthDecision::Reject,
+        );
+    }
+
+    #[test]
+    fn auth_cookie_percent_encodes_token_for_browser_bootstrap() {
+        let state = AuthState::with_required_token("a b;c".into());
+        let header = auth_cookie_header(&state);
+        let value = header.to_str().unwrap();
+        assert!(value.contains("xvn_dashboard_token=a%20b%3Bc"));
+        assert!(value.contains("Path=/"));
+        assert!(value.contains("HttpOnly"));
     }
 
     #[test]
