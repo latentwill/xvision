@@ -42,7 +42,10 @@ through their contracts' `parallel_conflicts`.
 | `frontend/web/src/components/primitives/Pill.tsx` | (closed-out: `eval-running-animation`) | ux-polish |
 | `frontend/web/src/routes/eval-runs.tsx` | `ux-polish-eval-list-and-snapshot` | ux-polish |
 | `frontend/web/src/routes/eval-runs.test.tsx` | `ux-polish-eval-list-and-snapshot` | ux-polish |
-| `frontend/web/src/routes/eval-runs-detail.tsx` | (closed-out: `eval-running-animation`) | ux-polish |
+| `frontend/web/src/routes/eval-runs-detail.tsx` | `mobile-eval-run-detail` (re-claimed; was closed-out from `eval-running-animation`) | mobile-polish |
+| `frontend/web/src/routes/eval-runs-detail.test.tsx` | `mobile-eval-run-detail` | mobile-polish |
+| `frontend/web/src/routes/eval-runs-detail-mobile.tsx` | `mobile-eval-run-detail` (new file) | mobile-polish |
+| `frontend/web/src/routes/eval-runs-detail-mobile.test.tsx` | `mobile-eval-run-detail` (new file) | mobile-polish |
 | `frontend/web/src/routes/eval-compare.tsx` | (closed-out: `eval-running-animation`) | ux-polish |
 | `frontend/web/src/routes/home.tsx` | `ux-polish-eval-list-and-snapshot` | ux-polish |
 | `frontend/web/src/routes/home.test.tsx` | `ux-polish-eval-list-and-snapshot` | ux-polish |
