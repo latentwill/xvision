@@ -14,6 +14,27 @@ V2 work (V2A onboarding + docs, V2B–V4 roadmap) lives on its own board:
 
 - [ux-polish-eval-list-and-snapshot](contracts/ux-polish-eval-list-and-snapshot.md) — leaf · ready · chart snapshot title + eval-list friendly labels + scroll indicator
 
+### qa-2026-05-17 — comprehensive codebase review
+
+Decomposition: `team/intake/2026-05-17-qa-comprehensive-codebase-review.md`.
+Source: `qa/2026-05-17-comprehensive-codebase-review.md` (3×P1, 3×P2, 4×P3).
+
+P1 (claim first):
+
+- [qa-execute-slot-cap](contracts/qa-execute-slot-cap.md) — foundation · ready · bound `execute_slot` tool-use loop with iteration cap + typed error
+- [qa-agentd-budget-enforcement](contracts/qa-agentd-budget-enforcement.md) — leaf · ready · enforce `budget_limits.max_wall_ms` + token caps in `xvision-agentd`
+- [qa-dashboard-auth-hardening](contracts/qa-dashboard-auth-hardening.md) — integration · ready · gate `/api/cli/jobs` + danger routes; argv allowlist; server-side challenge
+
+P2:
+
+- [qa-role-normalization](contracts/qa-role-normalization.md) — leaf · ready · canonicalize `AgentRef.role` at mutation; fix trader-case + whitespace drift (combines findings 5+6+7)
+
+P3:
+
+- [qa-strategy-id-path-safety](contracts/qa-strategy-id-path-safety.md) — leaf · ready · path-safe strategy ID validation in `FilesystemStore`
+- [qa-eval-retry-params-override](contracts/qa-eval-retry-params-override.md) — leaf · ready · include `params_override` in retry idempotency predicate
+- [qa-chart-hold-marker-zero](contracts/qa-chart-hold-marker-zero.md) — leaf · ready · stop emitting hold markers at price 0.0 on bar-lookup miss
+
 `cline-sdk-wave1-2` (#208) and `observability-review-fixes` (#207) merged
 2026-05-17; both archived under
 `team/archive/2026-05-17-cline-sdk-merge/`. PR #199 (DRAFT spec) closed as
@@ -28,6 +49,12 @@ The remaining v1 worker stream is the V2A onboarding leaves on
 Safe to claim right now (no unresolved Foundation dependency):
 
 - `ux-polish-eval-list-and-snapshot` — three independent UI nits in one PR.
+- All seven `qa-*` tracks above. P1 tracks (`qa-execute-slot-cap`,
+  `qa-agentd-budget-enforcement`, `qa-dashboard-auth-hardening`) take
+  priority. `qa-role-normalization` and `qa-execute-slot-cap` both touch
+  `crates/xvision-engine/src/agent/` (different files) — coordinate
+  rebases. `qa-dashboard-auth-hardening` re-claims the
+  `dashboard/src/{server,lib}.rs` single-writer rows (registered below).
 - Phase B agent-run-observability contracts — **now unblocked** by the
   #208 merge (Cline SDK migration step 3 complete; `xvision-agent-client`
   crate is on `main`). Contracts in the Reserved section can be promoted
