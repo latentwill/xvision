@@ -5,7 +5,7 @@ wave: agent-run-observability-followups
 worktree: .worktrees/agent-run-observability-sse-stream-frontend
 branch: task/agent-run-observability-sse-stream-frontend
 base: origin/main
-status: blocked
+status: claimed
 depends_on:
   - agent-run-observability-ui            # PR #227 — mock→real openAgentRunStream surface
   - agent-run-observability-sse-stream    # PR #235 — backend SSE route + wire protocol

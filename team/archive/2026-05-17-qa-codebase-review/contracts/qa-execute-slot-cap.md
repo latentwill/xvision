@@ -5,10 +5,10 @@ wave: qa-2026-05-17
 worktree: .worktrees/qa-execute-slot-cap
 branch: task/qa-execute-slot-cap
 base: origin/main
-status: ready
+status: pr-open
 depends_on: []
 blocks: []
-stacking: none
+stacking: declared:qa-remove-agent-max-tokens
 allowed_paths:
   - crates/xvision-engine/src/agent/execute.rs
   - crates/xvision-engine/src/agent/execute.test.rs
