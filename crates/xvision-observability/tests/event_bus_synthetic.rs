@@ -300,12 +300,26 @@ async fn run_finished_then_recorder_writes_completed_status() {
     }))
     .await;
 
-    wait_for_rows(&pool, "agent_runs", 1).await;
-    let (status,): (String,) =
-        sqlx::query_as("SELECT status FROM agent_runs WHERE id = ?")
-            .bind(&run_id)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    assert_eq!(status, RunStatus::Completed.as_db_str());
+    // Wait for the row AND the status transition. The plain `agent_runs
+    // count >= 1` check is satisfied after RunStarted's INSERT but
+    // before RunFinished's UPDATE, leaving a race window where status
+    // is still "running".
+    let deadline = std::time::Instant::now() + StdDuration::from_secs(2);
+    loop {
+        let row: Option<(String,)> =
+            sqlx::query_as("SELECT status FROM agent_runs WHERE id = ?")
+                .bind(&run_id)
+                .fetch_optional(&pool)
+                .await
+                .unwrap();
+        if let Some((status,)) = row {
+            if status == RunStatus::Completed.as_db_str() {
+                return;
+            }
+        }
+        if std::time::Instant::now() >= deadline {
+            panic!("agent_runs row did not reach `completed` in time");
+        }
+        tokio::time::sleep(StdDuration::from_millis(10)).await;
+    }
 }

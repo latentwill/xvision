@@ -1,4 +1,4 @@
-//! `RunEventBus` — bounded mpsc bus + multi-subscriber fan-out.
+//! `RunEventBus` — bounded ring-buffer bus + multi-subscriber fan-out.
 //!
 //! Producers (the `xvision-agent-client` IPC handler in Phase B; tests
 //! today) call `publish(event)`. A single consumer task drains the bus
@@ -6,40 +6,46 @@
 //!
 //! ## Overflow semantics
 //!
-//! The contract requires that gaps in the recorded timeline are
-//! *visible* and that lifecycle-closing events (`RunStarted`,
-//! `RunFinished`, `RunInterrupted`, `SidecarError`) are *never lost* —
-//! otherwise runs/spans stay open in SQLite or sidecar crashes go
-//! unrecorded.
+//! Per the Phase A contract, the bus **drops the oldest queued event on
+//! full**, increments a per-routing-key drop counter, and emits a
+//! `BackpressureDropped` event so a downstream `supervisor_notes` row
+//! records the gap.
 //!
-//! We implement this with two paths:
+//! Lifecycle-closing events (`RunStarted`, `RunFinished`,
+//! `RunInterrupted`, `SidecarError`) must never be lost — otherwise
+//! runs/spans stay open in SQLite or sidecar crashes go unrecorded.
+//! The eviction scan skips them: on full we drop the oldest
+//! **non-lifecycle** event. In the degenerate case where every queued
+//! event is lifecycle-critical, the producer is awaited until the
+//! consumer drains a slot (true backpressure). That path requires
+//! sustained sidecar-crash-level event rates and is not expected in
+//! practice.
 //!
-//! - **Lifecycle-critical events** (`RunEvent::is_lifecycle_critical`)
-//!   use `mpsc::Sender::send().await`, which applies backpressure to the
-//!   producer rather than dropping. These events are low-frequency, so
-//!   the producer briefly awaiting a free slot is acceptable.
-//! - **Routine high-volume events** (span starts/finishes, model/tool
-//!   calls, text deltas, checkpoints, notes) use `try_send`. On `Full`
-//!   the new event is dropped and a per-routing-key counter is bumped.
-//!
-//! Drops are attributed by routing key: `run_id` if the event carries
-//! one directly, otherwise `span_id` (the bus consumer maintains a
-//! `span_id → run_id` map populated from `SpanStarted` events, so
-//! span-keyed drops are translated to runs before the
-//! `BackpressureDropped` marker is published). If neither id is
-//! available, the drop is logged at `warn` and surfaced as a marker
-//! with empty `run_id` so it still appears in `supervisor_notes`.
+//! Drops are attributed by routing key against the EVICTED event:
+//! `run_id` if it carries one directly, otherwise `span_id` (the bus
+//! consumer maintains a `span_id → run_id` map populated from
+//! `SpanStarted` events, so span-keyed drops are translated to runs
+//! before the `BackpressureDropped` marker is published). If neither id
+//! is available, the drop surfaces as an unattributed marker.
 //!
 //! Sequencing guarantee: FIFO per `run_id`. Cross-run ordering is
 //! best-effort.
 
 use crate::events::{BackpressureDroppedEvent, RunEvent};
 use crate::recorder::{AgentRunRecorder, RecorderError};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, Notify};
 use tokio::task::JoinHandle;
 use tracing::warn;
+
+/// Internal: outcome of one publish attempt. `Blocked` carries the
+/// event back so the caller can retry without cloning.
+enum PublishOutcome {
+    Evicted(RunEvent),
+    Blocked(RunEvent),
+}
 
 /// Identifies the bucket a drop is counted under. Span-keyed drops are
 /// translated to run-keyed drops once the consumer has seen the
@@ -53,14 +59,47 @@ enum DropKey {
     Unattributed,
 }
 
-#[derive(Debug)]
+struct Inner {
+    capacity: usize,
+    queue: Mutex<VecDeque<RunEvent>>,
+    drops: Mutex<HashMap<DropKey, u32>>,
+    /// `span_id → run_id` map, populated when a `SpanStarted` is
+    /// **published** (not when consumed). Producer-side population
+    /// matters because a `SpanStarted` can be evicted on full before
+    /// the consumer ever sees it — without producer-side population,
+    /// subsequent span-scoped drops for that span would never
+    /// translate to a run.
+    span_to_run: Mutex<HashMap<String, String>>,
+    /// Wakes the consumer when a new event arrives.
+    notify_consumer: Notify,
+    /// Wakes a backpressured producer when the consumer drains a slot.
+    /// Only used in the degenerate "queue full of lifecycle events"
+    /// fallback.
+    notify_producer: Notify,
+    closed: AtomicBool,
+}
+
 pub struct RunEventBus {
-    tx: mpsc::Sender<RunEvent>,
-    /// Drop counters maintained by both producers (on `Full`) and the
-    /// consumer (translation + drain).
-    drops: Arc<Mutex<HashMap<DropKey, u32>>>,
-    /// Consumer task handle. Dropped when the bus shuts down.
+    inner: Arc<Inner>,
     _consumer: JoinHandle<()>,
+}
+
+impl std::fmt::Debug for RunEventBus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RunEventBus")
+            .field("capacity", &self.inner.capacity)
+            .finish()
+    }
+}
+
+impl Drop for RunEventBus {
+    fn drop(&mut self) {
+        // Tell the consumer to exit so background tasks don't outlive
+        // the bus handle. The consumer wakes on either `notify_consumer`
+        // or the `closed` flag below.
+        self.inner.closed.store(true, Ordering::Release);
+        self.inner.notify_consumer.notify_waiters();
+    }
 }
 
 impl RunEventBus {
@@ -76,84 +115,164 @@ impl RunEventBus {
         capacity: usize,
         subscribers: Vec<Arc<dyn AgentRunRecorder>>,
     ) -> Self {
-        let (tx, mut rx) = mpsc::channel::<RunEvent>(capacity.max(1));
-        let drops = Arc::new(Mutex::new(HashMap::<DropKey, u32>::new()));
-        let drops_for_task = drops.clone();
-        let tx_for_task = tx.clone();
+        let inner = Arc::new(Inner {
+            capacity: capacity.max(1),
+            queue: Mutex::new(VecDeque::with_capacity(capacity.max(1))),
+            drops: Mutex::new(HashMap::new()),
+            span_to_run: Mutex::new(HashMap::new()),
+            notify_consumer: Notify::new(),
+            notify_producer: Notify::new(),
+            closed: AtomicBool::new(false),
+        });
+        let inner_for_task = inner.clone();
         let consumer = tokio::spawn(async move {
-            // Consumer-local span→run map. Populated from `SpanStarted`
-            // events that successfully traverse the bus; used to
-            // translate span-keyed drops into the run they belong to.
-            let mut span_to_run: HashMap<String, String> = HashMap::new();
-            while let Some(event) = rx.recv().await {
-                if let RunEvent::SpanStarted(s) = &event {
-                    span_to_run.insert(s.span_id.clone(), s.run_id.clone());
-                }
-                for sub in &subscribers {
-                    if let Err(e) = sub.handle_event(&event).await {
-                        recorder_error(&e);
-                    }
-                }
-                flush_drops(&drops_for_task, &mut span_to_run, &tx_for_task, &event)
-                    .await;
-            }
+            consumer_loop(inner_for_task, subscribers).await;
         });
         Self {
-            tx,
-            drops,
+            inner,
             _consumer: consumer,
         }
     }
 
     /// Publish an event onto the bus.
     ///
-    /// - Lifecycle-critical events (see [`RunEvent::is_lifecycle_critical`])
-    ///   apply backpressure to the producer via `send().await` rather
-    ///   than being dropped — losing one of these leaves the run/spans
-    ///   in an inconsistent state in SQLite.
-    /// - Routine events use `try_send`. On overflow the event is
-    ///   dropped and the drop is attributed by routing key (run_id ▸
-    ///   span_id ▸ unattributed) so that a `BackpressureDropped` marker
-    ///   eventually surfaces the gap in `supervisor_notes`.
+    /// On full, the oldest non-lifecycle event is evicted to make room
+    /// and a drop counter is incremented (attributed to the evicted
+    /// event's run). If every queued event is lifecycle-critical, the
+    /// producer is awaited until the consumer drains a slot — this is
+    /// the only backpressure path and exists so lifecycle markers are
+    /// never lost.
     pub async fn publish(&self, event: RunEvent) {
-        if event.is_lifecycle_critical() {
-            if let Err(e) = self.tx.send(event).await {
-                warn!(
-                    target: "xvision_observability::bus",
-                    "lifecycle event dropped because bus is closed: {e}"
-                );
-            }
-            return;
+        // Populate the bus-wide span→run map BEFORE we attempt to
+        // enqueue. The event itself may be evicted on full, but the
+        // mapping survives so future span-scoped drops can still be
+        // attributed to the right run.
+        if let RunEvent::SpanStarted(s) = &event {
+            self.inner
+                .span_to_run
+                .lock()
+                .await
+                .insert(s.span_id.clone(), s.run_id.clone());
         }
-        let key = drop_key_for(&event);
-        match self.tx.try_send(event) {
-            Ok(()) => {}
-            Err(mpsc::error::TrySendError::Full(_)) => {
-                *self.drops.lock().await.entry(key).or_insert(0) += 1;
-            }
-            Err(mpsc::error::TrySendError::Closed(_)) => {
-                // Bus is shutting down; producers should stop. We log
-                // once per close on the consumer side, not here.
+        let mut pending = event;
+        loop {
+            let outcome = {
+                let mut q = self.inner.queue.lock().await;
+                if q.len() < self.inner.capacity {
+                    q.push_back(pending);
+                    self.inner.notify_consumer.notify_one();
+                    return;
+                }
+                if let Some(idx) =
+                    q.iter().position(|e| !e.is_lifecycle_critical())
+                {
+                    let evicted = q.remove(idx).expect("idx was just observed");
+                    q.push_back(pending);
+                    PublishOutcome::Evicted(evicted)
+                } else {
+                    // Every queued event is lifecycle-critical — we
+                    // can't drop any of them. Hand `pending` back so
+                    // we can retry after the consumer drains a slot.
+                    PublishOutcome::Blocked(pending)
+                }
+            };
+            match outcome {
+                PublishOutcome::Evicted(e) => {
+                    let key = drop_key_for(&e);
+                    *self
+                        .inner
+                        .drops
+                        .lock()
+                        .await
+                        .entry(key)
+                        .or_insert(0) += 1;
+                    self.inner.notify_consumer.notify_one();
+                    return;
+                }
+                PublishOutcome::Blocked(returned) => {
+                    pending = returned;
+                    self.inner.notify_producer.notified().await;
+                    continue;
+                }
             }
         }
     }
 
     /// Synchronous variant for hot paths where awaiting is not possible.
-    /// Drops the event on overflow without updating drop counters
-    /// (those require the async lock). Callers should prefer
-    /// [`Self::publish`] when an async context is available.
+    /// On full, the oldest non-lifecycle event is evicted; returns
+    /// `Err(event)` only when the bus is closed or no non-lifecycle
+    /// event can be evicted. Callers should prefer [`Self::publish`]
+    /// when an async context is available because the sync path can
+    /// only make best-effort drop accounting (it cannot await the
+    /// async drops-map lock).
     pub fn try_publish(&self, event: RunEvent) -> Result<(), RunEvent> {
-        match self.tx.try_send(event) {
-            Ok(()) => Ok(()),
-            Err(mpsc::error::TrySendError::Full(e)) => Err(e),
-            Err(mpsc::error::TrySendError::Closed(e)) => Err(e),
+        if self.inner.closed.load(Ordering::Acquire) {
+            return Err(event);
         }
+        let mut q = match self.inner.queue.try_lock() {
+            Ok(g) => g,
+            Err(_) => return Err(event),
+        };
+        if q.len() < self.inner.capacity {
+            q.push_back(event);
+            self.inner.notify_consumer.notify_one();
+            return Ok(());
+        }
+        if let Some(idx) = q.iter().position(|e| !e.is_lifecycle_critical()) {
+            let evicted = q.remove(idx).expect("idx was just observed");
+            q.push_back(event);
+            drop(q);
+            // Best-effort drop accounting without awaiting.
+            if let Ok(mut drops) = self.inner.drops.try_lock() {
+                *drops.entry(drop_key_for(&evicted)).or_insert(0) += 1;
+            }
+            self.inner.notify_consumer.notify_one();
+            return Ok(());
+        }
+        Err(event)
     }
 
     /// Test helper: drain the bus and let subscribers finish. Returns
     /// when there are no in-flight messages.
     pub async fn quiesce(&self) {
         tokio::task::yield_now().await;
+    }
+}
+
+async fn consumer_loop(
+    inner: Arc<Inner>,
+    subscribers: Vec<Arc<dyn AgentRunRecorder>>,
+) {
+    loop {
+        let event = match next_event(&inner).await {
+            Some(e) => e,
+            None => return,
+        };
+        for sub in &subscribers {
+            if let Err(e) = sub.handle_event(&event).await {
+                recorder_error(&e);
+            }
+        }
+        flush_drops(&inner, &event).await;
+    }
+}
+
+/// Block until either a new event arrives or the bus closes.
+async fn next_event(inner: &Arc<Inner>) -> Option<RunEvent> {
+    loop {
+        {
+            let mut q = inner.queue.lock().await;
+            if let Some(e) = q.pop_front() {
+                // We just freed a slot; wake any backpressured
+                // producer that was waiting on a lifecycle-only queue.
+                inner.notify_producer.notify_waiters();
+                return Some(e);
+            }
+            if inner.closed.load(Ordering::Acquire) {
+                return None;
+            }
+        }
+        inner.notify_consumer.notified().await;
     }
 }
 
@@ -172,20 +291,14 @@ fn drop_key_for(event: &RunEvent) -> DropKey {
 /// span→run map, then emit a `BackpressureDropped` marker per run that
 /// has pending drops. Unattributable drops are emitted with empty
 /// `run_id` so the gap still surfaces in `supervisor_notes`.
-async fn flush_drops(
-    drops: &Arc<Mutex<HashMap<DropKey, u32>>>,
-    span_to_run: &mut HashMap<String, String>,
-    tx: &mpsc::Sender<RunEvent>,
-    just_handled: &RunEvent,
-) {
+async fn flush_drops(inner: &Arc<Inner>, just_handled: &RunEvent) {
     let markers: Vec<BackpressureDroppedEvent> = {
-        let mut map = drops.lock().await;
+        let mut map = inner.drops.lock().await;
         if map.is_empty() {
-            // Still prune span_to_run on lifecycle close so it stays
-            // bounded even when no drops occurred.
-            prune_span_map(span_to_run, just_handled);
+            prune_span_map(&inner.span_to_run, just_handled).await;
             return;
         }
+        let span_to_run = inner.span_to_run.lock().await;
         let mut per_run: HashMap<String, u32> = HashMap::new();
         let mut unattributed: u32 = 0;
         let keys: Vec<DropKey> = map.keys().cloned().collect();
@@ -213,7 +326,8 @@ async fn flush_drops(
                 }
             }
         }
-        prune_span_map(span_to_run, just_handled);
+        drop(span_to_run);
+        prune_span_map(&inner.span_to_run, just_handled).await;
         let mut out: Vec<BackpressureDroppedEvent> = per_run
             .into_iter()
             .map(|(run_id, dropped)| BackpressureDroppedEvent {
@@ -233,34 +347,50 @@ async fn flush_drops(
         out
     };
     for marker in markers {
-        let run_id = marker.run_id.clone();
-        let dropped = marker.dropped;
-        if let Err(mpsc::error::TrySendError::Full(_)) =
-            tx.try_send(RunEvent::BackpressureDropped(marker))
-        {
-            warn!(
-                target: "xvision_observability::bus",
-                run_id = %run_id, dropped,
-                "could not enqueue backpressure marker; bus still saturated, requeueing"
-            );
-            let key = if run_id.is_empty() {
-                DropKey::Unattributed
-            } else {
-                DropKey::Run(run_id)
-            };
-            *drops.lock().await.entry(key).or_insert(0) += dropped;
-        }
+        publish_marker(inner, marker).await;
     }
 }
 
-fn prune_span_map(span_to_run: &mut HashMap<String, String>, event: &RunEvent) {
+async fn publish_marker(inner: &Arc<Inner>, marker: BackpressureDroppedEvent) {
+    let event = RunEvent::BackpressureDropped(marker);
+    {
+        let mut q = inner.queue.lock().await;
+        if q.len() < inner.capacity {
+            q.push_back(event);
+            inner.notify_consumer.notify_one();
+            return;
+        }
+    }
+    // Queue is still saturated. Re-park the count in the drops map so
+    // the next `flush_drops` (triggered when the consumer drains one
+    // of the events ahead in the queue) retries the marker. This is
+    // strictly preferable to evicting another event here — a marker
+    // recursively evicting another event would itself need to be
+    // counted, leading to an unbounded chain.
+    let RunEvent::BackpressureDropped(m) = event else {
+        unreachable!()
+    };
+    let key = if m.run_id.is_empty() {
+        DropKey::Unattributed
+    } else {
+        DropKey::Run(m.run_id.clone())
+    };
+    *inner.drops.lock().await.entry(key).or_insert(0) += m.dropped;
+    warn!(
+        target: "xvision_observability::bus",
+        run_id = %m.run_id, dropped = m.dropped,
+        "could not enqueue backpressure marker now; re-parked for next consumed event"
+    );
+}
+
+async fn prune_span_map(span_to_run: &Mutex<HashMap<String, String>>, event: &RunEvent) {
     let run_id = match event {
-        RunEvent::RunFinished(e) => Some(&e.run_id),
-        RunEvent::RunInterrupted(e) => Some(&e.run_id),
+        RunEvent::RunFinished(e) => Some(e.run_id.clone()),
+        RunEvent::RunInterrupted(e) => Some(e.run_id.clone()),
         _ => None,
     };
     if let Some(run_id) = run_id {
-        span_to_run.retain(|_, r| r != run_id);
+        span_to_run.lock().await.retain(|_, r| r != &run_id);
     }
 }
 
