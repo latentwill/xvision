@@ -543,7 +543,8 @@ fn compute_position(decisions: &[crate::eval::store::DecisionRow], bars: &[Marke
 /// column to `DecisionRow` if needed.
 ///
 /// For `HoldMarker.price` we look up the bar whose timestamp matches the
-/// decision timestamp; if not found we fall back to 0.0.
+/// decision timestamp; if not found we skip the marker. Rendering a marker at
+/// zero distorts autoscaling and falsely implies a market crash.
 fn split_markers(decisions: &[crate::eval::store::DecisionRow], bars: &[MarketBar]) -> ChartMarkers {
     // Build a timestamp → close price index for hold-marker price lookup.
     let bar_close: std::collections::HashMap<i64, f64> =
@@ -607,13 +608,14 @@ fn split_markers(decisions: &[crate::eval::store::DecisionRow], bars: &[MarketBa
                 }
             }
             "hold" => {
-                let price = bar_close.get(&t).copied().unwrap_or(0.0);
-                holds.push(HoldMarker {
-                    time: t,
-                    price,
-                    conviction: d.conviction,
-                    decision_index: d.decision_index,
-                });
+                if let Some(price) = bar_close.get(&t).copied() {
+                    holds.push(HoldMarker {
+                        time: t,
+                        price,
+                        conviction: d.conviction,
+                        decision_index: d.decision_index,
+                    });
+                }
             }
             _ => {}
         }
