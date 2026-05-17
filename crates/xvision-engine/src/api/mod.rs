@@ -82,6 +82,12 @@ pub struct ApiContext {
     /// `AppState::api_context` injects this; CLI and tests leave it
     /// `None` so the recorder path is a no-op.
     pub obs_event_bus: Option<Arc<xvision_observability::RunEventBus>>,
+    /// Active observability config. Drives the `retention_mode` field
+    /// recorded on each `RunStarted` event so the dashboard can render
+    /// whether a run's payloads are on disk. Defaults to
+    /// `ObservabilityConfig::default()` so unit tests / CLI paths that
+    /// build `ApiContext` directly don't have to thread it through.
+    pub obs_config: Arc<xvision_observability::ObservabilityConfig>,
 }
 
 // `AlpacaBarsFetcher` doesn't derive Debug (it holds a reqwest::Client
@@ -169,6 +175,7 @@ impl ApiContext {
             bars_singleflight: Arc::new(Mutex::new(HashMap::new())),
             event_bus: Arc::new(chart::RunEventBus::new()),
             obs_event_bus: None,
+            obs_config: Arc::new(xvision_observability::ObservabilityConfig::default()),
         }
     }
 
@@ -199,6 +206,18 @@ impl ApiContext {
         bus: Arc<xvision_observability::RunEventBus>,
     ) -> Self {
         self.obs_event_bus = Some(bus);
+        self
+    }
+
+    /// Override the active observability config. Production callers
+    /// (dashboard `AppState`) load the resolved view from disk +
+    /// env + CLI flags at startup and pass it here so the engine's
+    /// emit_run_started picks up the operator's actual choice.
+    pub fn with_obs_config(
+        mut self,
+        cfg: Arc<xvision_observability::ObservabilityConfig>,
+    ) -> Self {
+        self.obs_config = cfg;
         self
     }
 

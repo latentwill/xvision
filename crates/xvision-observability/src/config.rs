@@ -70,12 +70,15 @@ pub struct RetentionConfig {
 
 impl Default for RetentionConfig {
     fn default() -> Self {
+        // Default is FullDebug so operators can read prompts and
+        // responses out of the box. Privacy hardening is an explicit
+        // opt-in via TOML / env, not the default.
         Self {
-            mode: RetentionMode::HashOnly,
-            store_prompts: false,
-            store_responses: false,
-            store_tool_inputs: false,
-            store_tool_outputs: false,
+            mode: RetentionMode::FullDebug,
+            store_prompts: true,
+            store_responses: true,
+            store_tool_inputs: true,
+            store_tool_outputs: true,
             redact_secrets: true,
             payload_ttl_days: 7,
             max_payload_bytes: 200_000,
@@ -249,14 +252,18 @@ impl ObservabilityConfig {
     }
 
     pub fn warn_if_full_debug(&self) {
+        // FullDebug is now the default — the startup WARN here would
+        // fire on every fresh install, which is noisy. Demoted to an
+        // info-level line; callers that go through `retention::resolve`
+        // still emit the loud WARN when full_debug was set explicitly
+        // by an operator (TOML / env / CLI flag), so the contract-grep
+        // for `full_debug retention enabled` keeps firing under those
+        // explicit paths.
         if self.retention.mode == RetentionMode::FullDebug {
-            // The exact wording is contract — the retention-cli leaf
-            // test greps for `full_debug retention enabled`.
-            warn!(
+            tracing::info!(
                 target: "xvision_observability",
-                "full_debug retention enabled. Prompts, responses, and tool \
-                 payloads may be stored on disk. Disable for shared / client \
-                 work."
+                "full_debug retention active (default). Prompts, \
+                 responses, and tool payloads are stored on disk."
             );
         }
     }
@@ -292,13 +299,16 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn default_is_hash_only() {
+    fn default_is_full_debug() {
         let cfg = ObservabilityConfig::default();
-        assert_eq!(cfg.retention.mode, RetentionMode::HashOnly);
+        assert_eq!(cfg.retention.mode, RetentionMode::FullDebug);
         assert!(cfg.sqlite_enabled);
         assert!(!cfg.otel_enabled);
         assert!(cfg.retention.redact_secrets);
-        assert!(!cfg.retention.store_prompts);
+        assert!(cfg.retention.store_prompts);
+        assert!(cfg.retention.store_responses);
+        assert!(cfg.retention.store_tool_inputs);
+        assert!(cfg.retention.store_tool_outputs);
     }
 
     #[test]
