@@ -81,12 +81,30 @@ export function AgentRunDetailRoute() {
       <Card className="p-5 mb-4 flex flex-wrap items-center gap-4">
         <div className="font-mono text-[12px] text-text-3">{detail.summary.run_id}</div>
         <Pill tone={detail.summary.error_count > 0 ? "danger" : "default"}>{detail.summary.status}</Pill>
+        <Pill
+          tone={detail.summary.retention_mode === "full_debug" ? "warn" : "info"}
+          data-testid="retention-badge"
+          title={`Retention mode: ${detail.summary.retention_mode}`}
+        >
+          retention: {detail.summary.retention_mode}
+        </Pill>
         <span className="font-mono text-[12px] text-text-2">spans: {detail.summary.span_count}</span>
         <span className="font-mono text-[12px] text-text-2">cost: ${detail.summary.total_cost_usd.toFixed(4)}</span>
         <span className="font-mono text-[12px] text-text-2">
           {detail.summary.total_input_tokens.toLocaleString()} in · {detail.summary.total_output_tokens.toLocaleString()} out
         </span>
       </Card>
+
+      {detail.summary.retention_mode === "full_debug" ? (
+        <Card
+          role="alert"
+          data-testid="retention-banner"
+          className="p-3 mb-4 border-warn/40 bg-warn/10 text-warn text-[12px] leading-relaxed"
+        >
+          <strong className="font-medium">Full-debug retention.</strong>{" "}
+          Recorded under full_debug retention — prompts and tool payloads stored on disk.
+        </Card>
+      ) : null}
 
       <Card className="mb-3 overflow-hidden">
         <FilterBar
