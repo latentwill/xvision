@@ -1,9 +1,13 @@
-import { Suspense, type ElementType } from "react";
+import { Suspense, type ElementType, lazy } from "react";
 import { Outlet } from "react-router-dom";
 
 import type { ChatRailProps } from "@/components/shell/ChatRail";
 import { CommandPalette } from "@/components/shell/CommandPalette";
 import { Sidebar } from "@/components/shell/Sidebar";
+
+const StripDockSlot = lazy(() =>
+  import("@/features/agent-runs/StripDockSlot").then((m) => ({ default: m.StripDockSlot })),
+);
 
 export function DesktopThreePaneShell({
   ChatRailComponent,
@@ -20,6 +24,9 @@ export function DesktopThreePaneShell({
         <ChatRailComponent />
       </Suspense>
       <CommandPalette />
+      <Suspense fallback={null}>
+        <StripDockSlot />
+      </Suspense>
     </div>
   );
 }
