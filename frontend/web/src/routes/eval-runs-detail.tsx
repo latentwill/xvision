@@ -15,6 +15,11 @@ import type {
   RunDetail,
   RunSummary,
 } from "@/api/types.gen";
+import {
+  MobileEvalRunDetail,
+  MobileEvalRunDetailError,
+  MobileEvalRunDetailLoading,
+} from "./eval-runs-detail-mobile";
 
 const STATUS_TONE: Record<string, "gold" | "warn" | "danger" | "default" | "info"> = {
   completed: "gold",
@@ -60,6 +65,7 @@ export function EvalRunDetailRoute() {
     },
   });
   useLiveRunStream(id, q.data, qc);
+  const isPhone = useIsPhone();
 
   // TODO(agent-run-observability): cross-link decision-row click → open dock + set decisionFilter to span's decision_idx. Needs design pass — eval-run decision rows do not map 1:1 to agent-run span decision_idx values.
 
@@ -70,6 +76,7 @@ export function EvalRunDetailRoute() {
   }, []);
 
   if (q.isPending) {
+    if (isPhone) return <MobileEvalRunDetailLoading id={id} />;
     return (
       <>
         <Topbar title="Run detail" sub={id ? id : "Loading…"} />
@@ -82,6 +89,15 @@ export function EvalRunDetailRoute() {
   }
 
   if (q.isError || !q.data) {
+    if (isPhone) {
+      return (
+        <MobileEvalRunDetailError
+          err={q.error}
+          onRetry={() => q.refetch()}
+          runId={id}
+        />
+      );
+    }
     return (
       <>
         <Topbar title="Run detail" sub={id} />
@@ -91,6 +107,17 @@ export function EvalRunDetailRoute() {
   }
 
   const detail = q.data;
+  if (isPhone) {
+    return (
+      <MobileEvalRunDetail
+        detail={detail}
+        onCancel={() => cancel.mutate(detail.summary.id)}
+        cancelling={cancel.variables === detail.summary.id && cancel.isPending}
+        onRetry={() => retry.mutate(detail.summary.id)}
+        retrying={retry.variables === detail.summary.id && retry.isPending}
+      />
+    );
+  }
   return (
     <>
       <Topbar
@@ -630,6 +657,25 @@ function fmtTime(iso: string): string {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+// Defensive viewport check: when matchMedia is absent (jsdom, SSR), default
+// to desktop so existing tests keep targeting the desktop layout.
+function useIsPhone(): boolean {
+  const [isPhone, setIsPhone] = useState(() => {
+    if (typeof window === "undefined") return false;
+    if (typeof window.matchMedia !== "function") return false;
+    return window.matchMedia("(max-width: 767px)").matches;
+  });
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (typeof window.matchMedia !== "function") return;
+    const mq = window.matchMedia("(max-width: 767px)");
+    const update = () => setIsPhone(mq.matches);
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, []);
+  return isPhone;
 }
 
 function dotColor(tone: "gold" | "warn" | "danger" | "default" | "info") {
