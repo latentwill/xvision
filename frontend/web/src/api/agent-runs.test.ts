@@ -145,6 +145,38 @@ describe("validateAgentRunDetail", () => {
     expect(detail.spans.map((s) => s.span_id)).toEqual(["span_root", "span_model"]);
     expect(detail.spans[0]?.attributes).toEqual({ phase: "root" });
     expect(detail.model_calls[0]?.input_tokens).toBe(10);
+    expect(detail.model_calls[0]?.response_hash).toBe("sha256:def");
+    expect(detail.model_calls[0]?.response_text).toBeNull();
+  });
+
+  test("projects model_calls.provider/model/hashes onto the matching span", () => {
+    const detail = validateAgentRunDetail(EXPORT_PAYLOAD);
+    const modelSpan = detail.spans.find((s) => s.span_id === "span_model");
+    expect(modelSpan?.provider).toBe("anthropic");
+    expect(modelSpan?.model).toBe("claude");
+    expect(modelSpan?.tokens_in).toBe(10);
+    expect(modelSpan?.tokens_out).toBe(5);
+    expect(modelSpan?.cost).toBeCloseTo(0.001);
+    expect(modelSpan?.hash).toBe("sha256:abc");
+    expect(modelSpan?.response_hash).toBe("sha256:def");
+  });
+
+  test("surfaces payload refs when retention preserves them", () => {
+    const withRefs = {
+      ...EXPORT_PAYLOAD,
+      retention_mode: "full_debug",
+      model_calls: [
+        {
+          ...EXPORT_PAYLOAD.model_calls[0],
+          prompt_payload_ref: "blob://prompts/abc",
+          response_payload_ref: "blob://responses/def",
+        },
+      ],
+    };
+    const detail = validateAgentRunDetail(withRefs);
+    const modelSpan = detail.spans.find((s) => s.span_id === "span_model");
+    expect(modelSpan?.prompt_payload_ref).toBe("blob://prompts/abc");
+    expect(modelSpan?.response_payload_ref).toBe("blob://responses/def");
   });
 });
 

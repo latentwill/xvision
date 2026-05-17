@@ -59,7 +59,16 @@ export type RunSpan = {
   decision_idx?: number;
   provider?: string;
   model?: string;
+  /** `prompt_hash` from the matching `model_calls` row (kept as `hash`
+   * for back-compat with existing fixtures + SpanInspector field row). */
   hash?: string;
+  response_hash?: string;
+  /** Blob-store refs for the prompt + completion bodies. Only populated
+   * when retention is `summaries` or `full_debug`. The ref itself is
+   * surfaced in SpanInspector so operators can pivot to the on-disk
+   * payload via CLI until a blob-fetch route lands. */
+  prompt_payload_ref?: string;
+  response_payload_ref?: string;
   tokens_in?: number;
   tokens_out?: number;
   cost?: number;
@@ -75,6 +84,9 @@ export type ModelCall = {
   output_tokens: number | null;
   cost_usd: number | null;
   prompt_hash: string;
+  response_hash?: string | null;
+  prompt_payload_ref?: string | null;
+  response_payload_ref?: string | null;
   response_text: string | null;
 };
 
