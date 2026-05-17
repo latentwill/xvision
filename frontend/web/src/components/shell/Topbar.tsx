@@ -1,11 +1,6 @@
-import { lazy, Suspense } from "react";
 import { HealthPill } from "./HealthPill";
 import { useUi } from "@/stores/ui";
 import { modKeyLabel } from "@/lib/platform";
-
-const TopbarModeToggle = lazy(() =>
-  import("@/features/agent-runs/TopbarModeToggle").then((m) => ({ default: m.TopbarModeToggle })),
-);
 
 export function Topbar({
   title,
@@ -31,9 +26,6 @@ export function Topbar({
       </div>
 
       <div className="flex items-center gap-3 min-w-0 w-full xl:w-auto">
-        <Suspense fallback={null}>
-          <TopbarModeToggle />
-        </Suspense>
         <HealthPill />
 
         <button

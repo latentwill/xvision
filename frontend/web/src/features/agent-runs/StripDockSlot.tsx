@@ -15,21 +15,23 @@ function deriveTone(summary: { status: string; error_count: number }): "complete
 }
 
 export function StripDockSlot() {
-  const { activeRunId, height, mode, setHeight } = useTraceDock();
+  const { activeRunId, height, setHeight } = useTraceDock();
   const navigate = useNavigate();
-
-  // Tick once per second so the strip's m:ss duration refreshes while live.
-  useEffect(() => {
-    if (mode !== "live") return;
-    const id = window.setInterval(() => useTraceDock.setState((s) => ({ ...s })), 1000);
-    return () => window.clearInterval(id);
-  }, [mode]);
 
   const q = useQuery({
     queryKey: activeRunId ? agentRunKeys.run(activeRunId) : ["agent-runs", "noop"],
     queryFn: () => getAgentRun(activeRunId!),
     enabled: !!activeRunId,
   });
+
+  const isLive = q.data?.summary.status === "running";
+
+  // Tick once per second so the strip's m:ss duration refreshes while live.
+  useEffect(() => {
+    if (!isLive) return;
+    const id = window.setInterval(() => useTraceDock.setState((s) => ({ ...s })), 1000);
+    return () => window.clearInterval(id);
+  }, [isLive]);
 
   if (!activeRunId || !q.data) return null;
 
@@ -41,7 +43,7 @@ export function StripDockSlot() {
       <RunStatusStrip
         summary={summary}
         currentSpan={null /* Phase 3 will compute newest inflight leaf */}
-        isLive={mode === "live"}
+        isLive={isLive}
         liveDurationSec={liveDurationSec}
         tone={deriveTone(summary)}
         onExpand={() => setHeight("working")}
