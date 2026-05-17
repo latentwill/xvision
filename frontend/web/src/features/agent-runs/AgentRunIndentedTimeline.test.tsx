@@ -42,4 +42,41 @@ describe("AgentRunIndentedTimeline", () => {
     );
     expect(screen.getByTestId("span-row-s3")).toHaveAttribute("data-selected", "true");
   });
+
+  test("each row renders a positioned waterfall bar", () => {
+    render(
+      <AgentRunIndentedTimeline
+        spans={MOCK_RUN_COMPLETED.spans}
+        selectedSpanId={null}
+        onSelect={() => {}}
+      />,
+    );
+    const root = screen.getByTestId("span-waterfall-bar-s1");
+    expect(root.style.left).toBe("0%");
+    expect(parseFloat(root.style.width)).toBeGreaterThan(0);
+
+    const earlier = screen.getByTestId("span-waterfall-bar-s2");
+    const later = screen.getByTestId("span-waterfall-bar-s4");
+    expect(parseFloat(later.style.left)).toBeGreaterThan(parseFloat(earlier.style.left));
+
+    for (const span of MOCK_RUN_COMPLETED.spans) {
+      const bar = screen.getByTestId(`span-waterfall-bar-${span.span_id}`);
+      const left = parseFloat(bar.style.left);
+      const width = parseFloat(bar.style.width);
+      expect(left + width).toBeLessThanOrEqual(100.0001);
+    }
+  });
+
+  test("renders the kind chip label and span name as distinct fields", () => {
+    render(
+      <AgentRunIndentedTimeline
+        spans={MOCK_RUN_COMPLETED.spans}
+        selectedSpanId={null}
+        onSelect={() => {}}
+      />,
+    );
+    const row = screen.getByTestId("span-row-s3");
+    expect(row).toHaveTextContent(/MODEL/);
+    expect(row).toHaveTextContent(/claude-opus-4-7/);
+  });
 });

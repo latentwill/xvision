@@ -20,11 +20,16 @@ function renderAt(path: string) {
 }
 
 describe("AgentRunDetailRoute", () => {
-  test("loads the run and renders rail-tree + timeline + inspector", async () => {
+  test("loads the run and renders the waterfall timeline + inspector", async () => {
     renderAt("/agent-runs/run_abc1234");
     await waitFor(() => expect(screen.getByText(/Improve BTC/)).toBeInTheDocument());
-    expect(screen.getAllByTestId(/^rail-node-/).length).toBeGreaterThan(0);
-    expect(screen.getAllByTestId(/^span-row-/).length).toBeGreaterThan(0);
+    const rows = screen.getAllByTestId(/^span-row-/);
+    expect(rows.length).toBeGreaterThan(0);
+    // Redundant rail-tree column was removed.
+    expect(screen.queryAllByTestId(/^rail-node-/)).toHaveLength(0);
+    // Each row pairs with a positioned waterfall bar.
+    const bars = screen.getAllByTestId(/^span-waterfall-bar-/);
+    expect(bars.length).toBe(rows.length);
   });
 
   test("renders an error state for unknown id", async () => {
