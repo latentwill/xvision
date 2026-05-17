@@ -1,5 +1,7 @@
+use anyhow::Context;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 // ---- shared message + tool-use shape --------------------------------------
 //
@@ -110,6 +112,21 @@ pub struct LlmResponse {
     pub stop_reason: StopReason,
     pub input_tokens: u32,
     pub output_tokens: u32,
+}
+
+const RESPONSE_DECODE_RETRIES: usize = 1;
+
+async fn retry_decode_sleep(attempt: usize) {
+    tokio::time::sleep(Duration::from_millis(250 * (attempt as u64 + 1))).await;
+}
+
+fn decode_llm_json(provider: &str, body: &str) -> anyhow::Result<serde_json::Value> {
+    serde_json::from_str(body).with_context(|| {
+        format!(
+            "provider_decode: {provider} returned invalid JSON response body ({} bytes)",
+            body.len()
+        )
+    })
 }
 
 impl LlmResponse {
@@ -361,29 +378,54 @@ impl LlmDispatch for AnthropicDispatch {
             "dispatching LLM request"
         );
 
-        let http_resp = self
-            .client
-            .post("https://api.anthropic.com/v1/messages")
-            .header("x-api-key", &self.api_key)
-            .header("anthropic-version", "2023-06-01")
-            .header("content-type", "application/json")
-            .json(&body)
-            .send()
-            .await?;
+        let mut resp = None;
+        for attempt in 0..=RESPONSE_DECODE_RETRIES {
+            let http_resp = self
+                .client
+                .post("https://api.anthropic.com/v1/messages")
+                .header("x-api-key", &self.api_key)
+                .header("anthropic-version", "2023-06-01")
+                .header("content-type", "application/json")
+                .json(&body)
+                .send()
+                .await?;
 
-        let status = http_resp.status();
-        if !status.is_success() {
-            let text = http_resp.text().await.unwrap_or_default();
-            tracing::warn!(
-                target: "xvision::llm",
-                provider = "anthropic",
-                status = %status,
-                body = %text,
-                "Anthropic API returned non-success"
-            );
-            anyhow::bail!("Anthropic API error {}: {}", status, text);
+            let status = http_resp.status();
+            if !status.is_success() {
+                let text = http_resp.text().await.unwrap_or_default();
+                tracing::warn!(
+                    target: "xvision::llm",
+                    provider = "anthropic",
+                    status = %status,
+                    body = %text,
+                    "Anthropic API returned non-success"
+                );
+                anyhow::bail!("Anthropic API error {}: {}", status, text);
+            }
+
+            let text = http_resp
+                .text()
+                .await
+                .context("provider_decode: anthropic failed reading response body")?;
+            match decode_llm_json("anthropic", &text) {
+                Ok(value) => {
+                    resp = Some(value);
+                    break;
+                }
+                Err(err) if attempt < RESPONSE_DECODE_RETRIES => {
+                    tracing::warn!(
+                        target: "xvision::llm",
+                        provider = "anthropic",
+                        attempt = attempt + 1,
+                        error = %err,
+                        "Anthropic API returned undecodable JSON response; retrying"
+                    );
+                    retry_decode_sleep(attempt).await;
+                }
+                Err(err) => return Err(err),
+            }
         }
-        let resp: serde_json::Value = http_resp.json().await?;
+        let resp = resp.expect("response decode loop must return or set response");
 
         let raw_content = resp["content"].as_array().cloned().unwrap_or_default();
         let mut content = Vec::with_capacity(raw_content.len());
@@ -545,25 +587,50 @@ impl LlmDispatch for OpenaiCompatDispatch {
             "dispatching LLM request"
         );
 
-        let mut request = self.client.post(&url).header("content-type", "application/json");
-        if !self.api_key.is_empty() {
-            request = request.header("authorization", format!("Bearer {}", self.api_key));
+        let mut resp = None;
+        for attempt in 0..=RESPONSE_DECODE_RETRIES {
+            let mut request = self.client.post(&url).header("content-type", "application/json");
+            if !self.api_key.is_empty() {
+                request = request.header("authorization", format!("Bearer {}", self.api_key));
+            }
+            let http_resp = request.json(&body).send().await?;
+            let status = http_resp.status();
+            if !status.is_success() {
+                let text = http_resp.text().await.unwrap_or_default();
+                tracing::warn!(
+                    target: "xvision::llm",
+                    provider = "openai-compat",
+                    url = %url,
+                    status = %status,
+                    body = %text,
+                    "OpenAI-compat API returned non-success"
+                );
+                anyhow::bail!("OpenAI-compat API error {} at {}: {}", status, url, text);
+            }
+
+            let text = http_resp.text().await.with_context(|| {
+                format!("provider_decode: OpenAI-compat failed reading response body at {url}")
+            })?;
+            match decode_llm_json("OpenAI-compat", &text) {
+                Ok(value) => {
+                    resp = Some(value);
+                    break;
+                }
+                Err(err) if attempt < RESPONSE_DECODE_RETRIES => {
+                    tracing::warn!(
+                        target: "xvision::llm",
+                        provider = "openai-compat",
+                        url = %url,
+                        attempt = attempt + 1,
+                        error = %err,
+                        "OpenAI-compat API returned undecodable JSON response; retrying"
+                    );
+                    retry_decode_sleep(attempt).await;
+                }
+                Err(err) => return Err(err),
+            }
         }
-        let http_resp = request.json(&body).send().await?;
-        let status = http_resp.status();
-        if !status.is_success() {
-            let text = http_resp.text().await.unwrap_or_default();
-            tracing::warn!(
-                target: "xvision::llm",
-                provider = "openai-compat",
-                url = %url,
-                status = %status,
-                body = %text,
-                "OpenAI-compat API returned non-success"
-            );
-            anyhow::bail!("OpenAI-compat API error {} at {}: {}", status, url, text);
-        }
-        let resp: serde_json::Value = http_resp.json().await?;
+        let resp = resp.expect("response decode loop must return or set response");
 
         let choices = resp
             .get("choices")

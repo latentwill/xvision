@@ -109,9 +109,10 @@ describe("ScenarioChart", () => {
 
     fireEvent.click(screen.getByText(/Layers/));
 
-    expect(screen.getByText("sma30")).toBeInTheDocument();
-    expect(screen.getByText("sma60")).toBeInTheDocument();
-    expect(screen.getByText("sma90")).toBeInTheDocument();
+    expect(screen.getByText("SMA 30")).toBeInTheDocument();
+    expect(screen.getByText("SMA 60")).toBeInTheDocument();
+    expect(screen.getByText("SMA 90")).toBeInTheDocument();
+    expect(screen.getByText("RSI 14")).toBeInTheDocument();
   });
 
   it("renders scenario candles, cache status, and data table fallback", () => {

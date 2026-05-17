@@ -57,6 +57,7 @@ the autoresearcher track is explicitly scoped as stateless v1.
 | 11 | Autoresearcher mutation / eval / judge loop | autoresearcher plans |
 | 12 | Autoresearcher dashboard + lineage review | autoresearcher dashboard plan |
 | 13 | Final UI/UX pass across dashboard surfaces | design docs, chart plans |
+| 16 | Chart aesthetics + customization pass using Lightweight Charts layout/grid/crosshair/series/scale options | F32, [Lightweight Charts customization](https://tradingview.github.io/lightweight-charts/tutorials/customization/intro) |
 
 ### V4 — mainnet readiness
 

@@ -666,6 +666,11 @@ pub struct ScenarioChartPayload {
     pub cache_status: CacheStatus,
 }
 
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ScenarioChartQuery {
+    pub granularity: Option<String>,
+}
+
 /// Build a `ScenarioChartPayload` for the given scenario id.
 ///
 /// Computes the expected bar count from (end - start) and granularity,
@@ -674,9 +679,43 @@ pub struct ScenarioChartPayload {
 /// Alpaca and back-fills — which will fail in tests without credentials,
 /// so `NotCached` is returned directly when no cached row exists).
 pub async fn build_scenario_payload(ctx: &ApiContext, id: &str) -> ApiResult<ScenarioChartPayload> {
+    build_scenario_payload_with_granularity(ctx, id, None).await
+}
+
+pub async fn build_scenario_payload_with_granularity(
+    ctx: &ApiContext,
+    id: &str,
+    granularity: Option<&str>,
+) -> ApiResult<ScenarioChartPayload> {
     use crate::api::scenario as api_scenario;
 
-    let scenario = api_scenario::get(ctx, id).await?;
+    let mut scenario = api_scenario::get(ctx, id).await?;
+    let requested_granularity = match granularity {
+        Some(raw) if !raw.trim().is_empty() => raw
+            .parse::<xvision_data::alpaca::BarGranularity>()
+            .map_err(ApiError::Validation)?,
+        _ => scenario.granularity,
+    };
+    let asset_ref = scenario
+        .asset
+        .first()
+        .ok_or_else(|| ApiError::Internal(format!("scenario '{}' has empty asset list", scenario.id)))?;
+    let data_source_tag = "alpaca-historical-v1";
+    let cache_key = if requested_granularity == scenario.granularity {
+        scenario.bar_cache_policy.cache_key.clone()
+    } else {
+        crate::eval::bars::compute_cache_key(
+            &asset_ref.venue_symbol,
+            requested_granularity,
+            scenario.time_window.start,
+            scenario.time_window.end,
+            data_source_tag,
+        )
+    };
+    let asset_pair = asset_ref.venue_symbol.clone();
+
+    scenario.granularity = requested_granularity;
+    scenario.bar_cache_policy.cache_key = cache_key.clone();
 
     // Compute expected bar count from the window and granularity.
     let window_secs = (scenario.time_window.end - scenario.time_window.start)
@@ -711,19 +750,15 @@ pub async fn build_scenario_payload(ctx: &ApiContext, id: &str) -> ApiResult<Sce
         cache_status,
         CacheStatus::FullyCached { .. } | CacheStatus::PartiallyCached { .. }
     ) {
-        let asset_ref = scenario
-            .asset
-            .first()
-            .ok_or_else(|| ApiError::Internal(format!("scenario '{}' has empty asset list", scenario.id)))?;
         crate::eval::bars::load_bars(
             ctx,
             &crate::eval::bars::BarCacheArgs {
                 cache_key: scenario.bar_cache_policy.cache_key.clone(),
-                asset_pair: asset_ref.venue_symbol.clone(),
+                asset_pair,
                 granularity: scenario.granularity,
                 start: scenario.time_window.start,
                 end: scenario.time_window.end,
-                data_source_tag: "alpaca-historical-v1".into(),
+                data_source_tag: data_source_tag.into(),
             },
         )
         .await?

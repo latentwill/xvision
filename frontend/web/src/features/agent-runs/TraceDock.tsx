@@ -2,6 +2,7 @@
 import { useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { ApiError } from "@/api/client";
 import { agentRunKeys, getAgentRun, openAgentRunStream } from "@/api/agent-runs";
 import type { AgentRunDetail, RunSpan } from "@/api/types-agent-runs";
 import { useTraceDock, type DockHeight } from "@/stores/trace-dock";
@@ -42,7 +43,16 @@ export function TraceDock() {
     queryKey: activeRunId ? agentRunKeys.run(activeRunId) : ["agent-runs", "noop"],
     queryFn: () => getAgentRun(activeRunId!),
     enabled: !!activeRunId,
+    retry: (failureCount, error) =>
+      !(error instanceof ApiError && error.code === "not_found") && failureCount < 2,
   });
+
+  useEffect(() => {
+    if (!activeRunId) return;
+    if (q.error instanceof ApiError && q.error.code === "not_found") {
+      useTraceDock.getState().setActiveRun(null, "post-hoc");
+    }
+  }, [activeRunId, q.error]);
 
   const filter = useSpanFilter({
     runId: activeRunId ?? "",

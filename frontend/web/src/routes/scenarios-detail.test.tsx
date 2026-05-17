@@ -256,4 +256,18 @@ describe("ScenariosDetailRoute bars cache actions", () => {
       expect(chartApi.getScenarioChart).toHaveBeenCalledTimes(2);
     });
   });
+
+  it("refetches the scenario chart when the indicator timeframe changes", async () => {
+    vi.mocked(scenarioApi.getScenario).mockResolvedValue(scenario);
+    vi.mocked(chartApi.getScenarioChart).mockResolvedValue(chartPayload);
+
+    renderRoute();
+
+    const selector = await screen.findByLabelText("Indicator timeframe");
+    fireEvent.change(selector, { target: { value: "1h" } });
+
+    await waitFor(() => {
+      expect(chartApi.getScenarioChart).toHaveBeenCalledWith(scenario.id, "1h");
+    });
+  });
 });
