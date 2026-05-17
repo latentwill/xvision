@@ -195,6 +195,12 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
         // Real chunked SSE on AnthropicDispatch / OpenaiCompatDispatch
         // is a follow-up — when they emit per-chunk deltas the frontend
         // already accumulates into the same slot.
+        //
+        // Retention is enforced inside `emit_assistant_text_delta`: when
+        // the active policy is anything other than FullDebug +
+        // store_responses, the body is suppressed at the source. We
+        // still publish the event so the dashboard can update span
+        // counts, just without raw text.
         if let Some(obs) = input.obs.as_ref() {
             use crate::agent::llm::ContentBlock;
             let assistant_text: String = resp

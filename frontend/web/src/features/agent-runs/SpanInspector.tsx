@@ -273,6 +273,30 @@ export function SpanInspector({
           />
         ) : span.response ? (
           <PullQuote label="RESPONSE" body={span.response} accent="var(--gold)" glyph={"“"} italic />
+        ) : streamingBody ? (
+          // Post-hoc fallback: when the span has finished but we still
+          // have a `bodiesBySpan` entry (from the engine's post-hoc
+          // bridge delta or accumulated streaming chunks), surface it
+          // here so the body persists in the inspector even after the
+          // model call closed and the live STREAMING pull-quote
+          // disappeared. Without this, the body flashed briefly during
+          // the active-span window and was then replaced by the
+          // hash/ref placeholder — defeating the purpose of plumbing
+          // delta_text in the first place.
+          <PullQuote
+            label="RESPONSE"
+            body={
+              <pre
+                data-testid="span-inspector-posthoc-body"
+                className="m-0 whitespace-pre-wrap text-[11px] font-mono text-text"
+              >
+                {streamingBody}
+              </pre>
+            }
+            accent="var(--gold)"
+            glyph={"“"}
+            italic
+          />
         ) : span.kind === "model.call" && (span.response_payload_ref || span.response_hash) ? (
           <PullQuote
             label="RESPONSE"

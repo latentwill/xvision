@@ -246,6 +246,54 @@ describe("SpanInspector (with pull-quotes)", () => {
     ).toBeGreaterThan(0);
   });
 
+  test("post-stream-finish: accumulated body persists as RESPONSE pull-quote", () => {
+    // The engine's post-hoc bridge in agent/execute.rs emits a final
+    // delta carrying the full body, then immediately fires
+    // model_call_finished. Without the post-hoc fallback the body
+    // would flash briefly while the span was active and then vanish
+    // when the hash/ref placeholder took over. The fix: when a span
+    // has bodiesBySpan content, render it as the RESPONSE pull-quote
+    // even after the live state has cleared.
+    useTraceDock.getState().markSpanActive(baseSpan.span_id, {
+      name: baseSpan.name,
+      started_at: baseSpan.started_at,
+      kind: baseSpan.kind,
+    });
+    useTraceDock.getState().appendDelta(baseSpan.span_id, 11, "hello world");
+    useTraceDock.getState().markSpanInactive(baseSpan.span_id);
+
+    render(
+      <SpanInspector
+        span={{
+          ...baseSpan,
+          prompt: undefined,
+          response: undefined,
+          // hash-only placeholder would normally render here; the
+          // post-hoc body takes precedence.
+          response_hash: "sha256:respccc",
+        }}
+        isLive
+        onRerun={() => {}}
+        onJumpToDecision={() => {}}
+      />,
+    );
+
+    // Live pull-quote is gone (span no longer active).
+    expect(
+      screen.queryByTestId("span-inspector-streaming-body"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("span-inspector-streaming"),
+    ).not.toBeInTheDocument();
+    // Body persists as the post-hoc RESPONSE.
+    const body = screen.getByTestId("span-inspector-posthoc-body");
+    expect(body.textContent).toBe("hello world");
+    // hash-only placeholder must NOT render alongside.
+    expect(
+      screen.queryByText(/hash-only retention — completion body not stored on disk/i),
+    ).not.toBeInTheDocument();
+  });
+
   test("rerun button enabled when not live; clicking calls onRerun(span_id)", async () => {
     const { default: userEvent } = await import("@testing-library/user-event");
     const onRerun = vi.fn();
