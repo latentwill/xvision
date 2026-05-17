@@ -1,5 +1,5 @@
 // frontend/web/src/routes/agent-runs-detail.tsx
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
@@ -10,6 +10,7 @@ import { agentRunKeys, getAgentRun } from "@/api/agent-runs";
 import { AgentRunRailTree } from "@/features/agent-runs/AgentRunRailTree";
 import { AgentRunIndentedTimeline } from "@/features/agent-runs/AgentRunIndentedTimeline";
 import { SpanInspector } from "@/features/agent-runs/SpanInspector";
+import { useTraceDock } from "@/stores/trace-dock";
 
 export function AgentRunDetailRoute() {
   const { runId = "" } = useParams<{ runId: string }>();
@@ -24,6 +25,15 @@ export function AgentRunDetailRoute() {
     () => q.data?.spans.find((s) => s.span_id === selectedSpanId) ?? q.data?.spans[0] ?? null,
     [q.data, selectedSpanId],
   );
+
+  useEffect(() => {
+    if (q.data) {
+      useTraceDock.getState().setActiveRun(
+        q.data.summary.run_id,
+        q.data.summary.status === "running" ? "live" : "post-hoc",
+      );
+    }
+  }, [q.data?.summary.run_id, q.data?.summary.status]);
 
   if (q.isPending) {
     return (

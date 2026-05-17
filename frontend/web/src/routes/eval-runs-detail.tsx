@@ -9,6 +9,7 @@ import { cancelRun, downloadEvalRunExport, evalKeys, getRun, retryRun } from "@/
 import { chartKeys, getRunChart, openRunStream } from "@/api/chart";
 import { RunChart } from "@/components/chart/RunChart";
 import { ReviewPanel } from "@/features/eval-runs/review";
+import { useTraceDock } from "@/stores/trace-dock";
 import type {
   DecisionRowDto,
   RunDetail,
@@ -59,6 +60,12 @@ export function EvalRunDetailRoute() {
     },
   });
   useLiveRunStream(id, q.data, qc);
+
+  // TODO(agent-run-observability): replace hardcoded mock id with
+  // summary.agent_run_id once the backend adds it to eval RunSummary.
+  useEffect(() => {
+    useTraceDock.getState().setActiveRun("run_abc1234", "post-hoc");
+  }, []);
 
   if (q.isPending) {
     return (
