@@ -7,6 +7,7 @@ import { ApiError } from "@/api/client";
 import { evalKeys, listRuns } from "@/api/eval";
 import { chartKeys, getRunChart } from "@/api/chart";
 import { strategyKeys, listStrategies } from "@/api/strategies";
+import { scenarioKeys, listScenarios } from "@/api/scenarios";
 import { agentKeys, listAgents } from "@/api/agents";
 import { getBrokers, listProviders, settingsKeys } from "@/api/settings";
 import { RunChart } from "@/components/chart/RunChart";
@@ -15,7 +16,9 @@ import type {
   BrokersReport,
   ProviderRow,
   RunSummary,
+  Scenario,
 } from "@/api/types.gen";
+import type { StrategyListItem } from "@/api/strategies";
 
 const STATUS_TONE: Record<string, "gold" | "warn" | "danger" | "default" | "info"> = {
   completed: "gold",
@@ -51,11 +54,16 @@ export function HomeRoute() {
   });
 
   const recent = (runs.data ?? []).slice(0, 5);
-  const latestRunId = recent[0]?.id ?? "";
+  const latestRun = recent[0];
+  const latestRunId = latestRun?.id ?? "";
   const latestChart = useQuery({
     queryKey: chartKeys.run(latestRunId),
     queryFn: () => getRunChart(latestRunId),
     enabled: !!latestRunId,
+  });
+  const scenarios = useQuery({
+    queryKey: scenarioKeys.list(),
+    queryFn: () => listScenarios(),
   });
   const strategyCount = strategies.data?.length ?? 0;
   const agentCount = agents.data?.length ?? 0;
@@ -90,6 +98,9 @@ export function HomeRoute() {
             loadingChart={latestChart.isPending}
             chartError={latestChart.error}
             chart={latestChart.data}
+            latestRun={latestRun}
+            strategies={strategies.data ?? []}
+            scenarios={scenarios.data ?? []}
           />
         </div>
 
@@ -309,26 +320,46 @@ function ControlChartCard({
   loadingChart,
   chartError,
   chart,
+  latestRun,
+  strategies,
+  scenarios,
 }: {
   hasRuns: boolean;
   loadingRuns: boolean;
   loadingChart: boolean;
   chartError: unknown;
   chart: Parameters<typeof RunChart>[0]["payload"] | undefined;
+  latestRun: RunSummary | undefined;
+  strategies: StrategyListItem[];
+  scenarios: Scenario[];
 }) {
+  const strategyLabel = latestRun
+    ? strategies.find((s) => s.agent_id === latestRun.agent_id)?.display_name?.trim()
+    : undefined;
+  const scenarioLabel = latestRun
+    ? scenarios.find((s) => s.id === latestRun.scenario_id)?.display_name?.trim()
+    : undefined;
+  const sub = latestRun
+    ? `Latest eval · ${strategyLabel ?? latestRun.agent_id.slice(0, 8)} on ${scenarioLabel ?? latestRun.scenario_id} · ${fmtChartDate(latestRun.started_at)}`
+    : null;
   return (
     <Card className="p-5">
-      <div className="flex items-baseline justify-between mb-3">
+      <div className="flex items-baseline justify-between mb-1">
         <h2 className="m-0 font-serif font-medium text-[24px] tracking-tight">
           Chart snapshot
         </h2>
         <Link
-          to="/eval-runs"
+          to={latestRun ? `/eval-runs/${latestRun.id}` : "/eval-runs"}
           className="text-[12px] text-text-2 hover:text-text"
         >
           open eval →
         </Link>
       </div>
+      {sub ? (
+        <div className="text-[12px] text-text-3 mb-3 truncate">{sub}</div>
+      ) : (
+        <div className="mb-3" />
+      )}
       {loadingRuns ? (
         <div className="text-text-3 text-[13px] text-center py-6">
           Loading runs…
@@ -445,6 +476,18 @@ function brokerAttention(b: BrokerEntry): AttentionItem {
 }
 
 // ─── helpers ───────────────────────────────────────────────────────────────
+
+function fmtChartDate(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
 
 function fmtPctOrDash(v: number | null | undefined): string {
   if (v == null) return "—";
