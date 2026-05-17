@@ -32,8 +32,9 @@ pub use config::{
     CONFIG_FILE_NAME, ENV_OVERRIDE_PREFIX,
 };
 pub use export::{
-    build_export, build_report, render_report, AgentRunExport, AgentRunReport,
-    ExportError, ExportTotals, FinalArtifact, SpanNode, SCHEMA_VERSION,
+    build_export, build_report, find_blob_owner, render_report, AgentRunExport,
+    AgentRunReport, ExportError, ExportTotals, FinalArtifact, SpanNode,
+    SCHEMA_VERSION,
 };
 pub use events::{
     ArtifactWrittenEvent, AssistantTextDeltaEvent, BackpressureDroppedEvent,

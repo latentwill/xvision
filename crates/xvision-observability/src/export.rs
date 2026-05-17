@@ -335,6 +335,60 @@ pub fn render_report(export: &AgentRunExport) -> AgentRunReport {
     AgentRunReport { markdown: out }
 }
 
+// ─── blob ownership lookup ──────────────────────────────────────────────────
+
+/// Resolves `(run_id, blob_ref) → Option<retention_mode_db_str>`.
+///
+/// Returns the run's `retention_mode` as stored in `agent_runs`
+/// (`hash_only` | `redacted` | `full_debug`) if `blob_ref` is
+/// referenced by any `model_calls`, `tool_calls`, or `checkpoints`
+/// row whose span (or row, for checkpoints) belongs to `run_id`.
+/// Returns `Ok(None)` if no such row exists — the caller should map
+/// that to 404.
+///
+/// The ref is matched as a literal string; this function does not
+/// hash or normalize it. Callers must validate the ref's shape
+/// (typically `^[0-9a-f]{64}$`) before invoking. The intent of the
+/// shape check is to refuse traversal (`..`, `/`) before the blob
+/// store joins the ref onto its root path.
+pub async fn find_blob_owner(
+    pool: &SqlitePool,
+    run_id: &str,
+    blob_ref: &str,
+) -> Result<Option<String>, ExportError> {
+    // One round-trip via three `EXISTS` subqueries. SQLite short-circuits
+    // on the first match, so the worst case is the same as a single
+    // indexed scan over the smallest detail table.
+    let row: Option<SqliteRow> = sqlx::query(
+        "SELECT ar.retention_mode FROM agent_runs ar \
+         WHERE ar.id = ?1 AND ( \
+            EXISTS ( \
+                SELECT 1 FROM model_calls mc \
+                JOIN spans s ON s.id = mc.span_id \
+                WHERE s.run_id = ar.id \
+                AND (mc.prompt_payload_ref = ?2 OR mc.response_payload_ref = ?2) \
+            ) \
+            OR EXISTS ( \
+                SELECT 1 FROM tool_calls tc \
+                JOIN spans s ON s.id = tc.span_id \
+                WHERE s.run_id = ar.id \
+                AND (tc.input_payload_ref = ?2 OR tc.output_payload_ref = ?2) \
+            ) \
+            OR EXISTS ( \
+                SELECT 1 FROM checkpoints c \
+                WHERE c.run_id = ar.id \
+                AND (c.input_payload_ref = ?2 OR c.output_payload_ref = ?2) \
+            ) \
+         )",
+    )
+    .bind(run_id)
+    .bind(blob_ref)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(row.map(|r| r.try_get::<String, _>("retention_mode")).transpose()?)
+}
+
 // ─── per-table loaders ──────────────────────────────────────────────────────
 
 async fn load_agent_run(pool: &SqlitePool, run_id: &str) -> Result<AgentRunRow, ExportError> {
@@ -736,5 +790,170 @@ fn sort_children(node: &mut SpanNode) {
     });
     for child in &mut node.children {
         sort_children(child);
+    }
+}
+
+#[cfg(test)]
+mod blob_owner_tests {
+    use super::*;
+    use sqlx::SqlitePool;
+
+    const MIGRATION_002: &str = include_str!("../../xvision-engine/migrations/002_eval.sql");
+    const MIGRATION_013: &str = include_str!("../../xvision-engine/migrations/013_cli_jobs.sql");
+    const MIGRATION_018: &str =
+        include_str!("../../xvision-engine/migrations/018_agent_run_observability.sql");
+
+    async fn migrated_pool() -> SqlitePool {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(MIGRATION_002).execute(&pool).await.unwrap();
+        sqlx::query(MIGRATION_013).execute(&pool).await.unwrap();
+        sqlx::query(MIGRATION_018).execute(&pool).await.unwrap();
+        pool
+    }
+
+    async fn seed_run(pool: &SqlitePool, run_id: &str, retention: &str) {
+        sqlx::query(
+            "INSERT INTO agent_runs (id, objective, status, started_at, retention_mode) \
+             VALUES (?1, 'test', 'completed', '2026-05-17T16:00:00Z', ?2)",
+        )
+        .bind(run_id)
+        .bind(retention)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn seed_span(pool: &SqlitePool, span_id: &str, run_id: &str) {
+        sqlx::query(
+            "INSERT INTO spans (id, run_id, kind, name, status, started_at) \
+             VALUES (?1, ?2, 'model.call', 'm', 'ok', '2026-05-17T16:00:01Z')",
+        )
+        .bind(span_id)
+        .bind(run_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn seed_model_call(
+        pool: &SqlitePool,
+        span_id: &str,
+        prompt_ref: Option<&str>,
+        response_ref: Option<&str>,
+    ) {
+        sqlx::query(
+            "INSERT INTO model_calls (span_id, provider, model, prompt_hash, \
+                 prompt_payload_ref, response_payload_ref) \
+             VALUES (?1, 'anthropic', 'claude', 'sha256:abc', ?2, ?3)",
+        )
+        .bind(span_id)
+        .bind(prompt_ref)
+        .bind(response_ref)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    const REF_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const REF_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const REF_C: &str = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+    const REF_NOT_OWNED: &str =
+        "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+
+    #[tokio::test]
+    async fn returns_retention_mode_when_model_call_owns_prompt_ref() {
+        let pool = migrated_pool().await;
+        seed_run(&pool, "run_x", "full_debug").await;
+        seed_span(&pool, "span_m1", "run_x").await;
+        seed_model_call(&pool, "span_m1", Some(REF_A), Some(REF_B)).await;
+
+        let got = find_blob_owner(&pool, "run_x", REF_A).await.unwrap();
+        assert_eq!(got.as_deref(), Some("full_debug"));
+
+        // Response ref on the same row also resolves.
+        let got = find_blob_owner(&pool, "run_x", REF_B).await.unwrap();
+        assert_eq!(got.as_deref(), Some("full_debug"));
+    }
+
+    #[tokio::test]
+    async fn returns_none_when_ref_not_owned_by_this_run() {
+        let pool = migrated_pool().await;
+        seed_run(&pool, "run_x", "redacted").await;
+        seed_span(&pool, "span_m1", "run_x").await;
+        seed_model_call(&pool, "span_m1", Some(REF_A), None).await;
+
+        // Wrong ref → None.
+        let got = find_blob_owner(&pool, "run_x", REF_NOT_OWNED).await.unwrap();
+        assert!(got.is_none());
+
+        // Right ref but wrong run → None.
+        let got = find_blob_owner(&pool, "run_other", REF_A).await.unwrap();
+        assert!(got.is_none());
+    }
+
+    #[tokio::test]
+    async fn checkpoint_refs_also_resolve() {
+        let pool = migrated_pool().await;
+        seed_run(&pool, "run_cp", "full_debug").await;
+        seed_span(&pool, "span_cp", "run_cp").await;
+        sqlx::query(
+            "INSERT INTO checkpoints (id, run_id, span_id, sequence, kind, \
+                 input_hash, input_payload_ref, output_payload_ref, created_at) \
+             VALUES ('cp1', 'run_cp', 'span_cp', 0, 'model_step', \
+                 'sha256:in', ?1, ?2, '2026-05-17T16:00:02Z')",
+        )
+        .bind(REF_C)
+        .bind(REF_A)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let got = find_blob_owner(&pool, "run_cp", REF_C).await.unwrap();
+        assert_eq!(got.as_deref(), Some("full_debug"));
+        let got = find_blob_owner(&pool, "run_cp", REF_A).await.unwrap();
+        assert_eq!(got.as_deref(), Some("full_debug"));
+    }
+
+    #[tokio::test]
+    async fn cross_run_isolation_holds() {
+        // Two runs each own one ref; a query against run_a for run_b's
+        // ref returns None, and vice versa.
+        let pool = migrated_pool().await;
+        seed_run(&pool, "run_a", "full_debug").await;
+        seed_run(&pool, "run_b", "redacted").await;
+        seed_span(&pool, "span_a", "run_a").await;
+        seed_span(&pool, "span_b", "run_b").await;
+        seed_model_call(&pool, "span_a", Some(REF_A), None).await;
+        seed_model_call(&pool, "span_b", Some(REF_B), None).await;
+
+        assert_eq!(
+            find_blob_owner(&pool, "run_a", REF_A).await.unwrap().as_deref(),
+            Some("full_debug"),
+        );
+        assert_eq!(
+            find_blob_owner(&pool, "run_b", REF_B).await.unwrap().as_deref(),
+            Some("redacted"),
+        );
+        assert!(find_blob_owner(&pool, "run_a", REF_B).await.unwrap().is_none());
+        assert!(find_blob_owner(&pool, "run_b", REF_A).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn returns_hash_only_when_run_is_hash_only() {
+        // The helper doesn't enforce policy — it returns the retention
+        // mode as stored. The route is responsible for 403'ing on
+        // hash_only. Test this explicitly so a future helper change
+        // doesn't silently bypass that route-level check.
+        let pool = migrated_pool().await;
+        seed_run(&pool, "run_hash", "hash_only").await;
+        seed_span(&pool, "span_h", "run_hash").await;
+        // A blob ref would not normally exist under hash_only, but a
+        // misconfigured producer or pre-migration row could leave one
+        // dangling. The helper still reports the row's mode so the
+        // route can refuse.
+        seed_model_call(&pool, "span_h", Some(REF_A), None).await;
+
+        let got = find_blob_owner(&pool, "run_hash", REF_A).await.unwrap();
+        assert_eq!(got.as_deref(), Some("hash_only"));
     }
 }
