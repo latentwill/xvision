@@ -6,6 +6,7 @@ import { agentRunKeys, getAgentRun } from "@/api/agent-runs";
 import { useTraceDock, type DockHeight } from "@/stores/trace-dock";
 import { FlameGraph } from "./FlameGraph";
 import { SpanInspector } from "./SpanInspector";
+import { HaltStrategyButton } from "./HaltStrategyButton";
 
 function heightPx(h: DockHeight): number {
   if (h === "collapsed") return 0;
@@ -71,6 +72,12 @@ export function TraceDock() {
           <span className="text-text-3">loading…</span>
         )}
         <div className="ml-auto flex items-center gap-1">
+          {isLive && summary?.strategy_id ? (
+            <HaltStrategyButton
+              strategyName={summary.strategy_id}
+              onHalt={() => window.alert(`halt-strategy stubbed (strategy ${summary.strategy_id})`)}
+            />
+          ) : null}
           {(["peek", "working", "full"] as const).map((h) => (
             <button
               key={h}
