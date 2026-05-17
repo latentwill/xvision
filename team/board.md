@@ -17,6 +17,10 @@ V2 work (V2A onboarding + docs, V2B-V4 roadmap) also has its own board:
 ### Agent-run Observability Follow-ups
 
 - [agent-run-observability-blob-fetch-route](contracts/agent-run-observability-blob-fetch-route.md) - leaf - claimed - add authenticated blob fetch route plus lazy SpanInspector preview for retained prompt/response payload refs.
+- [trace-dock-ux-polish](contracts/trace-dock-ux-polish.md) - leaf - claimed - bigger header icons, capsule glow on status strip, flame graph row distribution, single-span width cap.
+- [observability-retention-default-full-debug](contracts/observability-retention-default-full-debug.md) - leaf - ready - flip default retention mode to `full_debug` so operators can debug from the first run; remove hardcoded `"hash_only"` callsites.
+- [model-call-streaming-text-passthrough](contracts/model-call-streaming-text-passthrough.md) - integration - ready - wire actual delta text from intern providers to SpanInspector so STREAMING shows the body, not just a char count.
+- [eval-inspector-header-polish](contracts/eval-inspector-header-polish.md) - leaf - ready - uniform action-button widths, drop redundant strategy/scenario id strip, add a stable per-run disambiguator visible in list + detail header.
 
 ### Post-Q15 Paper Trading
 
