@@ -7,7 +7,7 @@
  */
 import { describe, it, expect, beforeEach } from "vitest"
 import { Agent, createTool } from "@cline/sdk"
-import { installMockProvider, setMockScript, resetMockScript, buildMockModel } from "./mock-provider.js"
+import { installMockProvider, setMockScript, resetMockScript, buildMockModel } from "../../src/testing/mock-provider.js"
 
 describe("xvision-mock provider", () => {
   beforeEach(() => {
