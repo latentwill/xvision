@@ -218,18 +218,24 @@ export function TraceDock() {
           <button
             type="button"
             aria-label="pop out to dedicated view"
+            title="Open in dedicated route"
             onClick={() => navigate(`/agent-runs/${activeRunId}`)}
-            className="px-2 hover:opacity-80"
+            className="h-7 w-8 inline-flex items-center justify-center rounded text-text-3 hover:text-text hover:bg-surface-elev"
           >
-            ⤡
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M6 3h7v7M13 3l-7 7M3 8v5h5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
           </button>
           <button
             type="button"
             aria-label="minimize dock"
+            title="Minimize trace dock (F12)"
             onClick={minimize}
-            className="px-2 hover:opacity-80"
+            className="h-7 w-8 inline-flex items-center justify-center rounded text-text-3 hover:text-text hover:bg-surface-elev"
           >
-            ⤓
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M3 6l5 5 5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
           </button>
         </div>
       </div>
