@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 
 import { HomeRoute } from "./home";
+import * as chartApi from "@/api/chart";
 import * as evalApi from "@/api/eval";
 import * as strategyApi from "@/api/strategies";
 import * as scenarioApi from "@/api/scenarios";
@@ -85,6 +86,7 @@ function renderRoute() {
 describe("HomeRoute", () => {
   beforeEach(() => {
     vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    vi.mocked(chartApi.getRunChart).mockResolvedValue(null as never);
     vi.mocked(strategyApi.listStrategies).mockResolvedValue([]);
     vi.mocked(scenarioApi.listScenarios).mockResolvedValue([]);
   });

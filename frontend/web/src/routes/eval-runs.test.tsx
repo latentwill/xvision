@@ -579,6 +579,11 @@ describe("EvalRunsRoute", () => {
     expect(screen.getAllByText(/User 4H/).length).toBeGreaterThan(0);
     // Raw agent_id slice must NOT appear in either layout for the row.
     expect(screen.queryByText("01TEST")).not.toBeInTheDocument();
+    expect(screen.getByTestId("eval-runs-desktop-table")).toHaveClass(
+      "min-w-[980px]",
+    );
+    expect(screen.getByTestId("eval-runs-scroll-fade").getAttribute("style"))
+      .toContain("var(--surface-card)");
   });
 
   it("falls back to the short id when the strategy/scenario lookup misses", async () => {

@@ -437,7 +437,10 @@ function RunsTable({
 
       <div className="relative hidden md:block">
         <div className="overflow-x-auto">
-        <table className="w-full">
+        <table
+          data-testid="eval-runs-desktop-table"
+          className="min-w-[980px] w-full"
+        >
           <thead>
             <tr className="border-b border-border-soft text-left text-[12px] text-text-2">
               <th className="w-8 py-2.5 pl-5 pr-2 font-normal"></th>
@@ -557,16 +560,17 @@ function RunsTable({
         {/*
           Edge fade gradient hints at horizontal overflow without
           painting over the rightmost column when there's no overflow.
-          The gradient color uses `--surface` so it blends in both
+          The gradient color uses the card surface so it blends in both
           light and dark themes (per the dark-mode borders rule in
           CLAUDE.md — no hard whites here).
         */}
         <div
           aria-hidden
+          data-testid="eval-runs-scroll-fade"
           className="pointer-events-none absolute inset-y-0 right-0 w-8"
           style={{
             background:
-              "linear-gradient(to right, transparent, var(--surface))",
+              "linear-gradient(to right, transparent, var(--surface-card))",
           }}
         />
       </div>
