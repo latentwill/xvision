@@ -95,9 +95,10 @@ export function RunStatusStrip({
 }: RunStatusStripProps) {
   const conf = TONE[tone];
 
-  const dur = isLive
-    ? `0:${String(liveDurationSec).padStart(2, "0")}`
-    : fmtPostHoc(summary.duration_ms);
+  const mins = Math.floor(liveDurationSec / 60);
+  const secs = liveDurationSec % 60;
+  const liveDurDisplay = `${mins}:${String(secs).padStart(2, "0")}`;
+  const dur = isLive ? liveDurDisplay : fmtPostHoc(summary.duration_ms);
 
   return (
     <div
@@ -105,6 +106,7 @@ export function RunStatusStrip({
       data-tone={tone}
       role="button"
       tabIndex={0}
+      aria-label="Expand trace dock"
       onClick={onExpand}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
@@ -307,6 +309,7 @@ export function RunStatusStrip({
         {/* Expand button */}
         <button
           onClick={(e) => { e.stopPropagation(); onExpand(); }}
+          aria-label="Expand trace dock"
           title="Expand trace dock (F12)"
           style={{
             height: 24,

@@ -89,6 +89,21 @@ describe("RunStatusStrip", () => {
     expect(onExpand).toHaveBeenCalledOnce();
   });
 
+  test("LIVE duration formats as m:ss for 90 seconds", () => {
+    render(
+      <RunStatusStrip
+        summary={MOCK_RUN_LIVE.summary}
+        currentSpan={null}
+        isLive
+        liveDurationSec={90}
+        tone="live"
+        onExpand={() => {}}
+        onPopOut={() => {}}
+      />,
+    );
+    expect(screen.getByText("1:30")).toBeInTheDocument();
+  });
+
   test("clicking the body calls onExpand; clicking pop-out calls onPopOut (no double-fire)", async () => {
     const onExpand = vi.fn();
     const onPopOut = vi.fn();
