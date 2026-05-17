@@ -27,6 +27,11 @@ struct SeedSummary {
     strategies_removed: Vec<String>,
     scenarios_created: Vec<String>,
     scenarios_skipped: Vec<String>,
+    scenarios_removed: Vec<String>,
+    /// Example scenarios that could not be removed during `--reset`
+    /// because at least one `eval_runs` row still references them. The
+    /// existing row is preserved as-is so audit history stays intact.
+    scenarios_preserved_referenced: Vec<String>,
     tutorial_path: String,
 }
 
@@ -47,7 +52,7 @@ pub async fn run(xvn_home_override: Option<PathBuf>, args: SeedArgs) -> CliResul
     };
 
     seed_strategies(&strategy_store, args.reset, &mut summary).await?;
-    seed_scenarios(&ctx, &mut summary).await?;
+    seed_scenarios(&ctx, args.reset, &mut summary).await?;
     write_tutorial(&xvn_home, &mut summary).await?;
 
     if args.json {
@@ -118,10 +123,53 @@ async fn seed_strategies(
     Ok(())
 }
 
-async fn seed_scenarios(ctx: &ApiContext, summary: &mut SeedSummary) -> CliResultUnit {
-    // Scenarios are immutable post-insert (migration 006's `scenarios_no_update`
-    // trigger). Idempotency model: insert if missing, otherwise skip. We
-    // never overwrite or delete operator-authored scenarios.
+async fn seed_scenarios(ctx: &ApiContext, reset: bool, summary: &mut SeedSummary) -> CliResultUnit {
+    use xvision_engine::api::ApiError;
+
+    // Scenarios are immutable post-insert (migration 006's
+    // `scenarios_no_update` trigger blocks `UPDATE` on every column
+    // except `archived_at`). Refresh shape:
+    //
+    // * Default — insert if missing, skip if present. Never overwrite an
+    //   operator-authored scenario.
+    // * `--reset` — try `scenario_store::delete_scenario` on each
+    //   example row first, then insert the curated set. The delete is
+    //   blocked when at least one `eval_runs` row still references the
+    //   scenario; in that case the existing row is preserved (the
+    //   audit trail is more valuable than refreshing the body), and the
+    //   row is recorded in `scenarios_preserved_referenced` so the
+    //   operator can see why their reset did not rewrite everything.
+    if reset {
+        for scenario in example_scenarios() {
+            let existing = scenario_store::get_scenario(ctx, &scenario.id)
+                .await
+                .map_err(|e| api_to_cli("seed lookup", e))?;
+            let Some(prior) = existing else {
+                continue;
+            };
+            if !is_example_scenario(&prior) {
+                return Err(CliError::conflict(anyhow::anyhow!(
+                    "scenario '{}' exists and is not labelled as an example. \
+                     Refusing to overwrite operator data.",
+                    scenario.id
+                )));
+            }
+            match scenario_store::delete_scenario(ctx, &scenario.id).await {
+                Ok(()) => {
+                    summary.scenarios_removed.push(scenario.id.clone());
+                }
+                Err(ApiError::Validation(_)) => {
+                    // delete_scenario surfaces a Validation error when
+                    // `eval_runs` references the scenario. Keep the row.
+                    summary
+                        .scenarios_preserved_referenced
+                        .push(scenario.id.clone());
+                }
+                Err(e) => return Err(api_to_cli("seed delete", e)),
+            }
+        }
+    }
+
     for scenario in example_scenarios() {
         scenario
             .validate_v1()
@@ -191,6 +239,22 @@ fn print_human_summary(s: &SeedSummary) {
             println!("  · {id}");
         }
     }
+    if !s.scenarios_removed.is_empty() {
+        println!("removed {} example scenarios:", s.scenarios_removed.len());
+        for id in &s.scenarios_removed {
+            println!("  - {id}");
+        }
+    }
+    if !s.scenarios_preserved_referenced.is_empty() {
+        println!(
+            "preserved {} example scenarios (referenced by existing eval runs — \
+             body cannot be refreshed without removing those runs first):",
+            s.scenarios_preserved_referenced.len()
+        );
+        for id in &s.scenarios_preserved_referenced {
+            println!("  · {id}");
+        }
+    }
     if !s.scenarios_created.is_empty() {
         println!("created {} scenarios:", s.scenarios_created.len());
         for id in &s.scenarios_created {
@@ -229,7 +293,7 @@ mod tests {
             ..SeedSummary::default()
         };
         seed_strategies(&store, reset, &mut summary).await.unwrap();
-        seed_scenarios(&ctx, &mut summary).await.unwrap();
+        seed_scenarios(&ctx, reset, &mut summary).await.unwrap();
         write_tutorial(xvn_home, &mut summary).await.unwrap();
         summary
     }
@@ -282,15 +346,59 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reset_removes_existing_examples_before_recreating() {
+    async fn reset_removes_and_recreates_strategies_and_unreferenced_scenarios() {
         let dir = tempdir().unwrap();
         seed_fresh(dir.path(), false).await;
         let second = seed_fresh(dir.path(), true).await;
         assert_eq!(second.strategies_removed.len(), 3);
         assert_eq!(second.strategies_created.len(), 3);
-        // Scenarios remain (DB-immutable rows; idempotent path).
-        assert!(second.scenarios_created.is_empty());
-        assert_eq!(second.scenarios_skipped.len(), 2);
+        // No eval_runs exist yet, so example scenarios delete cleanly and
+        // get re-inserted from the curated set.
+        assert_eq!(second.scenarios_removed.len(), 2);
+        assert_eq!(second.scenarios_created.len(), 2);
+        assert!(second.scenarios_skipped.is_empty());
+        assert!(second.scenarios_preserved_referenced.is_empty());
+    }
+
+    #[tokio::test]
+    async fn reset_preserves_scenarios_referenced_by_eval_runs() {
+        use xvision_engine::strategies::templates::EXAMPLE_SCENARIO_QUICKSTART_BULL;
+
+        let dir = tempdir().unwrap();
+        seed_fresh(dir.path(), false).await;
+
+        // Insert an eval_runs row that references one of the example
+        // scenarios. The `delete_scenario` validation should kick in on
+        // reset and the row should be preserved, not removed.
+        let user = "test-user".to_string();
+        let ctx = ApiContext::open(dir.path(), Actor::Cli { user })
+            .await
+            .expect("open ctx");
+        sqlx::query(
+            "INSERT INTO eval_runs (id, agent_id, scenario_id, mode, status, started_at) \
+             VALUES ('run-pinning', 'strategy-x', ?1, 'backtest', 'completed', \
+                     '2026-05-17T00:00:00Z')",
+        )
+        .bind(EXAMPLE_SCENARIO_QUICKSTART_BULL)
+        .execute(&ctx.db)
+        .await
+        .expect("insert eval_runs row pinning the scenario");
+        drop(ctx);
+
+        let summary = seed_fresh(dir.path(), true).await;
+
+        assert!(summary
+            .scenarios_preserved_referenced
+            .iter()
+            .any(|id| id == EXAMPLE_SCENARIO_QUICKSTART_BULL));
+        assert!(!summary
+            .scenarios_removed
+            .iter()
+            .any(|id| id == EXAMPLE_SCENARIO_QUICKSTART_BULL));
+        // The unreferenced flash-crash scenario still gets removed and
+        // recreated on the same reset call.
+        assert!(summary.scenarios_removed.iter().any(|id| id
+            == xvision_engine::strategies::templates::EXAMPLE_SCENARIO_QUICKSTART_FLASH));
     }
 
     #[tokio::test]
