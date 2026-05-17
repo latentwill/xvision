@@ -69,11 +69,13 @@ export function EvalRunDetailRoute() {
 
   // TODO(agent-run-observability): cross-link decision-row click → open dock + set decisionFilter to span's decision_idx. Needs design pass — eval-run decision rows do not map 1:1 to agent-run span decision_idx values.
 
-  // TODO(agent-run-observability): replace hardcoded mock id with
-  // summary.agent_run_id once the backend adds it to eval RunSummary.
   useEffect(() => {
-    useTraceDock.getState().setActiveRun("run_abc1234", "post-hoc");
-  }, []);
+    if (!id) return;
+    const status = q.data?.summary.status;
+    useTraceDock
+      .getState()
+      .setActiveRun(id, status === "queued" || status === "running" ? "live" : "post-hoc");
+  }, [id, q.data?.summary.status]);
 
   if (q.isPending) {
     if (isPhone) return <MobileEvalRunDetailLoading id={id} />;
@@ -285,6 +287,7 @@ function SummaryCard({
   const canRetry = summary.status === "failed";
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  const agentRunId = traceRunId(summary);
 
   async function handleDownload() {
     setDownloadError(null);
@@ -304,9 +307,8 @@ function SummaryCard({
         <div>
           <div className="flex items-center">
             <div className="text-text-3 text-[12px] font-mono">{summary.id}</div>
-            {/* TODO(agent-run-observability): use summary.agent_run_id when backend adds it */}
             <Link
-              to="/agent-runs/run_abc1234"
+              to={`/agent-runs/${encodeURIComponent(agentRunId)}`}
               className="text-[12px] text-info hover:underline ml-3"
             >
               View agent trace →
@@ -650,6 +652,11 @@ function fmtTime(iso: string): string {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+function traceRunId(summary: RunSummary): string {
+  const withTraceId = summary as RunSummary & { agent_run_id?: string | null };
+  return withTraceId.agent_run_id ?? summary.id;
 }
 
 // Defensive viewport check: when matchMedia is absent (jsdom, SSR), default

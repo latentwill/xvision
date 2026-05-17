@@ -202,7 +202,7 @@ describe("EvalRunDetailRoute (mobile layout)", () => {
     fireEvent.click(await screen.findByRole("tab", { name: "TRACE" }));
 
     const link = screen.getByRole("link", { name: /view full trace/i });
-    expect(link).toHaveAttribute("href", "/agent-runs/run_abc1234");
+    expect(link).toHaveAttribute("href", "/agent-runs/01LIVE");
   });
 
   it("shows HALT button + LIVE label while the run is active", async () => {

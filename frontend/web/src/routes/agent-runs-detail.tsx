@@ -106,7 +106,7 @@ export function AgentRunDetailRoute() {
         </Card>
       ) : null}
 
-      <Card className="mb-3 overflow-hidden">
+      <Card className="mb-3 overflow-x-auto overflow-y-hidden">
         <FilterBar
           query={filter.query} setQuery={filter.setQuery}
           kinds={filter.kinds} toggleKind={filter.toggleKind}
@@ -117,15 +117,15 @@ export function AgentRunDetailRoute() {
         />
       </Card>
 
-      <div className="grid grid-cols-[220px_1fr_400px] gap-3 h-[70vh]">
-        <Card className="overflow-hidden">
+      <div className="grid grid-cols-1 gap-3 xl:grid-cols-[220px_minmax(0,1fr)_400px] xl:h-[70vh]">
+        <Card className="overflow-hidden min-h-[180px] max-h-[260px] xl:min-h-0 xl:max-h-none">
           <AgentRunRailTree
             spans={filter.filtered}
             selectedSpanId={selectedSpan?.span_id ?? null}
             onSelect={setSelectedSpanId}
           />
         </Card>
-        <Card className="overflow-hidden">
+        <Card className="overflow-hidden min-h-[240px] max-h-[360px] xl:min-h-0 xl:max-h-none">
           <AgentRunIndentedTimeline
             spans={filter.filtered}
             selectedSpanId={selectedSpan?.span_id ?? null}
@@ -133,15 +133,17 @@ export function AgentRunDetailRoute() {
           />
         </Card>
         {selectedSpan ? (
-          <SpanInspector
-            span={selectedSpan}
-            isLive={isLive}
-            onRerun={(spanId) => {
-              // Phase 4 stub — checkpoint design pending.
-              console.warn("[agent-runs] rerun-from-here — pending checkpoint design", { spanId });
-            }}
-            onJumpToDecision={() => { /* Phase 2.5.4: cross-link to eval-runs-detail */ }}
-          />
+          <Card className="overflow-hidden min-h-[420px] xl:min-h-0">
+            <SpanInspector
+              span={selectedSpan}
+              isLive={isLive}
+              onRerun={(spanId) => {
+                // Phase 4 stub — checkpoint design pending.
+                console.warn("[agent-runs] rerun-from-here — pending checkpoint design", { spanId });
+              }}
+              onJumpToDecision={() => { /* Phase 2.5.4: cross-link to eval-runs-detail */ }}
+            />
+          </Card>
         ) : null}
       </div>
     </>

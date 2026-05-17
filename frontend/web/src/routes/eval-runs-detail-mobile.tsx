@@ -100,7 +100,7 @@ export function MobileEvalRunDetail({
         )}
         {tab === "DECISIONS" && <DecisionsTab decisions={detail.decisions} />}
         {tab === "TRACE" && (
-          <TraceTab spanCount={detail.decisions.length} />
+          <TraceTab summary={summary} spanCount={detail.decisions.length} />
         )}
         {tab === "REVIEW" && (
           <ReviewTab summary={summary} />
@@ -672,10 +672,14 @@ function ActionPill({ action }: { action: "BUY" | "SELL" | "HOLD" | "CLOSE" }) {
 
 // ── TRACE tab ──────────────────────────────────────────────────────
 
-function TraceTab({ spanCount }: { spanCount: number }) {
-  // TODO(agent-run-observability): use summary.agent_run_id when backend adds it.
-  // Until then, deep-link to /agent-runs/run_abc1234 to match the desktop SummaryCard.
-  const agentRunId = "run_abc1234";
+function TraceTab({
+  summary,
+  spanCount,
+}: {
+  summary: RunSummary;
+  spanCount: number;
+}) {
+  const agentRunId = traceRunId(summary);
   return (
     <div className="flex flex-col gap-3 py-3 pb-24">
       <div className={`${MONO_TINY} text-text-3`}>
@@ -703,7 +707,7 @@ function TraceTab({ spanCount }: { spanCount: number }) {
             : "Open the full trace surface to inspect agent spans for this run."}
         </p>
         <Link
-          to={`/agent-runs/${agentRunId}`}
+          to={`/agent-runs/${encodeURIComponent(agentRunId)}`}
           className="mt-3 inline-flex items-center gap-2 px-3 py-2 rounded text-[12px] border border-gold/40 bg-gold/[0.08] text-gold hover:bg-gold/[0.14]"
         >
           View full trace →
@@ -937,4 +941,9 @@ function fmtDate(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function traceRunId(summary: RunSummary): string {
+  const withTraceId = summary as RunSummary & { agent_run_id?: string | null };
+  return withTraceId.agent_run_id ?? summary.id;
 }

@@ -258,6 +258,23 @@ describe("EvalRunDetailRoute", () => {
     );
   });
 
+  it("links the trace surface to the actual eval run id", async () => {
+    vi.mocked(evalApi.getRun).mockResolvedValue(
+      detail({
+        summary: {
+          ...detail().summary,
+          status: "completed",
+          completed_at: "2026-05-13T14:01:00Z",
+        },
+      }),
+    );
+
+    renderDetail();
+
+    const link = await screen.findByRole("link", { name: /view agent trace/i });
+    expect(link).toHaveAttribute("href", "/agent-runs/01LIVE");
+  });
+
   it("surfaces an inline error when the export helper rejects", async () => {
     vi.mocked(evalApi.getRun).mockResolvedValue(
       detail({
