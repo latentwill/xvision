@@ -925,6 +925,24 @@ async fn run_inner(
     //     shorter `bar_history` slice at bar 1.
     warn_on_warmup_mismatch(&scenario, &strategy);
 
+    // 4. Build a fresh Run, persist, then drive the executor. The
+    //    `run.id` must exist before we construct the observability
+    //    emitter so SpanStarted events have a valid FK.
+    let mut run = Run::new_queued(req.agent_id.clone(), scenario.id.clone(), req.mode);
+    run.params_override = req.params_override.clone();
+
+    // Observability emitter (`qa-eval-observability-wiring`). Built
+    // only when the dashboard injected an obs bus on the ApiContext;
+    // CLI and tests run without it and emission is a no-op. `RunStarted`
+    // is published below — only after the `eval_runs` row exists and
+    // executor preflight has succeeded — so the recorder's
+    // `agent_runs.eval_run_id` FK is valid and a preflight failure can't
+    // leave a phantom observability run behind.
+    let obs_emitter = ctx
+        .obs_event_bus
+        .as_ref()
+        .map(|bus| crate::agent::observability::ObsEmitter::new(bus.clone(), run.id.clone()));
+
     // 3. Pick the executor for this run mode. For backtest mode, when the
     //    scenario came from the DB we try to source bars through the
     //    cache wrapper (`eval::bars::load_bars`); on miss / fetch error
@@ -933,14 +951,12 @@ async fn run_inner(
     let executor: Box<dyn Executor> = match req.mode {
         RunMode::Paper => {
             let b = broker.ok_or_else(|| ApiError::Validation("paper mode requires a broker".into()))?;
-            build_paper_executor(ctx, &scenario, from_db, b).await?
+            build_paper_executor(ctx, &scenario, from_db, b, obs_emitter.clone()).await?
         }
-        RunMode::Backtest => build_backtest_executor(ctx, &scenario, from_db).await?,
+        RunMode::Backtest => {
+            build_backtest_executor(ctx, &scenario, from_db, obs_emitter.clone()).await?
+        }
     };
-
-    // 4. Build a fresh Run, persist, then drive the executor.
-    let mut run = Run::new_queued(req.agent_id.clone(), scenario.id.clone(), req.mode);
-    run.params_override = req.params_override.clone();
 
     let store = RunStore::new(ctx.db.clone());
     store
@@ -959,6 +975,19 @@ async fn run_inner(
         return Ok(stopped);
     }
     run.status = RunStatus::Running;
+
+    // With the `eval_runs` row persisted and the executor built, register
+    // the observability run. From here, any executor failure emits
+    // `RunFinished{Failed}` below; a successful run emits
+    // `RunFinished{Completed}` after finalize.
+    if let Some(em) = obs_emitter.as_ref() {
+        let objective = format!(
+            "eval:{mode:?}:{scenario}",
+            mode = req.mode,
+            scenario = scenario.id,
+        );
+        em.emit_run_started(objective, "hash_only").await;
+    }
 
     // Clone the dispatch Arc so we can reuse it for the post-finalize
     // findings extraction below without re-paying client setup.
@@ -986,7 +1015,18 @@ async fn run_inner(
         if let Ok(failed) = store.get(&run.id).await {
             api_search::upsert_run(ctx, &failed).await;
         }
+        if let Some(em) = obs_emitter.as_ref() {
+            em.emit_run_finished(
+                xvision_observability::RunStatus::Failed,
+                Some(err_msg.clone()),
+            )
+            .await;
+        }
         return Err(ApiError::Internal(format!("executor: {err_msg}")));
+    }
+
+    if let Some(em) = obs_emitter.as_ref() {
+        em.emit_run_finished(xvision_observability::RunStatus::Completed, None).await;
     }
 
     // Re-read from the store so the returned Run reflects the canonical
@@ -1158,6 +1198,7 @@ async fn build_paper_executor(
     scenario: &Scenario,
     from_db: bool,
     broker: Arc<dyn BrokerSurface>,
+    obs: Option<crate::agent::observability::ObsEmitter>,
 ) -> ApiResult<Box<dyn Executor>> {
     let bars = load_ohlcv_for_scenario(ctx, scenario, from_db).await?;
     let warmup = if from_db {
@@ -1170,17 +1211,20 @@ async fn build_paper_executor(
         // can pull a real pre-window from the bars cache.
         Vec::new()
     };
-    Ok(Box::new(
-        PaperExecutor::with_bars(broker, bars)
-            .with_warmup(warmup)
-            .with_event_bus(ctx.event_bus.clone()),
-    ))
+    let mut paper = PaperExecutor::with_bars(broker, bars)
+        .with_warmup(warmup)
+        .with_event_bus(ctx.event_bus.clone());
+    if let Some(emitter) = obs {
+        paper = paper.with_observability(emitter);
+    }
+    Ok(Box::new(paper))
 }
 
 async fn build_backtest_executor(
     ctx: &ApiContext,
     scenario: &Scenario,
     from_db: bool,
+    obs: Option<crate::agent::observability::ObsEmitter>,
 ) -> ApiResult<Box<dyn Executor>> {
     if from_db {
         match load_bars_for_scenario(ctx, scenario).await {
@@ -1200,11 +1244,13 @@ async fn build_backtest_executor(
                 // operator who set `warmup_bars > 0` expects real
                 // pre-window context, not silent emptiness.
                 let warmup = market_bars_to_ohlcv(load_warmup_for_scenario(ctx, scenario).await?);
-                return Ok(Box::new(
-                    BacktestExecutor::with_bars(ohlcv)
-                        .with_warmup(warmup)
-                        .with_event_bus(ctx.event_bus.clone()),
-                ));
+                let mut bt = BacktestExecutor::with_bars(ohlcv)
+                    .with_warmup(warmup)
+                    .with_event_bus(ctx.event_bus.clone());
+                if let Some(emitter) = obs {
+                    bt = bt.with_observability(emitter);
+                }
+                return Ok(Box::new(bt));
             }
             Err(e) => {
                 if scenario.warmup_bars > 0 || !legacy_fixture_exists(scenario) {
@@ -1221,9 +1267,11 @@ async fn build_backtest_executor(
         return Err(missing_bars_validation(scenario, None));
     }
 
-    Ok(Box::new(
-        BacktestExecutor::new().with_event_bus(ctx.event_bus.clone()),
-    ))
+    let mut bt = BacktestExecutor::new().with_event_bus(ctx.event_bus.clone());
+    if let Some(emitter) = obs {
+        bt = bt.with_observability(emitter);
+    }
+    Ok(Box::new(bt))
 }
 
 /// Emit a warning (via `tracing::warn`) when the scenario's
@@ -1286,21 +1334,45 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
     let dispatch = build_eval_dispatch(ctx, &strategy, &agent_slots).await?;
     let tools = Arc::new(ToolRegistry::default_with_builtins());
 
+    // Other entry point (`run_with_deps_in_progress`) — observability
+    // wiring is opt-in via the same ApiContext bus. The emitter is
+    // built after `run.id` is available below; `RunStarted` is
+    // published only after the `eval_runs` row exists and executor
+    // preflight has succeeded, so the recorder's FK is valid and
+    // preflight failures can't leave a phantom observability run
+    // behind. The matching `RunFinished` is emitted by
+    // `execute_in_background`.
+    let mut run = Run::new_queued(req.agent_id.clone(), scenario.id.clone(), req.mode);
+    let obs_emitter = ctx
+        .obs_event_bus
+        .as_ref()
+        .map(|bus| crate::agent::observability::ObsEmitter::new(bus.clone(), run.id.clone()));
+
     let executor: Box<dyn Executor> = match req.mode {
         RunMode::Paper => {
             let b = broker.expect("paper mode broker built above");
-            build_paper_executor(ctx, &scenario, from_db, b).await?
+            build_paper_executor(ctx, &scenario, from_db, b, obs_emitter.clone()).await?
         }
-        RunMode::Backtest => build_backtest_executor(ctx, &scenario, from_db).await?,
+        RunMode::Backtest => {
+            build_backtest_executor(ctx, &scenario, from_db, obs_emitter.clone()).await?
+        }
     };
 
-    let mut run = Run::new_queued(req.agent_id.clone(), scenario.id.clone(), req.mode);
     run.params_override = req.params_override.clone();
     let store = RunStore::new(ctx.db.clone());
     store
         .create(&run)
         .await
         .map_err(|e| ApiError::Internal(format!("create run: {e}")))?;
+
+    if let Some(em) = obs_emitter.as_ref() {
+        let objective = format!(
+            "eval:{mode:?}:{scenario}",
+            mode = req.mode,
+            scenario = scenario.id,
+        );
+        em.emit_run_started(objective, "hash_only").await;
+    }
 
     let args_json = serde_json::to_string(&req).ok();
     let _ = audit::record(
@@ -1326,6 +1398,7 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
             executor,
             dispatch,
             tools,
+            obs_emitter,
         )
         .await;
     });
@@ -1347,6 +1420,7 @@ async fn execute_in_background(
     executor: Box<dyn Executor>,
     dispatch: Arc<dyn LlmDispatch>,
     tools: Arc<ToolRegistry>,
+    obs_emitter: Option<crate::agent::observability::ObsEmitter>,
 ) {
     let store = RunStore::new(ctx.db.clone());
 
@@ -1358,6 +1432,13 @@ async fn execute_in_background(
             if let Ok(terminal) = store.get(&run.id).await {
                 api_search::upsert_run(&ctx, &terminal).await;
             }
+            // Caller already advanced past Queued (e.g., cancel before
+            // executor start). Emit Cancelled so SSE consumers don't
+            // wait forever on /api/agent-runs/<eval_run_id>.
+            if let Some(em) = obs_emitter.as_ref() {
+                em.emit_run_finished(xvision_observability::RunStatus::Cancelled, None)
+                    .await;
+            }
             return;
         }
         Err(e) => {
@@ -1367,6 +1448,13 @@ async fn execute_in_background(
                 error = %e,
                 "failed to transition Queued → Running",
             );
+            if let Some(em) = obs_emitter.as_ref() {
+                em.emit_run_finished(
+                    xvision_observability::RunStatus::Failed,
+                    Some(format!("failed to transition Queued → Running: {e}")),
+                )
+                .await;
+            }
             return;
         }
     }
@@ -1390,6 +1478,10 @@ async fn execute_in_background(
             if let Ok(cancelled) = store.get(&run.id).await {
                 api_search::upsert_run(&ctx, &cancelled).await;
             }
+            if let Some(em) = obs_emitter.as_ref() {
+                em.emit_run_finished(xvision_observability::RunStatus::Cancelled, None)
+                    .await;
+            }
             return;
         }
         tracing::error!(
@@ -1403,6 +1495,13 @@ async fn execute_in_background(
         if let Ok(failed) = store.get(&run.id).await {
             api_search::upsert_run(&ctx, &failed).await;
         }
+        if let Some(em) = obs_emitter.as_ref() {
+            em.emit_run_finished(
+                xvision_observability::RunStatus::Failed,
+                Some(err_msg),
+            )
+            .await;
+        }
         return;
     }
 
@@ -1415,10 +1514,21 @@ async fn execute_in_background(
                 error = %e,
                 "failed to re-read finalized run",
             );
+            if let Some(em) = obs_emitter.as_ref() {
+                em.emit_run_finished(
+                    xvision_observability::RunStatus::Failed,
+                    Some(format!("failed to re-read finalized run: {e}")),
+                )
+                .await;
+            }
             return;
         }
     };
     api_search::upsert_run(&ctx, &finalized).await;
+    if let Some(em) = obs_emitter.as_ref() {
+        em.emit_run_finished(xvision_observability::RunStatus::Completed, None)
+            .await;
+    }
 
     // Best-effort findings extraction — failures audit but don't reopen
     // the run.
