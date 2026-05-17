@@ -3,6 +3,7 @@ pub mod manifest;
 pub mod risk;
 pub mod slot;
 pub mod store;
+pub mod templates;
 pub mod validate;
 
 use serde::{Deserialize, Serialize};
