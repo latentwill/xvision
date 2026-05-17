@@ -37,7 +37,7 @@ pub use trader_output::{TraderFailureKind, TraderOutputError};
 ///  - Trader output classes: `empty`, `tool_use_only`, `truncated`,
 ///    `invalid_json`, `missing_field`, `invalid_field`, `missing_response`.
 ///  - Provider transport classes: `provider_timeout`, `provider_connect`,
-///    `provider_http_error`.
+///    `provider_http_error`, `provider_decode`.
 ///  - Broker transport classes: `broker_auth`, `broker_unsupported`,
 ///    `broker_insufficient_funds`, `broker_timeout`, `broker_rejected`.
 ///  - `unclassified` for anything else.
@@ -100,6 +100,13 @@ pub fn classify_run_failure(err: &anyhow::Error) -> &'static str {
     if s.contains("anthropic api error") || s.contains("openai-compat api error") {
         return "provider_http_error";
     }
+    if s.contains("provider_decode")
+        || s.contains("error decoding response body")
+        || s.contains("invalid json response body")
+        || s.contains("eof while parsing")
+    {
+        return "provider_decode";
+    }
     "unclassified"
 }
 
@@ -155,7 +162,9 @@ mod tests {
         let e2 = anyhow::anyhow!("alpaca create_order: bracket orders not supported for this asset class");
         assert_eq!(classify_run_failure(&e2), "broker_unsupported");
 
-        let e3 = anyhow::anyhow!("alpaca create_order: order_type market is not supported for this asset class");
+        let e3 = anyhow::anyhow!(
+            "alpaca create_order: order_type market is not supported for this asset class"
+        );
         assert_eq!(classify_run_failure(&e3), "broker_unsupported");
     }
 
@@ -201,6 +210,10 @@ mod tests {
 
         let e_provider_http = anyhow::anyhow!("anthropic api error: 500 internal server error");
         assert_eq!(classify_run_failure(&e_provider_http), "provider_http_error");
+
+        let e_provider_decode =
+            anyhow::anyhow!("provider_decode: anthropic returned invalid JSON response body: EOF while parsing a value at line 1707 column 0");
+        assert_eq!(classify_run_failure(&e_provider_decode), "provider_decode");
     }
 
     #[test]
