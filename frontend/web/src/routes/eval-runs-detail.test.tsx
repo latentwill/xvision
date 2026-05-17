@@ -561,6 +561,64 @@ describe("EvalRunDetailRoute", () => {
     ).toBeInTheDocument();
   });
 
+  // ── status pill + running animation ──────────────────────────────────
+
+  it("renders status pill from run.status while the run is running", async () => {
+    vi.mocked(evalApi.getRun).mockResolvedValue(detail());
+
+    renderDetail();
+
+    // Wait for actual content to render, not the loading skeleton.
+    await screen.findByRole("button", { name: /stop eval run/i });
+    // The pill's text content equals run.status — not the trailing
+    // span's state. While running, never "completed".
+    const pill = document.querySelector(".xvn-pill-animated");
+    expect(pill).not.toBeNull();
+    expect(pill?.textContent).toContain("running");
+    expect(pill?.textContent).not.toContain("completed");
+  });
+
+  it("animates the running pill via prefers-reduced-motion-aware xvn-pill-animated class", async () => {
+    vi.mocked(evalApi.getRun).mockResolvedValue(detail());
+
+    renderDetail();
+
+    await screen.findByRole("button", { name: /stop eval run/i });
+    const pill = document.querySelector(".xvn-pill-animated");
+    expect(pill).not.toBeNull();
+    expect(pill?.getAttribute("data-running")).toBe("true");
+    expect(pill?.getAttribute("aria-busy")).toBe("true");
+  });
+
+  it("does not render a separate streaming capsule alongside the running pill", async () => {
+    vi.mocked(evalApi.getRun).mockResolvedValue(detail());
+
+    renderDetail();
+
+    await screen.findByRole("button", { name: /stop eval run/i });
+    // Single status indicator on the surface: the animated pill.
+    // The legacy duplicate "streaming" indicator must not appear.
+    expect(screen.queryByText(/^streaming$/i)).not.toBeInTheDocument();
+  });
+
+  it("strips animation off the pill once the run reaches a terminal state", async () => {
+    vi.mocked(evalApi.getRun).mockResolvedValue(
+      detail({
+        summary: {
+          ...detail().summary,
+          status: "completed",
+          completed_at: "2026-05-13T14:01:00Z",
+        },
+      }),
+    );
+
+    renderDetail();
+
+    await screen.findByRole("button", { name: /download eval run/i });
+    // The animated class only attaches while status === "running".
+    expect(document.querySelector(".xvn-pill-animated")).toBeNull();
+  });
+
   it("shows a Retry button on failed terminal runs", async () => {
     vi.mocked(evalApi.getRun).mockResolvedValue(
       detail({

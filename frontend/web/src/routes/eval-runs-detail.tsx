@@ -368,13 +368,6 @@ function SummaryCard({
         </div>
       ) : null}
 
-      {inflight ? (
-        <div className="mb-4 inline-flex items-center gap-1.5 rounded-sm border border-info/30 bg-info/[0.06] px-2 py-1 text-[12px] text-info">
-          <span className="w-1.5 h-1.5 rounded-full bg-info" />
-          streaming
-        </div>
-      ) : null}
-
       <div className="grid grid-cols-3 gap-x-8 gap-y-3">
         <Metric label="Sharpe" value={fmtNumber(summary.sharpe)} />
         <Metric label="Max DD" value={fmtPct(summary.max_drawdown_pct)} />
