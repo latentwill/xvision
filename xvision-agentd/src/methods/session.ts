@@ -7,6 +7,17 @@ import {
 } from "../session/store.js"
 import { handleToolRegistryGet } from "./tool-registry.js"
 import { buildAgent } from "../session/build-agent.js"
+import {
+  emitRunStarted,
+  emitRunFinished,
+  emitModelCallFinished,
+  emitError,
+  newSpanId,
+} from "../session/emit.js"
+import {
+  setActiveRun,
+  clearActiveRun,
+} from "../session/active-run.js"
 
 let store: SessionStore = getDefaultStore()
 
@@ -49,6 +60,17 @@ export function handleSessionStartRun(raw: unknown): StartRunResult {
     if (!known.has(name)) throw new TypeError(`unknown tool in allowed_tools: ${name}`)
   }
   const s = store.create(p.run_id as string, config)
+  emitRunStarted({
+    run_id: s.run_id,
+    // The sidecar doesn't see an "objective" field — that's set by the
+    // Rust caller before start_run. We pass the system_prompt as a
+    // human-readable label; the Rust side may overwrite with a richer
+    // objective in its translation layer.
+    objective: config.system_prompt,
+    started_at_ms: s.created_at_ms,
+    provider_id: config.provider_id,
+    model_id: config.model_id,
+  })
   return { run_id: s.run_id, started_at_ms: s.created_at_ms }
 }
 
@@ -57,6 +79,13 @@ export function handleSessionEndRun(raw: unknown): EndRunResult {
   if (typeof p.run_id !== "string" || p.run_id.length === 0)
     throw new TypeError("params.run_id must be a non-empty string")
   const ended = store.end(p.run_id)
+  if (ended) {
+    emitRunFinished({
+      run_id: p.run_id,
+      status: "completed",
+      finished_at_ms: Date.now(),
+    })
+  }
   return { ended }
 }
 
@@ -142,23 +171,55 @@ export async function handleSessionStep(raw: unknown): Promise<StepResult> {
   }
   const agent = session.agent!
 
-  const result = agent.hasRun
-    ? await agent.continue(p.prompt)
-    : await agent.run(p.prompt)
+  const runId = p.run_id
+  const stepSpanId = newSpanId()
+  setActiveRun(runId, session.config.provider_id, session.config.model_id)
+  try {
+    const result = agent.hasRun
+      ? await agent.continue(p.prompt)
+      : await agent.run(p.prompt)
 
-  // exactOptionalPropertyTypes: omit total_cost / error when undefined.
-  return {
-    status: result.status,
-    output_text: result.outputText,
-    iterations: result.iterations,
-    usage: {
+    emitModelCallFinished({
+      span_id: stepSpanId,
+      run_id: runId,
+      provider: session.config.provider_id,
+      model: session.config.model_id,
       input_tokens: result.usage.inputTokens,
       output_tokens: result.usage.outputTokens,
-      cache_read_tokens: result.usage.cacheReadTokens ?? 0,
-      cache_write_tokens: result.usage.cacheWriteTokens ?? 0,
-      ...(typeof result.usage.totalCost === "number" ? { total_cost: result.usage.totalCost } : {}),
-    },
-    ...(result.error ? { error: result.error.message } : {}),
+      total_cost: typeof result.usage.totalCost === "number" ? result.usage.totalCost : undefined,
+    })
+
+    if (result.error) {
+      emitError({
+        run_id: runId,
+        message: result.error.message,
+        severity: "error",
+      })
+    }
+
+    // exactOptionalPropertyTypes: omit total_cost / error when undefined.
+    return {
+      status: result.status,
+      output_text: result.outputText,
+      iterations: result.iterations,
+      usage: {
+        input_tokens: result.usage.inputTokens,
+        output_tokens: result.usage.outputTokens,
+        cache_read_tokens: result.usage.cacheReadTokens ?? 0,
+        cache_write_tokens: result.usage.cacheWriteTokens ?? 0,
+        ...(typeof result.usage.totalCost === "number" ? { total_cost: result.usage.totalCost } : {}),
+      },
+      ...(result.error ? { error: result.error.message } : {}),
+    }
+  } catch (err) {
+    emitError({
+      run_id: runId,
+      message: err instanceof Error ? err.message : String(err),
+      severity: "error",
+    })
+    throw err
+  } finally {
+    clearActiveRun()
   }
 }
 

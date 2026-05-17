@@ -5,7 +5,26 @@
 // When the backend lands ts-rs derives, replace this file with the
 // generated bindings.
 
-export type RunStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
+export type RunStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "interrupted"
+  | "agent_failure";
+
+/**
+ * Retention modes mirror the recorder's on-disk policy (see
+ * docs/superpowers/specs/2026-05-15-xvn-agent-run-system-spec.md §retention).
+ *
+ * - `hash_only` — default. Prompts and tool payloads are hashed; no raw
+ *   text on disk. Inspector shows hashes + redaction notes.
+ * - `summaries` — short summarized snippets retained alongside hashes.
+ * - `full_debug` — raw prompts, responses, and tool I/O retained on disk.
+ *   Surfaces a banner because PII/credential leakage risk increases.
+ */
+export type RetentionMode = "hash_only" | "summaries" | "full_debug";
 
 export type SpanKind =
   | "agent.run"
@@ -88,6 +107,11 @@ export type AgentRunSummary = {
   total_output_tokens: number;
   duration_ms: number | null;
   financial_eval_id: string | null;
+  /**
+   * Retention mode the run was recorded under. Drives the header badge
+   * and (when `full_debug`) the warning banner about on-disk payloads.
+   */
+  retention_mode: RetentionMode;
 };
 
 export type AgentRunDetail = {

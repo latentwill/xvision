@@ -42,4 +42,26 @@ describe("AgentRunDetailRoute", () => {
     expect(screen.queryByText("s1")).not.toBeInTheDocument();
     expect(await screen.findByText("s3")).toBeInTheDocument();
   });
+
+  test("renders the retention badge with the run's retention_mode", async () => {
+    renderAt("/agent-runs/run_abc1234");
+    const badge = await screen.findByTestId("retention-badge");
+    expect(badge).toHaveTextContent(/hash_only/);
+  });
+
+  test("does not render the full_debug banner for hash_only runs", async () => {
+    renderAt("/agent-runs/run_abc1234");
+    await screen.findByTestId("retention-badge");
+    expect(screen.queryByTestId("retention-banner")).not.toBeInTheDocument();
+  });
+
+  test("renders the full_debug banner when retention_mode is full_debug", async () => {
+    renderAt("/agent-runs/run_debug42");
+    const banner = await screen.findByTestId("retention-banner");
+    expect(banner).toHaveTextContent(
+      /Recorded under full_debug retention — prompts and tool payloads stored on disk\./,
+    );
+    const badge = await screen.findByTestId("retention-badge");
+    expect(badge).toHaveTextContent(/full_debug/);
+  });
 });

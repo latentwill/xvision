@@ -76,6 +76,7 @@ export const MOCK_RUN_COMPLETED: AgentRunDetail = {
     total_output_tokens: 1816,
     duration_ms: 3400,
     financial_eval_id: "eval_456",
+    retention_mode: "hash_only",
   },
   spans: COMPLETED_SPANS,
   model_calls: COMPLETED_MODEL_CALLS,
@@ -118,4 +119,19 @@ export const MOCK_RUN_ERROR: AgentRunDetail = {
   ),
   model_calls: COMPLETED_MODEL_CALLS,
   tool_calls: COMPLETED_TOOL_CALLS.map((t) => ({ ...t, error: "tool timeout" })),
+};
+
+/**
+ * Same shape as the completed run, but recorded under `full_debug` so the
+ * detail route renders the retention warning banner.
+ */
+export const MOCK_RUN_FULL_DEBUG: AgentRunDetail = {
+  summary: {
+    ...MOCK_RUN_COMPLETED.summary,
+    run_id: "run_debug42",
+    retention_mode: "full_debug",
+  },
+  spans: COMPLETED_SPANS,
+  model_calls: COMPLETED_MODEL_CALLS,
+  tool_calls: COMPLETED_TOOL_CALLS,
 };
