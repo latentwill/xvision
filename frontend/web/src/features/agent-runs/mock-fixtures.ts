@@ -3,6 +3,7 @@ import type {
   AgentRunDetail,
   ModelCall,
   RunSpan,
+  SpanStatus,
   ToolCall,
 } from "@/api/types-agent-runs";
 
@@ -94,8 +95,8 @@ export const MOCK_RUN_LIVE: AgentRunDetail = {
   spans: [
     COMPLETED_SPANS[0]!, // root agent.run still in progress
     COMPLETED_SPANS[1]!,
-    { ...COMPLETED_SPANS[2]!, finished_at: null, status: "in_progress" },
-  ].map((s, i) => (i === 0 ? { ...s, finished_at: null, status: "in_progress" } : s)),
+    { ...COMPLETED_SPANS[2]!, finished_at: null, status: "in_progress" as SpanStatus },
+  ].map((s, i) => (i === 0 ? { ...s, finished_at: null, status: "in_progress" as SpanStatus } : s)),
   model_calls: [],
   tool_calls: [],
 };
