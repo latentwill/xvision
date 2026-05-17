@@ -38,12 +38,11 @@ export function buildAgent(config: StartRunConfig, opts: { allowWrites?: boolean
   // The wrapper code itself (`wrapAgentModel`) is provider-agnostic
   // and ready to use as soon as we have a pre-built model in hand;
   // the gap is purely the registration plumbing on the Cline side.
-  // For now, real-provider runs emit the existing per-step
-  // `model_call_finished` from the wrapper's outer caller (none —
-  // see methods/session.ts; that emission was moved into the
-  // wrapper, so the real-provider path will currently emit nothing
-  // per call). Downstream consumers continue to see `RunStarted`
-  // and `RunFinished` with aggregate usage from `result.usage`.
+  // For now, real-provider runs emit a per-step aggregate
+  // ModelCallStarted + ModelCallFinished pair from methods/session.ts
+  // after `agent.run()` / `agent.continue()` returns. That preserves
+  // production model-call coverage until the gateway model can be
+  // wrapped directly.
   return new Agent({
     providerId: config.provider_id,
     modelId: config.model_id,
