@@ -2,6 +2,7 @@ use thiserror::Error;
 
 use std::collections::HashSet;
 
+use crate::strategies::agent_ref::canonical_role;
 use crate::strategies::{PipelineKind, Strategy};
 
 #[derive(Debug, Error)]
@@ -207,14 +208,19 @@ fn push_unique_minutes(out: &mut Vec<u32>, minutes: u32) {
 }
 
 fn validate_agent_pipeline(b: &Strategy) -> Result<(), ValidationError> {
-    let mut roles = HashSet::new();
+    // Canonical form across the engine: trim + ASCII lowercase. The
+    // serde layer normalizes roles on deserialize/serialize, so most
+    // strategies arrive here already canonical — but programmatic
+    // constructions can carry raw values, and validation must produce
+    // the same answer for both paths.
+    let mut roles: HashSet<String> = HashSet::new();
     for agent in &b.agents {
-        let role = agent.role.trim();
+        let role = canonical_role(&agent.role);
         if role.is_empty() {
             return Err(ValidationError::EmptyAgentRole);
         }
-        if !roles.insert(role) {
-            return Err(ValidationError::DuplicateAgentRole(role.to_string()));
+        if !roles.insert(role.clone()) {
+            return Err(ValidationError::DuplicateAgentRole(role));
         }
     }
     if b.pipeline.kind == PipelineKind::Single && b.agents.len() > 1 {
@@ -222,10 +228,12 @@ fn validate_agent_pipeline(b: &Strategy) -> Result<(), ValidationError> {
     }
     if b.pipeline.kind == PipelineKind::Graph {
         for edge in &b.pipeline.edges {
-            if !roles.contains(edge.from_role.as_str()) {
+            let from = canonical_role(&edge.from_role);
+            let to = canonical_role(&edge.to_role);
+            if !roles.contains(&from) {
                 return Err(ValidationError::UnknownPipelineRole(edge.from_role.clone()));
             }
-            if !roles.contains(edge.to_role.as_str()) {
+            if !roles.contains(&to) {
                 return Err(ValidationError::UnknownPipelineRole(edge.to_role.clone()));
             }
         }
