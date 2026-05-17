@@ -25,6 +25,71 @@ use xvision_observability::{
     RunStartedEvent, RunStatus, SpanFinishedEvent, SpanKind, SpanStartedEvent, SpanStatus,
 };
 
+/// Retention policy carried on `ObsEmitter` so producers can gate
+/// payload-bearing events (e.g. `AssistantTextDelta.delta_text`)
+/// without round-tripping through `ApiContext::obs_config` per call.
+/// Defaults are deny-by-default so a caller that constructs an
+/// `ObsEmitter` without setting a policy never leaks raw bodies.
+#[derive(Clone, Copy, Debug)]
+pub struct ObsRetentionPolicy {
+    pub store_responses: bool,
+    pub mode_is_full_debug: bool,
+    pub max_payload_bytes: usize,
+}
+
+impl Default for ObsRetentionPolicy {
+    fn default() -> Self {
+        // Deny-by-default. Callers (engine eval handler) opt in by
+        // calling `with_retention(...)` after reading the resolved
+        // ObservabilityConfig off `ApiContext`.
+        Self {
+            store_responses: false,
+            mode_is_full_debug: false,
+            max_payload_bytes: 0,
+        }
+    }
+}
+
+impl ObsRetentionPolicy {
+    pub fn from_config(cfg: &xvision_observability::ObservabilityConfig) -> Self {
+        use xvision_observability::RetentionMode;
+        Self {
+            store_responses: cfg.retention.store_responses,
+            mode_is_full_debug: cfg.retention.mode == RetentionMode::FullDebug,
+            max_payload_bytes: cfg.retention.max_payload_bytes as usize,
+        }
+    }
+
+    /// Whether assistant body text is allowed on the wire. Bodies only
+    /// stream when the operator opted into FullDebug AND
+    /// store_responses; otherwise we suppress to avoid leaking raw
+    /// payloads over SSE to the dashboard.
+    pub fn allow_assistant_body(&self) -> bool {
+        self.mode_is_full_debug && self.store_responses
+    }
+
+    /// Apply the policy to a candidate `delta_text`. Returns the
+    /// bounded text — empty when emission is disallowed, truncated to
+    /// `max_payload_bytes` with a trailing `…` marker when too long.
+    /// Pure; safe to call without a tokio runtime.
+    pub fn apply_to_body(&self, delta_text: &str) -> String {
+        if !self.allow_assistant_body() {
+            return String::new();
+        }
+        let cap = self.max_payload_bytes;
+        if cap == 0 || delta_text.len() <= cap {
+            return delta_text.to_string();
+        }
+        let mut end = cap;
+        while end > 0 && !delta_text.is_char_boundary(end) {
+            end -= 1;
+        }
+        let mut s = delta_text[..end].to_string();
+        s.push('…');
+        s
+    }
+}
+
 /// Engine-side helper that emits observability events around LLM
 /// dispatches and tool invocations. `None` means observability is
 /// disabled for this call site (default for unit tests and the CLI).
@@ -35,6 +100,7 @@ use xvision_observability::{
 pub struct ObsEmitter {
     bus: Arc<RunEventBus>,
     run_id: String,
+    retention: ObsRetentionPolicy,
 }
 
 impl ObsEmitter {
@@ -45,7 +111,22 @@ impl ObsEmitter {
         Self {
             bus,
             run_id: run_id.into(),
+            retention: ObsRetentionPolicy::default(),
         }
+    }
+
+    /// Attach a resolved retention policy. Without this call the
+    /// emitter denies all payload-bearing emissions (assistant body
+    /// text). The eval handler reads the policy off
+    /// `ctx.obs_config` and wires it in.
+    pub fn with_retention(mut self, policy: ObsRetentionPolicy) -> Self {
+        self.retention = policy;
+        self
+    }
+
+    /// Read-only accessor for the active retention policy.
+    pub fn retention(&self) -> ObsRetentionPolicy {
+        self.retention
     }
 
     /// Run id the emitter is bound to.
@@ -179,17 +260,24 @@ impl ObsEmitter {
             .await;
     }
 
-    /// Best-effort live-token marker. The recorder discards by default;
-    /// SSE subscribers receive it directly. Used when the dispatcher
-    /// supports streaming and we want to drive the trace dock's
-    /// `STREAMING` badge.
-    #[allow(dead_code)] // wired in a follow-up when streaming dispatchers land
-    pub async fn emit_assistant_text_delta(&self, span_id: &str, delta_len: usize) {
+    /// Best-effort live-token chunk. The recorder discards by default;
+    /// SSE subscribers receive it directly and the trace dock's
+    /// `SpanInspector` accumulates the chunks into the live body. The
+    /// final response payload is still persisted via
+    /// `emit_model_call_finished`; this method does not write to disk.
+    ///
+    /// Retention gate (see `bound_delta_text`): hash_only / redacted /
+    /// any non-FullDebug policy suppresses the raw text but still
+    /// publishes the event so the dashboard's span counts stay
+    /// accurate.
+    pub async fn emit_assistant_text_delta(&self, span_id: &str, delta_text: &str) {
+        let bounded = self.retention.apply_to_body(delta_text);
         self.bus
             .publish(RunEvent::AssistantTextDelta(AssistantTextDeltaEvent {
                 span_id: span_id.to_string(),
                 run_id: self.run_id.clone(),
-                delta_len,
+                delta_len: delta_text.chars().count(),
+                delta_text: bounded,
             }))
             .await;
     }
@@ -200,4 +288,64 @@ impl ObsEmitter {
 /// the emitter so callers don't grow an extra `ulid` import.
 pub fn fresh_span_id() -> String {
     ulid::Ulid::new().to_string()
+}
+
+#[cfg(test)]
+mod retention_tests {
+    use super::*;
+    use xvision_observability::{ObservabilityConfig, RetentionMode};
+
+    fn full_debug_policy(max_bytes: usize) -> ObsRetentionPolicy {
+        let mut cfg = ObservabilityConfig::default();
+        cfg.retention.mode = RetentionMode::FullDebug;
+        cfg.retention.store_responses = true;
+        cfg.retention.max_payload_bytes = max_bytes as u64;
+        ObsRetentionPolicy::from_config(&cfg)
+    }
+
+    fn hash_only_policy() -> ObsRetentionPolicy {
+        let mut cfg = ObservabilityConfig::default();
+        cfg.retention.mode = RetentionMode::HashOnly;
+        cfg.retention.store_responses = false;
+        ObsRetentionPolicy::from_config(&cfg)
+    }
+
+    #[test]
+    fn full_debug_passes_text_through_unchanged() {
+        let p = full_debug_policy(1024);
+        assert_eq!(p.apply_to_body("hello world"), "hello world");
+    }
+
+    #[test]
+    fn hash_only_suppresses_body() {
+        let p = hash_only_policy();
+        assert_eq!(p.apply_to_body("secret prompt body"), "");
+    }
+
+    #[test]
+    fn default_policy_denies_body() {
+        // ObsRetentionPolicy::default is deny-by-default. ObsEmitter::new
+        // installs this until the caller wires a real policy.
+        let p = ObsRetentionPolicy::default();
+        assert_eq!(p.apply_to_body("should not leak"), "");
+    }
+
+    #[test]
+    fn body_truncated_to_max_payload_bytes_with_marker() {
+        let p = full_debug_policy(10);
+        let out = p.apply_to_body("abcdefghijklmnopqrstuvwxyz");
+        assert!(out.ends_with('…'), "expected truncation marker, got: {out:?}");
+        assert!(out.starts_with("abcdefghij"), "expected first 10 bytes, got: {out:?}");
+    }
+
+    #[test]
+    fn truncation_walks_back_to_utf8_char_boundary() {
+        // A 4-byte char "🎯" at byte position 8..12; cap=10 falls
+        // mid-char, so the bound must walk back to byte 8 and emit
+        // 8 bytes + ellipsis (no mojibake).
+        let p = full_debug_policy(10);
+        let out = p.apply_to_body("12345678🎯end");
+        assert!(out.ends_with('…'));
+        assert_eq!(&out[..out.len() - '…'.len_utf8()], "12345678");
+    }
 }

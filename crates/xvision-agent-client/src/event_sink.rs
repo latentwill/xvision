@@ -324,14 +324,18 @@ fn dispatch_inner(
         "event.assistant_text_delta" => {
             // Stream-only: the recorder discards the delta_len and
             // writes nothing to SQLite. We publish to the bus so the
-            // future SSE subscriber + the OtelTeeRecorder can see the
-            // stream-progress signal. `text` payload stays at the
-            // sidecar — only the length crosses the wire (per
-            // Phase A retention decision).
+            // SSE subscriber + the OtelTeeRecorder can see the
+            // stream-progress signal. When the sidecar carries the
+            // actual chunk text (`text` field), forward it so the
+            // trace dock renders the live body; older sidecars that
+            // only ship `delta_len` still work — `delta_text` is
+            // simply empty.
+            let delta_text = str_field("text").unwrap_or_default();
             vec![RunEvent::AssistantTextDelta(AssistantTextDeltaEvent {
                 span_id: str_field("span_id")?,
                 run_id: str_field("run_id")?,
                 delta_len: u64_field("delta_len").unwrap_or(0) as usize,
+                delta_text,
             })]
         }
 

@@ -114,6 +114,41 @@ describe("trace-dock store — streamingState", () => {
     expect(deltas.s_b).toBe(4);
   });
 
+  test("appendDelta concatenates delta_text per span across frames", () => {
+    useTraceDock.getState().applyStreamEvent({
+      event: "assistant_text_delta",
+      data: {
+        span_id: "s_body",
+        run_id: "run_x",
+        delta_len: 5,
+        delta_text: "hello",
+      },
+    });
+    useTraceDock.getState().applyStreamEvent({
+      event: "assistant_text_delta",
+      data: {
+        span_id: "s_body",
+        run_id: "run_x",
+        delta_len: 6,
+        delta_text: " world",
+      },
+    });
+
+    const bodies = useTraceDock.getState().streamingState.bodiesBySpan;
+    expect(bodies.s_body).toBe("hello world");
+  });
+
+  test("appendDelta tolerates missing delta_text without dropping the count", () => {
+    useTraceDock.getState().applyStreamEvent({
+      event: "assistant_text_delta",
+      data: { span_id: "s_c", run_id: "run_x", delta_len: 3 },
+    });
+
+    const s = useTraceDock.getState().streamingState;
+    expect(s.deltaCharsBySpan.s_c).toBe(3);
+    expect(s.bodiesBySpan.s_c).toBeUndefined();
+  });
+
   test("lagged increments droppedEvents and logs a console warning", () => {
     const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {

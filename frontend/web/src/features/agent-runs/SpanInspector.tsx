@@ -141,6 +141,12 @@ export function SpanInspector({
   const deltaChars = useTraceDock(
     (s) => s.streamingState.deltaCharsBySpan[span.span_id] ?? 0,
   );
+  // Accumulated assistant body from delta_text frames. Empty when the
+  // producer is the legacy chars-only wire — the inspector falls back
+  // to the "Streaming…" indicator in that case.
+  const streamingBody = useTraceDock(
+    (s) => s.streamingState.bodiesBySpan[span.span_id] ?? "",
+  );
   const isLiveStreamingModelCall =
     isLive && span.kind === "model.call" && isActiveSseSpan;
   // The header pill keeps showing on the legacy `span.streaming`
@@ -234,12 +240,13 @@ export function SpanInspector({
         ) : null}
         {isLiveStreamingModelCall ? (
           // Preempt the post-hoc RESPONSE fallback while the SSE feed is
-          // still delivering `assistant_text_delta` frames. The delta
-          // wire carries only `delta_len`, not text — so the indicator
-          // shows accumulated character count, not the body. When the
-          // stream finishes (span removed from `activeSpanIds`), this
-          // block disappears and the existing hash/ref fallback below
-          // takes over.
+          // still delivering `assistant_text_delta` frames. When the
+          // wire carries `delta_text` (real streaming dispatchers, or
+          // the post-hoc bridge in agent/execute.rs) we render the live
+          // body directly. When the producer ships counts only we fall
+          // back to a character-count indicator so the user still sees
+          // motion. Once the span finishes the existing hash/ref
+          // fallback below takes over.
           <PullQuote
             label="RESPONSE"
             accent="var(--info)"
@@ -247,20 +254,49 @@ export function SpanInspector({
             italic
             streaming
             body={
-              <div
-                className="text-[11px] font-mono text-text-2"
-                data-testid="span-inspector-streaming"
-              >
-                Streaming response… ({deltaChars.toLocaleString()} chars)
-                <div className="text-text-3 mt-1">
-                  body not stored on disk while in-flight — completion
-                  appears below when the model call finishes
+              streamingBody ? (
+                <pre
+                  data-testid="span-inspector-streaming-body"
+                  className="m-0 whitespace-pre-wrap text-[11px] font-mono text-text"
+                >
+                  {streamingBody}
+                </pre>
+              ) : (
+                <div
+                  className="text-[11px] font-mono text-text-2"
+                  data-testid="span-inspector-streaming"
+                >
+                  Streaming response… ({deltaChars.toLocaleString()} chars)
                 </div>
-              </div>
+              )
             }
           />
         ) : span.response ? (
           <PullQuote label="RESPONSE" body={span.response} accent="var(--gold)" glyph={"“"} italic />
+        ) : streamingBody ? (
+          // Post-hoc fallback: when the span has finished but we still
+          // have a `bodiesBySpan` entry (from the engine's post-hoc
+          // bridge delta or accumulated streaming chunks), surface it
+          // here so the body persists in the inspector even after the
+          // model call closed and the live STREAMING pull-quote
+          // disappeared. Without this, the body flashed briefly during
+          // the active-span window and was then replaced by the
+          // hash/ref placeholder — defeating the purpose of plumbing
+          // delta_text in the first place.
+          <PullQuote
+            label="RESPONSE"
+            body={
+              <pre
+                data-testid="span-inspector-posthoc-body"
+                className="m-0 whitespace-pre-wrap text-[11px] font-mono text-text"
+              >
+                {streamingBody}
+              </pre>
+            }
+            accent="var(--gold)"
+            glyph={"“"}
+            italic
+          />
         ) : span.kind === "model.call" && (span.response_payload_ref || span.response_hash) ? (
           <PullQuote
             label="RESPONSE"

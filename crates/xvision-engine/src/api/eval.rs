@@ -941,7 +941,14 @@ async fn run_inner(
     let obs_emitter = ctx
         .obs_event_bus
         .as_ref()
-        .map(|bus| crate::agent::observability::ObsEmitter::new(bus.clone(), run.id.clone()));
+        .map(|bus| {
+            crate::agent::observability::ObsEmitter::new(bus.clone(), run.id.clone())
+                .with_retention(
+                    crate::agent::observability::ObsRetentionPolicy::from_config(
+                        &ctx.obs_config,
+                    ),
+                )
+        });
 
     // 3. Pick the executor for this run mode. For backtest mode, when the
     //    scenario came from the DB we try to source bars through the
@@ -1347,7 +1354,14 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
     let obs_emitter = ctx
         .obs_event_bus
         .as_ref()
-        .map(|bus| crate::agent::observability::ObsEmitter::new(bus.clone(), run.id.clone()));
+        .map(|bus| {
+            crate::agent::observability::ObsEmitter::new(bus.clone(), run.id.clone())
+                .with_retention(
+                    crate::agent::observability::ObsRetentionPolicy::from_config(
+                        &ctx.obs_config,
+                    ),
+                )
+        });
 
     let executor: Box<dyn Executor> = match req.mode {
         RunMode::Paper => {
