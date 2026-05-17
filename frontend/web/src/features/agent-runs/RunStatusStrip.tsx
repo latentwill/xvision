@@ -31,11 +31,42 @@ export type RunStatusStripProps = {
 
 // ── Tone config ───────────────────────────────────────────────────────────────
 
-const TONE: Record<StripTone, { dot: string; label: string; pulse: boolean; glow: string }> = {
-  completed: { dot: "var(--gold)",   label: "COMPLETED", pulse: false, glow: "0 0 0 3px var(--gold-bg)" },
-  live:      { dot: "var(--info)",   label: "LIVE",      pulse: true,  glow: "0 0 0 3px rgba(111,143,184,0.25)" },
-  warn:      { dot: "var(--warn)",   label: "WARNINGS",  pulse: false, glow: "0 0 0 3px rgba(219,146,48,0.20)" },
-  error:     { dot: "var(--danger)", label: "ERROR",     pulse: false, glow: "0 0 0 3px rgba(200,68,58,0.25)" },
+// `dotGlow` is the small halo around the leading status dot. `capsuleGlow`
+// is a larger outer ring on the capsule itself so the floating control
+// reads as a discrete element instead of blending into the page surface.
+// Per-tone hues match the dot so the capsule visibly carries its state.
+const TONE: Record<
+  StripTone,
+  { dot: string; label: string; pulse: boolean; dotGlow: string; capsuleGlow: string }
+> = {
+  completed: {
+    dot: "var(--gold)",
+    label: "COMPLETED",
+    pulse: false,
+    dotGlow: "0 0 0 3px var(--gold-bg)",
+    capsuleGlow: "0 0 24px 2px rgba(212,165,71,0.22), 0 0 0 1px rgba(212,165,71,0.35)",
+  },
+  live: {
+    dot: "var(--info)",
+    label: "LIVE",
+    pulse: true,
+    dotGlow: "0 0 0 3px rgba(111,143,184,0.25)",
+    capsuleGlow: "0 0 28px 2px rgba(111,143,184,0.30), 0 0 0 1px rgba(111,143,184,0.45)",
+  },
+  warn: {
+    dot: "var(--warn)",
+    label: "WARNINGS",
+    pulse: false,
+    dotGlow: "0 0 0 3px rgba(219,146,48,0.20)",
+    capsuleGlow: "0 0 24px 2px rgba(219,146,48,0.24), 0 0 0 1px rgba(219,146,48,0.40)",
+  },
+  error: {
+    dot: "var(--danger)",
+    label: "ERROR",
+    pulse: false,
+    dotGlow: "0 0 0 3px rgba(200,68,58,0.25)",
+    capsuleGlow: "0 0 28px 2px rgba(200,68,58,0.32), 0 0 0 1px rgba(200,68,58,0.50)",
+  },
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -180,7 +211,7 @@ export function RunStatusStrip({
         borderRadius: 999,
         background: "var(--surface-elev)",
         border: "1px solid var(--border-strong)",
-        boxShadow: "0 14px 40px rgba(0,0,0,0.55), 0 0 0 1px rgba(0,0,0,0.4)",
+        boxShadow: `${conf.capsuleGlow}, 0 14px 40px rgba(0,0,0,0.55), 0 0 0 1px rgba(0,0,0,0.4)`,
         backdropFilter: "blur(8px)",
         maxWidth: "calc(100vw - 32px)",
         cursor: "pointer",
@@ -202,7 +233,7 @@ export function RunStatusStrip({
             height: 6,
             borderRadius: "50%",
             background: conf.dot,
-            boxShadow: conf.glow,
+            boxShadow: conf.dotGlow,
           }}
         />
         <span

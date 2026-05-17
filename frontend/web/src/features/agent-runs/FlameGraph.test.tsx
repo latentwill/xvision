@@ -2,8 +2,22 @@
 import { describe, expect, test, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { RunSpan } from "@/api/types-agent-runs";
 import { FlameGraph } from "./FlameGraph";
 import { MOCK_RUN_COMPLETED } from "./mock-fixtures";
+
+function mkSpan(p: Partial<RunSpan> & Pick<RunSpan, "span_id" | "name">): RunSpan {
+  return {
+    span_id: p.span_id,
+    parent_span_id: p.parent_span_id ?? null,
+    name: p.name,
+    kind: p.kind ?? "agent.run",
+    started_at: p.started_at ?? "2026-05-18T00:00:00.000Z",
+    finished_at: p.finished_at ?? "2026-05-18T00:00:01.000Z",
+    status: p.status ?? "ok",
+    attributes: p.attributes ?? {},
+  };
+}
 
 describe("FlameGraph", () => {
   test("renders one bar per span", () => {
@@ -30,6 +44,54 @@ describe("FlameGraph", () => {
     const root = screen.getByTestId("flame-bar-s1");
     const width = parseFloat(root.style.width);
     expect(width).toBeGreaterThanOrEqual(95);
+  });
+
+  test("sibling top-level spans render on distinct rows", () => {
+    // Three parentless spans in the filtered set must not collapse onto
+    // row 0 — they each get their own lane.
+    const spans: RunSpan[] = [
+      mkSpan({
+        span_id: "a",
+        name: "first",
+        started_at: "2026-05-18T00:00:00.000Z",
+        finished_at: "2026-05-18T00:00:01.000Z",
+      }),
+      mkSpan({
+        span_id: "b",
+        name: "second",
+        started_at: "2026-05-18T00:00:01.000Z",
+        finished_at: "2026-05-18T00:00:02.000Z",
+      }),
+      mkSpan({
+        span_id: "c",
+        name: "third",
+        started_at: "2026-05-18T00:00:02.000Z",
+        finished_at: "2026-05-18T00:00:03.000Z",
+      }),
+    ];
+    render(<FlameGraph spans={spans} selectedSpanId={null} onSelect={() => {}} />);
+    const tops = ["a", "b", "c"].map(
+      (id) => screen.getByTestId(`flame-bar-${id}`).style.top,
+    );
+    // Each row gets a distinct top offset.
+    expect(new Set(tops).size).toBe(3);
+  });
+
+  test("single-span run renders as a chip, not full-width", () => {
+    const spans: RunSpan[] = [
+      mkSpan({
+        span_id: "solo",
+        name: "agent.run",
+        started_at: "2026-05-18T00:00:00.000Z",
+        finished_at: "2026-05-18T00:00:01.000Z",
+      }),
+    ];
+    render(<FlameGraph spans={spans} selectedSpanId={null} onSelect={() => {}} />);
+    const bar = screen.getByTestId("flame-bar-solo");
+    const width = parseFloat(bar.style.width);
+    // Capped: must not paint the entire dock width.
+    expect(width).toBeLessThan(100);
+    expect(width).toBeGreaterThan(0);
   });
 
   test("clicking a bar calls onSelect with span id", async () => {
