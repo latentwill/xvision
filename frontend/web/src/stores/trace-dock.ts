@@ -34,6 +34,14 @@ export type StreamingState = {
   activeSpanIds: Set<string>;
   activeSpanMeta: Record<string, ActiveSpanMeta>;
   deltaCharsBySpan: Record<string, number>;
+  /**
+   * Accumulated assistant body per span from `assistant_text_delta.delta_text`
+   * frames. SpanInspector reads this for the live STREAMING pull-quote so
+   * the operator sees the response body grow in real time. Empty when the
+   * wire only carries `delta_len` (older sidecars / non-streaming
+   * dispatchers).
+   */
+  bodiesBySpan: Record<string, string>;
   droppedEvents: number;
 };
 
@@ -55,7 +63,7 @@ type Actions = {
   setActiveRun: (id: string | null, mode: DockMode) => void;
   markSpanActive: (spanId: string, meta?: ActiveSpanMeta) => void;
   markSpanInactive: (spanId: string) => void;
-  appendDelta: (spanId: string, len: number) => void;
+  appendDelta: (spanId: string, len: number, text?: string) => void;
   recordLag: (n: number) => void;
   applyStreamEvent: (ev: AgentRunStreamEvent) => void;
   resetStreamingState: () => void;
@@ -65,6 +73,7 @@ const EMPTY_STREAMING: StreamingState = {
   activeSpanIds: new Set<string>(),
   activeSpanMeta: {},
   deltaCharsBySpan: {},
+  bodiesBySpan: {},
   droppedEvents: 0,
 };
 
@@ -73,6 +82,7 @@ function freshStreaming(): StreamingState {
     activeSpanIds: new Set<string>(),
     activeSpanMeta: {},
     deltaCharsBySpan: {},
+    bodiesBySpan: {},
     droppedEvents: 0,
   };
 }
@@ -133,16 +143,26 @@ export const useTraceDock = create<State & Actions>((set, get) => ({
         },
       };
     }),
-  appendDelta: (spanId, len) =>
-    set((s) => ({
-      streamingState: {
-        ...s.streamingState,
-        deltaCharsBySpan: {
-          ...s.streamingState.deltaCharsBySpan,
-          [spanId]: (s.streamingState.deltaCharsBySpan[spanId] ?? 0) + len,
+  appendDelta: (spanId, len, text) =>
+    set((s) => {
+      const nextChars = {
+        ...s.streamingState.deltaCharsBySpan,
+        [spanId]: (s.streamingState.deltaCharsBySpan[spanId] ?? 0) + len,
+      };
+      const nextBodies = text
+        ? {
+            ...s.streamingState.bodiesBySpan,
+            [spanId]: (s.streamingState.bodiesBySpan[spanId] ?? "") + text,
+          }
+        : s.streamingState.bodiesBySpan;
+      return {
+        streamingState: {
+          ...s.streamingState,
+          deltaCharsBySpan: nextChars,
+          bodiesBySpan: nextBodies,
         },
-      },
-    })),
+      };
+    }),
   recordLag: (n) =>
     set((s) => ({
       streamingState: {
@@ -203,7 +223,11 @@ export const useTraceDock = create<State & Actions>((set, get) => ({
         return;
       }
       case "assistant_text_delta": {
-        actions.appendDelta(ev.data.span_id, ev.data.delta_len);
+        actions.appendDelta(
+          ev.data.span_id,
+          ev.data.delta_len,
+          ev.data.delta_text,
+        );
         return;
       }
       case "lagged":

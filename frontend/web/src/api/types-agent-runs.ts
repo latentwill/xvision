@@ -220,6 +220,13 @@ export type StreamAssistantTextDeltaData = {
   span_id: string;
   run_id: string;
   delta_len: number;
+  /**
+   * The chunk text. Empty string when the producer ships counts only
+   * (older sidecars / providers that haven't switched to streaming SSE).
+   * Concatenated per-span by `useTraceDock.streamingState.bodiesBySpan`
+   * to drive the trace dock's live response pull-quote.
+   */
+  delta_text?: string;
 };
 
 export type StreamSidecarErrorData = {

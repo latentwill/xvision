@@ -180,6 +180,41 @@ describe("SpanInspector (with pull-quotes)", () => {
     ).not.toBeInTheDocument();
   });
 
+  test("live streaming pull-quote renders accumulated delta_text body", () => {
+    // When the SSE feed carries delta_text the inspector must render the
+    // assistant body in the streaming pull-quote — not the chars-only
+    // placeholder.
+    useTraceDock.getState().markSpanActive(baseSpan.span_id, {
+      name: baseSpan.name,
+      started_at: baseSpan.started_at,
+      kind: baseSpan.kind,
+    });
+    useTraceDock.getState().appendDelta(baseSpan.span_id, 5, "hello");
+    useTraceDock.getState().appendDelta(baseSpan.span_id, 7, ", world");
+
+    render(
+      <SpanInspector
+        span={{
+          ...baseSpan,
+          prompt: undefined,
+          response: undefined,
+          response_hash: "sha256:respbbb",
+        }}
+        isLive
+        onRerun={() => {}}
+        onJumpToDecision={() => {}}
+      />,
+    );
+
+    const body = screen.getByTestId("span-inspector-streaming-body");
+    expect(body.textContent).toBe("hello, world");
+    // The chars-only placeholder must not be on screen when we have
+    // body text to show.
+    expect(
+      screen.queryByTestId("span-inspector-streaming"),
+    ).not.toBeInTheDocument();
+  });
+
   test("stream finish (span removed from activeSpanIds) restores hash/ref fallback", () => {
     useTraceDock.getState().markSpanActive(baseSpan.span_id, {
       name: baseSpan.name,

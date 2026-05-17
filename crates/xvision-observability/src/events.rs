@@ -176,11 +176,20 @@ pub struct CheckpointWrittenEvent {
 /// Streamed to the dashboard SSE channel; intentionally not persisted in
 /// its own table. Recorder may optionally write a coarse `events` row if
 /// retention policy asks for it; default is to discard.
+///
+/// `delta_text` carries the actual chunk text so the trace dock can render
+/// the assistant body as it streams, instead of just a character count.
+/// Producers should cap individual chunks at
+/// `ObservabilityConfig::retention.max_payload_bytes` and truncate with a
+/// trailing `…` if exceeded — the recorder still stamps the original
+/// `delta_len` for monitoring.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssistantTextDeltaEvent {
     pub span_id: String,
     pub run_id: String,
     pub delta_len: usize,
+    #[serde(default)]
+    pub delta_text: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

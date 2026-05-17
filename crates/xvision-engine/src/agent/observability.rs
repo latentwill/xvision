@@ -179,17 +179,18 @@ impl ObsEmitter {
             .await;
     }
 
-    /// Best-effort live-token marker. The recorder discards by default;
-    /// SSE subscribers receive it directly. Used when the dispatcher
-    /// supports streaming and we want to drive the trace dock's
-    /// `STREAMING` badge.
-    #[allow(dead_code)] // wired in a follow-up when streaming dispatchers land
-    pub async fn emit_assistant_text_delta(&self, span_id: &str, delta_len: usize) {
+    /// Best-effort live-token chunk. The recorder discards by default;
+    /// SSE subscribers receive it directly and the trace dock's
+    /// `SpanInspector` accumulates the chunks into the live body. The
+    /// final response payload is still persisted via
+    /// `emit_model_call_finished`; this method does not write to disk.
+    pub async fn emit_assistant_text_delta(&self, span_id: &str, delta_text: &str) {
         self.bus
             .publish(RunEvent::AssistantTextDelta(AssistantTextDeltaEvent {
                 span_id: span_id.to_string(),
                 run_id: self.run_id.clone(),
-                delta_len,
+                delta_len: delta_text.chars().count(),
+                delta_text: delta_text.to_string(),
             }))
             .await;
     }
