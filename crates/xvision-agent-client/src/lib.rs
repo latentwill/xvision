@@ -1,5 +1,6 @@
 pub mod client;
 pub mod errors;
+pub mod event_sink;
 pub mod protocol;
 pub(crate) mod supervisor;
 pub mod tool_dispatch;
@@ -10,6 +11,10 @@ pub mod transport;
 
 pub use client::AgentClient;
 pub use errors::{AgentClientError, Result};
+pub use event_sink::{
+    dispatch as dispatch_notification, mark_runs_interrupted, start_event_sink, EventSinkHandle,
+    SidecarFingerprint,
+};
 pub use protocol::{
     BudgetLimits, EndRunParams, EndRunResult, RunUsage, RuntimeHealthResult, SideEffectLevel,
     StartRunParams, StartRunResult, StepParams, StepResult, ToolDescriptor, ToolRegistryGetResult,
