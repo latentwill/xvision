@@ -8288,6 +8288,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "xvision-agent-client"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "xvision-engine",
+]
+
+[[package]]
 name = "xvision-cli"
 version = "0.1.0"
 dependencies = [
