@@ -79,7 +79,7 @@ export function SlotForm({
               title="Remove slot"
               className="p-1.5 text-text-3 hover:text-danger rounded transition-colors"
             >
-              <Icon name="check" size={14} />
+              <Icon name="trash" size={14} />
             </button>
           ) : null}
         </div>
