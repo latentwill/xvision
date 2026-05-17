@@ -29,6 +29,8 @@ env/
 data/*
 !data/probes/
 !data/probes/**
+!data/examples/
+!data/examples/**
 logs/
 checkpoints/
 models/

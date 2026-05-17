@@ -6,6 +6,7 @@ pub mod dashboard;
 pub mod doctor;
 pub mod eod;
 pub mod eval;
+pub mod example;
 pub mod fire_trade;
 pub mod home;
 pub mod indicator;
