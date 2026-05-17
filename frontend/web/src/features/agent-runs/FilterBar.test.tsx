@@ -2,12 +2,14 @@
 import { describe, expect, test, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { FilterBar } from "./FilterBar";
+import type { SpanCategory } from "./span-colors";
 
 const baseProps = {
   query: "",
   setQuery: vi.fn(),
-  kinds: new Set<string>(),
+  kinds: new Set<SpanCategory>(),
   toggleKind: vi.fn(),
   status: "all" as const,
   setStatus: vi.fn(),
@@ -47,10 +49,20 @@ describe("FilterBar", () => {
     expect(screen.getByText(/spans/)).toBeInTheDocument();
   });
 
-  test("typing in the search input calls setQuery", async () => {
-    const setQuery = vi.fn();
-    render(<FilterBar {...baseProps} setQuery={setQuery} />);
+  test("typing in the search input calls setQuery with each cumulative value", async () => {
+    const setQuerySpy = vi.fn();
+    function Harness() {
+      const [q, setQ] = useState("");
+      return (
+        <FilterBar
+          {...baseProps}
+          query={q}
+          setQuery={(v: string) => { setQ(v); setQuerySpy(v); }}
+        />
+      );
+    }
+    render(<Harness />);
     await userEvent.type(screen.getByPlaceholderText(/title:agent\.plan/i), "tool:run_backtest");
-    expect(setQuery).toHaveBeenLastCalledWith("tool:run_backtest");
+    expect(setQuerySpy).toHaveBeenLastCalledWith("tool:run_backtest");
   });
 });

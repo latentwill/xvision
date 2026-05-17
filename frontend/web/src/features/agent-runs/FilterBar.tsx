@@ -1,5 +1,5 @@
 // frontend/web/src/features/agent-runs/FilterBar.tsx
-import { useEffect, useRef, type Dispatch, type SetStateAction } from "react";
+import type { Dispatch, SetStateAction } from "react";
 import { DecisionJump, type DecisionRef } from "./DecisionJump";
 import { CATEGORY_STYLES, type SpanCategory } from "./span-colors";
 import type { StatusFilter } from "./use-span-filter";
@@ -23,7 +23,7 @@ export function FilterBar({
 }: {
   query: string;
   setQuery: Dispatch<SetStateAction<string>> | ((v: string) => void);
-  kinds: Set<SpanCategory | string>;
+  kinds: Set<SpanCategory>;
   toggleKind: (k: SpanCategory) => void;
   status: StatusFilter;
   setStatus: (s: StatusFilter) => void;
@@ -33,17 +33,6 @@ export function FilterBar({
   total: number;
   filtered: number;
 }) {
-  // Use an uncontrolled ref for the search input so userEvent.type accumulates
-  // naturally in tests and the onChange fires with the full accumulated value.
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  // Sync external query changes into the DOM input (e.g. clear via ×).
-  useEffect(() => {
-    if (inputRef.current && inputRef.current.value !== query) {
-      inputRef.current.value = query;
-    }
-  }, [query]);
-
   return (
     <div
       className="h-9 px-2 flex items-center gap-2 shrink-0 overflow-hidden"
@@ -58,8 +47,7 @@ export function FilterBar({
           <path d="M11 11l3.5 3.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
         </svg>
         <input
-          ref={inputRef}
-          defaultValue={query}
+          value={query}
           onChange={(e) => (setQuery as (v: string) => void)(e.target.value)}
           placeholder='filter   title:agent.plan   model:gpt-5   tool:run_backtest'
           className="flex-1 bg-transparent text-[11px] font-mono text-text outline-none placeholder:text-text-4 min-w-0"
@@ -67,10 +55,7 @@ export function FilterBar({
         {query ? (
           <button
             type="button"
-            onClick={() => {
-              (setQuery as (v: string) => void)("");
-              if (inputRef.current) inputRef.current.value = "";
-            }}
+            onClick={() => (setQuery as (v: string) => void)("")}
             className="text-text-3 hover:text-text text-[10px] font-mono"
           >
             ×
