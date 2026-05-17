@@ -20,6 +20,8 @@ coverage
 data/*
 !data/probes/
 !data/probes/**
+!data/examples/
+!data/examples/**
 *.db
 *.db-journal
 *.db-wal
