@@ -234,7 +234,10 @@ function normalizeAgentRunExport(payload: Record<string, unknown>): AgentRunDeta
         typeof row.output_token_count === "number" ? row.output_token_count : null,
       cost_usd: typeof row.cost_usd === "number" ? row.cost_usd : null,
       prompt_hash: asString(row.prompt_hash),
-      response_text: asNullableString(row.response_hash),
+      response_hash: asNullableString(row.response_hash),
+      prompt_payload_ref: asNullableString(row.prompt_payload_ref),
+      response_payload_ref: asNullableString(row.response_payload_ref),
+      response_text: asNullableString(row.response_text),
     })),
     tool_calls: toolCallsRaw.filter(isObject).map((row) => {
       const spanId = asString(row.span_id);
