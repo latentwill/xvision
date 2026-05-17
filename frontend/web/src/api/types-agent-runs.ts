@@ -49,6 +49,17 @@ export type RunSpan = {
   finished_at: string | null; // ISO, null = in-flight
   status: SpanStatus;
   attributes: Record<string, unknown>;
+  /**
+   * Human-readable error message extracted from the span's
+   * `error_json` payload (observability schema). Present iff
+   * `status === "error"`. Surfaced as a first-class field so the
+   * inspector can render it without reaching into `attributes`.
+   *
+   * Per qa-trace-error-surfacing (2026-05-17, operator walk-through):
+   * a failed LLM call must show its error in the trace dock, not
+   * silently render as "Completed".
+   */
+  error_message?: string;
   // Prototype-driven extensions: live in `attributes` server-side but
   // surface as first-class so the inspector can render them as pull-quotes.
   prompt?: string;

@@ -178,6 +178,77 @@ describe("validateAgentRunDetail", () => {
     expect(modelSpan?.prompt_payload_ref).toBe("blob://prompts/abc");
     expect(modelSpan?.response_payload_ref).toBe("blob://responses/def");
   });
+
+  // qa-trace-error-surfacing (2026-05-17): error_json on a span must
+  // surface as a first-class `error_message` field so the inspector
+  // can render it without reaching into raw attributes.
+  test("parses error_json {message:...} payload into RunSpan.error_message", () => {
+    const payload = {
+      ...EXPORT_PAYLOAD,
+      run_id: "run_with_error",
+      status: "failed",
+      spans: [
+        {
+          id: "span_failed_call",
+          run_id: "run_with_error",
+          parent_span_id: null,
+          kind: "model.call",
+          name: "anthropic/claude",
+          status: "error",
+          started_at: "2026-05-17T16:00:00Z",
+          ended_at: "2026-05-17T16:00:01Z",
+          duration_ms: 1000,
+          attributes_json: null,
+          error_json: JSON.stringify({
+            message:
+              "[unclassified] error decoding response body: EOF while parsing a value at line 1145 column 0",
+          }),
+          children: [],
+        },
+      ],
+    };
+    const detail = validateAgentRunDetail(payload);
+    const span = detail.spans[0];
+    expect(span?.status).toBe("error");
+    expect(span?.error_message).toContain("EOF while parsing");
+    expect(span?.error_message).toContain("[unclassified]");
+    // Error count rolled up correctly.
+    expect(detail.summary.error_count).toBeGreaterThanOrEqual(1);
+  });
+
+  test("falls back to bare error_json strings when not JSON-wrapped", () => {
+    const payload = {
+      ...EXPORT_PAYLOAD,
+      run_id: "run_bare_error",
+      status: "failed",
+      spans: [
+        {
+          id: "span_x",
+          run_id: "run_bare_error",
+          parent_span_id: null,
+          kind: "tool.call",
+          name: "tool",
+          status: "error",
+          started_at: "2026-05-17T16:00:00Z",
+          ended_at: null,
+          duration_ms: null,
+          attributes_json: null,
+          error_json: "raw-string-no-json-wrap",
+          children: [],
+        },
+      ],
+    };
+    const detail = validateAgentRunDetail(payload);
+    expect(detail.spans[0]?.status).toBe("error");
+    expect(detail.spans[0]?.error_message).toBe("raw-string-no-json-wrap");
+  });
+
+  test("drops error_message when error_json is null", () => {
+    const detail = validateAgentRunDetail(EXPORT_PAYLOAD);
+    for (const span of detail.spans) {
+      expect(span.error_message).toBeUndefined();
+    }
+  });
 });
 
 describe("agent-runs real-mode branch", () => {
