@@ -88,7 +88,6 @@ function InspectorPage({ id }: { id: string }) {
         </div>
 
         <aside className="space-y-5">
-          <RunEvalCard agentId={id} strategy={strategyQ.data ?? null} />
           <BackLinkCard />
         </aside>
       </div>
@@ -199,7 +198,7 @@ function AgentsCard({ strategy }: { strategy: Strategy }) {
             model: newAgentModel,
             system_prompt: newAgentPrompt.trim(),
             skill_ids: [],
-            max_tokens: 4096,
+            max_tokens: null,
           },
         ],
       });
@@ -262,7 +261,7 @@ function AgentsCard({ strategy }: { strategy: Strategy }) {
         label="Strategy agents"
         hint="Attach reusable AgentRefs and define the pipeline that executes them."
       />
-      <div className="px-5 pb-5 space-y-4">
+      <div className="px-5 pt-4 pb-5 space-y-4">
         <div className="grid grid-cols-1 md:grid-cols-[220px_1fr] gap-3 items-start border border-border-soft rounded p-3">
           <Field
             label="Pipeline kind"
@@ -719,7 +718,7 @@ function ManifestCard({ strategy }: { strategy: Strategy }) {
         label="Manifest"
         hint="Direct edits are locked in the Inspector. Wizard changes appear here only after a save tool succeeds."
       />
-      <dl className="grid grid-cols-[160px_1fr] gap-y-2 px-5 pb-4 text-[13px]">
+      <dl className="grid grid-cols-[160px_1fr] gap-y-2 px-5 pt-4 pb-4 text-[13px]">
         <DT>Display name</DT>
         <DD>{m.display_name}</DD>
         <DT>Template</DT>
@@ -951,97 +950,6 @@ function BackLinkCard() {
         <Link to="/strategies" className="text-text hover:underline">
           ← Back to strategies
         </Link>
-      </div>
-    </Card>
-  );
-}
-
-function RunEvalCard({
-  agentId,
-  strategy,
-}: {
-  agentId: string;
-  strategy: Strategy | null;
-}) {
-  // v1 launches eval runs via CLI; the dashboard surfaces results. This
-  // card gives the operator a copy-pasteable command + a direct link to
-  // the runs list so the loop "edit → eval → inspect" is reachable from
-  // inside the Inspector instead of requiring a route hop.
-  const cliCommand = `xvn eval run --strategy ${agentId} --scenario crypto-bull-q1-2025 --mode backtest`;
-  const [copied, setCopied] = useState(false);
-  const hasAgents = hasAttachedAgents(strategy);
-
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(cliCommand);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1400);
-    } catch {
-      // Clipboard API can fail in non-secure contexts; silently no-op.
-      // The user can still triple-click to select the command text.
-    }
-  }
-
-  return (
-    <Card>
-      <SectionHeader
-        label="Run eval"
-        hint="Launch via CLI; results render in /eval-runs."
-      />
-      <div className="px-5 py-4 space-y-3">
-        {!strategy ? (
-          <p className="m-0 text-[12px] text-text-3 leading-snug">
-            Checking strategy readiness...
-          </p>
-        ) : !hasAgents ? (
-          <div className="rounded border border-danger/40 bg-danger/5 px-3 py-2 text-[12px] text-danger leading-snug">
-            <p className="m-0">
-              Attach an agent before running eval. Eval launch requires at
-              least one strategy AgentRef with a configured provider/model.
-            </p>
-            <a
-              href="#strategy-agents"
-              className="mt-2 inline-flex text-text hover:text-gold"
-            >
-              Attach agent first
-            </a>
-          </div>
-        ) : (
-          <>
-            <div className="relative">
-              <pre className="m-0 overflow-x-auto whitespace-pre rounded border border-border-soft bg-surface-elev px-3 py-2 font-mono text-[11.5px] text-text">
-{cliCommand}
-              </pre>
-              <button
-                type="button"
-                onClick={copy}
-                className="absolute top-1.5 right-1.5 px-2 py-0.5 text-[11px] text-text-3 hover:text-text bg-surface-card border border-border rounded"
-                title="Copy command"
-              >
-                {copied ? "copied" : "copy"}
-              </button>
-            </div>
-            <p className="m-0 text-[12px] text-text-3 leading-snug">
-              Swap{" "}
-              <code className="font-mono text-text-2">
-                crypto-bull-q1-2025
-              </code>{" "}
-              for any{" "}
-              <code className="font-mono text-text-2">
-                xvn eval scenarios
-              </code>{" "}
-              id. Use{" "}
-              <code className="font-mono text-text-2">--mode paper</code> for
-              Alpaca paper trading.
-            </p>
-            <Link
-              to={`/eval-runs?strategy=${encodeURIComponent(agentId)}&start=1`}
-              className="inline-flex items-center gap-1 text-[13px] text-text hover:text-gold"
-            >
-              Open launcher →
-            </Link>
-          </>
-        )}
       </div>
     </Card>
   );
