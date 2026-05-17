@@ -20,11 +20,11 @@ export type RunStatus =
  *
  * - `hash_only` — default. Prompts and tool payloads are hashed; no raw
  *   text on disk. Inspector shows hashes + redaction notes.
- * - `summaries` — short summarized snippets retained alongside hashes.
+ * - `redacted` — redacted payload snippets retained alongside hashes.
  * - `full_debug` — raw prompts, responses, and tool I/O retained on disk.
  *   Surfaces a banner because PII/credential leakage risk increases.
  */
-export type RetentionMode = "hash_only" | "summaries" | "full_debug";
+export type RetentionMode = "hash_only" | "redacted" | "full_debug";
 
 export type SpanKind =
   | "agent.run"
@@ -75,9 +75,8 @@ export type RunSpan = {
   hash?: string;
   response_hash?: string;
   /** Blob-store refs for the prompt + completion bodies. Only populated
-   * when retention is `summaries` or `full_debug`. The ref itself is
-   * surfaced in SpanInspector so operators can pivot to the on-disk
-   * payload via CLI until a blob-fetch route lands. */
+   * when retention is `redacted` or `full_debug`. The ref itself is
+   * surfaced in SpanInspector for inline first-load body previews. */
   prompt_payload_ref?: string;
   response_payload_ref?: string;
   tokens_in?: number;
