@@ -76,6 +76,15 @@ assets in the data volume.
 | `ORDERLY_KEY` / `ORDERLY_SECRET` / `ORDERLY_ACCOUNT_ID` / `ORDERLY_BASE_URL` | Orderly testnet creds | none |
 | `MANTLE_RPC_URL` / `MANTLE_DEPLOYER_KEY` | Mantle access (identity image only) | none |
 | `RUST_LOG` | Tracing filter | unset |
+| `XVISION_OBSERVABILITY_RETENTION` | Agent-run retention mode (`full_debug`, `redacted`, `hash_only`) | `full_debug` |
+
+The retention default ships as `full_debug` so operators can read prompts
+and responses in the trace dock from the first run. For shared / client
+deployments where raw payloads should not land on disk, set
+`XVISION_OBSERVABILITY_RETENTION=hash_only` (or the matching block in
+`$XVN_HOME/config/observability.toml`). Explicit `full_debug` (via env,
+TOML, or `xvn obs retention set`) still emits the loud startup WARN; the
+implicit default does not.
 
 Pull from 1Password (see `MANUAL.md` M5/M6/M7) and pass via `--env-file`:
 

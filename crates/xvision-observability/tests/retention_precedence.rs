@@ -39,7 +39,7 @@ fn default_wins_when_nothing_else_set() {
     let tmp = TempDir::new().unwrap();
     let path = tmp.path().join("observability.toml");
     let view = resolve_retention(&path, &CliOverrides::default()).unwrap();
-    assert_eq!(view.mode.value, RetentionMode::HashOnly);
+    assert_eq!(view.mode.value, RetentionMode::FullDebug);
     assert_eq!(view.mode.source, Source::Default);
     assert_eq!(view.payload_ttl_days.value, 7);
     assert_eq!(view.payload_ttl_days.source, Source::Default);
@@ -154,19 +154,16 @@ impl<'a> MakeWriter<'a> for VecWriter {
 }
 
 #[test]
-fn full_debug_emits_startup_warn() {
+fn explicit_full_debug_emits_startup_warn() {
+    // An operator who set full_debug explicitly (CLI flag here — equivalent
+    // to a TOML/env that resolves to a non-Default source) still gets the
+    // loud WARN so they know raw payloads land on disk. Only the implicit
+    // default (covered by `default_full_debug_does_not_emit_startup_warn`)
+    // is silent.
     let _guard = env_lock();
     clean_env();
     let tmp = TempDir::new().unwrap();
     let path = tmp.path().join("observability.toml");
-    fs::write(
-        &path,
-        r#"
-[observability.retention]
-mode = "full_debug"
-"#,
-    )
-    .unwrap();
 
     let writer = VecWriter::default();
     let buf_for_assert = writer.buf.clone();
@@ -177,8 +174,12 @@ mode = "full_debug"
         .with_ansi(false)
         .finish();
 
+    let overrides = CliOverrides {
+        mode: Some(RetentionMode::FullDebug),
+        ..CliOverrides::default()
+    };
     with_default(subscriber, || {
-        let _ = resolve_retention(&path, &CliOverrides::default()).unwrap();
+        let _ = resolve_retention(&path, &overrides).unwrap();
     });
 
     let logged = String::from_utf8(buf_for_assert.lock().unwrap().clone()).unwrap();
@@ -189,11 +190,15 @@ mode = "full_debug"
 }
 
 #[test]
-fn hash_only_does_not_emit_full_debug_warn() {
+fn default_full_debug_does_not_emit_startup_warn() {
+    // The implicit default is now full_debug so a fresh install can
+    // debug from the first run. We do NOT emit the loud WARN on the
+    // default path — only when an operator set full_debug explicitly
+    // (via TOML / env / CLI flag).
     let _guard = env_lock();
     clean_env();
     let tmp = TempDir::new().unwrap();
-    let path = tmp.path().join("observability.toml"); // missing => default hash_only
+    let path = tmp.path().join("observability.toml"); // missing => default
     let writer = VecWriter::default();
     let buf_for_assert = writer.buf.clone();
     let subscriber = tracing_subscriber::fmt()
@@ -208,7 +213,7 @@ fn hash_only_does_not_emit_full_debug_warn() {
     let logged = String::from_utf8(buf_for_assert.lock().unwrap().clone()).unwrap();
     assert!(
         !logged.contains("full_debug retention enabled"),
-        "did not expect full_debug WARN, got: {logged}"
+        "implicit default full_debug should not WARN, got: {logged}"
     );
 }
 

@@ -265,11 +265,12 @@ pub fn resolve(
         config_file_present: file_present,
     };
 
-    // Emit the startup WARN if full_debug is the resolved mode, mirroring
-    // ObservabilityConfig::warn_if_full_debug so callers that go through
-    // resolve() instead of load_with_env still get the warning. The
-    // wording matches the contract grep.
-    if view.mode.value == RetentionMode::FullDebug {
+    // Emit the startup WARN only when full_debug was set EXPLICITLY by
+    // an operator (CLI / env / config file). The implicit default is
+    // also full_debug now (so a fresh install can debug from the first
+    // run); warning every time would be noise. The wording on the
+    // explicit path is unchanged so the contract-grep still matches.
+    if view.mode.value == RetentionMode::FullDebug && view.mode.source != Source::Default {
         tracing::warn!(
             target: "xvision_observability",
             "full_debug retention enabled. Prompts, responses, and tool \
