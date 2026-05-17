@@ -1,29 +1,29 @@
 ---
 name: xvision
-description: Orient an agent operating xvision as a product through the `xvn` CLI, dashboard, MCP tools, strategy/eval workflows, live Tailscale nodes, or remote CLI job surface. Do not use this skill for ordinary coding tasks just because the workspace repository is xvision.
+description: Orient an agent USING xvision as a product — running `xvn` CLI verbs, the embedded dashboard, MCP tools, strategy/eval workflows, the live Tailscale nodes, and the remote CLI job surface. USAGE ONLY. If the task is editing crates/**, frontend/web/**, migrations, contracts, or CI/deploy scripts, use `xvision-dev` instead; do not load this skill just because the cwd is the xvision repo.
 ---
 
-# xvision
+# xvision (operator / usage skill)
+
+> **Building xvision rather than using it?** Use the `xvision-dev` skill.
+> This skill is for end-user operation: running `xvn`, driving the dashboard,
+> submitting remote-CLI jobs, interpreting pipeline output.
 
 A multistrategy trading-agent backtest harness. Single CLI binary `xvn` + a baked-in axum + Vite SPA dashboard.
 
-Use this skill when the task is about using xvision: running or explaining
+Use this skill when the task is about *using* xvision: running or explaining
 `xvn`, managing strategies/agents/scenarios/eval runs, operating the dashboard
 nodes, interpreting xvision pipeline vocabulary, or following xvision operator
-runbooks. Do not load it for generic code edits, dependency bumps, or ordinary
-repository navigation unless the user task also needs xvision product/CLI
-context.
+runbooks.
 
-## Where to look first
-
-Don't grep blindly. The repo has canonical docs — start there:
+## Where to look first (operator docs)
 
 - `MANUAL.md` — operator-side prerequisites (Alpaca creds, Orderly onboarding, Mantle minting). Tier 2 = forward-paper, Tier 3 = one-time setup.
-- `FOLLOWUPS.md` — open engineering work. **F-codes** = shared track. **SLF-codes** = Strategy Loom hackathon track (branch `hackathon/turing`, deadline 2026-06-15).
-- `architecture.md` — system shape.
-- `docs/superpowers/specs/` and `docs/superpowers/plans/` — design spec + executable plan for each major subsystem. Plan filenames are dated; pick the latest matching the feature you're touching.
-- `decisions/` — ADRs. ADR 0010 = the 2026-05-05 marketplace pivot; ADR 0011 = CV substrate moved to xvision-play.
-- `docs/superpowers/specs/2026-05-12-remote-cli-over-tailscale-design.md` — the shipped remote CLI contract over Tailscale.
+- `xvn <verb> --help` — source of truth for any CLI flag.
+- `docs/superpowers/specs/2026-05-12-remote-cli-over-tailscale-design.md` — the shipped remote CLI contract for driving live nodes.
+
+For engineering docs (specs/plans/ADRs/FOLLOWUPS, architecture, team board),
+switch to `xvision-dev`.
 
 ## CLI quick map
 
@@ -64,24 +64,18 @@ conventions, not hardcoded slot names. The current shipped CLI initializes
 state with `xvn migrate`; interactive setup/onboarding is handled through the
 dashboard wizard and operator runbooks.
 
-## Build, test, run
+## Live nodes (operator surface)
 
-```bash
-cargo build --workspace
-cargo test --workspace
-```
+Two live `xvn` instances behind Tailscale on `extndly-dev`:
 
-Cargo from `~/.cargo/bin`. `xvision-identity` is opt-in — excluded from `default-members`. Build it explicitly: `cargo build -p xvision-identity`.
+- `https://xvn.tail2bb69.ts.net` — personal node
+- `https://xvnej.tail2bb69.ts.net` — QA node
 
-## Deploy
-
-GHCR image `ghcr.io/latentwill/xvision:latest` is built from `Dockerfile.deploy` (CLI + SPA baked in) by `.github/workflows/docker.yml`. Trigger: tag push `v*.*.*` or `gh workflow run docker.yml --ref main -f dockerfile=Dockerfile.deploy`.
-
-Two live instances on `extndly-dev`: `xvn.tail2bb69.ts.net` (personal) + `xvnej.tail2bb69.ts.net` (QA). Stacks at `/root/deploy/stacks/{xvn,xvnej}/`. Redeploy: `docker compose pull && docker compose up -d --force-recreate`. App shares netns with the tailscale sidecar — if `ts-*` restarts, `--force-recreate` the app too.
-
-Live-node control currently means the Tailscale-served dashboard node, not
-generic SSH orchestration. Assume `xvn.tail2bb69.ts.net` or
-`xvnej.tail2bb69.ts.net` unless the operator tells you otherwise.
+Live-node control means the Tailscale-served dashboard + remote-CLI surface,
+not generic SSH orchestration. Assume one of those hostnames unless told
+otherwise. Deployment mechanics (image build, compose recreate, cert
+issuance) live in `xvision-dev` — operator tasks should call the dashboard /
+remote CLI, not run `docker compose` directly.
 
 ## Remote CLI over Tailscale
 
@@ -94,16 +88,17 @@ For command-style live-node work, prefer the typed remote CLI job API instead of
 - Use `GET /api/cli/jobs/:id/events` for SSE progress.
 - `xvn-mcp` is separate stdio MCP, not the HTTP remote-control surface.
 
-## Don'ts
+## Don'ts (operator-facing)
 
-- Don't recommend `AcpxIntern` for backtest pairing — agentic intern breaks deterministic cache pairing per `setup_id`/`cycle_id`. Use `OpenAICompatIntern` or `AnthropicIntern` for that.
-- Don't mock the DB in integration tests — production migrations need real exercise.
+- Don't recommend `AcpxIntern` for backtest pairing — agentic intern breaks deterministic cache pairing per `cycle_id`. Use `OpenAICompatIntern` or `AnthropicIntern` for backtests.
 - Don't bind the dashboard wider than loopback outside Tailscale until **F35** (dashboard auth) lands.
-- Don't build heavy Rust locally on `extndly-dev` (3.7 GiB RAM — OOMs). Use GHCR.
-- Don't push workflow-file changes with the default `gh` auth on `extndly-dev` — it lacks `workflow` scope. Use the classic PAT from 1Password (`Olympus / Github Classic Token (No Admin/Delete)`).
+- Don't drive the live nodes through ad-hoc SSH or shell text — use the typed remote-CLI job API or `scripts/xvn-remote.py`.
+- Don't bypass the `xvn provider` / `xvn strategy` / `xvn eval` surfaces by editing `$XVN_HOME` files directly — the CLI knows the right invariants and audit hooks.
 
 ## Deeper references
 
 - [`references/cli.md`](references/cli.md) — full CLI subcommand surface with examples.
-- [`references/architecture.md`](references/architecture.md) — crate layout, pipeline stages, slot model.
-- [`references/deploy.md`](references/deploy.md) — GHCR workflow, the xvn / xvnej tailscale stacks, common deploy pitfalls.
+- [`references/architecture.md`](references/architecture.md) — pipeline stages and how `xvn` output maps to the engine internals (operator-relevant only).
+
+Engineering-side deployment + crate-level architecture moved to the
+`xvision-dev` skill.

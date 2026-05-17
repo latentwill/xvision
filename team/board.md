@@ -4,7 +4,7 @@
 > verification, and acceptance. This file is conductor-owned; see
 > `team/CONDUCTOR.md`.
 >
-> Last updated: 2026-05-16.
+> Last updated: 2026-05-17.
 > Previous board: `team/archive/2026-05-16-migration/execution-board-2026-05-13.md`.
 
 V2 work (V2A onboarding + docs, V2B–V4 roadmap) lives on its own board:
@@ -12,15 +12,34 @@ V2 work (V2A onboarding + docs, V2B–V4 roadmap) lives on its own board:
 
 ## Active
 
-Nothing. `alpaca-paper-crypto-submit` landed via #191 on 2026-05-16. Remaining
-v1 work is the V2A onboarding leaves on `team/board-v2.md`.
+_No active wave-1 tracks._ Phase A of the agent-run-observability wave landed
+2026-05-17 via #200 (schema) and #204 (event bus + retention CLI). Phase B
+contracts are reserved below pending the Cline SDK migration.
+
+The remaining v1 worker stream is the V2A onboarding leaves on
+`team/board-v2.md` (`v2a-driver-tour`, `v2a-in-app-docs`,
+`v2a-example-artifacts`).
 
 ## Immediate start set
 
 Safe to claim right now (no unresolved Foundation dependency):
 
-- V2A leaves — see `team/board-v2.md` (`v2a-driver-tour`, `v2a-in-app-docs`,
-  `v2a-example-artifacts`; independent, parallel-safe).
+- V2A leaves on `team/board-v2.md` (`v2a-driver-tour`, `v2a-in-app-docs`;
+  `v2a-example-artifacts` is in review as #205). Independent, parallel-safe.
+- Phase B agent-run-observability contracts are *not* in the start set —
+  they are gated on the Cline SDK migration (see Reserved).
+
+## Reserved (not yet ready)
+
+Phase B of the agent-run-observability wave. Contracts not yet opened —
+they are gated on the Cline SDK migration reaching step 3 (`xvision-agent-client` crate exists):
+
+- `agent-run-observability-ipc-emission` (foundation) — wires Cline IPC events to the `RunEventBus`. **Is step 8 of the Cline migration plan.**
+- `agent-run-observability-otel-bridge` (leaf) — `tracing-opentelemetry` + OTLP, gated by cargo feature `otel`.
+- `agent-run-observability-export-cli` (leaf) — `xvn run inspect <id>` produces `xvn_run.json` + `xvn_report.md`; `GET /api/agent-runs/:id` routes.
+- `agent-run-observability-ui` (leaf) — `/agent-runs/:id` route with agent timeline + streaming text.
+
+Cline SDK design PR: **#199 (draft, still in progress)**. Implementation plan TBD; contracts cannot open against this wave until that plan lands.
 
 ## Deferred
 
@@ -47,6 +66,13 @@ Archived 2026-05-16:
 - **eval-review-api-cli** — merged via #188; archived under `team/archive/2026-05-16-eval-review/`.
 - **eval-review-run-detail-ui** — merged via #190; archived under `team/archive/2026-05-16-eval-review/`.
 - **alpaca-paper-crypto-submit** — merged via #191; contract retained at `team/contracts/alpaca-paper-crypto-submit.md` for regression context.
+- **provider-models-selected-first** — merged via #192; archived under `team/archive/2026-05-16-ux-polish/`.
+- **strategy-agent-card-collapse** — merged via #194; archived under `team/archive/2026-05-16-ux-polish/`.
+- **strategy-agent-card-collapse-resync** — merged via #196 (fix-forward on #194); archived under `team/archive/2026-05-16-ux-polish/`.
+- **agent-run-observability-foundation** — merged via #197 on 2026-05-17; archived under `team/archive/2026-05-17-agent-run-observability/`. Plan at `docs/superpowers/plans/2026-05-17-agent-run-observability-plan.md`. Phase A leaves now open for claim; Phase B reserved pending Cline migration.
+- **agent-run-observability-schema** — merged via #200 on 2026-05-16; archived under `team/archive/2026-05-17-agent-run-observability/`. New `xvision-observability` crate + migration 018 (10 tables).
+- **agent-run-observability-event-bus** + **agent-run-observability-retention-cli** — combined and merged via #204 on 2026-05-17; archived under `team/archive/2026-05-17-agent-run-observability/`. Standalone PRs #202/#203 were closed in favor of the combined PR. Phase A is now feature-complete.
+- **eval-running-animation** — merged via #193 on 2026-05-16; archived under `team/archive/2026-05-17-eval-running-animation/`. Animated "running" status pill across eval surfaces with `prefers-reduced-motion` guard.
 
 Q15 wave closed except the deferred integration track. Eval-review wave fully closed.
 
