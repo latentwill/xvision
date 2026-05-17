@@ -26,6 +26,17 @@ export const agentRunKeys = {
   run: (id: string) => [...agentRunKeys.all, "run", id] as const,
 };
 
+/**
+ * URL of the dashboard's per-run JSON export endpoint (added in #226).
+ * Served with `Content-Disposition: attachment; filename=xvn_run_<id>.json`.
+ * Kept as a plain string helper so callers can pass it to `fetch` directly
+ * (the response is binary-ish — we want the raw body as a Blob, not the
+ * apiFetch JSON-parse path).
+ */
+export function agentRunExportUrl(id: string): string {
+  return `/api/agent-runs/${encodeURIComponent(id)}/export.json`;
+}
+
 export async function getAgentRun(id: string): Promise<AgentRunDetail> {
   const detail = MOCK_BY_ID[id];
   if (!detail) {
