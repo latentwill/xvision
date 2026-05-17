@@ -10,15 +10,23 @@ type LayoutRow = {
   widthPct: number;
 };
 
-function depthOf(span: RunSpan, byId: Map<string, RunSpan>): number {
+// `topAndDepth` walks parent pointers within the filtered span set to find
+// the span's top-level ancestor (the one whose parent is missing from the
+// set) and the depth relative to that ancestor. Returns `null` only if the
+// walk cycles, which would be a malformed fixture.
+function topAndDepth(
+  span: RunSpan,
+  byId: Map<string, RunSpan>,
+): { topId: string; depth: number } {
   let depth = 0;
-  let cur: RunSpan | undefined = span;
-  while (cur?.parent_span_id) {
+  let cur: RunSpan = span;
+  while (cur.parent_span_id && byId.has(cur.parent_span_id)) {
+    const parent = byId.get(cur.parent_span_id)!;
     depth += 1;
-    cur = byId.get(cur.parent_span_id);
+    cur = parent;
     if (depth > 32) break;
   }
-  return depth;
+  return { topId: cur.span_id, depth };
 }
 
 function layout(spans: RunSpan[]): LayoutRow[] {
@@ -29,17 +37,48 @@ function layout(spans: RunSpan[]): LayoutRow[] {
   const ends = spans.map((s) => (s.finished_at ? ts(s.finished_at) : Date.now()));
   const t0 = Math.min(...starts);
   const tN = Math.max(...ends);
-  const span = Math.max(1, tN - t0);
+  const totalSpan = Math.max(1, tN - t0);
+
+  // Top-level spans are parentless within the filtered set (either truly
+  // root or filter removed their parent). Each gets its own vertical lane
+  // so sibling top-levels don't overdraw row 0.
+  const topLevels = spans
+    .filter((s) => !s.parent_span_id || !byId.has(s.parent_span_id))
+    .sort((a, b) => ts(a.started_at) - ts(b.started_at));
+
+  // Map every span to its top-level ancestor + intra-lane depth.
+  const ancestry = new Map<string, { topId: string; depth: number }>();
+  for (const s of spans) ancestry.set(s.span_id, topAndDepth(s, byId));
+
+  // Lane offset = sum of (max_intra_depth + 1) for preceding lanes, so a
+  // 3-deep tree followed by a 1-deep tree lays out as rows 0..3 then 4..5.
+  const maxDepthByTop = new Map<string, number>();
+  for (const { topId, depth } of ancestry.values()) {
+    maxDepthByTop.set(topId, Math.max(maxDepthByTop.get(topId) ?? 0, depth));
+  }
+  const laneOffset = new Map<string, number>();
+  let runningOffset = 0;
+  for (const top of topLevels) {
+    laneOffset.set(top.span_id, runningOffset);
+    runningOffset += (maxDepthByTop.get(top.span_id) ?? 0) + 1;
+  }
+
+  // A single-span run paints as a fixed chip instead of the full dock
+  // width — otherwise the lone bar is visually indistinguishable from
+  // the background.
+  const isSingleSpan = spans.length === 1;
+
   return spans
     .map((s) => {
       const start = ts(s.started_at);
       const end = s.finished_at ? ts(s.finished_at) : Date.now();
-      return {
-        span: s,
-        depth: depthOf(s, byId),
-        leftPct: ((start - t0) / span) * 100,
-        widthPct: Math.max(0.5, ((end - start) / span) * 100),
-      };
+      const a = ancestry.get(s.span_id)!;
+      const finalDepth = (laneOffset.get(a.topId) ?? 0) + a.depth;
+      const leftPct = isSingleSpan ? 0 : ((start - t0) / totalSpan) * 100;
+      const widthPct = isSingleSpan
+        ? 40
+        : Math.max(0.5, ((end - start) / totalSpan) * 100);
+      return { span: s, depth: finalDepth, leftPct, widthPct };
     })
     .sort((a, b) => a.depth - b.depth || a.leftPct - b.leftPct);
 }
