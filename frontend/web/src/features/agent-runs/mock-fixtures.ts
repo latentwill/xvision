@@ -90,13 +90,18 @@ export const MOCK_RUN_LIVE: AgentRunDetail = {
     finished_at: null,
     duration_ms: null,
     span_count: 3,
+    model_call_count: 0,
+    tool_call_count: 0,
     error_count: 0,
+    total_cost_usd: 0,
+    total_input_tokens: 0,
+    total_output_tokens: 0,
   },
   spans: [
-    COMPLETED_SPANS[0]!, // root agent.run still in progress
+    { ...COMPLETED_SPANS[0]!, finished_at: null, status: "in_progress" as SpanStatus },
     COMPLETED_SPANS[1]!,
     { ...COMPLETED_SPANS[2]!, finished_at: null, status: "in_progress" as SpanStatus },
-  ].map((s, i) => (i === 0 ? { ...s, finished_at: null, status: "in_progress" as SpanStatus } : s)),
+  ],
   model_calls: [],
   tool_calls: [],
 };
