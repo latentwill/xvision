@@ -14,6 +14,9 @@ use crate::cli_jobs::store::CliJobStore;
 use xvision_engine::api::chart::RunEventBus;
 use xvision_engine::api::settings::providers::ProviderModelsReport;
 use xvision_engine::api::{Actor, ApiContext};
+use xvision_observability::{
+    AgentRunRecorder, BroadcastSubscriber, RunEventBus as ObsRunEventBus, SqliteRecorder,
+};
 
 const MODELS_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
 
@@ -30,6 +33,15 @@ pub struct AppState {
     /// Singleton live-stream event bus. Constructed once at server start and
     /// shared across all HTTP requests via `api_context()`.
     pub event_bus: Arc<RunEventBus>,
+    /// Agent-run observability bus + the broadcast subscriber that
+    /// backs `/api/agent-runs/:id/stream`. The bus owns the
+    /// `SqliteRecorder` (canonical persistence) and the
+    /// `BroadcastSubscriber` (fan-out to per-run SSE channels) as
+    /// recorders — keeping a separate handle to the subscriber lets
+    /// route handlers call `subscribe_run` without going through the
+    /// recorder trait.
+    pub obs_event_bus: Arc<ObsRunEventBus>,
+    pub obs_broadcast: Arc<BroadcastSubscriber>,
     /// Per-provider catalog cache so the chat-rail dropdown doesn't
     /// hammer upstream `/models` on every page load. 5-minute TTL is the
     /// sweet spot between freshness and rate-limit pressure (OpenRouter
@@ -68,10 +80,23 @@ impl AppState {
         let cli_command = PathBuf::from("xvn");
         let cli_runner = Arc::new(CliJobRunner::new(pool.clone(), cli_command.clone()));
 
+        // Agent-run observability fan-out: SqliteRecorder for persistence
+        // + BroadcastSubscriber for the live SSE stream. The bus drives
+        // both as recorders on a single consumer task.
+        let obs_broadcast: Arc<BroadcastSubscriber> = Arc::new(BroadcastSubscriber::new());
+        let sqlite_recorder: Arc<SqliteRecorder> = Arc::new(SqliteRecorder::new(pool.clone()));
+        let subscribers: Vec<Arc<dyn AgentRunRecorder>> = vec![
+            sqlite_recorder as Arc<dyn AgentRunRecorder>,
+            obs_broadcast.clone() as Arc<dyn AgentRunRecorder>,
+        ];
+        let obs_event_bus = Arc::new(ObsRunEventBus::new(subscribers));
+
         Ok(Self {
             pool,
             xvn_home,
             event_bus: Arc::new(RunEventBus::new()),
+            obs_event_bus,
+            obs_broadcast,
             models_cache: Arc::new(Mutex::new(HashMap::new())),
             cli_command,
             cli_runner,

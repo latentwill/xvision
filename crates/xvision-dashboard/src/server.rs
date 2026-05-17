@@ -90,6 +90,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/agent-runs/:id", get(agent_runs::get))
         .route("/api/agent-runs/:id/export.json", get(agent_runs::export_json))
         .route("/api/agent-runs/:id/export.md", get(agent_runs::export_md))
+        // Live SSE feed (`agent-run-observability-sse-stream` leaf).
+        .route("/api/agent-runs/:id/stream", get(agent_runs::stream))
         // Eval-review routes (see routes/eval_review.rs).
         .route(
             "/api/eval/runs/:id/review",

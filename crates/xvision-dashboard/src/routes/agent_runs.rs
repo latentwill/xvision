@@ -20,16 +20,23 @@
 //! `qa-dashboard-auth-hardening` lands, the gate it introduces for
 //! `/api/agent-runs/**` should cover these too — see TODO below.
 
+use std::convert::Infallible;
+
 use axum::{
     extract::{Path, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
-    response::{IntoResponse, Response},
+    response::{
+        sse::{Event, Sse},
+        IntoResponse, Response,
+    },
     Json,
 };
+use tokio_stream::Stream;
 
 use xvision_observability::{build_export, build_report, AgentRunExport, ExportError};
 
 use crate::error::DashboardError;
+use crate::sse::agent_run_sse;
 use crate::state::AppState;
 
 // TODO(qa-dashboard-auth-hardening): when the dashboard auth surface
@@ -94,6 +101,30 @@ pub async fn export_md(
     }
 
     Ok((StatusCode::OK, headers, report.markdown).into_response())
+}
+
+/// `GET /api/agent-runs/:id/stream` — Server-Sent Events feed for a
+/// single agent run. The first event carries the `xvn.agent_run.v1`
+/// snapshot so the consumer has full context before live tail events
+/// start streaming. Subsequent events mirror the `RunEvent` vocabulary
+/// (one SSE event per emitted `RunEvent`) and the stream closes
+/// gracefully on `RunFinished` / `RunInterrupted`.
+///
+/// Auth gating mirrors the static `get` route — same TODO applies.
+pub async fn stream(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, DashboardError> {
+    // Build the snapshot up front. If the run doesn't exist this maps
+    // to a 404 *before* we open the SSE response, which is the correct
+    // axum pattern (after `into_response` an SSE upgrade can't be
+    // cleanly downgraded to a JSON error).
+    let snapshot = build_export(&state.pool, &id).await.map_err(map_err)?;
+    // Subscribe to the broadcast channel for this run. `subscribe_run`
+    // creates the sender lazily so even if no producer has emitted yet,
+    // future events will be delivered as soon as they arrive.
+    let rx = state.obs_broadcast.subscribe_run(&id).await;
+    Ok(agent_run_sse(snapshot, rx))
 }
 
 fn map_err(e: ExportError) -> DashboardError {

@@ -10,6 +10,7 @@
 
 pub mod blobs;
 pub mod bus;
+pub mod bus_subscriber;
 pub mod config;
 pub mod events;
 pub mod export;
@@ -23,6 +24,7 @@ pub mod types;
 
 pub use blobs::{BlobRef, BlobStore, BlobStoreError};
 pub use bus::RunEventBus;
+pub use bus_subscriber::{BroadcastSubscriber, SharedBroadcastSubscriber, RUN_CHANNEL_CAPACITY};
 pub use config::{
     default_config_path, ObservabilityConfig, RetentionConfig, RetentionMode,
     CONFIG_FILE_NAME, ENV_OVERRIDE_PREFIX,
