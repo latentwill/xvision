@@ -2,7 +2,7 @@
 track: agent-run-observability-ui
 branch: task/agent-run-observability-ui
 worktree: .worktrees/agent-run-observability-ui
-status: claimed
+status: done
 updated_at: 2026-05-17
 ---
 
