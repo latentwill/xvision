@@ -173,3 +173,35 @@ questions below must be resolved before Wave 2 imports the SDK.
   to Wave 2 once F1/F2 are resolved.
 
 These follow-ups block Wave 2's `@cline/sdk` import, not Wave 1's adapter scaffold.
+
+---
+
+## 2026-05-17 status — wave 2 landed; deploy-image runtime verification deferred
+
+Wave 2 (commit range f78f5c1..4bb25a66d07158de42347ff54469e2a63c03bef7) ships `@cline/sdk` import + session
+lifecycle + tool round-trip through the Cline Agent. All sidecar and
+Rust client tests pass; the end-to-end integration test
+(`session_lifecycle`) succeeds against the real sidecar binary.
+
+The Wave 2 acceptance gate's deploy-image runtime check (build via
+`scripts/deploy-image.sh`, then `docker run <tag> node
+/opt/xvision-agentd/dist/index.js --version` and confirm
+`cline_sdk_version` reports the resolved semver) is **deferred** —
+Docker is not available on the current build host. Static inspection of
+`Dockerfile.deploy` confirms the sidecar `package.json` and
+`pnpm-lock.yaml` are copied into the build stage and `@cline/sdk` is
+listed under `dependencies` (not `devDependencies`), so the install
+step will include it. Re-verify at the next push to the deploy host.
+
+**Dockerfile.deploy sidecar stage (lines 38–57) — key facts:**
+- Base: `node:22-bookworm-slim AS agentd`
+- `COPY xvision-agentd/package.json xvision-agentd/pnpm-lock.yaml ./` — both manifest and lockfile are copied.
+- `pnpm install --frozen-lockfile` — installs all `dependencies` (including `@cline/sdk@0.0.41`); lockfile is present so versions are pinned.
+- `pnpm prune --prod` — strips `devDependencies`; `@cline/sdk` is in `dependencies`, so it survives pruning.
+- Final image copies `/agentd/dist`, `/agentd/node_modules`, and `/agentd/package.json` to `/opt/xvision-agentd/`.
+- No allowlist, exclusion, or `--ignore` flag that would drop `@cline/sdk`.
+
+Per direction, the licensing baseline (LICENSE, NOTICE, CONTRIBUTING,
+SECURITY, CODE_OF_CONDUCT, THIRD_PARTY_LICENSES, cargo-deny,
+license-checker, license workflow) remains a deferred follow-up. F1–F4
+above are still open.
