@@ -21,6 +21,7 @@ import { listProviders, settingsKeys } from "@/api/settings";
 import { getStrategyChart, strategyChartKeys } from "@/api/chart";
 import { StrategyChart } from "@/components/chart/StrategyChart";
 import { ModelPicker } from "@/components/ModelPicker";
+import type { ProviderRow } from "@/api/types.gen";
 import { safeStorageGet, safeStorageSet } from "@/lib/storage";
 
 const AGENT_COLLAPSE_KEY_PREFIX = "xvn:authoring:agent-collapsed";
@@ -377,113 +378,234 @@ function AgentsCard({ strategy }: { strategy: Strategy }) {
           </div>
         )}
 
-        <div className="border border-border-soft rounded p-3 space-y-2">
-          <div className="text-[12px] text-text-2">Attach existing agent</div>
-          <Field label="Existing agent">
-            <select
-              className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text"
-              value={newAgentId}
-              onChange={(e) => setNewAgentId(e.target.value)}
-            >
-              <option value="">Select agent…</option>
-              {available.map((a) => (
-                <option key={a.agent_id} value={a.agent_id}>
-                  {a.name} · {a.agent_id}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Existing agent role">
-            <input
-              className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
-              value={newRole}
-              onChange={(e) => setNewRole(e.target.value)}
-              placeholder="Role name (e.g. trader)"
-            />
-          </Field>
-          <button
-            type="button"
-            onClick={() =>
-              addMut.mutate({
-                agent_id: newAgentId,
-                role: newRole.trim(),
-              })
-            }
-            disabled={!newAgentId || !newRole.trim() || addMut.isPending}
-            className="px-3 py-1.5 rounded text-[12px] border border-border disabled:opacity-50"
-          >
-            Add Agent
-          </button>
-        </div>
-
-        <div className="border border-border-soft rounded p-3 space-y-3">
-          <div className="text-[12px] text-text-2">Create and attach agent</div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <Field label="New agent name">
-              <input
-                className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text"
-                value={newAgentName}
-                onChange={(e) => setNewAgentName(e.target.value)}
-                placeholder="DeepSeek trader"
-              />
-            </Field>
-            <Field label="New agent role">
-              <input
-                className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
-                value={newAgentRole}
-                onChange={(e) => setNewAgentRole(e.target.value)}
-                placeholder="trader"
-              />
-            </Field>
-          </div>
-          <Field label="New agent model">
-            <ModelPicker
-              rows={providers.data?.providers ?? []}
-              loading={providers.isPending}
-              provider={newAgentProvider}
-              model={newAgentModel}
-              onChange={(provider, model) => {
-                setNewAgentProvider(provider);
-                setNewAgentModel(model);
-              }}
-              className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
-              ariaLabel="New agent model"
-              emptyHint="No enabled models for agent creation"
-            />
-          </Field>
-          <Field label="New agent system prompt">
-            <textarea
-              className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono leading-relaxed"
-              value={newAgentPrompt}
-              onChange={(e) => setNewAgentPrompt(e.target.value)}
-              rows={3}
-              placeholder="Trade with discipline."
-            />
-          </Field>
-          <button
-            type="button"
-            onClick={() => createAttachMut.mutate()}
-            disabled={
-              !newAgentName.trim() ||
-              !newAgentRole.trim() ||
-              !newAgentProvider ||
-              !newAgentModel ||
-              createAttachMut.isPending
-            }
-            className="px-3 py-1.5 rounded text-[12px] border border-border text-text disabled:opacity-50"
-          >
-            {createAttachMut.isPending
-              ? "Creating..."
-              : "Create and attach agent"}
-          </button>
-          {createAttachMut.isError ? (
-            <div className="text-[12px] text-danger">
-              {errorMessage(createAttachMut.error)}
-            </div>
-          ) : null}
-        </div>
+        {/* Merged attach surface. Per qa-strategy-popup-to-accordion: one
+            inline box with a Pick existing / Create new toggle, no separate
+            "Attach existing" + "Create and attach" cards. */}
+        <AddAgentAccordion
+          available={available}
+          providers={providers}
+          newAgentId={newAgentId}
+          setNewAgentId={setNewAgentId}
+          newRole={newRole}
+          setNewRole={setNewRole}
+          newAgentName={newAgentName}
+          setNewAgentName={setNewAgentName}
+          newAgentRole={newAgentRole}
+          setNewAgentRole={setNewAgentRole}
+          newAgentProvider={newAgentProvider}
+          setNewAgentProvider={setNewAgentProvider}
+          newAgentModel={newAgentModel}
+          setNewAgentModel={setNewAgentModel}
+          newAgentPrompt={newAgentPrompt}
+          setNewAgentPrompt={setNewAgentPrompt}
+          onAttachExisting={() =>
+            addMut.mutate({
+              agent_id: newAgentId,
+              role: newRole.trim(),
+            })
+          }
+          attachExistingPending={addMut.isPending}
+          onCreateAndAttach={() => createAttachMut.mutate()}
+          createPending={createAttachMut.isPending}
+          createError={createAttachMut.isError ? createAttachMut.error : null}
+        />
       </div>
     </Card>
+  );
+}
+
+type AddAgentAccordionProps = {
+  available: Agent[];
+  providers: { data: { providers: ProviderRow[] } | undefined; isPending: boolean };
+  newAgentId: string;
+  setNewAgentId: (v: string) => void;
+  newRole: string;
+  setNewRole: (v: string) => void;
+  newAgentName: string;
+  setNewAgentName: (v: string) => void;
+  newAgentRole: string;
+  setNewAgentRole: (v: string) => void;
+  newAgentProvider: string | null;
+  setNewAgentProvider: (v: string | null) => void;
+  newAgentModel: string;
+  setNewAgentModel: (v: string) => void;
+  newAgentPrompt: string;
+  setNewAgentPrompt: (v: string) => void;
+  onAttachExisting: () => void;
+  attachExistingPending: boolean;
+  onCreateAndAttach: () => void;
+  createPending: boolean;
+  createError: unknown;
+};
+
+/**
+ * Single inline accordion for adding an agent to the strategy. Replaces the
+ * previous two-card layout ("Attach existing" + "Create and attach") with a
+ * mode toggle. No overlay / popup — the create form expands in place.
+ */
+function AddAgentAccordion(props: AddAgentAccordionProps) {
+  const [mode, setMode] = useState<"existing" | "create">("existing");
+  const [open, setOpen] = useState(true);
+
+  return (
+    <div
+      data-testid="add-agent-accordion"
+      className="border border-border-soft rounded"
+    >
+      <div className="flex items-center justify-between gap-2 px-3 py-2">
+        <button
+          type="button"
+          aria-expanded={open}
+          aria-controls="add-agent-accordion-panel"
+          onClick={() => setOpen((v) => !v)}
+          className="inline-flex items-center gap-2 text-[12px] text-text-2 hover:text-text"
+        >
+          <span className="inline-flex items-center justify-center w-5 h-5 rounded text-[11px] border border-transparent">
+            {open ? "▼" : "▶"}
+          </span>
+          <span>Add agent</span>
+        </button>
+        {open ? (
+          <div
+            className="flex items-center gap-1"
+            role="group"
+            aria-label="Add agent mode"
+          >
+            <button
+              type="button"
+              aria-pressed={mode === "existing"}
+              onClick={() => setMode("existing")}
+              className={`px-2 py-1 text-[11px] rounded border ${
+                mode === "existing"
+                  ? "border-border text-text bg-surface-elev"
+                  : "border-transparent text-text-3 hover:text-text"
+              }`}
+            >
+              Pick existing
+            </button>
+            <button
+              type="button"
+              aria-pressed={mode === "create"}
+              onClick={() => setMode("create")}
+              className={`px-2 py-1 text-[11px] rounded border ${
+                mode === "create"
+                  ? "border-border text-text bg-surface-elev"
+                  : "border-transparent text-text-3 hover:text-text"
+              }`}
+            >
+              Create new
+            </button>
+          </div>
+        ) : null}
+      </div>
+
+      {open ? (
+        <div id="add-agent-accordion-panel" className="border-t border-border-soft px-3 py-3 space-y-3">
+          {mode === "existing" ? (
+            <div className="space-y-2">
+              <Field label="Existing agent">
+                <select
+                  className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text"
+                  value={props.newAgentId}
+                  onChange={(e) => props.setNewAgentId(e.target.value)}
+                >
+                  <option value="">Select agent…</option>
+                  {props.available.map((a) => (
+                    <option key={a.agent_id} value={a.agent_id}>
+                      {a.name} · {a.agent_id}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Existing agent role">
+                <input
+                  className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
+                  value={props.newRole}
+                  onChange={(e) => props.setNewRole(e.target.value)}
+                  placeholder="Role name (e.g. trader)"
+                />
+              </Field>
+              <button
+                type="button"
+                onClick={props.onAttachExisting}
+                disabled={
+                  !props.newAgentId ||
+                  !props.newRole.trim() ||
+                  props.attachExistingPending
+                }
+                className="px-3 py-1.5 rounded text-[12px] border border-border disabled:opacity-50"
+              >
+                {props.attachExistingPending ? "Adding..." : "Add Agent"}
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <Field label="New agent name">
+                  <input
+                    className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text"
+                    value={props.newAgentName}
+                    onChange={(e) => props.setNewAgentName(e.target.value)}
+                    placeholder="DeepSeek trader"
+                  />
+                </Field>
+                <Field label="New agent role">
+                  <input
+                    className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
+                    value={props.newAgentRole}
+                    onChange={(e) => props.setNewAgentRole(e.target.value)}
+                    placeholder="trader"
+                  />
+                </Field>
+              </div>
+              <Field label="New agent model">
+                <ModelPicker
+                  rows={props.providers.data?.providers ?? []}
+                  loading={props.providers.isPending}
+                  provider={props.newAgentProvider}
+                  model={props.newAgentModel}
+                  onChange={(provider, model) => {
+                    props.setNewAgentProvider(provider);
+                    props.setNewAgentModel(model);
+                  }}
+                  className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
+                  ariaLabel="New agent model"
+                  emptyHint="No enabled models for agent creation"
+                />
+              </Field>
+              <Field label="New agent system prompt">
+                <textarea
+                  className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono leading-relaxed"
+                  value={props.newAgentPrompt}
+                  onChange={(e) => props.setNewAgentPrompt(e.target.value)}
+                  rows={3}
+                  placeholder="Trade with discipline."
+                />
+              </Field>
+              <button
+                type="button"
+                onClick={props.onCreateAndAttach}
+                disabled={
+                  !props.newAgentName.trim() ||
+                  !props.newAgentRole.trim() ||
+                  !props.newAgentProvider ||
+                  !props.newAgentModel ||
+                  props.createPending
+                }
+                className="px-3 py-1.5 rounded text-[12px] border border-border text-text disabled:opacity-50"
+              >
+                {props.createPending ? "Creating..." : "Create and attach agent"}
+              </button>
+              {props.createError ? (
+                <div className="text-[12px] text-danger">
+                  {errorMessage(props.createError)}
+                </div>
+              ) : null}
+            </div>
+          )}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -508,7 +630,6 @@ export function AttachedAgentRow({
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     return safeStorageGet(storageKey) === "1";
   });
-  const [popoutOpen, setPopoutOpen] = useState(false);
 
   // The React key for each row is `${agent_id}:${role}` — stable across
   // strategies that attach the same agent under the same role. When the
@@ -517,7 +638,6 @@ export function AttachedAgentRow({
   // storage key rather than relying on the lazy `useState` initializer.
   useEffect(() => {
     setCollapsed(safeStorageGet(storageKey) === "1");
-    setPopoutOpen(false);
   }, [storageKey]);
   const primarySlot = agent?.slots[0];
   const modelLabel = primarySlot
@@ -530,10 +650,6 @@ export function AttachedAgentRow({
       safeStorageSet(storageKey, next ? "1" : "0");
       return next;
     });
-  }
-
-  function closePopout() {
-    setPopoutOpen(false);
   }
 
   return (
@@ -577,21 +693,38 @@ export function AttachedAgentRow({
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <button
-            type="button"
-            className="text-[12px] text-text-2 hover:text-text"
-            onClick={() => setPopoutOpen(true)}
-            aria-label="Open agent in window"
-          >
-            Open in window
-          </button>
-        </div>
       </div>
 
       {!collapsed ? (
-        <div className="border-t border-border-soft px-3 py-2 space-y-2 text-[12px] text-text-2">
-          <div className="break-all font-mono">{agentRef.agent_id}</div>
+        // Inline detail panel — replaces the previous fullscreen "Open in
+        // window" dialog (qa-strategy-popup-to-accordion, 2026-05-17).
+        // Per dashboard no-popups rule (CLAUDE.md adopted 2026-05-17),
+        // detail expansion happens in place, not as an overlay.
+        <div className="border-t border-border-soft px-3 py-3 space-y-3 text-[12px] text-text-2">
+          <div>
+            <div className="text-[11px] uppercase tracking-wide text-text-3">
+              Agent id
+            </div>
+            <div className="break-all font-mono text-text-2">{agentRef.agent_id}</div>
+          </div>
+          {modelLabel ? (
+            <div>
+              <div className="text-[11px] uppercase tracking-wide text-text-3">
+                Model
+              </div>
+              <div className="font-mono text-text-2">{modelLabel}</div>
+            </div>
+          ) : null}
+          {primarySlot?.system_prompt ? (
+            <div>
+              <div className="text-[11px] uppercase tracking-wide text-text-3">
+                System prompt
+              </div>
+              <pre className="whitespace-pre-wrap font-mono text-[12px] text-text-2 bg-surface-elev border border-border-soft rounded p-2 max-h-[40vh] overflow-y-auto">
+                {primarySlot.system_prompt}
+              </pre>
+            </div>
+          ) : null}
           <div className="flex items-center gap-3 pt-1">
             <button
               type="button"
@@ -613,96 +746,6 @@ export function AttachedAgentRow({
             >
               Remove
             </button>
-          </div>
-        </div>
-      ) : null}
-
-      {popoutOpen ? (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label={`Agent ${agentRef.role} details`}
-          className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-6"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) closePopout();
-          }}
-        >
-          <div className="w-[min(560px,92vw)] mt-[10vh] bg-surface-card border border-border rounded-card shadow-2xl overflow-hidden">
-            <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-border-soft">
-              <div className="text-[13px]">
-                <span className="font-mono text-text">{agentRef.role}</span>
-                {agent ? (
-                  <>
-                    <span className="text-text-3"> · </span>
-                    <span className="text-text">{agent.name}</span>
-                  </>
-                ) : null}
-              </div>
-              <button
-                type="button"
-                className="text-[12px] text-text-2 hover:text-text"
-                onClick={closePopout}
-                aria-label="Close agent window"
-              >
-                Close
-              </button>
-            </div>
-            <div className="px-4 py-3 space-y-3 text-[13px]">
-              <div>
-                <div className="text-[11px] uppercase tracking-wide text-text-3">
-                  Agent id
-                </div>
-                <div className="break-all font-mono text-text-2">
-                  {agentRef.agent_id}
-                </div>
-              </div>
-              {modelLabel ? (
-                <div>
-                  <div className="text-[11px] uppercase tracking-wide text-text-3">
-                    Model
-                  </div>
-                  <div className="font-mono text-text-2">{modelLabel}</div>
-                </div>
-              ) : null}
-              {primarySlot?.system_prompt ? (
-                <div>
-                  <div className="text-[11px] uppercase tracking-wide text-text-3">
-                    System prompt
-                  </div>
-                  <pre className="whitespace-pre-wrap font-mono text-[12px] text-text-2 bg-surface-elev border border-border-soft rounded p-2 max-h-[40vh] overflow-y-auto">
-                    {primarySlot.system_prompt}
-                  </pre>
-                </div>
-              ) : null}
-              <div className="flex items-center gap-3 pt-1">
-                <button
-                  type="button"
-                  className="text-[12px] text-text-2 hover:text-text"
-                  onClick={() => {
-                    closePopout();
-                    onRenameRole();
-                  }}
-                >
-                  Rename role
-                </button>
-                <Link
-                  className="text-[12px] text-text-2 hover:text-text"
-                  to={`/agents/${encodeURIComponent(agentRef.agent_id)}`}
-                >
-                  Edit agent
-                </Link>
-                <button
-                  type="button"
-                  className="text-[12px] text-danger"
-                  onClick={() => {
-                    closePopout();
-                    onRemove();
-                  }}
-                >
-                  Remove
-                </button>
-              </div>
-            </div>
           </div>
         </div>
       ) : null}
