@@ -5,6 +5,7 @@
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use std::io::ErrorKind;
 use std::path::PathBuf;
 use xshell::{cmd, Shell};
 
@@ -46,7 +47,11 @@ fn gen_types(sh: &Shell) -> Result<()> {
     let out_dir = "frontend/web/src/api/types.gen";
 
     // Wipe first so deletions in Rust propagate (ts-rs only writes, never deletes).
-    cmd!(sh, "rm -rf {out_dir}").run().ok();
+    match std::fs::remove_dir_all(out_dir) {
+        Ok(()) => {}
+        Err(err) if err.kind() == ErrorKind::NotFound => {}
+        Err(err) => return Err(err).with_context(|| format!("remove {out_dir}")),
+    }
 
     // ts-rs emits files as the side effect of running unit tests under the
     // `ts-export` feature. `--lib` because the auto-generated test functions
@@ -107,11 +112,7 @@ fn gen_types(sh: &Shell) -> Result<()> {
 /// assertion fires, so the bindings we care about are already on disk.
 fn run_ts_export(sh: &Shell, pkg: &str, out_dir: &str) -> Result<()> {
     let before = count_ts_files(out_dir);
-    let result = cmd!(
-        sh,
-        "cargo test -p {pkg} --features ts-export --lib --quiet"
-    )
-    .run();
+    let result = cmd!(sh, "cargo test -p {pkg} --features ts-export --lib --quiet").run();
     let after = count_ts_files(out_dir);
     if result.is_err() && after <= before {
         anyhow::bail!(
