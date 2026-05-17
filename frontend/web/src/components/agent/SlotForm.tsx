@@ -79,19 +79,7 @@ export function SlotForm({
               title="Remove slot"
               className="p-1.5 text-text-3 hover:text-danger rounded transition-colors"
             >
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 16 16"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden
-              >
-                <path d="M3 5h10M6.5 5V3.5a1 1 0 011-1h1a1 1 0 011 1V5M5 5l.7 8a1 1 0 001 1h2.6a1 1 0 001-1L11 5M6.5 8v3.5M9.5 8v3.5" />
-              </svg>
+              <Icon name="trash" size={14} />
             </button>
           ) : null}
         </div>

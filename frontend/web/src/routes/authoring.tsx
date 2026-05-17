@@ -198,7 +198,7 @@ function AgentsCard({ strategy }: { strategy: Strategy }) {
             model: newAgentModel,
             system_prompt: newAgentPrompt.trim(),
             skill_ids: [],
-            max_tokens: 4096,
+            max_tokens: null,
           },
         ],
       });
