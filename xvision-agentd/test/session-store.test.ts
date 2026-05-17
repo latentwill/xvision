@@ -52,4 +52,9 @@ describe("session store", () => {
     expect(store.get("run-1")?.agent).toBe(fakeAgent)
     expect(store.get("run-1")).toBe(s)
   })
+
+  it("attachAgent throws when the run does not exist", () => {
+    expect(() => store.attachAgent("missing", {} as unknown as Session["agent"]))
+      .toThrow(/not found/)
+  })
 })

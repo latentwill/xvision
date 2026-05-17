@@ -55,6 +55,9 @@ export function createStore(opts: StoreOptions = {}): SessionStore {
     get(run_id) {
       return sessions.get(run_id)
     },
+    // Throws rather than returning false: called only after the JSON-RPC
+    // handler has already confirmed the session exists; a missing session
+    // here is a programmer error, not a caller error.
     attachAgent(run_id, agent) {
       const s = sessions.get(run_id)
       if (!s) throw new Error(`session not found: ${run_id}`)
