@@ -29,14 +29,17 @@ import { Pill } from "@/components/primitives/Pill";
 import { Icon } from "@/components/primitives/Icon";
 import { SlotForm } from "./SlotForm";
 
+// The per-slot `max_tokens` override was removed from the UI (2026-05-17
+// via qa-remove-agent-max-tokens). New slots always send `null` so the
+// engine resolves the cap from the model library; existing agents with a
+// persisted value still load and execute, but the engine ignores it.
+// Do not bring a `max_tokens` input back in any downstream refactor.
 const BLANK_SLOT: AgentSlot = {
   name: "main",
   provider: "",
   model: "",
   system_prompt: "",
   skill_ids: [],
-  // null → "Auto from model"; the dispatcher resolves this from the
-  // model's metadata at request time (q15 §1).
   max_tokens: null,
 };
 
