@@ -18,7 +18,7 @@
 use serde_json::json;
 use sqlx::SqlitePool;
 use xvision_engine::api::eval::{self, ListRunsRequest};
-use xvision_engine::api::{Actor, ApiContext};
+use xvision_engine::api::{Actor, ApiContext, ApiError};
 use xvision_engine::eval::{Run, RunMode, RunStatus, RunStore};
 
 async fn ctx_with_eval_tables() -> (ApiContext, tempfile::TempDir) {
@@ -62,16 +62,29 @@ async fn seed_failed(ctx: &ApiContext, params: Option<serde_json::Value>) -> Run
     store.get(&run.id).await.unwrap()
 }
 
-async fn seed_sibling_queued(
-    ctx: &ApiContext,
-    failed: &Run,
-    params: Option<serde_json::Value>,
-) -> Run {
+async fn seed_sibling_queued(ctx: &ApiContext, failed: &Run, params: Option<serde_json::Value>) -> Run {
     let store = RunStore::new(ctx.db.clone());
     let mut sibling = Run::new_queued(failed.agent_id.clone(), failed.scenario_id.clone(), failed.mode);
     sibling.params_override = params;
     store.create(&sibling).await.unwrap();
     store.get(&sibling.id).await.unwrap()
+}
+
+async fn assert_retry_takes_start_path(ctx: &ApiContext, failed_id: &str) {
+    let err = eval::retry(ctx, failed_id)
+        .await
+        .expect_err("different params_override must not return an in-flight sibling");
+    assert!(
+        matches!(err, ApiError::NotFound(_)),
+        "retry should fall through to start_run and fail on missing strategy, got {err:?}"
+    );
+
+    let runs = eval::list(ctx, ListRunsRequest::default()).await.unwrap();
+    assert_eq!(
+        runs.len(),
+        2,
+        "retry must not coalesce and must not persist a new run when start_run fails"
+    );
 }
 
 /// Regression: when the only in-flight run with the same
@@ -91,34 +104,9 @@ async fn retry_does_not_coalesce_when_params_override_differs() {
     let failed = seed_failed(&ctx, Some(json!({"alpha": 1}))).await;
     // Sibling Queued has params { "alpha": 2 } — same (agent, scenario, mode),
     // different params_override. Must NOT be treated as a sibling.
-    let sibling = seed_sibling_queued(&ctx, &failed, Some(json!({"alpha": 2}))).await;
+    let _sibling = seed_sibling_queued(&ctx, &failed, Some(json!({"alpha": 2}))).await;
 
-    let result = eval::retry(&ctx, &failed.id).await;
-
-    match result {
-        Ok(detail) => {
-            // If retry somehow succeeded (unlikely without strategy wiring),
-            // the returned id must NOT be the unrelated sibling.
-            assert_ne!(
-                detail.summary.id, sibling.id,
-                "retry must not coalesce onto a sibling with a different params_override"
-            );
-        }
-        Err(err) => {
-            // Expected path in this test harness: predicate did not match,
-            // retry fell through to start_run, which fails on missing
-            // strategy. The key assertion is that the sibling id is not
-            // surfaced; verify by listing runs — there must be no THIRD
-            // run created (because start_run errored before persisting),
-            // and crucially the sibling was not silently returned as the
-            // "retry result".
-            let msg = err.to_string();
-            assert!(
-                !msg.contains(&sibling.id),
-                "error must not reference unrelated sibling id ({msg})"
-            );
-        }
-    }
+    assert_retry_takes_start_path(&ctx, &failed.id).await;
 }
 
 /// Happy path: a true sibling — identical `params_override` — still
@@ -186,11 +174,7 @@ async fn retry_does_not_coalesce_when_one_side_is_none() {
     let (ctx, _d) = ctx_with_eval_tables().await;
 
     let failed = seed_failed(&ctx, None).await;
-    let sibling = seed_sibling_queued(&ctx, &failed, Some(json!({"alpha": 1}))).await;
+    let _sibling = seed_sibling_queued(&ctx, &failed, Some(json!({"alpha": 1}))).await;
 
-    let result = eval::retry(&ctx, &failed.id).await;
-    match result {
-        Ok(detail) => assert_ne!(detail.summary.id, sibling.id),
-        Err(err) => assert!(!err.to_string().contains(&sibling.id)),
-    }
+    assert_retry_takes_start_path(&ctx, &failed.id).await;
 }
