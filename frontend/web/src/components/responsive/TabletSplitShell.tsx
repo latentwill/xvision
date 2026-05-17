@@ -1,8 +1,12 @@
-import { Suspense, type ElementType } from "react";
+import { Suspense, type ElementType, lazy } from "react";
 import { Outlet } from "react-router-dom";
 
 import type { ChatRailProps } from "@/components/shell/ChatRail";
 import { CommandPalette } from "@/components/shell/CommandPalette";
+
+const StripDockSlot = lazy(() =>
+  import("@/features/agent-runs/StripDockSlot").then((m) => ({ default: m.StripDockSlot })),
+);
 
 export function TabletSplitShell({
   ChatRailComponent,
@@ -21,6 +25,9 @@ export function TabletSplitShell({
         <Outlet />
       </main>
       <CommandPalette />
+      <Suspense fallback={null}>
+        <StripDockSlot />
+      </Suspense>
     </div>
   );
 }
