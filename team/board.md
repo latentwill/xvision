@@ -13,6 +13,7 @@ V2 work (V2A onboarding + docs, V2B–V4 roadmap) lives on its own board:
 ## Active
 
 - [ux-polish-eval-list-and-snapshot](contracts/ux-polish-eval-list-and-snapshot.md) — leaf · ready · chart snapshot title + eval-list friendly labels + scroll indicator
+- [mobile-eval-run-detail](contracts/mobile-eval-run-detail.md) — leaf · in-progress · phone-viewport layout for `/eval-runs/:runId` (Anthropic design `Eval Run Detail · Mobile`)
 
 ### qa-2026-05-17 — comprehensive codebase review
 

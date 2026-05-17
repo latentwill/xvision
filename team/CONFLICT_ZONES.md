@@ -25,7 +25,7 @@ Conductor: see `team/CONDUCTOR.md`.
 | `crates/xvision-engine/src/eval/trader_output.rs` | (none — released by `q15-agent-max-tokens-from-model` PR #185 merge) | — | — |
 | `crates/xvision-dashboard/src/routes/eval/mod.rs` | (none — released by #187 / #188 / #184 merges) | — | — |
 | `crates/xvision-cli/src/commands/eval/mod.rs` | (none — released by #187 / #188 merges) | — | — |
-| `frontend/web/src/routes/eval-runs-detail.tsx` | (none — released by #190 / #187 / #184 merges) | — | — |
+| `frontend/web/src/routes/eval-runs-detail.tsx` | `mobile-eval-run-detail` | mobile-polish | `mobile-eval-run-detail` merges |
 | `crates/xvision-cli/src/json/object_shapes.rs` | (none — released by #187 / #189 merges) | — | — |
 | `crates/xvision-dashboard/src/server.rs` | `qa-dashboard-auth-hardening` (re-claimed from deferred q15-tailscale) | qa-2026-05-17 | `qa-dashboard-auth-hardening` merges |
 | `crates/xvision-dashboard/src/lib.rs` | `qa-dashboard-auth-hardening` (re-claimed from deferred q15-tailscale) | qa-2026-05-17 | `qa-dashboard-auth-hardening` merges |
