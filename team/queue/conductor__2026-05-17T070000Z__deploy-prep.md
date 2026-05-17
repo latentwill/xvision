@@ -6,29 +6,21 @@ created_at: 2026-05-17T07:00:00Z
 ack_required: false
 ---
 
-# Deploy image rollout — waiting on #208 + #207
+# Deploy image rollout — #207 + #208 merged, ready to ship
 
-## State 2026-05-17 (conductor walk-through)
+## State 2026-05-17 (post-merge)
 
-Two PRs are blocking the next image push:
+Both blockers are on `main`:
 
-1. **#208 — Cline SDK Wave 1+2** (`task/cline-sdk-wave1-impl`,
-   55 files, +11.9k). `mergeable: MERGEABLE`, no CI on this repo to gate.
-   Verification commands listed on
-   `team/contracts/cline-sdk-wave1-2.md`.
-2. **#207 — Observability bus drops-oldest fix** (`task/observability-review-fixes`,
-   3 files, +590/-123). Fix-forward on Phase A bus.rs. Verification commands
-   on `team/contracts/observability-review-fixes.md`.
+1. **#207** merged 2026-05-17 02:27 UTC (observability bus drops-oldest fix).
+2. **#208** merged 2026-05-17 02:28 UTC (Cline SDK Wave 1+2); merge commit
+   `7365cc57f592f121283e9ced60220234a8bea980`.
 
-PR #199 (draft cline-sdk spec) is superseded by #208. Close after #208 merges.
+PR #199 (draft cline-sdk spec) closed as superseded. Merged branches
+deleted on origin: `task/observability-review-fixes`,
+`task/cline-sdk-wave1-impl`.
 
-## Order
-
-Land #207 first (small, surgical, no overlap with #208). Then #208 (touches
-xvision-agentd/ + xvision-agent-client/ — orthogonal to #207's
-xvision-observability/src/bus.rs). No rebase conflict expected.
-
-## After both merge
+## Run the deploy
 
 1. `git fetch --prune origin && git checkout main && git pull --ff-only`
 2. Run the deploy-image preferred path locally on the build host (NOT on a

@@ -12,9 +12,12 @@ V2 work (V2A onboarding + docs, V2B–V4 roadmap) lives on its own board:
 
 ## Active
 
-- [cline-sdk-wave1-2](contracts/cline-sdk-wave1-2.md) — foundation · pr-open (#208) · sidecar adapter + session lifecycle (waves 1+2)
-- [observability-review-fixes](contracts/observability-review-fixes.md) — leaf · pr-open (#207) · bus drops oldest on Full, not newest (Phase A fix-forward)
 - [ux-polish-eval-list-and-snapshot](contracts/ux-polish-eval-list-and-snapshot.md) — leaf · ready · chart snapshot title + eval-list friendly labels + scroll indicator
+
+`cline-sdk-wave1-2` (#208) and `observability-review-fixes` (#207) merged
+2026-05-17; both archived under
+`team/archive/2026-05-17-cline-sdk-merge/`. PR #199 (DRAFT spec) closed as
+superseded.
 
 The remaining v1 worker stream is the V2A onboarding leaves on
 `team/board-v2.md` (`v2a-driver-tour`, `v2a-in-app-docs`;
@@ -25,16 +28,18 @@ The remaining v1 worker stream is the V2A onboarding leaves on
 Safe to claim right now (no unresolved Foundation dependency):
 
 - `ux-polish-eval-list-and-snapshot` — three independent UI nits in one PR.
+- Phase B agent-run-observability contracts — **now unblocked** by the
+  #208 merge (Cline SDK migration step 3 complete; `xvision-agent-client`
+  crate is on `main`). Contracts in the Reserved section can be promoted
+  to Active by the next conductor pass.
 - V2A leaves on `team/board-v2.md` (`v2a-driver-tour`, `v2a-in-app-docs`).
   Independent, parallel-safe.
-- Phase B agent-run-observability contracts are *not* in the start set —
-  they unlock when #208 lands (see Reserved).
 
-## Reserved (not yet ready)
+## Reserved (ready to decompose)
 
-Phase B of the agent-run-observability wave. Contracts not yet opened —
-they are gated on the Cline SDK migration reaching step 3
-(`xvision-agent-client` crate exists), which is what #208 delivers:
+Phase B of the agent-run-observability wave. The Cline SDK foundation
+landed via #208, so these are unblocked — they just need contract files
+written and worktrees created:
 
 - `agent-run-observability-ipc-emission` (foundation) — wires Cline IPC
   events to the `RunEventBus`. **Is step 8 of the Cline migration plan.**
@@ -47,9 +52,6 @@ they are gated on the Cline SDK migration reaching step 3
   timeline + streaming text. Implementation plan landed at
   `docs/superpowers/plans/2026-05-17-agent-run-observability-ui-implementation-plan.md`
   (design: `docs/superpowers/specs/2026-05-17-agent-run-observability-ui-design.md`).
-
-Cline SDK design PR: **#208 (waves 1+2 implementation, supersedes the
-draft spec PR #199)**. Phase B contracts can open as soon as #208 merges.
 
 ## Deferred
 
@@ -82,6 +84,8 @@ Archived 2026-05-16:
 
 Archived 2026-05-17:
 
+- **cline-sdk-wave1-2** — merged via #208 on 2026-05-17; archived under `team/archive/2026-05-17-cline-sdk-merge/`. Sidecar adapter (`xvision-agentd`) + Rust client crate (`xvision-agent-client`) + session lifecycle (`start_run` / `step` / `end_run`) + tool callback round-trip. Mock-provider path for deterministic CI; production providers use normal SDK plumbing. Licensing baseline (LICENSE / NOTICE / cargo-deny / license-checker / CI workflow) explicitly deferred per direction — F1–F4 in `docs/superpowers/research/2026-05-17-cline-sdk-license-audit.md`. Deploy-image runtime check deferred to next Docker-host push. Draft spec PR #199 closed as superseded.
+- **observability-review-fixes** — merged via #207 on 2026-05-17; archived under `team/archive/2026-05-17-cline-sdk-merge/`. Event bus now evicts OLDEST non-lifecycle event on overflow (not newest, as the buggy `tokio::sync::mpsc::try_send` had been doing). Lifecycle-critical events (RunStarted/RunFinished/RunInterrupted/SidecarError) never evicted. Two reviewer findings on retention.rs / janitor.rs confirmed already fixed on main pre-merge.
 - **agent-run-observability-foundation** — merged via #197 on 2026-05-17; archived under `team/archive/2026-05-17-agent-run-observability/`. Plan at `docs/superpowers/plans/2026-05-17-agent-run-observability-plan.md`. Phase A leaves now open for claim; Phase B reserved pending Cline migration.
 - **agent-run-observability-schema** — merged via #200 on 2026-05-16; archived under `team/archive/2026-05-17-agent-run-observability/`. New `xvision-observability` crate + migration 018 (10 tables).
 - **agent-run-observability-event-bus** + **agent-run-observability-retention-cli** — combined and merged via #204 on 2026-05-17; archived under `team/archive/2026-05-17-agent-run-observability/`. Standalone PRs #202/#203 were closed in favor of the combined PR. Phase A is now feature-complete. Live fix-forward = `observability-review-fixes` (#207).

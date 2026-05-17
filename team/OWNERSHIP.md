@@ -51,20 +51,20 @@ through their contracts' `parallel_conflicts`.
 | `docs/superpowers/plans/2026-05-17-agent-run-observability-plan.md` | (closed-out: `agent-run-observability-foundation`, merged #197) | agent-run-observability |
 | `docs/superpowers/specs/2026-05-15-xvn-agent-run-system-spec.md` | (closed-out: `agent-run-observability-foundation`) | agent-run-observability |
 | `team/intake/2026-05-17-agent-run-observability.md` | (closed-out: `agent-run-observability-foundation`) | agent-run-observability |
-| `crates/xvision-observability/src/bus.rs` | `observability-review-fixes` (fix-forward on Phase A) | agent-run-observability |
-| `crates/xvision-observability/tests/event_bus_drop_oldest.rs` | `observability-review-fixes` (new test file) | agent-run-observability |
-| `crates/xvision-observability/tests/event_bus_synthetic.rs` | `observability-review-fixes` (race-fix) | agent-run-observability |
-| `crates/xvision-observability/**` | (closed-out Phase A: `agent-run-observability-schema`, `agent-run-observability-event-bus`, `agent-run-observability-retention-cli`; live fix-forward = `observability-review-fixes` for bus.rs + its tests only) | agent-run-observability |
+| `crates/xvision-observability/src/bus.rs` | (closed-out: `observability-review-fixes`, merged #207) | agent-run-observability |
+| `crates/xvision-observability/tests/event_bus_drop_oldest.rs` | (closed-out: `observability-review-fixes`, merged #207) | agent-run-observability |
+| `crates/xvision-observability/tests/event_bus_synthetic.rs` | (closed-out: `observability-review-fixes`, merged #207) | agent-run-observability |
+| `crates/xvision-observability/**` | (closed-out Phase A. Next claimant: a Phase B contract from the Reserved list on `team/board.md` once decomposed.) | agent-run-observability |
 | `crates/xvision-engine/migrations/018_agent_run_observability.sql` | (closed-out: `agent-run-observability-schema`) | agent-run-observability |
 | `crates/xvision-engine/migrations/018_agent_run_observability.down.sql` | (closed-out: `agent-run-observability-schema`) | agent-run-observability |
 | `crates/xvision-cli/src/commands/obs/**` | (closed-out: `agent-run-observability-retention-cli`) | agent-run-observability |
-| `xvision-agentd/**` | `cline-sdk-wave1-2` | cline-sdk-agent-replacement |
-| `crates/xvision-agent-client/**` | `cline-sdk-wave1-2` | cline-sdk-agent-replacement |
-| `docs/superpowers/specs/2026-05-17-cline-sdk-agent-replacement-design.md` | `cline-sdk-wave1-2` | cline-sdk-agent-replacement |
-| `docs/superpowers/plans/2026-05-17-cline-sdk-agent-replacement-wave1.md` | `cline-sdk-wave1-2` | cline-sdk-agent-replacement |
-| `docs/superpowers/plans/2026-05-17-cline-sdk-agent-replacement-wave2.md` | `cline-sdk-wave1-2` | cline-sdk-agent-replacement |
-| `docs/superpowers/research/2026-05-17-cline-sdk-license-audit.md` | `cline-sdk-wave1-2` | cline-sdk-agent-replacement |
-| `Dockerfile.deploy` | `cline-sdk-wave1-2` (sidecar bundle additions only — do NOT modify base image / Rust build stages without a contract update) | cline-sdk-agent-replacement |
+| `xvision-agentd/**` | (closed-out: `cline-sdk-wave1-2`, merged #208) | cline-sdk-agent-replacement |
+| `crates/xvision-agent-client/**` | (closed-out: `cline-sdk-wave1-2`, merged #208) | cline-sdk-agent-replacement |
+| `docs/superpowers/specs/2026-05-17-cline-sdk-agent-replacement-design.md` | (closed-out: `cline-sdk-wave1-2`, merged #208) | cline-sdk-agent-replacement |
+| `docs/superpowers/plans/2026-05-17-cline-sdk-agent-replacement-wave1.md` | (closed-out: `cline-sdk-wave1-2`, merged #208) | cline-sdk-agent-replacement |
+| `docs/superpowers/plans/2026-05-17-cline-sdk-agent-replacement-wave2.md` | (closed-out: `cline-sdk-wave1-2`, merged #208) | cline-sdk-agent-replacement |
+| `docs/superpowers/research/2026-05-17-cline-sdk-license-audit.md` | (closed-out: `cline-sdk-wave1-2`, merged #208) | cline-sdk-agent-replacement |
+| `Dockerfile.deploy` | (closed-out: `cline-sdk-wave1-2`, merged #208) | cline-sdk-agent-replacement |
 
 ## Multi-owner exemptions
 

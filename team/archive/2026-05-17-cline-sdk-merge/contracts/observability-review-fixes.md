@@ -2,10 +2,11 @@
 track: observability-review-fixes
 lane: leaf
 wave: agent-run-observability
-worktree: .worktrees/observability-review-fixes
-branch: task/observability-review-fixes
+worktree: (removed post-merge)
+branch: task/observability-review-fixes (deleted post-merge)
 base: origin/main
-status: pr-open
+status: merged
+pr: https://github.com/latentwill/xvision/pull/207
 depends_on: []
 blocks: []
 stacking: none

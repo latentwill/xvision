@@ -2,10 +2,12 @@
 track: cline-sdk-wave1-2
 lane: foundation
 wave: cline-sdk-agent-replacement
-worktree: .worktrees/cline-sdk-wave1
-branch: task/cline-sdk-wave1-impl
+worktree: (removed post-merge)
+branch: task/cline-sdk-wave1-impl (deleted post-merge)
 base: origin/main
-status: pr-open
+status: merged
+pr: https://github.com/latentwill/xvision/pull/208
+merge_commit: 7365cc57f592f121283e9ced60220234a8bea980
 depends_on: []
 blocks: [cline-sdk-wave3]
 stacking: none
