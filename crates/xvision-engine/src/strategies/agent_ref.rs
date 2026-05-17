@@ -8,7 +8,38 @@
 //! This file is the strategy-side half of that refactor. The agent records
 //! themselves live in `crates/xvision-engine/src/agents/`.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+/// Canonical form of a role string used as the comparison key across
+/// the engine: trimmed of leading/trailing whitespace and lowercased
+/// (ASCII). Pick the single helper so every comparison site agrees;
+/// previously, sites were split between `trim()`,
+/// `eq_ignore_ascii_case()`, and combinations of the two — which let a
+/// `Trader` slot run as trader but drop its output (see QA finding #5,
+/// 2026-05-17).
+pub fn canonical_role(s: &str) -> String {
+    s.trim().to_ascii_lowercase()
+}
+
+/// Serde deserializer for role fields: normalizes the on-disk value to
+/// canonical form on load. Old strategy JSON with whitespace-padded or
+/// mixed-case role values self-heals on the next read instead of
+/// requiring a migration. Save also runs the same canonicalizer so disk
+/// strings carry the canonical form going forward.
+fn deserialize_role<'de, D>(d: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw = String::deserialize(d)?;
+    Ok(canonical_role(&raw))
+}
+
+fn serialize_role<S>(value: &str, s: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    s.serialize_str(&canonical_role(value))
+}
 
 /// One agent's appearance inside a strategy. `agent_id` is an FK to the
 /// `Agent` record in the workspace agent library; `role` is the
@@ -23,7 +54,17 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AgentRef {
     pub agent_id: String,
+    #[serde(deserialize_with = "deserialize_role", serialize_with = "serialize_role")]
     pub role: String,
+}
+
+impl AgentRef {
+    /// Canonical comparison key for this ref's role. Use this rather
+    /// than reading `self.role` directly when comparing against
+    /// pipeline-stage names like `"trader"`.
+    pub fn canonical_role(&self) -> String {
+        canonical_role(&self.role)
+    }
 }
 
 /// How the agents in a strategy wire together.
@@ -66,7 +107,9 @@ impl Default for PipelineKind {
 )]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PipelineEdge {
+    #[serde(deserialize_with = "deserialize_role", serialize_with = "serialize_role")]
     pub from_role: String,
+    #[serde(deserialize_with = "deserialize_role", serialize_with = "serialize_role")]
     pub to_role: String,
 }
 
@@ -182,6 +225,52 @@ mod tests {
         );
         let back: PipelineDef = serde_json::from_str(&s).unwrap();
         assert_eq!(back, d);
+    }
+
+    #[test]
+    fn canonical_role_trims_and_lowercases() {
+        assert_eq!(canonical_role(" Trader "), "trader");
+        assert_eq!(canonical_role("TRADER"), "trader");
+        assert_eq!(canonical_role("trader"), "trader");
+        assert_eq!(canonical_role("   "), "");
+    }
+
+    #[test]
+    fn agent_ref_deserialize_normalizes_role() {
+        // Old strategy JSON with a whitespace-padded mixed-case role
+        // self-heals on load.
+        let r: AgentRef = serde_json::from_value(json!({
+            "agent_id": "01HZAGENT",
+            "role": " Trader ",
+        }))
+        .unwrap();
+        assert_eq!(r.role, "trader");
+        assert_eq!(r.canonical_role(), "trader");
+    }
+
+    #[test]
+    fn agent_ref_serialize_emits_canonical_role() {
+        // A programmatic construction that bypassed the deserializer
+        // still serializes with the canonical form on the wire, so
+        // round-tripped data is canonical.
+        let r = AgentRef {
+            agent_id: "01HZAGENT".into(),
+            role: " Trader ".into(),
+        };
+        let s = serde_json::to_string(&r).unwrap();
+        assert!(s.contains("\"trader\""), "expected canonical role on wire, got `{s}`");
+        assert!(!s.contains(" Trader"), "expected no whitespace on wire");
+    }
+
+    #[test]
+    fn pipeline_edge_deserialize_normalizes_roles() {
+        let e: PipelineEdge = serde_json::from_value(json!({
+            "from_role": " Scout ",
+            "to_role": "TRADER",
+        }))
+        .unwrap();
+        assert_eq!(e.from_role, "scout");
+        assert_eq!(e.to_role, "trader");
     }
 
     #[test]
