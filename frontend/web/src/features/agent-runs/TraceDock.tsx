@@ -11,6 +11,7 @@ import { HaltStrategyButton } from "./HaltStrategyButton";
 import { FilterBar } from "./FilterBar";
 import { useSpanFilter } from "./use-span-filter";
 import { deriveDecisions } from "./decisions";
+import { TraceDownloadButton } from "./TraceDownloadButton";
 
 function heightPx(h: DockHeight): number {
   if (h === "collapsed") return 0;
@@ -108,6 +109,16 @@ export function TraceDock() {
               onHalt={() => console.warn("[agent-runs] halt-strategy — pending checkpoint design", { strategyId: summary.strategy_id })}
             />
           ) : null}
+          {/*
+            Export region — disjoint from the height/pop-out/minimize cluster
+            to leave room for sibling tracks (`qa-eval-trace-fidelity` and
+            `qa-trace-error-surfacing`) to add adjacent controls without a
+            merge conflict. Keep new export-style controls inside this group.
+          */}
+          <div data-testid="trace-dock-export" className="flex items-center gap-1">
+            <TraceDownloadButton runId={activeRunId} />
+          </div>
+          <span aria-hidden className="opacity-30 px-1">|</span>
           {(["peek", "working", "full"] as const).map((h) => (
             <button
               key={h}

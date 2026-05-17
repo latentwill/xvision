@@ -44,6 +44,14 @@ export const agentRunKeys = {
 };
 
 /**
+ * URL of the dashboard's per-run JSON export endpoint.
+ * Kept as a plain string helper so callers can pass it to `fetch` directly.
+ */
+export function agentRunExportUrl(id: string): string {
+  return `/api/agent-runs/${encodeURIComponent(id)}/export.json`;
+}
+
+/**
  * Whether the shim should serve mock fixtures instead of calling the real
  * backend. Exported for tests so they can flip the mode without
  * monkey-patching `import.meta.env`.
