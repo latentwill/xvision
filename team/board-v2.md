@@ -6,15 +6,16 @@
 > Same rules as the main board (`team/board.md`): one line per active track,
 > each linking to a `team/contracts/<slug>.md`. Conductor-owned.
 >
-> Last updated: 2026-05-16.
+> Last updated: 2026-05-17.
 
 ## Active — V2A (onboarding & docs)
 
 - [v2a-driver-tour](contracts/v2a-driver-tour.md) — leaf · ready · independent
 - [v2a-in-app-docs](contracts/v2a-in-app-docs.md) — leaf · ready · independent
-- [v2a-example-artifacts](contracts/v2a-example-artifacts.md) — leaf · ready · independent
 
-All three are independent leaves — safe to claim in parallel.
+`v2a-example-artifacts` merged via #205 on 2026-05-17; archived under
+`team/archive/2026-05-17-v2a/`. The remaining two leaves are independent —
+safe to claim in parallel.
 
 ## Not yet decomposed
 
