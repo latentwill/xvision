@@ -70,6 +70,25 @@ describe("RunStatusStrip", () => {
     expect(screen.getByText("720ms")).toBeInTheDocument();
   });
 
+  test("Enter key on the strip body activates onExpand", async () => {
+    const onExpand = vi.fn();
+    render(
+      <RunStatusStrip
+        summary={MOCK_RUN_COMPLETED.summary}
+        currentSpan={null}
+        isLive={false}
+        liveDurationSec={0}
+        tone="completed"
+        onExpand={onExpand}
+        onPopOut={() => {}}
+      />,
+    );
+    const strip = screen.getByTestId("run-status-strip");
+    strip.focus();
+    await userEvent.keyboard("{Enter}");
+    expect(onExpand).toHaveBeenCalledOnce();
+  });
+
   test("clicking the body calls onExpand; clicking pop-out calls onPopOut (no double-fire)", async () => {
     const onExpand = vi.fn();
     const onPopOut = vi.fn();

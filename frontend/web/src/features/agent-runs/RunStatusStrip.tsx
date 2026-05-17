@@ -3,6 +3,7 @@
 // Phase 1.1 — floating bottom-centre pill.
 // Ported pixel-perfect from docs/superpowers/designs/2026-05-17-agent-run-observability/strip.jsx.
 
+import type { ReactNode } from "react";
 import type { AgentRunSummary } from "@/api/types-agent-runs";
 
 // ── Exported types ────────────────────────────────────────────────────────────
@@ -42,6 +43,45 @@ function fmtPostHoc(ms: number | null): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
+function TonePill({
+  dotColor,
+  background,
+  border,
+  textColor,
+  children,
+}: {
+  dotColor?: string;
+  background: string;
+  border: string;
+  textColor: string;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex", alignItems: "center", gap: 6,
+        padding: "2px 6px", borderRadius: 999,
+        background, border: `1px solid ${border}`, flexShrink: 0,
+      }}
+    >
+      {dotColor != null && (
+        <span
+          style={{ width: 6, height: 6, borderRadius: 999, background: dotColor }}
+        />
+      )}
+      <span
+        style={{
+          color: textColor,
+          fontSize: 10, letterSpacing: "0.04em",
+          fontFamily: "var(--font-mono, ui-monospace, monospace)",
+        }}
+      >
+        {children}
+      </span>
+    </div>
+  );
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function RunStatusStrip({
@@ -63,7 +103,15 @@ export function RunStatusStrip({
     <div
       data-testid="run-status-strip"
       data-tone={tone}
+      role="button"
+      tabIndex={0}
       onClick={onExpand}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onExpand();
+        }
+      }}
       title="Click to expand the trace dock (F12)"
       style={{
         position: "fixed",
@@ -230,65 +278,26 @@ export function RunStatusStrip({
 
       {/* Error pill */}
       {tone === "error" && (
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            padding: "2px 6px",
-            borderRadius: 999,
-            background: "rgba(200,68,58,0.14)",
-            border: "1px solid rgba(200,68,58,0.45)",
-            flexShrink: 0,
-          }}
+        <TonePill
+          dotColor="var(--danger)"
+          background="rgba(200,68,58,0.14)"
+          border="rgba(200,68,58,0.45)"
+          textColor="var(--danger)"
         >
-          <span
-            style={{
-              display: "inline-block",
-              width: 6,
-              height: 6,
-              borderRadius: "50%",
-              background: "var(--danger)",
-            }}
-          />
-          <span
-            style={{
-              fontFamily: "var(--font-mono, ui-monospace, monospace)",
-              fontSize: 10,
-              letterSpacing: "0.05em",
-              color: "var(--danger)",
-            }}
-          >
-            1 error
-          </span>
-        </div>
+          {summary.error_count} error{summary.error_count !== 1 ? "s" : ""}
+        </TonePill>
       )}
 
       {/* Warn pill */}
       {tone === "warn" && (
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            padding: "2px 6px",
-            borderRadius: 999,
-            background: "rgba(219,146,48,0.10)",
-            border: "1px solid rgba(219,146,48,0.40)",
-            flexShrink: 0,
-          }}
+        // TODO: wire to summary.warning_count when the backend adds it
+        <TonePill
+          background="rgba(219,146,48,0.10)"
+          border="rgba(219,146,48,0.40)"
+          textColor="var(--warn)"
         >
-          <span
-            style={{
-              fontFamily: "var(--font-mono, ui-monospace, monospace)",
-              fontSize: 10,
-              letterSpacing: "0.05em",
-              color: "var(--warn)",
-            }}
-          >
-            2 warnings
-          </span>
-        </div>
+          2 warnings
+        </TonePill>
       )}
 
       {/* Right divider + icon buttons */}
