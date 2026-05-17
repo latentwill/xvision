@@ -15,13 +15,16 @@ use xvision_risk::RiskLayer;
 ///
 /// The caller is responsible for persisting the result via `store::insert_risk_outcome`.
 ///
-/// `asset` is passed explicitly (Option A — `TraderDecision` carries no asset field).
+/// The explicit `asset` is the source of truth for the risk evaluation. The
+/// returned decision is normalized to carry the same asset for downstream
+/// persistence.
 pub fn apply_risk(
-    trader_decision: TraderDecision,
+    mut trader_decision: TraderDecision,
     portfolio: &PortfolioState,
     asset: AssetSymbol,
     risk_layer: &RiskLayer,
 ) -> RiskDecision {
+    trader_decision.asset = Some(asset);
     let risk_decision = risk_layer.evaluate(trader_decision, portfolio, asset);
 
     match &risk_decision {
@@ -55,7 +58,7 @@ mod tests {
     use std::path::Path;
 
     use uuid::Uuid;
-    use xvision_core::{Action, AssetSymbol, Direction, TraderDecision};
+    use xvision_core::{Action, AssetSymbol, Direction, TraderDecision, VetoReason};
 
     fn fixture_decision() -> TraderDecision {
         TraderDecision {
@@ -85,14 +88,57 @@ mod tests {
     fn harness_apply_risk_approves_clean_decision() {
         let layer = load_risk_layer(Path::new("../..")).expect("workspace config should load");
         let result = apply_risk(fixture_decision(), &flat_portfolio(), AssetSymbol::Btc, &layer);
-        assert!(
-            matches!(result, RiskDecision::Approved { .. }),
-            "expected Approved, got {result:?}"
+        match result {
+            RiskDecision::Approved { decision } => {
+                assert_eq!(decision.asset, Some(AssetSymbol::Btc));
+            }
+            other => panic!("expected Approved, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn harness_apply_risk_overrides_conflicting_embedded_asset() {
+        let layer = load_risk_layer(Path::new("../..")).expect("workspace config should load");
+        let mut decision = fixture_decision();
+        decision.asset = Some(AssetSymbol::Eth);
+
+        let result = apply_risk(decision, &flat_portfolio(), AssetSymbol::Btc, &layer);
+        assert_eq!(
+            result.effective().and_then(|decision| decision.asset),
+            Some(AssetSymbol::Btc)
         );
     }
 
     #[test]
-    fn crate_smoke() {
-        assert_eq!(2 + 2, 4);
+    fn harness_apply_risk_returns_modified_decision() {
+        let layer = load_risk_layer(Path::new("../..")).expect("workspace config should load");
+        let mut decision = fixture_decision();
+        decision.stop_loss_pct = 15.0;
+
+        let result = apply_risk(decision, &flat_portfolio(), AssetSymbol::Btc, &layer);
+        match result {
+            RiskDecision::Modified { modified, reason, .. } => {
+                assert_eq!(reason, VetoReason::StopLossTooWide);
+                assert_eq!(modified.asset, Some(AssetSymbol::Btc));
+                assert!((modified.stop_loss_pct - 10.0).abs() < 0.01);
+            }
+            other => panic!("expected Modified, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn harness_apply_risk_returns_vetoed_decision() {
+        let layer = load_risk_layer(Path::new("../..")).expect("workspace config should load");
+        let mut decision = fixture_decision();
+        decision.size_bps = 2500;
+
+        let result = apply_risk(decision, &flat_portfolio(), AssetSymbol::Btc, &layer);
+        match result {
+            RiskDecision::Vetoed { original, reason } => {
+                assert_eq!(reason, VetoReason::PositionTooLarge);
+                assert_eq!(original.asset, Some(AssetSymbol::Btc));
+            }
+            other => panic!("expected Vetoed, got {other:?}"),
+        }
     }
 }
