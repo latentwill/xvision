@@ -1,4 +1,5 @@
 import * as net from "node:net"
+import { unlink } from "node:fs/promises"
 import { NdjsonDecoder, encodeNdjson } from "./ndjson.js"
 import {
   JsonRpcResponse,
@@ -31,6 +32,11 @@ export async function startUdsServer(socketPath: string): Promise<UdsServerHandl
     conn.on("data", (chunk) => decoder.push(chunk))
     conn.on("error", () => { /* swallow; client may close abruptly */ })
   })
+
+  // Best-effort unlink: a prior process may have crashed before cleanup
+  // and left this socket file behind, which would make listen() fail
+  // with EADDRINUSE. The ENOENT case (clean state) is silently ignored.
+  await unlink(socketPath).catch(() => {})
 
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject)

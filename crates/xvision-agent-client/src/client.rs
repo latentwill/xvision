@@ -13,15 +13,21 @@ use crate::transport::UdsTransport;
 
 /// Combines a spawned `xvision-agentd` sidecar with a JSON-RPC transport.
 ///
-/// Callers are expected to invoke [`AgentClient::shutdown`] when done.
-/// `shutdown` aborts the callback listener, removes the callback socket
-/// file (if any), and kills the sidecar process. The sidecar is also
-/// killed via tokio's `kill_on_drop(true)` if the client is dropped
-/// without `shutdown`, but the callback socket file will leak in that
-/// case — call `shutdown` explicitly for production use.
+/// Prefer [`AgentClient::shutdown`] for explicit teardown — it awaits the
+/// supervisor exit and returns any process-level error. If the client is
+/// dropped without `shutdown`, the destructor still aborts the callback
+/// listener and unlinks the callback socket file (best-effort,
+/// synchronous), and tokio's `kill_on_drop(true)` reaps the child
+/// process. The Drop fallback exists so repeated client construction in
+/// long-running processes does not leak OS resources; production code
+/// should still call `shutdown` explicitly to observe shutdown errors.
 pub struct AgentClient {
     transport: UdsTransport,
-    supervisor: Supervisor,
+    // Wrapped in Option so `shutdown` can take it out without a partial
+    // move (which Drop-bearing structs forbid). The Drop impl below does
+    // not touch the supervisor — the underlying tokio child uses
+    // `kill_on_drop(true)`, so the process is reaped either way.
+    supervisor: Option<Supervisor>,
     versions: RuntimeHealthResult,
     callback_handle: Option<tokio::task::JoinHandle<()>>,
     callback_socket_path: Option<std::path::PathBuf>,
@@ -34,7 +40,7 @@ impl AgentClient {
         let versions = Self::handshake(&transport).await?;
         Ok(Self {
             transport,
-            supervisor,
+            supervisor: Some(supervisor),
             versions,
             callback_handle: None,
             callback_socket_path: None,
@@ -60,14 +66,18 @@ impl AgentClient {
         self.transport.call::<(), _>("runtime.health", None).await
     }
 
-    pub async fn shutdown(self) -> Result<()> {
-        if let Some(h) = &self.callback_handle {
+    pub async fn shutdown(mut self) -> Result<()> {
+        if let Some(h) = self.callback_handle.take() {
             h.abort();
         }
-        if let Some(path) = &self.callback_socket_path {
-            let _ = std::fs::remove_file(path);
+        if let Some(path) = self.callback_socket_path.take() {
+            let _ = std::fs::remove_file(&path);
         }
-        self.supervisor.shutdown().await
+        if let Some(sup) = self.supervisor.take() {
+            sup.shutdown().await
+        } else {
+            Ok(())
+        }
     }
 
     pub async fn register_tools(&self, tools: Vec<ToolDescriptor>) -> Result<ToolRegistrySetResult> {
@@ -140,7 +150,7 @@ impl AgentClient {
         };
         Ok(Self {
             transport,
-            supervisor,
+            supervisor: Some(supervisor),
             versions,
             callback_handle: Some(callback_handle),
             callback_socket_path: Some(callback_socket_path.to_path_buf()),
@@ -160,5 +170,20 @@ impl AgentClient {
         self.transport
             .call::<P, serde_json::Value>("tool.invoke", Some(P { name, input }))
             .await
+    }
+}
+
+impl Drop for AgentClient {
+    /// Best-effort cleanup if the caller never invoked [`AgentClient::shutdown`]:
+    /// abort the callback accept loop and unlink the callback socket file.
+    /// The sidecar process is reaped by tokio's `kill_on_drop(true)` on the
+    /// supervisor's child handle, so we don't need to touch it here.
+    fn drop(&mut self) {
+        if let Some(h) = self.callback_handle.take() {
+            h.abort();
+        }
+        if let Some(path) = self.callback_socket_path.take() {
+            let _ = std::fs::remove_file(&path);
+        }
     }
 }

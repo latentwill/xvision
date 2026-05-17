@@ -65,6 +65,12 @@ pub async fn serve_callbacks(
     socket_path: &Path,
     dispatch: Arc<dyn ToolDispatch>,
 ) -> std::io::Result<tokio::task::JoinHandle<()>> {
+    // Best-effort unlink: a prior process may have crashed before cleanup
+    // and left this socket file behind, which would make bind() fail with
+    // EADDRINUSE. The ENOENT case (clean state) is ignored. We do not
+    // attempt to distinguish stale sockets from a concurrent live server
+    // — the caller picks unique paths (typically under a TempDir).
+    let _ = std::fs::remove_file(socket_path);
     let listener = UnixListener::bind(socket_path)?;
     let handle = tokio::spawn(async move {
         loop {
