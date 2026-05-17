@@ -144,7 +144,7 @@ export function EvalRunsRoute() {
 
   return (
     <>
-      <Topbar title="Eval" sub={subtitleFor(q, strategyFilter)} />
+      <Topbar title="Eval" sub={subtitleFor(q, strategyFilterLabel)} />
 
       <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
         {selected.size > 0 ? (
@@ -244,14 +244,14 @@ export function EvalRunsRoute() {
 
 // ── Existing helpers ───────────────────────────────────────────────────────
 
-function subtitleFor(q: ReturnType<typeof useQuery>, strategyFilter: string) {
+function subtitleFor(q: ReturnType<typeof useQuery>, strategyFilterLabel: string) {
   if (q.isPending) return "Loading…";
   if (q.isError) return "Couldn't load runs";
   const data = q.data as { length: number } | undefined;
   if (!data) return "";
   const n = data.length;
   const base = `${n} ${n === 1 ? "run" : "runs"}`;
-  return strategyFilter ? `${base} for ${strategyFilter}` : base;
+  return strategyFilterLabel ? `${base} for ${strategyFilterLabel}` : base;
 }
 
 function CompareToolbar({
