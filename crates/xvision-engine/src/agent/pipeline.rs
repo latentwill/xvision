@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::agent::execute::{execute_slot, SlotInput};
 use crate::agent::llm::{LlmDispatch, LlmResponse, ResponseSchema};
 use crate::agents::AgentSlot;
+use crate::strategies::agent_ref::canonical_role;
 use crate::strategies::slot::LLMSlot;
 use crate::strategies::{PipelineKind, Strategy};
 use crate::tools::ToolRegistry;
@@ -124,7 +125,14 @@ async fn run_agent_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pip
     let mut trader = None;
 
     for resolved in input.agent_slots.iter() {
-        let is_trader_output = resolved.role.trim().eq_ignore_ascii_case("trader");
+        // Single canonical comparison key (trim + lowercase) so the
+        // trader-output schema selection and the output-assignment
+        // match arm can never disagree. Pre-canonicalization, the
+        // schema check was case-insensitive but the match was
+        // case-sensitive — so an attached `Trader` slot ran with the
+        // right schema and then silently dropped its result (QA #5).
+        let role_key = canonical_role(&resolved.role);
+        let is_trader_output = role_key == "trader";
         let out = execute_slot(SlotInput {
             slot: &resolved.slot,
             upstream_inputs: accumulated.clone(),
@@ -140,9 +148,9 @@ async fn run_agent_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pip
         .await?;
         total_in += out.input_tokens;
         total_out += out.output_tokens;
-        accumulated[format!("{}_output", resolved.role)] = serde_json::Value::String(out.text());
+        accumulated[format!("{role_key}_output")] = serde_json::Value::String(out.text());
 
-        match resolved.role.trim() {
+        match role_key.as_str() {
             "regime" => regime = Some(out.clone()),
             "intern" => intern = Some(out.clone()),
             "trader" => trader = Some(out.clone()),

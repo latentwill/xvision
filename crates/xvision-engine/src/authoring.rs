@@ -14,6 +14,7 @@ use std::collections::{HashMap, HashSet};
 use ulid::Ulid;
 
 use crate::strategies::{
+    agent_ref::canonical_role,
     risk::{RiskConfig, RiskPreset},
     slot::LLMSlot,
     store::StrategyStore,
@@ -263,16 +264,16 @@ pub async fn update_manifest(
 
 pub async fn add_agent_ref(store: &dyn StrategyStore, req: AddAgentRefRequest) -> anyhow::Result<Strategy> {
     let mut strategy = store.load(&req.strategy_id).await?;
-    let role = req.role.trim();
+    let role = canonical_role(&req.role);
     if role.is_empty() {
         anyhow::bail!("role is required");
     }
-    if strategy.agents.iter().any(|a| a.role == role) {
+    if strategy.agents.iter().any(|a| canonical_role(&a.role) == role) {
         anyhow::bail!("role '{role}' already exists on strategy");
     }
     strategy.agents.push(AgentRef {
         agent_id: req.agent_id,
-        role: role.to_string(),
+        role,
     });
     if strategy.pipeline.kind == PipelineKind::Single && strategy.agents.len() > 1 {
         strategy.pipeline.kind = PipelineKind::Sequential;
@@ -286,8 +287,9 @@ pub async fn remove_agent_ref(
     req: RemoveAgentRefRequest,
 ) -> anyhow::Result<Strategy> {
     let mut strategy = store.load(&req.strategy_id).await?;
+    let role = canonical_role(&req.role);
     let before = strategy.agents.len();
-    strategy.agents.retain(|a| a.role != req.role);
+    strategy.agents.retain(|a| canonical_role(&a.role) != role);
     if strategy.agents.len() == before {
         anyhow::bail!("role '{}' not found on strategy", req.role);
     }
@@ -295,7 +297,7 @@ pub async fn remove_agent_ref(
         strategy
             .pipeline
             .edges
-            .retain(|edge| edge.from_role != req.role && edge.to_role != req.role);
+            .retain(|edge| canonical_role(&edge.from_role) != role && canonical_role(&edge.to_role) != role);
     }
     if strategy.agents.len() <= 1 {
         strategy.pipeline = PipelineDef::default();
@@ -311,21 +313,22 @@ pub async fn rename_agent_role(
     req: RenameAgentRoleRequest,
 ) -> anyhow::Result<Strategy> {
     let mut strategy = store.load(&req.strategy_id).await?;
-    let new_role = req.new_role.trim();
+    let role = canonical_role(&req.role);
+    let new_role = canonical_role(&req.new_role);
     if new_role.is_empty() {
         anyhow::bail!("new role is required");
     }
     if strategy
         .agents
         .iter()
-        .any(|a| a.role == new_role && a.role != req.role)
+        .any(|a| canonical_role(&a.role) == new_role && canonical_role(&a.role) != role)
     {
         anyhow::bail!("role '{new_role}' already exists on strategy");
     }
     let mut found = false;
     for agent in &mut strategy.agents {
-        if agent.role == req.role {
-            agent.role = new_role.to_string();
+        if canonical_role(&agent.role) == role {
+            agent.role = new_role.clone();
             found = true;
             break;
         }
@@ -335,11 +338,11 @@ pub async fn rename_agent_role(
     }
     if strategy.pipeline.kind == PipelineKind::Graph {
         for edge in &mut strategy.pipeline.edges {
-            if edge.from_role == req.role {
-                edge.from_role = new_role.to_string();
+            if canonical_role(&edge.from_role) == role {
+                edge.from_role = new_role.clone();
             }
-            if edge.to_role == req.role {
-                edge.to_role = new_role.to_string();
+            if canonical_role(&edge.to_role) == role {
+                edge.to_role = new_role.clone();
             }
         }
         validate_graph_pipeline(&strategy)?;
@@ -370,21 +373,25 @@ fn validate_pipeline_shape(strategy: &Strategy) -> anyhow::Result<()> {
 }
 
 fn validate_graph_pipeline(strategy: &Strategy) -> anyhow::Result<()> {
-    let roles: HashSet<&str> = strategy.agents.iter().map(|agent| agent.role.as_str()).collect();
-    let mut adjacency: HashMap<&str, Vec<&str>> = HashMap::new();
-    let mut seen_edges: HashSet<(&str, &str)> = HashSet::new();
+    let roles: HashSet<String> = strategy
+        .agents
+        .iter()
+        .map(|agent| canonical_role(&agent.role))
+        .collect();
+    let mut adjacency: HashMap<String, Vec<String>> = HashMap::new();
+    let mut seen_edges: HashSet<(String, String)> = HashSet::new();
 
     for edge in &strategy.pipeline.edges {
-        let from = edge.from_role.as_str();
-        let to = edge.to_role.as_str();
+        let from = canonical_role(&edge.from_role);
+        let to = canonical_role(&edge.to_role);
 
-        if !roles.contains(from) || !roles.contains(to) {
+        if !roles.contains(&from) || !roles.contains(&to) {
             anyhow::bail!("graph edges must reference existing strategy roles");
         }
         if from == to {
             anyhow::bail!("graph pipelines cannot contain self-loops");
         }
-        if !seen_edges.insert((from, to)) {
+        if !seen_edges.insert((from.clone(), to.clone())) {
             anyhow::bail!("graph pipelines cannot contain duplicate edges");
         }
         adjacency.entry(from).or_default().push(to);
@@ -393,7 +400,7 @@ fn validate_graph_pipeline(strategy: &Strategy) -> anyhow::Result<()> {
     let mut visiting = HashSet::new();
     let mut visited = HashSet::new();
     for role in &roles {
-        if graph_cycle_from(*role, &adjacency, &mut visiting, &mut visited) {
+        if graph_cycle_from(role, &adjacency, &mut visiting, &mut visited) {
             anyhow::bail!("graph pipelines must be acyclic");
         }
     }
@@ -401,16 +408,16 @@ fn validate_graph_pipeline(strategy: &Strategy) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn graph_cycle_from<'a>(
-    role: &'a str,
-    adjacency: &HashMap<&'a str, Vec<&'a str>>,
-    visiting: &mut HashSet<&'a str>,
-    visited: &mut HashSet<&'a str>,
+fn graph_cycle_from(
+    role: &str,
+    adjacency: &HashMap<String, Vec<String>>,
+    visiting: &mut HashSet<String>,
+    visited: &mut HashSet<String>,
 ) -> bool {
     if visited.contains(role) {
         return false;
     }
-    if !visiting.insert(role) {
+    if !visiting.insert(role.to_string()) {
         return true;
     }
     if let Some(neighbors) = adjacency.get(role) {
@@ -421,7 +428,7 @@ fn graph_cycle_from<'a>(
         }
     }
     visiting.remove(role);
-    visited.insert(role);
+    visited.insert(role.to_string());
     false
 }
 
@@ -491,6 +498,7 @@ pub async fn validate_draft(store: &dyn StrategyStore, id: &str) -> anyhow::Resu
 mod tests {
     use super::*;
     use crate::strategies::store::FilesystemStore;
+    use crate::strategies::PipelineEdge;
 
     fn store_in_tmp() -> (FilesystemStore, tempfile::TempDir) {
         let td = tempfile::tempdir().unwrap();
@@ -603,6 +611,107 @@ mod tests {
         let strategy = get_strategy(&store, &out.id).await.unwrap();
         assert_eq!(strategy.manifest.asset_universe, vec!["BTC/USD"]);
         assert_eq!(strategy.manifest.decision_cadence_minutes, 360);
+    }
+
+    #[tokio::test]
+    async fn add_agent_ref_canonicalizes_role_and_rejects_variant_duplicates() {
+        let (store, _td) = store_in_tmp();
+        let out = create_strategy(
+            &store,
+            CreateStrategyReq {
+                template: "trend_follower".into(),
+                name: "x".into(),
+                creator: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let strategy = add_agent_ref(
+            &store,
+            AddAgentRefRequest {
+                strategy_id: out.id.clone(),
+                agent_id: "01HZAGENT1".into(),
+                role: " Trader ".into(),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(strategy.agents[0].role, "trader");
+
+        let err = add_agent_ref(
+            &store,
+            AddAgentRefRequest {
+                strategy_id: out.id,
+                agent_id: "01HZAGENT2".into(),
+                role: "TRADER".into(),
+            },
+        )
+        .await
+        .expect_err("canonical duplicate should be rejected");
+        assert!(err.to_string().contains("already exists"));
+    }
+
+    #[tokio::test]
+    async fn rename_and_remove_agent_role_match_canonical_role_keys() {
+        let (store, _td) = store_in_tmp();
+        let out = create_strategy(
+            &store,
+            CreateStrategyReq {
+                template: "trend_follower".into(),
+                name: "x".into(),
+                creator: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let mut strategy = get_strategy(&store, &out.id).await.unwrap();
+        strategy.agents = vec![
+            AgentRef {
+                agent_id: "01HZSCOUT".into(),
+                role: "Scout".into(),
+            },
+            AgentRef {
+                agent_id: "01HZTRADER".into(),
+                role: "Trader".into(),
+            },
+        ];
+        strategy.pipeline = PipelineDef {
+            kind: PipelineKind::Graph,
+            edges: vec![PipelineEdge {
+                from_role: "SCOUT".into(),
+                to_role: "TRADER".into(),
+            }],
+        };
+        store.save(&strategy).await.unwrap();
+
+        let strategy = rename_agent_role(
+            &store,
+            RenameAgentRoleRequest {
+                strategy_id: out.id.clone(),
+                role: " scout ".into(),
+                new_role: " Analyst ".into(),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(strategy.agents[0].role, "analyst");
+        assert_eq!(strategy.pipeline.edges[0].from_role, "analyst");
+        assert_eq!(strategy.pipeline.edges[0].to_role, "trader");
+
+        let strategy = remove_agent_ref(
+            &store,
+            RemoveAgentRefRequest {
+                strategy_id: out.id,
+                role: " TRADER ".into(),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(strategy.agents.len(), 1);
+        assert_eq!(strategy.agents[0].role, "analyst");
+        assert_eq!(strategy.pipeline, PipelineDef::default());
     }
 
     #[tokio::test]

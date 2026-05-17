@@ -37,6 +37,7 @@ use crate::eval::progress::{send_event, ProgressEvent, ProgressTx};
 use crate::eval::run::{MetricsSummary, Run, RunStatus};
 use crate::eval::scenario::{Scenario, SlippageModel};
 use crate::eval::store::{DecisionRow, RunStore};
+use crate::strategies::agent_ref::canonical_role;
 use crate::strategies::Strategy;
 use crate::tools::ToolRegistry;
 
@@ -652,7 +653,7 @@ fn trader_model_id(
 ) -> Option<String> {
     if let Some(resolved) = agent_slots
         .iter()
-        .find(|r| r.role.eq_ignore_ascii_case("trader"))
+        .find(|r| canonical_role(&r.role) == "trader")
     {
         let model = resolved.slot.effective_model();
         if !model.trim().is_empty() {
@@ -879,5 +880,75 @@ mod tests {
     #[test]
     fn fill_side_for_flat_close_of_short_is_buy() {
         assert_eq!(fill_side_for_action("flat", -0.5), "buy");
+    }
+
+    use crate::strategies::manifest::{PublicManifest, RegimeFit};
+    use crate::strategies::risk::RiskPreset;
+    use crate::strategies::slot::LLMSlot;
+    use crate::strategies::{PipelineDef, Strategy};
+
+    fn empty_strategy() -> Strategy {
+        Strategy {
+            manifest: PublicManifest {
+                id: "01H8N7Z000".into(),
+                display_name: "T".into(),
+                plain_summary: "x".into(),
+                creator: "@t".into(),
+                template: "mean_reversion".into(),
+                regime_fit: vec![RegimeFit::RangeBound],
+                asset_universe: vec!["BTC/USD".into()],
+                decision_cadence_minutes: 15,
+                required_models: vec!["m".into()],
+                required_tools: vec!["ohlcv".into()],
+                risk_preset_or_config: "balanced".into(),
+                published_at: None,
+                min_warmup_bars: None,
+            },
+            agents: Vec::new(),
+            pipeline: PipelineDef::default(),
+            regime_slot: None,
+            intern_slot: None,
+            trader_slot: None,
+            risk: RiskPreset::Balanced.expand(),
+            mechanical_params: serde_json::json!({}),
+        }
+    }
+
+    fn resolved(role: &str, model: &str) -> ResolvedAgentSlot {
+        ResolvedAgentSlot {
+            role: role.into(),
+            slot: LLMSlot {
+                role: role.into(),
+                prompt: "p".into(),
+                model_requirement: model.into(),
+                allowed_tools: Vec::new(),
+                provider: None,
+                model: Some(model.into()),
+            },
+            max_tokens: None,
+        }
+    }
+
+    #[test]
+    fn trader_model_id_returns_canonical_trader_model() {
+        // QA #7 — trader_model_id used `eq_ignore_ascii_case` without
+        // trim, so padded role variants missed the reasoning-class
+        // truncation hint. Canonical comparison fixes all variants.
+        let strategy = empty_strategy();
+        for variant in [" trader ", "Trader", "TRADER", "trader"] {
+            let slots = vec![resolved(variant, "claude-opus-4-7")];
+            assert_eq!(
+                trader_model_id(&slots, &strategy).as_deref(),
+                Some("claude-opus-4-7"),
+                "role variant `{variant}` should resolve to the trader model",
+            );
+        }
+    }
+
+    #[test]
+    fn trader_model_id_returns_none_when_no_trader() {
+        let strategy = empty_strategy();
+        let slots = vec![resolved("regime", "claude-opus-4-7")];
+        assert!(trader_model_id(&slots, &strategy).is_none());
     }
 }
