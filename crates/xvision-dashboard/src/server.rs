@@ -125,6 +125,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/settings/daemon", get(settings::daemon::get))
         .route("/api/settings/identity", get(settings::identity::get))
         .route(
+            "/api/settings/observability",
+            get(settings::observability::get).put(settings::observability::put),
+        )
+        .route(
             "/api/settings/providers",
             get(settings::providers::list).post(settings::providers::add),
         )
