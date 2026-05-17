@@ -7336,6 +7336,7 @@ dependencies = [
  "ulid",
  "xvision-core",
  "xvision-engine",
+ "xvision-observability",
 ]
 
 [[package]]
