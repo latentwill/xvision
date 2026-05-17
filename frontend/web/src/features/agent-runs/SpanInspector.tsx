@@ -1,0 +1,174 @@
+// frontend/web/src/features/agent-runs/SpanInspector.tsx
+import type { ReactNode } from "react";
+import type { RunSpan } from "@/api/types-agent-runs";
+import { spanColor, withAlpha } from "./span-colors";
+import { PullQuote } from "./PullQuote";
+
+type SpanInspectorProps = {
+  span: RunSpan;
+  isLive: boolean;
+  onRerun: (spanId: string) => void;
+  onJumpToDecision: (spanId: string, decisionIdx?: number) => void;
+  onCopyJson?: (span: RunSpan) => void;
+};
+
+function durationMs(span: RunSpan): number | null {
+  if (!span.finished_at) return null;
+  return new Date(span.finished_at).getTime() - new Date(span.started_at).getTime();
+}
+
+const Row = ({ k, v, tone }: { k: string; v: ReactNode; tone?: "gold" }) => (
+  <div className="flex items-baseline gap-3 py-1 border-b border-border">
+    <div className="w-[100px] shrink-0 text-[10px] uppercase tracking-wider text-text-3">{k}</div>
+    <div
+      className="flex-1 text-[11px] font-mono tabular-nums break-all"
+      style={{ color: tone === "gold" ? "var(--gold)" : "var(--text)" }}
+    >
+      {v}
+    </div>
+  </div>
+);
+
+export function SpanInspector({
+  span,
+  isLive,
+  onRerun,
+  onJumpToDecision,
+  onCopyJson,
+}: SpanInspectorProps) {
+  const color = spanColor(span.kind);
+  const ms = durationMs(span);
+  const isStreaming = isLive && span.streaming;
+
+  return (
+    <div className="w-[400px] shrink-0 flex flex-col">
+      {/* Header strip */}
+      <div className="px-3 py-2 border-b border-border flex items-center gap-2 min-w-0">
+        <span
+          className="px-1.5 py-0.5 text-[9px] tracking-[0.16em] font-mono rounded shrink-0"
+          style={{
+            color: color.hex,
+            background: withAlpha(color.hex, 0.08),
+            border: `1px solid ${withAlpha(color.hex, 0.4)}`,
+          }}
+        >
+          {color.label}
+        </span>
+        <span className="text-[11px] font-mono text-text truncate">{span.name}</span>
+        {isStreaming ? (
+          <span
+            className="ml-auto px-1.5 py-0.5 text-[9px] tracking-[0.16em] font-mono rounded animate-pulse shrink-0"
+            style={{
+              color: "var(--info)",
+              background: withAlpha("#6f8fb8", 0.12),
+              border: `1px solid ${withAlpha("#6f8fb8", 0.5)}`,
+            }}
+          >
+            STREAMING
+          </span>
+        ) : null}
+      </div>
+
+      {/* Body */}
+      <div className="flex-1 overflow-auto px-3 py-3">
+        {span.prompt ? (
+          <PullQuote label="PROMPT" body={span.prompt} accent={color.hex} glyph="›" />
+        ) : null}
+        {span.response ? (
+          <PullQuote label="RESPONSE" body={span.response} accent="var(--gold)" glyph={"“"} italic />
+        ) : null}
+        {span.response_partial ? (
+          <PullQuote label="RESPONSE (PARTIAL)" body={span.response_partial} accent="var(--info)" glyph={"“"} italic streaming />
+        ) : null}
+        {span.args !== undefined ? (
+          <PullQuote
+            label="TOOL ARGS"
+            accent={color.hex}
+            glyph="›"
+            body={
+              <pre className="m-0 text-[11px] font-mono whitespace-pre-wrap text-text-2">
+                {JSON.stringify(span.args, null, 2)}
+              </pre>
+            }
+          />
+        ) : null}
+        {span.result !== undefined ? (
+          <PullQuote
+            label="TOOL RESULT"
+            accent="var(--gold)"
+            glyph="←"
+            body={
+              <pre className="m-0 text-[11px] font-mono whitespace-pre-wrap text-text">
+                {JSON.stringify(span.result, null, 2)}
+              </pre>
+            }
+          />
+        ) : null}
+
+        <div className="mt-4 pt-1">
+          <div className="text-[9px] font-mono tracking-[0.18em] text-text-3 mb-1">FIELDS</div>
+          <Row k="span.id" v={span.span_id} />
+          <Row k="kind" v={span.kind} />
+          <Row k="duration" v={ms != null ? `${ms}ms` : "—"} />
+          <Row k="start" v={span.started_at} />
+          {span.provider ? <Row k="provider" v={span.provider} /> : null}
+          {span.model ? <Row k="model" v={span.model} tone="gold" /> : null}
+          {span.tokens_in !== undefined ? (
+            <Row k="tokens.in" v={span.tokens_in.toLocaleString()} />
+          ) : null}
+          {span.tokens_out !== undefined ? (
+            <Row k="tokens.out" v={span.tokens_out.toLocaleString()} />
+          ) : null}
+          <Row k="cost" v={`$${(span.cost ?? 0).toFixed(4)}`} />
+          {span.hash ? <Row k="prompt.hash" v={span.hash} /> : null}
+          {span.decision_idx !== undefined ? (
+            <Row k="decision" v={`#${span.decision_idx}`} tone="gold" />
+          ) : null}
+        </div>
+      </div>
+
+      {/* Footer */}
+      <div className="p-2 grid grid-cols-1 gap-1 border-t border-border">
+        {span.decision_idx !== undefined ? (
+          <button
+            type="button"
+            className="h-7 px-2 text-[11px] font-mono text-left text-text rounded flex items-center gap-2"
+            style={{ background: "var(--surface-elev)", border: "1px solid var(--border)" }}
+            onClick={() => onJumpToDecision(span.span_id, span.decision_idx)}
+          >
+            <span style={{ color: "var(--gold)" }}>↧</span>
+            {` Jump to decision #${span.decision_idx}`}
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className="h-7 px-2 text-[11px] font-mono text-left rounded flex items-center gap-2"
+          style={
+            isLive
+              ? { background: "transparent", color: "var(--text-4)", cursor: "not-allowed", border: "1px solid var(--border)" }
+              : { background: "var(--surface-elev)", border: "1px solid var(--border)", color: "var(--text)" }
+          }
+          disabled={isLive}
+          title={isLive ? "Disabled — strategy is currently executing" : undefined}
+          onClick={() => onRerun(span.span_id)}
+        >
+          ↻ Rerun from here
+          {isLive ? (
+            <span className="ml-auto text-[9px] text-text-4 tracking-wider">LOCKED · LIVE</span>
+          ) : null}
+        </button>
+        <button
+          type="button"
+          className="h-7 px-2 text-[11px] font-mono text-left text-text rounded flex items-center gap-2"
+          style={{ background: "var(--surface-elev)", border: "1px solid var(--border)" }}
+          onClick={() => {
+            onCopyJson?.(span);
+            navigator.clipboard?.writeText(JSON.stringify(span, null, 2));
+          }}
+        >
+          ⧉ Copy span JSON
+        </button>
+      </div>
+    </div>
+  );
+}

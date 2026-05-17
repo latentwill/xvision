@@ -9,6 +9,7 @@ import { cancelRun, downloadEvalRunExport, evalKeys, getRun, retryRun } from "@/
 import { chartKeys, getRunChart, openRunStream } from "@/api/chart";
 import { RunChart } from "@/components/chart/RunChart";
 import { ReviewPanel } from "@/features/eval-runs/review";
+import { useTraceDock } from "@/stores/trace-dock";
 import type {
   DecisionRowDto,
   RunDetail,
@@ -59,6 +60,14 @@ export function EvalRunDetailRoute() {
     },
   });
   useLiveRunStream(id, q.data, qc);
+
+  // TODO(agent-run-observability): cross-link decision-row click → open dock + set decisionFilter to span's decision_idx. Needs design pass — eval-run decision rows do not map 1:1 to agent-run span decision_idx values.
+
+  // TODO(agent-run-observability): replace hardcoded mock id with
+  // summary.agent_run_id once the backend adds it to eval RunSummary.
+  useEffect(() => {
+    useTraceDock.getState().setActiveRun("run_abc1234", "post-hoc");
+  }, []);
 
   if (q.isPending) {
     return (
@@ -266,7 +275,16 @@ function SummaryCard({
     <Card className="p-5">
       <div className="flex items-center justify-between mb-4">
         <div>
-          <div className="text-text-3 text-[12px] font-mono">{summary.id}</div>
+          <div className="flex items-center">
+            <div className="text-text-3 text-[12px] font-mono">{summary.id}</div>
+            {/* TODO(agent-run-observability): use summary.agent_run_id when backend adds it */}
+            <Link
+              to="/agent-runs/run_abc1234"
+              className="text-[12px] text-info hover:underline ml-3"
+            >
+              View agent trace →
+            </Link>
+          </div>
           <div className="text-text-2 text-[12px] mt-1">
             strategy{" "}
             <code className="font-mono text-text">
