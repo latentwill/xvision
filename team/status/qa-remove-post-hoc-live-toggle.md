@@ -21,20 +21,22 @@ owner: claude (opus 4.7)
 - `frontend/web/src/features/agent-runs/TraceDock.tsx`: stopped reading
   `mode` from the store. `isLive` now derives from
   `summary.status === "running"`. Effect dependency array updated.
+- `frontend/web/src/features/agent-runs/StripDockSlot.tsx`: stopped
+  reading `mode` from the store. Strip tick and `RunStatusStrip.isLive`
+  now derive from `summary.status === "running"`.
 - `frontend/web/src/features/agent-runs/TraceDock.test.tsx`: dropped the
   `mode: "post-hoc"` field from the test setState fixtures (no longer
   required by the component).
 - Left `useTraceDock().mode` and `setActiveRun(id, mode)` shape in
-  `stores/trace-dock.ts` untouched. `StripDockSlot.tsx` (out of
-  `allowed_paths`, owned by `qa-eval-trace-fidelity`) still reads
-  `mode`. Per contract acceptance "or, if kept for the store typings,
-  no UI branches on it" and the Notes hint about consumers outside
-  `allowed_paths`. Posted a queue note documenting the deferred cleanup:
+  `stores/trace-dock.ts` untouched for route/store compatibility. No UI
+  component now branches on `mode`; both trace surfaces derive live state
+  from the run summary. Posted a queue note documenting the deferred
+  store-shape cleanup:
   `team/queue/qa-remove-post-hoc-live-toggle__2026-05-17T100000Z__store-mode-field-retained.md`.
 
 `agent-runs-detail.tsx` did not need any code change — its
-`setActiveRun(..., "live"/"post-hoc")` call still works as the
-`mode`-write side for StripDockSlot, and no test referenced `mode`.
+`setActiveRun(..., "live"/"post-hoc")` call remains compatible with the
+temporary store signature, but no UI reads that mode value.
 `eval-runs-detail.tsx` was not touched.
 
 ## Commits
