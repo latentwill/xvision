@@ -17,6 +17,7 @@ pub mod obs;
 pub mod provider;
 pub mod report;
 pub mod risk;
+pub mod run;
 pub mod run_setup;
 pub mod scenario;
 pub mod show_briefing;
