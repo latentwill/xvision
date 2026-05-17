@@ -1,4 +1,14 @@
 import "@testing-library/jest-dom/vitest";
+import { afterEach } from "vitest";
+import { cleanup } from "@testing-library/react";
+
+// Ensure DOM is cleaned between tests. @testing-library/react registers
+// its own afterEach cleanup when it detects a compatible runner, but jsdom
+// environments using the `pure` import path skip that. Add a guaranteed
+// global cleanup to make tests independent regardless of import path.
+afterEach(() => {
+  cleanup();
+});
 
 // Node 22+ exposes an experimental built-in `localStorage` that lacks
 // the standard Storage methods (no setItem / getItem / clear). jsdom's
