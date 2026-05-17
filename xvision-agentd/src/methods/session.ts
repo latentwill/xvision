@@ -6,6 +6,7 @@ import {
   type BudgetLimits,
 } from "../session/store.js"
 import { handleToolRegistryGet } from "./tool-registry.js"
+import { buildAgent } from "../session/build-agent.js"
 
 let store: SessionStore = getDefaultStore()
 
@@ -105,5 +106,62 @@ function validateBudget(raw: unknown): BudgetLimits {
   }
 }
 
+interface StepParams {
+  run_id?: unknown
+  prompt?: unknown
+}
+
+interface StepResult {
+  status: "completed" | "aborted" | "failed"
+  output_text: string
+  iterations: number
+  usage: {
+    input_tokens: number
+    output_tokens: number
+    cache_read_tokens: number
+    cache_write_tokens: number
+    total_cost?: number
+  }
+  error?: string
+}
+
+export async function handleSessionStep(raw: unknown): Promise<StepResult> {
+  const p = (raw ?? {}) as StepParams
+  if (typeof p.run_id !== "string" || p.run_id.length === 0)
+    throw new TypeError("params.run_id must be a non-empty string")
+  if (typeof p.prompt !== "string")
+    throw new TypeError("params.prompt must be a string")
+
+  const session = store.get(p.run_id)
+  if (!session) throw new Error(`session not found: ${p.run_id}`)
+
+  // Lazy: build the Agent on first step.
+  if (!session.agent) {
+    const agent = buildAgent(session.config)
+    store.attachAgent(p.run_id, agent)
+  }
+  const agent = session.agent!
+
+  const result = agent.hasRun
+    ? await agent.continue(p.prompt)
+    : await agent.run(p.prompt)
+
+  // exactOptionalPropertyTypes: omit total_cost / error when undefined.
+  return {
+    status: result.status,
+    output_text: result.outputText,
+    iterations: result.iterations,
+    usage: {
+      input_tokens: result.usage.inputTokens,
+      output_tokens: result.usage.outputTokens,
+      cache_read_tokens: result.usage.cacheReadTokens ?? 0,
+      cache_write_tokens: result.usage.cacheWriteTokens ?? 0,
+      ...(typeof result.usage.totalCost === "number" ? { total_cost: result.usage.totalCost } : {}),
+    },
+    ...(result.error ? { error: result.error.message } : {}),
+  }
+}
+
 registerMethod("session.start_run", (p) => handleSessionStartRun(p))
 registerMethod("session.end_run", (p) => handleSessionEndRun(p))
+registerMethod("session.step", (p) => handleSessionStep(p))
