@@ -12,6 +12,7 @@ use std::sync::Arc;
 use crate::agent::llm::{
     ContentBlock, LlmDispatch, LlmRequest, LlmResponse, Message, ResponseSchema, StopReason,
 };
+use crate::agent::observability::{fresh_span_id, ObsEmitter};
 use crate::agent::tool_call;
 use crate::strategies::slot::LLMSlot;
 use crate::tools::ToolRegistry;
@@ -76,6 +77,15 @@ pub struct SlotInput<'a> {
     /// was a footgun (4096 set on a 384k-output model silently capped
     /// production runs).
     pub max_tokens: Option<u32>,
+    /// Observability emitter (`qa-eval-observability-wiring`, 2026-05-17).
+    /// When `Some`, every LLM dispatch inside this slot emits a
+    /// `ModelCall` span + `ModelCallFinished` (success) or
+    /// `SpanFinished{Error}` (failure) on the observability bus, so
+    /// eval runs surface in `/api/agent-runs/<run_id>` and the trace
+    /// dock renders failures (PR #238). `None` is the default —
+    /// existing call sites (legacy pipeline, unit tests) opt out
+    /// trivially and the emit code becomes a no-op.
+    pub obs: Option<ObsEmitter>,
 }
 
 pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmResponse> {
@@ -146,7 +156,50 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
                 .clone()
                 .or_else(|| response_schema_for_slot(input.slot)),
         };
-        let resp = input.dispatch.complete(req).await?;
+
+        // Open a ModelCall span around this dispatch iteration. Per
+        // qa-eval-observability-wiring (2026-05-17): the operator's
+        // `[unclassified] error decoding response body` from an eval
+        // run never appeared in the trace because the engine's
+        // dispatch path had no observability emission. Now every
+        // round-trip is bracketed by SpanStarted / SpanFinished, and
+        // failures land as `status=error` with the dispatch error
+        // message in `error_json` so `SpanInspector` (PR #238) renders
+        // it.
+        let model_str = req.model.clone();
+        let provider_str = input
+            .slot
+            .provider
+            .clone()
+            .unwrap_or_else(|| "unknown".to_string());
+        let span_id = fresh_span_id();
+        if let Some(obs) = input.obs.as_ref() {
+            obs.emit_model_call_started(&span_id, None, &provider_str, &model_str)
+                .await;
+        }
+
+        let resp = match input.dispatch.complete(req).await {
+            Ok(r) => r,
+            Err(e) => {
+                if let Some(obs) = input.obs.as_ref() {
+                    let msg = format!("{e:#}");
+                    obs.emit_span_finished_error(&span_id, &msg).await;
+                }
+                return Err(e);
+            }
+        };
+        if let Some(obs) = input.obs.as_ref() {
+            obs.emit_model_call_finished(
+                &span_id,
+                &provider_str,
+                &model_str,
+                Some(resp.input_tokens),
+                Some(resp.output_tokens),
+                None,
+            )
+            .await;
+            obs.emit_span_finished_ok(&span_id).await;
+        }
         total_input_tokens = total_input_tokens.saturating_add(resp.input_tokens);
         total_output_tokens = total_output_tokens.saturating_add(resp.output_tokens);
         last_stop_reason = resp.stop_reason;
@@ -308,6 +361,7 @@ mod tests {
             tools,
             response_schema: None,
             max_tokens: Some(4096),
+            obs: None,
         })
         .await
         .unwrap();
@@ -347,6 +401,7 @@ mod tests {
             tools,
             response_schema: None,
             max_tokens: None,
+            obs: None,
         })
         .await
         .unwrap();

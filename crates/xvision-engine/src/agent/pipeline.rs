@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use crate::agent::execute::{execute_slot, SlotInput};
 use crate::agent::llm::{LlmDispatch, LlmResponse, ResponseSchema};
+use crate::agent::observability::ObsEmitter;
 use crate::agents::AgentSlot;
 use crate::strategies::agent_ref::canonical_role;
 use crate::strategies::slot::LLMSlot;
@@ -27,6 +28,12 @@ pub struct PipelineInputs<'a> {
     pub seed_inputs: serde_json::Value,
     pub dispatch: Arc<dyn LlmDispatch>,
     pub tools: Arc<ToolRegistry>,
+    /// Optional observability emitter threaded down into every
+    /// `execute_slot` call (`qa-eval-observability-wiring`,
+    /// 2026-05-17). `None` is the default — every existing call site
+    /// inherits the no-op path without code changes, and the eval
+    /// executors opt in via `BacktestExecutor::with_observability_bus`.
+    pub obs: Option<ObsEmitter>,
 }
 
 #[derive(Debug)]
@@ -56,6 +63,7 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
             tools: input.tools.clone(),
             response_schema: None,
             max_tokens,
+            obs: input.obs.clone(),
         })
         .await?;
         total_in += out.input_tokens;
@@ -75,6 +83,7 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
             tools: input.tools.clone(),
             response_schema: None,
             max_tokens,
+            obs: input.obs.clone(),
         })
         .await?;
         total_in += out.input_tokens;
@@ -94,6 +103,7 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
             tools: input.tools.clone(),
             response_schema: Some(ResponseSchema::trader_output()),
             max_tokens,
+            obs: input.obs.clone(),
         })
         .await?;
         total_in += out.input_tokens;
@@ -144,6 +154,7 @@ async fn run_agent_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pip
                 None
             },
             max_tokens: resolved.max_tokens,
+            obs: input.obs.clone(),
         })
         .await?;
         total_in += out.input_tokens;
