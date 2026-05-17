@@ -45,6 +45,36 @@ const SUBPANE_KEYS = [
 
 const EQUITY_KEYS = ["equity", "drawdown"] as const;
 
+const LAYER_LABELS: Record<LayerKey, string> = {
+  candles: "Candles",
+  sma20: "SMA 20",
+  sma30: "SMA 30",
+  sma50: "SMA 50",
+  sma60: "SMA 60",
+  sma90: "SMA 90",
+  sma200: "SMA 200",
+  ema20: "EMA 20",
+  ema30: "EMA 30",
+  ema50: "EMA 50",
+  ema60: "EMA 60",
+  ema90: "EMA 90",
+  ema200: "EMA 200",
+  bollinger: "Bollinger Bands",
+  donchian: "Donchian Channel",
+  markerBuy: "Buy markers",
+  markerSell: "Sell markers",
+  markerVeto: "Veto markers",
+  markerHold: "Hold markers",
+  positionBand: "Position band",
+  subpaneRsi: "RSI 14",
+  subpaneMacd: "MACD",
+  subpaneAtr: "ATR 14",
+  subpaneOff: "Off",
+  equity: "Equity",
+  drawdown: "Drawdown",
+  volume: "Volume",
+};
+
 export function ChartLayersPanel({
   layers,
   toggle,
@@ -68,7 +98,7 @@ export function ChartLayersPanel({
             checked={layers[key]}
             onChange={() => toggle(key)}
           />{" "}
-          {key}
+          {LAYER_LABELS[key]}
         </label>
       ))}
 
@@ -85,7 +115,7 @@ export function ChartLayersPanel({
               );
             }}
           />{" "}
-          {key}
+          {LAYER_LABELS[key]}
         </label>
       ))}
 
@@ -99,7 +129,7 @@ export function ChartLayersPanel({
                 checked={layers[key]}
                 onChange={() => toggle(key)}
               />{" "}
-              {key}
+              {LAYER_LABELS[key]}
             </label>
           ))}
         </>
@@ -114,7 +144,7 @@ export function ChartLayersPanel({
               checked={layers.volume}
               onChange={() => toggle("volume")}
             />{" "}
-            volume
+            {LAYER_LABELS.volume}
           </label>
         </>
       ) : null}

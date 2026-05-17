@@ -17,7 +17,8 @@ export const chartKeys = {
 };
 
 export const scenarioChartKeys = {
-  scenario: (id: string) => ["chart", "scenario", id] as const,
+  scenario: (id: string, granularity?: string | null) =>
+    ["chart", "scenario", id, granularity ?? "stored"] as const,
 };
 
 export const strategyChartKeys = {
@@ -38,9 +39,13 @@ export function getCompareChart(runIds: string[]): Promise<CompareChartPayload> 
 
 export function getScenarioChart(
   scenarioId: string,
+  granularity?: string | null,
 ): Promise<ScenarioChartPayload> {
+  const q = new URLSearchParams();
+  if (granularity) q.set("granularity", granularity);
+  const suffix = q.size > 0 ? `?${q}` : "";
   return apiFetch<ScenarioChartPayload>(
-    `/api/scenarios/${encodeURIComponent(scenarioId)}/chart`,
+    `/api/scenarios/${encodeURIComponent(scenarioId)}/chart${suffix}`,
   );
 }
 

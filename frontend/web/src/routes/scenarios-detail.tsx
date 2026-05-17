@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
@@ -292,6 +292,12 @@ function TabBar({
 // ── definition tab ─────────────────────────────────────────────────────────
 
 function DefinitionTab({ s }: { s: Scenario }) {
+  const scenarioGranularity = scenarioGranularityToCli(s.granularity);
+  const [chartGranularity, setChartGranularity] = useState(scenarioGranularity);
+  useEffect(() => {
+    setChartGranularity(scenarioGranularity);
+  }, [s.id, scenarioGranularity]);
+
   const assetLabel =
     s.asset.length > 0
       ? s.asset.map((a) => a.symbol).join(", ") + " / " + s.quote_currency
@@ -300,10 +306,10 @@ function DefinitionTab({ s }: { s: Scenario }) {
   const windowLabel = `${fmtDate(s.time_window.start)} → ${fmtDate(s.time_window.end)}`;
 
   const chart = useQuery({
-    queryKey: scenarioChartKeys.scenario(s.id),
-    queryFn: () => getScenarioChart(s.id),
+    queryKey: scenarioChartKeys.scenario(s.id, chartGranularity),
+    queryFn: () => getScenarioChart(s.id, chartGranularity),
   });
-  const barsFetch = useBarsFetchJob(buildBarsFetchSpec(s));
+  const barsFetch = useBarsFetchJob(buildBarsFetchSpec(s, chartGranularity));
 
   return (
     <div>
@@ -316,6 +322,23 @@ function DefinitionTab({ s }: { s: Scenario }) {
         )}
         {chart.data && (
           <div className="mb-5">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <label className="text-text-3 text-[12px]" htmlFor="scenario-chart-granularity">
+                Indicator timeframe
+              </label>
+              <select
+                id="scenario-chart-granularity"
+                value={chartGranularity}
+                onChange={(event) => setChartGranularity(event.target.value)}
+                className="bg-surface border border-border rounded px-2 py-1 text-[12px] text-text"
+              >
+                {CHART_GRANULARITY_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
             <ScenarioChart
               payload={chart.data}
               onFetch={barsFetch.start}
@@ -549,18 +572,34 @@ function BarCacheTab({ scenario }: { scenario: Scenario }) {
   );
 }
 
-function buildBarsFetchSpec(s: Scenario) {
+const CHART_GRANULARITY_OPTIONS = [
+  { value: "1m", label: "1 minute" },
+  { value: "5m", label: "5 minutes" },
+  { value: "15m", label: "15 minutes" },
+  { value: "1h", label: "1 hour" },
+  { value: "4h", label: "4 hours" },
+  { value: "6h", label: "6 hours" },
+  { value: "1d", label: "1 day" },
+  { value: "1w", label: "1 week" },
+];
+
+function buildBarsFetchSpec(s: Scenario, granularity?: string) {
   const asset = s.asset[0]?.symbol;
   if (!asset) return null;
+  const selectedGranularity = granularity ?? scenarioGranularityToCli(s.granularity);
+  const scenarioGranularity = scenarioGranularityToCli(s.granularity);
+  const invalidateQueryKeys: Array<readonly unknown[]> = [
+    scenarioChartKeys.scenario(s.id, selectedGranularity),
+  ];
+  if (selectedGranularity === scenarioGranularity) {
+    invalidateQueryKeys.push(["bars-cache", s.bar_cache_policy.cache_key] as const);
+  }
   return {
     asset,
-    granularity: scenarioGranularityToCli(s.granularity),
+    granularity: selectedGranularity,
     from: fmtDate(s.time_window.start),
     to: fmtDate(s.time_window.end),
-    invalidateQueryKeys: [
-      scenarioChartKeys.scenario(s.id),
-      ["bars-cache", s.bar_cache_policy.cache_key] as const,
-    ],
+    invalidateQueryKeys,
   };
 }
 
