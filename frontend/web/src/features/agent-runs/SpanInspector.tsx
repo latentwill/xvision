@@ -149,7 +149,7 @@ export function SpanInspector({
   const isStreaming = isLive && (span.streaming || isActiveSseSpan);
 
   return (
-    <div className="w-[400px] shrink-0 flex flex-col">
+    <div className="w-full min-w-0 flex flex-col h-full">
       {/* Header strip */}
       <div className="px-3 py-2 border-b border-border flex items-center gap-2 min-w-0">
         <span

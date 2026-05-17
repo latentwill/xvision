@@ -14,6 +14,8 @@ import { EvalRunDetailRoute } from "./eval-runs-detail";
 import * as chartApi from "@/api/chart";
 import * as evalApi from "@/api/eval";
 import * as evalReviewApi from "@/api/eval-review";
+import * as scenariosApi from "@/api/scenarios";
+import * as strategyApi from "@/api/strategies";
 import type { DecisionRowDto, RunDetail } from "@/api/types.gen";
 
 vi.mock("@/api/eval", async () => {
@@ -48,6 +50,26 @@ vi.mock("@/api/chart", () => ({
     (runId: string) => new EventSource(`/stream/${runId}`),
   ),
 }));
+
+vi.mock("@/api/scenarios", async () => {
+  const actual = await vi.importActual<typeof import("@/api/scenarios")>(
+    "@/api/scenarios",
+  );
+  return {
+    ...actual,
+    listScenarios: vi.fn(),
+  };
+});
+
+vi.mock("@/api/strategies", async () => {
+  const actual = await vi.importActual<typeof import("@/api/strategies")>(
+    "@/api/strategies",
+  );
+  return {
+    ...actual,
+    listStrategies: vi.fn(),
+  };
+});
 
 function stubMatchMedia(matchesPhone: boolean) {
   Object.defineProperty(window, "matchMedia", {
@@ -130,6 +152,20 @@ describe("EvalRunDetailRoute (mobile layout)", () => {
     vi.clearAllMocks();
     vi.mocked(chartApi.getRunChart).mockResolvedValue(null as never);
     vi.mocked(evalReviewApi.listReviewsForRun).mockResolvedValue([]);
+    vi.mocked(strategyApi.listStrategies).mockResolvedValue([
+      {
+        agent_id: "mean-reversion-v3",
+        display_name: "Mean reversion V3",
+        template: "mean_reversion",
+        decision_cadence_minutes: 240,
+      },
+    ]);
+    vi.mocked(scenariosApi.listScenarios).mockResolvedValue([
+      {
+        id: "flash-crash-2024-08",
+        display_name: "Flash crash 2024",
+      } as any,
+    ]);
     vi.mocked(evalApi.cancelRun).mockResolvedValue({
       ...detail().summary,
       status: "cancelled",
@@ -202,7 +238,7 @@ describe("EvalRunDetailRoute (mobile layout)", () => {
     fireEvent.click(await screen.findByRole("tab", { name: "TRACE" }));
 
     const link = screen.getByRole("link", { name: /view full trace/i });
-    expect(link).toHaveAttribute("href", "/agent-runs/run_abc1234");
+    expect(link).toHaveAttribute("href", "/agent-runs/01LIVE");
   });
 
   it("shows HALT button + LIVE label while the run is active", async () => {

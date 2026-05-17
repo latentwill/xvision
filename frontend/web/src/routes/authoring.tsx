@@ -108,7 +108,7 @@ function PerformanceHistoryCard({ strategyId }: { strategyId: string }) {
         label="Performance history"
         hint="Equity curves from all completed eval runs, colour-coded by scenario."
       />
-      <div className="px-5 pb-5">
+      <div className="px-5 pt-4 pb-5">
         {chart.isPending && (
           <div className="text-text-3 text-[13px] py-4">Loading history…</div>
         )}
@@ -873,7 +873,7 @@ function RiskCard({ strategy }: { strategy: Strategy }) {
   return (
     <Card>
       <SectionHeader label="Risk" hint={`Currently: ${currentBasis}`} />
-      <div className="px-5 pb-5 space-y-4">
+      <div className="px-5 pt-4 pb-5 space-y-4">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <Field label="Risk per trade (%)">
             <input
@@ -971,7 +971,7 @@ function MechanicalParamsCard({ strategy }: { strategy: Strategy }) {
         label="Mechanical params"
         hint="Inspector read-only in v1. Tune through setup tools; this panel shows the saved JSON."
       />
-      <div className="px-5 pb-5">
+      <div className="px-5 pt-4 pb-5">
         {empty ? (
           <p className="m-0 text-[13px] text-text-3">
             No mechanical params on this template.
