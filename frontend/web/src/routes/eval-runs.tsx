@@ -107,6 +107,14 @@ export function EvalRunsRoute() {
     queryFn: () => getRunChart(latestRunId),
     enabled: !!latestRunId,
   });
+  const strategiesQ = useQuery({
+    queryKey: strategyKeys.list(),
+    queryFn: listStrategies,
+  });
+  const scenariosQ = useQuery({
+    queryKey: scenarioKeys.list(),
+    queryFn: () => listScenarios(),
+  });
 
   function toggleSelected(id: string) {
     setSelected((prev) => {
@@ -192,6 +200,8 @@ export function EvalRunsRoute() {
             selected={selected}
             onToggle={toggleSelected}
             nowMs={nowMs}
+            strategies={strategiesQ.data ?? []}
+            scenarios={scenariosQ.data ?? []}
           />
         )}
       </Card>
@@ -280,12 +290,24 @@ function RunsTable({
   selected,
   onToggle,
   nowMs,
+  strategies,
+  scenarios,
 }: {
   items: RunSummary[];
   selected: Set<string>;
   onToggle: (id: string) => void;
   nowMs: number;
+  strategies: StrategyListItem[];
+  scenarios: Scenario[];
 }) {
+  const strategyName = (id: string) => {
+    const s = strategies.find((x) => x.agent_id === id);
+    return s?.display_name?.trim() || id.slice(0, 8);
+  };
+  const scenarioName = (id: string) => {
+    const s = scenarios.find((x) => x.id === id);
+    return s?.display_name?.trim() || id;
+  };
   const navigate = useNavigate();
   const qc = useQueryClient();
   const remove = useMutation({
@@ -349,8 +371,8 @@ function RunsTable({
               <div className="font-mono text-[12px] text-text">
                 {row.id.slice(0, 12)}…
               </div>
-              <div className="mt-1 font-mono text-[12px] text-text-2">
-                {row.agent_id.slice(0, 8)} · {row.scenario_id}
+              <div className="mt-1 text-[12px] text-text-2 truncate">
+                {strategyName(row.agent_id)} · {scenarioName(row.scenario_id)}
               </div>
               <div className="mt-1 text-[12px] text-text-2">
                 {row.mode} · {fmtTime(row.started_at)}
@@ -413,7 +435,8 @@ function RunsTable({
         })}
       </div>
 
-      <div className="hidden overflow-x-auto md:block">
+      <div className="relative hidden md:block">
+        <div className="overflow-x-auto">
         <table className="w-full">
           <thead>
             <tr className="border-b border-border-soft text-left text-[12px] text-text-2">
@@ -469,10 +492,10 @@ function RunsTable({
                   <td className="px-3 py-3 font-mono text-[12px] text-text">
                     {row.id.slice(0, 12)}…
                   </td>
-                  <td className="px-3 py-3 font-mono text-[12px] text-text-2">
-                    {row.agent_id.slice(0, 8)}
+                  <td className="px-3 py-3 text-[12px] text-text-2">
+                    {strategyName(row.agent_id)}
                   </td>
-                  <td className="px-3 py-3 text-text-2">{row.scenario_id}</td>
+                  <td className="px-3 py-3 text-text-2">{scenarioName(row.scenario_id)}</td>
                   <td className="px-3 py-3 text-text-2">{row.mode}</td>
                   <td className="px-3 py-3">
                     <StatusPill status={row.status} />
@@ -530,6 +553,22 @@ function RunsTable({
             })}
           </tbody>
         </table>
+        </div>
+        {/*
+          Edge fade gradient hints at horizontal overflow without
+          painting over the rightmost column when there's no overflow.
+          The gradient color uses `--surface` so it blends in both
+          light and dark themes (per the dark-mode borders rule in
+          CLAUDE.md — no hard whites here).
+        */}
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-y-0 right-0 w-8"
+          style={{
+            background:
+              "linear-gradient(to right, transparent, var(--surface))",
+          }}
+        />
       </div>
     </>
   );
