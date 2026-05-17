@@ -73,9 +73,53 @@ export function SpanInspector({
       <div className="flex-1 overflow-auto px-3 py-3">
         {span.prompt ? (
           <PullQuote label="PROMPT" body={span.prompt} accent={color.hex} glyph="›" />
+        ) : span.kind === "model.call" && (span.prompt_payload_ref || span.hash) ? (
+          <PullQuote
+            label="PROMPT"
+            accent={color.hex}
+            glyph="›"
+            body={
+              <div className="text-[11px] font-mono text-text-2 break-all">
+                {span.prompt_payload_ref ? (
+                  <>
+                    payload ref: <span className="text-text">{span.prompt_payload_ref}</span>
+                  </>
+                ) : (
+                  <>
+                    hash: <span className="text-text">{span.hash}</span>
+                    <div className="text-text-3 mt-1">
+                      hash-only retention — prompt body not stored on disk
+                    </div>
+                  </>
+                )}
+              </div>
+            }
+          />
         ) : null}
         {span.response ? (
           <PullQuote label="RESPONSE" body={span.response} accent="var(--gold)" glyph={"“"} italic />
+        ) : span.kind === "model.call" && (span.response_payload_ref || span.response_hash) ? (
+          <PullQuote
+            label="RESPONSE"
+            accent="var(--gold)"
+            glyph={"“"}
+            body={
+              <div className="text-[11px] font-mono text-text-2 break-all">
+                {span.response_payload_ref ? (
+                  <>
+                    payload ref: <span className="text-text">{span.response_payload_ref}</span>
+                  </>
+                ) : (
+                  <>
+                    hash: <span className="text-text">{span.response_hash}</span>
+                    <div className="text-text-3 mt-1">
+                      hash-only retention — completion body not stored on disk
+                    </div>
+                  </>
+                )}
+              </div>
+            }
+          />
         ) : null}
         {span.response_partial ? (
           <PullQuote label="RESPONSE (PARTIAL)" body={span.response_partial} accent="var(--info)" glyph={"“"} italic streaming />
@@ -121,6 +165,11 @@ export function SpanInspector({
           ) : null}
           <Row k="cost" v={`$${(span.cost ?? 0).toFixed(4)}`} />
           {span.hash ? <Row k="prompt.hash" v={span.hash} /> : null}
+          {span.response_hash ? <Row k="response.hash" v={span.response_hash} /> : null}
+          {span.prompt_payload_ref ? <Row k="prompt.ref" v={span.prompt_payload_ref} /> : null}
+          {span.response_payload_ref ? (
+            <Row k="response.ref" v={span.response_payload_ref} />
+          ) : null}
           {span.decision_idx !== undefined ? (
             <Row k="decision" v={`#${span.decision_idx}`} tone="gold" />
           ) : null}

@@ -170,6 +170,31 @@ function normalizeAgentRunExport(payload: Record<string, unknown>): AgentRunDeta
   const modelCallsRaw = Array.isArray(payload.model_calls) ? payload.model_calls : [];
   const toolCallsRaw = Array.isArray(payload.tool_calls) ? payload.tool_calls : [];
   const bySpan = new Map(spans.map((s) => [s.span_id, s]));
+  // Project per-call provider/model/cost/hashes back onto the matching
+  // `model.call` span so SpanInspector can render the model the slot
+  // actually invoked (not just the strategy default) and so operators
+  // can pivot to the on-disk payload via the prompt/response refs.
+  for (const raw of modelCallsRaw) {
+    if (!isObject(raw)) continue;
+    const spanId = asString(raw.span_id);
+    const span = bySpan.get(spanId);
+    if (!span) continue;
+    const provider = asString(raw.provider);
+    const model = asString(raw.model);
+    if (provider) span.provider = provider;
+    if (model) span.model = model;
+    if (typeof raw.input_token_count === "number") span.tokens_in = raw.input_token_count;
+    if (typeof raw.output_token_count === "number") span.tokens_out = raw.output_token_count;
+    if (typeof raw.cost_usd === "number") span.cost = raw.cost_usd;
+    const promptHash = asString(raw.prompt_hash);
+    if (promptHash) span.hash = promptHash;
+    const responseHash = asNullableString(raw.response_hash);
+    if (responseHash) span.response_hash = responseHash;
+    const promptRef = asNullableString(raw.prompt_payload_ref);
+    if (promptRef) span.prompt_payload_ref = promptRef;
+    const responseRef = asNullableString(raw.response_payload_ref);
+    if (responseRef) span.response_payload_ref = responseRef;
+  }
   const status = asString(payload.status, "completed") as RunStatus;
   const startedAt = asString(payload.started_at);
   const finishedAt = asNullableString(payload.finished_at);
@@ -209,7 +234,10 @@ function normalizeAgentRunExport(payload: Record<string, unknown>): AgentRunDeta
         typeof row.output_token_count === "number" ? row.output_token_count : null,
       cost_usd: typeof row.cost_usd === "number" ? row.cost_usd : null,
       prompt_hash: asString(row.prompt_hash),
-      response_text: asNullableString(row.response_hash),
+      response_hash: asNullableString(row.response_hash),
+      prompt_payload_ref: asNullableString(row.prompt_payload_ref),
+      response_payload_ref: asNullableString(row.response_payload_ref),
+      response_text: asNullableString(row.response_text),
     })),
     tool_calls: toolCallsRaw.filter(isObject).map((row) => {
       const spanId = asString(row.span_id);
