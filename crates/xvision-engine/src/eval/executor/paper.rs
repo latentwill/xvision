@@ -196,6 +196,11 @@ impl Executor for PaperExecutor {
         tools: Arc<ToolRegistry>,
         store: &RunStore,
     ) -> Result<MetricsSummary> {
+        if !store.begin_running(&run.id).await? {
+            anyhow::bail!("eval run stopped");
+        }
+        run.status = RunStatus::Running;
+
         // RunStarted fires before any work so subscribers can show the
         // run as "in flight" even if the first tick is slow.
         self.emit(ProgressEvent::RunStarted {

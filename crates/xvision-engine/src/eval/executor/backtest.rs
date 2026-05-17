@@ -163,6 +163,11 @@ impl Executor for BacktestExecutor {
         tools: Arc<ToolRegistry>,
         store: &RunStore,
     ) -> Result<MetricsSummary> {
+        if !store.begin_running(&run.id).await? {
+            anyhow::bail!("eval run stopped");
+        }
+        run.status = RunStatus::Running;
+
         // RunStarted fires before fixture-loading work so subscribers
         // can show "in flight" even on a slow parquet read.
         self.emit(ProgressEvent::RunStarted {
