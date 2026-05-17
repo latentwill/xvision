@@ -8,7 +8,18 @@ use xvision_dashboard::cli_jobs::store::CliJobStore;
 use xvision_dashboard::server::build_router;
 use xvision_dashboard::AppState;
 
+// qa-dashboard-auth-hardening (2026-05-17): these existing tests rely on
+// generic `help` / `slow` fake-cli commands which are NOT on the
+// production allowlist. Flip devmode on for the duration of this test
+// binary so the route's allowlist check falls back to the permissive
+// (legacy-equivalent) behavior; the dedicated `cli_jobs_allowlist.rs`
+// suite covers the strict allowlist path.
+fn arm_devmode() {
+    std::env::set_var("XVN_DASHBOARD_CLI_DEVMODE", "1");
+}
+
 async fn boot() -> (TestServer, TempDir) {
+    arm_devmode();
     let tmp = TempDir::new().unwrap();
     let cli = write_fake_cli(tmp.path());
     let state = AppState::new(tmp.path().to_path_buf())
@@ -20,6 +31,7 @@ async fn boot() -> (TestServer, TempDir) {
 }
 
 async fn boot_http() -> (String, TempDir, tokio::task::JoinHandle<()>) {
+    arm_devmode();
     let tmp = TempDir::new().unwrap();
     let cli = write_fake_cli(tmp.path());
     let state = AppState::new(tmp.path().to_path_buf())
@@ -36,6 +48,7 @@ async fn boot_http() -> (String, TempDir, tokio::task::JoinHandle<()>) {
 }
 
 async fn boot_existing_home(root: &std::path::Path) -> TestServer {
+    arm_devmode();
     let cli = write_fake_cli(root);
     let state = AppState::new(root.to_path_buf())
         .await

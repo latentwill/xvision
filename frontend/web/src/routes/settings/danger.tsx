@@ -5,13 +5,19 @@ import { ApiError } from "@/api/client";
 import {
   dangerFactoryReset,
   dangerWipeDb,
+  DANGER_WIPE_DB_PHRASE,
+  DANGER_FACTORY_RESET_PHRASE,
 } from "@/api/settings";
 import type {
   FactoryResetReport,
   WipeDbReport,
 } from "@/api/types.gen";
 
-const CONFIRM_PHRASE = "DELETE";
+// Per qa-dashboard-auth-hardening (2026-05-17): each destructive op has
+// its own typed phrase. The operator must type the phrase verbatim;
+// the typed text is what travels on the wire to the backend, which
+// rejects anything that doesn't match the per-route expectation. No
+// static confirm token is shipped in this bundle.
 
 export function SettingsDangerRoute() {
   return (
@@ -21,14 +27,16 @@ export function SettingsDangerRoute() {
           ⚠ Destructive operations
         </div>
         <p className="m-0 mt-1 text-text-2 text-[12px] leading-snug">
-          Every action on this page is irreversible. Each requires you to type{" "}
-          <code className="font-mono">{CONFIRM_PHRASE}</code> to confirm and is
-          audit-logged before it runs.
+          Every action on this page is irreversible. Each requires you to
+          type its phrase verbatim to confirm and is audit-logged before
+          it runs. The phrases differ per operation — typing one does
+          not arm the others.
         </p>
       </div>
 
       <DangerSection<WipeDbReport>
         title="Wipe local database"
+        phrase={DANGER_WIPE_DB_PHRASE}
         description={
           <>
             Deletes every row in <code className="font-mono">xvn.db</code>{" "}
@@ -62,6 +70,7 @@ export function SettingsDangerRoute() {
 
       <DangerSection<FactoryResetReport>
         title="Factory reset (delete XVN_HOME)"
+        phrase={DANGER_FACTORY_RESET_PHRASE}
         description={
           <>
             Deletes the entire <code className="font-mono">$XVN_HOME</code>{" "}
@@ -90,22 +99,27 @@ export function SettingsDangerRoute() {
 
 function DangerSection<T>({
   title,
+  phrase,
   description,
   actionLabel,
   mutationFn,
   renderSuccess,
 }: {
   title: string;
+  /** Expected typed phrase for this op. The operator must type it
+   *  verbatim; the typed value is what travels on the wire. */
+  phrase: string;
   description: React.ReactNode;
   actionLabel: string;
-  mutationFn: () => Promise<T>;
+  /** Mutation function receives the typed phrase. */
+  mutationFn: (typedPhrase: string) => Promise<T>;
   renderSuccess: (data: T) => React.ReactNode;
 }) {
-  const [phrase, setPhrase] = useState("");
-  const armed = phrase === CONFIRM_PHRASE;
+  const [typed, setTyped] = useState("");
+  const armed = typed === phrase;
   const m = useMutation({
-    mutationFn,
-    onSuccess: () => setPhrase(""),
+    mutationFn: () => mutationFn(typed),
+    onSuccess: () => setTyped(""),
   });
 
   return (
@@ -117,13 +131,18 @@ function DangerSection<T>({
         {description}
       </p>
 
-      <div className="mt-4 flex items-center gap-3">
+      <p className="m-0 mt-3 text-text-3 text-[12px]">
+        Type{" "}
+        <code className="font-mono text-text">{phrase}</code> to confirm.
+      </p>
+
+      <div className="mt-2 flex items-center gap-3">
         <input
           type="text"
-          value={phrase}
-          onChange={(e) => setPhrase(e.target.value)}
-          placeholder={`Type ${CONFIRM_PHRASE} to confirm`}
-          className="flex-1 max-w-[260px] bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
+          value={typed}
+          onChange={(e) => setTyped(e.target.value)}
+          placeholder={`Type ${phrase} to confirm`}
+          className="flex-1 max-w-[320px] bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
         />
         <button
           type="button"
