@@ -27,8 +27,9 @@ xvision-trader    = { path = "../xvision-trader" }
 xvision-risk      = { path = "../xvision-risk" }
 xvision-execution = { path = "../xvision-execution" }
 xvision-harness   = { path = "../xvision-harness" }
-xvision-engine    = { path = "../xvision-engine" }
-xvision-dashboard = { path = "../xvision-dashboard" }
+xvision-engine        = { path = "../xvision-engine" }
+xvision-dashboard     = { path = "../xvision-dashboard" }
+xvision-observability = { path = "../xvision-observability" }
 ulid              = "1"
 dirs              = "5"
 blake3            = "1.5"
