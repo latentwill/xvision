@@ -78,11 +78,12 @@ function validateStartRun(p: StartRunParams): StartRunConfig {
   if (p.base_url !== undefined && typeof p.base_url !== "string")
     throw new TypeError("params.base_url must be a string when present")
   const limits = validateBudget(p.budget_limits)
+  // exactOptionalPropertyTypes: spread the optional fields only when present.
   return {
     provider_id: p.provider_id,
     model_id: p.model_id,
-    api_key: p.api_key as string | undefined,
-    base_url: p.base_url as string | undefined,
+    ...(typeof p.api_key === "string" ? { api_key: p.api_key } : {}),
+    ...(typeof p.base_url === "string" ? { base_url: p.base_url } : {}),
     system_prompt: p.system_prompt,
     allowed_tools: p.allowed_tools as string[],
     budget_limits: limits,

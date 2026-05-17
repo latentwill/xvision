@@ -32,7 +32,7 @@ function buildTool(d: ToolDescriptor): AgentTool {
     // Wave-1 registry validator already enforced object shape.
     inputSchema: d.input_schema as Record<string, unknown>,
     timeoutMs: d.timeout_ms,
-    execute: async (input) => {
+    execute: async (input: unknown) => {
       try {
         return await callRust(d.name, input as Record<string, unknown>)
       } catch (err) {

@@ -24,7 +24,38 @@
  *   MockTurn               — type alias
  */
 
-import type { AgentModel, AgentModelEvent, AgentModelRequest } from "@cline/sdk"
+// The Cline `Agent` constructor accepts a `model: AgentModel` per
+// `AgentRuntimeConfigWithModel`. The canonical types (AgentModel,
+// AgentModelEvent, AgentModelRequest) live in @cline/shared, but the
+// package's index.d.ts re-exports them via `export * from "./agent"`
+// without a `.js` extension, which `moduleResolution: "NodeNext"` cannot
+// resolve. We rely on structural typing instead: the local interfaces
+// below mirror @cline/shared/dist/agent.d.ts and the Agent constructor
+// accepts our return value because the shapes match.
+interface AgentModelRequest {
+  messages: readonly unknown[]
+  tools?: readonly unknown[]
+  systemPrompt?: string
+  signal?: AbortSignal
+  [extra: string]: unknown
+}
+
+type AgentModelEvent =
+  | { type: "text-delta"; text: string }
+  | {
+      type: "tool-call-delta"
+      toolCallId?: string
+      toolName?: string
+      input?: unknown
+    }
+  | { type: "usage"; usage: { inputTokens?: number; outputTokens?: number } }
+  | { type: "finish"; reason: "stop" | "tool-calls" | "length" | "error"; error?: string }
+
+interface AgentModel {
+  stream(
+    request: AgentModelRequest,
+  ): AsyncIterable<AgentModelEvent> | Promise<AsyncIterable<AgentModelEvent>>
+}
 
 // Public id Task 5's buildAgent can branch on without a magic string.
 export const MOCK_PROVIDER_ID = "xvision-mock" as const
