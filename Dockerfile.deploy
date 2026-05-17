@@ -35,6 +35,28 @@ RUN cd frontend/web && pnpm build && \
     test -f /xvision/crates/xvision-dashboard/static/index.html
 
 # ──────────────────────────────────────────────────────────────────────────
+# Stage 1b — agentd: build the xvision-agentd Node sidecar
+# ──────────────────────────────────────────────────────────────────────────
+FROM node:22-bookworm-slim AS agentd
+WORKDIR /agentd
+
+# Corepack activates the pinned pnpm from packageManager.
+RUN corepack enable
+
+# Copy lockfile + manifest first for cache.
+COPY xvision-agentd/package.json xvision-agentd/pnpm-lock.yaml ./
+RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
+    pnpm install --frozen-lockfile
+
+# Copy the rest of the sidecar and build.
+COPY xvision-agentd/ ./
+RUN pnpm build
+
+# Prune devDependencies so the runtime image carries only what's needed.
+RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
+    pnpm prune --prod
+
+# ──────────────────────────────────────────────────────────────────────────
 # Stage 2 — chef: prepare a recipe of the Rust dep graph for caching
 # ──────────────────────────────────────────────────────────────────────────
 FROM rust:1.95.0-bookworm AS chef
@@ -100,19 +122,27 @@ LABEL org.opencontainers.image.title="xvision (deploy)" \
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
+        curl \
+        gnupg \
         libsqlite3-0 \
         tini \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && apt-get purge -y --auto-remove curl gnupg \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system --gid 1000 xvision \
     && useradd  --system --uid 1000 --gid xvision --home /home/xvision --create-home xvision \
-    && mkdir -p /data /config /strategies /opt/xvision/data/probes \
-    && chown -R xvision:xvision /data /config /strategies /opt/xvision
+    && mkdir -p /data /config /strategies /opt/xvision/data/probes /opt/xvision-agentd \
+    && chown -R xvision:xvision /data /config /strategies /opt/xvision /opt/xvision-agentd
 
 COPY --from=builder /usr/local/bin/xvn /usr/local/bin/xvn
 COPY --chown=xvision:xvision config/        /config/
 COPY --chown=xvision:xvision strategies/    /strategies/
 COPY --chown=xvision:xvision data/probes/   /opt/xvision/data/probes/
 COPY --chown=xvision:xvision docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY --from=agentd --chown=xvision:xvision /agentd/dist          /opt/xvision-agentd/dist
+COPY --from=agentd --chown=xvision:xvision /agentd/node_modules  /opt/xvision-agentd/node_modules
+COPY --from=agentd --chown=xvision:xvision /agentd/package.json  /opt/xvision-agentd/package.json
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
 USER xvision
@@ -124,6 +154,7 @@ ENV XVN_DATA_DIR=/data \
     XVN_HOME=/data \
     XVN_CONFIG_DIR=/config \
     XVN_CONFIG_PATH=/config/default.toml \
+    XVN_AGENTD_BIN=/opt/xvision-agentd/dist/index.js \
     APCA_API_BASE_URL=https://paper-api.alpaca.markets
 
 EXPOSE 8788
