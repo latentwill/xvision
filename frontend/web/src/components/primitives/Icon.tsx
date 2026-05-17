@@ -30,6 +30,7 @@ export type IconName =
   | "list"
   | "flame"
   | "sliders"
+  | "trash"
   | "sun"
   | "moon";
 
@@ -117,6 +118,14 @@ const PATHS: Record<IconName, ReactNode> = {
       <circle cx="12" cy="6" r="1.5" />
       <circle cx="8" cy="10" r="1.5" />
       <circle cx="14" cy="14" r="1.5" />
+    </>
+  ),
+  trash: (
+    <>
+      <path d="M3 5h14" />
+      <path d="M7.5 5V3.5a1.5 1.5 0 011.5-1.5h2a1.5 1.5 0 011.5 1.5V5" />
+      <path d="M5 5l.8 11a1.5 1.5 0 001.5 1.4h5.4a1.5 1.5 0 001.5-1.4L15 5" />
+      <path d="M8.5 8v6M11.5 8v6" />
     </>
   ),
   sun: (

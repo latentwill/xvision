@@ -7,7 +7,7 @@ use axum::{
 use tower_http::{compression::CompressionLayer, trace::TraceLayer};
 
 use crate::routes::{
-    agents, bars, chat_rail, cli, eval::review as eval_review, eval_runs, health::health,
+    agent_runs, agents, bars, chat_rail, cli, eval::review as eval_review, eval_runs, health::health,
     scenarios, search as search_route, settings, skills, static_files, strategies, wizard,
 };
 use crate::state::AppState;
@@ -84,6 +84,12 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/eval/runs/:id/stream", get(eval_runs::stream))
         .route("/api/eval/compare", get(eval_runs::compare))
         .route("/api/eval/scenarios", get(eval_runs::list_scenarios))
+        // Agent-run observability read-side routes
+        // (`agent-run-observability-export-cli` leaf).
+        .route("/api/agent-runs/:id", get(agent_runs::get))
+        .route("/api/agent-runs/:id/export.json", get(agent_runs::export_json))
+        .route("/api/agent-runs/:id/export.md", get(agent_runs::export_md))
+        .route("/api/agent-runs/:id/stream", get(agent_runs::stream))
         // Eval-review routes (see routes/eval_review.rs).
         .route(
             "/api/eval/runs/:id/review",
