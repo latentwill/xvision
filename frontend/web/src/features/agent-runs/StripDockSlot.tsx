@@ -5,7 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { agentRunKeys, getAgentRun } from "@/api/agent-runs";
 import { useTraceDock } from "@/stores/trace-dock";
 import { RunStatusStrip } from "./RunStatusStrip";
-// TraceDock added in Phase 3 — until then this is a placeholder.
+import { TraceDock } from "./TraceDock";
 
 function deriveTone(summary: { status: string; error_count: number }): "completed" | "live" | "warn" | "error" {
   if (summary.status === "failed" || summary.error_count > 0) return "error";
@@ -50,6 +50,5 @@ export function StripDockSlot() {
     );
   }
 
-  // Phase 3 replaces this placeholder with <TraceDock />.
-  return <div data-testid="trace-dock-placeholder" />;
+  return <TraceDock />;
 }

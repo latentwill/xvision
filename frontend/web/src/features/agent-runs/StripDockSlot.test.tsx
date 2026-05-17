@@ -32,7 +32,7 @@ describe("StripDockSlot", () => {
   test("renders nothing when activeRunId is null", () => {
     renderSlot();
     expect(screen.queryByTestId("run-status-strip")).toBeNull();
-    expect(screen.queryByTestId("trace-dock-placeholder")).toBeNull();
+    expect(screen.queryByTestId("trace-dock")).toBeNull();
   });
 
   test("renders RunStatusStrip when activeRunId set and height=collapsed", async () => {
@@ -41,10 +41,10 @@ describe("StripDockSlot", () => {
     await waitFor(() => expect(screen.getByTestId("run-status-strip")).toBeInTheDocument());
   });
 
-  test("renders placeholder when height is non-collapsed", async () => {
+  test("renders TraceDock when height is non-collapsed", async () => {
     useTraceDock.setState({ activeRunId: "run_abc1234", height: "working" });
     renderSlot();
-    await waitFor(() => expect(screen.getByTestId("trace-dock-placeholder")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId("trace-dock")).toBeInTheDocument());
     expect(screen.queryByTestId("run-status-strip")).toBeNull();
   });
 });
