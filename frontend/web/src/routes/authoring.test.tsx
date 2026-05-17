@@ -150,7 +150,7 @@ afterEach(() => {
   cleanup();
 });
 
-describe("AuthoringRoute attached-agent row collapse + popout", () => {
+describe("AuthoringRoute attached-agent row collapse + inline detail", () => {
   it("renders the model in the bar even when the row is collapsed", async () => {
     // Pre-set storage so the row mounts in collapsed state.
     localStorage.setItem("xvn:authoring:agent-collapsed:01TEST:trader", "1");
@@ -203,32 +203,31 @@ describe("AuthoringRoute attached-agent row collapse + popout", () => {
     ).toBe("0");
   });
 
-  it("opens a popout dialog that shows model + system prompt", async () => {
+  it("shows model + system prompt inline in the expanded row (no overlay)", async () => {
+    // qa-strategy-popup-to-accordion (2026-05-17): the "Open in window"
+    // overlay was removed per the dashboard no-popups rule. Agent detail
+    // now lives in the row's existing inline expansion. The expanded
+    // state must render the same content the old dialog used to show.
     renderRoute();
 
-    const popout = await screen.findByRole("button", {
-      name: "Open agent in window",
-    });
-    fireEvent.click(popout);
+    // Wait for the agent pool to load so the row's model/system-prompt
+    // detail (sourced from `agentById.get`) populates.
+    const modelMatches = await screen.findAllByText(
+      "openrouter / deepseek/deepseek-v4-flash",
+    );
+    expect(modelMatches.length).toBeGreaterThanOrEqual(1);
 
-    const dialog = await screen.findByRole("dialog", {
-      name: "Agent trader details",
-    });
-    expect(dialog).toBeInTheDocument();
-
-    // Model appears in the bar AND in the dialog body — getAllByText covers both.
+    // No overlay dialog with the old name should exist.
     expect(
-      screen.getAllByText("openrouter / deepseek/deepseek-v4-flash").length,
-    ).toBeGreaterThanOrEqual(1);
+      screen.queryByRole("dialog", { name: "Agent trader details" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Open agent in window" }),
+    ).not.toBeInTheDocument();
+
+    // Inline detail renders the agent id and system prompt.
+    expect(screen.getByText("01DEEPSEEK")).toBeInTheDocument();
     expect(screen.getByText("Trade with discipline.")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Close agent window" }));
-
-    await waitFor(() => {
-      expect(
-        screen.queryByRole("dialog", { name: "Agent trader details" }),
-      ).not.toBeInTheDocument();
-    });
   });
 });
 
