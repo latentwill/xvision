@@ -64,15 +64,11 @@ pub async fn export_json(
     Path(id): Path<String>,
 ) -> Result<Response, DashboardError> {
     let export = build_export(&state.pool, &id).await.map_err(map_err)?;
-    let body = serde_json::to_vec_pretty(&export).map_err(|e| {
-        DashboardError::Internal(anyhow::anyhow!("serialize xvn_run.json: {e}"))
-    })?;
+    let body = serde_json::to_vec_pretty(&export)
+        .map_err(|e| DashboardError::Internal(anyhow::anyhow!("serialize xvn_run.json: {e}")))?;
 
     let mut headers = HeaderMap::new();
-    headers.insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static("application/json"),
-    );
+    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
     let disposition = format!("attachment; filename=\"xvn_run_{id}.json\"");
     if let Ok(value) = HeaderValue::from_str(&disposition) {
         headers.insert(header::CONTENT_DISPOSITION, value);
@@ -115,15 +111,18 @@ pub async fn stream(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, DashboardError> {
-    // Build the snapshot up front. If the run doesn't exist this maps
-    // to a 404 *before* we open the SSE response, which is the correct
-    // axum pattern (after `into_response` an SSE upgrade can't be
-    // cleanly downgraded to a JSON error).
-    let snapshot = build_export(&state.pool, &id).await.map_err(map_err)?;
     // Subscribe to the broadcast channel for this run. `subscribe_run`
-    // creates the sender lazily so even if no producer has emitted yet,
-    // future events will be delivered as soon as they arrive.
+    // creates the sender lazily and must happen before building the
+    // snapshot so events committed during the export query are still
+    // delivered by the live tail.
     let rx = state.obs_broadcast.subscribe_run(&id).await;
+    let snapshot = match build_export(&state.pool, &id).await {
+        Ok(snapshot) => snapshot,
+        Err(e) => {
+            state.obs_broadcast.drop_channel(&id).await;
+            return Err(map_err(e));
+        }
+    };
     Ok(agent_run_sse(snapshot, rx))
 }
 

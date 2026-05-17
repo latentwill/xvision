@@ -48,7 +48,8 @@ pub const RUN_CHANNEL_CAPACITY: usize = 256;
 /// `AppState` so route handlers can call [`Self::subscribe_run`].
 #[derive(Debug, Default)]
 pub struct BroadcastSubscriber {
-    inner: RwLock<HashMap<String, broadcast::Sender<RunEvent>>>,
+    channels: RwLock<HashMap<String, broadcast::Sender<RunEvent>>>,
+    span_to_run: RwLock<HashMap<String, String>>,
 }
 
 impl BroadcastSubscriber {
@@ -62,12 +63,12 @@ impl BroadcastSubscriber {
     /// any events.
     pub async fn subscribe_run(&self, run_id: &str) -> broadcast::Receiver<RunEvent> {
         {
-            let read = self.inner.read().await;
+            let read = self.channels.read().await;
             if let Some(tx) = read.get(run_id) {
                 return tx.subscribe();
             }
         }
-        let mut write = self.inner.write().await;
+        let mut write = self.channels.write().await;
         let tx = write
             .entry(run_id.to_owned())
             .or_insert_with(|| broadcast::channel(RUN_CHANNEL_CAPACITY).0);
@@ -78,12 +79,13 @@ impl BroadcastSubscriber {
     /// the run terminates so receivers see `RecvError::Closed`. Safe to
     /// call concurrently; later receivers re-create the channel.
     pub async fn drop_channel(&self, run_id: &str) {
-        self.inner.write().await.remove(run_id);
+        self.channels.write().await.remove(run_id);
+        self.prune_span_map(run_id).await;
     }
 
     /// Test helper: number of run channels currently registered.
     pub async fn channel_count(&self) -> usize {
-        self.inner.read().await.len()
+        self.channels.read().await.len()
     }
 
     /// Look up (or lazily create) the sender for `run_id` and send the
@@ -93,7 +95,7 @@ impl BroadcastSubscriber {
     async fn send_to_run(&self, run_id: &str, event: &RunEvent) {
         // Fast path: sender already exists.
         {
-            let read = self.inner.read().await;
+            let read = self.channels.read().await;
             if let Some(tx) = read.get(run_id) {
                 let _ = tx.send(event.clone());
                 return;
@@ -106,26 +108,56 @@ impl BroadcastSubscriber {
         // per receiver only AFTER they subscribe — but creating early
         // makes a single source-of-truth sender that survives across
         // subscribe/unsubscribe cycles for the run).
-        let mut write = self.inner.write().await;
+        let mut write = self.channels.write().await;
         let tx = write
             .entry(run_id.to_owned())
             .or_insert_with(|| broadcast::channel(RUN_CHANNEL_CAPACITY).0);
         let _ = tx.send(event.clone());
+    }
+
+    async fn record_span(&self, event: &RunEvent) {
+        if let RunEvent::SpanStarted(s) = event {
+            self.span_to_run
+                .write()
+                .await
+                .insert(s.span_id.clone(), s.run_id.clone());
+        }
+    }
+
+    async fn resolve_span_run(&self, event: &RunEvent) -> Option<String> {
+        let span_id = event.span_id()?;
+        self.span_to_run.read().await.get(span_id).cloned()
+    }
+
+    async fn prune_span_map(&self, run_id: &str) {
+        self.span_to_run
+            .write()
+            .await
+            .retain(|_, mapped_run| mapped_run != run_id);
+    }
+
+    async fn prune_if_terminal(&self, event: &RunEvent) {
+        match event {
+            RunEvent::RunFinished(e) => self.prune_span_map(&e.run_id).await,
+            RunEvent::RunInterrupted(e) => self.prune_span_map(&e.run_id).await,
+            _ => {}
+        }
     }
 }
 
 #[async_trait]
 impl AgentRunRecorder for BroadcastSubscriber {
     async fn handle_event(&self, event: &RunEvent) -> Result<(), RecorderError> {
+        self.record_span(event).await;
         let run_id = event.run_id();
         if !run_id.is_empty() {
             self.send_to_run(run_id, event).await;
+            self.prune_if_terminal(event).await;
+            return Ok(());
         }
-        // Span-only events (no run_id) cannot be routed without a
-        // span→run map. The dashboard SSE stream does not depend on
-        // them — the bus's own span→run translation has already run
-        // and any cross-cutting summary will arrive via a run-scoped
-        // event (e.g. `RunFinished`) before the stream closes.
+        if let Some(run_id) = self.resolve_span_run(event).await {
+            self.send_to_run(&run_id, event).await;
+        }
         Ok(())
     }
 
@@ -144,7 +176,11 @@ pub type SharedBroadcastSubscriber = Arc<BroadcastSubscriber>;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::events::{RunStartedEvent, SidecarErrorEvent};
+    use crate::events::{
+        ModelCallFinishedEvent, RunFinishedEvent, RunStartedEvent, SidecarErrorEvent, SpanFinishedEvent,
+        SpanStartedEvent,
+    };
+    use crate::types::{RunStatus, SpanKind, SpanStatus};
     use chrono::Utc;
 
     fn run_started(id: &str) -> RunEvent {
@@ -172,6 +208,56 @@ mod tests {
         })
     }
 
+    fn span_started(run_id: &str, span_id: &str) -> RunEvent {
+        RunEvent::SpanStarted(SpanStartedEvent {
+            span_id: span_id.into(),
+            run_id: run_id.into(),
+            parent_span_id: None,
+            kind: SpanKind::ModelCall,
+            name: "model.call".into(),
+            started_at: Utc::now(),
+            otel_trace_id: None,
+            otel_span_id: None,
+            attributes_json: None,
+        })
+    }
+
+    fn model_call_finished(span_id: &str) -> RunEvent {
+        RunEvent::ModelCallFinished(ModelCallFinishedEvent {
+            span_id: span_id.into(),
+            provider: "test-provider".into(),
+            model: "test-model".into(),
+            input_token_count: Some(11),
+            output_token_count: Some(7),
+            cost_usd: None,
+            prompt_hash: "sha256:prompt".into(),
+            response_hash: Some("sha256:response".into()),
+            prompt_payload_ref: None,
+            response_payload_ref: None,
+            tool_calls_requested: None,
+            capability_path: None,
+        })
+    }
+
+    fn span_finished(span_id: &str) -> RunEvent {
+        RunEvent::SpanFinished(SpanFinishedEvent {
+            span_id: span_id.into(),
+            ended_at: Utc::now(),
+            status: SpanStatus::Ok,
+            error_json: None,
+        })
+    }
+
+    fn run_finished(run_id: &str) -> RunEvent {
+        RunEvent::RunFinished(RunFinishedEvent {
+            run_id: run_id.into(),
+            finished_at: Utc::now(),
+            status: RunStatus::Completed,
+            final_artifact_id: None,
+            error: None,
+        })
+    }
+
     #[tokio::test]
     async fn subscribe_before_publish_receives_event() {
         let sub = BroadcastSubscriber::new();
@@ -190,11 +276,7 @@ mod tests {
         let ev = rx_a.recv().await.unwrap();
         assert_eq!(ev.run_id(), "run_a");
         // run_b receiver should not have anything yet.
-        let res = tokio::time::timeout(
-            std::time::Duration::from_millis(50),
-            rx_b.recv(),
-        )
-        .await;
+        let res = tokio::time::timeout(std::time::Duration::from_millis(50), rx_b.recv()).await;
         assert!(res.is_err(), "run_b receiver should have no events");
     }
 
@@ -202,17 +284,11 @@ mod tests {
     async fn no_receivers_drops_silently() {
         let sub = BroadcastSubscriber::new();
         // Should not panic even with no subscribers.
-        sub.handle_event(&sidecar_error("run_x", "boom"))
-            .await
-            .unwrap();
+        sub.handle_event(&sidecar_error("run_x", "boom")).await.unwrap();
         // Subscribing now creates a fresh channel; the dropped event is
         // gone (no replay buffer for new subscribers).
         let mut rx = sub.subscribe_run("run_x").await;
-        let res = tokio::time::timeout(
-            std::time::Duration::from_millis(50),
-            rx.recv(),
-        )
-        .await;
+        let res = tokio::time::timeout(std::time::Duration::from_millis(50), rx.recv()).await;
         assert!(res.is_err(), "no replay for new subscriber");
     }
 
@@ -225,15 +301,46 @@ mod tests {
         // dropped from the map (the last `Arc<Sender>` referenced by the
         // map is gone; the receiver still owns its half, so it sees
         // Closed on next recv).
-        let res = tokio::time::timeout(
-            std::time::Duration::from_millis(200),
-            rx.recv(),
-        )
-        .await
-        .expect("recv should complete after drop_channel");
-        assert!(matches!(
-            res,
-            Err(broadcast::error::RecvError::Closed)
-        ));
+        let res = tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv())
+            .await
+            .expect("recv should complete after drop_channel");
+        assert!(matches!(res, Err(broadcast::error::RecvError::Closed)));
+    }
+
+    #[tokio::test]
+    async fn span_scoped_events_route_to_their_run() {
+        let sub = BroadcastSubscriber::new();
+        let mut rx = sub.subscribe_run("run_a").await;
+
+        sub.handle_event(&span_started("run_a", "span_model"))
+            .await
+            .unwrap();
+        sub.handle_event(&model_call_finished("span_model"))
+            .await
+            .unwrap();
+        sub.handle_event(&span_finished("span_model")).await.unwrap();
+
+        assert!(matches!(rx.recv().await.unwrap(), RunEvent::SpanStarted(_)));
+        assert!(matches!(rx.recv().await.unwrap(), RunEvent::ModelCallFinished(_)));
+        assert!(matches!(rx.recv().await.unwrap(), RunEvent::SpanFinished(_)));
+    }
+
+    #[tokio::test]
+    async fn terminal_run_event_prunes_span_routes() {
+        let sub = BroadcastSubscriber::new();
+        let mut rx = sub.subscribe_run("run_a").await;
+
+        sub.handle_event(&span_started("run_a", "span_model"))
+            .await
+            .unwrap();
+        sub.handle_event(&run_finished("run_a")).await.unwrap();
+        sub.handle_event(&model_call_finished("span_model"))
+            .await
+            .unwrap();
+
+        assert!(matches!(rx.recv().await.unwrap(), RunEvent::SpanStarted(_)));
+        assert!(matches!(rx.recv().await.unwrap(), RunEvent::RunFinished(_)));
+        let res = tokio::time::timeout(std::time::Duration::from_millis(50), rx.recv()).await;
+        assert!(res.is_err(), "span route should be pruned after run end");
     }
 }

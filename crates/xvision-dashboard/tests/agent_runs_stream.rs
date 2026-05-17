@@ -12,10 +12,10 @@ use futures_util::StreamExt;
 use tempfile::TempDir;
 use tokio::time::timeout;
 use xvision_dashboard::{server::build_router, AppState};
-use xvision_observability::{
-    RunEvent, RunFinishedEvent, RunStartedEvent, SpanStartedEvent,
-};
 use xvision_observability::types::{RunStatus, SpanKind};
+use xvision_observability::{
+    ModelCallFinishedEvent, RunEvent, RunFinishedEvent, RunStartedEvent, SpanStartedEvent,
+};
 
 async fn boot_server() -> (String, TempDir, AppState) {
     let tmp = TempDir::new().unwrap();
@@ -100,6 +100,21 @@ async fn sse_stream_emits_snapshot_then_live_event_then_closes() {
             attributes_json: None,
         }))
         .await;
+        bus.publish(RunEvent::ModelCallFinished(ModelCallFinishedEvent {
+            span_id: "span_run".into(),
+            provider: "test-provider".into(),
+            model: "test-model".into(),
+            input_token_count: Some(5),
+            output_token_count: Some(3),
+            cost_usd: None,
+            prompt_hash: "sha256:prompt".into(),
+            response_hash: Some("sha256:response".into()),
+            prompt_payload_ref: None,
+            response_payload_ref: None,
+            tool_calls_requested: None,
+            capability_path: None,
+        }))
+        .await;
         // Closing lifecycle event so the SSE handler ends gracefully.
         bus.publish(RunEvent::RunFinished(RunFinishedEvent {
             run_id: run_id_emit.clone(),
@@ -143,9 +158,7 @@ async fn sse_stream_emits_snapshot_then_live_event_then_closes() {
             let bytes = chunk.expect("read chunk");
             acc.extend_from_slice(&bytes);
             let text = std::str::from_utf8(&acc).unwrap_or("");
-            if text.contains("event: snapshot")
-                && text.contains("event: run_finished")
-            {
+            if text.contains("event: snapshot") && text.contains("event: run_finished") {
                 break;
             }
         }
@@ -159,9 +172,12 @@ async fn sse_stream_emits_snapshot_then_live_event_then_closes() {
         "expected 'event: snapshot' in body; got:\n{body_text}"
     );
     assert!(
-        body_text.contains("event: run_started")
-            || body_text.contains("event: span_started"),
+        body_text.contains("event: run_started") || body_text.contains("event: span_started"),
         "expected at least one live event (run_started or span_started) in body; got:\n{body_text}"
+    );
+    assert!(
+        body_text.contains("event: model_call_finished"),
+        "expected span-scoped model_call_finished in body; got:\n{body_text}"
     );
     assert!(
         body_text.contains("event: run_finished"),
