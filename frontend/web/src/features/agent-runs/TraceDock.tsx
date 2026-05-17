@@ -22,7 +22,7 @@ function heightPx(h: DockHeight): number {
 }
 
 export function TraceDock() {
-  const { height, activeRunId, mode, selectedSpanId, minimize, setHeight, setSelectedSpan } =
+  const { height, activeRunId, selectedSpanId, minimize, setHeight, setSelectedSpan } =
     useTraceDock();
   const navigate = useNavigate();
 
@@ -56,9 +56,12 @@ export function TraceDock() {
   // Decisions derived from spans that carry a decision_idx, deduped and sorted.
   const decisions = useMemo(() => deriveDecisions(q.data?.spans ?? []), [q.data]);
 
+  const summary = q.data?.summary;
+  const isLive = summary?.status === "running";
+
   const qc = useQueryClient();
   useEffect(() => {
-    if (!activeRunId || mode !== "live") return;
+    if (!activeRunId || !isLive) return;
     const close = openAgentRunStream(activeRunId, (ev) => {
       if (ev.event === "summary") {
         qc.setQueryData<AgentRunDetail>(agentRunKeys.run(activeRunId), (prev) =>
@@ -72,13 +75,10 @@ export function TraceDock() {
       }
     });
     return close;
-  }, [activeRunId, mode, qc]);
+  }, [activeRunId, isLive, qc]);
 
   if (!activeRunId) return null;
   if (height === "collapsed") return null;
-
-  const summary = q.data?.summary;
-  const isLive = mode === "live";
 
   return (
     <div

@@ -24,7 +24,6 @@ describe("TraceDock", () => {
       height: "collapsed",
       selectedSpanId: null,
       activeRunId: null,
-      mode: "post-hoc",
       lastOpenHeight: "working",
     });
   });
