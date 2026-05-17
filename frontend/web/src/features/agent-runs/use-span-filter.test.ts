@@ -2,13 +2,16 @@
 import { describe, expect, test, beforeEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { useSpanFilter } from "./use-span-filter";
-import { MOCK_RUN_COMPLETED } from "./mock-fixtures";
+import { MOCK_RUN_COMPLETED, MOCK_RUN_ERROR } from "./mock-fixtures";
 
 const allSpans = MOCK_RUN_COMPLETED.spans;
 const runId = MOCK_RUN_COMPLETED.summary.run_id;
 
 describe("useSpanFilter", () => {
-  beforeEach(() => localStorage.clear());
+  beforeEach(() => {
+    localStorage.clear();
+    window.history.replaceState({}, "", "/");
+  });
 
   test("empty filter passes all spans", () => {
     const { result } = renderHook(() => useSpanFilter({ runId, spans: allSpans }));
@@ -45,5 +48,20 @@ describe("useSpanFilter", () => {
     unmount();
     const { result: r2 } = renderHook(() => useSpanFilter({ runId, spans: allSpans }));
     expect(r2.current.query).toBe("model:gpt-5");
+  });
+
+  test("status=all (default) passes all spans", () => {
+    const { result } = renderHook(() => useSpanFilter({ runId, spans: allSpans }));
+    expect(result.current.status).toBe("all");
+    expect(result.current.filtered).toHaveLength(allSpans.length);
+  });
+
+  test("status filter narrows to spans with matching status", () => {
+    const errorSpans = MOCK_RUN_ERROR.spans;
+    const errorRunId = MOCK_RUN_ERROR.summary.run_id;
+    const { result } = renderHook(() => useSpanFilter({ runId: errorRunId, spans: errorSpans }));
+    act(() => result.current.setStatus("red"));
+    expect(result.current.filtered.length).toBeGreaterThan(0);
+    expect(result.current.filtered.every((s) => s.status === "error")).toBe(true);
   });
 });

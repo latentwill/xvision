@@ -96,6 +96,11 @@ export function useSpanFilter({ runId, spans }: { runId: string; spans: RunSpan[
       const cat = categoryOf(s.kind);
       if (kinds.size > 0 && !kinds.has(cat)) return false;
       if (decisionFilter !== "all" && String(s.decision_idx ?? "") !== decisionFilter) return false;
+      // Status predicate
+      if (status === "green" && s.status !== "ok") return false;
+      if (status === "blue" && s.status !== "in_progress") return false;
+      if (status === "red" && s.status !== "error") return false;
+      // TODO(agent-run-observability): wire amber to warning_count when backend adds it
       if (!q) return true;
       const tokens = q.split(/\s+/);
       return tokens.every((tok) => {
@@ -112,7 +117,7 @@ export function useSpanFilter({ runId, spans }: { runId: string; spans: RunSpan[
         );
       });
     });
-  }, [spans, query, kinds, decisionFilter]);
+  }, [spans, query, kinds, status, decisionFilter]);
 
   return {
     query, setQuery,
