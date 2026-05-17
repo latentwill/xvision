@@ -43,15 +43,15 @@ export function TraceDock() {
     enabled: !!activeRunId,
   });
 
-  const selectedSpan = useMemo(
-    () => q.data?.spans.find((s) => s.span_id === selectedSpanId) ?? q.data?.spans[0] ?? null,
-    [q.data, selectedSpanId],
-  );
-
   const filter = useSpanFilter({
     runId: activeRunId ?? "",
     spans: q.data?.spans ?? [],
   });
+
+  const selectedSpan = useMemo(
+    () => filter.filtered.find((s) => s.span_id === selectedSpanId) ?? filter.filtered[0] ?? null,
+    [filter.filtered, selectedSpanId],
+  );
 
   // Decisions derived from spans that carry a decision_idx, deduped and sorted.
   const decisions = useMemo(() => deriveDecisions(q.data?.spans ?? []), [q.data]);

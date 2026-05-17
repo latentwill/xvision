@@ -1,6 +1,7 @@
 // frontend/web/src/routes/agent-runs-detail.test.tsx
 import { describe, expect, test } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { AgentRunDetailRoute } from "./agent-runs-detail";
@@ -29,5 +30,16 @@ describe("AgentRunDetailRoute", () => {
   test("renders an error state for unknown id", async () => {
     renderAt("/agent-runs/missing");
     await waitFor(() => expect(screen.getByText(/not found/i)).toBeInTheDocument());
+  });
+
+  test("inspector selection falls back to the first filtered span", async () => {
+    renderAt("/agent-runs/run_abc1234");
+    await waitFor(() => expect(screen.getByText(/Improve BTC/)).toBeInTheDocument());
+    await screen.findByTestId("span-row-s1");
+
+    await userEvent.click(screen.getByRole("button", { name: /^MODEL$/i }));
+
+    expect(screen.queryByText("s1")).not.toBeInTheDocument();
+    expect(await screen.findByText("s3")).toBeInTheDocument();
   });
 });

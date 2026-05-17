@@ -24,15 +24,15 @@ export function AgentRunDetailRoute() {
   });
   const [selectedSpanId, setSelectedSpanId] = useState<string | null>(null);
 
-  const selectedSpan = useMemo(
-    () => q.data?.spans.find((s) => s.span_id === selectedSpanId) ?? q.data?.spans[0] ?? null,
-    [q.data, selectedSpanId],
-  );
-
   const filter = useSpanFilter({
     runId,
     spans: q.data?.spans ?? [],
   });
+
+  const selectedSpan = useMemo(
+    () => filter.filtered.find((s) => s.span_id === selectedSpanId) ?? filter.filtered[0] ?? null,
+    [filter.filtered, selectedSpanId],
+  );
 
   const decisions = useMemo(() => deriveDecisions(q.data?.spans ?? []), [q.data]);
 

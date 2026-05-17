@@ -2,7 +2,7 @@
 import { describe, expect, test, beforeEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { useSpanFilter } from "./use-span-filter";
-import { MOCK_RUN_COMPLETED, MOCK_RUN_ERROR } from "./mock-fixtures";
+import { MOCK_RUN_COMPLETED, MOCK_RUN_ERROR, MOCK_RUN_LIVE } from "./mock-fixtures";
 
 const allSpans = MOCK_RUN_COMPLETED.spans;
 const runId = MOCK_RUN_COMPLETED.summary.run_id;
@@ -63,5 +63,28 @@ describe("useSpanFilter", () => {
     act(() => result.current.setStatus("red"));
     expect(result.current.filtered.length).toBeGreaterThan(0);
     expect(result.current.filtered.every((s) => s.status === "error")).toBe(true);
+  });
+
+  test("switching runId loads that run's filters instead of persisting stale state", () => {
+    const liveRunId = MOCK_RUN_LIVE.summary.run_id;
+    localStorage.setItem(
+      `xvn.agent-runs.filter.${liveRunId}`,
+      JSON.stringify({ q: "", k: [], s: "blue", d: "all" }),
+    );
+
+    const { result, rerender } = renderHook(
+      ({ id, spans }) => useSpanFilter({ runId: id, spans }),
+      { initialProps: { id: runId, spans: allSpans } },
+    );
+
+    act(() => result.current.setQuery("model:gpt-5"));
+    expect(result.current.query).toBe("model:gpt-5");
+
+    rerender({ id: liveRunId, spans: MOCK_RUN_LIVE.spans });
+
+    expect(result.current.query).toBe("");
+    expect(result.current.status).toBe("blue");
+    expect(result.current.filtered.every((s) => s.status === "in_progress")).toBe(true);
+    expect(localStorage.getItem(`xvn.agent-runs.filter.${liveRunId}`)).not.toContain("model:gpt-5");
   });
 });

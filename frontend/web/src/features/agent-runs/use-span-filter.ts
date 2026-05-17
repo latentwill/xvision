@@ -1,5 +1,5 @@
 // frontend/web/src/features/agent-runs/use-span-filter.ts
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type SetStateAction } from "react";
 import type { RunSpan } from "@/api/types-agent-runs";
 import { categoryOf, type SpanCategory } from "./span-colors";
 
@@ -12,16 +12,22 @@ type SerializedState = {
   d: string;
 };
 
+type RunFilterState = SerializedState & {
+  runId: string;
+};
+
 function lsKey(runId: string): string {
   return `xvn.agent-runs.filter.${runId}`;
 }
 
-function loadInitial(runId: string): SerializedState {
+function loadInitial(runId: string, includeUrl = true): SerializedState {
   try {
-    const url = new URL(window.location.href);
-    const fromUrl = url.searchParams.get("q");
-    if (fromUrl) {
-      return parseQueryString(fromUrl);
+    if (includeUrl) {
+      const url = new URL(window.location.href);
+      const fromUrl = url.searchParams.get("q");
+      if (fromUrl) {
+        return parseQueryString(fromUrl);
+      }
     }
     const raw = localStorage.getItem(lsKey(runId));
     if (raw) return JSON.parse(raw) as SerializedState;
@@ -29,6 +35,14 @@ function loadInitial(runId: string): SerializedState {
     /* fall through */
   }
   return { q: "", k: [], s: "all", d: "all" };
+}
+
+function initialForRun(runId: string, includeUrl = true): RunFilterState {
+  return { runId, ...loadInitial(runId, includeUrl) };
+}
+
+function stateForRun(state: RunFilterState, runId: string): RunFilterState {
+  return state.runId === runId ? state : initialForRun(runId, false);
 }
 
 function parseQueryString(qs: string): SerializedState {
@@ -62,14 +76,17 @@ function serialize(s: SerializedState): string {
 }
 
 export function useSpanFilter({ runId, spans }: { runId: string; spans: RunSpan[] }) {
-  const initial = useMemo(() => loadInitial(runId), [runId]);
-  const [query, setQuery] = useState(initial.q);
-  const [kinds, setKinds] = useState<Set<SpanCategory>>(new Set(initial.k));
-  const [status, setStatus] = useState<StatusFilter>(initial.s);
-  const [decisionFilter, setDecisionFilter] = useState<string>(initial.d);
+  const [state, setState] = useState<RunFilterState>(() => initialForRun(runId));
 
   useEffect(() => {
-    const state: SerializedState = { q: query, k: [...kinds], s: status, d: decisionFilter };
+    setState((prev) => (prev.runId === runId ? prev : initialForRun(runId, false)));
+  }, [runId]);
+
+  const activeState = state.runId === runId ? state : initialForRun(runId, false);
+  const kinds = useMemo(() => new Set(activeState.k), [activeState.k]);
+
+  useEffect(() => {
+    if (!runId || state.runId !== runId) return;
     const qs = serialize(state);
     try {
       localStorage.setItem(lsKey(runId), JSON.stringify(state));
@@ -80,26 +97,40 @@ export function useSpanFilter({ runId, spans }: { runId: string; spans: RunSpan[
     } catch {
       /* swallow */
     }
-  }, [runId, query, kinds, status, decisionFilter]);
+  }, [runId, state]);
 
-  const toggleKind = (k: SpanCategory) =>
-    setKinds((prev) => {
-      const next = new Set(prev);
-      if (next.has(k)) next.delete(k);
-      else next.add(k);
-      return next;
+  const setQuery = (next: SetStateAction<string>) =>
+    setState((prev) => {
+      const base = stateForRun(prev, runId);
+      const q = typeof next === "function" ? next(base.q) : next;
+      return { ...base, q };
     });
 
+  const toggleKind = (k: SpanCategory) =>
+    setState((prev) => {
+      const base = stateForRun(prev, runId);
+      const next = new Set(base.k);
+      if (next.has(k)) next.delete(k);
+      else next.add(k);
+      return { ...base, k: [...next] };
+    });
+
+  const setStatus = (s: StatusFilter) =>
+    setState((prev) => ({ ...stateForRun(prev, runId), s }));
+
+  const setDecisionFilter = (d: string) =>
+    setState((prev) => ({ ...stateForRun(prev, runId), d }));
+
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const q = activeState.q.trim().toLowerCase();
     return spans.filter((s) => {
       const cat = categoryOf(s.kind);
       if (kinds.size > 0 && !kinds.has(cat)) return false;
-      if (decisionFilter !== "all" && String(s.decision_idx ?? "") !== decisionFilter) return false;
+      if (activeState.d !== "all" && String(s.decision_idx ?? "") !== activeState.d) return false;
       // Status predicate
-      if (status === "green" && s.status !== "ok") return false;
-      if (status === "blue" && s.status !== "in_progress") return false;
-      if (status === "red" && s.status !== "error") return false;
+      if (activeState.s === "green" && s.status !== "ok") return false;
+      if (activeState.s === "blue" && s.status !== "in_progress") return false;
+      if (activeState.s === "red" && s.status !== "error") return false;
       // TODO(agent-run-observability): wire amber to warning_count when backend adds it
       if (!q) return true;
       const tokens = q.split(/\s+/);
@@ -117,13 +148,13 @@ export function useSpanFilter({ runId, spans }: { runId: string; spans: RunSpan[
         );
       });
     });
-  }, [spans, query, kinds, status, decisionFilter]);
+  }, [spans, activeState.q, activeState.d, activeState.s, kinds]);
 
   return {
-    query, setQuery,
+    query: activeState.q, setQuery,
     kinds, toggleKind,
-    status, setStatus,
-    decisionFilter, setDecisionFilter,
+    status: activeState.s, setStatus,
+    decisionFilter: activeState.d, setDecisionFilter,
     filtered,
     summary: { total: spans.length, filtered: filtered.length },
   };

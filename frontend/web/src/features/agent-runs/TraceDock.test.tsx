@@ -54,4 +54,16 @@ describe("TraceDock", () => {
     await userEvent.click(screen.getByLabelText(/minimize/i));
     expect(useTraceDock.getState().height).toBe("collapsed");
   });
+
+  test("inspector selection falls back to the first filtered span", async () => {
+    useTraceDock.setState({ activeRunId: "run_abc1234", height: "working" });
+    renderDock();
+    await screen.findByTestId("trace-dock-body");
+    await screen.findByTestId("flame-bar-s1");
+
+    await userEvent.click(screen.getByRole("button", { name: /^MODEL$/i }));
+
+    expect(screen.queryByText("s1")).not.toBeInTheDocument();
+    expect(await screen.findByText("s3")).toBeInTheDocument();
+  });
 });
