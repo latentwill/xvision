@@ -610,7 +610,7 @@ describe("AuthoringRoute agent composition", () => {
           model: "deepseek/deepseek-v4-flash",
           system_prompt: "Trade with discipline.",
           skill_ids: [],
-          max_tokens: 4096,
+          max_tokens: null,
         },
       ],
       archived: false,
@@ -653,7 +653,7 @@ describe("AuthoringRoute agent composition", () => {
             model: "deepseek/deepseek-v4-flash",
             system_prompt: "Trade with discipline.",
             skill_ids: [],
-            max_tokens: 4096,
+            max_tokens: null,
           },
         ],
       });

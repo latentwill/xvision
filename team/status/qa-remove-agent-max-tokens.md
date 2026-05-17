@@ -76,7 +76,7 @@ deliberate.
 
 ## Implementation summary
 
-Frontend (`frontend/web/src/components/agent/`):
+Frontend:
 - `SlotForm.tsx`: removed the entire `MaxTokensInput` component, the
   `buildCatalogTooltip` helper, the catalog/`modelMetadata` imports it
   pulled in, the `slotProviderRow`/`slotProviderKind` derivations that
@@ -87,6 +87,9 @@ Frontend (`frontend/web/src/components/agent/`):
 - `AgentForm.tsx`: kept `BLANK_SLOT.max_tokens: null` (the field still
   exists on `AgentSlot`); replaced the inline q15 comment with a
   rationale comment pointing at the removal.
+- `routes/authoring.tsx`: the inline "create and attach agent" flow now
+  sends `max_tokens: null` for new slots instead of seeding the removed
+  `4096` override.
 - `agents.test.tsx`: rewrote — kept the `modelMetadata table` describe
   block (7 tests; the editorial lookup still serves provider-catalog
   tooling), dropped the SlotForm-rendering UX tests that asserted the
@@ -107,7 +110,7 @@ Engine (`crates/xvision-engine/src/agent/`):
   - `execute_slot_with_unset_max_tokens_hands_dispatcher_none`
     (`SlotInput.max_tokens: None` → request has `None`).
 
-Nothing else changed. No migration. No wire-schema edit. No touches to
+No migration. No wire-schema edit. No touches to
 `agents/store.rs`, `agents/model.rs`, `agents/validate.rs`,
 `agent/pipeline.rs`, the eval executors, or `types.gen/`.
 
