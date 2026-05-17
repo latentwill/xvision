@@ -57,6 +57,10 @@ target/
 
 # Git worktrees for parallel team operation (see team/README.md)
 .worktrees/
+.claude/worktrees/
+
+# Local tool workspaces
+.clawpatch/
 
 # Frontend bundle (Vite emits into the dashboard crate; baked at compile time)
 crates/xvision-dashboard/static/*
