@@ -12,6 +12,7 @@ pub mod blobs;
 pub mod bus;
 pub mod config;
 pub mod events;
+pub mod export;
 pub mod janitor;
 pub mod recorder;
 pub mod redactor;
@@ -25,6 +26,10 @@ pub use bus::RunEventBus;
 pub use config::{
     default_config_path, ObservabilityConfig, RetentionConfig, RetentionMode,
     CONFIG_FILE_NAME, ENV_OVERRIDE_PREFIX,
+};
+pub use export::{
+    build_export, build_report, render_report, AgentRunExport, AgentRunReport,
+    ExportError, ExportTotals, FinalArtifact, SpanNode, SCHEMA_VERSION,
 };
 pub use events::{
     ArtifactWrittenEvent, AssistantTextDeltaEvent, BackpressureDroppedEvent,
