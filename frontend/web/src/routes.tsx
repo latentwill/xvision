@@ -13,6 +13,7 @@ const AgentsEditRoute = lazy(() => import("./routes/agents-edit").then((m) => ({
 const AuthoringRoute = lazy(() => import("./routes/authoring").then((m) => ({ default: m.AuthoringRoute })));
 const EvalRunsRoute = lazy(() => import("./routes/eval-runs").then((m) => ({ default: m.EvalRunsRoute })));
 const EvalRunDetailRoute = lazy(() => import("./routes/eval-runs-detail").then((m) => ({ default: m.EvalRunDetailRoute })));
+const AgentRunDetailRoute = lazy(() => import("./routes/agent-runs-detail").then((m) => ({ default: m.AgentRunDetailRoute })));
 const EvalCompareRoute = lazy(() => import("./routes/eval-compare").then((m) => ({ default: m.EvalCompareRoute })));
 const LiveRoute = lazy(() => import("./routes/live").then((m) => ({ default: m.LiveRoute })));
 const SetupRoute = lazy(() => import("./routes/setup").then((m) => ({ default: m.SetupRoute })));
@@ -50,6 +51,7 @@ export const router = createBrowserRouter([
       { path: "authoring/:id", element: page(<AuthoringRoute />) },
       { path: "eval-runs", element: page(<EvalRunsRoute />) },
       { path: "eval-runs/:runId", element: page(<EvalRunDetailRoute />) },
+      { path: "agent-runs/:runId", element: page(<AgentRunDetailRoute />) },
       { path: "eval-runs/compare", element: page(<EvalCompareRoute />) },
       { path: "live/:id", element: page(<LiveRoute />) },
       { path: "setup", element: page(<SetupRoute />) },
