@@ -61,6 +61,8 @@ export function EvalRunDetailRoute() {
   });
   useLiveRunStream(id, q.data, qc);
 
+  // TODO(agent-run-observability): cross-link decision-row click → open dock + set decisionFilter to span's decision_idx. Needs design pass — eval-run decision rows do not map 1:1 to agent-run span decision_idx values.
+
   // TODO(agent-run-observability): replace hardcoded mock id with
   // summary.agent_run_id once the backend adds it to eval RunSummary.
   useEffect(() => {

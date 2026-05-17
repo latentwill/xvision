@@ -10,6 +10,8 @@ import { agentRunKeys, getAgentRun } from "@/api/agent-runs";
 import { AgentRunRailTree } from "@/features/agent-runs/AgentRunRailTree";
 import { AgentRunIndentedTimeline } from "@/features/agent-runs/AgentRunIndentedTimeline";
 import { SpanInspector } from "@/features/agent-runs/SpanInspector";
+import { FilterBar } from "@/features/agent-runs/FilterBar";
+import { useSpanFilter } from "@/features/agent-runs/use-span-filter";
 import { useTraceDock } from "@/stores/trace-dock";
 
 export function AgentRunDetailRoute() {
@@ -25,6 +27,23 @@ export function AgentRunDetailRoute() {
     () => q.data?.spans.find((s) => s.span_id === selectedSpanId) ?? q.data?.spans[0] ?? null,
     [q.data, selectedSpanId],
   );
+
+  const filter = useSpanFilter({
+    runId,
+    spans: q.data?.spans ?? [],
+  });
+
+  const decisions = useMemo(() => {
+    const seen = new Set<number>();
+    const out: { i: number }[] = [];
+    for (const s of q.data?.spans ?? []) {
+      if (s.decision_idx != null && !seen.has(s.decision_idx)) {
+        seen.add(s.decision_idx);
+        out.push({ i: s.decision_idx });
+      }
+    }
+    return out.sort((a, b) => a.i - b.i);
+  }, [q.data]);
 
   useEffect(() => {
     if (q.data) {
@@ -78,17 +97,28 @@ export function AgentRunDetailRoute() {
         </span>
       </Card>
 
+      <Card className="mb-3 overflow-hidden">
+        <FilterBar
+          query={filter.query} setQuery={filter.setQuery}
+          kinds={filter.kinds} toggleKind={filter.toggleKind}
+          status={filter.status} setStatus={filter.setStatus}
+          decisionFilter={filter.decisionFilter} setDecisionFilter={filter.setDecisionFilter}
+          decisions={decisions}
+          total={filter.summary.total} filtered={filter.summary.filtered}
+        />
+      </Card>
+
       <div className="grid grid-cols-[220px_1fr_400px] gap-3 h-[70vh]">
         <Card className="overflow-hidden">
           <AgentRunRailTree
-            spans={detail.spans}
+            spans={filter.filtered}
             selectedSpanId={selectedSpan?.span_id ?? null}
             onSelect={setSelectedSpanId}
           />
         </Card>
         <Card className="overflow-hidden">
           <AgentRunIndentedTimeline
-            spans={detail.spans}
+            spans={filter.filtered}
             selectedSpanId={selectedSpan?.span_id ?? null}
             onSelect={setSelectedSpanId}
           />

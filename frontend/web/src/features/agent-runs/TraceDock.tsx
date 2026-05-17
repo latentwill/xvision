@@ -8,6 +8,8 @@ import { useTraceDock, type DockHeight } from "@/stores/trace-dock";
 import { FlameGraph } from "./FlameGraph";
 import { SpanInspector } from "./SpanInspector";
 import { HaltStrategyButton } from "./HaltStrategyButton";
+import { FilterBar } from "./FilterBar";
+import { useSpanFilter } from "./use-span-filter";
 
 function heightPx(h: DockHeight): number {
   if (h === "collapsed") return 0;
@@ -44,6 +46,24 @@ export function TraceDock() {
     () => q.data?.spans.find((s) => s.span_id === selectedSpanId) ?? q.data?.spans[0] ?? null,
     [q.data, selectedSpanId],
   );
+
+  const filter = useSpanFilter({
+    runId: activeRunId ?? "",
+    spans: q.data?.spans ?? [],
+  });
+
+  // Decisions derived from spans that carry a decision_idx, deduped and sorted.
+  const decisions = useMemo(() => {
+    const seen = new Set<number>();
+    const out: { i: number }[] = [];
+    for (const s of q.data?.spans ?? []) {
+      if (s.decision_idx != null && !seen.has(s.decision_idx)) {
+        seen.add(s.decision_idx);
+        out.push({ i: s.decision_idx });
+      }
+    }
+    return out.sort((a, b) => a.i - b.i);
+  }, [q.data]);
 
   const qc = useQueryClient();
   useEffect(() => {
@@ -126,11 +146,21 @@ export function TraceDock() {
           </button>
         </div>
       </div>
+      {height !== "peek" ? (
+        <FilterBar
+          query={filter.query} setQuery={filter.setQuery}
+          kinds={filter.kinds} toggleKind={filter.toggleKind}
+          status={filter.status} setStatus={filter.setStatus}
+          decisionFilter={filter.decisionFilter} setDecisionFilter={filter.setDecisionFilter}
+          decisions={decisions}
+          total={filter.summary.total} filtered={filter.summary.filtered}
+        />
+      ) : null}
       <div data-testid="trace-dock-body" className="flex flex-1 min-h-0">
         <div className={`min-w-0 ${height === "peek" ? "flex-1" : "flex-1 border-r border-border"}`}>
           {q.data ? (
             <FlameGraph
-              spans={q.data.spans}
+              spans={filter.filtered}
               selectedSpanId={selectedSpan?.span_id ?? null}
               onSelect={setSelectedSpan}
             />
