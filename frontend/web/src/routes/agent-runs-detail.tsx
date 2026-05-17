@@ -7,7 +7,6 @@ import { Card } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
 import { ApiError } from "@/api/client";
 import { agentRunKeys, getAgentRun } from "@/api/agent-runs";
-import { AgentRunRailTree } from "@/features/agent-runs/AgentRunRailTree";
 import { AgentRunIndentedTimeline } from "@/features/agent-runs/AgentRunIndentedTimeline";
 import { SpanInspector } from "@/features/agent-runs/SpanInspector";
 import { FilterBar } from "@/features/agent-runs/FilterBar";
@@ -117,15 +116,8 @@ export function AgentRunDetailRoute() {
         />
       </Card>
 
-      <div className="grid grid-cols-1 gap-3 xl:grid-cols-[220px_minmax(0,1fr)_400px] xl:h-[70vh]">
-        <Card className="overflow-hidden min-h-[180px] max-h-[260px] xl:min-h-0 xl:max-h-none">
-          <AgentRunRailTree
-            spans={filter.filtered}
-            selectedSpanId={selectedSpan?.span_id ?? null}
-            onSelect={setSelectedSpanId}
-          />
-        </Card>
-        <Card className="overflow-hidden min-h-[240px] max-h-[360px] xl:min-h-0 xl:max-h-none">
+      <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_400px] xl:h-[70vh]">
+        <Card className="overflow-hidden min-h-[320px] xl:min-h-0 xl:max-h-none">
           <AgentRunIndentedTimeline
             spans={filter.filtered}
             selectedSpanId={selectedSpan?.span_id ?? null}
