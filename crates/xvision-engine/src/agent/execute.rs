@@ -22,11 +22,18 @@ pub struct SlotInput<'a> {
     pub dispatch: Arc<dyn LlmDispatch>,
     pub tools: Arc<ToolRegistry>,
     pub response_schema: Option<ResponseSchema>,
-    /// Operator's per-request output-token budget. `None` lets the
-    /// dispatcher decide: OpenAI-compat omits the field entirely (the
-    /// provider applies its own default); Anthropic falls back to the
-    /// per-model auto value because the API requires the field. Explicit
-    /// values pass through verbatim — no clamping.
+    /// **Deprecated.** Vestigial per-request budget that used to thread
+    /// the operator's `AgentSlot.max_tokens` override through to the
+    /// dispatcher. Retained on the struct so existing callers (the eval
+    /// pipeline, in-tree integration tests) keep compiling — but
+    /// `execute_slot` ignores this field and always hands the dispatcher
+    /// `None`, which makes the llm-layer resolve the cap from the model
+    /// library (`lookup_model(model).auto_max_tokens()` for Anthropic;
+    /// OpenAI-compat omits the field and lets the provider apply its
+    /// own default). See the 2026-05-17 `qa-remove-agent-max-tokens`
+    /// track for the rationale — leaving operators a per-slot override
+    /// was a footgun (4096 set on a 384k-output model silently capped
+    /// production runs).
     pub max_tokens: Option<u32>,
 }
 
@@ -47,12 +54,19 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
     let mut total_input_tokens = 0u32;
     let mut total_output_tokens = 0u32;
 
+    // Per qa-remove-agent-max-tokens (2026-05-17): always hand the
+    // dispatcher `None`. `input.max_tokens` (whether it came from a
+    // legacy persisted `AgentSlot.max_tokens` or a caller that
+    // hand-built a `SlotInput`) is intentionally ignored so the cap
+    // resolves from the model library, not from operator config.
+    let dispatcher_max_tokens: Option<u32> = None;
+
     loop {
         let req = LlmRequest {
             model: input.slot.effective_model(),
             system_prompt: input.slot.prompt.clone(),
             messages: messages.clone(),
-            max_tokens: input.max_tokens,
+            max_tokens: dispatcher_max_tokens,
             tools: tool_defs.clone(),
             temperature: None,
             response_schema: input
@@ -118,6 +132,10 @@ pub(crate) fn response_schema_for_slot(slot: &LLMSlot) -> Option<ResponseSchema>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::llm::{LlmRequest, LlmResponse};
+    use crate::tools::ToolRegistry;
+    use async_trait::async_trait;
+    use std::sync::Mutex;
 
     fn slot(role: &str) -> LLMSlot {
         LLMSlot {
@@ -146,5 +164,118 @@ mod tests {
     #[test]
     fn non_trader_slots_do_not_force_the_trader_schema() {
         assert!(response_schema_for_slot(&slot("intern")).is_none());
+    }
+
+    /// Dispatch double that captures the last `LlmRequest` it saw so we
+    /// can assert what `execute_slot` handed downstream.
+    struct RecordingDispatch {
+        seen: Mutex<Vec<LlmRequest>>,
+        response: LlmResponse,
+    }
+
+    impl RecordingDispatch {
+        fn new(response_text: &str) -> Self {
+            Self {
+                seen: Mutex::new(Vec::new()),
+                response: LlmResponse {
+                    content: vec![ContentBlock::Text {
+                        text: response_text.into(),
+                    }],
+                    stop_reason: StopReason::EndTurn,
+                    input_tokens: 1,
+                    output_tokens: 1,
+                },
+            }
+        }
+
+        fn last_request(&self) -> LlmRequest {
+            self.seen.lock().unwrap().last().cloned().unwrap()
+        }
+    }
+
+    #[async_trait]
+    impl crate::agent::llm::LlmDispatch for RecordingDispatch {
+        async fn complete(&self, req: LlmRequest) -> anyhow::Result<LlmResponse> {
+            self.seen.lock().unwrap().push(req);
+            Ok(self.response.clone())
+        }
+    }
+
+    /// Acceptance test for the 2026-05-17 `qa-remove-agent-max-tokens`
+    /// track: `execute_slot` MUST hand the dispatcher `max_tokens: None`
+    /// regardless of what `SlotInput.max_tokens` carries, so the
+    /// downstream Anthropic dispatcher falls back to
+    /// `lookup_model(model).auto_max_tokens()` (the model-library cap)
+    /// and the OpenAI-compat dispatcher omits the field. Operators
+    /// previously setting `4096` on a 384k-output model used to silently
+    /// cap real production runs; that override is now ignored.
+    #[tokio::test]
+    async fn execute_slot_ignores_persisted_max_tokens_and_hands_dispatcher_none() {
+        let slot = LLMSlot {
+            role: "trader".into(),
+            prompt: "decide".into(),
+            model_requirement: "anthropic.claude-sonnet-4-6".into(),
+            allowed_tools: Vec::new(),
+            provider: Some("anthropic".into()),
+            model: Some("claude-sonnet-4-6".into()),
+        };
+        let dispatch = std::sync::Arc::new(RecordingDispatch::new(
+            r#"{"action":"hold","conviction":0.5,"justification":"test"}"#,
+        ));
+        let tools = std::sync::Arc::new(ToolRegistry::default_with_builtins());
+
+        // Operator persisted a stale 4096 override on this agent slot.
+        let out = execute_slot(SlotInput {
+            slot: &slot,
+            upstream_inputs: serde_json::json!({}),
+            dispatch: dispatch.clone(),
+            tools,
+            response_schema: None,
+            max_tokens: Some(4096),
+        })
+        .await
+        .unwrap();
+
+        assert!(out.text().contains("hold"));
+        let req = dispatch.last_request();
+        assert_eq!(
+            req.max_tokens, None,
+            "execute_slot must drop persisted max_tokens so llm.rs resolves \
+             the cap from the model library; got {:?}",
+            req.max_tokens,
+        );
+    }
+
+    /// Companion test: `None` on `SlotInput` also flows through as
+    /// `None` on the dispatcher request. Together with the test above,
+    /// this pins the "always None at the dispatcher boundary" contract.
+    #[tokio::test]
+    async fn execute_slot_with_unset_max_tokens_hands_dispatcher_none() {
+        let slot = LLMSlot {
+            role: "trader".into(),
+            prompt: "decide".into(),
+            model_requirement: "anthropic.claude-sonnet-4-6".into(),
+            allowed_tools: Vec::new(),
+            provider: Some("anthropic".into()),
+            model: Some("claude-sonnet-4-6".into()),
+        };
+        let dispatch = std::sync::Arc::new(RecordingDispatch::new(
+            r#"{"action":"hold","conviction":0.5,"justification":"test"}"#,
+        ));
+        let tools = std::sync::Arc::new(ToolRegistry::default_with_builtins());
+
+        execute_slot(SlotInput {
+            slot: &slot,
+            upstream_inputs: serde_json::json!({}),
+            dispatch: dispatch.clone(),
+            tools,
+            response_schema: None,
+            max_tokens: None,
+        })
+        .await
+        .unwrap();
+
+        let req = dispatch.last_request();
+        assert_eq!(req.max_tokens, None);
     }
 }
