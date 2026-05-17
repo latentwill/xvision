@@ -1,9 +1,14 @@
 // frontend/web/src/features/agent-runs/RunStatusStrip.test.tsx
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { RunStatusStrip } from "./RunStatusStrip";
+import { useTraceDock } from "@/stores/trace-dock";
 import { MOCK_RUN_COMPLETED, MOCK_RUN_LIVE, MOCK_RUN_ERROR } from "./mock-fixtures";
+
+afterEach(() => {
+  useTraceDock.getState().setActiveRun(null, "post-hoc");
+});
 
 describe("RunStatusStrip", () => {
   test("renders COMPLETED label and aggregates for a completed run", () => {
@@ -102,6 +107,90 @@ describe("RunStatusStrip", () => {
       />,
     );
     expect(screen.getByText("1:30")).toBeInTheDocument();
+  });
+
+  test("isLive + active SSE span derives a chip from streamingState when prop is null", () => {
+    // SSE feed has registered two active spans; the newer one
+    // (highest started_at) should be the chip.
+    const startedOld = new Date(Date.now() - 5000).toISOString();
+    const startedNew = new Date(Date.now() - 1500).toISOString();
+    useTraceDock.getState().markSpanActive("s_old", {
+      name: "agent.plan p_root",
+      started_at: startedOld,
+      kind: "agent.plan",
+    });
+    useTraceDock.getState().markSpanActive("s_new", {
+      name: "model.call gpt-5",
+      started_at: startedNew,
+      kind: "model.call",
+    });
+
+    render(
+      <RunStatusStrip
+        summary={MOCK_RUN_LIVE.summary}
+        currentSpan={null}
+        isLive
+        liveDurationSec={5}
+        tone="live"
+        onExpand={() => {}}
+        onPopOut={() => {}}
+      />,
+    );
+
+    // Newer span wins.
+    expect(screen.getByText(/model\.call gpt-5/)).toBeInTheDocument();
+    expect(screen.queryByText(/agent\.plan p_root/)).not.toBeInTheDocument();
+  });
+
+  test("explicit currentSpan prop wins over the streamingState derivation", () => {
+    useTraceDock.getState().markSpanActive("s_stream", {
+      name: "model.call streamed",
+      started_at: new Date().toISOString(),
+      kind: "model.call",
+    });
+
+    render(
+      <RunStatusStrip
+        summary={MOCK_RUN_LIVE.summary}
+        currentSpan={{
+          name: "explicit prop span",
+          color: "#7dd3fc",
+          label: "TOOL",
+          elapsedMs: 42,
+        }}
+        isLive
+        liveDurationSec={5}
+        tone="live"
+        onExpand={() => {}}
+        onPopOut={() => {}}
+      />,
+    );
+
+    expect(screen.getByText("explicit prop span")).toBeInTheDocument();
+    expect(screen.queryByText(/model\.call streamed/)).not.toBeInTheDocument();
+  });
+
+  test("post-hoc run (isLive=false) ignores streamingState even with active spans", () => {
+    // Stale state left over from a prior live run; should not surface.
+    useTraceDock.getState().markSpanActive("s_leak", {
+      name: "ghost span",
+      started_at: new Date().toISOString(),
+      kind: "model.call",
+    });
+
+    render(
+      <RunStatusStrip
+        summary={MOCK_RUN_COMPLETED.summary}
+        currentSpan={null}
+        isLive={false}
+        liveDurationSec={0}
+        tone="completed"
+        onExpand={() => {}}
+        onPopOut={() => {}}
+      />,
+    );
+
+    expect(screen.queryByText(/ghost span/)).not.toBeInTheDocument();
   });
 
   test("clicking the body calls onExpand; clicking pop-out calls onPopOut (no double-fire)", async () => {

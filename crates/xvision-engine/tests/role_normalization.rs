@@ -98,6 +98,7 @@ async fn pipeline_output_assigned_for_role_variants() {
             seed_inputs: serde_json::json!({}),
             dispatch,
             tools,
+            obs: None,
         })
         .await
         .expect("pipeline runs");
