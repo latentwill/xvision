@@ -55,7 +55,23 @@ export function SpanInspector({
           {color.label}
         </span>
         <span className="text-[11px] font-mono text-text truncate">{span.name}</span>
-        {isStreaming ? (
+        {span.status === "error" ? (
+          // Error badge rides next to the name so operators see the
+          // failed state without scrolling to the body. The full
+          // message lands as a pull-quote in the body below.
+          // qa-trace-error-surfacing (2026-05-17).
+          <span
+            data-testid="span-error-badge"
+            className="ml-auto px-1.5 py-0.5 text-[9px] tracking-[0.16em] font-mono rounded shrink-0"
+            style={{
+              color: "var(--danger)",
+              background: withAlpha("#c8443a", 0.12),
+              border: `1px solid ${withAlpha("#c8443a", 0.5)}`,
+            }}
+          >
+            ERROR
+          </span>
+        ) : isStreaming ? (
           <span
             className="ml-auto px-1.5 py-0.5 text-[9px] tracking-[0.16em] font-mono rounded animate-pulse shrink-0"
             style={{
@@ -71,6 +87,18 @@ export function SpanInspector({
 
       {/* Body */}
       <div className="flex-1 overflow-auto px-3 py-3">
+        {span.status === "error" && span.error_message ? (
+          // Error pull-quote: the operator's primary debug signal when a
+          // span failed. Rendered before prompt/response so it's the
+          // first thing scrolled to. Falls back to status alone when
+          // no message is attached (e.g. older runs).
+          <PullQuote
+            label="ERROR"
+            body={span.error_message}
+            accent="var(--danger)"
+            glyph="!"
+          />
+        ) : null}
         {span.prompt ? (
           <PullQuote label="PROMPT" body={span.prompt} accent={color.hex} glyph="›" />
         ) : span.kind === "model.call" && (span.prompt_payload_ref || span.hash) ? (
