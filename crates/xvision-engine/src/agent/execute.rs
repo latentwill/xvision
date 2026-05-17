@@ -16,17 +16,65 @@ use crate::agent::tool_call;
 use crate::strategies::slot::LLMSlot;
 use crate::tools::ToolRegistry;
 
+/// Hard cap on the number of tool-use round-trips inside `execute_slot`.
+/// A pathological model that always emits `ToolUse` (no `EndTurn`) would
+/// otherwise loop until the upstream LLM budget or wall clock ran out —
+/// see `qa/2026-05-17-comprehensive-codebase-review.md` finding #1. The
+/// dashboard wizard has a sibling constant for its own iteration count;
+/// the two are intentionally independent.
+///
+/// Picked at the top of the 8–12 range from the contract — generous
+/// enough for legitimate multi-tool plans, tight enough to catch a loop
+/// long before it burns through realistic per-decision budgets.
+pub const MAX_TOOL_LOOP_ITERATIONS: usize = 12;
+
+/// Typed errors that `execute_slot` can produce. Wrapped in
+/// `anyhow::Error` at the call boundary so existing `Result<_,
+/// anyhow::Error>` callers (the engine pipeline, eval executors) keep
+/// compiling unchanged — but downstream observability code (e.g. the
+/// post-Phase-B `qa-trace-error-surfacing` track) can `downcast_ref` to
+/// match on the specific variant and pull the structured payload.
+#[derive(Debug, thiserror::Error)]
+pub enum ExecuteSlotError {
+    /// The tool-use loop ran for `MAX_TOOL_LOOP_ITERATIONS` rounds
+    /// without the model emitting `EndTurn` or running out of tool
+    /// calls. Carries enough payload for an operator to diagnose which
+    /// slot wedged and what it was doing.
+    #[error(
+        "execute_slot: tool-use loop exhausted after {iterations} iterations \
+         (slot role={role}, model={model}, last stop_reason={last_stop_reason:?}, \
+         tools_called={tool_names:?}, input_tokens={input_tokens}, \
+         output_tokens={output_tokens})"
+    )]
+    ToolLoopCapExceeded {
+        role: String,
+        model: String,
+        iterations: usize,
+        tool_names: Vec<String>,
+        input_tokens: u32,
+        output_tokens: u32,
+        last_stop_reason: StopReason,
+    },
+}
+
 pub struct SlotInput<'a> {
     pub slot: &'a LLMSlot,
     pub upstream_inputs: serde_json::Value,
     pub dispatch: Arc<dyn LlmDispatch>,
     pub tools: Arc<ToolRegistry>,
     pub response_schema: Option<ResponseSchema>,
-    /// Operator's per-request output-token budget. `None` lets the
-    /// dispatcher decide: OpenAI-compat omits the field entirely (the
-    /// provider applies its own default); Anthropic falls back to the
-    /// per-model auto value because the API requires the field. Explicit
-    /// values pass through verbatim — no clamping.
+    /// **Deprecated.** Vestigial per-request budget that used to thread
+    /// the operator's `AgentSlot.max_tokens` override through to the
+    /// dispatcher. Retained on the struct so existing callers (the eval
+    /// pipeline, in-tree integration tests) keep compiling — but
+    /// `execute_slot` ignores this field and always hands the dispatcher
+    /// `None`, which makes the llm-layer resolve the cap from the model
+    /// library (`lookup_model(model).auto_max_tokens()` for Anthropic;
+    /// OpenAI-compat omits the field and lets the provider apply its
+    /// own default). See the 2026-05-17 `qa-remove-agent-max-tokens`
+    /// track for the rationale — leaving operators a per-slot override
+    /// was a footgun (4096 set on a 384k-output model silently capped
+    /// production runs).
     pub max_tokens: Option<u32>,
 }
 
@@ -47,12 +95,50 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
     let mut total_input_tokens = 0u32;
     let mut total_output_tokens = 0u32;
 
+    // Per qa-remove-agent-max-tokens (2026-05-17): always hand the
+    // dispatcher `None`. `input.max_tokens` (whether it came from a
+    // legacy persisted `AgentSlot.max_tokens` or a caller that
+    // hand-built a `SlotInput`) is intentionally ignored so the cap
+    // resolves from the model library, not from operator config.
+    let dispatcher_max_tokens: Option<u32> = None;
+
+    // Cap on tool-use round-trips (qa-execute-slot-cap, 2026-05-17). A
+    // misbehaving model that always emits `ToolUse` would otherwise
+    // loop until upstream budget exhaustion. The cap counts iterations
+    // BEFORE the dispatch call; the final EndTurn/empty-uses turn does
+    // NOT consume an iteration since it short-circuits below.
+    let mut iterations: usize = 0;
+    let mut tool_names_called: Vec<String> = Vec::new();
+    let mut last_stop_reason: StopReason = StopReason::EndTurn;
+
     loop {
+        if iterations >= MAX_TOOL_LOOP_ITERATIONS {
+            tracing::warn!(
+                slot_role = %input.slot.role,
+                model = %input.slot.effective_model(),
+                iterations,
+                last_stop_reason = ?last_stop_reason,
+                tool_names = ?tool_names_called,
+                input_tokens = total_input_tokens,
+                output_tokens = total_output_tokens,
+                "execute_slot tool-use loop exhausted iteration cap",
+            );
+            return Err(anyhow::Error::new(ExecuteSlotError::ToolLoopCapExceeded {
+                role: input.slot.role.clone(),
+                model: input.slot.effective_model(),
+                iterations,
+                tool_names: tool_names_called,
+                input_tokens: total_input_tokens,
+                output_tokens: total_output_tokens,
+                last_stop_reason,
+            }));
+        }
+
         let req = LlmRequest {
             model: input.slot.effective_model(),
             system_prompt: input.slot.prompt.clone(),
             messages: messages.clone(),
-            max_tokens: input.max_tokens,
+            max_tokens: dispatcher_max_tokens,
             tools: tool_defs.clone(),
             temperature: None,
             response_schema: input
@@ -63,6 +149,7 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
         let resp = input.dispatch.complete(req).await?;
         total_input_tokens = total_input_tokens.saturating_add(resp.input_tokens);
         total_output_tokens = total_output_tokens.saturating_add(resp.output_tokens);
+        last_stop_reason = resp.stop_reason;
 
         let uses = tool_call::tool_uses(&resp.content);
 
@@ -91,6 +178,7 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
         // whole slot on a single bad tool call.
         let mut results = Vec::with_capacity(uses.len());
         for (tu_id, tu_name, tu_input) in uses {
+            tool_names_called.push(tu_name.clone());
             let content = match tool_call::invoke(&tu_name, tu_input, input.tools.clone()).await {
                 Ok(s) => s,
                 Err(e) => format!("tool error: {e}"),
@@ -104,6 +192,8 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
             role: "user".into(),
             content: results,
         });
+
+        iterations += 1;
     }
 }
 
@@ -118,6 +208,10 @@ pub(crate) fn response_schema_for_slot(slot: &LLMSlot) -> Option<ResponseSchema>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::llm::{LlmRequest, LlmResponse};
+    use crate::tools::ToolRegistry;
+    use async_trait::async_trait;
+    use std::sync::Mutex;
 
     fn slot(role: &str) -> LLMSlot {
         LLMSlot {
@@ -146,5 +240,118 @@ mod tests {
     #[test]
     fn non_trader_slots_do_not_force_the_trader_schema() {
         assert!(response_schema_for_slot(&slot("intern")).is_none());
+    }
+
+    /// Dispatch double that captures the last `LlmRequest` it saw so we
+    /// can assert what `execute_slot` handed downstream.
+    struct RecordingDispatch {
+        seen: Mutex<Vec<LlmRequest>>,
+        response: LlmResponse,
+    }
+
+    impl RecordingDispatch {
+        fn new(response_text: &str) -> Self {
+            Self {
+                seen: Mutex::new(Vec::new()),
+                response: LlmResponse {
+                    content: vec![ContentBlock::Text {
+                        text: response_text.into(),
+                    }],
+                    stop_reason: StopReason::EndTurn,
+                    input_tokens: 1,
+                    output_tokens: 1,
+                },
+            }
+        }
+
+        fn last_request(&self) -> LlmRequest {
+            self.seen.lock().unwrap().last().cloned().unwrap()
+        }
+    }
+
+    #[async_trait]
+    impl crate::agent::llm::LlmDispatch for RecordingDispatch {
+        async fn complete(&self, req: LlmRequest) -> anyhow::Result<LlmResponse> {
+            self.seen.lock().unwrap().push(req);
+            Ok(self.response.clone())
+        }
+    }
+
+    /// Acceptance test for the 2026-05-17 `qa-remove-agent-max-tokens`
+    /// track: `execute_slot` MUST hand the dispatcher `max_tokens: None`
+    /// regardless of what `SlotInput.max_tokens` carries, so the
+    /// downstream Anthropic dispatcher falls back to
+    /// `lookup_model(model).auto_max_tokens()` (the model-library cap)
+    /// and the OpenAI-compat dispatcher omits the field. Operators
+    /// previously setting `4096` on a 384k-output model used to silently
+    /// cap real production runs; that override is now ignored.
+    #[tokio::test]
+    async fn execute_slot_ignores_persisted_max_tokens_and_hands_dispatcher_none() {
+        let slot = LLMSlot {
+            role: "trader".into(),
+            prompt: "decide".into(),
+            model_requirement: "anthropic.claude-sonnet-4-6".into(),
+            allowed_tools: Vec::new(),
+            provider: Some("anthropic".into()),
+            model: Some("claude-sonnet-4-6".into()),
+        };
+        let dispatch = std::sync::Arc::new(RecordingDispatch::new(
+            r#"{"action":"hold","conviction":0.5,"justification":"test"}"#,
+        ));
+        let tools = std::sync::Arc::new(ToolRegistry::default_with_builtins());
+
+        // Operator persisted a stale 4096 override on this agent slot.
+        let out = execute_slot(SlotInput {
+            slot: &slot,
+            upstream_inputs: serde_json::json!({}),
+            dispatch: dispatch.clone(),
+            tools,
+            response_schema: None,
+            max_tokens: Some(4096),
+        })
+        .await
+        .unwrap();
+
+        assert!(out.text().contains("hold"));
+        let req = dispatch.last_request();
+        assert_eq!(
+            req.max_tokens, None,
+            "execute_slot must drop persisted max_tokens so llm.rs resolves \
+             the cap from the model library; got {:?}",
+            req.max_tokens,
+        );
+    }
+
+    /// Companion test: `None` on `SlotInput` also flows through as
+    /// `None` on the dispatcher request. Together with the test above,
+    /// this pins the "always None at the dispatcher boundary" contract.
+    #[tokio::test]
+    async fn execute_slot_with_unset_max_tokens_hands_dispatcher_none() {
+        let slot = LLMSlot {
+            role: "trader".into(),
+            prompt: "decide".into(),
+            model_requirement: "anthropic.claude-sonnet-4-6".into(),
+            allowed_tools: Vec::new(),
+            provider: Some("anthropic".into()),
+            model: Some("claude-sonnet-4-6".into()),
+        };
+        let dispatch = std::sync::Arc::new(RecordingDispatch::new(
+            r#"{"action":"hold","conviction":0.5,"justification":"test"}"#,
+        ));
+        let tools = std::sync::Arc::new(ToolRegistry::default_with_builtins());
+
+        execute_slot(SlotInput {
+            slot: &slot,
+            upstream_inputs: serde_json::json!({}),
+            dispatch: dispatch.clone(),
+            tools,
+            response_schema: None,
+            max_tokens: None,
+        })
+        .await
+        .unwrap();
+
+        let req = dispatch.last_request();
+        assert_eq!(req.max_tokens, None);
     }
 }
