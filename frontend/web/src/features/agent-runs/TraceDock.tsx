@@ -3,7 +3,7 @@ import { useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { agentRunKeys, getAgentRun, openAgentRunStream } from "@/api/agent-runs";
-import type { AgentRunDetail } from "@/api/types-agent-runs";
+import type { AgentRunDetail, RunSpan } from "@/api/types-agent-runs";
 import { useTraceDock, type DockHeight } from "@/stores/trace-dock";
 import { FlameGraph } from "./FlameGraph";
 import { SpanInspector } from "./SpanInspector";
@@ -63,16 +63,101 @@ export function TraceDock() {
   const qc = useQueryClient();
   useEffect(() => {
     if (!activeRunId || !isLive) return;
+    const key = agentRunKeys.run(activeRunId);
     const close = openAgentRunStream(activeRunId, (ev) => {
-      if (ev.event === "summary") {
-        qc.setQueryData<AgentRunDetail>(agentRunKeys.run(activeRunId), (prev) =>
-          prev ? { ...prev, summary: ev.data } : prev,
-        );
-      }
-      if (ev.event === "span") {
-        qc.setQueryData<AgentRunDetail>(agentRunKeys.run(activeRunId), (prev) =>
-          prev ? { ...prev, spans: [...prev.spans, ev.data] } : prev,
-        );
+      switch (ev.event) {
+        // Legacy mock-branch arms — kept for test/dev MODE.
+        case "summary":
+          qc.setQueryData<AgentRunDetail>(key, (prev) =>
+            prev ? { ...prev, summary: ev.data } : prev,
+          );
+          return;
+        case "span":
+          qc.setQueryData<AgentRunDetail>(key, (prev) =>
+            prev ? { ...prev, spans: [...prev.spans, ev.data] } : prev,
+          );
+          return;
+        // Real-wire arms.
+        case "snapshot":
+          // Authoritative resync — replaces the cached detail wholesale.
+          qc.setQueryData<AgentRunDetail>(key, ev.data);
+          return;
+        case "span_started": {
+          const partial: RunSpan = {
+            span_id: ev.data.span_id,
+            parent_span_id: ev.data.parent_span_id ?? null,
+            name: ev.data.name,
+            kind: ev.data.kind,
+            started_at: ev.data.started_at,
+            finished_at: null,
+            status: "in_progress",
+            attributes: {},
+          };
+          qc.setQueryData<AgentRunDetail>(key, (prev) => {
+            if (!prev) return prev;
+            if (prev.spans.some((s) => s.span_id === partial.span_id)) return prev;
+            return { ...prev, spans: [...prev.spans, partial] };
+          });
+          return;
+        }
+        case "span_finished": {
+          qc.setQueryData<AgentRunDetail>(key, (prev) => {
+            if (!prev) return prev;
+            let mutated = false;
+            const spans = prev.spans.map((s) => {
+              if (s.span_id !== ev.data.span_id) return s;
+              mutated = true;
+              return {
+                ...s,
+                finished_at: ev.data.ended_at,
+                status: ev.data.status,
+              };
+            });
+            return mutated ? { ...prev, spans } : prev;
+          });
+          return;
+        }
+        case "run_finished":
+        case "run_interrupted": {
+          qc.setQueryData<AgentRunDetail>(key, (prev) => {
+            if (!prev) return prev;
+            const finished_at =
+              "finished_at" in ev.data ? ev.data.finished_at : prev.summary.finished_at;
+            const nextStatus =
+              ev.event === "run_finished"
+                ? ev.data.status
+                : ("interrupted" as const);
+            return {
+              ...prev,
+              summary: { ...prev.summary, status: nextStatus, finished_at },
+            };
+          });
+          // Pull canonical aggregates (cost, span/model counts, terminal
+          // statuses on spans) on the next tick so the trace dock isn't
+          // left guessing at totals from event-only deltas.
+          qc.invalidateQueries({ queryKey: key });
+          return;
+        }
+        case "model_call_finished":
+        case "tool_call_finished":
+        case "tool_call_failed":
+        case "tool_call_cancelled":
+          // These carry detail (tokens, cost, output hashes) we don't
+          // reconstruct from the event payload alone; refetch the
+          // canonical detail to keep aggregates honest.
+          qc.invalidateQueries({ queryKey: key });
+          return;
+        // Lifecycle / informational arms — no cache side effect.
+        case "run_started":
+        case "tool_call_started":
+        case "assistant_text_delta":
+        case "sidecar_error":
+        case "checkpoint_written":
+        case "supervisor_note":
+        case "artifact_written":
+        case "backpressure_dropped":
+        case "lagged":
+          return;
       }
     });
     return close;

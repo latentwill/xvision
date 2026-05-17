@@ -144,6 +144,126 @@ export type AgentRunDetail = {
   tool_calls: ToolCall[];
 };
 
+// ---------------------------------------------------------------------------
+// SSE stream events (real wire protocol shipped in #235)
+// ---------------------------------------------------------------------------
+//
+// Wire format produced by `crates/xvision-dashboard/src/sse/mod.rs`:
+//
+//   event: snapshot              data: <AgentRunExport JSON>      // first frame
+//   event: <variant_snake_case>  data: <RunEvent JSON>            // tail
+//   event: lagged                data: {"dropped": n}             // synthetic
+//
+// Variants below correspond 1:1 to the Rust `RunEvent` enum in
+// `crates/xvision-observability/src/events.rs`. We intentionally keep the
+// payload types loose (`unknown` / minimal interfaces) for variants the
+// frontend does not yet consume — the recorder owns the canonical shape
+// and reshaping them here would just create drift.
+//
+// The mock branch keeps emitting `summary` / `span` arms; both are
+// retained additively so the dock keeps working in test/dev MODE.
+
+export type StreamSpanStartedData = {
+  span_id: string;
+  run_id: string;
+  parent_span_id: string | null;
+  kind: SpanKind;
+  name: string;
+  started_at: string;
+  otel_trace_id?: string | null;
+  otel_span_id?: string | null;
+  attributes_json?: string | null;
+};
+
+export type StreamSpanFinishedData = {
+  span_id: string;
+  ended_at: string;
+  status: SpanStatus;
+  error_json?: string | null;
+};
+
+export type StreamModelCallFinishedData = {
+  span_id: string;
+  provider: string;
+  model: string;
+  input_token_count?: number | null;
+  output_token_count?: number | null;
+  cost_usd?: number | null;
+  prompt_hash: string;
+  response_hash?: string | null;
+};
+
+export type StreamToolCallStartedData = {
+  span_id: string;
+  tool_name: string;
+  input_hash: string;
+  requires_approval?: boolean;
+  is_run_terminator?: boolean;
+};
+
+export type StreamToolCallFinishedData = {
+  span_id: string;
+  output_hash?: string | null;
+  exit_code?: number | null;
+};
+
+export type StreamToolCallFailedData = {
+  span_id: string;
+  error_json?: string | null;
+};
+
+export type StreamToolCallCancelledData = {
+  span_id: string;
+  reason?: string | null;
+};
+
+export type StreamAssistantTextDeltaData = {
+  span_id: string;
+  run_id: string;
+  delta_len: number;
+};
+
+export type StreamSidecarErrorData = {
+  run_id: string;
+  message: string;
+  severity: string;
+};
+
+export type StreamLaggedData = { dropped: number };
+
+// Loose payloads for events we surface but don't yet render against.
+// Shapes match `crates/xvision-observability/src/events.rs` and may
+// gain typed fields as consumers need them.
+export type StreamCheckpointWrittenData = { run_id: string; path?: string | null };
+export type StreamSupervisorNoteData = { run_id: string; message: string };
+export type StreamArtifactWrittenData = { run_id: string; path?: string | null };
+export type StreamBackpressureDroppedData = { dropped: number };
+
+/**
+ * Stream events surfaced to the dock + components. Mock arms (`summary`,
+ * `span`) are kept additive so the test/dev mock branch keeps working;
+ * real branch arms map 1:1 to the SSE wire vocabulary.
+ */
 export type AgentRunStreamEvent =
+  // Mock-branch arms (Phase 0 fixtures + Vitest).
   | { event: "span"; data: RunSpan }
-  | { event: "summary"; data: AgentRunSummary };
+  | { event: "summary"; data: AgentRunSummary }
+  // Real-branch arms (SSE wire protocol).
+  | { event: "snapshot"; data: AgentRunDetail }
+  | { event: "run_started"; data: { run_id: string; objective: string; started_at: string } }
+  | { event: "run_finished"; data: { run_id: string; finished_at: string; status: RunStatus } }
+  | { event: "run_interrupted"; data: { run_id: string; finished_at: string; reason: string } }
+  | { event: "span_started"; data: StreamSpanStartedData }
+  | { event: "span_finished"; data: StreamSpanFinishedData }
+  | { event: "model_call_finished"; data: StreamModelCallFinishedData }
+  | { event: "tool_call_started"; data: StreamToolCallStartedData }
+  | { event: "tool_call_finished"; data: StreamToolCallFinishedData }
+  | { event: "tool_call_failed"; data: StreamToolCallFailedData }
+  | { event: "tool_call_cancelled"; data: StreamToolCallCancelledData }
+  | { event: "assistant_text_delta"; data: StreamAssistantTextDeltaData }
+  | { event: "sidecar_error"; data: StreamSidecarErrorData }
+  | { event: "checkpoint_written"; data: StreamCheckpointWrittenData }
+  | { event: "supervisor_note"; data: StreamSupervisorNoteData }
+  | { event: "artifact_written"; data: StreamArtifactWrittenData }
+  | { event: "backpressure_dropped"; data: StreamBackpressureDroppedData }
+  | { event: "lagged"; data: StreamLaggedData };
