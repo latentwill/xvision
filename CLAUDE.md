@@ -178,3 +178,26 @@ implementation plans/specs. The current wave intake is
 Next-wave roadmap source: `docs/superpowers/plans/2026-05-13-v2-v4-action-plan.md`.
 The conductor decomposes one wave at a time; do not freelance contracts from
 that list without going through intake.
+
+## Frontend UI rule: no popups
+
+The dashboard SPA does not use popups, modals, sheets, popovers, or any
+overlay that steals focus or paints over the primary surface.
+Confirmations, detail views, agent windows, settings panels, error
+recovery flows, share dialogs — everything routes, docks, rails,
+accordions, tabs, or inline-expands.
+
+Exceptions:
+- Toasts (transient, non-focus-stealing feedback). Allowed.
+- Native browser primitives we cannot reasonably replace (file picker,
+  print dialog). Avoid where possible; do not invent new ones.
+
+Why: popups destroy the spatial mental model of the app, are hostile to
+keyboard navigation, deep-linking, and screen-sharing, and are a sign of
+weak information architecture — the question they answer should have a
+home in the actual layout.
+
+Adopted 2026-05-17 via
+`docs/superpowers/specs/2026-05-17-agent-run-observability-ui-design.md`.
+A separate track will audit existing `Dialog`/`Modal`/`Sheet`/`Popover`
+usage in `frontend/web/src/` and migrate each.
