@@ -36,6 +36,9 @@ violation unless the contract is updated first.
 | `frontend/web/src/routes/eval-runs-detail.tsx` | `eval-inspector-header-polish` | agent-run-observability-followups |
 | `frontend/web/src/routes/eval-runs-detail-mobile.tsx` | `eval-inspector-header-polish` | agent-run-observability-followups |
 | `frontend/web/src/routes/eval-runs.tsx` | `eval-inspector-header-polish` | agent-run-observability-followups |
+| `frontend/web/src/routes/eval-runs-detail.test.tsx` | `eval-inspector-header-polish` | agent-run-observability-followups |
+| `frontend/web/src/routes/eval-runs-detail-mobile.test.tsx` | `eval-inspector-header-polish` | agent-run-observability-followups |
+| `frontend/web/src/routes/eval-runs.test.tsx` | `eval-inspector-header-polish` | agent-run-observability-followups |
 | `crates/xvision-execution/src/alpaca.rs` | `alpaca-paper-crypto-submit` | post-q15 |
 | `crates/xvision-execution/src/broker_surface.rs` | `alpaca-paper-crypto-submit` | post-q15 |
 | `crates/xvision-execution/tests/broker_surface.rs` | `alpaca-paper-crypto-submit` | post-q15 |

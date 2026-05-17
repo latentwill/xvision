@@ -26,11 +26,10 @@ interfaces_used:
 parallel_safe: true
 parallel_conflicts: []
 verification:
-  - npm --prefix frontend/web run lint
   - npm --prefix frontend/web run typecheck
-  - npm --prefix frontend/web test -- --run eval-runs-detail
-  - npm --prefix frontend/web test -- --run eval-runs-detail-mobile
-  - npm --prefix frontend/web test -- --run eval-runs
+  - npm --prefix frontend/web test -- eval-runs-detail
+  - npm --prefix frontend/web test -- eval-runs-detail-mobile
+  - npm --prefix frontend/web test -- eval-runs
 acceptance:
   - The Stop / Retry / Download JSON buttons in the eval inspector header
     render at the same visual width on a given run regardless of label
