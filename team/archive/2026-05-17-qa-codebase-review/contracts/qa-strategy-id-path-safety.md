@@ -5,7 +5,7 @@ wave: qa-2026-05-17
 worktree: .worktrees/qa-strategy-id-path-safety
 branch: task/qa-strategy-id-path-safety
 base: origin/main
-status: ready
+status: pr-open
 depends_on: []
 blocks: []
 stacking: none
