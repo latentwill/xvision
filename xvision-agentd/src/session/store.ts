@@ -1,4 +1,6 @@
 import type { Agent } from "@cline/sdk"
+import type { CumulativeUsage } from "./budget.js"
+import { emptyUsage } from "./budget.js"
 
 export interface BudgetLimits {
   max_input_tokens: number
@@ -21,12 +23,31 @@ export interface Session {
   config: StartRunConfig
   agent: Agent | null
   created_at_ms: number
+  /**
+   * Cumulative token usage across every step in this run. Updated by
+   * `session.step` after each step the agent completes, then compared
+   * against `config.budget_limits` to enforce the per-run token caps.
+   */
+  usage: CumulativeUsage
 }
 
 export interface SessionStore {
   create(run_id: string, config: StartRunConfig): Session
   get(run_id: string): Session | undefined
   attachAgent(run_id: string, agent: Agent): void
+  /**
+   * Add an observed step's usage to this run's cumulative totals. Called
+   * by `session.step` after each successful or aborted step; budget caps
+   * are then checked against the new totals.
+   */
+  addUsage(run_id: string, delta: Partial<CumulativeUsage>): CumulativeUsage
+  /**
+   * Current monotonic clock for this store. Budget enforcement reads
+   * this so the same clock that stamped `created_at_ms` also computes
+   * elapsed wall-clock time — keeps tests deterministic when a fake
+   * `now` is injected via `createStore({ now })`.
+   */
+  now(): number
   end(run_id: string): boolean
 }
 
@@ -48,6 +69,7 @@ export function createStore(opts: StoreOptions = {}): SessionStore {
         config,
         agent: null,
         created_at_ms: now(),
+        usage: emptyUsage(),
       }
       sessions.set(run_id, session)
       return session
@@ -62,6 +84,20 @@ export function createStore(opts: StoreOptions = {}): SessionStore {
       const s = sessions.get(run_id)
       if (!s) throw new Error(`session not found: ${run_id}`)
       s.agent = agent
+    },
+    addUsage(run_id, delta) {
+      const s = sessions.get(run_id)
+      if (!s) throw new Error(`session not found: ${run_id}`)
+      if (typeof delta.input_tokens === "number") {
+        s.usage.input_tokens += delta.input_tokens
+      }
+      if (typeof delta.output_tokens === "number") {
+        s.usage.output_tokens += delta.output_tokens
+      }
+      return { ...s.usage }
+    },
+    now() {
+      return now()
     },
     end(run_id) {
       return sessions.delete(run_id)
