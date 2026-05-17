@@ -7923,6 +7923,7 @@ dependencies = [
  "axum 0.7.9",
  "axum-test",
  "chrono",
+ "futures-util",
  "mime_guess",
  "reqwest",
  "rust-embed",
