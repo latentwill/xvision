@@ -80,6 +80,62 @@ describe("SpanInspector (with pull-quotes)", () => {
     expect(screen.getByText(/LOCKED · LIVE/)).toBeInTheDocument();
   });
 
+  test("model.call without raw text shows hash-only preview + retention note", () => {
+    render(
+      <SpanInspector
+        span={{
+          ...baseSpan,
+          prompt: undefined,
+          response: undefined,
+          hash: "sha256:promptaaa",
+          response_hash: "sha256:respbbb",
+        }}
+        isLive={false}
+        onRerun={() => {}}
+        onJumpToDecision={() => {}}
+      />,
+    );
+    expect(screen.getByText("PROMPT")).toBeInTheDocument();
+    expect(screen.getByText("RESPONSE")).toBeInTheDocument();
+    expect(screen.getAllByText(/hash-only retention/i).length).toBeGreaterThan(0);
+    // Hash also appears in the FIELDS table as response.hash.
+    expect(screen.getByText("response.hash")).toBeInTheDocument();
+  });
+
+  test("model.call with payload refs surfaces them in preview + fields", () => {
+    render(
+      <SpanInspector
+        span={{
+          ...baseSpan,
+          prompt: undefined,
+          response: undefined,
+          prompt_payload_ref: "blob://prompts/p1",
+          response_payload_ref: "blob://responses/r1",
+        }}
+        isLive={false}
+        onRerun={() => {}}
+        onJumpToDecision={() => {}}
+      />,
+    );
+    expect(screen.getAllByText("blob://prompts/p1").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("blob://responses/r1").length).toBeGreaterThan(0);
+    expect(screen.getByText("prompt.ref")).toBeInTheDocument();
+    expect(screen.getByText("response.ref")).toBeInTheDocument();
+  });
+
+  test("displays projected per-call provider + model from model_calls join", () => {
+    render(
+      <SpanInspector
+        span={{ ...baseSpan, provider: "openai", model: "gpt-5-mini" }}
+        isLive={false}
+        onRerun={() => {}}
+        onJumpToDecision={() => {}}
+      />,
+    );
+    expect(screen.getByText("openai")).toBeInTheDocument();
+    expect(screen.getByText("gpt-5-mini")).toBeInTheDocument();
+  });
+
   test("rerun button enabled when not live; clicking calls onRerun(span_id)", async () => {
     const { default: userEvent } = await import("@testing-library/user-event");
     const onRerun = vi.fn();
