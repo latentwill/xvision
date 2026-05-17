@@ -705,6 +705,7 @@ async fn run_inline(id: &str, fixture: &str, decisions: u32, mock: bool) -> CliR
             seed_inputs: seed,
             dispatch: dispatch.clone(),
             tools: tools.clone(),
+            obs: None,
         })
         .await
         .exit_with(XvnExit::Upstream)?;
