@@ -33,7 +33,12 @@ use axum::{
 };
 use tokio_stream::Stream;
 
-use xvision_observability::{build_export, build_report, AgentRunExport, ExportError};
+use serde_json::json;
+
+use xvision_observability::{
+    build_export, build_report, find_blob_owner, AgentRunExport, BlobRef, BlobStore,
+    BlobStoreError, ExportError,
+};
 
 use crate::error::DashboardError;
 use crate::sse::agent_run_sse;
@@ -131,4 +136,95 @@ fn map_err(e: ExportError) -> DashboardError {
         ExportError::NotFound(m) => DashboardError::NotFound(m),
         other => DashboardError::Internal(anyhow::anyhow!(other)),
     }
+}
+
+/// Match `^[0-9a-f]{64}$` without pulling in a regex dep. Refuses
+/// uppercase too — the blob store writes lowercase hex, so anything
+/// else would be a 404 anyway; we'd rather 400 fast on the way in.
+/// Also refuses any traversal characters by construction (`/`, `.`,
+/// `\`) since they're not in `[0-9a-f]`.
+fn is_valid_sha256_hex(s: &str) -> bool {
+    s.len() == 64 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// `GET /api/agent-runs/:id/blobs/:ref` — return the raw bytes of a
+/// blob owned by this run.
+///
+/// `:ref` is a content-addressed sha256 hex; the blob is read from
+/// `<xvn_home>/agent_runs/blobs/<ref>`. The route refuses to serve
+/// blobs that don't belong to this run (404), bodies for runs whose
+/// retention mode is `hash_only` (403; refs shouldn't exist there in
+/// the first place, but we don't trust the producer), and malformed
+/// refs (400).
+///
+/// Response is `application/octet-stream` with
+/// `Cache-Control: private, no-store` because payloads can carry
+/// model output that may contain PII or credentials. No
+/// `Content-Disposition` header — this route is for inline preview,
+/// not download.
+///
+/// Auth gating mirrors `get` — same TODO applies until
+/// `qa-dashboard-auth-hardening` covers it.
+pub async fn get_blob(
+    State(state): State<AppState>,
+    Path((id, blob_ref)): Path<(String, String)>,
+) -> Result<Response, DashboardError> {
+    if !is_valid_sha256_hex(&blob_ref) {
+        return Err(DashboardError::Validation {
+            field: "ref".into(),
+            msg: "expected 64-character lowercase hex sha256".into(),
+        });
+    }
+
+    let retention = match find_blob_owner(&state.pool, &id, &blob_ref)
+        .await
+        .map_err(map_err)?
+    {
+        Some(m) => m,
+        None => {
+            return Err(DashboardError::NotFound(format!(
+                "blob {blob_ref} not associated with run {id}"
+            )));
+        }
+    };
+
+    if retention == "hash_only" {
+        let body = json!({
+            "code": "forbidden",
+            "message": "retention is hash_only — blob bodies are not stored on disk for this run",
+        });
+        let payload = serde_json::to_vec(&body)
+            .unwrap_or_else(|_| b"{\"code\":\"forbidden\"}".to_vec());
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/json"),
+        );
+        return Ok((StatusCode::FORBIDDEN, headers, payload).into_response());
+    }
+
+    let blob_root = state.xvn_home.join("agent_runs").join("blobs");
+    let store = BlobStore::new(blob_root);
+    let bytes = match store.read(&BlobRef(blob_ref.clone())) {
+        Ok(b) => b,
+        Err(BlobStoreError::NotFound(_)) => {
+            return Err(DashboardError::NotFound(format!(
+                "blob {blob_ref} not found on disk"
+            )));
+        }
+        Err(e) => {
+            return Err(DashboardError::Internal(anyhow::anyhow!(e)));
+        }
+    };
+
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/octet-stream"),
+    );
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("private, no-store"),
+    );
+    Ok((StatusCode::OK, headers, bytes).into_response())
 }

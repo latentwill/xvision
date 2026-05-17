@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
   agentRunKeys,
+  fetchAgentRunBlob,
   getAgentRun,
   openAgentRunStream,
   shouldUseMockAgentRuns,
@@ -322,5 +323,75 @@ describe("agent-runs real-mode branch", () => {
     } finally {
       (globalThis as { EventSource: unknown }).EventSource = original;
     }
+  });
+});
+
+describe("fetchAgentRunBlob", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test("returns the body text on 200", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("hello prompt body", {
+        status: 200,
+        headers: { "content-type": "application/octet-stream" },
+      }),
+    );
+    const body = await fetchAgentRunBlob(
+      "run_x",
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    );
+    expect(body).toBe("hello prompt body");
+  });
+
+  test("URL-encodes runId and ref so callers can pass slashes safely", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response("ok", { status: 200 }));
+    await fetchAgentRunBlob("run/with/slash", "ref:weird");
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/agent-runs/run%2Fwith%2Fslash/blobs/ref%3Aweird",
+      expect.objectContaining({ headers: expect.any(Object) }),
+    );
+  });
+
+  test("403 surfaces ApiError with code=forbidden + server message", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          code: "forbidden",
+          message: "retention is hash_only — blob bodies are not stored on disk",
+        }),
+        { status: 403, headers: { "content-type": "application/json" } },
+      ),
+    );
+    await expect(
+      fetchAgentRunBlob(
+        "run_y",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      ),
+    ).rejects.toMatchObject({
+      status: 403,
+      code: "forbidden",
+    });
+  });
+
+  test("404 surfaces ApiError with code=not_found", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({ code: "not_found", message: "blob not associated with run" }),
+        { status: 404, headers: { "content-type": "application/json" } },
+      ),
+    );
+    await expect(
+      fetchAgentRunBlob(
+        "run_z",
+        "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      ),
+    ).rejects.toMatchObject({
+      status: 404,
+      code: "not_found",
+    });
   });
 });

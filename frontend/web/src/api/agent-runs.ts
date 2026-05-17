@@ -379,6 +379,49 @@ export function validateAgentRunDetail(payload: unknown): AgentRunDetail {
 // Public API
 // ---------------------------------------------------------------------------
 
+/**
+ * Fetch the body bytes for a payload ref owned by `runId`. Server
+ * returns `application/octet-stream`; we surface the body as text so
+ * the SpanInspector can render it inline. Binary refs (rare — model
+ * payloads are JSON/UTF-8 in practice) will round-trip through the
+ * browser's UTF-8 decoder.
+ *
+ * Errors map to `ApiError` codes:
+ *   - 400 → `validation`         (malformed ref shape)
+ *   - 403 → `forbidden`          (run is hash_only retention)
+ *   - 404 → `not_found`          (ref not owned by run or missing on disk)
+ *   - 5xx → `internal`
+ *
+ * No mock branch — the route doesn't ship in fixtures yet. Caller is
+ * expected to gate by `shouldUseMockAgentRuns()` if relevant.
+ */
+export async function fetchAgentRunBlob(
+  runId: string,
+  ref: string,
+): Promise<string> {
+  const url = `/api/agent-runs/${encodeURIComponent(runId)}/blobs/${encodeURIComponent(ref)}`;
+  let res: Response;
+  try {
+    res = await fetch(url, { headers: { accept: "application/octet-stream" } });
+  } catch (err) {
+    throw new ApiError(0, "network", err instanceof Error ? err.message : String(err));
+  }
+  if (!res.ok) {
+    let body: { code?: string; message?: string } | undefined;
+    try {
+      body = await res.json();
+    } catch {
+      // 5xx may not be JSON; fall back to status text.
+    }
+    throw new ApiError(
+      res.status,
+      body?.code ?? "http_error",
+      body?.message ?? res.statusText ?? `HTTP ${res.status}`,
+    );
+  }
+  return await res.text();
+}
+
 export async function getAgentRun(id: string): Promise<AgentRunDetail> {
   if (shouldUseMockAgentRuns()) {
     const detail = MOCK_BY_ID[id];
