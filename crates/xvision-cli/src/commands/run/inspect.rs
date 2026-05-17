@@ -60,17 +60,15 @@ pub async fn run(args: InspectArgs) -> CliResult<()> {
     // Stdout sink for JSON. Markdown is meaningless on stdout (mixed
     // with caller output), so we restrict `-` to JSON.
     if let Some("-") = args.out.as_deref() {
-        if matches!(args.format, OutputFormat::Md) {
+        if !matches!(args.format, OutputFormat::Json) {
             return Err(CliError {
                 exit: XvnExit::Usage,
                 source: anyhow::anyhow!(
-                    "`--out -` is only valid for `--format json` (markdown to stdout would mix with caller output)"
+                    "`--out -` requires `--format json` (markdown to stdout would mix with caller output)"
                 ),
             });
         }
-        let export = build_export(&pool, &args.id)
-            .await
-            .map_err(map_export_err)?;
+        let export = build_export(&pool, &args.id).await.map_err(map_export_err)?;
         let bytes = serde_json::to_vec_pretty(&export).map_err(|e| CliError {
             exit: XvnExit::Upstream,
             source: anyhow::anyhow!("serialize xvn_run.json: {e}"),
@@ -97,9 +95,7 @@ pub async fn run(args: InspectArgs) -> CliResult<()> {
     })?;
 
     if matches!(args.format, OutputFormat::Json | OutputFormat::Both) {
-        let export = build_export(&pool, &args.id)
-            .await
-            .map_err(map_export_err)?;
+        let export = build_export(&pool, &args.id).await.map_err(map_export_err)?;
         let bytes = serde_json::to_vec_pretty(&export).map_err(|e| CliError {
             exit: XvnExit::Upstream,
             source: anyhow::anyhow!("serialize xvn_run.json: {e}"),
@@ -117,9 +113,7 @@ pub async fn run(args: InspectArgs) -> CliResult<()> {
     }
 
     if matches!(args.format, OutputFormat::Md | OutputFormat::Both) {
-        let report = build_report(&pool, &args.id)
-            .await
-            .map_err(map_export_err)?;
+        let report = build_report(&pool, &args.id).await.map_err(map_export_err)?;
         let path = out_dir.join("xvn_report.md");
         std::fs::write(&path, report.markdown.as_bytes()).map_err(|e| CliError {
             exit: XvnExit::Upstream,
@@ -151,7 +145,10 @@ fn map_export_err(e: xvision_observability::ExportError) -> CliError {
     }
 }
 
-async fn open_pool(xvn_home: Option<&std::path::Path>, db: Option<&std::path::Path>) -> CliResult<SqlitePool> {
+async fn open_pool(
+    xvn_home: Option<&std::path::Path>,
+    db: Option<&std::path::Path>,
+) -> CliResult<SqlitePool> {
     let path = match db {
         Some(p) => p.to_path_buf(),
         None => {
@@ -193,11 +190,9 @@ async fn open_pool(xvn_home: Option<&std::path::Path>, db: Option<&std::path::Pa
 }
 
 fn default_xvn_home() -> PathBuf {
-    std::env::var("XVN_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            dirs::home_dir()
-                .map(|h| h.join(".xvn"))
-                .unwrap_or_else(|| PathBuf::from(".xvn"))
-        })
+    std::env::var("XVN_HOME").map(PathBuf::from).unwrap_or_else(|_| {
+        dirs::home_dir()
+            .map(|h| h.join(".xvn"))
+            .unwrap_or_else(|| PathBuf::from(".xvn"))
+    })
 }
