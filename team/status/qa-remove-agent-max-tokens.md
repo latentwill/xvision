@@ -154,4 +154,27 @@ Nothing else changed. No migration. No wire-schema edit. No touches to
 
 ## Commit
 
-(Filled in after commit lands.)
+- `4cb4729` qa(agent-max-tokens): remove per-slot max_tokens UI; engine
+  ignores persisted override
+
+Branch: `task/qa-remove-agent-max-tokens`. Not pushed; no PR opened
+(per worker contract). Worktree retained at
+`.worktrees/qa-remove-agent-max-tokens` until the conductor merges /
+closes the track.
+
+## Outstanding flags for conductor
+
+1. Contract `verification` lists `pnpm --dir frontend/web lint` but the
+   project's `package.json` has no `lint` script. Either add an ESLint
+   config + script, or strike the line from the contract template.
+2. Four pre-existing `xvision-engine` test failures (one in
+   `authoring`, three in `eval::postprocess`) reproduce on a clean
+   `origin/main` checkout. Worth a triage track.
+3. Contract `allowed_paths` lists
+   `crates/xvision-engine/src/eval/dispatcher.rs` and
+   `crates/xvision-engine/src/eval/trader_output.rs` — neither exists
+   in the tree (the eval dispatcher lives in `agent/execute.rs`; the
+   trader-output module is `eval/executor/trader_output.rs`). The
+   conflict with `qa-openrouter-pricing-pull` over the bogus path is
+   moot. Suggest reconciling the contract paths or amending the
+   conflict zone.
