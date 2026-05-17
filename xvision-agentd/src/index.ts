@@ -1,6 +1,7 @@
 import { startUdsServer } from "./transport/uds-server.js"
 import { CLINE_SDK_VERSION, PROTOCOL_VERSION, SIDECAR_VERSION } from "./version.js"
 import { setCallbackSocketPath } from "./transport/callback-client.js"
+import { installMockProvider, setMockScript } from "./testing/mock-provider.js"
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2)
@@ -20,6 +21,17 @@ async function main(): Promise<void> {
   const cbIdx = args.indexOf("--callback-socket")
   if (cbIdx !== -1 && args[cbIdx + 1]) {
     setCallbackSocketPath(args[cbIdx + 1])
+  }
+
+  // Test-only: install a deterministic mock-model script before sessions
+  // can start. Gated by env var so production builds never trigger this
+  // path. Sets the script to: one echo tool-call, one "done" text.
+  if (process.env.XVISION_TEST_MOCK_PROVIDER === "1") {
+    installMockProvider()
+    setMockScript([
+      { toolCall: { name: "echo", input: { msg: "from-sidecar" } } },
+      { text: "done" },
+    ])
   }
 
   const server = await startUdsServer(socketPath)
