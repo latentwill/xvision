@@ -2,6 +2,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::errors::{AgentClientError, Result};
+use crate::event_sink::{start_event_sink, EventSinkHandle, SidecarFingerprint};
 use crate::protocol::{
     EndRunParams, EndRunResult, RuntimeHealthResult, StartRunParams, StartRunResult, StepParams,
     StepResult, ToolDescriptor, ToolRegistryGetResult, ToolRegistrySetParams, ToolRegistrySetResult,
@@ -10,6 +11,7 @@ use crate::protocol::{
 use crate::supervisor::Supervisor;
 use crate::tool_dispatch::{serve_callbacks, ToolDispatch};
 use crate::transport::UdsTransport;
+use xvision_observability::RunEventBus;
 
 /// Combines a spawned `xvision-agentd` sidecar with a JSON-RPC transport.
 ///
@@ -31,11 +33,12 @@ pub struct AgentClient {
     versions: RuntimeHealthResult,
     callback_handle: Option<tokio::task::JoinHandle<()>>,
     callback_socket_path: Option<std::path::PathBuf>,
+    event_sink: Option<EventSinkHandle>,
 }
 
 impl AgentClient {
     pub async fn spawn(bin: &Path, socket_path: &Path) -> Result<Self> {
-        let supervisor = Supervisor::spawn(bin, socket_path, None).await?;
+        let supervisor = Supervisor::spawn(bin, socket_path, None, None).await?;
         let transport = UdsTransport::connect(&supervisor.socket_path).await?;
         let versions = Self::handshake(&transport).await?;
         Ok(Self {
@@ -44,6 +47,7 @@ impl AgentClient {
             versions,
             callback_handle: None,
             callback_socket_path: None,
+            event_sink: None,
         })
     }
 
@@ -72,6 +76,9 @@ impl AgentClient {
         }
         if let Some(path) = self.callback_socket_path.take() {
             let _ = std::fs::remove_file(&path);
+        }
+        if let Some(sink) = self.event_sink.take() {
+            sink.shutdown().await;
         }
         if let Some(sup) = self.supervisor.take() {
             sup.shutdown().await
@@ -124,7 +131,7 @@ impl AgentClient {
         // If anything below fails, abort the accept loop and unlink the
         // callback socket file so a retry with the same path doesn't hit
         // EADDRINUSE.
-        let supervisor = match Supervisor::spawn(bin, socket_path, Some(callback_socket_path)).await {
+        let supervisor = match Supervisor::spawn(bin, socket_path, Some(callback_socket_path), None).await {
             Ok(s) => s,
             Err(e) => {
                 callback_handle.abort();
@@ -154,6 +161,110 @@ impl AgentClient {
             versions,
             callback_handle: Some(callback_handle),
             callback_socket_path: Some(callback_socket_path.to_path_buf()),
+            event_sink: None,
+        })
+    }
+
+    /// Spawn the sidecar with both a tool-callback path AND an
+    /// observability event sink. Notifications from the sidecar are
+    /// translated to `RunEvent`s and published to `bus` so the Phase-A
+    /// `SqliteRecorder` (or any other subscriber) can persist them.
+    ///
+    /// The sidecar fingerprint (`sidecar_version`, `cline_sdk_version`,
+    /// `protocol_version`) is captured from the IPC handshake here and
+    /// threaded onto every `RunStarted` event the sink publishes.
+    pub async fn spawn_with_event_sink(
+        bin: &Path,
+        socket_path: &Path,
+        callback_socket_path: &Path,
+        event_socket_path: &Path,
+        dispatch: Arc<dyn ToolDispatch>,
+        bus: Arc<RunEventBus>,
+    ) -> Result<Self> {
+        let callback_handle = serve_callbacks(callback_socket_path, dispatch).await?;
+
+        // Bind the event listener BEFORE we tell the sidecar where the
+        // socket lives — otherwise the sidecar's first emit may race the
+        // accept() and silently no-op (the event-client.ts path swallows
+        // connection errors).
+        // Start with an empty fingerprint; populated after handshake.
+        let initial_fp = SidecarFingerprint::default();
+        let event_sink = match start_event_sink(event_socket_path, bus.clone(), initial_fp).await {
+            Ok(h) => h,
+            Err(e) => {
+                callback_handle.abort();
+                let _ = std::fs::remove_file(callback_socket_path);
+                return Err(AgentClientError::from(e));
+            }
+        };
+
+        let supervisor = match Supervisor::spawn(
+            bin,
+            socket_path,
+            Some(callback_socket_path),
+            Some(event_socket_path),
+        )
+        .await
+        {
+            Ok(s) => s,
+            Err(e) => {
+                callback_handle.abort();
+                event_sink.accept_handle.abort();
+                let _ = std::fs::remove_file(callback_socket_path);
+                let _ = std::fs::remove_file(event_socket_path);
+                return Err(e);
+            }
+        };
+        let transport = match UdsTransport::connect(&supervisor.socket_path).await {
+            Ok(t) => t,
+            Err(e) => {
+                callback_handle.abort();
+                event_sink.accept_handle.abort();
+                let _ = std::fs::remove_file(callback_socket_path);
+                let _ = std::fs::remove_file(event_socket_path);
+                return Err(e);
+            }
+        };
+        let versions = match Self::handshake(&transport).await {
+            Ok(v) => v,
+            Err(e) => {
+                callback_handle.abort();
+                event_sink.accept_handle.abort();
+                let _ = std::fs::remove_file(callback_socket_path);
+                let _ = std::fs::remove_file(event_socket_path);
+                return Err(e);
+            }
+        };
+
+        // Restart the event sink with the fingerprint populated. The
+        // sidecar opens its event-client connection lazily on the first
+        // emit, so by the time we re-bind here the sidecar has not yet
+        // pushed anything (no session.start_run has run). We tear down
+        // the placeholder sink and start a fresh one bound to the same
+        // path with the fingerprint stamped in.
+        let fp = SidecarFingerprint {
+            sidecar_version: Some(versions.sidecar_version.clone()),
+            cline_sdk_version: Some(versions.cline_sdk_version.clone()),
+            protocol_version: Some(versions.protocol_version.clone()),
+        };
+        event_sink.accept_handle.abort();
+        let _ = std::fs::remove_file(event_socket_path);
+        let event_sink = match start_event_sink(event_socket_path, bus.clone(), fp).await {
+            Ok(h) => h,
+            Err(e) => {
+                callback_handle.abort();
+                let _ = std::fs::remove_file(callback_socket_path);
+                return Err(AgentClientError::from(e));
+            }
+        };
+
+        Ok(Self {
+            transport,
+            supervisor: Some(supervisor),
+            versions,
+            callback_handle: Some(callback_handle),
+            callback_socket_path: Some(callback_socket_path.to_path_buf()),
+            event_sink: Some(event_sink),
         })
     }
 
@@ -184,6 +295,10 @@ impl Drop for AgentClient {
         }
         if let Some(path) = self.callback_socket_path.take() {
             let _ = std::fs::remove_file(&path);
+        }
+        if let Some(sink) = self.event_sink.take() {
+            sink.accept_handle.abort();
+            let _ = std::fs::remove_file(&sink.socket_path);
         }
     }
 }

@@ -15,6 +15,17 @@ import {
   type BudgetAbortReason,
   type WallTimer,
 } from "../session/budget.js"
+import {
+  emitRunStarted,
+  emitRunFinished,
+  emitModelCallFinished,
+  emitError,
+  newSpanId,
+} from "../session/emit.js"
+import {
+  setActiveRun,
+  clearActiveRun,
+} from "../session/active-run.js"
 
 let store: SessionStore = getDefaultStore()
 
@@ -75,6 +86,17 @@ export function handleSessionStartRun(raw: unknown): StartRunResult {
     if (!known.has(name)) throw new TypeError(`unknown tool in allowed_tools: ${name}`)
   }
   const s = store.create(p.run_id as string, config)
+  emitRunStarted({
+    run_id: s.run_id,
+    // The sidecar doesn't see an "objective" field — that's set by the
+    // Rust caller before start_run. We pass the system_prompt as a
+    // human-readable label; the Rust side may overwrite with a richer
+    // objective in its translation layer.
+    objective: config.system_prompt,
+    started_at_ms: s.created_at_ms,
+    provider_id: config.provider_id,
+    model_id: config.model_id,
+  })
   return { run_id: s.run_id, started_at_ms: s.created_at_ms }
 }
 
@@ -83,6 +105,13 @@ export function handleSessionEndRun(raw: unknown): EndRunResult {
   if (typeof p.run_id !== "string" || p.run_id.length === 0)
     throw new TypeError("params.run_id must be a non-empty string")
   const ended = store.end(p.run_id)
+  if (ended) {
+    emitRunFinished({
+      run_id: p.run_id,
+      status: "completed",
+      finished_at_ms: Date.now(),
+    })
+  }
   return { ended }
 }
 
@@ -204,6 +233,10 @@ export async function handleSessionStep(raw: unknown): Promise<StepResult> {
   }
   const agent = session.agent!
 
+  const runId = p.run_id
+  const stepSpanId = newSpanId()
+  setActiveRun(runId, session.config.provider_id, session.config.model_id)
+
   // Arm the wall-clock timer. When it fires we call `agent.abort()`,
   // which causes the in-flight `agent.run` / `agent.continue` to resolve
   // with `status: "aborted"` (see `AgentRunStatus` in @cline/shared).
@@ -222,55 +255,81 @@ export async function handleSessionStep(raw: unknown): Promise<StepResult> {
   }
   timer.signal.addEventListener("abort", onTimerFire, { once: true })
 
-  let result
   try {
-    result = agent.hasRun
+    const result = agent.hasRun
       ? await agent.continue(p.prompt)
       : await agent.run(p.prompt)
+
+    // Update cumulative usage and check post-step token caps.
+    const cumulative = store.addUsage(p.run_id, {
+      input_tokens: result.usage.inputTokens,
+      output_tokens: result.usage.outputTokens,
+    })
+
+    // Classify the terminal status:
+    //   1. SDK said `aborted` *and* our timer fired -> wall-budget exhaustion.
+    //   2. Cumulative tokens now exceed a cap -> token exhaustion.
+    //   3. SDK said `aborted` for an unrelated reason -> pass through.
+    //   4. Otherwise -> pass the SDK's status through verbatim.
+    let status: StepResult["status"] = result.status
+    let errorMsg: string | undefined = result.error?.message
+    if (result.status === "aborted" && timer.fired()) {
+      errorMsg = "budget_wall_ms_exceeded"
+    } else {
+      const postTokenReason = checkTokenCapsAfterStep(cumulative, limits)
+      if (postTokenReason) {
+        // The step ran to completion or got aborted for another reason, but
+        // its usage pushed us over the cap. Force the terminal status to
+        // `aborted` so the caller stops sending more prompts. If the agent
+        // already came back aborted, preserve that.
+        status = "aborted"
+        errorMsg = postTokenReason
+      }
+    }
+
+    emitModelCallFinished({
+      span_id: stepSpanId,
+      run_id: runId,
+      provider: session.config.provider_id,
+      model: session.config.model_id,
+      input_tokens: result.usage.inputTokens,
+      output_tokens: result.usage.outputTokens,
+      total_cost: typeof result.usage.totalCost === "number" ? result.usage.totalCost : undefined,
+    })
+
+    if (errorMsg) {
+      emitError({
+        run_id: runId,
+        message: errorMsg,
+        severity: "error",
+      })
+    }
+
+    // exactOptionalPropertyTypes: omit total_cost / error when undefined.
+    return {
+      status: result.status,
+      output_text: result.outputText,
+      iterations: result.iterations,
+      usage: {
+        input_tokens: result.usage.inputTokens,
+        output_tokens: result.usage.outputTokens,
+        cache_read_tokens: result.usage.cacheReadTokens ?? 0,
+        cache_write_tokens: result.usage.cacheWriteTokens ?? 0,
+        ...(typeof result.usage.totalCost === "number" ? { total_cost: result.usage.totalCost } : {}),
+      },
+      ...(errorMsg ? { error: errorMsg } : {}),
+    }
+  } catch (err) {
+    emitError({
+      run_id: runId,
+      message: err instanceof Error ? err.message : String(err),
+      severity: "error",
+    })
+    throw err
   } finally {
     timer.signal.removeEventListener("abort", onTimerFire)
     timer.clear()
-  }
-
-  // Update cumulative usage and check post-step token caps.
-  const cumulative = store.addUsage(p.run_id, {
-    input_tokens: result.usage.inputTokens,
-    output_tokens: result.usage.outputTokens,
-  })
-
-  // Classify the terminal status:
-  //   1. SDK said `aborted` *and* our timer fired → wall-budget exhaustion.
-  //   2. Cumulative tokens now exceed a cap → token exhaustion.
-  //   3. SDK said `aborted` for an unrelated reason → pass through.
-  //   4. Otherwise → pass the SDK's status through verbatim.
-  let status: StepResult["status"] = result.status
-  let errorMsg: string | undefined = result.error?.message
-  if (result.status === "aborted" && timer.fired()) {
-    errorMsg = "budget_wall_ms_exceeded"
-  } else {
-    const postTokenReason = checkTokenCapsAfterStep(cumulative, limits)
-    if (postTokenReason) {
-      // The step ran to completion or got aborted for another reason, but
-      // its usage pushed us over the cap. Force the terminal status to
-      // `aborted` so the caller stops sending more prompts. If the agent
-      // already came back aborted, preserve that.
-      status = "aborted"
-      errorMsg = postTokenReason
-    }
-  }
-
-  return {
-    status,
-    output_text: result.outputText,
-    iterations: result.iterations,
-    usage: {
-      input_tokens: result.usage.inputTokens,
-      output_tokens: result.usage.outputTokens,
-      cache_read_tokens: result.usage.cacheReadTokens ?? 0,
-      cache_write_tokens: result.usage.cacheWriteTokens ?? 0,
-      ...(typeof result.usage.totalCost === "number" ? { total_cost: result.usage.totalCost } : {}),
-    },
-    ...(errorMsg ? { error: errorMsg } : {}),
+    clearActiveRun()
   }
 }
 

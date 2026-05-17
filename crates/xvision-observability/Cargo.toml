@@ -34,5 +34,38 @@ tracing-subscriber = { workspace = true }
 
 [features]
 default = []
-# OTel bridge ships in Phase B (`agent-run-observability-otel-bridge`).
-# This crate intentionally has no `otel` feature yet.
+# Phase B OpenTelemetry bridge — opt-in only. Enabling this pulls in
+# `tracing-opentelemetry`, `opentelemetry`, `opentelemetry-otlp`, and the
+# `OtelTeeRecorder` published from `src/otel.rs`. Default builds (and the
+# production `xvision:latest` image) stay slim.
+otel = [
+  "dep:tracing-opentelemetry",
+  "dep:tracing-subscriber",
+  "dep:opentelemetry",
+  "dep:opentelemetry_sdk",
+  "dep:opentelemetry-otlp",
+]
+
+[dependencies.tracing-opentelemetry]
+version  = "0.22"
+optional = true
+
+[dependencies.tracing-subscriber]
+workspace = true
+optional  = true
+
+[dependencies.opentelemetry]
+version  = "0.21"
+optional = true
+
+[dependencies.opentelemetry_sdk]
+version  = "0.21"
+# `testing` is needed by `tests/otel_tee_smoke.rs` for the in-memory span
+# exporter. It only gets pulled in when `--features otel` is active.
+features = ["rt-tokio", "testing"]
+optional = true
+
+[dependencies.opentelemetry-otlp]
+version  = "0.14"
+features = ["tonic", "trace"]
+optional = true
