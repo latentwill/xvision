@@ -1,6 +1,8 @@
 // frontend/web/src/features/agent-runs/SpanInspector.tsx
-import type { ReactNode } from "react";
+import { useCallback, useState, type ReactNode } from "react";
 import type { RunSpan } from "@/api/types-agent-runs";
+import { fetchAgentRunBlob } from "@/api/agent-runs";
+import { useTraceDock } from "@/stores/trace-dock";
 import { spanColor, withAlpha } from "./span-colors";
 import { PullQuote } from "./PullQuote";
 
@@ -15,6 +17,93 @@ type SpanInspectorProps = {
 function durationMs(span: RunSpan): number | null {
   if (!span.finished_at) return null;
   return new Date(span.finished_at).getTime() - new Date(span.started_at).getTime();
+}
+
+/**
+ * Inline `<details>` block that fetches the body bytes referenced by
+ * `payloadRef` on first expand. The ref string is the visible summary
+ * so operators can still see / copy / paste it. Errors land inline as
+ * muted text — no popup, per project UI rule.
+ */
+function PayloadRefDetails({
+  runId,
+  payloadRef,
+  testIdPrefix,
+}: {
+  runId: string | null;
+  payloadRef: string;
+  testIdPrefix: string;
+}) {
+  const [phase, setPhase] = useState<
+    | { kind: "idle" }
+    | { kind: "loading" }
+    | { kind: "ready"; body: string }
+    | { kind: "error"; message: string }
+  >({ kind: "idle" });
+
+  const onToggle = useCallback(
+    (e: React.SyntheticEvent<HTMLDetailsElement>) => {
+      if (!e.currentTarget.open) return;
+      // Only fetch the first time the user opens the details panel.
+      if (phase.kind !== "idle") return;
+      if (!runId) {
+        setPhase({
+          kind: "error",
+          message: "no active run id — open this span from the run detail page",
+        });
+        return;
+      }
+      setPhase({ kind: "loading" });
+      fetchAgentRunBlob(runId, payloadRef)
+        .then((body) => setPhase({ kind: "ready", body }))
+        .catch((err: unknown) => {
+          const message =
+            err instanceof Error && err.message
+              ? err.message
+              : "failed to load blob";
+          setPhase({ kind: "error", message });
+        });
+    },
+    [phase.kind, runId, payloadRef],
+  );
+
+  return (
+    <details
+      data-testid={`${testIdPrefix}-details`}
+      className="text-[11px] font-mono text-text-2 break-all"
+      onToggle={onToggle}
+    >
+      <summary className="cursor-pointer select-none">
+        payload ref: <span className="text-text">{payloadRef}</span>
+      </summary>
+      <div className="mt-2 border-l-2 border-border pl-2">
+        {phase.kind === "idle" ? (
+          <span className="text-text-3">click to load body…</span>
+        ) : phase.kind === "loading" ? (
+          <span
+            data-testid={`${testIdPrefix}-loading`}
+            className="text-text-3"
+          >
+            Loading…
+          </span>
+        ) : phase.kind === "ready" ? (
+          <pre
+            data-testid={`${testIdPrefix}-body`}
+            className="m-0 whitespace-pre-wrap text-text"
+          >
+            {phase.body}
+          </pre>
+        ) : (
+          <span
+            data-testid={`${testIdPrefix}-error`}
+            className="text-text-3"
+          >
+            could not load body — {phase.message}
+          </span>
+        )}
+      </div>
+    </details>
+  );
 }
 
 const Row = ({ k, v, tone }: { k: string; v: ReactNode; tone?: "gold" }) => (
@@ -39,6 +128,10 @@ export function SpanInspector({
   const color = spanColor(span.kind);
   const ms = durationMs(span);
   const isStreaming = isLive && span.streaming;
+  // The blob-fetch route is keyed by run id; the inspector itself
+  // doesn't carry it as a prop (parent always sets activeRunId on the
+  // trace dock when navigating to the run detail page).
+  const activeRunId = useTraceDock((s) => s.activeRunId);
 
   return (
     <div className="w-[400px] shrink-0 flex flex-col">
@@ -107,20 +200,20 @@ export function SpanInspector({
             accent={color.hex}
             glyph="›"
             body={
-              <div className="text-[11px] font-mono text-text-2 break-all">
-                {span.prompt_payload_ref ? (
-                  <>
-                    payload ref: <span className="text-text">{span.prompt_payload_ref}</span>
-                  </>
-                ) : (
-                  <>
-                    hash: <span className="text-text">{span.hash}</span>
-                    <div className="text-text-3 mt-1">
-                      hash-only retention — prompt body not stored on disk
-                    </div>
-                  </>
-                )}
-              </div>
+              span.prompt_payload_ref ? (
+                <PayloadRefDetails
+                  runId={activeRunId}
+                  payloadRef={span.prompt_payload_ref}
+                  testIdPrefix="span-inspector-prompt-ref"
+                />
+              ) : (
+                <div className="text-[11px] font-mono text-text-2 break-all">
+                  hash: <span className="text-text">{span.hash}</span>
+                  <div className="text-text-3 mt-1">
+                    hash-only retention — prompt body not stored on disk
+                  </div>
+                </div>
+              )
             }
           />
         ) : null}
@@ -132,20 +225,20 @@ export function SpanInspector({
             accent="var(--gold)"
             glyph={"“"}
             body={
-              <div className="text-[11px] font-mono text-text-2 break-all">
-                {span.response_payload_ref ? (
-                  <>
-                    payload ref: <span className="text-text">{span.response_payload_ref}</span>
-                  </>
-                ) : (
-                  <>
-                    hash: <span className="text-text">{span.response_hash}</span>
-                    <div className="text-text-3 mt-1">
-                      hash-only retention — completion body not stored on disk
-                    </div>
-                  </>
-                )}
-              </div>
+              span.response_payload_ref ? (
+                <PayloadRefDetails
+                  runId={activeRunId}
+                  payloadRef={span.response_payload_ref}
+                  testIdPrefix="span-inspector-response-ref"
+                />
+              ) : (
+                <div className="text-[11px] font-mono text-text-2 break-all">
+                  hash: <span className="text-text">{span.response_hash}</span>
+                  <div className="text-text-3 mt-1">
+                    hash-only retention — completion body not stored on disk
+                  </div>
+                </div>
+              )
             }
           />
         ) : null}

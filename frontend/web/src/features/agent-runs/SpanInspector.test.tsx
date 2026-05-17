@@ -1,8 +1,14 @@
 // frontend/web/src/features/agent-runs/SpanInspector.test.tsx
-import { describe, expect, test, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, test, vi } from "vitest";
+import { render, screen, waitFor } from "@testing-library/react";
 import { SpanInspector } from "./SpanInspector";
+import { useTraceDock } from "@/stores/trace-dock";
 import type { RunSpan } from "@/api/types-agent-runs";
+
+afterEach(() => {
+  useTraceDock.getState().setActiveRun(null, "post-hoc");
+  vi.restoreAllMocks();
+});
 
 const baseSpan: RunSpan = {
   span_id: "s_test",
@@ -222,5 +228,101 @@ describe("SpanInspector (with pull-quotes)", () => {
     expect(screen.getByTestId("span-error-badge")).toBeInTheDocument();
     // The pull-quote message body must NOT render without a message.
     expect(screen.queryByText(/EOF while parsing/)).not.toBeInTheDocument();
+  });
+
+  test("expanding a payload-ref details block fetches the blob and shows the body", async () => {
+    // Seed the dock so the inspector knows which run to query.
+    useTraceDock.getState().setActiveRun("run_blob_ui", "post-hoc");
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("PROMPT BODY TEXT", {
+        status: 200,
+        headers: { "content-type": "application/octet-stream" },
+      }),
+    );
+
+    const ref = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    render(
+      <SpanInspector
+        span={{
+          ...baseSpan,
+          prompt: undefined,
+          response: undefined,
+          prompt_payload_ref: ref,
+        }}
+        isLive={false}
+        onRerun={() => {}}
+        onJumpToDecision={() => {}}
+      />,
+    );
+
+    // Idle state pre-expand: ref visible, body not.
+    const details = screen.getByTestId(
+      "span-inspector-prompt-ref-details",
+    ) as HTMLDetailsElement;
+    expect(details.open).toBe(false);
+    expect(screen.getAllByText(ref).length).toBeGreaterThan(0);
+    expect(screen.queryByTestId("span-inspector-prompt-ref-body")).toBeNull();
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    // Expand → fetch fires.
+    details.open = true;
+    details.dispatchEvent(new Event("toggle"));
+
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("span-inspector-prompt-ref-body"),
+      ).toBeInTheDocument();
+    });
+    expect(
+      screen.getByTestId("span-inspector-prompt-ref-body"),
+    ).toHaveTextContent("PROMPT BODY TEXT");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const url = String(fetchSpy.mock.calls[0]?.[0] ?? "");
+    expect(url).toBe(`/api/agent-runs/run_blob_ui/blobs/${ref}`);
+
+    // Collapse + re-expand should NOT re-fetch (one-shot cache).
+    details.open = false;
+    details.dispatchEvent(new Event("toggle"));
+    details.open = true;
+    details.dispatchEvent(new Event("toggle"));
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  test("expanding a payload-ref details block surfaces 403 inline", async () => {
+    useTraceDock.getState().setActiveRun("run_blob_403", "post-hoc");
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          code: "forbidden",
+          message: "retention is hash_only — blob bodies are not stored on disk",
+        }),
+        { status: 403, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    const ref = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+    render(
+      <SpanInspector
+        span={{
+          ...baseSpan,
+          prompt: undefined,
+          response: undefined,
+          response_payload_ref: ref,
+        }}
+        isLive={false}
+        onRerun={() => {}}
+        onJumpToDecision={() => {}}
+      />,
+    );
+    const details = screen.getByTestId(
+      "span-inspector-response-ref-details",
+    ) as HTMLDetailsElement;
+    details.open = true;
+    details.dispatchEvent(new Event("toggle"));
+
+    const err = await screen.findByTestId("span-inspector-response-ref-error");
+    expect(err.textContent).toMatch(/hash_only/);
   });
 });
