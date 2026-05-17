@@ -424,6 +424,10 @@ const REAL_SSE_EVENTS = [
   "tool_call_cancelled",
   "assistant_text_delta",
   "sidecar_error",
+  "checkpoint_written",
+  "supervisor_note",
+  "artifact_written",
+  "backpressure_dropped",
   "lagged",
 ] as const;
 type RealSseEventName = (typeof REAL_SSE_EVENTS)[number];

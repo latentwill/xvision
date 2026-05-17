@@ -3,7 +3,7 @@
 // Phase 1.1 — floating bottom-centre pill.
 // Ported pixel-perfect from docs/superpowers/designs/2026-05-17-agent-run-observability/strip.jsx.
 
-import { useMemo, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { AgentRunSummary } from "@/api/types-agent-runs";
 import { useTraceDock } from "@/stores/trace-dock";
 import { spanColor } from "./span-colors";
@@ -95,10 +95,18 @@ function TonePill({
  */
 function useLiveActiveSpanChip(isLive: boolean): CurrentSpanChip | null {
   const activeMeta = useTraceDock((s) => s.streamingState.activeSpanMeta);
-  // Tick the strip's elapsedMs is the parent's responsibility (the
-  // route already runs a 1s interval that nudges the store). useMemo
-  // keys off `activeMeta` AND a coarse minute clock to refresh chip
-  // elapsed time when the parent re-renders.
+  // Local 1-second tick so the chip's elapsed time advances even when
+  // the SSE feed is quiet between events. `nowMs` is intentionally a
+  // dependency of the memo so the elapsed value recomputes each tick.
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
+  const hasActive = isLive && Object.keys(activeMeta).length > 0;
+  useEffect(() => {
+    if (!hasActive) return;
+    setNowMs(Date.now());
+    const id = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [hasActive]);
+
   return useMemo<CurrentSpanChip | null>(() => {
     if (!isLive) return null;
     const ids = Object.keys(activeMeta);
@@ -119,9 +127,9 @@ function useLiveActiveSpanChip(isLive: boolean): CurrentSpanChip | null {
       name: meta.name,
       color: color.hex,
       label: color.label,
-      elapsedMs: Math.max(0, Date.now() - best.startedMs),
+      elapsedMs: Math.max(0, nowMs - best.startedMs),
     };
-  }, [activeMeta, isLive]);
+  }, [activeMeta, isLive, nowMs]);
 }
 
 export function RunStatusStrip({

@@ -156,18 +156,29 @@ export const useTraceDock = create<State & Actions>((set, get) => ({
     const actions = get();
     switch (ev.event) {
       case "snapshot": {
-        // Seed activeSpanIds from any in-flight spans in the snapshot so
-        // a late subscriber sees the live chip without waiting for the
-        // next `span_started` event.
+        // Authoritative resync. A reconnect snapshot must REPLACE the
+        // active set, not merge into it — a span that finished while we
+        // were disconnected must not stay active just because nothing
+        // explicitly cleared it.
+        const nextIds = new Set<string>();
+        const nextMeta: Record<string, ActiveSpanMeta> = {};
         for (const span of ev.data.spans) {
           if (span.finished_at == null) {
-            actions.markSpanActive(span.span_id, {
+            nextIds.add(span.span_id);
+            nextMeta[span.span_id] = {
               name: span.name,
               started_at: span.started_at,
               kind: span.kind,
-            });
+            };
           }
         }
+        set((s) => ({
+          streamingState: {
+            ...s.streamingState,
+            activeSpanIds: nextIds,
+            activeSpanMeta: nextMeta,
+          },
+        }));
         return;
       }
       case "span_started": {
@@ -195,10 +206,9 @@ export const useTraceDock = create<State & Actions>((set, get) => ({
         actions.appendDelta(ev.data.span_id, ev.data.delta_len);
         return;
       }
-      case "lagged": {
+      case "lagged":
+      case "backpressure_dropped": {
         actions.recordLag(ev.data.dropped);
-        // Surface a quiet console warning so a developer notices in
-        // devtools without us painting a popup.
         if (typeof console !== "undefined") {
           console.warn(
             `[trace-dock] backpressure: dropped ${ev.data.dropped} stream event(s)`,
@@ -206,12 +216,27 @@ export const useTraceDock = create<State & Actions>((set, get) => ({
         }
         return;
       }
+      case "run_finished":
+      case "run_interrupted": {
+        // Run-terminal events: any still-active spans are now stale.
+        // Clear streaming indicators so consumers stop showing a live
+        // chip / streaming dots on a finished run.
+        set((s) => ({
+          streamingState: {
+            ...s.streamingState,
+            activeSpanIds: new Set<string>(),
+            activeSpanMeta: {},
+          },
+        }));
+        return;
+      }
       // Lifecycle / informational arms — no streaming-state side effect.
       case "run_started":
-      case "run_finished":
-      case "run_interrupted":
       case "tool_call_started":
       case "sidecar_error":
+      case "checkpoint_written":
+      case "supervisor_note":
+      case "artifact_written":
       case "span":
       case "summary":
         return;

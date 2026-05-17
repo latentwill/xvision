@@ -220,6 +220,14 @@ export type StreamSidecarErrorData = {
 
 export type StreamLaggedData = { dropped: number };
 
+// Loose payloads for events we surface but don't yet render against.
+// Shapes match `crates/xvision-observability/src/events.rs` and may
+// gain typed fields as consumers need them.
+export type StreamCheckpointWrittenData = { run_id: string; path?: string | null };
+export type StreamSupervisorNoteData = { run_id: string; message: string };
+export type StreamArtifactWrittenData = { run_id: string; path?: string | null };
+export type StreamBackpressureDroppedData = { dropped: number };
+
 /**
  * Stream events surfaced to the dock + components. Mock arms (`summary`,
  * `span`) are kept additive so the test/dev mock branch keeps working;
@@ -243,4 +251,8 @@ export type AgentRunStreamEvent =
   | { event: "tool_call_cancelled"; data: StreamToolCallCancelledData }
   | { event: "assistant_text_delta"; data: StreamAssistantTextDeltaData }
   | { event: "sidecar_error"; data: StreamSidecarErrorData }
+  | { event: "checkpoint_written"; data: StreamCheckpointWrittenData }
+  | { event: "supervisor_note"; data: StreamSupervisorNoteData }
+  | { event: "artifact_written"; data: StreamArtifactWrittenData }
+  | { event: "backpressure_dropped"; data: StreamBackpressureDroppedData }
   | { event: "lagged"; data: StreamLaggedData };
