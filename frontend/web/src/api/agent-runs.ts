@@ -22,6 +22,7 @@ import {
   MOCK_RUN_FULL_DEBUG,
   MOCK_RUN_LIVE,
 } from "@/features/agent-runs/mock-fixtures";
+import { useTraceDock } from "@/stores/trace-dock";
 import type {
   AgentRunDetail,
   AgentRunStreamEvent,
@@ -92,7 +93,7 @@ const RUN_STATUSES: ReadonlySet<RunStatus> = new Set([
 ]);
 const RETENTION_MODES: ReadonlySet<RetentionMode> = new Set([
   "hash_only",
-  "summaries",
+  "redacted",
   "full_debug",
 ]);
 
@@ -300,7 +301,7 @@ function checkSummary(summary: unknown, problems: Problem[]): void {
     problems.push(`summary.status: expected one of ${[...RUN_STATUSES].join(",")}`);
   }
   if (summary.retention_mode === undefined) {
-    problems.push("summary.retention_mode: missing (expected hash_only|summaries|full_debug)");
+    problems.push("summary.retention_mode: missing (expected hash_only|redacted|full_debug)");
   } else if (
     typeof summary.retention_mode !== "string" ||
     !RETENTION_MODES.has(summary.retention_mode as RetentionMode)
@@ -466,6 +467,61 @@ function openMockStream(
   return () => window.clearInterval(interval);
 }
 
+/**
+ * Real-branch SSE consumer. Maps the wire vocabulary produced by
+ * `crates/xvision-dashboard/src/sse/mod.rs` (one `event:` name per
+ * `RunEvent` variant, plus a leading `snapshot` and a synthetic
+ * `lagged`) into typed `AgentRunStreamEvent`s.
+ *
+ * Side effect: every successfully-parsed event is also dispatched into
+ * the trace-dock store so the strip + inspector can render streaming
+ * indicators without each consumer wiring its own bridge.
+ *
+ * Reconnect is exponential-backoff per `SSE_BACKOFF_MS`. The snapshot
+ * is the first frame on every (re)connect, so a dropped connection
+ * recovers the full run state on its own.
+ */
+const REAL_SSE_EVENTS = [
+  "snapshot",
+  "run_started",
+  "run_finished",
+  "run_interrupted",
+  "span_started",
+  "span_finished",
+  "model_call_finished",
+  "tool_call_started",
+  "tool_call_finished",
+  "tool_call_failed",
+  "tool_call_cancelled",
+  "assistant_text_delta",
+  "sidecar_error",
+  "checkpoint_written",
+  "supervisor_note",
+  "artifact_written",
+  "backpressure_dropped",
+  "lagged",
+] as const;
+type RealSseEventName = (typeof REAL_SSE_EVENTS)[number];
+
+function parseSnapshot(raw: string): AgentRunDetail | null {
+  try {
+    return validateAgentRunDetail(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
+
+function dispatchToStore(ev: AgentRunStreamEvent): void {
+  try {
+    useTraceDock.getState().applyStreamEvent(ev);
+  } catch (err) {
+    // Store side-effect must never break the consumer callback.
+    if (typeof console !== "undefined") {
+      console.warn("[agent-runs] trace-dock dispatch failed", err);
+    }
+  }
+}
+
 function openRealStream(
   runId: string,
   onEvent: (ev: AgentRunStreamEvent) => void,
@@ -477,14 +533,31 @@ function openRealStream(
 
   const url = `/api/agent-runs/${encodeURIComponent(runId)}/stream`;
 
-  const handle = (eventName: "span" | "summary") => (ev: MessageEvent) => {
-    try {
-      const data = JSON.parse(ev.data) as RunSpan | AgentRunSummary;
-      onEvent({ event: eventName, data } as AgentRunStreamEvent);
-    } catch {
-      // Drop malformed frames — the validator will surface shape errors on
-      // the next snapshot refetch.
+  const handle = (eventName: RealSseEventName) => (ev: MessageEvent) => {
+    if (eventName === "snapshot") {
+      const detail = parseSnapshot(ev.data as string);
+      if (!detail) return;
+      const out: AgentRunStreamEvent = { event: "snapshot", data: detail };
+      dispatchToStore(out);
+      onEvent(out);
+      return;
     }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(ev.data as string);
+    } catch {
+      // Drop malformed frames — the validator will surface shape errors
+      // on the next snapshot refetch.
+      return;
+    }
+    // The Rust side encodes the variant tag as `kind` inside the JSON
+    // payload (see `#[serde(tag = "kind", rename_all = "snake_case")]`).
+    // We trust the `event:` name and use the inner payload as-is. The
+    // remaining typing is intentionally loose — see types-agent-runs.ts.
+    const data = parsed as Record<string, unknown>;
+    const out = { event: eventName, data: data as never } as AgentRunStreamEvent;
+    dispatchToStore(out);
+    onEvent(out);
   };
 
   const connect = () => {
@@ -493,8 +566,27 @@ function openRealStream(
     source.addEventListener("open", () => {
       attempt = 0;
     });
-    source.addEventListener("span", handle("span") as EventListener);
-    source.addEventListener("summary", handle("summary") as EventListener);
+    for (const name of REAL_SSE_EVENTS) {
+      source.addEventListener(name, handle(name) as EventListener);
+    }
+    // Back-compat: keep the mock arms alive in case the backend ever
+    // emits them (e.g. integration shim). Cheap and additive.
+    source.addEventListener("span", ((ev: MessageEvent) => {
+      try {
+        const data = JSON.parse(ev.data) as RunSpan;
+        onEvent({ event: "span", data });
+      } catch {
+        /* swallow */
+      }
+    }) as EventListener);
+    source.addEventListener("summary", ((ev: MessageEvent) => {
+      try {
+        const data = JSON.parse(ev.data) as AgentRunSummary;
+        onEvent({ event: "summary", data });
+      } catch {
+        /* swallow */
+      }
+    }) as EventListener);
     source.addEventListener("error", () => {
       if (closed) return;
       source?.close();

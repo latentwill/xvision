@@ -127,11 +127,26 @@ export function SpanInspector({
 }: SpanInspectorProps) {
   const color = spanColor(span.kind);
   const ms = durationMs(span);
-  const isStreaming = isLive && span.streaming;
   // The blob-fetch route is keyed by run id; the inspector itself
   // doesn't carry it as a prop (parent always sets activeRunId on the
   // trace dock when navigating to the run detail page).
   const activeRunId = useTraceDock((s) => s.activeRunId);
+  // The streaming slice is populated by `agent-runs.ts`'s real SSE
+  // branch. Span is considered live-streaming iff the SSE feed has
+  // marked it active AND it has not been closed by `span_finished` /
+  // `model_call_finished` / a tool terminal event.
+  const isActiveSseSpan = useTraceDock((s) =>
+    s.streamingState.activeSpanIds.has(span.span_id),
+  );
+  const deltaChars = useTraceDock(
+    (s) => s.streamingState.deltaCharsBySpan[span.span_id] ?? 0,
+  );
+  const isLiveStreamingModelCall =
+    isLive && span.kind === "model.call" && isActiveSseSpan;
+  // The header pill keeps showing on the legacy `span.streaming`
+  // attribute path (mock fixtures + per-span streaming flag) AND on
+  // the new active-SSE-span path. Either is enough to badge it.
+  const isStreaming = isLive && (span.streaming || isActiveSseSpan);
 
   return (
     <div className="w-[400px] shrink-0 flex flex-col">
@@ -217,7 +232,34 @@ export function SpanInspector({
             }
           />
         ) : null}
-        {span.response ? (
+        {isLiveStreamingModelCall ? (
+          // Preempt the post-hoc RESPONSE fallback while the SSE feed is
+          // still delivering `assistant_text_delta` frames. The delta
+          // wire carries only `delta_len`, not text — so the indicator
+          // shows accumulated character count, not the body. When the
+          // stream finishes (span removed from `activeSpanIds`), this
+          // block disappears and the existing hash/ref fallback below
+          // takes over.
+          <PullQuote
+            label="RESPONSE"
+            accent="var(--info)"
+            glyph={"“"}
+            italic
+            streaming
+            body={
+              <div
+                className="text-[11px] font-mono text-text-2"
+                data-testid="span-inspector-streaming"
+              >
+                Streaming response… ({deltaChars.toLocaleString()} chars)
+                <div className="text-text-3 mt-1">
+                  body not stored on disk while in-flight — completion
+                  appears below when the model call finishes
+                </div>
+              </div>
+            }
+          />
+        ) : span.response ? (
           <PullQuote label="RESPONSE" body={span.response} accent="var(--gold)" glyph={"“"} italic />
         ) : span.kind === "model.call" && (span.response_payload_ref || span.response_hash) ? (
           <PullQuote
