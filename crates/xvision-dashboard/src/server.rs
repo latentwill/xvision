@@ -6,6 +6,7 @@ use axum::{
 };
 use tower_http::{compression::CompressionLayer, trace::TraceLayer};
 
+use crate::auth::{auth_middleware, AuthState};
 use crate::routes::{
     agent_runs, agents, bars, chat_rail, cli, eval::review as eval_review, eval_runs,
     health::health, scenarios, search as search_route, settings, skills, static_files,
@@ -193,6 +194,14 @@ pub fn build_router(state: AppState) -> Router {
         .with_state(state)
 }
 
+/// Wrap an already-built router with the auth middleware. Separate
+/// from `build_router` so tests can construct a router without auth
+/// when they want, and so `serve` can pick the right `AuthState` from
+/// the bind address.
+pub fn wrap_with_auth(router: Router, auth: AuthState) -> Router {
+    router.layer(axum::middleware::from_fn_with_state(auth, auth_middleware))
+}
+
 pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
     // Cold-start the ⌘K index: walk the strategy store + run table, re-seed
     // the static action set + canonical scenarios. Idempotent — every
@@ -224,9 +233,26 @@ pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
         );
     }
 
-    let app = build_router(state);
+    // Resolve auth posture from bind address + env. Refuses to start
+    // on a non-loopback bind without a configured shared secret. See
+    // `crates/xvision-dashboard/src/auth.rs` and the runbook.
+    let auth = AuthState::from_env(&addr)?;
+    if auth.is_gated() {
+        tracing::info!(
+            %addr,
+            "xvision-dashboard auth gate ACTIVE (XVN_DASHBOARD_TOKEN required for non-loopback clients)",
+        );
+    } else {
+        tracing::info!(%addr, "xvision-dashboard auth gate inactive (loopback-only bind)");
+    }
+
+    let app = wrap_with_auth(build_router(state), auth);
     tracing::info!(%addr, "xvision-dashboard listening");
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
     Ok(())
 }

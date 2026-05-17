@@ -24,9 +24,19 @@ import type {
   WipeDbReport,
 } from "./types.gen";
 
-// Confirm string the engine expects. Mirrored from
-// `xvision_engine::api::settings::danger::CONFIRM_TOKEN`.
-const DANGER_CONFIRM_TOKEN = "yes-i-am-sure";
+// Per-route confirm phrases. Mirrored from
+// `xvision_engine::api::settings::danger::{WIPE_DB_CONFIRM,
+// FACTORY_RESET_CONFIRM, REGEN_IDENTITY_CONFIRM}`.
+//
+// qa-dashboard-auth-hardening (2026-05-17): these constants are
+// re-exported so the UI can display the phrase for discoverability,
+// but the operator must still type it themselves — the typed text is
+// what travels on the wire to the backend, which validates against
+// the per-route constant. We deliberately do NOT auto-fill the
+// payload with these strings.
+export const DANGER_WIPE_DB_PHRASE = "WIPE DATABASE";
+export const DANGER_FACTORY_RESET_PHRASE = "FACTORY RESET";
+export const DANGER_REGEN_IDENTITY_PHRASE = "REGEN IDENTITY";
 
 export const settingsKeys = {
   all: ["settings"] as const,
@@ -361,17 +371,24 @@ export function testProviderConnection(
 }
 
 // ─── Danger ops ────────────────────────────────────────────────────────────
+//
+// Each danger function accepts the operator-typed phrase as a
+// parameter rather than auto-filling a bundled constant. The backend
+// rejects anything that doesn't match its per-route expectation;
+// the constants above are exported for UI display purposes only.
 
-export function dangerWipeDb(): Promise<WipeDbReport> {
+export function dangerWipeDb(typedPhrase: string): Promise<WipeDbReport> {
   return apiFetch<WipeDbReport>("/api/settings/danger/wipe-db", {
     method: "POST",
-    body: JSON.stringify({ confirm: DANGER_CONFIRM_TOKEN }),
+    body: JSON.stringify({ confirm: typedPhrase }),
   });
 }
 
-export function dangerFactoryReset(): Promise<FactoryResetReport> {
+export function dangerFactoryReset(
+  typedPhrase: string,
+): Promise<FactoryResetReport> {
   return apiFetch<FactoryResetReport>("/api/settings/danger/factory-reset", {
     method: "POST",
-    body: JSON.stringify({ confirm: DANGER_CONFIRM_TOKEN }),
+    body: JSON.stringify({ confirm: typedPhrase }),
   });
 }
