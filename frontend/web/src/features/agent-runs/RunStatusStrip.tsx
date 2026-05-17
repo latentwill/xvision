@@ -306,14 +306,14 @@ export function RunStatusStrip({
       <div style={{ width: 1, height: 14, background: "var(--border)", flexShrink: 0 }} />
 
       <div style={{ display: "flex", alignItems: "center", gap: 2, paddingRight: 4, flexShrink: 0 }}>
-        {/* Expand button */}
+        {/* Expand button. Icon bumped from 11px to 14px per qa-operator-2026-05-17 readability fix. */}
         <button
           onClick={(e) => { e.stopPropagation(); onExpand(); }}
           aria-label="Expand trace dock"
           title="Expand trace dock (F12)"
           style={{
-            height: 24,
-            width: 28,
+            height: 26,
+            width: 30,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -325,19 +325,19 @@ export function RunStatusStrip({
             padding: 0,
           }}
         >
-          <svg width="11" height="11" viewBox="0 0 16 16" fill="none">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
             <path d="M3 10l5-5 5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
           </svg>
         </button>
 
-        {/* Pop-out button */}
+        {/* Pop-out button. Icon bumped from 11px to 14px per qa-operator-2026-05-17 readability fix. */}
         <button
           aria-label="open dedicated trace view"
           onClick={(e) => { e.stopPropagation(); onPopOut(); }}
           title="Open in dedicated route"
           style={{
-            height: 24,
-            width: 28,
+            height: 26,
+            width: 30,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -349,7 +349,7 @@ export function RunStatusStrip({
             padding: 0,
           }}
         >
-          <svg width="11" height="11" viewBox="0 0 16 16" fill="none">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
             <path d="M6 3h7v7M13 3l-7 7M3 8v5h5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         </button>
