@@ -18,6 +18,7 @@ V2 work (V2A onboarding + docs, V2B-V4 roadmap) also has its own board:
 
 - [agent-run-observability-blob-fetch-route](contracts/agent-run-observability-blob-fetch-route.md) - leaf - claimed - add authenticated blob fetch route plus lazy SpanInspector preview for retained prompt/response payload refs.
 - [eval-inspector-header-polish](contracts/eval-inspector-header-polish.md) - leaf - ready - uniform action-button widths, drop redundant strategy/scenario id strip, add a stable per-run disambiguator visible in list + detail header.
+- [trace-fullscreen-redesign](contracts/trace-fullscreen-redesign.md) - leaf - claimed - replace the pop-out `/agent-runs/:runId` rail+timeline pair with a Logfire-style waterfall column; drop the redundant rail tree.
 
 ### Post-Q15 Paper Trading
 

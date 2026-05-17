@@ -33,6 +33,12 @@ violation unless the contract is updated first.
 | `frontend/web/src/api/agent-runs.test.ts` | `agent-run-observability-blob-fetch-route` | agent-run-observability-followups |
 | `frontend/web/src/features/agent-runs/SpanInspector.tsx` | `agent-run-observability-blob-fetch-route` | agent-run-observability-followups |
 | `frontend/web/src/features/agent-runs/SpanInspector.test.tsx` | `agent-run-observability-blob-fetch-route` | agent-run-observability-followups |
+| `frontend/web/src/features/agent-runs/AgentRunIndentedTimeline.tsx` | `trace-fullscreen-redesign` | agent-run-observability-followups |
+| `frontend/web/src/features/agent-runs/AgentRunIndentedTimeline.test.tsx` | `trace-fullscreen-redesign` | agent-run-observability-followups |
+| `frontend/web/src/features/agent-runs/AgentRunRailTree.tsx` | `trace-fullscreen-redesign` | agent-run-observability-followups |
+| `frontend/web/src/features/agent-runs/AgentRunRailTree.test.tsx` | `trace-fullscreen-redesign` | agent-run-observability-followups |
+| `frontend/web/src/routes/agent-runs-detail.tsx` | `trace-fullscreen-redesign` | agent-run-observability-followups |
+| `frontend/web/src/routes/agent-runs-detail.test.tsx` | `trace-fullscreen-redesign` | agent-run-observability-followups |
 | `frontend/web/src/routes/eval-runs-detail.tsx` | `eval-inspector-header-polish` | agent-run-observability-followups |
 | `frontend/web/src/routes/eval-runs-detail-mobile.tsx` | `eval-inspector-header-polish` | agent-run-observability-followups |
 | `frontend/web/src/routes/eval-runs.tsx` | `eval-inspector-header-polish` | agent-run-observability-followups |
