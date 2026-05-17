@@ -2,6 +2,11 @@ import { useNavigate } from "react-router-dom";
 
 import { InlineSparkline } from "@/components/chat/inline-chart/InlineSparkline";
 import type { RunListContentBlock } from "@/api/chat_rail";
+import {
+  displayScenarioName,
+  displayStrategyName,
+  shortId,
+} from "@/lib/run-display";
 import { runInlineAction } from "./actions";
 
 export function ChatRunListCard({ payload }: { payload: RunListContentBlock }) {
@@ -19,45 +24,53 @@ export function ChatRunListCard({ payload }: { payload: RunListContentBlock }) {
         </h3>
       </header>
       <div className="divide-y divide-border-soft">
-        {payload.runs.slice(0, 5).map((run) => (
-          <button
-            key={run.run_id}
-            type="button"
-            aria-label={`Open run ${run.run_id}`}
-            onClick={() => navigate(`/eval-runs/${encodeURIComponent(run.run_id)}`)}
-            className="w-full px-3 py-2 text-left hover:bg-surface-hover flex items-center gap-2"
-          >
-            <span className="w-5 flex-shrink-0 font-mono text-[11px] text-text-3">
-              #{run.rank}
-            </span>
-            <span className="flex-1 min-w-0">
-              <span className="block font-mono text-[12px] text-text truncate">
-                {run.run_id}
+        {payload.runs.slice(0, 5).map((run) => {
+          const strategy = run.strategy_id
+            ? displayStrategyName(run.strategy_id, [])
+            : "Eval run";
+          const scenario = run.scenario
+            ? displayScenarioName(run.scenario, [])
+            : null;
+          return (
+            <button
+              key={run.run_id}
+              type="button"
+              aria-label={`Open run ${run.run_id}`}
+              onClick={() => navigate(`/eval-runs/${encodeURIComponent(run.run_id)}`)}
+              className="w-full px-3 py-2 text-left hover:bg-surface-hover flex items-center gap-2"
+            >
+              <span className="w-5 flex-shrink-0 font-mono text-[11px] text-text-3">
+                #{run.rank}
               </span>
-              <span className="block text-[11px] text-text-3 truncate">
-                {[run.strategy_id, run.scenario].filter(Boolean).join(" / ")}
+              <span className="flex-1 min-w-0">
+                <span className="block text-[12px] text-text truncate">
+                  {strategy}
+                </span>
+                <span className="block text-[11px] text-text-3 truncate">
+                  {[scenario, `run ${shortId(run.run_id)}`].filter(Boolean).join(" / ")}
+                </span>
               </span>
-            </span>
-            <span className="flex-shrink-0 text-right">
-              <span className="block font-mono text-[12px] text-gold">
-                {formatPercent(run.return_pct)}
+              <span className="flex-shrink-0 text-right">
+                <span className="block font-mono text-[12px] text-gold">
+                  {formatPercent(run.return_pct)}
+                </span>
+                <span className="block font-mono text-[10px] text-text-3">
+                  S {formatNumber(run.sharpe)}
+                </span>
               </span>
-              <span className="block font-mono text-[10px] text-text-3">
-                S {formatNumber(run.sharpe)}
-              </span>
-            </span>
-            {run.sparkline && run.sparkline.length > 0 ? (
-              <InlineSparkline
-                series={{
-                  id: `${run.run_id}:spark`,
-                  label: run.run_id,
-                  tone: "gold",
-                  points: run.sparkline,
-                }}
-              />
-            ) : null}
-          </button>
-        ))}
+              {run.sparkline && run.sparkline.length > 0 ? (
+                <InlineSparkline
+                  series={{
+                    id: `${run.run_id}:spark`,
+                    label: strategy,
+                    tone: "gold",
+                    points: run.sparkline,
+                  }}
+                />
+              ) : null}
+            </button>
+          );
+        })}
       </div>
       {payload.actions.length > 0 ? (
         <footer className="px-3 py-2 border-t border-border-soft flex justify-end gap-1.5">

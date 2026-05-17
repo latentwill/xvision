@@ -174,8 +174,25 @@
      rendered in (info for running, etc.). */
   .xvn-pill-animated {
     position: relative;
+    isolation: isolate;
+    overflow: hidden;
     animation: xvn-pill-pulse 1.6s ease-in-out infinite;
     background: color-mix(in srgb, currentColor 8%, transparent);
+  }
+  .xvn-pill-animated::after {
+    content: "";
+    position: absolute;
+    inset: -1px;
+    z-index: 0;
+    pointer-events: none;
+    transform: translateX(-115%);
+    background: linear-gradient(
+      90deg,
+      transparent,
+      color-mix(in srgb, currentColor 24%, transparent),
+      transparent
+    );
+    animation: xvn-pill-sweep 1.6s ease-in-out infinite;
   }
   .xvn-pill-animated > span:first-child:not(:only-child) {
     animation: xvn-pill-dot-pulse 1.6s ease-in-out infinite;
@@ -201,9 +218,19 @@
       opacity: 0.82;
     }
   }
+  @keyframes xvn-pill-sweep {
+    0% {
+      transform: translateX(-115%);
+    }
+    52%,
+    100% {
+      transform: translateX(115%);
+    }
+  }
 
   @media (prefers-reduced-motion: reduce) {
     .xvn-pill-animated,
+    .xvn-pill-animated::after,
     .xvn-pill-animated > span:first-child:not(:only-child) {
       animation: none;
     }

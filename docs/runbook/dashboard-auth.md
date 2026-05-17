@@ -36,6 +36,12 @@ Treat the secret as a credential — generate via `openssl rand -hex 32`
 or your preferred CSPRNG. Don't commit it. Distribute via the same
 channels you'd use for an API key.
 
+The current Tailscale deployment path is a testing convenience, not the
+final user-facing auth model. It still counts as a non-loopback dashboard bind,
+so test stacks that expose the dashboard through a Tailscale sidecar must set
+`XVN_DASHBOARD_TOKEN` in their remote `.env`. Local development can avoid the
+token by binding the dashboard to `127.0.0.1`.
+
 ## Presenting the secret
 
 Four channels are accepted (constant-time compared, equivalent

@@ -294,7 +294,7 @@ describe("EvalRunsRoute", () => {
     expect(screen.getAllByText("1,545").length).toBeGreaterThan(0);
   });
 
-  it("marks the running status pill with the animation hook and leaves completed pills static", async () => {
+  it("marks in-flight status pills with the animation hook and leaves completed pills static", async () => {
     vi.mocked(evalApi.listRuns).mockResolvedValue([
       {
         id: "01RUN000000000000000000001",
@@ -310,6 +310,21 @@ describe("EvalRunsRoute", () => {
         error: null,
         actual_input_tokens: 100,
         actual_output_tokens: 50,
+      },
+      {
+        id: "01RUN000000000000000000003",
+        agent_id: "01TEST",
+        scenario_id: "crypto-bull-q1-2025",
+        mode: "backtest",
+        status: "queued",
+        started_at: "2026-05-13T07:02:00Z",
+        completed_at: null,
+        sharpe: null,
+        max_drawdown_pct: null,
+        total_return_pct: null,
+        error: null,
+        actual_input_tokens: null,
+        actual_output_tokens: null,
       },
       {
         id: "01RUN000000000000000000002",
@@ -330,16 +345,19 @@ describe("EvalRunsRoute", () => {
 
     renderRoute();
 
-    await screen.findByText("2 runs");
+    await screen.findByText("3 runs");
     // EvalRunsRoute renders runs in both a card grid and a table, so each
-    // row's pill appears twice. With one running row and one completed row,
-    // exactly the running-row pills should carry the animation hook.
+    // row's pill appears twice. In-flight rows should carry the animation hook.
     const animatedPills = document.querySelectorAll("[data-running='true']");
-    expect(animatedPills.length).toBeGreaterThanOrEqual(1);
+    expect(animatedPills.length).toBeGreaterThanOrEqual(2);
+    const animatedText = Array.from(animatedPills)
+      .map((pill) => pill.textContent ?? "")
+      .join(" ");
+    expect(animatedText).toContain("running");
+    expect(animatedText).toContain("queued");
     for (const pill of Array.from(animatedPills)) {
       expect(pill).toHaveAttribute("aria-busy", "true");
       expect(pill.className).toContain("xvn-pill-animated");
-      expect(pill.textContent).toContain("running");
     }
     const staticPills = document.querySelectorAll(
       ".xvn-pill-animated[data-running='false']",
@@ -609,9 +627,9 @@ describe("EvalRunsRoute", () => {
     renderRoute();
 
     await waitFor(() =>
-      expect(screen.getAllByText("01ORPHAN").length).toBeGreaterThan(0),
+      expect(screen.getAllByText("Strategy 01ORPHAN...").length).toBeGreaterThan(0),
     );
-    expect(screen.getAllByText("deleted-scenario").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Deleted Scenario").length).toBeGreaterThan(0);
   });
 
   it("blocks paper eval launch when Alpaca credentials are missing", async () => {

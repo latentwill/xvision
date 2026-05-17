@@ -145,6 +145,53 @@ describe("HomeRoute", () => {
     expect(sub.textContent).toContain("User 4H");
   });
 
+  it("renders recent runs as eval rows with readable names", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([
+      {
+        id: "01RUN0001",
+        agent_id: "01STRAT",
+        scenario_id: "user-scenario-4h",
+        mode: "backtest",
+        status: "queued",
+        started_at: "2026-05-13T07:00:00Z",
+        completed_at: null,
+        sharpe: null,
+        max_drawdown_pct: null,
+        total_return_pct: null,
+        error: null,
+        actual_input_tokens: null,
+        actual_output_tokens: null,
+      } as never,
+    ]);
+    vi.mocked(strategyApi.listStrategies).mockResolvedValue([
+      {
+        agent_id: "01STRAT",
+        display_name: "Trend 4H",
+        template: "trend_follower",
+        decision_cadence_minutes: 240,
+        providers: ["openai"],
+        models: ["gpt-4.1-mini"],
+      } as never,
+    ]);
+    vi.mocked(scenarioApi.listScenarios).mockResolvedValue([
+      {
+        id: "user-scenario-4h",
+        display_name: "User 4H",
+      } as never,
+    ]);
+
+    renderRoute();
+
+    expect(await screen.findByText("Eval")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Trend 4H" })).toHaveAttribute(
+      "href",
+      "/eval-runs/01RUN0001",
+    );
+    expect(screen.getByText("User 4H")).toBeInTheDocument();
+    expect(screen.queryByText("01RUN0001")).not.toBeInTheDocument();
+    expect(screen.getByText("queued")).toHaveAttribute("aria-busy", "true");
+  });
+
   it("links the chart card's open-eval action to the latest run when one exists", async () => {
     vi.mocked(evalApi.listRuns).mockResolvedValue([
       {

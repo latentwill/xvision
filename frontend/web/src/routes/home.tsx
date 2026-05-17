@@ -11,6 +11,12 @@ import { scenarioKeys, listScenarios } from "@/api/scenarios";
 import { agentKeys, listAgents } from "@/api/agents";
 import { getBrokers, listProviders, settingsKeys } from "@/api/settings";
 import { RunChart } from "@/components/chart/RunChart";
+import { isInflightRunStatus } from "@/lib/run-status";
+import {
+  displayScenarioName,
+  displayStrategyName,
+  shortId,
+} from "@/lib/run-display";
 import type {
   BrokerEntry,
   BrokersReport,
@@ -47,12 +53,6 @@ export function HomeRoute() {
     queryFn: getBrokers,
   });
 
-  const attention = buildAttention({
-    runs: runs.data,
-    providers: providers.data?.providers,
-    brokers: brokers.data,
-  });
-
   const recent = (runs.data ?? []).slice(0, 5);
   const latestRun = recent[0];
   const latestRunId = latestRun?.id ?? "";
@@ -64,6 +64,13 @@ export function HomeRoute() {
   const scenarios = useQuery({
     queryKey: scenarioKeys.list(),
     queryFn: () => listScenarios(),
+  });
+  const attention = buildAttention({
+    runs: runs.data,
+    providers: providers.data?.providers,
+    brokers: brokers.data,
+    strategies: strategies.data ?? [],
+    scenarios: scenarios.data ?? [],
   });
   const strategyCount = strategies.data?.length ?? 0;
   const agentCount = agents.data?.length ?? 0;
@@ -90,6 +97,8 @@ export function HomeRoute() {
             runs={recent}
             loading={runs.isPending}
             error={runs.error}
+            strategies={strategies.data ?? []}
+            scenarios={scenarios.data ?? []}
           />
 
           <ControlChartCard
@@ -224,11 +233,18 @@ function RecentRunsCard({
   runs,
   loading,
   error,
+  strategies,
+  scenarios,
 }: {
   runs: RunSummary[];
   loading: boolean;
   error: unknown;
+  strategies: StrategyListItem[];
+  scenarios: Scenario[];
 }) {
+  const strategyLabel = (id: string) => displayStrategyName(id, strategies);
+  const scenarioLabel = (id: string) => displayScenarioName(id, scenarios);
+
   return (
     <Card className="p-5">
       <div className="flex items-baseline justify-between mb-3">
@@ -268,7 +284,8 @@ function RecentRunsCard({
         <table className="w-full">
           <thead>
             <tr className="text-text-3 text-[11px] uppercase tracking-wider text-left">
-              <th className="py-1.5 pr-3 font-normal">Run</th>
+              <th className="py-1.5 pr-3 font-normal">Type</th>
+              <th className="py-1.5 pr-3 font-normal">Strategy</th>
               <th className="py-1.5 pr-3 font-normal">Scenario</th>
               <th className="py-1.5 pr-3 font-normal text-right">Sharpe</th>
               <th className="py-1.5 pr-3 font-normal text-right">Return</th>
@@ -279,15 +296,18 @@ function RecentRunsCard({
             {runs.map((r) => (
               <tr key={r.id} className="border-t border-border-soft">
                 <td className="py-2 pr-3">
+                  <Pill tone="default">Eval</Pill>
+                </td>
+                <td className="py-2 pr-3">
                   <Link
                     to={`/eval-runs/${r.id}`}
-                    className="font-mono text-[12px] text-text hover:text-gold"
+                    className="text-[12px] text-text hover:text-gold"
                   >
-                    {r.id.slice(0, 10)}…
+                    {strategyLabel(r.agent_id)}
                   </Link>
                 </td>
                 <td className="py-2 pr-3 text-text-2 text-[12px]">
-                  {r.scenario_id}
+                  {scenarioLabel(r.scenario_id)}
                 </td>
                 <td className="py-2 pr-3 text-right font-mono text-[12px]">
                   {fmtNumOrDash(r.sharpe, 2)}
@@ -300,7 +320,7 @@ function RecentRunsCard({
                 <td className="py-2 pr-0 text-right">
                   <Pill
                     tone={STATUS_TONE[r.status] ?? "default"}
-                    animated={r.status === "running"}
+                    animated={isInflightRunStatus(r.status)}
                   >
                     {r.status}
                   </Pill>
@@ -334,13 +354,13 @@ function ControlChartCard({
   scenarios: Scenario[];
 }) {
   const strategyLabel = latestRun
-    ? strategies.find((s) => s.agent_id === latestRun.agent_id)?.display_name?.trim()
+    ? displayStrategyName(latestRun.agent_id, strategies)
     : undefined;
   const scenarioLabel = latestRun
-    ? scenarios.find((s) => s.id === latestRun.scenario_id)?.display_name?.trim()
+    ? displayScenarioName(latestRun.scenario_id, scenarios)
     : undefined;
   const sub = latestRun
-    ? `Latest eval · ${strategyLabel ?? latestRun.agent_id.slice(0, 8)} on ${scenarioLabel ?? latestRun.scenario_id} · ${fmtChartDate(latestRun.started_at)}`
+    ? `Latest eval · ${strategyLabel} on ${scenarioLabel} · ${fmtChartDate(latestRun.started_at)}`
     : null;
   return (
     <Card className="p-5">
@@ -427,6 +447,8 @@ function buildAttention(input: {
   runs: RunSummary[] | undefined;
   providers: ProviderRow[] | undefined;
   brokers: BrokersReport | undefined;
+  strategies: StrategyListItem[];
+  scenarios: Scenario[];
 }): AttentionItem[] {
   const out: AttentionItem[] = [];
 
@@ -437,7 +459,7 @@ function buildAttention(input: {
       title: `${failed.length} failed eval run${failed.length === 1 ? "" : "s"}`,
       detail:
         failed[0].error ??
-        `latest: ${failed[0].scenario_id} (${failed[0].id.slice(0, 10)}…)`,
+        `latest: ${displayStrategyName(failed[0].agent_id, input.strategies)} on ${displayScenarioName(failed[0].scenario_id, input.scenarios)} (${shortId(failed[0].id)})`,
       link: { to: "/eval-runs", label: "review" },
     });
   }
