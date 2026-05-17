@@ -16,6 +16,47 @@ use crate::agent::tool_call;
 use crate::strategies::slot::LLMSlot;
 use crate::tools::ToolRegistry;
 
+/// Hard cap on the number of tool-use round-trips inside `execute_slot`.
+/// A pathological model that always emits `ToolUse` (no `EndTurn`) would
+/// otherwise loop until the upstream LLM budget or wall clock ran out —
+/// see `qa/2026-05-17-comprehensive-codebase-review.md` finding #1. The
+/// dashboard wizard has a sibling constant for its own iteration count;
+/// the two are intentionally independent.
+///
+/// Picked at the top of the 8–12 range from the contract — generous
+/// enough for legitimate multi-tool plans, tight enough to catch a loop
+/// long before it burns through realistic per-decision budgets.
+pub const MAX_TOOL_LOOP_ITERATIONS: usize = 12;
+
+/// Typed errors that `execute_slot` can produce. Wrapped in
+/// `anyhow::Error` at the call boundary so existing `Result<_,
+/// anyhow::Error>` callers (the engine pipeline, eval executors) keep
+/// compiling unchanged — but downstream observability code (e.g. the
+/// post-Phase-B `qa-trace-error-surfacing` track) can `downcast_ref` to
+/// match on the specific variant and pull the structured payload.
+#[derive(Debug, thiserror::Error)]
+pub enum ExecuteSlotError {
+    /// The tool-use loop ran for `MAX_TOOL_LOOP_ITERATIONS` rounds
+    /// without the model emitting `EndTurn` or running out of tool
+    /// calls. Carries enough payload for an operator to diagnose which
+    /// slot wedged and what it was doing.
+    #[error(
+        "execute_slot: tool-use loop exhausted after {iterations} iterations \
+         (slot role={role}, model={model}, last stop_reason={last_stop_reason:?}, \
+         tools_called={tool_names:?}, input_tokens={input_tokens}, \
+         output_tokens={output_tokens})"
+    )]
+    ToolLoopCapExceeded {
+        role: String,
+        model: String,
+        iterations: usize,
+        tool_names: Vec<String>,
+        input_tokens: u32,
+        output_tokens: u32,
+        last_stop_reason: StopReason,
+    },
+}
+
 pub struct SlotInput<'a> {
     pub slot: &'a LLMSlot,
     pub upstream_inputs: serde_json::Value,
@@ -61,7 +102,38 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
     // resolves from the model library, not from operator config.
     let dispatcher_max_tokens: Option<u32> = None;
 
+    // Cap on tool-use round-trips (qa-execute-slot-cap, 2026-05-17). A
+    // misbehaving model that always emits `ToolUse` would otherwise
+    // loop until upstream budget exhaustion. The cap counts iterations
+    // BEFORE the dispatch call; the final EndTurn/empty-uses turn does
+    // NOT consume an iteration since it short-circuits below.
+    let mut iterations: usize = 0;
+    let mut tool_names_called: Vec<String> = Vec::new();
+    let mut last_stop_reason: StopReason = StopReason::EndTurn;
+
     loop {
+        if iterations >= MAX_TOOL_LOOP_ITERATIONS {
+            tracing::warn!(
+                slot_role = %input.slot.role,
+                model = %input.slot.effective_model(),
+                iterations,
+                last_stop_reason = ?last_stop_reason,
+                tool_names = ?tool_names_called,
+                input_tokens = total_input_tokens,
+                output_tokens = total_output_tokens,
+                "execute_slot tool-use loop exhausted iteration cap",
+            );
+            return Err(anyhow::Error::new(ExecuteSlotError::ToolLoopCapExceeded {
+                role: input.slot.role.clone(),
+                model: input.slot.effective_model(),
+                iterations,
+                tool_names: tool_names_called,
+                input_tokens: total_input_tokens,
+                output_tokens: total_output_tokens,
+                last_stop_reason,
+            }));
+        }
+
         let req = LlmRequest {
             model: input.slot.effective_model(),
             system_prompt: input.slot.prompt.clone(),
@@ -77,6 +149,7 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
         let resp = input.dispatch.complete(req).await?;
         total_input_tokens = total_input_tokens.saturating_add(resp.input_tokens);
         total_output_tokens = total_output_tokens.saturating_add(resp.output_tokens);
+        last_stop_reason = resp.stop_reason;
 
         let uses = tool_call::tool_uses(&resp.content);
 
@@ -105,6 +178,7 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
         // whole slot on a single bad tool call.
         let mut results = Vec::with_capacity(uses.len());
         for (tu_id, tu_name, tu_input) in uses {
+            tool_names_called.push(tu_name.clone());
             let content = match tool_call::invoke(&tu_name, tu_input, input.tools.clone()).await {
                 Ok(s) => s,
                 Err(e) => format!("tool error: {e}"),
@@ -118,6 +192,8 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
             role: "user".into(),
             content: results,
         });
+
+        iterations += 1;
     }
 }
 
