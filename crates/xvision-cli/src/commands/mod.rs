@@ -12,6 +12,7 @@ pub mod indicator;
 pub mod intern;
 pub mod metrics;
 pub mod migrate;
+pub mod obs;
 pub mod provider;
 pub mod report;
 pub mod risk;
