@@ -101,15 +101,23 @@ impl AppState {
         // (the dashboard process doesn't take retention flags), so the
         // effective chain is env > file > default. Persisted across the
         // process lifetime so eval handlers don't re-read it per request.
+        //
+        // We go through `retention::resolve` (rather than the simpler
+        // `ObservabilityConfig::load_with_env`) so the explicit-source
+        // startup `warn!` line still fires when an operator set
+        // full_debug via env or TOML — `load_with_env` no longer
+        // distinguishes default vs. explicit and would only emit the
+        // quiet info-level line.
         let obs_config_path = xvision_observability::default_config_path();
-        let obs_config = match xvision_observability::ObservabilityConfig::load_with_env(
+        let obs_config = match xvision_observability::retention::resolve(
             &obs_config_path,
+            &xvision_observability::retention::CliOverrides::default(),
         ) {
-            Ok(cfg) => Arc::new(cfg),
+            Ok(view) => Arc::new(view.config()),
             Err(e) => {
                 tracing::warn!(
                     error = %e,
-                    "could not load observability config; using defaults"
+                    "could not resolve observability config; using defaults"
                 );
                 Arc::new(xvision_observability::ObservabilityConfig::default())
             }

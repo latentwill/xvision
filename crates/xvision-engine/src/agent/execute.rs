@@ -188,6 +188,35 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
                 return Err(e);
             }
         };
+        // Bridge to the trace dock's streaming pull-quote: emit the
+        // accumulated assistant text as a single `AssistantTextDelta`
+        // before closing the span so `SpanInspector` renders the body
+        // even though the underlying dispatch is non-streaming today.
+        // Real chunked SSE on AnthropicDispatch / OpenaiCompatDispatch
+        // is a follow-up — when they emit per-chunk deltas the frontend
+        // already accumulates into the same slot.
+        //
+        // Retention is enforced inside `emit_assistant_text_delta`: when
+        // the active policy is anything other than FullDebug +
+        // store_responses, the body is suppressed at the source. We
+        // still publish the event so the dashboard can update span
+        // counts, just without raw text.
+        if let Some(obs) = input.obs.as_ref() {
+            use crate::agent::llm::ContentBlock;
+            let assistant_text: String = resp
+                .content
+                .iter()
+                .filter_map(|c| match c {
+                    ContentBlock::Text { text } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("");
+            if !assistant_text.is_empty() {
+                obs.emit_assistant_text_delta(&span_id, &assistant_text)
+                    .await;
+            }
+        }
         if let Some(obs) = input.obs.as_ref() {
             obs.emit_model_call_finished(
                 &span_id,
