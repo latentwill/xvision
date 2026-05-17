@@ -20,11 +20,15 @@ impl Supervisor {
         bin: &Path,
         socket_path: &Path,
         callback_socket_path: Option<&Path>,
+        event_socket_path: Option<&Path>,
     ) -> Result<Self> {
         let mut cmd = Command::new("node");
         cmd.arg(bin).arg("--socket").arg(socket_path);
         if let Some(cb) = callback_socket_path {
             cmd.arg("--callback-socket").arg(cb);
+        }
+        if let Some(ev) = event_socket_path {
+            cmd.arg("--event-socket").arg(ev);
         }
         cmd.stdout(Stdio::null())
             .stderr(Stdio::piped())
