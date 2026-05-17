@@ -283,17 +283,18 @@ describe("AuthoringRoute agent composition", () => {
 
     renderRoute();
 
+    // RunEvalCard was removed by qa-ui-micro-fixes (2026-05-17); the
+    // "no agents attached" path now surfaces solely through
+    // InspectorActions at the top of the route.
     expect(
-      await screen.findByText(/attach an agent before running eval/i),
+      await screen.findByText(/no strategy agent is attached yet/i),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("link", { name: /attach agent first/i }),
+      screen.getByRole("link", { name: /go to agents/i }),
     ).toHaveAttribute("href", "#strategy-agents");
+    // The launch button must be absent until an agent is attached.
     expect(
       screen.queryByRole("link", { name: /^run eval/i }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("link", { name: /open launcher/i }),
     ).not.toBeInTheDocument();
   });
 
