@@ -30,6 +30,21 @@ export type RunSpan = {
   finished_at: string | null; // ISO, null = in-flight
   status: SpanStatus;
   attributes: Record<string, unknown>;
+  // Prototype-driven extensions: live in `attributes` server-side but
+  // surface as first-class so the inspector can render them as pull-quotes.
+  prompt?: string;
+  response?: string;
+  response_partial?: string;
+  args?: unknown;
+  result?: unknown;
+  decision_idx?: number;
+  provider?: string;
+  model?: string;
+  hash?: string;
+  tokens_in?: number;
+  tokens_out?: number;
+  cost?: number;
+  streaming?: boolean;
 };
 
 export type ModelCall = {
