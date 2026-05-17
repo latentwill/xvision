@@ -206,6 +206,12 @@ describe("EvalRunsRoute", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     vi.mocked(chartApi.getRunChart).mockResolvedValue(null as never);
+    // Default to empty lookup lists so the strategy/scenario name
+    // queries don't return undefined and pollute test output with
+    // "Query data cannot be undefined" warnings. Individual tests
+    // override via mockReady() when they need rows back.
+    vi.mocked(strategyApi.listStrategies).mockResolvedValue([]);
+    vi.mocked(scenariosApi.listScenarios).mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -540,6 +546,67 @@ describe("EvalRunsRoute", () => {
       ),
     ).toBeInTheDocument();
     expect(evalApi.startRun).not.toHaveBeenCalled();
+  });
+
+  it("renders strategy display name and scenario display name in the run list (desktop + mobile)", async () => {
+    mockReady();
+    vi.mocked(evalApi.listRuns).mockResolvedValue([
+      {
+        id: "01RUN000000000000000000000",
+        agent_id: "01TEST",
+        scenario_id: "user-scenario-4h",
+        mode: "backtest",
+        status: "completed",
+        started_at: "2026-05-13T07:00:00Z",
+        completed_at: "2026-05-13T08:15:00Z",
+        sharpe: 1.2,
+        max_drawdown_pct: 4.5,
+        total_return_pct: 8.1,
+        error: null,
+        actual_input_tokens: 1000,
+        actual_output_tokens: 250,
+      },
+    ]);
+
+    renderRoute();
+
+    // EvalRunsRoute renders the row in both desktop and mobile layouts,
+    // so the friendly labels should appear at least once each. Display
+    // names come from listStrategies / listScenarios mocks above.
+    await waitFor(() =>
+      expect(screen.getAllByText(/Trend 4H/).length).toBeGreaterThan(0),
+    );
+    expect(screen.getAllByText(/User 4H/).length).toBeGreaterThan(0);
+    // Raw agent_id slice must NOT appear in either layout for the row.
+    expect(screen.queryByText("01TEST")).not.toBeInTheDocument();
+  });
+
+  it("falls back to the short id when the strategy/scenario lookup misses", async () => {
+    mockReady();
+    vi.mocked(evalApi.listRuns).mockResolvedValue([
+      {
+        id: "01RUN000000000000000000000",
+        agent_id: "01ORPHANSTRAT",
+        scenario_id: "deleted-scenario",
+        mode: "backtest",
+        status: "completed",
+        started_at: "2026-05-13T07:00:00Z",
+        completed_at: "2026-05-13T08:15:00Z",
+        sharpe: 1.2,
+        max_drawdown_pct: 4.5,
+        total_return_pct: 8.1,
+        error: null,
+        actual_input_tokens: 1000,
+        actual_output_tokens: 250,
+      },
+    ]);
+
+    renderRoute();
+
+    await waitFor(() =>
+      expect(screen.getAllByText("01ORPHAN").length).toBeGreaterThan(0),
+    );
+    expect(screen.getAllByText("deleted-scenario").length).toBeGreaterThan(0);
   });
 
   it("blocks paper eval launch when Alpaca credentials are missing", async () => {
