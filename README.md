@@ -41,8 +41,8 @@ If you are an external or embedded agent using this repo, start here:
 
 1. Read `MANUAL.md` for operator commands and environment assumptions.
 2. Read `FOLLOWUPS.md` for active engineering tracks and deferred work.
-3. If you are running inside Claude Code rooted in this repo, load `.claude/skills/xvision/SKILL.md`.
-4. For exact CLI usage, run `xvn --help` and read `.claude/skills/xvision/references/cli.md`.
+3. If you are running inside Claude Code rooted in this repo, load `.claude/skills/xvision-cli/SKILL.md` for operator/usage tasks or `.claude/skills/xvision-dev/SKILL.md` when editing the codebase. See `.claude/skills/README.md` for the full skill map.
+4. For exact CLI usage, run `xvn --help` and read `.claude/skills/xvision-cli/references/cli.md`.
 5. For live-node remote control, use the Tailscale-served dashboard node (`xvn.tail2bb69.ts.net` or `xvnej.tail2bb69.ts.net`) rather than assuming arbitrary SSH access.
 6. For a shell-free remote CLI helper, use `scripts/xvn-remote.py`.
 
