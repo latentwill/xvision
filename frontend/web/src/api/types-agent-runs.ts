@@ -5,7 +5,14 @@
 // When the backend lands ts-rs derives, replace this file with the
 // generated bindings.
 
-export type RunStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
+export type RunStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "interrupted"
+  | "agent_failure";
 
 /**
  * Retention modes mirror the recorder's on-disk policy (see

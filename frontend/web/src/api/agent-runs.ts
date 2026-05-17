@@ -79,6 +79,8 @@ const RUN_STATUSES: ReadonlySet<RunStatus> = new Set([
   "completed",
   "failed",
   "cancelled",
+  "interrupted",
+  "agent_failure",
 ]);
 const RETENTION_MODES: ReadonlySet<RetentionMode> = new Set([
   "hash_only",
@@ -90,6 +92,132 @@ type Problem = string;
 
 function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+function isAgentRunExportPayload(payload: unknown): payload is Record<string, unknown> {
+  return isObject(payload) && payload.schema_version === "xvn.agent_run.v1";
+}
+
+function asString(v: unknown, fallback = ""): string {
+  return typeof v === "string" ? v : fallback;
+}
+
+function asNumber(v: unknown, fallback = 0): number {
+  return typeof v === "number" && Number.isFinite(v) ? v : fallback;
+}
+
+function asNullableString(v: unknown): string | null {
+  return typeof v === "string" ? v : null;
+}
+
+function parseAttributes(raw: unknown): Record<string, unknown> {
+  if (isObject(raw)) return raw;
+  if (typeof raw !== "string" || raw.length === 0) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return isObject(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function spanStatus(row: Record<string, unknown>): RunSpan["status"] {
+  if (row.ended_at == null && row.finished_at == null) return "in_progress";
+  return row.status === "error" ? "error" : "ok";
+}
+
+function flattenExportSpans(spans: unknown, out: RunSpan[] = []): RunSpan[] {
+  if (!Array.isArray(spans)) return out;
+  for (const raw of spans) {
+    if (!isObject(raw)) continue;
+    const id = asString(raw.id ?? raw.span_id);
+    if (!id) continue;
+    const attrs = parseAttributes(raw.attributes_json ?? raw.attributes);
+    out.push({
+      span_id: id,
+      parent_span_id: asNullableString(raw.parent_span_id),
+      name: asString(raw.name, id),
+      kind: asString(raw.kind, "agent.run") as RunSpan["kind"],
+      started_at: asString(raw.started_at),
+      finished_at: asNullableString(raw.ended_at ?? raw.finished_at),
+      status: spanStatus(raw),
+      attributes: attrs,
+    });
+    flattenExportSpans(raw.children, out);
+  }
+  return out;
+}
+
+function durationMs(startedAt: string, finishedAt: string | null): number | null {
+  if (!finishedAt) return null;
+  const start = new Date(startedAt).getTime();
+  const end = new Date(finishedAt).getTime();
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+  return Math.max(0, end - start);
+}
+
+function normalizeAgentRunExport(payload: Record<string, unknown>): AgentRunDetail {
+  const totals = isObject(payload.totals) ? payload.totals : {};
+  const spans = flattenExportSpans(payload.spans);
+  const modelCallsRaw = Array.isArray(payload.model_calls) ? payload.model_calls : [];
+  const toolCallsRaw = Array.isArray(payload.tool_calls) ? payload.tool_calls : [];
+  const bySpan = new Map(spans.map((s) => [s.span_id, s]));
+  const status = asString(payload.status, "completed") as RunStatus;
+  const startedAt = asString(payload.started_at);
+  const finishedAt = asNullableString(payload.finished_at);
+  const errorCount =
+    spans.filter((s) => s.status === "error").length +
+    (status === "failed" || status === "agent_failure" ? 1 : 0);
+
+  return {
+    summary: {
+      run_id: asString(payload.run_id),
+      objective: asString(payload.objective),
+      strategy_id: asNullableString(payload.strategy_id),
+      agent_id: null,
+      started_at: startedAt,
+      finished_at: finishedAt,
+      status,
+      span_count: spans.length,
+      model_call_count: asNumber(totals.model_calls, modelCallsRaw.length),
+      tool_call_count: asNumber(totals.tool_calls, toolCallsRaw.length),
+      error_count: errorCount,
+      total_cost_usd: asNumber(totals.cost_usd),
+      total_input_tokens: asNumber(totals.input_tokens),
+      total_output_tokens: asNumber(totals.output_tokens),
+      duration_ms: durationMs(startedAt, finishedAt),
+      financial_eval_id: asNullableString(payload.eval_run_id),
+      retention_mode: asString(payload.retention_mode, "hash_only") as RetentionMode,
+    },
+    spans,
+    model_calls: modelCallsRaw.filter(isObject).map((row) => ({
+      model_call_id: asString(row.span_id),
+      span_id: asString(row.span_id),
+      provider: asString(row.provider),
+      model: asString(row.model),
+      input_tokens:
+        typeof row.input_token_count === "number" ? row.input_token_count : null,
+      output_tokens:
+        typeof row.output_token_count === "number" ? row.output_token_count : null,
+      cost_usd: typeof row.cost_usd === "number" ? row.cost_usd : null,
+      prompt_hash: asString(row.prompt_hash),
+      response_text: asNullableString(row.response_hash),
+    })),
+    tool_calls: toolCallsRaw.filter(isObject).map((row) => {
+      const spanId = asString(row.span_id);
+      const span = bySpan.get(spanId);
+      return {
+        tool_call_id: spanId,
+        span_id: spanId,
+        tool_name: asString(row.tool_name),
+        input_json: row.input_payload_ref ?? row.input_hash ?? null,
+        output_json: row.output_payload_ref ?? row.output_hash ?? null,
+        error: null,
+        started_at: span?.started_at ?? "",
+        finished_at: span?.finished_at ?? null,
+      };
+    }),
+  };
 }
 
 function checkSummary(summary: unknown, problems: Problem[]): void {
@@ -152,6 +280,10 @@ function checkSpan(span: unknown, idx: number, problems: Problem[]): void {
  * Exported for tests.
  */
 export function validateAgentRunDetail(payload: unknown): AgentRunDetail {
+  if (isAgentRunExportPayload(payload)) {
+    return validateAgentRunDetail(normalizeAgentRunExport(payload));
+  }
+
   const problems: Problem[] = [];
   if (!isObject(payload)) {
     throw new ApiError(

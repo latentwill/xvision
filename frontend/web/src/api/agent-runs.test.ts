@@ -9,6 +9,70 @@ import {
 } from "./agent-runs";
 import { MOCK_RUN_COMPLETED, MOCK_RUN_FULL_DEBUG } from "@/features/agent-runs/mock-fixtures";
 
+const EXPORT_PAYLOAD = {
+  schema_version: "xvn.agent_run.v1",
+  run_id: "run_export_1",
+  objective: "Inspect a real export",
+  strategy_id: "strat_1",
+  eval_run_id: null,
+  status: "interrupted",
+  retention_mode: "hash_only",
+  started_at: "2026-05-17T16:00:00Z",
+  finished_at: "2026-05-17T16:00:03Z",
+  totals: {
+    model_calls: 1,
+    tool_calls: 1,
+    approvals: 0,
+    input_tokens: 10,
+    output_tokens: 5,
+    cost_usd: 0.001,
+  },
+  spans: [
+    {
+      id: "span_root",
+      run_id: "run_export_1",
+      parent_span_id: null,
+      kind: "agent.run",
+      name: "agent.run",
+      status: "ok",
+      started_at: "2026-05-17T16:00:00Z",
+      ended_at: "2026-05-17T16:00:03Z",
+      duration_ms: 3000,
+      attributes_json: "{\"phase\":\"root\"}",
+      error_json: null,
+      children: [
+        {
+          id: "span_model",
+          run_id: "run_export_1",
+          parent_span_id: "span_root",
+          kind: "model.call",
+          name: "anthropic/claude",
+          status: "ok",
+          started_at: "2026-05-17T16:00:01Z",
+          ended_at: "2026-05-17T16:00:02Z",
+          duration_ms: 1000,
+          attributes_json: null,
+          error_json: null,
+          children: [],
+        },
+      ],
+    },
+  ],
+  model_calls: [
+    {
+      span_id: "span_model",
+      provider: "anthropic",
+      model: "claude",
+      input_token_count: 10,
+      output_token_count: 5,
+      cost_usd: 0.001,
+      prompt_hash: "sha256:abc",
+      response_hash: "sha256:def",
+    },
+  ],
+  tool_calls: [],
+};
+
 describe("agent-runs API (mock mode)", () => {
   test("shouldUseMockAgentRuns is true under vitest (MODE=test)", () => {
     expect(shouldUseMockAgentRuns()).toBe(true);
@@ -71,6 +135,17 @@ describe("validateAgentRunDetail", () => {
   test("accepts the full_debug fixture", () => {
     expect(() => validateAgentRunDetail(MOCK_RUN_FULL_DEBUG)).not.toThrow();
   });
+
+  test("normalizes the backend xvn.agent_run.v1 export shape", () => {
+    const detail = validateAgentRunDetail(EXPORT_PAYLOAD);
+    expect(detail.summary.run_id).toBe("run_export_1");
+    expect(detail.summary.status).toBe("interrupted");
+    expect(detail.summary.span_count).toBe(2);
+    expect(detail.summary.total_input_tokens).toBe(10);
+    expect(detail.spans.map((s) => s.span_id)).toEqual(["span_root", "span_model"]);
+    expect(detail.spans[0]?.attributes).toEqual({ phase: "root" });
+    expect(detail.model_calls[0]?.input_tokens).toBe(10);
+  });
 });
 
 describe("agent-runs real-mode branch", () => {
@@ -93,10 +168,10 @@ describe("agent-runs real-mode branch", () => {
     vi.restoreAllMocks();
   });
 
-  test("getAgentRun calls /api/agent-runs/:id and validates the response", async () => {
+  test("getAgentRun calls /api/agent-runs/:id and normalizes the export response", async () => {
     expect(shouldUseMockAgentRuns()).toBe(false);
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify(MOCK_RUN_COMPLETED), {
+      new Response(JSON.stringify(EXPORT_PAYLOAD), {
         status: 200,
         headers: { "content-type": "application/json" },
       }),
@@ -106,7 +181,8 @@ describe("agent-runs real-mode branch", () => {
       "/api/agent-runs/run_real_1",
       expect.objectContaining({ headers: expect.any(Object) }),
     );
-    expect(detail.summary.run_id).toBe(MOCK_RUN_COMPLETED.summary.run_id);
+    expect(detail.summary.run_id).toBe("run_export_1");
+    expect(detail.summary.status).toBe("interrupted");
   });
 
   test("getAgentRun throws invalid_response when the backend returns garbage", async () => {
