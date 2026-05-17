@@ -6,8 +6,9 @@ license.workspace = true
 publish = false
 
 [dependencies]
-xvision-core    = { path = "../xvision-core" }
-xvision-engine  = { path = "../xvision-engine" }
+xvision-core          = { path = "../xvision-core" }
+xvision-engine        = { path = "../xvision-engine" }
+xvision-observability = { path = "../xvision-observability" }
 axum            = { version = "0.7", features = ["macros"] }
 tokio           = { workspace = true }
 tower-http      = { version = "0.6", features = ["trace", "cors", "compression-full"] }

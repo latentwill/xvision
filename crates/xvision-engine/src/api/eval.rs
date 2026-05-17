@@ -317,9 +317,12 @@ async fn get_inner(ctx: &ApiContext, run_id: &str) -> ApiResult<Run> {
 /// Rejected with `ApiError::Validation` if the source run is not in
 /// `Failed` state — Cancelled runs are intentional and Completed runs
 /// don't need retrying. Idempotent on the source-run fingerprint: if any
-/// run with the same `(agent_id, scenario_id, mode)` is already queued
-/// or running, returns that run's detail instead of starting another to
-/// avoid retry storms when the operator double-clicks the Retry button.
+/// run with the same `(agent_id, scenario_id, mode, params_override)` is
+/// already queued or running, returns that run's detail instead of
+/// starting another to avoid retry storms when the operator double-clicks
+/// the Retry button. A queued or running sibling that shares
+/// `(agent_id, scenario_id, mode)` but differs on `params_override` is a
+/// distinct workload and does NOT coalesce — retry starts a new run.
 pub async fn retry(ctx: &ApiContext, source_id: &str) -> ApiResult<RunDetail> {
     let started = Instant::now();
     let result = retry_inner(ctx, source_id).await;
@@ -364,6 +367,7 @@ async fn retry_inner(ctx: &ApiContext, source_id: &str) -> ApiResult<RunDetail> 
     if let Some(existing) = siblings.into_iter().find(|r| {
         r.id != source.id
             && r.mode == source.mode
+            && r.params_override == source.params_override
             && matches!(r.status, RunStatus::Queued | RunStatus::Running)
     }) {
         return get_run(ctx, &existing.id).await;
