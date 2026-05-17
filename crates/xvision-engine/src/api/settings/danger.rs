@@ -1,21 +1,25 @@
-//! `/api/settings/danger` — destructive workspace ops behind a confirm string.
+//! `/api/settings/danger` — destructive workspace ops behind a typed
+//! confirm phrase.
 //!
 //! Three operations, mirroring the Settings/Danger tab in the dashboard:
 //!
 //! - [`wipe_db`] — `DELETE FROM` every user table in `xvn.db` except
-//!   `api_audit`. The audit row that recorded the wipe survives so the
-//!   trail of "what just happened" is preserved.
+//!   `api_audit`. Requires the typed phrase `"WIPE DATABASE"`.
 //! - [`regen_identity`] — overwrite the on-disk Ed25519 signing key.
 //!   v1 ships without the `xvision-identity` feature; this op returns
-//!   a `Conflict` until the wallet plan ships. The intent is still
-//!   audit-logged.
-//! - [`factory_reset`] — delete and recreate `$XVN_HOME`. The audit
-//!   row is mirrored to a sibling log file at
-//!   `<xvn_home>/../xvn-last-factory-reset.log` before the directory
-//!   is removed so the trail survives.
+//!   a `Conflict` until the wallet plan ships. Requires
+//!   `"REGEN IDENTITY"`.
+//! - [`factory_reset`] — delete and recreate `$XVN_HOME`. Audit row is
+//!   mirrored to a sibling log file outside the wiped dir. Requires
+//!   `"FACTORY RESET"`.
 //!
-//! Every op requires the caller to pass the literal confirm string
-//! `"yes-i-am-sure"` — wrong / missing string returns `Validation`.
+//! Per QA 2026-05-17 finding #4 (`qa-dashboard-auth-hardening`): the
+//! prior single `CONFIRM_TOKEN = "yes-i-am-sure"` was a static constant
+//! shipped in the frontend bundle, so it added no real intent gate. Now
+//! each op has a distinct phrase that the operator must type verbatim;
+//! the typed text is what travels on the wire and is what the engine
+//! checks. The frontend may render the expected phrase to operators
+//! for discoverability — it just can't auto-fill it on submit.
 
 use std::path::PathBuf;
 use std::time::Instant;
@@ -29,9 +33,13 @@ use crate::api::{
     ApiContext, ApiError, ApiResult,
 };
 
-/// Confirm string operators must echo back. Anything else (including the
-/// empty string) is a validation error.
-pub const CONFIRM_TOKEN: &str = "yes-i-am-sure";
+/// Per-route confirm phrases (qa-dashboard-auth-hardening, 2026-05-17).
+/// Distinct phrases per op so an operator's typed string demonstrates
+/// intent specifically for THAT op — not a generic "yes-i-am-sure"
+/// that could fall through from one route to another.
+pub const WIPE_DB_CONFIRM: &str = "WIPE DATABASE";
+pub const REGEN_IDENTITY_CONFIRM: &str = "REGEN IDENTITY";
+pub const FACTORY_RESET_CONFIRM: &str = "FACTORY RESET";
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(
@@ -109,7 +117,7 @@ pub async fn wipe_db(ctx: &ApiContext, confirm: &str) -> ApiResult<WipeDbReport>
 }
 
 async fn wipe_db_inner(ctx: &ApiContext, confirm: &str) -> ApiResult<WipeDbReport> {
-    check_confirm(confirm)?;
+    check_confirm(confirm, WIPE_DB_CONFIRM)?;
 
     let names: Vec<String> = sqlx::query(
         "SELECT name FROM sqlite_master \
@@ -169,7 +177,7 @@ pub async fn regen_identity(ctx: &ApiContext, confirm: &str) -> ApiResult<RegenI
 }
 
 async fn regen_identity_inner(_ctx: &ApiContext, confirm: &str) -> ApiResult<RegenIdentityReport> {
-    check_confirm(confirm)?;
+    check_confirm(confirm, REGEN_IDENTITY_CONFIRM)?;
 
     // v1 ships without the `xvision-identity` member. Regen is intentionally
     // refused; the audit row still records the intent. The wallet plan
@@ -218,7 +226,7 @@ pub async fn factory_reset(ctx: &ApiContext, confirm: &str) -> ApiResult<Factory
 }
 
 async fn factory_reset_inner(ctx: &ApiContext, confirm: &str) -> ApiResult<FactoryResetReport> {
-    check_confirm(confirm)?;
+    check_confirm(confirm, FACTORY_RESET_CONFIRM)?;
     let xvn_home = ctx.xvn_home.clone();
 
     // Mirror to a sibling log file so the trail survives the wipe.
@@ -267,10 +275,10 @@ async fn factory_reset_inner(ctx: &ApiContext, confirm: &str) -> ApiResult<Facto
 
 // ─── helpers ─────────────────────────────────────────────────────────────
 
-fn check_confirm(confirm: &str) -> ApiResult<()> {
-    if confirm != CONFIRM_TOKEN {
+fn check_confirm(confirm: &str, expected: &str) -> ApiResult<()> {
+    if confirm != expected {
         return Err(ApiError::Validation(format!(
-            "confirm must be the literal string \"{CONFIRM_TOKEN}\""
+            "confirm must be the literal string \"{expected}\""
         )));
     }
     Ok(())
@@ -314,6 +322,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn wipe_db_rejects_legacy_yes_i_am_sure() {
+        // qa-dashboard-auth-hardening (2026-05-17): the prior single
+        // `yes-i-am-sure` confirm string is intentionally no longer
+        // accepted. An operator typing it must now get a Validation
+        // error pointing at the per-route phrase.
+        let dir = TempDir::new().unwrap();
+        let ctx = ctx_in(&dir).await;
+        let err = wipe_db(&ctx, "yes-i-am-sure").await.unwrap_err();
+        match err {
+            ApiError::Validation(msg) => assert!(
+                msg.contains(WIPE_DB_CONFIRM),
+                "validation message must guide the operator to the new phrase, got: {msg}"
+            ),
+            other => panic!("expected Validation, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn factory_reset_rejects_cross_route_phrase() {
+        // Per-route phrases also defend against a single typed phrase
+        // accidentally firing the wrong op. The WIPE_DB phrase must
+        // not satisfy factory_reset.
+        let dir = TempDir::new().unwrap();
+        let xvn_home = dir.path().join("xvn-home");
+        tokio::fs::create_dir_all(&xvn_home).await.unwrap();
+        let ctx = ApiContext::open(&xvn_home, Actor::Cli { user: "test".into() })
+            .await
+            .unwrap();
+        let err = factory_reset(&ctx, WIPE_DB_CONFIRM).await.unwrap_err();
+        assert!(matches!(err, ApiError::Validation(_)));
+    }
+
+    #[tokio::test]
     async fn wipe_db_clears_user_tables_and_preserves_audit() {
         let dir = TempDir::new().unwrap();
         let ctx = ctx_in(&dir).await;
@@ -332,7 +373,7 @@ mod tests {
         // Also fire an audit row so the post-wipe count is verifiable.
         let _ = audit::record(&ctx, "test", "seed", None, None, Outcome::Ok, 0).await;
 
-        let report = wipe_db(&ctx, CONFIRM_TOKEN).await.unwrap();
+        let report = wipe_db(&ctx, WIPE_DB_CONFIRM).await.unwrap();
 
         assert_eq!(count_rows(&ctx.db, "chat_sessions").await, 0);
         // api_audit must NOT be in the report and must still have rows
@@ -360,7 +401,7 @@ mod tests {
     async fn regen_identity_returns_conflict_in_v1() {
         let dir = TempDir::new().unwrap();
         let ctx = ctx_in(&dir).await;
-        let err = regen_identity(&ctx, CONFIRM_TOKEN).await.unwrap_err();
+        let err = regen_identity(&ctx, REGEN_IDENTITY_CONFIRM).await.unwrap_err();
         match err {
             ApiError::Conflict(msg) => {
                 assert!(
@@ -400,7 +441,7 @@ mod tests {
             .await
             .unwrap();
 
-        let report = factory_reset(&ctx, CONFIRM_TOKEN).await.unwrap();
+        let report = factory_reset(&ctx, FACTORY_RESET_CONFIRM).await.unwrap();
 
         // Marker gone, dir re-created empty (ApiContext::open didn't
         // re-run since we don't re-open after the reset — the dir is

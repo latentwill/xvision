@@ -4,6 +4,7 @@ use axum::extract::{Json, Path, State};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use serde::{Deserialize, Serialize};
 
+use crate::cli_jobs::allowlist::{check_argv, AllowlistDecision};
 use crate::cli_jobs::runner::{CliJobEvent, DEFAULT_TIMEOUT_SECS, MAX_TIMEOUT_SECS};
 use crate::cli_jobs::store::CliJobStore;
 use crate::error::DashboardError;
@@ -185,10 +186,15 @@ fn validate_create_body(body: &CreateCliJobReq) -> Result<(), DashboardError> {
         });
     }
 
-    if matches!(body.argv.first().map(String::as_str), Some("dashboard" | "mcp")) {
+    // Allowlist check (qa-dashboard-auth-hardening, 2026-05-17). Replaces
+    // the previous denylist on a small set of obviously dangerous
+    // subcommands — now anything not on the allowlist is rejected by
+    // default. `XVN_DASHBOARD_CLI_DEVMODE=1` opts back into permissive
+    // behavior for local development.
+    if let AllowlistDecision::Reject(msg) = check_argv(&body.argv) {
         return Err(DashboardError::Validation {
             field: "argv".into(),
-            msg: "subcommand is not allowed over remote cli".into(),
+            msg,
         });
     }
 

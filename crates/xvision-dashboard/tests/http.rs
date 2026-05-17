@@ -1182,10 +1182,13 @@ async fn danger_wipe_db_rejects_wrong_confirm() {
 
 #[tokio::test]
 async fn danger_wipe_db_clears_tables_with_confirm() {
+    // qa-dashboard-auth-hardening (2026-05-17): the confirm payload is
+    // now the operator-typed phrase, not a static token. Each route
+    // has its own phrase (see `crates/xvision-engine/src/api/settings/danger.rs`).
     let (server, _tmp) = boot().await;
     let response = server
         .post("/api/settings/danger/wipe-db")
-        .json(&serde_json::json!({ "confirm": "yes-i-am-sure" }))
+        .json(&serde_json::json!({ "confirm": "WIPE DATABASE" }))
         .await;
     response.assert_status_ok();
     let body: serde_json::Value = response.json();
@@ -1206,7 +1209,7 @@ async fn danger_regen_identity_returns_409_in_v1() {
     let (server, _tmp) = boot().await;
     let response = server
         .post("/api/settings/danger/regen-identity")
-        .json(&serde_json::json!({ "confirm": "yes-i-am-sure" }))
+        .json(&serde_json::json!({ "confirm": "REGEN IDENTITY" }))
         .await;
     response.assert_status(axum::http::StatusCode::CONFLICT);
     let body: serde_json::Value = response.json();
@@ -1318,7 +1321,7 @@ async fn danger_factory_reset_clears_xvn_home_with_confirm() {
 
     let response = server
         .post("/api/settings/danger/factory-reset")
-        .json(&serde_json::json!({ "confirm": "yes-i-am-sure" }))
+        .json(&serde_json::json!({ "confirm": "FACTORY RESET" }))
         .await;
     response.assert_status_ok();
     let body: serde_json::Value = response.json();
