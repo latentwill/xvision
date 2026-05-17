@@ -42,6 +42,11 @@ pub struct AppState {
     /// recorder trait.
     pub obs_event_bus: Arc<ObsRunEventBus>,
     pub obs_broadcast: Arc<BroadcastSubscriber>,
+    /// Resolved observability config (precedence: CLI > env > file >
+    /// default). Threaded into every per-request `ApiContext` so engine
+    /// eval handlers can stamp the right `retention_mode` on the
+    /// `RunStarted` event.
+    pub obs_config: Arc<xvision_observability::ObservabilityConfig>,
     /// Per-provider catalog cache so the chat-rail dropdown doesn't
     /// hammer upstream `/models` on every page load. 5-minute TTL is the
     /// sweet spot between freshness and rate-limit pressure (OpenRouter
@@ -91,12 +96,32 @@ impl AppState {
         ];
         let obs_event_bus = Arc::new(ObsRunEventBus::new(subscribers));
 
+        // Resolve the observability config once at startup — precedence
+        // CLI flag > env > file > built-in default. CLI flag is None here
+        // (the dashboard process doesn't take retention flags), so the
+        // effective chain is env > file > default. Persisted across the
+        // process lifetime so eval handlers don't re-read it per request.
+        let obs_config_path = xvision_observability::default_config_path();
+        let obs_config = match xvision_observability::ObservabilityConfig::load_with_env(
+            &obs_config_path,
+        ) {
+            Ok(cfg) => Arc::new(cfg),
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "could not load observability config; using defaults"
+                );
+                Arc::new(xvision_observability::ObservabilityConfig::default())
+            }
+        };
+
         Ok(Self {
             pool,
             xvn_home,
             event_bus: Arc::new(RunEventBus::new()),
             obs_event_bus,
             obs_broadcast,
+            obs_config,
             models_cache: Arc::new(Mutex::new(HashMap::new())),
             cli_command,
             cli_runner,
@@ -120,6 +145,7 @@ impl AppState {
         // engine-side eval run so spans + errors land in
         // `/api/agent-runs/<eval_run_id>` and the trace dock.
         .with_obs_event_bus(self.obs_event_bus.clone())
+        .with_obs_config(self.obs_config.clone())
     }
 
     /// Read a cached models report for `provider` if it's within the TTL.

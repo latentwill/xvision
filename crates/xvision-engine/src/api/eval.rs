@@ -986,7 +986,8 @@ async fn run_inner(
             mode = req.mode,
             scenario = scenario.id,
         );
-        em.emit_run_started(objective, "hash_only").await;
+        em.emit_run_started(objective, ctx.obs_config.retention.mode.as_db_str())
+            .await;
     }
 
     // Clone the dispatch Arc so we can reuse it for the post-finalize
@@ -1371,7 +1372,8 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
             mode = req.mode,
             scenario = scenario.id,
         );
-        em.emit_run_started(objective, "hash_only").await;
+        em.emit_run_started(objective, ctx.obs_config.retention.mode.as_db_str())
+            .await;
     }
 
     let args_json = serde_json::to_string(&req).ok();
