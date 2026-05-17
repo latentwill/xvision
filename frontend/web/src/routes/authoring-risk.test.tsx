@@ -283,17 +283,18 @@ describe("AuthoringRoute agent composition", () => {
 
     renderRoute();
 
+    // RunEvalCard was removed by qa-ui-micro-fixes (2026-05-17); the
+    // "no agents attached" path now surfaces solely through
+    // InspectorActions at the top of the route.
     expect(
-      await screen.findByText(/attach an agent before running eval/i),
+      await screen.findByText(/no strategy agent is attached yet/i),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("link", { name: /attach agent first/i }),
+      screen.getByRole("link", { name: /go to agents/i }),
     ).toHaveAttribute("href", "#strategy-agents");
+    // The launch button must be absent until an agent is attached.
     expect(
       screen.queryByRole("link", { name: /^run eval/i }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("link", { name: /open launcher/i }),
     ).not.toBeInTheDocument();
   });
 
@@ -430,9 +431,13 @@ describe("AuthoringRoute agent composition", () => {
     renderRoute();
 
     expect(await screen.findByText("DeepSeek trader")).toBeInTheDocument();
+    // After qa-strategy-popup-to-accordion (2026-05-17), the model
+    // label renders in both the bar and the inline detail panel
+    // (replacing the removed overlay dialog). Use getAllByText since
+    // both surfaces show the same string.
     expect(
-      screen.getByText("openrouter / deepseek/deepseek-v4-flash"),
-    ).toBeInTheDocument();
+      screen.getAllByText("openrouter / deepseek/deepseek-v4-flash").length,
+    ).toBeGreaterThanOrEqual(1);
   });
 
   it("shows AgentRefs in pipeline order with current pipeline kind", async () => {
@@ -610,7 +615,7 @@ describe("AuthoringRoute agent composition", () => {
           model: "deepseek/deepseek-v4-flash",
           system_prompt: "Trade with discipline.",
           skill_ids: [],
-          max_tokens: 4096,
+          max_tokens: null,
         },
       ],
       archived: false,
@@ -624,6 +629,13 @@ describe("AuthoringRoute agent composition", () => {
     });
 
     renderRoute();
+
+    // qa-strategy-popup-to-accordion (2026-05-17): the "Create and
+    // attach" form is now a mode inside the AddAgentAccordion; switch
+    // to it before filling fields.
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Create new" }),
+    );
 
     fireEvent.change(await screen.findByLabelText("New agent name"), {
       target: { value: "DeepSeek trader" },
@@ -653,7 +665,7 @@ describe("AuthoringRoute agent composition", () => {
             model: "deepseek/deepseek-v4-flash",
             system_prompt: "Trade with discipline.",
             skill_ids: [],
-            max_tokens: 4096,
+            max_tokens: null,
           },
         ],
       });

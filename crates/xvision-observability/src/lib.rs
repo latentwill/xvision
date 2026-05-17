@@ -12,7 +12,10 @@ pub mod blobs;
 pub mod bus;
 pub mod config;
 pub mod events;
+pub mod export;
 pub mod janitor;
+#[cfg(feature = "otel")]
+pub mod otel;
 pub mod recorder;
 pub mod redactor;
 pub mod retention;
@@ -25,6 +28,10 @@ pub use bus::RunEventBus;
 pub use config::{
     default_config_path, ObservabilityConfig, RetentionConfig, RetentionMode,
     CONFIG_FILE_NAME, ENV_OVERRIDE_PREFIX,
+};
+pub use export::{
+    build_export, build_report, render_report, AgentRunExport, AgentRunReport,
+    ExportError, ExportTotals, FinalArtifact, SpanNode, SCHEMA_VERSION,
 };
 pub use events::{
     ArtifactWrittenEvent, AssistantTextDeltaEvent, BackpressureDroppedEvent,
@@ -51,4 +58,12 @@ pub use sqlite::SqliteRecorder;
 pub use types::{
     CapabilityPath, RiskLevel, RunStatus, SideEffectLevel, SpanKind, SpanStatus,
     ToolOrigin,
+};
+
+#[cfg(feature = "otel")]
+pub use otel::{
+    add_attribute as otel_add_attribute, attr as otel_attr, attribute_to_kv,
+    build_resource as otel_build_resource, init_otel_pipeline, shutdown_otel_pipeline,
+    OtelIds, OtelInitError, OtelTeeRecorder, ENV_OTLP_ENDPOINT,
+    ENV_RESOURCE_ATTRIBUTES, ENV_SERVICE_NAME,
 };
