@@ -9,6 +9,7 @@
 pub mod attestation;
 pub mod bars;
 pub mod compare;
+pub mod cost;
 pub mod executor;
 pub mod export;
 pub mod findings;
@@ -26,6 +27,7 @@ pub use attestation::{EvalAttestation, TokensUsed};
 pub use compare::{
     compare_runs, ComparisonEquityCurve, ComparisonEquitySample, ComparisonReport, ComparisonRunSummary,
 };
+pub use cost::{compute_token_cost_usd, compute_token_cost_usd_from_catalog};
 pub use findings::{Finding, Severity};
 pub use progress::{send_event, ProgressBus, ProgressEvent, ProgressRx, ProgressTx};
 pub use review::{AgentProfile, EvalReview, ReviewStatus, ReviewVerdict};

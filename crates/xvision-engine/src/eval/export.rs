@@ -50,6 +50,7 @@ use serde::{Deserialize, Serialize};
 use crate::agents::{Agent, AgentStore};
 use crate::api::{self, ApiContext, ApiError, ApiResult};
 use crate::eval::attestation::{EvalAttestation, TokensUsed};
+use crate::eval::cost::compute_token_cost_usd_from_catalog;
 use crate::eval::findings::Finding;
 use crate::eval::review::EvalReview;
 use crate::eval::run::{MetricsSummary, Run, RunStatus};
@@ -187,6 +188,11 @@ pub struct ProviderDiagnostics {
     /// classification".
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trader_output_failure: Option<String>,
+    /// Best-effort USD cost computed from observed token counts and the
+    /// provider model catalog. `None` means unknown (missing pricing,
+    /// missing catalog, or mixed executable models in the same run).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cost_usd: Option<f64>,
 }
 
 /// Build the export for a *terminal* run id (`completed` / `failed` /
@@ -260,7 +266,8 @@ pub async fn build_export(ctx: &ApiContext, run_id: &str) -> ApiResult<EvalRunEx
     };
 
     let attestation = store.get_attestation(&run.id).await.ok().flatten();
-    let provider_diagnostics = build_provider_diagnostics(&run, attestation);
+    let cost_usd = compute_export_cost_usd(ctx, &run, strategy.as_ref(), &agents).await;
+    let provider_diagnostics = build_provider_diagnostics(&run, attestation, cost_usd);
 
     let errors = match run.error.as_deref() {
         Some(msg) if !msg.trim().is_empty() => vec![RunErrorEntry {
@@ -303,6 +310,7 @@ async fn load_strategy_agents(ctx: &ApiContext, strategy: &Strategy) -> Vec<Agen
 fn build_provider_diagnostics(
     run: &Run,
     attestation: Option<EvalAttestation>,
+    cost_usd: Option<f64>,
 ) -> Option<ProviderDiagnostics> {
     // Attestation wins when present — its `tokens_used` is part of the
     // signed payload, so the export must mirror it exactly. Falling
@@ -347,6 +355,7 @@ fn build_provider_diagnostics(
         && run.actual_input_tokens.is_none()
         && run.actual_output_tokens.is_none()
         && trader_output_failure.is_none()
+        && cost_usd.is_none()
     {
         return None;
     }
@@ -356,7 +365,60 @@ fn build_provider_diagnostics(
         ran_at,
         attestation,
         trader_output_failure,
+        cost_usd,
     })
+}
+
+async fn compute_export_cost_usd(
+    ctx: &ApiContext,
+    run: &Run,
+    strategy: Option<&Strategy>,
+    agents: &[Agent],
+) -> Option<f64> {
+    let input_tokens = run.actual_input_tokens?;
+    let output_tokens = run.actual_output_tokens?;
+    let (provider, model) = single_executable_provider_model(strategy?, agents)?;
+    let catalog = crate::providers::load_cached_catalog(&ctx.xvn_home, &provider)
+        .await
+        .ok()
+        .flatten()?;
+    compute_token_cost_usd_from_catalog(input_tokens, output_tokens, &model, &catalog)
+}
+
+fn single_executable_provider_model(strategy: &Strategy, agents: &[Agent]) -> Option<(String, String)> {
+    let mut pairs: Vec<(String, String)> = Vec::new();
+
+    if strategy.agents.is_empty() {
+        for slot in [
+            strategy.regime_slot.as_ref(),
+            strategy.intern_slot.as_ref(),
+            strategy.trader_slot.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            pairs.push(provider_model_pair(slot.provider.as_deref(), slot.model.as_deref())?);
+        }
+    } else {
+        for agent_ref in &strategy.agents {
+            let agent = agents.iter().find(|agent| agent.agent_id == agent_ref.agent_id)?;
+            let slot = agent.slots.first()?;
+            pairs.push(provider_model_pair(Some(&slot.provider), Some(&slot.model))?);
+        }
+    }
+
+    let first = pairs.first()?.clone();
+    if pairs.iter().all(|pair| pair == &first) {
+        Some(first)
+    } else {
+        None
+    }
+}
+
+fn provider_model_pair(provider: Option<&str>, model: Option<&str>) -> Option<(String, String)> {
+    let provider = provider.map(str::trim).filter(|s| !s.is_empty());
+    let model = model.map(str::trim).filter(|s| !s.is_empty());
+    Some((provider?.to_string(), model?.to_string()))
 }
 
 fn is_terminal(status: RunStatus) -> bool {
@@ -415,6 +477,12 @@ mod roundtrip {
     use crate::api::{Actor, ApiContext};
     use crate::eval::run::{Run, RunMode, RunStatus};
     use crate::eval::store::{DecisionRow, RunStore};
+    use crate::strategies::manifest::{PublicManifest, RegimeFit};
+    use crate::strategies::risk::RiskPreset;
+    use crate::strategies::slot::LLMSlot;
+    use crate::strategies::store::{strategy_store_dir, FilesystemStore, StrategyStore};
+    use crate::strategies::{PipelineDef, Strategy};
+    use xvision_core::providers::{Catalog, ModelEntry};
 
     async fn ctx_with_eval_tables() -> (ApiContext, tempfile::TempDir) {
         let pool = SqlitePool::connect(":memory:").await.unwrap();
@@ -489,6 +557,63 @@ mod roundtrip {
                 .unwrap();
         }
         run.id
+    }
+
+    fn openrouter_strategy(id: &str, model: &str) -> Strategy {
+        let slot = LLMSlot {
+            role: "trader".into(),
+            prompt: "decide".into(),
+            model_requirement: format!("openrouter.{model}"),
+            allowed_tools: Vec::new(),
+            provider: Some("openrouter".into()),
+            model: Some(model.into()),
+        };
+        Strategy {
+            manifest: PublicManifest {
+                id: id.into(),
+                display_name: "Cost strategy".into(),
+                plain_summary: "x".into(),
+                creator: "@test".into(),
+                template: "mean_reversion".into(),
+                regime_fit: vec![RegimeFit::RangeBound],
+                asset_universe: vec!["BTC/USD".into()],
+                decision_cadence_minutes: 15,
+                required_models: vec![model.into()],
+                required_tools: Vec::new(),
+                risk_preset_or_config: "balanced".into(),
+                published_at: None,
+                min_warmup_bars: None,
+            },
+            agents: Vec::new(),
+            pipeline: PipelineDef::default(),
+            regime_slot: None,
+            intern_slot: None,
+            trader_slot: Some(slot),
+            risk: RiskPreset::Balanced.expand(),
+            mechanical_params: serde_json::json!({}),
+        }
+    }
+
+    async fn save_openrouter_catalog(ctx: &ApiContext) {
+        let catalog = Catalog {
+            provider: "openrouter".into(),
+            fetched_at: Utc::now(),
+            source_url: "https://openrouter.ai/api/v1/models".into(),
+            models: vec![ModelEntry {
+                id: "anthropic/claude-opus-4.7".into(),
+                display_name: Some("Anthropic: Claude Opus 4.7".into()),
+                context_window: Some(200_000),
+                max_output_tokens: Some(8192),
+                supports_reasoning: Some(true),
+                supports_tools: Some(true),
+                pricing_per_million_input_usd: Some(15.0),
+                pricing_per_million_output_usd: Some(75.0),
+                raw: serde_json::Value::Null,
+            }],
+        };
+        crate::providers::save_cached_catalog(&ctx.xvn_home, &catalog)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -716,5 +841,39 @@ mod roundtrip {
         assert_eq!(diag.tokens_used.output, 1000);
         assert_eq!(diag.tokens_used.total, 1422);
         assert!(diag.attestation.is_none(), "no attestation attached");
+    }
+
+    #[tokio::test]
+    async fn provider_diagnostics_includes_catalog_priced_token_cost() {
+        let (ctx, _d) = ctx_with_eval_tables().await;
+        let strategy_id = "01H8N7ZCOST";
+        let strategy_store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+        strategy_store
+            .save(&openrouter_strategy(strategy_id, "anthropic/claude-opus-4.7"))
+            .await
+            .unwrap();
+        save_openrouter_catalog(&ctx).await;
+
+        let store = RunStore::new(ctx.db.clone());
+        let mut run = Run::new_queued(
+            strategy_id.into(),
+            "crypto-bull-q1-2025".into(),
+            RunMode::Backtest,
+        );
+        run.actual_input_tokens = Some(10_000);
+        run.actual_output_tokens = Some(2_000);
+        store.create(&run).await.unwrap();
+        store
+            .update_status(&run.id, RunStatus::Completed, None)
+            .await
+            .unwrap();
+
+        let export = build_export(&ctx, &run.id).await.expect("build_export");
+        let diag = export
+            .provider_diagnostics
+            .expect("provider_diagnostics with observed counters");
+        assert_eq!(diag.tokens_used.input, 10_000);
+        assert_eq!(diag.tokens_used.output, 2_000);
+        assert_eq!(diag.cost_usd, Some(0.30));
     }
 }
