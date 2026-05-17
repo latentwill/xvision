@@ -3,7 +3,7 @@ import { registerMethod } from "./index.js"
 
 const VALID_SIDE_EFFECT_LEVELS = new Set(["pure", "read_only", "external_read", "external_write"] as const)
 
-interface ToolDescriptor {
+export interface ToolDescriptor {
   name: string
   version: string
   description: string

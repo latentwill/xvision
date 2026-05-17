@@ -1,16 +1,8 @@
 import { createTool, type AgentTool } from "@cline/sdk"
 import { callRust } from "../transport/callback-client.js"
+import type { ToolDescriptor } from "../methods/tool-registry.js"
 
-export interface ToolDescriptor {
-  name: string
-  version: string
-  description: string
-  input_schema: unknown
-  output_schema: unknown
-  timeout_ms: number
-  side_effect_level: "pure" | "read_only" | "external_read" | "external_write"
-  requires_approval: boolean
-}
+export type { ToolDescriptor }
 
 export interface ShimOptions {
   allowWrites: boolean
