@@ -66,6 +66,13 @@ returns `Option<f64>` USD, treating absent / zero pricing as `None`
 carry pricing return `None`, so existing operator-trusted Anthropic /
 OpenAI cost paths (which compute cost out-of-band) are untouched.
 
+Follow-up review fix: `eval/export.rs` now calls the cost helper when
+building `provider_diagnostics`. The export computes `cost_usd` only when
+the run has observed token counts, a cached catalog is present, pricing is
+known, and the strategy resolves to exactly one executable provider/model
+pair. Mixed-model runs return `None` rather than pretending all tokens
+used one model's price.
+
 ## Plan
 
 1. Add `crates/xvision-engine/src/eval/cost.rs` with
@@ -77,17 +84,19 @@ OpenAI cost paths (which compute cost out-of-band) are untouched.
    - Anthropic / OpenAI catalogs without pricing → `None`, leaving the
      existing out-of-band path in place.
 2. Expose the module from `crates/xvision-engine/src/eval/mod.rs`.
-3. Unit tests in the same file:
+3. Wire `build_export` provider diagnostics to the helper via the cached
+   provider catalog, surfacing best-effort `provider_diagnostics.cost_usd`.
+4. Unit tests:
    - Fixture OpenRouter `ModelEntry` (Claude Opus 4.7 @ $15/$75 per Mtok)
      with known token counts → assert exact USD result.
    - Pricing absent → `None`.
    - Pricing `Some(0.0)` → `None` (the puller already filters these to
      `None`, but the cost fn defends against future shape drift).
    - Anthropic-style entry with no pricing → `None`.
-4. Wider verification:
+5. Wider verification:
    - `cargo test -p xvision-engine`
    - `cargo clippy -p xvision-engine -- -D warnings`
-5. Commit on `task/qa-openrouter-pricing-pull` with the standard
+6. Commit on `task/qa-openrouter-pricing-pull` with the standard
    Co-Authored-By trailer. No push, no PR.
 
 ## Path reconciliation note
