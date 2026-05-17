@@ -130,8 +130,34 @@ function parseAttributes(raw: unknown): Record<string, unknown> {
 }
 
 function spanStatus(row: Record<string, unknown>): RunSpan["status"] {
+  if (row.status === "error") return "error";
   if (row.ended_at == null && row.finished_at == null) return "in_progress";
-  return row.status === "error" ? "error" : "ok";
+  return "ok";
+}
+
+/**
+ * Pull a human-readable error message out of the observability
+ * `error_json` payload. The recorder writes
+ * `JSON.stringify({ message: "<text>" })` for ToolCallFailed +
+ * SpanFinished(Error); some emitters write a plain string. Accept
+ * either shape, fall back to the raw string when JSON parse fails.
+ * Returns `undefined` for null/missing inputs so the field is dropped
+ * from the JSON wire shape.
+ */
+function parseErrorJson(raw: unknown): string | undefined {
+  if (raw == null) return undefined;
+  if (typeof raw !== "string" || raw.length === 0) return undefined;
+  try {
+    const parsed = JSON.parse(raw);
+    if (typeof parsed === "string") return parsed;
+    if (isObject(parsed)) {
+      const msg = parsed.message ?? parsed.error ?? parsed.detail;
+      if (typeof msg === "string" && msg.length > 0) return msg;
+    }
+  } catch {
+    // Recorder may have written a bare string; fall through.
+  }
+  return raw;
 }
 
 function flattenExportSpans(spans: unknown, out: RunSpan[] = []): RunSpan[] {
@@ -141,6 +167,7 @@ function flattenExportSpans(spans: unknown, out: RunSpan[] = []): RunSpan[] {
     const id = asString(raw.id ?? raw.span_id);
     if (!id) continue;
     const attrs = parseAttributes(raw.attributes_json ?? raw.attributes);
+    const errorMessage = parseErrorJson(raw.error_json ?? raw.error_message);
     out.push({
       span_id: id,
       parent_span_id: asNullableString(raw.parent_span_id),
@@ -150,6 +177,7 @@ function flattenExportSpans(spans: unknown, out: RunSpan[] = []): RunSpan[] {
       finished_at: asNullableString(raw.ended_at ?? raw.finished_at),
       status: spanStatus(raw),
       attributes: attrs,
+      ...(errorMessage ? { error_message: errorMessage } : {}),
     });
     flattenExportSpans(raw.children, out);
   }

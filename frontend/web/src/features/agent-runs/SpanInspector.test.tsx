@@ -152,4 +152,75 @@ describe("SpanInspector (with pull-quotes)", () => {
     await userEvent.click(btn);
     expect(onRerun).toHaveBeenCalledWith("s_test");
   });
+
+  // qa-trace-error-surfacing (2026-05-17): operator complained that a
+  // failed eval LLM call never surfaced in the trace. Once observability
+  // is wired (engine half is a follow-up; see status doc), errored spans
+  // must show their error prominently — badge in the header, pull-quote
+  // at the top of the body.
+  test("renders ERROR badge + pull-quote when span.status === 'error'", () => {
+    const errored: RunSpan = {
+      ...baseSpan,
+      status: "error",
+      error_message:
+        "[unclassified] error decoding response body: EOF while parsing a value at line 1145 column 0",
+    };
+    render(
+      <SpanInspector
+        span={errored}
+        isLive={false}
+        onRerun={() => {}}
+        onJumpToDecision={() => {}}
+      />,
+    );
+    expect(screen.getByTestId("span-error-badge")).toHaveTextContent("ERROR");
+    expect(
+      screen.getByText(/EOF while parsing a value at line 1145 column 0/),
+    ).toBeInTheDocument();
+  });
+
+  test("ERROR badge replaces STREAMING when both are eligible", () => {
+    // A span can be both errored and 'streaming' if the observability
+    // path closes it as error mid-stream. The badge slot must pick
+    // the error (more salient) over the streaming pulse.
+    const erroredStreaming: RunSpan = {
+      ...baseSpan,
+      status: "error",
+      error_message: "boom",
+      streaming: true,
+    };
+    render(
+      <SpanInspector
+        span={erroredStreaming}
+        isLive
+        onRerun={() => {}}
+        onJumpToDecision={() => {}}
+      />,
+    );
+    expect(screen.getByTestId("span-error-badge")).toBeInTheDocument();
+    // STREAMING badge must NOT also render (single badge slot).
+    expect(screen.queryByText(/^STREAMING$/)).not.toBeInTheDocument();
+  });
+
+  test("renders no ERROR pull-quote when span has no error_message", () => {
+    // Defensive: an errored span with no message attached (older
+    // observability rows) should still render the badge but no body
+    // pull-quote.
+    const errored: RunSpan = {
+      ...baseSpan,
+      status: "error",
+      error_message: undefined,
+    };
+    render(
+      <SpanInspector
+        span={errored}
+        isLive={false}
+        onRerun={() => {}}
+        onJumpToDecision={() => {}}
+      />,
+    );
+    expect(screen.getByTestId("span-error-badge")).toBeInTheDocument();
+    // The pull-quote message body must NOT render without a message.
+    expect(screen.queryByText(/EOF while parsing/)).not.toBeInTheDocument();
+  });
 });
