@@ -933,21 +933,15 @@ async fn run_inner(
 
     // Observability emitter (`qa-eval-observability-wiring`). Built
     // only when the dashboard injected an obs bus on the ApiContext;
-    // CLI and tests run without it and emission is a no-op. When
-    // present, emit `RunStarted` so the recorder writes an
-    // `agent_runs` row that subsequent SpanStarted events can FK to.
+    // CLI and tests run without it and emission is a no-op. `RunStarted`
+    // is published below — only after the `eval_runs` row exists and
+    // executor preflight has succeeded — so the recorder's
+    // `agent_runs.eval_run_id` FK is valid and a preflight failure can't
+    // leave a phantom observability run behind.
     let obs_emitter = ctx
         .obs_event_bus
         .as_ref()
         .map(|bus| crate::agent::observability::ObsEmitter::new(bus.clone(), run.id.clone()));
-    if let Some(em) = obs_emitter.as_ref() {
-        let objective = format!(
-            "eval:{mode:?}:{scenario}",
-            mode = req.mode,
-            scenario = scenario.id,
-        );
-        em.emit_run_started(objective, "hash_only").await;
-    }
 
     // 3. Pick the executor for this run mode. For backtest mode, when the
     //    scenario came from the DB we try to source bars through the
@@ -981,6 +975,19 @@ async fn run_inner(
         return Ok(stopped);
     }
     run.status = RunStatus::Running;
+
+    // With the `eval_runs` row persisted and the executor built, register
+    // the observability run. From here, any executor failure emits
+    // `RunFinished{Failed}` below; a successful run emits
+    // `RunFinished{Completed}` after finalize.
+    if let Some(em) = obs_emitter.as_ref() {
+        let objective = format!(
+            "eval:{mode:?}:{scenario}",
+            mode = req.mode,
+            scenario = scenario.id,
+        );
+        em.emit_run_started(objective, "hash_only").await;
+    }
 
     // Clone the dispatch Arc so we can reuse it for the post-finalize
     // findings extraction below without re-paying client setup.
@@ -1328,21 +1335,18 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
     let tools = Arc::new(ToolRegistry::default_with_builtins());
 
     // Other entry point (`run_with_deps_in_progress`) — observability
-    // wiring is opt-in via the same ApiContext bus; emitter is built
-    // after `run.id` is available below.
+    // wiring is opt-in via the same ApiContext bus. The emitter is
+    // built after `run.id` is available below; `RunStarted` is
+    // published only after the `eval_runs` row exists and executor
+    // preflight has succeeded, so the recorder's FK is valid and
+    // preflight failures can't leave a phantom observability run
+    // behind. The matching `RunFinished` is emitted by
+    // `execute_in_background`.
     let mut run = Run::new_queued(req.agent_id.clone(), scenario.id.clone(), req.mode);
     let obs_emitter = ctx
         .obs_event_bus
         .as_ref()
         .map(|bus| crate::agent::observability::ObsEmitter::new(bus.clone(), run.id.clone()));
-    if let Some(em) = obs_emitter.as_ref() {
-        let objective = format!(
-            "eval:{mode:?}:{scenario}",
-            mode = req.mode,
-            scenario = scenario.id,
-        );
-        em.emit_run_started(objective, "hash_only").await;
-    }
 
     let executor: Box<dyn Executor> = match req.mode {
         RunMode::Paper => {
@@ -1360,6 +1364,15 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
         .create(&run)
         .await
         .map_err(|e| ApiError::Internal(format!("create run: {e}")))?;
+
+    if let Some(em) = obs_emitter.as_ref() {
+        let objective = format!(
+            "eval:{mode:?}:{scenario}",
+            mode = req.mode,
+            scenario = scenario.id,
+        );
+        em.emit_run_started(objective, "hash_only").await;
+    }
 
     let args_json = serde_json::to_string(&req).ok();
     let _ = audit::record(
@@ -1385,6 +1398,7 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
             executor,
             dispatch,
             tools,
+            obs_emitter,
         )
         .await;
     });
@@ -1406,6 +1420,7 @@ async fn execute_in_background(
     executor: Box<dyn Executor>,
     dispatch: Arc<dyn LlmDispatch>,
     tools: Arc<ToolRegistry>,
+    obs_emitter: Option<crate::agent::observability::ObsEmitter>,
 ) {
     let store = RunStore::new(ctx.db.clone());
 
@@ -1417,6 +1432,13 @@ async fn execute_in_background(
             if let Ok(terminal) = store.get(&run.id).await {
                 api_search::upsert_run(&ctx, &terminal).await;
             }
+            // Caller already advanced past Queued (e.g., cancel before
+            // executor start). Emit Cancelled so SSE consumers don't
+            // wait forever on /api/agent-runs/<eval_run_id>.
+            if let Some(em) = obs_emitter.as_ref() {
+                em.emit_run_finished(xvision_observability::RunStatus::Cancelled, None)
+                    .await;
+            }
             return;
         }
         Err(e) => {
@@ -1426,6 +1448,13 @@ async fn execute_in_background(
                 error = %e,
                 "failed to transition Queued → Running",
             );
+            if let Some(em) = obs_emitter.as_ref() {
+                em.emit_run_finished(
+                    xvision_observability::RunStatus::Failed,
+                    Some(format!("failed to transition Queued → Running: {e}")),
+                )
+                .await;
+            }
             return;
         }
     }
@@ -1449,6 +1478,10 @@ async fn execute_in_background(
             if let Ok(cancelled) = store.get(&run.id).await {
                 api_search::upsert_run(&ctx, &cancelled).await;
             }
+            if let Some(em) = obs_emitter.as_ref() {
+                em.emit_run_finished(xvision_observability::RunStatus::Cancelled, None)
+                    .await;
+            }
             return;
         }
         tracing::error!(
@@ -1462,6 +1495,13 @@ async fn execute_in_background(
         if let Ok(failed) = store.get(&run.id).await {
             api_search::upsert_run(&ctx, &failed).await;
         }
+        if let Some(em) = obs_emitter.as_ref() {
+            em.emit_run_finished(
+                xvision_observability::RunStatus::Failed,
+                Some(err_msg),
+            )
+            .await;
+        }
         return;
     }
 
@@ -1474,10 +1514,21 @@ async fn execute_in_background(
                 error = %e,
                 "failed to re-read finalized run",
             );
+            if let Some(em) = obs_emitter.as_ref() {
+                em.emit_run_finished(
+                    xvision_observability::RunStatus::Failed,
+                    Some(format!("failed to re-read finalized run: {e}")),
+                )
+                .await;
+            }
             return;
         }
     };
     api_search::upsert_run(&ctx, &finalized).await;
+    if let Some(em) = obs_emitter.as_ref() {
+        em.emit_run_finished(xvision_observability::RunStatus::Completed, None)
+            .await;
+    }
 
     // Best-effort findings extraction — failures audit but don't reopen
     // the run.
