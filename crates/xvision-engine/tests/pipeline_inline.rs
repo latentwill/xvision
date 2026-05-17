@@ -78,6 +78,7 @@ async fn three_slot_pipeline_chains_outputs() {
         seed_inputs: serde_json::json!({"ohlcv_history": [], "indicator_panel": {}}),
         dispatch,
         tools,
+        obs: None,
     })
     .await
     .unwrap();
@@ -100,6 +101,7 @@ async fn skips_missing_optional_slots() {
         seed_inputs: serde_json::json!({}),
         dispatch,
         tools,
+        obs: None,
     })
     .await
     .unwrap();
@@ -150,6 +152,7 @@ async fn resolved_agent_pipeline_uses_trader_role_as_decision_output() {
         seed_inputs: serde_json::json!({}),
         dispatch,
         tools,
+        obs: None,
     })
     .await
     .unwrap();
@@ -204,6 +207,7 @@ async fn resolved_agent_pipeline_does_not_treat_non_trader_as_decision_output() 
         seed_inputs: serde_json::json!({}),
         dispatch,
         tools,
+        obs: None,
     })
     .await
     .unwrap();
