@@ -250,8 +250,9 @@ impl OtelTeeRecorder {
 #[async_trait]
 impl AgentRunRecorder for OtelTeeRecorder {
     async fn handle_event(&self, event: &RunEvent) -> Result<(), RecorderError> {
+        self.inner.handle_event(event).await?;
         emit_otel_for(event);
-        self.inner.handle_event(event).await
+        Ok(())
     }
 
     async fn mark_interrupted(&self, run_id: &str) -> Result<(), RecorderError> {
