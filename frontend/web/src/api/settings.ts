@@ -15,10 +15,12 @@ import type {
   BrokersReport,
   Catalog,
   FactoryResetReport,
+  ObservabilityReport,
   ProviderModelsReport,
   ProviderRow,
   ProvidersReport,
   RefreshOutcome,
+  RetentionModeDto,
   TestConnectionReport,
   UpdateProviderRequest,
   WipeDbReport,
@@ -43,12 +45,45 @@ export const settingsKeys = {
   brokers: () => [...settingsKeys.all, "brokers"] as const,
   daemon: () => [...settingsKeys.all, "daemon"] as const,
   identity: () => [...settingsKeys.all, "identity"] as const,
+  observability: () => [...settingsKeys.all, "observability"] as const,
   providers: () => [...settingsKeys.all, "providers"] as const,
   providerModels: (name: string) =>
     [...settingsKeys.all, "providers", name, "models"] as const,
   providerCatalog: (name: string) =>
     [...settingsKeys.all, "providers", name, "catalog"] as const,
 };
+
+// ─── Observability (trace retention) ──────────────────────────────────────
+
+export function getObservability(): Promise<ObservabilityReport> {
+  return apiFetch<ObservabilityReport>("/api/settings/observability");
+}
+
+export function setObservabilityMode(
+  mode: RetentionModeDto,
+): Promise<ObservabilityReport> {
+  const trace = createTrace("settings", { retention_mode: mode });
+  const started = performance.now();
+  trace.info("settings.observability.set");
+  return apiFetch<ObservabilityReport>("/api/settings/observability", {
+    method: "PUT",
+    body: JSON.stringify({ mode }),
+  })
+    .then((report) => {
+      trace.info("settings.observability.set.ok", {
+        mode: report.mode,
+        duration_ms: durationSince(started),
+      });
+      return report;
+    })
+    .catch((err) => {
+      trace.error("settings.observability.set.error", {
+        duration_ms: durationSince(started),
+        error: errorSummary(err),
+      });
+      throw err;
+    });
+}
 
 export function getBrokers(): Promise<BrokersReport> {
   const trace = createTrace("settings");
