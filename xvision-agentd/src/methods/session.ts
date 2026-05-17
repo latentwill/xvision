@@ -8,6 +8,14 @@ import {
 import { handleToolRegistryGet } from "./tool-registry.js"
 import { buildAgent } from "../session/build-agent.js"
 import {
+  armWallTimer,
+  checkTokenCapsAfterStep,
+  checkTokenCapsBeforeStep,
+  remainingWallMs,
+  type BudgetAbortReason,
+  type WallTimer,
+} from "../session/budget.js"
+import {
   emitRunStarted,
   emitRunFinished,
   emitModelCallFinished,
@@ -24,6 +32,24 @@ let store: SessionStore = getDefaultStore()
 // Test-only — lets vitest swap in an isolated store.
 export function __setStoreForTesting(s: SessionStore): void {
   store = s
+}
+
+interface BudgetTimerOverrides {
+  schedule?: typeof setTimeout
+  cancel?: typeof clearTimeout
+}
+
+let timerOverrides: BudgetTimerOverrides = {}
+
+/**
+ * Test-only — inject a timer scheduler so budget enforcement is
+ * deterministic. Production code uses `setTimeout`/`clearTimeout`.
+ * The wall-clock *reference* time comes from `store.now()`, not from
+ * here, so the same clock that stamped `created_at_ms` also drives the
+ * elapsed-time calculation.
+ */
+export function __setBudgetClockForTesting(overrides: BudgetTimerOverrides): void {
+  timerOverrides = overrides
 }
 
 interface StartRunParams {
@@ -154,6 +180,26 @@ interface StepResult {
   error?: string
 }
 
+/**
+ * Synthesize an aborted-step result without invoking the agent. Used
+ * when a token cap was already exhausted by a previous step and the next
+ * step must short-circuit.
+ */
+function abortedStepResult(reason: BudgetAbortReason): StepResult {
+  return {
+    status: "aborted",
+    output_text: "",
+    iterations: 0,
+    usage: {
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_read_tokens: 0,
+      cache_write_tokens: 0,
+    },
+    error: reason,
+  }
+}
+
 export async function handleSessionStep(raw: unknown): Promise<StepResult> {
   const p = (raw ?? {}) as StepParams
   if (typeof p.run_id !== "string" || p.run_id.length === 0)
@@ -163,6 +209,22 @@ export async function handleSessionStep(raw: unknown): Promise<StepResult> {
 
   const session = store.get(p.run_id)
   if (!session) throw new Error(`session not found: ${p.run_id}`)
+
+  const limits = session.config.budget_limits
+
+  // Pre-step token caps: if a previous step already pushed cumulative
+  // input/output tokens over the cap, short-circuit without invoking the
+  // agent. Root-cause failure: caller asked for one more step past the
+  // contracted budget, and the sidecar must say so explicitly.
+  const preTokenReason = checkTokenCapsBeforeStep(session.usage, limits)
+  if (preTokenReason) return abortedStepResult(preTokenReason)
+
+  // Pre-step wall budget: if `now - started_at >= max_wall_ms` we cannot
+  // even start the step. Surface a wall-budget abort immediately. The
+  // clock comes from the store so injected `now` (tests) stays consistent
+  // with whatever clock stamped `created_at_ms`.
+  const remaining = remainingWallMs(session.created_at_ms, limits, store.now())
+  if (remaining <= 0) return abortedStepResult("budget_wall_ms_exceeded")
 
   // Lazy: build the Agent on first step.
   if (!session.agent) {
@@ -174,10 +236,56 @@ export async function handleSessionStep(raw: unknown): Promise<StepResult> {
   const runId = p.run_id
   const stepSpanId = newSpanId()
   setActiveRun(runId, session.config.provider_id, session.config.model_id)
+
+  // Arm the wall-clock timer. When it fires we call `agent.abort()`,
+  // which causes the in-flight `agent.run` / `agent.continue` to resolve
+  // with `status: "aborted"` (see `AgentRunStatus` in @cline/shared).
+  const timer: WallTimer = armWallTimer(remaining, {
+    ...(timerOverrides.schedule ? { schedule: timerOverrides.schedule } : {}),
+    ...(timerOverrides.cancel ? { cancel: timerOverrides.cancel } : {}),
+  })
+  const onTimerFire = (): void => {
+    // `agent.abort` is idempotent; safe to call from the timer callback.
+    try {
+      agent.abort(new Error("budget_wall_ms_exceeded"))
+    } catch {
+      // Best-effort: if the SDK throws synchronously here, the awaited
+      // promise will still settle below and we'll classify the result.
+    }
+  }
+  timer.signal.addEventListener("abort", onTimerFire, { once: true })
+
   try {
     const result = agent.hasRun
       ? await agent.continue(p.prompt)
       : await agent.run(p.prompt)
+
+    // Update cumulative usage and check post-step token caps.
+    const cumulative = store.addUsage(p.run_id, {
+      input_tokens: result.usage.inputTokens,
+      output_tokens: result.usage.outputTokens,
+    })
+
+    // Classify the terminal status:
+    //   1. SDK said `aborted` *and* our timer fired -> wall-budget exhaustion.
+    //   2. Cumulative tokens now exceed a cap -> token exhaustion.
+    //   3. SDK said `aborted` for an unrelated reason -> pass through.
+    //   4. Otherwise -> pass the SDK's status through verbatim.
+    let status: StepResult["status"] = result.status
+    let errorMsg: string | undefined = result.error?.message
+    if (result.status === "aborted" && timer.fired()) {
+      errorMsg = "budget_wall_ms_exceeded"
+    } else {
+      const postTokenReason = checkTokenCapsAfterStep(cumulative, limits)
+      if (postTokenReason) {
+        // The step ran to completion or got aborted for another reason, but
+        // its usage pushed us over the cap. Force the terminal status to
+        // `aborted` so the caller stops sending more prompts. If the agent
+        // already came back aborted, preserve that.
+        status = "aborted"
+        errorMsg = postTokenReason
+      }
+    }
 
     emitModelCallFinished({
       span_id: stepSpanId,
@@ -189,10 +297,10 @@ export async function handleSessionStep(raw: unknown): Promise<StepResult> {
       total_cost: typeof result.usage.totalCost === "number" ? result.usage.totalCost : undefined,
     })
 
-    if (result.error) {
+    if (errorMsg) {
       emitError({
         run_id: runId,
-        message: result.error.message,
+        message: errorMsg,
         severity: "error",
       })
     }
@@ -209,7 +317,7 @@ export async function handleSessionStep(raw: unknown): Promise<StepResult> {
         cache_write_tokens: result.usage.cacheWriteTokens ?? 0,
         ...(typeof result.usage.totalCost === "number" ? { total_cost: result.usage.totalCost } : {}),
       },
-      ...(result.error ? { error: result.error.message } : {}),
+      ...(errorMsg ? { error: errorMsg } : {}),
     }
   } catch (err) {
     emitError({
@@ -219,6 +327,8 @@ export async function handleSessionStep(raw: unknown): Promise<StepResult> {
     })
     throw err
   } finally {
+    timer.signal.removeEventListener("abort", onTimerFire)
+    timer.clear()
     clearActiveRun()
   }
 }
