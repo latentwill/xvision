@@ -23,10 +23,10 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::UnixListener;
 use tokio::task::JoinHandle;
 use xvision_observability::{
-    BackpressureDroppedEvent, ModelCallFinishedEvent, RunEvent, RunEventBus,
-    RunFinishedEvent, RunInterruptedEvent, RunStartedEvent, SidecarErrorEvent,
-    SpanFinishedEvent, SpanStartedEvent, ToolCallFailedEvent, ToolCallFinishedEvent,
-    ToolCallStartedEvent,
+    AssistantTextDeltaEvent, BackpressureDroppedEvent, ModelCallFinishedEvent,
+    RunEvent, RunEventBus, RunFinishedEvent, RunInterruptedEvent, RunStartedEvent,
+    SidecarErrorEvent, SpanFinishedEvent, SpanStartedEvent, ToolCallCancelledEvent,
+    ToolCallFailedEvent, ToolCallFinishedEvent, ToolCallStartedEvent,
 };
 use xvision_observability::{
     CapabilityPath, RiskLevel, RunStatus, SideEffectLevel, SpanKind, SpanStatus, ToolOrigin,
@@ -261,30 +261,39 @@ fn dispatch_inner(
             ]
         }
 
-        "event.model_call_finished" => {
+        "event.model_call_started" => {
+            // Per-iteration ModelCall span boundary. The matching
+            // ModelCallFinished arrives via `event.model_call_finished`
+            // below with the same `span_id`. v1 synthesized this pair
+            // around model_call_finished; the v2 wrapper emits it
+            // explicitly so we can record per-stream usage instead of
+            // per-step aggregates.
             let span_id = str_field("span_id")?;
             let run_id = str_field("run_id")?;
             let provider = str_field("provider")?;
             let model = str_field("model")?;
+            vec![RunEvent::SpanStarted(SpanStartedEvent {
+                span_id,
+                run_id,
+                parent_span_id: None,
+                kind: SpanKind::ModelCall,
+                name: format!("{}/{}", provider, model),
+                started_at: Utc::now(),
+                otel_trace_id: None,
+                otel_span_id: None,
+                attributes_json: None,
+            })]
+        }
+
+        "event.model_call_finished" => {
+            // Pair with the preceding `event.model_call_started`. Emit
+            // SpanFinished + ModelCallFinished detail; no synthesized
+            // SpanStarted (it arrived as its own notification).
+            let span_id = str_field("span_id")?;
+            let provider = str_field("provider")?;
+            let model = str_field("model")?;
             let now = Utc::now();
-            // Expand to: SpanStarted + SpanFinished (instantaneous model
-            // call span) + ModelCallFinished detail. The "Started" sub-
-            // event is synthesized because the sidecar only emits the
-            // aggregated end-of-step event in v1; per-iteration model
-            // request/response streaming is a follow-up that will swap
-            // this for separate ModelCallStarted/Finished notifications.
             vec![
-                RunEvent::SpanStarted(SpanStartedEvent {
-                    span_id: span_id.clone(),
-                    run_id,
-                    parent_span_id: None,
-                    kind: SpanKind::ModelCall,
-                    name: format!("{}/{}", provider, model),
-                    started_at: now,
-                    otel_trace_id: None,
-                    otel_span_id: None,
-                    attributes_json: None,
-                }),
                 RunEvent::SpanFinished(SpanFinishedEvent {
                     span_id: span_id.clone(),
                     ended_at: now,
@@ -308,6 +317,44 @@ fn dispatch_inner(
                     response_payload_ref: None,
                     tool_calls_requested: None,
                     capability_path: Some(CapabilityPath::StructuredOutput),
+                }),
+            ]
+        }
+
+        "event.assistant_text_delta" => {
+            // Stream-only: the recorder discards the delta_len and
+            // writes nothing to SQLite. We publish to the bus so the
+            // future SSE subscriber + the OtelTeeRecorder can see the
+            // stream-progress signal. `text` payload stays at the
+            // sidecar — only the length crosses the wire (per
+            // Phase A retention decision).
+            vec![RunEvent::AssistantTextDelta(AssistantTextDeltaEvent {
+                span_id: str_field("span_id")?,
+                run_id: str_field("run_id")?,
+                delta_len: u64_field("delta_len").unwrap_or(0) as usize,
+            })]
+        }
+
+        "event.tool_call_cancelled" => {
+            let span_id = str_field("span_id")?;
+            let reason = str_field("reason");
+            let now = Utc::now();
+            // Pair with a SpanFinished(status=Cancelled) so the spans
+            // row closes — without it the tool span would stay open
+            // forever in the recorder (no tool_call_finished arrives
+            // after a cancellation, just this one notification).
+            vec![
+                RunEvent::SpanFinished(SpanFinishedEvent {
+                    span_id: span_id.clone(),
+                    ended_at: now,
+                    status: SpanStatus::Cancelled,
+                    error_json: reason
+                        .as_ref()
+                        .map(|r| serde_json::json!({ "reason": r }).to_string()),
+                }),
+                RunEvent::ToolCallCancelled(ToolCallCancelledEvent {
+                    span_id,
+                    reason,
                 }),
             ]
         }
@@ -459,16 +506,118 @@ mod tests {
             }),
             &fp,
         );
-        assert_eq!(events.len(), 3);
-        // SpanStarted → SpanFinished → ModelCallFinished
-        match &events[2] {
+        // v2: model_call_finished pairs with an explicit
+        // event.model_call_started (no synthesized SpanStarted), so
+        // dispatch now produces SpanFinished + ModelCallFinished.
+        assert_eq!(events.len(), 2);
+        assert!(matches!(events[0], RunEvent::SpanFinished(_)));
+        match &events[1] {
             RunEvent::ModelCallFinished(m) => {
                 assert_eq!(m.input_token_count, Some(100));
                 assert_eq!(m.output_token_count, Some(50));
                 assert_eq!(m.cost_usd, Some(0.0123));
                 assert_eq!(m.provider, "anthropic");
             }
-            _ => panic!("wrong variant for events[2]"),
+            _ => panic!("wrong variant for events[1]"),
+        }
+    }
+
+    #[test]
+    fn dispatch_model_call_started_emits_span_started() {
+        let fp = SidecarFingerprint::default();
+        let events = dispatch(
+            "event.model_call_started",
+            &serde_json::json!({
+                "span_id": "sp-m1",
+                "run_id": "r1",
+                "provider": "anthropic",
+                "model": "claude-opus-4-7",
+            }),
+            &fp,
+        );
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            RunEvent::SpanStarted(s) => {
+                assert_eq!(s.span_id, "sp-m1");
+                assert_eq!(s.run_id, "r1");
+                assert!(matches!(s.kind, SpanKind::ModelCall));
+                assert_eq!(s.name, "anthropic/claude-opus-4-7");
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn dispatch_assistant_text_delta_single_event() {
+        let fp = SidecarFingerprint::default();
+        let events = dispatch(
+            "event.assistant_text_delta",
+            &serde_json::json!({
+                "span_id": "sp-m1",
+                "run_id": "r1",
+                "delta_len": 12,
+            }),
+            &fp,
+        );
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            RunEvent::AssistantTextDelta(d) => {
+                assert_eq!(d.span_id, "sp-m1");
+                assert_eq!(d.run_id, "r1");
+                assert_eq!(d.delta_len, 12);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn dispatch_tool_call_cancelled_expands_with_span_finish() {
+        let fp = SidecarFingerprint::default();
+        let events = dispatch(
+            "event.tool_call_cancelled",
+            &serde_json::json!({
+                "span_id": "sp-t1",
+                "run_id": "r1",
+                "reason": "user abort",
+            }),
+            &fp,
+        );
+        assert_eq!(events.len(), 2);
+        match &events[0] {
+            RunEvent::SpanFinished(s) => {
+                assert!(matches!(s.status, SpanStatus::Cancelled));
+            }
+            _ => panic!("wrong variant for events[0]"),
+        }
+        match &events[1] {
+            RunEvent::ToolCallCancelled(c) => {
+                assert_eq!(c.span_id, "sp-t1");
+                assert_eq!(c.reason.as_deref(), Some("user abort"));
+            }
+            _ => panic!("wrong variant for events[1]"),
+        }
+    }
+
+    #[test]
+    fn dispatch_overloaded_emits_backpressure_dropped() {
+        let fp = SidecarFingerprint::default();
+        let events = dispatch(
+            "event.overloaded",
+            &serde_json::json!({
+                "run_id": "r1",
+                "dropped": 0,
+                "note": "outbound buffer high",
+            }),
+            &fp,
+        );
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            RunEvent::BackpressureDropped(b) => {
+                assert_eq!(b.run_id, "r1");
+                assert_eq!(b.dropped, 0);
+                assert_eq!(b.note, "outbound buffer high");
+            }
+            _ => panic!("wrong variant"),
         }
     }
 }

@@ -14,7 +14,11 @@ export const NOTIFY = {
   ToolCallStarted: "event.tool_call_started",
   ToolCallFinished: "event.tool_call_finished",
   ToolCallFailed: "event.tool_call_failed",
+  ToolCallCancelled: "event.tool_call_cancelled",
+  ModelCallStarted: "event.model_call_started",
   ModelCallFinished: "event.model_call_finished",
+  AssistantTextDelta: "event.assistant_text_delta",
+  Overloaded: "event.overloaded",
   Error: "event.error",
 } as const
 
@@ -101,6 +105,50 @@ export function emitModelCallFinished(params: {
     output_tokens: params.output_tokens,
     ...(typeof params.total_cost === "number" ? { total_cost: params.total_cost } : {}),
   })
+}
+
+export function emitToolCallCancelled(params: {
+  span_id: string
+  run_id: string
+  reason?: string | undefined
+}): void {
+  void emitNotification(NOTIFY.ToolCallCancelled, {
+    span_id: params.span_id,
+    run_id: params.run_id,
+    ...(params.reason !== undefined ? { reason: params.reason } : {}),
+  })
+}
+
+export function emitModelCallStarted(params: {
+  span_id: string
+  run_id: string
+  provider: string
+  model: string
+}): void {
+  void emitNotification(NOTIFY.ModelCallStarted, params)
+}
+
+export function emitAssistantTextDelta(params: {
+  span_id: string
+  run_id: string
+  delta_len: number
+}): void {
+  void emitNotification(NOTIFY.AssistantTextDelta, params)
+}
+
+/**
+ * Emitted by `event-client.ts` when the outbound notification socket's
+ * `writableLength` crosses the configured high-water mark, and again when
+ * it drains below 50% of that mark. Best-effort: if no active run is
+ * known we still emit with `run_id: ""` so the dispatch path can record
+ * the warning against the bus's "unknown run" fallback.
+ */
+export function emitOverloaded(params: {
+  run_id: string
+  dropped: number
+  note: string
+}): void {
+  void emitNotification(NOTIFY.Overloaded, params)
 }
 
 export function emitError(params: { run_id: string; message: string; severity: "info" | "warn" | "error" }): void {

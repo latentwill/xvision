@@ -137,6 +137,19 @@ async fn ipc_emission_records_rows_with_fingerprint() {
     )
     .await;
 
+    // v2: model_call_finished now pairs with an explicit
+    // model_call_started, both sharing the same span_id.
+    push(
+        &mut conn,
+        "event.model_call_started",
+        serde_json::json!({
+            "span_id": "sp-model-1",
+            "run_id": "r-smoke-1",
+            "provider": "anthropic",
+            "model": "claude-opus-4-7",
+        }),
+    )
+    .await;
     push(
         &mut conn,
         "event.model_call_finished",
