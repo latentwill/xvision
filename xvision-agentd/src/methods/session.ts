@@ -10,6 +10,7 @@ import { buildAgent } from "../session/build-agent.js"
 import {
   emitRunStarted,
   emitRunFinished,
+  emitModelCallStarted,
   emitModelCallFinished,
   emitError,
   newSpanId,
@@ -18,6 +19,7 @@ import {
   setActiveRun,
   clearActiveRun,
 } from "../session/active-run.js"
+import { MOCK_PROVIDER_ID } from "../testing/mock-provider.js"
 
 let store: SessionStore = getDefaultStore()
 
@@ -173,21 +175,40 @@ export async function handleSessionStep(raw: unknown): Promise<StepResult> {
 
   const runId = p.run_id
   const stepSpanId = newSpanId()
+  // The mock-provider path is wrapped by `wrapAgentModel` in
+  // `build-agent.ts`, which emits its own per-`stream()` ModelCallStarted
+  // + ModelCallFinished pair. To avoid double-counting, only emit the
+  // per-step aggregate ModelCall span here for the real-provider path
+  // where the wrapper is not currently applied (see the buildAgent
+  // comment for the rationale + follow-up). Once the real-provider
+  // gateway integration lands, drop this branch entirely.
+  const isMock = session.config.provider_id === MOCK_PROVIDER_ID
   setActiveRun(runId, session.config.provider_id, session.config.model_id)
   try {
     const result = agent.hasRun
       ? await agent.continue(p.prompt)
       : await agent.run(p.prompt)
 
-    emitModelCallFinished({
-      span_id: stepSpanId,
-      run_id: runId,
-      provider: session.config.provider_id,
-      model: session.config.model_id,
-      input_tokens: result.usage.inputTokens,
-      output_tokens: result.usage.outputTokens,
-      total_cost: typeof result.usage.totalCost === "number" ? result.usage.totalCost : undefined,
-    })
+    if (!isMock) {
+      // Emit a paired Start+Finish so the Rust span recorder sees the
+      // model span; without Start the recorder has no spans row for the
+      // model_calls FK to reference.
+      emitModelCallStarted({
+        span_id: stepSpanId,
+        run_id: runId,
+        provider: session.config.provider_id,
+        model: session.config.model_id,
+      })
+      emitModelCallFinished({
+        span_id: stepSpanId,
+        run_id: runId,
+        provider: session.config.provider_id,
+        model: session.config.model_id,
+        input_tokens: result.usage.inputTokens,
+        output_tokens: result.usage.outputTokens,
+        total_cost: typeof result.usage.totalCost === "number" ? result.usage.totalCost : undefined,
+      })
+    }
 
     if (result.error) {
       emitError({
