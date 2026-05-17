@@ -5,7 +5,7 @@ wave: qa-2026-05-17
 worktree: .worktrees/qa-chart-hold-marker-zero
 branch: task/qa-chart-hold-marker-zero
 base: origin/main
-status: ready
+status: merged
 depends_on: []
 blocks: []
 stacking: none

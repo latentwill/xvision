@@ -5,7 +5,7 @@ wave: qa-2026-05-17
 worktree: .worktrees/qa-role-normalization
 branch: task/qa-role-normalization
 base: origin/main
-status: ready
+status: pr-open
 depends_on: []
 blocks: []
 stacking: none

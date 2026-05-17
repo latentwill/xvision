@@ -5,7 +5,7 @@ wave: qa-2026-05-17
 worktree: .worktrees/qa-dashboard-auth-hardening
 branch: task/qa-dashboard-auth-hardening
 base: origin/main
-status: ready
+status: pr-open
 depends_on: []
 blocks: []
 stacking: none
@@ -22,7 +22,9 @@ allowed_paths:
   - frontend/web/src/routes/settings/danger.tsx
   - crates/xvision-dashboard/tests/auth.rs
   - crates/xvision-dashboard/tests/cli_jobs_allowlist.rs
+  - crates/xvision-dashboard/tests/cli_jobs_routes.rs
   - crates/xvision-dashboard/tests/danger_challenge.rs
+  - crates/xvision-dashboard/tests/http.rs
   - docs/runbook/dashboard-auth.md
 forbidden_paths:
   - crates/xvision-engine/migrations/**

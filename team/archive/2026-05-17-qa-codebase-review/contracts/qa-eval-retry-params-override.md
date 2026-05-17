@@ -5,7 +5,7 @@ wave: qa-2026-05-17
 worktree: .worktrees/qa-eval-retry-params-override
 branch: task/qa-eval-retry-params-override
 base: origin/main
-status: ready
+status: pr-open
 depends_on: []
 blocks: []
 stacking: none

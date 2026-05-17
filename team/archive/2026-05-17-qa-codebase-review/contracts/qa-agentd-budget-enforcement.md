@@ -5,7 +5,7 @@ wave: qa-2026-05-17
 worktree: .worktrees/qa-agentd-budget-enforcement
 branch: task/qa-agentd-budget-enforcement
 base: origin/main
-status: ready
+status: pr-open
 depends_on: []
 blocks: []
 stacking: none
