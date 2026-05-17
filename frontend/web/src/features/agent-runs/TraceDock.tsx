@@ -1,8 +1,9 @@
 // frontend/web/src/features/agent-runs/TraceDock.tsx
 import { useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
-import { agentRunKeys, getAgentRun } from "@/api/agent-runs";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { agentRunKeys, getAgentRun, openAgentRunStream } from "@/api/agent-runs";
+import type { AgentRunDetail } from "@/api/types-agent-runs";
 import { useTraceDock, type DockHeight } from "@/stores/trace-dock";
 import { FlameGraph } from "./FlameGraph";
 import { SpanInspector } from "./SpanInspector";
@@ -43,6 +44,24 @@ export function TraceDock() {
     () => q.data?.spans.find((s) => s.span_id === selectedSpanId) ?? q.data?.spans[0] ?? null,
     [q.data, selectedSpanId],
   );
+
+  const qc = useQueryClient();
+  useEffect(() => {
+    if (!activeRunId || mode !== "live") return;
+    const close = openAgentRunStream(activeRunId, (ev) => {
+      if (ev.event === "summary") {
+        qc.setQueryData<AgentRunDetail>(agentRunKeys.run(activeRunId), (prev) =>
+          prev ? { ...prev, summary: ev.data } : prev,
+        );
+      }
+      if (ev.event === "span") {
+        qc.setQueryData<AgentRunDetail>(agentRunKeys.run(activeRunId), (prev) =>
+          prev ? { ...prev, spans: [...prev.spans, ev.data] } : prev,
+        );
+      }
+    });
+    return close;
+  }, [activeRunId, mode, qc]);
 
   if (!activeRunId) return null;
   if (height === "collapsed") return null;
