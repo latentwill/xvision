@@ -7,7 +7,15 @@ import { Pill } from "@/components/primitives/Pill";
 import { ApiError } from "@/api/client";
 import { compareRuns, evalKeys } from "@/api/eval";
 import { chartKeys, getCompareChart } from "@/api/chart";
+import { listScenarios, scenarioKeys } from "@/api/scenarios";
+import { listStrategies, strategyKeys } from "@/api/strategies";
 import { CompareChart } from "@/components/chart/CompareChart";
+import { isInflightRunStatus } from "@/lib/run-status";
+import {
+  displayScenarioName,
+  displayStrategyName,
+  shortId,
+} from "@/lib/run-display";
 import type {
   ComparisonRunSummary,
   Finding,
@@ -43,6 +51,14 @@ export function EvalCompareRoute() {
     queryKey: chartKeys.compare(ids),
     queryFn: () => getCompareChart(ids),
     enabled: ids.length >= 2,
+  });
+  const strategies = useQuery({
+    queryKey: strategyKeys.list(),
+    queryFn: listStrategies,
+  });
+  const scenarios = useQuery({
+    queryKey: scenarioKeys.list(),
+    queryFn: () => listScenarios(),
   });
 
   // Empty / single-id state — short-circuit before hitting the api so the
@@ -87,7 +103,11 @@ export function EvalCompareRoute() {
         title="Compare"
         sub={`${report.runs.length} runs · ${report.findings.length} findings`}
       />
-      <MetricsTable runs={report.runs} />
+      <MetricsTable
+        runs={report.runs}
+        strategies={strategies.data ?? []}
+        scenarios={scenarios.data ?? []}
+      />
       <h2 className="font-serif italic text-[20px] text-text mt-8 mb-3">
         Equity curves
       </h2>
@@ -114,7 +134,12 @@ export function EvalCompareRoute() {
         {report.findings.length === 0 ? (
           <EmptyFindings />
         ) : (
-          <FindingsTable findings={report.findings} runs={report.runs} />
+          <FindingsTable
+            findings={report.findings}
+            runs={report.runs}
+            strategies={strategies.data ?? []}
+            scenarios={scenarios.data ?? []}
+          />
         )}
       </Card>
     </>
@@ -123,7 +148,15 @@ export function EvalCompareRoute() {
 
 // ────────────────────────────────────────────────────────────────────────────
 
-function MetricsTable({ runs }: { runs: ComparisonRunSummary[] }) {
+function MetricsTable({
+  runs,
+  strategies,
+  scenarios,
+}: {
+  runs: ComparisonRunSummary[];
+  strategies: { agent_id: string; display_name?: string | null }[];
+  scenarios: { id: string; display_name?: string | null }[];
+}) {
   return (
     <Card>
       <table className="w-full">
@@ -131,7 +164,6 @@ function MetricsTable({ runs }: { runs: ComparisonRunSummary[] }) {
           <tr className="text-left text-text-2 text-[12px] border-b border-border-soft">
             <th className="font-normal py-2.5 px-5">Run</th>
             <th className="font-normal py-2.5 px-3">Status</th>
-            <th className="font-normal py-2.5 px-3">Strategy</th>
             <th className="font-normal py-2.5 px-3">Scenario</th>
             <th className="font-normal py-2.5 px-3 text-right">Total return</th>
             <th className="font-normal py-2.5 px-3 text-right">Sharpe</th>
@@ -158,21 +190,21 @@ function MetricsTable({ runs }: { runs: ComparisonRunSummary[] }) {
                   />
                   <Link
                     to={`/eval-runs/${encodeURIComponent(r.id)}`}
-                    className="font-mono text-text hover:underline"
+                    className="text-text hover:underline"
                   >
-                    {r.id.slice(0, 12)}…
+                    {displayStrategyName(r.agent_id, strategies)}
                   </Link>
+                  <div className="mt-0.5 font-mono text-[11px] text-text-3">
+                    run {shortId(r.id)}
+                  </div>
                 </td>
                 <td className="py-2.5 px-3">
-                  <Pill tone={tone} animated={r.status === "running"}>
+                  <Pill tone={tone} animated={isInflightRunStatus(r.status)}>
                     {r.status}
                   </Pill>
                 </td>
-                <td className="py-2.5 px-3 font-mono text-text-2 text-[12px]">
-                  {r.agent_id.slice(0, 12)}
-                </td>
                 <td className="py-2.5 px-3 text-text-2 text-[12px]">
-                  {r.scenario_id}
+                  {displayScenarioName(r.scenario_id, scenarios)}
                 </td>
                 <MetricCell
                   value={fmtPct(r.metrics?.total_return_pct)}
@@ -207,11 +239,16 @@ function MetricCell({ value, sign }: { value: string; sign?: 1 | -1 | 0 }) {
 function FindingsTable({
   findings,
   runs,
+  strategies,
+  scenarios,
 }: {
   findings: Finding[];
   runs: ComparisonRunSummary[];
+  strategies: { agent_id: string; display_name?: string | null }[];
+  scenarios: { id: string; display_name?: string | null }[];
 }) {
   const idToIndex = new Map(runs.map((r, i) => [r.id, i] as const));
+  const runById = new Map(runs.map((r) => [r.id, r] as const));
   return (
     <table className="w-full">
       <thead>
@@ -225,6 +262,7 @@ function FindingsTable({
       <tbody>
         {findings.map((f) => {
           const idx = idToIndex.get(f.run_id) ?? 0;
+          const run = runById.get(f.run_id);
           const palette = CURVE_PALETTE[idx % CURVE_PALETTE.length];
           return (
             <tr
@@ -239,10 +277,17 @@ function FindingsTable({
                 />
                 <Link
                   to={`/eval-runs/${encodeURIComponent(f.run_id)}`}
-                  className="font-mono text-text hover:underline text-[12px]"
+                  className="text-text hover:underline text-[12px]"
                 >
-                  {f.run_id.slice(0, 8)}…
+                  {run
+                    ? displayStrategyName(run.agent_id, strategies)
+                    : `Run ${shortId(f.run_id)}`}
                 </Link>
+                {run ? (
+                  <div className="mt-0.5 text-[11px] text-text-3">
+                    {displayScenarioName(run.scenario_id, scenarios)}
+                  </div>
+                ) : null}
               </td>
               <td className="py-2.5 px-3">
                 <Pill tone={severityTone(f.severity)}>{f.severity}</Pill>
@@ -411,4 +456,3 @@ function signOf(n: number | null | undefined): 1 | -1 | 0 | undefined {
   if (n < 0) return -1;
   return 0;
 }
-

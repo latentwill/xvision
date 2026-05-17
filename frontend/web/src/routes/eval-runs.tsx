@@ -36,6 +36,12 @@ import {
   type ProviderModelPair,
   type StrategyListItem,
 } from "@/api/strategies";
+import { isInflightRunStatus } from "@/lib/run-status";
+import {
+  displayScenarioName,
+  displayStrategyName,
+  shortId,
+} from "@/lib/run-display";
 import type {
   BrokersReport,
   ProvidersReport,
@@ -70,9 +76,7 @@ export function EvalRunsRoute() {
     refetchInterval: (query) => {
       const items = query.state.data as RunSummary[] | undefined;
       if (!items) return false;
-      const inflight = items.some(
-        (r) => r.status === "queued" || r.status === "running",
-      );
+      const inflight = items.some((r) => isInflightRunStatus(r.status));
       return inflight ? 2000 : false;
     },
   });
@@ -84,7 +88,7 @@ export function EvalRunsRoute() {
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [startOpen, setStartOpen] = useState(startRequested);
   const hasInflight =
-    q.data?.some((r) => r.status === "queued" || r.status === "running") ??
+    q.data?.some((r) => isInflightRunStatus(r.status)) ??
     false;
   const [nowMs, setNowMs] = useState(() => Date.now());
 
@@ -115,6 +119,9 @@ export function EvalRunsRoute() {
     queryKey: scenarioKeys.list(),
     queryFn: () => listScenarios(),
   });
+  const strategyFilterLabel = strategyFilter
+    ? displayStrategyName(strategyFilter, strategiesQ.data ?? [])
+    : "";
 
   function toggleSelected(id: string) {
     setSelected((prev) => {
@@ -171,7 +178,8 @@ export function EvalRunsRoute() {
         <div className="mb-3 px-3 py-2 rounded border border-border-soft bg-surface-elev text-[12px] text-text-2 flex items-center justify-between gap-2">
           <span>
             Filtering runs for strategy{" "}
-            <code className="font-mono text-text">{strategyFilter}</code>
+            <span className="text-text">{strategyFilterLabel}</span>
+            <code className="ml-2 font-mono text-text-3">{shortId(strategyFilter)}</code>
           </span>
           <button
             type="button"
@@ -300,14 +308,8 @@ function RunsTable({
   strategies: StrategyListItem[];
   scenarios: Scenario[];
 }) {
-  const strategyName = (id: string) => {
-    const s = strategies.find((x) => x.agent_id === id);
-    return s?.display_name?.trim() || id.slice(0, 8);
-  };
-  const scenarioName = (id: string) => {
-    const s = scenarios.find((x) => x.id === id);
-    return s?.display_name?.trim() || id;
-  };
+  const strategyName = (id: string) => displayStrategyName(id, strategies);
+  const scenarioName = (id: string) => displayScenarioName(id, scenarios);
   const navigate = useNavigate();
   const qc = useQueryClient();
   const remove = useMutation({
@@ -368,14 +370,14 @@ function RunsTable({
                 <StatusPill status={row.status} />
               </div>
 
-              <div className="font-mono text-[12px] text-text">
-                {row.id.slice(0, 12)}…
+              <div className="text-[14px] text-text font-medium truncate">
+                {strategyName(row.agent_id)}
               </div>
               <div className="mt-1 text-[12px] text-text-2 truncate">
-                {strategyName(row.agent_id)} · {scenarioName(row.scenario_id)}
+                {scenarioName(row.scenario_id)}
               </div>
-              <div className="mt-1 text-[12px] text-text-2">
-                {row.mode} · {fmtTime(row.started_at)}
+              <div className="mt-1 font-mono text-[11px] text-text-3">
+                run {shortId(row.id)} · {row.mode} · {fmtTime(row.started_at)}
               </div>
               <div className="mt-2 grid grid-cols-2 gap-2 text-[12px] min-[420px]:grid-cols-5">
                 <div className="text-text-2">
@@ -444,8 +446,7 @@ function RunsTable({
           <thead>
             <tr className="border-b border-border-soft text-left text-[12px] text-text-2">
               <th className="w-8 py-2.5 pl-5 pr-2 font-normal"></th>
-              <th className="px-3 py-2.5 font-normal">ID</th>
-              <th className="px-3 py-2.5 font-normal">Strategy</th>
+              <th className="px-3 py-2.5 font-normal">Run</th>
               <th className="px-3 py-2.5 font-normal">Scenario</th>
               <th className="px-3 py-2.5 font-normal">Mode</th>
               <th className="px-3 py-2.5 font-normal">Status</th>
@@ -492,11 +493,13 @@ function RunsTable({
                       className="cursor-pointer accent-gold"
                     />
                   </td>
-                  <td className="px-3 py-3 font-mono text-[12px] text-text">
-                    {row.id.slice(0, 12)}…
-                  </td>
-                  <td className="px-3 py-3 text-[12px] text-text-2">
-                    {strategyName(row.agent_id)}
+                  <td className="px-3 py-3">
+                    <div className="text-[13px] text-text font-medium">
+                      {strategyName(row.agent_id)}
+                    </div>
+                    <div className="mt-0.5 font-mono text-[11px] text-text-3">
+                      run {shortId(row.id)}
+                    </div>
                   </td>
                   <td className="px-3 py-3 text-text-2">{scenarioName(row.scenario_id)}</td>
                   <td className="px-3 py-3 text-text-2">{row.mode}</td>
@@ -931,7 +934,7 @@ function errorDetail(err: unknown): string {
 function StatusPill({ status }: { status: string }) {
   const tone = STATUS_TONE[status] ?? "default";
   return (
-    <Pill tone={tone} animated={status === "running"}>
+    <Pill tone={tone} animated={isInflightRunStatus(status)}>
       <span className="w-1.5 h-1.5 rounded-full" style={dotColor(tone)} />
       {status}
     </Pill>
@@ -960,7 +963,7 @@ function fmtPct(n: number | null | undefined): string {
 }
 
 function isInflight(row: RunSummary): boolean {
-  return row.status === "queued" || row.status === "running";
+  return isInflightRunStatus(row.status);
 }
 
 function fmtTokens(row: RunSummary): string {

@@ -55,6 +55,9 @@ target/
 # Superpowers brainstorming session content (ephemeral mockups + state)
 .superpowers/
 
+# Local design mockups / generated mobile artifacts
+docs/design/
+
 # Git worktrees for parallel team operation (see team/README.md)
 .worktrees/
 .claude/worktrees/

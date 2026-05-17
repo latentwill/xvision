@@ -7,6 +7,8 @@ import { EvalRunDetailRoute } from "./eval-runs-detail";
 import * as chartApi from "@/api/chart";
 import * as evalApi from "@/api/eval";
 import * as evalReviewApi from "@/api/eval-review";
+import * as scenariosApi from "@/api/scenarios";
+import * as strategyApi from "@/api/strategies";
 import type { DecisionRowDto, RunDetail } from "@/api/types.gen";
 
 vi.mock("@/api/eval", async () => {
@@ -41,6 +43,26 @@ vi.mock("@/api/chart", () => ({
   getRunChart: vi.fn(),
   openRunStream: vi.fn((runId: string) => new EventSource(`/stream/${runId}`)),
 }));
+
+vi.mock("@/api/scenarios", async () => {
+  const actual = await vi.importActual<typeof import("@/api/scenarios")>(
+    "@/api/scenarios",
+  );
+  return {
+    ...actual,
+    listScenarios: vi.fn(),
+  };
+});
+
+vi.mock("@/api/strategies", async () => {
+  const actual = await vi.importActual<typeof import("@/api/strategies")>(
+    "@/api/strategies",
+  );
+  return {
+    ...actual,
+    listStrategies: vi.fn(),
+  };
+});
 
 class FakeEventSource {
   static instances: FakeEventSource[] = [];
@@ -181,6 +203,20 @@ describe("EvalRunDetailRoute", () => {
       review: makeReview(),
       findings: [],
     });
+    vi.mocked(strategyApi.listStrategies).mockResolvedValue([
+      {
+        agent_id: "01AGENT",
+        display_name: "BTC Momentum",
+        template: "momentum",
+        decision_cadence_minutes: 60,
+      },
+    ]);
+    vi.mocked(scenariosApi.listScenarios).mockResolvedValue([
+      {
+        id: "btc-4h",
+        display_name: "BTC 4h breakout",
+      } as any,
+    ]);
   });
 
   afterEach(() => {

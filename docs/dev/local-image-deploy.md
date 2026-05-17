@@ -57,6 +57,24 @@ After the image is loaded, any Docker Compose or Coolify service that points at
 `xvision:deploy-latest` must be recreated or redeployed so the running
 container actually picks up the new image.
 
+## Dashboard token for test deployments
+
+The dashboard refuses to boot on a non-loopback bind such as
+`0.0.0.0:8788` unless `XVN_DASHBOARD_TOKEN` is set. This also applies to the
+current Tailscale test stacks, because the app container still binds inside the
+sidecar network namespace on `0.0.0.0:8788`.
+
+For local-only development, bind to `127.0.0.1:8788` and no token is required.
+For SSH/Docker/Tailscale test deployments, put a generated value in the remote
+stack's `.env`:
+
+```bash
+XVN_DASHBOARD_TOKEN="$(openssl rand -hex 32)"
+```
+
+Treat this as a temporary shared secret for the testing surface, not a finalized
+user-auth model. Rotate it if it is pasted into logs or shared too broadly.
+
 ## Server compose image
 
 Point the server's Compose file at the loaded image:
@@ -69,6 +87,7 @@ services:
       - "8788:8788"
     environment:
       XVN_AUTOMIGRATE: "1"
+      XVN_DASHBOARD_TOKEN: ${XVN_DASHBOARD_TOKEN}
       XVN_DATA_DIR: /data
       XVN_HOME: /data
     volumes:

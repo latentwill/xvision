@@ -4,6 +4,8 @@ import { Link } from "react-router-dom";
 import { ApiError } from "@/api/client";
 import { downloadEvalRunExport } from "@/api/eval";
 import { ReviewPanel } from "@/features/eval-runs/review";
+import { isInflightRunStatus } from "@/lib/run-status";
+import type { EvalRunLabels } from "@/lib/run-display";
 import type {
   DecisionRowDto,
   EquityPoint,
@@ -56,19 +58,21 @@ const MONO_LBL = "font-mono text-[10px] tracking-[0.18em]";
 
 export function MobileEvalRunDetail({
   detail,
+  labels,
   onCancel,
   cancelling,
   onRetry,
   retrying,
 }: {
   detail: RunDetail;
+  labels: EvalRunLabels;
   onCancel: () => void;
   cancelling: boolean;
   onRetry: () => void;
   retrying: boolean;
 }) {
   const { summary } = detail;
-  const isLive = summary.status === "running" || summary.status === "queued";
+  const isLive = isInflightRunStatus(summary.status);
   const stripState = mapStripState(summary.status);
   const liveDuration = useLiveDuration(summary);
   const [tab, setTab] = useState<Tab>(() =>
@@ -84,6 +88,7 @@ export function MobileEvalRunDetail({
         isLive={isLive}
         liveDuration={liveDuration}
         summary={summary}
+        labels={labels}
         onHalt={onCancel}
         cancelling={cancelling}
       />
@@ -92,6 +97,7 @@ export function MobileEvalRunDetail({
         {tab === "SUMMARY" && (
           <SummaryTab
             detail={detail}
+            labels={labels}
             isLive={isLive}
             liveDuration={liveDuration}
             onRetry={onRetry}
@@ -100,7 +106,7 @@ export function MobileEvalRunDetail({
         )}
         {tab === "DECISIONS" && <DecisionsTab decisions={detail.decisions} />}
         {tab === "TRACE" && (
-          <TraceTab summary={summary} spanCount={detail.decisions.length} />
+          <TraceTab summary={summary} labels={labels} spanCount={detail.decisions.length} />
         )}
         {tab === "REVIEW" && (
           <ReviewTab summary={summary} />
@@ -117,6 +123,7 @@ function LiveStrip({
   isLive,
   liveDuration,
   summary,
+  labels,
   onHalt,
   cancelling,
 }: {
@@ -124,6 +131,7 @@ function LiveStrip({
   isLive: boolean;
   liveDuration: number;
   summary: RunSummary;
+  labels: EvalRunLabels;
   onHalt: () => void;
   cancelling: boolean;
 }) {
@@ -159,8 +167,8 @@ function LiveStrip({
         style={{ background: "var(--border)" }}
       />
       <span className="flex-1 min-w-0 font-mono text-[11px] text-text truncate">
-        <span className="text-text-3">RUN&nbsp;·&nbsp;</span>
-        {summary.id}
+        <span className="text-text-3">EVAL&nbsp;·&nbsp;</span>
+        {labels.strategyName}
       </span>
       {isLive && (
         <button
@@ -227,12 +235,14 @@ function TabBar({
 
 function SummaryTab({
   detail,
+  labels,
   isLive,
   liveDuration,
   onRetry,
   retrying,
 }: {
   detail: RunDetail;
+  labels: EvalRunLabels;
   isLive: boolean;
   liveDuration: number;
   onRetry: () => void;
@@ -244,17 +254,15 @@ function SummaryTab({
       {/* Hero */}
       <div>
         <div className="font-serif italic text-[28px] leading-none text-text font-medium">
-          Run
+          {labels.strategyName}
         </div>
-        <div className="font-mono text-[14px] text-text-2 mt-0.5 truncate">
-          {summary.id}
+        <div className="text-[14px] text-text-2 mt-1 truncate">
+          {labels.scenarioName}
         </div>
         <div className="mt-1.5 flex flex-wrap gap-x-2 font-mono text-[10px] text-text-3">
-          <span className="truncate max-w-[45%]">{summary.scenario_id}</span>
+          <span>run {labels.shortRunId}</span>
           <span className="text-text-4">·</span>
-          <span className="truncate max-w-[45%]">
-            {summary.agent_id.slice(0, 12)}
-          </span>
+          <span>strategy {labels.shortStrategyId}</span>
           <span className="text-text-4">·</span>
           <span>{summary.mode}</span>
         </div>
@@ -306,7 +314,7 @@ function SummaryTab({
 
       <EquityCard equity={equity_curve} pct={summary.total_return_pct} />
 
-      <MetaCard summary={summary} />
+      <MetaCard summary={summary} labels={labels} />
 
       <RunActions
         summary={summary}
@@ -402,10 +410,17 @@ function ActivityCard({
   );
 }
 
-function MetaCard({ summary }: { summary: RunSummary }) {
+function MetaCard({
+  summary,
+  labels,
+}: {
+  summary: RunSummary;
+  labels: EvalRunLabels;
+}) {
   const rows: [string, string][] = [
-    ["scenario", summary.scenario_id],
-    ["strategy", summary.agent_id.slice(0, 18)],
+    ["strategy", labels.strategyName],
+    ["scenario", labels.scenarioName],
+    ["run id", summary.id],
     ["mode", summary.mode],
     ["started", fmtTime(summary.started_at)],
     [
@@ -674,16 +689,18 @@ function ActionPill({ action }: { action: "BUY" | "SELL" | "HOLD" | "CLOSE" }) {
 
 function TraceTab({
   summary,
+  labels,
   spanCount,
 }: {
   summary: RunSummary;
+  labels: EvalRunLabels;
   spanCount: number;
 }) {
   const agentRunId = traceRunId(summary);
   return (
     <div className="flex flex-col gap-3 py-3 pb-24">
       <div className={`${MONO_TINY} text-text-3`}>
-        TRACE · agent run {agentRunId}
+        TRACE · {labels.strategyName}
       </div>
       <div
         className="rounded-card border border-border bg-surface px-3 py-3"
@@ -815,7 +832,7 @@ export function MobileEvalRunDetailError({
 // ── helpers ─────────────────────────────────────────────────────────
 
 function mapStripState(status: string): StripState {
-  if (status === "running" || status === "queued") return "blue";
+  if (isInflightRunStatus(status)) return "blue";
   if (status === "completed") return "green";
   if (status === "cancelled") return "amber";
   return "red";
@@ -826,7 +843,7 @@ function isTerminalStatus(status: string): boolean {
 }
 
 function useLiveDuration(summary: RunSummary): number {
-  const isLive = summary.status === "running" || summary.status === "queued";
+  const isLive = isInflightRunStatus(summary.status);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (!isLive) return;
@@ -846,7 +863,7 @@ function useLiveDuration(summary: RunSummary): number {
 }
 
 function totalDurationLabel(summary: RunSummary, liveDuration: number): string {
-  const isLive = summary.status === "running" || summary.status === "queued";
+  const isLive = isInflightRunStatus(summary.status);
   if (isLive) {
     const m = Math.floor(liveDuration / 60);
     const s = liveDuration % 60;

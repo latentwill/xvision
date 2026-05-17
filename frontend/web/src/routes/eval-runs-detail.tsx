@@ -10,6 +10,10 @@ import { chartKeys, getRunChart, openRunStream } from "@/api/chart";
 import { RunChart } from "@/components/chart/RunChart";
 import { ReviewPanel } from "@/features/eval-runs/review";
 import { useTraceDock } from "@/stores/trace-dock";
+import { isInflightRunStatus } from "@/lib/run-status";
+import { evalRunLabels, type EvalRunLabels } from "@/lib/run-display";
+import { listScenarios, scenarioKeys } from "@/api/scenarios";
+import { listStrategies, strategyKeys } from "@/api/strategies";
 import type {
   DecisionRowDto,
   RunDetail,
@@ -40,13 +44,21 @@ export function EvalRunDetailRoute() {
     refetchInterval: (query) => {
       const detail = query.state.data;
       const status = detail?.summary.status;
-      return status === "queued" || status === "running" ? 2000 : false;
+      return status && isInflightRunStatus(status) ? 2000 : false;
     },
   });
   const chart = useQuery({
     queryKey: chartKeys.run(id),
     queryFn: () => getRunChart(id),
     enabled: !!id,
+  });
+  const strategies = useQuery({
+    queryKey: strategyKeys.list(),
+    queryFn: listStrategies,
+  });
+  const scenarios = useQuery({
+    queryKey: scenarioKeys.list(),
+    queryFn: () => listScenarios(),
   });
   const navigate = useNavigate();
   const cancel = useMutation({
@@ -74,7 +86,7 @@ export function EvalRunDetailRoute() {
     const status = q.data?.summary.status;
     useTraceDock
       .getState()
-      .setActiveRun(id, status === "queued" || status === "running" ? "live" : "post-hoc");
+      .setActiveRun(id, status && isInflightRunStatus(status) ? "live" : "post-hoc");
   }, [id, q.data?.summary.status]);
 
   if (q.isPending) {
@@ -109,10 +121,16 @@ export function EvalRunDetailRoute() {
   }
 
   const detail = q.data;
+  const labels = evalRunLabels(
+    detail.summary,
+    strategies.data ?? [],
+    scenarios.data ?? [],
+  );
   if (isPhone) {
     return (
       <MobileEvalRunDetail
         detail={detail}
+        labels={labels}
         onCancel={() => cancel.mutate(detail.summary.id)}
         cancelling={cancel.variables === detail.summary.id && cancel.isPending}
         onRetry={() => retry.mutate(detail.summary.id)}
@@ -123,12 +141,13 @@ export function EvalRunDetailRoute() {
   return (
     <>
       <Topbar
-        title={`Run ${detail.summary.id.slice(0, 12)}…`}
-        sub={`${detail.summary.scenario_id} · ${detail.summary.mode}`}
+        title={labels.title}
+        sub={`${labels.subtitle} · run ${labels.shortRunId}`}
       />
 
       <SummaryCard
         summary={detail.summary}
+        labels={labels}
         onCancel={() => cancel.mutate(detail.summary.id)}
         cancelling={cancel.variables === detail.summary.id && cancel.isPending}
         onRetry={() => retry.mutate(detail.summary.id)}
@@ -270,19 +289,21 @@ function isTerminalStatus(status: string): boolean {
 
 function SummaryCard({
   summary,
+  labels,
   onCancel,
   cancelling,
   onRetry,
   retrying,
 }: {
   summary: RunSummary;
+  labels: EvalRunLabels;
   onCancel: () => void;
   cancelling: boolean;
   onRetry: () => void;
   retrying: boolean;
 }) {
   const tone = STATUS_TONE[summary.status] ?? "default";
-  const inflight = summary.status === "queued" || summary.status === "running";
+  const inflight = isInflightRunStatus(summary.status);
   const terminal = isTerminalStatus(summary.status);
   const canRetry = summary.status === "failed";
   const [downloading, setDownloading] = useState(false);
@@ -304,21 +325,23 @@ function SummaryCard({
   return (
     <Card className="p-5">
       <div className="flex items-center justify-between mb-4">
-        <div>
-          <div className="flex items-center">
-            <div className="text-text-3 text-[12px] font-mono">{summary.id}</div>
+        <div className="min-w-0">
+          <div className="font-serif text-[30px] leading-none text-text truncate">
+            {labels.strategyName}
+          </div>
+          <div className="mt-1 text-[14px] text-text-2 truncate">
+            {labels.scenarioName}
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-text-3">
+            <span className="font-mono">run {labels.shortRunId}</span>
+            <span className="font-mono">strategy {labels.shortStrategyId}</span>
+            <span className="font-mono">scenario {labels.shortScenarioId}</span>
             <Link
               to={`/agent-runs/${encodeURIComponent(agentRunId)}`}
-              className="text-[12px] text-info hover:underline ml-3"
+              className="text-info hover:underline"
             >
               View agent trace →
             </Link>
-          </div>
-          <div className="text-text-2 text-[12px] mt-1">
-            strategy{" "}
-            <code className="font-mono text-text">
-              {summary.agent_id.slice(0, 12)}
-            </code>
           </div>
         </div>
         <div className="flex items-center gap-3">
@@ -355,7 +378,7 @@ function SummaryCard({
               {downloading ? "Preparing JSON…" : "Download JSON"}
             </button>
           ) : null}
-          <Pill tone={tone} animated={summary.status === "running"}>
+          <Pill tone={tone} animated={inflight}>
             <span
               className="w-1.5 h-1.5 rounded-full"
               style={dotColor(tone)}
