@@ -1,6 +1,7 @@
 import { startUdsServer } from "./transport/uds-server.js"
 import { CLINE_SDK_VERSION, PROTOCOL_VERSION, SIDECAR_VERSION } from "./version.js"
 import { setCallbackSocketPath } from "./transport/callback-client.js"
+import { setEventSocketPath } from "./transport/event-client.js"
 import { installMockProvider, setMockScript } from "./testing/mock-provider.js"
 
 async function main(): Promise<void> {
@@ -21,6 +22,11 @@ async function main(): Promise<void> {
   const cbIdx = args.indexOf("--callback-socket")
   if (cbIdx !== -1 && args[cbIdx + 1]) {
     setCallbackSocketPath(args[cbIdx + 1])
+  }
+
+  const evIdx = args.indexOf("--event-socket")
+  if (evIdx !== -1 && args[evIdx + 1]) {
+    setEventSocketPath(args[evIdx + 1])
   }
 
   // Test-only: install a deterministic mock-model script before sessions

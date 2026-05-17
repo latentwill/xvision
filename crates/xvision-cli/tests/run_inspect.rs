@@ -19,12 +19,9 @@ use xvision_observability::{
     AgentRunRecorder, RunEvent, RunEventBus, SqliteRecorder,
 };
 
-const MIGRATION_002: &str =
-    include_str!("../../xvision-engine/migrations/002_eval.sql");
-const MIGRATION_013: &str =
-    include_str!("../../xvision-engine/migrations/013_cli_jobs.sql");
-const MIGRATION_018: &str =
-    include_str!("../../xvision-engine/migrations/018_agent_run_observability.sql");
+const MIGRATION_002: &str = include_str!("../../xvision-engine/migrations/002_eval.sql");
+const MIGRATION_013: &str = include_str!("../../xvision-engine/migrations/013_cli_jobs.sql");
+const MIGRATION_018: &str = include_str!("../../xvision-engine/migrations/018_agent_run_observability.sql");
 
 fn fixed_ts(offset_secs: i64) -> DateTime<Utc> {
     let base = DateTime::parse_from_rfc3339("2026-05-17T16:00:00Z")
@@ -95,12 +92,11 @@ async fn seed_run(db_path: &std::path::Path, run_id: &str) {
     drop(bus);
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
-        let row: Option<(String,)> =
-            sqlx::query_as("SELECT status FROM agent_runs WHERE id = ?")
-                .bind(run_id)
-                .fetch_optional(&pool)
-                .await
-                .unwrap();
+        let row: Option<(String,)> = sqlx::query_as("SELECT status FROM agent_runs WHERE id = ?")
+            .bind(run_id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
         if let Some((status,)) = row {
             if status == "completed" {
                 break;
@@ -223,7 +219,11 @@ fn inspect_is_idempotent_on_finished_runs() {
             ],
             home.path(),
         );
-        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
     }
 
     // Second invocation produced identical bytes — that's the
@@ -261,8 +261,40 @@ fn inspect_unknown_run_id_returns_not_found() {
     );
     let code = out.status.code().expect("clean exit");
     assert_eq!(
-        code, 4,
+        code,
+        4,
         "expected XvnExit::NotFound=4 for unknown run id, stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn inspect_stdout_requires_json_format() {
+    let home = tempdir().unwrap();
+    let db_path = home.path().join("data").join("store.db");
+    std::fs::create_dir_all(db_path.parent().unwrap()).unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(seed_run(&db_path, "run_stdout"));
+
+    let out = xvn(
+        &[
+            "run",
+            "inspect",
+            "run_stdout",
+            "--db",
+            db_path.to_str().unwrap(),
+            "--out",
+            "-",
+        ],
+        home.path(),
+    );
+    assert_eq!(
+        out.status.code().expect("clean exit"),
+        2,
+        "expected XvnExit::Usage=2 when --out - is used without --format json; stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
 }

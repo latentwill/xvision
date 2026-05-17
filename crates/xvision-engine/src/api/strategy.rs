@@ -425,7 +425,9 @@ pub async fn delete(ctx: &ApiContext, agent_id: &str) -> ApiResult<()> {
 async fn get_inner(ctx: &ApiContext, agent_id: &str) -> ApiResult<Strategy> {
     let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
     store.load(agent_id).await.map_err(|e| {
-        if is_not_found(&e) {
+        if let Some(validation) = strategy_id_validation_error(&e) {
+            validation
+        } else if is_not_found(&e) {
             ApiError::NotFound(format!("strategy '{agent_id}'"))
         } else {
             ApiError::Internal(e.to_string())
@@ -435,7 +437,9 @@ async fn get_inner(ctx: &ApiContext, agent_id: &str) -> ApiResult<Strategy> {
 
 async fn delete_inner(store: &FilesystemStore, agent_id: &str) -> ApiResult<()> {
     store.delete(agent_id).await.map_err(|e| {
-        if is_not_found(&e) {
+        if let Some(validation) = strategy_id_validation_error(&e) {
+            validation
+        } else if is_not_found(&e) {
             ApiError::NotFound(format!("strategy '{agent_id}'"))
         } else {
             ApiError::Internal(e.to_string())
@@ -452,6 +456,20 @@ fn is_not_found(err: &anyhow::Error) -> bool {
         }
     }
     false
+}
+
+/// If `err` is an `anyhow`-wrapped `StrategyIdError` (the filesystem-store
+/// path-safety validator rejected the caller-supplied id), map it to a
+/// `Validation` ApiError so the dashboard / CLI sees a clean 4xx-style
+/// message instead of a generic 500. Returns `None` otherwise so the
+/// caller can fall through to its existing NotFound / Internal mapping.
+fn strategy_id_validation_error(err: &anyhow::Error) -> Option<ApiError> {
+    for cause in err.chain() {
+        if let Some(id_err) = cause.downcast_ref::<crate::strategies::id::StrategyIdError>() {
+            return Some(ApiError::Validation(format!("invalid strategy id: {id_err}")));
+        }
+    }
+    None
 }
 
 pub async fn clone_strategy(ctx: &ApiContext, agent_id: &str, req: CloneStrategyReq) -> ApiResult<Strategy> {
@@ -505,6 +523,9 @@ pub async fn clone_strategy(ctx: &ApiContext, agent_id: &str, req: CloneStrategy
 /// for the cases we want to surface as `Validation`. Anything else falls
 /// through to `Internal`.
 fn map_authoring_error(err: anyhow::Error, agent_id: Option<&str>) -> ApiError {
+    if let Some(validation) = strategy_id_validation_error(&err) {
+        return validation;
+    }
     if is_not_found(&err) {
         return match agent_id {
             Some(id) => ApiError::NotFound(format!("strategy '{id}'")),
