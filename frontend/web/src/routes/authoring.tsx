@@ -466,11 +466,14 @@ function AddAgentAccordion(props: AddAgentAccordionProps) {
           <span>Add agent</span>
         </button>
         {open ? (
-          <div className="flex items-center gap-1" role="tablist" aria-label="Add agent mode">
+          <div
+            className="flex items-center gap-1"
+            role="group"
+            aria-label="Add agent mode"
+          >
             <button
               type="button"
-              role="tab"
-              aria-selected={mode === "existing"}
+              aria-pressed={mode === "existing"}
               onClick={() => setMode("existing")}
               className={`px-2 py-1 text-[11px] rounded border ${
                 mode === "existing"
@@ -482,8 +485,7 @@ function AddAgentAccordion(props: AddAgentAccordionProps) {
             </button>
             <button
               type="button"
-              role="tab"
-              aria-selected={mode === "create"}
+              aria-pressed={mode === "create"}
               onClick={() => setMode("create")}
               className={`px-2 py-1 text-[11px] rounded border ${
                 mode === "create"

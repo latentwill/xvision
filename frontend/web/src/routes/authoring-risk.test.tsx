@@ -631,10 +631,10 @@ describe("AuthoringRoute agent composition", () => {
     renderRoute();
 
     // qa-strategy-popup-to-accordion (2026-05-17): the "Create and
-    // attach" form is now a tab inside the AddAgentAccordion; switch
+    // attach" form is now a mode inside the AddAgentAccordion; switch
     // to it before filling fields.
     fireEvent.click(
-      await screen.findByRole("tab", { name: "Create new" }),
+      await screen.findByRole("button", { name: "Create new" }),
     );
 
     fireEvent.change(await screen.findByLabelText("New agent name"), {
