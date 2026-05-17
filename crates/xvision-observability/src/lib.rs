@@ -13,6 +13,8 @@ pub mod bus;
 pub mod config;
 pub mod events;
 pub mod janitor;
+#[cfg(feature = "otel")]
+pub mod otel;
 pub mod recorder;
 pub mod redactor;
 pub mod retention;
@@ -51,4 +53,12 @@ pub use sqlite::SqliteRecorder;
 pub use types::{
     CapabilityPath, RiskLevel, RunStatus, SideEffectLevel, SpanKind, SpanStatus,
     ToolOrigin,
+};
+
+#[cfg(feature = "otel")]
+pub use otel::{
+    add_attribute as otel_add_attribute, attr as otel_attr, attribute_to_kv,
+    build_resource as otel_build_resource, init_otel_pipeline, shutdown_otel_pipeline,
+    OtelIds, OtelInitError, OtelTeeRecorder, ENV_OTLP_ENDPOINT,
+    ENV_RESOURCE_ATTRIBUTES, ENV_SERVICE_NAME,
 };
