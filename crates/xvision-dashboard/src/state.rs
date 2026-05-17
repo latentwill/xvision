@@ -115,6 +115,11 @@ impl AppState {
             self.xvn_home.clone(),
         )
         .with_event_bus(self.event_bus.clone())
+        // qa-eval-observability-wiring (2026-05-17): hand the
+        // dashboard's singleton observability bus to every
+        // engine-side eval run so spans + errors land in
+        // `/api/agent-runs/<eval_run_id>` and the trace dock.
+        .with_obs_event_bus(self.obs_event_bus.clone())
     }
 
     /// Read a cached models report for `provider` if it's within the TTL.
