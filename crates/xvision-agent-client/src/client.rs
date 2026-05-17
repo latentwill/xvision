@@ -3,7 +3,8 @@ use std::sync::Arc;
 
 use crate::errors::{AgentClientError, Result};
 use crate::protocol::{
-    RuntimeHealthResult, ToolDescriptor, ToolRegistryGetResult, ToolRegistrySetParams, ToolRegistrySetResult,
+    EndRunParams, EndRunResult, RuntimeHealthResult, StartRunParams, StartRunResult, StepParams,
+    StepResult, ToolDescriptor, ToolRegistryGetResult, ToolRegistrySetParams, ToolRegistrySetResult,
     SUPPORTED_PROTOCOL_VERSION,
 };
 use crate::supervisor::Supervisor;
@@ -81,6 +82,24 @@ impl AgentClient {
     pub async fn list_tools(&self) -> Result<ToolRegistryGetResult> {
         self.transport
             .call::<(), ToolRegistryGetResult>("tool.registry.get", None)
+            .await
+    }
+
+    pub async fn start_run(&self, params: StartRunParams) -> Result<StartRunResult> {
+        self.transport
+            .call::<StartRunParams, StartRunResult>("session.start_run", Some(params))
+            .await
+    }
+
+    pub async fn step(&self, params: StepParams) -> Result<StepResult> {
+        self.transport
+            .call::<StepParams, StepResult>("session.step", Some(params))
+            .await
+    }
+
+    pub async fn end_run(&self, params: EndRunParams) -> Result<EndRunResult> {
+        self.transport
+            .call::<EndRunParams, EndRunResult>("session.end_run", Some(params))
             .await
     }
 

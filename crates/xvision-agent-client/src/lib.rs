@@ -11,8 +11,9 @@ pub mod transport;
 pub use client::AgentClient;
 pub use errors::{AgentClientError, Result};
 pub use protocol::{
-    RuntimeHealthResult, SideEffectLevel, ToolDescriptor, ToolRegistryGetResult, ToolRegistrySetResult,
-    SUPPORTED_PROTOCOL_VERSION,
+    BudgetLimits, EndRunParams, EndRunResult, RunUsage, RuntimeHealthResult, SideEffectLevel,
+    StartRunParams, StartRunResult, StepParams, StepResult, ToolDescriptor, ToolRegistryGetResult,
+    ToolRegistrySetResult, SUPPORTED_PROTOCOL_VERSION,
 };
 pub use tool_dispatch::{ToolDispatch, ToolDispatchError};
 pub use transport::UdsTransport;
