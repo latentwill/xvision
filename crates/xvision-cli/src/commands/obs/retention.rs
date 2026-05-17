@@ -8,6 +8,7 @@ use xvision_observability::{
     clear_config, default_config_path, resolve_retention, write_config, CliOverrides,
     ObservabilityConfig, RetentionMode,
 };
+use anyhow::Context;
 
 #[derive(Args, Debug)]
 pub struct RetentionCmd {
@@ -114,10 +115,13 @@ fn set(args: SetArgs) -> anyhow::Result<()> {
         .config
         .clone()
         .unwrap_or_else(default_config_path);
-    // Start from the currently-resolved view (so unspecified knobs
-    // survive the rewrite), then overlay the CLI overrides.
-    let view = resolve_retention(&path, &CliOverrides::default())?;
-    let mut cfg: ObservabilityConfig = view.config();
+    // Seed from the file on disk only — never from the env-resolved
+    // view. Otherwise a transient `XVISION_OBSERVABILITY_*` export in
+    // the shell would get baked into `observability.toml` whenever the
+    // operator runs an unrelated `set`. Missing file → start from
+    // defaults; the CLI flags below overlay on top.
+    let mut cfg: ObservabilityConfig = ObservabilityConfig::load_from_file(&path)
+        .with_context(|| format!("reading {}", path.display()))?;
 
     if let Some(m) = args.mode {
         cfg.retention.mode = m.into();
@@ -170,4 +174,64 @@ fn clear(args: ClearArgs) -> anyhow::Result<()> {
         eprintln!("no config file at {} (already cleared)", path.display());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    /// Regression: `xvn obs retention set` used to seed from
+    /// `resolve_retention`, which folds in any
+    /// `XVISION_OBSERVABILITY_*` env override. That meant a transient
+    /// shell export (e.g. `XVISION_OBSERVABILITY_RETENTION=full_debug`)
+    /// would get baked into `observability.toml` on the next unrelated
+    /// `set --payload-ttl-days 30`. After the fix, `set` reads the
+    /// file directly so env vars do not influence what is persisted.
+    #[test]
+    fn set_does_not_persist_env_overrides() {
+        // Sentinel value lets us prove the env var was actually live
+        // for the duration of the test; the persisted file must NOT
+        // reflect it.
+        const KEY: &str = "XVISION_OBSERVABILITY_RETENTION";
+
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("observability.toml");
+
+        // Set the env var, run `set` with a CLI flag that does NOT
+        // touch the mode, then immediately remove the env var so this
+        // test does not leak state to siblings if run in parallel.
+        let prior = std::env::var(KEY).ok();
+        std::env::set_var(KEY, "full_debug");
+        let result = set(SetArgs {
+            config: Some(path.clone()),
+            mode: None,
+            store_prompts: None,
+            store_responses: None,
+            store_tool_inputs: None,
+            store_tool_outputs: None,
+            redact_secrets: None,
+            payload_ttl_days: Some(30),
+            max_payload_bytes: None,
+            sqlite_enabled: None,
+            otel_enabled: None,
+        });
+        match prior {
+            Some(v) => std::env::set_var(KEY, v),
+            None => std::env::remove_var(KEY),
+        }
+        result.expect("set should succeed");
+
+        // Read the file back via load_from_file (no env application).
+        let persisted = ObservabilityConfig::load_from_file(&path).unwrap();
+        assert_eq!(
+            persisted.retention.mode,
+            RetentionMode::HashOnly,
+            "env var must NOT have leaked into the persisted mode"
+        );
+        assert_eq!(
+            persisted.retention.payload_ttl_days, 30,
+            "the explicitly-passed CLI flag should be the only thing the file changed to"
+        );
+    }
 }

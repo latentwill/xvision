@@ -8,10 +8,14 @@
 //! the null pass are removed.
 //!
 //! Step 2 — max bytes: if total blob-store size exceeds
-//! `max_payload_bytes`, delete blob files in mtime-ascending order
+//! `max_payload_bytes`, evict blob files in mtime-ascending order
 //! (tie-break by SHA hex per the contract notes — file mtime is
 //! unreliable on copied workspaces, so the tie-break gives
-//! deterministic test outcomes).
+//! deterministic test outcomes). For each evicted blob, the
+//! corresponding `*_payload_ref` columns are nulled **before** the
+//! file is removed, so a partial run never leaves rows pointing at
+//! missing blobs (`BlobStore::read` would return `NotFound` for what
+//! still looks like a live ref).
 
 use crate::blobs::BlobStore;
 use sqlx::SqlitePool;
@@ -64,7 +68,7 @@ pub async fn run_once(
 ) -> Result<JanitorStats, JanitorError> {
     let mut stats = JanitorStats::default();
     stats += expire_old_payload_refs(pool, blob_store, config.payload_ttl_days).await?;
-    stats += truncate_to_max_bytes(blob_store, config.max_payload_bytes)?;
+    stats += truncate_to_max_bytes(pool, blob_store, config.max_payload_bytes).await?;
     Ok(stats)
 }
 
@@ -197,10 +201,14 @@ pub async fn expire_old_payload_refs(
     Ok(stats)
 }
 
-/// Force the blob store under `max_bytes` by deleting oldest files
-/// first. Tie-break by SHA hex sort for determinism (mtime is
-/// unreliable on copied workspaces — see contract notes).
-pub fn truncate_to_max_bytes(
+/// Force the blob store under `max_bytes` by evicting oldest files
+/// first (tie-break by SHA hex for determinism — mtime is unreliable
+/// on copied workspaces). For each evicted blob hash, the matching
+/// `*_payload_ref` columns are nulled **before** the file is removed
+/// so the DB invariant ("a non-null payload_ref points at a present
+/// blob") is preserved even if file deletion fails mid-loop.
+pub async fn truncate_to_max_bytes(
+    pool: &SqlitePool,
     blob_store: &BlobStore,
     max_bytes: u64,
 ) -> Result<JanitorStats, JanitorError> {
@@ -235,16 +243,62 @@ pub fn truncate_to_max_bytes(
     }
 
     entries.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
-    for (_mtime, _sha, path, len) in entries {
+    for (_mtime, sha, path, len) in entries {
         if total <= max_bytes {
             break;
         }
+        // Null any payload_ref columns referencing this blob first.
+        // Counting the nulled rows under `row_refs_nulled` keeps stats
+        // symmetric with the TTL pass.
+        let nulled = null_refs_for_hash(pool, &sha).await?;
+        stats.row_refs_nulled += nulled;
         fs::remove_file(&path)?;
         stats.blob_files_deleted += 1;
         stats.bytes_freed += len;
         total = total.saturating_sub(len);
     }
     Ok(stats)
+}
+
+/// Null any `*_payload_ref` columns across model_calls, tool_calls,
+/// sandbox_results, and checkpoints that point at the given blob hash.
+/// Returns the total number of rows touched (each row counts once per
+/// statement that updated it; a row with both prompt+response refs
+/// pointing at the same hash counts as one).
+async fn null_refs_for_hash(
+    pool: &SqlitePool,
+    sha: &str,
+) -> Result<u64, JanitorError> {
+    let mut nulled = 0u64;
+    let stmts: [&str; 4] = [
+        "UPDATE model_calls SET \
+            prompt_payload_ref = CASE WHEN prompt_payload_ref = ? THEN NULL ELSE prompt_payload_ref END, \
+            response_payload_ref = CASE WHEN response_payload_ref = ? THEN NULL ELSE response_payload_ref END \
+         WHERE prompt_payload_ref = ? OR response_payload_ref = ?",
+        "UPDATE tool_calls SET \
+            input_payload_ref = CASE WHEN input_payload_ref = ? THEN NULL ELSE input_payload_ref END, \
+            output_payload_ref = CASE WHEN output_payload_ref = ? THEN NULL ELSE output_payload_ref END \
+         WHERE input_payload_ref = ? OR output_payload_ref = ?",
+        "UPDATE sandbox_results SET \
+            stdout_ref = CASE WHEN stdout_ref = ? THEN NULL ELSE stdout_ref END, \
+            stderr_ref = CASE WHEN stderr_ref = ? THEN NULL ELSE stderr_ref END \
+         WHERE stdout_ref = ? OR stderr_ref = ?",
+        "UPDATE checkpoints SET \
+            input_payload_ref = CASE WHEN input_payload_ref = ? THEN NULL ELSE input_payload_ref END, \
+            output_payload_ref = CASE WHEN output_payload_ref = ? THEN NULL ELSE output_payload_ref END \
+         WHERE input_payload_ref = ? OR output_payload_ref = ?",
+    ];
+    for sql in stmts {
+        let res = sqlx::query(sql)
+            .bind(sha)
+            .bind(sha)
+            .bind(sha)
+            .bind(sha)
+            .execute(pool)
+            .await?;
+        nulled += res.rows_affected();
+    }
+    Ok(nulled)
 }
 
 async fn live_blob_refs(pool: &SqlitePool) -> Result<HashSet<String>, JanitorError> {

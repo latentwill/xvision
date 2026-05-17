@@ -259,8 +259,9 @@ async fn ttl_pass_keeps_shared_blobs_alive() {
     assert!(store.exists(&blob));
 }
 
-#[test]
-fn max_bytes_evicts_oldest_until_under_cap() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn max_bytes_evicts_oldest_until_under_cap() {
+    let pool = migrated_pool().await;
     let tmp = TempDir::new().unwrap();
     let store = BlobStore::new(tmp.path());
 
@@ -272,7 +273,7 @@ fn max_bytes_evicts_oldest_until_under_cap() {
     let c = store.write(&vec![b'c'; 1024]).unwrap();
     let _ = (b, c); // keep distinct names for readability
 
-    let stats = truncate_to_max_bytes(&store, 2 * 1024).unwrap();
+    let stats = truncate_to_max_bytes(&pool, &store, 2 * 1024).await.unwrap();
     assert!(stats.blob_files_deleted >= 1);
     assert!(stats.bytes_freed >= 1024);
 
@@ -292,9 +293,10 @@ fn max_bytes_evicts_oldest_until_under_cap() {
     );
 }
 
-#[test]
-fn max_bytes_tie_break_uses_sha_hex_when_mtimes_equal() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn max_bytes_tie_break_uses_sha_hex_when_mtimes_equal() {
     use std::time::{Duration as StdDuration, SystemTime};
+    let pool = migrated_pool().await;
     let tmp = TempDir::new().unwrap();
     let store = BlobStore::new(tmp.path());
 
@@ -318,7 +320,7 @@ fn max_bytes_tie_break_uses_sha_hex_when_mtimes_equal() {
     all.sort();
     let expected_evicted = all[0].to_string();
 
-    let stats = truncate_to_max_bytes(&store, 2 * 1024).unwrap();
+    let stats = truncate_to_max_bytes(&pool, &store, 2 * 1024).await.unwrap();
     assert!(stats.blob_files_deleted >= 1);
 
     let names: Vec<String> = fs::read_dir(tmp.path())
@@ -332,12 +334,13 @@ fn max_bytes_tie_break_uses_sha_hex_when_mtimes_equal() {
     );
 }
 
-#[test]
-fn max_bytes_is_a_noop_under_cap() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn max_bytes_is_a_noop_under_cap() {
+    let pool = migrated_pool().await;
     let tmp = TempDir::new().unwrap();
     let store = BlobStore::new(tmp.path());
     let _ = store.write(b"small").unwrap();
-    let stats = truncate_to_max_bytes(&store, 1024 * 1024).unwrap();
+    let stats = truncate_to_max_bytes(&pool, &store, 1024 * 1024).await.unwrap();
     assert_eq!(stats.blob_files_deleted, 0);
     assert_eq!(stats.bytes_freed, 0);
 }
@@ -394,4 +397,82 @@ async fn periodic_spawn_runs_at_least_once() {
     .unwrap();
     assert_eq!(refs, 0, "periodic janitor should have nulled the ref");
     assert!(!store.exists(&old_blob));
+}
+
+/// Regression: the max-bytes path used to delete blob files without
+/// nulling the matching `*_payload_ref` columns, leaving rows pointing
+/// at missing blobs (BlobStore::read → NotFound for what still looks
+/// like a live reference). After the fix, an evicted blob's refs must
+/// be NULL across every table.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn max_bytes_nulls_payload_refs_for_evicted_blobs() {
+    let pool = migrated_pool().await;
+    let tmp = TempDir::new().unwrap();
+    let store = BlobStore::new(tmp.path());
+
+    // Three 1KB blobs; cap=2KB forces eviction of the oldest. The row
+    // is "fresh" — not TTL-eligible — so this only exercises the
+    // max-bytes path.
+    let oldest = store.write(&vec![b'a'; 1024]).unwrap();
+    let middle = store.write(&vec![b'b'; 1024]).unwrap();
+    let newest = store.write(&vec![b'c'; 1024]).unwrap();
+    let _ = (middle, &newest);
+
+    let now = Utc::now();
+    let fresh = ts(now - ChronoDuration::hours(1));
+    insert_run(&pool, "run_x", &fresh).await;
+    insert_span(&pool, "span_x", "run_x", &fresh).await;
+    insert_model_call(&pool, "span_x", oldest.as_str(), newest.as_str()).await;
+    insert_checkpoint(
+        &pool,
+        "cp_x",
+        "run_x",
+        "span_x",
+        1,
+        oldest.as_str(),
+        newest.as_str(),
+        &fresh,
+    )
+    .await;
+
+    let stats = truncate_to_max_bytes(&pool, &store, 2 * 1024).await.unwrap();
+    assert!(stats.blob_files_deleted >= 1);
+    assert!(
+        stats.row_refs_nulled >= 1,
+        "max-bytes pass must null refs for evicted blobs; got {} rows nulled",
+        stats.row_refs_nulled
+    );
+    assert!(!store.exists(&oldest), "oldest blob should be evicted");
+
+    // The model_calls row's prompt_payload_ref pointed at `oldest`;
+    // after eviction it must be NULL while the response ref (which
+    // pointed at `newest`, still present) is preserved.
+    let (prompt_ref, response_ref): (Option<String>, Option<String>) =
+        sqlx::query_as(
+            "SELECT prompt_payload_ref, response_payload_ref \
+             FROM model_calls WHERE span_id = 'span_x'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(
+        prompt_ref.is_none(),
+        "prompt_payload_ref must be NULL after the blob was evicted"
+    );
+    assert_eq!(
+        response_ref.as_deref(),
+        Some(newest.as_str()),
+        "response_payload_ref must survive — its blob is still on disk"
+    );
+
+    // Same invariant for checkpoints.
+    let (cp_in, cp_out): (Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT input_payload_ref, output_payload_ref FROM checkpoints \
+         WHERE id = 'cp_x'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(cp_in.is_none(), "checkpoint input_payload_ref must be NULL");
+    assert_eq!(cp_out.as_deref(), Some(newest.as_str()));
 }
