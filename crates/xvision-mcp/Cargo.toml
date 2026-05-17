@@ -15,6 +15,10 @@ path = "src/lib.rs"
 name = "xvn-mcp"
 path = "src/main.rs"
 
+[[bin]]
+name = "xvision-mcp"
+path = "src/bin/xvision-mcp.rs"
+
 [dependencies]
 xvision-data   = { path = "../xvision-data" }
 xvision-engine = { path = "../xvision-engine" }

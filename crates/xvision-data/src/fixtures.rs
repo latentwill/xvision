@@ -5,9 +5,13 @@
 //! deployments.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
+use arrow_array::{Array, Float64Array, LargeStringArray, RecordBatch, StringArray, StringViewArray};
+use arrow_schema::{DataType, Field, Schema};
 use chrono::{DateTime, TimeZone, Utc};
-use polars::prelude::*;
+use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+use parquet::arrow::ArrowWriter;
 use xvision_core::market::Ohlcv;
 
 /// Absolute path to the probe fixture directory.
@@ -43,33 +47,66 @@ pub fn load_ohlcv_fixture(fixture: &str, _asset: &str, lookback_bars: usize) -> 
     let path = fixture_path(fixture);
     let file =
         std::fs::File::open(&path).map_err(|e| anyhow::anyhow!("opening {}: {}", path.display(), e))?;
-    let df = ParquetReader::new(file).finish()?;
+    let reader = ParquetRecordBatchReaderBuilder::try_new(file)?.build()?;
 
-    let ts_col = df.column("timestamp")?.str()?;
-    let open = df.column("open")?.f64()?;
-    let high = df.column("high")?.f64()?;
-    let low = df.column("low")?.f64()?;
-    let close = df.column("close")?.f64()?;
-    let volume = df.column("volume")?.f64()?;
+    let mut bars = Vec::new();
+    for batch in reader {
+        let batch = batch?;
+        let schema = batch.schema();
+        let ts_idx = schema.index_of("timestamp")?;
+        let open_idx = schema.index_of("open")?;
+        let high_idx = schema.index_of("high")?;
+        let low_idx = schema.index_of("low")?;
+        let close_idx = schema.index_of("close")?;
+        let volume_idx = schema.index_of("volume")?;
 
-    let n = df.height();
-    let start = n.saturating_sub(lookback_bars);
-    let mut bars = Vec::with_capacity(n - start);
-    for i in start..n {
-        let ts: DateTime<Utc> = ts_col
-            .get(i)
-            .ok_or_else(|| anyhow::anyhow!("null timestamp at row {i}"))?
-            .parse()?;
-        bars.push(Ohlcv {
-            timestamp: ts,
-            open: open.get(i).unwrap_or(0.0),
-            high: high.get(i).unwrap_or(0.0),
-            low: low.get(i).unwrap_or(0.0),
-            close: close.get(i).unwrap_or(0.0),
-            volume: volume.get(i).unwrap_or(0.0),
-        });
+        for row in 0..batch.num_rows() {
+            let ts: DateTime<Utc> = string_value(batch.column(ts_idx).as_ref(), row, "timestamp")?.parse()?;
+            bars.push(Ohlcv {
+                timestamp: ts,
+                open: f64_value(batch.column(open_idx).as_ref(), row, "open")?,
+                high: f64_value(batch.column(high_idx).as_ref(), row, "high")?,
+                low: f64_value(batch.column(low_idx).as_ref(), row, "low")?,
+                close: f64_value(batch.column(close_idx).as_ref(), row, "close")?,
+                volume: f64_value(batch.column(volume_idx).as_ref(), row, "volume")?,
+            });
+        }
     }
-    Ok(bars)
+
+    let start = bars.len().saturating_sub(lookback_bars);
+    Ok(bars.split_off(start))
+}
+
+fn string_value<'a>(array: &'a dyn Array, row: usize, column: &str) -> anyhow::Result<&'a str> {
+    if array.is_null(row) {
+        anyhow::bail!("null {column} at row {row}");
+    }
+    if let Some(values) = array.as_any().downcast_ref::<StringArray>() {
+        return Ok(values.value(row));
+    }
+    if let Some(values) = array.as_any().downcast_ref::<LargeStringArray>() {
+        return Ok(values.value(row));
+    }
+    if let Some(values) = array.as_any().downcast_ref::<StringViewArray>() {
+        return Ok(values.value(row));
+    }
+    anyhow::bail!(
+        "column {column} has unsupported parquet type {:?}",
+        array.data_type()
+    )
+}
+
+fn f64_value(array: &dyn Array, row: usize, column: &str) -> anyhow::Result<f64> {
+    if array.is_null(row) {
+        return Ok(0.0);
+    }
+    if let Some(values) = array.as_any().downcast_ref::<Float64Array>() {
+        return Ok(values.value(row));
+    }
+    anyhow::bail!(
+        "column {column} has unsupported parquet type {:?}",
+        array.data_type()
+    )
 }
 
 /// Generate a deterministic synthetic fixture (300 hourly bars, mean-reverting
@@ -109,17 +146,29 @@ pub fn ensure_test_fixture(fixture: &str) -> anyhow::Result<PathBuf> {
         price = c;
     }
 
-    let mut df = df![
-        "timestamp" => ts,
-        "open"      => open_v,
-        "high"      => high_v,
-        "low"       => low_v,
-        "close"     => close_v,
-        "volume"    => volume_v,
-    ]?;
-
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("timestamp", DataType::Utf8, false),
+        Field::new("open", DataType::Float64, false),
+        Field::new("high", DataType::Float64, false),
+        Field::new("low", DataType::Float64, false),
+        Field::new("close", DataType::Float64, false),
+        Field::new("volume", DataType::Float64, false),
+    ]));
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![
+            Arc::new(StringArray::from(ts)),
+            Arc::new(Float64Array::from(open_v)),
+            Arc::new(Float64Array::from(high_v)),
+            Arc::new(Float64Array::from(low_v)),
+            Arc::new(Float64Array::from(close_v)),
+            Arc::new(Float64Array::from(volume_v)),
+        ],
+    )?;
     let mut file = std::fs::File::create(&path)?;
-    ParquetWriter::new(&mut file).finish(&mut df)?;
+    let mut writer = ArrowWriter::try_new(&mut file, schema, None)?;
+    writer.write(&batch)?;
+    writer.close()?;
     Ok(path)
 }
 

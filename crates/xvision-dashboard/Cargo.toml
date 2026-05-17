@@ -34,4 +34,4 @@ tokio     = { version = "1", features = ["full", "test-util"] }
 serde_json = "1"
 tempfile  = "3"
 chrono    = { workspace = true }
-reqwest   = { version = "0.12", features = ["stream"] }
+reqwest   = { workspace = true, features = ["stream"] }

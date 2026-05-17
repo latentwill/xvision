@@ -35,6 +35,8 @@ use xvision_eval::harness::BacktestRunConfig;
 use xvision_eval::provider_registry::ProviderRegistry;
 use xvision_trader::TraderParams;
 
+use crate::exit::{CliError, CliResult, ResultExt, XvnExit};
+
 #[allow(clippy::too_many_arguments)]
 pub async fn run(
     cycles: PathBuf,
@@ -54,10 +56,12 @@ pub async fn run(
     trader_base_url: String,
     trader_model: String,
     trader_api_key_env: String,
-) -> anyhow::Result<()> {
-    let asset_sym = AssetSymbol::from_str(&asset).map_err(|e| anyhow::anyhow!("{e}"))?;
+) -> CliResult<()> {
+    let asset_sym = AssetSymbol::from_str(&asset).map_err(|e| CliError::usage(anyhow::anyhow!("{e}")))?;
 
-    let snapshots: Vec<MarketSnapshot> = serde_json::from_slice(&std::fs::read(&cycles)?)?;
+    let cycles_raw = std::fs::read(&cycles).exit_with(XvnExit::Upstream)?;
+    let snapshots: Vec<MarketSnapshot> = serde_json::from_slice(&cycles_raw)
+        .map_err(|e| CliError::usage(anyhow::anyhow!("parse cycles: {e}")))?;
     let bars_vec: Vec<MarketBar> = load_bars_input(bars.as_ref(), from, to, &granularity, asset_sym).await?;
 
     let mut arm_specs: Vec<_> = if arms.trim().is_empty() {
@@ -65,7 +69,8 @@ pub async fn run(
     } else {
         arms.split(',')
             .map(|s| parse_arm_spec(s.trim()))
-            .collect::<anyhow::Result<Vec<_>>>()?
+            .collect::<anyhow::Result<Vec<_>>>()
+            .map_err(CliError::usage)?
     };
     auto_suffix_arm_names(&mut arm_specs);
 
@@ -75,8 +80,9 @@ pub async fn run(
     // matches that triple. The CLI's `--intern --intern-model` selects which
     // existing provider's `(base_url, api_key_env)` is used for the Intern
     // default — matching by `ProviderKind`.
-    let workspace_root = std::env::current_dir()?;
-    let runtime_cfg = xvision_core::config::load_runtime(&workspace_root.join("config/default.toml"))?;
+    let workspace_root = std::env::current_dir().exit_with(XvnExit::Upstream)?;
+    let runtime_cfg = xvision_core::config::load_runtime(&workspace_root.join("config/default.toml"))
+        .exit_with(XvnExit::Upstream)?;
     let mut rows = runtime_cfg.providers;
 
     let cli_trader_kind = ProviderKind::OpenaiCompat;
@@ -99,17 +105,21 @@ pub async fn run(
     let cli_intern_kind: ProviderKind = match intern_provider.as_str() {
         "anthropic" => ProviderKind::Anthropic,
         "openai-compat" => ProviderKind::OpenaiCompat,
-        other => anyhow::bail!("unknown intern provider: {other}"),
+        other => {
+            return Err(CliError::usage(anyhow::anyhow!(
+                "unknown intern provider: {other}"
+            )))
+        }
     };
     let cli_intern_provider_name = rows
         .iter()
         .find(|p| p.kind == cli_intern_kind)
         .map(|p| p.name.clone())
         .ok_or_else(|| {
-            anyhow::anyhow!(
+            CliError::usage(anyhow::anyhow!(
                 "no provider row matches CLI --intern={intern_provider}; \
                  register one under [[providers]] in config/default.toml"
-            )
+            ))
         })?;
 
     let registry = Arc::new(ProviderRegistry::new(
@@ -118,7 +128,7 @@ pub async fn run(
         SlotRef::new(cli_trader_provider_name, trader_model),
     ));
 
-    let risk = xvision_harness::load_risk_layer(&workspace_root)?;
+    let risk = xvision_harness::load_risk_layer(&workspace_root).exit_with(XvnExit::Upstream)?;
 
     let cfg = BacktestRunConfig {
         initial_nav_usd,
@@ -156,9 +166,11 @@ pub async fn run(
         portfolio_provider,
         &risk,
     )
-    .await?;
+    .await
+    .exit_with(XvnExit::Upstream)?;
 
-    std::fs::write(&output, serde_json::to_vec_pretty(&result)?)?;
+    let result_json = serde_json::to_vec_pretty(&result).exit_with(XvnExit::Upstream)?;
+    std::fs::write(&output, result_json).exit_with(XvnExit::Upstream)?;
     println!("wrote {} arm result(s) → {}", result.arms.len(), output.display());
     Ok(())
 }
@@ -173,31 +185,37 @@ async fn load_bars_input(
     to: Option<NaiveDate>,
     granularity: &str,
     asset: AssetSymbol,
-) -> anyhow::Result<Vec<MarketBar>> {
+) -> CliResult<Vec<MarketBar>> {
     let cache_window = matches!((from, to), (Some(_), Some(_)));
     let file_window = bars_path.is_some();
 
     match (cache_window, file_window) {
-        (true, true) => anyhow::bail!("--bars is mutually exclusive with --from/--to; pick one source"),
-        (false, false) => anyhow::bail!("must supply either --bars <path> OR --from <date> + --to <date>"),
+        (true, true) => Err(CliError::usage(anyhow::anyhow!(
+            "--bars is mutually exclusive with --from/--to; pick one source"
+        ))),
+        (false, false) => Err(CliError::usage(anyhow::anyhow!(
+            "must supply either --bars <path> OR --from <date> + --to <date>"
+        ))),
         (true, false) => {
             // Cache-backed path. asset already validated by caller.
             let g = granularity
                 .parse::<BarGranularity>()
-                .map_err(anyhow::Error::msg)?;
+                .map_err(|e| CliError::usage(anyhow::anyhow!("{e}")))?;
             // Safe: cache_window match arm guarantees both Some.
             let from = from.unwrap();
             let to = to.unwrap();
             let start = from
                 .and_hms_opt(0, 0, 0)
-                .ok_or_else(|| anyhow::anyhow!("invalid --from date"))?
+                .ok_or_else(|| CliError::usage(anyhow::anyhow!("invalid --from date")))?
                 .and_utc();
             let end = to
                 .and_hms_opt(0, 0, 0)
-                .ok_or_else(|| anyhow::anyhow!("invalid --to date"))?
+                .ok_or_else(|| CliError::usage(anyhow::anyhow!("invalid --to date")))?
                 .and_utc();
             if end <= start {
-                anyhow::bail!("--to must be strictly after --from");
+                return Err(CliError::usage(anyhow::anyhow!(
+                    "--to must be strictly after --from"
+                )));
             }
             let asset_pair = asset.as_alpaca_pair();
             let data_source_tag = "alpaca-historical-v1";
@@ -213,7 +231,7 @@ async fn load_bars_input(
             };
             let upstream = load_bars(&ctx, &cache_args)
                 .await
-                .map_err(|e| anyhow::anyhow!("load bars: {e}"))?;
+                .map_err(|e| CliError::upstream(anyhow::anyhow!("load bars: {e}")))?;
             // Convert `xvision_data::alpaca::MarketBar` → eval-shaped
             // `MarketBar`. Field set is identical; the two types live in
             // separate crates to keep `xvision-eval` independent of the
@@ -234,19 +252,20 @@ async fn load_bars_input(
             // Legacy JSON-file path. Safe unwrap: file_window match arm
             // guarantees Some.
             let path = bars_path.unwrap();
-            let raw =
-                std::fs::read(path).map_err(|e| anyhow::anyhow!("read bars {}: {e}", path.display()))?;
-            serde_json::from_slice(&raw).map_err(|e| anyhow::anyhow!("parse bars {}: {e}", path.display()))
+            let raw = std::fs::read(path)
+                .map_err(|e| CliError::upstream(anyhow::anyhow!("read bars {}: {e}", path.display())))?;
+            serde_json::from_slice(&raw)
+                .map_err(|e| CliError::usage(anyhow::anyhow!("parse bars {}: {e}", path.display())))
         }
     }
 }
 
-async fn open_api_ctx() -> anyhow::Result<ApiContext> {
-    let xvn_home = crate::commands::home::resolve_xvn_home_env()?;
+async fn open_api_ctx() -> CliResult<ApiContext> {
+    let xvn_home = crate::commands::home::resolve_xvn_home_env().exit_with(XvnExit::Upstream)?;
     let user = std::env::var("USER")
         .or_else(|_| std::env::var("USERNAME"))
         .unwrap_or_else(|_| "operator".to_string());
     ApiContext::open(&xvn_home, Actor::Cli { user })
         .await
-        .map_err(|e| anyhow::anyhow!("open ApiContext at {}: {e}", xvn_home.display()))
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("open ApiContext at {}: {e}", xvn_home.display())))
 }
