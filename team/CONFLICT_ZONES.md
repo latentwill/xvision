@@ -16,8 +16,8 @@ Conductor: see `team/CONDUCTOR.md`.
 | `frontend/web/pnpm-lock.yaml` | `v2a-driver-tour` | v2a | Driver.js install committed |
 | `frontend/web/src/routes/index.tsx` | `v2a-driver-tour` | v2a | Tour mount point landed |
 | `crates/xvision-engine/src/eval/store.rs` | (none — released by eval-review-agent-engine #186 and q15-eval-json-export #187 merges) | — | — |
-| `crates/xvision-engine/src/eval/executor/backtest.rs` | (none — released by `q15-scenario-warmup-bars` PR #183 merge) | — | — |
-| `crates/xvision-engine/src/eval/executor/paper.rs` | (none — released by `alpaca-paper-crypto-submit` PR #191 merge) | — | — |
+| `crates/xvision-engine/src/eval/executor/backtest.rs` | `qa-role-normalization` | qa-2026-05-17 | `qa-role-normalization` merges |
+| `crates/xvision-engine/src/eval/executor/paper.rs` | `qa-role-normalization` | qa-2026-05-17 | `qa-role-normalization` merges |
 | `crates/xvision-engine/src/eval/executor/mod.rs` | (none — released by `alpaca-paper-crypto-submit` PR #191 merge) | — | — |
 | `crates/xvision-execution/src/broker_surface.rs` | (none — released by `alpaca-paper-crypto-submit` PR #191 merge) | — | — |
 | `crates/xvision-execution/src/alpaca.rs` | (none — released by `alpaca-paper-crypto-submit` PR #191 merge) | — | — |
@@ -27,8 +27,8 @@ Conductor: see `team/CONDUCTOR.md`.
 | `crates/xvision-cli/src/commands/eval/mod.rs` | (none — released by #187 / #188 merges) | — | — |
 | `frontend/web/src/routes/eval-runs-detail.tsx` | (none — released by #190 / #187 / #184 merges) | — | — |
 | `crates/xvision-cli/src/json/object_shapes.rs` | (none — released by #187 / #189 merges) | — | — |
-| `crates/xvision-dashboard/src/server.rs` | (none — `q15-tailscale-serve-api-reachability` deferred 2026-05-16) | — | — |
-| `crates/xvision-dashboard/src/lib.rs` | (none — `q15-tailscale-serve-api-reachability` deferred 2026-05-16) | — | — |
+| `crates/xvision-dashboard/src/server.rs` | `qa-dashboard-auth-hardening` (re-claimed from deferred q15-tailscale) | qa-2026-05-17 | `qa-dashboard-auth-hardening` merges |
+| `crates/xvision-dashboard/src/lib.rs` | `qa-dashboard-auth-hardening` (re-claimed from deferred q15-tailscale) | qa-2026-05-17 | `qa-dashboard-auth-hardening` merges |
 | `frontend/web/vite.config.ts` | (none — `q15-tailscale-serve-api-reachability` deferred 2026-05-16) | — | — |
 | `frontend/web/src/api/client.ts` | (none — `q15-tailscale-serve-api-reachability` deferred 2026-05-16) | — | — |
 | `crates/xvision-cli/src/commands/mod.rs` | `v2a-example-artifacts` | v2a | `xvn example` registered |
