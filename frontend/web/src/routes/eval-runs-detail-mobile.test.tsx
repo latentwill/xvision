@@ -188,10 +188,11 @@ describe("EvalRunDetailRoute (mobile layout)", () => {
 
     renderRoute();
 
-    // LIVE strip: COMPLETED state shows "COMPLETED" label and the run id
+    // LIVE strip: COMPLETED state shows "COMPLETED" and the friendly run labels.
     expect(await screen.findByText("COMPLETED")).toBeInTheDocument();
-    // The run id renders in both the strip and the summary hero.
-    expect(screen.getAllByText(/^01LIVE$/).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Mean reversion V3").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Flash crash 2024").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("run 01LIVE").length).toBeGreaterThan(0);
 
     // Tab bar: four tabs as the design specifies
     const tablist = screen.getByRole("tablist");
