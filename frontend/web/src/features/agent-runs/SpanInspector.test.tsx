@@ -1,8 +1,15 @@
 // frontend/web/src/features/agent-runs/SpanInspector.test.tsx
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { SpanInspector } from "./SpanInspector";
+import { useTraceDock } from "@/stores/trace-dock";
 import type { RunSpan } from "@/api/types-agent-runs";
+
+afterEach(() => {
+  // Reset streaming slice + dock shell between tests so one test's
+  // active-span set doesn't leak into the next.
+  useTraceDock.getState().setActiveRun(null, "post-hoc");
+});
 
 const baseSpan: RunSpan = {
   span_id: "s_test",
@@ -134,6 +141,73 @@ describe("SpanInspector (with pull-quotes)", () => {
     );
     expect(screen.getByText("openai")).toBeInTheDocument();
     expect(screen.getByText("gpt-5-mini")).toBeInTheDocument();
+  });
+
+  test("live streaming model.call preempts the post-hoc RESPONSE hash fallback", () => {
+    // Seed streaming state via the public reducers, exactly as the
+    // SSE bridge would.
+    useTraceDock.getState().markSpanActive(baseSpan.span_id, {
+      name: baseSpan.name,
+      started_at: baseSpan.started_at,
+      kind: baseSpan.kind,
+    });
+    useTraceDock.getState().appendDelta(baseSpan.span_id, 421);
+
+    render(
+      <SpanInspector
+        span={{
+          ...baseSpan,
+          prompt: undefined,
+          response: undefined,
+          // Both response artefacts would normally render the post-hoc
+          // fallback; the streaming branch must preempt them.
+          hash: "sha256:promptaaa",
+          response_hash: "sha256:respbbb",
+        }}
+        isLive
+        onRerun={() => {}}
+        onJumpToDecision={() => {}}
+      />,
+    );
+
+    const indicator = screen.getByTestId("span-inspector-streaming");
+    expect(indicator.textContent).toMatch(/Streaming response/);
+    expect(indicator.textContent).toMatch(/421 chars/);
+    // The hash-only fallback must NOT be on screen while streaming.
+    expect(
+      screen.queryByText(/hash-only retention — completion body not stored on disk/i),
+    ).not.toBeInTheDocument();
+  });
+
+  test("stream finish (span removed from activeSpanIds) restores hash/ref fallback", () => {
+    useTraceDock.getState().markSpanActive(baseSpan.span_id, {
+      name: baseSpan.name,
+      started_at: baseSpan.started_at,
+      kind: baseSpan.kind,
+    });
+    useTraceDock.getState().appendDelta(baseSpan.span_id, 100);
+    // Simulate model_call_finished — the SSE bridge would invoke this.
+    useTraceDock.getState().markSpanInactive(baseSpan.span_id);
+
+    render(
+      <SpanInspector
+        span={{
+          ...baseSpan,
+          prompt: undefined,
+          response: undefined,
+          response_hash: "sha256:respbbb",
+        }}
+        isLive
+        onRerun={() => {}}
+        onJumpToDecision={() => {}}
+      />,
+    );
+
+    expect(screen.queryByTestId("span-inspector-streaming")).not.toBeInTheDocument();
+    expect(
+      screen.getAllByText(/hash-only retention — completion body not stored on disk/i)
+        .length,
+    ).toBeGreaterThan(0);
   });
 
   test("rerun button enabled when not live; clicking calls onRerun(span_id)", async () => {

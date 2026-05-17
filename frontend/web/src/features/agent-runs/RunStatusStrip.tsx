@@ -3,8 +3,10 @@
 // Phase 1.1 — floating bottom-centre pill.
 // Ported pixel-perfect from docs/superpowers/designs/2026-05-17-agent-run-observability/strip.jsx.
 
-import type { ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import type { AgentRunSummary } from "@/api/types-agent-runs";
+import { useTraceDock } from "@/stores/trace-dock";
+import { spanColor } from "./span-colors";
 
 // ── Exported types ────────────────────────────────────────────────────────────
 
@@ -84,6 +86,44 @@ function TonePill({
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
+/**
+ * Derive a `CurrentSpanChip` from the SSE streaming slice when the
+ * parent hasn't computed one yet. Returns the newest active span
+ * (highest `started_at`) so a long-running parent doesn't shadow a
+ * fresh in-flight leaf. Stable identity per dependency set so React
+ * doesn't churn the strip during keep-alive frames.
+ */
+function useLiveActiveSpanChip(isLive: boolean): CurrentSpanChip | null {
+  const activeMeta = useTraceDock((s) => s.streamingState.activeSpanMeta);
+  // Tick the strip's elapsedMs is the parent's responsibility (the
+  // route already runs a 1s interval that nudges the store). useMemo
+  // keys off `activeMeta` AND a coarse minute clock to refresh chip
+  // elapsed time when the parent re-renders.
+  return useMemo<CurrentSpanChip | null>(() => {
+    if (!isLive) return null;
+    const ids = Object.keys(activeMeta);
+    if (ids.length === 0) return null;
+    let best: { id: string; startedMs: number } | null = null;
+    for (const id of ids) {
+      const meta = activeMeta[id]!;
+      const startedMs = new Date(meta.started_at).getTime();
+      if (!Number.isFinite(startedMs)) continue;
+      if (best == null || startedMs > best.startedMs) {
+        best = { id, startedMs };
+      }
+    }
+    if (best == null) return null;
+    const meta = activeMeta[best.id]!;
+    const color = spanColor(meta.kind);
+    return {
+      name: meta.name,
+      color: color.hex,
+      label: color.label,
+      elapsedMs: Math.max(0, Date.now() - best.startedMs),
+    };
+  }, [activeMeta, isLive]);
+}
+
 export function RunStatusStrip({
   summary,
   currentSpan,
@@ -99,6 +139,13 @@ export function RunStatusStrip({
   const secs = liveDurationSec % 60;
   const liveDurDisplay = `${mins}:${String(secs).padStart(2, "0")}`;
   const dur = isLive ? liveDurDisplay : fmtPostHoc(summary.duration_ms);
+
+  // Acceptance: when a stream is open and any span is active, show the
+  // currently-active span (highest `started_at` among active spans)
+  // with elapsed time. Existing post-hoc behavior unchanged: parent
+  // explicit `currentSpan` wins; we only fill in when prop is null.
+  const liveChip = useLiveActiveSpanChip(isLive);
+  const effectiveCurrentSpan = currentSpan ?? liveChip;
 
   return (
     <div
@@ -204,7 +251,7 @@ export function RunStatusStrip({
       </div>
 
       {/* CurrentSpan chip */}
-      {currentSpan != null && (
+      {effectiveCurrentSpan != null && (
         <>
           <div style={{ width: 1, height: 14, background: "var(--border)", flexShrink: 0 }} />
           <div
@@ -225,8 +272,8 @@ export function RunStatusStrip({
                   height: 6,
                   borderRadius: "50%",
                   flexShrink: 0,
-                  background: currentSpan.color,
-                  boxShadow: `0 0 0 3px ${currentSpan.color}22`,
+                  background: effectiveCurrentSpan.color,
+                  boxShadow: `0 0 0 3px ${effectiveCurrentSpan.color}22`,
                 }}
               />
             ) : (
@@ -236,7 +283,7 @@ export function RunStatusStrip({
                   width: 3,
                   height: 12,
                   flexShrink: 0,
-                  background: currentSpan.color,
+                  background: effectiveCurrentSpan.color,
                 }}
               />
             )}
@@ -245,11 +292,11 @@ export function RunStatusStrip({
                 fontFamily: "var(--font-mono, ui-monospace, monospace)",
                 fontSize: 10,
                 letterSpacing: "0.16em",
-                color: currentSpan.color,
+                color: effectiveCurrentSpan.color,
                 flexShrink: 0,
               }}
             >
-              {currentSpan.label}
+              {effectiveCurrentSpan.label}
             </span>
             <span
               style={{
@@ -261,7 +308,7 @@ export function RunStatusStrip({
                 minWidth: 0,
               }}
             >
-              {currentSpan.name}
+              {effectiveCurrentSpan.name}
             </span>
             <span
               style={{
@@ -272,7 +319,7 @@ export function RunStatusStrip({
                 flexShrink: 0,
               }}
             >
-              {currentSpan.elapsedMs}ms
+              {effectiveCurrentSpan.elapsedMs}ms
             </span>
           </div>
         </>
