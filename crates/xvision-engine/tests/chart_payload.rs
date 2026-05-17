@@ -160,6 +160,34 @@ async fn build_scenario_payload_loads_cached_bars_and_indicators() {
     assert_eq!(payload.indicators.macd.histogram.len(), 31);
 }
 
+#[tokio::test]
+async fn build_scenario_payload_uses_requested_granularity_cache_key() {
+    use xvision_engine::api::chart::{build_scenario_payload_with_granularity, CacheStatus};
+    use xvision_engine::api::scenario as api_scenario;
+    use xvision_engine::eval::scenario::BarGranularity;
+
+    let ctx = test_ctx().await;
+    let scenario = api_scenario::get(&ctx, "crypto-bull-q1-2025").await.unwrap();
+    let override_key = xvision_engine::eval::bars::compute_cache_key(
+        &scenario.asset[0].venue_symbol,
+        BarGranularity::Hour4,
+        scenario.time_window.start,
+        scenario.time_window.end,
+        "alpaca-historical-v1",
+    );
+
+    let payload = build_scenario_payload_with_granularity(&ctx, &scenario.id, Some("4h"))
+        .await
+        .unwrap();
+
+    assert_eq!(payload.scenario.granularity, BarGranularity::Hour4);
+    assert_eq!(payload.scenario.bar_cache_policy.cache_key, override_key);
+    assert!(
+        matches!(payload.cache_status, CacheStatus::NotCached { .. }),
+        "expected alternate timeframe to check its own cache row"
+    );
+}
+
 /// `build_scenario_payload` must return `ApiError::NotFound` for an id that
 /// does not exist in the scenarios table.
 #[tokio::test]

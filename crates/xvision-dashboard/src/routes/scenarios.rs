@@ -110,8 +110,14 @@ pub async fn delete(
 pub async fn chart(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    Query(q): Query<chart_api::ScenarioChartQuery>,
 ) -> Result<Json<ScenarioChartPayload>, DashboardError> {
-    let payload = chart_api::build_scenario_payload(&state.api_context(), &id).await?;
+    let payload = chart_api::build_scenario_payload_with_granularity(
+        &state.api_context(),
+        &id,
+        q.granularity.as_deref(),
+    )
+    .await?;
     Ok(Json(payload))
 }
 

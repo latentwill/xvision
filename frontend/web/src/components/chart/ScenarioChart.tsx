@@ -120,7 +120,7 @@ export function ScenarioChart({
         c.addLineSeries({ color: palette.series.donchianLower, lineWidth: 1 }).setData(indicators.donchian.lower.map(toLine));
       }
 
-      applyRange(c, range, payload.bars.length);
+      applyRange(c, range, payload.bars.length, payload.scenario.granularity);
 
       if (layers.volume) {
         const vol = c.addHistogramSeries({ priceScaleId: "volume" });
@@ -147,7 +147,7 @@ export function ScenarioChart({
     <div style={{ background: bg }}>
       <div className="flex items-center justify-between mb-2">
         <span className="text-text-3 text-[12px]">
-          {assetSymbol} · {payload.scenario.granularity}
+          {assetSymbol} · {formatGranularity(payload.scenario.granularity)}
         </span>
         <CacheStatusBadge
           status={payload.cache_status}
@@ -203,21 +203,69 @@ function emptyIndicators() {
   };
 }
 
-function applyRange(chart: ReturnType<typeof createChart>, range: RangePreset, len: number) {
+function applyRange(
+  chart: ReturnType<typeof createChart>,
+  range: RangePreset,
+  len: number,
+  granularity: string,
+) {
   if (len <= 0) return;
   if (range === "All") {
     chart.timeScale().fitContent();
     return;
   }
-  const count =
-    range === "1d" ? 24 :
-    range === "1w" ? 24 * 7 :
-    range === "1m" ? 24 * 30 :
-    24 * 90;
+  const barSeconds = granularitySeconds(granularity) ?? 60 * 60;
+  const rangeSeconds =
+    range === "1d" ? 86_400 :
+    range === "1w" ? 7 * 86_400 :
+    range === "1m" ? 30 * 86_400 :
+    90 * 86_400;
+  const count = Math.max(1, Math.ceil(rangeSeconds / barSeconds));
   chart.timeScale().setVisibleLogicalRange({
     from: Math.max(0, len - count),
     to: len + 2,
   });
+}
+
+function granularitySeconds(granularity: string): number | null {
+  const normalized = formatGranularity(granularity);
+  const match = normalized.match(/^(\d+)(m|h|d|w|mo)$/);
+  if (!match) return null;
+  const amount = Number(match[1]);
+  switch (match[2]) {
+    case "m":
+      return amount * 60;
+    case "h":
+      return amount * 60 * 60;
+    case "d":
+      return amount * 86_400;
+    case "w":
+      return amount * 7 * 86_400;
+    case "mo":
+      return amount * 30 * 86_400;
+    default:
+      return null;
+  }
+}
+
+function formatGranularity(granularity: string): string {
+  const legacy = granularity.match(/^(Minute|Hour|Day|Week|Month)(\d+)$/);
+  if (!legacy) return granularity;
+  const amount = legacy[2];
+  switch (legacy[1]) {
+    case "Minute":
+      return `${amount}m`;
+    case "Hour":
+      return `${amount}h`;
+    case "Day":
+      return `${amount}d`;
+    case "Week":
+      return `${amount}w`;
+    case "Month":
+      return `${amount}mo`;
+    default:
+      return granularity;
+  }
 }
 
 function ScenarioBarsTable({ bars }: { bars: ScenarioChartPayload["bars"] }) {

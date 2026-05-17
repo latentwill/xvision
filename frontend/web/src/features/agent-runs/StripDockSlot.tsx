@@ -2,6 +2,7 @@
 import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+import { ApiError } from "@/api/client";
 import { agentRunKeys, getAgentRun } from "@/api/agent-runs";
 import { useTraceDock } from "@/stores/trace-dock";
 import { RunStatusStrip } from "./RunStatusStrip";
@@ -22,9 +23,18 @@ export function StripDockSlot() {
     queryKey: activeRunId ? agentRunKeys.run(activeRunId) : ["agent-runs", "noop"],
     queryFn: () => getAgentRun(activeRunId!),
     enabled: !!activeRunId,
+    retry: (failureCount, error) =>
+      !(error instanceof ApiError && error.code === "not_found") && failureCount < 2,
   });
 
   const isLive = q.data?.summary.status === "running";
+
+  useEffect(() => {
+    if (!activeRunId) return;
+    if (q.error instanceof ApiError && q.error.code === "not_found") {
+      useTraceDock.getState().setActiveRun(null, "post-hoc");
+    }
+  }, [activeRunId, q.error]);
 
   // Tick once per second so the strip's m:ss duration refreshes while live.
   useEffect(() => {
