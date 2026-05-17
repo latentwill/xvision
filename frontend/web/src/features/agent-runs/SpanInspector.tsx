@@ -129,15 +129,17 @@ export function SpanInspector({
 
       {/* Footer */}
       <div className="p-2 grid grid-cols-1 gap-1 border-t border-border">
-        <button
-          type="button"
-          className="h-7 px-2 text-[11px] font-mono text-left text-text rounded flex items-center gap-2"
-          style={{ background: "var(--surface-elev)", border: "1px solid var(--border)" }}
-          onClick={() => onJumpToDecision(span.span_id, span.decision_idx)}
-        >
-          <span style={{ color: "var(--gold)" }}>↧</span>
-          {` Jump to decision #${span.decision_idx ?? 14}`}
-        </button>
+        {span.decision_idx !== undefined ? (
+          <button
+            type="button"
+            className="h-7 px-2 text-[11px] font-mono text-left text-text rounded flex items-center gap-2"
+            style={{ background: "var(--surface-elev)", border: "1px solid var(--border)" }}
+            onClick={() => onJumpToDecision(span.span_id, span.decision_idx)}
+          >
+            <span style={{ color: "var(--gold)" }}>↧</span>
+            {` Jump to decision #${span.decision_idx}`}
+          </button>
+        ) : null}
         <button
           type="button"
           className="h-7 px-2 text-[11px] font-mono text-left rounded flex items-center gap-2"
