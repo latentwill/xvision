@@ -10,6 +10,7 @@ import { SpanInspector } from "./SpanInspector";
 import { HaltStrategyButton } from "./HaltStrategyButton";
 import { FilterBar } from "./FilterBar";
 import { useSpanFilter } from "./use-span-filter";
+import { deriveDecisions } from "./decisions";
 
 function heightPx(h: DockHeight): number {
   if (h === "collapsed") return 0;
@@ -53,17 +54,7 @@ export function TraceDock() {
   });
 
   // Decisions derived from spans that carry a decision_idx, deduped and sorted.
-  const decisions = useMemo(() => {
-    const seen = new Set<number>();
-    const out: { i: number }[] = [];
-    for (const s of q.data?.spans ?? []) {
-      if (s.decision_idx != null && !seen.has(s.decision_idx)) {
-        seen.add(s.decision_idx);
-        out.push({ i: s.decision_idx });
-      }
-    }
-    return out.sort((a, b) => a.i - b.i);
-  }, [q.data]);
+  const decisions = useMemo(() => deriveDecisions(q.data?.spans ?? []), [q.data]);
 
   const qc = useQueryClient();
   useEffect(() => {
@@ -114,7 +105,7 @@ export function TraceDock() {
           {isLive && summary?.strategy_id ? (
             <HaltStrategyButton
               strategyName={summary.strategy_id}
-              onHalt={() => window.alert(`halt-strategy stubbed (strategy ${summary.strategy_id})`)}
+              onHalt={() => console.warn("[agent-runs] halt-strategy — pending checkpoint design", { strategyId: summary.strategy_id })}
             />
           ) : null}
           {(["peek", "working", "full"] as const).map((h) => (
@@ -173,7 +164,7 @@ export function TraceDock() {
               isLive={isLive}
               onRerun={(spanId) => {
                 // Phase 4 stub — checkpoint design pending.
-                window.alert(`rerun-from-here pending checkpoint design (span ${spanId})`);
+                console.warn("[agent-runs] rerun-from-here — pending checkpoint design", { spanId });
               }}
               onJumpToDecision={() => {
                 // Phase 2.5.4 will wire cross-link to eval-runs-detail.

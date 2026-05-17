@@ -12,6 +12,7 @@ import { AgentRunIndentedTimeline } from "@/features/agent-runs/AgentRunIndented
 import { SpanInspector } from "@/features/agent-runs/SpanInspector";
 import { FilterBar } from "@/features/agent-runs/FilterBar";
 import { useSpanFilter } from "@/features/agent-runs/use-span-filter";
+import { deriveDecisions } from "@/features/agent-runs/decisions";
 import { useTraceDock } from "@/stores/trace-dock";
 
 export function AgentRunDetailRoute() {
@@ -33,17 +34,7 @@ export function AgentRunDetailRoute() {
     spans: q.data?.spans ?? [],
   });
 
-  const decisions = useMemo(() => {
-    const seen = new Set<number>();
-    const out: { i: number }[] = [];
-    for (const s of q.data?.spans ?? []) {
-      if (s.decision_idx != null && !seen.has(s.decision_idx)) {
-        seen.add(s.decision_idx);
-        out.push({ i: s.decision_idx });
-      }
-    }
-    return out.sort((a, b) => a.i - b.i);
-  }, [q.data]);
+  const decisions = useMemo(() => deriveDecisions(q.data?.spans ?? []), [q.data]);
 
   useEffect(() => {
     if (q.data) {
@@ -129,7 +120,7 @@ export function AgentRunDetailRoute() {
             isLive={isLive}
             onRerun={(spanId) => {
               // Phase 4 stub — checkpoint design pending.
-              window.alert(`rerun-from-here pending checkpoint design (span ${spanId})`);
+              console.warn("[agent-runs] rerun-from-here — pending checkpoint design", { spanId });
             }}
             onJumpToDecision={() => { /* Phase 2.5.4: cross-link to eval-runs-detail */ }}
           />
