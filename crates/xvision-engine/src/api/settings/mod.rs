@@ -13,5 +13,6 @@ pub mod brokers;
 pub mod daemon;
 pub mod danger;
 pub mod identity;
+pub mod observability;
 pub mod providers;
 pub mod providers_catalog;
