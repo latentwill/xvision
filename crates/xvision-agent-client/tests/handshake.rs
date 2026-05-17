@@ -21,7 +21,8 @@ async fn start_fake_sidecar(sock: PathBuf, protocol_version: &'static str) {
                     "result": {
                         "protocol_version": protocol_version,
                         "sidecar_version": "0.1.0",
-                        "cline_sdk_version": "unbound",
+                        // Test fixture: any semver-shaped value is fine; the assertion below just verifies field round-trip.
+                        "cline_sdk_version": "1.0.0",
                         "status": "ok"
                     }
                 });

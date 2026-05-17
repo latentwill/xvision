@@ -28,7 +28,8 @@ async fn start_mock_server(socket_path: PathBuf) -> tokio::task::JoinHandle<()> 
                         "result": {
                             "protocol_version": "0.1.0",
                             "sidecar_version": "0.1.0",
-                            "cline_sdk_version": "unbound",
+                            // Test fixture: any semver-shaped value is fine; the assertion below just verifies field round-trip.
+                            "cline_sdk_version": "1.0.0",
                             "status": "ok"
                         }
                     })
@@ -58,7 +59,7 @@ async fn calls_runtime_health_against_mock() {
     let t = UdsTransport::connect(&sock).await.expect("connect");
     let h: RuntimeHealthResult = t.call::<(), _>("runtime.health", None).await.expect("rpc");
     assert_eq!(h.protocol_version, "0.1.0");
-    assert_eq!(h.cline_sdk_version, "unbound");
+    assert_eq!(h.cline_sdk_version, "1.0.0");
     assert_eq!(h.status, "ok");
 }
 

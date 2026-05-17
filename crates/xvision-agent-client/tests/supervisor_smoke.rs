@@ -28,7 +28,16 @@ async fn spawns_and_calls_health() {
     let h = client.health().await.expect("health");
     assert_eq!(h.status, "ok");
     assert_eq!(h.protocol_version, "0.1.0");
-    assert_eq!(h.cline_sdk_version, "unbound");
+    // @cline/sdk version is resolved at sidecar module load. Don't pin to a
+    // specific semver here — the SDK version moves; pin only to "not the old
+    // Wave-1 placeholder, and looks like a semver."
+    let first = h.cline_sdk_version.chars().next();
+    assert!(
+        first.map_or(false, |c| c.is_ascii_digit()),
+        "expected semver-shaped cline_sdk_version, got: {}",
+        h.cline_sdk_version
+    );
+    assert_ne!(h.cline_sdk_version, "unbound");
 
     client.shutdown().await.expect("shutdown");
 }
