@@ -26,6 +26,9 @@
 
 import type { AgentModel, AgentModelEvent, AgentModelRequest } from "@cline/sdk"
 
+// Public id Task 5's buildAgent can branch on without a magic string.
+export const MOCK_PROVIDER_ID = "xvision-mock" as const
+
 // ---------------------------------------------------------------------------
 // Script state
 // ---------------------------------------------------------------------------
@@ -67,7 +70,8 @@ export function installMockProvider(): void {
 export function buildMockModel(): AgentModel {
   return {
     async *stream(_request: AgentModelRequest): AsyncIterable<AgentModelEvent> {
-      const turn = script[cursor++] ?? { text: "" }
+      const idx = cursor++
+      const turn = script[idx] ?? { text: "" }
 
       if ("text" in turn) {
         yield { type: "text-delta", text: turn.text }
@@ -76,8 +80,9 @@ export function buildMockModel(): AgentModel {
         return
       }
 
-      // Tool-call turn: emit a single tool-call-delta with the full input
-      const callId = `tc-${cursor}`
+      // Tool-call turn: emit a single tool-call-delta with the full input.
+      // callId uses the *pre-increment* index so it matches the turn number.
+      const callId = `tc-${idx}`
       yield {
         type: "tool-call-delta",
         toolCallId: callId,
