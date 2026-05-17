@@ -65,6 +65,34 @@ through their contracts' `parallel_conflicts`.
 | `docs/superpowers/plans/2026-05-17-cline-sdk-agent-replacement-wave2.md` | (closed-out: `cline-sdk-wave1-2`, merged #208) | cline-sdk-agent-replacement |
 | `docs/superpowers/research/2026-05-17-cline-sdk-license-audit.md` | (closed-out: `cline-sdk-wave1-2`, merged #208) | cline-sdk-agent-replacement |
 | `Dockerfile.deploy` | (closed-out: `cline-sdk-wave1-2`, merged #208) | cline-sdk-agent-replacement |
+| `crates/xvision-engine/src/agent/execute.rs` | `qa-execute-slot-cap` | qa-2026-05-17 |
+| `crates/xvision-engine/src/agent/pipeline.rs` | `qa-role-normalization` | qa-2026-05-17 |
+| `crates/xvision-engine/src/strategies/validate.rs` | `qa-role-normalization` | qa-2026-05-17 |
+| `crates/xvision-engine/src/strategies/agent_ref.rs` | `qa-role-normalization` | qa-2026-05-17 |
+| `crates/xvision-engine/src/eval/executor/backtest.rs` | `qa-role-normalization` | qa-2026-05-17 |
+| `crates/xvision-engine/src/eval/executor/paper.rs` | `qa-role-normalization` | qa-2026-05-17 |
+| `crates/xvision-engine/src/strategies/store.rs` | `qa-strategy-id-path-safety` | qa-2026-05-17 |
+| `crates/xvision-engine/src/strategies/id.rs` | `qa-strategy-id-path-safety` (new file) | qa-2026-05-17 |
+| `crates/xvision-engine/src/authoring.rs` | `qa-strategy-id-path-safety` | qa-2026-05-17 |
+| `crates/xvision-engine/src/api/strategy.rs` | `qa-strategy-id-path-safety` | qa-2026-05-17 |
+| `crates/xvision-engine/src/api/eval.rs` | `qa-eval-retry-params-override` | qa-2026-05-17 |
+| `crates/xvision-engine/src/api/chart.rs` | `qa-chart-hold-marker-zero` | qa-2026-05-17 |
+| `crates/xvision-dashboard/src/server.rs` | `qa-dashboard-auth-hardening` (re-claimed from deferred q15-tailscale) | qa-2026-05-17 |
+| `crates/xvision-dashboard/src/lib.rs` | `qa-dashboard-auth-hardening` (re-claimed from deferred q15-tailscale) | qa-2026-05-17 |
+| `crates/xvision-dashboard/src/auth.rs` | `qa-dashboard-auth-hardening` (new file) | qa-2026-05-17 |
+| `crates/xvision-dashboard/src/routes/cli.rs` | `qa-dashboard-auth-hardening` | qa-2026-05-17 |
+| `crates/xvision-dashboard/src/cli_jobs/runner.rs` | `qa-dashboard-auth-hardening` | qa-2026-05-17 |
+| `crates/xvision-dashboard/src/cli_jobs/allowlist.rs` | `qa-dashboard-auth-hardening` (new file) | qa-2026-05-17 |
+| `crates/xvision-dashboard/src/routes/settings/danger.rs` | `qa-dashboard-auth-hardening` | qa-2026-05-17 |
+| `crates/xvision-engine/src/api/settings/danger.rs` | `qa-dashboard-auth-hardening` | qa-2026-05-17 |
+| `frontend/web/src/api/settings.ts` | `qa-dashboard-auth-hardening` | qa-2026-05-17 |
+| `frontend/web/src/routes/settings/danger.tsx` | `qa-dashboard-auth-hardening` | qa-2026-05-17 |
+| `docs/runbook/dashboard-auth.md` | `qa-dashboard-auth-hardening` (new file) | qa-2026-05-17 |
+| `xvision-agentd/src/methods/session.ts` | `qa-agentd-budget-enforcement` | qa-2026-05-17 |
+| `xvision-agentd/src/session/store.ts` | `qa-agentd-budget-enforcement` | qa-2026-05-17 |
+| `xvision-agentd/src/session/build-agent.ts` | `qa-agentd-budget-enforcement` | qa-2026-05-17 |
+| `xvision-agentd/src/session/budget.ts` | `qa-agentd-budget-enforcement` (new file) | qa-2026-05-17 |
+| `crates/xvision-agent-client/src/protocol.rs` | `qa-agentd-budget-enforcement` | qa-2026-05-17 |
 
 ## Multi-owner exemptions
 
