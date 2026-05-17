@@ -1,3 +1,4 @@
+pub mod agent_runs;
 pub mod agents;
 pub mod bars;
 pub mod chat_rail;
