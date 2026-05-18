@@ -27,30 +27,39 @@ verification:
   - cargo test -p xvision-dashboard
   - cargo clippy -p xvision-dashboard -- -D warnings
 acceptance:
-  - An eval run that triggers the review pass on a dashboard with NO
-    Anthropic provider configured no longer fails with
+  - A POST to `/api/eval/runs/:id/review` on a dashboard with NO
+    Anthropic provider configured no longer fails with the cryptic
     `agent profile 'research-agent' references provider 'anthropic'
-    which is not configured in Settings → Providers`.
-  - Fallback behavior (one of, picked in the status note):
-    (a) Provider-aware default: the review-agent profile resolves
-        against whichever provider has at least one configured model;
-        if none, the review pass is skipped with a single warning
-        emitted on the agent-run-observability bus.
-    (b) Skip-or-warn: the review pass logs a single warning and
-        produces no review output. The eval run completes successfully.
-  - The chosen fallback is documented in the contract Notes section
-    before the PR opens, and reflected in `team/status/qa-review-agent-provider-config.md`.
+    which is not configured in Settings → Providers`. The replacement
+    behavior is one of (a) or (b) below — the chosen path is
+    documented in the contract Notes before the PR opens.
+  - Resolution behavior (exactly one of, no ambiguity):
+    (a) **Same-kind substitution + skip-with-remediation otherwise.**
+        Exact provider-name match wins. If the named provider isn't
+        configured but a configured provider has the same
+        `ProviderKind` (so the seeded model id remains valid on the
+        wire), substitute it with a `tracing::warn!` naming the
+        substitution. If neither match is available, return a clearer
+        `ApiError::Validation` listing the configured providers and
+        what kind of provider would resolve the review. NEVER
+        cross-kind substitute — dispatching `claude-sonnet-4-6` to an
+        OpenAI-compatible endpoint would 404.
+    (b) **Pure skip-or-warn.** Any miss returns the clearer
+        `ApiError::Validation`; no substitution at all.
   - Regression tests added inline in `crates/xvision-dashboard/src/routes/eval/review.rs`
-    (existing `#[cfg(test)] mod tests` block) assert: (1) review pass
-    succeeds when the profile's named provider is unconfigured but
-    another provider is configured (provider substitution); (2) review
-    pass returns a clearer error than "anthropic not configured" when
-    no providers are configured at all; (3) review pass works normally
-    when the named provider IS configured (no regression — the
-    existing `local-candle` provider test path covers this).
-  - Substitution emits a `tracing::warn!` naming the requested provider
-    and the chosen fallback so the operator can see what happened in
-    server logs. No new agent-run-observability event variants.
+    (existing `#[cfg(test)] mod tests` block) assert: (1) same-kind
+    substitution path is taken when the named provider is missing but
+    a same-kind provider IS configured (asserts the resolver did NOT
+    skip); (2) cross-kind substitution is REFUSED (skip-with-error
+    listing the configured providers); (3) review pass returns
+    skip-with-remediation when no providers are configured; (4) the
+    kind-inference helper unit-test covers known + unknown names; (5)
+    existing `post_review_persists_inconclusive_when_local_candle_returns_stub`
+    covers the no-regression case where the named provider IS
+    configured exactly.
+  - Substitution (when it fires) emits a `tracing::warn!` naming the
+    requested provider, the chosen substitute, and the matched kind.
+    No new agent-run-observability event variants.
 ---
 
 # Scope
@@ -105,18 +114,27 @@ where the provider lookup happens. The agent_profiles table is owned
 by the engine but profile→dispatch resolution is dashboard-side.
 allowed_paths corrected.
 
-**Chosen fallback:** provider-aware default. When `profile.provider`
-isn't found in `cfg.providers` but at least one other provider is
-configured, log a `tracing::warn!` naming the requested vs chosen
-provider and proceed with the first configured provider. When
-`cfg.providers` is empty, return a clearer error
-("no LLM provider configured in Settings → Providers") instead of
-naming a specific provider that the operator may not even know is
-referenced.
+**Chosen path:** (a) — same-kind substitution + skip-with-remediation
+otherwise. Initial implementation (PR #256 first revision) used
+"first configured provider" which would have dispatched a
+`claude-sonnet-4-6` model id to whatever non-Anthropic provider the
+operator had — a wire-format failure. Switched to kind-aware
+substitution after code review (the local-candle test masked the bug
+because mock dispatch ignores the model). Cross-kind substitution is
+explicitly refused; the resolver returns a remediation message
+listing the configured providers and naming the requested provider so
+the operator knows what to add.
+
+The kind-inference helper hardcodes the convention that
+`provider="anthropic"` → `ProviderKind::Anthropic`,
+`provider="openrouter"`/`"openai"`/`"openai-compat"` →
+`ProviderKind::OpenaiCompat`, `provider="local-candle"` →
+`ProviderKind::LocalCandle`. Unknown names return `None` (no
+substitution attempted) so we don't quietly guess.
 
 Rationale: operator (Ed) leans toward "let the review run if at all
 possible" per memory `feedback_alpha_root_cause`-adjacent posture
-(don't silently skip operator-triggered work). Substitution is a
-visible warn, not a silent swap.
+(no silent skips). Same-kind substitution preserves that intent
+without breaking the model id at the wire layer.
 
 Append checkpoints / PR links below.
