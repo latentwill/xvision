@@ -167,6 +167,57 @@
     background: color-mix(in srgb, var(--warn) 86%, #ffdd8a);
   }
 
+  /* Per-row open-position chip. Sibling to dec-pill, smaller + denser.
+     Live in the decisions table's "Open positions" column so operators
+     can see active legs without leaving the row. Side colour mirrors
+     the dec-pill convention (long → gold, short → danger). */
+  .dec-pos {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.25rem;
+    padding: 0.2rem 0.4rem;
+    border: 1px solid var(--border-soft);
+    border-radius: 4px;
+    background: var(--surface-elev);
+    color: var(--text-2);
+    font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+    font-size: 11px;
+    line-height: 1.1;
+    white-space: nowrap;
+  }
+
+  .dec-pos__asset {
+    color: var(--text);
+    font-weight: 600;
+  }
+
+  .dec-pos__side {
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-size: 10px;
+    font-weight: 600;
+  }
+
+  .dec-pos--long .dec-pos__side {
+    color: color-mix(in srgb, var(--gold) 86%, #88d498);
+  }
+
+  .dec-pos--short .dec-pos__side {
+    color: color-mix(in srgb, var(--danger) 86%, #ffb1a7);
+  }
+
+  .dec-pos__qty {
+    color: var(--text);
+  }
+
+  .dec-pos__sep {
+    color: var(--text-3);
+  }
+
+  .dec-pos__entry {
+    color: var(--text-2);
+  }
+
   /* In-flight pill animation. Driven by Pill's `animated` prop, used by the
      four eval-status surfaces (eval-runs list, eval-runs-detail, eval-compare,
      home) to make a "running" row visually distinct from completed rows.
