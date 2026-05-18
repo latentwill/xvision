@@ -54,6 +54,18 @@ V2 work (V2A onboarding + docs, V2B-V4 roadmap) also has its own board:
 - [v2a-driver-tour](contracts/v2a-driver-tour.md) - leaf - ready - first-run Driver.js tour plus restart affordance.
 - [v2a-in-app-docs](contracts/v2a-in-app-docs.md) - leaf - ready - dashboard `/docs` route backed by packaged in-repo docs.
 
+### Agent CI/CD Phase 1 (2026-05-18)
+
+Implements `docs/superpowers/specs/2026-05-18-agent-cicd-control-plane.md`.
+Phase-1 closes the worktree + PR-open gap; review routing and deploy are
+Phase 2/3 (not contracted yet).
+
+- [agent-cicd-board-schema](contracts/agent-cicd-board-schema.md) - foundation - ready - JSON Schema 2020-12 for the task object + GitHub Project v2 setup doc. Blocks the other three.
+- [agent-cicd-migrate-board](contracts/agent-cicd-migrate-board.md) - integration - ready - one-time idempotent script: parse `team/board.md` + `team/board-v2.md`, enrich from contracts, create Issues + Project items. Depends on board-schema.
+- [agent-cicd-daemon-skeleton](contracts/agent-cicd-daemon-skeleton.md) - foundation - ready - Node/TS daemon at `tools/agent-conductor/` with `start|stop|pause|resume|status|watch|cancel` CLI, three-layer status surface (CLI + state.json + digest), instance identity for multi-repo Hermes, zero-host-repo-references boundary. Phase-1 transitions only. Depends on board-schema.
+- [agent-cicd-shadow-run](contracts/agent-cicd-shadow-run.md) - integration - ready - run daemon in shadow against a real 3-5 leaf cohort; ≥90% agreement gate; archived report unblocks live flip. Depends on the other three.
+- [agent-cicd-extract-package](contracts/agent-cicd-extract-package.md) - integration - deferred - Phase-2 work: extract `tools/agent-conductor/` to standalone npm package + `npx agent-conductor init` scaffolder. Deferred until Phase-1 is live and Phase-2 review-routing has merged.
+
 ## Deferred
 
 - [q15-tailscale-serve-api-reachability](contracts/q15-tailscale-serve-api-reachability.md) - integration - deferred 2026-05-16. Mobile/QA over tailnet parked, not archived. Revive by flipping `status:` back to `ready` and re-adding it to `Active`.
