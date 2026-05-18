@@ -229,13 +229,15 @@ async fn factory_reset_inner(ctx: &ApiContext, confirm: &str) -> ApiResult<Facto
     check_confirm(confirm, FACTORY_RESET_CONFIRM)?;
     let xvn_home = ctx.xvn_home.clone();
 
-    // Mirror to a sibling log file so the trail survives the wipe.
-    let audit_log_path: PathBuf = match xvn_home.parent() {
-        Some(parent) => parent.join("xvn-last-factory-reset.log"),
-        // `xvn_home` is the filesystem root — shouldn't happen, but fall
-        // back to a tempfile so we still get a record somewhere.
-        None => std::env::temp_dir().join("xvn-last-factory-reset.log"),
-    };
+    // Mirror to a sibling log file so the trail survives the wipe. The
+    // previous parent-based picker (commit 4b1eda3) only fell back to
+    // `temp_dir()` when `xvn_home.parent()` was `None`, which never
+    // fires in practice — the filesystem root `/` is a perfectly
+    // valid parent for `XVN_HOME=/data`, so the picker would hand back
+    // `/xvn-last-factory-reset.log` and fail with EACCES on container
+    // deploys where the process runs as a non-root user. F-3 from the
+    // 2026-05-18 QA round-4 intake.
+    let audit_log_path = pick_audit_log_path(&xvn_home);
     let log_line = format!(
         "{ts} factory_reset xvn_home={path}\n",
         ts = chrono::Utc::now().to_rfc3339(),
@@ -282,6 +284,85 @@ fn check_confirm(confirm: &str, expected: &str) -> ApiResult<()> {
         )));
     }
     Ok(())
+}
+
+/// Pick a writable home for the factory-reset audit-log mirror. The log
+/// must live OUTSIDE `xvn_home` so it survives the wipe, and the
+/// directory must be writable by the running process. Order:
+///
+/// 1. `$XVN_AUDIT_DIR/xvn-last-factory-reset.log` — explicit override
+///    for deployments that want the log under a known mount.
+/// 2. `<xvn_home.parent()>/xvn-last-factory-reset.log` — the original
+///    workstation pick. Only used when the parent isn't the filesystem
+///    root *and* is writable.
+/// 3. `std::env::temp_dir()/xvn-last-factory-reset.log` — operator can
+///    `docker cp` it out before restart.
+fn pick_audit_log_path(xvn_home: &std::path::Path) -> PathBuf {
+    let audit_dir = std::env::var_os("XVN_AUDIT_DIR").map(PathBuf::from);
+    pick_audit_log_path_with(
+        xvn_home,
+        audit_dir.as_deref(),
+        &std::env::temp_dir(),
+    )
+}
+
+/// Env-free core of `pick_audit_log_path` — same algorithm, but the
+/// `XVN_AUDIT_DIR` override and the `temp_dir()` fallback are passed in
+/// so unit tests don't have to race on the process-wide environment.
+fn pick_audit_log_path_with(
+    xvn_home: &std::path::Path,
+    audit_dir_override: Option<&std::path::Path>,
+    temp_dir: &std::path::Path,
+) -> PathBuf {
+    const LOG_NAME: &str = "xvn-last-factory-reset.log";
+
+    if let Some(dir) = audit_dir_override {
+        if dir_is_writable(dir) {
+            return dir.join(LOG_NAME);
+        }
+    }
+
+    if let Some(parent) = xvn_home.parent() {
+        // Filesystem root has no parent; reject it so we don't try to
+        // write `/xvn-last-factory-reset.log` on a container deploy
+        // where `XVN_HOME=/data` makes the parent the read-only root.
+        let is_root = parent.parent().is_none();
+        if !is_root && dir_is_writable(parent) {
+            return parent.join(LOG_NAME);
+        }
+    }
+
+    temp_dir.join(LOG_NAME)
+}
+
+/// Probe whether `dir` is a writable directory by attempting to create
+/// (and immediately remove) a uniquely-named file inside it. Failure
+/// modes — missing dir, EACCES, EROFS — all collapse to `false`, which
+/// routes the caller to the next fallback in the picker chain.
+fn dir_is_writable(dir: &std::path::Path) -> bool {
+    if !dir.is_dir() {
+        return false;
+    }
+    let probe_name = format!(
+        ".xvn_writable_probe_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0),
+    );
+    let probe = dir.join(&probe_name);
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+    {
+        Ok(_f) => {
+            let _ = std::fs::remove_file(&probe);
+            true
+        }
+        Err(_) => false,
+    }
 }
 
 fn audit_outcome<T>(result: &ApiResult<T>) -> Outcome {
@@ -455,5 +536,73 @@ mod tests {
         let contents = tokio::fs::read_to_string(&log_path).await.unwrap();
         assert!(contents.contains("factory_reset"), "log line written");
         assert!(contents.contains(&xvn_home.display().to_string()));
+    }
+
+    #[test]
+    fn pick_audit_log_path_with_honors_audit_dir_override() {
+        // F-3: when XVN_AUDIT_DIR is set + writable, it beats the
+        // parent-based pick.
+        let override_dir = TempDir::new().unwrap();
+        let temp = TempDir::new().unwrap();
+        let pick = pick_audit_log_path_with(
+            std::path::Path::new("/data"),
+            Some(override_dir.path()),
+            temp.path(),
+        );
+        assert_eq!(pick, override_dir.path().join("xvn-last-factory-reset.log"));
+    }
+
+    #[test]
+    fn pick_audit_log_path_with_falls_back_when_parent_is_filesystem_root() {
+        // Container repro: XVN_HOME=/data → parent=/ → root-owned. The
+        // old picker handed back /xvn-last-factory-reset.log; the new
+        // picker must skip the root and use temp_dir.
+        let temp = TempDir::new().unwrap();
+        let pick = pick_audit_log_path_with(
+            std::path::Path::new("/data"),
+            None,
+            temp.path(),
+        );
+        assert_eq!(pick, temp.path().join("xvn-last-factory-reset.log"));
+    }
+
+    #[test]
+    fn pick_audit_log_path_with_uses_parent_when_writable() {
+        // Workstation shape: xvn_home parent is a normal writable dir.
+        let parent = TempDir::new().unwrap();
+        let xvn_home = parent.path().join(".xvision");
+        let temp = TempDir::new().unwrap();
+        let pick = pick_audit_log_path_with(&xvn_home, None, temp.path());
+        assert_eq!(pick, parent.path().join("xvn-last-factory-reset.log"));
+    }
+
+    #[test]
+    fn pick_audit_log_path_with_falls_back_when_parent_unwritable() {
+        // /proc/sys/<doesn't-exist> isn't a writable dir; probe fails
+        // and we route to temp_dir.
+        let temp = TempDir::new().unwrap();
+        let pick = pick_audit_log_path_with(
+            std::path::Path::new("/proc/sys/this-path-cannot-exist/.xvision"),
+            None,
+            temp.path(),
+        );
+        assert_eq!(pick, temp.path().join("xvn-last-factory-reset.log"));
+    }
+
+    #[test]
+    fn pick_audit_log_path_with_falls_back_when_override_unwritable() {
+        // An override pointing at a non-existent or non-writable dir
+        // must NOT short-circuit — the picker falls through to the
+        // parent-based / temp_dir chain.
+        let parent = TempDir::new().unwrap();
+        let xvn_home = parent.path().join(".xvision");
+        let temp = TempDir::new().unwrap();
+        let bogus = std::path::Path::new("/proc/sys/not-a-dir");
+        let pick = pick_audit_log_path_with(&xvn_home, Some(bogus), temp.path());
+        assert_eq!(
+            pick,
+            parent.path().join("xvn-last-factory-reset.log"),
+            "bogus override should fall through to the writable parent",
+        );
     }
 }

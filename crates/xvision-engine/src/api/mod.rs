@@ -47,6 +47,8 @@ const MIGRATION_017_EVAL_FINDINGS_REVIEW_COLUMNS: &str =
     include_str!("../../migrations/017_eval_findings_review_columns.sql");
 const MIGRATION_018_AGENT_RUN_OBSERVABILITY: &str =
     include_str!("../../migrations/018_agent_run_observability.sql");
+const MIGRATION_019_AGENT_SLOT_PROMPT_VERSION: &str =
+    include_str!("../../migrations/019_agent_slot_prompt_version.sql");
 
 /// Map of cache_key → per-key mutex used by `eval::bars::load_bars` to
 /// serialize concurrent misses for the same window. Kept inside an outer
@@ -144,6 +146,7 @@ impl ApiContext {
         sqlx::query(MIGRATION_016_EVAL_REVIEWS).execute(&pool).await?;
         migrate_eval_findings_review_columns(&pool).await?;
         sqlx::query(MIGRATION_018_AGENT_RUN_OBSERVABILITY).execute(&pool).await?;
+        migrate_agent_slot_prompt_version(&pool).await?;
 
         let ctx = Self::new(pool, actor, xvn_home.to_path_buf());
 
@@ -422,6 +425,25 @@ async fn migrate_eval_decisions_reasoning(pool: &SqlitePool) -> ApiResult<()> {
 async fn migrate_eval_findings_review_columns(pool: &SqlitePool) -> ApiResult<()> {
     if !table_has_column(pool, "eval_findings", "eval_review_id").await? {
         sqlx::query(MIGRATION_017_EVAL_FINDINGS_REVIEW_COLUMNS)
+            .execute(pool)
+            .await?;
+    }
+
+    Ok(())
+}
+
+/// Apply the `agent_slots.prompt_version` column add from migration 019
+/// against pre-019 databases. SQLite has no `ALTER TABLE ADD COLUMN IF
+/// NOT EXISTS`, and the migration file is a bare `ALTER TABLE`, so we
+/// gate on the column probe — same pattern as
+/// `migrate_eval_findings_review_columns` above. F-1 from the
+/// 2026-05-18 QA round-4 intake: PR #296 added the SQL file + store
+/// queries but never wired the migration into the engine boot path,
+/// so every `/api/agents` and `/api/strategies` read against an
+/// existing `/data/xvn.db` 500'd on the missing column.
+async fn migrate_agent_slot_prompt_version(pool: &SqlitePool) -> ApiResult<()> {
+    if !table_has_column(pool, "agent_slots", "prompt_version").await? {
+        sqlx::query(MIGRATION_019_AGENT_SLOT_PROMPT_VERSION)
             .execute(pool)
             .await?;
     }
