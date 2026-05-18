@@ -40,6 +40,7 @@ import { isInflightRunStatus } from "@/lib/run-status";
 import {
   displayScenarioName,
   displayStrategyName,
+  evalRunDisambiguator,
   shortId,
 } from "@/lib/run-display";
 import type {
@@ -377,7 +378,13 @@ function RunsTable({
                 {scenarioName(row.scenario_id)}
               </div>
               <div className="mt-1 font-mono text-[11px] text-text-3">
-                run {shortId(row.id)} · {row.mode} · {fmtTime(row.started_at)}
+                <span className="text-text-2">
+                  {evalRunDisambiguator(row, items)}
+                </span>
+                <span className="mx-1.5 text-text-4">·</span>
+                <span title={row.id}>run {shortId(row.id)}</span>
+                <span className="mx-1.5 text-text-4">·</span>
+                <span>{row.mode}</span>
               </div>
               <div className="mt-2 grid grid-cols-2 gap-2 text-[12px] min-[420px]:grid-cols-5">
                 <div className="text-text-2">
@@ -497,7 +504,13 @@ function RunsTable({
                     <div className="text-[13px] text-text font-medium">
                       {strategyName(row.agent_id)}
                     </div>
-                    <div className="mt-0.5 font-mono text-[11px] text-text-3">
+                    <div className="mt-0.5 text-[11px] text-text-2">
+                      {evalRunDisambiguator(row, items)}
+                    </div>
+                    <div
+                      className="mt-0.5 font-mono text-[11px] text-text-3"
+                      title={row.id}
+                    >
                       run {shortId(row.id)}
                     </div>
                   </td>

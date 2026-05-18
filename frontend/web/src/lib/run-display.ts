@@ -68,6 +68,59 @@ export function shortId(id: string, len = 10): string {
   return id.length > len ? `${id.slice(0, len)}...` : id;
 }
 
+// Per-(strategy, scenario) sequence number, sorted by started_at ascending,
+// with `id` as a stable tiebreaker. Falls back to {1,1} when siblings is
+// empty so a brand-new run reads as Run #1 before the siblings list loads.
+export function evalRunOrdinal(
+  summary: RunSummary,
+  siblings: RunSummary[],
+): { index: number; total: number } {
+  const samePair = siblings.filter(
+    (r) =>
+      r.agent_id === summary.agent_id &&
+      r.scenario_id === summary.scenario_id,
+  );
+  if (samePair.length === 0) {
+    return { index: 1, total: 1 };
+  }
+  const sorted = [...samePair].sort((a, b) => {
+    const at = a.started_at ?? "";
+    const bt = b.started_at ?? "";
+    if (at !== bt) return at < bt ? -1 : 1;
+    return a.id < b.id ? -1 : 1;
+  });
+  const idx = sorted.findIndex((r) => r.id === summary.id);
+  return {
+    index: (idx >= 0 ? idx : sorted.length - 1) + 1,
+    total: sorted.length,
+  };
+}
+
+// "Run #3 · May 18, 14:02" (or "Run #3/7 · …" when more than one run
+// exists for the same strategy+scenario pair). Derived entirely from
+// existing `RunSummary` fields — no backend contract change.
+export function evalRunDisambiguator(
+  summary: RunSummary,
+  siblings: RunSummary[],
+): string {
+  const { index, total } = evalRunOrdinal(summary, siblings);
+  const stamp = formatDisambiguatorTimestamp(summary.started_at);
+  const ordinal = total > 1 ? `Run #${index}/${total}` : `Run #${index}`;
+  return stamp ? `${ordinal} · ${stamp}` : ordinal;
+}
+
+function formatDisambiguatorTimestamp(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 function fallbackName(kind: string, id: string): string {
   const normalized = id
     .replace(/^sc[_-]/i, "")
