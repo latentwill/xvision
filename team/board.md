@@ -18,6 +18,16 @@ V2 work (V2A onboarding + docs, V2B-V4 roadmap) also has its own board:
 
 ## Active
 
+### Harness Observability Audit — F-6
+
+F-1/F-2/F-3 from `team/intake/2026-05-18-harness-observability-audit.md`
+landed (PRs #277, #294, #296). F-4 (#297) and F-5 (#298) are in PR
+review on the conductor branch. F-7 is gated on F-4 merging. F-6 is
+the last unclaimed leaf in the wave; it is parallel-safe with the
+F-4/F-5 PRs (disjoint files).
+
+- [harness-typed-mechanical-params](contracts/harness-typed-mechanical-params.md) - integration - claimed - F-6 — typed `MechanicalParams` enum keyed on `manifest.template` (one variant per canonical template + `Custom(Value)` fallback). Adds `#[serde(deny_unknown_fields)]` to `InternBriefing`, `TraderDecision`, `RiskDecision`, `RiskConfig`/`Limits`/`Stops`, `RiskCaps`. Single pre-persist validate seam in `StrategyStore::save`. No migration; wire format unchanged. Parallel-safe with F-4 PR #297 and F-5 PR #298.
+
 ### Agent CI/CD Phase 1 (2026-05-18)
 
 Implements `docs/superpowers/specs/2026-05-18-agent-cicd-control-plane.md`.
