@@ -206,7 +206,7 @@ export function SpanInspector({
       </div>
 
       {/* Body */}
-      <div className="flex-1 overflow-auto px-3 py-3">
+      <div className="scrollbar-stable flex-1 overflow-auto px-3 py-3">
         {span.status === "error" && span.error_message ? (
           // Error pull-quote: the operator's primary debug signal when a
           // span failed. Rendered before prompt/response so it's the

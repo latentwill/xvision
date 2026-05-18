@@ -84,6 +84,59 @@
     scrollbar-gutter: stable;
   }
 
+  /*
+   * `.scrollbar-stable` — persistent, theme-styled scrollbar for
+   * desktop overflow surfaces. macOS' default `::-webkit-scrollbar`
+   * is an overlay that auto-hides until interaction, leaving operators
+   * with no "more below" affordance once the box is taller than the
+   * viewport. Forcing a thin styled bar at `pointer: fine` gives a
+   * persistent indicator without disturbing touch UX (mobile webviews
+   * resolve `pointer: coarse` and keep their native auto-hide).
+   *
+   * Per-component opt-in (apply this class on the overflow element)
+   * rather than a global force-on. Pairs cleanly with `.xvn-scroll`
+   * if a surface wants the gold thumb without the always-visible gutter.
+   */
+  .scrollbar-stable {
+    scrollbar-gutter: stable;
+  }
+}
+
+@layer components {
+  @media (pointer: fine) {
+    .scrollbar-stable {
+      overflow-y: scroll;
+      scrollbar-width: thin;
+      scrollbar-color: color-mix(in srgb, var(--text-3) 58%, transparent)
+        color-mix(in srgb, var(--surface-elev) 72%, transparent);
+    }
+    .scrollbar-stable::-webkit-scrollbar {
+      width: 10px;
+      height: 10px;
+    }
+    .scrollbar-stable::-webkit-scrollbar-track {
+      background: color-mix(in srgb, var(--surface-elev) 72%, transparent);
+      border-left: 1px solid var(--border-soft);
+    }
+    .scrollbar-stable::-webkit-scrollbar-thumb {
+      min-height: 40px;
+      background: linear-gradient(
+        180deg,
+        color-mix(in srgb, var(--gold) 42%, var(--text-3)),
+        color-mix(in srgb, var(--text-3) 70%, transparent)
+      );
+      border: 2px solid color-mix(in srgb, var(--surface-elev) 82%, transparent);
+      border-radius: 999px;
+    }
+    .scrollbar-stable::-webkit-scrollbar-thumb:hover {
+      background: linear-gradient(
+        180deg,
+        color-mix(in srgb, var(--gold) 68%, var(--text-2)),
+        color-mix(in srgb, var(--text-2) 84%, transparent)
+      );
+    }
+  }
+
   .rail {
     scrollbar-color: color-mix(in srgb, var(--gold) 56%, var(--text-3))
       color-mix(in srgb, var(--surface-sidebar) 78%, var(--surface-elev));
