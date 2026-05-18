@@ -307,6 +307,23 @@ impl ObsEmitter {
         let venue = venue.into();
         let order_type = order_type.into();
         let name = format!("{venue} {symbol} {side:?}");
+        // Persist the broker payload on the span row's `attributes_json`
+        // so the dashboard read path can project a `broker_call`
+        // payload onto the wire span without joining a second table.
+        // `qa-trace-broker-spans` deliberately doesn't add a
+        // `broker_calls` table (the contract forbids migrations);
+        // attributes_json is the durable carrier.
+        let started_attrs = serde_json::json!({
+            "broker_call": {
+                "side": side,
+                "symbol": symbol,
+                "qty": qty,
+                "intended_price": intended_price,
+                "order_type": order_type,
+                "venue": venue,
+                "idempotency_key": idempotency_key,
+            }
+        });
         self.bus
             .publish(RunEvent::SpanStarted(SpanStartedEvent {
                 span_id: span_id.to_string(),
@@ -317,7 +334,7 @@ impl ObsEmitter {
                 started_at: Utc::now(),
                 otel_trace_id: None,
                 otel_span_id: None,
-                attributes_json: None,
+                attributes_json: Some(started_attrs.to_string()),
             }))
             .await;
         self.bus

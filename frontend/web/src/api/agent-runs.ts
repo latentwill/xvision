@@ -169,20 +169,61 @@ function flattenExportSpans(spans: unknown, out: RunSpan[] = []): RunSpan[] {
     if (!id) continue;
     const attrs = parseAttributes(raw.attributes_json ?? raw.attributes);
     const errorMessage = parseErrorJson(raw.error_json ?? raw.error_message);
+    const kind = asString(raw.kind, "agent.run") as RunSpan["kind"];
+    // Project the on-disk `attributes_json.broker_call` blob (written
+    // by `xvision_observability::sqlite::SqliteRecorder` on the
+    // SpanStarted + BrokerCallFinished arms) onto the typed
+    // `RunSpan.broker_call` field so SpanInspector renders without
+    // re-reading attributes. `qa-trace-broker-spans`.
+    const brokerCall =
+      kind === "broker.call" ? extractBrokerCall(attrs) : undefined;
     out.push({
       span_id: id,
       parent_span_id: asNullableString(raw.parent_span_id),
       name: asString(raw.name, id),
-      kind: asString(raw.kind, "agent.run") as RunSpan["kind"],
+      kind,
       started_at: asString(raw.started_at),
       finished_at: asNullableString(raw.ended_at ?? raw.finished_at),
       status: spanStatus(raw),
       attributes: attrs,
       ...(errorMessage ? { error_message: errorMessage } : {}),
+      ...(brokerCall ? { broker_call: brokerCall } : {}),
     });
     flattenExportSpans(raw.children, out);
   }
   return out;
+}
+
+function extractBrokerCall(
+  attrs: Record<string, unknown>,
+): RunSpan["broker_call"] | undefined {
+  const raw = attrs["broker_call"];
+  if (!isObject(raw)) return undefined;
+  const side = asString(raw.side, "buy") as NonNullable<
+    RunSpan["broker_call"]
+  >["side"];
+  const symbol = asString(raw.symbol);
+  if (!symbol) return undefined;
+  const outcomeRaw = asString(raw.outcome);
+  const outcome = outcomeRaw
+    ? (outcomeRaw as NonNullable<RunSpan["broker_call"]>["outcome"])
+    : null;
+  return {
+    side,
+    symbol,
+    qty: typeof raw.qty === "number" ? raw.qty : 0,
+    intended_price: typeof raw.intended_price === "number" ? raw.intended_price : null,
+    order_type: asString(raw.order_type, "market"),
+    venue: asString(raw.venue, "unknown"),
+    idempotency_key: asNullableString(raw.idempotency_key) ?? null,
+    outcome,
+    fill_price: typeof raw.fill_price === "number" ? raw.fill_price : null,
+    fill_qty: typeof raw.fill_qty === "number" ? raw.fill_qty : null,
+    fee: typeof raw.fee === "number" ? raw.fee : null,
+    broker_order_id: asNullableString(raw.broker_order_id) ?? null,
+    error_class: asNullableString(raw.error_class) ?? null,
+    error_message: asNullableString(raw.error_message) ?? null,
+  };
 }
 
 function durationMs(startedAt: string, finishedAt: string | null): number | null {

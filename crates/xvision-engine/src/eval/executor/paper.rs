@@ -597,7 +597,7 @@ impl PaperExecutor {
                                 conf.fill_price.map(|p| p as f64),
                                 Some(conf.fill_size as f64),
                                 conf.fee.map(|f| f as f64),
-                                None,
+                                Some(conf.broker_order_id.clone()),
                                 None,
                                 None,
                             )

@@ -5,7 +5,7 @@
 //! still attribute back to a run. The map is loaded lazily on first use
 //! per `run_id` and pruned when a run is finalized.
 
-use crate::events::RunEvent;
+use crate::events::{BrokerCallFinishedEvent, BrokerCallOutcome, RunEvent};
 use crate::recorder::{AgentRunRecorder, RecorderError};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -250,6 +250,66 @@ impl AgentRunRecorder for SqliteRecorder {
                 .await?;
             }
 
+            RunEvent::BrokerCallStarted(_) => {
+                // The broker_call payload was baked into the matching
+                // `SpanStarted` event's `attributes_json` by
+                // `ObsEmitter::emit_broker_call_started`. The
+                // `SpanStarted` arm above already inserted the span
+                // row with that JSON; nothing to do here. The typed
+                // event still publishes onto the bus so live SSE
+                // subscribers (dashboard + tests) see the structured
+                // payload without re-parsing the JSON blob.
+            }
+
+            RunEvent::BrokerCallFinished(e) => {
+                // Merge the broker-side outcome / fill / error into the
+                // existing `attributes_json.broker_call` object that
+                // SpanStarted baked above. Using sqlite's `json_set`
+                // keeps the prior `broker_call.{side,symbol,qty,...}`
+                // keys intact while adding the finished-side fields,
+                // so the dashboard read path can project a SINGLE
+                // `broker_call` payload onto the wire span without
+                // joining a second table or stitching two events
+                // client-side. `qa-trace-broker-spans` deliberately
+                // avoids a `broker_calls` table because the contract
+                // forbids new migrations.
+                let finished_json = broker_call_finished_partial_json(e);
+                sqlx::query(
+                    "UPDATE spans \
+                     SET attributes_json = json_set( \
+                             COALESCE(attributes_json, '{}'), \
+                             '$.broker_call.outcome', ?, \
+                             '$.broker_call.fill_price', ?, \
+                             '$.broker_call.fill_qty', ?, \
+                             '$.broker_call.fee', ?, \
+                             '$.broker_call.broker_order_id', ?, \
+                             '$.broker_call.error_class', ?, \
+                             '$.broker_call.error_message', ? \
+                         ), \
+                         status = CASE \
+                             WHEN status = 'in_progress' THEN \
+                                 CASE WHEN ? = 'filled' THEN 'ok' ELSE 'error' END \
+                             ELSE status \
+                         END \
+                     WHERE id = ?",
+                )
+                .bind(broker_outcome_str(&e.outcome))
+                .bind(e.fill_price)
+                .bind(e.fill_qty)
+                .bind(e.fee)
+                .bind(&e.broker_order_id)
+                .bind(&e.error_class)
+                .bind(&e.error_message)
+                .bind(broker_outcome_str(&e.outcome))
+                .bind(&e.span_id)
+                .execute(&self.pool)
+                .await?;
+                // `finished_json` is retained for tests / debugging
+                // contexts that want a copy of the structured finished
+                // payload; the SQL above is the authoritative writer.
+                let _ = finished_json;
+            }
+
             RunEvent::CheckpointWritten(e) => {
                 sqlx::query(
                     "INSERT INTO checkpoints (\
@@ -359,4 +419,28 @@ impl AgentRunRecorder for SqliteRecorder {
         .await?;
         Ok(())
     }
+}
+
+fn broker_outcome_str(o: &BrokerCallOutcome) -> &'static str {
+    match o {
+        BrokerCallOutcome::Filled => "filled",
+        BrokerCallOutcome::Rejected => "rejected",
+        BrokerCallOutcome::Cancelled => "cancelled",
+        BrokerCallOutcome::Failed => "failed",
+    }
+}
+
+/// Snapshot of the finished-side fields as a structured JSON value.
+/// Used in tests + debug logs; the authoritative writer is the
+/// `json_set` SQL in the `BrokerCallFinished` arm above.
+fn broker_call_finished_partial_json(e: &BrokerCallFinishedEvent) -> serde_json::Value {
+    serde_json::json!({
+        "outcome": broker_outcome_str(&e.outcome),
+        "fill_price": e.fill_price,
+        "fill_qty": e.fill_qty,
+        "fee": e.fee,
+        "broker_order_id": e.broker_order_id,
+        "error_class": e.error_class,
+        "error_message": e.error_message,
+    })
 }
