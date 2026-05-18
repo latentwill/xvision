@@ -383,7 +383,7 @@ function SummaryCard({
   }
 
   return (
-    <Card className="p-5">
+    <Card className="p-5 !border-border-soft">
       <div className="flex items-center justify-between mb-4">
         <div className="min-w-0">
           <div className="font-serif text-[30px] leading-none text-text truncate">
@@ -413,18 +413,19 @@ function SummaryCard({
           </div>
         </div>
         {/*
-          The grid uses auto-cols-fr with grid-flow-col so every visible
-          action button shares one column and every column is sized to
-          1fr. In an unconstrained inline-grid that resolves to the
-          widest natural label as the floor for every column — so Stop /
-          Retry / Download read at matching widths without a hardcoded
-          px floor. The status pill stays outside the grid so it keeps
-          its natural size.
+          Each visible button takes `min-w-[16ch]` so the column floor
+          is the widest natural label ("Preparing JSON…" with padding).
+          The previous `grid grid-flow-col auto-cols-fr` shell only
+          equalizes columns when the grid has an explicit container
+          width — in an unconstrained inline-grid `1fr` collapses to
+          content size, so the operator still saw mismatched widths.
+          The status pill stays outside the grid so it keeps its
+          natural size. See `qa-eval-inspector-buttons-actually-uniform`.
         */}
         <div className="flex items-center gap-3">
           <div
             data-testid="eval-run-actions"
-            className="grid grid-flow-col auto-cols-fr gap-3"
+            className="flex items-center gap-3"
           >
             {inflight ? (
               <button
@@ -432,7 +433,7 @@ function SummaryCard({
                 aria-label={`Stop eval run ${summary.id}`}
                 onClick={onCancel}
                 disabled={cancelling}
-                className="rounded-sm border border-warn/40 bg-warn/[0.08] px-2.5 py-1 text-[12px] text-warn hover:border-warn/70 hover:bg-warn/[0.14] hover:text-text disabled:opacity-50"
+                className="min-w-[16ch] rounded-sm border border-warn/40 bg-warn/[0.08] px-2.5 py-1 text-[12px] text-warn hover:border-warn/70 hover:bg-warn/[0.14] hover:text-text disabled:opacity-50"
               >
                 {cancelling ? "Stopping..." : "Stop eval"}
               </button>
@@ -443,7 +444,7 @@ function SummaryCard({
                 aria-label={`Retry eval run ${summary.id}`}
                 onClick={onRetry}
                 disabled={retrying}
-                className="rounded-sm border border-info/40 bg-info/[0.08] px-2.5 py-1 text-[12px] text-info hover:border-info/70 hover:bg-info/[0.14] hover:text-text disabled:opacity-50"
+                className="min-w-[16ch] rounded-sm border border-info/40 bg-info/[0.08] px-2.5 py-1 text-[12px] text-info hover:border-info/70 hover:bg-info/[0.14] hover:text-text disabled:opacity-50"
               >
                 {retrying ? "Retrying..." : "Retry"}
               </button>
@@ -454,7 +455,7 @@ function SummaryCard({
                 aria-label={`Download eval run ${summary.id} as JSON`}
                 onClick={handleDownload}
                 disabled={downloading}
-                className="rounded-sm border border-border bg-surface-elev px-2.5 py-1 text-[12px] text-text-2 hover:border-gold/40 hover:text-text disabled:opacity-50"
+                className="min-w-[16ch] rounded-sm border border-border-soft bg-surface-elev px-2.5 py-1 text-[12px] text-text-2 hover:border-gold/40 hover:text-text disabled:opacity-50"
               >
                 {downloading ? "Preparing JSON…" : "Download JSON"}
               </button>
@@ -464,7 +465,7 @@ function SummaryCard({
               aria-label={`Delete eval run ${summary.id}`}
               onClick={onDelete}
               disabled={deleting}
-              className="rounded-sm border border-danger/40 bg-danger/[0.06] px-2.5 py-1 text-[12px] text-danger hover:border-danger/70 hover:bg-danger/[0.12] hover:text-text disabled:opacity-50"
+              className="min-w-[16ch] rounded-sm border border-danger/40 bg-danger/[0.06] px-2.5 py-1 text-[12px] text-danger hover:border-danger/70 hover:bg-danger/[0.12] hover:text-text disabled:opacity-50"
             >
               {deleting ? "Deleting…" : "Delete"}
             </button>

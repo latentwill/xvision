@@ -326,7 +326,7 @@ describe("EvalRunDetailRoute", () => {
     expect(meta.textContent ?? "").not.toMatch(/scenario btc-4h/);
   });
 
-  it("renders the action-row buttons in a 1fr-per-column grid for uniform widths", async () => {
+  it("renders the action-row buttons at uniform widths via per-button min-w", async () => {
     vi.mocked(evalApi.getRun).mockResolvedValue(
       detail({
         summary: {
@@ -341,10 +341,20 @@ describe("EvalRunDetailRoute", () => {
     renderDetail();
 
     const actions = await screen.findByTestId("eval-run-actions");
-    expect(actions.className).toContain("grid-flow-col");
-    expect(actions.className).toContain("auto-cols-fr");
-    // Failed run shows Retry + Download + Delete in the same row.
-    expect(actions.querySelectorAll("button").length).toBe(3);
+    // Failed terminal run shows Retry + Download + Delete in the
+    // same row (Delete added by qa-eval-action-lifecycle / #260).
+    const buttons = actions.querySelectorAll("button");
+    expect(buttons.length).toBe(3);
+    // Each button carries the same min-width floor so they read at
+    // uniform widths regardless of label length. The previous
+    // `grid grid-flow-col auto-cols-fr` shell (PR #255) did NOT
+    // equalize widths in an unconstrained inline-grid (`1fr`
+    // collapses to content size when there's no fixed container
+    // width), so the operator still saw uneven buttons — see
+    // `qa-eval-inspector-buttons-actually-uniform`.
+    for (const button of Array.from(buttons)) {
+      expect(button.className).toContain("min-w-[16ch]");
+    }
   });
 
   it("links the trace surface to the actual eval run id", async () => {
