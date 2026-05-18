@@ -312,18 +312,24 @@ impl BacktestExecutor {
             load_ohlcv_fixture(data_seed, &asset, usize::MAX)
                 .map_err(|e| anyhow!("load fixture {}: {e}", data_seed))?
         };
-        if bars.len() < 2 {
+        // An N-bar window is expected to produce N decisions
+        // (qa-decisions-30day-count). The final bar fills against its own
+        // close via the `next_bar_open` fallback below, so the only
+        // genuinely-uninterpretable case is an empty bar list. Anything
+        // narrower than that is a contract bug at the loader layer, not
+        // a runtime input the executor should silently tolerate.
+        if bars.is_empty() {
             anyhow::bail!(
-                "scenario {} has only {} bars; need at least 2",
+                "scenario {} has no bars; nothing to backtest",
                 scenario.id,
-                bars.len(),
             );
         }
 
         // Used by RunTick to report bar-clock progress. Cadence can make
-        // actual decisions sparser, but every decision still needs a following
-        // bar to fill against, so the final bar is reserved as the fill source.
-        let total_decision_bars = bars.len().saturating_sub(1).max(1) as f64;
+        // actual decisions sparser; the final bar produces a decision too
+        // (it fills against its own close instead of the absent T+1 open —
+        // see the `next_bar_open` fallback in the loop below).
+        let total_decision_bars = bars.len().max(1) as f64;
 
         // Per-decision rolling-history window. Warmup bars (from
         // `eval::bars::load_warmup_bars`) are concatenated in front of the
@@ -367,10 +373,13 @@ impl BacktestExecutor {
             if (bar.timestamp.timestamp() / 60) % cadence_min != 0 {
                 continue;
             }
-            // Need a next bar to fill against.
-            let Some(next_bar) = bars.get(i + 1) else {
-                break;
-            };
+            // A decision at bar T normally fills at T+1's open. For the
+            // final bar of the window there is no T+1, so the fill source
+            // falls back to the same bar's close. Without this fallback
+            // an N-bar scenario would silently drop the last decision and
+            // produce N-1 rows in `decisions` (operator-reported off-by-
+            // one — `qa-decisions-30day-count`).
+            let next_bar_open = bars.get(i + 1).map(|b| b.open).unwrap_or(bar.close);
 
             // RunTick fires before the per-bar pipeline call so dashboards
             // can advance progress bars even when an LLM round-trip is slow.
@@ -407,7 +416,7 @@ impl BacktestExecutor {
                         "close": bar.close,
                         "volume": bar.volume,
                     },
-                    "next_bar_open": next_bar.open,
+                    "next_bar_open": next_bar_open,
                     "reference_price_usd": bar.close,
                     "reference_price_source": "eval_bar.close",
                     "bar_history": bar_history,
@@ -459,7 +468,7 @@ impl BacktestExecutor {
                 pos: pre_fill_position,
                 entry: entry_price,
                 action: &parsed.action,
-                next_open: next_bar.open,
+                next_open: next_bar_open,
                 slip_bps,
                 taker_bps,
                 equity,
@@ -496,7 +505,7 @@ impl BacktestExecutor {
             });
 
             // Mark equity to the next bar's open.
-            equity = initial + realized_total + position * (next_bar.open - entry_price);
+            equity = initial + realized_total + position * (next_bar_open - entry_price);
 
             let decision_row = DecisionRow {
                 run_id: run.id.clone(),
@@ -564,7 +573,7 @@ impl BacktestExecutor {
                 }
                 "hold" => Some(MarkerEvent::Hold(HoldMarker {
                     time: t,
-                    price: next_bar.open,
+                    price: next_bar_open,
                     conviction: Some(parsed.conviction),
                     decision_index: decision_idx,
                 })),
