@@ -5,7 +5,7 @@ wave: agent-cicd-phase-1
 worktree: .worktrees/agent-cicd-shadow-run
 branch: task/agent-cicd-shadow-run
 base: origin/main
-status: ready
+status: claimed
 depends_on:
   - agent-cicd-board-schema     # schema must exist
   - agent-cicd-migrate-board    # Project must be populated from markdown
