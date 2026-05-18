@@ -294,17 +294,65 @@ async fn build_dispatch_for_profile(
         .await
         .map_err(|e| DashboardError::Internal(anyhow::anyhow!("spawn_blocking: {e}")))?
         .map_err(|e| DashboardError::from(ApiError::Validation(format!("load config: {e}"))))?;
-    let entry = cfg
-        .providers
-        .iter()
-        .find(|p| p.name == profile.provider)
-        .ok_or_else(|| {
-            DashboardError::from(ApiError::Validation(format!(
-                "agent profile `{}` references provider `{}` which is not configured in Settings → Providers.",
-                profile.id, profile.provider
-            )))
-        })?;
-    dispatch_from_provider(entry).map_err(DashboardError::from)
+
+    if let Some(entry) = cfg.providers.iter().find(|p| p.name == profile.provider) {
+        return dispatch_from_provider(entry).map_err(DashboardError::from);
+    }
+
+    // Same-kind substitution: if the operator named their Anthropic key
+    // something other than "anthropic" (e.g. "anthropic-prod"), we can
+    // still dispatch the seeded profile's Anthropic model id against it
+    // because the wire format matches. Cross-kind substitution does NOT
+    // work — the seeded research/reasoning/risk/fast-trader profiles
+    // (migration 016) carry Anthropic model ids like `claude-sonnet-4-6`
+    // which an OpenAI-compatible endpoint would 404 on. See
+    // qa-review-agent-provider-config contract for the chosen path.
+    let requested_kind = inferred_kind_for_provider_name(&profile.provider);
+    if let Some(kind) = requested_kind {
+        if let Some(entry) = cfg.providers.iter().find(|p| p.kind == kind) {
+            tracing::warn!(
+                profile_id = %profile.id,
+                requested_provider = %profile.provider,
+                substituted_provider = %entry.name,
+                provider_kind = ?kind,
+                "agent profile's named provider not configured; substituting same-kind provider",
+            );
+            return dispatch_from_provider(entry).map_err(DashboardError::from);
+        }
+    }
+
+    // No exact match and no kind-compatible substitute. Return a clearer
+    // skip-with-remediation error so the operator knows what to add.
+    // We deliberately do NOT cross-kind substitute: sending the seeded
+    // profile's Anthropic model id to an OpenAI-compatible endpoint
+    // would fail at the wire layer.
+    let configured = if cfg.providers.is_empty() {
+        "none".to_string()
+    } else {
+        cfg.providers
+            .iter()
+            .map(|p| p.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    Err(DashboardError::from(ApiError::Validation(format!(
+        "review skipped: agent profile `{}` requires provider `{}` which is not configured in Settings → Providers (configured: {}). Add a compatible provider to run this review.",
+        profile.id, profile.provider, configured,
+    ))))
+}
+
+/// Map well-known provider names to their `ProviderKind` so the resolver
+/// can substitute across configured providers of the same kind without
+/// sending a model id to a wire format that can't serve it. Returns
+/// `None` for operator-defined provider names we don't recognize —
+/// callers fall through to the skip-with-error path rather than guessing.
+fn inferred_kind_for_provider_name(name: &str) -> Option<ProviderKind> {
+    match name {
+        "anthropic" => Some(ProviderKind::Anthropic),
+        "openai" | "openai-compat" | "openrouter" => Some(ProviderKind::OpenaiCompat),
+        "local-candle" => Some(ProviderKind::LocalCandle),
+        _ => None,
+    }
 }
 
 fn dispatch_from_provider(entry: &ProviderEntry) -> Result<Arc<dyn LlmDispatch>, ApiError> {
@@ -355,17 +403,22 @@ mod tests {
     use xvision_engine::eval::store::DecisionRow;
 
     async fn fresh_state() -> (AppState, TempDir) {
+        fresh_state_with_providers(
+            "\n[[providers]]\nname = \"anthropic\"\nkind = \"local-candle\"\nbase_url = \"\"\napi_key_env = \"\"\n",
+        )
+        .await
+    }
+
+    /// Build a fresh AppState with the operator-provided `[[providers]]`
+    /// TOML appended (or none, if empty). Lets tests exercise the
+    /// provider-resolution branches in `build_dispatch_for_profile`.
+    async fn fresh_state_with_providers(providers_toml: &str) -> (AppState, TempDir) {
         let tmp = TempDir::new().unwrap();
         let xvn_home = tmp.path().to_path_buf();
         std::fs::create_dir_all(xvn_home.join("config")).unwrap();
-        // Reuse the canonical workspace config and append a local-candle
-        // provider so build_dispatch_for_profile resolves without
-        // needing real API keys.
         let mut cfg = std::fs::read_to_string("../../config/default.toml")
             .expect("read workspace config/default.toml");
-        cfg.push_str(
-            "\n[[providers]]\nname = \"anthropic\"\nkind = \"local-candle\"\nbase_url = \"\"\napi_key_env = \"\"\n",
-        );
+        cfg.push_str(providers_toml);
         std::fs::write(xvn_home.join("config/default.toml"), cfg).unwrap();
         let state = AppState::new(xvn_home).await.expect("AppState::new");
         (state, tmp)
@@ -629,5 +682,127 @@ mod tests {
         let t0 = items[0]["created_at"].as_str().unwrap();
         let t1 = items[1]["created_at"].as_str().unwrap();
         assert!(t0 >= t1, "newest first ({t0} vs {t1})");
+    }
+
+    // --- qa-review-agent-provider-config regression coverage ---
+
+    /// Same-kind substitution: an Anthropic provider named anything
+    /// OTHER than "anthropic" (e.g. an operator's `anthropic-prod`
+    /// key) resolves the seeded `anthropic`-pinned profile because
+    /// the wire format and model ids match across providers of the
+    /// same `ProviderKind`. We use a stub API key to get past
+    /// `dispatch_from_provider`'s api-key gate; the actual provider
+    /// HTTP call would then fail authentication, but that's downstream
+    /// of the substitution path we're asserting on.
+    #[tokio::test]
+    async fn post_review_substitutes_same_kind_provider_with_different_name() {
+        // SAFETY: env var mutation is process-global; this key is
+        // namespaced and other tests in this file don't read it.
+        std::env::set_var(
+            "QA_REVIEW_SUBSTITUTE_TEST_KEY",
+            "fake-key-for-substitution-test",
+        );
+        let (state, _tmp) = fresh_state_with_providers(
+            "\n[[providers]]\nname = \"anthropic-prod\"\nkind = \"anthropic\"\nbase_url = \"https://api.anthropic.com\"\napi_key_env = \"QA_REVIEW_SUBSTITUTE_TEST_KEY\"\n",
+        )
+        .await;
+        let server =
+            TestServer::new(crate::server::build_router(state.clone())).expect("TestServer");
+        let run_id = seed_completed_run(&state.pool).await;
+
+        let resp = server
+            .post(&format!("/api/eval/runs/{run_id}/review"))
+            .json(&serde_json::json!({"agent_profile_id": "reasoning-agent"}))
+            .await;
+        let body_text = resp.text();
+        // The point: the substitution PATH was taken — we did NOT
+        // get the skip-with-remediation Validation error. The
+        // downstream Anthropic call fails auth (fake key), which
+        // surfaces as a persisted Failed review or 5xx, but never as
+        // the "review skipped" Validation copy.
+        assert!(
+            !body_text.contains("review skipped"),
+            "same-kind substitution should not skip; got: {body_text}"
+        );
+    }
+
+    /// Cross-kind substitution is REFUSED. If the only configured
+    /// provider has a different `ProviderKind` than the profile's
+    /// requested provider, the resolver must NOT substitute it —
+    /// dispatching an Anthropic model id to an OpenAI-compatible
+    /// endpoint would 404 at the wire layer. Instead, return a clear
+    /// skip-with-remediation error.
+    #[tokio::test]
+    async fn post_review_does_not_cross_kind_substitute() {
+        let (state, _tmp) = fresh_state_with_providers(
+            "\n[[providers]]\nname = \"openrouter\"\nkind = \"openai-compat\"\nbase_url = \"https://openrouter.ai/api/v1\"\napi_key_env = \"OPENROUTER_KEY\"\n",
+        )
+        .await;
+        let server =
+            TestServer::new(crate::server::build_router(state.clone())).expect("TestServer");
+        let run_id = seed_completed_run(&state.pool).await;
+
+        let resp = server
+            .post(&format!("/api/eval/runs/{run_id}/review"))
+            .json(&serde_json::json!({"agent_profile_id": "reasoning-agent"}))
+            .await;
+        let body_text = resp.text();
+        assert!(
+            body_text.contains("review skipped"),
+            "should refuse cross-kind substitution, got: {body_text}"
+        );
+        assert!(
+            body_text.contains("openrouter"),
+            "skip message should list configured providers, got: {body_text}"
+        );
+        assert!(
+            body_text.contains("anthropic"),
+            "skip message should name the requested provider so operator knows what to add, got: {body_text}"
+        );
+    }
+
+    /// When NO providers are configured, the resolver returns a
+    /// skip-with-remediation error listing `configured: none` rather
+    /// than the older "anthropic not configured" line.
+    #[tokio::test]
+    async fn post_review_returns_clearer_error_when_no_providers() {
+        let (state, _tmp) = fresh_state_with_providers("").await;
+        let server =
+            TestServer::new(crate::server::build_router(state.clone())).expect("TestServer");
+        let run_id = seed_completed_run(&state.pool).await;
+
+        let resp = server
+            .post(&format!("/api/eval/runs/{run_id}/review"))
+            .json(&serde_json::json!({"agent_profile_id": "reasoning-agent"}))
+            .await;
+        let body_text = resp.text();
+        assert!(
+            body_text.contains("review skipped"),
+            "expected skip-with-remediation, got: {body_text}"
+        );
+        assert!(
+            body_text.contains("configured: none"),
+            "should list configured providers (none), got: {body_text}"
+        );
+    }
+
+    /// Unit test for the kind inference helper used to gate same-kind
+    /// substitution. Unknown names return None so callers fall through
+    /// to the skip-with-error path rather than guessing.
+    #[test]
+    fn inferred_kind_for_provider_name_handles_known_and_unknown() {
+        assert_eq!(
+            inferred_kind_for_provider_name("anthropic"),
+            Some(ProviderKind::Anthropic)
+        );
+        assert_eq!(
+            inferred_kind_for_provider_name("openrouter"),
+            Some(ProviderKind::OpenaiCompat)
+        );
+        assert_eq!(
+            inferred_kind_for_provider_name("local-candle"),
+            Some(ProviderKind::LocalCandle)
+        );
+        assert_eq!(inferred_kind_for_provider_name("operator-custom"), None);
     }
 }
