@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/api/client";
 import { agentRunKeys, getAgentRun, openAgentRunStream } from "@/api/agent-runs";
 import type { AgentRunDetail, RunSpan } from "@/api/types-agent-runs";
+import { formatCostUsd, formatCostUsdPrecise } from "@/lib/format";
 import { useTraceDock, type DockHeight } from "@/stores/trace-dock";
 import { FlameGraph } from "./FlameGraph";
 import { SpanInspector } from "./SpanInspector";
@@ -191,7 +192,9 @@ export function TraceDock() {
             <span className="opacity-40">·</span>
             <span>{summary.model_call_count} model</span>
             <span className="opacity-40">·</span>
-            <span>${summary.total_cost_usd.toFixed(4)}</span>
+            <span title={formatCostUsdPrecise(summary.total_cost_usd)}>
+              {formatCostUsd(summary.total_cost_usd)}
+            </span>
             {isLive ? <span className="text-blue-300 ml-2 animate-pulse">● LIVE</span> : null}
           </>
         ) : (

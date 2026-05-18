@@ -1,6 +1,7 @@
 // frontend/web/src/features/agent-runs/FlameGraph.tsx
 import { useMemo } from "react";
 import type { RunSpan } from "@/api/types-agent-runs";
+import { formatCostUsd, formatCostUsdPrecise } from "@/lib/format";
 import { spanColor, withAlpha } from "./span-colors";
 
 type LayoutRow = {
@@ -103,7 +104,12 @@ export function FlameGraph({
         {rows.map((r) => {
           const color = spanColor(r.span.kind);
           const selected = r.span.span_id === selectedSpanId;
-          const cost = (r.span.attributes as { cost_usd?: number }).cost_usd;
+          // Real export-backed model.call spans land on `span.cost` (see
+          // normalisation in api/agent-runs.ts); the legacy `attributes.cost_usd`
+          // path is preserved for mock fixtures and any older event shapes.
+          const cost = r.span.cost ?? (r.span.attributes as { cost_usd?: number }).cost_usd;
+          const costDisplay = cost != null ? ` · ${formatCostUsd(cost)}` : "";
+          const costPrecise = cost != null ? ` (${formatCostUsdPrecise(cost)})` : "";
           const pulseClass = r.span.status === "in_progress" ? "animate-pulse" : "";
           const errorClass = r.span.status === "error" ? "outline outline-1 outline-red-400" : "";
           const selectedClass = selected ? "ring-2 ring-white/80" : "";
@@ -113,7 +119,7 @@ export function FlameGraph({
               type="button"
               data-testid={`flame-bar-${r.span.span_id}`}
               onClick={() => onSelect(r.span.span_id)}
-              title={`${r.span.kind} · ${r.span.name}${cost != null ? ` · $${cost}` : ""}`}
+              title={`${r.span.kind} · ${r.span.name}${costDisplay}${costPrecise}`}
               className={`absolute text-[10px] font-mono leading-[16px] px-1.5 truncate text-left text-white ${selectedClass} ${pulseClass} ${errorClass}`}
               style={{
                 left: `${r.leftPct}%`,
@@ -127,7 +133,7 @@ export function FlameGraph({
               }}
             >
               {r.span.name}
-              {cost != null ? ` · $${cost}` : ""}
+              {costDisplay}
             </button>
           );
         })}

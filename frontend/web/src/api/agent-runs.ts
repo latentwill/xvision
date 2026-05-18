@@ -460,7 +460,7 @@ function openMockStream(
       event: "summary",
       data: {
         ...detail.summary,
-        total_cost_usd: Number(tickCost.toFixed(4)),
+        total_cost_usd: tickCost,
       },
     });
   }, 800);
