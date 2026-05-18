@@ -145,14 +145,17 @@ export function TraceDock() {
         case "tool_call_finished":
         case "tool_call_failed":
         case "tool_call_cancelled":
-          // These carry detail (tokens, cost, output hashes) we don't
-          // reconstruct from the event payload alone; refetch the
-          // canonical detail to keep aggregates honest.
+        case "broker_call_finished":
+          // These carry detail (tokens, cost, output hashes,
+          // broker fill/error) we don't reconstruct from the event
+          // payload alone; refetch the canonical detail to keep
+          // aggregates honest.
           qc.invalidateQueries({ queryKey: key });
           return;
         // Lifecycle / informational arms — no cache side effect.
         case "run_started":
         case "tool_call_started":
+        case "broker_call_started":
         case "assistant_text_delta":
         case "sidecar_error":
         case "checkpoint_written":

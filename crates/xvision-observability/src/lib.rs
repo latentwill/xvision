@@ -38,6 +38,7 @@ pub use export::{
 };
 pub use events::{
     ArtifactWrittenEvent, AssistantTextDeltaEvent, BackpressureDroppedEvent,
+    BrokerCallFinishedEvent, BrokerCallOutcome, BrokerCallStartedEvent, BrokerSide,
     CheckpointWrittenEvent, ModelCallFinishedEvent, RunEvent, RunFinishedEvent,
     RunInterruptedEvent, RunStartedEvent, SidecarErrorEvent, SpanFinishedEvent,
     SpanStartedEvent, SupervisorNoteEvent, ToolCallCancelledEvent,

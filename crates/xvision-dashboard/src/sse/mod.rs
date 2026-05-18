@@ -45,6 +45,8 @@ fn event_name(ev: &RunEvent) -> &'static str {
         RunEvent::ToolCallFinished(_) => "tool_call_finished",
         RunEvent::ToolCallFailed(_) => "tool_call_failed",
         RunEvent::ToolCallCancelled(_) => "tool_call_cancelled",
+        RunEvent::BrokerCallStarted(_) => "broker_call_started",
+        RunEvent::BrokerCallFinished(_) => "broker_call_finished",
         RunEvent::CheckpointWritten(_) => "checkpoint_written",
         RunEvent::AssistantTextDelta(_) => "assistant_text_delta",
         RunEvent::SupervisorNote(_) => "supervisor_note",

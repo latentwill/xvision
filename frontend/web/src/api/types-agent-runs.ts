@@ -36,7 +36,42 @@ export type SpanKind =
   | "sandbox.exec"
   | "supervisor.review"
   | "financial.eval"
-  | "artifact.write";
+  | "artifact.write"
+  | "broker.call";
+
+/**
+ * Trace-dock-visible side of a broker submit. `Close` / `Short` are
+ * derived from the trader's action, not the wire-level Buy/Sell, so
+ * short-sale fills (#14 round-2 intake) show up as `short` instead
+ * of an ambiguous `sell`. Mirrors `xvision_observability::BrokerSide`.
+ */
+export type BrokerSide = "buy" | "sell" | "close" | "short";
+
+/** Terminal state of a broker submit. Mirrors `BrokerCallOutcome`. */
+export type BrokerCallOutcome = "filled" | "rejected" | "cancelled" | "failed";
+
+/**
+ * Detail payload surfaced on a `broker.call` span. The dashboard
+ * normalises the matching `broker_call_started` + `broker_call_finished`
+ * events into this shape so the SpanInspector can render side / qty /
+ * fill / error without joining two events.
+ */
+export type BrokerCallDetail = {
+  side: BrokerSide;
+  symbol: string;
+  qty: number;
+  intended_price: number | null;
+  order_type: string;
+  venue: string;
+  idempotency_key: string | null;
+  outcome: BrokerCallOutcome | null;
+  fill_price: number | null;
+  fill_qty: number | null;
+  fee: number | null;
+  broker_order_id: string | null;
+  error_class: string | null;
+  error_message: string | null;
+};
 
 export type SpanStatus = "ok" | "error" | "in_progress";
 
@@ -82,6 +117,12 @@ export type RunSpan = {
   tokens_in?: number;
   tokens_out?: number;
   cost?: number;
+  /**
+   * Populated on `broker.call` spans (qa-trace-broker-spans). The
+   * SpanInspector renders side / qty / fill status / error from this
+   * payload alongside model.call rows.
+   */
+  broker_call?: BrokerCallDetail;
   streaming?: boolean;
 };
 
@@ -216,6 +257,37 @@ export type StreamToolCallCancelledData = {
   reason?: string | null;
 };
 
+/**
+ * SSE payload for `broker_call_started` / `broker_call_finished`. Mirrors
+ * `xvision_observability::Broker{Started,Finished}Event`. The trace
+ * dock typically invalidates the canonical agent-run detail on these
+ * events rather than reconstructing the broker_call payload from the
+ * deltas — keep parity with the model_call_finished / tool_call_finished
+ * arms.
+ */
+export type StreamBrokerCallStartedData = {
+  span_id: string;
+  run_id: string;
+  side: BrokerSide;
+  symbol: string;
+  qty: number;
+  intended_price: number | null;
+  order_type: string;
+  venue: string;
+  idempotency_key: string | null;
+};
+
+export type StreamBrokerCallFinishedData = {
+  span_id: string;
+  outcome: BrokerCallOutcome;
+  fill_price: number | null;
+  fill_qty: number | null;
+  fee: number | null;
+  broker_order_id: string | null;
+  error_class: string | null;
+  error_message: string | null;
+};
+
 export type StreamAssistantTextDeltaData = {
   span_id: string;
   run_id: string;
@@ -266,6 +338,8 @@ export type AgentRunStreamEvent =
   | { event: "tool_call_finished"; data: StreamToolCallFinishedData }
   | { event: "tool_call_failed"; data: StreamToolCallFailedData }
   | { event: "tool_call_cancelled"; data: StreamToolCallCancelledData }
+  | { event: "broker_call_started"; data: StreamBrokerCallStartedData }
+  | { event: "broker_call_finished"; data: StreamBrokerCallFinishedData }
   | { event: "assistant_text_delta"; data: StreamAssistantTextDeltaData }
   | { event: "sidecar_error"; data: StreamSidecarErrorData }
   | { event: "checkpoint_written"; data: StreamCheckpointWrittenData }
