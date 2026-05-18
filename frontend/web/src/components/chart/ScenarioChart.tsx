@@ -13,6 +13,7 @@ import { chartTheme, normalizeChartTheme } from "./chart-theme";
 import { ChartContainer, type RangePreset } from "./ChartContainer";
 import { CacheStatusBadge } from "@/components/scenario/CacheStatusBadge";
 import { useChartLayers } from "./use-chart-layers";
+import { fitChartContent, applyVerticalAutoScale } from "./chart-fit";
 import { ChartLayersPanel } from "./ChartLayersPanel";
 
 const REGIME_BG: Record<string, string> = {
@@ -211,7 +212,7 @@ function applyRange(
 ) {
   if (len <= 0) return;
   if (range === "All") {
-    chart.timeScale().fitContent();
+    fitChartContent(chart, ["right", "volume"]);
     return;
   }
   const barSeconds = granularitySeconds(granularity) ?? 60 * 60;
@@ -225,6 +226,8 @@ function applyRange(
     from: Math.max(0, len - count),
     to: len + 2,
   });
+  // F-5: re-fit the vertical price axis to the newly selected window.
+  applyVerticalAutoScale(chart, ["right", "volume"]);
 }
 
 function granularitySeconds(granularity: string): number | null {

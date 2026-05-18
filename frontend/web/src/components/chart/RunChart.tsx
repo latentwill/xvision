@@ -15,6 +15,7 @@ import { chartTheme, normalizeChartTheme } from "./chart-theme";
 import { useChartLayers } from "./use-chart-layers";
 import { ChartLayersPanel } from "./ChartLayersPanel";
 import { type LayerKey } from "./chart-layers";
+import { applyVerticalAutoScale, fitChartContent } from "./chart-fit";
 import { MarkerSidePanel } from "./MarkerSidePanel";
 
 type ActiveMarker = { kind: "trade" | "veto" | "hold"; decision_index: number };
@@ -395,7 +396,13 @@ export function RunChart({
         lastSynchronizedRangeRef.current = r;
         all.forEach((other) => {
           if (other !== c) other.timeScale().setVisibleLogicalRange(r);
+          // F-5: re-fit the vertical price axis on every visible-range
+          // change so zooming into a 10-bar slice rescales the price
+          // scale to those 10 bars instead of leaving it on the prior
+          // range.
+          applyVerticalAutoScale(other);
         });
+        applyVerticalAutoScale(c);
       }),
     );
 
@@ -410,8 +417,11 @@ export function RunChart({
     const frozenLogicalRange = frozenLogicalRangeRef.current;
     if (!follow && frozenLogicalRange) {
       applyLogicalRange(all, frozenLogicalRange);
+      // F-5: a restored frozen range still needs the price axis to
+      // refit to that window's data.
+      all.forEach((c) => applyVerticalAutoScale(c));
     } else if (!follow) {
-      all.forEach((c) => c.timeScale().fitContent());
+      all.forEach((c) => fitChartContent(c));
     }
 
     return () => {
