@@ -5,7 +5,7 @@ wave: harness-observability-audit
 worktree: .worktrees/harness-typed-mechanical-params
 branch: task/harness-typed-mechanical-params
 base: origin/main
-status: claimed
+status: pr-open
 depends_on: []
 blocks: []
 stacking: none

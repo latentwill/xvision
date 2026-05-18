@@ -2,7 +2,7 @@
 track: harness-typed-mechanical-params
 worktree: .worktrees/harness-typed-mechanical-params
 branch: task/harness-typed-mechanical-params
-phase: in-progress
+phase: pr-open
 last_updated: 2026-05-18T00:00:00Z
 owner: claude-f6
 ---

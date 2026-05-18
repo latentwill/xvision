@@ -26,7 +26,7 @@ review on the conductor branch. F-7 is gated on F-4 merging. F-6 is
 the last unclaimed leaf in the wave; it is parallel-safe with the
 F-4/F-5 PRs (disjoint files).
 
-- [harness-typed-mechanical-params](contracts/harness-typed-mechanical-params.md) - integration - claimed - F-6 — typed `MechanicalParams` enum keyed on `manifest.template` (one variant per canonical template + `Custom(Value)` fallback). Adds `#[serde(deny_unknown_fields)]` to `InternBriefing`, `TraderDecision`, `RiskDecision`, `RiskConfig`/`Limits`/`Stops`, `RiskCaps`. Single pre-persist validate seam in `StrategyStore::save`. No migration; wire format unchanged. Parallel-safe with F-4 PR #297 and F-5 PR #298.
+- [harness-typed-mechanical-params](contracts/harness-typed-mechanical-params.md) - integration - pr-open #302 - F-6 — typed `MechanicalParams` enum keyed on `manifest.template` (one variant per canonical template + `Custom(Value)` fallback). Adds `#[serde(deny_unknown_fields)]` to `InternBriefing`, `TraderDecision`, `RiskDecision`, `RiskConfig`/`Limits`/`Stops`, `RiskCaps`. Single pre-persist validate seam in `StrategyStore::save`. No migration; wire format unchanged. Parallel-safe with F-4 (merged) and F-5 PR #298.
 
 ### Agent CI/CD Phase 1 (2026-05-18)
 
