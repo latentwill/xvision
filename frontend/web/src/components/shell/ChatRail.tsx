@@ -26,6 +26,7 @@ import { agentKeys } from "@/api/agents";
 import { evalKeys } from "@/api/eval";
 
 import { ChatComposer } from "@/components/chat/ChatComposer";
+import { ChatHistoryItem } from "@/components/chat/ChatHistoryItem";
 import { ChatThread } from "@/components/chat/ChatThread";
 import { QuickRail } from "@/components/chat/QuickRail";
 import type {
@@ -295,27 +296,41 @@ export function ChatRail({
         <div className="px-4 py-2 border-b border-border-soft bg-surface-2/20">
           <div className="text-[11px] text-text-3 mb-1">Conversation history</div>
           <div className="space-y-1">
-            {recentScopeSessions.map((s) => (
-              <button
-                key={s.id}
-                onClick={async () => {
-                  try {
-                    setSessionId(s.id);
-                    const h = await loadSessionHistory(s.id);
-                    setBubbles(historyToBubbles(h));
-                  } catch (e) {
-                    setError(formatErr(e));
+            {recentScopeSessions.map((s) => {
+              const isActive = s.id === sessionId;
+              // First-turn snippets only available for the active
+              // session (we have its bubbles); for other rows the
+              // hook falls back to cache/localStorage or the date.
+              const activeFirstUser = isActive ? firstUserText(bubbles) : undefined;
+              const activeFirstAssistant = isActive
+                ? firstAssistantText(bubbles)
+                : undefined;
+              return (
+                <ChatHistoryItem
+                  key={s.id}
+                  sessionId={s.id}
+                  lastActivityAt={s.last_activity_at}
+                  isActive={isActive}
+                  firstUser={activeFirstUser}
+                  firstAssistant={activeFirstAssistant}
+                  providerName={providerName}
+                  modelId={modelId}
+                  providersConfigured={
+                    (providers.data?.providers ?? []).length > 0
                   }
-                }}
-                className={`w-full text-left rounded px-2 py-1 text-[11px] border ${
-                  s.id === sessionId
-                    ? "border-gold/40 text-text bg-gold/5"
-                    : "border-border-soft text-text-2 hover:text-text"
-                }`}
-              >
-                {new Date(s.last_activity_at).toLocaleString()}
-              </button>
-            ))}
+                  ready={isActive && !isStreaming && !!activeFirstAssistant}
+                  onClick={async () => {
+                    try {
+                      setSessionId(s.id);
+                      const h = await loadSessionHistory(s.id);
+                      setBubbles(historyToBubbles(h));
+                    } catch (e) {
+                      setError(formatErr(e));
+                    }
+                  }}
+                />
+              );
+            })}
           </div>
         </div>
       )}
@@ -419,6 +434,26 @@ function RailModelBar({
  * `crates/xvision-dashboard/src/wizard_loop.rs:446-541`. New tools that
  * mutate must be added here in the same PR they ship.
  */
+/** First user-turn text in a bubble list, or undefined if none yet. */
+function firstUserText(bubbles: Bubble[]): string | undefined {
+  for (const b of bubbles) if (b.role === "user") return b.text;
+  return undefined;
+}
+
+/** First assistant-turn text in a bubble list, or undefined if none yet. */
+function firstAssistantText(bubbles: Bubble[]): string | undefined {
+  for (const b of bubbles) {
+    if (b.role === "assistant") {
+      const parts = b.blocks
+        .map((blk) => (blk.kind === "text" ? blk.text : ""))
+        .filter(Boolean);
+      const joined = parts.join(" ").trim();
+      if (joined) return joined;
+    }
+  }
+  return undefined;
+}
+
 export function invalidateForToolResult(qc: QueryClient, ev: WizardEvent): void {
   if (ev.type !== "tool_result") return;
   // Failed tool results don't mutate; nothing to invalidate. Require a
