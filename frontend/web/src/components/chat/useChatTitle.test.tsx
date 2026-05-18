@@ -1,3 +1,4 @@
+import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 
@@ -96,6 +97,16 @@ describe("summarizeChatTitle", () => {
     expect(chatRail.createSession).toHaveBeenCalledOnce();
     expect(chatRail.streamChat).toHaveBeenCalledOnce();
     expect(chatRail.deleteSession).toHaveBeenCalledWith("throwaway");
+    // PR #280 review: the throwaway session must use a unique
+    // `selection` scope tagged so it can't be returned by
+    // `resolve(operator-scope)` or grouped under any operator's
+    // history pane.
+    const scopeArg = vi.mocked(chatRail.createSession).mock.calls[0]?.[0];
+    expect(scopeArg).toMatchObject({ scope: "selection" });
+    if (scopeArg && scopeArg.scope === "selection") {
+      expect(scopeArg.items[0]).toBe("__xvn-chat-title-helper");
+      expect(scopeArg.items[1]).toMatch(/.+/); // unique token present
+    }
   });
 
   test("throws on empty body", async () => {
@@ -139,6 +150,31 @@ describe("useChatTitle", () => {
     await new Promise((r) => setTimeout(r, 10));
     expect(screen.getByTestId("title")).toHaveTextContent("(no title)");
     expect(chatRail.streamChat).not.toHaveBeenCalled();
+  });
+
+  test("survives React StrictMode double-mount and still resolves the title", async () => {
+    // Regression for PR #280 review: the old `inflight` Set guard made
+    // the second StrictMode effect short-circuit while the first
+    // effect's abort had already cancelled the only run, leaving the
+    // hook stuck without a title. The shared-promise pattern keeps
+    // the original promise alive across the double-mount.
+    render(
+      <StrictMode>
+        <Harness
+          sessionId="s_strict"
+          firstUser="hi"
+          firstAssistant="hello"
+        />
+      </StrictMode>,
+    );
+    // Let StrictMode flush both effects + the awaited summarize.
+    await waitFor(() =>
+      expect(screen.getByTestId("title")).toHaveTextContent(
+        "Strategy review of Q2 momentum signals",
+      ),
+    );
+    // Exactly one underlying summarize, not one-per-effect.
+    expect(chatRail.streamChat).toHaveBeenCalledOnce();
   });
 
   test("fires summarize exactly once per session even across remounts", async () => {

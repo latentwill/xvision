@@ -7,8 +7,14 @@ import { createSession, deleteSession, streamChat } from "@/api/chat_rail";
 // have a server-side title field (see contract acceptance — backend
 // persistence is a queue follow-up).
 const TITLE_STORAGE_PREFIX = "xvn.chat-history.title.";
+const TITLE_HELPER_SCOPE_TAG = "__xvn-chat-title-helper";
 const titleCache = new Map<string, string>();
-const inflight = new Set<string>();
+// Shared in-flight promises so React StrictMode double-invoke does not
+// abort the only run and leave the second effect short-circuited by an
+// `inflight` guard with no retry pending. Each effect observer just
+// subscribes to the shared promise and skips its own setState on
+// cleanup (PR #280 review).
+const inflightPromises = new Map<string, Promise<string>>();
 const failed = new Set<string>();
 
 function storageKey(sessionId: string): string {
@@ -68,7 +74,21 @@ export async function summarizeChatTitle({
   modelId?: string;
   signal?: AbortSignal;
 }): Promise<string> {
-  const fresh = await createSession({ scope: "workspace" });
+  // Use a unique `selection` scope tagged `__xvn-chat-title-helper` so
+  // the throwaway session can NEVER be returned by `resolve(operator-
+  // scope)` (`resolve` matches by exact context_scope_json) and can
+  // never land in the operator-visible history pane (the rail filters
+  // sessions by scopeKey match, which is unique-per-call here). The
+  // best-effort delete in `finally` still cleans up the row after the
+  // model call returns. PR #280 review.
+  const helperToken =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const fresh = await createSession({
+    scope: "selection",
+    items: [TITLE_HELPER_SCOPE_TAG, helperToken],
+  });
   try {
     let body = "";
     for await (const ev of streamChat(
@@ -138,40 +158,54 @@ export function useChatTitle({
       );
       return;
     }
-    if (inflight.has(sessionId) || failed.has(sessionId)) return;
+    if (failed.has(sessionId)) return;
 
-    inflight.add(sessionId);
     let cancelled = false;
-    const ctrl = new AbortController();
-
-    (async () => {
-      try {
-        const t = await summarizeChatTitle({
-          firstUser,
-          firstAssistant,
-          providerName,
-          modelId,
-          signal: ctrl.signal,
+    // Share a single in-flight promise across remounts so React
+    // StrictMode's deliberate double-invoke can't abort the only
+    // request and leave the second effect short-circuited by an
+    // `inflight` guard with no retry. The promise outlives every
+    // effect instance; effects only subscribe + skip setState on
+    // cleanup.
+    let promise = inflightPromises.get(sessionId);
+    if (!promise) {
+      promise = summarizeChatTitle({
+        firstUser,
+        firstAssistant,
+        providerName,
+        modelId,
+      })
+        .then((t) => {
+          titleCache.set(sessionId, t);
+          writePersisted(sessionId, t);
+          return t;
+        })
+        .catch((e) => {
+          failed.add(sessionId);
+          console.warn(
+            "[chat-title] summarize failed; falling back to date label",
+            e,
+          );
+          // Re-throw so subscribers also fall through their catch.
+          throw e;
+        })
+        .finally(() => {
+          inflightPromises.delete(sessionId);
         });
+      inflightPromises.set(sessionId, promise);
+    }
+
+    promise
+      .then((t) => {
         if (cancelled) return;
-        titleCache.set(sessionId, t);
-        writePersisted(sessionId, t);
         setTitle(t);
-      } catch (e) {
-        if (cancelled) return;
-        failed.add(sessionId);
-        console.warn(
-          "[chat-title] summarize failed; falling back to date label",
-          e,
-        );
-      } finally {
-        inflight.delete(sessionId);
-      }
-    })();
+      })
+      .catch(() => {
+        // Already logged inside the shared promise.
+      });
 
     return () => {
       cancelled = true;
-      ctrl.abort();
     };
   }, [
     sessionId,
@@ -190,6 +224,6 @@ export function useChatTitle({
 /** Test-only: reset module-level guards between tests. */
 export function __resetChatTitleForTests() {
   titleCache.clear();
-  inflight.clear();
+  inflightPromises.clear();
   failed.clear();
 }
