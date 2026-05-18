@@ -51,9 +51,7 @@ violation unless the contract is updated first.
 | `crates/xvision-observability/src/redactor.rs` | `qa-retention-prompt-storage-bug` | qa-2026-05-18 |
 | `crates/xvision-observability/src/sqlite.rs` | `qa-retention-prompt-storage-bug` | qa-2026-05-18 |
 | `crates/xvision-observability/src/export.rs` | `agent-run-observability-blob-fetch-route`, `qa-retention-prompt-storage-bug` | agent-run-observability-followups / qa-2026-05-18 |
-| `crates/xvision-engine/src/agents/templates.rs` | `qa-review-agent-provider-config` | qa-2026-05-18 |
-| `crates/xvision-engine/src/review/**` | `qa-review-agent-provider-config` | qa-2026-05-18 |
-| `crates/xvision-engine/src/llm/registry.rs` | `qa-review-agent-provider-config` | qa-2026-05-18 |
+| `crates/xvision-dashboard/src/routes/eval/review.rs` | `qa-review-agent-provider-config` | qa-2026-05-18 |
 | `crates/xvision-engine/src/eval/dispatcher.rs` | `qa-decisions-30day-count` | qa-2026-05-18 |
 | `crates/xvision-engine/src/eval/executor/backtest.rs` | `qa-decisions-30day-count` | qa-2026-05-18 |
 | `crates/xvision-engine/src/eval/executor/mod.rs` | `qa-decisions-30day-count`, `qa-trace-broker-spans`, `qa-decisions-position-pnl` | qa-2026-05-18 |

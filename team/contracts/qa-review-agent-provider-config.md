@@ -10,22 +10,22 @@ depends_on: []
 blocks: []
 stacking: none
 allowed_paths:
-  - crates/xvision-engine/src/agents/templates.rs
-  - crates/xvision-engine/src/review/**
-  - crates/xvision-engine/src/llm/registry.rs
-  - crates/xvision-engine/tests/review_provider_fallback.rs
+  - crates/xvision-dashboard/src/routes/eval/review.rs
 forbidden_paths:
   - crates/xvision-engine/migrations/**
+  - crates/xvision-engine/src/agents/**
+  - crates/xvision-engine/src/eval/review/**
   - frontend/web/**
   - crates/xvision-execution/**
 interfaces_used:
-  - LLM provider registry (Settings → Providers)
-  - Agent template registry (research-agent, review-agent profiles)
+  - config::ProviderEntry / ProviderKind (xvision-core)
+  - AgentProfile (xvision-engine::eval::review)
+  - build_dispatch_for_profile (xvision-dashboard::routes::eval::review)
 parallel_safe: true
 parallel_conflicts: []
 verification:
-  - cargo test -p xvision-engine
-  - cargo clippy -p xvision-engine -- -D warnings
+  - cargo test -p xvision-dashboard
+  - cargo clippy -p xvision-dashboard -- -D warnings
 acceptance:
   - An eval run that triggers the review pass on a dashboard with NO
     Anthropic provider configured no longer fails with
@@ -40,14 +40,17 @@ acceptance:
         produces no review output. The eval run completes successfully.
   - The chosen fallback is documented in the contract Notes section
     before the PR opens, and reflected in `team/status/qa-review-agent-provider-config.md`.
-  - Regression test in `crates/xvision-engine/tests/review_provider_fallback.rs`
-    asserts: (1) review pass succeeds when Anthropic is unconfigured
-    if any other provider has a model; (2) review pass degrades to
-    warn-and-skip when no providers are configured; (3) review pass
-    works normally when Anthropic IS configured (no regression).
-  - The warning surfaces in the trace dock's supervisor-notes panel
-    (uses the existing `event.supervisor_note` / equivalent variant on
-    the agent-run-observability bus — no new event variants).
+  - Regression tests added inline in `crates/xvision-dashboard/src/routes/eval/review.rs`
+    (existing `#[cfg(test)] mod tests` block) assert: (1) review pass
+    succeeds when the profile's named provider is unconfigured but
+    another provider is configured (provider substitution); (2) review
+    pass returns a clearer error than "anthropic not configured" when
+    no providers are configured at all; (3) review pass works normally
+    when the named provider IS configured (no regression — the
+    existing `local-candle` provider test path covers this).
+  - Substitution emits a `tracing::warn!` naming the requested provider
+    and the chosen fallback so the operator can see what happened in
+    server logs. No new agent-run-observability event variants.
 ---
 
 # Scope
@@ -95,9 +98,25 @@ git worktree add .worktrees/qa-review-agent-provider-config \
 
 # Notes
 
-Worker must record the chosen fallback path (provider-aware default vs.
-warn-and-skip) here before opening the PR. Operator (Ed) leans
-provider-aware default if there's any sane provider to pick — defer to
-worker judgment based on what the registry exposes.
+**Path correction (2026-05-18):** initial contract pointed at
+`crates/xvision-engine/src/review/**`, but the error originates in
+`crates/xvision-dashboard/src/routes/eval/review.rs::build_dispatch_for_profile`
+where the provider lookup happens. The agent_profiles table is owned
+by the engine but profile→dispatch resolution is dashboard-side.
+allowed_paths corrected.
+
+**Chosen fallback:** provider-aware default. When `profile.provider`
+isn't found in `cfg.providers` but at least one other provider is
+configured, log a `tracing::warn!` naming the requested vs chosen
+provider and proceed with the first configured provider. When
+`cfg.providers` is empty, return a clearer error
+("no LLM provider configured in Settings → Providers") instead of
+naming a specific provider that the operator may not even know is
+referenced.
+
+Rationale: operator (Ed) leans toward "let the review run if at all
+possible" per memory `feedback_alpha_root_cause`-adjacent posture
+(don't silently skip operator-triggered work). Substitution is a
+visible warn, not a silent swap.
 
 Append checkpoints / PR links below.
