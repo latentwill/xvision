@@ -5,7 +5,7 @@ wave: qa-operator-2026-05-18-r3
 worktree: .worktrees/wizard-strategy-template-optional
 branch: task/wizard-strategy-template-optional
 base: origin/main
-status: ready
+status: pr-open
 depends_on: []
 blocks: []
 stacking: none
