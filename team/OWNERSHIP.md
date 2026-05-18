@@ -39,12 +39,45 @@ violation unless the contract is updated first.
 | `frontend/web/src/features/agent-runs/AgentRunRailTree.test.tsx` | `trace-fullscreen-redesign` | agent-run-observability-followups |
 | `frontend/web/src/routes/agent-runs-detail.tsx` | `trace-fullscreen-redesign` | agent-run-observability-followups |
 | `frontend/web/src/routes/agent-runs-detail.test.tsx` | `trace-fullscreen-redesign` | agent-run-observability-followups |
-| `frontend/web/src/routes/eval-runs-detail.tsx` | `eval-inspector-header-polish` | agent-run-observability-followups |
-| `frontend/web/src/routes/eval-runs-detail-mobile.tsx` | `eval-inspector-header-polish` | agent-run-observability-followups |
-| `frontend/web/src/routes/eval-runs.tsx` | `eval-inspector-header-polish` | agent-run-observability-followups |
-| `frontend/web/src/routes/eval-runs-detail.test.tsx` | `eval-inspector-header-polish` | agent-run-observability-followups |
-| `frontend/web/src/routes/eval-runs-detail-mobile.test.tsx` | `eval-inspector-header-polish` | agent-run-observability-followups |
-| `frontend/web/src/routes/eval-runs.test.tsx` | `eval-inspector-header-polish` | agent-run-observability-followups |
+| `frontend/web/src/routes/eval-runs-detail.tsx` | `eval-inspector-header-polish`, `qa-eval-action-lifecycle` (stacked) | agent-run-observability-followups / qa-2026-05-18 |
+| `frontend/web/src/routes/eval-runs-detail-mobile.tsx` | `eval-inspector-header-polish`, `qa-eval-action-lifecycle` (stacked) | agent-run-observability-followups / qa-2026-05-18 |
+| `frontend/web/src/routes/eval-runs.tsx` | `eval-inspector-header-polish`, `qa-eval-action-lifecycle` (stacked) | agent-run-observability-followups / qa-2026-05-18 |
+| `frontend/web/src/routes/eval-runs-detail.test.tsx` | `eval-inspector-header-polish`, `qa-eval-action-lifecycle` (stacked) | agent-run-observability-followups / qa-2026-05-18 |
+| `frontend/web/src/routes/eval-runs-detail-mobile.test.tsx` | `eval-inspector-header-polish`, `qa-eval-action-lifecycle` (stacked) | agent-run-observability-followups / qa-2026-05-18 |
+| `frontend/web/src/routes/eval-runs.test.tsx` | `eval-inspector-header-polish`, `qa-eval-action-lifecycle` (stacked) | agent-run-observability-followups / qa-2026-05-18 |
+| `frontend/web/src/features/eval-runs/**` | `qa-eval-action-lifecycle` | qa-2026-05-18 |
+| `frontend/web/src/stores/eval-capsule.ts` | `qa-eval-action-lifecycle` | qa-2026-05-18 |
+| `frontend/web/src/api/eval-runs.ts` | `qa-eval-action-lifecycle` | qa-2026-05-18 |
+| `crates/xvision-observability/src/redactor.rs` | `qa-retention-prompt-storage-bug` | qa-2026-05-18 |
+| `crates/xvision-observability/src/sqlite.rs` | `qa-retention-prompt-storage-bug` | qa-2026-05-18 |
+| `crates/xvision-observability/src/export.rs` | `agent-run-observability-blob-fetch-route`, `qa-retention-prompt-storage-bug` | agent-run-observability-followups / qa-2026-05-18 |
+| `crates/xvision-engine/src/agents/templates.rs` | `qa-review-agent-provider-config` | qa-2026-05-18 |
+| `crates/xvision-engine/src/review/**` | `qa-review-agent-provider-config` | qa-2026-05-18 |
+| `crates/xvision-engine/src/llm/registry.rs` | `qa-review-agent-provider-config` | qa-2026-05-18 |
+| `crates/xvision-engine/src/eval/dispatcher.rs` | `qa-decisions-30day-count` | qa-2026-05-18 |
+| `crates/xvision-engine/src/eval/executor/backtest.rs` | `qa-decisions-30day-count` | qa-2026-05-18 |
+| `crates/xvision-engine/src/eval/executor/mod.rs` | `qa-decisions-30day-count`, `qa-trace-broker-spans`, `qa-decisions-position-pnl` | qa-2026-05-18 |
+| `crates/xvision-engine/src/data/**` | `qa-decisions-30day-count` | qa-2026-05-18 |
+| `crates/xvision-observability/src/events.rs` | `qa-trace-broker-spans` | qa-2026-05-18 |
+| `crates/xvision-execution/src/broker_surface.rs` | `alpaca-paper-crypto-submit`, `qa-trace-broker-spans` (stacked) | post-q15 / qa-2026-05-18 |
+| `crates/xvision-execution/src/alpaca.rs` | `alpaca-paper-crypto-submit`, `qa-trace-broker-spans` (stacked) | post-q15 / qa-2026-05-18 |
+| `crates/xvision-execution/src/orderly.rs` | `qa-trace-broker-spans` | qa-2026-05-18 |
+| `crates/xvision-engine/src/eval/executor/trader_output.rs` | `alpaca-paper-crypto-submit`, `qa-trace-broker-spans` (stacked), `qa-decisions-position-pnl` (stacked) | post-q15 / qa-2026-05-18 |
+| `crates/xvision-engine/src/eval/portfolio/**` | `qa-decisions-position-pnl` | qa-2026-05-18 |
+| `frontend/web/src/features/decisions/**` | `qa-decisions-position-pnl` | qa-2026-05-18 |
+| `frontend/web/src/routes/decisions.tsx` | `qa-decisions-position-pnl` | qa-2026-05-18 |
+| `frontend/web/src/api/decisions.ts` | `qa-decisions-position-pnl` | qa-2026-05-18 |
+| `frontend/web/src/features/budget/**` | `qa-budget-cost-precision` | qa-2026-05-18 |
+| `frontend/web/src/routes/budget.tsx` | `qa-budget-cost-precision` | qa-2026-05-18 |
+| `frontend/web/src/utils/cost-format.ts` | `qa-budget-cost-precision` | qa-2026-05-18 |
+| `frontend/web/src/features/agent-runs/TraceDock.tsx` | `qa-trace-dock-resizable` | qa-2026-05-18 |
+| `frontend/web/src/features/agent-runs/DockResizeHandle.tsx` | `qa-trace-dock-resizable` | qa-2026-05-18 |
+| `frontend/web/src/stores/trace-dock.ts` | `qa-trace-dock-resizable` | qa-2026-05-18 |
+| `frontend/web/src/features/home/LatestRunChart.tsx` | `qa-ui-polish-round2` | qa-2026-05-18 |
+| `frontend/web/src/features/agents/**` | `qa-ui-polish-round2` | qa-2026-05-18 |
+| `frontend/web/src/routes/agents.tsx` | `qa-ui-polish-round2` | qa-2026-05-18 |
+| `frontend/web/src/features/charts/**` | `qa-ui-polish-round2` | qa-2026-05-18 |
+| `frontend/web/src/features/settings/RetentionCard.tsx` | `qa-ui-polish-round2` | qa-2026-05-18 |
 | `crates/xvision-execution/src/alpaca.rs` | `alpaca-paper-crypto-submit` | post-q15 |
 | `crates/xvision-execution/src/broker_surface.rs` | `alpaca-paper-crypto-submit` | post-q15 |
 | `crates/xvision-execution/tests/broker_surface.rs` | `alpaca-paper-crypto-submit` | post-q15 |
@@ -72,6 +105,14 @@ violation unless the contract is updated first.
 |---|---|---|
 | `crates/xvision-dashboard/src/server.rs` | `agent-run-observability-blob-fetch-route`, `q15-tailscale-serve-api-reachability` | `q15` is deferred. If revived before the blob route merges, it must stack or wait. |
 | `crates/xvision-dashboard/src/state.rs` | `agent-run-observability-blob-fetch-route`, `q15-tailscale-serve-api-reachability` | `q15` is deferred. If revived before the blob route merges, it must stack or wait. |
+| `frontend/web/src/routes/eval-runs-detail.tsx` (+ sibling routes/tests) | `eval-inspector-header-polish`, `qa-eval-action-lifecycle` | qa-eval-action-lifecycle stacks on eval-inspector-header-polish per its `stacking:` declaration. |
+| `frontend/web/src/features/agent-runs/SpanInspector.tsx` | `agent-run-observability-blob-fetch-route`, `qa-ui-polish-round2` (dup-icon nit), `qa-retention-prompt-storage-bug` | Single-writer claim was held by blob-fetch-route. Other tracks must stack or land after it merges; qa-ui-polish-round2 may pull the icon dedupe out into a tiny follow-up if scheduling forces it. |
+| `crates/xvision-execution/src/broker_surface.rs` + `alpaca.rs` | `alpaca-paper-crypto-submit`, `qa-trace-broker-spans` | qa-trace-broker-spans stacks on alpaca-paper-crypto-submit per its `stacking:` declaration. |
+| `crates/xvision-engine/src/eval/executor/trader_output.rs` | `alpaca-paper-crypto-submit`, `qa-trace-broker-spans`, `qa-decisions-position-pnl` | Coordinate disjoint regions via team/queue/; later claimants stack on the earliest. |
+| `crates/xvision-engine/src/eval/executor/mod.rs` | `qa-decisions-30day-count`, `qa-trace-broker-spans`, `qa-decisions-position-pnl`, `alpaca-paper-crypto-submit` | Four tracks each owning disjoint concerns. Coordinate via team/queue/; rebase smaller diff onto larger. |
+| `crates/xvision-observability/src/export.rs` | `agent-run-observability-blob-fetch-route`, `qa-retention-prompt-storage-bug` | Blob route owns export shape; qa-retention may need a projection fix. Stack and coordinate. |
+| `frontend/web/src/routes/index.tsx` | `v2a-driver-tour`, `qa-ui-polish-round2` | qa-ui-polish-round2's LatestRunChart eval-name fix may live in `routes/index.tsx`. Coordinate via team/queue/; the chart change is small and isolated from the tour mount point. |
+| `frontend/web/src/routes/eval-runs-detail.tsx` (+ sibling routes/tests) | `eval-inspector-header-polish`, `qa-eval-action-lifecycle` | qa-eval-action-lifecycle stacks on eval-inspector-header-polish per its `stacking:` declaration. |
 
 ## Out of Scope
 
