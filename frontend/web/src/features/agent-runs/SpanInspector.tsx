@@ -148,8 +148,21 @@ export function SpanInspector({
   const streamingBody = useTraceDock(
     (s) => s.streamingState.bodiesBySpan[span.span_id] ?? "",
   );
+  // The live RESPONSE PullQuote covers two paths:
+  //   - real SSE wire: the span is in `streamingState.activeSpanIds`
+  //   - legacy / fixture wire: the span carries a `streaming: true`
+  //     flag AND there is no `response_partial` body to render (which
+  //     has its own streaming indicator via the PARTIAL PullQuote
+  //     below). Without this fallback, a live model.call span with
+  //     `streaming: true`, no SSE active entry, and no response body
+  //     would render no streaming indicator at all — the dedupe in
+  //     PR #264 dropped the SpanInspector header pill that previously
+  //     covered it.
   const isLiveStreamingModelCall =
-    isLive && span.kind === "model.call" && isActiveSseSpan;
+    isLive &&
+    span.kind === "model.call" &&
+    (isActiveSseSpan ||
+      (span.streaming === true && !span.response_partial));
 
   return (
     <div className="w-full min-w-0 flex flex-col h-full">

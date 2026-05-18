@@ -76,6 +76,30 @@ describe("SpanInspector (with pull-quotes)", () => {
     expect(screen.getAllByText(/STREAMING/)).toHaveLength(1);
   });
 
+  test("legacy span.streaming=true (no SSE entry, no partial body) still shows one STREAMING indicator", () => {
+    // Regression for PR #264 review: the dedupe removed the header
+    // pill that covered the legacy `span.streaming` path. A live
+    // model.call span with `streaming: true` but no
+    // `streamingState.activeSpanIds` entry and no `response_partial`
+    // must still render a single streaming indicator via the body-
+    // level PullQuote (the "RESPONSE" placeholder with the streaming
+    // header pill + animated caret).
+    render(
+      <SpanInspector
+        span={{
+          ...baseSpan,
+          response: undefined,
+          response_partial: undefined,
+          streaming: true,
+        }}
+        isLive
+        onRerun={() => {}}
+        onJumpToDecision={() => {}}
+      />,
+    );
+    expect(screen.getAllByText(/STREAMING/)).toHaveLength(1);
+  });
+
   test("rerun button shows `LOCKED · LIVE` and is disabled when isLive", () => {
     render(
       <SpanInspector
