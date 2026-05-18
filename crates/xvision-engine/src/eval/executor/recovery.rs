@@ -14,9 +14,9 @@
 //!
 //! After F-5: [`FailureClass`] is the typed pre-recovery vocabulary.
 //! Each variant carries a structured payload (e.g.
-//! [`FailureClass::MalformedJson::parse_error`]) the recovery
-//! dispatcher feeds back to the agent. [`RecoveryDispatcher`] owns the
-//! per-variant playbook with a fixed bounded retry count
+//! [`FailureClass::MalformedJson`]'s `parse_error`) the recovery
+//! dispatcher feeds back to the agent. The per-variant playbook lives
+//! in the executor's recovery loop with a fixed bounded retry count
 //! (constants below) and emits a `recovery.attempt` span per transition
 //! via [`crate::agent::observability::ObsEmitter::emit_recovery_attempt`].
 //!

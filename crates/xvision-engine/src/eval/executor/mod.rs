@@ -59,16 +59,22 @@ pub fn classify_run_failure(err: &anyhow::Error) -> &'static str {
     // `[<class>]` that downstream consumers parse is preserved
     // unchanged.
     //
-    // Two cases need a small fixup because [`FailureClass::tag`]
-    // collapses semantically-distinct legacy tags:
+    // Four cases need a small fixup because [`FailureClass::tag`]
+    // either collapses semantically-distinct legacy tags or introduces
+    // a new tag that legacy `&'static str` callers (eval store,
+    // dashboard, CLI grep) don't recognise yet:
     //
     // - `provider_decode` (model-dispatch decode failure) and
     //   `invalid_json` (trader-output decode failure) both map to
     //   `FailureClass::MalformedJson`. Re-discriminate here on the
     //   error-string shape so the legacy tag is unchanged.
-    // - `tool_timeout` is a new tag F-5 introduces; do NOT emit it
-    //   for legacy classifier callers (eval store, dashboard) until
-    //   they learn it. Map to `unclassified` to preserve wire format.
+    // - `tool_timeout`, `context_overflow`, and `empty_data` are new
+    //   tags F-5 introduces. Do NOT emit them through the legacy
+    //   `&'static str` surface — project back to the pre-F-5 tag the
+    //   string would have produced. The typed `FailureClass` remains
+    //   available to the recovery dispatcher for the playbook
+    //   decision; only the persisted `[<class>]` wire prefix is held
+    //   stable.
     let class = recovery::classify(err);
     if matches!(class, recovery::FailureClass::MalformedJson { .. }) {
         let s = format!("{:#}", err).to_lowercase();
@@ -78,6 +84,22 @@ pub fn classify_run_failure(err: &anyhow::Error) -> &'static str {
         return "provider_decode";
     }
     if matches!(class, recovery::FailureClass::ToolTimeout { .. }) {
+        return "unclassified";
+    }
+    if matches!(class, recovery::FailureClass::ContextOverflow { .. }) {
+        // Pre-F-5: `anthropic api error: context_length_exceeded`
+        // matched the `anthropic api error` branch first and emitted
+        // `provider_http_error`. Other shapes (`maximum context
+        // length`, `context window`, `... too long ...`) fell through
+        // to `unclassified`. Re-discriminate on the same needle.
+        let s = format!("{:#}", err).to_lowercase();
+        if s.contains("anthropic api error") || s.contains("openai-compat api error") {
+            return "provider_http_error";
+        }
+        return "unclassified";
+    }
+    if matches!(class, recovery::FailureClass::EmptyData { .. }) {
+        // Pre-F-5: empty-data strings fell through to `unclassified`.
         return "unclassified";
     }
     class.tag()
@@ -247,6 +269,32 @@ mod tests {
     #[test]
     fn classify_unclassified_for_unrecognised_messages() {
         let e = anyhow::anyhow!("something completely unexpected went wrong");
+        assert_eq!(classify_run_failure(&e), "unclassified");
+    }
+
+    #[test]
+    fn classify_context_overflow_preserves_legacy_wire_format() {
+        // Pre-F-5 wire-format pin (regression coverage for the typed
+        // `FailureClass::ContextOverflow` projection added in F-5). The
+        // typed classifier learns `context_overflow` as a new tag; the
+        // legacy `&'static str` surface must keep emitting the tag the
+        // pre-F-5 regex chain produced so the eval store / dashboard /
+        // CLI grep keep parsing the persisted `[<class>]` prefix.
+        let e_anthropic = anyhow::anyhow!(
+            "anthropic api error: context_length_exceeded: max 200000 tokens"
+        );
+        assert_eq!(classify_run_failure(&e_anthropic), "provider_http_error");
+
+        let e_generic = anyhow::anyhow!("model returned: maximum context length exceeded");
+        assert_eq!(classify_run_failure(&e_generic), "unclassified");
+    }
+
+    #[test]
+    fn classify_empty_data_preserves_legacy_unclassified() {
+        // Pre-F-5: empty-data strings fell through to `unclassified`.
+        // F-5 introduces a typed `EmptyData` class but the legacy
+        // `&'static str` surface must hold the wire format stable.
+        let e = anyhow::anyhow!("snapshot recent_bars is empty for run R, cycle 4");
         assert_eq!(classify_run_failure(&e), "unclassified");
     }
 }
