@@ -515,6 +515,53 @@ mod tests {
     }
 
     #[test]
+    fn custom_template_is_registered_for_blank_draft_fallback() {
+        // The wizard's `create_strategy` defaults to the `custom`
+        // template when the agent omits `template`. Pin the
+        // dependency: if `custom` ever gets renamed, the wizard
+        // default needs to follow.
+        let names: Vec<_> = list_templates().into_iter().map(|t| t.name).collect();
+        assert!(
+            names.contains(&"custom".to_string()),
+            "wizard create_strategy fallback assumes the `custom` template \
+             is registered; available: {names:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn create_strategy_from_custom_template_produces_blank_mechanical_params() {
+        // Acceptance: the wizard's no-template path produces a draft
+        // with empty `mechanical_params` and no legacy regime/intern
+        // slots — a clean starting point the `set_*` tools can fill.
+        let (store, _td) = store_in_tmp();
+        let out = create_strategy(
+            &store,
+            CreateStrategyReq {
+                template: "custom".into(),
+                name: "Blank Run".into(),
+                creator: Some("@test".into()),
+            },
+        )
+        .await
+        .expect("custom template create must succeed");
+
+        let draft = get_strategy(&store, &out.id).await.expect("draft must load");
+        assert!(
+            draft.mechanical_params.as_object().is_some_and(|m| m.is_empty()),
+            "blank draft must have empty mechanical_params, got: {:?}",
+            draft.mechanical_params
+        );
+        assert!(
+            draft.regime_slot.is_none(),
+            "blank draft should not carry a regime slot"
+        );
+        assert!(
+            draft.intern_slot.is_none(),
+            "blank draft should not carry an intern slot"
+        );
+    }
+
+    #[test]
     fn create_strategy_request_rejects_unknown_fields() {
         let err = serde_json::from_str::<CreateStrategyReq>(
             r#"{"template":"trend_follower","name":"x","creator":null,"surprise":true}"#,
