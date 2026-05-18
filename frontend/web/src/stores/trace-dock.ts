@@ -47,6 +47,14 @@ export type StreamingState = {
 
 type State = {
   height: DockHeight;
+  /**
+   * User-controlled pixel height for the dock when not collapsed. The drag
+   * handle on the dock's top edge writes this slice; the named `height`
+   * enum is retained for back-compat with callers that still poke a preset
+   * ("peek" / "working" / "full"), but the rendered height comes from
+   * `heightPx`. Persisted under `xvision.trace-dock.height` in localStorage.
+   */
+  heightPx: number;
   selectedSpanId: string | null;
   activeRunId: string | null;
   mode: DockMode;
@@ -57,6 +65,7 @@ type State = {
 
 type Actions = {
   setHeight: (h: DockHeight) => void;
+  setHeightPx: (px: number) => void;
   toggle: () => void;
   minimize: () => void;
   setSelectedSpan: (id: string | null) => void;
@@ -87,8 +96,45 @@ function freshStreaming(): StreamingState {
   };
 }
 
+export const DOCK_HEIGHT_STORAGE_KEY = "xvision.trace-dock.height";
+export const DOCK_MIN_PX = 96;
+export const DEFAULT_DOCK_PX = 480;
+
+export function dockMaxPx(): number {
+  if (typeof window === "undefined") return 800;
+  return Math.floor(window.innerHeight * 0.9);
+}
+
+export function clampDockPx(px: number): number {
+  if (!Number.isFinite(px)) return DEFAULT_DOCK_PX;
+  return Math.max(DOCK_MIN_PX, Math.min(dockMaxPx(), Math.round(px)));
+}
+
+function readPersistedHeightPx(): number {
+  if (typeof window === "undefined") return DEFAULT_DOCK_PX;
+  try {
+    const raw = window.localStorage.getItem(DOCK_HEIGHT_STORAGE_KEY);
+    if (!raw) return DEFAULT_DOCK_PX;
+    const n = Number.parseInt(raw, 10);
+    if (!Number.isFinite(n)) return DEFAULT_DOCK_PX;
+    return clampDockPx(n);
+  } catch {
+    return DEFAULT_DOCK_PX;
+  }
+}
+
+function writePersistedHeightPx(px: number): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(DOCK_HEIGHT_STORAGE_KEY, String(px));
+  } catch {
+    // Best effort only — Safari private-mode etc.
+  }
+}
+
 export const useTraceDock = create<State & Actions>((set, get) => ({
   height: "collapsed",
+  heightPx: readPersistedHeightPx(),
   selectedSpanId: null,
   activeRunId: null,
   mode: "post-hoc",
@@ -99,6 +145,11 @@ export const useTraceDock = create<State & Actions>((set, get) => ({
       height: h,
       lastOpenHeight: h === "collapsed" ? s.lastOpenHeight : h,
     })),
+  setHeightPx: (px) => {
+    const next = clampDockPx(px);
+    writePersistedHeightPx(next);
+    set({ heightPx: next });
+  },
   toggle: () => {
     const s = get();
     set({

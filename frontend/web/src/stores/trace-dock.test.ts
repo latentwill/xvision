@@ -1,6 +1,13 @@
 // frontend/web/src/stores/trace-dock.test.ts
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import { useTraceDock } from "./trace-dock";
+import {
+  DOCK_HEIGHT_STORAGE_KEY,
+  DOCK_MIN_PX,
+  DEFAULT_DOCK_PX,
+  clampDockPx,
+  dockMaxPx,
+  useTraceDock,
+} from "./trace-dock";
 import type {
   AgentRunDetail,
   RunSpan,
@@ -49,6 +56,31 @@ describe("trace-dock store — dock shell", () => {
     expect(useTraceDock.getState().selectedSpanId).toBeNull();
     expect(useTraceDock.getState().activeRunId).toBe("run_other");
     expect(useTraceDock.getState().mode).toBe("post-hoc");
+  });
+});
+
+describe("trace-dock store — heightPx slice", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    useTraceDock.setState({ heightPx: DEFAULT_DOCK_PX });
+  });
+
+  test("clampDockPx enforces min and max bounds", () => {
+    expect(clampDockPx(10)).toBe(DOCK_MIN_PX);
+    expect(clampDockPx(10_000)).toBe(dockMaxPx());
+    expect(clampDockPx(Number.NaN)).toBe(DEFAULT_DOCK_PX);
+  });
+
+  test("setHeightPx clamps and writes localStorage", () => {
+    useTraceDock.getState().setHeightPx(20);
+    expect(useTraceDock.getState().heightPx).toBe(DOCK_MIN_PX);
+    expect(localStorage.getItem(DOCK_HEIGHT_STORAGE_KEY)).toBe(
+      String(DOCK_MIN_PX),
+    );
+
+    useTraceDock.getState().setHeightPx(640);
+    expect(useTraceDock.getState().heightPx).toBe(640);
+    expect(localStorage.getItem(DOCK_HEIGHT_STORAGE_KEY)).toBe("640");
   });
 });
 
