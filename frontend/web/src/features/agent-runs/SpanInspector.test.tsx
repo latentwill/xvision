@@ -503,4 +503,83 @@ describe("SpanInspector (with pull-quotes)", () => {
     const err = await screen.findByTestId("span-inspector-response-ref-error");
     expect(err.textContent).toMatch(/hash_only/);
   });
+
+  test("broker.call span renders side / qty / fill / venue rows (filled)", () => {
+    render(
+      <SpanInspector
+        span={{
+          ...baseSpan,
+          span_id: "span_broker_filled",
+          kind: "broker.call",
+          name: "paper BTC/USD short",
+          prompt: undefined,
+          response: undefined,
+          broker_call: {
+            side: "short",
+            symbol: "BTC/USD",
+            qty: 0.1,
+            intended_price: 60_000,
+            order_type: "market",
+            venue: "paper",
+            idempotency_key: "run_42-0001",
+            outcome: "filled",
+            fill_price: 60_010,
+            fill_qty: 0.1,
+            fee: 0.01,
+            broker_order_id: "ord_42",
+            error_class: null,
+            error_message: null,
+          },
+        }}
+        isLive={false}
+        onRerun={() => {}}
+        onJumpToDecision={() => {}}
+      />,
+    );
+    const detail = screen.getByTestId("span-inspector-broker-call");
+    expect(detail).toHaveTextContent(/short/i);
+    expect(detail).toHaveTextContent("BTC/USD");
+    expect(detail).toHaveTextContent("paper");
+    expect(detail).toHaveTextContent("filled");
+    expect(detail).toHaveTextContent("ord_42");
+    expect(detail.textContent).toMatch(/60010\.0000/);
+  });
+
+  test("broker.call span renders error class + message on failed outcome", () => {
+    render(
+      <SpanInspector
+        span={{
+          ...baseSpan,
+          span_id: "span_broker_failed",
+          kind: "broker.call",
+          name: "paper BTC/USD buy",
+          prompt: undefined,
+          response: undefined,
+          broker_call: {
+            side: "buy",
+            symbol: "BTC/USD",
+            qty: 0.5,
+            intended_price: 60_000,
+            order_type: "market",
+            venue: "alpaca-paper",
+            idempotency_key: "run_99-0007",
+            outcome: "failed",
+            fill_price: null,
+            fill_qty: null,
+            fee: null,
+            broker_order_id: null,
+            error_class: "broker_insufficient_funds",
+            error_message: "alpaca create_order: insufficient buying power",
+          },
+        }}
+        isLive={false}
+        onRerun={() => {}}
+        onJumpToDecision={() => {}}
+      />,
+    );
+    const detail = screen.getByTestId("span-inspector-broker-call");
+    expect(detail).toHaveTextContent("broker_insufficient_funds");
+    expect(detail).toHaveTextContent(/insufficient buying power/);
+    expect(detail).toHaveTextContent("failed");
+  });
 });

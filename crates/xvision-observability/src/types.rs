@@ -86,6 +86,15 @@ pub enum SpanKind {
     IpcNotification,
     #[serde(rename = "skill.invoke")]
     SkillInvoke,
+    /// One broker submit → fill/reject cycle. Emitted by the eval
+    /// executor (paper + real wires) wrapping every `submit_order`
+    /// call. Carries side / qty / price / fill status / error class on
+    /// the matching [`BrokerCallStartedEvent`] /
+    /// [`BrokerCallFinishedEvent`] payload. Added by
+    /// `qa-trace-broker-spans` (round-2 intake item #8/#14): broker
+    /// activity was previously invisible on the trace dock.
+    #[serde(rename = "broker.call")]
+    BrokerCall,
 }
 
 impl SpanKind {
@@ -103,6 +112,7 @@ impl SpanKind {
             Self::ArtifactWrite => "artifact.write",
             Self::IpcNotification => "ipc.notification",
             Self::SkillInvoke => "skill.invoke",
+            Self::BrokerCall => "broker.call",
         }
     }
 }

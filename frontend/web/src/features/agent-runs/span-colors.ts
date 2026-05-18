@@ -6,7 +6,13 @@
 
 import type { SpanKind } from "@/api/types-agent-runs";
 
-export type SpanCategory = "agent" | "model" | "tool" | "supervisor" | "artifact";
+export type SpanCategory =
+  | "agent"
+  | "model"
+  | "tool"
+  | "broker"
+  | "supervisor"
+  | "artifact";
 
 type CategoryStyle = {
   hex: string;     // canonical color used everywhere (bar, dot, badge)
@@ -17,6 +23,10 @@ export const CATEGORY_STYLES: Record<SpanCategory, CategoryStyle> = {
   agent:      { hex: "#a39a85", label: "AGENT" },
   model:      { hex: "#7dd3fc", label: "MODEL" },
   tool:       { hex: "#6ee7b7", label: "TOOL"  },
+  // qa-trace-broker-spans: distinct rose tint for broker.call rows so
+  // Buy / Sell / Close / Short submissions read as a separate column
+  // on the flame graph alongside model.call.
+  broker:     { hex: "#f472b6", label: "BROKR" },
   supervisor: { hex: "#d4a547", label: "SUPER" },
   artifact:   { hex: "#a78bfa", label: "ARTIF" },
 };
@@ -25,6 +35,7 @@ export function categoryOf(kind: SpanKind): SpanCategory {
   if (kind === "agent.run" || kind === "agent.plan") return "agent";
   if (kind === "model.call") return "model";
   if (kind === "tool.call") return "tool";
+  if (kind === "broker.call") return "broker";
   if (kind === "artifact.write") return "artifact";
   // approval.*, sandbox.exec, supervisor.review, financial.eval
   return "supervisor";

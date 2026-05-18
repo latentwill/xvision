@@ -13,9 +13,10 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use xvision_core::market::Ohlcv;
 use xvision_execution::broker_surface::{is_alpaca_crypto, BrokerSurface, OrderRequest, Side};
+use xvision_observability::{BrokerCallOutcome, BrokerSide};
 
 use crate::agent::llm::LlmDispatch;
-use crate::agent::observability::ObsEmitter;
+use crate::agent::observability::{fresh_span_id, ObsEmitter};
 use crate::agent::pipeline::{run_pipeline, PipelineInputs, ResolvedAgentSlot};
 use crate::api::chart::{ChartEquityPoint, LiveDecisionRow, RunChartEvent, RunEventBus};
 use crate::eval::executor::Executor;
@@ -145,6 +146,47 @@ impl PaperExecutor {
 
 fn is_actionable(action: &str) -> bool {
     matches!(action, "long_open" | "short_open")
+}
+
+/// Map the trader's action + the wire-level Buy/Sell `Side` onto the
+/// trace-dock-visible side enum. `short_open` lands as `Short` even
+/// though the underlying order is a `Sell`, so the operator sees the
+/// strategy intent rather than the broker leg. `*_close` collapses
+/// onto `Close` regardless of long-vs-short.
+fn broker_side_for_action(action: &str, side: Side) -> BrokerSide {
+    if action.ends_with("_close") || action == "close" {
+        BrokerSide::Close
+    } else if action == "short_open" {
+        BrokerSide::Short
+    } else {
+        match side {
+            Side::Buy => BrokerSide::Buy,
+            Side::Sell => BrokerSide::Sell,
+        }
+    }
+}
+
+/// Compact classification for broker-call failures surfaced on the
+/// trace. Mirrors the engine-side `classify_run_failure` patterns but
+/// returns a string the dashboard can render verbatim without joining
+/// against the eval-runs failure column.
+fn classify_broker_error(msg: &str) -> &'static str {
+    let lower = msg.to_ascii_lowercase();
+    if lower.contains("not permitted") || lower.contains("forbidden") {
+        "broker_unsupported"
+    } else if lower.contains("insufficient buying power") || lower.contains("insufficient_funds") {
+        "broker_insufficient_funds"
+    } else if lower.contains("not shortable") {
+        "broker_unsupported"
+    } else if lower.contains("bracket") && lower.contains("not supported") {
+        "broker_unsupported"
+    } else if lower.contains("unauthorized") || lower.contains("invalid_api_key") {
+        "broker_auth"
+    } else if lower.contains("timeout") || lower.contains("timed out") {
+        "broker_timeout"
+    } else {
+        "broker_rejected"
+    }
 }
 
 /// Find the trader slot's model id, used to decorate trader-output
@@ -493,6 +535,7 @@ impl PaperExecutor {
             };
 
             if let Some((side, size)) = plan {
+                let idempotency_key = format!("{}-{}", run.id, decision_idx);
                 let req = OrderRequest {
                     asset: asset.clone(),
                     side,
@@ -500,24 +543,94 @@ impl PaperExecutor {
                     reference_price_usd,
                     stop_loss_pct: Some((strategy.risk.stop_loss_atr_multiple as f32).max(0.5)),
                     take_profit_pct: Some(5.0),
-                    idempotency_key: format!("{}-{}", run.id, decision_idx),
+                    idempotency_key: idempotency_key.clone(),
                 };
-                let conf = self
-                    .broker
-                    .submit_order(req)
-                    .await
-                    .with_context(|| {
-                        format!(
-                            "paper eval submit_order failed: run_id={} decision_index={} asset={} action={} side={:?} size={} reference_price_usd={}",
-                            run.id,
-                            decision_idx,
-                            asset,
-                            parsed.action,
-                            side,
-                            size,
-                            reference_price_usd
-                        )
-                    })?;
+
+                // qa-trace-broker-spans: wrap every broker submit in a
+                // `broker.call` span so the operator can audit Buy /
+                // Sell / Close / Short submissions in the trace dock.
+                // The `BrokerSide::{Close, Short}` intents are derived
+                // from the trader's action, not the wire-level
+                // Buy/Sell — short-sale fills (#14 round-2 intake)
+                // surface as side=Short even though the underlying
+                // order is a Sell.
+                let trace_side = broker_side_for_action(&parsed.action, side);
+                let span_id_opt = self.obs_emitter.as_ref().map(|_| fresh_span_id());
+                if let (Some(em), Some(sid)) =
+                    (self.obs_emitter.as_ref(), span_id_opt.as_deref())
+                {
+                    em.emit_broker_call_started(
+                        sid,
+                        None,
+                        trace_side,
+                        asset.clone(),
+                        size as f64,
+                        Some(reference_price_usd as f64),
+                        "market".to_string(),
+                        "paper".to_string(),
+                        Some(idempotency_key.clone()),
+                    )
+                    .await;
+                }
+
+                let submit_res = self.broker.submit_order(req).await.with_context(|| {
+                    format!(
+                        "paper eval submit_order failed: run_id={} decision_index={} asset={} action={} side={:?} size={} reference_price_usd={}",
+                        run.id,
+                        decision_idx,
+                        asset,
+                        parsed.action,
+                        side,
+                        size,
+                        reference_price_usd
+                    )
+                });
+
+                let conf = match submit_res {
+                    Ok(conf) => {
+                        if let (Some(em), Some(sid)) =
+                            (self.obs_emitter.as_ref(), span_id_opt.as_deref())
+                        {
+                            em.emit_broker_call_finished(
+                                sid,
+                                BrokerCallOutcome::Filled,
+                                conf.fill_price.map(|p| p as f64),
+                                Some(conf.fill_size as f64),
+                                conf.fee.map(|f| f as f64),
+                                None,
+                                None,
+                                None,
+                            )
+                            .await;
+                        }
+                        conf
+                    }
+                    Err(e) => {
+                        if let (Some(em), Some(sid)) =
+                            (self.obs_emitter.as_ref(), span_id_opt.as_deref())
+                        {
+                            // Classify what we can from the error
+                            // chain; full classification lives in the
+                            // executor's `classify_run_failure`. The
+                            // span carries a compact class so the
+                            // trace dock can colour-code it.
+                            let msg = format!("{e:#}");
+                            let class = classify_broker_error(&msg);
+                            em.emit_broker_call_finished(
+                                sid,
+                                BrokerCallOutcome::Failed,
+                                None,
+                                None,
+                                None,
+                                None,
+                                Some(class.into()),
+                                Some(msg.clone()),
+                            )
+                            .await;
+                        }
+                        return Err(e);
+                    }
+                };
                 fill_price = conf.fill_price;
                 fill_size = Some(conf.fill_size);
                 fee = conf.fee;
