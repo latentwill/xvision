@@ -290,6 +290,39 @@ describe("EvalRunDetailRoute (mobile layout)", () => {
     expect(meta.textContent ?? "").not.toMatch(/strategy mean-reversion-v3/);
   });
 
+  it("sizes every mobile action-row button at the same min-width floor", async () => {
+    // Failed + terminal so all three actions (Retry + Download + Delete)
+    // render on the same row — the case where uneven widths are most
+    // visible. Each button must carry `min-w-[16ch]` so the operator
+    // sees a uniform row. Regression for the qa-review of PR #265:
+    // the Delete button was missing the min-width class on mobile.
+    vi.mocked(evalApi.getRun).mockResolvedValue(
+      detail({
+        summary: {
+          ...detail().summary,
+          status: "failed",
+          completed_at: "2026-05-13T14:30:00Z",
+          error: "boom",
+        },
+      }),
+    );
+
+    renderRoute();
+
+    const retry = await screen.findByRole("button", {
+      name: /retry eval run 01LIVE/i,
+    });
+    const download = await screen.findByRole("button", {
+      name: /download eval run 01LIVE as json/i,
+    });
+    const del = await screen.findByRole("button", {
+      name: /delete eval run 01LIVE/i,
+    });
+    for (const button of [retry, download, del]) {
+      expect(button.className).toContain("min-w-[16ch]");
+    }
+  });
+
   it("falls back to the desktop layout when matchMedia reports non-phone", async () => {
     stubMatchMedia(false);
     vi.mocked(evalApi.getRun).mockResolvedValue(detail());

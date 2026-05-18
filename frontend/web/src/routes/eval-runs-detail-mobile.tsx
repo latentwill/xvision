@@ -540,7 +540,7 @@ function RunActions({
           aria-label={`Delete eval run ${summary.id}`}
           onClick={onDelete}
           disabled={deleting}
-          className="rounded-sm border border-danger/40 bg-danger/[0.06] px-2.5 py-1.5 text-[12px] text-danger hover:border-danger/70 hover:bg-danger/[0.12] hover:text-text disabled:opacity-50"
+          className="min-w-[16ch] rounded-sm border border-danger/40 bg-danger/[0.06] px-2.5 py-1.5 text-[12px] text-danger hover:border-danger/70 hover:bg-danger/[0.12] hover:text-text disabled:opacity-50"
         >
           {deleting ? "Deleting…" : "Delete"}
         </button>
