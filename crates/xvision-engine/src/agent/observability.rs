@@ -19,12 +19,63 @@
 use std::sync::Arc;
 
 use chrono::Utc;
+use serde::Serialize;
+use sha2::{Digest, Sha256};
 
+use crate::agent::llm::{LlmRequest, Message, ToolDefinition};
 use xvision_observability::{
     AssistantTextDeltaEvent, BrokerCallFinishedEvent, BrokerCallOutcome, BrokerCallStartedEvent,
     BrokerSide, ModelCallFinishedEvent, RunEvent, RunEventBus, RunFinishedEvent, RunStartedEvent,
     RunStatus, SpanFinishedEvent, SpanKind, SpanStartedEvent, SpanStatus,
 };
+
+/// Serializable digest input for `compute_prompt_hash`. Private —
+/// callers should never need to construct it directly. Field order is
+/// load-bearing because `serde_json::to_vec` is order-preserving and
+/// the digest must be stable across identical prompts.
+///
+/// Reasoning / thinking blocks are NOT a `ContentBlock` variant in our
+/// domain — `AnthropicDispatch::complete` strips them at the wire
+/// boundary, so by the time messages reach an `LlmRequest` they're
+/// already reasoning-free. If a future ContentBlock variant for
+/// thinking is added, that work must extend this helper to strip
+/// before hashing.
+#[derive(Serialize)]
+#[serde(deny_unknown_fields)]
+struct PromptDigestInput<'a> {
+    system_prompt: &'a str,
+    messages: &'a [Message],
+    tools: &'a [ToolDefinition],
+}
+
+/// SHA-256 digest of an `LlmRequest`'s prompt content. Returns
+/// `sha256:<64-hex-lowercase>` so the algorithm is explicit and
+/// future-migratable. Two requests with identical (system_prompt,
+/// messages, tools) produce identical hashes regardless of
+/// run_id / span_id / model / sampling params.
+pub fn compute_prompt_hash(req: &LlmRequest) -> String {
+    let input = PromptDigestInput {
+        system_prompt: &req.system_prompt,
+        messages: &req.messages,
+        tools: &req.tools,
+    };
+    // serde_json::to_vec is deterministic for our domain types
+    // (no HashMap; structs serialize in declaration order). If
+    // serialization ever fails it indicates a programming error in
+    // the domain types, not a runtime condition — fall back to a
+    // marker hash so the trace ledger stays non-null.
+    let bytes = serde_json::to_vec(&input)
+        .unwrap_or_else(|_| b"prompt-digest-serialize-error".to_vec());
+    format!("sha256:{}", hex::encode(Sha256::digest(&bytes)))
+}
+
+/// SHA-256 digest of the assistant text accumulation. Mirrors
+/// `compute_prompt_hash`'s `sha256:<hex>` format. Callers pass `None`
+/// in for empty responses (tool-use-only turns); this helper does not
+/// try to detect emptiness itself so the call site retains control.
+pub fn compute_response_hash(text: &str) -> String {
+    format!("sha256:{}", hex::encode(Sha256::digest(text.as_bytes())))
+}
 
 /// Retention policy carried on `ObsEmitter` so producers can gate
 /// payload-bearing events (e.g. `AssistantTextDelta.delta_text`)
@@ -233,6 +284,16 @@ impl ObsEmitter {
     /// Side-detail for a model-call span. Pair with
     /// `emit_model_call_started` (same `span_id`). Tokens / cost
     /// values are `None` when the provider didn't report them.
+    ///
+    /// `prompt_hash` and `response_hash` are caller-computed via
+    /// `compute_prompt_hash` / `compute_response_hash`. The work
+    /// happens at the call site because `LlmRequest` is consumed by
+    /// `dispatch.complete(req)` and the assistant text accumulation
+    /// already exists there — hashing here would require either an
+    /// extra clone or routing the request back through the emitter.
+    /// `response_hash` is `None` for tool-use-only turns (no assistant
+    /// text).
+    #[allow(clippy::too_many_arguments)]
     pub async fn emit_model_call_finished(
         &self,
         span_id: &str,
@@ -241,8 +302,9 @@ impl ObsEmitter {
         input_tokens: Option<u32>,
         output_tokens: Option<u32>,
         cost_usd: Option<f64>,
+        prompt_hash: String,
+        response_hash: Option<String>,
     ) {
-        let prompt_hash = format!("eval:{run}:{span}", run = self.run_id, span = span_id);
         self.bus
             .publish(RunEvent::ModelCallFinished(ModelCallFinishedEvent {
                 span_id: span_id.to_string(),
@@ -252,7 +314,7 @@ impl ObsEmitter {
                 output_token_count: output_tokens.map(i64::from),
                 cost_usd,
                 prompt_hash,
-                response_hash: None,
+                response_hash,
                 prompt_payload_ref: None,
                 response_payload_ref: None,
                 tool_calls_requested: None,
