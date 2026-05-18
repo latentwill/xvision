@@ -688,6 +688,45 @@ describe("EvalRunDetailRoute", () => {
     ).toBeInTheDocument();
   });
 
+  it("clicking Retry on a cancelled run requeues and navigates to the new run id", async () => {
+    const cancelledDetail = detail({
+      summary: {
+        ...detail().summary,
+        status: "cancelled",
+        completed_at: "2026-05-13T14:01:00Z",
+        error: "cancelled by user",
+      },
+    });
+    const newRunDetail = detail({
+      summary: {
+        ...detail().summary,
+        id: "01CANCELRETRY",
+        status: "queued",
+      },
+    });
+    vi.mocked(evalApi.getRun).mockImplementation(async (id: string) =>
+      id === "01CANCELRETRY" ? newRunDetail : cancelledDetail,
+    );
+    vi.mocked(evalApi.retryRun).mockResolvedValue(newRunDetail);
+
+    renderDetail();
+
+    const retry = await screen.findByRole("button", {
+      name: "Retry eval run 01LIVE",
+    });
+    fireEvent.click(retry);
+
+    await waitFor(() => expect(evalApi.retryRun).toHaveBeenCalled());
+    expect(vi.mocked(evalApi.retryRun).mock.calls[0]?.[0]).toBe("01LIVE");
+    await waitFor(() =>
+      expect(
+        vi
+          .mocked(evalApi.getRun)
+          .mock.calls.some(([id]) => id === "01CANCELRETRY"),
+      ).toBe(true),
+    );
+  });
+
   it("Delete button calls the eval DELETE route and navigates back to /eval-runs", async () => {
     vi.mocked(evalApi.getRun).mockResolvedValue(
       detail({

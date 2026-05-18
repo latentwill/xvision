@@ -345,9 +345,9 @@ pub async fn retry(ctx: &ApiContext, source_id: &str) -> ApiResult<RunDetail> {
 
 async fn retry_inner(ctx: &ApiContext, source_id: &str) -> ApiResult<RunDetail> {
     let source = get_inner(ctx, source_id).await?;
-    if source.status != RunStatus::Failed {
+    if !matches!(source.status, RunStatus::Failed | RunStatus::Cancelled) {
         return Err(ApiError::Validation(format!(
-            "run '{source_id}' cannot be retried from status {}; retry requires a 'failed' run",
+            "run '{source_id}' cannot be retried from status {}; retry requires a 'failed' or 'cancelled' run",
             source.status.as_str()
         )));
     }
