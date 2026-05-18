@@ -223,6 +223,10 @@ function extractBrokerCall(
     broker_order_id: asNullableString(raw.broker_order_id) ?? null,
     error_class: asNullableString(raw.error_class) ?? null,
     error_message: asNullableString(raw.error_message) ?? null,
+    severity:
+      raw.severity === "warn" || raw.severity === "error"
+        ? (raw.severity as "warn" | "error")
+        : null,
   };
 }
 

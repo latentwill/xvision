@@ -89,18 +89,71 @@ pub struct SlotInput<'a> {
 }
 
 pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmResponse> {
+    // agent-error-feedback-self-healing: pull the broker feedback
+    // out of `upstream_inputs` BEFORE serialising the JSON dump so
+    // the diagnostic lands in the proper ToolResult carrier instead
+    // of being duplicated as inline JSON in the user prompt.
+    let mut inputs_for_prompt = input.upstream_inputs.clone();
+    let agent_error_feedback = inputs_for_prompt
+        .as_object_mut()
+        .and_then(|o| o.remove("agent_error_feedback"))
+        .filter(|v| !v.is_null());
+
     let initial_user = format!(
         "Inputs:\n{}\n\nFollow the slot's instructions. You may call tools \
          to fetch additional data; emit your final decision as JSON.",
-        serde_json::to_string_pretty(&input.upstream_inputs)?
+        serde_json::to_string_pretty(&inputs_for_prompt)?
     );
 
     let tool_defs = tool_call::definitions_for_slot(&input.slot.allowed_tools, &input.tools);
 
-    let mut messages = vec![Message {
+    let mut messages: Vec<Message> = Vec::with_capacity(3);
+
+    // When the executor stashed a recoverable broker error from the
+    // prior decision cycle, surface it as a proper ToolResult with
+    // `is_error: true` BEFORE the live user turn. The model sees a
+    // synthetic prior tool_use + the failure result, then the
+    // current cycle's inputs — matching the contract's "tool-result
+    // with is_error: true" wording. The synthetic tool_use_id is
+    // deterministic so a future re-run can correlate.
+    if let Some(feedback) = agent_error_feedback {
+        let decision_idx = feedback
+            .get("decision_index")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let tool_use_id = format!("broker_call_prior_cycle_{decision_idx}");
+        let tool_input = feedback
+            .as_object()
+            .map(|obj| {
+                serde_json::json!({
+                    "asset": obj.get("asset"),
+                    "intended_action": "broker submit",
+                })
+            })
+            .unwrap_or(serde_json::Value::Null);
+        messages.push(Message {
+            role: "assistant".into(),
+            content: vec![ContentBlock::ToolUse {
+                id: tool_use_id.clone(),
+                name: "broker.submit_order".into(),
+                input: tool_input,
+            }],
+        });
+        messages.push(Message {
+            role: "user".into(),
+            content: vec![ContentBlock::ToolResult {
+                tool_use_id,
+                content: serde_json::to_string(&feedback)
+                    .unwrap_or_else(|_| "{}".to_string()),
+                is_error: Some(true),
+            }],
+        });
+    }
+
+    messages.push(Message {
         role: "user".into(),
         content: vec![ContentBlock::Text { text: initial_user }],
-    }];
+    });
 
     let mut total_input_tokens = 0u32;
     let mut total_output_tokens = 0u32;
@@ -257,17 +310,23 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
 
         // Run each tool, build a `ToolResult` block per call. Tool errors
         // surface as strings so the model can recover; we don't abort the
-        // whole slot on a single bad tool call.
+        // whole slot on a single bad tool call. `is_error: Some(true)`
+        // marks the failure on the Anthropic native shape and prepends an
+        // `[is_error: true]` marker on the OpenAI shape, so the model
+        // sees the prior tool call failed instead of trusting the
+        // content as a normal result. (agent-error-feedback-self-healing.)
         let mut results = Vec::with_capacity(uses.len());
         for (tu_id, tu_name, tu_input) in uses {
             tool_names_called.push(tu_name.clone());
-            let content = match tool_call::invoke(&tu_name, tu_input, input.tools.clone()).await {
-                Ok(s) => s,
-                Err(e) => format!("tool error: {e}"),
-            };
+            let (content, is_error) =
+                match tool_call::invoke(&tu_name, tu_input, input.tools.clone()).await {
+                    Ok(s) => (s, None),
+                    Err(e) => (format!("tool error: {e}"), Some(true)),
+                };
             results.push(ContentBlock::ToolResult {
                 tool_use_id: tu_id,
                 content,
+                is_error,
             });
         }
         messages.push(Message {
