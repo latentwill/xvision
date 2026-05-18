@@ -4,12 +4,15 @@
 > verification, and acceptance. This file is conductor-owned; see
 > `team/CONDUCTOR.md`.
 >
-> Last updated: 2026-05-18 conductor sync — second sweep. Merged today
-> since last sweep: #282 (qa-retention), #283 (qa-trace-broker-spans),
-> #284 (qa-decisions-position-pnl). Gated until image build deploys:
-> #277 (harness F-1) and #278 (agent-cicd-board-schema) per operator.
-> Now in review: `agent-error-feedback-self-healing` PR #286 (P1,
-> dep #283 merged) — follow-up hardening queued under Deferred.
+> Last updated: 2026-05-18 conductor sync — third sweep. Harness
+> observability wave 5/7 merged today: #277 (F-1), #294 (F-2),
+> #296 (F-3, +fix #299), #297 (F-4), #298 (F-5). F-6
+> (`harness-typed-mechanical-params`) ready to claim; F-7
+> (`trace-dock-simple-advanced-toggle`) in review at PR #300.
+> Operator's image-build gate lifted earlier today — no more
+> "blocked-on-deploy" tracks in the harness section. Agent CI/CD
+> Phase-1 schema-board / migrate / daemon all landed: #278, #290,
+> #295; shadow-run remains as the only active phase-1 track.
 > Previous board: `team/archive/2026-05-16-migration/execution-board-2026-05-13.md`.
 
 V2 work (V2A onboarding + docs, V2B-V4 roadmap) also has its own board:
@@ -17,31 +20,18 @@ V2 work (V2A onboarding + docs, V2B-V4 roadmap) also has its own board:
 
 ## Active
 
-### QA Operator Round 2/3 — remaining
+### Harness Observability Audit (intake `team/intake/2026-05-18-harness-observability-audit.md`)
 
-- [agent-error-feedback-self-healing](contracts/agent-error-feedback-self-healing.md) - integration - pr-open #286 - P1 — recoverable broker errors must round-trip to agent as tool-results. Review open; dep `qa-trace-broker-spans` (#283) merged.
+F-1..F-5 merged. F-6 ready (no dependencies, parallel-safe with F-7). F-7 in review.
 
-### Harness Observability Audit — GATED on image build
-
-All seven findings (F-1..F-7) from `team/intake/2026-05-18-harness-observability-audit.md` are held until operator ships an image build of pre-harness state. PR #277 (F-1) is open + green but **must not merge**. F-7 is additionally gated on F-2 + F-4 once the wave unfreezes.
-
-- [harness-prompt-hash-real-digest](contracts/harness-prompt-hash-real-digest.md) - leaf - blocked (PR #277 held) - F-1 — real SHA-256 prompt_hash + response_hash on model_call spans. Re-open by flipping status back to `pr-open` once the image deploys.
-- [harness-span-taxonomy-extension](contracts/harness-span-taxonomy-extension.md) - integration - pr-open #297 - F-4 — 4 new SpanKind variants (`tool.validate_input/output`, `recovery.attempt`, `state.transition`) + emission seams for validate spans and state transitions. Reserves `recovery.attempt` wire id for F-5. Rebased onto main after F-2 (#294) merged. Unblocks F-7.
-- [harness-recovery-state-machine](contracts/harness-recovery-state-machine.md) - integration - pr-open #298 (draft) - F-5 — typed `FailureClass` dispatcher replacing regex `classify_run_failure` with six bounded playbooks (MalformedJson, ToolTimeout, SchemaMissingField, EmptyData, ContextOverflow, RepeatedToolFailure). Emits `recovery.attempt` spans (F-4 seam). **Folds in** the deferred `agent-error-feedback-non-broker-errors` follow-up — extends the recoverable/fatal split from PR #286 to risk/model/data-fetch errors. Stacked on F-4 PR #297. Foundation landed; dispatcher invocation seams + agent_recovery.rs integration tests are follow-up commits on this branch.
-- [harness-typed-mechanical-params](contracts/harness-typed-mechanical-params.md) - integration - ready - F-6 — typed `MechanicalParams` enum keyed on `manifest.template` (one variant per canonical template + `Custom(Value)` fallback). Adds `#[serde(deny_unknown_fields)]` to `InternBriefing`, `TraderDecision`, `RiskDecision`, `RiskConfig`/`Limits`/`Stops`, `RiskCaps`. Single pre-persist validate seam in `StrategyStore::save`. No migration; wire format unchanged. Parallel-safe with F-2/F-3/F-4/F-5/F-7.
+- [harness-typed-mechanical-params](contracts/harness-typed-mechanical-params.md) - integration - ready - F-6 — typed `MechanicalParams` enum keyed on `manifest.template` (one variant per canonical template + `Custom(Value)` fallback). Adds `#[serde(deny_unknown_fields)]` to `InternBriefing`, `TraderDecision`, `RiskDecision`, `RiskConfig`/`Limits`/`Stops`, `RiskCaps`. Single pre-persist validate seam in `StrategyStore::save`. No migration; wire format unchanged. Parallel-safe with F-7.
 - [trace-dock-simple-advanced-toggle](contracts/trace-dock-simple-advanced-toggle.md) - leaf - pr-open #300 - F-7 — `Simple | Advanced` segmented toggle on both trace surfaces (TraceDock + /agent-runs/<id>). Simple (default) hides `tool.validate_input/output` + `state.transition` and collapses SpanInspector attributes to a one-liner. Recovery spans stay visible in both. Pure frontend.
 
-### Agent CI/CD Phase 1 (2026-05-18) — GATED on image build
+### Agent CI/CD Phase 1 (2026-05-18, spec `docs/superpowers/specs/2026-05-18-agent-cicd-control-plane.md`)
 
-Implements `docs/superpowers/specs/2026-05-18-agent-cicd-control-plane.md`.
-**Entire wave held until operator's image build deploys** alongside the
-harness-observability gate. PR #278 is green but must not merge; the
-three downstream tracks stay blocked behind it.
+Schema-board (#278), markdown→Project migrate (#290), and daemon skeleton (#295) all merged. Shadow-run is the last Phase-1 track.
 
-- [agent-cicd-board-schema](contracts/agent-cicd-board-schema.md) - foundation - blocked (PR #278 held) - JSON Schema 2020-12 for the task object + GitHub Project v2 setup doc. Re-open by flipping status back to `pr-open` once the image deploys.
-- [agent-cicd-migrate-board](contracts/agent-cicd-migrate-board.md) - integration - blocked-on #278 - one-time idempotent script: parse `team/board.md` + `team/board-v2.md`, enrich from contracts, create Issues + Project items. Depends on board-schema.
-- [agent-cicd-daemon-skeleton](contracts/agent-cicd-daemon-skeleton.md) - foundation - blocked-on #278 - Node/TS daemon at `tools/agent-conductor/` with `start|stop|pause|resume|status|watch|cancel` CLI, three-layer status surface (CLI + state.json + digest), instance identity for multi-repo Hermes, zero-host-repo-references boundary. Phase-1 transitions only. Depends on board-schema.
-- [agent-cicd-shadow-run](contracts/agent-cicd-shadow-run.md) - integration - blocked-on the-other-three - run daemon in shadow against a real 3-5 leaf cohort; ≥90% agreement gate; archived report unblocks live flip. Depends on the other three.
+- [agent-cicd-shadow-run](contracts/agent-cicd-shadow-run.md) - integration - ready - run daemon in shadow against a real 3-5 leaf cohort; ≥90% agreement gate; archived report unblocks live flip. Depends on board-schema + migrate + daemon-skeleton (all merged).
 - [agent-cicd-extract-package](contracts/agent-cicd-extract-package.md) - integration - deferred - Phase-2 work: extract `tools/agent-conductor/` to standalone npm package + `npx agent-conductor init` scaffolder. Deferred until Phase-1 is live and Phase-2 review-routing has merged.
 
 ## Deferred
@@ -58,8 +48,15 @@ or an explicit conductor contract update.
 
 ## Recently Closed
 
+Archived 2026-05-18 (harness observability audit, third sweep — see
+`team/archive/2026-05-18-harness/`):
+
+- **Harness wave (5/7 merged)** — `harness-prompt-hash-real-digest` (F-1, #277), `harness-span-attrs-populate` (F-2, #294), `harness-prompt-version-field` (F-3, #296 + fix #299), `harness-span-taxonomy-extension` (F-4, #297), `harness-recovery-state-machine` (F-5, #298). F-6 (`harness-typed-mechanical-params`) remains active; F-7 (`trace-dock-simple-advanced-toggle`) in review at #300.
+
 Archived 2026-05-18 (rounds 1/2/3 QA merge wave — see
 `team/archive/2026-05-18-qa-rounds/`):
+
+- **Self-healing broker errors** — `agent-error-feedback-self-healing` (#286). The deferred follow-ups under `## Deferred` below (same-cycle rerun, real-broker round-trip test) trace back to this PR.
 
 - **Agent-run observability follow-ups** — `agent-run-observability-blob-fetch-route` (#244), `eval-inspector-header-polish` (#255), `trace-fullscreen-redesign` (#249).
 - **Post-Q15 paper trading** — `alpaca-paper-crypto-submit` (#191, older merge, archived alongside the round-2 wave for traceability).
