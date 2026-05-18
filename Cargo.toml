@@ -43,7 +43,10 @@ default-members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+# Bumped per-image-deploy. Patch = QA wave / image (0.21 → 0.22 → …);
+# minor = major feature (e.g. autoresearcher = 0.3); see docs/VERSIONING.md
+# and CHANGELOG.md. Bump via `scripts/bump-version.sh <new-version>`.
+version = "0.21.0"
 edition = "2021"
 rust-version = "1.95"
 license = "Apache-2.0"
