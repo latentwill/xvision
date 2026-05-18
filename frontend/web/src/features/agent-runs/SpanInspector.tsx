@@ -1,7 +1,13 @@
 // frontend/web/src/features/agent-runs/SpanInspector.tsx
 import { useCallback, useState, type ReactNode } from "react";
-import type { BrokerCallDetail, RunSpan } from "@/api/types-agent-runs";
-import { fetchAgentRunBlob } from "@/api/agent-runs";
+import { useQueryClient } from "@tanstack/react-query";
+import type {
+  AgentRunDetail,
+  BrokerCallDetail,
+  RetentionMode,
+  RunSpan,
+} from "@/api/types-agent-runs";
+import { agentRunKeys, fetchAgentRunBlob } from "@/api/agent-runs";
 import { formatCostUsd, formatCostUsdPrecise } from "@/lib/format";
 import { useTraceDock } from "@/stores/trace-dock";
 import { spanColor, withAlpha } from "./span-colors";
@@ -19,6 +25,48 @@ function durationMs(span: RunSpan): number | null {
   if (!span.finished_at) return null;
   return new Date(span.finished_at).getTime() - new Date(span.started_at).getTime();
 }
+
+/**
+ * Reason text for the prompt / response placeholder when no
+ * `payload_ref` is available on the span. Keyed on the run's
+ * retention mode so the inspector doesn't lie under `full_debug`
+ * (operator 2026-05-18: "prompts still redacted despite full_debug
+ * while responses appear").
+ *
+ * `full_debug` rows currently land here for two distinct reasons:
+ *   1. The run pre-dates the producer-side payload-write fix
+ *      (queue note `qa-retention-prompt-storage-bug__*__producer-
+ *      never-writes-payload-refs`). Re-running captures the body.
+ *   2. The producer-side fix has shipped but this specific span
+ *      pre-dated the deploy. Same remediation: re-run.
+ * The copy covers both with one operator-readable line.
+ *
+ * `kind` selects the right noun: "prompt body" vs "completion body".
+ */
+export function payloadPlaceholderReason(
+  retentionMode: RetentionMode | undefined,
+  kind: "prompt" | "response",
+): string {
+  const noun = kind === "prompt" ? "prompt body" : "completion body";
+  switch (retentionMode) {
+    case "full_debug":
+      return `${noun} not captured for this run — re-run to capture`;
+    case "redacted":
+      return `redacted retention — ${noun} suppressed`;
+    case "hash_only":
+      return `hash-only retention — ${noun} not stored on disk`;
+    default:
+      // Unknown / undefined retention mode (cache miss, older summary
+      // shape): keep a neutral copy. Better than lying about a
+      // specific mode we can't verify.
+      return `${noun} not stored on disk`;
+  }
+}
+
+/** Back-compat alias — `promptPlaceholderReason("full_debug")` is the
+ * historical shape used by the unit test suite. */
+export const promptPlaceholderReason = (mode: RetentionMode | undefined): string =>
+  payloadPlaceholderReason(mode, "prompt");
 
 /**
  * Inline `<details>` block that fetches the body bytes referenced by
@@ -132,6 +180,21 @@ export function SpanInspector({
   // doesn't carry it as a prop (parent always sets activeRunId on the
   // trace dock when navigating to the run detail page).
   const activeRunId = useTraceDock((s) => s.activeRunId);
+  // Read the active run's retention mode out of the TanStack Query
+  // cache so the prompt-placeholder copy below tells the truth about
+  // *why* the body isn't on screen. Without this, the inspector
+  // hardcoded "hash-only retention — prompt body not stored on disk"
+  // even for runs configured with `full_debug`, which misled the
+  // operator (2026-05-18: "prompts still redacted despite full_debug
+  // while responses appear"). See queue note
+  // `qa-retention-prompt-storage-bug__*__producer-never-writes-payload-refs`
+  // for the underlying producer-side gap (out of this contract's
+  // scope; tracked in the harness wave).
+  const queryClient = useQueryClient();
+  const retentionMode: RetentionMode | undefined = activeRunId
+    ? queryClient.getQueryData<AgentRunDetail>(agentRunKeys.run(activeRunId))?.summary
+        .retention_mode
+    : undefined;
   // The streaming slice is populated by `agent-runs.ts`'s real SSE
   // branch. Span is considered live-streaming iff the SSE feed has
   // marked it active AND it has not been closed by `span_finished` /
@@ -245,10 +308,16 @@ export function SpanInspector({
                   testIdPrefix="span-inspector-prompt-ref"
                 />
               ) : (
-                <div className="text-[11px] font-mono text-text-2 break-all">
+                <div
+                  className="text-[11px] font-mono text-text-2 break-all"
+                  data-testid="span-inspector-prompt-placeholder"
+                >
                   hash: <span className="text-text">{span.hash}</span>
-                  <div className="text-text-3 mt-1">
-                    hash-only retention — prompt body not stored on disk
+                  <div
+                    className="text-text-3 mt-1"
+                    data-testid="span-inspector-prompt-placeholder-reason"
+                  >
+                    {payloadPlaceholderReason(retentionMode, "prompt")}
                   </div>
                 </div>
               )
@@ -327,10 +396,16 @@ export function SpanInspector({
                   testIdPrefix="span-inspector-response-ref"
                 />
               ) : (
-                <div className="text-[11px] font-mono text-text-2 break-all">
+                <div
+                  className="text-[11px] font-mono text-text-2 break-all"
+                  data-testid="span-inspector-response-placeholder"
+                >
                   hash: <span className="text-text">{span.response_hash}</span>
-                  <div className="text-text-3 mt-1">
-                    hash-only retention — completion body not stored on disk
+                  <div
+                    className="text-text-3 mt-1"
+                    data-testid="span-inspector-response-placeholder-reason"
+                  >
+                    {payloadPlaceholderReason(retentionMode, "response")}
                   </div>
                 </div>
               )

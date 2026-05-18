@@ -1,9 +1,61 @@
 // frontend/web/src/features/agent-runs/SpanInspector.test.tsx
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
-import { SpanInspector } from "./SpanInspector";
+import { render as rtlRender, screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ReactElement } from "react";
+import { SpanInspector, promptPlaceholderReason } from "./SpanInspector";
 import { useTraceDock } from "@/stores/trace-dock";
-import type { RunSpan } from "@/api/types-agent-runs";
+import { agentRunKeys } from "@/api/agent-runs";
+import type {
+  AgentRunDetail,
+  AgentRunSummary,
+  RetentionMode,
+  RunSpan,
+} from "@/api/types-agent-runs";
+
+/**
+ * Render helper that wires a fresh QueryClient + Provider around the
+ * inspector. SpanInspector reads `retention_mode` off the cached run
+ * detail via `useQueryClient`, so a Provider is mandatory; seeding
+ * the cache here lets us assert the retention-aware placeholder copy.
+ */
+function render(
+  ui: ReactElement,
+  options: { activeRunId?: string; retentionMode?: RetentionMode } = {},
+) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  if (options.activeRunId) {
+    useTraceDock.getState().setActiveRun(options.activeRunId, "post-hoc");
+    if (options.retentionMode) {
+      const detail = mockRunDetail(options.activeRunId, options.retentionMode);
+      qc.setQueryData(agentRunKeys.run(options.activeRunId), detail);
+    }
+  }
+  return rtlRender(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
+}
+
+function mockRunDetail(runId: string, retention: RetentionMode): AgentRunDetail {
+  const summary: AgentRunSummary = {
+    run_id: runId,
+    objective: "test",
+    strategy_id: null,
+    agent_id: null,
+    started_at: "2026-05-17T10:00:00.000Z",
+    finished_at: "2026-05-17T10:00:01.000Z",
+    status: "completed",
+    span_count: 1,
+    model_call_count: 1,
+    tool_call_count: 0,
+    error_count: 0,
+    total_cost_usd: 0,
+    total_input_tokens: 0,
+    total_output_tokens: 0,
+    duration_ms: 1000,
+    financial_eval_id: null,
+    retention_mode: retention,
+  };
+  return { summary, spans: [], model_calls: [], tool_calls: [] };
+}
 
 afterEach(() => {
   // Reset streaming slice + dock shell between tests so one test's
@@ -30,6 +82,30 @@ const baseSpan: RunSpan = {
   cost: 0.0416,
   hash: "sha256:a1b2c3",
 };
+
+describe("promptPlaceholderReason", () => {
+  test("full_debug → re-run to capture", () => {
+    expect(promptPlaceholderReason("full_debug")).toBe(
+      "prompt body not captured for this run — re-run to capture",
+    );
+  });
+
+  test("redacted → redacted-mode notice", () => {
+    expect(promptPlaceholderReason("redacted")).toBe(
+      "redacted retention — prompt body suppressed",
+    );
+  });
+
+  test("hash_only → historical hash-only copy", () => {
+    expect(promptPlaceholderReason("hash_only")).toBe(
+      "hash-only retention — prompt body not stored on disk",
+    );
+  });
+
+  test("undefined → neutral fallback (doesn't lie about mode)", () => {
+    expect(promptPlaceholderReason(undefined)).toBe("prompt body not stored on disk");
+  });
+});
 
 describe("SpanInspector (with pull-quotes)", () => {
   test("renders PROMPT and RESPONSE pull-quotes when present", () => {
@@ -114,7 +190,7 @@ describe("SpanInspector (with pull-quotes)", () => {
     expect(screen.getByText(/LOCKED · LIVE/)).toBeInTheDocument();
   });
 
-  test("model.call without raw text shows hash-only preview + retention note", () => {
+  test("model.call without raw text shows hash-only preview + retention note (hash_only mode)", () => {
     render(
       <SpanInspector
         span={{
@@ -128,12 +204,82 @@ describe("SpanInspector (with pull-quotes)", () => {
         onRerun={() => {}}
         onJumpToDecision={() => {}}
       />,
+      { activeRunId: "run-hashonly", retentionMode: "hash_only" },
     );
     expect(screen.getByText("PROMPT")).toBeInTheDocument();
     expect(screen.getByText("RESPONSE")).toBeInTheDocument();
-    expect(screen.getAllByText(/hash-only retention/i).length).toBeGreaterThan(0);
-    // Hash also appears in the FIELDS table as response.hash.
+    const reason = screen.getByTestId("span-inspector-prompt-placeholder-reason");
+    expect(reason.textContent).toMatch(/hash-only retention/i);
     expect(screen.getByText("response.hash")).toBeInTheDocument();
+  });
+
+  test("full_debug run with no prompt_payload_ref shows 're-run to capture' notice — not 'hash-only'", () => {
+    // Operator 2026-05-18: "prompts still redacted despite full_debug
+    // while responses appear". Until the producer-side payload-write
+    // fix lands (queue note), prompts have no payload_ref. The
+    // placeholder must NOT lie that retention is hash-only when
+    // the run was configured for full_debug.
+    render(
+      <SpanInspector
+        span={{
+          ...baseSpan,
+          prompt: undefined,
+          response: undefined,
+          hash: "sha256:promptaaa",
+          response_hash: "sha256:respbbb",
+        }}
+        isLive={false}
+        onRerun={() => {}}
+        onJumpToDecision={() => {}}
+      />,
+      { activeRunId: "run-fulldebug", retentionMode: "full_debug" },
+    );
+    const reason = screen.getByTestId("span-inspector-prompt-placeholder-reason");
+    expect(reason.textContent).toMatch(/re-run to capture/i);
+    expect(reason.textContent).not.toMatch(/hash-only/i);
+  });
+
+  test("redacted retention shows the redacted-mode notice", () => {
+    render(
+      <SpanInspector
+        span={{
+          ...baseSpan,
+          prompt: undefined,
+          response: undefined,
+          hash: "sha256:promptaaa",
+        }}
+        isLive={false}
+        onRerun={() => {}}
+        onJumpToDecision={() => {}}
+      />,
+      { activeRunId: "run-redacted", retentionMode: "redacted" },
+    );
+    const reason = screen.getByTestId("span-inspector-prompt-placeholder-reason");
+    expect(reason.textContent).toMatch(/redacted retention/i);
+  });
+
+  test("unknown / missing retention mode falls back to a neutral message", () => {
+    // Cache miss path: render the inspector without seeding the
+    // detail cache. The placeholder must not pick a specific mode
+    // it can't verify.
+    render(
+      <SpanInspector
+        span={{
+          ...baseSpan,
+          prompt: undefined,
+          response: undefined,
+          hash: "sha256:promptaaa",
+        }}
+        isLive={false}
+        onRerun={() => {}}
+        onJumpToDecision={() => {}}
+      />,
+    );
+    const reason = screen.getByTestId("span-inspector-prompt-placeholder-reason");
+    expect(reason.textContent).toBe("prompt body not stored on disk");
+    expect(reason.textContent).not.toMatch(/hash-only/i);
+    expect(reason.textContent).not.toMatch(/re-run/i);
+    expect(reason.textContent).not.toMatch(/redacted retention/i);
   });
 
   test("model.call with payload refs surfaces them in preview + fields", () => {
@@ -202,7 +348,7 @@ describe("SpanInspector (with pull-quotes)", () => {
     expect(indicator.textContent).toMatch(/421 chars/);
     // The hash-only fallback must NOT be on screen while streaming.
     expect(
-      screen.queryByText(/hash-only retention — completion body not stored on disk/i),
+      screen.queryByTestId("span-inspector-response-placeholder"),
     ).not.toBeInTheDocument();
   });
 
@@ -266,10 +412,13 @@ describe("SpanInspector (with pull-quotes)", () => {
     );
 
     expect(screen.queryByTestId("span-inspector-streaming")).not.toBeInTheDocument();
+    // Response fallback renders the retention-aware placeholder. With
+    // no retention mode seeded into the query cache, the copy uses the
+    // neutral default — not the old hardcoded "hash-only retention" line.
+    expect(screen.getByTestId("span-inspector-response-placeholder")).toBeInTheDocument();
     expect(
-      screen.getAllByText(/hash-only retention — completion body not stored on disk/i)
-        .length,
-    ).toBeGreaterThan(0);
+      screen.getByTestId("span-inspector-response-placeholder-reason").textContent,
+    ).toMatch(/completion body not stored on disk/i);
   });
 
   test("post-stream-finish: accumulated body persists as RESPONSE pull-quote", () => {
@@ -316,7 +465,7 @@ describe("SpanInspector (with pull-quotes)", () => {
     expect(body.textContent).toBe("hello world");
     // hash-only placeholder must NOT render alongside.
     expect(
-      screen.queryByText(/hash-only retention — completion body not stored on disk/i),
+      screen.queryByTestId("span-inspector-response-placeholder"),
     ).not.toBeInTheDocument();
   });
 
