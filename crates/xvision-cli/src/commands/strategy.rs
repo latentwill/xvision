@@ -577,6 +577,7 @@ fn slot_to_agent_slot(
         // (q15 §1). Old auto-create paths can let this stay `None` so
         // the operator-facing UX is consistent with `+ New agent`.
         max_tokens: None,
+        prompt_version: String::new(),
     }
 }
 
