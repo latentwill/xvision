@@ -120,7 +120,7 @@ export function ScenarioForm({
   const [timeError, setTimeError] = useState<string | null>(null);
   const [warmupError, setWarmupError] = useState<string | null>(null);
 
-  const estimatedBars = estimateBars(from, to, granularity);
+  const estimatedBars = estimateBars(from, to, granularity, warmupBars);
 
   useEffect(() => {
     if (onDraftChange) {
@@ -407,7 +407,23 @@ export function ScenarioForm({
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-function estimateBars(from: string, to: string, g: ScenarioGranularity): number {
+// Exported for unit tests; the total estimate includes both the
+// time-window-derived bar count and the operator-supplied context
+// (warmup) bars so the Scenario form responds to the "Context bars"
+// input even before a time window is picked.
+export function estimateBars(
+  from: string,
+  to: string,
+  g: ScenarioGranularity,
+  contextBars: number,
+): number {
+  const ctx = Number.isFinite(contextBars) && contextBars > 0
+    ? Math.floor(contextBars)
+    : 0;
+  return windowBars(from, to, g) + ctx;
+}
+
+function windowBars(from: string, to: string, g: ScenarioGranularity): number {
   if (!from || !to) return 0;
   const ms = +new Date(to) - +new Date(from);
   if (ms <= 0) return 0;

@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { CreateScenarioRequest } from "@/api/types.gen";
-import { ScenarioForm } from "./ScenarioForm";
+import { ScenarioForm, estimateBars } from "./ScenarioForm";
 
 afterEach(() => {
   cleanup();
@@ -339,5 +339,52 @@ describe("ScenarioForm", () => {
     expect(
       screen.getByText(/longest indicator period/i),
     ).toBeInTheDocument();
+  });
+});
+
+describe("estimateBars", () => {
+  // (a) Time-window only — operator picked dates but left context at 0.
+  it("time-window only adds zero context bars", () => {
+    expect(estimateBars("2024-01-01", "2024-01-03", "1d", 0)).toBe(2);
+  });
+
+  // (b) Context bars only — operator typed a context value before
+  // picking a time window. The estimate must NOT stay at 0 just
+  // because from/to are blank.
+  it("context bars only (empty time window) returns the context count", () => {
+    expect(estimateBars("", "", "1d", 100)).toBe(100);
+  });
+
+  // (c) Both summed — the live form case.
+  it("sums time-window bars and context bars", () => {
+    expect(estimateBars("2024-01-01", "2024-01-03", "1d", 100)).toBe(102);
+  });
+
+  // (d) Zero context degrades to the time-window-only number.
+  it("zero / negative / NaN context bars degrade cleanly", () => {
+    expect(estimateBars("2024-01-01", "2024-01-03", "1d", 0)).toBe(2);
+    expect(estimateBars("2024-01-01", "2024-01-03", "1d", -5)).toBe(2);
+    expect(estimateBars("2024-01-01", "2024-01-03", "1d", Number.NaN)).toBe(2);
+  });
+});
+
+describe("ScenarioForm — estimated bars UI", () => {
+  it("updates the live estimate when Context bars input changes", () => {
+    // Operator repro from team/intake/2026-05-18-qa-operator-round-3.md:
+    // "Added 100 bars context in scenario, but it still says
+    // Estimated bars to fetch: 0." Without a time window picked
+    // the estimate must still react to the Context bars input.
+    render(<ScenarioForm onSubmit={vi.fn()} />);
+
+    const contextInput = screen.getByLabelText("Context bars");
+    fireEvent.change(contextInput, { target: { value: "100" } });
+
+    // The estimate node renders the formatted number; use a regex
+    // anchored on "Estimated bars to fetch" so the label match
+    // survives copy tweaks elsewhere on the form.
+    const estimate = screen.getByText(/Estimated bars to fetch:/i).parentElement;
+    expect(estimate).toBeTruthy();
+    expect(estimate!.textContent).toMatch(/100/);
+    expect(estimate!.textContent).not.toMatch(/Estimated bars to fetch:\s*0\b/);
   });
 });
