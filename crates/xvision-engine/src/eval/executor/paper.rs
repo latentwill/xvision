@@ -492,6 +492,7 @@ impl PaperExecutor {
 
             let position = self.broker.position(&asset).await?;
             let balance = self.broker.balance().await?;
+            let buying_power = self.broker.buying_power(&asset).await?;
             let market_data = bar_seed(&asset, bar, bar_history);
             let reference_price_usd = bar.close;
             let mut seed = serde_json::json!({
@@ -502,6 +503,9 @@ impl PaperExecutor {
                 "portfolio_state": {
                     "position_size": position,
                     "equity": balance,
+                    // Settled cash (for crypto) or buying_power (for equities).
+                    // This is the hard cap on the next buy — equity is not.
+                    "buying_power": buying_power,
                     "mark_price": reference_price_usd,
                 },
             });
@@ -591,7 +595,14 @@ impl PaperExecutor {
                     None
                 }
             } else {
-                let usd_at_risk = balance * strategy.risk.risk_pct_per_trade;
+                // Size against *buying power* (settled cash for crypto), not
+                // equity. `balance` above is equity (cash + open-position
+                // mark-to-market); after the first fill it stays roughly
+                // constant while cash drops, so equity-based sizing chronically
+                // overshoots available cash and Alpaca returns 403
+                // "insufficient balance for USD".
+                let buying_power = self.broker.buying_power(&asset).await?;
+                let usd_at_risk = buying_power * strategy.risk.risk_pct_per_trade;
                 let size = (usd_at_risk / reference_price_usd).max(0.0);
                 let side = if parsed.action == "long_open" {
                     Side::Buy

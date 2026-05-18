@@ -356,8 +356,19 @@ pub trait BrokerSurface: Send + Sync {
     /// negative = short). Returns 0.0 when no position is open.
     async fn position(&self, asset: &str) -> anyhow::Result<f64>;
 
-    /// Account equity in USD.
+    /// Account equity in USD (cash + marked-to-market value of open positions).
+    /// Use this for equity curves and metrics — NOT for sizing new orders.
     async fn balance(&self) -> anyhow::Result<f64>;
+
+    /// USD available to fund a new order for `asset`. For Alpaca paper crypto
+    /// this returns settled cash — the constraint Alpaca actually validates
+    /// against when it rejects with 403 "insufficient balance for USD". For
+    /// margin equities accounts it returns `buying_power`. Defaults to
+    /// `balance` so non-cash-aware impls (mocks, stubs) keep compiling, but
+    /// any sizing call site MUST use this instead of `balance`.
+    async fn buying_power(&self, _asset: &str) -> anyhow::Result<f64> {
+        self.balance().await
+    }
 }
 
 // ── AlpacaPaperSurface ───────────────────────────────────────────────────────
@@ -547,6 +558,29 @@ impl BrokerSurface for AlpacaPaperSurface {
             .map_err(|e| anyhow::anyhow!("alpaca get_account: {e}"))?;
         Ok(acct.equity)
     }
+
+    async fn buying_power(&self, asset: &str) -> anyhow::Result<f64> {
+        let acct = self
+            .api
+            .get_account()
+            .await
+            .map_err(|e| anyhow::anyhow!("alpaca get_account: {e}"))?;
+        // Crypto symbols (e.g. "BTC/USD") are non-marginable: Alpaca validates
+        // crypto buys against settled USD cash, not `buying_power` (which on a
+        // margin account can include unsettled / margin allowance).
+        // For equities, use `buying_power`.
+        if is_crypto_symbol(asset) {
+            Ok(acct.cash)
+        } else {
+            Ok(acct.buying_power)
+        }
+    }
+}
+
+/// Alpaca crypto symbols are pair-formatted (`BTC/USD`, `ETH/USD`). Equities
+/// are bare tickers (`AAPL`). Used to pick the right buying-power field.
+fn is_crypto_symbol(asset: &str) -> bool {
+    asset.contains('/')
 }
 
 impl AlpacaPaperSurface {

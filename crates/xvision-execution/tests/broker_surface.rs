@@ -83,6 +83,8 @@ fn fixture_account() -> AlpacaAccount {
     AlpacaAccount {
         equity: 100_000.0,
         last_equity: 99_500.0,
+        cash: 100_000.0,
+        buying_power: 100_000.0,
     }
 }
 
