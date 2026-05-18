@@ -5,7 +5,7 @@ wave: harness-observability-audit
 worktree: .worktrees/harness-span-taxonomy-extension
 branch: task/harness-span-taxonomy-extension
 base: origin/main   # rebased onto main 2026-05-18 after F-2 squashed in as PR #294
-status: pr-open
+status: merged
 depends_on:
   - harness-span-attrs-populate   # F-2 — new spans populate the typed SpanAttributes bag from emission
 blocks:
