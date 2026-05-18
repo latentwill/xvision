@@ -100,16 +100,12 @@ export function AgentRunDetailRoute() {
         </span>
       </Card>
 
-      {detail.summary.retention_mode === "full_debug" ? (
-        <Card
-          role="alert"
-          data-testid="retention-banner"
-          className="p-3 mb-4 border-warn/40 bg-warn/10 text-warn text-[12px] leading-relaxed"
-        >
-          <strong className="font-medium">Full-debug retention.</strong>{" "}
-          Recorded under full_debug retention — prompts and tool payloads stored on disk.
-        </Card>
-      ) : null}
+      {/*
+        qa-ui-polish-round2 #10: the loud full_debug retention banner is
+        gone. The minimal `retention-badge` Pill above still shows the
+        mode, and Settings → Retention is the canonical surface — there
+        is no need for an `role="alert"` Card on every run page.
+      */}
 
       <Card className="mb-3 overflow-x-auto overflow-y-hidden">
         <FilterBar

@@ -70,8 +70,10 @@ describe("SpanInspector (with pull-quotes)", () => {
       />,
     );
     expect(screen.getByText("RESPONSE (PARTIAL)")).toBeInTheDocument();
-    // There are two STREAMING markers when isLive+streaming: header pill and pull-quote header. At least one must appear.
-    expect(screen.getAllByText(/STREAMING/).length).toBeGreaterThan(0);
+    // qa-ui-polish-round2 #9: the streaming indicator is canonical at the
+    // PullQuote header — exactly one "STREAMING" label per active span,
+    // not the prior header-pill + pull-quote-pill duplicate.
+    expect(screen.getAllByText(/STREAMING/)).toHaveLength(1);
   });
 
   test("rerun button shows `LOCKED · LIVE` and is disabled when isLive", () => {

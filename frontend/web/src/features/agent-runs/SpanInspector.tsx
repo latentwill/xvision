@@ -150,10 +150,6 @@ export function SpanInspector({
   );
   const isLiveStreamingModelCall =
     isLive && span.kind === "model.call" && isActiveSseSpan;
-  // The header pill keeps showing on the legacy `span.streaming`
-  // attribute path (mock fixtures + per-span streaming flag) AND on
-  // the new active-SSE-span path. Either is enough to badge it.
-  const isStreaming = isLive && (span.streaming || isActiveSseSpan);
 
   return (
     <div className="w-full min-w-0 flex flex-col h-full">
@@ -186,18 +182,14 @@ export function SpanInspector({
           >
             ERROR
           </span>
-        ) : isStreaming ? (
-          <span
-            className="ml-auto px-1.5 py-0.5 text-[9px] tracking-[0.16em] font-mono rounded animate-pulse shrink-0"
-            style={{
-              color: "var(--info)",
-              background: withAlpha("#6f8fb8", 0.12),
-              border: `1px solid ${withAlpha("#6f8fb8", 0.5)}`,
-            }}
-          >
-            STREAMING
-          </span>
         ) : null}
+        {/*
+          The streaming indicator now lives next to the PullQuote body
+          (the "● STREAMING" label + animated caret in PullQuote.tsx).
+          Operator reported a duplicate icon — the header pill repeated
+          what the body pull-quote already shows. The ERROR badge above
+          stays because there is no body affordance for it.
+        */}
       </div>
 
       {/* Body */}
