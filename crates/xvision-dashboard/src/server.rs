@@ -168,7 +168,10 @@ pub fn build_router(state: AppState) -> Router {
             "/api/settings/providers/catalog/refresh-all",
             post(settings::providers::refresh_all_catalogs),
         )
-        .route("/api/settings/danger/wipe-db", post(settings::danger::wipe_db))
+        .route(
+            "/api/settings/danger/reset-workspace",
+            post(settings::danger::reset_workspace),
+        )
         .route(
             "/api/settings/danger/regen-identity",
             post(settings::danger::regen_identity),
