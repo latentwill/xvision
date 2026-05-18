@@ -224,20 +224,93 @@ async function ghJson(args, { input } = {}) {
   return stdout.trim() === '' ? null : JSON.parse(stdout);
 }
 
-export function makeGhClient({ repo }) {
+// ---------- gh argv builders (pure; unit-tested) ----------
+//
+// Building each gh command's argv as a pure function lets the tests assert
+// the exact flags. This is how PR #290's review caught the regression
+// where the live client used --project-id / --content-id on item-list and
+// item-add — gh 2.65 rejects those. The argv builders below are the
+// single source of truth; makeGhClient and the test fakes both consume
+// them.
+
+export function buildIssueListArgs({ repo, label }) {
+  return [
+    'issue', 'list',
+    '-R', repo,
+    '--label', label,
+    '--state', 'all',
+    '--json', 'number,id,title,state,url',
+  ];
+}
+
+export function buildIssueCreateArgs({ repo, title, body, labels = [] }) {
+  const args = ['issue', 'create', '-R', repo, '--title', title, '--body', body];
+  for (const l of labels) args.push('--label', l);
+  return args;
+}
+
+export function buildIssueViewArgs({ repo, number }) {
+  return ['issue', 'view', String(number), '-R', repo, '--json', 'id,number,url'];
+}
+
+export function buildProjectViewArgs({ projectOwner, projectNumber }) {
+  return ['project', 'view', String(projectNumber), '--owner', projectOwner, '--format', 'json'];
+}
+
+export function buildProjectFieldListArgs({ projectOwner, projectNumber }) {
+  return ['project', 'field-list', String(projectNumber), '--owner', projectOwner, '--format', 'json', '--limit', '50'];
+}
+
+export function buildProjectItemListArgs({ projectOwner, projectNumber, limit = 500 }) {
+  return [
+    'project', 'item-list', String(projectNumber),
+    '--owner', projectOwner,
+    '--format', 'json',
+    '--limit', String(limit),
+  ];
+}
+
+export function buildProjectItemAddArgs({ projectOwner, projectNumber, issueUrl }) {
+  return [
+    'project', 'item-add', String(projectNumber),
+    '--owner', projectOwner,
+    '--url', issueUrl,
+    '--format', 'json',
+  ];
+}
+
+export function buildProjectItemEditArgs({
+  projectId, itemId, fieldId, value, dataType,
+}) {
+  const args = [
+    'project', 'item-edit',
+    '--project-id', projectId,
+    '--id', itemId,
+    '--field-id', fieldId,
+  ];
+  switch (dataType) {
+    case 'SINGLE_SELECT': args.push('--single-select-option-id', value); break;
+    case 'NUMBER': args.push('--number', String(value)); break;
+    case 'DATE': args.push('--date', String(value)); break;
+    default: args.push('--text', String(value)); break;
+  }
+  return args;
+}
+
+// ---------- gh-backed client ----------
+
+export function makeGhClient({ repo, projectOwner, projectNumber }) {
   const [owner, name] = String(repo).split('/');
   if (!owner || !name) throw new Error(`--repo must be <owner>/<name>, got: ${repo}`);
+  if (!projectOwner || projectNumber == null) {
+    throw new Error('makeGhClient: projectOwner and projectNumber are required');
+  }
+  const repoArg = `${owner}/${name}`;
 
   return {
     async findIssueByTrackLabel(track) {
       const label = `track:${track}`;
-      const data = await ghJson([
-        'issue', 'list',
-        '-R', `${owner}/${name}`,
-        '--label', label,
-        '--state', 'all',
-        '--json', 'number,id,title,state',
-      ]);
+      const data = await ghJson(buildIssueListArgs({ repo: repoArg, label }));
       const list = data ?? [];
       if (list.length === 0) return null;
       if (list.length > 1) {
@@ -245,39 +318,21 @@ export function makeGhClient({ repo }) {
           `migrate-board: WARNING multiple issues found with label ${label}; picking #${list[0].number}\n`,
         );
       }
-      return { id: list[0].id, number: list[0].number };
+      return { id: list[0].id, number: list[0].number, url: list[0].url };
     },
     async createIssue({ title, body, labels }) {
-      const args = [
-        'issue', 'create',
-        '-R', `${owner}/${name}`,
-        '--title', title,
-        '--body', body,
-      ];
-      for (const l of labels ?? []) {
-        args.push('--label', l);
-      }
-      const { stdout } = await execFileAsync('gh', args);
+      const { stdout } = await execFileAsync(
+        'gh',
+        buildIssueCreateArgs({ repo: repoArg, title, body, labels }),
+      );
       const url = stdout.trim();
       const number = Number(url.split('/').pop());
-      const issue = await ghJson([
-        'issue', 'view', String(number),
-        '-R', `${owner}/${name}`,
-        '--json', 'id,number',
-      ]);
-      return { id: issue.id, number: issue.number };
+      const issue = await ghJson(buildIssueViewArgs({ repo: repoArg, number }));
+      return { id: issue.id, number: issue.number, url: issue.url ?? url };
     },
-    async getProjectInfo({ projectOwner, number }) {
-      const data = await ghJson([
-        'project', 'view', String(number),
-        '--owner', projectOwner,
-        '--format', 'json',
-      ]);
-      const fields = await ghJson([
-        'project', 'field-list', String(number),
-        '--owner', projectOwner,
-        '--format', 'json',
-      ]);
+    async getProjectInfo() {
+      const data = await ghJson(buildProjectViewArgs({ projectOwner, projectNumber }));
+      const fields = await ghJson(buildProjectFieldListArgs({ projectOwner, projectNumber }));
       const byName = {};
       for (const f of fields?.fields ?? []) {
         byName[f.name] = {
@@ -288,46 +343,37 @@ export function makeGhClient({ repo }) {
       }
       return { id: data.id, fields: byName };
     },
-    async findProjectItem(projectId, contentId) {
-      // The gh CLI does not expose Project items by content id directly; we
-      // page through items and filter. For migration scale this is fine.
-      const data = await ghJson([
-        'project', 'item-list', '--owner', '@me',
-        '--format', 'json',
-        '--limit', '500',
-        '--project-id', projectId,
-      ]);
+    async findProjectItem(_projectId, contentId) {
+      // gh project item-list takes the project NUMBER + --owner, NOT
+      // --project-id. The closure carries number+owner; the projectId
+      // arg is accepted only for parity with the fake-client interface.
+      const data = await ghJson(buildProjectItemListArgs({ projectOwner, projectNumber }));
       const items = data?.items ?? [];
       const match = items.find((it) => it.content?.id === contentId);
       if (!match) return null;
       return { id: match.id, fieldValues: match.fieldValues ?? {} };
     },
-    async addProjectItem(projectId, contentId) {
-      const data = await ghJson([
-        'project', 'item-add', '--owner', '@me',
-        '--project-id', projectId,
-        '--content-id', contentId,
-        '--format', 'json',
-      ]);
+    async addProjectItem(_projectId, contentIdOrUrl, opts = {}) {
+      // gh project item-add uses the issue URL, not the GraphQL content
+      // id. Callers SHOULD pass the URL via opts.url; we fall back to
+      // contentIdOrUrl if it looks like a URL.
+      const url = opts.url
+        ?? (typeof contentIdOrUrl === 'string' && contentIdOrUrl.startsWith('http')
+              ? contentIdOrUrl
+              : null);
+      if (!url) {
+        throw new Error('addProjectItem: issue URL required (gh project item-add --url)');
+      }
+      const data = await ghJson(buildProjectItemAddArgs({
+        projectOwner, projectNumber, issueUrl: url,
+      }));
       return { id: data.id };
     },
     async setFieldValue({ projectId, itemId, fieldId, value, dataType }) {
-      const args = [
-        'project', 'item-edit', '--owner', '@me',
-        '--project-id', projectId,
-        '--id', itemId,
-        '--field-id', fieldId,
-      ];
-      if (dataType === 'SINGLE_SELECT') {
-        args.push('--single-select-option-id', value);
-      } else if (dataType === 'NUMBER') {
-        args.push('--number', String(value));
-      } else if (dataType === 'DATE') {
-        args.push('--date', String(value));
-      } else {
-        args.push('--text', String(value));
-      }
-      await execFileAsync('gh', args);
+      await execFileAsync(
+        'gh',
+        buildProjectItemEditArgs({ projectId, itemId, fieldId, value, dataType }),
+      );
     },
   };
 }
@@ -434,11 +480,7 @@ export async function runMigration({
   }
 
   // Live: per-row reconcile.
-  const projectOwner = opts.repo.split('/')[0];
-  const project = await client.getProjectInfo({
-    projectOwner,
-    number: opts.project,
-  });
+  const project = await client.getProjectInfo();
 
   let created = 0;
   let updated = 0;
@@ -456,10 +498,17 @@ export async function runMigration({
       });
       created++;
     }
+    if (!issue.url) {
+      stderr.write(
+        `migrate-board: ABORT ${descriptor.track} — Issue has no URL; ` +
+        `cannot add to Project (gh project item-add requires --url).\n`,
+      );
+      return { exitCode: 1 };
+    }
 
     let item = await client.findProjectItem(project.id, issue.id);
     if (!item) {
-      const added = await client.addProjectItem(project.id, issue.id);
+      const added = await client.addProjectItem(project.id, issue.id, { url: issue.url });
       item = { id: added.id, fieldValues: {} };
     }
 
@@ -563,7 +612,13 @@ export function computeFieldUpdates({ project, item, descriptor }) {
 const isMainModule = process.argv[1] && import.meta.url === `file://${process.argv[1]}`;
 if (isMainModule) {
   const opts = parseArgs(process.argv.slice(2));
-  const client = opts.dryRun ? null : makeGhClient({ repo: opts.repo });
+  const client = opts.dryRun
+    ? null
+    : makeGhClient({
+        repo: opts.repo,
+        projectOwner: opts.repo?.split('/')?.[0],
+        projectNumber: opts.project,
+      });
   runMigration({ client, args: process.argv.slice(2) })
     .then((res) => process.exit(res.exitCode ?? 0))
     .catch((e) => {

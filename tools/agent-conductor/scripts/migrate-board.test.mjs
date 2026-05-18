@@ -11,6 +11,14 @@ import {
   extractScalarFields,
   readContractFrontMatter,
   runMigration,
+  buildIssueListArgs,
+  buildIssueCreateArgs,
+  buildIssueViewArgs,
+  buildProjectViewArgs,
+  buildProjectFieldListArgs,
+  buildProjectItemListArgs,
+  buildProjectItemAddArgs,
+  buildProjectItemEditArgs,
 } from './migrate-board.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -83,15 +91,23 @@ function makeFakeClient(initial = {}) {
   const client = {
     state,
     async findIssueByTrackLabel(track) {
-      return state.issues.get(track) ?? null;
+      const issue = state.issues.get(track);
+      if (!issue) return null;
+      // Real gh issue list returns url; preserve in the fake so consumers
+      // that depend on it (addProjectItem live path) are exercised.
+      return { ...issue, url: issue.url ?? `https://example.invalid/${track}/${issue.number}` };
     },
     async createIssue({ title, body, labels }) {
       const trackLabel = (labels ?? []).find((l) => l.startsWith('track:'));
       const track = trackLabel ? trackLabel.slice('track:'.length) : null;
-      const issue = { id: `I-${state.nextIssueNumber}`, number: state.nextIssueNumber };
-      state.nextIssueNumber++;
+      const number = state.nextIssueNumber++;
+      const issue = {
+        id: `I-${number}`,
+        number,
+        url: `https://example.invalid/${track ?? 'issue'}/${number}`,
+      };
       if (track) state.issues.set(track, issue);
-      state.issueCreates.push({ title, body, labels });
+      state.issueCreates.push({ title, body, labels, issue });
       return issue;
     },
     async getProjectInfo() {
@@ -100,10 +116,16 @@ function makeFakeClient(initial = {}) {
     async findProjectItem(_projectId, contentId) {
       return state.items.get(contentId) ?? null;
     },
-    async addProjectItem(_projectId, contentId) {
+    async addProjectItem(_projectId, contentId, opts = {}) {
+      // Mirrors the real client's contract: live path requires a URL,
+      // not a content-id. Tests that pass only contentId without a URL
+      // should hit this guard.
+      if (!opts.url && !(typeof contentId === 'string' && contentId.startsWith('http'))) {
+        throw new Error('fake addProjectItem: opts.url required (matches gh project item-add --url)');
+      }
       const item = { id: `IT-${state.nextItemId++}`, fieldValues: {} };
       state.items.set(contentId, item);
-      state.itemAdds.push({ contentId, itemId: item.id });
+      state.itemAdds.push({ contentId, itemId: item.id, url: opts.url ?? contentId });
       return { id: item.id };
     },
     async setFieldValue({ projectId, itemId, fieldId, value, dataType }) {
@@ -130,6 +152,104 @@ function makeFakeClient(initial = {}) {
   };
   return client;
 }
+
+// ---------- gh argv builders (PR #290 review regression: real-CLI flags) ----------
+
+test('buildProjectItemListArgs uses <number> --owner (NOT --project-id)', () => {
+  const args = buildProjectItemListArgs({ projectOwner: 'latentwill', projectNumber: 7 });
+  // Sanity: positional number AND --owner present.
+  assert.ok(args.includes('item-list'));
+  assert.ok(args.includes('7'));
+  assert.ok(args.includes('--owner'));
+  assert.ok(args.includes('latentwill'));
+  assert.ok(args.includes('--format'));
+  assert.ok(args.includes('json'));
+  // Hard-blocked: --project-id is gh 2.65's unknown-flag trigger here.
+  assert.ok(!args.includes('--project-id'), 'item-list must not use --project-id');
+});
+
+test('buildProjectItemAddArgs uses --url (NOT --content-id) and --owner + number', () => {
+  const args = buildProjectItemAddArgs({
+    projectOwner: 'latentwill',
+    projectNumber: 7,
+    issueUrl: 'https://github.com/latentwill/xvision/issues/42',
+  });
+  assert.ok(args.includes('item-add'));
+  assert.ok(args.includes('7'));
+  assert.ok(args.includes('--owner'));
+  assert.ok(args.includes('latentwill'));
+  assert.ok(args.includes('--url'));
+  assert.ok(args.includes('https://github.com/latentwill/xvision/issues/42'));
+  assert.ok(!args.includes('--project-id'), 'item-add must not use --project-id');
+  assert.ok(!args.includes('--content-id'), 'item-add must not use --content-id');
+});
+
+test('buildProjectItemEditArgs uses --project-id (this command DOES accept it) + dataType switch', () => {
+  const single = buildProjectItemEditArgs({
+    projectId: 'PVT_abc', itemId: 'PVTI_xyz', fieldId: 'PVTSSF_status',
+    value: 'opt-id-1', dataType: 'SINGLE_SELECT',
+  });
+  assert.ok(single.includes('item-edit'));
+  assert.ok(single.includes('--project-id'));
+  assert.ok(single.includes('PVT_abc'));
+  assert.ok(single.includes('--single-select-option-id'));
+  assert.ok(single.includes('opt-id-1'));
+
+  const number = buildProjectItemEditArgs({
+    projectId: 'PVT_abc', itemId: 'PVTI_xyz', fieldId: 'PVTF_pr',
+    value: 42, dataType: 'NUMBER',
+  });
+  assert.ok(number.includes('--number'));
+  assert.ok(number.includes('42'));
+
+  const text = buildProjectItemEditArgs({
+    projectId: 'PVT_abc', itemId: 'PVTI_xyz', fieldId: 'PVTF_track',
+    value: 'sample-track', dataType: 'TEXT',
+  });
+  assert.ok(text.includes('--text'));
+  assert.ok(text.includes('sample-track'));
+});
+
+test('buildProjectViewArgs and buildProjectFieldListArgs use <number> --owner', () => {
+  const view = buildProjectViewArgs({ projectOwner: 'o', projectNumber: 3 });
+  assert.deepEqual(view, ['project', 'view', '3', '--owner', 'o', '--format', 'json']);
+
+  const fields = buildProjectFieldListArgs({ projectOwner: 'o', projectNumber: 3 });
+  assert.ok(fields.includes('field-list'));
+  assert.ok(fields.includes('3'));
+  assert.ok(fields.includes('--owner'));
+  assert.ok(fields.includes('o'));
+  assert.ok(!fields.includes('--project-id'));
+});
+
+test('buildIssueListArgs includes url in --json (so addProjectItem has a URL to use)', () => {
+  const args = buildIssueListArgs({ repo: 'o/r', label: 'track:foo' });
+  assert.ok(args.includes('-R'));
+  assert.ok(args.includes('o/r'));
+  assert.ok(args.includes('--label'));
+  assert.ok(args.includes('track:foo'));
+  const jsonIdx = args.indexOf('--json');
+  assert.ok(jsonIdx >= 0);
+  const jsonFields = args[jsonIdx + 1].split(',');
+  assert.ok(jsonFields.includes('url'), '--json must request url');
+});
+
+test('buildIssueCreateArgs threads each label as a separate --label flag', () => {
+  const args = buildIssueCreateArgs({
+    repo: 'o/r', title: 't', body: 'b', labels: ['track:foo', 'lane:leaf'],
+  });
+  const labelIdxs = args.reduce((acc, a, i) => (a === '--label' ? [...acc, i] : acc), []);
+  assert.equal(labelIdxs.length, 2);
+  assert.equal(args[labelIdxs[0] + 1], 'track:foo');
+  assert.equal(args[labelIdxs[1] + 1], 'lane:leaf');
+});
+
+test('buildIssueViewArgs requests url so live createIssue can return it', () => {
+  const args = buildIssueViewArgs({ repo: 'o/r', number: 42 });
+  const jsonIdx = args.indexOf('--json');
+  assert.ok(jsonIdx >= 0);
+  assert.ok(args[jsonIdx + 1].split(',').includes('url'));
+});
 
 // ---------- parseArgs ----------
 
