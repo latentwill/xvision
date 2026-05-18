@@ -1553,7 +1553,17 @@ fn strategy_tool_defs() -> Vec<ToolDefinition> {
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "template": {"type": "string", "description": "Optional. Template name from list_templates. Omit for a blank draft."},
+                    "template": {
+                        // anyOf string|null so providers that honor the
+                        // advertised JSON schema (Anthropic strict-tools,
+                        // OpenAI structured outputs) will let the model
+                        // emit an explicit `null` — not just omit the
+                        // field. WizardCreateStrategyInput accepts both
+                        // shapes; the schema must too or strict providers
+                        // strip the null before it reaches the deserializer.
+                        "anyOf": [{"type": "string"}, {"type": "null"}],
+                        "description": "Optional. Template name from list_templates. Omit or pass null for a blank draft."
+                    },
                     "name": {"type": "string", "description": "Human-readable name"},
                     "creator": {"type": "string", "description": "Optional @handle"}
                 },
@@ -1798,6 +1808,7 @@ mod tests {
     use super::*;
     use sqlx::sqlite::SqliteConnectOptions;
     use xvision_engine::agent::llm::MockDispatch;
+
 
     /// Build a real sqlite-backed pool against a tempdir + run engine
     /// migrations. Each test gets its own DB so concurrent runs don't
@@ -2640,6 +2651,48 @@ mod tests {
         ] {
             assert!(names.contains(&v), "missing verb {v} in {names:?}");
         }
+    }
+
+    #[test]
+    fn create_strategy_tool_schema_allows_null_template() {
+        // PR #275 follow-up: the Rust deserializer accepts `template: null`
+        // / omitted, but providers that honor the advertised JSON schema
+        // (Anthropic strict-tools, OpenAI structured outputs) reject an
+        // explicit null unless the schema declares it. Without `anyOf:
+        // [string, null]` the model can only omit the field, leaving the
+        // operator-repro "I'll pass null" path unreachable in production.
+        let defs = wizard_tool_defs();
+        let create = defs
+            .iter()
+            .find(|d| d.name == "create_strategy")
+            .expect("create_strategy tool def must exist");
+        let tmpl = create
+            .input_schema
+            .pointer("/properties/template")
+            .expect("template property must be in the schema");
+        let any_of = tmpl
+            .get("anyOf")
+            .and_then(|v| v.as_array())
+            .expect("template schema must use anyOf so null is permitted");
+        let has_string = any_of
+            .iter()
+            .any(|v| v.get("type").and_then(|t| t.as_str()) == Some("string"));
+        let has_null = any_of
+            .iter()
+            .any(|v| v.get("type").and_then(|t| t.as_str()) == Some("null"));
+        assert!(has_string, "template schema must still accept string");
+        assert!(has_null, "template schema must accept null");
+        // `template` must NOT be required — that's the whole point of the PR.
+        let required = create
+            .input_schema
+            .get("required")
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>())
+            .unwrap_or_default();
+        assert!(
+            !required.contains(&"template"),
+            "template must not be in required: got {required:?}"
+        );
     }
 
     #[test]
