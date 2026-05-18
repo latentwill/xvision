@@ -32,6 +32,10 @@ import type {
   RunSummary,
 } from "@/api/types.gen";
 import {
+  derivePositionsByDecision,
+  type OpenPosition,
+} from "@/features/decisions/positions";
+import {
   MobileEvalRunDetail,
   MobileEvalRunDetailError,
   MobileEvalRunDetailLoading,
@@ -528,6 +532,10 @@ type DecisionFilter = "all" | "buy" | "sell" | "hold" | "close";
 function DecisionsPanel({ rows }: { rows: DecisionRowDto[] }) {
   const [filter, setFilter] = useState<DecisionFilter>("all");
   const counts = useMemo(() => decisionCounts(rows), [rows]);
+  // Derive open positions across the FULL unfiltered sequence — filtering
+  // is purely display-side, but a CLOSE row's "positions after close = []"
+  // only holds if we've walked every preceding fill.
+  const positionsByDecision = useMemo(() => derivePositionsByDecision(rows), [rows]);
   const filtered = useMemo(
     () => rows.filter((row) => filter === "all" || decisionKind(row.action) === filter),
     [rows, filter],
@@ -554,7 +562,7 @@ function DecisionsPanel({ rows }: { rows: DecisionRowDto[] }) {
             ))}
           </div>
           <div className="xvn-scroll xvn-scroll--always max-h-[520px] overflow-x-auto">
-            <DecisionsTable rows={filtered} />
+            <DecisionsTable rows={filtered} positionsByDecision={positionsByDecision} />
           </div>
         </>
       )}
@@ -562,9 +570,15 @@ function DecisionsPanel({ rows }: { rows: DecisionRowDto[] }) {
   );
 }
 
-function DecisionsTable({ rows }: { rows: DecisionRowDto[] }) {
+function DecisionsTable({
+  rows,
+  positionsByDecision,
+}: {
+  rows: DecisionRowDto[];
+  positionsByDecision: Map<number, OpenPosition[]>;
+}) {
   return (
-    <table className="w-full min-w-[980px]">
+    <table className="w-full min-w-[1140px]">
       <thead>
         <tr className="sticky top-0 z-10 bg-surface-card text-left text-text-2 text-[12px] border-b border-border-soft">
           <th className="font-normal py-2.5 px-5">#</th>
@@ -575,6 +589,7 @@ function DecisionsTable({ rows }: { rows: DecisionRowDto[] }) {
           <th className="font-normal py-2.5 px-3 text-right">Size</th>
           <th className="font-normal py-2.5 px-3 text-right">Fill</th>
           <th className="font-normal py-2.5 px-3 text-right">PnL</th>
+          <th className="font-normal py-2.5 px-3">Open positions</th>
           <th className="font-normal py-2.5 px-3">Reasoning</th>
         </tr>
       </thead>
@@ -608,6 +623,12 @@ function DecisionsTable({ rows }: { rows: DecisionRowDto[] }) {
             >
               {fmtNumber(r.pnl_realized)}
             </td>
+            <td
+              className="py-2.5 px-3 font-mono text-[12px]"
+              data-testid={`decision-open-positions-${r.decision_index}`}
+            >
+              <OpenPositionsCell positions={positionsByDecision.get(r.decision_index) ?? []} />
+            </td>
             <td className="py-2.5 px-3 text-text-2 text-[12px] leading-snug max-w-[320px]">
               {decisionReasoning(r)}
             </td>
@@ -616,6 +637,48 @@ function DecisionsTable({ rows }: { rows: DecisionRowDto[] }) {
       </tbody>
     </table>
   );
+}
+
+function OpenPositionsCell({ positions }: { positions: OpenPosition[] }) {
+  if (positions.length === 0) {
+    return (
+      <span className="text-text-3" data-testid="decision-open-positions-flat">
+        flat
+      </span>
+    );
+  }
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {positions.map((p) => (
+        <span
+          key={p.asset}
+          className={`dec-pos dec-pos--${p.side}`}
+          title={`${p.asset} ${p.side} ${p.qty} @ ${p.entry_price}`}
+        >
+          <span className="dec-pos__asset">{p.asset}</span>
+          <span className="dec-pos__side">{p.side}</span>
+          <span className="dec-pos__qty">{fmtPositionQty(p.qty)}</span>
+          <span className="dec-pos__sep">@</span>
+          <span className="dec-pos__entry">{fmtPositionEntry(p.entry_price)}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function fmtPositionQty(qty: number): string {
+  // Strategy-config risk_pct lands roughly anywhere in 0.0001..10 units;
+  // 4 sig figs is wide enough without overflowing the cell.
+  if (qty === 0) return "0";
+  if (Math.abs(qty) >= 1000) return qty.toLocaleString("en-US", { maximumFractionDigits: 2 });
+  return qty.toPrecision(4).replace(/\.?0+$/, "");
+}
+
+function fmtPositionEntry(price: number): string {
+  if (price === 0) return "0";
+  if (price >= 1000) return price.toLocaleString("en-US", { maximumFractionDigits: 0 });
+  if (price >= 1) return price.toFixed(2);
+  return price.toPrecision(4);
 }
 
 function DecisionSignal({ action }: { action: string }) {
