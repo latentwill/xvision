@@ -99,7 +99,7 @@ export function FlameGraph({
   const totalH = (maxDepth + 1) * ROW_H;
 
   return (
-    <div className="relative w-full overflow-x-auto overflow-y-auto h-full" role="figure" aria-label="span flame graph">
+    <div className="scrollbar-stable relative w-full overflow-x-auto h-full" role="figure" aria-label="span flame graph">
       <div className="relative" style={{ height: totalH, minWidth: "100%" }}>
         {rows.map((r) => {
           const color = spanColor(r.span.kind);
