@@ -181,8 +181,18 @@ pub struct InternBriefing {
 /// trader_arm + baselines) each emit one of these against the same cached
 /// briefing (Tier 1 fix #1) — arm identity is carried by the storage key
 /// `(cycle_id, arm_name)`, not by a field on the decision itself.
+///
+/// **Deserialization runs the F-6 cross-field invariant automatically.**
+/// `#[serde(try_from = "TraderDecisionRaw")]` parses into a private
+/// shadow struct (with `#[serde(deny_unknown_fields)]`), then runs
+/// `validate_cross_field` on the conversion. Every parse site — DB
+/// store, CLI risk command, API boundary — picks up the
+/// `take_profit_pct > stop_loss_pct` check without any caller change.
+/// Direct struct construction (test fixtures, in-process risk-engine
+/// outputs) skips the check — callers that need it can invoke
+/// `validate_cross_field` explicitly.
 #[derive(Debug, Clone, PartialEq, Validate, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(try_from = "TraderDecisionRaw")]
 pub struct TraderDecision {
     #[garde(skip)]
     pub cycle_id: Uuid,
@@ -207,6 +217,44 @@ pub struct TraderDecision {
     #[garde(skip)]
     #[serde(default)]
     pub asset: Option<AssetSymbol>,
+}
+
+/// Shadow struct backing `TraderDecision`'s `try_from` deserialize
+/// (F-6). Carries `#[serde(deny_unknown_fields)]` so typos in the
+/// trader response or in stored JSON fail at parse time, and acts as
+/// the seam where `validate_cross_field` runs before the typed value
+/// is constructed.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TraderDecisionRaw {
+    cycle_id: Uuid,
+    action: Action,
+    size_bps: u32,
+    direction: Direction,
+    stop_loss_pct: f32,
+    take_profit_pct: f32,
+    trader_summary: String,
+    #[serde(default)]
+    asset: Option<AssetSymbol>,
+}
+
+impl TryFrom<TraderDecisionRaw> for TraderDecision {
+    type Error = String;
+
+    fn try_from(raw: TraderDecisionRaw) -> Result<Self, Self::Error> {
+        let decision = TraderDecision {
+            cycle_id: raw.cycle_id,
+            action: raw.action,
+            size_bps: raw.size_bps,
+            direction: raw.direction,
+            stop_loss_pct: raw.stop_loss_pct,
+            take_profit_pct: raw.take_profit_pct,
+            trader_summary: raw.trader_summary,
+            asset: raw.asset,
+        };
+        decision.validate_cross_field()?;
+        Ok(decision)
+    }
 }
 
 impl TraderDecision {
@@ -661,6 +709,66 @@ mod tests {
         d.take_profit_pct = 1.0;
         d.validate_cross_field()
             .expect("Close action is an exit; no forward TP/SL asymmetry to enforce");
+    }
+
+    #[test]
+    fn decision_deserialize_runs_cross_field_check() {
+        // PR #302 review P1: the try_from shadow must enforce
+        // validate_cross_field on every parse path (DB store, CLI,
+        // API), not just when callers happen to call it explicitly.
+        let bad = serde_json::json!({
+            "cycle_id": Uuid::nil(),
+            "action": "buy",
+            "size_bps": 1000,
+            "direction": "long",
+            "stop_loss_pct": 5.0,
+            "take_profit_pct": 3.0,
+            "trader_summary": "Long entry on confirmed range break with 2:1 R:R.",
+        });
+        let err = serde_json::from_value::<TraderDecision>(bad)
+            .expect_err("Buy with TP<=SL must fail deserialization");
+        let msg = err.to_string();
+        assert!(msg.contains("take_profit_pct"), "{msg}");
+        assert!(msg.contains("stop_loss_pct"), "{msg}");
+    }
+
+    #[test]
+    fn decision_deserialize_passes_for_flat_with_inverted_tp_sl() {
+        // Flat actions skip the cross-field rule even via deserialize.
+        let raw = serde_json::json!({
+            "cycle_id": Uuid::nil(),
+            "action": "flat",
+            "size_bps": 0,
+            "direction": "flat",
+            "stop_loss_pct": 5.0,
+            "take_profit_pct": 1.0,
+            "trader_summary": "Flat — no directional signal.",
+        });
+        let d: TraderDecision = serde_json::from_value(raw)
+            .expect("Flat action must skip the TP/SL cross-field rule at parse time");
+        assert_eq!(d.action, Action::Flat);
+    }
+
+    #[test]
+    fn risk_decision_deserialize_propagates_inner_cross_field_failure() {
+        // Round-tripping a RiskDecision::Approved with a bad inner
+        // TraderDecision must also fail — the inner TraderDecision's
+        // try_from runs on the embedded decode.
+        let bad = serde_json::json!({
+            "verdict": "approved",
+            "decision": {
+                "cycle_id": Uuid::nil(),
+                "action": "sell",
+                "size_bps": 1000,
+                "direction": "short",
+                "stop_loss_pct": 4.0,
+                "take_profit_pct": 4.0,
+                "trader_summary": "Short on RSI overbought with 1:1 R:R.",
+            }
+        });
+        let err = serde_json::from_value::<RiskDecision>(bad)
+            .expect_err("inner TraderDecision with TP==SL must reject");
+        assert!(err.to_string().contains("take_profit_pct"));
     }
 
     #[test]
