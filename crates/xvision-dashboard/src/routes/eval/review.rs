@@ -294,17 +294,30 @@ async fn build_dispatch_for_profile(
         .await
         .map_err(|e| DashboardError::Internal(anyhow::anyhow!("spawn_blocking: {e}")))?
         .map_err(|e| DashboardError::from(ApiError::Validation(format!("load config: {e}"))))?;
-    let entry = cfg
-        .providers
-        .iter()
-        .find(|p| p.name == profile.provider)
-        .ok_or_else(|| {
-            DashboardError::from(ApiError::Validation(format!(
-                "agent profile `{}` references provider `{}` which is not configured in Settings → Providers.",
-                profile.id, profile.provider
-            )))
-        })?;
-    dispatch_from_provider(entry).map_err(DashboardError::from)
+
+    if let Some(entry) = cfg.providers.iter().find(|p| p.name == profile.provider) {
+        return dispatch_from_provider(entry).map_err(DashboardError::from);
+    }
+
+    // The profile's named provider isn't configured. If at least one
+    // other provider is available, fall back to it with a visible
+    // warn rather than failing an operator-triggered review. Seeded
+    // profiles (migration 016) pin `anthropic` as the provider, which
+    // makes the review pass un-runnable on dashboards without an
+    // Anthropic key — see qa-review-agent-provider-config contract.
+    if let Some(fallback) = cfg.providers.first() {
+        tracing::warn!(
+            profile_id = %profile.id,
+            requested_provider = %profile.provider,
+            fallback_provider = %fallback.name,
+            "agent profile's named provider not configured; substituting first available provider",
+        );
+        return dispatch_from_provider(fallback).map_err(DashboardError::from);
+    }
+
+    Err(DashboardError::from(ApiError::Validation(
+        "no LLM provider configured in Settings → Providers — add a provider to run reviews".to_string(),
+    )))
 }
 
 fn dispatch_from_provider(entry: &ProviderEntry) -> Result<Arc<dyn LlmDispatch>, ApiError> {
@@ -355,17 +368,22 @@ mod tests {
     use xvision_engine::eval::store::DecisionRow;
 
     async fn fresh_state() -> (AppState, TempDir) {
+        fresh_state_with_providers(
+            "\n[[providers]]\nname = \"anthropic\"\nkind = \"local-candle\"\nbase_url = \"\"\napi_key_env = \"\"\n",
+        )
+        .await
+    }
+
+    /// Build a fresh AppState with the operator-provided `[[providers]]`
+    /// TOML appended (or none, if empty). Lets tests exercise the
+    /// provider-resolution branches in `build_dispatch_for_profile`.
+    async fn fresh_state_with_providers(providers_toml: &str) -> (AppState, TempDir) {
         let tmp = TempDir::new().unwrap();
         let xvn_home = tmp.path().to_path_buf();
         std::fs::create_dir_all(xvn_home.join("config")).unwrap();
-        // Reuse the canonical workspace config and append a local-candle
-        // provider so build_dispatch_for_profile resolves without
-        // needing real API keys.
         let mut cfg = std::fs::read_to_string("../../config/default.toml")
             .expect("read workspace config/default.toml");
-        cfg.push_str(
-            "\n[[providers]]\nname = \"anthropic\"\nkind = \"local-candle\"\nbase_url = \"\"\napi_key_env = \"\"\n",
-        );
+        cfg.push_str(providers_toml);
         std::fs::write(xvn_home.join("config/default.toml"), cfg).unwrap();
         let state = AppState::new(xvn_home).await.expect("AppState::new");
         (state, tmp)
@@ -629,5 +647,60 @@ mod tests {
         let t0 = items[0]["created_at"].as_str().unwrap();
         let t1 = items[1]["created_at"].as_str().unwrap();
         assert!(t0 >= t1, "newest first ({t0} vs {t1})");
+    }
+
+    // --- qa-review-agent-provider-config regression coverage ---
+
+    /// When the profile's named provider (e.g. `anthropic`) isn't in
+    /// the runtime config but at least one other provider IS, the
+    /// review should run against the fallback provider instead of
+    /// erroring with "anthropic not configured".
+    #[tokio::test]
+    async fn post_review_falls_back_when_named_provider_missing() {
+        // The reasoning-agent profile (migration 016 seed) requests
+        // `anthropic`. Provide a single non-anthropic provider; the
+        // resolver should pick it.
+        let (state, _tmp) = fresh_state_with_providers(
+            "\n[[providers]]\nname = \"local-fallback\"\nkind = \"local-candle\"\nbase_url = \"\"\napi_key_env = \"\"\n",
+        )
+        .await;
+        let server =
+            TestServer::new(crate::server::build_router(state.clone())).expect("TestServer");
+        let run_id = seed_completed_run(&state.pool).await;
+
+        let resp = server
+            .post(&format!("/api/eval/runs/{run_id}/review"))
+            .json(&serde_json::json!({"agent_profile_id": "reasoning-agent"}))
+            .await;
+        resp.assert_status_ok();
+        let body: serde_json::Value = resp.json();
+        assert_eq!(body["review"]["verdict"].as_str(), Some("inconclusive"));
+    }
+
+    /// When NO providers are configured, the resolver should return
+    /// a clearer error than naming a specific provider the operator
+    /// may not even know is referenced.
+    #[tokio::test]
+    async fn post_review_returns_clearer_error_when_no_providers() {
+        let (state, _tmp) = fresh_state_with_providers("").await;
+        let server =
+            TestServer::new(crate::server::build_router(state.clone())).expect("TestServer");
+        let run_id = seed_completed_run(&state.pool).await;
+
+        let resp = server
+            .post(&format!("/api/eval/runs/{run_id}/review"))
+            .json(&serde_json::json!({"agent_profile_id": "reasoning-agent"}))
+            .await;
+        // ApiError::Validation maps to 4xx; we don't care about the
+        // exact code, just that the body carries the new copy.
+        let body_text = resp.text();
+        assert!(
+            body_text.contains("no LLM provider configured"),
+            "expected clearer no-providers message, got: {body_text}"
+        );
+        assert!(
+            !body_text.contains("references provider `anthropic`"),
+            "should not name a specific provider when none are configured: {body_text}"
+        );
     }
 }
