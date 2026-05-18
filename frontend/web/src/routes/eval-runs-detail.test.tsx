@@ -21,6 +21,7 @@ vi.mock("@/api/eval", async () => {
     cancelRun: vi.fn(),
     downloadEvalRunExport: vi.fn(),
     retryRun: vi.fn(),
+    listRuns: vi.fn(),
   };
 });
 
@@ -188,6 +189,9 @@ describe("EvalRunDetailRoute", () => {
       completed_at: "2026-05-13T14:01:00Z",
       error: "cancelled by user",
     });
+    // siblings query: default empty so the disambiguator falls back to
+    // "Run #1 · …". Individual tests override when ordinal matters.
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
     vi.mocked(chartApi.openRunStream).mockImplementation(
       (runId: string) => new EventSource(`/stream/${runId}`),
     );
@@ -292,6 +296,53 @@ describe("EvalRunDetailRoute", () => {
     await waitFor(() =>
       expect(evalApi.downloadEvalRunExport).toHaveBeenCalledWith("01LIVE"),
     );
+  });
+
+  it("renders the disambiguator label in the metadata strip and drops the strategy/scenario id chips", async () => {
+    vi.mocked(evalApi.getRun).mockResolvedValue(detail());
+    vi.mocked(evalApi.listRuns).mockResolvedValue([
+      detail().summary,
+      {
+        ...detail().summary,
+        id: "01OLDER",
+        started_at: "2026-05-13T10:00:00Z",
+      },
+    ]);
+
+    renderDetail();
+
+    const meta = await screen.findByTestId("eval-run-meta");
+    await waitFor(() =>
+      expect(meta.textContent ?? "").toMatch(/Run #2\/2/),
+    );
+    // run-id chip with full id available via title attribute
+    const runChip = meta.querySelector('[aria-label="Run id 01LIVE"]');
+    expect(runChip).not.toBeNull();
+    expect(runChip?.getAttribute("title")).toBe("01LIVE");
+    // The redundant `strategy <id>` / `scenario <id>` chips are gone.
+    expect(meta.textContent ?? "").not.toMatch(/strategy 01AGENT/);
+    expect(meta.textContent ?? "").not.toMatch(/scenario btc-4h/);
+  });
+
+  it("renders the action-row buttons in a 1fr-per-column grid for uniform widths", async () => {
+    vi.mocked(evalApi.getRun).mockResolvedValue(
+      detail({
+        summary: {
+          ...detail().summary,
+          status: "failed",
+          completed_at: "2026-05-13T14:30:00Z",
+          error: "boom",
+        },
+      }),
+    );
+
+    renderDetail();
+
+    const actions = await screen.findByTestId("eval-run-actions");
+    expect(actions.className).toContain("grid-flow-col");
+    expect(actions.className).toContain("auto-cols-fr");
+    // Failed run shows Retry + Download in the same row.
+    expect(actions.querySelectorAll("button").length).toBe(2);
   });
 
   it("links the trace surface to the actual eval run id", async () => {

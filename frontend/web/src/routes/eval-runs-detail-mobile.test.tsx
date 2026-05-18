@@ -28,6 +28,7 @@ vi.mock("@/api/eval", async () => {
     cancelRun: vi.fn(),
     downloadEvalRunExport: vi.fn(),
     retryRun: vi.fn(),
+    listRuns: vi.fn(),
   };
 });
 
@@ -171,6 +172,7 @@ describe("EvalRunDetailRoute (mobile layout)", () => {
       status: "cancelled",
       completed_at: "2026-05-13T14:01:00Z",
     });
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
     stubMatchMedia(true);
   });
 
@@ -264,6 +266,28 @@ describe("EvalRunDetailRoute (mobile layout)", () => {
     fireEvent.click(halt);
     await waitFor(() => expect(evalApi.cancelRun).toHaveBeenCalled());
     expect(vi.mocked(evalApi.cancelRun).mock.calls[0]?.[0]).toBe("01LIVE");
+  });
+
+  it("renders the disambiguator in the mobile hero and drops the duplicate strategy-id chip", async () => {
+    vi.mocked(evalApi.getRun).mockResolvedValue(detail());
+    vi.mocked(evalApi.listRuns).mockResolvedValue([
+      detail().summary,
+      {
+        ...detail().summary,
+        id: "01OLDER",
+        started_at: "2026-05-13T13:00:00Z",
+      },
+    ]);
+
+    renderRoute();
+
+    const meta = await screen.findByTestId("mobile-eval-run-meta");
+    await waitFor(() =>
+      expect(meta.textContent ?? "").toMatch(/Run #2\/2/),
+    );
+    expect(meta.textContent ?? "").toMatch(/run 01LIVE/);
+    // The redundant `strategy <id>` chip is gone from the mobile hero.
+    expect(meta.textContent ?? "").not.toMatch(/strategy mean-reversion-v3/);
   });
 
   it("falls back to the desktop layout when matchMedia reports non-phone", async () => {

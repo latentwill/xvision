@@ -5,7 +5,7 @@ wave: agent-run-observability-followups
 worktree: .worktrees/eval-inspector-header-polish
 branch: task/eval-inspector-header-polish
 base: origin/main
-status: ready
+status: claimed
 depends_on: []
 blocks: []
 stacking: none
@@ -16,6 +16,10 @@ allowed_paths:
   - frontend/web/src/routes/eval-runs-detail.test.tsx
   - frontend/web/src/routes/eval-runs-detail-mobile.test.tsx
   - frontend/web/src/routes/eval-runs.test.tsx
+  # 2026-05-18: amended to host evalRunOrdinal / evalRunDisambiguator
+  # in run-display.ts so the list and detail routes can share the helper
+  # without the list route statically importing the lazy detail chunk.
+  - frontend/web/src/lib/run-display.ts
 forbidden_paths:
   - crates/**
   - frontend/web/src/api/types.gen/**
