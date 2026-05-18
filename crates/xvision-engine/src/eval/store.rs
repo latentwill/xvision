@@ -272,6 +272,7 @@ impl RunStore {
 
     pub async fn delete(&self, id: &str) -> Result<()> {
         let mut tx = self.pool.begin().await.context("begin delete run tx")?;
+        // Direct children from migration 002.
         sqlx::query("DELETE FROM eval_decisions WHERE run_id = ?")
             .bind(id)
             .execute(&mut *tx)
@@ -292,6 +293,109 @@ impl RunStore {
             .execute(&mut *tx)
             .await
             .context("delete eval_attestations")?;
+        // Reviews (migration 016) FK eval_run_id → eval_runs(id).
+        sqlx::query("DELETE FROM eval_reviews WHERE eval_run_id = ?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .context("delete eval_reviews")?;
+        // Agent-run observability chain (migration 018). FK enforcement is
+        // ON by sqlx default, so we have to unwind the whole chain bottom-up:
+        // children of spans, then spans, then sibling children of agent_runs,
+        // then agent_runs themselves.
+        sqlx::query(
+            "DELETE FROM approvals
+             WHERE span_id IN (
+                 SELECT s.id FROM spans s
+                 JOIN agent_runs ar ON ar.id = s.run_id
+                 WHERE ar.eval_run_id = ?
+             )",
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .context("delete approvals")?;
+        sqlx::query(
+            "DELETE FROM tool_calls
+             WHERE span_id IN (
+                 SELECT s.id FROM spans s
+                 JOIN agent_runs ar ON ar.id = s.run_id
+                 WHERE ar.eval_run_id = ?
+             )",
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .context("delete tool_calls")?;
+        sqlx::query(
+            "DELETE FROM model_calls
+             WHERE span_id IN (
+                 SELECT s.id FROM spans s
+                 JOIN agent_runs ar ON ar.id = s.run_id
+                 WHERE ar.eval_run_id = ?
+             )",
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .context("delete model_calls")?;
+        sqlx::query(
+            "DELETE FROM sandbox_results
+             WHERE span_id IN (
+                 SELECT s.id FROM spans s
+                 JOIN agent_runs ar ON ar.id = s.run_id
+                 WHERE ar.eval_run_id = ?
+             )",
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .context("delete sandbox_results")?;
+        sqlx::query(
+            "DELETE FROM events
+             WHERE run_id IN (SELECT id FROM agent_runs WHERE eval_run_id = ?)",
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .context("delete events")?;
+        sqlx::query(
+            "DELETE FROM checkpoints
+             WHERE run_id IN (SELECT id FROM agent_runs WHERE eval_run_id = ?)",
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .context("delete checkpoints")?;
+        sqlx::query(
+            "DELETE FROM spans
+             WHERE run_id IN (SELECT id FROM agent_runs WHERE eval_run_id = ?)",
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .context("delete spans")?;
+        sqlx::query(
+            "DELETE FROM supervisor_notes
+             WHERE run_id IN (SELECT id FROM agent_runs WHERE eval_run_id = ?)",
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .context("delete supervisor_notes")?;
+        sqlx::query(
+            "DELETE FROM artifacts
+             WHERE run_id IN (SELECT id FROM agent_runs WHERE eval_run_id = ?)",
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .context("delete artifacts")?;
+        sqlx::query("DELETE FROM agent_runs WHERE eval_run_id = ?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .context("delete agent_runs")?;
         let res = sqlx::query("DELETE FROM eval_runs WHERE id = ?")
             .bind(id)
             .execute(&mut *tx)
@@ -987,6 +1091,137 @@ fn row_to_run(row: &sqlx::sqlite::SqliteRow) -> Result<Run> {
             .context("read actual_output_tokens")?
             .map(|n| n as u64),
     })
+}
+
+#[cfg(test)]
+mod delete_cascade_tests {
+    use super::*;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    // Hand-crafted minimal schema covering every table that has a
+    // FOREIGN KEY pointing into the eval_runs cascade (mig 002, 016, 018).
+    // We don't apply the full migration suite because several real
+    // migrations need their custom Rust-side wrappers; the constraints we
+    // need to verify are FK enforcement, so matching just the FKs is enough.
+    const SCHEMA: &str = "
+        CREATE TABLE eval_runs (id TEXT PRIMARY KEY);
+        CREATE TABLE eval_decisions (run_id TEXT, FOREIGN KEY (run_id) REFERENCES eval_runs(id));
+        CREATE TABLE eval_equity_samples (run_id TEXT, FOREIGN KEY (run_id) REFERENCES eval_runs(id));
+        CREATE TABLE eval_findings (run_id TEXT, FOREIGN KEY (run_id) REFERENCES eval_runs(id));
+        CREATE TABLE eval_attestations (run_id TEXT, FOREIGN KEY (run_id) REFERENCES eval_runs(id));
+        CREATE TABLE eval_reviews (id TEXT PRIMARY KEY, eval_run_id TEXT NOT NULL, FOREIGN KEY (eval_run_id) REFERENCES eval_runs(id));
+        CREATE TABLE agent_runs (id TEXT PRIMARY KEY, eval_run_id TEXT, FOREIGN KEY (eval_run_id) REFERENCES eval_runs(id));
+        CREATE TABLE spans (id TEXT PRIMARY KEY, run_id TEXT NOT NULL, FOREIGN KEY (run_id) REFERENCES agent_runs(id));
+        CREATE TABLE checkpoints (id TEXT PRIMARY KEY, run_id TEXT NOT NULL, span_id TEXT NOT NULL,
+            FOREIGN KEY (run_id) REFERENCES agent_runs(id), FOREIGN KEY (span_id) REFERENCES spans(id));
+        CREATE TABLE model_calls (span_id TEXT PRIMARY KEY, FOREIGN KEY (span_id) REFERENCES spans(id));
+        CREATE TABLE tool_calls (span_id TEXT PRIMARY KEY, FOREIGN KEY (span_id) REFERENCES spans(id));
+        CREATE TABLE approvals (id TEXT PRIMARY KEY, span_id TEXT NOT NULL, tool_call_id TEXT NOT NULL,
+            FOREIGN KEY (span_id) REFERENCES spans(id), FOREIGN KEY (tool_call_id) REFERENCES tool_calls(span_id));
+        CREATE TABLE sandbox_results (span_id TEXT PRIMARY KEY, FOREIGN KEY (span_id) REFERENCES spans(id));
+        CREATE TABLE supervisor_notes (id TEXT PRIMARY KEY, run_id TEXT NOT NULL, FOREIGN KEY (run_id) REFERENCES agent_runs(id));
+        CREATE TABLE artifacts (id TEXT PRIMARY KEY, run_id TEXT NOT NULL, FOREIGN KEY (run_id) REFERENCES agent_runs(id));
+        CREATE TABLE events (id TEXT PRIMARY KEY, run_id TEXT NOT NULL, span_id TEXT, FOREIGN KEY (run_id) REFERENCES agent_runs(id), FOREIGN KEY (span_id) REFERENCES spans(id));
+    ";
+
+    async fn pool_with_fks() -> SqlitePool {
+        // sqlx-sqlite enables foreign_keys=ON by default; make it explicit
+        // so this test doesn't drift if the default ever changes.
+        let opts: sqlx::sqlite::SqliteConnectOptions = "sqlite::memory:".parse().unwrap();
+        let opts = opts.foreign_keys(true);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(opts)
+            .await
+            .unwrap();
+        sqlx::query(SCHEMA).execute(&pool).await.unwrap();
+        pool
+    }
+
+    async fn seed_full_run(pool: &SqlitePool, run_id: &str) {
+        sqlx::query("INSERT INTO eval_runs (id) VALUES (?)")
+            .bind(run_id).execute(pool).await.unwrap();
+        sqlx::query("INSERT INTO eval_decisions (run_id) VALUES (?)")
+            .bind(run_id).execute(pool).await.unwrap();
+        sqlx::query("INSERT INTO eval_equity_samples (run_id) VALUES (?)")
+            .bind(run_id).execute(pool).await.unwrap();
+        sqlx::query("INSERT INTO eval_findings (run_id) VALUES (?)")
+            .bind(run_id).execute(pool).await.unwrap();
+        sqlx::query("INSERT INTO eval_attestations (run_id) VALUES (?)")
+            .bind(run_id).execute(pool).await.unwrap();
+        sqlx::query("INSERT INTO eval_reviews (id, eval_run_id) VALUES (?, ?)")
+            .bind(format!("REV-{run_id}")).bind(run_id).execute(pool).await.unwrap();
+        let ar = format!("AR-{run_id}");
+        sqlx::query("INSERT INTO agent_runs (id, eval_run_id) VALUES (?, ?)")
+            .bind(&ar).bind(run_id).execute(pool).await.unwrap();
+        let span = format!("SP-{run_id}");
+        sqlx::query("INSERT INTO spans (id, run_id) VALUES (?, ?)")
+            .bind(&span).bind(&ar).execute(pool).await.unwrap();
+        sqlx::query("INSERT INTO checkpoints (id, run_id, span_id) VALUES (?, ?, ?)")
+            .bind(format!("CHK-{run_id}")).bind(&ar).bind(&span).execute(pool).await.unwrap();
+        sqlx::query("INSERT INTO model_calls (span_id) VALUES (?)")
+            .bind(&span).execute(pool).await.unwrap();
+        let tc_span = format!("SPT-{run_id}");
+        sqlx::query("INSERT INTO spans (id, run_id) VALUES (?, ?)")
+            .bind(&tc_span).bind(&ar).execute(pool).await.unwrap();
+        sqlx::query("INSERT INTO tool_calls (span_id) VALUES (?)")
+            .bind(&tc_span).execute(pool).await.unwrap();
+        sqlx::query("INSERT INTO approvals (id, span_id, tool_call_id) VALUES (?, ?, ?)")
+            .bind(format!("AP-{run_id}")).bind(&tc_span).bind(&tc_span).execute(pool).await.unwrap();
+        sqlx::query("INSERT INTO sandbox_results (span_id) VALUES (?)")
+            .bind(format!("SBX-{run_id}-fake")).execute(pool).await.ok();
+        let sbx_span = format!("SPX-{run_id}");
+        sqlx::query("INSERT INTO spans (id, run_id) VALUES (?, ?)")
+            .bind(&sbx_span).bind(&ar).execute(pool).await.unwrap();
+        sqlx::query("INSERT INTO sandbox_results (span_id) VALUES (?)")
+            .bind(&sbx_span).execute(pool).await.unwrap();
+        sqlx::query("INSERT INTO supervisor_notes (id, run_id) VALUES (?, ?)")
+            .bind(format!("SN-{run_id}")).bind(&ar).execute(pool).await.unwrap();
+        sqlx::query("INSERT INTO artifacts (id, run_id) VALUES (?, ?)")
+            .bind(format!("ART-{run_id}")).bind(&ar).execute(pool).await.unwrap();
+        sqlx::query("INSERT INTO events (id, run_id, span_id) VALUES (?, ?, ?)")
+            .bind(format!("EV-{run_id}")).bind(&ar).bind(&span).execute(pool).await.unwrap();
+    }
+
+    async fn count(pool: &SqlitePool, table: &str, col: &str, val: &str) -> i64 {
+        let sql = format!("SELECT COUNT(*) FROM {table} WHERE {col} = ?");
+        let (n,): (i64,) = sqlx::query_as(&sql).bind(val).fetch_one(pool).await.unwrap();
+        n
+    }
+
+    #[tokio::test]
+    async fn delete_cascades_through_reviews_and_agent_run_observability() {
+        let pool = pool_with_fks().await;
+        seed_full_run(&pool, "RUN_A").await;
+        seed_full_run(&pool, "RUN_B").await;
+
+        let store = RunStore::new(pool.clone());
+        store.delete("RUN_A").await.expect("delete should succeed");
+
+        // RUN_A and every dependent row is gone.
+        assert_eq!(count(&pool, "eval_runs", "id", "RUN_A").await, 0);
+        assert_eq!(count(&pool, "eval_reviews", "eval_run_id", "RUN_A").await, 0);
+        assert_eq!(count(&pool, "agent_runs", "eval_run_id", "RUN_A").await, 0);
+        let ar_a = "AR-RUN_A";
+        assert_eq!(count(&pool, "spans", "run_id", ar_a).await, 0);
+        assert_eq!(count(&pool, "checkpoints", "run_id", ar_a).await, 0);
+        assert_eq!(count(&pool, "events", "run_id", ar_a).await, 0);
+        assert_eq!(count(&pool, "supervisor_notes", "run_id", ar_a).await, 0);
+        assert_eq!(count(&pool, "artifacts", "run_id", ar_a).await, 0);
+
+        // RUN_B is untouched.
+        assert_eq!(count(&pool, "eval_runs", "id", "RUN_B").await, 1);
+        assert_eq!(count(&pool, "eval_reviews", "eval_run_id", "RUN_B").await, 1);
+        assert_eq!(count(&pool, "agent_runs", "eval_run_id", "RUN_B").await, 1);
+    }
+
+    #[tokio::test]
+    async fn delete_returns_not_found_for_unknown_run() {
+        let pool = pool_with_fks().await;
+        let store = RunStore::new(pool);
+        let err = store.delete("MISSING").await.unwrap_err();
+        assert!(err.to_string().contains("run not found"), "got: {err}");
+    }
 }
 
 fn row_to_decision(row: &sqlx::sqlite::SqliteRow) -> Result<DecisionRow> {
