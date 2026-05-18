@@ -17,6 +17,42 @@
 `team/archive/2026-05-17-v2a/`. The remaining two leaves are independent —
 safe to claim in parallel.
 
+## Follow-ups / research needed
+
+- **User-configurable review-agent profile** (raised 2026-05-18 from
+  operator QA round 2). The current review/research agent profile
+  hardcodes `anthropic` as its provider. `qa-review-agent-provider-config`
+  ships a runtime fallback so review still runs on dashboards without
+  Anthropic configured, but the longer arc is a Settings → Review
+  Agents UI where the operator picks the profile (system prompt,
+  provider, model, memory mode) for the review pass. Ties into the
+  broader "expanding and evaluating agent types" V2 piece. Output
+  before contract: short design note under `docs/superpowers/notes/`
+  scoping the Settings surface + which review passes are configurable
+  (results review only, or also research / autoresearcher passes).
+
+- **V2 "walk back"** — research + competitor comparison before scoping.
+  What does "walking back" a v2 action (decision/order/agent step) look
+  like for users, and how do comparable products (trading copilots,
+  agent IDEs, eval platforms) expose undo / revert / replay? No contract
+  until the research note lands; park here so it doesn't get lost.
+  Output: a short doc under `docs/superpowers/notes/` summarizing
+  competitor patterns + recommended xvision shape, then conductor
+  decides whether it becomes a V2B/V2C contract.
+- **Marketplace "all-included" strategy dependencies** (V3, ties V2C
+  marketplace flow). A purchased strategy must be immediately runnable
+  by the buyer — expose every dependency the seller's agents relied on:
+  models (provider + id), MCP servers, tools, skills, broker/wallet
+  shape, memory mode. Need to (a) track those deps on the Strategy
+  artifact at mint time, (b) surface them in the listing UI so a buyer
+  sees the full bill of materials before purchase, (c) define a method
+  for guaranteeing the buyer's runtime can satisfy them on first run
+  (auto-prompt for missing API keys, install missing MCPs/skills,
+  reject unsupported model ids with a clear remediation, etc.).
+  Output: design note under `docs/superpowers/notes/` covering dep
+  schema + buyer-side install/verify flow; promotes into a contract
+  alongside the SLF3 strategy NFT mint work (V2C item 8).
+
 ## Not yet decomposed
 
 The conductor decomposes one phase at a time. Items below are roadmap-only;
