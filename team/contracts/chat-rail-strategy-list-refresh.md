@@ -12,14 +12,17 @@ stacking: none
 allowed_paths:
   - frontend/web/src/components/chat/**
   - frontend/web/src/components/chat/cards/**
+  - frontend/web/src/components/shell/ChatRail.tsx
+  - frontend/web/src/components/shell/ChatRail.test.tsx
+  - frontend/web/src/api/chat_rail.ts
   - frontend/web/src/api/strategies.ts
   - frontend/web/src/api/strategies.test.ts
   - frontend/web/src/api/scenarios.ts
   - frontend/web/src/api/scenarios.test.ts
   - frontend/web/src/api/agents.ts
   - frontend/web/src/api/agents.test.ts
-  - frontend/web/src/api/eval-runs.ts
-  - frontend/web/src/api/eval-runs.test.ts
+  - frontend/web/src/api/eval.ts
+  - frontend/web/src/api/eval.test.ts
   - frontend/web/src/routes/strategies.tsx
   - frontend/web/src/routes/scenarios.tsx
   - frontend/web/src/routes/agents.tsx
@@ -102,10 +105,17 @@ git worktree add .worktrees/chat-rail-strategy-list-refresh \
 
 # Notes
 
-Worker should grep the existing chat rail handlers for any
-`queryClient.invalidateQueries` calls first — confirm whether the
-gap is "never invalidates" or "invalidates the wrong key". The fix
-is small either way but the trace doc in the status file matters
-for catching similar gaps later.
+**Path correction (2026-05-18):** initial contract scoped
+`allowed_paths` to `components/chat/**`, but the chat rail's
+SSE-event consumer lives in `components/shell/ChatRail.tsx::applyEvent`
+(line 396-444). That's where `tool_result` events are processed, so
+that's where invalidation has to hook in. Added `ChatRail.tsx` +
+test file + `api/chat_rail.ts` to allowed_paths.
+
+The audit confirmed the gap is **never invalidates** — zero
+`invalidateQueries` calls exist in `components/chat/**` or
+`components/shell/ChatRail.tsx`. Today the chat rail mutates server
+state via tool calls but TanStack Query has no idea so list queries
+stay stale until the operator hard-refreshes.
 
 Append checkpoints / PR links below.

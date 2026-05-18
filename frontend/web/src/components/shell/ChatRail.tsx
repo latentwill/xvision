@@ -18,7 +18,12 @@ import {
 } from "react";
 import { useLocation } from "react-router-dom";
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+
+import { strategyKeys } from "@/api/strategies";
+import { scenarioKeys } from "@/api/scenarios";
+import { agentKeys } from "@/api/agents";
+import { evalKeys } from "@/api/eval";
 
 import { ChatComposer } from "@/components/chat/ChatComposer";
 import { ChatThread } from "@/components/chat/ChatThread";
@@ -74,6 +79,7 @@ export function ChatRail({
   onOpenActions,
 }: ChatRailProps) {
   const location = useLocation();
+  const qc = useQueryClient();
   const scope = useMemo<ContextScope>(
     () => scopeFromPath(location.pathname, location.search),
     [location.pathname, location.search],
@@ -194,6 +200,7 @@ export function ChatRail({
           ctrl.signal,
         )) {
           applyEvent(setBubbles, ev);
+          invalidateForToolResult(qc, ev);
         }
       } catch (e) {
         if ((e as Error).name === "AbortError") return;
@@ -203,7 +210,7 @@ export function ChatRail({
         abortRef.current = null;
       }
     },
-    [sessionId, isStreaming, providerName, modelId],
+    [sessionId, isStreaming, providerName, modelId, qc],
   );
 
   const stopStreaming = useCallback(() => {
@@ -392,6 +399,61 @@ function RailModelBar({
 
 // ---------------------------------------------------------------------------
 // helpers — kept module-local to avoid spilling internals into the API layer.
+
+/**
+ * Map a successful wizard `tool_result` event to the TanStack Query keys
+ * the tool just invalidated server-side, then call
+ * `queryClient.invalidateQueries` for each so any mounted list query
+ * refetches without a manual reload.
+ *
+ * Fixes `chat-rail-strategy-list-refresh`: today the chat rail mutates
+ * server state via tool calls (`create_strategy`, `create_scenario`,
+ * `update_slot`, …) but TanStack Query has no idea the cache went
+ * stale. The operator only saw the new row after a hard refresh.
+ *
+ * No-op for non-tool events, for failed tool results, and for read-only
+ * tools (`validate_draft`) — invalidating read-only tools would force a
+ * pointless refetch.
+ *
+ * Tool → key map mirrors the wizard tool registry in
+ * `crates/xvision-dashboard/src/wizard_loop.rs:446-541`. New tools that
+ * mutate must be added here in the same PR they ship.
+ */
+export function invalidateForToolResult(qc: QueryClient, ev: WizardEvent): void {
+  if (ev.type !== "tool_result") return;
+  // Failed tool results don't mutate; nothing to invalidate.
+  const result = ev.result as { error?: unknown } | null | undefined;
+  if (result && typeof result === "object" && "error" in result) return;
+  switch (ev.tool) {
+    case "create_strategy":
+    case "create_strategy_agent":
+    case "attach_agent":
+    case "update_slot":
+    case "update_manifest":
+    case "set_mechanical_param":
+    case "set_risk_config":
+      qc.invalidateQueries({ queryKey: strategyKeys.all });
+      // create_strategy_agent also mutates the agent library
+      // (the underlying agent row is created in `agents` too).
+      if (ev.tool === "create_strategy_agent") {
+        qc.invalidateQueries({ queryKey: agentKeys.all });
+      }
+      return;
+    case "create_scenario":
+      qc.invalidateQueries({ queryKey: scenarioKeys.all });
+      return;
+    case "run_eval":
+      qc.invalidateQueries({ queryKey: evalKeys.all });
+      return;
+    // Read-only — no invalidation.
+    case "validate_draft":
+      return;
+    default:
+      // Unknown tool: be conservative and skip. New mutating tools must
+      // opt in explicitly so we don't spam refetches for every read.
+      return;
+  }
+}
 
 function applyEvent(
   setBubbles: Dispatch<SetStateAction<Bubble[]>>,
