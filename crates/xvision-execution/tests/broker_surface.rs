@@ -432,6 +432,43 @@ async fn alpaca_paper_balance_returns_equity() {
     assert_eq!(bal, 100_000.0);
 }
 
+#[tokio::test]
+async fn alpaca_paper_buying_power_routes_crypto_to_cash_equities_to_buying_power() {
+    // Distinct values per field so a mis-wiring is impossible to miss.
+    let account = AlpacaAccount {
+        equity: 100_000.0,
+        last_equity: 99_500.0,
+        cash: 12_345.0,
+        buying_power: 67_890.0,
+    };
+    let mock = MockAlpacaApi::new(
+        account,
+        vec![],
+        fixture_pending_order(),
+        fixture_filled_order("ignored"),
+    );
+    let surface = AlpacaPaperSurface::with_api(Arc::new(mock));
+
+    // Crypto pair → settled cash (the field Alpaca actually validates
+    // crypto buys against and reports in `insufficient balance for USD`).
+    let crypto_bp = surface
+        .buying_power("BTC/USD")
+        .await
+        .expect("crypto buying_power must succeed");
+    assert_eq!(crypto_bp, 12_345.0, "crypto must route to cash");
+
+    // Equity ticker → Alpaca's `buying_power` (which may include margin).
+    let equity_bp = surface
+        .buying_power("AAPL")
+        .await
+        .expect("equity buying_power must succeed");
+    assert_eq!(equity_bp, 67_890.0, "equities must route to buying_power");
+
+    // And equity (curve / metrics) is still untouched by the new method.
+    let bal = surface.balance().await.expect("balance must succeed");
+    assert_eq!(bal, 100_000.0);
+}
+
 // ── MockBrokerSurface tests (downstream pattern) ─────────────────────────────
 
 #[tokio::test]
