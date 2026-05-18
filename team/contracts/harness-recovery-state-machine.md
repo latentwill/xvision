@@ -4,8 +4,8 @@ lane: integration
 wave: harness-observability-audit
 worktree: .worktrees/harness-recovery-state-machine
 branch: task/harness-recovery-state-machine
-base: origin/task/harness-span-taxonomy-extension   # stacked on F-4; rebases to origin/main when F-4 (and F-2) merge
-status: ready
+base: origin/task/harness-span-taxonomy-extension   # stacked on F-4 (PR #297); rebases to origin/main when F-4 merges
+status: pr-open
 depends_on:
   - harness-span-taxonomy-extension   # F-4 — adds `RecoveryAttempt` SpanKind variant + `state.transition` emission helper
 blocks: []
