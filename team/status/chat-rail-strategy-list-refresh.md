@@ -80,7 +80,21 @@ query-keys live at `api/eval.ts::evalKeys`).
   `ChatRail.tsx`; wired into the streaming loop in `send`.
 - 2026-05-18 — 13 tests added (parameterized over each mutating
   tool + negative-path coverage).
+- 2026-05-18 (follow-up, this PR) — operator regression resurfaced
+  for tool results that ship `error: null` (Rust `Option<String>`
+  serde default). The old failed-detection
+  (`"error" in result`) bailed on success payloads with a `null`
+  error field, so the invalidator no-op'd on a successful
+  `create_strategy` whose serialized payload happened to include
+  `{"id": "01...", "error": null}`.
+
+  Fix: require a TRUTHY error value (`Boolean(result.error)`) — the
+  wizard loop emits `{"error": "<msg>"}` on real failure, so
+  truthiness is enough to discriminate.
+
+  Regression test added:
+  `does NOT treat success payloads with error: null / error: ""`.
 
 ## PR
 
-(pending)
+#275 (follow-up): tighten failed-result detection to truthy `error`.
