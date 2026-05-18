@@ -22,9 +22,25 @@ const KEYBOARD_NUDGE_PX = 24;
 export function DockResizeHandle() {
   const heightPx = useTraceDock((s) => s.heightPx);
   const setHeightPx = useTraceDock((s) => s.setHeightPx);
-  const dragStateRef = useRef<{ startY: number; startHeight: number } | null>(
-    null,
-  );
+  // Drag state plus the body styles captured at pointer-down so we can
+  // restore them even if the component unmounts mid-drag (route
+  // navigation, active-run clear, etc.) before pointerup fires.
+  const dragStateRef = useRef<{
+    startY: number;
+    startHeight: number;
+    prevCursor: string;
+    prevUserSelect: string;
+  } | null>(null);
+
+  // Single drag-end cleanup. Idempotent: noop when no drag is active so
+  // both `pointerup` and the effect-cleanup can call it safely.
+  const endDrag = useCallback(() => {
+    const drag = dragStateRef.current;
+    if (!drag) return;
+    dragStateRef.current = null;
+    document.body.style.cursor = drag.prevCursor;
+    document.body.style.userSelect = drag.prevUserSelect;
+  }, []);
 
   // Drag tracking: the handle sits on the dock's TOP edge, so as the
   // pointer moves UP (lower clientY) the dock grows.
@@ -35,21 +51,20 @@ export function DockResizeHandle() {
       const delta = drag.startY - e.clientY;
       setHeightPx(drag.startHeight + delta);
     }
-    function onUp() {
-      if (!dragStateRef.current) return;
-      dragStateRef.current = null;
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-    }
     window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-    window.addEventListener("pointercancel", onUp);
+    window.addEventListener("pointerup", endDrag);
+    window.addEventListener("pointercancel", endDrag);
     return () => {
       window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      window.removeEventListener("pointercancel", onUp);
+      window.removeEventListener("pointerup", endDrag);
+      window.removeEventListener("pointercancel", endDrag);
+      // If the handle unmounts mid-drag — route nav, active-run clear,
+      // a parent state transition — restore the body styles too;
+      // otherwise the page is stuck with `ns-resize` + `userSelect:none`
+      // for the rest of the session.
+      endDrag();
     };
-  }, [setHeightPx]);
+  }, [setHeightPx, endDrag]);
 
   const onPointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
@@ -58,6 +73,8 @@ export function DockResizeHandle() {
       dragStateRef.current = {
         startY: e.clientY,
         startHeight: useTraceDock.getState().heightPx,
+        prevCursor: document.body.style.cursor,
+        prevUserSelect: document.body.style.userSelect,
       };
       document.body.style.cursor = "ns-resize";
       document.body.style.userSelect = "none";

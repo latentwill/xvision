@@ -82,6 +82,45 @@ describe("DockResizeHandle", () => {
     );
   });
 
+  test("restores body cursor + userSelect when the handle unmounts mid-drag", () => {
+    // Set a non-default body cursor first so we can prove the cleanup
+    // restores the *previous* value rather than wiping to "".
+    document.body.style.cursor = "wait";
+    document.body.style.userSelect = "text";
+
+    const { unmount } = render(<DockResizeHandle />);
+    const handle = screen.getByTestId("trace-dock-resize-handle");
+
+    fireEvent.pointerDown(handle, { button: 0, clientY: 500 });
+    expect(document.body.style.cursor).toBe("ns-resize");
+    expect(document.body.style.userSelect).toBe("none");
+
+    // Unmount before pointerup — simulates route nav or active-run
+    // clear killing the dock mid-drag.
+    unmount();
+
+    expect(document.body.style.cursor).toBe("wait");
+    expect(document.body.style.userSelect).toBe("text");
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+  });
+
+  test("pointerup restores the prior body style values too", () => {
+    document.body.style.cursor = "wait";
+    document.body.style.userSelect = "text";
+
+    render(<DockResizeHandle />);
+    const handle = screen.getByTestId("trace-dock-resize-handle");
+
+    fireEvent.pointerDown(handle, { button: 0, clientY: 500 });
+    fireEvent.pointerUp(window);
+
+    expect(document.body.style.cursor).toBe("wait");
+    expect(document.body.style.userSelect).toBe("text");
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+  });
+
   test("persists across mount / unmount via localStorage", async () => {
     localStorage.setItem(DOCK_HEIGHT_STORAGE_KEY, "612");
     // Re-import the store module so it re-reads localStorage on first
