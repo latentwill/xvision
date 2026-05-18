@@ -324,6 +324,7 @@ impl WhitelistConfig {
 // --- risk -------------------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq, Validate, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RiskConfig {
     #[garde(dive)]
     pub limits: RiskLimits,
@@ -332,6 +333,7 @@ pub struct RiskConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Validate, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RiskLimits {
     #[garde(range(min = 0.1, max = 100.0))]
     pub max_position_pct_nav: f32,
@@ -346,6 +348,7 @@ pub struct RiskLimits {
 }
 
 #[derive(Debug, Clone, PartialEq, Validate, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RiskStops {
     #[garde(skip)]
     pub stop_loss_required: bool,
@@ -357,6 +360,30 @@ pub struct RiskStops {
     pub take_profit_required: bool,
     #[garde(range(min = 0.5, max = 10.0))]
     pub take_profit_min_rr: f32,
+}
+
+impl RiskStops {
+    /// Cross-field invariant: the minimum stop-loss must not exceed
+    /// the maximum. Previously implicit (callers happened not to
+    /// invert them); F-6 enforces it at the validator boundary as a
+    /// companion to `Validate::validate(&())`.
+    pub fn validate_cross_field(&self) -> Result<(), String> {
+        if self.stop_loss_min_pct > self.stop_loss_max_pct {
+            return Err(format!(
+                "stop_loss_min_pct ({:.2}) must be <= stop_loss_max_pct ({:.2})",
+                self.stop_loss_min_pct, self.stop_loss_max_pct,
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl RiskConfig {
+    /// Run cross-field invariants on every nested type that has them.
+    /// Used by the pre-persist seam alongside `Validate::validate`.
+    pub fn validate_cross_field(&self) -> Result<(), String> {
+        self.stops.validate_cross_field()
+    }
 }
 
 // --- loader -----------------------------------------------------------------
@@ -420,6 +447,88 @@ pub fn load_risk(path: &Path) -> Result<RiskConfig, ConfigError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── F-6: deny_unknown_fields + cross-field invariants ───────────
+
+    fn baseline_risk_config() -> RiskConfig {
+        RiskConfig {
+            limits: RiskLimits {
+                max_position_pct_nav: 10.0,
+                max_total_exposure_pct: 100.0,
+                max_open_positions: 3,
+                max_daily_loss_pct: 5.0,
+                max_correlation_cluster: 2,
+            },
+            stops: RiskStops {
+                stop_loss_required: true,
+                stop_loss_min_pct: 0.5,
+                stop_loss_max_pct: 5.0,
+                take_profit_required: true,
+                take_profit_min_rr: 1.5,
+            },
+        }
+    }
+
+    #[test]
+    fn risk_config_rejects_unknown_field() {
+        let valid = serde_json::to_value(baseline_risk_config()).unwrap();
+        let mut object = valid.as_object().unwrap().clone();
+        object.insert("phantom".into(), serde_json::json!(true));
+        let err = serde_json::from_value::<RiskConfig>(serde_json::Value::Object(object))
+            .expect_err("deny_unknown_fields must reject `phantom`");
+        assert!(err.to_string().contains("unknown field"));
+        assert!(err.to_string().contains("phantom"));
+    }
+
+    #[test]
+    fn risk_limits_rejects_unknown_field() {
+        let valid = serde_json::to_value(baseline_risk_config().limits).unwrap();
+        let mut object = valid.as_object().unwrap().clone();
+        object.insert("max_widgets".into(), serde_json::json!(7));
+        let err = serde_json::from_value::<RiskLimits>(serde_json::Value::Object(object))
+            .expect_err("deny_unknown_fields must reject `max_widgets`");
+        assert!(err.to_string().contains("unknown field"));
+    }
+
+    #[test]
+    fn risk_stops_rejects_unknown_field() {
+        let valid = serde_json::to_value(baseline_risk_config().stops).unwrap();
+        let mut object = valid.as_object().unwrap().clone();
+        object.insert("trailing_stop".into(), serde_json::json!(0.5));
+        let err = serde_json::from_value::<RiskStops>(serde_json::Value::Object(object))
+            .expect_err("deny_unknown_fields must reject `trailing_stop`");
+        assert!(err.to_string().contains("unknown field"));
+    }
+
+    #[test]
+    fn risk_stops_cross_field_accepts_min_le_max() {
+        let cfg = baseline_risk_config();
+        cfg.stops
+            .validate_cross_field()
+            .expect("0.5 <= 5.0 satisfies the cross-field rule");
+    }
+
+    #[test]
+    fn risk_stops_cross_field_rejects_min_above_max() {
+        let mut cfg = baseline_risk_config();
+        cfg.stops.stop_loss_min_pct = 10.0;
+        cfg.stops.stop_loss_max_pct = 2.0;
+        let err = cfg
+            .stops
+            .validate_cross_field()
+            .expect_err("10.0 > 2.0 must fail the cross-field rule");
+        assert!(err.contains("stop_loss_min_pct"));
+        assert!(err.contains("stop_loss_max_pct"));
+    }
+
+    #[test]
+    fn risk_config_cross_field_delegates_to_stops() {
+        let mut cfg = baseline_risk_config();
+        cfg.stops.stop_loss_min_pct = 10.0;
+        cfg.stops.stop_loss_max_pct = 2.0;
+        cfg.validate_cross_field()
+            .expect_err("RiskConfig::validate_cross_field must surface RiskStops failures");
+    }
 
     fn project_root() -> PathBuf {
         // crates/xvision-core -> ../..

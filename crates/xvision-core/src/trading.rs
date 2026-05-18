@@ -143,6 +143,7 @@ pub enum EvidenceTag {
 /// forbidden from naming a recommendation (§2 architecture) — that keeps
 /// vectors' steering surface clean for Stage 2.
 #[derive(Debug, Clone, PartialEq, Validate, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct InternBriefing {
     #[garde(skip)]
     pub cycle_id: Uuid,
@@ -181,6 +182,7 @@ pub struct InternBriefing {
 /// briefing (Tier 1 fix #1) — arm identity is carried by the storage key
 /// `(cycle_id, arm_name)`, not by a field on the decision itself.
 #[derive(Debug, Clone, PartialEq, Validate, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TraderDecision {
     #[garde(skip)]
     pub cycle_id: Uuid,
@@ -213,6 +215,33 @@ impl TraderDecision {
     /// than `action` alone.
     pub fn divergence_key(&self) -> (Action, Direction, SizeBucket) {
         (self.action, self.direction, SizeBucket::from_bps(self.size_bps))
+    }
+
+    /// Cross-field invariants not expressible via field-level garde:
+    /// take-profit must exceed stop-loss for any directional position
+    /// (Buy/Sell). `Flat`/`Close` skip the check — they're position
+    /// exits with no forward risk asymmetry to enforce. Symmetric for
+    /// long and short since both pcts are stored as positive
+    /// magnitudes.
+    ///
+    /// Callers that need full validation should invoke `validate(&())`
+    /// (field-level ranges + lengths via garde) AND
+    /// `validate_cross_field()` (this method). The eval boundary
+    /// already gates on the former; F-6 adds the latter to the
+    /// pre-persist seam in `StrategyStore::save` (for trader-decision
+    /// fixtures embedded in a strategy) and to any future risk-gate
+    /// audit that wants the cross-field discipline.
+    pub fn validate_cross_field(&self) -> Result<(), String> {
+        if matches!(self.action, Action::Flat | Action::Close) {
+            return Ok(());
+        }
+        if self.take_profit_pct <= self.stop_loss_pct {
+            return Err(format!(
+                "take_profit_pct ({:.2}) must exceed stop_loss_pct ({:.2}) for action {:?}",
+                self.take_profit_pct, self.stop_loss_pct, self.action,
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -309,7 +338,7 @@ pub enum VetoReason {
 /// Risk-layer output: a `TraderDecision` is approved as-is, modified into a
 /// reduced version, or fully vetoed.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "verdict", rename_all = "snake_case")]
+#[serde(tag = "verdict", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RiskDecision {
     Approved {
         decision: TraderDecision,
@@ -539,6 +568,99 @@ mod tests {
         let mut op = fixture_open_position();
         op.size_bps = 2500;
         op.validate().expect_err("size_bps > 2000 must fail");
+    }
+
+    // ── F-6: deny_unknown_fields + cross-field invariants ───────────
+
+    #[test]
+    fn briefing_rejects_unknown_field() {
+        // Take a valid briefing JSON and inject a stray field. With
+        // deny_unknown_fields the parse must fail.
+        let valid = serde_json::to_value(fixture_briefing()).unwrap();
+        let mut object = valid.as_object().unwrap().clone();
+        object.insert("rogue".into(), serde_json::json!("smuggled"));
+        let err = serde_json::from_value::<InternBriefing>(serde_json::Value::Object(object))
+            .expect_err("deny_unknown_fields must reject `rogue`");
+        assert!(err.to_string().contains("unknown field"), "{err}");
+        assert!(err.to_string().contains("rogue"), "{err}");
+    }
+
+    #[test]
+    fn decision_rejects_unknown_field() {
+        let valid = serde_json::to_value(fixture_decision()).unwrap();
+        let mut object = valid.as_object().unwrap().clone();
+        object.insert("extra".into(), serde_json::json!(1));
+        let err = serde_json::from_value::<TraderDecision>(serde_json::Value::Object(object))
+            .expect_err("deny_unknown_fields must reject `extra`");
+        assert!(err.to_string().contains("unknown field"));
+        assert!(err.to_string().contains("extra"));
+    }
+
+    #[test]
+    fn risk_decision_rejects_unknown_field() {
+        let approved = RiskDecision::Approved {
+            decision: fixture_decision(),
+        };
+        let valid = serde_json::to_value(&approved).unwrap();
+        let mut object = valid.as_object().unwrap().clone();
+        object.insert("snuck_in".into(), serde_json::json!(true));
+        let err = serde_json::from_value::<RiskDecision>(serde_json::Value::Object(object))
+            .expect_err("deny_unknown_fields must reject `snuck_in`");
+        assert!(err.to_string().contains("unknown field"));
+    }
+
+    #[test]
+    fn decision_cross_field_accepts_tp_above_sl_for_buy() {
+        let d = fixture_decision();
+        assert!(matches!(d.action, Action::Buy));
+        assert!(d.take_profit_pct > d.stop_loss_pct);
+        d.validate_cross_field()
+            .expect("fixture has TP > SL so cross-field passes");
+    }
+
+    #[test]
+    fn decision_cross_field_rejects_tp_below_sl_for_buy() {
+        let mut d = fixture_decision();
+        d.stop_loss_pct = 5.0;
+        d.take_profit_pct = 3.0; // TP < SL
+        let err = d
+            .validate_cross_field()
+            .expect_err("TP <= SL on a Buy action must fail");
+        assert!(err.contains("take_profit_pct"));
+        assert!(err.contains("stop_loss_pct"));
+    }
+
+    #[test]
+    fn decision_cross_field_rejects_tp_equal_sl_for_sell() {
+        let mut d = fixture_decision();
+        d.action = Action::Sell;
+        d.direction = Direction::Short;
+        d.stop_loss_pct = 3.0;
+        d.take_profit_pct = 3.0; // TP == SL
+        let err = d
+            .validate_cross_field()
+            .expect_err("TP == SL on a Sell action must fail (strict >)");
+        assert!(err.contains("take_profit_pct"));
+    }
+
+    #[test]
+    fn decision_cross_field_skips_flat_action() {
+        let mut d = fixture_decision();
+        d.action = Action::Flat;
+        d.stop_loss_pct = 5.0;
+        d.take_profit_pct = 1.0; // would fail for Buy/Sell
+        d.validate_cross_field()
+            .expect("Flat action skips the directional TP/SL invariant");
+    }
+
+    #[test]
+    fn decision_cross_field_skips_close_action() {
+        let mut d = fixture_decision();
+        d.action = Action::Close;
+        d.stop_loss_pct = 5.0;
+        d.take_profit_pct = 1.0;
+        d.validate_cross_field()
+            .expect("Close action is an exit; no forward TP/SL asymmetry to enforce");
     }
 
     #[test]
