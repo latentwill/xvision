@@ -140,8 +140,9 @@ async fn backtest_executor_runs_30_day_fixture_without_200_bar_warmup() {
         .expect("30 daily bars should not require 200 warmup bars");
 
     assert_eq!(
-        metrics.n_decisions, 29,
-        "30 bars should produce one decision for each bar with a next-open fill"
+        metrics.n_decisions, 30,
+        "30 bars should produce 30 decisions; the final bar fills against its own close \
+         (see backtest.rs `next_bar_open` fallback — qa-decisions-30day-count)",
     );
     let decisions = store.read_decisions(&run.id).await.unwrap();
     assert_eq!(decisions.len() as u32, metrics.n_decisions);
@@ -149,6 +150,11 @@ async fn backtest_executor_runs_30_day_fixture_without_200_bar_warmup() {
         decisions.first().map(|d| d.timestamp),
         Some(first_bar_ts),
         "replay should start on the first bar instead of skipping a 200-bar warmup"
+    );
+    assert_eq!(
+        decisions.last().map(|d| d.timestamp),
+        Some(first_bar_ts + Duration::days(29)),
+        "the final decision must be keyed to the last input bar",
     );
 }
 
