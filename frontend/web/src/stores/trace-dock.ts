@@ -61,6 +61,20 @@ type State = {
   /** Last non-collapsed height — restored by toggle(). */
   lastOpenHeight: DockHeight;
   streamingState: StreamingState;
+  /**
+   * Trace-view density. `false` = Simple (default): hide instrumentation
+   * spans (`tool.validate_input` / `tool.validate_output` /
+   * `state.transition`) and collapse the SpanInspector attribute bag to
+   * a one-line summary. `true` = Advanced: show every span and the full
+   * attribute grid. Persisted under
+   * `xvision.trace-dock.advanced-view` in localStorage.
+   *
+   * Added by F-7 (`trace-dock-simple-advanced-toggle`). The new F-4 span
+   * kinds + F-2 populated attribute bag would otherwise make a real run
+   * unreadable for triage — Simple mode is the operator's everyday view;
+   * Advanced is the forensics view.
+   */
+  advanced_view: boolean;
 };
 
 type Actions = {
@@ -76,6 +90,7 @@ type Actions = {
   recordLag: (n: number) => void;
   applyStreamEvent: (ev: AgentRunStreamEvent) => void;
   resetStreamingState: () => void;
+  setAdvancedView: (v: boolean) => void;
 };
 
 const EMPTY_STREAMING: StreamingState = {
@@ -97,6 +112,7 @@ function freshStreaming(): StreamingState {
 }
 
 export const DOCK_HEIGHT_STORAGE_KEY = "xvision.trace-dock.height";
+export const DOCK_ADVANCED_VIEW_STORAGE_KEY = "xvision.trace-dock.advanced-view";
 export const DOCK_MIN_PX = 96;
 export const DEFAULT_DOCK_PX = 480;
 
@@ -132,6 +148,30 @@ function writePersistedHeightPx(px: number): void {
   }
 }
 
+/**
+ * Read the persisted Simple/Advanced toggle. Returns `false` (Simple)
+ * for any missing / malformed value so first-time visitors land in
+ * Simple mode per the F-7 default.
+ */
+function readPersistedAdvancedView(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    const raw = window.localStorage.getItem(DOCK_ADVANCED_VIEW_STORAGE_KEY);
+    return raw === "true";
+  } catch {
+    return false;
+  }
+}
+
+function writePersistedAdvancedView(v: boolean): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(DOCK_ADVANCED_VIEW_STORAGE_KEY, v ? "true" : "false");
+  } catch {
+    // Best effort only — Safari private-mode etc.
+  }
+}
+
 export const useTraceDock = create<State & Actions>((set, get) => ({
   height: "collapsed",
   heightPx: readPersistedHeightPx(),
@@ -140,6 +180,11 @@ export const useTraceDock = create<State & Actions>((set, get) => ({
   mode: "post-hoc",
   lastOpenHeight: "working",
   streamingState: EMPTY_STREAMING,
+  advanced_view: readPersistedAdvancedView(),
+  setAdvancedView: (v) => {
+    writePersistedAdvancedView(v);
+    set({ advanced_view: v });
+  },
   setHeight: (h) =>
     set((s) => ({
       height: h,

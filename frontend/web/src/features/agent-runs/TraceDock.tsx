@@ -16,9 +16,35 @@ import { useSpanFilter } from "./use-span-filter";
 import { deriveDecisions } from "./decisions";
 import { TraceDownloadButton } from "./TraceDownloadButton";
 
+/**
+ * Span kinds hidden in Simple-mode trace views. Recovery spans are
+ * deliberately NOT in this list — the F-7 intake calls out that
+ * recovery.attempt always matters and stays visible in both modes.
+ *
+ * `context.assemble` / `prompt.render` don't exist as SpanKind variants
+ * today; they're noted in the audit as nice-to-haves. Listing them
+ * defensively means if they're added later the toggle hides them
+ * without a separate change here.
+ */
+const SIMPLE_HIDDEN_KINDS: ReadonlySet<string> = new Set([
+  "tool.validate_input",
+  "tool.validate_output",
+  "state.transition",
+  "context.assemble",
+  "prompt.render",
+]);
+
 export function TraceDock() {
-  const { height, heightPx, activeRunId, selectedSpanId, minimize, setSelectedSpan } =
-    useTraceDock();
+  const {
+    height,
+    heightPx,
+    activeRunId,
+    selectedSpanId,
+    minimize,
+    setSelectedSpan,
+    advanced_view,
+    setAdvancedView,
+  } = useTraceDock();
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -52,10 +78,28 @@ export function TraceDock() {
     spans: q.data?.spans ?? [],
   });
 
-  const selectedSpan = useMemo(
-    () => filter.filtered.find((s) => s.span_id === selectedSpanId) ?? filter.filtered[0] ?? null,
-    [filter.filtered, selectedSpanId],
+  // Simple mode hides instrumentation kinds at the render boundary
+  // (F-7). Selected span lookups still consult the unfiltered
+  // `filter.filtered` so flipping the toggle does not auto-clear a
+  // selection that lives in a hidden kind — the operator can switch
+  // to Advanced and stay on the same span.
+  const displaySpans: RunSpan[] = useMemo(
+    () =>
+      advanced_view
+        ? filter.filtered
+        : filter.filtered.filter((s) => !SIMPLE_HIDDEN_KINDS.has(s.kind)),
+    [advanced_view, filter.filtered],
   );
+
+  const selectedSpan = useMemo(
+    () => filter.filtered.find((s) => s.span_id === selectedSpanId) ?? displaySpans[0] ?? null,
+    [filter.filtered, displaySpans, selectedSpanId],
+  );
+
+  const selectedSpanHiddenInSimple =
+    selectedSpan != null &&
+    !advanced_view &&
+    SIMPLE_HIDDEN_KINDS.has(selectedSpan.kind);
 
   // Decisions derived from spans that carry a decision_idx, deduped and sorted.
   const decisions = useMemo(() => deriveDecisions(q.data?.spans ?? []), [q.data]);
@@ -196,6 +240,43 @@ export function TraceDock() {
         ) : (
           <span className="text-text-3">loading…</span>
         )}
+        <div
+          role="group"
+          aria-label="Trace density"
+          data-testid="trace-dock-density-toggle"
+          className="ml-3 flex items-center gap-0.5"
+        >
+          <button
+            type="button"
+            aria-pressed={!advanced_view}
+            onClick={() => setAdvancedView(false)}
+            title="Simple — hide instrumentation spans, collapse attribute bag"
+            className="h-6 px-1.5 text-[10px] font-mono tracking-[0.14em] flex items-center"
+            style={{
+              background: !advanced_view ? "var(--surface-card)" : "transparent",
+              border: `1px solid ${!advanced_view ? "var(--text-2)" : "var(--border)"}`,
+              color: !advanced_view ? "var(--text)" : "var(--text-3)",
+              borderRadius: 4,
+            }}
+          >
+            SIMPLE
+          </button>
+          <button
+            type="button"
+            aria-pressed={advanced_view}
+            onClick={() => setAdvancedView(true)}
+            title="Advanced — show every span and the full attribute grid"
+            className="h-6 px-1.5 text-[10px] font-mono tracking-[0.14em] flex items-center"
+            style={{
+              background: advanced_view ? "var(--surface-card)" : "transparent",
+              border: `1px solid ${advanced_view ? "var(--text-2)" : "var(--border)"}`,
+              color: advanced_view ? "var(--text)" : "var(--text-3)",
+              borderRadius: 4,
+            }}
+          >
+            ADVANCED
+          </button>
+        </div>
         <div className="ml-auto flex items-center gap-1">
           {isLive && summary?.strategy_id ? (
             <HaltStrategyButton
@@ -249,7 +330,7 @@ export function TraceDock() {
         <div className="min-w-0 flex-1 border-r border-border">
           {q.data ? (
             <FlameGraph
-              spans={filter.filtered}
+              spans={displaySpans}
               selectedSpanId={selectedSpan?.span_id ?? null}
               onSelect={setSelectedSpan}
             />
@@ -260,6 +341,9 @@ export function TraceDock() {
             <SpanInspector
               span={selectedSpan}
               isLive={isLive}
+              simpleMode={!advanced_view}
+              hiddenInSimpleMode={selectedSpanHiddenInSimple}
+              onRequestAdvanced={() => setAdvancedView(true)}
               onRerun={(spanId) => {
                 // Phase 4 stub — checkpoint design pending.
                 console.warn("[agent-runs] rerun-from-here — pending checkpoint design", { spanId });

@@ -29,10 +29,42 @@ export function AgentRunDetailRoute() {
     spans: q.data?.spans ?? [],
   });
 
-  const selectedSpan = useMemo(
-    () => filter.filtered.find((s) => s.span_id === selectedSpanId) ?? filter.filtered[0] ?? null,
-    [filter.filtered, selectedSpanId],
+  // F-7 — trace-dock density toggle. Shared store with the in-app
+  // dock so flipping in either surface persists across both.
+  const advancedView = useTraceDock((s) => s.advanced_view);
+  const setAdvancedView = useTraceDock((s) => s.setAdvancedView);
+
+  // Hidden-in-Simple kinds. See TraceDock.tsx for the canonical list
+  // and the reason for keeping recovery.attempt visible in both modes.
+  const SIMPLE_HIDDEN_KINDS = useMemo(
+    () =>
+      new Set<string>([
+        "tool.validate_input",
+        "tool.validate_output",
+        "state.transition",
+        "context.assemble",
+        "prompt.render",
+      ]),
+    [],
   );
+
+  const displaySpans = useMemo(
+    () =>
+      advancedView
+        ? filter.filtered
+        : filter.filtered.filter((s) => !SIMPLE_HIDDEN_KINDS.has(s.kind)),
+    [advancedView, filter.filtered, SIMPLE_HIDDEN_KINDS],
+  );
+
+  const selectedSpan = useMemo(
+    () => filter.filtered.find((s) => s.span_id === selectedSpanId) ?? displaySpans[0] ?? null,
+    [filter.filtered, displaySpans, selectedSpanId],
+  );
+
+  const selectedSpanHiddenInSimple =
+    selectedSpan != null &&
+    !advancedView &&
+    SIMPLE_HIDDEN_KINDS.has(selectedSpan.kind);
 
   const decisions = useMemo(() => deriveDecisions(q.data?.spans ?? []), [q.data]);
 
@@ -108,20 +140,59 @@ export function AgentRunDetailRoute() {
       */}
 
       <Card className="mb-3 overflow-x-auto overflow-y-hidden">
-        <FilterBar
-          query={filter.query} setQuery={filter.setQuery}
-          kinds={filter.kinds} toggleKind={filter.toggleKind}
-          status={filter.status} setStatus={filter.setStatus}
-          decisionFilter={filter.decisionFilter} setDecisionFilter={filter.setDecisionFilter}
-          decisions={decisions}
-          total={filter.summary.total} filtered={filter.summary.filtered}
-        />
+        <div className="flex items-center gap-3">
+          <FilterBar
+            query={filter.query} setQuery={filter.setQuery}
+            kinds={filter.kinds} toggleKind={filter.toggleKind}
+            status={filter.status} setStatus={filter.setStatus}
+            decisionFilter={filter.decisionFilter} setDecisionFilter={filter.setDecisionFilter}
+            decisions={decisions}
+            total={filter.summary.total} filtered={filter.summary.filtered}
+          />
+          <div
+            role="group"
+            aria-label="Trace density"
+            data-testid="agent-run-density-toggle"
+            className="ml-auto flex items-center gap-0.5"
+          >
+            <button
+              type="button"
+              aria-pressed={!advancedView}
+              onClick={() => setAdvancedView(false)}
+              title="Simple — hide instrumentation spans, collapse attribute bag"
+              className="h-6 px-1.5 text-[10px] font-mono tracking-[0.14em] flex items-center"
+              style={{
+                background: !advancedView ? "var(--surface-card)" : "transparent",
+                border: `1px solid ${!advancedView ? "var(--text-2)" : "var(--border)"}`,
+                color: !advancedView ? "var(--text)" : "var(--text-3)",
+                borderRadius: 4,
+              }}
+            >
+              SIMPLE
+            </button>
+            <button
+              type="button"
+              aria-pressed={advancedView}
+              onClick={() => setAdvancedView(true)}
+              title="Advanced — show every span and the full attribute grid"
+              className="h-6 px-1.5 text-[10px] font-mono tracking-[0.14em] flex items-center"
+              style={{
+                background: advancedView ? "var(--surface-card)" : "transparent",
+                border: `1px solid ${advancedView ? "var(--text-2)" : "var(--border)"}`,
+                color: advancedView ? "var(--text)" : "var(--text-3)",
+                borderRadius: 4,
+              }}
+            >
+              ADVANCED
+            </button>
+          </div>
+        </div>
       </Card>
 
       <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_400px] xl:h-[70vh]">
         <Card className="overflow-hidden min-h-[320px] xl:min-h-0 xl:max-h-none">
           <AgentRunIndentedTimeline
-            spans={filter.filtered}
+            spans={displaySpans}
             selectedSpanId={selectedSpan?.span_id ?? null}
             onSelect={setSelectedSpanId}
           />
@@ -131,6 +202,9 @@ export function AgentRunDetailRoute() {
             <SpanInspector
               span={selectedSpan}
               isLive={isLive}
+              simpleMode={!advancedView}
+              hiddenInSimpleMode={selectedSpanHiddenInSimple}
+              onRequestAdvanced={() => setAdvancedView(true)}
               onRerun={(spanId) => {
                 // Phase 4 stub — checkpoint design pending.
                 console.warn("[agent-runs] rerun-from-here — pending checkpoint design", { spanId });
