@@ -486,14 +486,22 @@ function RunActions({
   if (!canRetry && !terminal) return null;
   return (
     <div className="flex flex-col gap-2">
-      <div className="grid grid-flow-col auto-cols-fr gap-2">
+      {/*
+        `min-w-[16ch]` on each button gives a column floor that matches
+        the widest natural label ("Preparing JSON…" with padding) so
+        Retry / Download render at the same visual width on mobile.
+        Replaces a `grid auto-cols-fr` shell that didn't actually
+        equalize widths in the unconstrained inline-grid case. See
+        `qa-eval-inspector-buttons-actually-uniform`.
+      */}
+      <div className="flex items-center gap-2">
         {canRetry && (
           <button
             type="button"
             aria-label={`Retry eval run ${summary.id}`}
             onClick={onRetry}
             disabled={retrying}
-            className="rounded-sm border border-info/40 bg-info/[0.08] px-2.5 py-1.5 text-[12px] text-info hover:border-info/70 hover:text-text disabled:opacity-50"
+            className="min-w-[16ch] rounded-sm border border-info/40 bg-info/[0.08] px-2.5 py-1.5 text-[12px] text-info hover:border-info/70 hover:text-text disabled:opacity-50"
           >
             {retrying ? "Retrying..." : "Retry"}
           </button>
@@ -504,7 +512,7 @@ function RunActions({
             aria-label={`Download eval run ${summary.id} as JSON`}
             onClick={handleDownload}
             disabled={downloading}
-            className="rounded-sm border border-border bg-surface-elev px-2.5 py-1.5 text-[12px] text-text-2 hover:border-gold/40 hover:text-text disabled:opacity-50"
+            className="min-w-[16ch] rounded-sm border border-border-soft bg-surface-elev px-2.5 py-1.5 text-[12px] text-text-2 hover:border-gold/40 hover:text-text disabled:opacity-50"
           >
             {downloading ? "Preparing JSON…" : "Download JSON"}
           </button>
