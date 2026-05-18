@@ -77,7 +77,7 @@ function buildOpts(theme: ReturnType<typeof chartTheme>) {
       horzLines: { color: theme.grid },
     },
     crosshair: { mode: CrosshairMode.Normal },
-    timeScale: { rightOffset: 6, secondsVisible: false },
+    timeScale: { rightOffset: 12, secondsVisible: false },
   };
 }
 
@@ -200,7 +200,10 @@ function applySeriesData(
     payload.indicators.macd.histogram.map((p) => ({ time: p.time as UTCTimestamp, value: p.value })),
   );
   series.atr?.setData(payload.indicators.atr_14.map(toLine));
-  series.equity?.setData(payload.equity.map((p) => ({ time: p.time as UTCTimestamp, value: p.equity_usd })));
+  const startingEquity = payload.equity[0]?.equity_usd ?? 0;
+  series.equity?.setData(
+    payload.equity.map((p) => ({ time: p.time as UTCTimestamp, value: p.equity_usd - startingEquity })),
+  );
   series.drawdown?.setData(payload.drawdown.map((p) => ({ time: p.time as UTCTimestamp, value: -p.drawdown_pct })));
   series.volume?.setData(
     payload.bars.map((b) => ({
@@ -350,12 +353,16 @@ export function RunChart({
       }
     }
 
-    // --- Equity + drawdown ---
+    // --- Earnings (P&L delta from starting balance) + drawdown ---
     if (eqChart && layers.equity) {
-      const eq = eqChart.addAreaSeries({
-        lineColor: palette.series.equity,
-        topColor: palette.series.equityTop,
-        bottomColor: palette.series.equityBottom,
+      const eq = eqChart.addBaselineSeries({
+        baseValue: { type: "price", price: 0 },
+        topLineColor: palette.series.candleUp,
+        topFillColor1: palette.series.candleUp + "44",
+        topFillColor2: palette.series.candleUp + "00",
+        bottomLineColor: palette.series.candleDown,
+        bottomFillColor1: palette.series.candleDown + "44",
+        bottomFillColor2: palette.series.candleDown + "00",
       });
       series.equity = eq as SetDataSeries;
     }
@@ -403,6 +410,8 @@ export function RunChart({
     const frozenLogicalRange = frozenLogicalRangeRef.current;
     if (!follow && frozenLogicalRange) {
       applyLogicalRange(all, frozenLogicalRange);
+    } else if (!follow) {
+      all.forEach((c) => c.timeScale().fitContent());
     }
 
     return () => {

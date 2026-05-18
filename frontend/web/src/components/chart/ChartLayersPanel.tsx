@@ -70,7 +70,7 @@ const LAYER_LABELS: Record<LayerKey, string> = {
   subpaneMacd: "MACD",
   subpaneAtr: "ATR 14",
   subpaneOff: "Off",
-  equity: "Equity",
+  equity: "Earnings",
   drawdown: "Drawdown",
   volume: "Volume",
 };
@@ -121,7 +121,7 @@ export function ChartLayersPanel({
 
       {equity ? (
         <>
-          <div className="text-text-3 mb-1 mt-3">Equity pane</div>
+          <div className="text-text-3 mb-1 mt-3">Earnings pane</div>
           {EQUITY_KEYS.map((key) => (
             <label key={key} className="flex items-center gap-2">
               <input

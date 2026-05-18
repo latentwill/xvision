@@ -47,6 +47,7 @@ export function CompareChart({
         horzLines: { color: palette.grid },
       },
       crosshair: { mode: CrosshairMode.Normal },
+      timeScale: { rightOffset: 12, secondsVisible: false },
     });
 
     if (showBackdrop && payload.price_backdrop) {
@@ -79,6 +80,8 @@ export function CompareChart({
         r.equity.map((p) => ({ time: p.time as UTCTimestamp, value: p.equity_usd })),
       );
     });
+
+    c.timeScale().fitContent();
 
     return () => c.remove();
   }, [payload, activeTheme, showBackdrop]);
