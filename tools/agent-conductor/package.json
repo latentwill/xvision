@@ -1,0 +1,40 @@
+{
+  "name": "agent-conductor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local control plane that claims READY board tasks, manages worktrees, spawns Claude Code workers, opens PRs, and archives merged work. Phase-1 skeleton (READY→CLAIMED, CLAIMED→CODING, CODING→PR_OPEN, MERGED→ARCHIVED).",
+  "type": "module",
+  "license": "UNLICENSED",
+  "bin": {
+    "agent-conductor": "bin/agent-conductor"
+  },
+  "files": [
+    "bin/",
+    "dist/",
+    "launchd/",
+    "lint/",
+    "prompts/",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --dir test --pool=forks",
+    "test:watch": "vitest --dir test",
+    "lint": "node lint/no-host-repo-references.mjs src/"
+  },
+  "dependencies": {
+    "ajv": "8.17.1",
+    "ajv-formats": "3.0.1",
+    "commander": "12.1.0",
+    "tsx": "4.16.2"
+  },
+  "devDependencies": {
+    "@types/node": "20.14.10",
+    "typescript": "5.5.3",
+    "vitest": "1.6.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

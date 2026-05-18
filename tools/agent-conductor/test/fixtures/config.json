@@ -1,0 +1,9 @@
+{
+  "name": "test-instance",
+  "version": "v1",
+  "repo": { "owner": "exampleorg", "name": "example-repo" },
+  "project": { "owner": "exampleorg", "number": 42 },
+  "paths": { "worktreeRoot": ".worktrees", "queueDir": "queue" },
+  "branch": { "prefix": "work/" },
+  "pollIntervalS": 5
+}

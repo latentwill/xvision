@@ -1,0 +1,11 @@
+#!/usr/bin/env node
+// Entry shim. Delegates to the compiled CLI in dist/cli/index.js.
+// During development, run `npm run build` first; vitest exercises the
+// modules directly without going through this shim.
+
+import { runCli } from "../dist/cli/index.js";
+
+runCli(process.argv).catch((err) => {
+  process.stderr.write(`fatal: ${err?.stack ?? err}\n`);
+  process.exit(1);
+});
