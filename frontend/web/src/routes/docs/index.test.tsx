@@ -102,4 +102,13 @@ describe("DocsRoute", () => {
       await screen.findByTestId("docs-page-error"),
     ).toBeInTheDocument();
   });
+
+  test("renders an inline error when the index fetch fails", async () => {
+    vi.mocked(docsApi.getDocsIndex).mockRejectedValueOnce(new Error("boom"));
+    renderRoute();
+    expect(
+      await screen.findByTestId("docs-index-error"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(/could not load docs index/i);
+  });
 });

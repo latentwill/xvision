@@ -23,11 +23,6 @@ use serde::Serialize;
 
 /// One row in the docs index. `slug` is URL-safe and stable across
 /// deploys; `title` is the operator-visible label.
-#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
-#[cfg_attr(
-    feature = "ts-export",
-    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
-)]
 #[derive(Debug, Clone, Serialize)]
 pub struct DocPageMeta {
     pub slug: &'static str,

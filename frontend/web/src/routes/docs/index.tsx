@@ -64,6 +64,14 @@ export function DocsRoute() {
           <nav className="flex flex-col gap-1" data-testid="docs-index">
             {index.isPending ? (
               <div className="text-[12px] text-text-3 py-2">Loading…</div>
+            ) : index.isError ? (
+              <div
+                role="alert"
+                data-testid="docs-index-error"
+                className="rounded border border-danger/30 bg-danger/[0.06] px-2 py-1.5 text-[12px] text-danger"
+              >
+                Could not load docs index.
+              </div>
             ) : filtered.length === 0 ? (
               <div className="text-[12px] text-text-3 py-2">
                 No pages match "{filter}".
