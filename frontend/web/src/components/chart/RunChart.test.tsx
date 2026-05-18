@@ -13,6 +13,7 @@ const chartMocks = vi.hoisted(() => ({
   subscribeRegistrationCount: 0,
   subscribeRegistrationCountsAtScroll: [] as number[],
   initialRangesQueue: [] as Array<LogicalRangeStub | null>,
+  baselineSeries: [] as Array<{ setData: ReturnType<typeof vi.fn> }>,
   createdCharts: [] as Array<{
     getCurrentRange: () => LogicalRangeStub | null;
     emitVisibleLogicalRangeChange: (range: LogicalRangeStub | null) => void;
@@ -74,6 +75,11 @@ function createChartStub() {
     addCandlestickSeries: vi.fn(() => createSeriesStub()),
     addLineSeries: vi.fn(() => createSeriesStub()),
     addAreaSeries: vi.fn(() => createSeriesStub()),
+    addBaselineSeries: vi.fn(() => {
+      const series = createSeriesStub();
+      chartMocks.baselineSeries.push(series);
+      return series;
+    }),
     addHistogramSeries: vi.fn(() => createSeriesStub()),
     getCurrentRange: () => currentRange,
     emitVisibleLogicalRangeChange: (range: LogicalRangeStub | null) => {
@@ -116,6 +122,7 @@ describe("RunChart", () => {
     chartMocks.subscribeRegistrationCount = 0;
     chartMocks.subscribeRegistrationCountsAtScroll.length = 0;
     chartMocks.initialRangesQueue.length = 0;
+    chartMocks.baselineSeries.length = 0;
     chartMocks.createChart.mockImplementation(() => {
       const chart = createChartStub();
       chartMocks.createdCharts.push(chart);
@@ -184,6 +191,27 @@ describe("RunChart", () => {
     expect(raw).not.toBeNull();
     const persisted = JSON.parse(raw!) as Record<string, boolean>;
     expect(persisted.sma20).toBe(false);
+  });
+
+  it("plots the earnings baseline series as equity_usd - startingEquity", () => {
+    const payload = {
+      ...(samplePayload as any),
+      equity: [
+        { time: 1_700_000_000, equity_usd: 100_000 },
+        { time: 1_700_000_060, equity_usd: 100_500 },
+        { time: 1_700_000_120, equity_usd: 99_750 },
+      ],
+    };
+
+    render(<RunChart payload={payload} follow={false} />);
+
+    expect(chartMocks.baselineSeries.length).toBeGreaterThan(0);
+    const earningsSeries = chartMocks.baselineSeries[0];
+    expect(earningsSeries.setData).toHaveBeenCalledWith([
+      { time: 1_700_000_000, value: 0 },
+      { time: 1_700_000_060, value: 500 },
+      { time: 1_700_000_120, value: -250 },
+    ]);
   });
 
   it("does not scroll to real time while follow mode is disabled", () => {
