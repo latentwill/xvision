@@ -384,6 +384,27 @@ fn emit_otel_for(event: &RunEvent) {
             let _g = s.enter();
             add_attribute(&s, attr::SPAN_ID, Attribute::id(&e.span_id));
         }
+        RunEvent::BrokerCallStarted(e) => {
+            // qa-trace-broker-spans: broker submits get a distinct
+            // OTel span so the trace dock's `broker.call` row has a
+            // matching OTel waterfall entry. Side / symbol surface as
+            // attributes; the full structured payload stays on the
+            // SQLite-side `attributes_json` (see sqlite.rs).
+            let s = span!(Level::INFO, "xvision.broker.call.started");
+            let _g = s.enter();
+            add_attribute(&s, attr::SPAN_ID, Attribute::id(&e.span_id));
+            add_attribute(&s, attr::RUN_ID, Attribute::id(&e.run_id));
+            add_attribute(&s, "xvision.broker.symbol", Attribute::id(&e.symbol));
+            add_attribute(&s, "xvision.broker.venue", Attribute::id(&e.venue));
+        }
+        RunEvent::BrokerCallFinished(e) => {
+            let s = span!(Level::INFO, "xvision.broker.call.finished");
+            let _g = s.enter();
+            add_attribute(&s, attr::SPAN_ID, Attribute::id(&e.span_id));
+            if let Some(class) = &e.error_class {
+                add_attribute(&s, "xvision.broker.error_class", Attribute::id(class));
+            }
+        }
         RunEvent::CheckpointWritten(e) => {
             let s = span!(Level::INFO, "xvision.checkpoint");
             let _g = s.enter();

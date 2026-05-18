@@ -41,6 +41,12 @@ pub enum RunEvent {
     ToolCallFailed(ToolCallFailedEvent),
     ToolCallCancelled(ToolCallCancelledEvent),
 
+    /// One broker submit → fill/reject cycle. Started on
+    /// `BrokerSurface::submit_order` entry, finished on its return
+    /// (success or typed broker error). `qa-trace-broker-spans`.
+    BrokerCallStarted(BrokerCallStartedEvent),
+    BrokerCallFinished(BrokerCallFinishedEvent),
+
     CheckpointWritten(CheckpointWrittenEvent),
 
     /// Persisted only as a span-attached `events` row (not its own table)
@@ -232,6 +238,75 @@ pub struct BackpressureDroppedEvent {
     pub note: String,
 }
 
+/// Side of a broker submit. Mirrors `xvision_execution::Side`, plus
+/// the higher-level `CloseFlat` / `ShortOpen` intents the executor
+/// derives from the trader's action. Operators look at this column in
+/// the trace dock to spot missing short fills (#14 in the round-2
+/// intake).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BrokerSide {
+    Buy,
+    Sell,
+    Close,
+    Short,
+}
+
+/// Terminal state of a broker submit. `Filled` covers both full and
+/// partial fills (the qty / price columns disambiguate). `Rejected`
+/// carries a broker-side reason; `Cancelled` is operator-initiated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BrokerCallOutcome {
+    Filled,
+    Rejected,
+    Cancelled,
+    /// Transport / 5xx / timeout — distinct from `Rejected` (which is a
+    /// well-formed broker NACK).
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrokerCallStartedEvent {
+    pub span_id: String,
+    pub run_id: String,
+    pub side: BrokerSide,
+    pub symbol: String,
+    pub qty: f64,
+    /// Reference / intended price at submit time. Fill price lands on
+    /// the matching [`BrokerCallFinishedEvent`].
+    pub intended_price: Option<f64>,
+    /// `market` / `limit` / `stop_limit` etc. Producer-defined string;
+    /// the dashboard renders it verbatim.
+    pub order_type: String,
+    /// e.g. `alpaca-paper`, `alpaca-live`, `orderly`. Lets operators
+    /// distinguish paper vs. real fills at a glance.
+    pub venue: String,
+    /// Client-side dedupe key the producer set on the broker submit
+    /// (e.g. `<run_id>-<decision_idx>`). Lets traces correlate to
+    /// decision rows without joining on (run_id, decision_idx).
+    pub idempotency_key: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrokerCallFinishedEvent {
+    pub span_id: String,
+    pub outcome: BrokerCallOutcome,
+    pub fill_price: Option<f64>,
+    pub fill_qty: Option<f64>,
+    pub fee: Option<f64>,
+    /// Broker venue's order id on success; `None` on transport failure
+    /// before an id was assigned.
+    pub broker_order_id: Option<String>,
+    /// Short error class — e.g. `broker_rejected`, `broker_auth`,
+    /// `broker_unsupported`, `broker_insufficient_funds`,
+    /// `broker_timeout`. Only set on `Rejected` / `Failed` outcomes.
+    pub error_class: Option<String>,
+    /// Verbatim broker / transport message. Truncated upstream if it
+    /// exceeds the observability payload cap.
+    pub error_message: Option<String>,
+}
+
 impl RunEvent {
     /// Convenience for tests + recorder routing. Returns the run id this
     /// event belongs to, or `""` if the event only carries a `span_id`
@@ -249,6 +324,8 @@ impl RunEvent {
             Self::ToolCallFinished(_) => "",
             Self::ToolCallFailed(_) => "",
             Self::ToolCallCancelled(_) => "",
+            Self::BrokerCallStarted(e) => &e.run_id,
+            Self::BrokerCallFinished(_) => "",
             Self::CheckpointWritten(e) => &e.run_id,
             Self::AssistantTextDelta(e) => &e.run_id,
             Self::SupervisorNote(e) => &e.run_id,
@@ -270,6 +347,8 @@ impl RunEvent {
             Self::ToolCallFinished(e) => Some(&e.span_id),
             Self::ToolCallFailed(e) => Some(&e.span_id),
             Self::ToolCallCancelled(e) => Some(&e.span_id),
+            Self::BrokerCallStarted(e) => Some(&e.span_id),
+            Self::BrokerCallFinished(e) => Some(&e.span_id),
             Self::CheckpointWritten(e) => Some(&e.span_id),
             Self::AssistantTextDelta(e) => Some(&e.span_id),
             Self::RunStarted(_)

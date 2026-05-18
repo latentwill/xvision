@@ -267,7 +267,8 @@ export const useTraceDock = create<State & Actions>((set, get) => ({
       case "model_call_finished":
       case "tool_call_finished":
       case "tool_call_failed":
-      case "tool_call_cancelled": {
+      case "tool_call_cancelled":
+      case "broker_call_finished": {
         // Terminal events on a span — drop it from the active set if it
         // hasn't already been closed by an explicit span_finished frame.
         actions.markSpanInactive(ev.data.span_id);
@@ -308,6 +309,7 @@ export const useTraceDock = create<State & Actions>((set, get) => ({
       // Lifecycle / informational arms — no streaming-state side effect.
       case "run_started":
       case "tool_call_started":
+      case "broker_call_started":
       case "sidecar_error":
       case "checkpoint_written":
       case "supervisor_note":

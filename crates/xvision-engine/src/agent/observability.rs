@@ -21,8 +21,9 @@ use std::sync::Arc;
 use chrono::Utc;
 
 use xvision_observability::{
-    AssistantTextDeltaEvent, ModelCallFinishedEvent, RunEvent, RunEventBus, RunFinishedEvent,
-    RunStartedEvent, RunStatus, SpanFinishedEvent, SpanKind, SpanStartedEvent, SpanStatus,
+    AssistantTextDeltaEvent, BrokerCallFinishedEvent, BrokerCallOutcome, BrokerCallStartedEvent,
+    BrokerSide, ModelCallFinishedEvent, RunEvent, RunEventBus, RunFinishedEvent, RunStartedEvent,
+    RunStatus, SpanFinishedEvent, SpanKind, SpanStartedEvent, SpanStatus,
 };
 
 /// Retention policy carried on `ObsEmitter` so producers can gate
@@ -278,6 +279,125 @@ impl ObsEmitter {
                 run_id: self.run_id.clone(),
                 delta_len: delta_text.chars().count(),
                 delta_text: bounded,
+            }))
+            .await;
+    }
+
+    /// Open a `broker.call` span around one `BrokerSurface::submit_order`
+    /// invocation. The eval executor pairs this with exactly one
+    /// `emit_broker_call_finished` call carrying the same `span_id`.
+    ///
+    /// Adds the trace-fidelity row the operator asked for in round-2
+    /// (#8, #14): Buy / Sell / Close / Short submissions are now
+    /// auditable on the trace dock alongside model.call rows.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn emit_broker_call_started(
+        &self,
+        span_id: &str,
+        parent_span_id: Option<String>,
+        side: BrokerSide,
+        symbol: impl Into<String>,
+        qty: f64,
+        intended_price: Option<f64>,
+        order_type: impl Into<String>,
+        venue: impl Into<String>,
+        idempotency_key: Option<String>,
+    ) {
+        let symbol = symbol.into();
+        let venue = venue.into();
+        let order_type = order_type.into();
+        let name = format!("{venue} {symbol} {side:?}");
+        // Persist the broker payload on the span row's `attributes_json`
+        // so the dashboard read path can project a `broker_call`
+        // payload onto the wire span without joining a second table.
+        // `qa-trace-broker-spans` deliberately doesn't add a
+        // `broker_calls` table (the contract forbids migrations);
+        // attributes_json is the durable carrier.
+        let started_attrs = serde_json::json!({
+            "broker_call": {
+                "side": side,
+                "symbol": symbol,
+                "qty": qty,
+                "intended_price": intended_price,
+                "order_type": order_type,
+                "venue": venue,
+                "idempotency_key": idempotency_key,
+            }
+        });
+        self.bus
+            .publish(RunEvent::SpanStarted(SpanStartedEvent {
+                span_id: span_id.to_string(),
+                run_id: self.run_id.clone(),
+                parent_span_id,
+                kind: SpanKind::BrokerCall,
+                name,
+                started_at: Utc::now(),
+                otel_trace_id: None,
+                otel_span_id: None,
+                attributes_json: Some(started_attrs.to_string()),
+            }))
+            .await;
+        self.bus
+            .publish(RunEvent::BrokerCallStarted(BrokerCallStartedEvent {
+                span_id: span_id.to_string(),
+                run_id: self.run_id.clone(),
+                side,
+                symbol,
+                qty,
+                intended_price,
+                order_type,
+                venue,
+                idempotency_key,
+            }))
+            .await;
+    }
+
+    /// Close a `broker.call` span with the broker's terminal state.
+    /// Always emits BOTH `BrokerCallFinished` AND a span-level
+    /// `SpanFinished` so the recorder can stamp the close timestamp
+    /// without parsing the broker payload.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn emit_broker_call_finished(
+        &self,
+        span_id: &str,
+        outcome: BrokerCallOutcome,
+        fill_price: Option<f64>,
+        fill_qty: Option<f64>,
+        fee: Option<f64>,
+        broker_order_id: Option<String>,
+        error_class: Option<String>,
+        error_message: Option<String>,
+    ) {
+        let span_status = match outcome {
+            BrokerCallOutcome::Filled => SpanStatus::Ok,
+            BrokerCallOutcome::Rejected
+            | BrokerCallOutcome::Cancelled
+            | BrokerCallOutcome::Failed => SpanStatus::Error,
+        };
+        self.bus
+            .publish(RunEvent::BrokerCallFinished(BrokerCallFinishedEvent {
+                span_id: span_id.to_string(),
+                outcome,
+                fill_price,
+                fill_qty,
+                fee,
+                broker_order_id,
+                error_class: error_class.clone(),
+                error_message: error_message.clone(),
+            }))
+            .await;
+        self.bus
+            .publish(RunEvent::SpanFinished(SpanFinishedEvent {
+                span_id: span_id.to_string(),
+                ended_at: Utc::now(),
+                status: span_status,
+                error_json: error_message.map(|m| {
+                    serde_json::json!({
+                        "class": error_class,
+                        "message": m,
+                    })
+                    .to_string()
+                }),
             }))
             .await;
     }

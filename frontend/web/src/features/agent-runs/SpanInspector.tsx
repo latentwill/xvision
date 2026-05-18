@@ -1,6 +1,6 @@
 // frontend/web/src/features/agent-runs/SpanInspector.tsx
 import { useCallback, useState, type ReactNode } from "react";
-import type { RunSpan } from "@/api/types-agent-runs";
+import type { BrokerCallDetail, RunSpan } from "@/api/types-agent-runs";
 import { fetchAgentRunBlob } from "@/api/agent-runs";
 import { formatCostUsd, formatCostUsdPrecise } from "@/lib/format";
 import { useTraceDock } from "@/stores/trace-dock";
@@ -219,6 +219,17 @@ export function SpanInspector({
             glyph="!"
           />
         ) : null}
+        {span.kind === "broker.call" && span.broker_call ? (
+          // qa-trace-broker-spans: render the broker submit detail as
+          // a key/value pull-quote. Operators look here for short-sale
+          // fills (#14 round-2 intake) and broker-side errors.
+          <PullQuote
+            label="BROKER CALL"
+            accent={color.hex}
+            glyph="$"
+            body={<BrokerCallDetailRows detail={span.broker_call} />}
+          />
+        ) : null}
         {span.prompt ? (
           <PullQuote label="PROMPT" body={span.prompt} accent={color.hex} glyph="›" />
         ) : span.kind === "model.call" && (span.prompt_payload_ref || span.hash) ? (
@@ -431,5 +442,75 @@ export function SpanInspector({
         </button>
       </div>
     </div>
+  );
+}
+
+function BrokerCallDetailRows({ detail }: { detail: BrokerCallDetail }) {
+  const fmt = (n: number | null | undefined, digits = 4) =>
+    n == null || !Number.isFinite(n) ? "—" : n.toFixed(digits);
+  const outcomeColor =
+    detail.outcome === "filled"
+      ? "var(--gold)"
+      : detail.outcome === "cancelled"
+        ? "var(--text-3)"
+        : detail.outcome != null
+          ? "var(--danger)"
+          : "var(--info)";
+  return (
+    <dl
+      data-testid="span-inspector-broker-call"
+      className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-[11px] font-mono"
+    >
+      <dt className="text-text-3">side</dt>
+      <dd className="text-text uppercase tracking-[0.12em]">{detail.side}</dd>
+      <dt className="text-text-3">symbol</dt>
+      <dd className="text-text">{detail.symbol}</dd>
+      <dt className="text-text-3">qty</dt>
+      <dd className="text-text">{fmt(detail.qty, 6)}</dd>
+      <dt className="text-text-3">intended</dt>
+      <dd className="text-text">{fmt(detail.intended_price, 4)}</dd>
+      <dt className="text-text-3">type</dt>
+      <dd className="text-text-2">{detail.order_type}</dd>
+      <dt className="text-text-3">venue</dt>
+      <dd className="text-text-2">{detail.venue}</dd>
+      {detail.idempotency_key ? (
+        <>
+          <dt className="text-text-3">key</dt>
+          <dd className="text-text-2 break-all">{detail.idempotency_key}</dd>
+        </>
+      ) : null}
+      <dt className="text-text-3">outcome</dt>
+      <dd style={{ color: outcomeColor }}>
+        {detail.outcome ?? "in_progress"}
+      </dd>
+      {detail.outcome === "filled" || detail.fill_price != null ? (
+        <>
+          <dt className="text-text-3">fill px</dt>
+          <dd className="text-text">{fmt(detail.fill_price, 4)}</dd>
+          <dt className="text-text-3">fill qty</dt>
+          <dd className="text-text">{fmt(detail.fill_qty, 6)}</dd>
+          <dt className="text-text-3">fee</dt>
+          <dd className="text-text-2">{fmt(detail.fee, 6)}</dd>
+        </>
+      ) : null}
+      {detail.broker_order_id ? (
+        <>
+          <dt className="text-text-3">order id</dt>
+          <dd className="text-text-2 break-all">{detail.broker_order_id}</dd>
+        </>
+      ) : null}
+      {detail.error_class ? (
+        <>
+          <dt className="text-text-3">err class</dt>
+          <dd style={{ color: "var(--danger)" }}>{detail.error_class}</dd>
+        </>
+      ) : null}
+      {detail.error_message ? (
+        <>
+          <dt className="text-text-3">err msg</dt>
+          <dd className="text-text-2 break-all">{detail.error_message}</dd>
+        </>
+      ) : null}
+    </dl>
   );
 }

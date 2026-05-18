@@ -523,3 +523,65 @@ describe("fetchAgentRunBlob", () => {
     });
   });
 });
+
+describe("normalizeAgentRunExport — broker.call projection", () => {
+  // qa-trace-broker-spans review (P1): broker spans on the wire must
+  // surface their `broker_call` payload as a first-class field, not
+  // buried in `attributes`. The dashboard recorder bakes the started
+  // payload into `attributes_json.broker_call` and json_set's the
+  // finished fields onto the same object; `normalizeAgentRunExport`
+  // projects that JSON onto `RunSpan.broker_call` so SpanInspector
+  // renders without re-reading attributes.
+  test("populates RunSpan.broker_call on broker.call spans", () => {
+    const payload = {
+      ...EXPORT_PAYLOAD,
+      spans: [
+        {
+          id: "span_broker_real",
+          run_id: "run_export_1",
+          parent_span_id: null,
+          kind: "broker.call",
+          name: "paper BTC/USD short",
+          status: "ok",
+          started_at: "2026-05-17T16:00:01Z",
+          ended_at: "2026-05-17T16:00:02Z",
+          duration_ms: 1000,
+          attributes_json: JSON.stringify({
+            broker_call: {
+              side: "short",
+              symbol: "BTC/USD",
+              qty: 0.1,
+              intended_price: 60000,
+              order_type: "market",
+              venue: "paper",
+              idempotency_key: "run_export_1-0001",
+              outcome: "filled",
+              fill_price: 60010,
+              fill_qty: 0.1,
+              fee: 0.01,
+              broker_order_id: "ord_real",
+              error_class: null,
+              error_message: null,
+            },
+          }),
+          error_json: null,
+          children: [],
+        },
+      ],
+    };
+    const detail = validateAgentRunDetail(payload);
+    const span = detail.spans.find((s) => s.span_id === "span_broker_real");
+    expect(span?.kind).toBe("broker.call");
+    expect(span?.broker_call?.side).toBe("short");
+    expect(span?.broker_call?.outcome).toBe("filled");
+    expect(span?.broker_call?.broker_order_id).toBe("ord_real");
+    expect(span?.broker_call?.fill_price).toBe(60010);
+  });
+
+  test("non-broker.call spans get no broker_call field", () => {
+    const detail = validateAgentRunDetail(EXPORT_PAYLOAD);
+    for (const span of detail.spans) {
+      expect(span.broker_call).toBeUndefined();
+    }
+  });
+});
