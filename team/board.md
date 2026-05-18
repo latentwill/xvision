@@ -4,8 +4,9 @@
 > verification, and acceptance. This file is conductor-owned; see
 > `team/CONDUCTOR.md`.
 >
-> Last updated: 2026-05-17 conductor cleanup. Merged Phase B, QA,
-> and mobile/operator tracks archived. Current conductor pass claimed by
+> Last updated: 2026-05-18 conductor cleanup. Round-2 QA wave decomposed
+> from `team/intake/2026-05-18-qa-operator-round-2.md`. Round-1 QA
+> tracks (2026-05-17 wave) archived. Current conductor pass claimed by
 > this session until commit/push completes.
 > Previous board: `team/archive/2026-05-16-migration/execution-board-2026-05-13.md`.
 
@@ -23,6 +24,18 @@ V2 work (V2A onboarding + docs, V2B-V4 roadmap) also has its own board:
 ### Post-Q15 Paper Trading
 
 - [alpaca-paper-crypto-submit](contracts/alpaca-paper-crypto-submit.md) - integration - ready - make Alpaca crypto paper orders non-fatal where the broker rejects bracket/short semantics, and improve broker failure classification.
+
+### QA Operator Round 2 (2026-05-18)
+
+- [qa-eval-action-lifecycle](contracts/qa-eval-action-lifecycle.md) - leaf - ready - fix cancelled-run timer / capsule bleed across routes / retry on cancelled / add delete in inspector. Stacks on eval-inspector-header-polish.
+- [qa-retention-prompt-storage-bug](contracts/qa-retention-prompt-storage-bug.md) - leaf - ready - prompts still redacted despite full_debug while responses appear. Root-cause and fix the asymmetry. Depends on observability-retention-default-full-debug.
+- [qa-review-agent-provider-config](contracts/qa-review-agent-provider-config.md) - leaf - ready - research-agent hardcodes anthropic provider; degrade gracefully when unconfigured.
+- [qa-decisions-30day-count](contracts/qa-decisions-30day-count.md) - integration - ready - 30-bar scenario produces only 29 decisions (off-by-one). Root-cause and pin with parameterized test.
+- [qa-trace-broker-spans](contracts/qa-trace-broker-spans.md) - integration - ready - emit Buy/Sell/Close/Short broker calls as trace spans; fixes missing short-sale fill. Stacks on alpaca-paper-crypto-submit.
+- [qa-decisions-position-pnl](contracts/qa-decisions-position-pnl.md) - integration - ready - add per-row open-positions cell + realized-PnL fill on close decisions.
+- [qa-budget-cost-precision](contracts/qa-budget-cost-precision.md) - leaf - ready - cheap-model per-call costs show $0.0000; add smart formatter + validate prices flow.
+- [qa-trace-dock-resizable](contracts/qa-trace-dock-resizable.md) - leaf - ready - drop redundant "Full" button, add resizable dock with persisted height. Stacks on trace-dock-ux-polish.
+- [qa-ui-polish-round2](contracts/qa-ui-polish-round2.md) - leaf - ready - bundle: latest-run chart eval name, agents archived delete, dup streaming icon, remove retention warning, restore TradingView chart titles.
 
 ### V2A Onboarding
 
