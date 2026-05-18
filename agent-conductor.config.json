@@ -1,0 +1,14 @@
+{
+  "version": "v1",
+  "name": "xvision",
+  "repo": { "owner": "latentwill", "name": "xvision" },
+  "project": { "owner": "latentwill", "number": 1 },
+  "paths": {
+    "worktreeRoot": ".worktrees",
+    "queueDir": "team/queue"
+  },
+  "branch": { "prefix": "agent/" },
+  "pollIntervalS": 30,
+  "contractsDir": "team/contracts",
+  "schemaPath": "team/schema/board.schema.json"
+}
