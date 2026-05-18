@@ -54,6 +54,32 @@ describe("TraceDock", () => {
     expect(useTraceDock.getState().height).toBe("collapsed");
   });
 
+  test("renders no Full preset button (resize handle owns height)", async () => {
+    useTraceDock.setState({ activeRunId: "run_abc1234", height: "working" });
+    renderDock();
+    await screen.findByTestId("trace-dock-body");
+    expect(screen.queryByRole("button", { name: /^full$/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^peek$/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^working$/i })).toBeNull();
+    // The pop-out arrows remain — the sole fullscreen affordance.
+    expect(
+      screen.getByLabelText(/pop out to dedicated view/i),
+    ).toBeInTheDocument();
+    // The resize handle is mounted.
+    expect(screen.getByTestId("trace-dock-resize-handle")).toBeInTheDocument();
+  });
+
+  test("dock renders at the store's heightPx", async () => {
+    useTraceDock.setState({
+      activeRunId: "run_abc1234",
+      height: "working",
+      heightPx: 612,
+    });
+    renderDock();
+    const dock = await screen.findByTestId("trace-dock");
+    expect(dock).toHaveStyle({ height: "612px" });
+  });
+
   test("inspector selection falls back to the first filtered span", async () => {
     useTraceDock.setState({ activeRunId: "run_abc1234", height: "working" });
     renderDock();

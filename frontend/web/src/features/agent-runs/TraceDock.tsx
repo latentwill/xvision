@@ -6,7 +6,8 @@ import { ApiError } from "@/api/client";
 import { agentRunKeys, getAgentRun, openAgentRunStream } from "@/api/agent-runs";
 import type { AgentRunDetail, RunSpan } from "@/api/types-agent-runs";
 import { formatCostUsd, formatCostUsdPrecise } from "@/lib/format";
-import { useTraceDock, type DockHeight } from "@/stores/trace-dock";
+import { useTraceDock } from "@/stores/trace-dock";
+import { DockResizeHandle } from "./DockResizeHandle";
 import { FlameGraph } from "./FlameGraph";
 import { SpanInspector } from "./SpanInspector";
 import { HaltStrategyButton } from "./HaltStrategyButton";
@@ -15,17 +16,8 @@ import { useSpanFilter } from "./use-span-filter";
 import { deriveDecisions } from "./decisions";
 import { TraceDownloadButton } from "./TraceDownloadButton";
 
-function heightPx(h: DockHeight): number {
-  if (h === "collapsed") return 0;
-  if (h === "peek") return 240;
-  if (h === "working") return 480;
-  // full
-  if (typeof window !== "undefined") return Math.floor(window.innerHeight * 0.8);
-  return 600;
-}
-
 export function TraceDock() {
-  const { height, activeRunId, selectedSpanId, minimize, setHeight, setSelectedSpan } =
+  const { height, heightPx, activeRunId, selectedSpanId, minimize, setSelectedSpan } =
     useTraceDock();
   const navigate = useNavigate();
 
@@ -181,8 +173,9 @@ export function TraceDock() {
     <div
       data-testid="trace-dock"
       className="fixed bottom-0 left-0 right-0 z-30 bg-bg border-t border-border shadow-2xl flex flex-col"
-      style={{ height: heightPx(height) }}
+      style={{ height: heightPx }}
     >
+      <DockResizeHandle />
       <div className="flex items-center gap-3 px-3 h-8 border-b border-border text-[11px] font-mono">
         <span className="text-text-2">TRACE</span>
         {summary ? (
@@ -217,17 +210,6 @@ export function TraceDock() {
             <TraceDownloadButton runId={activeRunId} />
           </div>
           <span aria-hidden className="opacity-30 px-1">|</span>
-          {(["peek", "working", "full"] as const).map((h) => (
-            <button
-              key={h}
-              type="button"
-              onClick={() => setHeight(h)}
-              aria-pressed={height === h}
-              className={`px-1.5 py-0.5 border rounded-sm ${height === h ? "border-text" : "border-border"}`}
-            >
-              {h}
-            </button>
-          ))}
           <button
             type="button"
             aria-label="pop out to dedicated view"
@@ -252,18 +234,16 @@ export function TraceDock() {
           </button>
         </div>
       </div>
-      {height !== "peek" ? (
-        <FilterBar
-          query={filter.query} setQuery={filter.setQuery}
-          kinds={filter.kinds} toggleKind={filter.toggleKind}
-          status={filter.status} setStatus={filter.setStatus}
-          decisionFilter={filter.decisionFilter} setDecisionFilter={filter.setDecisionFilter}
-          decisions={decisions}
-          total={filter.summary.total} filtered={filter.summary.filtered}
-        />
-      ) : null}
+      <FilterBar
+        query={filter.query} setQuery={filter.setQuery}
+        kinds={filter.kinds} toggleKind={filter.toggleKind}
+        status={filter.status} setStatus={filter.setStatus}
+        decisionFilter={filter.decisionFilter} setDecisionFilter={filter.setDecisionFilter}
+        decisions={decisions}
+        total={filter.summary.total} filtered={filter.summary.filtered}
+      />
       <div data-testid="trace-dock-body" className="flex flex-1 min-h-0">
-        <div className={`min-w-0 ${height === "peek" ? "flex-1" : "flex-1 border-r border-border"}`}>
+        <div className="min-w-0 flex-1 border-r border-border">
           {q.data ? (
             <FlameGraph
               spans={filter.filtered}
@@ -272,7 +252,7 @@ export function TraceDock() {
             />
           ) : null}
         </div>
-        {height !== "peek" && selectedSpan ? (
+        {selectedSpan ? (
           <div className="w-[400px] min-w-0">
             <SpanInspector
               span={selectedSpan}
