@@ -11,6 +11,7 @@
 
 pub mod backtest;
 pub mod paper;
+pub mod recovery;
 pub mod trader_output;
 
 use std::sync::Arc;
@@ -27,6 +28,11 @@ use crate::tools::ToolRegistry;
 
 pub use backtest::BacktestExecutor;
 pub use paper::PaperExecutor;
+pub use recovery::{
+    classify as classify_failure_typed, FailureClass, RecoveryOutcome,
+    MAX_CONTEXT_OVERFLOW_RETRIES, MAX_DECODE_REPAIR_PROMPTS, MAX_SCHEMA_PATCH_PROMPTS,
+    MAX_SUMMARIZE_INPUT_TOKENS, MAX_TOOL_RETRIES, REPEATED_TOOL_FAILURE_THRESHOLD,
+};
 pub use trader_output::{TraderFailureKind, TraderOutputError};
 
 /// Stable failure-class tag for a run-level error. Paper/backtest executors
@@ -46,68 +52,35 @@ pub use trader_output::{TraderFailureKind, TraderOutputError};
 /// `Display`) so an underlying broker rejection survives a `with_context`
 /// wrap from the surface caller.
 pub fn classify_run_failure(err: &anyhow::Error) -> &'static str {
-    if let Some(te) = err.downcast_ref::<TraderOutputError>() {
-        return te.class_tag();
-    }
-    let s = format!("{:#}", err).to_lowercase();
-    // Trader-output errors may have been wrapped with `.context(...)` and
-    // not survive downcast — check the message form as a fallback.
-    for kind in [
-        TraderFailureKind::EmptyText,
-        TraderFailureKind::ToolUseOnly,
-        TraderFailureKind::Truncated,
-        TraderFailureKind::InvalidJson,
-        TraderFailureKind::MissingField,
-        TraderFailureKind::InvalidField,
-        TraderFailureKind::MissingResponse,
-    ] {
-        let needle = format!("trader_output[{}]", kind.tag());
-        if s.contains(&needle) {
-            return kind.tag();
+    // Delegate to the typed classifier and project back to the
+    // legacy `&'static str` set via `FailureClass::tag()`. F-5
+    // (`harness-recovery-state-machine`) introduced the typed
+    // pre-recovery dispatch surface; the wire-format prefix
+    // `[<class>]` that downstream consumers parse is preserved
+    // unchanged.
+    //
+    // Two cases need a small fixup because [`FailureClass::tag`]
+    // collapses semantically-distinct legacy tags:
+    //
+    // - `provider_decode` (model-dispatch decode failure) and
+    //   `invalid_json` (trader-output decode failure) both map to
+    //   `FailureClass::MalformedJson`. Re-discriminate here on the
+    //   error-string shape so the legacy tag is unchanged.
+    // - `tool_timeout` is a new tag F-5 introduces; do NOT emit it
+    //   for legacy classifier callers (eval store, dashboard) until
+    //   they learn it. Map to `unclassified` to preserve wire format.
+    let class = recovery::classify(err);
+    if matches!(class, recovery::FailureClass::MalformedJson { .. }) {
+        let s = format!("{:#}", err).to_lowercase();
+        if s.contains("trader_output[invalid_json]") || err.is::<TraderOutputError>() {
+            return "invalid_json";
         }
-    }
-    // Broker classes — match before the generic `timeout` fallback so a
-    // broker-side fill timeout doesn't get tagged `provider_timeout`.
-    if s.contains("broker_unsupported")
-        || s.contains("not shortable")
-        || s.contains("asset is not shortable")
-        || (s.contains("bracket") && s.contains("not supported"))
-        || s.contains("not supported for this asset class")
-    {
-        return "broker_unsupported";
-    }
-    if s.contains("insufficient buying power")
-        || s.contains("insufficient balance")
-        || s.contains("insufficient funds")
-    {
-        return "broker_insufficient_funds";
-    }
-    if s.contains("not permitted") || s.contains("forbidden") {
-        return "broker_auth";
-    }
-    if s.contains("alpaca order") && s.contains("rejected") {
-        return "broker_rejected";
-    }
-    if s.contains("did not fill within") {
-        return "broker_timeout";
-    }
-    if s.contains("timed out") || s.contains("timeout") {
-        return "provider_timeout";
-    }
-    if s.contains("tcp connect") || s.contains("dns error") || s.contains("connection refused") {
-        return "provider_connect";
-    }
-    if s.contains("anthropic api error") || s.contains("openai-compat api error") {
-        return "provider_http_error";
-    }
-    if s.contains("provider_decode")
-        || s.contains("error decoding response body")
-        || s.contains("invalid json response body")
-        || s.contains("eof while parsing")
-    {
         return "provider_decode";
     }
-    "unclassified"
+    if matches!(class, recovery::FailureClass::ToolTimeout { .. }) {
+        return "unclassified";
+    }
+    class.tag()
 }
 
 /// Format the persisted/displayed failure string for a run error. The
