@@ -176,6 +176,61 @@ async fn api_context_open_accepts_already_renamed_eval_agent_schema() {
 }
 
 #[tokio::test]
+async fn api_context_open_applies_migration_019_to_pre_019_db() {
+    // F-1 from 2026-05-18 QA round-4 intake: a pre-019 DB on disk
+    // (existing /data/xvn.db on the xvn-app container) was 500ing every
+    // /api/agents read because PR #296 added the column to AgentStore
+    // queries but never wired migration 019 into ApiContext::open.
+    //
+    // Repro: stand up the agent_slots table at the 005_agents schema,
+    // then open the same xvn_home and assert prompt_version appears.
+
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("xvn.db");
+    let url = format!("sqlite://{}?mode=rwc", db_path.display());
+    let pool = SqlitePool::connect(&url).await.unwrap();
+    // Minimal pre-019 shape — only the column set that 005_agents
+    // defined; specifically no `prompt_version`.
+    sqlx::query(
+        "CREATE TABLE agent_slots (
+            id TEXT PRIMARY KEY,
+            agent_id TEXT NOT NULL,
+            slot_label TEXT NOT NULL,
+            system_prompt TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            model TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    pool.close().await;
+
+    let ctx = ApiContext::open(dir.path(), Actor::Cli { user: "u".into() })
+        .await
+        .expect("open must apply migration 019 to a pre-019 DB");
+
+    let columns: Vec<(i64, String, String, i64, Option<String>, i64)> =
+        sqlx::query_as("PRAGMA table_info(agent_slots)")
+            .fetch_all(&ctx.db)
+            .await
+            .unwrap();
+    assert!(
+        columns
+            .iter()
+            .any(|(_, name, _, _, _, _)| name == "prompt_version"),
+        "migration 019 must add prompt_version column, got: {columns:?}"
+    );
+
+    // Idempotent — second open must not error on the already-present column.
+    let _again = ApiContext::open(dir.path(), Actor::Cli { user: "u".into() })
+        .await
+        .expect("re-opening a post-019 DB must succeed");
+}
+
+#[tokio::test]
 async fn api_context_open_creates_xvn_home_dir_if_missing() {
     let parent = tempfile::tempdir().unwrap();
     let nested = parent.path().join("nested/.xvn");

@@ -270,8 +270,132 @@ impl RunStore {
         row_to_run(&row)
     }
 
+    /// Delete an eval run and every row that references it. F-2 from the
+    /// 2026-05-18 QA round-4 intake: the previous implementation only
+    /// touched `eval_decisions`, `eval_equity_samples`, `eval_findings`,
+    /// `eval_attestations` — but `agent_runs.eval_run_id` and
+    /// `eval_reviews.eval_run_id` also FK eval_runs(id), and `agent_runs`
+    /// is itself the parent of `spans` / `model_calls` / `tool_calls` /
+    /// `events` / `approvals` / `sandbox_results` / `supervisor_notes` /
+    /// `artifacts` / `checkpoints`. Any descendant row aborted the final
+    /// `DELETE FROM eval_runs` with SQLite error 787 (FOREIGN KEY
+    /// constraint failed).
+    ///
+    /// The cascade order is leaves-first; spans use a self-FK
+    /// (`parent_span_id`) but SQLite checks FKs at end-of-statement, so
+    /// deleting every span for the agent_runs in one go satisfies it.
     pub async fn delete(&self, id: &str) -> Result<()> {
         let mut tx = self.pool.begin().await.context("begin delete run tx")?;
+
+        // ── agent_runs and their descendants ──
+        // Approvals reference both spans (span_id) and tool_calls
+        // (tool_call_id), so they must go before tool_calls and spans.
+        sqlx::query(
+            "DELETE FROM approvals WHERE span_id IN (
+                SELECT id FROM spans WHERE run_id IN (
+                    SELECT id FROM agent_runs WHERE eval_run_id = ?
+                )
+            )",
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .context("delete approvals")?;
+        sqlx::query(
+            "DELETE FROM tool_calls WHERE span_id IN (
+                SELECT id FROM spans WHERE run_id IN (
+                    SELECT id FROM agent_runs WHERE eval_run_id = ?
+                )
+            )",
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .context("delete tool_calls")?;
+        sqlx::query(
+            "DELETE FROM model_calls WHERE span_id IN (
+                SELECT id FROM spans WHERE run_id IN (
+                    SELECT id FROM agent_runs WHERE eval_run_id = ?
+                )
+            )",
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .context("delete model_calls")?;
+        sqlx::query(
+            "DELETE FROM sandbox_results WHERE span_id IN (
+                SELECT id FROM spans WHERE run_id IN (
+                    SELECT id FROM agent_runs WHERE eval_run_id = ?
+                )
+            )",
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .context("delete sandbox_results")?;
+        // events FK both run_id and span_id — delete by run_id covers the
+        // full set for this eval's agent_runs.
+        sqlx::query(
+            "DELETE FROM events WHERE run_id IN (
+                SELECT id FROM agent_runs WHERE eval_run_id = ?
+            )",
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .context("delete events")?;
+        // checkpoints FK both run_id and span_id — delete by run_id.
+        sqlx::query(
+            "DELETE FROM checkpoints WHERE run_id IN (
+                SELECT id FROM agent_runs WHERE eval_run_id = ?
+            )",
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .context("delete checkpoints")?;
+        sqlx::query(
+            "DELETE FROM supervisor_notes WHERE run_id IN (
+                SELECT id FROM agent_runs WHERE eval_run_id = ?
+            )",
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .context("delete supervisor_notes")?;
+        sqlx::query(
+            "DELETE FROM artifacts WHERE run_id IN (
+                SELECT id FROM agent_runs WHERE eval_run_id = ?
+            )",
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .context("delete artifacts")?;
+        sqlx::query(
+            "DELETE FROM spans WHERE run_id IN (
+                SELECT id FROM agent_runs WHERE eval_run_id = ?
+            )",
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .context("delete spans")?;
+        sqlx::query("DELETE FROM agent_runs WHERE eval_run_id = ?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .context("delete agent_runs")?;
+
+        // ── eval_reviews ──
+        sqlx::query("DELETE FROM eval_reviews WHERE eval_run_id = ?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .context("delete eval_reviews")?;
+
+        // ── direct eval_runs children (pre-existing set) ──
         sqlx::query("DELETE FROM eval_decisions WHERE run_id = ?")
             .bind(id)
             .execute(&mut *tx)
@@ -292,6 +416,7 @@ impl RunStore {
             .execute(&mut *tx)
             .await
             .context("delete eval_attestations")?;
+
         let res = sqlx::query("DELETE FROM eval_runs WHERE id = ?")
             .bind(id)
             .execute(&mut *tx)
