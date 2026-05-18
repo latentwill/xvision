@@ -1213,16 +1213,34 @@ fn normalize_create_scenario_input(obj: &mut serde_json::Map<String, serde_json:
         );
     }
     // Unwrap a tag-wrapped calendar shape (`{ "type": "Continuous24x7" }`)
-    // to the bare string serde expects. Same Qwen 2026-05-18 repro: the
-    // agent wrapped the variant and serde rejected with
-    // `unknown variant 'type'`.
-    if let Some(serde_json::Value::Object(cal_obj)) = obj.get("calendar") {
-        if let Some(tag) = cal_obj
-            .get("type")
-            .and_then(|v| v.as_str())
-            .map(String::from)
-        {
-            obj.insert("calendar".into(), serde_json::Value::String(tag));
+    // to the form serde expects. Same Qwen 2026-05-18 repro: the agent
+    // wrapped the variant and serde rejected with `unknown variant 'type'`.
+    //
+    // CalendarRef (xvision-engine::eval::scenario) is `enum { Continuous24x7,
+    // UsEquities, Custom(String) }` with default (externally-tagged) serde:
+    //   - unit variants serialize as `"Continuous24x7"` / `"UsEquities"`
+    //   - Custom serializes as `{"Custom": "<name>"}` — NOT a bare string
+    // so the unit and Custom branches need separate handling.
+    if let Some(serde_json::Value::Object(cal_obj)) = obj.get("calendar").cloned() {
+        if let Some(tag) = cal_obj.get("type").and_then(|v| v.as_str()) {
+            let replacement = match tag {
+                "Custom" => {
+                    // Pull a name from any of the common keys the agent
+                    // might use; fall back to the tag itself so we still
+                    // produce a valid Custom("Custom") rather than dropping
+                    // the variant.
+                    let name = cal_obj
+                        .get("name")
+                        .or_else(|| cal_obj.get("value"))
+                        .or_else(|| cal_obj.get("calendar"))
+                        .and_then(|v| v.as_str())
+                        .map(String::from)
+                        .unwrap_or_else(|| "Custom".into());
+                    serde_json::json!({ "Custom": name })
+                }
+                other => serde_json::Value::String(other.to_string()),
+            };
+            obj.insert("calendar".into(), replacement);
         }
     }
     obj.entry("calendar")
@@ -2042,6 +2060,70 @@ mod tests {
         );
         normalize_create_scenario_input(&mut obj);
         assert_eq!(obj.get("calendar"), Some(&serde_json::json!("UsEquities")));
+    }
+
+    #[test]
+    fn normalize_create_scenario_rewrites_tagged_custom_calendar_to_externally_tagged_form() {
+        // `CalendarRef::Custom(String)` serializes as `{"Custom": "<name>"}`,
+        // NOT a bare string. If the agent passes `{"type": "Custom",
+        // "name": "tokyo_hours"}` the unwrap must produce
+        // `{"Custom": "tokyo_hours"}` — collapsing to bare `"Custom"`
+        // would drop the payload and serde would still fail.
+        let mut obj = serde_json::Map::new();
+        obj.insert(
+            "display_name".into(),
+            serde_json::Value::String("BTC Q1 2026".into()),
+        );
+        obj.insert(
+            "calendar".into(),
+            serde_json::json!({"type": "Custom", "name": "tokyo_hours"}),
+        );
+        normalize_create_scenario_input(&mut obj);
+        assert_eq!(
+            obj.get("calendar"),
+            Some(&serde_json::json!({"Custom": "tokyo_hours"})),
+        );
+    }
+
+    #[test]
+    fn normalize_create_scenario_custom_calendar_falls_back_to_self_named_string() {
+        // If the agent passes `{"type": "Custom"}` with no payload,
+        // produce `{"Custom": "Custom"}` rather than dropping the
+        // variant or collapsing to a bare string.
+        let mut obj = serde_json::Map::new();
+        obj.insert(
+            "display_name".into(),
+            serde_json::Value::String("BTC Q1 2026".into()),
+        );
+        obj.insert(
+            "calendar".into(),
+            serde_json::json!({"type": "Custom"}),
+        );
+        normalize_create_scenario_input(&mut obj);
+        assert_eq!(
+            obj.get("calendar"),
+            Some(&serde_json::json!({"Custom": "Custom"})),
+        );
+    }
+
+    #[test]
+    fn normalize_create_scenario_custom_calendar_reads_value_key_too() {
+        // Some agents may put the payload under `value` instead of
+        // `name`. The unwrap accepts either.
+        let mut obj = serde_json::Map::new();
+        obj.insert(
+            "display_name".into(),
+            serde_json::Value::String("BTC Q1 2026".into()),
+        );
+        obj.insert(
+            "calendar".into(),
+            serde_json::json!({"type": "Custom", "value": "asia_session"}),
+        );
+        normalize_create_scenario_input(&mut obj);
+        assert_eq!(
+            obj.get("calendar"),
+            Some(&serde_json::json!({"Custom": "asia_session"})),
+        );
     }
 
     #[test]
