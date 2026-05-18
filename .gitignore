@@ -76,3 +76,7 @@ frontend/web/.vite/
 # agent-conductor scripts
 tools/agent-conductor/scripts/node_modules/
 tools/agent-conductor/scripts/package-lock.json
+
+# agent-conductor daemon
+tools/agent-conductor/node_modules/
+tools/agent-conductor/dist/

@@ -1,0 +1,51 @@
+#!/usr/bin/env node
+// Entry shim. Prefers the compiled CLI in dist/cli/index.js (production
+// install path; the `files` manifest in package.json ships dist/), but
+// falls back to running the TypeScript source via the locally-installed
+// `tsx` when dist/ isn't present — fresh checkouts, dev iteration, CI
+// verification before `npm run build`. `tsx` is a runtime dependency,
+// so the fallback is satisfied by `npm install` alone.
+
+import { existsSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const distEntry = join(here, "..", "dist", "cli", "index.js");
+const srcEntry = join(here, "..", "src", "cli", "main.ts");
+const tsxBin = join(here, "..", "node_modules", ".bin", "tsx");
+
+if (existsSync(distEntry)) {
+  const mod = await import(distEntry);
+  await mod.runCli(process.argv).catch((err) => {
+    process.stderr.write(`fatal: ${err?.stack ?? err}\n`);
+    process.exit(1);
+  });
+} else if (existsSync(tsxBin)) {
+  // No build present — run TS source through tsx. Forward stdio and
+  // exit with the child's status / signal so the operator sees the
+  // same behaviour as a compiled run.
+  const child = spawn(tsxBin, [srcEntry, ...process.argv.slice(2)], {
+    stdio: "inherit",
+  });
+  child.on("exit", (code, signal) => {
+    if (signal) {
+      // Propagate the terminating signal so the parent shell sees the
+      // same exit cause.
+      process.kill(process.pid, signal);
+      return;
+    }
+    process.exit(code ?? 1);
+  });
+  child.on("error", (err) => {
+    process.stderr.write(`fatal: ${err?.stack ?? err}\n`);
+    process.exit(1);
+  });
+} else {
+  process.stderr.write(
+    "fatal: neither dist/cli/index.js nor node_modules/.bin/tsx is present.\n" +
+      "Run `npm install` (and optionally `npm run build`) before invoking agent-conductor.\n",
+  );
+  process.exit(1);
+}

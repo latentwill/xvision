@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  launchd template for agent-conductor. NOT installed by the contract —
+  the operator runs `launchctl bootstrap gui/$(id -u) <path>` to load.
+
+  Placeholders to substitute before install:
+    {{HOME}}       — operator's $HOME, e.g. /Users/operator
+    {{BIN_PATH}}   — absolute path to bin/agent-conductor inside the repo
+    {{REPO_PATH}}  — absolute path to the host-repo checkout (cwd for the daemon)
+
+  The kill switch (AGENT_CONDUCTOR_ENABLE) is asserted "1" here so the
+  plist itself is the operator's deliberate opt-in. Set it to "0" and
+  reload the plist to disable without uninstalling.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+ "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.xvision.agent-conductor</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>{{BIN_PATH}}</string>
+        <string>start</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>{{REPO_PATH}}</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>{{HOME}}</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>AGENT_CONDUCTOR_ENABLE</key>
+        <string>1</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+        <key>Crashed</key>
+        <true/>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>{{HOME}}/.cache/agent-conductor/launchd-stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>{{HOME}}/.cache/agent-conductor/launchd-stderr.log</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+</dict>
+</plist>
