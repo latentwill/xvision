@@ -312,11 +312,16 @@ impl BacktestExecutor {
             load_ohlcv_fixture(data_seed, &asset, usize::MAX)
                 .map_err(|e| anyhow!("load fixture {}: {e}", data_seed))?
         };
-        if bars.len() < 2 {
+        // An N-bar window is expected to produce N decisions
+        // (qa-decisions-30day-count). The final bar fills against its own
+        // close via the `next_bar_open` fallback below, so the only
+        // genuinely-uninterpretable case is an empty bar list. Anything
+        // narrower than that is a contract bug at the loader layer, not
+        // a runtime input the executor should silently tolerate.
+        if bars.is_empty() {
             anyhow::bail!(
-                "scenario {} has only {} bars; need at least 2",
+                "scenario {} has no bars; nothing to backtest",
                 scenario.id,
-                bars.len(),
             );
         }
 

@@ -123,12 +123,6 @@ async fn run_backtest_with_bars(bar_count: usize) -> (u32, u32, chrono::DateTime
     store.create(&run).await.unwrap();
 
     let bars = daily_bars(bar_count);
-    if bars.len() < 2 {
-        // BacktestExecutor::run requires at least 2 bars (line 315 of
-        // backtest.rs). The 1-bar edge case is documented in the test
-        // below rather than driven through the executor here.
-        return (0, 0, bars[0].timestamp, bars[0].timestamp);
-    }
     let first_ts = bars.first().unwrap().timestamp;
     let last_ts = bars.last().unwrap().timestamp;
 
@@ -172,28 +166,12 @@ async fn backtest_n_bars_yields_n_decisions_for_100_bars() {
     assert_eq!(summarized, 100, "metrics.n_decisions must agree with persisted count");
 }
 
-/// The 1-bar edge case is rejected at the executor preflight (need at
-/// least 2 bars per `backtest.rs:315`); document that rather than try to
-/// run it.
+/// The 1-bar edge case must also honor "N bars → N decisions". The
+/// final-bar `next_bar_open` fallback (executor falls back to
+/// `bar.close`) means a single-bar window has a valid fill source.
 #[tokio::test]
-async fn backtest_rejects_single_bar_window() {
-    let store = fresh_store().await;
-    #[allow(deprecated)]
-    let scenario = canonical_scenarios()
-        .into_iter()
-        .find(|s| s.id == "flash-crash-2024-08")
-        .expect("flash-crash-2024-08 scenario must exist");
-    let strategy = build_strategy("01TESTQADECISIONS1BARREJECT");
-    let mut run = Run::new_queued(strategy.manifest.id.clone(), scenario.id.clone(), RunMode::Backtest);
-    store.create(&run).await.unwrap();
-
-    let executor = BacktestExecutor::with_bars(daily_bars(1));
-    let err = executor
-        .run(&mut run, &strategy, &scenario, &[], hold_dispatch(), Arc::new(ToolRegistry::empty()), &store)
-        .await
-        .expect_err("single-bar window must be rejected by executor preflight");
-    assert!(
-        err.to_string().contains("at least 2"),
-        "preflight error must explain the minimum bar requirement, got: {err}",
-    );
+async fn backtest_n_bars_yields_n_decisions_for_1_bar() {
+    let (persisted, summarized, _, _) = run_backtest_with_bars(1).await;
+    assert_eq!(persisted, 1, "1 bar must yield 1 decision");
+    assert_eq!(summarized, 1, "metrics.n_decisions must agree with persisted count");
 }
