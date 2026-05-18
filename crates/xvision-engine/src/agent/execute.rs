@@ -340,11 +340,35 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
         let mut results = Vec::with_capacity(uses.len());
         for (tu_id, tu_name, tu_input) in uses {
             tool_names_called.push(tu_name.clone());
+            // F-4 (`harness-span-taxonomy-extension`): bracket each
+            // tool invocation with `tool.validate_input` and
+            // `tool.validate_output` instantaneous spans. The body
+            // of each is a no-op today — F-6
+            // (`harness-typed-mechanical-params`) replaces the
+            // no-ops with the actual schema validators. We emit the
+            // spans now so the wire format / ordering /
+            // `tool_name` attribute are pinned before F-6 starts.
+            //
+            // `validate_output` MUST emit even when the tool call
+            // errored — the post-state record is exactly when an
+            // operator needs visibility most. parent_span_id is
+            // None because the engine eval path does not currently
+            // emit `tool.call` spans (that gap is tracked
+            // separately); when it starts to, the parent here can
+            // be wired without changing the validate-span shape.
+            if let Some(obs) = input.obs.as_ref() {
+                obs.emit_tool_validate_input(&fresh_span_id(), None, &tu_name)
+                    .await;
+            }
             let (content, is_error) =
                 match tool_call::invoke(&tu_name, tu_input, input.tools.clone()).await {
                     Ok(s) => (s, None),
                     Err(e) => (format!("tool error: {e}"), Some(true)),
                 };
+            if let Some(obs) = input.obs.as_ref() {
+                obs.emit_tool_validate_output(&fresh_span_id(), None, &tu_name)
+                    .await;
+            }
             results.push(ContentBlock::ToolResult {
                 tool_use_id: tu_id,
                 content,
