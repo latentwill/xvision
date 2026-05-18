@@ -12,6 +12,7 @@ import {
   type ResolvedTheme,
 } from "@/theme/themes";
 import { useTheme } from "@/theme/useTheme";
+import { RestartTourButton } from "@/features/onboarding";
 
 function swatchFor(value: string) {
   const id: ResolvedTheme =
@@ -115,6 +116,21 @@ export function SettingsGeneralRoute() {
               </label>
             );
           })}
+        </div>
+      </Card>
+
+      <Card className="p-5">
+        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="m-0 font-serif font-medium text-[20px] tracking-tight">
+              Guided tour
+            </h3>
+            <p className="m-0 mt-1 max-w-2xl text-[12px] leading-snug text-text-3">
+              Replay the first-run walkthrough across Strategies, Scenarios,
+              and Eval Runs.
+            </p>
+          </div>
+          <RestartTourButton />
         </div>
       </Card>
 
