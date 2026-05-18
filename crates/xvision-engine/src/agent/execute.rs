@@ -226,6 +226,10 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
             .clone()
             .unwrap_or_else(|| "unknown".to_string());
         let span_id = fresh_span_id();
+        // Compute prompt_hash before `req` is moved into `dispatch.complete(req)`.
+        // The digest is deterministic over (system_prompt, messages, tools)
+        // and prefixed `sha256:` for explicit algorithm tagging.
+        let prompt_hash = crate::agent::observability::compute_prompt_hash(&req);
         if let Some(obs) = input.obs.as_ref() {
             obs.emit_model_call_started(&span_id, None, &provider_str, &model_str)
                 .await;
@@ -241,6 +245,26 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
                 return Err(e);
             }
         };
+        // Accumulate assistant text once; reused for the streaming
+        // delta bridge and the response_hash.
+        let assistant_text: String = {
+            use crate::agent::llm::ContentBlock;
+            resp.content
+                .iter()
+                .filter_map(|c| match c {
+                    ContentBlock::Text { text } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("")
+        };
+        let response_hash = if assistant_text.is_empty() {
+            None
+        } else {
+            Some(crate::agent::observability::compute_response_hash(
+                &assistant_text,
+            ))
+        };
         // Bridge to the trace dock's streaming pull-quote: emit the
         // accumulated assistant text as a single `AssistantTextDelta`
         // before closing the span so `SpanInspector` renders the body
@@ -255,16 +279,6 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
         // still publish the event so the dashboard can update span
         // counts, just without raw text.
         if let Some(obs) = input.obs.as_ref() {
-            use crate::agent::llm::ContentBlock;
-            let assistant_text: String = resp
-                .content
-                .iter()
-                .filter_map(|c| match c {
-                    ContentBlock::Text { text } => Some(text.as_str()),
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-                .join("");
             if !assistant_text.is_empty() {
                 obs.emit_assistant_text_delta(&span_id, &assistant_text)
                     .await;
@@ -278,6 +292,8 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
                 Some(resp.input_tokens),
                 Some(resp.output_tokens),
                 None,
+                prompt_hash,
+                response_hash,
             )
             .await;
             obs.emit_span_finished_ok(&span_id).await;
