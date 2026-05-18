@@ -286,6 +286,25 @@ describe("invalidateForToolResult", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
+  it("does NOT treat success payloads with `error: null` / `error: \"\"` as failures", () => {
+    // Rust API responses serialized from `Option<String>` ship
+    // `error: null` on the wire when there is no real error. The old
+    // `"error" in result` check bailed on those payloads, which left
+    // the strategies list stale after a successful create — exactly
+    // the operator-reported regression. The truthy-error gate fixes it.
+    const { qc, spy } = spyClient();
+    invalidateForToolResult(
+      qc,
+      toolResult("create_strategy", { id: "01OK", error: null }),
+    );
+    invalidateForToolResult(
+      qc,
+      toolResult("create_strategy", { id: "01OK2", error: "" }),
+    );
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(spy).toHaveBeenCalledWith({ queryKey: strategyKeys.all });
+  });
+
   it("ignores read-only validate_draft", () => {
     const { qc, spy } = spyClient();
     invalidateForToolResult(qc, toolResult("validate_draft"));
@@ -314,6 +333,33 @@ describe("invalidateForToolResult", () => {
     const { qc, spy } = spyClient();
     invalidateForToolResult(qc, toolResult(tool));
     expect(spy).toHaveBeenCalledWith({ queryKey: strategyKeys.all });
+  });
+
+  it("invalidates BOTH strategies and agents when create_strategy ships an `agent` payload", () => {
+    // The wizard_loop calls `create_default_strategy_agent` after a
+    // successful `create_strategy` when a provider/model is selected
+    // and folds the new agent under `agent` in the tool result. The
+    // agents list must refetch in that case — invalidating only
+    // strategies left /agents stale (PR #276 review).
+    const { qc, spy } = spyClient();
+    invalidateForToolResult(
+      qc,
+      toolResult("create_strategy", {
+        id: "01STRAT",
+        agent: { agent_id: "01AGENT", provider: "anthropic" },
+      }),
+    );
+    expect(spy).toHaveBeenCalledWith({ queryKey: strategyKeys.all });
+    expect(spy).toHaveBeenCalledWith({ queryKey: agentKeys.all });
+  });
+
+  it("does NOT invalidate agents on bare create_strategy (no `agent` in result)", () => {
+    // No provider/model selected → no default-agent creation → agents
+    // list is not stale → skip the second invalidation.
+    const { qc, spy } = spyClient();
+    invalidateForToolResult(qc, toolResult("create_strategy", { id: "01STRAT" }));
+    expect(spy).toHaveBeenCalledWith({ queryKey: strategyKeys.all });
+    expect(spy).not.toHaveBeenCalledWith({ queryKey: agentKeys.all });
   });
 
   it("invalidates BOTH strategies and agents on create_strategy_agent", () => {

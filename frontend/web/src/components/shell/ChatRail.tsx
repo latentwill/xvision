@@ -421,9 +421,19 @@ function RailModelBar({
  */
 export function invalidateForToolResult(qc: QueryClient, ev: WizardEvent): void {
   if (ev.type !== "tool_result") return;
-  // Failed tool results don't mutate; nothing to invalidate.
-  const result = ev.result as { error?: unknown } | null | undefined;
-  if (result && typeof result === "object" && "error" in result) return;
+  // Failed tool results don't mutate; nothing to invalidate. Require a
+  // TRUTHY `error` value — checking only key presence used to bail on
+  // legitimate success payloads that happened to ship `error: null` or
+  // `error: ""` (common with Rust `Option<String>` serde defaults).
+  // The wizard loop emits `{"error": "<msg>"}` on real failure, so a
+  // truthiness check is enough to distinguish.
+  const result = ev.result as
+    | { error?: unknown; agent?: unknown }
+    | null
+    | undefined;
+  if (result && typeof result === "object" && "error" in result && Boolean(result.error)) {
+    return;
+  }
   switch (ev.tool) {
     case "create_strategy":
     case "create_strategy_agent":
@@ -433,9 +443,20 @@ export function invalidateForToolResult(qc: QueryClient, ev: WizardEvent): void 
     case "set_mechanical_param":
     case "set_risk_config":
       qc.invalidateQueries({ queryKey: strategyKeys.all });
-      // create_strategy_agent also mutates the agent library
-      // (the underlying agent row is created in `agents` too).
-      if (ev.tool === "create_strategy_agent") {
+      // `create_strategy_agent` always creates an agent row in the
+      // library. `create_strategy` MAY also create a default agent —
+      // when the wizard has a provider/model selected, the backend
+      // calls `create_default_strategy_agent` and returns the new
+      // agent under an `agent` key (see
+      // crates/xvision-dashboard/src/wizard_loop.rs:467). When that
+      // happens the agents list is stale until refetched.
+      if (
+        ev.tool === "create_strategy_agent" ||
+        (ev.tool === "create_strategy" &&
+          result &&
+          typeof result === "object" &&
+          result.agent != null)
+      ) {
         qc.invalidateQueries({ queryKey: agentKeys.all });
       }
       return;
