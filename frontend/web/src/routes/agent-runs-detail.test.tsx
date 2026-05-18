@@ -54,19 +54,20 @@ describe("AgentRunDetailRoute", () => {
     expect(badge).toHaveTextContent(/hash_only/);
   });
 
-  test("does not render the full_debug banner for hash_only runs", async () => {
+  test("does not render the loud full_debug banner for hash_only runs", async () => {
     renderAt("/agent-runs/run_abc1234");
     await screen.findByTestId("retention-badge");
     expect(screen.queryByTestId("retention-banner")).not.toBeInTheDocument();
   });
 
-  test("renders the full_debug banner when retention_mode is full_debug", async () => {
+  test("never renders the loud full_debug banner — badge is the only surface", async () => {
+    // qa-ui-polish-round2 #10: the role="alert" Card was removed. The
+    // retention mode is communicated by the minimal Pill above, and
+    // Settings → Retention is the canonical control. Confirm the banner
+    // does NOT render even for a full_debug run.
     renderAt("/agent-runs/run_debug42");
-    const banner = await screen.findByTestId("retention-banner");
-    expect(banner).toHaveTextContent(
-      /Recorded under full_debug retention — prompts and tool payloads stored on disk\./,
-    );
     const badge = await screen.findByTestId("retention-badge");
     expect(badge).toHaveTextContent(/full_debug/);
+    expect(screen.queryByTestId("retention-banner")).not.toBeInTheDocument();
   });
 });
