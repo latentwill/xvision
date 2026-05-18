@@ -761,6 +761,13 @@ impl PaperExecutor {
                                 .await?;
                             equity_samples.push(balance_now);
                             n_recoverable_broker_errors += 1;
+                            tracing::warn!(
+                                run_id = %run.id,
+                                decision_index = decision_idx,
+                                error_class = class.as_tag(),
+                                n_recoverable = n_recoverable_broker_errors,
+                                "recoverable broker error fed back to agent for next cycle",
+                            );
                             decision_idx += 1;
                             continue;
                         } else {
