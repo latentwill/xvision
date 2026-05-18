@@ -244,7 +244,9 @@ describe("EvalRunDetailRoute", () => {
     });
 
     expect(await screen.findByText("long_open")).toBeInTheDocument();
-    expect(screen.getByText("BTC/USD")).toBeInTheDocument();
+    // BTC/USD now appears in two places: the Asset column and the
+    // new "Open positions" cell. Both are correct.
+    expect(screen.getAllByText("BTC/USD").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("0.77")).toBeInTheDocument();
   });
 
@@ -928,5 +930,133 @@ describe("EvalRunDetailRoute", () => {
         vi.mocked(evalApi.getRun).mock.calls.some(([id]) => id === "01NEWRUN"),
       ).toBe(true),
     );
+  });
+});
+
+describe("EvalRunDetailRoute — Open positions cell", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    FakeEventSource.instances = [];
+    vi.stubGlobal("EventSource", FakeEventSource);
+    vi.mocked(chartApi.getRunChart).mockResolvedValue(null as never);
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    vi.mocked(chartApi.openRunStream).mockImplementation(
+      (runId: string) => new EventSource(`/stream/${runId}`),
+    );
+    vi.mocked(evalReviewApi.listReviewsForRun).mockResolvedValue([]);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("CLOSE row after short_open shows positions=flat (operator repro 2026-05-18)", async () => {
+    // Operator: "a short_open then the next bar is CLOSE flat —
+    // can't tell whether the short is still on". After this fix:
+    // open-positions cell on the CLOSE row reads `flat` explicitly.
+    vi.mocked(evalApi.getRun).mockResolvedValue(
+      detail({
+        summary: { ...detail().summary, status: "completed" },
+        decisions: [
+          decision({
+            decision_index: 0,
+            action: "short_open",
+            fill_size: 0.5,
+            fill_price: 60_000,
+          }),
+          decision({
+            decision_index: 1,
+            action: "flat",
+            fill_size: 0.5,
+            fill_price: 61_000,
+            pnl_realized: -500,
+          }),
+        ],
+      }),
+    );
+
+    renderDetail();
+
+    const shortRow = await screen.findByTestId("decision-open-positions-0");
+    expect(shortRow.textContent).toMatch(/BTC\/USD/);
+    expect(shortRow.textContent).toMatch(/short/i);
+
+    const closeRow = await screen.findByTestId("decision-open-positions-1");
+    expect(closeRow.textContent).toMatch(/flat/i);
+    expect(closeRow.querySelector('[data-testid="decision-open-positions-flat"]')).not
+      .toBeNull();
+  });
+
+  it("HOLD row after CLOSE keeps the positions cell flat (no carry-over from the closed leg)", async () => {
+    vi.mocked(evalApi.getRun).mockResolvedValue(
+      detail({
+        summary: { ...detail().summary, status: "completed" },
+        decisions: [
+          decision({ decision_index: 0, action: "long_open", fill_size: 1, fill_price: 50_000 }),
+          decision({
+            decision_index: 1,
+            action: "flat",
+            fill_size: 1,
+            fill_price: 51_000,
+            pnl_realized: 1000,
+          }),
+          decision({ decision_index: 2, action: "hold", fill_size: null, fill_price: null }),
+        ],
+      }),
+    );
+
+    renderDetail();
+
+    const holdRow = await screen.findByTestId("decision-open-positions-2");
+    expect(holdRow.textContent).toMatch(/flat/i);
+  });
+
+  it("re-entry after CLOSE shows the new position with the new entry price", async () => {
+    vi.mocked(evalApi.getRun).mockResolvedValue(
+      detail({
+        summary: { ...detail().summary, status: "completed" },
+        decisions: [
+          decision({ decision_index: 0, action: "long_open", fill_size: 1, fill_price: 50_000 }),
+          decision({ decision_index: 1, action: "flat", fill_size: 1, fill_price: 51_000 }),
+          decision({
+            decision_index: 2,
+            action: "short_open",
+            fill_size: 0.5,
+            fill_price: 49_000,
+          }),
+        ],
+      }),
+    );
+
+    renderDetail();
+
+    const reentry = await screen.findByTestId("decision-open-positions-2");
+    expect(reentry.textContent).toMatch(/BTC\/USD/);
+    expect(reentry.textContent).toMatch(/short/i);
+    // Entry price 49_000 renders without grouping (>=1000 → no decimals).
+    expect(reentry.textContent).toMatch(/49,?000/);
+  });
+
+  it("realized PnL fills in on the close decision row when the engine reports it", async () => {
+    vi.mocked(evalApi.getRun).mockResolvedValue(
+      detail({
+        summary: { ...detail().summary, status: "completed" },
+        decisions: [
+          decision({ decision_index: 0, action: "long_open", fill_size: 1, fill_price: 50_000 }),
+          decision({
+            decision_index: 1,
+            action: "flat",
+            fill_size: 1,
+            fill_price: 51_000,
+            pnl_realized: 999,
+          }),
+        ],
+      }),
+    );
+
+    renderDetail();
+
+    // The close row's PnL cell shows the engine-reported value
+    // (fmtNumber → fixed 2 decimals).
+    expect(await screen.findByText("999.00")).toBeInTheDocument();
   });
 });
