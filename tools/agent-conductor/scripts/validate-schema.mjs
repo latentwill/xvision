@@ -48,7 +48,7 @@ if (!schemaPath && !checkExamples && positional.length === 1) {
 if (!schemaPath) die('missing schema path (pass as positional arg or --schema)');
 
 const ajv = new Ajv2020({ allErrors: true, strict: true });
-addFormats.default(ajv);
+addFormats(ajv);
 
 let schema;
 try {

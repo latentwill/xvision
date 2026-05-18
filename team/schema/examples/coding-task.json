@@ -5,7 +5,7 @@
   "owner_agent": "xvision:build-host.local",
   "branch": "agent/example-coding-task",
   "worktree": ".worktrees/example-coding-task",
-  "pr": null,
+  "pr": 1234,
   "review_status": "none",
   "deploy_status": "none",
   "intake_doc": "team/intake/2026-05-18-example-intake.md",
