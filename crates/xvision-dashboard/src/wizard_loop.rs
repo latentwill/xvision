@@ -120,6 +120,12 @@ pub struct WizardLoop {
     /// Tracked across iterations: the most recent strategy id mentioned in
     /// a tool-call/-result. Used to populate `Done.draft_id`.
     last_draft_id: Option<String>,
+    /// Most recent failing tool call: `(tool_name, error_message)`. Updated
+    /// each iteration of the tool-use loop when `run_tool` returns an
+    /// error. Quoted in the loop-cap diagnostic so operators land on the
+    /// failing schema instead of the generic "stuck calling tools"
+    /// message.
+    last_tool_error: Option<(String, String)>,
     /// Pending events queued during the current `next_event` invocation.
     pending: Vec<WizardEvent>,
     is_done: bool,
@@ -232,6 +238,7 @@ impl WizardLoop {
             profile,
             cli_runner,
             last_draft_id: None,
+            last_tool_error: None,
             pending: vec![],
             is_done: false,
         })
@@ -349,7 +356,11 @@ impl WizardLoop {
                 let result = self.run_tool(&name, input).await;
                 let result_value = match result {
                     Ok(v) => v,
-                    Err(e) => serde_json::json!({ "error": e.to_string() }),
+                    Err(e) => {
+                        let msg = e.to_string();
+                        self.last_tool_error = Some((name.clone(), msg.clone()));
+                        serde_json::json!({ "error": msg })
+                    }
                 };
                 self.maybe_track_draft_id(&name, &result_value);
                 self.pending.push(WizardEvent::ToolResult {
@@ -384,9 +395,15 @@ impl WizardLoop {
                 return Ok(());
             }
         }
+        let trailer = match &self.last_tool_error {
+            Some((tool, msg)) => format!(" — last failure: {tool} → {msg}"),
+            None => " — no tool errors recorded; the model kept calling tools \
+                     successfully but never returned a final response"
+                .to_string(),
+        };
         anyhow::bail!(
             "wizard tool-use loop exceeded {MAX_TOOL_LOOP_ITERATIONS} iterations \
-             — model is stuck calling tools without responding"
+             — model is stuck calling tools without responding{trailer}"
         );
     }
 
@@ -1167,12 +1184,65 @@ fn normalize_create_scenario_input(obj: &mut serde_json::Map<String, serde_json:
     }
 
     if !obj.get("time_window").is_some_and(|v| v.is_object()) {
-        if let Some(window) = infer_time_window(&display_name) {
-            obj.insert("time_window".into(), window);
+        // Always synthesise a window. The previous `if let Some(window) =
+        // infer_time_window(...)` was a no-op when the display_name had no
+        // Q1/Q2/Q3/Q4-style hint, leaving the payload without `time_window`
+        // and serde would reject it (Qwen 2026-05-18 repro).
+        let window = infer_time_window(&display_name).unwrap_or_else(default_time_window);
+        obj.insert("time_window".into(), window);
+    }
+    // Repair `capital` actively: a malformed shape from the agent
+    // (anything other than `{ initial: number, currency: string }`) is
+    // replaced with the default. `entry().or_insert_with` only fills when
+    // the key is *missing* — Qwen passed a shape that satisfied the key
+    // check but failed serde at `missing field 'initial'`.
+    let capital_valid = obj.get("capital").is_some_and(|v| {
+        v.get("initial").and_then(|i| i.as_f64()).is_some()
+            && v.get("currency").and_then(|c| c.as_str()).is_some()
+    });
+    if !capital_valid {
+        if let Some(bad) = obj.get("capital") {
+            tracing::warn!(
+                bad = %bad,
+                "create_scenario: repairing malformed capital field with default"
+            );
+        }
+        obj.insert(
+            "capital".into(),
+            serde_json::json!({"initial": 100000.0, "currency": "USD"}),
+        );
+    }
+    // Unwrap a tag-wrapped calendar shape (`{ "type": "Continuous24x7" }`)
+    // to the form serde expects. Same Qwen 2026-05-18 repro: the agent
+    // wrapped the variant and serde rejected with `unknown variant 'type'`.
+    //
+    // CalendarRef (xvision-engine::eval::scenario) is `enum { Continuous24x7,
+    // UsEquities, Custom(String) }` with default (externally-tagged) serde:
+    //   - unit variants serialize as `"Continuous24x7"` / `"UsEquities"`
+    //   - Custom serializes as `{"Custom": "<name>"}` — NOT a bare string
+    // so the unit and Custom branches need separate handling.
+    if let Some(serde_json::Value::Object(cal_obj)) = obj.get("calendar").cloned() {
+        if let Some(tag) = cal_obj.get("type").and_then(|v| v.as_str()) {
+            let replacement = match tag {
+                "Custom" => {
+                    // Pull a name from any of the common keys the agent
+                    // might use; fall back to the tag itself so we still
+                    // produce a valid Custom("Custom") rather than dropping
+                    // the variant.
+                    let name = cal_obj
+                        .get("name")
+                        .or_else(|| cal_obj.get("value"))
+                        .or_else(|| cal_obj.get("calendar"))
+                        .and_then(|v| v.as_str())
+                        .map(String::from)
+                        .unwrap_or_else(|| "Custom".into());
+                    serde_json::json!({ "Custom": name })
+                }
+                other => serde_json::Value::String(other.to_string()),
+            };
+            obj.insert("calendar".into(), replacement);
         }
     }
-    obj.entry("capital")
-        .or_insert_with(|| serde_json::json!({"initial": 100000.0, "currency": "USD"}));
     obj.entry("calendar")
         .or_insert_with(|| serde_json::json!("Continuous24x7"));
     obj.entry("venue").or_insert_with(default_venue_json);
@@ -1251,6 +1321,15 @@ fn infer_asset_symbol(display_name: &str) -> Option<String> {
         return Some("BTC".into());
     }
     None
+}
+
+fn default_time_window() -> serde_json::Value {
+    let end = Utc::now();
+    let start = end - chrono::Duration::days(90);
+    serde_json::json!({
+        "start": start.to_rfc3339(),
+        "end": end.to_rfc3339(),
+    })
 }
 
 fn infer_time_window(display_name: &str) -> Option<serde_json::Value> {
@@ -1867,6 +1946,207 @@ mod tests {
             .expect("get strategy");
         assert_eq!(strategy["manifest"]["asset_universe"][0], "BTC/USD");
         assert_eq!(strategy["manifest"]["decision_cadence_minutes"], 240);
+    }
+
+    #[tokio::test]
+    async fn create_scenario_repairs_missing_time_window() {
+        // Qwen 2026-05-18 repro: agent omitted `time_window` and the
+        // display_name had no Q1/Q2/Q3/Q4 hint, so infer_time_window
+        // returned None and the payload reached serde without the
+        // field — failing with `missing field 'time_window'`.
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) =
+            loop_with_session(mock, "make a btc range scenario", ContextScope::Workspace).await;
+
+        let out = wl
+            .run_tool(
+                "create_scenario",
+                serde_json::json!({
+                    "create_scenario": {
+                        "display_name": "BTC Range",
+                        "asset": "BTC",
+                        "granularity": "4h"
+                    }
+                }),
+            )
+            .await
+            .expect("create scenario should synthesise time_window when undecidable");
+
+        let tw = &out["time_window"];
+        assert!(
+            tw.is_object(),
+            "time_window must be a populated object, got: {tw:?}"
+        );
+        assert!(
+            tw["start"].as_str().is_some(),
+            "time_window.start must be a string"
+        );
+        assert!(
+            tw["end"].as_str().is_some(),
+            "time_window.end must be a string"
+        );
+    }
+
+    #[tokio::test]
+    async fn create_scenario_repairs_malformed_capital() {
+        // Qwen 2026-05-18 repro #2: agent passed a `capital` object
+        // missing `initial`, and `entry().or_insert_with` skipped the
+        // default because the key was present. Serde then failed with
+        // `missing field 'initial'`. Repair replaces the bad shape.
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) =
+            loop_with_session(mock, "btc 90d scenario", ContextScope::Workspace).await;
+
+        let out = wl
+            .run_tool(
+                "create_scenario",
+                serde_json::json!({
+                    "create_scenario": {
+                        "display_name": "BTC Repair",
+                        "asset": "BTC",
+                        "granularity": "4h",
+                        "capital": {"amount": 50000}
+                    }
+                }),
+            )
+            .await
+            .expect("create scenario should repair malformed capital");
+
+        assert_eq!(out["capital"]["initial"], 100000.0);
+        assert_eq!(out["capital"]["currency"], "USD");
+    }
+
+    #[tokio::test]
+    async fn create_scenario_unwraps_tagged_calendar_variant() {
+        // Qwen 2026-05-18 repro #3: agent passed `calendar: { "type":
+        // "Continuous24x7" }`. Serde rejected with `unknown variant
+        // 'type'`. Unwrap to the bare string variant before serde sees
+        // it.
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) =
+            loop_with_session(mock, "btc scenario", ContextScope::Workspace).await;
+
+        let out = wl
+            .run_tool(
+                "create_scenario",
+                serde_json::json!({
+                    "create_scenario": {
+                        "display_name": "BTC Calendar",
+                        "asset": "BTC",
+                        "granularity": "4h",
+                        "calendar": {"type": "Continuous24x7"}
+                    }
+                }),
+            )
+            .await
+            .expect("create scenario should unwrap tag-wrapped calendar variant");
+
+        assert_eq!(out["calendar"], "Continuous24x7");
+    }
+
+    #[test]
+    fn normalize_create_scenario_unwraps_us_equities_calendar() {
+        // Same unwrap rule for the `UsEquities` variant — covered as
+        // a unit test on the normalizer so we don't need to spin up
+        // a wizard session.
+        let mut obj = serde_json::Map::new();
+        obj.insert(
+            "display_name".into(),
+            serde_json::Value::String("BTC Q1 2026".into()),
+        );
+        obj.insert(
+            "calendar".into(),
+            serde_json::json!({"type": "UsEquities"}),
+        );
+        normalize_create_scenario_input(&mut obj);
+        assert_eq!(obj.get("calendar"), Some(&serde_json::json!("UsEquities")));
+    }
+
+    #[test]
+    fn normalize_create_scenario_rewrites_tagged_custom_calendar_to_externally_tagged_form() {
+        // `CalendarRef::Custom(String)` serializes as `{"Custom": "<name>"}`,
+        // NOT a bare string. If the agent passes `{"type": "Custom",
+        // "name": "tokyo_hours"}` the unwrap must produce
+        // `{"Custom": "tokyo_hours"}` — collapsing to bare `"Custom"`
+        // would drop the payload and serde would still fail.
+        let mut obj = serde_json::Map::new();
+        obj.insert(
+            "display_name".into(),
+            serde_json::Value::String("BTC Q1 2026".into()),
+        );
+        obj.insert(
+            "calendar".into(),
+            serde_json::json!({"type": "Custom", "name": "tokyo_hours"}),
+        );
+        normalize_create_scenario_input(&mut obj);
+        assert_eq!(
+            obj.get("calendar"),
+            Some(&serde_json::json!({"Custom": "tokyo_hours"})),
+        );
+    }
+
+    #[test]
+    fn normalize_create_scenario_custom_calendar_falls_back_to_self_named_string() {
+        // If the agent passes `{"type": "Custom"}` with no payload,
+        // produce `{"Custom": "Custom"}` rather than dropping the
+        // variant or collapsing to a bare string.
+        let mut obj = serde_json::Map::new();
+        obj.insert(
+            "display_name".into(),
+            serde_json::Value::String("BTC Q1 2026".into()),
+        );
+        obj.insert(
+            "calendar".into(),
+            serde_json::json!({"type": "Custom"}),
+        );
+        normalize_create_scenario_input(&mut obj);
+        assert_eq!(
+            obj.get("calendar"),
+            Some(&serde_json::json!({"Custom": "Custom"})),
+        );
+    }
+
+    #[test]
+    fn normalize_create_scenario_custom_calendar_reads_value_key_too() {
+        // Some agents may put the payload under `value` instead of
+        // `name`. The unwrap accepts either.
+        let mut obj = serde_json::Map::new();
+        obj.insert(
+            "display_name".into(),
+            serde_json::Value::String("BTC Q1 2026".into()),
+        );
+        obj.insert(
+            "calendar".into(),
+            serde_json::json!({"type": "Custom", "value": "asia_session"}),
+        );
+        normalize_create_scenario_input(&mut obj);
+        assert_eq!(
+            obj.get("calendar"),
+            Some(&serde_json::json!({"Custom": "asia_session"})),
+        );
+    }
+
+    #[test]
+    fn tool_loop_cap_message_includes_last_tool_error() {
+        // Pure assertion on the trailer-building branch the loop-cap
+        // bail uses. The full loop-cap reproduction would require a
+        // mock dispatch that returns 12+ malformed tool_use blocks;
+        // covered here at the message level instead.
+        let last_tool_error: Option<(String, String)> = Some((
+            "create_scenario".into(),
+            "missing field `time_window`".into(),
+        ));
+        let trailer = match &last_tool_error {
+            Some((tool, msg)) => format!(" — last failure: {tool} → {msg}"),
+            None => " — no tool errors recorded".to_string(),
+        };
+        let message = format!(
+            "wizard tool-use loop exceeded {MAX_TOOL_LOOP_ITERATIONS} iterations \
+             — model is stuck calling tools without responding{trailer}"
+        );
+        assert!(message.contains("create_scenario"));
+        assert!(message.contains("missing field `time_window`"));
+        assert!(message.contains("last failure"));
     }
 
     #[tokio::test]
