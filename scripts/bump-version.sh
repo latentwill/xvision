@@ -109,9 +109,24 @@ if [ "$NEW_VERSION" = "$CURRENT" ]; then
   exit 2
 fi
 
-# Compare using `sort -V` so 0.10.0 > 0.9.0 etc.
-top="$(printf '%s\n%s\n' "$CURRENT" "$NEW_VERSION" | sort -V | tail -1)"
-if [ "$top" = "$CURRENT" ]; then
+version_gt() {
+  local left="$1"
+  local right="$2"
+  local left_major left_minor left_patch right_major right_minor right_patch
+  IFS=. read -r left_major left_minor left_patch <<<"$left"
+  IFS=. read -r right_major right_minor right_patch <<<"$right"
+  if (( left_major != right_major )); then
+    (( left_major > right_major ))
+    return
+  fi
+  if (( left_minor != right_minor )); then
+    (( left_minor > right_minor ))
+    return
+  fi
+  (( left_patch > right_patch ))
+}
+
+if ! version_gt "$NEW_VERSION" "$CURRENT"; then
   echo "bump-version: $NEW_VERSION is older than current $CURRENT — refusing to downgrade." >&2
   exit 2
 fi
@@ -185,6 +200,7 @@ if command -v cargo >/dev/null 2>&1; then
   echo "bump-version: refreshing $CARGO_LOCK via 'cargo check --workspace' …"
   cargo check --workspace >/dev/null 2>&1 || {
     echo "bump-version: cargo check failed; commit what you have and re-run cargo check manually." >&2
+    exit 1
   }
 else
   echo "bump-version: cargo not on PATH; skipped $CARGO_LOCK refresh." >&2

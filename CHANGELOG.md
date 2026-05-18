@@ -2,9 +2,9 @@
 
 All notable changes to xvision are documented here. The format is based
 on [Keep a Changelog](https://keepachangelog.com). Versioning rules
-live in [`docs/VERSIONING.md`](docs/VERSIONING.md): PATCH = one QA
-wave / image deploy; MINOR = a major product capability (next: `0.3`
-autoresearcher).
+live in [`docs/VERSIONING.md`](docs/VERSIONING.md): the pre-1.0 MINOR
+component is the image-release train (`0.21.0` -> `0.22.0`), while PATCH
+is reserved for same-train hotfixes.
 
 Unreleased entries accumulate above the most recent released section.
 Each release ships as a Docker image; the version that the running
