@@ -5,7 +5,7 @@ wave: agent-cicd-phase-1
 worktree: .worktrees/agent-cicd-board-schema
 branch: task/agent-cicd-board-schema
 base: origin/main
-status: pr-open
+status: blocked
 depends_on: []
 blocks:
   - agent-cicd-migrate-board

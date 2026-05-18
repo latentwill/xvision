@@ -4,12 +4,12 @@
 > verification, and acceptance. This file is conductor-owned; see
 > `team/CONDUCTOR.md`.
 >
-> Last updated: 2026-05-18 conductor sync — drift cleanup after PRs
-> #275, #280, #281 merged. Open PRs now: #277 (gated, harness), #278
-> (agent-cicd-board-schema), #282 (qa-retention), #283 (qa-trace-
-> broker-spans). Active WIP (uncommitted, no PR): `qa-decisions-
-> position-pnl`. Truly unblocked + unclaimed: zero — every ready
-> downstream stacks on an in-flight PR or is gated.
+> Last updated: 2026-05-18 conductor sync — second sweep. Merged today
+> since last sweep: #282 (qa-retention), #283 (qa-trace-broker-spans),
+> #284 (qa-decisions-position-pnl). Gated until image build deploys:
+> #277 (harness F-1) and #278 (agent-cicd-board-schema) per operator.
+> Now in review: `agent-error-feedback-self-healing` PR #286 (P1,
+> dep #283 merged) — follow-up hardening queued under Deferred.
 > Previous board: `team/archive/2026-05-16-migration/execution-board-2026-05-13.md`.
 
 V2 work (V2A onboarding + docs, V2B-V4 roadmap) also has its own board:
@@ -19,10 +19,7 @@ V2 work (V2A onboarding + docs, V2B-V4 roadmap) also has its own board:
 
 ### QA Operator Round 2/3 — remaining
 
-- [qa-retention-prompt-storage-bug](contracts/qa-retention-prompt-storage-bug.md) - leaf - pr-open #282 - P1 — retention-aware prompt/response placeholder copy (no more "hash-only" lie under full_debug). Awaiting review.
-- [qa-trace-broker-spans](contracts/qa-trace-broker-spans.md) - integration - pr-open #283 - P2 — emit `broker.call` spans for Buy/Sell/Close/Short submits. Unblocks `agent-error-feedback-self-healing` when it lands.
-- [qa-decisions-position-pnl](contracts/qa-decisions-position-pnl.md) - integration - in-progress (worktree WIP, no PR) - P2 — per-row open-positions cell + realized-PnL fill. Worker has uncommitted client-side derivation in `.worktrees/qa-decisions-position-pnl`; status file pending.
-- [agent-error-feedback-self-healing](contracts/agent-error-feedback-self-healing.md) - integration - blocked-on #283 - P1 — recoverable broker errors must round-trip to agent as tool-results. Cannot start until `qa-trace-broker-spans` (#283) merges.
+- [agent-error-feedback-self-healing](contracts/agent-error-feedback-self-healing.md) - integration - pr-open #286 - P1 — recoverable broker errors must round-trip to agent as tool-results. Review open; dep `qa-trace-broker-spans` (#283) merged.
 
 ### Harness Observability Audit — GATED on image build
 
@@ -30,13 +27,14 @@ All seven findings (F-1..F-7) from `team/intake/2026-05-18-harness-observability
 
 - [harness-prompt-hash-real-digest](contracts/harness-prompt-hash-real-digest.md) - leaf - blocked (PR #277 held) - F-1 — real SHA-256 prompt_hash + response_hash on model_call spans. Re-open by flipping status back to `pr-open` once the image deploys.
 
-### Agent CI/CD Phase 1 (2026-05-18)
+### Agent CI/CD Phase 1 (2026-05-18) — GATED on image build
 
 Implements `docs/superpowers/specs/2026-05-18-agent-cicd-control-plane.md`.
-Phase-1 closes the worktree + PR-open gap; review routing and deploy are
-Phase 2/3 (not contracted yet).
+**Entire wave held until operator's image build deploys** alongside the
+harness-observability gate. PR #278 is green but must not merge; the
+three downstream tracks stay blocked behind it.
 
-- [agent-cicd-board-schema](contracts/agent-cicd-board-schema.md) - foundation - pr-open #278 - JSON Schema 2020-12 for the task object + GitHub Project v2 setup doc. Blocks the other three.
+- [agent-cicd-board-schema](contracts/agent-cicd-board-schema.md) - foundation - blocked (PR #278 held) - JSON Schema 2020-12 for the task object + GitHub Project v2 setup doc. Re-open by flipping status back to `pr-open` once the image deploys.
 - [agent-cicd-migrate-board](contracts/agent-cicd-migrate-board.md) - integration - blocked-on #278 - one-time idempotent script: parse `team/board.md` + `team/board-v2.md`, enrich from contracts, create Issues + Project items. Depends on board-schema.
 - [agent-cicd-daemon-skeleton](contracts/agent-cicd-daemon-skeleton.md) - foundation - blocked-on #278 - Node/TS daemon at `tools/agent-conductor/` with `start|stop|pause|resume|status|watch|cancel` CLI, three-layer status surface (CLI + state.json + digest), instance identity for multi-repo Hermes, zero-host-repo-references boundary. Phase-1 transitions only. Depends on board-schema.
 - [agent-cicd-shadow-run](contracts/agent-cicd-shadow-run.md) - integration - blocked-on the-other-three - run daemon in shadow against a real 3-5 leaf cohort; ≥90% agreement gate; archived report unblocks live flip. Depends on the other three.
@@ -45,6 +43,9 @@ Phase 2/3 (not contracted yet).
 ## Deferred
 
 - [q15-tailscale-serve-api-reachability](contracts/q15-tailscale-serve-api-reachability.md) - integration - deferred 2026-05-16. Mobile/QA over tailnet parked, not archived. Revive by flipping `status:` back to `ready` and re-adding it to `Active`.
+- agent-error-feedback-same-cycle-rerun - integration - deferred follow-up from PR #286 - Re-run the trader within the same decision cycle after a recoverable broker rejection, recording the retry/follow-up turn in the trace rather than waiting for the next bar.
+- agent-error-feedback-real-broker-roundtrip-test - integration - deferred follow-up from PR #286 - Add a real-broker or high-fidelity broker-surface integration test for `recoverable_broker_error_round_trips_to_agent`, including the broker span, decision row, feedback injection, and continued run.
+- agent-error-feedback-non-broker-errors - integration - deferred follow-up from PR #286 - Apply the recoverable/fatal split and agent feedback path to risk-engine, model-call, and data-fetch errors so comparable recoverable failures do not hard-kill runs.
 
 ## Reserved
 
@@ -62,6 +63,7 @@ Archived 2026-05-18 (rounds 1/2/3 QA merge wave — see
 - **QA operator round 3** — `wizard-scenario-create-tool-repair` (#272), `trader-output-action-case-insensitive` (#268), `chat-rail-strategy-list-refresh` (#270), `ui-scrollbars-always-visible` (#271), `scenario-bars-estimate-ui` (#269), plus the related `fix-streaming-legacy-fallback` (#267), and `wizard-strategy-template-optional` (#275).
 - **V2A onboarding** — `v2a-driver-tour` (#258), `v2a-in-app-docs` (#281). V2A wave closed.
 - **QA Round 3 chat polish** — `chat-history-auto-title` (#280).
+- **QA Round 2/3 second-wave merge** — `qa-retention-prompt-storage-bug` (#282), `qa-trace-broker-spans` (#283), `qa-decisions-position-pnl` (#284).
 - **Closed without merge** — `qa-eval-inspector-buttons-actually-uniform` PR #263 closed 2026-05-18; contract archived under `team/archive/2026-05-18-qa-rounds/contracts/` for reference. Revisit if operator confirms the button uniformity regression returns.
 
 Archived 2026-05-17:
