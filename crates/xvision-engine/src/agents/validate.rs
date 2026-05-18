@@ -159,6 +159,7 @@ mod tests {
                 system_prompt: "p".into(),
                 skill_ids: vec![],
                 max_tokens: Some(4096),
+            prompt_version: String::new(),
             },
             AgentSlot {
                 name: "TRADER".into(), // case-insensitive duplicate
@@ -167,6 +168,7 @@ mod tests {
                 system_prompt: "p".into(),
                 skill_ids: vec![],
                 max_tokens: Some(4096),
+            prompt_version: String::new(),
             },
         ];
         let diags = validate_agent(&a);

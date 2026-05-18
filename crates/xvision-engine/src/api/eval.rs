@@ -1850,6 +1850,7 @@ mod tests {
                 "anthropic.claude-sonnet-4.6",
             ),
             max_tokens: Some(4096),
+            prompt_version: String::new(),
         }];
 
         let slots = runtime_slots(&strategy, &agent_slots);
@@ -1889,6 +1890,7 @@ mod tests {
                 "anthropic.claude-sonnet-4.6",
             ),
             max_tokens: Some(4096),
+            prompt_version: String::new(),
         }];
 
         let err = validate_eval_trader_source(&strategy, &agent_slots).unwrap_err();
@@ -1920,6 +1922,7 @@ mod tests {
                 "anthropic.claude-sonnet-4.6",
             ),
             max_tokens: Some(4096),
+            prompt_version: String::new(),
         }];
 
         validate_eval_trader_source(&strategy, &agent_slots).unwrap();
