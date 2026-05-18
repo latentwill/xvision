@@ -659,6 +659,74 @@ impl ObsEmitter {
             }))
             .await;
     }
+
+    /// Emit one instantaneous `recovery.attempt` span carrying the
+    /// typed [`crate::eval::executor::FailureClass`] tag and the
+    /// dispatcher's [`crate::eval::executor::RecoveryOutcome`]. F-5
+    /// (`harness-recovery-state-machine`) is the only call site —
+    /// every transition through the bounded recovery playbook lands
+    /// here.
+    ///
+    /// The span opens and closes in the same call (instantaneous):
+    /// recovery is a point-in-time decision, not a duration.
+    /// `attempt` is the retry index (1-based — the first transition
+    /// is attempt=1). `outcome` is one of `continue` / `stop` /
+    /// `surfaced` per [`crate::eval::executor::RecoveryOutcome::tag`].
+    pub async fn emit_recovery_attempt(
+        &self,
+        span_id: &str,
+        parent_span_id: Option<String>,
+        failure_class: &str,
+        outcome: &str,
+        attempt: u8,
+    ) {
+        let typed_attrs = SpanAttributes {
+            run_id: Some(self.run_id.clone()),
+            retry_count: Some(i32::from(attempt)),
+            ..SpanAttributes::default()
+        };
+        let mut base = serde_json::Map::new();
+        base.insert(
+            "recovery".to_string(),
+            serde_json::json!({
+                "failure_class": failure_class,
+                "outcome": outcome,
+                "attempt": attempt,
+            }),
+        );
+        let attrs_json = typed_attrs.merge_into_object(base);
+        self.bus
+            .publish(RunEvent::SpanStarted(SpanStartedEvent {
+                span_id: span_id.to_string(),
+                run_id: self.run_id.clone(),
+                parent_span_id,
+                kind: SpanKind::RecoveryAttempt,
+                name: format!("{failure_class} → {outcome}"),
+                started_at: Utc::now(),
+                otel_trace_id: None,
+                otel_span_id: None,
+                attributes_json: Some(attrs_json),
+            }))
+            .await;
+        // Close immediately. `outcome=surfaced` and `continue` are
+        // success cases for the dispatcher; `stop` is a recovery
+        // failure but the parent run-level failure surfaces the user-
+        // visible error. Recorder uses `SpanStatus::Ok` either way so
+        // the span renders consistently in the trace dock; the
+        // outcome detail lives in `attributes_json.recovery.outcome`.
+        let status = match outcome {
+            "stop" => SpanStatus::Error,
+            _ => SpanStatus::Ok,
+        };
+        self.bus
+            .publish(RunEvent::SpanFinished(SpanFinishedEvent {
+                span_id: span_id.to_string(),
+                ended_at: Utc::now(),
+                status,
+                error_json: None,
+            }))
+            .await;
+    }
 }
 
 /// Generate a fresh span id. ULID-shaped, time-prefixed so spans sort

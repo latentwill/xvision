@@ -11,6 +11,7 @@
 
 pub mod backtest;
 pub mod paper;
+pub mod recovery;
 pub mod trader_output;
 
 use std::sync::Arc;
@@ -27,6 +28,11 @@ use crate::tools::ToolRegistry;
 
 pub use backtest::BacktestExecutor;
 pub use paper::PaperExecutor;
+pub use recovery::{
+    classify as classify_failure_typed, FailureClass, RecoveryOutcome,
+    MAX_CONTEXT_OVERFLOW_RETRIES, MAX_DECODE_REPAIR_PROMPTS, MAX_SCHEMA_PATCH_PROMPTS,
+    MAX_SUMMARIZE_INPUT_TOKENS, MAX_TOOL_RETRIES, REPEATED_TOOL_FAILURE_THRESHOLD,
+};
 pub use trader_output::{TraderFailureKind, TraderOutputError};
 
 /// Stable failure-class tag for a run-level error. Paper/backtest executors
@@ -46,68 +52,57 @@ pub use trader_output::{TraderFailureKind, TraderOutputError};
 /// `Display`) so an underlying broker rejection survives a `with_context`
 /// wrap from the surface caller.
 pub fn classify_run_failure(err: &anyhow::Error) -> &'static str {
-    if let Some(te) = err.downcast_ref::<TraderOutputError>() {
-        return te.class_tag();
-    }
-    let s = format!("{:#}", err).to_lowercase();
-    // Trader-output errors may have been wrapped with `.context(...)` and
-    // not survive downcast — check the message form as a fallback.
-    for kind in [
-        TraderFailureKind::EmptyText,
-        TraderFailureKind::ToolUseOnly,
-        TraderFailureKind::Truncated,
-        TraderFailureKind::InvalidJson,
-        TraderFailureKind::MissingField,
-        TraderFailureKind::InvalidField,
-        TraderFailureKind::MissingResponse,
-    ] {
-        let needle = format!("trader_output[{}]", kind.tag());
-        if s.contains(&needle) {
-            return kind.tag();
+    // Delegate to the typed classifier and project back to the
+    // legacy `&'static str` set via `FailureClass::tag()`. F-5
+    // (`harness-recovery-state-machine`) introduced the typed
+    // pre-recovery dispatch surface; the wire-format prefix
+    // `[<class>]` that downstream consumers parse is preserved
+    // unchanged.
+    //
+    // Four cases need a small fixup because [`FailureClass::tag`]
+    // either collapses semantically-distinct legacy tags or introduces
+    // a new tag that legacy `&'static str` callers (eval store,
+    // dashboard, CLI grep) don't recognise yet:
+    //
+    // - `provider_decode` (model-dispatch decode failure) and
+    //   `invalid_json` (trader-output decode failure) both map to
+    //   `FailureClass::MalformedJson`. Re-discriminate here on the
+    //   error-string shape so the legacy tag is unchanged.
+    // - `tool_timeout`, `context_overflow`, and `empty_data` are new
+    //   tags F-5 introduces. Do NOT emit them through the legacy
+    //   `&'static str` surface — project back to the pre-F-5 tag the
+    //   string would have produced. The typed `FailureClass` remains
+    //   available to the recovery dispatcher for the playbook
+    //   decision; only the persisted `[<class>]` wire prefix is held
+    //   stable.
+    let class = recovery::classify(err);
+    if matches!(class, recovery::FailureClass::MalformedJson { .. }) {
+        let s = format!("{:#}", err).to_lowercase();
+        if s.contains("trader_output[invalid_json]") || err.is::<TraderOutputError>() {
+            return "invalid_json";
         }
-    }
-    // Broker classes — match before the generic `timeout` fallback so a
-    // broker-side fill timeout doesn't get tagged `provider_timeout`.
-    if s.contains("broker_unsupported")
-        || s.contains("not shortable")
-        || s.contains("asset is not shortable")
-        || (s.contains("bracket") && s.contains("not supported"))
-        || s.contains("not supported for this asset class")
-    {
-        return "broker_unsupported";
-    }
-    if s.contains("insufficient buying power")
-        || s.contains("insufficient balance")
-        || s.contains("insufficient funds")
-    {
-        return "broker_insufficient_funds";
-    }
-    if s.contains("not permitted") || s.contains("forbidden") {
-        return "broker_auth";
-    }
-    if s.contains("alpaca order") && s.contains("rejected") {
-        return "broker_rejected";
-    }
-    if s.contains("did not fill within") {
-        return "broker_timeout";
-    }
-    if s.contains("timed out") || s.contains("timeout") {
-        return "provider_timeout";
-    }
-    if s.contains("tcp connect") || s.contains("dns error") || s.contains("connection refused") {
-        return "provider_connect";
-    }
-    if s.contains("anthropic api error") || s.contains("openai-compat api error") {
-        return "provider_http_error";
-    }
-    if s.contains("provider_decode")
-        || s.contains("error decoding response body")
-        || s.contains("invalid json response body")
-        || s.contains("eof while parsing")
-    {
         return "provider_decode";
     }
-    "unclassified"
+    if matches!(class, recovery::FailureClass::ToolTimeout { .. }) {
+        return "unclassified";
+    }
+    if matches!(class, recovery::FailureClass::ContextOverflow { .. }) {
+        // Pre-F-5: `anthropic api error: context_length_exceeded`
+        // matched the `anthropic api error` branch first and emitted
+        // `provider_http_error`. Other shapes (`maximum context
+        // length`, `context window`, `... too long ...`) fell through
+        // to `unclassified`. Re-discriminate on the same needle.
+        let s = format!("{:#}", err).to_lowercase();
+        if s.contains("anthropic api error") || s.contains("openai-compat api error") {
+            return "provider_http_error";
+        }
+        return "unclassified";
+    }
+    if matches!(class, recovery::FailureClass::EmptyData { .. }) {
+        // Pre-F-5: empty-data strings fell through to `unclassified`.
+        return "unclassified";
+    }
+    class.tag()
 }
 
 /// Format the persisted/displayed failure string for a run error. The
@@ -274,6 +269,32 @@ mod tests {
     #[test]
     fn classify_unclassified_for_unrecognised_messages() {
         let e = anyhow::anyhow!("something completely unexpected went wrong");
+        assert_eq!(classify_run_failure(&e), "unclassified");
+    }
+
+    #[test]
+    fn classify_context_overflow_preserves_legacy_wire_format() {
+        // Pre-F-5 wire-format pin (regression coverage for the typed
+        // `FailureClass::ContextOverflow` projection added in F-5). The
+        // typed classifier learns `context_overflow` as a new tag; the
+        // legacy `&'static str` surface must keep emitting the tag the
+        // pre-F-5 regex chain produced so the eval store / dashboard /
+        // CLI grep keep parsing the persisted `[<class>]` prefix.
+        let e_anthropic = anyhow::anyhow!(
+            "anthropic api error: context_length_exceeded: max 200000 tokens"
+        );
+        assert_eq!(classify_run_failure(&e_anthropic), "provider_http_error");
+
+        let e_generic = anyhow::anyhow!("model returned: maximum context length exceeded");
+        assert_eq!(classify_run_failure(&e_generic), "unclassified");
+    }
+
+    #[test]
+    fn classify_empty_data_preserves_legacy_unclassified() {
+        // Pre-F-5: empty-data strings fell through to `unclassified`.
+        // F-5 introduces a typed `EmptyData` class but the legacy
+        // `&'static str` surface must hold the wire format stable.
+        let e = anyhow::anyhow!("snapshot recent_bars is empty for run R, cycle 4");
         assert_eq!(classify_run_failure(&e), "unclassified");
     }
 }
