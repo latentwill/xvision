@@ -1,60 +1,37 @@
 # xvision
 
-**Non-custodial AI trading agents.** xvision runs LLM-driven trading strategies
-against your own broker account, with explicit scope enforcement so xvision
-itself never holds your funds. An overnight autoresearcher mutates and
-evaluates new strategy variants automatically.
+xvision is a *non-custodial* AI trading system.
 
-> ⚠️ **This is alpha software. Use at your own risk.** xvision executes real
-> trades against real money on whatever broker account you connect. The
-> non-custodial design means xvision can't drain your account, but a buggy
-> strategy or risk-engine misconfiguration absolutely can lose money. Read the
-> safety section below before connecting a non-trivial balance.
+That means:
 
-## What it does
+- xvision can place trades for you
+- xvision does **not** hold your money
+- your broker account stays yours
+- you are still responsible for the strategies you run
 
-- Runs trading strategies as LLM-driven decision pipelines (briefing → trader →
-  risk gate → execution).
-- Holds an Orderly trading-only Ed25519 key per user that can place orders but
-  cannot withdraw, transfer, or mint.
-- Enforces per-strategy hard-cap × dynamic-quota budgets via a race-free
-  reservation pattern; no strategy can exceed its cap even under burst load.
-- Logs every order's full lifecycle (emit → risk → simulate → sign → submit →
-  fill → close) to an append-only audit log; positions can be reconstructed
-  from the log alone.
-- Runs an overnight autoresearcher that mutates seed strategies, evaluates
-  variants on held-out backtests, and seals survivors as immutable lineage
-  artifacts.
+> ⚠️ **Alpha software**
+>
+> xvision can trade real money. A bad strategy, bad settings, or a broken
+> connection can still lose money. Start small and read the safety notes before
+> using real funds.
 
-## What it does NOT do
+## What xvision does
 
-- Custody trading capital. You fund your own Orderly account; xvision only
-  holds the authority to place trades against it.
-- Process withdrawals or transfers. The Orderly trading key is scoped to
-  trading only; the broker layer enforces this independently.
-- Run unsupervised on production capital without operator oversight. The
-  current design assumes a single operator monitoring the system.
+- Runs trading strategies with AI help.
+- Checks each trade against risk rules before sending it.
+- Uses an Orderly trading-only key that can trade, but cannot withdraw funds.
+- Saves a full log of what happened so you can review trades later.
+- Runs overnight research to try new strategy ideas and keep the good ones.
 
-## For Agents
+## What xvision does not do
 
-If you are an external or embedded agent using this repo, start here:
+- It does not hold your trading capital.
+- It does not withdraw or transfer funds.
+- It should not be left unattended on real money without someone watching it.
 
-1. Read `MANUAL.md` for operator commands and environment assumptions.
-2. Read `FOLLOWUPS.md` for active engineering tracks and deferred work.
-3. If you are running inside Claude Code rooted in this repo, load `.claude/skills/xvision/SKILL.md`.
-4. For exact CLI usage, run `xvn --help` and read `.claude/skills/xvision/references/cli.md`.
-5. For live-node remote control, use the Tailscale-served dashboard node (`xvn.tail2bb69.ts.net` or `xvnej.tail2bb69.ts.net`) rather than assuming arbitrary SSH access.
+## Quick start
 
-Hard deployment rules for agents:
-
-1. Never run `cargo` on server/deploy hosts.
-2. Never do production image builds on server/deploy hosts.
-3. Use GHCR via `.github/workflows/docker.yml` (`workflow_dispatch`) for deploy builds.
-4. Prefer `scripts/deploy-ghcr.sh` as the canonical deployment trigger/watch flow.
-
-## Quickstart (for first users)
-
-This walks through running xvision against Orderly testnet with no real money.
+This is the fast path for trying xvision on Orderly testnet.
 
 ```bash
 # 1. Clone and build
@@ -62,29 +39,28 @@ git clone https://github.com/latentwill/xvision
 cd xvision
 cargo build --release
 
-# 2. Generate an EVM signing key (or use an existing one)
-# 3. Set up Orderly testnet account with that key
-# 4. Initialize xvision config/state
+# 2. Create or reuse a signing key
+# 3. Set up an Orderly testnet account with that key
+# 4. Initialize xvision
 export CREDENTIAL_SECRET=$(openssl rand -hex 32)
 ./target/release/xvn migrate
 
-# 5. Check provider config
+# 5. Check provider settings
 ./target/release/xvn provider list
 
-# 6. Configure a strategy from a template
+# 6. Create a strategy from a template
 ./target/release/xvn strategy templates
 STRATEGY_ID=$(./target/release/xvn strategy new --template mean_reversion --name my-first-agent)
 
-# 7. Run or inspect evals
+# 7. Run a backtest
 ./target/release/xvn eval scenarios
 ./target/release/xvn eval run --strategy "$STRATEGY_ID" --scenario crypto-bull-q1-2025 --mode backtest
 
-# 8. Inspect stored runs
+# 8. View saved runs
 ./target/release/xvn eval list
 ```
 
-Or pull the Docker image — see `docker/README.md` for the full mount/env-var
-reference:
+You can also use the Docker image:
 
 ```bash
 docker pull ghcr.io/latentwill/xvision:latest
@@ -98,70 +74,79 @@ docker run --rm \
 
 ## Web dashboard
 
-`xvn` also ships a single-binary web dashboard. The Vite-built SPA in
-`frontend/web/` is baked into the binary at compile time (via `rust-embed`),
-so `xvn dashboard serve` boots a full UI with no separate frontend process.
+xvision includes a web dashboard in the main binary.
 
 ```bash
-# locally, after cargo build
+# local
 xvn dashboard serve --bind 127.0.0.1:8788
 # open http://localhost:8788
 
-# in the docker image (the published `:latest` defaults to this)
+# docker
 docker run --rm -p 8788:8788 -e XVN_AUTOMIGRATE=1 \
   ghcr.io/latentwill/xvision:latest
 ```
 
-V1 routes: `/` Dashboard, `/setup` Wizard, `/strategies`, `/authoring/:id`,
-`/eval-runs`, `/eval-runs/:id`, `/eval-runs/compare`, `/settings/*`.
-See `frontend/README.md` for the full route table and `frontend/DESIGN.md` for
-the design synthesis.
+Main routes:
 
-> Building from source? `frontend/web/` is a pnpm workspace and must be built
-> (`cd frontend/web && pnpm install && pnpm build`) before `cargo build` if
-> you want the SPA embedded. The image published from `Dockerfile.deploy`
-> does this automatically.
+- `/` — dashboard
+- `/setup` — setup wizard
+- `/strategies` — strategy list
+- `/authoring/:id` — strategy editor
+- `/eval-runs` — evaluation history
+- `/settings/*` — settings pages
+
+For the full route list, see `frontend/README.md`.
 
 ## Safety
 
-xvision assumes a single operator who monitors the system and can intervene.
-Current operator commands:
+xvision is built for one operator who watches what it is doing.
 
-- `xvn portfolio --venue <alpaca|orderly>` — read live portfolio state.
-- `xvn close-position --venue <alpaca|orderly> --asset BTC` — close one open position.
-- `xvn fire-trade --venue <alpaca|orderly> --side buy --size-bps 100` — manual smoke trade through the venue executor.
-- `xvn store stats --db data/store.db` — inspect local flight-recorder state.
-- `xvn eval list` and `xvn eval show <run_id>` — inspect eval history.
+Use these commands to check the system:
 
-The non-custodial design closes one failure mode (xvision can't drain you) but
-opens others:
-- A buggy strategy can lose its hard-cap allocation. Set caps small at first.
-- The autoresearcher can produce a variant that overfits the judge. Lineage
-  attestations are explicit about which strategies are sealed (auditable) vs
-  which are still mutating (use-with-care).
-- Cross-margin contagion: if Orderly applies losses across the whole account,
-  one strategy's drawdown can trigger another's stop-loss. v1 either uses
-  isolated margin (if available) or fails-closed on aggregate utilization > 85%.
+- `xvn portfolio --venue <alpaca|orderly>` — view live portfolio state
+- `xvn close-position --venue <alpaca|orderly> --asset BTC` — close one position
+- `xvn fire-trade --venue <alpaca|orderly> --side buy --size-bps 100` — send a manual test trade
+- `xvn store stats --db data/store.db` — inspect local state
+- `xvn eval list` and `xvn eval show <run_id>` — review past eval runs
 
-## Architecture
+Important warnings:
 
-- **Trading rail** (this scope): non-custodial, broker-side scope enforcement,
-  off-chain SQLite audit log + reservation ledger.
-- **Marketplace rail** (separate scope, Plan 5): on-chain protocol for fees +
-  delegation. xvision.io would run this; a self-hosted instance does not need
-  it.
-- **Autoresearcher** (separate scope, AR-1/AR-2/AR-3): the mutator + judge +
-  lineage seal pipeline.
+- A bad strategy can still lose money.
+- Keep starting caps small.
+- The research system can overfit if you trust it too much.
+- If your broker uses shared margin, one strategy can affect another.
+
+## Architecture at a glance
+
+- **Trading layer**: trades, risk checks, audit logs, and broker integration
+- **Marketplace layer**: separate future scope for fees and delegation
+- **Autoresearcher**: creates, tests, and ranks new strategy variants
+
+## For agents
+
+If another agent is using this repo, start with:
+
+1. `MANUAL.md`
+2. `FOLLOWUPS.md`
+3. `.claude/skills/xvision/SKILL.md` if running in Claude Code
+4. `xvn --help`
+
+Deployment rules for agents:
+
+- Do not run `cargo` on server/deploy hosts.
+- Do not build production Docker images on server/deploy hosts.
+- Use the GitHub Actions deploy workflow for releases.
+- Use `scripts/deploy-ghcr.sh` for deploy/build flow.
 
 ## Documentation
 
-- `MANUAL.md` — operator runbook (commands, daily checklist, scale tiers)
-- `docs/superpowers/specs/` — design specifications
-- `docs/superpowers/plans/` — implementation plans (executable)
-- `docs/HACKATHON-1-PAGER.md` — narrative pitch
-- `docs/marketing-followups.md` — public-copy follow-ups and external references
-- `docker/README.md` — Docker image guide
+- `MANUAL.md` — operator runbook
+- `docs/superpowers/specs/` — design specs
+- `docs/superpowers/plans/` — implementation plans
+- `docs/HACKATHON-1-PAGER.md` — short pitch
+- `docs/marketing-followups.md` — marketing follow-ups
+- `docker/README.md` — Docker guide
 
 ## License
 
-Apache-2.0. See `LICENSE` if present, or `Cargo.toml` workspace metadata.
+Apache-2.0
