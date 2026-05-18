@@ -440,7 +440,23 @@ pub async fn set_mechanical_param(
     let map = strategy.mechanical_params.as_object_mut().ok_or_else(|| {
         anyhow::anyhow!("mechanical_params is not a JSON object — template invariant violation")
     })?;
-    map.insert(req.key, req.value);
+    map.insert(req.key.clone(), req.value);
+    // F-6: validate the patched mechanical_params against the typed
+    // variant for the active template before persisting. Catches typos
+    // (unknown field for the template) and bad types (e.g. string in
+    // an integer slot) at the API boundary instead of letting them
+    // reach the engine. `Custom` templates pass through unchanged.
+    crate::strategies::mechanical::MechanicalParams::from_value(
+        &strategy.manifest.template,
+        strategy.mechanical_params.clone(),
+    )
+    .map_err(|e| {
+        anyhow::anyhow!(
+            "set_mechanical_param: `{}` is not a valid param for template `{}` ({e})",
+            req.key,
+            strategy.manifest.template,
+        )
+    })?;
     store.save(&strategy).await
 }
 
