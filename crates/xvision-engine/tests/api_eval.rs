@@ -253,15 +253,16 @@ async fn retry_rejects_running_run() {
 }
 
 #[tokio::test]
-async fn retry_rejects_cancelled_run() {
-    // Cancellation is intentional; retry is not the right verb.
+async fn retry_accepts_cancelled_run() {
+    // Operator intent on Cancel is reversible — retry must requeue the
+    // same (agent_id, scenario_id, mode) shape just like a failed run.
     let (ctx, _d) = ctx_with_eval_tables().await;
     let run = seed_run(&ctx, RunStatus::Cancelled).await;
-    let err = eval::retry(&ctx, &run.id).await.unwrap_err();
-    let ApiError::Validation(msg) = err else {
-        panic!("expected Validation, got {err:?}");
-    };
-    assert!(msg.contains("cancelled"), "{msg}");
+    let detail = eval::retry(&ctx, &run.id).await.unwrap();
+    assert_eq!(detail.summary.status, "queued");
+    assert_ne!(detail.summary.id, run.id, "retry must create a new run id");
+    assert_eq!(detail.summary.agent_id, run.agent_id);
+    assert_eq!(detail.summary.scenario_id, run.scenario_id);
 }
 
 #[tokio::test]

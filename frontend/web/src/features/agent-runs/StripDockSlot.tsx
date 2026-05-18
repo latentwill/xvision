@@ -8,15 +8,22 @@ import { useTraceDock } from "@/stores/trace-dock";
 import { RunStatusStrip } from "./RunStatusStrip";
 import { TraceDock } from "./TraceDock";
 
-function deriveTone(summary: { status: string; error_count: number }): "completed" | "live" | "warn" | "error" {
+function deriveTone(
+  summary: { status: string; error_count: number },
+  mode: "live" | "post-hoc",
+): "completed" | "live" | "warn" | "error" {
   if (summary.status === "failed" || summary.error_count > 0) return "error";
-  if (summary.status === "running") return "live";
-  if (summary.status === "cancelled") return "warn";
+  // Only show the pulsing LIVE tone when the active inspector still
+  // considers the run inflight. A backend-lag scenario (eval cancelled,
+  // agent-run summary still reports `running`) must not keep the LIVE
+  // dot pulsing — fall through to a frozen terminal tone instead.
+  if (summary.status === "running" && mode === "live") return "live";
+  if (summary.status === "cancelled" || summary.status === "running") return "warn";
   return "completed";
 }
 
 export function StripDockSlot() {
-  const { activeRunId, height, setHeight } = useTraceDock();
+  const { activeRunId, height, setHeight, mode } = useTraceDock();
   const navigate = useNavigate();
 
   const q = useQuery({
@@ -27,7 +34,14 @@ export function StripDockSlot() {
       !(error instanceof ApiError && error.code === "not_found") && failureCount < 2,
   });
 
-  const isLive = q.data?.summary.status === "running";
+  // The strip is "live" only when BOTH the agent-run summary says
+  // running AND the active inspector has declared the run live. Without
+  // the `mode` intersection, a freshly-cancelled eval whose agent-run
+  // summary hasn't propagated `cancelled` yet would keep ticking — the
+  // eval inspector is authoritative about whether the run is still
+  // in-flight (it flips mode to "post-hoc" the moment status leaves
+  // the inflight set).
+  const isLive = q.data?.summary.status === "running" && mode === "live";
 
   useEffect(() => {
     if (!activeRunId) return;
@@ -49,13 +63,28 @@ export function StripDockSlot() {
     const summary = q.data.summary;
     const startedMs = new Date(summary.started_at).getTime();
     const liveDurationSec = Math.max(0, Math.floor((Date.now() - startedMs) / 1000));
+    // Post-hoc duration freeze: prefer the backend's `duration_ms`; if
+    // it hasn't been written yet (e.g. cancel landed before the
+    // agent-run summary was flushed) fall back to
+    // `finished_at - started_at`. Keeps the cancelled capsule from
+    // showing "—" while still freezing at the cancel moment.
+    const frozenSummary =
+      summary.duration_ms == null && summary.finished_at != null
+        ? {
+            ...summary,
+            duration_ms: Math.max(
+              0,
+              new Date(summary.finished_at).getTime() - startedMs,
+            ),
+          }
+        : summary;
     return (
       <RunStatusStrip
-        summary={summary}
+        summary={frozenSummary}
         currentSpan={null /* Phase 3 will compute newest inflight leaf */}
         isLive={isLive}
         liveDurationSec={liveDurationSec}
-        tone={deriveTone(summary)}
+        tone={deriveTone(summary, mode)}
         onExpand={() => setHeight("working")}
         onPopOut={() => navigate(`/agent-runs/${activeRunId}`)}
       />
