@@ -219,3 +219,192 @@ impl ToolOrigin {
         }
     }
 }
+
+/// Typed bag carried in `SpanStartedEvent.attributes_json`. All fields
+/// optional so emission sites populate only what's in scope at the
+/// call. Serializes to a flat JSON object with `skip_serializing_if`
+/// so `None` fields are absent in the wire payload rather than
+/// `"field": null` — keeps the recorded `attributes_json` payload
+/// small and forward-compatible with new fields.
+///
+/// F-1 introduced real `prompt_hash` digests. F-2 (this struct) makes
+/// those digests join-able with the per-span context they were
+/// produced in. Subsequent harness tracks add their own fields here:
+/// F-3 wires `prompt_version` from a new `agent_slots` column; F-4
+/// adds `recovery.attempt` spans that thread `retry_count` through;
+/// F-5 carries the typed `FailureClass` per recovery transition.
+///
+/// The struct is deliberately *not* `#[serde(deny_unknown_fields)]` on
+/// the deserialize side — older recorded rows predate later additions
+/// and must continue to parse cleanly.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SpanAttributes {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    /// Slot role label ("regime" / "intern" / "trader" / free-form
+    /// per strategy). Sourced from `LLMSlot.role` at the engine
+    /// dispatch site.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stage: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_count: Option<i32>,
+    /// Reserved for F-3 (`harness-prompt-version-field`). Until that
+    /// migration lands the field is always `None` on emission; once
+    /// `agent_slots.prompt_version` exists, the dispatch site will
+    /// populate it from the slot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_version: Option<String>,
+}
+
+impl SpanAttributes {
+    /// Serialize to the wire form stored in `attributes_json`. Returns
+    /// `None` when every field is `None` so an entirely empty bag does
+    /// not write `"{}"` and waste a row's worth of bytes. Panics
+    /// cannot occur in practice — every field is a primitive Serialize
+    /// impl — but on the off chance serialization fails we fall back
+    /// to `None` rather than poison the span emission.
+    pub fn to_attributes_json(&self) -> Option<String> {
+        if self == &Self::default() {
+            return None;
+        }
+        serde_json::to_string(self).ok()
+    }
+
+    /// Merge this typed bag into a pre-existing JSON object payload
+    /// (e.g. the `broker_call` sub-object the broker span already
+    /// carries). Fields with `Some` value are written at the top
+    /// level; existing keys in `base` are preserved. Returns the
+    /// serialized merged object.
+    ///
+    /// Used by the broker-call span site so the typed attributes
+    /// coexist with the broker-specific `broker_call` sub-object
+    /// without nesting.
+    pub fn merge_into_object(&self, mut base: serde_json::Map<String, serde_json::Value>) -> String {
+        let typed = serde_json::to_value(self).unwrap_or(serde_json::Value::Null);
+        if let serde_json::Value::Object(typed_map) = typed {
+            for (k, v) in typed_map {
+                base.entry(k).or_insert(v);
+            }
+        }
+        serde_json::Value::Object(base).to_string()
+    }
+}
+
+#[cfg(test)]
+mod span_attributes_tests {
+    use super::*;
+
+    #[test]
+    fn empty_attributes_serialize_to_none() {
+        // Avoid writing "{}" into the column when nothing is populated;
+        // the recorder treats absent and empty-object as semantically
+        // distinct (absent = emission site had nothing to say).
+        let attrs = SpanAttributes::default();
+        assert!(attrs.to_attributes_json().is_none());
+    }
+
+    #[test]
+    fn populated_attributes_skip_none_fields() {
+        let attrs = SpanAttributes {
+            run_id: Some("run-1".into()),
+            stage: Some("trader".into()),
+            model: Some("claude-sonnet-4.6".into()),
+            provider: Some("anthropic".into()),
+            ..SpanAttributes::default()
+        };
+        let json = attrs.to_attributes_json().expect("non-empty bag serializes");
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let obj = parsed.as_object().unwrap();
+        // Present fields make it through.
+        assert_eq!(obj.get("run_id").and_then(|v| v.as_str()), Some("run-1"));
+        assert_eq!(obj.get("stage").and_then(|v| v.as_str()), Some("trader"));
+        assert_eq!(obj.get("model").and_then(|v| v.as_str()), Some("claude-sonnet-4.6"));
+        assert_eq!(obj.get("provider").and_then(|v| v.as_str()), Some("anthropic"));
+        // None fields are absent, not serialized as null. Keeps the
+        // payload compact and forward-compatible.
+        assert!(!obj.contains_key("agent_id"));
+        assert!(!obj.contains_key("tool_name"));
+        assert!(!obj.contains_key("retry_count"));
+        assert!(!obj.contains_key("prompt_version"));
+    }
+
+    #[test]
+    fn round_trip_preserves_all_fields() {
+        let attrs = SpanAttributes {
+            run_id: Some("r".into()),
+            agent_id: Some("a".into()),
+            stage: Some("intern".into()),
+            model: Some("m".into()),
+            provider: Some("p".into()),
+            tool_name: Some("get_quote".into()),
+            retry_count: Some(2),
+            prompt_version: Some("v1".into()),
+        };
+        let json = attrs.to_attributes_json().expect("populated bag serializes");
+        let parsed: SpanAttributes = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, attrs);
+    }
+
+    #[test]
+    fn merge_into_object_preserves_existing_keys() {
+        // Broker-call site path: typed attrs and the broker_call
+        // sub-object must coexist in one flat payload.
+        let attrs = SpanAttributes {
+            run_id: Some("run-9".into()),
+            ..SpanAttributes::default()
+        };
+        let mut base = serde_json::Map::new();
+        base.insert(
+            "broker_call".into(),
+            serde_json::json!({ "side": "Buy", "symbol": "AAPL", "qty": 1.0 }),
+        );
+        let merged = attrs.merge_into_object(base);
+        let parsed: serde_json::Value = serde_json::from_str(&merged).unwrap();
+        let obj = parsed.as_object().unwrap();
+        // Typed field promoted to top-level.
+        assert_eq!(obj.get("run_id").and_then(|v| v.as_str()), Some("run-9"));
+        // Existing broker_call sub-object kept verbatim.
+        let bc = obj.get("broker_call").and_then(|v| v.as_object()).unwrap();
+        assert_eq!(bc.get("side").and_then(|v| v.as_str()), Some("Buy"));
+        assert_eq!(bc.get("symbol").and_then(|v| v.as_str()), Some("AAPL"));
+    }
+
+    #[test]
+    fn merge_does_not_overwrite_existing_top_level_keys() {
+        // If a caller already put a key in `base` that collides with a
+        // typed field, the existing value wins. Defensive: prevents a
+        // future caller from accidentally clobbering a more specific
+        // payload by adding a SpanAttributes field with the same name.
+        let attrs = SpanAttributes {
+            run_id: Some("from-typed".into()),
+            ..SpanAttributes::default()
+        };
+        let mut base = serde_json::Map::new();
+        base.insert("run_id".into(), serde_json::json!("from-base"));
+        let merged = attrs.merge_into_object(base);
+        let parsed: serde_json::Value = serde_json::from_str(&merged).unwrap();
+        assert_eq!(
+            parsed.get("run_id").and_then(|v| v.as_str()),
+            Some("from-base")
+        );
+    }
+
+    #[test]
+    fn deserialize_tolerates_unknown_fields() {
+        // Older rows may pre-date later additions; new rows may carry
+        // fields this crate version doesn't know about. Both must
+        // parse cleanly into the `Option`s we do know.
+        let json = r#"{"run_id":"r","unknown_future_field":"x","stage":"trader"}"#;
+        let parsed: SpanAttributes = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.run_id.as_deref(), Some("r"));
+        assert_eq!(parsed.stage.as_deref(), Some("trader"));
+    }
+}
