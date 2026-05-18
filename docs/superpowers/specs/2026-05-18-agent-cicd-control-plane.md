@@ -149,9 +149,12 @@ Loop (poll every N seconds; default 30):
 3. For each transition:
    - `READY → CLAIMED`: pick the next unclaimed READY task whose
      OWNERSHIP/CONFLICT_ZONES do not collide with any in-flight task.
-     Create the worktree via `git worktree add .worktrees/<track> -b agent/<track> origin/main`.
-     Launch a Claude Code session in that worktree with a prompt built from
-     the contract + intake doc.
+     Execute the atomic-claim sequence (see "Claim atomicity" below)
+     before any side effects: server-side ref creation acts as the
+     claim token. Only after the claim token is owned does the daemon
+     create the worktree, write `team/queue/<track>__<utc>__claimed.md`,
+     update the Project's `status` / `owner_agent` fields, and spawn the
+     Claude Code worker.
    - `CODING → PR_OPEN`: detect the worker pushed; ensure PR has the
      contract link, lane label, and `track:<track>` label.
    - `PR_OPEN → REVIEWING`: post `@codex review` (or trigger the equivalent
@@ -171,9 +174,67 @@ Loop (poll every N seconds; default 30):
 
 The daemon must be **idempotent and crash-safe**: state lives on GitHub,
 not in the daemon. Restarting the daemon must not duplicate work.
-Concurrency control is by the GH Issue's `status` field (atomic via
-GraphQL `updateProjectV2ItemFieldValue` conditional update); plus a local
-file lock per-track to prevent two daemons from claiming the same task.
+
+#### Claim atomicity
+
+GitHub's `updateProjectV2ItemFieldValue` mutation has **no
+compare-and-swap input** (the documented schema only accepts
+`clientMutationId`, `fieldId`, `itemId`, `projectId`, `value`), so a
+Project field write cannot itself be the atomic claim. Phase-1 uses a
+different primitive: **the agent branch ref is the claim token**.
+
+The `READY → CLAIMED` sequence:
+
+1. **Try to create the claim ref on origin (atomic at the server):**
+
+   ```bash
+   git push origin <base-sha>:refs/heads/agent/<track>
+   ```
+
+   This is a plain (non-force) ref-create. GitHub's ref-update is
+   serialized server-side: it succeeds only if the ref does not
+   already exist. A losing daemon's push fails with a "reference
+   already exists" / non-fast-forward error and the daemon moves on
+   to the next candidate.
+
+2. **Local file lock as cheap fast-path** (not the primary primitive):
+   acquire `~/.cache/agent-conductor/claims/<track>.lock` before the
+   push to short-circuit two local daemons on the same host. Lock is
+   advisory; the server-side ref-create remains the authority across
+   hosts.
+
+3. **Side effects (only after step 1 succeeds):**
+   - Fetch the new ref into the local clone.
+   - `git worktree add .worktrees/<track> agent/<track>`.
+   - Write `team/queue/<track>__<utc>__claimed.md` with daemon
+     identity (`instance.name`, `instance.host`, daemon PID, worker
+     PID once spawned).
+   - Update the Project: `status=CLAIMED`, `owner_agent=<instance.name>:<host>`,
+     `branch=agent/<track>`, `worktree=.worktrees/<track>`.
+   - Spawn the Claude Code worker.
+
+4. **Verify-after-write** (defensive, against operator races on the
+   Project UI): immediately re-read the Project item. If
+   `owner_agent` doesn't match this daemon's `instance` identity,
+   roll back — kill the worker, `git worktree remove --force`,
+   delete the local branch, push-delete the remote ref
+   (`git push origin :refs/heads/agent/<track>`) only if the remote
+   tip still equals our `<base-sha>` (i.e. nobody pushed work on top).
+   Surface to digest.
+
+5. **Recovery from partial claims** (daemon crash between steps 1 and
+   3): on next poll, the daemon sees `status=READY` but
+   `refs/heads/agent/<track>` exists on origin. Two cases:
+   - Remote tip == `<base-sha>` and no local queue marker: treat as
+     an orphaned claim, daemon may adopt it (re-run step 3 from a
+     fresh worktree).
+   - Remote tip != `<base-sha>` (commits exist) or a queue marker is
+     present with a live worker PID: treat as in-progress, set
+     `status=CODING`, no fresh claim attempted.
+
+The same primitive composes with manual operator claims: an operator
+running `xvn` or `gh` to create `agent/<track>` first wins the claim;
+the daemon's push fails, the daemon backs off.
 
 ### Status surface — remote read access
 
