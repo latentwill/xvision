@@ -26,6 +26,8 @@ V2 work (V2A onboarding + docs, V2B-V4 roadmap) also has its own board:
 All seven findings (F-1..F-7) from `team/intake/2026-05-18-harness-observability-audit.md` are held until operator ships an image build of pre-harness state. PR #277 (F-1) is open + green but **must not merge**. F-7 is additionally gated on F-2 + F-4 once the wave unfreezes.
 
 - [harness-prompt-hash-real-digest](contracts/harness-prompt-hash-real-digest.md) - leaf - blocked (PR #277 held) - F-1 — real SHA-256 prompt_hash + response_hash on model_call spans. Re-open by flipping status back to `pr-open` once the image deploys.
+- [harness-span-taxonomy-extension](contracts/harness-span-taxonomy-extension.md) - integration - claimed - F-4 — 4 new SpanKind variants (`tool.validate_input/output`, `recovery.attempt`, `state.transition`) + emission seams for validate spans and state transitions. Reserves `recovery.attempt` wire id for F-5. Stacked on F-2 (PR #293). Unblocks F-7.
+- [harness-recovery-state-machine](contracts/harness-recovery-state-machine.md) - integration - ready - F-5 — typed `FailureClass` dispatcher replacing regex `classify_run_failure` with six bounded playbooks (MalformedJson, ToolTimeout, SchemaMissingField, EmptyData, ContextOverflow, RepeatedToolFailure). Emits `recovery.attempt` spans (F-4 seam). **Folds in** the deferred `agent-error-feedback-non-broker-errors` follow-up — extends the recoverable/fatal split from PR #286 to risk/model/data-fetch errors. Stacked on F-4.
 
 ### Agent CI/CD Phase 1 (2026-05-18) — GATED on image build
 
@@ -45,7 +47,7 @@ three downstream tracks stay blocked behind it.
 - [q15-tailscale-serve-api-reachability](contracts/q15-tailscale-serve-api-reachability.md) - integration - deferred 2026-05-16. Mobile/QA over tailnet parked, not archived. Revive by flipping `status:` back to `ready` and re-adding it to `Active`.
 - agent-error-feedback-same-cycle-rerun - integration - deferred follow-up from PR #286 - Re-run the trader within the same decision cycle after a recoverable broker rejection, recording the retry/follow-up turn in the trace rather than waiting for the next bar.
 - agent-error-feedback-real-broker-roundtrip-test - integration - deferred follow-up from PR #286 - Add a real-broker or high-fidelity broker-surface integration test for `recoverable_broker_error_round_trips_to_agent`, including the broker span, decision row, feedback injection, and continued run.
-- agent-error-feedback-non-broker-errors - integration - deferred follow-up from PR #286 - Apply the recoverable/fatal split and agent feedback path to risk-engine, model-call, and data-fetch errors so comparable recoverable failures do not hard-kill runs.
+- ~~agent-error-feedback-non-broker-errors~~ — folded into `harness-recovery-state-machine` (F-5, Active) 2026-05-18. The recoverable/fatal split now extends to risk/model/data-fetch errors via the typed `FailureClass` dispatcher.
 
 ## Reserved
 
