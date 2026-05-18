@@ -72,3 +72,7 @@ frontend/web/node_modules/
 frontend/web/dist/
 frontend/web/*.tsbuildinfo
 frontend/web/.vite/
+
+# agent-conductor scripts
+tools/agent-conductor/scripts/node_modules/
+tools/agent-conductor/scripts/package-lock.json
