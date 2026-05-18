@@ -2,6 +2,7 @@
 import { useCallback, useState, type ReactNode } from "react";
 import type { RunSpan } from "@/api/types-agent-runs";
 import { fetchAgentRunBlob } from "@/api/agent-runs";
+import { formatCostUsd, formatCostUsdPrecise } from "@/lib/format";
 import { useTraceDock } from "@/stores/trace-dock";
 import { spanColor, withAlpha } from "./span-colors";
 import { PullQuote } from "./PullQuote";
@@ -362,7 +363,14 @@ export function SpanInspector({
           {span.tokens_out !== undefined ? (
             <Row k="tokens.out" v={span.tokens_out.toLocaleString()} />
           ) : null}
-          <Row k="cost" v={`$${(span.cost ?? 0).toFixed(4)}`} />
+          <Row
+            k="cost"
+            v={
+              <span title={formatCostUsdPrecise(span.cost ?? 0)}>
+                {formatCostUsd(span.cost ?? 0)}
+              </span>
+            }
+          />
           {span.hash ? <Row k="prompt.hash" v={span.hash} /> : null}
           {span.response_hash ? <Row k="response.hash" v={span.response_hash} /> : null}
           {span.prompt_payload_ref ? <Row k="prompt.ref" v={span.prompt_payload_ref} /> : null}
