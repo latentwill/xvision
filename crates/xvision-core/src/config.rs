@@ -324,6 +324,7 @@ impl WhitelistConfig {
 // --- risk -------------------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq, Validate, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RiskConfig {
     #[garde(dive)]
     pub limits: RiskLimits,
@@ -332,6 +333,7 @@ pub struct RiskConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Validate, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RiskLimits {
     #[garde(range(min = 0.1, max = 100.0))]
     pub max_position_pct_nav: f32,
@@ -345,7 +347,12 @@ pub struct RiskLimits {
     pub max_correlation_cluster: u32,
 }
 
+/// `#[serde(try_from = "RiskStopsRaw")]` runs the F-6 cross-field
+/// rule (`stop_loss_min_pct <= stop_loss_max_pct`) on every parse.
+/// TOML loads, JSON API payloads, and any future caller pick up the
+/// check without an explicit `validate_cross_field()` call.
 #[derive(Debug, Clone, PartialEq, Validate, Serialize, Deserialize)]
+#[serde(try_from = "RiskStopsRaw")]
 pub struct RiskStops {
     #[garde(skip)]
     pub stop_loss_required: bool,
@@ -357,6 +364,56 @@ pub struct RiskStops {
     pub take_profit_required: bool,
     #[garde(range(min = 0.5, max = 10.0))]
     pub take_profit_min_rr: f32,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RiskStopsRaw {
+    stop_loss_required: bool,
+    stop_loss_min_pct: f32,
+    stop_loss_max_pct: f32,
+    take_profit_required: bool,
+    take_profit_min_rr: f32,
+}
+
+impl TryFrom<RiskStopsRaw> for RiskStops {
+    type Error = String;
+
+    fn try_from(raw: RiskStopsRaw) -> Result<Self, Self::Error> {
+        let stops = RiskStops {
+            stop_loss_required: raw.stop_loss_required,
+            stop_loss_min_pct: raw.stop_loss_min_pct,
+            stop_loss_max_pct: raw.stop_loss_max_pct,
+            take_profit_required: raw.take_profit_required,
+            take_profit_min_rr: raw.take_profit_min_rr,
+        };
+        stops.validate_cross_field()?;
+        Ok(stops)
+    }
+}
+
+impl RiskStops {
+    /// Cross-field invariant: the minimum stop-loss must not exceed
+    /// the maximum. Previously implicit (callers happened not to
+    /// invert them); F-6 enforces it at the validator boundary as a
+    /// companion to `Validate::validate(&())`.
+    pub fn validate_cross_field(&self) -> Result<(), String> {
+        if self.stop_loss_min_pct > self.stop_loss_max_pct {
+            return Err(format!(
+                "stop_loss_min_pct ({:.2}) must be <= stop_loss_max_pct ({:.2})",
+                self.stop_loss_min_pct, self.stop_loss_max_pct,
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl RiskConfig {
+    /// Run cross-field invariants on every nested type that has them.
+    /// Used by the pre-persist seam alongside `Validate::validate`.
+    pub fn validate_cross_field(&self) -> Result<(), String> {
+        self.stops.validate_cross_field()
+    }
 }
 
 // --- loader -----------------------------------------------------------------
@@ -414,12 +471,191 @@ pub fn load_whitelist(path: &Path) -> Result<WhitelistConfig, ConfigError> {
 }
 
 pub fn load_risk(path: &Path) -> Result<RiskConfig, ConfigError> {
-    read_toml(path)
+    let cfg: RiskConfig = read_toml(path)?;
+    // F-6: the `RiskStops` `try_from` shadow already runs the
+    // `min <= max` invariant at TOML parse time. The explicit call
+    // here is belt-and-suspenders for any future RiskConfig-level
+    // cross-field rule and makes the loader symmetric with
+    // `load_runtime`'s explicit `validate_step_vs_horizon` /
+    // `validate_unique_provider_names` calls.
+    cfg.validate_cross_field()
+        .map_err(|message| ConfigError::CrossField {
+            path: path.to_path_buf(),
+            message,
+        })?;
+    Ok(cfg)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── F-6: deny_unknown_fields + cross-field invariants ───────────
+
+    fn baseline_risk_config() -> RiskConfig {
+        RiskConfig {
+            limits: RiskLimits {
+                max_position_pct_nav: 10.0,
+                max_total_exposure_pct: 100.0,
+                max_open_positions: 3,
+                max_daily_loss_pct: 5.0,
+                max_correlation_cluster: 2,
+            },
+            stops: RiskStops {
+                stop_loss_required: true,
+                stop_loss_min_pct: 0.5,
+                stop_loss_max_pct: 5.0,
+                take_profit_required: true,
+                take_profit_min_rr: 1.5,
+            },
+        }
+    }
+
+    #[test]
+    fn risk_config_rejects_unknown_field() {
+        let valid = serde_json::to_value(baseline_risk_config()).unwrap();
+        let mut object = valid.as_object().unwrap().clone();
+        object.insert("phantom".into(), serde_json::json!(true));
+        let err = serde_json::from_value::<RiskConfig>(serde_json::Value::Object(object))
+            .expect_err("deny_unknown_fields must reject `phantom`");
+        assert!(err.to_string().contains("unknown field"));
+        assert!(err.to_string().contains("phantom"));
+    }
+
+    #[test]
+    fn risk_limits_rejects_unknown_field() {
+        let valid = serde_json::to_value(baseline_risk_config().limits).unwrap();
+        let mut object = valid.as_object().unwrap().clone();
+        object.insert("max_widgets".into(), serde_json::json!(7));
+        let err = serde_json::from_value::<RiskLimits>(serde_json::Value::Object(object))
+            .expect_err("deny_unknown_fields must reject `max_widgets`");
+        assert!(err.to_string().contains("unknown field"));
+    }
+
+    #[test]
+    fn risk_stops_rejects_unknown_field() {
+        let valid = serde_json::to_value(baseline_risk_config().stops).unwrap();
+        let mut object = valid.as_object().unwrap().clone();
+        object.insert("trailing_stop".into(), serde_json::json!(0.5));
+        let err = serde_json::from_value::<RiskStops>(serde_json::Value::Object(object))
+            .expect_err("deny_unknown_fields must reject `trailing_stop`");
+        assert!(err.to_string().contains("unknown field"));
+    }
+
+    #[test]
+    fn risk_stops_cross_field_accepts_min_le_max() {
+        let cfg = baseline_risk_config();
+        cfg.stops
+            .validate_cross_field()
+            .expect("0.5 <= 5.0 satisfies the cross-field rule");
+    }
+
+    #[test]
+    fn risk_stops_cross_field_rejects_min_above_max() {
+        let mut cfg = baseline_risk_config();
+        cfg.stops.stop_loss_min_pct = 10.0;
+        cfg.stops.stop_loss_max_pct = 2.0;
+        let err = cfg
+            .stops
+            .validate_cross_field()
+            .expect_err("10.0 > 2.0 must fail the cross-field rule");
+        assert!(err.contains("stop_loss_min_pct"));
+        assert!(err.contains("stop_loss_max_pct"));
+    }
+
+    #[test]
+    fn risk_config_cross_field_delegates_to_stops() {
+        let mut cfg = baseline_risk_config();
+        cfg.stops.stop_loss_min_pct = 10.0;
+        cfg.stops.stop_loss_max_pct = 2.0;
+        cfg.validate_cross_field()
+            .expect_err("RiskConfig::validate_cross_field must surface RiskStops failures");
+    }
+
+    #[test]
+    fn risk_stops_deserialize_rejects_inverted_min_max() {
+        // PR #302 review P2: the try_from shadow on RiskStops must
+        // enforce min<=max on every parse path — TOML load, JSON
+        // payload, anywhere else. Catches it BEFORE load_risk's
+        // explicit `validate_cross_field` call would have a chance to.
+        let bad = serde_json::json!({
+            "stop_loss_required": true,
+            "stop_loss_min_pct": 10.0,
+            "stop_loss_max_pct": 2.0,
+            "take_profit_required": true,
+            "take_profit_min_rr": 1.5,
+        });
+        let err = serde_json::from_value::<RiskStops>(bad)
+            .expect_err("min > max must fail deserialization");
+        let msg = err.to_string();
+        assert!(msg.contains("stop_loss_min_pct"), "{msg}");
+        assert!(msg.contains("stop_loss_max_pct"), "{msg}");
+    }
+
+    #[test]
+    fn load_risk_rejects_inverted_min_max_via_explicit_validate_cross_field() {
+        // PR #302 review P2: load_risk's explicit call surfaces
+        // cross-field failures as ConfigError::CrossField (not as a
+        // serde Validation error). The try_from shadow would catch
+        // it first today, but the explicit call here is a
+        // belt-and-suspenders contract — any future RiskConfig-level
+        // rule that lives outside RiskStops should land here.
+        //
+        // We can't easily force the try_from to PASS while the
+        // explicit call FAILS without diverging the two checks, so
+        // this test exercises load_risk's error mapping by writing a
+        // file with an inverted RiskStops and asserting the error is
+        // either Parse (try_from fires) or CrossField (explicit call
+        // fires) — both are acceptable outcomes of the load.
+        let td = tempfile::tempdir().expect("tempdir");
+        let path = td.path().join("risk.toml");
+        let toml_text = r#"
+[limits]
+max_position_pct_nav = 10.0
+max_total_exposure_pct = 100.0
+max_open_positions = 3
+max_daily_loss_pct = 5.0
+max_correlation_cluster = 2
+
+[stops]
+stop_loss_required = true
+stop_loss_min_pct = 10.0
+stop_loss_max_pct = 2.0
+take_profit_required = true
+take_profit_min_rr = 1.5
+"#;
+        std::fs::write(&path, toml_text).expect("write fixture");
+        let err = load_risk(&path).expect_err("inverted min/max must reject");
+        match err {
+            ConfigError::Parse { .. } | ConfigError::CrossField { .. } => {}
+            other => panic!(
+                "expected Parse or CrossField error, got {other:?}",
+            ),
+        }
+    }
+
+    #[test]
+    fn load_risk_accepts_valid_min_le_max() {
+        let td = tempfile::tempdir().expect("tempdir");
+        let path = td.path().join("risk.toml");
+        let toml_text = r#"
+[limits]
+max_position_pct_nav = 10.0
+max_total_exposure_pct = 100.0
+max_open_positions = 3
+max_daily_loss_pct = 5.0
+max_correlation_cluster = 2
+
+[stops]
+stop_loss_required = true
+stop_loss_min_pct = 0.5
+stop_loss_max_pct = 5.0
+take_profit_required = true
+take_profit_min_rr = 1.5
+"#;
+        std::fs::write(&path, toml_text).expect("write fixture");
+        load_risk(&path).expect("0.5 <= 5.0 must load cleanly");
+    }
 
     fn project_root() -> PathBuf {
         // crates/xvision-core -> ../..

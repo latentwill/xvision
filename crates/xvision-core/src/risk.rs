@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 
 /// Initial trading capital allocated to a bundle.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Capital {
     pub initial: f64,
     pub currency: String,
@@ -32,6 +33,7 @@ impl Default for Capital {
 /// daily-loss kill switch). Separate from the per-trade `RiskConfig` already
 /// on `StrategyBundle`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RiskCaps {
     pub max_concurrent_positions: u32,
     pub max_leverage: f64,
