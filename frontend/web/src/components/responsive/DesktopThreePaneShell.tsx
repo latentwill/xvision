@@ -4,6 +4,7 @@ import { Outlet } from "react-router-dom";
 import type { ChatRailProps } from "@/components/shell/ChatRail";
 import { CommandPalette } from "@/components/shell/CommandPalette";
 import { Sidebar } from "@/components/shell/Sidebar";
+import { useFirstRunTour } from "@/features/onboarding";
 
 const StripDockSlot = lazy(() =>
   import("@/features/agent-runs/StripDockSlot").then((m) => ({ default: m.StripDockSlot })),
@@ -14,6 +15,7 @@ export function DesktopThreePaneShell({
 }: {
   ChatRailComponent: ElementType<ChatRailProps>;
 }) {
+  useFirstRunTour();
   return (
     <div className="grid grid-cols-[220px_1fr_auto] min-h-screen bg-bg text-text">
       <Sidebar />

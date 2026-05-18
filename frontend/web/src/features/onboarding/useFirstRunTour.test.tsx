@@ -1,3 +1,4 @@
+import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
@@ -16,6 +17,7 @@ vi.mock("driver.js/dist/driver.css", () => ({}));
 import { TOUR_COMPLETED_KEY } from "./keys";
 import { RestartTourButton } from "./RestartTourButton";
 import {
+  __resetFirstRunTourForTests,
   hasCompletedFirstRunTour,
   useFirstRunTour,
 } from "./useFirstRunTour";
@@ -30,6 +32,7 @@ beforeEach(() => {
   destroyMock.mockReset();
   driverFactory.mockClear();
   localStorage.clear();
+  __resetFirstRunTourForTests();
 });
 
 afterEach(() => {
@@ -61,6 +64,22 @@ describe("useFirstRunTour", () => {
 
   it("namespaces its storage key", () => {
     expect(TOUR_COMPLETED_KEY.startsWith("xvn.onboarding.")).toBe(true);
+  });
+
+  it("does not double-fire under React StrictMode remount", async () => {
+    render(
+      <StrictMode>
+        <Harness />
+      </StrictMode>,
+    );
+    // Let both StrictMode effects flush + the dynamic import resolve.
+    await new Promise((r) => setTimeout(r, 10));
+    await waitFor(() => expect(driveMock).toHaveBeenCalledTimes(1));
+    // Settle any in-flight promises so a late second runTour would still
+    // surface here.
+    await new Promise((r) => setTimeout(r, 10));
+    expect(driverFactory).toHaveBeenCalledTimes(1);
+    expect(driveMock).toHaveBeenCalledTimes(1);
   });
 
   it("only reads its own storage key", async () => {

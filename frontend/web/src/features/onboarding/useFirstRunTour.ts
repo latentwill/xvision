@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import {
   safeStorageGet,
   safeStorageRemove,
@@ -6,6 +6,12 @@ import {
 } from "@/lib/storage";
 import { TOUR_COMPLETED_KEY } from "./keys";
 import { firstRunTourSteps } from "./steps";
+
+// Module-level guard so React StrictMode's deliberate double-invoke of
+// effects cannot race two `driver()` instances. Set BEFORE the async
+// `import("driver.js")` settles, cleared only when the tour is destroyed
+// or its launch path bails out.
+let tourLaunching = false;
 
 function markCompleted() {
   safeStorageSet(TOUR_COMPLETED_KEY, "1");
@@ -18,6 +24,8 @@ function isCompleted(): boolean {
 async function runTour(opts: { force: boolean }) {
   if (typeof window === "undefined" || typeof document === "undefined") return;
   if (!opts.force && isCompleted()) return;
+  if (tourLaunching) return;
+  tourLaunching = true;
   let mod: typeof import("driver.js");
   try {
     mod = await import("driver.js");
@@ -27,6 +35,7 @@ async function runTour(opts: { force: boolean }) {
   } catch {
     // Driver.js unavailable (e.g. test env without the chunk). Skip silently.
     markCompleted();
+    tourLaunching = false;
     return;
   }
   const drv = mod.driver({
@@ -38,6 +47,7 @@ async function runTour(opts: { force: boolean }) {
     },
     onDestroyed: () => {
       markCompleted();
+      tourLaunching = false;
     },
     steps: firstRunTourSteps,
   });
@@ -45,10 +55,7 @@ async function runTour(opts: { force: boolean }) {
 }
 
 export function useFirstRunTour() {
-  const ranRef = useRef(false);
   useEffect(() => {
-    if (ranRef.current) return;
-    ranRef.current = true;
     void runTour({ force: false });
   }, []);
 }
@@ -60,4 +67,10 @@ export function restartFirstRunTour() {
 
 export function hasCompletedFirstRunTour(): boolean {
   return isCompleted();
+}
+
+// Test-only escape hatch for resetting the module-level guard between
+// tests. Not exported from the package barrel.
+export function __resetFirstRunTourForTests() {
+  tourLaunching = false;
 }

@@ -25,7 +25,6 @@ import type {
   Scenario,
 } from "@/api/types.gen";
 import type { StrategyListItem } from "@/api/strategies";
-import { useFirstRunTour } from "@/features/onboarding";
 
 const STATUS_TONE: Record<string, "gold" | "warn" | "danger" | "default" | "info"> = {
   completed: "gold",
@@ -36,7 +35,6 @@ const STATUS_TONE: Record<string, "gold" | "warn" | "danger" | "default" | "info
 };
 
 export function HomeRoute() {
-  useFirstRunTour();
   const runs = useQuery({ queryKey: evalKeys.runs(), queryFn: () => listRuns() });
   const strategies = useQuery({
     queryKey: strategyKeys.list(),
