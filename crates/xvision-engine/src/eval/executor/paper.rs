@@ -12,7 +12,10 @@ use std::sync::Arc;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use xvision_core::market::Ohlcv;
-use xvision_execution::broker_surface::{is_alpaca_crypto, BrokerSurface, OrderRequest, Side};
+use xvision_execution::broker_surface::{
+    classify_broker_error_message, extract_requested_available, is_alpaca_crypto,
+    BrokerErrorClass, BrokerSurface, OrderRequest, Side,
+};
 use xvision_observability::{BrokerCallOutcome, BrokerSide};
 
 use crate::agent::llm::LlmDispatch;
@@ -170,22 +173,62 @@ fn broker_side_for_action(action: &str, side: Side) -> BrokerSide {
 /// trace. Mirrors the engine-side `classify_run_failure` patterns but
 /// returns a string the dashboard can render verbatim without joining
 /// against the eval-runs failure column.
-fn classify_broker_error(msg: &str) -> &'static str {
-    let lower = msg.to_ascii_lowercase();
-    if lower.contains("not permitted") || lower.contains("forbidden") {
-        "broker_unsupported"
-    } else if lower.contains("insufficient buying power") || lower.contains("insufficient_funds") {
-        "broker_insufficient_funds"
-    } else if lower.contains("not shortable") {
-        "broker_unsupported"
-    } else if lower.contains("bracket") && lower.contains("not supported") {
-        "broker_unsupported"
-    } else if lower.contains("unauthorized") || lower.contains("invalid_api_key") {
-        "broker_auth"
-    } else if lower.contains("timeout") || lower.contains("timed out") {
-        "broker_timeout"
-    } else {
-        "broker_rejected"
+/// Structured diagnostic the executor stashes after a recoverable
+/// broker error and ships into the next bar's seed under
+/// `agent_error_feedback`. The agent reads this on its NEXT decision
+/// cycle and self-heals (re-decide with smaller size, flat,
+/// close-first, …). Cleared on read so the agent doesn't see a
+/// stale error forever.
+///
+/// `agent-error-feedback-self-healing` round-trip carrier.
+#[derive(Debug, Clone, serde::Serialize)]
+struct BrokerErrorFeedback {
+    class: BrokerErrorClass,
+    message: String,
+    requested: Option<f64>,
+    available: Option<f64>,
+    asset: String,
+    decision_index: u32,
+}
+
+/// Build a `DecisionRow` for a bar whose broker submit raised a
+/// RECOVERABLE error. The row shows the agent's original intent
+/// (action / asset / size) plus a `[<error_class>]` prefix on the
+/// justification so the operator sees the failed submit alongside
+/// the agent's reasoning on the decisions table.
+#[allow(clippy::too_many_arguments)]
+fn recoverable_broker_decision_row(
+    run_id: &str,
+    decision_idx: u32,
+    bar: &Ohlcv,
+    asset: &str,
+    parsed: &crate::eval::executor::trader_output::TraderOutput,
+    class: BrokerErrorClass,
+    message: &str,
+    requested: Option<f64>,
+    available: Option<f64>,
+) -> DecisionRow {
+    let mut justification = format!("[{}] {}", class.as_tag(), parsed.justification.trim());
+    if let (Some(req), Some(avail)) = (requested, available) {
+        justification.push_str(&format!(" (requested={req:.2}, available={avail:.2})"));
+    } else if !message.is_empty() {
+        let snip = message.chars().take(200).collect::<String>();
+        justification.push_str(&format!(" — {snip}"));
+    }
+    DecisionRow {
+        run_id: run_id.to_string(),
+        decision_index: decision_idx,
+        timestamp: bar.timestamp,
+        asset: asset.to_string(),
+        action: parsed.action.clone(),
+        conviction: Some(parsed.conviction),
+        justification: Some(justification),
+        reasoning: None,
+        order_size: None,
+        fill_price: None,
+        fill_size: None,
+        fee: None,
+        pnl_realized: None,
     }
 }
 
@@ -408,6 +451,15 @@ impl PaperExecutor {
         let mut equity_samples: Vec<f64> = Vec::new();
         let mut decision_idx = 0u32;
         let mut n_trades = 0u32;
+        // agent-error-feedback-self-healing: counter is for tests +
+        // future metrics surface; the value lives only in this scope
+        // because the run still terminates fatally on un-recoverable
+        // broker errors.
+        let mut n_recoverable_broker_errors: u32 = 0;
+        // Most-recent recoverable broker error, fed into the NEXT
+        // bar's seed under `agent_error_feedback` so the trader agent
+        // can self-heal.
+        let mut last_broker_error: Option<BrokerErrorFeedback> = None;
         let mut total_input_tokens: u64 = 0;
         let mut total_output_tokens: u64 = 0;
         // Running peak for drawdown_pct in MetricsUpdated. Start at the
@@ -442,7 +494,7 @@ impl PaperExecutor {
             let balance = self.broker.balance().await?;
             let market_data = bar_seed(&asset, bar, bar_history);
             let reference_price_usd = bar.close;
-            let seed = serde_json::json!({
+            let mut seed = serde_json::json!({
                 "decision_index": decision_idx,
                 "asset": asset,
                 "timestamp": bar.timestamp,
@@ -453,6 +505,21 @@ impl PaperExecutor {
                     "mark_price": reference_price_usd,
                 },
             });
+            // agent-error-feedback-self-healing: inject the most-
+            // recent recoverable broker error so the trader agent
+            // can self-heal on the next cycle (re-decide with a
+            // smaller size, flat, close-first, etc.). The field is
+            // CONSUMED on read — clearing it here means each error
+            // is delivered exactly once and the agent doesn't see
+            // stale feedback forever.
+            if let Some(fb) = last_broker_error.take() {
+                if let Some(obj) = seed.as_object_mut() {
+                    obj.insert(
+                        "agent_error_feedback".into(),
+                        serde_json::to_value(&fb).unwrap_or(serde_json::Value::Null),
+                    );
+                }
+            }
 
             let outs = run_pipeline(PipelineInputs {
                 strategy,
@@ -600,35 +667,112 @@ impl PaperExecutor {
                                 Some(conf.broker_order_id.clone()),
                                 None,
                                 None,
+                                None,
                             )
                             .await;
                         }
                         conf
                     }
                     Err(e) => {
+                        // agent-error-feedback-self-healing: classify
+                        // the broker error and split recoverable vs
+                        // fatal. Recoverable errors mark the
+                        // broker.call span as severity=warn and stash
+                        // a `BrokerErrorFeedback` on the executor so
+                        // the next bar's seed injects the diagnostic
+                        // into the trader agent. Fatal errors keep
+                        // the existing terminate path.
+                        let msg = format!("{e:#}");
+                        let class = classify_broker_error_message(&msg);
+                        let (requested, available) = extract_requested_available(&msg);
+                        let severity = if class.is_recoverable() {
+                            "warn"
+                        } else {
+                            "error"
+                        };
+                        let outcome = if class.is_recoverable() {
+                            BrokerCallOutcome::Rejected
+                        } else {
+                            BrokerCallOutcome::Failed
+                        };
                         if let (Some(em), Some(sid)) =
                             (self.obs_emitter.as_ref(), span_id_opt.as_deref())
                         {
-                            // Classify what we can from the error
-                            // chain; full classification lives in the
-                            // executor's `classify_run_failure`. The
-                            // span carries a compact class so the
-                            // trace dock can colour-code it.
-                            let msg = format!("{e:#}");
-                            let class = classify_broker_error(&msg);
                             em.emit_broker_call_finished(
                                 sid,
-                                BrokerCallOutcome::Failed,
+                                outcome,
                                 None,
                                 None,
                                 None,
                                 None,
-                                Some(class.into()),
+                                Some(class.as_tag().to_string()),
                                 Some(msg.clone()),
+                                Some(severity),
                             )
                             .await;
                         }
-                        return Err(e);
+                        if class.is_recoverable() {
+                            last_broker_error = Some(BrokerErrorFeedback {
+                                class,
+                                message: msg.clone(),
+                                requested,
+                                available,
+                                asset: asset.clone(),
+                                decision_index: decision_idx,
+                            });
+                            // The executor doesn't have a
+                            // confirmation, so skip the trade counter
+                            // / equity update but DO record the
+                            // decision row so the operator sees the
+                            // failed submit alongside the agent's
+                            // intent. The next iteration's seed
+                            // surfaces `last_broker_error` to the
+                            // trader so it can self-heal.
+                            self.emit(ProgressEvent::DecisionEmitted {
+                                run_id: run.id.clone(),
+                                action: parsed.action.clone(),
+                                asset: asset.clone(),
+                                size: 0.0,
+                                conviction: parsed.conviction,
+                            });
+                            let row = recoverable_broker_decision_row(
+                                &run.id,
+                                decision_idx,
+                                bar,
+                                &asset,
+                                &parsed,
+                                class,
+                                &msg,
+                                requested,
+                                available,
+                            );
+                            store.record_decision(&row).await?;
+                            self.emit_chart(
+                                &run.id,
+                                RunChartEvent::Decision(LiveDecisionRow::from(&row)),
+                            )
+                            .await;
+                            // Equity is unchanged (no fill); still
+                            // record it so the chart series stays
+                            // dense per bar.
+                            let balance_now = self.broker.balance().await?;
+                            store
+                                .record_equity(&run.id, bar.timestamp, balance_now)
+                                .await?;
+                            equity_samples.push(balance_now);
+                            n_recoverable_broker_errors += 1;
+                            tracing::warn!(
+                                run_id = %run.id,
+                                decision_index = decision_idx,
+                                error_class = class.as_tag(),
+                                n_recoverable = n_recoverable_broker_errors,
+                                "recoverable broker error fed back to agent for next cycle",
+                            );
+                            decision_idx += 1;
+                            continue;
+                        } else {
+                            return Err(e);
+                        }
                     }
                 };
                 fill_price = conf.fill_price;

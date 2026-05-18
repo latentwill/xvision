@@ -367,9 +367,15 @@ impl ObsEmitter {
         broker_order_id: Option<String>,
         error_class: Option<String>,
         error_message: Option<String>,
+        severity: Option<&'static str>,
     ) {
+        // Recoverable broker errors land as `Rejected` outcome +
+        // `severity = "warn"` so the trace dock can render them
+        // visually distinct from `Failed` (which is the fatal /
+        // run-terminating path). agent-error-feedback-self-healing.
         let span_status = match outcome {
             BrokerCallOutcome::Filled => SpanStatus::Ok,
+            BrokerCallOutcome::Rejected if severity == Some("warn") => SpanStatus::Ok,
             BrokerCallOutcome::Rejected
             | BrokerCallOutcome::Cancelled
             | BrokerCallOutcome::Failed => SpanStatus::Error,
@@ -384,6 +390,7 @@ impl ObsEmitter {
                 broker_order_id,
                 error_class: error_class.clone(),
                 error_message: error_message.clone(),
+                severity: severity.map(|s| s.to_string()),
             }))
             .await;
         self.bus

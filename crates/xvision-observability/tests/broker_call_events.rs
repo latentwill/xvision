@@ -76,6 +76,7 @@ fn broker_call_finished_event_omits_run_id_uses_span_routing() {
         broker_order_id: Some("ord_1234".into()),
         error_class: None,
         error_message: None,
+        severity: None,
     });
     // Finished is span-scoped; the bus resolves run via its span→run
     // map populated from BrokerCallStarted.
@@ -109,6 +110,7 @@ fn broker_call_finished_short_fill_round_trips_through_json() {
         broker_order_id: Some("ord_short".into()),
         error_class: None,
         error_message: None,
+        severity: None,
     });
 
     for ev in [&started, &finished] {
@@ -131,9 +133,35 @@ fn broker_call_failed_carries_error_class_and_message() {
         broker_order_id: None,
         error_class: Some("broker_timeout".into()),
         error_message: Some("alpaca create_order: timeout after 5s".into()),
+        severity: Some("error".into()),
     });
     let wire = serde_json::to_value(&ev).unwrap();
     assert_eq!(wire["kind"], "broker_call_finished");
     assert_eq!(wire["outcome"], "failed");
     assert_eq!(wire["error_class"], "broker_timeout");
+    assert_eq!(wire["severity"], "error");
+}
+
+#[test]
+fn broker_call_finished_recoverable_severity_round_trip() {
+    // agent-error-feedback-self-healing: recoverable broker errors
+    // ship `outcome=rejected` + `severity="warn"` so the trace dock
+    // can render them visually distinct from fatal failures.
+    let ev = RunEvent::BrokerCallFinished(BrokerCallFinishedEvent {
+        span_id: "span_warn".into(),
+        outcome: BrokerCallOutcome::Rejected,
+        fill_price: None,
+        fill_qty: None,
+        fee: None,
+        broker_order_id: None,
+        error_class: Some("broker_insufficient_funds".into()),
+        error_message: Some(
+            "alpaca create_order: insufficient balance for USD (requested: 2487.87, available: 1807.38)"
+                .into(),
+        ),
+        severity: Some("warn".into()),
+    });
+    let wire = serde_json::to_string(&ev).unwrap();
+    let back: RunEvent = serde_json::from_str(&wire).unwrap();
+    assert_eq!(serde_json::to_string(&back).unwrap(), wire);
 }

@@ -36,6 +36,14 @@ pub enum ContentBlock {
     ToolResult {
         tool_use_id: String,
         content: String,
+        /// Anthropic / function-call shaped error marker. `Some(true)`
+        /// tells the model the prior tool call failed (the model
+        /// should reason about recovery instead of trusting the
+        /// content as a normal result). Backward-compatible —
+        /// omitted from JSON when `None` so legacy producers stay on
+        /// the existing wire.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        is_error: Option<bool>,
     },
 }
 
@@ -501,7 +509,7 @@ pub fn openai_compat_request_body(req: &LlmRequest) -> serde_json::Value {
     for m in &req.messages {
         let mut text_parts: Vec<&str> = Vec::new();
         let mut tool_calls: Vec<serde_json::Value> = Vec::new();
-        let mut tool_results: Vec<(&str, &str)> = Vec::new();
+        let mut tool_results: Vec<(&str, String)> = Vec::new();
         for c in &m.content {
             match c {
                 ContentBlock::Text { text } => text_parts.push(text.as_str()),
@@ -515,8 +523,22 @@ pub fn openai_compat_request_body(req: &LlmRequest) -> serde_json::Value {
                         },
                     }));
                 }
-                ContentBlock::ToolResult { tool_use_id, content } => {
-                    tool_results.push((tool_use_id.as_str(), content.as_str()));
+                ContentBlock::ToolResult {
+                    tool_use_id,
+                    content,
+                    is_error,
+                } => {
+                    // OpenAI's `role: "tool"` message has no native
+                    // `is_error` field; prepend an `[is_error: true]`
+                    // marker to the content so the model still sees
+                    // the failure signal. Anthropic's native shape
+                    // carries the field via serde directly.
+                    let merged: String = if matches!(is_error, Some(true)) {
+                        format!("[is_error: true]\n{content}")
+                    } else {
+                        content.clone()
+                    };
+                    tool_results.push((tool_use_id.as_str(), merged));
                 }
             }
         }

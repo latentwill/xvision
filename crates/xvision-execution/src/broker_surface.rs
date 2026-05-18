@@ -88,6 +88,262 @@ pub struct OrderConfirmation {
     pub fee: Option<f64>,
 }
 
+/// Coarse classification of a broker-side failure. The shared
+/// surface lets the eval executor + future live daemon pick the
+/// same recover-vs-terminate boundary without re-encoding the broker
+/// error string in each call site. Added by
+/// `agent-error-feedback-self-healing`: recoverable variants are
+/// round-tripped to the agent as a tool-result so the model can
+/// self-heal (re-decide with smaller size, flat, close-first);
+/// fatal variants continue to terminate the run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BrokerErrorClass {
+    // Recoverable — the agent gets a structured tool-result and the
+    // run continues.
+    InsufficientFunds,
+    RateLimited,
+    PositionAlreadyOpen,
+    MinOrderSize,
+    MarketClosed,
+    // Fatal — the run terminates with the existing error path.
+    AuthFailed,
+    NetworkUnreachable,
+    UnsupportedAsset,
+    /// Catch-all. Treated as fatal by `is_recoverable()` because
+    /// blindly retrying on an un-known class can mask real provider
+    /// outages or contract-shape regressions.
+    Unknown,
+}
+
+impl BrokerErrorClass {
+    /// Returns `true` when the eval executor should record the error
+    /// and continue the run with a self-healing follow-up turn rather
+    /// than terminating.
+    pub fn is_recoverable(&self) -> bool {
+        matches!(
+            self,
+            Self::InsufficientFunds
+                | Self::RateLimited
+                | Self::PositionAlreadyOpen
+                | Self::MinOrderSize
+                | Self::MarketClosed
+        )
+    }
+
+    /// Compact snake-case tag for trace dock + decision-row error
+    /// columns. Matches the wire shape from
+    /// `xvision_observability::BrokerCallFinishedEvent.error_class`
+    /// so downstream dashboards can group across the two surfaces
+    /// without translation.
+    pub fn as_tag(&self) -> &'static str {
+        match self {
+            Self::InsufficientFunds => "broker_insufficient_funds",
+            Self::RateLimited => "broker_rate_limited",
+            Self::PositionAlreadyOpen => "broker_position_already_open",
+            Self::MinOrderSize => "broker_min_order_size",
+            Self::MarketClosed => "broker_market_closed",
+            Self::AuthFailed => "broker_auth",
+            Self::NetworkUnreachable => "broker_network_unreachable",
+            Self::UnsupportedAsset => "broker_unsupported",
+            Self::Unknown => "broker_rejected",
+        }
+    }
+}
+
+/// Structured detail surfaced to the agent on a recoverable error.
+/// `requested` / `available` / `asset` are best-effort extracted from
+/// the broker message; callers should not assume all three are
+/// populated.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrokerErrorDetail {
+    pub class: BrokerErrorClass,
+    pub message: String,
+    pub requested: Option<f64>,
+    pub available: Option<f64>,
+    pub asset: Option<String>,
+}
+
+/// Map a broker error message to a typed [`BrokerErrorClass`]. Looks
+/// at the full chain of `with_context` wrappers (callers pass
+/// `format!("{e:#}")`) so it matches whether the offending phrase is
+/// at the root cause or the outermost wrapper.
+///
+/// The classifier mirrors patterns documented in
+/// `team/contracts/alpaca-paper-crypto-submit.md` and the operator
+/// round-2/3 intakes. Adding a new pattern requires a test in
+/// `broker_error_classifier_tests` below — the named set the
+/// `agent-error-feedback-self-healing` contract calls out is covered.
+pub fn classify_broker_error_message(msg: &str) -> BrokerErrorClass {
+    let lower = msg.to_ascii_lowercase();
+    if lower.contains("insufficient buying power")
+        || lower.contains("insufficient balance")
+        || lower.contains("insufficient_funds")
+    {
+        BrokerErrorClass::InsufficientFunds
+    } else if lower.contains("rate limit") || lower.contains("rate_limited") {
+        BrokerErrorClass::RateLimited
+    } else if lower.contains("position already")
+        || lower.contains("already open")
+        || lower.contains("position_already_open")
+    {
+        BrokerErrorClass::PositionAlreadyOpen
+    } else if lower.contains("min order size")
+        || lower.contains("minimum order")
+        || lower.contains("min_order_size")
+    {
+        BrokerErrorClass::MinOrderSize
+    } else if lower.contains("market closed")
+        || lower.contains("market_closed")
+        || lower.contains("outside market hours")
+    {
+        BrokerErrorClass::MarketClosed
+    } else if lower.contains("unauthorized")
+        || lower.contains("invalid_api_key")
+        || lower.contains("auth_failed")
+        || lower.contains("forbidden")
+    {
+        BrokerErrorClass::AuthFailed
+    } else if lower.contains("network unreachable")
+        || lower.contains("connection refused")
+        || lower.contains("dns error")
+        || lower.contains("timed out")
+        || lower.contains("timeout")
+    {
+        BrokerErrorClass::NetworkUnreachable
+    } else if lower.contains("not shortable")
+        || lower.contains("not permitted")
+        || (lower.contains("bracket") && lower.contains("not supported"))
+        || lower.contains("unsupported asset")
+    {
+        BrokerErrorClass::UnsupportedAsset
+    } else {
+        BrokerErrorClass::Unknown
+    }
+}
+
+/// Best-effort extraction of `(requested, available)` numbers from a
+/// broker error message such as
+/// `"insufficient balance for USD (requested: 2487.87, available: 1807.38)"`.
+/// Returns `(None, None)` when no decimal pattern matches. Lives next
+/// to the classifier so the executor can build a [`BrokerErrorDetail`]
+/// without parsing the same string twice.
+pub fn extract_requested_available(msg: &str) -> (Option<f64>, Option<f64>) {
+    fn parse_after(label: &str, msg: &str) -> Option<f64> {
+        let i = msg.to_ascii_lowercase().find(label)?;
+        let rest = &msg[i + label.len()..];
+        let trimmed = rest.trim_start_matches(|c: char| c == ':' || c.is_whitespace());
+        // Capture decimal digits + dot + optional digits up to the
+        // first non-numeric char. Avoids pulling in a regex crate.
+        let mut end = 0usize;
+        for (idx, c) in trimmed.char_indices() {
+            if c.is_ascii_digit() || c == '.' {
+                end = idx + c.len_utf8();
+            } else {
+                break;
+            }
+        }
+        if end == 0 {
+            return None;
+        }
+        trimmed[..end].parse::<f64>().ok()
+    }
+    (parse_after("requested", msg), parse_after("available", msg))
+}
+
+#[cfg(test)]
+mod broker_error_classifier_tests {
+    use super::*;
+
+    #[test]
+    fn insufficient_funds_variants() {
+        assert_eq!(
+            classify_broker_error_message(
+                "alpaca create_order: rejected by venue: insufficient balance for USD"
+            ),
+            BrokerErrorClass::InsufficientFunds,
+        );
+        assert!(BrokerErrorClass::InsufficientFunds.is_recoverable());
+    }
+
+    #[test]
+    fn auth_failed_is_fatal() {
+        let class =
+            classify_broker_error_message("alpaca create_order: 401 Unauthorized: invalid_api_key");
+        assert_eq!(class, BrokerErrorClass::AuthFailed);
+        assert!(!class.is_recoverable());
+    }
+
+    #[test]
+    fn rate_limited_recoverable() {
+        let class = classify_broker_error_message("HTTP 429: rate limit exceeded");
+        assert_eq!(class, BrokerErrorClass::RateLimited);
+        assert!(class.is_recoverable());
+    }
+
+    #[test]
+    fn network_unreachable_fatal() {
+        let class = classify_broker_error_message("connection refused after retries");
+        assert_eq!(class, BrokerErrorClass::NetworkUnreachable);
+        assert!(!class.is_recoverable());
+    }
+
+    #[test]
+    fn unsupported_asset_fatal() {
+        let class = classify_broker_error_message("alpaca: bracket not supported on crypto");
+        assert_eq!(class, BrokerErrorClass::UnsupportedAsset);
+        assert!(!class.is_recoverable());
+    }
+
+    #[test]
+    fn position_already_open_recoverable() {
+        let class = classify_broker_error_message("rejected: position already open on BTC/USD");
+        assert_eq!(class, BrokerErrorClass::PositionAlreadyOpen);
+        assert!(class.is_recoverable());
+    }
+
+    #[test]
+    fn min_order_size_recoverable() {
+        let class = classify_broker_error_message("rejected: minimum order size 0.001 BTC");
+        assert_eq!(class, BrokerErrorClass::MinOrderSize);
+        assert!(class.is_recoverable());
+    }
+
+    #[test]
+    fn market_closed_recoverable() {
+        let class = classify_broker_error_message("rejected: market closed");
+        assert_eq!(class, BrokerErrorClass::MarketClosed);
+        assert!(class.is_recoverable());
+    }
+
+    #[test]
+    fn unknown_defaults_to_fatal() {
+        let class = classify_broker_error_message("some weird new venue message");
+        assert_eq!(class, BrokerErrorClass::Unknown);
+        assert!(!class.is_recoverable());
+    }
+
+    #[test]
+    fn extract_requested_available_from_operator_repro() {
+        // Operator round-3 repro:
+        //   broker_insufficient_funds … run_id=01KRWHY535HCYE14DFPWC7QEGG …
+        //   "insufficient balance for USD (requested: 2487.87, available: 1807.38)"
+        let msg = "alpaca create_order: rejected by venue: HTTP status 403 Forbidden: \
+                   insufficient balance for USD (requested: 2487.87, available: 1807.38)";
+        let (requested, available) = extract_requested_available(msg);
+        assert_eq!(requested, Some(2487.87));
+        assert_eq!(available, Some(1807.38));
+    }
+
+    #[test]
+    fn extract_requested_available_returns_none_when_missing() {
+        let msg = "alpaca create_order: 401 Unauthorized";
+        let (requested, available) = extract_requested_available(msg);
+        assert_eq!(requested, None);
+        assert_eq!(available, None);
+    }
+}
+
 // ── Trait ────────────────────────────────────────────────────────────────────
 
 #[async_trait]
