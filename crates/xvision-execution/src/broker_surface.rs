@@ -191,6 +191,20 @@ pub fn classify_broker_error_message(msg: &str) -> BrokerErrorClass {
     } else if lower.contains("min order size")
         || lower.contains("minimum order")
         || lower.contains("min_order_size")
+        // Alpaca crypto-paper returns this exact phrase for the
+        // $10 notional-minimum gate (round-4 live finding, 2026-05-18):
+        //   "HTTP status 403 Forbidden: cost basis must be >=
+        //    minimal amount of order 10".
+        // It ALSO contains "Forbidden", so without this branch the
+        // classifier falls through to AuthFailed (fatal) and the run
+        // terminates — even though the right behaviour is to round-trip
+        // the error to the agent as recoverable so it can re-decide
+        // with a larger size.
+        || lower.contains("minimal amount of order")
+        || lower.contains("cost basis must be")
+        || lower.contains("order amount is too small")
+        || lower.contains("notional too small")
+        || lower.contains("below minimum notional")
     {
         BrokerErrorClass::MinOrderSize
     } else if lower.contains("market closed")
@@ -307,6 +321,38 @@ mod broker_error_classifier_tests {
         let class = classify_broker_error_message("rejected: minimum order size 0.001 BTC");
         assert_eq!(class, BrokerErrorClass::MinOrderSize);
         assert!(class.is_recoverable());
+    }
+
+    #[test]
+    fn alpaca_cost_basis_minimum_classified_as_min_order_size_not_auth() {
+        // Round-4 live finding (2026-05-18): Alpaca crypto-paper
+        // rejects sub-$10 orders with:
+        //   "HTTP status 403 Forbidden: cost basis must be >= minimal
+        //    amount of order 10".
+        // The message contains "Forbidden" which previously short-
+        // circuited to AuthFailed (fatal). Operators saw `[broker_auth]`
+        // in the run-error column and the run terminated instead of
+        // round-tripping through agent-error-feedback-self-healing.
+        let msg = "alpaca create_order: rejected by venue: HTTP status 403 Forbidden: \
+                   cost basis must be >= minimal amount of order 10";
+        let class = classify_broker_error_message(msg);
+        assert_eq!(
+            class,
+            BrokerErrorClass::MinOrderSize,
+            "Alpaca cost-basis-minimum must be MinOrderSize, not AuthFailed"
+        );
+        assert!(class.is_recoverable(), "MinOrderSize is recoverable");
+    }
+
+    #[test]
+    fn alpaca_genuine_auth_403_still_fatal() {
+        // Guardrail: a 403 that DOESN'T carry the min-notional phrase
+        // (e.g. an expired key) must still classify as AuthFailed so
+        // the run terminates with a clear error class.
+        let msg = "alpaca create_order: HTTP status 403 Forbidden: invalid_api_key";
+        let class = classify_broker_error_message(msg);
+        assert_eq!(class, BrokerErrorClass::AuthFailed);
+        assert!(!class.is_recoverable());
     }
 
     #[test]
