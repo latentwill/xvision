@@ -5,7 +5,7 @@ wave: qa-operator-2026-05-18
 worktree: .worktrees/qa-trace-broker-spans
 branch: task/qa-trace-broker-spans
 base: origin/main
-status: ready
+status: pr-open
 depends_on: []
 blocks: []
 stacking: declared:alpaca-paper-crypto-submit

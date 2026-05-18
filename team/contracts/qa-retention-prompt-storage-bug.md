@@ -5,7 +5,7 @@ wave: qa-operator-2026-05-18
 worktree: .worktrees/qa-retention-prompt-storage-bug
 branch: task/qa-retention-prompt-storage-bug
 base: origin/main
-status: ready
+status: pr-open
 depends_on: []   # observability-retention-default-full-debug shipped via #252
 blocks: []
 stacking: none
