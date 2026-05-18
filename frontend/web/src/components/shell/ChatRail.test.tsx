@@ -9,9 +9,14 @@ import {
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 
-import { ChatRail } from "./ChatRail";
+import { ChatRail, invalidateForToolResult } from "./ChatRail";
 import * as chatApi from "@/api/chat_rail";
 import * as settingsApi from "@/api/settings";
+import { strategyKeys } from "@/api/strategies";
+import { scenarioKeys } from "@/api/scenarios";
+import { agentKeys } from "@/api/agents";
+import { evalKeys } from "@/api/eval";
+import type { WizardEvent } from "@/api/chat_rail";
 
 const defaultStorage = globalThis.localStorage;
 
@@ -235,5 +240,101 @@ describe("ChatRail", () => {
       expect(capturedSignal?.aborted).toBe(true);
     });
     expect(composer).toHaveValue("keep this draft");
+  });
+});
+
+/**
+ * Regression coverage for `chat-rail-strategy-list-refresh` (operator
+ * 2026-05-18): creating a strategy via the chat rail must invalidate
+ * the strategies list query so the row appears without a manual
+ * refresh, and the same must hold for every mutating wizard tool.
+ *
+ * Tested in isolation rather than through the full ChatRail render
+ * because the SSE event loop is mocked at the network layer in the
+ * other tests above — wiring a fake event into `streamChat` and
+ * waiting for the TanStack effect would be flaky. The pure helper is
+ * the source of truth for what gets invalidated per tool name.
+ */
+describe("invalidateForToolResult", () => {
+  function spyClient() {
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const spy = vi.spyOn(qc, "invalidateQueries");
+    return { qc, spy };
+  }
+
+  function toolResult(tool: string, result: unknown = { ok: true }): WizardEvent {
+    return { type: "tool_result", tool, result };
+  }
+
+  it("ignores non-tool_result events", () => {
+    const { qc, spy } = spyClient();
+    invalidateForToolResult(qc, { type: "token", text: "hi" });
+    invalidateForToolResult(qc, {
+      type: "tool_call",
+      tool: "create_strategy",
+      args: {},
+    });
+    invalidateForToolResult(qc, { type: "done" });
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("ignores failed tool results (no mutation happened)", () => {
+    const { qc, spy } = spyClient();
+    invalidateForToolResult(qc, toolResult("create_strategy", { error: "boom" }));
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("ignores read-only validate_draft", () => {
+    const { qc, spy } = spyClient();
+    invalidateForToolResult(qc, toolResult("validate_draft"));
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("ignores unknown tools (new mutating tools must opt in explicitly)", () => {
+    const { qc, spy } = spyClient();
+    invalidateForToolResult(qc, toolResult("future_unknown_tool"));
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("invalidates the strategies list on create_strategy", () => {
+    const { qc, spy } = spyClient();
+    invalidateForToolResult(qc, toolResult("create_strategy"));
+    expect(spy).toHaveBeenCalledWith({ queryKey: strategyKeys.all });
+  });
+
+  it.each([
+    "update_slot",
+    "update_manifest",
+    "set_mechanical_param",
+    "set_risk_config",
+    "attach_agent",
+  ])("invalidates the strategies list on %s", (tool) => {
+    const { qc, spy } = spyClient();
+    invalidateForToolResult(qc, toolResult(tool));
+    expect(spy).toHaveBeenCalledWith({ queryKey: strategyKeys.all });
+  });
+
+  it("invalidates BOTH strategies and agents on create_strategy_agent", () => {
+    // create_strategy_agent creates an agent row in the agents library
+    // AND attaches it to a strategy (strategies list reflects the new
+    // AgentRef count). Both query keys must invalidate.
+    const { qc, spy } = spyClient();
+    invalidateForToolResult(qc, toolResult("create_strategy_agent"));
+    expect(spy).toHaveBeenCalledWith({ queryKey: strategyKeys.all });
+    expect(spy).toHaveBeenCalledWith({ queryKey: agentKeys.all });
+  });
+
+  it("invalidates the scenarios list on create_scenario", () => {
+    const { qc, spy } = spyClient();
+    invalidateForToolResult(qc, toolResult("create_scenario"));
+    expect(spy).toHaveBeenCalledWith({ queryKey: scenarioKeys.all });
+  });
+
+  it("invalidates the eval list on run_eval", () => {
+    const { qc, spy } = spyClient();
+    invalidateForToolResult(qc, toolResult("run_eval"));
+    expect(spy).toHaveBeenCalledWith({ queryKey: evalKeys.all });
   });
 });
