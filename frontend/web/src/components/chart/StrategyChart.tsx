@@ -58,7 +58,7 @@ export function StrategyChart({
         horzLines: { color: palette.grid },
       },
       crosshair: { mode: CrosshairMode.Normal },
-      timeScale: { timeVisible: false, secondsVisible: false },
+      timeScale: { rightOffset: 12, timeVisible: false, secondsVisible: false },
     });
 
     for (const r of payload.run_series) {
@@ -72,6 +72,8 @@ export function StrategyChart({
         })),
       );
     }
+
+    c.timeScale().fitContent();
 
     return () => c.remove();
   }, [payload, activeTheme, scenarioColors]);

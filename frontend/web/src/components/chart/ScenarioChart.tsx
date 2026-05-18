@@ -64,7 +64,7 @@ export function ScenarioChart({
         horzLines: { color: palette.grid },
       },
       crosshair: { mode: CrosshairMode.Normal },
-      timeScale: { rightOffset: 6, secondsVisible: false },
+      timeScale: { rightOffset: 12, secondsVisible: false },
     });
 
     if (payload.bars.length > 0) {
