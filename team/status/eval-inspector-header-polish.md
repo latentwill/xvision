@@ -22,10 +22,11 @@ for the same strategy+scenario pair).
   view fetches via the existing `listRuns({ agent_id })` query and lets the
   helper narrow to same-scenario rows client-side.
 - The helper itself (`evalRunDisambiguator`, `evalRunOrdinal`) lives in
-  `eval-runs-detail.tsx` and is re-exported into `eval-runs.tsx` so both
-  surfaces produce identical strings. It was *not* added to
-  `frontend/web/src/lib/run-display.ts` because the contract's
-  `allowed_paths` only covers the three eval-runs route files.
+  `frontend/web/src/lib/run-display.ts` so both routes can import it
+  without the list chunk statically pulling in the lazy inspector
+  chunk. The contract `allowed_paths` was amended 2026-05-18 to include
+  that file after review caught the cross-route import regression on
+  the initial commit.
 
 Operator sees the same label in the eval-runs list row, the eval inspector
 Topbar (`title · subtitle · Run #N · …`), the desktop SummaryCard meta
@@ -34,6 +35,9 @@ they landed on the right run.
 
 ## Changes shipped
 
+- **`lib/run-display.ts`** — new `evalRunOrdinal` /
+  `evalRunDisambiguator` helpers, additive next to the existing
+  `evalRunLabels` / `shortId` exports.
 - **`eval-runs-detail.tsx`** — fetch sibling runs, compute disambiguator,
   thread it through `Topbar` sub-line + `SummaryCard`. SummaryCard meta
   strip now reads `<disambiguator> · run <shortId> · View agent trace →`
@@ -42,13 +46,12 @@ they landed on the right run.
   `grid grid-flow-col auto-cols-fr` so Stop / Retry / Download all share
   the widest natural label's column width without a hardcoded px floor.
   The status pill stays outside the grid to keep its natural size.
-  `evalRunOrdinal` / `evalRunDisambiguator` defined and exported here.
 - **`eval-runs-detail-mobile.tsx`** — accepts the disambiguator from the
   desktop route, surfaces it in the SummaryTab hero meta line, drops the
   redundant `strategy <id>` chip, and switches `RunActions` (Retry +
   Download) to the same `grid grid-flow-col auto-cols-fr` treatment.
 - **`eval-runs.tsx`** — imports `evalRunDisambiguator` from
-  `./eval-runs-detail`, computes the label per row using the full
+  `@/lib/run-display`, computes the label per row using the full
   rendered list as siblings, and renders it in both the mobile card
   layout and the desktop table. Full id remains in a `title=` tooltip
   on the shortened `run …` chip.

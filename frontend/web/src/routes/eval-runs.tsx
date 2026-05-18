@@ -40,9 +40,9 @@ import { isInflightRunStatus } from "@/lib/run-status";
 import {
   displayScenarioName,
   displayStrategyName,
+  evalRunDisambiguator,
   shortId,
 } from "@/lib/run-display";
-import { evalRunDisambiguator } from "./eval-runs-detail";
 import type {
   BrokersReport,
   ProvidersReport,

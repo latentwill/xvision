@@ -18,7 +18,11 @@ import { RunChart } from "@/components/chart/RunChart";
 import { ReviewPanel } from "@/features/eval-runs/review";
 import { useTraceDock } from "@/stores/trace-dock";
 import { isInflightRunStatus } from "@/lib/run-status";
-import { evalRunLabels, type EvalRunLabels } from "@/lib/run-display";
+import {
+  evalRunDisambiguator,
+  evalRunLabels,
+  type EvalRunLabels,
+} from "@/lib/run-display";
 import { listScenarios, scenarioKeys } from "@/api/scenarios";
 import { listStrategies, strategyKeys } from "@/api/strategies";
 import type {
@@ -755,59 +759,4 @@ function dotColor(tone: "gold" | "warn" | "danger" | "default" | "info") {
     info: { background: "var(--info)" },
     default: { background: "var(--text-3)" },
   }[tone];
-}
-
-// Per-(strategy, scenario) sequence number, sorted by started_at ascending.
-// Used to give every eval run a stable, user-visible disambiguator
-// derived entirely from existing `RunSummary` fields. Lives in the
-// detail route because the inspector is the canonical surface for
-// "what does this run look like"; the list route re-imports it so the
-// label matches across surfaces.
-export function evalRunOrdinal(
-  summary: RunSummary,
-  siblings: RunSummary[],
-): { index: number; total: number } {
-  const samePair = siblings.filter(
-    (r) =>
-      r.agent_id === summary.agent_id &&
-      r.scenario_id === summary.scenario_id,
-  );
-  if (samePair.length === 0) {
-    return { index: 1, total: 1 };
-  }
-  const sorted = [...samePair].sort((a, b) => {
-    const at = a.started_at ?? "";
-    const bt = b.started_at ?? "";
-    if (at !== bt) return at < bt ? -1 : 1;
-    return a.id < b.id ? -1 : 1;
-  });
-  const idx = sorted.findIndex((r) => r.id === summary.id);
-  return {
-    index: (idx >= 0 ? idx : sorted.length - 1) + 1,
-    total: sorted.length,
-  };
-}
-
-// "Run #3 · May 18, 14:02" (or "Run #3/7 · …" when more than one run
-// exists for the same strategy+scenario pair).
-export function evalRunDisambiguator(
-  summary: RunSummary,
-  siblings: RunSummary[],
-): string {
-  const { index, total } = evalRunOrdinal(summary, siblings);
-  const stamp = formatDisambiguatorTimestamp(summary.started_at);
-  const ordinal = total > 1 ? `Run #${index}/${total}` : `Run #${index}`;
-  return stamp ? `${ordinal} · ${stamp}` : ordinal;
-}
-
-function formatDisambiguatorTimestamp(iso: string | null | undefined): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
 }
