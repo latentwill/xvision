@@ -96,14 +96,74 @@ describe("derivePositionsByDecision", () => {
     expect(m.get(1)).toEqual(m.get(0));
   });
 
-  test("reverse from long to short replaces the position", () => {
+  test("backtest reverse from long to short: new qty = fill_size - |prev_long|", () => {
+    // Engine's simulate_fill records traded_units = |old| + |new|
+    // for reversals (backtest.rs:761-767). For a long-1 → short-0.5
+    // reverse, fill_size = 1.5 and the resulting short leg is 0.5.
     const m = derivePositionsByDecision([
       row(0, "long_open", 1, 50000),
-      row(1, "short_open", 0.8, 60000),
+      row(1, "short_open", 1.5, 60000),
     ]);
     expect(m.get(1)).toEqual([
-      { asset: "BTC", side: "short", qty: 0.8, entry_price: 60000 },
+      { asset: "BTC", side: "short", qty: 0.5, entry_price: 60000 },
     ]);
+  });
+
+  test("paper-mode Alpaca crypto: short_open while long collapses to a sell-to-close → flat (PR #284 review)", () => {
+    // Alpaca crypto is long-only. paper.rs:472-486 turns
+    // `short_open` while long into a sell sized exactly to the open
+    // long. The persisted row carries action="short_open" and
+    // fill_size == prev_long_qty. The derivation must therefore
+    // resolve to FLAT, not "active short", or the trace dock
+    // misrepresents what the broker actually holds.
+    // Anchored by the engine test
+    // `crates/xvision-engine/tests/eval_executor_paper.rs:265`
+    // (`paper_executor_crypto_short_open_closes_existing_long`).
+    const m = derivePositionsByDecision([
+      row(0, "long_open", 1, 50000),
+      row(1, "short_open", 1, 60000), // fill_size == prior long size
+    ]);
+    expect(m.get(0)).toEqual([
+      { asset: "BTC", side: "long", qty: 1, entry_price: 50000 },
+    ]);
+    expect(m.get(1)).toEqual([]);
+  });
+
+  test("paper-mode: subsequent short_open ticks while flat stay no-ops (skip-broker semantics)", () => {
+    // After the close-out, the LLM keeps emitting short_open while
+    // the broker is flat. paper.rs:482-486 skips the submission;
+    // fill_size on the row is null. Derivation: no state change.
+    const m = derivePositionsByDecision([
+      row(0, "long_open", 1, 50000),
+      row(1, "short_open", 1, 60000), // close-out
+      row(2, "short_open", null, null), // skip-broker, no fill
+      row(3, "short_open", null, null), // skip-broker, no fill
+    ]);
+    expect(m.get(1)).toEqual([]);
+    expect(m.get(2)).toEqual([]);
+    expect(m.get(3)).toEqual([]);
+  });
+
+  test("backtest reverse from short to long: new qty = fill_size - |prev_short|", () => {
+    // Mirror of the long→short reverse for completeness.
+    const m = derivePositionsByDecision([
+      row(0, "short_open", 0.4, 60000),
+      row(1, "long_open", 0.9, 50000), // |0.4| + |0.5| = 0.9
+    ]);
+    expect(m.get(1)).toEqual([
+      { asset: "BTC", side: "long", qty: 0.5, entry_price: 50000 },
+    ]);
+  });
+
+  test("reverse with fill_size equal to prev (within tolerance) collapses to flat", () => {
+    // Floating-point safety: if the engine reports a fill that
+    // exactly closes the leg with no remainder, treat as flat
+    // rather than an infinitesimal opposite position.
+    const m = derivePositionsByDecision([
+      row(0, "long_open", 0.5, 50000),
+      row(1, "short_open", 0.5, 60000),
+    ]);
+    expect(m.get(1)).toEqual([]);
   });
 
   test("multi-asset state stays separate per asset, alphabetically sorted", () => {

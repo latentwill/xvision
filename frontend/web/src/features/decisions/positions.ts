@@ -70,25 +70,12 @@ function applyAction(state: RunningState, row: DecisionRowDto): void {
   const current = state.get(asset) ?? { side: "flat" as PositionSide, qty: 0, entry: 0 };
 
   switch (row.action) {
-    case "long_open": {
-      // Open or reverse to long. Skip when already long (engine's
-      // simulate_fill no-ops on direction match, so the row has no
-      // fill — state is unchanged).
-      if (current.side === "long") return;
-      const qty = row.fill_size ?? 0;
-      const price = row.fill_price ?? 0;
-      if (qty <= 0 || price <= 0) return; // safety: defaulted-zero fills
-      state.set(asset, { side: "long", qty, entry: price });
+    case "long_open":
+      applyOpen(state, asset, "long", current, row);
       return;
-    }
-    case "short_open": {
-      if (current.side === "short") return;
-      const qty = row.fill_size ?? 0;
-      const price = row.fill_price ?? 0;
-      if (qty <= 0 || price <= 0) return;
-      state.set(asset, { side: "short", qty, entry: price });
+    case "short_open":
+      applyOpen(state, asset, "short", current, row);
       return;
-    }
     case "flat": {
       // Close. Drop the asset out of the state map so it stops
       // appearing in the snapshot — this is what makes "the bar
@@ -104,6 +91,63 @@ function applyAction(state: RunningState, row: DecisionRowDto): void {
       // silently mutate position state.
       return;
   }
+}
+
+/**
+ * Apply an open action (`long_open` or `short_open`) against the
+ * current per-asset state. Handles three cases the engine
+ * distinguishes:
+ *
+ * 1. **Already in the requested direction** — same-side reopen.
+ *    Backtest's `simulate_fill` short-circuits (`fill_price: None,
+ *    fill_size: None`) on direction match, so the row carries null
+ *    fills and we no-op via the zero/null guard.
+ *
+ * 2. **Reverse from the opposite direction.** The engine records
+ *    `traded_units = |old| + |new|` in
+ *    `crates/xvision-engine/src/eval/executor/backtest.rs:761-767`,
+ *    so the new leg's size is `fill_size - |prev_qty|`. Paper-mode
+ *    Alpaca crypto can't hold a short, so
+ *    `crates/xvision-engine/src/eval/executor/paper.rs:472-486`
+ *    collapses `short_open` while long into a sell sized exactly to
+ *    the open long. The row still records
+ *    `action: "short_open"` and `fill_size` equal to the closed
+ *    long, so `fill_size - |prev|` resolves to 0 → flat. The same
+ *    formula handles both modes — see engine test
+ *    `crates/xvision-engine/tests/eval_executor_paper.rs:265`
+ *    (`paper_executor_crypto_short_open_closes_existing_long`),
+ *    which asserts the broker is flat after that sequence.
+ *
+ * 3. **From flat** — straight open at `fill_size`.
+ */
+function applyOpen(
+  state: RunningState,
+  asset: string,
+  want: Exclude<PositionSide, "flat">,
+  current: { side: PositionSide; qty: number; entry: number },
+  row: DecisionRowDto,
+): void {
+  if (current.side === want) return;
+
+  const fill = row.fill_size ?? 0;
+  const price = row.fill_price ?? 0;
+  if (fill <= 0 || price <= 0) return;
+
+  const opposite = want === "long" ? "short" : "long";
+  if (current.side === opposite) {
+    // Reverse / collapse: traded units cover the closed leg plus
+    // whatever new size the engine opened (paper close-out → 0).
+    const newQty = fill - Math.abs(current.qty);
+    if (newQty <= 1e-9) {
+      state.delete(asset);
+      return;
+    }
+    state.set(asset, { side: want, qty: newQty, entry: price });
+    return;
+  }
+
+  // From flat → pure open.
+  state.set(asset, { side: want, qty: fill, entry: price });
 }
 
 function snapshot(state: RunningState): OpenPosition[] {
