@@ -483,6 +483,24 @@ function BrokerCallDetailRows({ detail }: { detail: BrokerCallDetail }) {
       <dd style={{ color: outcomeColor }}>
         {detail.outcome ?? "in_progress"}
       </dd>
+      {detail.severity ? (
+        <>
+          <dt className="text-text-3">severity</dt>
+          <dd
+            data-testid="span-inspector-broker-severity"
+            style={{
+              color:
+                detail.severity === "warn"
+                  ? "var(--warn)"
+                  : "var(--danger)",
+            }}
+          >
+            {detail.severity === "warn"
+              ? "warn — agent received feedback"
+              : "error — run terminated"}
+          </dd>
+        </>
+      ) : null}
       {detail.outcome === "filled" || detail.fill_price != null ? (
         <>
           <dt className="text-text-3">fill px</dt>

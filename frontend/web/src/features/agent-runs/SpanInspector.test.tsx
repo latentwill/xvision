@@ -529,6 +529,7 @@ describe("SpanInspector (with pull-quotes)", () => {
             broker_order_id: "ord_42",
             error_class: null,
             error_message: null,
+            severity: null,
           },
         }}
         isLive={false}
@@ -570,6 +571,7 @@ describe("SpanInspector (with pull-quotes)", () => {
             broker_order_id: null,
             error_class: "broker_insufficient_funds",
             error_message: "alpaca create_order: insufficient buying power",
+            severity: "warn",
           },
         }}
         isLive={false}
@@ -581,5 +583,11 @@ describe("SpanInspector (with pull-quotes)", () => {
     expect(detail).toHaveTextContent("broker_insufficient_funds");
     expect(detail).toHaveTextContent(/insufficient buying power/);
     expect(detail).toHaveTextContent("failed");
+    // agent-error-feedback-self-healing: severity=warn surfaces the
+    // self-healing posture so the operator sees the run wasn't
+    // killed by a recoverable error.
+    expect(
+      screen.getByTestId("span-inspector-broker-severity"),
+    ).toHaveTextContent(/warn — agent received feedback/);
   });
 });

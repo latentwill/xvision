@@ -284,11 +284,16 @@ impl AgentRunRecorder for SqliteRecorder {
                              '$.broker_call.fee', ?, \
                              '$.broker_call.broker_order_id', ?, \
                              '$.broker_call.error_class', ?, \
-                             '$.broker_call.error_message', ? \
+                             '$.broker_call.error_message', ?, \
+                             '$.broker_call.severity', ? \
                          ), \
                          status = CASE \
                              WHEN status = 'in_progress' THEN \
-                                 CASE WHEN ? = 'filled' THEN 'ok' ELSE 'error' END \
+                                 CASE \
+                                     WHEN ? = 'filled' THEN 'ok' \
+                                     WHEN ? = 'warn' THEN 'ok' \
+                                     ELSE 'error' \
+                                 END \
                              ELSE status \
                          END \
                      WHERE id = ?",
@@ -300,7 +305,9 @@ impl AgentRunRecorder for SqliteRecorder {
                 .bind(&e.broker_order_id)
                 .bind(&e.error_class)
                 .bind(&e.error_message)
+                .bind(&e.severity)
                 .bind(broker_outcome_str(&e.outcome))
+                .bind(&e.severity)
                 .bind(&e.span_id)
                 .execute(&self.pool)
                 .await?;

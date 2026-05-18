@@ -71,6 +71,14 @@ export type BrokerCallDetail = {
   broker_order_id: string | null;
   error_class: string | null;
   error_message: string | null;
+  /**
+   * Severity tag for the trace dock. `"warn"` means the broker
+   * rejected the order but the run continues (the agent gets the
+   * error fed back on the next decision cycle and self-heals).
+   * `"error"` means the run terminated. `null` on filled /
+   * cancelled outcomes. Added by `agent-error-feedback-self-healing`.
+   */
+  severity: "warn" | "error" | null;
 };
 
 export type SpanStatus = "ok" | "error" | "in_progress";
@@ -286,6 +294,13 @@ export type StreamBrokerCallFinishedData = {
   broker_order_id: string | null;
   error_class: string | null;
   error_message: string | null;
+  /**
+   * `"warn"` for recoverable broker errors that fed back to the
+   * agent (the run continues); `"error"` for fatal errors that
+   * terminated the run; `null` on filled / cancelled outcomes.
+   * Added by `agent-error-feedback-self-healing`.
+   */
+  severity?: string | null;
 };
 
 export type StreamAssistantTextDeltaData = {

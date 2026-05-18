@@ -305,6 +305,15 @@ pub struct BrokerCallFinishedEvent {
     /// Verbatim broker / transport message. Truncated upstream if it
     /// exceeds the observability payload cap.
     pub error_message: Option<String>,
+    /// Severity tag for the trace dock. `Some("warn")` means the
+    /// broker rejected the order but the run continues — the agent
+    /// gets the error fed back on the next decision cycle.
+    /// `Some("error")` means the run terminated. Added by
+    /// `agent-error-feedback-self-healing`; older producers leave
+    /// it `None` and the dashboard falls back to deriving from the
+    /// outcome.
+    #[serde(default)]
+    pub severity: Option<String>,
 }
 
 impl RunEvent {
