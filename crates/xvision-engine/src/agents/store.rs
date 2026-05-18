@@ -207,7 +207,7 @@ impl AgentStore {
 
     async fn load_slots(&self, agent_id: &str) -> Result<Vec<AgentSlot>> {
         let rows = sqlx::query(
-            "SELECT name, provider, model, system_prompt, skill_ids_json, max_tokens \
+            "SELECT name, provider, model, system_prompt, skill_ids_json, max_tokens, prompt_version \
              FROM agent_slots WHERE agent_id = ? ORDER BY slot_index ASC",
         )
         .bind(agent_id)
@@ -231,6 +231,7 @@ impl AgentStore {
                 system_prompt: row.try_get("system_prompt")?,
                 skill_ids,
                 max_tokens,
+                prompt_version: row.try_get("prompt_version").unwrap_or_default(),
             });
         }
         Ok(out)
@@ -244,10 +245,14 @@ async fn insert_slot(
     slot: &AgentSlot,
 ) -> Result<()> {
     let skill_ids_json = serde_json::to_string(&slot.skill_ids).context("serialize skill_ids")?;
+    // Always recompute server-side from `system_prompt`; any value the
+    // client sent on `slot.prompt_version` is silently overridden so the
+    // column is a true content digest, not free-text metadata. See F-3.
+    let prompt_version = AgentSlot::compute_prompt_version(&slot.system_prompt);
     sqlx::query(
         "INSERT INTO agent_slots \
-         (agent_id, slot_index, name, provider, model, system_prompt, skill_ids_json, max_tokens) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+         (agent_id, slot_index, name, provider, model, system_prompt, skill_ids_json, max_tokens, prompt_version) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(agent_id)
     .bind(idx)
@@ -259,6 +264,7 @@ async fn insert_slot(
     // `None` persists as the sentinel `0`; `Some(0)` is also treated as
     // unset to keep round-trips stable.
     .bind(slot.max_tokens.unwrap_or(0) as i64)
+    .bind(prompt_version)
     .execute(&mut **tx)
     .await
     .with_context(|| format!("insert slot {} for agent {}", slot.name, agent_id))?;
@@ -306,6 +312,7 @@ mod tests {
             system_prompt: "You are a trader.".to_string(),
             skill_ids: vec![],
             max_tokens: Some(4096),
+            prompt_version: String::new(),
         }
     }
 

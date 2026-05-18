@@ -1,0 +1,27 @@
+-- 019_agent_slot_prompt_version.sql — F-3 harness-prompt-version-field.
+--
+-- Adds a content-addressable identifier for an agent slot's prompt
+-- contents so prompt updates (which were silent overwrites via
+-- `AgentStore::update()` — see harness audit F-3) become traceable.
+--
+-- Value format: lowercase 16-hex-char prefix of
+-- `sha256(system_prompt)` (no algorithm prefix on this column; the
+-- short prefix is meant for human eyeballing in the agents UI, not for
+-- cryptographic comparison). Computed server-side on insert/update
+-- inside `AgentStore::insert_slot`; any client-supplied value is
+-- ignored. Once F-2's `SpanAttributes.prompt_version` (already
+-- reserved) is wired through the strategy assembly layer, a span's
+-- prompt_version will match the slot's at execution time.
+--
+-- The intake's original formula was
+-- `sha256(system_prompt + response_schema_json)[..16]`, but
+-- `AgentSlot` does not yet carry `response_schema_json` (that field
+-- arrives with F-6 typed mechanical params). Until then we hash the
+-- system_prompt alone; the helper signature can extend without a
+-- migration when the field lands.
+--
+-- DEFAULT '' lets the migration apply to existing rows without
+-- requiring a backfill pass — the next save through `AgentStore` will
+-- replace the empty string with the computed hash.
+
+ALTER TABLE agent_slots ADD COLUMN prompt_version TEXT NOT NULL DEFAULT '';
