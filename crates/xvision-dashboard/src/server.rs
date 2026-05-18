@@ -8,7 +8,7 @@ use tower_http::{compression::CompressionLayer, trace::TraceLayer};
 
 use crate::auth::{auth_middleware, AuthState};
 use crate::routes::{
-    agent_runs, agents, bars, chat_rail, cli, eval::review as eval_review, eval_runs,
+    agent_runs, agents, bars, chat_rail, cli, docs, eval::review as eval_review, eval_runs,
     health::health, scenarios, search as search_route, settings, skills, static_files,
     strategies, wizard,
 };
@@ -19,6 +19,8 @@ use xvision_engine::api::search as api_search;
 pub fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/api/health", get(health))
+        .route("/api/docs/index", get(docs::index))
+        .route("/api/docs/page/:slug", get(docs::page))
         .route(
             "/api/agents",
             get(agents::list).post(agents::create),
