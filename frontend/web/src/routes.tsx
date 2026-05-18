@@ -17,6 +17,7 @@ const AgentRunDetailRoute = lazy(() => import("./routes/agent-runs-detail").then
 const EvalCompareRoute = lazy(() => import("./routes/eval-compare").then((m) => ({ default: m.EvalCompareRoute })));
 const LiveRoute = lazy(() => import("./routes/live").then((m) => ({ default: m.LiveRoute })));
 const SetupRoute = lazy(() => import("./routes/setup").then((m) => ({ default: m.SetupRoute })));
+const DocsRoute = lazy(() => import("./routes/docs").then((m) => ({ default: m.DocsRoute })));
 const SettingsLayout = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsLayout })));
 const SettingsBrokersRoute = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsBrokersRoute })));
 const SettingsDangerRoute = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsDangerRoute })));
@@ -55,6 +56,7 @@ export const router = createBrowserRouter([
       { path: "eval-runs/compare", element: page(<EvalCompareRoute />) },
       { path: "live/:id", element: page(<LiveRoute />) },
       { path: "setup", element: page(<SetupRoute />) },
+      { path: "docs", element: page(<DocsRoute />) },
       {
         path: "settings",
         element: page(<SettingsLayout />),
