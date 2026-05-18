@@ -118,6 +118,7 @@ fn prompt_hash_distinguishes_tool_use_and_tool_result_history() {
         content: vec![ContentBlock::ToolResult {
             tool_use_id: "tu_1".into(),
             content: "{\"sma\": 100.5}".into(),
+            is_error: None,
         }],
     });
     assert_ne!(compute_prompt_hash(&a), compute_prompt_hash(&b));

@@ -190,6 +190,13 @@ impl ObsEmitter {
     /// emit have a valid FK target. Idempotent at the SQL layer via
     /// the recorder's `INSERT` — re-running yields an error the
     /// recorder logs but the publish itself never panics.
+    ///
+    /// Also emits a `state.transition` span (`None → Running`) so the
+    /// trace dock's per-run state timeline records the run-start
+    /// transition without having to infer it from the absence of a
+    /// prior state. Span ordering: `RunStarted` is published first so
+    /// the recorder has the `agent_runs` row before the
+    /// `state.transition` span tries to FK into it.
     pub async fn emit_run_started(
         &self,
         objective: impl Into<String>,
@@ -211,12 +218,25 @@ impl ObsEmitter {
                 mcp_servers_json: None,
             }))
             .await;
+        self.emit_state_transition(&fresh_span_id(), None, None, RunStatus::Running)
+            .await;
     }
 
     /// Mark the run terminal. `status` should be `Completed` /
     /// `Failed` / `Cancelled` to match the recorder's
     /// `agent_runs.status` text vocabulary.
+    ///
+    /// Emits a `state.transition` span (`Running → status`) before the
+    /// `RunFinished` event so the trace dock sees the closing
+    /// transition while the run row is still in the running state.
     pub async fn emit_run_finished(&self, status: RunStatus, error: Option<String>) {
+        self.emit_state_transition(
+            &fresh_span_id(),
+            None,
+            Some(RunStatus::Running),
+            status,
+        )
+        .await;
         self.bus
             .publish(RunEvent::RunFinished(RunFinishedEvent {
                 run_id: self.run_id.clone(),
@@ -224,6 +244,147 @@ impl ObsEmitter {
                 status,
                 final_artifact_id: None,
                 error,
+            }))
+            .await;
+    }
+
+    /// Emit an instantaneous `state.transition` span recording a
+    /// change in run lifecycle status. Open and immediate close-ok so
+    /// the trace dock renders it as a point event rather than a
+    /// duration. `attributes_json` carries `{"from", "to"}` merged
+    /// with the F-2 `SpanAttributes` bag — `from` is the
+    /// `RunStatus.as_db_str()` of the prior state or JSON `null` for
+    /// the run-start transition.
+    ///
+    /// Added by F-4 (`harness-span-taxonomy-extension`). The recovery
+    /// state machine planned in F-5 will emit a transition span per
+    /// failure-class promotion using this helper; F-4 wires only the
+    /// run-lifecycle transitions.
+    pub async fn emit_state_transition(
+        &self,
+        span_id: &str,
+        parent_span_id: Option<String>,
+        from: Option<RunStatus>,
+        to: RunStatus,
+    ) {
+        let typed_attrs = SpanAttributes {
+            run_id: Some(self.run_id.clone()),
+            ..SpanAttributes::default()
+        };
+        let mut base = serde_json::Map::new();
+        base.insert(
+            "from".to_string(),
+            from.map(|s| serde_json::Value::String(s.as_db_str().to_string()))
+                .unwrap_or(serde_json::Value::Null),
+        );
+        base.insert(
+            "to".to_string(),
+            serde_json::Value::String(to.as_db_str().to_string()),
+        );
+        let merged = typed_attrs.merge_into_object(base);
+        let now = Utc::now();
+        self.bus
+            .publish(RunEvent::SpanStarted(SpanStartedEvent {
+                span_id: span_id.to_string(),
+                run_id: self.run_id.clone(),
+                parent_span_id,
+                kind: SpanKind::StateTransition,
+                name: format!(
+                    "{} → {}",
+                    from.map(|s| s.as_db_str()).unwrap_or("(start)"),
+                    to.as_db_str()
+                ),
+                started_at: now,
+                otel_trace_id: None,
+                otel_span_id: None,
+                attributes_json: Some(merged),
+            }))
+            .await;
+        self.bus
+            .publish(RunEvent::SpanFinished(SpanFinishedEvent {
+                span_id: span_id.to_string(),
+                ended_at: now,
+                status: SpanStatus::Ok,
+                error_json: None,
+            }))
+            .await;
+    }
+
+    /// Emit an instantaneous `tool.validate_input` span recording the
+    /// pre-condition of a tool call. The body is a no-op today — F-6
+    /// (`harness-typed-mechanical-params`) will replace the no-op with
+    /// the actual schema check while the span shape stays fixed.
+    /// `parent_span_id` should be the enclosing `tool.call` span when
+    /// one exists; the engine eval path does not emit `tool.call`
+    /// spans today, in which case `None` is correct.
+    ///
+    /// Added by F-4 (`harness-span-taxonomy-extension`) as the
+    /// instrumentation seam for F-6.
+    pub async fn emit_tool_validate_input(
+        &self,
+        span_id: &str,
+        parent_span_id: Option<String>,
+        tool_name: &str,
+    ) {
+        self.emit_tool_validate(SpanKind::ToolValidateInput, span_id, parent_span_id, tool_name)
+            .await;
+    }
+
+    /// Emit an instantaneous `tool.validate_output` span recording the
+    /// post-condition of a tool call. Emitted even when the tool
+    /// errored so the post-state is always recorded; F-6 will use the
+    /// span body to validate the actual response shape.
+    ///
+    /// Added by F-4 (`harness-span-taxonomy-extension`).
+    pub async fn emit_tool_validate_output(
+        &self,
+        span_id: &str,
+        parent_span_id: Option<String>,
+        tool_name: &str,
+    ) {
+        self.emit_tool_validate(SpanKind::ToolValidateOutput, span_id, parent_span_id, tool_name)
+            .await;
+    }
+
+    /// Internal shared body for the two validate-bracket emitters.
+    /// Both spans have identical shape; the variant differs only by
+    /// `SpanKind`.
+    async fn emit_tool_validate(
+        &self,
+        kind: SpanKind,
+        span_id: &str,
+        parent_span_id: Option<String>,
+        tool_name: &str,
+    ) {
+        debug_assert!(
+            matches!(kind, SpanKind::ToolValidateInput | SpanKind::ToolValidateOutput),
+            "emit_tool_validate called with non-validate kind: {kind:?}"
+        );
+        let attrs = SpanAttributes {
+            run_id: Some(self.run_id.clone()),
+            tool_name: Some(tool_name.to_string()),
+            ..SpanAttributes::default()
+        };
+        let now = Utc::now();
+        self.bus
+            .publish(RunEvent::SpanStarted(SpanStartedEvent {
+                span_id: span_id.to_string(),
+                run_id: self.run_id.clone(),
+                parent_span_id,
+                kind,
+                name: tool_name.to_string(),
+                started_at: now,
+                otel_trace_id: None,
+                otel_span_id: None,
+                attributes_json: attrs.to_attributes_json(),
+            }))
+            .await;
+        self.bus
+            .publish(RunEvent::SpanFinished(SpanFinishedEvent {
+                span_id: span_id.to_string(),
+                ended_at: now,
+                status: SpanStatus::Ok,
+                error_json: None,
             }))
             .await;
     }

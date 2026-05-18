@@ -95,6 +95,40 @@ pub enum SpanKind {
     /// activity was previously invisible on the trace dock.
     #[serde(rename = "broker.call")]
     BrokerCall,
+    /// Pre-condition validation for a tool call. Brackets the open
+    /// of a [`SpanKind::ToolCall`] span. Added by F-4 from the
+    /// 2026-05-18 harness observability audit as the instrumentation
+    /// seam for F-6's typed schema validator — F-4 emits these spans
+    /// with a no-op body so the wire format and ordering are pinned
+    /// before F-6 drops the actual validation in.
+    #[serde(rename = "tool.validate_input")]
+    ToolValidateInput,
+    /// Post-condition validation for a tool call. Brackets the close
+    /// of a [`SpanKind::ToolCall`] span. Emitted even when the tool
+    /// call errored so the post-state is always recorded. Same
+    /// no-op-body / F-6-fills-it-in arrangement as
+    /// [`SpanKind::ToolValidateInput`].
+    #[serde(rename = "tool.validate_output")]
+    ToolValidateOutput,
+    /// One attempt by the recovery state machine to repair a failed
+    /// run. F-4 reserves the wire identifier; the variant is NOT
+    /// emitted anywhere in the engine yet. F-5
+    /// (`harness-recovery-state-machine`) owns emission — when it
+    /// promotes `classify_run_failure` from regex-on-error-string to
+    /// a typed `FailureClass` dispatcher, each transition through it
+    /// emits a `recovery.attempt` span carrying the failure class
+    /// and the retry index in the F-2 `SpanAttributes` bag.
+    #[serde(rename = "recovery.attempt")]
+    RecoveryAttempt,
+    /// One change in run lifecycle status (e.g. `Queued → Running`,
+    /// `Running → Completed`). Emitted as an instantaneous span
+    /// (open + immediate close-ok) from
+    /// `ObsEmitter::emit_state_transition`. Carries `{"from", "to"}`
+    /// in `attributes_json` alongside the F-2 `SpanAttributes` bag
+    /// so the trace dock can render a per-run state timeline without
+    /// having to diff successive snapshots.
+    #[serde(rename = "state.transition")]
+    StateTransition,
 }
 
 impl SpanKind {
@@ -113,6 +147,10 @@ impl SpanKind {
             Self::IpcNotification => "ipc.notification",
             Self::SkillInvoke => "skill.invoke",
             Self::BrokerCall => "broker.call",
+            Self::ToolValidateInput => "tool.validate_input",
+            Self::ToolValidateOutput => "tool.validate_output",
+            Self::RecoveryAttempt => "recovery.attempt",
+            Self::StateTransition => "state.transition",
         }
     }
 }
