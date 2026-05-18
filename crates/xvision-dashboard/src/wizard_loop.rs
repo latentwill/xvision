@@ -42,6 +42,26 @@ use xvision_engine::eval::scenario::Scenario;
 
 const WIZARD_SYSTEM_PROMPT_BASE: &str = include_str!("../prompts/wizard.md");
 
+/// Default template the wizard's `create_strategy` falls back to when the
+/// caller omits `template`. The `custom` template is the minimal
+/// single-trader-agent freeform shape registered in
+/// `crates/xvision-engine/src/templates/custom.rs` — empty
+/// `mechanical_params`, no regime/intern slot, conservative risk preset.
+/// The agent fills in the rest via `set_*` tools.
+const WIZARD_BLANK_TEMPLATE: &str = "custom";
+
+/// Wizard-side input deserializer for `create_strategy`. Mirrors
+/// `authoring::CreateStrategyReq` but with optional `template` so the
+/// public API / MCP surface can stay strict.
+#[derive(Debug, Deserialize)]
+struct WizardCreateStrategyInput {
+    #[serde(default)]
+    template: Option<String>,
+    name: String,
+    #[serde(default)]
+    creator: Option<String>,
+}
+
 /// Cap on tool-use → tool-result iterations per `next_event` call. Prevents
 /// a misbehaving model from looping forever; v1 wizards never need more
 /// than 3-4 round trips per user turn.
@@ -72,9 +92,12 @@ impl AgentProfile {
             AgentProfile::StrategySetup => {
                 "## Agent profile: strategy setup\n\
                  You are focused on strategy setup: creating, editing, validating, and evaluating \
-                 strategies. Use existing strategies and existing scenarios before falling back to \
-                 templates or asking broad questions. When you create a strategy, ensure it has a \
-                 trader agent with an explicit provider/model before claiming it is eval-ready. \
+                 strategies. Use existing strategies and existing scenarios before creating new \
+                 work. Templates from list_templates are reference examples — browse them for \
+                 inspiration, or call create_strategy without a `template` to start a blank draft \
+                 and fill it in via set_slot / set_mechanical_param. When you create a strategy, \
+                 ensure it has a trader agent with an explicit provider/model before claiming it \
+                 is eval-ready. \
                  Do not say a tool change succeeded until the tool_result says it succeeded. For \
                  strategy tools, pass `id` or `strategy_id` as a top-level field, never nested under \
                  the tool name. Ask one targeted clarification only when the available strategies/scenarios \
@@ -461,7 +484,20 @@ impl WizardLoop {
                 Ok(serde_json::to_value(out)?)
             }
             "create_strategy" => {
-                let req: authoring::CreateStrategyReq = serde_json::from_value(input)?;
+                // Wizard surface accepts `template: null` / omitted and
+                // defaults to the `custom` template (blank single-agent
+                // shape). Templates from `list_templates` are reference
+                // examples for the agent, not a hard requirement —
+                // the underlying `authoring::CreateStrategyReq` stays
+                // strict so the public API / MCP surface is unchanged.
+                let raw: WizardCreateStrategyInput = serde_json::from_value(input)?;
+                let req = authoring::CreateStrategyReq {
+                    template: raw
+                        .template
+                        .unwrap_or_else(|| WIZARD_BLANK_TEMPLATE.into()),
+                    name: raw.name,
+                    creator: raw.creator,
+                };
                 let out = api_strategy::create_strategy(&self.api_context, req).await?;
                 let mut value = serde_json::to_value(&out)?;
                 if let Some(agent) = self.create_default_strategy_agent(&out.id).await? {
@@ -1508,15 +1544,20 @@ fn strategy_tool_defs() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "create_strategy".into(),
-            description: "Instantiate a new draft from a template. Returns { id }.".into(),
+            description: "Instantiate a new draft. `template` is optional — \
+                          when omitted, creates a blank single-agent draft \
+                          you fill in with set_slot / set_mechanical_param. \
+                          Templates from list_templates are reference \
+                          examples, not a prerequisite. Returns { id }."
+                .into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "template": {"type": "string", "description": "Template name from list_templates"},
+                    "template": {"type": "string", "description": "Optional. Template name from list_templates. Omit for a blank draft."},
                     "name": {"type": "string", "description": "Human-readable name"},
                     "creator": {"type": "string", "description": "Optional @handle"}
                 },
-                "required": ["template", "name"]
+                "required": ["name"]
             }),
         },
         ToolDefinition {
@@ -2322,6 +2363,69 @@ mod tests {
             out["ui_action"]["cache_key"],
             out["scenario"]["bar_cache_policy"]["cache_key"]
         );
+    }
+
+    #[tokio::test]
+    async fn create_strategy_without_template_defaults_to_blank_custom_draft() {
+        // Operator 2026-05-18: the wizard told them "the API does require
+        // a template to create a strategy" — that error came from serde
+        // rejecting `missing field 'template'` when the agent omitted it.
+        // After this contract: omitting `template` produces a valid blank
+        // draft via the `custom` template, and downstream `set_*` tools
+        // can fill it in. Reference examples, not a hard requirement.
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) =
+            loop_with_session(mock, "make me a strategy", ContextScope::Workspace).await;
+
+        let out = wl
+            .run_tool(
+                "create_strategy",
+                serde_json::json!({ "name": "Blank Run" }),
+            )
+            .await
+            .expect("create_strategy without template must succeed");
+
+        let id = out["id"].as_str().expect("returned id must be a string");
+        assert!(!id.is_empty(), "draft id must be non-empty");
+    }
+
+    #[tokio::test]
+    async fn create_strategy_with_null_template_defaults_to_blank_custom_draft() {
+        // Same as above but with `"template": null` instead of omitted.
+        // Models that produce JSON with explicit nulls (some OpenRouter
+        // providers, JSON-schema-strict outputs) shouldn't fail.
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) =
+            loop_with_session(mock, "make me a strategy", ContextScope::Workspace).await;
+
+        let out = wl
+            .run_tool(
+                "create_strategy",
+                serde_json::json!({ "name": "Blank Run", "template": serde_json::Value::Null }),
+            )
+            .await
+            .expect("create_strategy with template:null must succeed");
+
+        assert!(out["id"].as_str().is_some_and(|id| !id.is_empty()));
+    }
+
+    #[tokio::test]
+    async fn create_strategy_with_named_template_still_works() {
+        // The existing template-named path is unchanged — this contract
+        // only relaxes the requirement, doesn't remove templates.
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) =
+            loop_with_session(mock, "trend follower please", ContextScope::Workspace).await;
+
+        let out = wl
+            .run_tool(
+                "create_strategy",
+                serde_json::json!({ "template": "trend_follower", "name": "TF1" }),
+            )
+            .await
+            .expect("named-template path must continue to work");
+
+        assert!(out["id"].as_str().is_some_and(|id| !id.is_empty()));
     }
 
     #[tokio::test]
