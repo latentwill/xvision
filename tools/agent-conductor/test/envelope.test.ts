@@ -62,14 +62,50 @@ describe("status envelope v1", () => {
     process.env["AGENT_CONDUCTOR_SHADOW"] = "1";
     process.env["AGENT_CONDUCTOR_ENABLE"] = "0";
     try {
-      const env = await buildStatusEnvelope({ loaded, tasks: [] });
+      const env = await buildStatusEnvelope({
+        loaded,
+        tasks: [],
+        // Pretend pid 4242 is alive so the lock-holder-is-live branch
+        // exercises (the real `process.kill(4242, 0)` would fail).
+        isPidAlive: (pid) => pid === 4242,
+      });
       expect(env.daemon.pid).toBe(4242);
       expect(env.daemon.started_at).toBe("2026-05-18T07:00:00.000Z");
+      expect(env.daemon.state).toBe("running");
       expect(env.daemon.shadow).toBe(true);
       expect(env.daemon.enabled).toBe(false);
     } finally {
       delete process.env["AGENT_CONDUCTOR_SHADOW"];
       delete process.env["AGENT_CONDUCTOR_ENABLE"];
     }
+  });
+
+  it("reports `stopped` when the lock file holds a dead pid (stale lock)", async () => {
+    // Phase-1 repro: `start` writes a lock and exits; the lock file
+    // outlives the holder. Pre-fix: `state` was hardcoded to "running"
+    // whenever any lock file existed, so `status` lied about daemon
+    // liveness until a later `start` reclaimed the stale lock. With
+    // the PID liveness probe, an orphaned lock surfaces as "stopped"
+    // (and the pid is still recorded for operator forensics).
+    const dir = await mkdtemp(join(tmpdir(), "ac-env-"));
+    const cfgPath = join(dir, "agent-conductor.config.json");
+    await writeFile(
+      cfgPath,
+      JSON.stringify({ ...CONFIG, paths: { ...CONFIG.paths, cacheDir: dir } }),
+    );
+    const loaded = await loadConfig(cfgPath, dir);
+
+    const { acquireLock } = await import("../src/daemon/lock.js");
+    await acquireLock(join(dir, "lock"), 9999, () => new Date("2026-05-18T06:00:00Z"));
+
+    const env = await buildStatusEnvelope({
+      loaded,
+      tasks: [],
+      // Force pid 9999 to be reported as dead, regardless of host.
+      isPidAlive: () => false,
+    });
+    expect(env.daemon.pid).toBe(9999); // surfaced for forensics
+    expect(env.daemon.started_at).toBe("2026-05-18T06:00:00.000Z");
+    expect(env.daemon.state).toBe("stopped");
   });
 });

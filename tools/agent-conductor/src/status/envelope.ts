@@ -7,7 +7,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { LoadedConfig } from "../config/load.js";
 import type { BoardTask, StatusEnvelope, TaskStatus } from "../types.js";
-import { readLockInfo } from "../daemon/lock.js";
+import { isPidAlive, readLockInfo } from "../daemon/lock.js";
 import { tailDigest } from "../daemon/digest.js";
 import { isShadow, isEnabled } from "../modes/env.js";
 
@@ -20,6 +20,10 @@ export interface BuildEnvelopeInput {
   nextPollAt?: string | null;
   digestTailLines?: number;
   now?: () => Date;
+  /// Liveness probe. Defaults to [`isPidAlive`]; tests inject a
+  /// deterministic predicate so the envelope can be exercised
+  /// without spawning real processes.
+  isPidAlive?: (pid: number) => boolean;
 }
 
 const SCHEMA = "agent-conductor.status/v1" as const;
@@ -55,6 +59,18 @@ export async function buildStatusEnvelope(
     input.digestTailLines ?? 20,
   ).catch(() => [] as string[]);
 
+  // Lock files outlive the holding process when the daemon exits
+  // without cleanup (Phase-1 `start` is one-shot — it writes a lock
+  // and returns; the next `start` reclaims the stale lock but until
+  // then any liveness check on the file alone would lie about state).
+  // Map `running` to the joint condition `(lock exists AND its pid is
+  // alive)`; an orphaned lock surfaces as `stopped` so the operator
+  // envelope stays truthful.
+  const aliveProbe = input.isPidAlive ?? isPidAlive;
+  const lockHolderIsLive = !!lock && aliveProbe(lock.pid);
+  const derivedState: StatusEnvelope["daemon"]["state"] =
+    input.state ?? (lockHolderIsLive ? "running" : "stopped");
+
   return {
     envelope: {
       schema: SCHEMA,
@@ -71,9 +87,12 @@ export async function buildStatusEnvelope(
       config_version: input.loaded.config.version,
     },
     daemon: {
+      // Surface the lock's recorded pid even when stale so the
+      // operator can see whose orphaned lock is in the way; the
+      // `state` field is the load-bearing source of liveness truth.
       pid: lock?.pid ?? null,
       started_at: lock?.startedAt ?? null,
-      state: input.state ?? (lock ? "running" : "stopped"),
+      state: derivedState,
       shadow: isShadow(),
       enabled: isEnabled(),
       poll_interval_s: input.loaded.config.pollIntervalS,

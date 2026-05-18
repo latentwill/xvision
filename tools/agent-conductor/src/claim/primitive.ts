@@ -77,6 +77,14 @@ export interface ClaimEnv {
   remote: string; // typically "origin"
   ownerAgent: string; // "<instance.name>:<host>"
   contractsDir: string;
+  /// Target Project v2 coordinates. The Project field write
+  /// (status / owner_agent / branch / worktree) and the
+  /// verify-after-write read both go to `(owner, number)`. Pre-fix this
+  /// was hardcoded to `("", 0)` and the in-memory test client ignored
+  /// the value — a real GhClient would target an invalid Project or
+  /// fail before verify. Thread the loaded config's
+  /// `config.project` here and assert in tests.
+  project: { owner: string; number: number };
   shadow: boolean;
   now?: () => Date;
 }
@@ -197,7 +205,7 @@ export async function claim(
 
     // 7. update Project.
     await env.gh.updateProjectStatus({
-      project: { owner: "", number: 0 }, // caller fills via wrapper
+      project: env.project,
       itemId: req.itemId,
       fields: {
         status: "CLAIMED",
@@ -222,7 +230,7 @@ export async function claim(
 
     // 9. verify-after-write.
     const echoed = await env.gh.readProjectItem({
-      project: { owner: "", number: 0 },
+      project: env.project,
       itemId: req.itemId,
     });
     if (echoed.owner_agent !== env.ownerAgent) {

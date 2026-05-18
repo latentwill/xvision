@@ -21,16 +21,28 @@ export class LockHeldError extends Error {
   }
 }
 
-function isAlive(pid: number): boolean {
+/// Probe whether `pid` is alive on this host. `signal 0` doesn't
+/// deliver a signal — it just tests for permission to signal. `EPERM`
+/// means the process exists but belongs to another user; treat as
+/// alive. Any other error (`ESRCH` etc.) means dead.
+///
+/// Exported so non-lock callers (e.g. the status envelope builder)
+/// can decide whether a lock file represents a live daemon vs. a
+/// stale one without owning their own copy of the predicate.
+export function isPidAlive(pid: number): boolean {
   if (pid <= 0) return false;
   try {
-    // Signal 0 doesn't deliver a signal; just probes liveness/permission.
     process.kill(pid, 0);
     return true;
   } catch (e) {
     // EPERM means the process exists but we don't have permission.
     return (e as NodeJS.ErrnoException).code === "EPERM";
   }
+}
+
+// Internal alias kept for the existing acquireLock call sites.
+function isAlive(pid: number): boolean {
+  return isPidAlive(pid);
 }
 
 async function readLock(path: string): Promise<LockInfo | null> {

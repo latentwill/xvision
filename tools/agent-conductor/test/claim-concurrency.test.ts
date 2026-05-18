@@ -21,6 +21,11 @@ interface FakeGhState {
   owner_agent: string | null;
   reads: number;
   writes: number;
+  // Each write/read records the Project coordinates the caller passed
+  // so the test can assert claim() threads `env.project` through (vs.
+  // the pre-fix hardcoded `("", 0)`).
+  writeProjects: Array<{ owner: string; number: number }>;
+  readProjects: Array<{ owner: string; number: number }>;
 }
 
 function makeMocks(): {
@@ -61,15 +66,23 @@ function makeMocks(): {
   } as GitClient & { existingRefs: Set<string>; pushed: string[]; deleted: string[] };
 
   const gh = {
-    state: { owner_agent: null, reads: 0, writes: 0 } as FakeGhState,
-    async updateProjectStatus({ fields }) {
+    state: {
+      owner_agent: null,
+      reads: 0,
+      writes: 0,
+      writeProjects: [],
+      readProjects: [],
+    } as FakeGhState,
+    async updateProjectStatus({ project, fields }) {
       this.state.writes += 1;
+      this.state.writeProjects.push({ owner: project.owner, number: project.number });
       if (typeof fields.owner_agent === "string") {
         this.state.owner_agent = fields.owner_agent;
       }
     },
-    async readProjectItem() {
+    async readProjectItem({ project }) {
       this.state.reads += 1;
+      this.state.readProjects.push({ owner: project.owner, number: project.number });
       return { owner_agent: this.state.owner_agent };
     },
   } as GhClient & { state: FakeGhState };
@@ -90,12 +103,15 @@ function makeMocks(): {
   return { git, gh, spawn, resolved };
 }
 
+const TEST_PROJECT = { owner: "latentwill", number: 42 };
+
 function envOf(
   cacheDir: string,
   queueDir: string,
   worktreeRoot: string,
   mocks: ReturnType<typeof makeMocks>,
   ownerAgent: string,
+  project: { owner: string; number: number } = TEST_PROJECT,
 ): ClaimEnv {
   return {
     git: mocks.git,
@@ -108,6 +124,7 @@ function envOf(
     remote: "origin",
     ownerAgent,
     contractsDir: "contracts",
+    project,
     shadow: false,
   };
 }
@@ -149,6 +166,11 @@ describe("claim primitive", () => {
     expect(mocks.git.pushed).toEqual(["refs/heads/agent/demo"]); // one push only
     expect(mocks.spawn.spawned.length).toBe(1); // one worker spawn
     expect(mocks.gh.state.writes).toBe(1); // one Project write
+    // Project coords from env.project are threaded into both the write
+    // and the verify-after-write read. Pre-fix this was `("", 0)` and
+    // a real GhClient would have targeted an invalid Project.
+    expect(mocks.gh.state.writeProjects).toEqual([TEST_PROJECT]);
+    expect(mocks.gh.state.readProjects).toEqual([TEST_PROJECT]);
   });
 
   it("operator beat-the-daemon: pre-existing remote ref → skip with no side effects", async () => {
