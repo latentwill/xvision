@@ -5,7 +5,7 @@ wave: agent-run-observability-followups
 worktree: .worktrees/eval-inspector-header-polish
 branch: task/eval-inspector-header-polish
 base: origin/main
-status: ready
+status: claimed
 depends_on: []
 blocks: []
 stacking: none

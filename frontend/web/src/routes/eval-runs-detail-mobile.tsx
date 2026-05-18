@@ -59,6 +59,7 @@ const MONO_LBL = "font-mono text-[10px] tracking-[0.18em]";
 export function MobileEvalRunDetail({
   detail,
   labels,
+  disambiguator,
   onCancel,
   cancelling,
   onRetry,
@@ -66,6 +67,7 @@ export function MobileEvalRunDetail({
 }: {
   detail: RunDetail;
   labels: EvalRunLabels;
+  disambiguator: string;
   onCancel: () => void;
   cancelling: boolean;
   onRetry: () => void;
@@ -98,6 +100,7 @@ export function MobileEvalRunDetail({
           <SummaryTab
             detail={detail}
             labels={labels}
+            disambiguator={disambiguator}
             isLive={isLive}
             liveDuration={liveDuration}
             onRetry={onRetry}
@@ -236,6 +239,7 @@ function TabBar({
 function SummaryTab({
   detail,
   labels,
+  disambiguator,
   isLive,
   liveDuration,
   onRetry,
@@ -243,6 +247,7 @@ function SummaryTab({
 }: {
   detail: RunDetail;
   labels: EvalRunLabels;
+  disambiguator: string;
   isLive: boolean;
   liveDuration: number;
   onRetry: () => void;
@@ -259,10 +264,13 @@ function SummaryTab({
         <div className="text-[14px] text-text-2 mt-1 truncate">
           {labels.scenarioName}
         </div>
-        <div className="mt-1.5 flex flex-wrap gap-x-2 font-mono text-[10px] text-text-3">
-          <span>run {labels.shortRunId}</span>
+        <div
+          data-testid="mobile-eval-run-meta"
+          className="mt-1.5 flex flex-wrap gap-x-2 font-mono text-[10px] text-text-3"
+        >
+          <span className="text-text-2">{disambiguator}</span>
           <span className="text-text-4">·</span>
-          <span>strategy {labels.shortStrategyId}</span>
+          <span title={summary.id}>run {labels.shortRunId}</span>
           <span className="text-text-4">·</span>
           <span>{summary.mode}</span>
         </div>
@@ -478,7 +486,7 @@ function RunActions({
   if (!canRetry && !terminal) return null;
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex flex-wrap gap-2">
+      <div className="grid grid-flow-col auto-cols-fr gap-2">
         {canRetry && (
           <button
             type="button"

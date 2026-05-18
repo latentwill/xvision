@@ -5,7 +5,14 @@ import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
 import { ApiError } from "@/api/client";
-import { cancelRun, downloadEvalRunExport, evalKeys, getRun, retryRun } from "@/api/eval";
+import {
+  cancelRun,
+  downloadEvalRunExport,
+  evalKeys,
+  getRun,
+  listRuns,
+  retryRun,
+} from "@/api/eval";
 import { chartKeys, getRunChart, openRunStream } from "@/api/chart";
 import { RunChart } from "@/components/chart/RunChart";
 import { ReviewPanel } from "@/features/eval-runs/review";
@@ -59,6 +66,15 @@ export function EvalRunDetailRoute() {
   const scenarios = useQuery({
     queryKey: scenarioKeys.list(),
     queryFn: () => listScenarios(),
+  });
+  // Sibling runs for the same strategy power the "Run #N/M" disambiguator.
+  // The list-runs API already filters by agent_id; we narrow to the same
+  // scenario client-side.
+  const agentId = q.data?.summary.agent_id ?? "";
+  const siblings = useQuery({
+    queryKey: evalKeys.runs({ agent_id: agentId || undefined }),
+    queryFn: () => listRuns({ agent_id: agentId || undefined }),
+    enabled: agentId.length > 0,
   });
   const navigate = useNavigate();
   const cancel = useMutation({
@@ -126,11 +142,16 @@ export function EvalRunDetailRoute() {
     strategies.data ?? [],
     scenarios.data ?? [],
   );
+  const disambiguator = evalRunDisambiguator(
+    detail.summary,
+    siblings.data ?? [],
+  );
   if (isPhone) {
     return (
       <MobileEvalRunDetail
         detail={detail}
         labels={labels}
+        disambiguator={disambiguator}
         onCancel={() => cancel.mutate(detail.summary.id)}
         cancelling={cancel.variables === detail.summary.id && cancel.isPending}
         onRetry={() => retry.mutate(detail.summary.id)}
@@ -142,12 +163,13 @@ export function EvalRunDetailRoute() {
     <>
       <Topbar
         title={labels.title}
-        sub={`${labels.subtitle} · run ${labels.shortRunId}`}
+        sub={`${labels.subtitle} · ${disambiguator}`}
       />
 
       <SummaryCard
         summary={detail.summary}
         labels={labels}
+        disambiguator={disambiguator}
         onCancel={() => cancel.mutate(detail.summary.id)}
         cancelling={cancel.variables === detail.summary.id && cancel.isPending}
         onRetry={() => retry.mutate(detail.summary.id)}
@@ -290,6 +312,7 @@ function isTerminalStatus(status: string): boolean {
 function SummaryCard({
   summary,
   labels,
+  disambiguator,
   onCancel,
   cancelling,
   onRetry,
@@ -297,6 +320,7 @@ function SummaryCard({
 }: {
   summary: RunSummary;
   labels: EvalRunLabels;
+  disambiguator: string;
   onCancel: () => void;
   cancelling: boolean;
   onRetry: () => void;
@@ -332,10 +356,18 @@ function SummaryCard({
           <div className="mt-1 text-[14px] text-text-2 truncate">
             {labels.scenarioName}
           </div>
-          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-text-3">
-            <span className="font-mono">run {labels.shortRunId}</span>
-            <span className="font-mono">strategy {labels.shortStrategyId}</span>
-            <span className="font-mono">scenario {labels.shortScenarioId}</span>
+          <div
+            data-testid="eval-run-meta"
+            className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-text-3"
+          >
+            <span className="text-text-2">{disambiguator}</span>
+            <span
+              className="font-mono"
+              title={summary.id}
+              aria-label={`Run id ${summary.id}`}
+            >
+              run {labels.shortRunId}
+            </span>
             <Link
               to={`/agent-runs/${encodeURIComponent(agentRunId)}`}
               className="text-info hover:underline"
@@ -344,40 +376,54 @@ function SummaryCard({
             </Link>
           </div>
         </div>
+        {/*
+          The grid uses auto-cols-fr with grid-flow-col so every visible
+          action button shares one column and every column is sized to
+          1fr. In an unconstrained inline-grid that resolves to the
+          widest natural label as the floor for every column — so Stop /
+          Retry / Download read at matching widths without a hardcoded
+          px floor. The status pill stays outside the grid so it keeps
+          its natural size.
+        */}
         <div className="flex items-center gap-3">
-          {inflight ? (
-            <button
-              type="button"
-              aria-label={`Stop eval run ${summary.id}`}
-              onClick={onCancel}
-              disabled={cancelling}
-              className="rounded-sm border border-warn/40 bg-warn/[0.08] px-2.5 py-1 text-[12px] text-warn hover:border-warn/70 hover:bg-warn/[0.14] hover:text-text disabled:opacity-50"
-            >
-              {cancelling ? "Stopping..." : "Stop eval"}
-            </button>
-          ) : null}
-          {canRetry ? (
-            <button
-              type="button"
-              aria-label={`Retry eval run ${summary.id}`}
-              onClick={onRetry}
-              disabled={retrying}
-              className="rounded-sm border border-info/40 bg-info/[0.08] px-2.5 py-1 text-[12px] text-info hover:border-info/70 hover:bg-info/[0.14] hover:text-text disabled:opacity-50"
-            >
-              {retrying ? "Retrying..." : "Retry"}
-            </button>
-          ) : null}
-          {terminal ? (
-            <button
-              type="button"
-              aria-label={`Download eval run ${summary.id} as JSON`}
-              onClick={handleDownload}
-              disabled={downloading}
-              className="rounded-sm border border-border bg-surface-elev px-2.5 py-1 text-[12px] text-text-2 hover:border-gold/40 hover:text-text disabled:opacity-50"
-            >
-              {downloading ? "Preparing JSON…" : "Download JSON"}
-            </button>
-          ) : null}
+          <div
+            data-testid="eval-run-actions"
+            className="grid grid-flow-col auto-cols-fr gap-3"
+          >
+            {inflight ? (
+              <button
+                type="button"
+                aria-label={`Stop eval run ${summary.id}`}
+                onClick={onCancel}
+                disabled={cancelling}
+                className="rounded-sm border border-warn/40 bg-warn/[0.08] px-2.5 py-1 text-[12px] text-warn hover:border-warn/70 hover:bg-warn/[0.14] hover:text-text disabled:opacity-50"
+              >
+                {cancelling ? "Stopping..." : "Stop eval"}
+              </button>
+            ) : null}
+            {canRetry ? (
+              <button
+                type="button"
+                aria-label={`Retry eval run ${summary.id}`}
+                onClick={onRetry}
+                disabled={retrying}
+                className="rounded-sm border border-info/40 bg-info/[0.08] px-2.5 py-1 text-[12px] text-info hover:border-info/70 hover:bg-info/[0.14] hover:text-text disabled:opacity-50"
+              >
+                {retrying ? "Retrying..." : "Retry"}
+              </button>
+            ) : null}
+            {terminal ? (
+              <button
+                type="button"
+                aria-label={`Download eval run ${summary.id} as JSON`}
+                onClick={handleDownload}
+                disabled={downloading}
+                className="rounded-sm border border-border bg-surface-elev px-2.5 py-1 text-[12px] text-text-2 hover:border-gold/40 hover:text-text disabled:opacity-50"
+              >
+                {downloading ? "Preparing JSON…" : "Download JSON"}
+              </button>
+            ) : null}
+          </div>
           <Pill tone={tone} animated={inflight}>
             <span
               className="w-1.5 h-1.5 rounded-full"
@@ -709,4 +755,59 @@ function dotColor(tone: "gold" | "warn" | "danger" | "default" | "info") {
     info: { background: "var(--info)" },
     default: { background: "var(--text-3)" },
   }[tone];
+}
+
+// Per-(strategy, scenario) sequence number, sorted by started_at ascending.
+// Used to give every eval run a stable, user-visible disambiguator
+// derived entirely from existing `RunSummary` fields. Lives in the
+// detail route because the inspector is the canonical surface for
+// "what does this run look like"; the list route re-imports it so the
+// label matches across surfaces.
+export function evalRunOrdinal(
+  summary: RunSummary,
+  siblings: RunSummary[],
+): { index: number; total: number } {
+  const samePair = siblings.filter(
+    (r) =>
+      r.agent_id === summary.agent_id &&
+      r.scenario_id === summary.scenario_id,
+  );
+  if (samePair.length === 0) {
+    return { index: 1, total: 1 };
+  }
+  const sorted = [...samePair].sort((a, b) => {
+    const at = a.started_at ?? "";
+    const bt = b.started_at ?? "";
+    if (at !== bt) return at < bt ? -1 : 1;
+    return a.id < b.id ? -1 : 1;
+  });
+  const idx = sorted.findIndex((r) => r.id === summary.id);
+  return {
+    index: (idx >= 0 ? idx : sorted.length - 1) + 1,
+    total: sorted.length,
+  };
+}
+
+// "Run #3 · May 18, 14:02" (or "Run #3/7 · …" when more than one run
+// exists for the same strategy+scenario pair).
+export function evalRunDisambiguator(
+  summary: RunSummary,
+  siblings: RunSummary[],
+): string {
+  const { index, total } = evalRunOrdinal(summary, siblings);
+  const stamp = formatDisambiguatorTimestamp(summary.started_at);
+  const ordinal = total > 1 ? `Run #${index}/${total}` : `Run #${index}`;
+  return stamp ? `${ordinal} · ${stamp}` : ordinal;
+}
+
+function formatDisambiguatorTimestamp(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
