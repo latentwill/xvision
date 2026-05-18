@@ -16,9 +16,13 @@
 //!   v1 ships without the `xvision-identity` feature; this op returns
 //!   a `Conflict` until the wallet plan ships. Requires
 //!   `"REGEN IDENTITY"`.
-//! - [`factory_reset`] — delete and recreate `$XVN_HOME`. Audit row is
+//! - [`factory_reset`] — clear every file/subdir under `$XVN_HOME`
+//!   while leaving the directory itself in place. Audit row is
 //!   mirrored to a sibling log file outside the wiped dir. Requires
-//!   `"FACTORY RESET"`.
+//!   `"FACTORY RESET"`. The previous "remove + recreate the dir" shape
+//!   was incompatible with container bind mounts (the process can rm
+//!   contents but not `/data` itself when it's the mount root) — see
+//!   the round-4 live finding (2026-05-18).
 //!
 //! Per QA 2026-05-17 finding #4 (`qa-dashboard-auth-hardening`): the
 //! prior single `CONFIRM_TOKEN = "yes-i-am-sure"` was a static constant
@@ -402,21 +406,58 @@ async fn factory_reset_inner(ctx: &ApiContext, confirm: &str) -> ApiResult<Facto
     .map_err(|e| ApiError::Internal(format!("spawn_blocking: {e}")))?
     .map_err(|e| ApiError::Internal(format!("write audit log: {e}")))?;
 
-    // The actual wipe. `remove_dir_all` is idempotent enough here —
-    // if the path is missing we treat it as already-clean.
-    if xvn_home.exists() {
-        tokio::fs::remove_dir_all(&xvn_home)
-            .await
-            .map_err(|e| ApiError::Internal(format!("remove {}: {e}", xvn_home.display())))?;
-    }
-    tokio::fs::create_dir_all(&xvn_home)
-        .await
-        .map_err(|e| ApiError::Internal(format!("recreate {}: {e}", xvn_home.display())))?;
+    // Clear the contents of xvn_home without removing the directory
+    // itself. Round-4 operator finding (2026-05-18): in a container
+    // deploy with `XVN_HOME=/data` as a mounted volume, the process
+    // can rm the contents but `rmdir /data` itself fails with EACCES
+    // — the mount point is owned by root, not by uid 1000. The old
+    // `remove_dir_all` + `create_dir_all` pair already destroyed
+    // every file inside before erroring on the dir, leaving the
+    // operator with a half-reset xvn_home that the dashboard couldn't
+    // serve from. Clearing entries instead is idempotent and works on
+    // both workstation and container layouts.
+    clear_dir_contents(&xvn_home).await?;
 
     Ok(FactoryResetReport {
         xvn_home: xvn_home.display().to_string(),
         audit_log_path: audit_log_path.display().to_string(),
     })
+}
+
+/// Remove every entry directly under `dir`, recursively for child
+/// directories, but leave `dir` itself in place. Idempotent on a
+/// missing path. Used by [`factory_reset`] so the call works against
+/// a bind-mounted `XVN_HOME` (where the process can rm the contents
+/// but not the mount root).
+async fn clear_dir_contents(dir: &std::path::Path) -> ApiResult<()> {
+    if !dir.exists() {
+        return Ok(());
+    }
+    let mut entries = tokio::fs::read_dir(dir)
+        .await
+        .map_err(|e| ApiError::Internal(format!("read {}: {e}", dir.display())))?;
+    while let Some(entry) = entries
+        .next_entry()
+        .await
+        .map_err(|e| ApiError::Internal(format!("scan {}: {e}", dir.display())))?
+    {
+        let path = entry.path();
+        let file_type = entry
+            .file_type()
+            .await
+            .map_err(|e| ApiError::Internal(format!("file_type {}: {e}", path.display())))?;
+        if file_type.is_dir() && !file_type.is_symlink() {
+            tokio::fs::remove_dir_all(&path)
+                .await
+                .map_err(|e| ApiError::Internal(format!("remove {}: {e}", path.display())))?;
+        } else {
+            // Files, symlinks, anything else — single unlink.
+            tokio::fs::remove_file(&path)
+                .await
+                .map_err(|e| ApiError::Internal(format!("remove {}: {e}", path.display())))?;
+        }
+    }
+    Ok(())
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────
@@ -765,9 +806,83 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn factory_reset_clears_xvn_home_and_writes_sibling_log() {
+    async fn factory_reset_clears_xvn_home_contents_without_removing_dir() {
+        // F-6 (live container, 2026-05-18): the previous implementation
+        // did `remove_dir_all(xvn_home)` + `create_dir_all(xvn_home)`.
+        // On a container where `XVN_HOME=/data` is a bind-mounted volume,
+        // the uid-1000 process can rm the contents but not `/data`
+        // itself — the mount is root-owned. The old code destroyed the
+        // contents (including xvn.db) and then 500'd on the rmdir,
+        // leaving the operator with a half-reset workspace the
+        // dashboard couldn't serve from.
+        //
+        // The new clear-contents pattern: rm every entry under xvn_home,
+        // leave the dir itself in place. Idempotent and mount-safe.
         let dir = TempDir::new().unwrap();
-        // Put a marker file under xvn_home so we can confirm it disappeared.
+        let xvn_home = dir.path().join("xvn-home");
+        tokio::fs::create_dir_all(&xvn_home).await.unwrap();
+        tokio::fs::write(xvn_home.join("marker"), b"hi").await.unwrap();
+        // Nested subdir, to confirm recursive rm.
+        tokio::fs::create_dir_all(xvn_home.join("strategies/draft")).await.unwrap();
+        tokio::fs::write(
+            xvn_home.join("strategies/draft/x.json"),
+            b"{}",
+        )
+        .await
+        .unwrap();
+
+        let ctx = ApiContext::open(&xvn_home, Actor::Cli { user: "test".into() })
+            .await
+            .unwrap();
+
+        // Capture the inode of xvn_home itself BEFORE the reset so we
+        // can assert the dir is the same dir afterwards (not a freshly
+        // re-created one — a bind-mount would forbid that).
+        use std::os::unix::fs::MetadataExt;
+        let xvn_home_inode_before = std::fs::metadata(&xvn_home).unwrap().ino();
+
+        let report = factory_reset(&ctx, FACTORY_RESET_CONFIRM).await.unwrap();
+
+        // The dir itself must still exist AND must be the same
+        // directory (same inode). Contents wiped.
+        assert!(xvn_home.exists(), "xvn_home must still exist at {}", xvn_home.display());
+        let xvn_home_inode_after = std::fs::metadata(&xvn_home).unwrap().ino();
+        assert_eq!(
+            xvn_home_inode_before, xvn_home_inode_after,
+            "xvn_home dir must not have been removed + re-created (would break bind mounts)"
+        );
+        assert!(!xvn_home.join("marker").exists(), "marker should have been wiped");
+        assert!(
+            !xvn_home.join("strategies").exists(),
+            "nested subdir should have been recursively removed"
+        );
+        // Dir is now empty.
+        let entries: Vec<_> = std::fs::read_dir(&xvn_home).unwrap().collect();
+        assert!(
+            entries.is_empty(),
+            "xvn_home contents must be empty, got {entries:?}"
+        );
+
+        // Sibling log got our line.
+        let log_path = PathBuf::from(&report.audit_log_path);
+        assert!(log_path.exists(), "sibling log written");
+        let contents = tokio::fs::read_to_string(&log_path).await.unwrap();
+        assert!(contents.contains("factory_reset"), "log line written");
+        assert!(contents.contains(&xvn_home.display().to_string()));
+    }
+
+    #[tokio::test]
+    async fn factory_reset_succeeds_when_xvn_home_parent_is_read_only() {
+        // Container repro of the 2026-05-18 live finding:
+        // `XVN_HOME=/data` with `/data` bind-mounted means the process
+        // CAN'T rmdir `/data` itself. We simulate that here by making
+        // xvn_home's parent read-only AFTER the ctx is built, so a
+        // hypothetical `rmdir xvn_home` would fail. Since our
+        // implementation no longer rmdirs xvn_home, the op must
+        // succeed regardless.
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = TempDir::new().unwrap();
         let xvn_home = dir.path().join("xvn-home");
         tokio::fs::create_dir_all(&xvn_home).await.unwrap();
         tokio::fs::write(xvn_home.join("marker"), b"hi").await.unwrap();
@@ -776,20 +891,32 @@ mod tests {
             .await
             .unwrap();
 
-        let report = factory_reset(&ctx, FACTORY_RESET_CONFIRM).await.unwrap();
+        // Make the parent read-only. The contents of xvn_home are
+        // still writable (we own xvn_home itself), so `rm` inside
+        // xvn_home works, but `rmdir xvn_home` would fail because the
+        // parent's inode table is locked.
+        let mut perms = std::fs::metadata(dir.path()).unwrap().permissions();
+        let original_mode = perms.mode();
+        perms.set_mode(0o555);
+        std::fs::set_permissions(dir.path(), perms).unwrap();
+        // Restore on drop so tempdir cleanup works.
+        struct PermRestore<'a>(&'a std::path::Path, u32);
+        impl Drop for PermRestore<'_> {
+            fn drop(&mut self) {
+                let mut p = std::fs::metadata(self.0).unwrap().permissions();
+                p.set_mode(self.1);
+                let _ = std::fs::set_permissions(self.0, p);
+            }
+        }
+        let _restore = PermRestore(dir.path(), original_mode);
 
-        // Marker gone, dir re-created empty (ApiContext::open didn't
-        // re-run since we don't re-open after the reset — the dir is
-        // empty but exists).
-        assert!(xvn_home.exists(), "xvn_home re-created at {}", xvn_home.display());
-        assert!(!xvn_home.join("marker").exists(), "marker should have been wiped");
-
-        // Sibling log got our line.
-        let log_path = PathBuf::from(&report.audit_log_path);
-        assert!(log_path.exists(), "sibling log written");
-        let contents = tokio::fs::read_to_string(&log_path).await.unwrap();
-        assert!(contents.contains("factory_reset"), "log line written");
-        assert!(contents.contains(&xvn_home.display().to_string()));
+        let report = factory_reset(&ctx, FACTORY_RESET_CONFIRM).await;
+        assert!(
+            report.is_ok(),
+            "factory_reset must NOT depend on removing xvn_home itself: {report:?}"
+        );
+        assert!(xvn_home.exists());
+        assert!(!xvn_home.join("marker").exists());
     }
 
     #[test]
