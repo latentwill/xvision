@@ -629,7 +629,7 @@ function ModelManager({
           Upstream returned no models.
         </div>
       ) : (
-        <div className="scrollbar-stable max-h-[300px] overflow-y-auto border border-border-soft rounded">
+        <div className="scrollbar-stable max-h-[300px] border border-border-soft rounded">
           <table className="w-full">
             <tbody>
               {enabledRows.length > 0 ? (
