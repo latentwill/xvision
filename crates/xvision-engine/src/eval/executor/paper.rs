@@ -594,6 +594,17 @@ impl PaperExecutor {
                 } else {
                     None
                 }
+            } else if parsed.action == "long_open" && position > 0.0 {
+                // Already long this asset: don't pile on. Re-running long_open
+                // every cycle is the failure mode that produced run
+                // 01KRWZHHSXAWHRZSG1X65CZMCD — 29 consecutive long_open
+                // requests after the first fill, all rejected for insufficient
+                // cash. The decision is still recorded so the trace shows the
+                // agent's intent; we just don't submit the order.
+                None
+            } else if parsed.action == "short_open" && position < 0.0 {
+                // Symmetric: already short.
+                None
             } else {
                 // Size against *buying power* (settled cash for crypto), not
                 // equity. `balance` above is equity (cash + open-position
