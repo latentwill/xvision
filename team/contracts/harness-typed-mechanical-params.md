@@ -29,6 +29,7 @@ allowed_paths:
   - crates/xvision-core/src/trading.rs                            # deny_unknown_fields + TP/SL cross-field
   - crates/xvision-core/src/config.rs                             # deny_unknown_fields on RiskConfig/Limits/Stops
   - crates/xvision-core/src/risk.rs                               # deny_unknown_fields on RiskCaps
+  - crates/xvision-engine/src/api/eval.rs                         # F-3 fallout: remove stray prompt_version field from 3 ResolvedAgentSlot test inits to restore workspace test build
   - team/contracts/harness-typed-mechanical-params.md
   - team/status/harness-typed-mechanical-params.md
   - team/board.md
@@ -80,19 +81,34 @@ acceptance:
         byte-identical to today's behaviour. The legacy
         `max_indicator_period` helper is removed in favour of typed
         dispatch.
-  - `Strategy.mechanical_params` field type becomes `MechanicalParams`.
-    Wire format on disk is unchanged: the params object is still the
-    flat `{ "ema_fast": 12, … }` shape today's strategies have on disk.
-    Variant discrimination is driven by `manifest.template` via a custom
-    `Deserialize` impl on `Strategy` (or equivalent two-step parse).
-    Unknown / non-canonical template strings deserialize as
-    `MechanicalParams::Custom(serde_json::Value)`. Existing strategies on
-    disk parse round-trip without any data rewrite.
-  - `Strategy::min_warmup_bars` delegates to the typed variant (or to
-    `manifest.min_warmup_bars` if explicitly set). The fallback constant
-    `FALLBACK_MIN_WARMUP_BARS` is preserved for the `Custom` arm with no
-    derivable hint. **No regression on warmup-bar derivation** —
-    existing `eval_executor_warmup` tests stay green unchanged.
+  - `Strategy.mechanical_params` is type-checked at the deserialization
+    boundary against the typed `MechanicalParams` enum. The field
+    keeps its `serde_json::Value` type at the Rust level (40+ in-tree
+    constructor sites would otherwise need pure-churn migration to
+    `MechanicalParams::Custom(json!({}))`, with no functional gain
+    once the boundary is enforced), but a custom `Deserialize` impl
+    on `Strategy` runs `MechanicalParams::from_value(manifest.template,
+    &value)` during parse and surfaces `deny_unknown_fields` errors
+    for typos against the active template. Wire format on disk is
+    unchanged. Existing strategies parse round-trip without any data
+    rewrite. **Amended 2026-05-18 mid-implementation** — the original
+    contract said "field type becomes `MechanicalParams`"; the
+    boundary-validation variant achieves the same operator-facing
+    invariant (no untyped escape hatch reaching the engine) with a
+    much smaller blast radius, and is what landed.
+  - A new `Strategy::typed_params() -> MechanicalParams` method
+    provides typed access for consumers (warmup-bar derivation,
+    validators, the `set_mechanical_param` API). It is **infallible**
+    on a `Strategy` value that was constructed via deserialization
+    (the boundary check ran), and falls back to
+    `MechanicalParams::Custom(value.clone())` for directly-constructed
+    `Strategy` values that bypass parsing.
+  - `Strategy::min_warmup_bars` delegates to the typed variant (via
+    `typed_params()`) or to `manifest.min_warmup_bars` if explicitly
+    set. The fallback constant `FALLBACK_MIN_WARMUP_BARS` is preserved
+    for the `Custom` arm with no derivable hint. **No regression on
+    warmup-bar derivation** — existing `eval_executor_warmup` tests
+    stay green unchanged.
   - `#[serde(deny_unknown_fields)]` is added to:
       - `xvision_core::trading::InternBriefing`
       - `xvision_core::trading::TraderDecision`

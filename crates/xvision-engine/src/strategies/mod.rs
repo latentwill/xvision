@@ -1,6 +1,7 @@
 pub mod agent_ref;
 pub mod id;
 pub mod manifest;
+pub mod mechanical;
 pub mod risk;
 pub mod slot;
 pub mod store;
@@ -11,10 +12,14 @@ use serde::{Deserialize, Serialize};
 
 pub use crate::strategies::agent_ref::{AgentRef, PipelineDef, PipelineEdge, PipelineKind};
 use crate::strategies::manifest::PublicManifest;
+pub use crate::strategies::mechanical::{
+    BreakoutParams, MechanicalParams, MeanReversionParams, MomentumParams, NewsTraderParams,
+    RangeTradeParams, ScalpingParams, TrendFollowerParams,
+};
 use crate::strategies::risk::RiskConfig;
 use crate::strategies::slot::LLMSlot;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Strategy {
     pub manifest: PublicManifest,
 
@@ -72,55 +77,95 @@ impl Strategy {
     ///
     /// Resolution order:
     /// 1. `manifest.min_warmup_bars`, if set.
-    /// 2. The largest positive integer in period-like
-    ///    `mechanical_params` fields, times 2. Covers `ema_slow=50`
-    ///    → 100, `donchian_period=20` → 40, etc., without mistaking
-    ///    thresholds like `rsi_overbought=70` for lookback windows.
+    /// 2. Typed-variant dispatch via [`Strategy::typed_params`]; each
+    ///    variant computes the largest period-like field × 2. The
+    ///    `Custom` variant falls back to a JSON walker that preserves
+    ///    the pre-F-6 heuristic for operator-authored templates.
     /// 3. [`FALLBACK_MIN_WARMUP_BARS`].
     pub fn min_warmup_bars(&self) -> u32 {
         if let Some(explicit) = self.manifest.min_warmup_bars {
             return explicit;
         }
-        match max_indicator_period(&self.mechanical_params, None) {
-            Some(p) => p.saturating_mul(2),
-            None => FALLBACK_MIN_WARMUP_BARS,
+        let derived = self.typed_params().min_warmup_bars();
+        if derived == 0 {
+            FALLBACK_MIN_WARMUP_BARS
+        } else {
+            derived
         }
+    }
+
+    /// Typed view of `mechanical_params` keyed on `manifest.template`.
+    /// Always succeeds — unknown templates yield
+    /// [`MechanicalParams::Custom`]; known templates that fail strict
+    /// parsing (e.g. via a directly-constructed `Strategy` that bypassed
+    /// the deserialize-time validation) also fall back to `Custom` so
+    /// callers like [`Strategy::min_warmup_bars`] stay infallible.
+    /// To assert strict typing, use [`Strategy::validate_typed`].
+    pub fn typed_params(&self) -> MechanicalParams {
+        MechanicalParams::from_value(&self.manifest.template, self.mechanical_params.clone())
+            .unwrap_or_else(|_| MechanicalParams::Custom(self.mechanical_params.clone()))
+    }
+
+    /// Strict typed parse of `mechanical_params`. Returns
+    /// `serde_json::Error` if the value does not match the typed
+    /// variant for `manifest.template` (e.g. unknown field, wrong
+    /// type). Used by the pre-persist validate seam in
+    /// [`crate::strategies::store::StrategyStore::save`].
+    pub fn validate_typed(&self) -> Result<MechanicalParams, serde_json::Error> {
+        MechanicalParams::from_value(&self.manifest.template, self.mechanical_params.clone())
     }
 }
 
-/// Recursively walk a `serde_json::Value` and return the largest positive
-/// integer found in period-like fields. Used as a heuristic to derive a
-/// strategy's `min_warmup_bars` from indicator lookbacks baked into
-/// `mechanical_params` (`ema_fast`, `ema_slow`, `donchian_period`,
-/// `lookback_bars`, etc.) while ignoring thresholds like `rsi_overbought`.
-fn max_indicator_period(value: &serde_json::Value, key: Option<&str>) -> Option<u32> {
-    use serde_json::Value;
-    match value {
-        Value::Number(n) if key.is_some_and(is_period_like_key) => {
-            let as_u64 = n.as_u64().or_else(|| n.as_i64().filter(|x| *x > 0).map(|x| x as u64));
-            as_u64.and_then(|n| u32::try_from(n).ok()).filter(|n| *n > 0)
-        }
-        Value::Number(_) => None,
-        Value::Array(arr) => arr.iter().filter_map(|v| max_indicator_period(v, key)).max(),
-        Value::Object(map) => map
-            .iter()
-            .filter_map(|(child_key, child_value)| max_indicator_period(child_value, Some(child_key)))
-            .max(),
-        Value::Null | Value::Bool(_) | Value::String(_) => None,
-    }
+// ── Custom Deserialize: validate mechanical_params against typed variant ──
+//
+// Plain `#[derive(Deserialize)]` would accept any JSON in the
+// `mechanical_params` field. To enforce `deny_unknown_fields` per
+// template, we two-step: deserialize a private mirror struct
+// (`StrategyRaw`) that has the same shape but keeps the field as
+// `serde_json::Value`, then run `MechanicalParams::from_value` against
+// it. Validation errors are surfaced as deserialize errors so a bad
+// strategy JSON fails fast at the API/store boundary, not later in
+// the engine.
+
+#[derive(Deserialize)]
+struct StrategyRaw {
+    manifest: PublicManifest,
+    #[serde(default)]
+    agents: Vec<AgentRef>,
+    #[serde(default)]
+    pipeline: PipelineDef,
+    #[serde(default)]
+    regime_slot: Option<LLMSlot>,
+    #[serde(default)]
+    intern_slot: Option<LLMSlot>,
+    #[serde(default)]
+    trader_slot: Option<LLMSlot>,
+    risk: RiskConfig,
+    mechanical_params: serde_json::Value,
 }
 
-fn is_period_like_key(key: &str) -> bool {
-    let key = key.to_ascii_lowercase();
-    key.contains("period")
-        || key.contains("lookback")
-        || key.contains("window")
-        || key.ends_with("_bars")
-        || key.starts_with("ema_")
-        || key.starts_with("sma_")
-        || key.starts_with("macd_")
-        || key.starts_with("atr_")
-        || key.starts_with("adx_")
+impl<'de> Deserialize<'de> for Strategy {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = StrategyRaw::deserialize(deserializer)?;
+        // Validate mechanical_params against the typed enum for the
+        // active template. `Custom` is fine; unknown fields on a
+        // canonical template fail here with a structured error.
+        MechanicalParams::from_value(&raw.manifest.template, raw.mechanical_params.clone())
+            .map_err(serde::de::Error::custom)?;
+        Ok(Strategy {
+            manifest: raw.manifest,
+            agents: raw.agents,
+            pipeline: raw.pipeline,
+            regime_slot: raw.regime_slot,
+            intern_slot: raw.intern_slot,
+            trader_slot: raw.trader_slot,
+            risk: raw.risk,
+            mechanical_params: raw.mechanical_params,
+        })
+    }
 }
 
 #[cfg(test)]
