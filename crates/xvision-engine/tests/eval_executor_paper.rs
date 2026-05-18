@@ -180,7 +180,14 @@ async fn paper_executor_records_a_decision_row_per_tick() {
 }
 
 #[tokio::test]
-async fn paper_executor_submits_orders_only_for_actionable_decisions() {
+async fn paper_executor_skips_duplicate_long_open_when_already_long() {
+    // Trader emits long_open on every cycle. The executor must submit only
+    // the first one — re-running long_open after the position is already
+    // open is what produced run 01KRWZHHSXAWHRZSG1X65CZMCD: 29 consecutive
+    // long_open requests, all rejected by Alpaca for insufficient cash
+    // because each one was sized against equity (which barely moves while
+    // cash drains). All four ticks still produce a recorded decision; only
+    // the first crosses the broker.
     let canned = r#"{"action":"long_open","conviction":0.7,"justification":"buy"}"#;
     let (mock, executor, store, mut run, strategy, scenario, dispatch, tools) =
         paper_harness(canned, 100_000.0).await;
@@ -193,19 +200,18 @@ async fn paper_executor_submits_orders_only_for_actionable_decisions() {
     let submitted = mock.submitted();
     assert_eq!(
         submitted.len(),
-        4,
-        "broker should see one submit per actionable tick"
+        1,
+        "broker should see exactly one submit; duplicate long_open ticks are no-ops"
     );
-    assert_eq!(metrics.n_trades, 4);
-    assert_eq!(metrics.n_decisions, 4);
-
-    let mut keys: Vec<String> = submitted.iter().map(|r| r.idempotency_key.clone()).collect();
-    keys.sort();
-    keys.dedup();
+    assert_eq!(metrics.n_trades, 1);
     assert_eq!(
-        keys.len(),
-        4,
-        "every submission must use a unique idempotency key"
+        metrics.n_decisions, 4,
+        "every cycle still records a decision so the trace shows the agent's intent"
+    );
+    assert!(
+        submitted[0].idempotency_key.ends_with("-0"),
+        "the single submit must be from decision_index 0; got {}",
+        submitted[0].idempotency_key
     );
 }
 
