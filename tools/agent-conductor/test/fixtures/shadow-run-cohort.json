@@ -1,0 +1,257 @@
+{
+  "cohort_name": "phase-1-shadow-replay",
+  "intake": "team/intake/2026-05-18-agent-cicd-shadow-cohort.md",
+  "tracks": [
+    {
+      "track": "round4-selective-reset",
+      "pr": 306,
+      "transitions": [
+        {
+          "label": "claim",
+          "task": { "track": "round4-selective-reset", "status": "READY", "lane": "leaf" },
+          "observed": {
+            "worktreeExists": false,
+            "branchExistsLocal": false,
+            "branchPushed": false,
+            "hasCommitsAhead": false,
+            "prNumber": null,
+            "prMerged": false
+          },
+          "expected": { "kind": "claim", "to": "CLAIMED" }
+        },
+        {
+          "label": "begin-coding",
+          "task": { "track": "round4-selective-reset", "status": "CLAIMED", "lane": "leaf" },
+          "observed": {
+            "worktreeExists": true,
+            "branchExistsLocal": true,
+            "branchPushed": false,
+            "hasCommitsAhead": false,
+            "prNumber": null,
+            "prMerged": false
+          },
+          "expected": { "kind": "begin-coding", "to": "CODING" }
+        },
+        {
+          "label": "pr-open",
+          "task": { "track": "round4-selective-reset", "status": "CODING", "lane": "leaf" },
+          "observed": {
+            "worktreeExists": true,
+            "branchExistsLocal": true,
+            "branchPushed": true,
+            "hasCommitsAhead": true,
+            "prNumber": 306,
+            "prMerged": false
+          },
+          "expected": { "kind": "pr-open", "to": "PR_OPEN" }
+        },
+        {
+          "label": "phase-2-no-act",
+          "task": { "track": "round4-selective-reset", "status": "PR_OPEN", "lane": "leaf", "pr": 306 },
+          "observed": {
+            "worktreeExists": true,
+            "branchExistsLocal": true,
+            "branchPushed": true,
+            "hasCommitsAhead": true,
+            "prNumber": 306,
+            "prMerged": false
+          },
+          "expected": { "kind": "noop", "to": "PR_OPEN" }
+        },
+        {
+          "label": "archive",
+          "task": { "track": "round4-selective-reset", "status": "MERGED", "lane": "leaf", "pr": 306 },
+          "observed": {
+            "worktreeExists": true,
+            "branchExistsLocal": true,
+            "branchPushed": true,
+            "hasCommitsAhead": true,
+            "prNumber": 306,
+            "prMerged": true
+          },
+          "expected": { "kind": "archive", "to": "ARCHIVED" }
+        }
+      ]
+    },
+    {
+      "track": "chart-vertical-snap-to-fit",
+      "pr": 305,
+      "transitions": [
+        {
+          "label": "claim",
+          "task": { "track": "chart-vertical-snap-to-fit", "status": "READY", "lane": "leaf" },
+          "observed": {
+            "worktreeExists": false,
+            "branchExistsLocal": false,
+            "branchPushed": false,
+            "hasCommitsAhead": false,
+            "prNumber": null,
+            "prMerged": false
+          },
+          "expected": { "kind": "claim", "to": "CLAIMED" }
+        },
+        {
+          "label": "begin-coding",
+          "task": { "track": "chart-vertical-snap-to-fit", "status": "CLAIMED", "lane": "leaf" },
+          "observed": {
+            "worktreeExists": true,
+            "branchExistsLocal": true,
+            "branchPushed": false,
+            "hasCommitsAhead": false,
+            "prNumber": null,
+            "prMerged": false
+          },
+          "expected": { "kind": "begin-coding", "to": "CODING" }
+        },
+        {
+          "label": "pr-open",
+          "task": { "track": "chart-vertical-snap-to-fit", "status": "CODING", "lane": "leaf" },
+          "observed": {
+            "worktreeExists": true,
+            "branchExistsLocal": true,
+            "branchPushed": true,
+            "hasCommitsAhead": true,
+            "prNumber": 305,
+            "prMerged": false
+          },
+          "expected": { "kind": "pr-open", "to": "PR_OPEN" }
+        },
+        {
+          "label": "archive",
+          "task": { "track": "chart-vertical-snap-to-fit", "status": "MERGED", "lane": "leaf", "pr": 305 },
+          "observed": {
+            "worktreeExists": true,
+            "branchExistsLocal": true,
+            "branchPushed": true,
+            "hasCommitsAhead": true,
+            "prNumber": 305,
+            "prMerged": true
+          },
+          "expected": { "kind": "archive", "to": "ARCHIVED" }
+        }
+      ]
+    },
+    {
+      "track": "round4-db-drift",
+      "pr": 304,
+      "transitions": [
+        {
+          "label": "claim",
+          "task": { "track": "round4-db-drift", "status": "READY", "lane": "integration" },
+          "observed": {
+            "worktreeExists": false,
+            "branchExistsLocal": false,
+            "branchPushed": false,
+            "hasCommitsAhead": false,
+            "prNumber": null,
+            "prMerged": false
+          },
+          "expected": { "kind": "claim", "to": "CLAIMED" }
+        },
+        {
+          "label": "claimed-waiting",
+          "task": { "track": "round4-db-drift", "status": "CLAIMED", "lane": "integration" },
+          "observed": {
+            "worktreeExists": false,
+            "branchExistsLocal": false,
+            "branchPushed": false,
+            "hasCommitsAhead": false,
+            "prNumber": null,
+            "prMerged": false
+          },
+          "expected": { "kind": "noop", "to": "CLAIMED" }
+        },
+        {
+          "label": "pr-open",
+          "task": { "track": "round4-db-drift", "status": "CODING", "lane": "integration" },
+          "observed": {
+            "worktreeExists": true,
+            "branchExistsLocal": true,
+            "branchPushed": true,
+            "hasCommitsAhead": true,
+            "prNumber": 304,
+            "prMerged": false
+          },
+          "expected": { "kind": "pr-open", "to": "PR_OPEN" }
+        }
+      ]
+    },
+    {
+      "track": "harness-recovery-state-machine",
+      "pr": 298,
+      "transitions": [
+        {
+          "label": "coding-no-pr-yet",
+          "task": { "track": "harness-recovery-state-machine", "status": "CODING", "lane": "integration" },
+          "observed": {
+            "worktreeExists": true,
+            "branchExistsLocal": true,
+            "branchPushed": true,
+            "hasCommitsAhead": true,
+            "prNumber": null,
+            "prMerged": false
+          },
+          "expected": { "kind": "noop", "to": "CODING" }
+        },
+        {
+          "label": "pr-open",
+          "task": { "track": "harness-recovery-state-machine", "status": "CODING", "lane": "integration" },
+          "observed": {
+            "worktreeExists": true,
+            "branchExistsLocal": true,
+            "branchPushed": true,
+            "hasCommitsAhead": true,
+            "prNumber": 298,
+            "prMerged": false
+          },
+          "expected": { "kind": "pr-open", "to": "PR_OPEN" }
+        },
+        {
+          "label": "phase-2-reviewing",
+          "task": { "track": "harness-recovery-state-machine", "status": "REVIEWING", "lane": "integration", "pr": 298 },
+          "observed": {
+            "worktreeExists": true,
+            "branchExistsLocal": true,
+            "branchPushed": true,
+            "hasCommitsAhead": true,
+            "prNumber": 298,
+            "prMerged": false
+          },
+          "expected": { "kind": "observe-only", "to": "REVIEWING" }
+        },
+        {
+          "label": "phase-2-approved",
+          "task": { "track": "harness-recovery-state-machine", "status": "APPROVED", "lane": "integration", "pr": 298 },
+          "observed": {
+            "worktreeExists": true,
+            "branchExistsLocal": true,
+            "branchPushed": true,
+            "hasCommitsAhead": true,
+            "prNumber": 298,
+            "prMerged": false
+          },
+          "expected": { "kind": "observe-only", "to": "APPROVED" }
+        }
+      ]
+    },
+    {
+      "track": "harness-span-taxonomy-extension",
+      "pr": 297,
+      "transitions": [
+        {
+          "label": "archive",
+          "task": { "track": "harness-span-taxonomy-extension", "status": "MERGED", "lane": "integration", "pr": 297 },
+          "observed": {
+            "worktreeExists": true,
+            "branchExistsLocal": true,
+            "branchPushed": true,
+            "hasCommitsAhead": true,
+            "prNumber": 297,
+            "prMerged": true
+          },
+          "expected": { "kind": "archive", "to": "ARCHIVED" }
+        }
+      ]
+    }
+  ]
+}
