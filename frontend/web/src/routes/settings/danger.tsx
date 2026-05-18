@@ -4,13 +4,13 @@ import { Card } from "@/components/primitives/Card";
 import { ApiError } from "@/api/client";
 import {
   dangerFactoryReset,
-  dangerWipeDb,
-  DANGER_WIPE_DB_PHRASE,
+  dangerResetWorkspace,
+  DANGER_RESET_WORKSPACE_PHRASE,
   DANGER_FACTORY_RESET_PHRASE,
 } from "@/api/settings";
 import type {
   FactoryResetReport,
-  WipeDbReport,
+  ResetWorkspaceReport,
 } from "@/api/types.gen";
 
 // Per qa-dashboard-auth-hardening (2026-05-17): each destructive op has
@@ -34,37 +34,77 @@ export function SettingsDangerRoute() {
         </p>
       </div>
 
-      <DangerSection<WipeDbReport>
-        title="Wipe local database"
-        phrase={DANGER_WIPE_DB_PHRASE}
+      <DangerSection<ResetWorkspaceReport>
+        title="Reset workspace"
+        phrase={DANGER_RESET_WORKSPACE_PHRASE}
         description={
           <>
-            Deletes every row in <code className="font-mono">xvn.db</code>{" "}
-            except the <code className="font-mono">api_audit</code> trail, so
-            the record of <em>this</em> wipe survives. Strategies on
-            disk, the config TOML, and any signing keys are untouched.
+            <p className="m-0">
+              Clears user-authored content so you can start a clean
+              testing session without wiping the whole install.
+            </p>
+            <p className="m-0 mt-2 text-text-3">
+              <span className="text-text-2">Cleared:</span> strategies,
+              evals, agents, agent runs, chats, user scenarios, traces
+              (spans, model/tool calls, supervisor notes, artifacts,
+              checkpoints), CLI jobs, search index.
+            </p>
+            <p className="m-0 mt-1 text-text-3">
+              <span className="text-text-2">Preserved:</span> API keys
+              + secrets, config, review-agent profiles, bars cache,
+              skills registry, the audit trail, and the four canonical
+              seed scenarios. File-backed strategy drafts under{" "}
+              <code className="font-mono">$XVN_HOME/strategies/</code>{" "}
+              are removed; <code className="font-mono">secrets/</code>{" "}
+              and <code className="font-mono">config/</code> stay.
+            </p>
           </>
         }
-        actionLabel="Wipe database"
-        mutationFn={dangerWipeDb}
+        actionLabel="Reset workspace"
+        mutationFn={dangerResetWorkspace}
         renderSuccess={(r) => (
-          <ul className="m-0 p-0 list-none text-[12px] text-text-2">
-            <li className="mb-1">
+          <div className="text-[12px] text-text-2 space-y-3">
+            <div>
               <span className="text-text">{r.total_rows_deleted}</span> row
               {r.total_rows_deleted === 1 ? "" : "s"} cleared across{" "}
-              <span className="text-text">{r.tables.length}</span> table
-              {r.tables.length === 1 ? "" : "s"}.
-            </li>
-            {r.tables.map((t) => (
-              <li
-                key={t.table}
-                className="flex justify-between border-t border-border-soft py-1 last:border-b-0"
-              >
-                <code className="font-mono">{t.table}</code>
-                <span className="text-text-3">{t.rows_deleted}</span>
-              </li>
-            ))}
-          </ul>
+              <span className="text-text">{r.tables_cleared.length}</span>{" "}
+              table{r.tables_cleared.length === 1 ? "" : "s"}.{" "}
+              <span className="text-text">{r.strategy_files_deleted}</span>{" "}
+              strategy file
+              {r.strategy_files_deleted === 1 ? "" : "s"} removed from
+              disk.
+            </div>
+            <ul className="m-0 p-0 list-none">
+              {r.tables_cleared.map((t) => (
+                <li
+                  key={`cleared-${t.table}`}
+                  className="flex justify-between border-t border-border-soft py-1 last:border-b-0"
+                >
+                  <code className="font-mono">{t.table}</code>
+                  <span className="text-text-3">{t.rows_deleted}</span>
+                </li>
+              ))}
+            </ul>
+            <div className="mt-3 pt-2 border-t border-border-soft">
+              <div className="text-[11px] uppercase tracking-wider text-text-3 mb-1">
+                Preserved
+              </div>
+              <ul className="m-0 p-0 list-none">
+                {r.tables_preserved.map((t) => (
+                  <li
+                    key={`preserved-${t.table}`}
+                    className="flex justify-between py-0.5"
+                  >
+                    <code className="font-mono">{t.table}</code>
+                    <span className="text-text-3">
+                      {t.rows_remaining} row
+                      {t.rows_remaining === 1 ? "" : "s"}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
         )}
       />
 

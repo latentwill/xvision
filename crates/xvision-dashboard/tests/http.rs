@@ -1159,10 +1159,10 @@ async fn strategy_chart_returns_empty_run_series_for_unused_strategy() {
 // /api/settings/danger/*
 
 #[tokio::test]
-async fn danger_wipe_db_rejects_missing_confirm() {
+async fn danger_reset_workspace_rejects_missing_confirm() {
     let (server, _tmp) = boot().await;
     let response = server
-        .post("/api/settings/danger/wipe-db")
+        .post("/api/settings/danger/reset-workspace")
         .json(&serde_json::json!({}))
         .await;
     response.assert_status_bad_request();
@@ -1171,37 +1171,68 @@ async fn danger_wipe_db_rejects_missing_confirm() {
 }
 
 #[tokio::test]
-async fn danger_wipe_db_rejects_wrong_confirm() {
+async fn danger_reset_workspace_rejects_wrong_confirm() {
     let (server, _tmp) = boot().await;
     let response = server
-        .post("/api/settings/danger/wipe-db")
+        .post("/api/settings/danger/reset-workspace")
         .json(&serde_json::json!({ "confirm": "nope" }))
         .await;
     response.assert_status_bad_request();
 }
 
 #[tokio::test]
-async fn danger_wipe_db_clears_tables_with_confirm() {
-    // qa-dashboard-auth-hardening (2026-05-17): the confirm payload is
-    // now the operator-typed phrase, not a static token. Each route
-    // has its own phrase (see `crates/xvision-engine/src/api/settings/danger.rs`).
+async fn danger_reset_workspace_clears_user_tables_with_confirm() {
+    // F-4 (2026-05-18): the selective reset replaces the previous
+    // nuclear wipe_db op. Preserves api_audit + agent_profiles +
+    // bars_cache + skills + eval_scenarios (and canonical scenarios).
     let (server, _tmp) = boot().await;
     let response = server
-        .post("/api/settings/danger/wipe-db")
-        .json(&serde_json::json!({ "confirm": "WIPE DATABASE" }))
+        .post("/api/settings/danger/reset-workspace")
+        .json(&serde_json::json!({ "confirm": "RESET WORKSPACE" }))
         .await;
     response.assert_status_ok();
     let body: serde_json::Value = response.json();
-    assert!(body["tables"].is_array());
+    assert!(body["tables_cleared"].is_array());
+    assert!(body["tables_preserved"].is_array());
     assert!(body["total_rows_deleted"].is_number());
-    // api_audit must be excluded from the wipe by construction.
-    let names: Vec<&str> = body["tables"]
+    assert!(body["strategy_files_deleted"].is_number());
+
+    let cleared: Vec<&str> = body["tables_cleared"]
         .as_array()
         .unwrap()
         .iter()
         .map(|t| t["table"].as_str().unwrap())
         .collect();
-    assert!(!names.contains(&"api_audit"));
+    let preserved: Vec<&str> = body["tables_preserved"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["table"].as_str().unwrap())
+        .collect();
+
+    for preserved_name in ["api_audit", "agent_profiles", "bars_cache", "skills"] {
+        assert!(
+            !cleared.contains(&preserved_name),
+            "{preserved_name} must NOT appear in tables_cleared, got {cleared:?}"
+        );
+        assert!(
+            preserved.contains(&preserved_name),
+            "{preserved_name} must appear in tables_preserved, got {preserved:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn danger_wipe_db_route_is_gone() {
+    // F-4: callers hitting the old `/api/settings/danger/wipe-db`
+    // must get a clean 404 — better than silently dropping the
+    // operator's intent.
+    let (server, _tmp) = boot().await;
+    let response = server
+        .post("/api/settings/danger/wipe-db")
+        .json(&serde_json::json!({ "confirm": "WIPE DATABASE" }))
+        .await;
+    response.assert_status(axum::http::StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]

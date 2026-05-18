@@ -20,14 +20,14 @@ import type {
   ProviderRow,
   ProvidersReport,
   RefreshOutcome,
+  ResetWorkspaceReport,
   RetentionModeDto,
   TestConnectionReport,
   UpdateProviderRequest,
-  WipeDbReport,
 } from "./types.gen";
 
 // Per-route confirm phrases. Mirrored from
-// `xvision_engine::api::settings::danger::{WIPE_DB_CONFIRM,
+// `xvision_engine::api::settings::danger::{RESET_WORKSPACE_CONFIRM,
 // FACTORY_RESET_CONFIRM, REGEN_IDENTITY_CONFIRM}`.
 //
 // qa-dashboard-auth-hardening (2026-05-17): these constants are
@@ -36,7 +36,11 @@ import type {
 // what travels on the wire to the backend, which validates against
 // the per-route constant. We deliberately do NOT auto-fill the
 // payload with these strings.
-export const DANGER_WIPE_DB_PHRASE = "WIPE DATABASE";
+//
+// F-4 (2026-05-18): the legacy `DANGER_WIPE_DB_PHRASE` ("WIPE
+// DATABASE") is gone — the route was replaced by the selective
+// `reset_workspace` op. `RESET WORKSPACE` is the new phrase.
+export const DANGER_RESET_WORKSPACE_PHRASE = "RESET WORKSPACE";
 export const DANGER_FACTORY_RESET_PHRASE = "FACTORY RESET";
 export const DANGER_REGEN_IDENTITY_PHRASE = "REGEN IDENTITY";
 
@@ -412,11 +416,16 @@ export function testProviderConnection(
 // rejects anything that doesn't match its per-route expectation;
 // the constants above are exported for UI display purposes only.
 
-export function dangerWipeDb(typedPhrase: string): Promise<WipeDbReport> {
-  return apiFetch<WipeDbReport>("/api/settings/danger/wipe-db", {
-    method: "POST",
-    body: JSON.stringify({ confirm: typedPhrase }),
-  });
+export function dangerResetWorkspace(
+  typedPhrase: string,
+): Promise<ResetWorkspaceReport> {
+  return apiFetch<ResetWorkspaceReport>(
+    "/api/settings/danger/reset-workspace",
+    {
+      method: "POST",
+      body: JSON.stringify({ confirm: typedPhrase }),
+    },
+  );
 }
 
 export function dangerFactoryReset(

@@ -4,8 +4,9 @@
 //!
 //! Before this gate, every `/api/*` route was implicitly trusted because the
 //! default bind was `127.0.0.1:8788`. The operator could re-bind to a public
-//! address (e.g. for tailnet access) and unwittingly expose `wipe_db`,
-//! `factory_reset`, `cli/jobs`, and every provider/secret mutation surface
+//! address (e.g. for tailnet access) and unwittingly expose
+//! `reset_workspace`, `factory_reset`, `cli/jobs`, and every
+//! provider/secret mutation surface
 //! to anyone who could reach the socket — no authentication required.
 //!
 //! ## What this layer does
