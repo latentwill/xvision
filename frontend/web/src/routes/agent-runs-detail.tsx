@@ -7,6 +7,7 @@ import { Card } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
 import { ApiError } from "@/api/client";
 import { agentRunKeys, getAgentRun } from "@/api/agent-runs";
+import { formatCostUsd, formatCostUsdPrecise } from "@/lib/format";
 import { AgentRunIndentedTimeline } from "@/features/agent-runs/AgentRunIndentedTimeline";
 import { SpanInspector } from "@/features/agent-runs/SpanInspector";
 import { FilterBar } from "@/features/agent-runs/FilterBar";
@@ -88,7 +89,12 @@ export function AgentRunDetailRoute() {
           retention: {detail.summary.retention_mode}
         </Pill>
         <span className="font-mono text-[12px] text-text-2">spans: {detail.summary.span_count}</span>
-        <span className="font-mono text-[12px] text-text-2">cost: ${detail.summary.total_cost_usd.toFixed(4)}</span>
+        <span
+          className="font-mono text-[12px] text-text-2"
+          title={formatCostUsdPrecise(detail.summary.total_cost_usd)}
+        >
+          cost: {formatCostUsd(detail.summary.total_cost_usd)}
+        </span>
         <span className="font-mono text-[12px] text-text-2">
           {detail.summary.total_input_tokens.toLocaleString()} in · {detail.summary.total_output_tokens.toLocaleString()} out
         </span>

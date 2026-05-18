@@ -5,6 +5,7 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { AgentRunSummary } from "@/api/types-agent-runs";
+import { formatCostUsd, formatCostUsdPrecise } from "@/lib/format";
 import { useTraceDock } from "@/stores/trace-dock";
 import { spanColor } from "./span-colors";
 
@@ -286,7 +287,12 @@ export function RunStatusStrip({
         <span style={{ color: "var(--text-4)", margin: "0 8px" }}>·</span>
         <span style={{ fontVariantNumeric: "tabular-nums" }}>{dur}</span>
         <span style={{ color: "var(--text-4)", margin: "0 8px" }}>·</span>
-        <span style={{ fontVariantNumeric: "tabular-nums" }}>${summary.total_cost_usd.toFixed(4)}</span>
+        <span
+          style={{ fontVariantNumeric: "tabular-nums" }}
+          title={formatCostUsdPrecise(summary.total_cost_usd)}
+        >
+          {formatCostUsd(summary.total_cost_usd)}
+        </span>
       </div>
 
       {/* CurrentSpan chip */}
