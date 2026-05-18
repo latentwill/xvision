@@ -88,6 +88,7 @@ function createChartStub() {
     },
     timeScaleApi,
     timeScale: vi.fn(() => timeScaleApi),
+    priceScale: vi.fn(() => ({ applyOptions: vi.fn() })),
     remove: vi.fn(),
   };
 }

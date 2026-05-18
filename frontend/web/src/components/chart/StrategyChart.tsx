@@ -10,6 +10,7 @@ import type { ResolvedTheme } from "@/theme/themes";
 import { useTheme } from "@/theme/useTheme";
 import { chartTheme, normalizeChartTheme } from "./chart-theme";
 import { ChartContainer, type RangePreset } from "./ChartContainer";
+import { fitChartContent } from "./chart-fit";
 
 const SCENARIO_PALETTE = [
   "#22d3ee",
@@ -73,7 +74,7 @@ export function StrategyChart({
       );
     }
 
-    c.timeScale().fitContent();
+    fitChartContent(c);
 
     return () => c.remove();
   }, [payload, activeTheme, scenarioColors]);

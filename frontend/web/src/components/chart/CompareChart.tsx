@@ -5,6 +5,7 @@ import type { ResolvedTheme } from "@/theme/themes";
 import { useTheme } from "@/theme/useTheme";
 import { chartTheme, normalizeChartTheme } from "./chart-theme";
 import { ChartContainer, type RangePreset } from "./ChartContainer";
+import { fitChartContent } from "./chart-fit";
 
 const RUN_COLORS = [
   "#22d3ee",
@@ -81,7 +82,10 @@ export function CompareChart({
       );
     });
 
-    c.timeScale().fitContent();
+    // CompareChart's price series live on the `left` scale (see the
+    // `priceScaleId: "left"` config above); fitChartContent's default
+    // `right` is a no-op for this chart, so pass the actual id.
+    fitChartContent(c, ["left"]);
 
     return () => c.remove();
   }, [payload, activeTheme, showBackdrop]);
