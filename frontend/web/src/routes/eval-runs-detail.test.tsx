@@ -9,6 +9,7 @@ import * as evalApi from "@/api/eval";
 import * as evalReviewApi from "@/api/eval-review";
 import * as scenariosApi from "@/api/scenarios";
 import * as strategyApi from "@/api/strategies";
+import { useTraceDock } from "@/stores/trace-dock";
 import type { DecisionRowDto, RunDetail } from "@/api/types.gen";
 
 vi.mock("@/api/eval", async () => {
@@ -22,6 +23,7 @@ vi.mock("@/api/eval", async () => {
     downloadEvalRunExport: vi.fn(),
     retryRun: vi.fn(),
     listRuns: vi.fn(),
+    deleteRun: vi.fn(),
   };
 });
 
@@ -341,8 +343,8 @@ describe("EvalRunDetailRoute", () => {
     const actions = await screen.findByTestId("eval-run-actions");
     expect(actions.className).toContain("grid-flow-col");
     expect(actions.className).toContain("auto-cols-fr");
-    // Failed run shows Retry + Download in the same row.
-    expect(actions.querySelectorAll("button").length).toBe(2);
+    // Failed run shows Retry + Download + Delete in the same row.
+    expect(actions.querySelectorAll("button").length).toBe(3);
   });
 
   it("links the trace surface to the actual eval run id", async () => {
@@ -666,6 +668,80 @@ describe("EvalRunDetailRoute", () => {
   });
 
   // ── status pill + running animation ──────────────────────────────────
+
+  it("offers Retry on cancelled runs (alongside failed)", async () => {
+    vi.mocked(evalApi.getRun).mockResolvedValue(
+      detail({
+        summary: {
+          ...detail().summary,
+          status: "cancelled",
+          completed_at: "2026-05-13T14:01:00Z",
+          error: "cancelled by user",
+        },
+      }),
+    );
+
+    renderDetail();
+
+    expect(
+      await screen.findByRole("button", { name: "Retry eval run 01LIVE" }),
+    ).toBeInTheDocument();
+  });
+
+  it("Delete button calls the eval DELETE route and navigates back to /eval-runs", async () => {
+    vi.mocked(evalApi.getRun).mockResolvedValue(
+      detail({
+        summary: {
+          ...detail().summary,
+          status: "completed",
+          completed_at: "2026-05-13T14:01:00Z",
+        },
+      }),
+    );
+    vi.mocked(evalApi.deleteRun).mockResolvedValue(undefined as never);
+
+    render(
+      <MemoryRouter initialEntries={["/eval-runs/01LIVE"]}>
+        <QueryClientProvider
+          client={
+            new QueryClient({
+              defaultOptions: { queries: { retry: false } },
+            })
+          }
+        >
+          <Routes>
+            <Route path="/eval-runs/:runId" element={<EvalRunDetailRoute />} />
+            <Route
+              path="/eval-runs"
+              element={<div data-testid="eval-runs-landing">runs landing</div>}
+            />
+          </Routes>
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+
+    const del = await screen.findByRole("button", {
+      name: "Delete eval run 01LIVE",
+    });
+    fireEvent.click(del);
+
+    await waitFor(() => expect(evalApi.deleteRun).toHaveBeenCalled());
+    expect(vi.mocked(evalApi.deleteRun).mock.calls[0]?.[0]).toBe("01LIVE");
+    await screen.findByTestId("eval-runs-landing");
+  });
+
+  it("clears the trace-dock active run when the inspector unmounts", async () => {
+    vi.mocked(evalApi.getRun).mockResolvedValue(detail());
+
+    const { unmount } = renderDetail();
+
+    await screen.findByRole("button", { name: /stop eval run/i });
+    expect(useTraceDock.getState().activeRunId).toBe("01LIVE");
+
+    unmount();
+
+    expect(useTraceDock.getState().activeRunId).toBeNull();
+  });
 
   it("renders status pill from run.status while the run is running", async () => {
     vi.mocked(evalApi.getRun).mockResolvedValue(detail());

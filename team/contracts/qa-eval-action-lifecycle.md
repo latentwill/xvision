@@ -5,7 +5,7 @@ wave: qa-operator-2026-05-18
 worktree: .worktrees/qa-eval-action-lifecycle
 branch: task/qa-eval-action-lifecycle
 base: origin/main
-status: ready
+status: claimed
 depends_on: []
 blocks: []
 stacking: declared:eval-inspector-header-polish
@@ -17,15 +17,22 @@ allowed_paths:
   - frontend/web/src/routes/eval-runs-detail-mobile.test.tsx
   - frontend/web/src/routes/eval-runs.test.tsx
   - frontend/web/src/features/eval-runs/**
-  - frontend/web/src/stores/eval-capsule.ts
-  - frontend/web/src/stores/eval-capsule.test.ts
-  - frontend/web/src/api/eval-runs.ts
-  - frontend/web/src/api/eval-runs.test.ts
+  # 2026-05-18: amended. The "eval capsule" the operator named is
+  # `RunStatusStrip` rendered via `StripDockSlot` from the trace-dock
+  # store — there is no `eval-capsule` store. Updated allowed_paths to
+  # reflect the real wiring so the cancelled-timer + capsule-bleed
+  # fixes can live alongside the inspector header edits. `TraceDock.tsx`
+  # remains forbidden (owned by qa-trace-dock-resizable). Neither
+  # `StripDockSlot.tsx` nor `RunStatusStrip.tsx` is in OWNERSHIP.md or
+  # CONFLICT_ZONES.md.
+  - frontend/web/src/features/agent-runs/StripDockSlot.tsx
+  - frontend/web/src/features/agent-runs/StripDockSlot.test.tsx
 forbidden_paths:
   - crates/**
   - crates/xvision-engine/migrations/**
   - frontend/web/src/components/primitives/Pill.tsx
   - frontend/web/src/features/agent-runs/TraceDock.tsx
+  - frontend/web/src/features/agent-runs/RunStatusStrip.tsx
 interfaces_used:
   - EvalRunSummary (existing)
   - useEvalRunLabels (existing)

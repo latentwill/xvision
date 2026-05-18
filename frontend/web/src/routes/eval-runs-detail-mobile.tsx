@@ -64,6 +64,8 @@ export function MobileEvalRunDetail({
   cancelling,
   onRetry,
   retrying,
+  onDelete,
+  deleting,
 }: {
   detail: RunDetail;
   labels: EvalRunLabels;
@@ -72,6 +74,8 @@ export function MobileEvalRunDetail({
   cancelling: boolean;
   onRetry: () => void;
   retrying: boolean;
+  onDelete: () => void;
+  deleting: boolean;
 }) {
   const { summary } = detail;
   const isLive = isInflightRunStatus(summary.status);
@@ -105,6 +109,8 @@ export function MobileEvalRunDetail({
             liveDuration={liveDuration}
             onRetry={onRetry}
             retrying={retrying}
+            onDelete={onDelete}
+            deleting={deleting}
           />
         )}
         {tab === "DECISIONS" && <DecisionsTab decisions={detail.decisions} />}
@@ -244,6 +250,8 @@ function SummaryTab({
   liveDuration,
   onRetry,
   retrying,
+  onDelete,
+  deleting,
 }: {
   detail: RunDetail;
   labels: EvalRunLabels;
@@ -252,6 +260,8 @@ function SummaryTab({
   liveDuration: number;
   onRetry: () => void;
   retrying: boolean;
+  onDelete: () => void;
+  deleting: boolean;
 }) {
   const { summary, decisions, equity_curve } = detail;
   return (
@@ -328,6 +338,8 @@ function SummaryTab({
         summary={summary}
         onRetry={onRetry}
         retrying={retrying}
+        onDelete={onDelete}
+        deleting={deleting}
       />
     </div>
   );
@@ -461,12 +473,19 @@ function RunActions({
   summary,
   onRetry,
   retrying,
+  onDelete,
+  deleting,
 }: {
   summary: RunSummary;
   onRetry: () => void;
   retrying: boolean;
+  onDelete: () => void;
+  deleting: boolean;
 }) {
-  const canRetry = summary.status === "failed";
+  // Cancelled runs are eligible for retry alongside failed runs — see
+  // the desktop SummaryCard comment for the rationale.
+  const canRetry =
+    summary.status === "failed" || summary.status === "cancelled";
   const terminal = isTerminalStatus(summary.status);
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
@@ -483,7 +502,6 @@ function RunActions({
     }
   }
 
-  if (!canRetry && !terminal) return null;
   return (
     <div className="flex flex-col gap-2">
       <div className="grid grid-flow-col auto-cols-fr gap-2">
@@ -509,6 +527,15 @@ function RunActions({
             {downloading ? "Preparing JSON…" : "Download JSON"}
           </button>
         )}
+        <button
+          type="button"
+          aria-label={`Delete eval run ${summary.id}`}
+          onClick={onDelete}
+          disabled={deleting}
+          className="rounded-sm border border-danger/40 bg-danger/[0.06] px-2.5 py-1.5 text-[12px] text-danger hover:border-danger/70 hover:bg-danger/[0.12] hover:text-text disabled:opacity-50"
+        >
+          {deleting ? "Deleting…" : "Delete"}
+        </button>
       </div>
       {downloadError && (
         <div className="rounded-sm border border-danger/30 bg-danger/[0.06] px-2 py-1 text-[12px] text-danger">
