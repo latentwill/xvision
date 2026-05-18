@@ -272,7 +272,15 @@ impl TraderOutput {
         let mut first_error: Option<(String, bool)> = None; // (message, was_missing_field)
         for candidate in trader_output_candidates(raw) {
             match serde_json::from_str::<Self>(&candidate) {
-                Ok(parsed) => {
+                Ok(mut parsed) => {
+                    // Normalize the action to lowercase before validating
+                    // against the canonical vocabulary. Qwen 3.6 and other
+                    // models occasionally emit title-cased forms ("Hold",
+                    // "Long_Open"); the underlying enum stays lowercase so
+                    // downstream code is unaffected. Diagnostics that name
+                    // `self.action` therefore show the normalized form the
+                    // parser actually tested.
+                    parsed.action = parsed.action.to_ascii_lowercase();
                     parsed.validate(run_id, decision_index, response, raw)?;
                     return Ok(parsed);
                 }
@@ -526,6 +534,67 @@ mod tests {
         assert!(err
             .to_string()
             .contains("action must be one of long_open, short_open, flat, hold"));
+    }
+
+    #[test]
+    fn action_accepts_title_case() {
+        // Repro from operator's 2026-05-18 Qwen 3.6 run
+        // `01KRWHHBR8FVKM1NVJPQXD4D4B decision 0`: model emitted
+        // `"action": "Hold"` (title-cased) which the pre-fix strict
+        // match rejected. After the parser-side lowercase, "Hold"
+        // normalises to "hold" and validates cleanly.
+        let parsed = TraderOutput::parse_strict(
+            r#"{"action":"Hold","conviction":0.7,"justification":"range chop"}"#,
+            "01KRWHHBR8FVKM1NVJPQXD4D4B",
+            0,
+        )
+        .expect("title-cased Hold must parse after lowercase normalisation");
+        assert_eq!(parsed.action, "hold");
+    }
+
+    #[test]
+    fn action_accepts_upper_case() {
+        let parsed = TraderOutput::parse_strict(
+            r#"{"action":"LONG_OPEN","conviction":0.9,"justification":"breakout"}"#,
+            "01TEST",
+            1,
+        )
+        .expect("UPPER_CASE action must parse after lowercase normalisation");
+        assert_eq!(parsed.action, "long_open");
+    }
+
+    #[test]
+    fn action_accepts_mixed_case() {
+        let parsed = TraderOutput::parse_strict(
+            r#"{"action":"Short_Open","conviction":0.6,"justification":"downtrend confirmed"}"#,
+            "01TEST",
+            2,
+        )
+        .expect("mixed-case action must parse after lowercase normalisation");
+        assert_eq!(parsed.action, "short_open");
+    }
+
+    #[test]
+    fn unknown_action_after_lowercase_still_fails() {
+        // Defence against accidental vocabulary widening: lowercasing
+        // shouldn't sneak a non-canonical action past the gate. "Buy"
+        // lowercases to "buy", which is still not in the canonical
+        // set — the diagnostic reflects the normalised form the
+        // parser actually tested, not the raw agent string.
+        let err = TraderOutput::parse_strict(
+            r#"{"action":"Buy","conviction":0.7,"justification":"momentum"}"#,
+            "01TEST",
+            4,
+        )
+        .expect_err("unknown action 'Buy' must still fail after lowercase");
+
+        assert_eq!(err.kind, TraderFailureKind::InvalidField);
+        let message = err.to_string();
+        assert!(
+            message.contains("got `buy`"),
+            "diagnostic should reference normalised form, got: {message}"
+        );
+        assert!(message.contains("action must be one of long_open, short_open, flat, hold"));
     }
 
     #[test]
