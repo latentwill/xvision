@@ -104,7 +104,10 @@ export function FlameGraph({
         {rows.map((r) => {
           const color = spanColor(r.span.kind);
           const selected = r.span.span_id === selectedSpanId;
-          const cost = (r.span.attributes as { cost_usd?: number }).cost_usd;
+          // Real export-backed model.call spans land on `span.cost` (see
+          // normalisation in api/agent-runs.ts); the legacy `attributes.cost_usd`
+          // path is preserved for mock fixtures and any older event shapes.
+          const cost = r.span.cost ?? (r.span.attributes as { cost_usd?: number }).cost_usd;
           const costDisplay = cost != null ? ` · ${formatCostUsd(cost)}` : "";
           const costPrecise = cost != null ? ` (${formatCostUsdPrecise(cost)})` : "";
           const pulseClass = r.span.status === "in_progress" ? "animate-pulse" : "";
