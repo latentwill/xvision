@@ -125,6 +125,12 @@ impl AlpacaOrder {
 pub struct AlpacaAccount {
     pub equity: f64,
     pub last_equity: f64,
+    /// Settled USD cash. The constraint Alpaca validates crypto buys
+    /// against — distinct from `equity`, which marks open positions.
+    pub cash: f64,
+    /// `buying_power` from Alpaca. For paper crypto this tracks settled cash;
+    /// for margin equities accounts it can exceed `cash`.
+    pub buying_power: f64,
 }
 
 /// Alpaca position snapshot.
@@ -262,8 +268,15 @@ impl AlpacaApi for ApacClientApi {
 
         let equity = acct.equity.to_f64().unwrap_or(0.0);
         let last_equity = acct.last_equity.to_f64().unwrap_or(0.0);
+        let cash = acct.cash.to_f64().unwrap_or(0.0);
+        let buying_power = acct.buying_power.to_f64().unwrap_or(0.0);
 
-        Ok(AlpacaAccount { equity, last_equity })
+        Ok(AlpacaAccount {
+            equity,
+            last_equity,
+            cash,
+            buying_power,
+        })
     }
 
     async fn list_positions(&self) -> Result<Vec<AlpacaPosition>, ExecutorError> {
@@ -703,6 +716,8 @@ mod tests {
         AlpacaAccount {
             equity: 100_000.0,
             last_equity: 99_500.0,
+            cash: 100_000.0,
+            buying_power: 100_000.0,
         }
     }
 
