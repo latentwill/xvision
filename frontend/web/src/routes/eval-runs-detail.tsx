@@ -7,6 +7,7 @@ import { Pill } from "@/components/primitives/Pill";
 import { ApiError } from "@/api/client";
 import {
   cancelRun,
+  deleteRun,
   downloadEvalRunExport,
   evalKeys,
   getRun,
@@ -96,6 +97,13 @@ export function EvalRunDetailRoute() {
       }
     },
   });
+  const remove = useMutation({
+    mutationFn: deleteRun,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: evalKeys.all });
+      navigate("/eval-runs");
+    },
+  });
   useLiveRunStream(id, q.data, qc);
   const isPhone = useIsPhone();
 
@@ -108,6 +116,18 @@ export function EvalRunDetailRoute() {
       .getState()
       .setActiveRun(id, status && isInflightRunStatus(status) ? "live" : "post-hoc");
   }, [id, q.data?.summary.status]);
+
+  // Drop the active run from the trace-dock store on unmount so the
+  // floating capsule doesn't bleed onto the eval list or any other
+  // route after the operator navigates away from the inspector.
+  useEffect(() => {
+    return () => {
+      const dock = useTraceDock.getState();
+      if (dock.activeRunId === id) {
+        dock.setActiveRun(null, "post-hoc");
+      }
+    };
+  }, [id]);
 
   if (q.isPending) {
     if (isPhone) return <MobileEvalRunDetailLoading id={id} />;
@@ -160,6 +180,8 @@ export function EvalRunDetailRoute() {
         cancelling={cancel.variables === detail.summary.id && cancel.isPending}
         onRetry={() => retry.mutate(detail.summary.id)}
         retrying={retry.variables === detail.summary.id && retry.isPending}
+        onDelete={() => remove.mutate(detail.summary.id)}
+        deleting={remove.variables === detail.summary.id && remove.isPending}
       />
     );
   }
@@ -178,6 +200,8 @@ export function EvalRunDetailRoute() {
         cancelling={cancel.variables === detail.summary.id && cancel.isPending}
         onRetry={() => retry.mutate(detail.summary.id)}
         retrying={retry.variables === detail.summary.id && retry.isPending}
+        onDelete={() => remove.mutate(detail.summary.id)}
+        deleting={remove.variables === detail.summary.id && remove.isPending}
       />
 
       <h2 className="font-serif italic text-[20px] text-text mt-8 mb-3">
@@ -321,6 +345,8 @@ function SummaryCard({
   cancelling,
   onRetry,
   retrying,
+  onDelete,
+  deleting,
 }: {
   summary: RunSummary;
   labels: EvalRunLabels;
@@ -329,11 +355,17 @@ function SummaryCard({
   cancelling: boolean;
   onRetry: () => void;
   retrying: boolean;
+  onDelete: () => void;
+  deleting: boolean;
 }) {
   const tone = STATUS_TONE[summary.status] ?? "default";
   const inflight = isInflightRunStatus(summary.status);
   const terminal = isTerminalStatus(summary.status);
-  const canRetry = summary.status === "failed";
+  // Cancelled runs are eligible for retry alongside failed runs — the
+  // operator typically wants to re-queue with the same inputs after
+  // halting. If the backend rejects the retry, the existing
+  // `retry.isError` path surfaces a classified error.
+  const canRetry = summary.status === "failed" || summary.status === "cancelled";
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const agentRunId = traceRunId(summary);
@@ -427,6 +459,15 @@ function SummaryCard({
                 {downloading ? "Preparing JSON…" : "Download JSON"}
               </button>
             ) : null}
+            <button
+              type="button"
+              aria-label={`Delete eval run ${summary.id}`}
+              onClick={onDelete}
+              disabled={deleting}
+              className="rounded-sm border border-danger/40 bg-danger/[0.06] px-2.5 py-1 text-[12px] text-danger hover:border-danger/70 hover:bg-danger/[0.12] hover:text-text disabled:opacity-50"
+            >
+              {deleting ? "Deleting…" : "Delete"}
+            </button>
           </div>
           <Pill tone={tone} animated={inflight}>
             <span
