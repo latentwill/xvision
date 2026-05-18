@@ -60,7 +60,7 @@ pub use rows::{
 };
 pub use sqlite::SqliteRecorder;
 pub use types::{
-    CapabilityPath, RiskLevel, RunStatus, SideEffectLevel, SpanKind, SpanStatus,
+    CapabilityPath, RiskLevel, RunStatus, SideEffectLevel, SpanAttributes, SpanKind, SpanStatus,
     ToolOrigin,
 };
 

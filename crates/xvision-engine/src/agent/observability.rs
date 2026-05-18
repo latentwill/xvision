@@ -26,7 +26,7 @@ use crate::agent::llm::{LlmRequest, Message, ToolDefinition};
 use xvision_observability::{
     AssistantTextDeltaEvent, BrokerCallFinishedEvent, BrokerCallOutcome, BrokerCallStartedEvent,
     BrokerSide, ModelCallFinishedEvent, RunEvent, RunEventBus, RunFinishedEvent, RunStartedEvent,
-    RunStatus, SpanFinishedEvent, SpanKind, SpanStartedEvent, SpanStatus,
+    RunStatus, SpanAttributes, SpanFinishedEvent, SpanKind, SpanStartedEvent, SpanStatus,
 };
 
 /// Serializable digest input for `compute_prompt_hash`. Private —
@@ -230,13 +230,28 @@ impl ObsEmitter {
 
     /// Open a `ModelCall` span. Caller pairs this with exactly one
     /// `emit_span_finished_*` call carrying the same `span_id`.
+    ///
+    /// `stage` is the `LLMSlot.role` label ("regime" / "intern" /
+    /// "trader" or any free-form per-strategy name) so the trace dock
+    /// can group spans by their pipeline role. Populates the
+    /// `SpanAttributes` bag with `run_id`, `provider`, `model`, and
+    /// the stage so F-7's planned Simple/Advanced toggle has the
+    /// fields to triage on — see harness audit F-2.
     pub async fn emit_model_call_started(
         &self,
         span_id: &str,
         parent_span_id: Option<String>,
         provider: &str,
         model: &str,
+        stage: Option<&str>,
     ) {
+        let attrs = SpanAttributes {
+            run_id: Some(self.run_id.clone()),
+            stage: stage.map(|s| s.to_string()),
+            model: Some(model.to_string()),
+            provider: Some(provider.to_string()),
+            ..SpanAttributes::default()
+        };
         self.bus
             .publish(RunEvent::SpanStarted(SpanStartedEvent {
                 span_id: span_id.to_string(),
@@ -247,7 +262,7 @@ impl ObsEmitter {
                 started_at: Utc::now(),
                 otel_trace_id: None,
                 otel_span_id: None,
-                attributes_json: None,
+                attributes_json: attrs.to_attributes_json(),
             }))
             .await;
     }
@@ -375,8 +390,20 @@ impl ObsEmitter {
         // `qa-trace-broker-spans` deliberately doesn't add a
         // `broker_calls` table (the contract forbids migrations);
         // attributes_json is the durable carrier.
-        let started_attrs = serde_json::json!({
-            "broker_call": {
+        // Broker spans carry both the qa-trace-broker-spans
+        // `broker_call` sub-object and the F-2 typed `SpanAttributes`
+        // bag in the same flat object. `merge_into_object` writes the
+        // typed fields at the top level and preserves `broker_call`
+        // verbatim — existing dashboard projection of `broker_call`
+        // continues to work.
+        let typed_attrs = SpanAttributes {
+            run_id: Some(self.run_id.clone()),
+            ..SpanAttributes::default()
+        };
+        let mut base = serde_json::Map::new();
+        base.insert(
+            "broker_call".to_string(),
+            serde_json::json!({
                 "side": side,
                 "symbol": symbol,
                 "qty": qty,
@@ -384,8 +411,9 @@ impl ObsEmitter {
                 "order_type": order_type,
                 "venue": venue,
                 "idempotency_key": idempotency_key,
-            }
-        });
+            }),
+        );
+        let started_attrs = typed_attrs.merge_into_object(base);
         self.bus
             .publish(RunEvent::SpanStarted(SpanStartedEvent {
                 span_id: span_id.to_string(),
@@ -396,7 +424,7 @@ impl ObsEmitter {
                 started_at: Utc::now(),
                 otel_trace_id: None,
                 otel_span_id: None,
-                attributes_json: Some(started_attrs.to_string()),
+                attributes_json: Some(started_attrs),
             }))
             .await;
         self.bus

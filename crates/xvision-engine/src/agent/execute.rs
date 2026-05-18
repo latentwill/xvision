@@ -231,8 +231,14 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
         // and prefixed `sha256:` for explicit algorithm tagging.
         let prompt_hash = crate::agent::observability::compute_prompt_hash(&req);
         if let Some(obs) = input.obs.as_ref() {
-            obs.emit_model_call_started(&span_id, None, &provider_str, &model_str)
-                .await;
+            obs.emit_model_call_started(
+                &span_id,
+                None,
+                &provider_str,
+                &model_str,
+                Some(&input.slot.role),
+            )
+            .await;
         }
 
         let resp = match input.dispatch.complete(req).await {
