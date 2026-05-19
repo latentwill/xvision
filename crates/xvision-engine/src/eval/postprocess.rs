@@ -220,7 +220,7 @@ mod tests {
     use super::*;
     use crate::agent::llm::MockDispatch;
     use crate::api::Actor;
-    use crate::eval::run::{MetricsSummary, Run, RunMode, RunStatus};
+    use crate::eval::run::{MetricsSummary, Run, RunMode};
     use chrono::Utc;
 
     async fn fresh_ctx() -> (ApiContext, tempfile::TempDir) {
@@ -231,14 +231,17 @@ mod tests {
         (ctx, dir)
     }
 
-    fn finalized_run() -> Run {
+    // Returns a freshly-queued Run with metrics pre-populated. The status is
+    // intentionally left as `RunStatus::Queued` so the tests' subsequent
+    // `store.finalize(...)` calls can transition queued → completed — that
+    // transition is the actual code path under test, and `eval/store.rs`'s
+    // finalize guard requires source status in `('queued', 'running')`.
+    fn queued_run() -> Run {
         let mut r = Run::new_queued(
             "strategy-h".into(),
             "crypto-bull-q1-2025".into(),
             RunMode::Backtest,
         );
-        r.status = RunStatus::Completed;
-        r.completed_at = Some(Utc::now());
         r.metrics = Some(MetricsSummary {
             total_return_pct: -3.2,
             sharpe: -0.4,
@@ -254,7 +257,7 @@ mod tests {
     async fn extract_and_record_persists_findings_and_indexes_them() {
         let (ctx, _dir) = fresh_ctx().await;
         let store = RunStore::new(ctx.db.clone());
-        let run = finalized_run();
+        let run = queued_run();
         store.create(&run).await.unwrap();
         store
             .finalize(&run.id, run.metrics.as_ref().unwrap())
@@ -294,7 +297,7 @@ mod tests {
     async fn extract_and_record_returns_zero_on_extractor_error() {
         let (ctx, _dir) = fresh_ctx().await;
         let store = RunStore::new(ctx.db.clone());
-        let run = finalized_run();
+        let run = queued_run();
         store.create(&run).await.unwrap();
         store
             .finalize(&run.id, run.metrics.as_ref().unwrap())
@@ -325,7 +328,7 @@ mod tests {
     async fn extract_and_record_returns_zero_when_extractor_returns_empty_array() {
         let (ctx, _dir) = fresh_ctx().await;
         let store = RunStore::new(ctx.db.clone());
-        let run = finalized_run();
+        let run = queued_run();
         store.create(&run).await.unwrap();
         store
             .finalize(&run.id, run.metrics.as_ref().unwrap())
