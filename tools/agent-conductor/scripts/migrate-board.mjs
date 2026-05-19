@@ -253,6 +253,54 @@ export function buildIssueViewArgs({ repo, number }) {
   return ['issue', 'view', String(number), '-R', repo, '--json', 'id,number,url'];
 }
 
+// Label pre-flight (Gap 2). `gh issue create --label <name>` aborts
+// with "could not add label: '<name>' not found" if the label doesn't
+// exist on the repo. The migration creates one issue per parsed track
+// with `track:<slug>` + `lane:<lane>` labels, so we ensure the union
+// set exists *before* any `gh issue create` runs. `--force` makes the
+// create idempotent: existing labels keep their color/description.
+export function buildLabelListArgs({ repo }) {
+  return ['label', 'list', '-R', repo, '--limit', '200', '--json', 'name'];
+}
+
+export function buildLabelCreateArgs({ repo, name, color, description }) {
+  return [
+    'label', 'create', name,
+    '-R', repo,
+    '--color', color,
+    '--description', description,
+    '--force',
+  ];
+}
+
+// Stable colour scheme for the migration's own labels. Tracks share a
+// single colour because their identity comes from the slug, not the
+// hue; lanes get distinct hues so the board is scannable at a glance.
+export const MIGRATION_LABEL_COLORS = Object.freeze({
+  'lane:foundation': { color: '0e8a16', description: 'Lane: foundation track' },
+  'lane:integration': { color: '1d76db', description: 'Lane: integration track' },
+  'lane:leaf': { color: 'fbca04', description: 'Lane: leaf track' },
+  trackDefault: { color: '5319e7', description: 'Per-track tag (agent-conductor board)' },
+});
+
+export function requiredLabelsForDescriptors(descriptors) {
+  const set = new Set();
+  for (const d of descriptors) {
+    if (d?.track) set.add(`track:${d.track}`);
+    if (d?.lane) set.add(`lane:${d.lane}`);
+  }
+  return [...set].sort();
+}
+
+export function labelSpec(name) {
+  if (name in MIGRATION_LABEL_COLORS) return MIGRATION_LABEL_COLORS[name];
+  if (name.startsWith('track:')) return MIGRATION_LABEL_COLORS.trackDefault;
+  // Fallback for an unknown lane name — surface as a neutral grey but
+  // still create it so the issue-create doesn't blow up. The caller's
+  // schema validation should catch malformed lanes upstream.
+  return { color: 'ededed', description: `Label: ${name}` };
+}
+
 export function buildProjectViewArgs({ projectOwner, projectNumber }) {
   return ['project', 'view', String(projectNumber), '--owner', projectOwner, '--format', 'json'];
 }
@@ -308,6 +356,33 @@ export function makeGhClient({ repo, projectOwner, projectNumber }) {
   const repoArg = `${owner}/${name}`;
 
   return {
+    async ensureLabels(labels) {
+      // Pre-flight: read once, create the missing ones with --force.
+      // gh label create --force is idempotent (no-op on an exact match,
+      // updates colour/description if either drifted). Done sequentially
+      // to avoid hammering the API; the set is small (10-20 labels).
+      const existing = new Set(
+        ((await ghJson(buildLabelListArgs({ repo: repoArg }))) ?? []).map(
+          (l) => l.name,
+        ),
+      );
+      let created = 0;
+      for (const name of labels) {
+        if (existing.has(name)) continue;
+        const spec = labelSpec(name);
+        await execFileAsync(
+          'gh',
+          buildLabelCreateArgs({
+            repo: repoArg,
+            name,
+            color: spec.color,
+            description: spec.description,
+          }),
+        );
+        created++;
+      }
+      return { ensured: labels.length, created };
+    },
     async findIssueByTrackLabel(track) {
       const label = `track:${track}`;
       const data = await ghJson(buildIssueListArgs({ repo: repoArg, label }));
@@ -333,9 +408,16 @@ export function makeGhClient({ repo, projectOwner, projectNumber }) {
     async getProjectInfo() {
       const data = await ghJson(buildProjectViewArgs({ projectOwner, projectNumber }));
       const fields = await ghJson(buildProjectFieldListArgs({ projectOwner, projectNumber }));
+      // Keys are lower-cased on insert. GitHub Projects v2 ships every
+      // new Project with a default `Status` field (capital S) that
+      // cannot be deleted, renamed, or shadowed by a sibling `status`
+      // field — so the schema-mandated `status` key has to match the
+      // capital-S default in practice. Lower-casing here means
+      // descriptor lookups (`project.fields['status']`) hit the right
+      // field regardless of how GitHub capitalises the default.
       const byName = {};
       for (const f of fields?.fields ?? []) {
-        byName[f.name] = {
+        byName[String(f.name).toLowerCase()] = {
           id: f.id,
           dataType: f.dataType,
           options: Object.fromEntries((f.options ?? []).map((o) => [o.name, o.id])),
@@ -479,7 +561,14 @@ export async function runMigration({
     return { exitCode: 2 };
   }
 
-  // Live: per-row reconcile.
+  // Live: pre-flight the label set so `gh issue create --label` does
+  // not abort on the first new track. `ensureLabels` is idempotent.
+  if (typeof client.ensureLabels === 'function') {
+    const labels = requiredLabelsForDescriptors(plan.map((p) => p.descriptor));
+    await client.ensureLabels(labels);
+  }
+
+  // Per-row reconcile.
   const project = await client.getProjectInfo();
 
   let created = 0;
