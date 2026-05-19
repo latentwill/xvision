@@ -220,7 +220,7 @@ mod tests {
     use super::*;
     use crate::agent::llm::MockDispatch;
     use crate::api::Actor;
-    use crate::eval::run::{MetricsSummary, Run, RunMode, RunStatus};
+    use crate::eval::run::{MetricsSummary, Run, RunMode};
     use chrono::Utc;
 
     async fn fresh_ctx() -> (ApiContext, tempfile::TempDir) {
@@ -231,35 +231,37 @@ mod tests {
         (ctx, dir)
     }
 
-    fn finalized_run() -> Run {
-        let mut r = Run::new_queued(
+    // Returns a freshly-queued Run alongside the metrics the caller will pass
+    // into `RunStore::finalize`. The Run itself has `metrics: None` so the DB
+    // row created by `store.create(&run)` matches production — the queued row
+    // never has `metrics_json` populated until `finalize` writes it. Tests
+    // pass the returned metrics into `store.finalize(...)` to drive the
+    // queued → completed transition, which is the actual code path under
+    // test.
+    fn queued_run() -> (Run, MetricsSummary) {
+        let run = Run::new_queued(
             "strategy-h".into(),
             "crypto-bull-q1-2025".into(),
             RunMode::Backtest,
         );
-        r.status = RunStatus::Completed;
-        r.completed_at = Some(Utc::now());
-        r.metrics = Some(MetricsSummary {
+        let metrics = MetricsSummary {
             total_return_pct: -3.2,
             sharpe: -0.4,
             max_drawdown_pct: 18.0,
             win_rate: 0.41,
             n_trades: 12,
             n_decisions: 30,
-        });
-        r
+        };
+        (run, metrics)
     }
 
     #[tokio::test]
     async fn extract_and_record_persists_findings_and_indexes_them() {
         let (ctx, _dir) = fresh_ctx().await;
         let store = RunStore::new(ctx.db.clone());
-        let run = finalized_run();
+        let (run, metrics) = queued_run();
         store.create(&run).await.unwrap();
-        store
-            .finalize(&run.id, run.metrics.as_ref().unwrap())
-            .await
-            .unwrap();
+        store.finalize(&run.id, &metrics).await.unwrap();
 
         let canned = r#"[
             {"kind":"underperformance","severity":"warning","summary":"Total return below baseline","evidence":{"value":-3.2}},
@@ -294,12 +296,9 @@ mod tests {
     async fn extract_and_record_returns_zero_on_extractor_error() {
         let (ctx, _dir) = fresh_ctx().await;
         let store = RunStore::new(ctx.db.clone());
-        let run = finalized_run();
+        let (run, metrics) = queued_run();
         store.create(&run).await.unwrap();
-        store
-            .finalize(&run.id, run.metrics.as_ref().unwrap())
-            .await
-            .unwrap();
+        store.finalize(&run.id, &metrics).await.unwrap();
 
         // Mock returns garbage that the extractor's JSON-array slicer can't parse.
         let dispatch: Arc<dyn LlmDispatch> = Arc::new(MockDispatch::echo("definitely not a json array"));
@@ -325,12 +324,9 @@ mod tests {
     async fn extract_and_record_returns_zero_when_extractor_returns_empty_array() {
         let (ctx, _dir) = fresh_ctx().await;
         let store = RunStore::new(ctx.db.clone());
-        let run = finalized_run();
+        let (run, metrics) = queued_run();
         store.create(&run).await.unwrap();
-        store
-            .finalize(&run.id, run.metrics.as_ref().unwrap())
-            .await
-            .unwrap();
+        store.finalize(&run.id, &metrics).await.unwrap();
 
         let dispatch: Arc<dyn LlmDispatch> = Arc::new(MockDispatch::echo("[]"));
         let n = extract_and_record(&ctx, &run.id, dispatch, DEFAULT_FINDINGS_MODEL).await;

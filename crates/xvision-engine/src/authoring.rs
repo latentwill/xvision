@@ -823,8 +823,15 @@ mod tests {
         .unwrap();
         let v = validate_draft(&store, &out.id).await.unwrap();
         assert!(!v.ok);
+        // Match the discriminating phrase from the actual error emitted at line 501:
+        // "attach at least one complete agent with provider/model before validation".
+        // We assert on "attach at least one complete agent" — specific enough to
+        // distinguish this error from other validation errors, but not so brittle
+        // that rephrasing the trailing "before validation" clause breaks the test.
         assert!(
-            v.errors.iter().any(|e| e.contains("attached agent")),
+            v.errors
+                .iter()
+                .any(|e| e.contains("attach at least one complete agent")),
             "expected missing attached agent error, got {:?}",
             v.errors,
         );
