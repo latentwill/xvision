@@ -4,8 +4,9 @@
 //!
 //! Subcommand registration only at the bottom of the file (`Op::*` →
 //! `run_*` dispatch arm). The `review` sibling lives in
-//! `commands/eval/review.rs`; everything else stays here.
+//! `commands/eval/review.rs`; `batch` lives in `commands/eval/batch.rs`.
 
+pub mod batch;
 pub mod review;
 
 use std::path::PathBuf;
@@ -72,6 +73,8 @@ pub enum Op {
     Export(ExportArgs),
     /// Generate an analytical review of a completed run.
     Review(review::ReviewArgs),
+    /// Launch, wait, and report a batch of eval runs across multiple scenarios.
+    Batch(batch::BatchArgs),
 }
 
 #[derive(Args, Debug)]
@@ -233,6 +236,7 @@ pub async fn run(cmd: EvalCmd) -> CliResult<()> {
         Op::Attest(args) => run_attest(args).await,
         Op::Export(args) => run_export(args).await,
         Op::Review(args) => review::run_review_cmd(args).await,
+        Op::Batch(args) => run_batch_cmd(args).await,
     }
 }
 
@@ -643,6 +647,12 @@ async fn run_scenarios(args: ScenariosArgs) -> CliResult<()> {
         xvn_home: args.xvn_home,
     })
     .await
+}
+
+async fn run_batch_cmd(args: batch::BatchArgs) -> CliResult<()> {
+    match args.op {
+        batch::BatchOp::Run(run_args) => batch::run_batch_cmd(run_args).await,
+    }
 }
 
 async fn run_attest(args: AttestArgs) -> CliResult<()> {
