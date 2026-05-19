@@ -19,9 +19,10 @@ safe to claim in parallel.
 
 ## Follow-ups / research needed
 
-- **Capability-first agent model** (new). The current role-based design
-  still bakes too much behavior into `trader` vs `router` naming. Refactor
-  toward explicit capabilities that are granted separately from labels:
+- **Capability-first agent model — a.k.a. the agent-role refactor** (new
+  — needs spec). The current role-based design still bakes too much
+  behavior into `trader` vs `router` naming. Refactor toward explicit
+  capabilities that are granted separately from labels:
   - a role label is user-facing / prompt-defined
   - behavior comes from the prompt and attached capabilities, not the
     class name
@@ -31,9 +32,38 @@ safe to claim in parallel.
     needs it
   - newer users can still start from templates, but templates should be
     capability presets / examples layered on top of the base system
-  Output before contract: short design note under `docs/superpowers/notes/`
-  covering capability schema, enforcement points, and the migration path
-  from role-gated eval to capability-gated eval.
+
+  **Folded in (was an F-11 sub-item, now part of this refactor):** the
+  **recorder wireup for the eval path**. Today `tool_calls`, `events`,
+  `supervisor_notes`, `approvals`, `sandbox_results`, `checkpoints`,
+  `artifacts` are all empty for eval-driven runs because the harness
+  side and the eval-executor side maintain parallel emission paths —
+  that asymmetry is itself a symptom of the role/capability confusion
+  this refactor resolves. The spec should specify a single capability-
+  gated recorder pipeline that both harness and eval-executor invoke,
+  so the operational tables fill regardless of which surface produced
+  the run. Originally filed as the final F-11 bullet of
+  `team/intake/2026-05-19-eval-traces-end-to-end-audit.md` (item f);
+  lifted here because piecemeal mirroring without the capability model
+  creates yet another role-shaped emission layer. **Not deferred** —
+  gated on the capability spec, not on indefinite future work.
+
+  **Also folded in (related QA carryover):** the canonical strategy
+  template currently ships no trader agent, so `xvn_validate_draft`
+  immediately fails for any fresh template (a strategy needs at least
+  one agent with a `trader` role per the strategies refactor). The
+  fix shape — "default capability set" on every template — is exactly
+  the capability-preset concept the refactor is about. Tracked under
+  this item rather than as a one-off so the spec resolves both at
+  once. Surfaced 2026-05-20 by PR #369 (the
+  `validate_draft_succeeds_for_fresh_template` test is currently
+  expected to fail on `main` until this lands).
+
+  Output before contract: short design note under
+  `docs/superpowers/notes/` covering capability schema, enforcement
+  points, the unified recorder contract, the default-capability-set
+  on starter templates, and the migration path from role-gated eval
+  to capability-gated eval.
 
 - **User-configurable review-agent profile** (raised 2026-05-18 from
   operator QA round 2). The current review/research agent profile
