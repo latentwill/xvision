@@ -298,9 +298,15 @@ mod tests {
 
     async fn fresh_pool() -> SqlitePool {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-        // Apply only the agents migration — sufficient for store tests.
-        let migration = include_str!("../../migrations/005_agents.sql");
-        sqlx::query(migration).execute(&pool).await.unwrap();
+        // 005 creates the agents + agent_slots tables.
+        let migration_005 = include_str!("../../migrations/005_agents.sql");
+        sqlx::query(migration_005).execute(&pool).await.unwrap();
+        // 019 adds agent_slots.prompt_version, which AgentStore::insert_slot
+        // writes on every save. Without it, every test that creates an
+        // agent fails on insert.
+        let migration_019 =
+            include_str!("../../migrations/019_agent_slot_prompt_version.sql");
+        sqlx::query(migration_019).execute(&pool).await.unwrap();
         pool
     }
 
