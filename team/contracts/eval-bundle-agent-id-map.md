@@ -13,8 +13,8 @@ allowed_paths:
   - crates/xvision-engine/src/eval/store.rs                       # add agents.agent_id column to eval_runs read/write
   - crates/xvision-engine/src/eval/run.rs                         # populate agent_id (the long-lived ULID) at eval start
   - crates/xvision-engine/src/api/eval.rs                         # expose lookup helper through the API surface used by the dashboard
-  - crates/xvision-engine/migrations/021_eval_runs_agents_agent_id.sql       # NEW
-  - crates/xvision-engine/migrations/021_eval_runs_agents_agent_id.down.sql  # NEW
+  - crates/xvision-engine/migrations/022_eval_runs_agents_agent_id.sql       # NEW
+  - crates/xvision-engine/migrations/022_eval_runs_agents_agent_id.down.sql  # NEW
   - team/MANIFEST.md                                              # coordinate registry update — if eval-causal-input-sanitization (PR #354) already landed migration 020 and its MANIFEST update, this PR adds row "021 | eval-bundle-agent-id-map"
   - crates/xvision-engine/tests/**
 forbidden_paths:

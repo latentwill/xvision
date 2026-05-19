@@ -415,9 +415,7 @@ mod tests {
     use crate::eval::run::{Run, RunMode, RunStatus};
     use crate::eval::store::RunStore;
     use crate::strategies::store::{strategy_store_dir, FilesystemStore, StrategyStore};
-    use crate::strategies::{
-        manifest::PublicManifest, risk::RiskPreset, AgentRef, PipelineDef, Strategy,
-    };
+    use crate::strategies::{manifest::PublicManifest, risk::RiskPreset, AgentRef, PipelineDef, Strategy};
     use chrono::Utc;
     use ulid::Ulid;
 
@@ -480,6 +478,7 @@ mod tests {
         Run {
             id: Ulid::new().to_string(),
             agent_id: strategy_id.to_string(),
+            agents_agent_id: None,
             scenario_id: scenario_id.to_string(),
             params_override: None,
             mode: RunMode::Backtest,
@@ -538,7 +537,8 @@ mod tests {
         let (ctx, _dir) = fresh_ctx().await;
         let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
 
-        let strategy = strategy_referencing("01HZSTRATEGY_RUN0000000001", "Run Strategy", "01HZAGENT_WITHRUN");
+        let strategy =
+            strategy_referencing("01HZSTRATEGY_RUN0000000001", "Run Strategy", "01HZAGENT_WITHRUN");
         store.save(&strategy).await.unwrap();
 
         let run = queued_run("01HZSTRATEGY_RUN0000000001", SEEDED_SCENARIO_ID);
@@ -557,7 +557,8 @@ mod tests {
         let (ctx, _dir) = fresh_ctx().await;
         let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
 
-        let strategy = strategy_referencing("01HZSTRATEGY_LIMIT000000001", "Limit Strategy", "01HZAGENT_LIMIT");
+        let strategy =
+            strategy_referencing("01HZSTRATEGY_LIMIT000000001", "Limit Strategy", "01HZAGENT_LIMIT");
         store.save(&strategy).await.unwrap();
 
         let run_store = RunStore::new(ctx.db.clone());
