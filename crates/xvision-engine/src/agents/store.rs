@@ -219,7 +219,7 @@ impl AgentStore {
 
     async fn load_slots(&self, agent_id: &str) -> Result<Vec<AgentSlot>> {
         let rows = sqlx::query(
-            "SELECT name, provider, model, system_prompt, skill_ids_json, max_tokens, prompt_version, inputs_policy \
+            "SELECT name, provider, model, system_prompt, skill_ids_json, max_tokens, prompt_version, inputs_policy, bar_history_limit \
              FROM agent_slots WHERE agent_id = ? ORDER BY slot_index ASC",
         )
         .bind(agent_id)
@@ -242,6 +242,15 @@ impl AgentStore {
             // on a future typo.
             let inputs_policy_s: String = row.try_get("inputs_policy").unwrap_or_default();
             let inputs_policy = InputsPolicy::parse_or_raw(&inputs_policy_s);
+            // `bar_history_limit` was added in migration 022 as a
+            // NULLable INTEGER. `None` (the default) preserves today's
+            // behavior; non-positive ints are treated as `None` so a
+            // stray `0` can't accidentally clear the trader's view.
+            let stored_limit: Option<i64> = row.try_get("bar_history_limit").ok().flatten();
+            let bar_history_limit = match stored_limit {
+                Some(n) if n > 0 => Some(n as u32),
+                _ => None,
+            };
             out.push(AgentSlot {
                 name: row.try_get("name")?,
                 provider: row.try_get("provider")?,
@@ -251,6 +260,7 @@ impl AgentStore {
                 max_tokens,
                 prompt_version: row.try_get("prompt_version").unwrap_or_default(),
                 inputs_policy,
+                bar_history_limit,
             });
         }
         Ok(out)
@@ -268,10 +278,21 @@ async fn insert_slot(
     // client sent on `slot.prompt_version` is silently overridden so the
     // column is a true content digest, not free-text metadata. See F-3.
     let prompt_version = AgentSlot::compute_prompt_version(&slot.system_prompt);
+    // F-8: `bar_history_limit` persists as a NULLable INTEGER
+    // (migration 022). `None` and non-positive ints both map to SQL
+    // NULL so the read path's "Some(0) → None" normalisation has a
+    // round-trippable wire form.
+    let bar_history_limit_db: Option<i64> = slot.bar_history_limit.and_then(|n| {
+        if n == 0 {
+            None
+        } else {
+            Some(n as i64)
+        }
+    });
     sqlx::query(
         "INSERT INTO agent_slots \
-         (agent_id, slot_index, name, provider, model, system_prompt, skill_ids_json, max_tokens, prompt_version, inputs_policy) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         (agent_id, slot_index, name, provider, model, system_prompt, skill_ids_json, max_tokens, prompt_version, inputs_policy, bar_history_limit) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(agent_id)
     .bind(idx)
@@ -289,6 +310,9 @@ async fn insert_slot(
     // the explicit string here so the row is unambiguous and the
     // read-side roundtrip is byte-stable.
     .bind(slot.inputs_policy.as_str())
+    // F-8: explicit NULLable INTEGER. Operators leaving it unset get
+    // SQL NULL → `None` on read, preserving pre-022 behavior.
+    .bind(bar_history_limit_db)
     .execute(&mut **tx)
     .await
     .with_context(|| format!("insert slot {} for agent {}", slot.name, agent_id))?;
@@ -333,6 +357,12 @@ mod tests {
         // 020 adds agent_slots.inputs_policy (F-6 causal sanitization).
         let migration_020 = include_str!("../../migrations/020_agent_slot_inputs_policy.sql");
         sqlx::query(migration_020).execute(&pool).await.unwrap();
+        // 022 adds agent_slots.bar_history_limit (F-8 rolling-window
+        // cap + provider prompt cache). AgentStore::insert_slot now
+        // writes this column on every save.
+        let migration_022 =
+            include_str!("../../migrations/022_agent_slot_cache_and_window.sql");
+        sqlx::query(migration_022).execute(&pool).await.unwrap();
         pool
     }
 
@@ -346,6 +376,7 @@ mod tests {
             max_tokens: Some(4096),
             prompt_version: String::new(),
             inputs_policy: InputsPolicy::Raw,
+            bar_history_limit: None,
         }
     }
 
@@ -545,6 +576,90 @@ mod tests {
             .unwrap()
             .expect("exists");
         assert_eq!(updated.slots[0].inputs_policy, InputsPolicy::Causal);
+    }
+
+    #[tokio::test]
+    async fn bar_history_limit_round_trips_through_create_and_update() {
+        // F-8: AgentStore must round-trip the optional cap through both
+        // `create` and `update`. The default (NULL) preserves today's
+        // behavior; `Some(50)` is the canonical "stable prefix" value
+        // the prompt-cache wave uses.
+        let store = AgentStore::new(fresh_pool().await);
+
+        // None round-trips as NULL → None.
+        let id = store
+            .create(NewAgent {
+                name: "no-cap".into(),
+                description: String::new(),
+                tags: vec![],
+                slots: vec![AgentSlot {
+                    bar_history_limit: None,
+                    ..sample_slot()
+                }],
+            })
+            .await
+            .unwrap();
+        let loaded = store.get(&id).await.unwrap().expect("exists");
+        assert_eq!(loaded.slots[0].bar_history_limit, None);
+
+        // Some(50) round-trips verbatim.
+        let id = store
+            .create(NewAgent {
+                name: "cap-50".into(),
+                description: String::new(),
+                tags: vec![],
+                slots: vec![AgentSlot {
+                    bar_history_limit: Some(50),
+                    ..sample_slot()
+                }],
+            })
+            .await
+            .unwrap();
+        let loaded = store.get(&id).await.unwrap().expect("exists");
+        assert_eq!(loaded.slots[0].bar_history_limit, Some(50));
+
+        // Some(0) is normalised to None — defence against a stray zero
+        // dropping the trader's view entirely.
+        let id = store
+            .create(NewAgent {
+                name: "stray-zero".into(),
+                description: String::new(),
+                tags: vec![],
+                slots: vec![AgentSlot {
+                    bar_history_limit: Some(0),
+                    ..sample_slot()
+                }],
+            })
+            .await
+            .unwrap();
+        let loaded = store.get(&id).await.unwrap().expect("exists");
+        assert_eq!(loaded.slots[0].bar_history_limit, None);
+
+        // Update path: flip from None to Some(10).
+        let id = store
+            .create(NewAgent {
+                name: "flip-cap".into(),
+                description: String::new(),
+                tags: vec![],
+                slots: vec![sample_slot()],
+            })
+            .await
+            .unwrap();
+        let updated = store
+            .update(
+                &id,
+                UpdateAgent {
+                    slots: Some(vec![AgentSlot {
+                        bar_history_limit: Some(10),
+                        ..sample_slot()
+                    }]),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap()
+            .expect("exists");
+        assert_eq!(updated.slots[0].bar_history_limit, Some(10));
     }
 
     #[tokio::test]

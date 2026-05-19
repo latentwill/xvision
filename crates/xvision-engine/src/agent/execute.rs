@@ -207,6 +207,12 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
                 .response_schema
                 .clone()
                 .or_else(|| response_schema_for_slot(input.slot)),
+            // F-8: the dispatcher evaluates the prompt-cache trigger
+            // (env XVN_PROMPT_CACHE=1 + non-empty system_prompt +
+            // bar_history > 1 entry) and emits cache_control on the
+            // wire when appropriate. Callers that want to force the
+            // hint set this directly; `execute_slot` leaves it None.
+            cache_control: None,
         };
 
         // Open a ModelCall span around this dispatch iteration. Per

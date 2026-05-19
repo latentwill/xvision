@@ -54,6 +54,7 @@ fn sample_slot(policy: InputsPolicy) -> AgentSlot {
         max_tokens: Some(4096),
         prompt_version: String::new(),
         inputs_policy: policy,
+        bar_history_limit: None,
     }
 }
 

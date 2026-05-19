@@ -27,6 +27,13 @@ pub struct ResolvedAgentSlot {
     /// seed. `Raw` (the default) and `Oracle` produce byte-identical
     /// JSON. See harness audit F-6.
     pub inputs_policy: InputsPolicy,
+    /// Optional cap on the number of `bar_history` entries surfaced to
+    /// the trader LLM at each decision (F-8). `None` preserves today's
+    /// behavior (no cap — the full `warmup_bars`-sized slice). `Some(n)`
+    /// trims the slice to its most-recent `n` entries so the prompt
+    /// prefix stays stable across many decisions and provider prompt
+    /// caching (Anthropic) can land a hit on the static portion.
+    pub bar_history_limit: Option<u32>,
 }
 
 pub struct PipelineInputs<'a> {
@@ -218,6 +225,7 @@ pub fn resolve_agent_slot(role: &str, slot: &AgentSlot) -> ResolvedAgentSlot {
         slot: agent_slot_to_llm_slot(role, slot),
         max_tokens: slot.resolve_max_tokens(),
         inputs_policy: slot.inputs_policy,
+        bar_history_limit: slot.bar_history_limit,
     }
 }
 

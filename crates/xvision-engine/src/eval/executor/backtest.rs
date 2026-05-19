@@ -351,6 +351,14 @@ impl BacktestExecutor {
         // byte-for-byte so this branch is a no-op for every existing
         // scenario+strategy combination that didn't opt into `Causal`.
         let inputs_policy = resolve_inputs_policy(agent_slots);
+        // F-8: optional rolling-window cap (paper executor mirror).
+        // `None` keeps today's behavior; `Some(n)` trims the slice to
+        // the most-recent `n` entries.
+        let bar_history_limit = resolve_bar_history_limit(agent_slots);
+        // F-8 stats: snapshot the global counter so we can log the
+        // per-run cache-hint delta at finalize.
+        let cache_hint_start = crate::agent::llm::CACHE_HINT_EMITTED_CALLS
+            .load(std::sync::atomic::Ordering::Relaxed);
 
         let initial = scenario.capital.initial;
         let slip_bps = match &scenario.venue.slippage {
@@ -427,6 +435,17 @@ impl BacktestExecutor {
             let combined_idx = warmup_count + i;
             let history_start = combined_idx.saturating_sub(history_window);
             let history_slice: &[&Ohlcv] = &combined_bars[history_start..combined_idx];
+            // F-8: optional rolling-window cap. `None` preserves the
+            // pre-022 wire shape; `Some(n)` trims to the most-recent
+            // `n` entries — when the slice is already smaller we
+            // send everything that's there.
+            let history_slice: &[&Ohlcv] = match bar_history_limit {
+                Some(n) if (n as usize) < history_slice.len() => {
+                    let take = n as usize;
+                    &history_slice[history_slice.len() - take..]
+                }
+                _ => history_slice,
+            };
             let bar_history = build_bar_history(history_slice, inputs_policy);
 
             // F-6: `Causal` drops `decision_index` + `timestamp` from
@@ -889,6 +908,19 @@ impl BacktestExecutor {
         run.actual_output_tokens = Some(total_output_tokens);
         run.metrics = Some(metrics.clone());
         run.status = RunStatus::Completed;
+        // F-8 stats: log the per-run cache-hint emit count. Counter
+        // is process-wide; per-run delta is the right signal because
+        // the launch-concurrency gate isolates the scope.
+        let cache_hint_end = crate::agent::llm::CACHE_HINT_EMITTED_CALLS
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let cache_hint_emitted_calls = cache_hint_end.saturating_sub(cache_hint_start);
+        tracing::info!(
+            target: "xvision::eval",
+            run_id = %run.id,
+            executor = "backtest",
+            cache_hint_emitted_calls,
+            "eval run finalize: provider prompt-cache stats"
+        );
         store.finalize(&run.id, &metrics).await?;
         Ok(metrics)
     }
@@ -1126,6 +1158,14 @@ fn resolve_inputs_policy(agent_slots: &[ResolvedAgentSlot]) -> InputsPolicy {
         .unwrap_or(InputsPolicy::Raw)
 }
 
+/// Mirror of `paper::resolve_bar_history_limit`. F-8 per-trader cap.
+fn resolve_bar_history_limit(agent_slots: &[ResolvedAgentSlot]) -> Option<u32> {
+    agent_slots
+        .iter()
+        .find(|r| canonical_role(&r.role) == "trader")
+        .and_then(|r| r.bar_history_limit)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1246,6 +1286,7 @@ mod tests {
             },
             max_tokens: None,
             inputs_policy: crate::agents::InputsPolicy::Raw,
+            bar_history_limit: None,
         }
     }
 

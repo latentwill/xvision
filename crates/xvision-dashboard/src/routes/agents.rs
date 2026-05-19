@@ -185,6 +185,7 @@ pub mod get {
                     max_tokens: Some(2048),
                     prompt_version: String::new(),
                     inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
+                    bar_history_limit: None,
                 }],
             },
         )

@@ -73,8 +73,9 @@ unambiguous.
 | 019 | agent-slot-prompt-version            | merged        |
 | 020 | eval-causal-input-sanitization (F-6) | in flight     |
 | 021 | eval-batch-persistence               | in flight     |
+| 022 | eval-prompt-cache-and-rolling-window (F-8) | in flight |
 
-The next available number is **022**. The conductor must approve and
+The next available number is **023**. The conductor must approve and
 reserve in this table before a track touches
 `crates/xvision-engine/migrations/`.
 

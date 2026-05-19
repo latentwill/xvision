@@ -70,6 +70,7 @@ fn resolved_agent_slot(role: &str) -> ResolvedAgentSlot {
         },
         max_tokens: None,
         inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
+        bar_history_limit: None,
     }
 }
 
@@ -232,6 +233,7 @@ fn agent_slot_to_llm_slot_smoke() {
         max_tokens: None,
         prompt_version: String::new(),
         inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
+        bar_history_limit: None,
     };
     let llm = agent_slot_to_llm_slot("trader", &s);
     assert_eq!(llm.role, "trader");

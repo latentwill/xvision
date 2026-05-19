@@ -47,6 +47,7 @@ fn create_agent(home: &std::path::Path, name: &str) -> String {
                     max_tokens: Some(1024),
                     prompt_version: String::new(),
                     inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
+                    bar_history_limit: None,
                 }],
             },
         )

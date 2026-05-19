@@ -1,0 +1,31 @@
+-- 022_agent_slot_cache_and_window.sql — F-8 rolling history window cap.
+--
+-- Adds a per-slot `bar_history_limit` knob so an operator can cap the
+-- number of `bar_history` entries the eval executor surfaces to the
+-- trader LLM, independent of the scenario's `warmup_bars` field. The
+-- field is part of the F-8 wave (`eval-prompt-cache-and-rolling-window`,
+-- contract `team/contracts/eval-prompt-cache-and-rolling-window.md`).
+--
+-- Semantics:
+--   * NULL  — preserve today's behavior. The executor surfaces the full
+--             history slice it already computes from `warmup_bars`.
+--             This is the migration default so every pre-022 row keeps
+--             its current behavior with no operator action required.
+--   * INT n — cap the surfaced slice at the most-recent `n` entries.
+--             When the available history is shorter than `n` the
+--             executor simply passes whatever is there; when longer,
+--             the oldest entries are trimmed so the trader prompt
+--             always sees the freshest `n` bars.
+--
+-- The column is `INTEGER NULL` so existing rows pick up the safe-default
+-- behavior (no cap) automatically. No backfill pass is required; the
+-- next save through `AgentStore` re-stamps whatever value the operator
+-- selected in the UI/CLI.
+--
+-- The application layer (`AgentSlot.bar_history_limit: Option<u32>`)
+-- enforces the value space. A CHECK constraint (`n >= 1`) would be
+-- tighter but SQLite can't add CHECK via `ALTER TABLE` without a full
+-- table rebuild — the Rust boundary already rejects non-positive ints
+-- by mapping `Some(0)` → None on the read path.
+
+ALTER TABLE agent_slots ADD COLUMN bar_history_limit INTEGER;

@@ -39,6 +39,7 @@ fn slot(name: &str, prompt: &str, skill_ids: Vec<&str>) -> AgentSlot {
         max_tokens: Some(4096),
         prompt_version: String::new(),
         inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
+        bar_history_limit: None,
     }
 }
 

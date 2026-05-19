@@ -147,6 +147,24 @@ pub struct AgentSlot {
     /// (`team/intake/2026-05-19-eval-traces-end-to-end-audit.md`).
     #[serde(default)]
     pub inputs_policy: InputsPolicy,
+    /// Optional cap on the number of `bar_history` entries the eval
+    /// executor surfaces to the trader LLM at each decision. `None`
+    /// (the migration default) preserves today's behavior — the full
+    /// `warmup_bars`-sized history slice is sent through. `Some(n)`
+    /// trims the slice to its most-recent `n` entries before the
+    /// trader sees it, which keeps the prompt prefix stable across
+    /// many decisions so provider prompt-caching (Anthropic) can land
+    /// a hit on the static portion.
+    ///
+    /// Persisted as a NULLable INTEGER on `agent_slots.bar_history_limit`
+    /// (migration 022); the store layer maps NULL ↔ `None` and rejects
+    /// non-positive ints (mapping `Some(0)` → `None`) so a stray `0`
+    /// can't silently drop every bar from the trader's view.
+    ///
+    /// F-8 (`team/contracts/eval-prompt-cache-and-rolling-window.md`).
+    #[serde(default)]
+    #[cfg_attr(feature = "ts-export", ts(type = "number | null"))]
+    pub bar_history_limit: Option<u32>,
 }
 
 impl AgentSlot {
@@ -217,6 +235,7 @@ impl Agent {
                 max_tokens: None,
                 prompt_version: String::new(),
                 inputs_policy: InputsPolicy::default(),
+                bar_history_limit: None,
             }],
             archived: false,
             created_at: now,
@@ -248,6 +267,10 @@ mod tests {
         // F-6: new slots default to `Raw` so existing behavior is
         // preserved; operators opt into `Causal` / `Oracle` explicitly.
         assert_eq!(a.slots[0].inputs_policy, InputsPolicy::Raw);
+        // F-8: new slots leave the rolling-window cap unset; today's
+        // executor behavior (no cap — full warmup_bars slice) is
+        // preserved until the operator opts in.
+        assert_eq!(a.slots[0].bar_history_limit, None);
     }
 
     #[test]

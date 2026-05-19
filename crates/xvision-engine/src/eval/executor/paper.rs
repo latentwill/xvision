@@ -300,6 +300,18 @@ fn resolve_inputs_policy(agent_slots: &[ResolvedAgentSlot]) -> InputsPolicy {
         .unwrap_or(InputsPolicy::Raw)
 }
 
+/// Determine the per-trader rolling-window cap (F-8). Sourced from the
+/// trader-role `ResolvedAgentSlot` if one is attached; legacy strategies
+/// with no attached trader role pre-date F-8 entirely, so the fallback
+/// is `None` (no cap — byte-identical pre-F-8 behavior).
+fn resolve_bar_history_limit(agent_slots: &[ResolvedAgentSlot]) -> Option<u32> {
+    use crate::strategies::agent_ref::canonical_role;
+    agent_slots
+        .iter()
+        .find(|r| canonical_role(&r.role) == "trader")
+        .and_then(|r| r.bar_history_limit)
+}
+
 fn bar_seed(
     asset: &str,
     bar: &Ohlcv,
@@ -540,6 +552,17 @@ impl PaperExecutor {
         // byte-for-byte; `Causal` strips `timestamp` per bar and
         // `decision_index` from the top-level seed.
         let inputs_policy = resolve_inputs_policy(agent_slots);
+        // F-8: per-run rolling-window cap. `None` means "no cap" and
+        // the executor surfaces the full `history_window` slice the
+        // scenario implies (today's behavior). `Some(n)` trims the
+        // slice to its most-recent `n` entries so the trader prompt
+        // prefix stays stable across decisions and provider prompt
+        // caching can land hits.
+        let bar_history_limit = resolve_bar_history_limit(agent_slots);
+        // F-8 stats: snapshot the global cache-hint counter before the
+        // bar loop so we can log the per-run delta at finalize.
+        let cache_hint_start = crate::agent::llm::CACHE_HINT_EMITTED_CALLS
+            .load(std::sync::atomic::Ordering::Relaxed);
 
         let initial_balance = self.broker.balance().await?;
         let mut equity_samples: Vec<f64> = Vec::new();
@@ -641,6 +664,18 @@ impl PaperExecutor {
             let combined_idx = warmup_count + i;
             let history_start = combined_idx.saturating_sub(history_window);
             let history_slice: &[&Ohlcv] = &combined_bars[history_start..combined_idx];
+            // F-8: apply the optional rolling-window cap. `None` is a
+            // no-op so existing behavior is preserved byte-for-byte;
+            // `Some(n)` keeps the most-recent `n` entries (the tail
+            // of the slice). When the slice is already shorter than
+            // `n` we send everything that's there.
+            let history_slice: &[&Ohlcv] = match bar_history_limit {
+                Some(n) if (n as usize) < history_slice.len() => {
+                    let take = n as usize;
+                    &history_slice[history_slice.len() - take..]
+                }
+                _ => history_slice,
+            };
             let bar_history = build_bar_history(history_slice, inputs_policy);
 
             let position = self.broker.position(&asset).await?;
@@ -1467,6 +1502,22 @@ impl PaperExecutor {
         run.actual_output_tokens = Some(total_output_tokens);
         run.metrics = Some(metrics.clone());
         run.status = RunStatus::Completed;
+        // F-8 stats: read the post-loop counter and log the per-run
+        // delta. The counter is process-wide so concurrent runs
+        // contribute too — the delta-over-window is still the right
+        // per-run signal because Acquire/Release isn't needed for a
+        // monotonic counter and the launch-concurrency gate isolates
+        // the scope.
+        let cache_hint_end = crate::agent::llm::CACHE_HINT_EMITTED_CALLS
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let cache_hint_emitted_calls = cache_hint_end.saturating_sub(cache_hint_start);
+        tracing::info!(
+            target: "xvision::eval",
+            run_id = %run.id,
+            executor = "paper",
+            cache_hint_emitted_calls,
+            "eval run finalize: provider prompt-cache stats"
+        );
         store.finalize(&run.id, &metrics).await?;
         Ok(metrics)
     }
@@ -1520,6 +1571,7 @@ mod role_tests {
             },
             max_tokens: None,
             inputs_policy: crate::agents::InputsPolicy::Raw,
+            bar_history_limit: None,
         }
     }
 
@@ -1619,6 +1671,7 @@ mod role_tests {
                 },
                 max_tokens: None,
                 inputs_policy: InputsPolicy::Oracle,
+                bar_history_limit: None,
             },
             ResolvedAgentSlot {
                 role: "trader".into(),
@@ -1632,6 +1685,7 @@ mod role_tests {
                 },
                 max_tokens: None,
                 inputs_policy: InputsPolicy::Causal,
+                bar_history_limit: None,
             },
         ];
         assert_eq!(resolve_inputs_policy(&slots), InputsPolicy::Causal);

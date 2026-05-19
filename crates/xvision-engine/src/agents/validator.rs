@@ -318,6 +318,7 @@ mod tests {
             max_tokens: Some(4096),
             prompt_version: String::new(),
             inputs_policy: crate::agents::InputsPolicy::Raw,
+            bar_history_limit: None,
         }
     }
 

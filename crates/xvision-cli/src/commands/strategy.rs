@@ -528,6 +528,7 @@ async fn new_atomic(
                 max_tokens: None,
                 prompt_version: String::new(),
                 inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
+                bar_history_limit: None,
             }],
         },
     )
@@ -1102,6 +1103,7 @@ fn slot_to_agent_slot(
         max_tokens: None,
         prompt_version: String::new(),
         inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
+        bar_history_limit: None,
     }
 }
 
@@ -1274,6 +1276,7 @@ async fn resolve_agent_slots_for_cli(
             slot: agent_slot_to_llm_slot(&agent_ref.role, slot),
             max_tokens: slot.resolve_max_tokens(),
             inputs_policy: slot.inputs_policy,
+            bar_history_limit: slot.bar_history_limit,
         });
     }
     Ok(out)

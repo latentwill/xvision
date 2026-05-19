@@ -948,6 +948,7 @@ async fn resolve_agent_slots(
             slot: agent_slot_to_llm_slot(&agent_ref.role, slot),
             max_tokens: slot.resolve_max_tokens(),
             inputs_policy: slot.inputs_policy,
+            bar_history_limit: slot.bar_history_limit,
         });
     }
     Ok(out)
@@ -2359,6 +2360,7 @@ mod tests {
             ),
             max_tokens: Some(4096),
             inputs_policy: crate::agents::InputsPolicy::Raw,
+            bar_history_limit: None,
         }];
 
         let slots = runtime_slots(&strategy, &agent_slots);
@@ -2399,6 +2401,7 @@ mod tests {
             ),
             max_tokens: Some(4096),
             inputs_policy: crate::agents::InputsPolicy::Raw,
+            bar_history_limit: None,
         }];
 
         let err = validate_eval_trader_source(&strategy, &agent_slots).unwrap_err();
@@ -2431,6 +2434,7 @@ mod tests {
             ),
             max_tokens: Some(4096),
             inputs_policy: crate::agents::InputsPolicy::Raw,
+            bar_history_limit: None,
         }];
 
         validate_eval_trader_source(&strategy, &agent_slots).unwrap();

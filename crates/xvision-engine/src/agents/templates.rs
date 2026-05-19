@@ -53,6 +53,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                 max_tokens: None,
                 prompt_version: String::new(),
                 inputs_policy: InputsPolicy::Raw,
+                bar_history_limit: None,
             }],
         },
         AgentTemplate {
@@ -75,6 +76,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     max_tokens: None,
                     prompt_version: String::new(),
                     inputs_policy: InputsPolicy::Raw,
+                    bar_history_limit: None,
                 },
                 AgentSlot {
                     name: "executor".into(),
@@ -89,6 +91,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     max_tokens: None,
                     prompt_version: String::new(),
                     inputs_policy: InputsPolicy::Raw,
+                    bar_history_limit: None,
                 },
             ],
         },
@@ -112,6 +115,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     max_tokens: None,
                     prompt_version: String::new(),
                     inputs_policy: InputsPolicy::Raw,
+                    bar_history_limit: None,
                 },
                 AgentSlot {
                     name: "risk_check".into(),
@@ -125,6 +129,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     max_tokens: None,
                     prompt_version: String::new(),
                     inputs_policy: InputsPolicy::Raw,
+                    bar_history_limit: None,
                 },
                 AgentSlot {
                     name: "executor".into(),
@@ -139,6 +144,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     max_tokens: None,
                     prompt_version: String::new(),
                     inputs_policy: InputsPolicy::Raw,
+                    bar_history_limit: None,
                 },
             ],
         },

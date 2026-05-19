@@ -196,6 +196,7 @@ async fn call_model(
         // `None` (what other callers do) keeps the provider default.
         temperature: Some(profile.temperature),
         response_schema: None,
+        cache_control: None,
     };
     let resp = dispatch.complete(req).await.map_err(|e| format!("{e}"))?;
     Ok(resp.text())

@@ -75,6 +75,7 @@ fn seed_strategy_with_trader(
                     max_tokens: Some(1024),
                     prompt_version: String::new(),
                     inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
+                    bar_history_limit: None,
                 }],
             },
         )
