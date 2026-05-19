@@ -180,7 +180,7 @@ function MarkdownView({ text }: { text: string }) {
             href={href}
             className="text-gold underline decoration-gold/40 hover:decoration-gold"
             target="_blank"
-            rel="noreferrer"
+            rel="noopener noreferrer"
           >
             {children}
           </a>
