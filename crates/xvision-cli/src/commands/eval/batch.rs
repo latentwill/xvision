@@ -29,6 +29,7 @@ use ulid::Ulid;
 use xvision_engine::agent::llm::LlmDispatch;
 use xvision_engine::api::eval::{self, EvalRunRequest};
 use xvision_engine::api::{scenario as api_scenario, ApiContext};
+use xvision_engine::eval::review;
 use xvision_engine::eval::run::RunMode;
 use xvision_engine::eval::store::RunStore;
 use xvision_engine::tools::ToolRegistry;
@@ -82,6 +83,11 @@ pub struct BatchRunArgs {
     #[arg(long)]
     pub json: bool,
 
+    /// After each completed run, generate an analytical review using the
+    /// named agent profile (e.g. `reasoning-agent`). Requires `--wait`.
+    #[arg(long, requires = "wait")]
+    pub review_with: Option<String>,
+
     /// Override the xvn home directory.
     #[arg(long)]
     pub xvn_home: Option<std::path::PathBuf>,
@@ -95,6 +101,24 @@ pub struct BatchResult {
     pub batch_id: String,
     pub strategy_id: String,
     pub runs: Vec<RunEntry>,
+}
+
+/// Per-run review outcome embedded in `RunEntry` when `--review-with` is set
+/// and the run completed successfully. If the review itself failed (provider
+/// error, profile not found, etc.) the status is `"failed"` and `error`
+/// carries the detail — the batch continues.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReviewDetail {
+    pub review_id: String,
+    /// `"complete"` | `"failed"`. Maps from `ReviewStatus`.
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verdict: Option<String>,
+    /// Error detail when status is `"failed"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 /// One entry in `BatchResult::runs` — one scenario's outcome.
@@ -122,6 +146,10 @@ pub struct RunEntry {
     /// Error message when `status == "failed"`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Review outcome, present only when `--review-with` was set and the run
+    /// completed. Absent entirely (not serialised as `null`) otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub review: Option<ReviewDetail>,
 }
 
 // ── Testable core ─────────────────────────────────────────────────────────────
@@ -137,6 +165,14 @@ pub struct BatchRunRequest {
     pub dispatch: Arc<dyn LlmDispatch>,
     pub findings_model: String,
     pub tools: Arc<ToolRegistry>,
+    /// Agent profile id to use for post-batch reviews (e.g. `"reasoning-agent"`).
+    /// When `None`, no reviews are generated.
+    pub review_with: Option<String>,
+    /// LLM dispatch to use for review calls. When `review_with` is set, this
+    /// **must** be `Some`; the CLI path builds it from the provider config. In
+    /// tests, pass a `MockDispatch`. When `review_with` is `None` this field is
+    /// ignored.
+    pub review_dispatch: Option<Arc<dyn LlmDispatch>>,
 }
 
 /// Core logic: launch one run per scenario, await all, return `BatchResult`.
@@ -214,6 +250,7 @@ pub async fn run_batch(ctx: &ApiContext, req: BatchRunRequest) -> Result<BatchRe
                     decisions,
                     actions,
                     error: run.error,
+                    review: None,
                 }
             }
             Err(e) => RunEntry {
@@ -227,9 +264,57 @@ pub async fn run_batch(ctx: &ApiContext, req: BatchRunRequest) -> Result<BatchRe
                 decisions: 0,
                 actions: BTreeMap::new(),
                 error: Some(e.to_string()),
+                review: None,
             },
         };
         entries.push(entry);
+    }
+
+    // Post-batch reviews: for each completed run, call run_review with the
+    // named agent profile. Reviews run sequentially after all runs finish.
+    // If a review fails, the entry carries review.status="failed" and the
+    // batch continues — same per-run error-isolation pattern as runs.
+    if let (Some(profile_id), Some(rev_dispatch)) = (&req.review_with, &req.review_dispatch) {
+        let store = RunStore::new(ctx.db.clone());
+        for entry in &mut entries {
+            if entry.status != "completed" {
+                // Only review completed runs; skip failed/cancelled.
+                continue;
+            }
+            let run_id = entry.run_id.clone();
+            let scenario_summary = review_scenario_summary(ctx, &run_id).await;
+            let outcome = review::run_review(
+                &store,
+                rev_dispatch.clone(),
+                &run_id,
+                profile_id,
+                scenario_summary,
+            )
+            .await;
+            entry.review = Some(match outcome {
+                Ok(o) => {
+                    // Read back the persisted review to surface summary + verdict.
+                    let detail = store.get_review(&o.review_id).await.ok().flatten();
+                    ReviewDetail {
+                        review_id: o.review_id,
+                        status: o.status.as_str().to_owned(),
+                        summary: detail.as_ref().and_then(|r| r.summary.clone()),
+                        verdict: detail
+                            .as_ref()
+                            .and_then(|r| r.verdict)
+                            .map(|v| v.as_str().to_owned()),
+                        error: detail.as_ref().and_then(|r| r.error.clone()),
+                    }
+                }
+                Err(e) => ReviewDetail {
+                    review_id: String::new(),
+                    status: "failed".into(),
+                    summary: None,
+                    verdict: None,
+                    error: Some(e.to_string()),
+                },
+            });
+        }
     }
 
     Ok(BatchResult {
@@ -276,6 +361,26 @@ async fn poll_until_terminal(
         tokio::time::sleep(poll_interval).await;
     }
     finished
+}
+
+/// Resolve scenario metadata for a run so the review payload carries context.
+/// Returns `None` on any resolution failure — the review engine treats it as
+/// optional and does not fail the review if scenario metadata is absent.
+async fn review_scenario_summary(
+    ctx: &ApiContext,
+    run_id: &str,
+) -> Option<review::ReviewScenarioSummary> {
+    let store = RunStore::new(ctx.db.clone());
+    let run = store.get(run_id).await.ok()?;
+    let scenario = api_scenario::get(ctx, &run.scenario_id).await.ok()?;
+    Some(review::ReviewScenarioSummary {
+        id: scenario.id.clone(),
+        name: Some(scenario.display_name.clone()),
+        asset: scenario.asset.first().map(|a| a.symbol.clone()),
+        granularity: Some(scenario.granularity.to_string()),
+        start: Some(scenario.time_window.start.to_rfc3339()),
+        end: Some(scenario.time_window.end.to_rfc3339()),
+    })
 }
 
 /// Query the decisions table for `run_id` and count each action kind.
@@ -407,6 +512,7 @@ pub async fn run_batch_cmd(args: BatchRunArgs) -> CliResult<()> {
                     decisions,
                     actions,
                     error: run.error,
+                    review: None,
                 }
             }
             Err(e) => {
@@ -422,10 +528,67 @@ pub async fn run_batch_cmd(args: BatchRunArgs) -> CliResult<()> {
                     decisions: 0,
                     actions: BTreeMap::new(),
                     error: Some(cli_err.source.to_string()),
+                    review: None,
                 }
             }
         };
         entries.push(entry);
+    }
+
+    // Post-batch reviews: when --review-with is set, fire a review for each
+    // completed run. Reviews run sequentially. Failures are captured per-run.
+    if let Some(profile_id) = &args.review_with {
+        let store = RunStore::new(ctx.db.clone());
+        // Load the agent profile once to resolve provider → dispatch.
+        let profile = store
+            .get_agent_profile(profile_id)
+            .await
+            .exit_with(XvnExit::Upstream)?
+            .ok_or_else(|| CliError {
+                exit: XvnExit::NotFound,
+                source: anyhow::anyhow!("agent profile `{profile_id}` not found"),
+            })?;
+        let rev_dispatch =
+            super::review::build_dispatch_for_profile(&ctx, &profile.provider)
+                .map_err(|e| api_to_cli("eval batch review", e))?;
+
+        for entry in &mut entries {
+            if entry.status != "completed" {
+                continue;
+            }
+            let run_id = entry.run_id.clone();
+            let scenario_summary = review_scenario_summary(&ctx, &run_id).await;
+            let outcome = review::run_review(
+                &store,
+                rev_dispatch.clone(),
+                &run_id,
+                profile_id,
+                scenario_summary,
+            )
+            .await;
+            entry.review = Some(match outcome {
+                Ok(o) => {
+                    let detail = store.get_review(&o.review_id).await.ok().flatten();
+                    ReviewDetail {
+                        review_id: o.review_id,
+                        status: o.status.as_str().to_owned(),
+                        summary: detail.as_ref().and_then(|r| r.summary.clone()),
+                        verdict: detail
+                            .as_ref()
+                            .and_then(|r| r.verdict)
+                            .map(|v| v.as_str().to_owned()),
+                        error: detail.as_ref().and_then(|r| r.error.clone()),
+                    }
+                }
+                Err(e) => ReviewDetail {
+                    review_id: String::new(),
+                    status: "failed".into(),
+                    summary: None,
+                    verdict: None,
+                    error: Some(e.to_string()),
+                },
+            });
+        }
     }
 
     let result = BatchResult {
@@ -465,6 +628,17 @@ pub async fn run_batch_cmd(args: BatchRunArgs) -> CliResult<()> {
         );
         if let Some(e) = &r.error {
             println!("  error: {e}");
+        }
+        if let Some(rev) = &r.review {
+            let verdict = rev.verdict.as_deref().unwrap_or("-");
+            println!("  review: {} verdict={}", rev.status, verdict);
+            if let Some(s) = &rev.summary {
+                let preview: String = s.chars().take(80).collect();
+                println!("    {preview}");
+            }
+            if let Some(e) = &rev.error {
+                println!("  review error: {e}");
+            }
         }
     }
     Ok(())
