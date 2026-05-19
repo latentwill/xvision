@@ -6,7 +6,7 @@
 #![allow(deprecated)] // canonical_scenarios() — see Task 8 (M2) deprecation note.
 
 use chrono::{Duration, TimeZone, Utc};
-use sqlx::SqlitePool;
+use sqlx::sqlite::SqlitePoolOptions;
 use xvision_engine::api::eval::{self};
 use xvision_engine::api::{Actor, ApiContext, ApiError};
 use xvision_engine::eval::attestation::verify;
@@ -15,7 +15,11 @@ use xvision_engine::eval::scenario::canonical_scenarios;
 use xvision_engine::eval::store::RunStore;
 
 async fn ctx_with_eval_tables() -> (ApiContext, tempfile::TempDir) {
-    let pool = SqlitePool::connect(":memory:").await.unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(":memory:")
+        .await
+        .unwrap();
     sqlx::query(include_str!("../migrations/001_api_audit.sql"))
         .execute(&pool)
         .await

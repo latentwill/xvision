@@ -237,12 +237,16 @@ function DetailView({
 function Breadcrumb({ scenario }: { scenario: Scenario }) {
   return (
     <nav className="text-[12px] text-text-3 mb-3">
-      <Link to="/scenarios" className="hover:text-text transition-colors">
-        Scenarios
+      <Link
+        to="/scenarios"
+        className="inline-flex items-center gap-1.5 text-[12px] text-text-2 hover:text-text"
+      >
+        ← Back to scenarios
       </Link>
       {scenario.parent_scenario_id && (
         <>
-          {" · forked from "}
+          <span className="mx-1.5">·</span>
+          <span>forked from{" "}</span>
           <Link
             to={`/scenarios/${scenario.parent_scenario_id}`}
             className="hover:text-text transition-colors"

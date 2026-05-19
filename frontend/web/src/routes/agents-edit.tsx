@@ -3,7 +3,7 @@
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 
 import {
   agentKeys,
@@ -30,6 +30,12 @@ export function AgentsEditRoute() {
         title={isNew ? "New agent" : "Agent"}
         sub={isNew ? "Single-slot draft" : agentId}
       />
+      <Link
+        to="/agents"
+        className="inline-flex items-center gap-1.5 text-[12px] text-text-2 hover:text-text mb-3"
+      >
+        ← Back to agents
+      </Link>
 
       {isNew && !pickedTemplateId ? (
         <TemplatePicker
