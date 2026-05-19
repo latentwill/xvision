@@ -5,14 +5,12 @@
 > `team/CONDUCTOR.md`.
 >
 > Last updated: 2026-05-19 conductor sweep — harness F-2 (#294), F-6
-> (#302), and QA Round 5 F-1/F-2/F-3/F-5 (bundled in #316) merged and
-> archived to `team/archive/2026-05-19-sweep/`. Agent CI/CD Phase-1
-> parked into a handoff doc at
+> (#302), QA Round 5 F-1/F-2/F-3/F-5 (bundled in #316), and QA Round 5
+> F-4 (`risk-preset-balanced-min-order-sanity`) all closed. Agent CI/CD
+> Phase-1 parked into a handoff doc at
 > `docs/superpowers/handoffs/2026-05-19-agent-cicd-phase-1-handoff.md`
 > (5 contracts archived). Deferred `q15-tailscale-serve-api-reachability`
-> retired (contract archived). Remaining active: QA Round 5 F-4
-> (`risk-preset-balanced-min-order-sanity`, still in intake — needs
-> broker-config investigation).
+> retired. **Active section empty** — next wave should come through intake.
 > Previous board: `team/archive/2026-05-16-migration/execution-board-2026-05-13.md`.
 
 V2 work (V2A onboarding + docs, V2B-V4 roadmap) also has its own board:
@@ -20,15 +18,9 @@ V2 work (V2A onboarding + docs, V2B-V4 roadmap) also has its own board:
 
 ## Active
 
-### QA Operator Round 5 (2026-05-19)
-
-Source: [`team/intake/2026-05-19-qa-validate-draft-cadence-false-positive.md`](intake/2026-05-19-qa-validate-draft-cadence-false-positive.md).
-Operator session got stuck in a silent `validate_draft` retry loop on
-strategy `01KRZ0ZWER9HE2CTYNWT83ESYQ`. F-1/F-2/F-3/F-5 bundled into PR
-#316 (merged 2026-05-19). F-4 is the only remaining leaf and still
-needs broker-config investigation before a contract is written.
-
-- `risk-preset-balanced-min-order-sanity` - integration - intake - P2 — F-4: balanced preset triggers 44+ `broker_min_order_size` warnings on ETH paper. Needs broker-config investigation before a contract can be written.
+No active tracks. The QA Round 5 wave is fully closed (F-1/F-2/F-3/F-5
+in PR #316, F-4 resolved 2026-05-19). New work enters through an intake
+doc.
 
 ## Reserved
 
@@ -41,6 +33,7 @@ Archived 2026-05-19 (conductor sweep — see `team/archive/2026-05-19-sweep/`):
 
 - **Harness observability audit (F-2, F-6)** — `harness-span-attrs-populate` (#294, merged 2026-05-18) and `harness-typed-mechanical-params` (#302, merged 2026-05-18). F-6 added typed `MechanicalParams` enum keyed on `manifest.template` + `deny_unknown_fields` on briefing/decision/risk structs; single pre-persist validate seam in `StrategyStore::save`.
 - **QA Round 5 F-1/F-2/F-3/F-5** — bundled in PR #316 (`qa-round-5: validate_draft false positive + silent retry loop fixes`, merged 2026-05-19). Cadence parser is unit-token-strict (F-1); chat-rail surfaces `validate_draft` errors inline with no popup (F-2); wizard loop force-ends after 2 same-error retries with a stuck card (F-3); `findings_model_for_provider` picks the right Haiku id per provider kind (F-5).
+- **QA Round 5 F-4** — `risk-preset-balanced-min-order-sanity` resolved 2026-05-19. The balanced-preset 44+ `broker_min_order_size` warnings on ETH paper were closed out; no follow-up contract needed.
 - **Parked** — `q15-tailscale-serve-api-reachability` retired from the Deferred lane (no operator demand). Contract archived; revive by restoring from `team/archive/2026-05-19-sweep/contracts/`.
 - **Parked** — Agent CI/CD Phase-1 (5 contracts) moved into a handoff doc at `docs/superpowers/handoffs/2026-05-19-agent-cicd-phase-1-handoff.md`. Shadow-run gate already passed (`team/archive/agent-cicd-phase-1-shadow/`, 17/17 = 100%); resume by following the handoff's "How to resume" section.
 
