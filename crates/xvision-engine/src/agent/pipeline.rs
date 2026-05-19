@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::agent::execute::{execute_slot, SlotInput};
 use crate::agent::llm::{LlmDispatch, LlmResponse, ResponseSchema};
 use crate::agent::observability::ObsEmitter;
-use crate::agents::AgentSlot;
+use crate::agents::{AgentSlot, InputsPolicy};
 use crate::strategies::agent_ref::canonical_role;
 use crate::strategies::slot::LLMSlot;
 use crate::strategies::{PipelineKind, Strategy};
@@ -20,6 +20,13 @@ pub struct ResolvedAgentSlot {
     /// per-model auto value because the API requires the field. Explicit
     /// values pass through verbatim — no clamping.
     pub max_tokens: Option<u32>,
+    /// Per-slot seed-sanitization policy (F-6). The eval executor reads
+    /// this off the trader-role slot before constructing the seed JSON
+    /// — `Causal` strips `timestamp` from `bar_history` (replacing it
+    /// with `bar_index`) and drops `decision_index` from the top-level
+    /// seed. `Raw` (the default) and `Oracle` produce byte-identical
+    /// JSON. See harness audit F-6.
+    pub inputs_policy: InputsPolicy,
 }
 
 pub struct PipelineInputs<'a> {
@@ -210,6 +217,7 @@ pub fn resolve_agent_slot(role: &str, slot: &AgentSlot) -> ResolvedAgentSlot {
         role: role.to_string(),
         slot: agent_slot_to_llm_slot(role, slot),
         max_tokens: slot.resolve_max_tokens(),
+        inputs_policy: slot.inputs_policy,
     }
 }
 

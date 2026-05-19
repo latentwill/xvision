@@ -8,12 +8,14 @@
 
 pub mod attestation;
 pub mod bars;
+pub mod batch_store;
 pub mod behavior;
 pub mod compare;
 pub mod cost;
 pub mod executor;
 pub mod export;
 pub mod findings;
+pub mod guardrails;
 pub mod metrics;
 pub mod postprocess;
 pub mod progress;
@@ -23,6 +25,7 @@ pub mod scenario;
 pub mod scenario_seed;
 pub mod scenario_store;
 pub mod store;
+pub mod watchdog;
 
 pub use attestation::{EvalAttestation, TokensUsed};
 pub use compare::{
@@ -33,6 +36,7 @@ pub use findings::{Finding, Severity};
 pub use progress::{send_event, ProgressBus, ProgressEvent, ProgressRx, ProgressTx};
 pub use review::{AgentProfile, EvalReview, ReviewStatus, ReviewVerdict};
 
+pub use batch_store::{Batch, BatchStore};
 pub use run::{MetricsSummary, Run, RunMode, RunStatus};
 #[allow(deprecated)]
 pub use scenario::canonical_scenarios;

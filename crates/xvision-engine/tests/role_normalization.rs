@@ -69,6 +69,7 @@ fn resolved_agent_slot(role: &str) -> ResolvedAgentSlot {
             model: Some("mock".into()),
         },
         max_tokens: None,
+        inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
     }
 }
 
@@ -230,6 +231,7 @@ fn agent_slot_to_llm_slot_smoke() {
         skill_ids: Vec::new(),
         max_tokens: None,
         prompt_version: String::new(),
+        inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
     };
     let llm = agent_slot_to_llm_slot("trader", &s);
     assert_eq!(llm.role, "trader");
