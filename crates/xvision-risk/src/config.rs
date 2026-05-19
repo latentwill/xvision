@@ -1,6 +1,7 @@
 //! TOML loader for `config/risk.toml`.
 
 use serde::Deserialize;
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::RiskError;
@@ -23,13 +24,54 @@ pub struct Stops {
     pub take_profit_min_rr: f64,
 }
 
+/// Per-venue deterministic constraints (broker min-notional, etc.).
+///
+/// The `MinNotional` rule reads `min_notional_usd` to pre-submit-veto
+/// orders the broker would otherwise reject for `cost basis must be >=
+/// minimal amount of order N`. Default 0.0 = no-op (matches the
+/// pre-rule behavior on venues with no recorded minimum).
+///
+/// Reasonable values (verify against the venue docs before relying on
+/// them in production):
+/// - `paper` (Alpaca paper crypto): `10.0` — Alpaca paper enforces a
+///   $10 minimum cost basis on crypto market orders; the rejection
+///   message is `"cost basis must be >= minimal amount of order 10"`,
+///   which is what PR #314 already classifies on the post-submit path.
+/// - `live` (Alpaca live crypto): `1.0` — Alpaca live crypto has a
+///   $1 minimum order size on most pairs per the public docs at
+///   <https://docs.alpaca.markets/docs/crypto-trading> ("Order
+///   minimums"). Keep `1.0` as the conservative default; bump per
+///   asset only if a venue surface adds per-symbol overrides.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct VenueLimits {
+    /// Minimum order notional in USD (`size × reference_price`). The
+    /// risk rule vetoes when notional is strictly less than this
+    /// value. `0.0` (the default) disables the rule for the venue.
+    #[serde(default)]
+    pub min_notional_usd: f64,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct RiskConfig {
     pub limits: Limits,
     pub stops: Stops,
+    /// Per-venue deterministic constraints. Indexed by the venue id
+    /// the executor identifies itself with (today: `"paper"` and
+    /// `"live"`). Absent venues use `VenueLimits::default()` — no
+    /// constraints applied, matching pre-rule behavior.
+    #[serde(default)]
+    pub venues: BTreeMap<String, VenueLimits>,
 }
 
 impl RiskConfig {
+    /// Return the configured limits for `venue_id`, falling back to the
+    /// default (all-zero) when the venue is unconfigured. The
+    /// `MinNotional` rule treats the zero default as a no-op, so an
+    /// unknown venue inherits today's pass-everything behavior.
+    pub fn venue_limits(&self, venue_id: &str) -> VenueLimits {
+        self.venues.get(venue_id).cloned().unwrap_or_default()
+    }
+
     pub fn from_path(path: &Path) -> Result<Self, RiskError> {
         let raw = std::fs::read_to_string(path)
             .map_err(|e| RiskError::Config(format!("cannot read {}: {e}", path.display())))?;
@@ -72,6 +114,13 @@ impl RiskConfig {
         }
         if s.take_profit_min_rr <= 0.0 {
             return Err(RiskError::Config("take_profit_min_rr must be > 0".into()));
+        }
+        for (venue, limits) in &self.venues {
+            if !limits.min_notional_usd.is_finite() || limits.min_notional_usd < 0.0 {
+                return Err(RiskError::Config(format!(
+                    "venues.{venue}.min_notional_usd must be a finite non-negative number"
+                )));
+            }
         }
         Ok(())
     }

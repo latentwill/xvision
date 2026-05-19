@@ -65,20 +65,60 @@ impl RiskLayer {
     ///
     /// Option A: the asset symbol is **not** on `TraderDecision`; callers pass
     /// it explicitly to `evaluate`. This keeps `xvision-core` untouched.
+    ///
+    /// Venue context defaults to `None`, which disables venue-keyed rules
+    /// such as `MinNotional`. Use [`Self::from_config_for_venue`] when the
+    /// caller knows which venue the run targets.
     pub fn from_config(risk_path: &Path, whitelist_path: &Path) -> Result<Self, RiskError> {
-        let config = RiskConfig::from_path(risk_path)?;
-        let whitelist = Whitelist::from_path(whitelist_path)?;
-        Ok(Self::with_default_rules(config, whitelist))
+        Self::from_config_for_venue_opt(risk_path, whitelist_path, None)
     }
 
-    /// Build with the standard v1 rule set.
-    pub(crate) fn with_default_rules(config: RiskConfig, whitelist: Whitelist) -> Self {
+    /// Build a `RiskLayer` from TOML config files, scoped to a specific
+    /// venue. The `MinNotional` rule reads the matching `[venues.<id>]`
+    /// block and short-circuits orders below the venue's deterministic
+    /// minimum (e.g. Alpaca paper crypto's `cost basis >= 10` constraint).
+    pub fn from_config_for_venue(
+        risk_path: &Path,
+        whitelist_path: &Path,
+        venue_id: &str,
+    ) -> Result<Self, RiskError> {
+        Self::from_config_for_venue_opt(risk_path, whitelist_path, Some(venue_id))
+    }
+
+    fn from_config_for_venue_opt(
+        risk_path: &Path,
+        whitelist_path: &Path,
+        venue_id: Option<&str>,
+    ) -> Result<Self, RiskError> {
+        let config = RiskConfig::from_path(risk_path)?;
+        let whitelist = Whitelist::from_path(whitelist_path)?;
+        Ok(Self::with_default_rules(config, whitelist, venue_id))
+    }
+
+    /// Build with the standard v1 rule set. `venue_id`, when supplied,
+    /// activates the `MinNotional` rule against `RiskConfig::venue_limits`.
+    pub fn with_default_rules(
+        config: RiskConfig,
+        whitelist: Whitelist,
+        venue_id: Option<&str>,
+    ) -> Self {
         use rules::*;
 
         let max_pos_bps = (config.limits.max_position_pct_nav * 100.0).round() as u32;
         let max_exp_bps = (config.limits.max_total_exposure_pct * 100.0).round() as u32;
 
-        let rules: Vec<Box<dyn RiskRule>> = vec![
+        // Ordering rationale (anchors contract acceptance):
+        //   1. Whitelist / daily-loss / size / exposure / open-positions /
+        //      cluster — these can `Modify` or `Veto` based on the agent's
+        //      raw decision and are unchanged.
+        //   2. `MinNotional` — runs AFTER size-modifying rules so a
+        //      `Modify` that shrinks size below the venue minimum is then
+        //      caught here. Runs BEFORE the stop-loss / take-profit
+        //      validators because there's no point validating stops on
+        //      an order we're about to veto for a deterministic notional
+        //      constraint.
+        //   3. `StopLossPresent` / `TakeProfitRR` — terminal validators.
+        let mut rules: Vec<Box<dyn RiskRule>> = vec![
             Box::new(AssetWhitelist {
                 whitelist: whitelist.clone(),
             }),
@@ -94,17 +134,26 @@ impl RiskLayer {
                 max: config.limits.max_correlation_cluster,
                 whitelist: whitelist.clone(),
             }),
-            Box::new(StopLossPresent {
-                required: config.stops.stop_loss_required,
-                min_pct: config.stops.stop_loss_min_pct,
-                max_pct: config.stops.stop_loss_max_pct,
-            }),
-            Box::new(TakeProfitRR {
-                required: config.stops.take_profit_required,
-                min_rr: config.stops.take_profit_min_rr,
-                stop_loss_min_pct: config.stops.stop_loss_min_pct,
-            }),
         ];
+
+        if let Some(v) = venue_id {
+            let limits = config.venue_limits(v);
+            rules.push(Box::new(MinNotional {
+                min_notional_usd: limits.min_notional_usd,
+                venue_id: v.to_string(),
+            }));
+        }
+
+        rules.push(Box::new(StopLossPresent {
+            required: config.stops.stop_loss_required,
+            min_pct: config.stops.stop_loss_min_pct,
+            max_pct: config.stops.stop_loss_max_pct,
+        }));
+        rules.push(Box::new(TakeProfitRR {
+            required: config.stops.take_profit_required,
+            min_rr: config.stops.take_profit_min_rr,
+            stop_loss_min_pct: config.stops.stop_loss_min_pct,
+        }));
 
         Self {
             rules,
@@ -287,7 +336,25 @@ pub(crate) mod tests_common {
     }
 
     pub fn default_risk_layer() -> crate::RiskLayer {
-        use crate::config::{Limits, RiskConfig, Stops};
+        default_risk_layer_for_venue(None)
+    }
+
+    pub fn default_risk_layer_for_venue(venue_id: Option<&str>) -> crate::RiskLayer {
+        use crate::config::{Limits, RiskConfig, Stops, VenueLimits};
+        use std::collections::BTreeMap;
+        let mut venues = BTreeMap::new();
+        venues.insert(
+            "paper".to_string(),
+            VenueLimits {
+                min_notional_usd: 10.0,
+            },
+        );
+        venues.insert(
+            "live".to_string(),
+            VenueLimits {
+                min_notional_usd: 1.0,
+            },
+        );
         let config = RiskConfig {
             limits: Limits {
                 max_position_pct_nav: 20.0,
@@ -303,8 +370,9 @@ pub(crate) mod tests_common {
                 take_profit_required: false,
                 take_profit_min_rr: 1.5,
             },
+            venues,
         };
-        crate::RiskLayer::with_default_rules(config, test_whitelist())
+        crate::RiskLayer::with_default_rules(config, test_whitelist(), venue_id)
     }
 }
 

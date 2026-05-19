@@ -330,6 +330,24 @@ pub struct RiskConfig {
     pub limits: RiskLimits,
     #[garde(dive)]
     pub stops: RiskStops,
+    /// Per-venue deterministic broker constraints (e.g. minimum
+    /// notional). The xvision-risk crate consumes these via its own
+    /// `RiskConfig::venue_limits()` accessor; xvision-core simply
+    /// passes them through so the schema deserializes. See
+    /// `risk-gate-min-notional` contract for details.
+    #[garde(skip)]
+    #[serde(default)]
+    pub venues: std::collections::BTreeMap<String, RiskVenueLimits>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Validate, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RiskVenueLimits {
+    /// Minimum order notional in USD. `0.0` (the default) disables
+    /// the venue-min-notional rule.
+    #[garde(range(min = 0.0))]
+    #[serde(default)]
+    pub min_notional_usd: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Validate, Serialize, Deserialize)]
@@ -508,6 +526,7 @@ mod tests {
                 take_profit_required: true,
                 take_profit_min_rr: 1.5,
             },
+            venues: std::collections::BTreeMap::new(),
         }
     }
 

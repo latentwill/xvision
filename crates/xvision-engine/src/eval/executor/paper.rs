@@ -59,6 +59,14 @@ pub struct PaperExecutor {
     /// Optional observability emitter (`qa-eval-observability-wiring`).
     /// See `BacktestExecutor::obs_emitter`.
     obs_emitter: Option<ObsEmitter>,
+    /// Pre-submit minimum-notional gate (`risk-gate-min-notional`).
+    /// When `Some(min)` and `min > 0.0`, orders with notional (size ×
+    /// reference price) strictly less than `min` are vetoed before
+    /// `submit_order` fires. The broker never sees them, the trace
+    /// records a `BelowVenueMinNotional` veto, and the next cycle
+    /// proceeds. `None` / `Some(0.0)` disables the gate (matches the
+    /// pre-rule behavior on venues we haven't catalogued yet).
+    min_notional_usd: Option<f64>,
 }
 
 impl PaperExecutor {
@@ -72,6 +80,7 @@ impl PaperExecutor {
             progress: None,
             event_bus: None,
             obs_emitter: None,
+            min_notional_usd: None,
         }
     }
 
@@ -83,6 +92,7 @@ impl PaperExecutor {
             progress: None,
             event_bus: None,
             obs_emitter: None,
+            min_notional_usd: None,
         }
     }
 
@@ -97,6 +107,7 @@ impl PaperExecutor {
             progress: Some(progress),
             event_bus: None,
             obs_emitter: None,
+            min_notional_usd: None,
         }
     }
 
@@ -112,6 +123,7 @@ impl PaperExecutor {
             progress: Some(progress),
             event_bus: None,
             obs_emitter: None,
+            min_notional_usd: None,
         }
     }
 
@@ -131,6 +143,16 @@ impl PaperExecutor {
     /// `with_event_bus`.
     pub fn with_warmup(mut self, warmup_bars: Vec<Ohlcv>) -> Self {
         self.warmup_bars = warmup_bars;
+        self
+    }
+
+    /// Wire the pre-submit minimum-notional gate
+    /// (`risk-gate-min-notional`). Pass `0.0` to disable. Production
+    /// call sites should derive this from `xvision_risk::RiskConfig`'s
+    /// `[venues.<id>]` block (e.g. `risk_cfg.venue_limits("paper")
+    /// .min_notional_usd`).
+    pub fn with_min_notional_usd(mut self, min_notional_usd: f64) -> Self {
+        self.min_notional_usd = Some(min_notional_usd);
         self
     }
 
@@ -656,6 +678,85 @@ impl PaperExecutor {
                 };
                 Some((side, size))
             };
+
+            // risk-gate-min-notional: pre-submit veto when the planned
+            // order's notional (size × reference price) is below the
+            // venue's configured minimum. The broker never sees a
+            // known-bad order; the operator sees a clean
+            // `BelowVenueMinNotional` veto in the trace instead of an
+            // opaque broker rejection on the post-submit path.
+            //
+            // Parallel-safe with `eval-broker-error-circuit-breaker`:
+            // that track owns the post-submit rejection path; this gate
+            // is strictly pre-submit and short-circuits before the
+            // broker.call span fires.
+            let min_notional_veto = self
+                .min_notional_usd
+                .filter(|m| *m > 0.0)
+                .and_then(|min| {
+                    plan.and_then(|(_side, size)| {
+                        let notional = size * reference_price_usd;
+                        if size > 0.0 && notional > 0.0 && notional < min {
+                            Some((notional, min))
+                        } else {
+                            None
+                        }
+                    })
+                });
+            if let Some((notional, min)) = min_notional_veto {
+                tracing::warn!(
+                    run_id = %run.id,
+                    decision_index = decision_idx,
+                    asset = %asset,
+                    notional,
+                    min_notional_usd = min,
+                    "MinNotional veto (pre-submit): order below venue minimum"
+                );
+                let justification = format!(
+                    "[below_venue_min_notional] {} (notional=${:.4}, min=${:.2})",
+                    parsed.justification.trim(),
+                    notional,
+                    min,
+                );
+                let row = DecisionRow {
+                    run_id: run.id.clone(),
+                    decision_index: decision_idx,
+                    timestamp: bar.timestamp,
+                    asset: asset.clone(),
+                    action: parsed.action.clone(),
+                    conviction: Some(parsed.conviction),
+                    justification: Some(justification),
+                    reasoning: None,
+                    order_size: None,
+                    fill_price: None,
+                    fill_size: None,
+                    fee: None,
+                    pnl_realized: None,
+                };
+                store.record_decision(&row).await?;
+                self.emit_chart(
+                    &run.id,
+                    RunChartEvent::Decision(LiveDecisionRow::from(&row)),
+                )
+                .await;
+                self.emit(ProgressEvent::DecisionEmitted {
+                    run_id: run.id.clone(),
+                    action: parsed.action.clone(),
+                    asset: asset.clone(),
+                    size: 0.0,
+                    conviction: parsed.conviction,
+                });
+                // Equity unchanged (no fill); record so the chart series
+                // stays dense per bar — same pattern as the recoverable
+                // broker-error path above.
+                let balance_now = self.broker.balance().await?;
+                store
+                    .record_equity(&run.id, bar.timestamp, balance_now)
+                    .await?;
+                equity_samples.push(balance_now);
+                decision_idx += 1;
+                continue;
+            }
 
             if let Some((side, size)) = plan {
                 // Hold this; the strike state may be reset below on
