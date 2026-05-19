@@ -16,6 +16,7 @@ xvision-core          = { path = "../xvision-core" }
 xvision-data          = { path = "../xvision-data" }
 xvision-execution     = { path = "../xvision-execution" }
 xvision-observability = { path = "../xvision-observability" }
+xvision-risk          = { path = "../xvision-risk" }
 
 reqwest     = { workspace = true }
 

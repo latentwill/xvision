@@ -1332,13 +1332,54 @@ async fn build_paper_executor(
         // can pull a real pre-window from the bars cache.
         Vec::new()
     };
+    let min_notional = paper_min_notional_usd(ctx);
     let mut paper = PaperExecutor::with_bars(broker, bars)
         .with_warmup(warmup)
-        .with_event_bus(ctx.event_bus.clone());
+        .with_event_bus(ctx.event_bus.clone())
+        .with_min_notional_usd(min_notional);
     if let Some(emitter) = obs {
         paper = paper.with_observability(emitter);
     }
     Ok(Box::new(paper))
+}
+
+/// Resolve the `paper` venue's `min_notional_usd` from the active risk
+/// config (`$XVN_HOME/config/risk.toml`, with `XVN_RISK_CONFIG_PATH`
+/// override). Returns `0.0` (rule no-op) when the file is missing,
+/// fails to parse, or has no `[venues.paper]` entry — matching the
+/// "absent venue → pass-through" contract from PR #324.
+///
+/// Plumbing choice: a per-run, best-effort read at executor-build
+/// time. Avoids threading a `RiskConfig` handle through `ApiContext`
+/// (which today holds no risk-layer state), and the file is small
+/// (~30 lines) so the read is negligible next to executor setup.
+/// Failure paths log and fall back to 0.0 — never panic, never
+/// bubble. The risk-layer crate already validates the file at the
+/// top of every run, so production paths see a well-formed config.
+fn paper_min_notional_usd(ctx: &ApiContext) -> f64 {
+    let path = if let Ok(p) = std::env::var("XVN_RISK_CONFIG_PATH") {
+        if !p.is_empty() {
+            std::path::PathBuf::from(p)
+        } else {
+            ctx.xvn_home.join("config").join("risk.toml")
+        }
+    } else {
+        ctx.xvn_home.join("config").join("risk.toml")
+    };
+    if !path.exists() {
+        return 0.0;
+    }
+    match xvision_risk::config::RiskConfig::from_path(&path) {
+        Ok(cfg) => cfg.venue_limits("paper").min_notional_usd,
+        Err(e) => {
+            tracing::warn!(
+                path = %path.display(),
+                error = %e,
+                "failed to load risk config for MinNotional wiring; defaulting to 0.0 (rule no-op)"
+            );
+            0.0
+        }
+    }
 }
 
 async fn build_backtest_executor(
