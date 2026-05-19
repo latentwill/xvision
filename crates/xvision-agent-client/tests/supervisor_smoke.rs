@@ -3,22 +3,32 @@ use tempfile::TempDir;
 use xvision_agent_client::AgentClient;
 
 fn agentd_bin() -> PathBuf {
-    // Repo-root-relative path computed from CARGO_MANIFEST_DIR.
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .join("xvision-agentd/dist/index.js")
+    std::env::var("XVISION_AGENTD_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            // Repo-root-relative path computed from CARGO_MANIFEST_DIR.
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .join("xvision-agentd/dist/index.js")
+        })
 }
 
 #[tokio::test]
 async fn spawns_and_calls_health() {
-    let bin = agentd_bin();
-    if !bin.exists() {
-        eprintln!("skipping: xvision-agentd not built. Run `pnpm --dir xvision-agentd build` first.");
+    if std::env::var("XVISION_RUN_SIDECAR_TESTS").ok().as_deref() != Some("1") {
+        eprintln!("skipping: XVISION_RUN_SIDECAR_TESTS != 1");
         return;
     }
+
+    let bin = agentd_bin();
+    assert!(
+        bin.exists(),
+        "xvision-agentd not built at {}. Run `pnpm --dir xvision-agentd build` first or set XVISION_AGENTD_PATH.",
+        bin.display()
+    );
 
     let dir = TempDir::new().unwrap();
     let sock = dir.path().join("sock");
