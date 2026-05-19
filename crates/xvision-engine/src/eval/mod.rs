@@ -19,6 +19,7 @@ pub mod guardrails;
 pub mod metrics;
 pub mod postprocess;
 pub mod progress;
+pub mod regime;
 pub mod review;
 pub mod run;
 pub mod scenario;

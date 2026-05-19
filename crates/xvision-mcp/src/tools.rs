@@ -798,6 +798,7 @@ impl XvisionTools {
                     skill_ids: Vec::new(),
                     max_tokens: None,
                     prompt_version: String::new(),
+                    inputs_policy: Default::default(),
                 }],
             },
         )

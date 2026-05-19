@@ -142,6 +142,12 @@ pub async fn create(ctx: &ApiContext, req: CreateScenarioRequest) -> ApiResult<S
             data_fetched_at: None,
         },
         warmup_bars: req.warmup_bars.unwrap_or(DEFAULT_WARMUP_BARS),
+        // Regime labels are unset on creation; populated by
+        // `xvn scenario classify` or `xvn scenario set-regime`.
+        regime_label: None,
+        volatility_label: None,
+        trend_direction: None,
+        regime_derived: false,
         created_at: Utc::now(),
         created_by: ctx.actor.id().to_string(),
         archived_at: None,

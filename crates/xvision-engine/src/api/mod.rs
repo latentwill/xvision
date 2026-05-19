@@ -52,6 +52,8 @@ const MIGRATION_019_AGENT_SLOT_PROMPT_VERSION: &str =
 const MIGRATION_020_AGENT_SLOT_INPUTS_POLICY: &str =
     include_str!("../../migrations/020_agent_slot_inputs_policy.sql");
 const MIGRATION_021_EVAL_BATCHES: &str = include_str!("../../migrations/021_eval_batches.sql");
+const MIGRATION_022_SCENARIO_REGIME_LABELS: &str =
+    include_str!("../../migrations/022_scenario_regime_labels.sql");
 
 /// Map of cache_key → per-key mutex used by `eval::bars::load_bars` to
 /// serialize concurrent misses for the same window. Kept inside an outer
@@ -154,6 +156,7 @@ impl ApiContext {
         migrate_agent_slot_prompt_version(&pool).await?;
         migrate_agent_slot_inputs_policy(&pool).await?;
         migrate_eval_batches(&pool).await?;
+        migrate_scenario_regime_labels(&pool).await?;
 
         let ctx = Self::new(pool, actor, xvn_home.to_path_buf());
 
@@ -488,6 +491,22 @@ async fn migrate_eval_batches(pool: &SqlitePool) -> ApiResult<()> {
             .await?;
     }
 
+    Ok(())
+}
+
+/// Apply migration 021: four regime-label columns on the `scenarios` table.
+/// Gated on column absence so the migration is idempotent on already-upgraded
+/// databases.  All four columns are added atomically (or skipped if already
+/// present) using the same `table_has_column` probe used by prior migrations.
+async fn migrate_scenario_regime_labels(pool: &SqlitePool) -> ApiResult<()> {
+    if table_has_column(pool, "scenarios", "regime_label").await? {
+        // Column present → migration already applied; skip.
+        return Ok(());
+    }
+    sqlx::query(MIGRATION_022_SCENARIO_REGIME_LABELS)
+        .execute(pool)
+        .await
+        .map_err(|e| ApiError::Internal(format!("migrate_scenario_regime_labels: {e}")))?;
     Ok(())
 }
 
