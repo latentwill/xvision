@@ -10,7 +10,7 @@
 //!     pnpm --dir xvision-agentd build
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -23,7 +23,10 @@ use xvision_agent_client::{
     ToolDispatch, ToolDispatchError,
 };
 
-struct EchoDispatch;
+#[derive(Default)]
+struct EchoDispatch {
+    invocations: Mutex<Vec<(String, serde_json::Value)>>,
+}
 
 #[async_trait]
 impl ToolDispatch for EchoDispatch {
@@ -32,10 +35,18 @@ impl ToolDispatch for EchoDispatch {
         name: &str,
         input: serde_json::Value,
     ) -> std::result::Result<serde_json::Value, ToolDispatchError> {
+        self.invocations
+            .lock()
+            .expect("record echo invocation")
+            .push((name.to_string(), input.clone()));
+
         if name != "echo" {
             return Err(ToolDispatchError::UnknownTool(name.into()));
         }
-        let msg = input.get("msg").and_then(|v| v.as_str()).unwrap_or("");
+        let msg = input
+            .get("msg")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ToolDispatchError::Failed("echo input missing string msg".into()))?;
         Ok(json!({ "echoed": msg }))
     }
 }
@@ -76,14 +87,11 @@ async fn full_session_round_trip() {
     let socket_path = dir.path().join("xvision-agentd.sock");
     let callback_path = dir.path().join("xvision-callbacks.sock");
 
-    let client = AgentClient::spawn_with_callbacks(
-        &sidecar_path,
-        &socket_path,
-        &callback_path,
-        Arc::new(EchoDispatch),
-    )
-    .await
-    .expect("spawn sidecar");
+    let dispatch = Arc::new(EchoDispatch::default());
+    let client =
+        AgentClient::spawn_with_callbacks(&sidecar_path, &socket_path, &callback_path, dispatch.clone())
+            .await
+            .expect("spawn sidecar");
 
     // Step 1: register the echo tool via the Wave-1 register_tools path.
     client
@@ -142,6 +150,16 @@ async fn full_session_round_trip() {
         stepped.output_text.contains("done"),
         "expected output_text to contain 'done', got: {:?}",
         stepped.output_text
+    );
+    let invocations = dispatch
+        .invocations
+        .lock()
+        .expect("read echo invocations")
+        .clone();
+    assert_eq!(
+        invocations,
+        vec![("echo".to_string(), json!({ "msg": "from-sidecar" }))],
+        "expected one echo callback with the sidecar payload"
     );
 
     // Step 4: end_run.
