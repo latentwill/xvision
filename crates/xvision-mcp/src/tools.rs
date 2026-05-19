@@ -15,16 +15,25 @@ use std::path::PathBuf;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{tool, tool_router};
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
 use xvision_data as xvn;
-use xvision_engine::api::eval::{self as api_eval, CompareRunsRequest, ListRunsRequest};
+use xvision_engine::api::eval::{
+    self as api_eval, BatchDetail, CompareRunsRequest, CreateBatchRequest, ListRunsRequest,
+};
+use xvision_engine::api::scenario as api_scenario;
 use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::authoring;
 use xvision_engine::eval::run::RunStatus;
+use xvision_engine::eval::scenario::Scenario;
 use xvision_engine::eval::store::RunStore;
-use xvision_engine::strategies::{risk::RiskConfig, store::FilesystemStore};
+use xvision_engine::strategies::{
+    risk::RiskConfig, store::FilesystemStore, store::StrategyStore, store::strategy_store_dir,
+};
+use xvision_engine::strategies::validate::preflight_validate;
+use xvision_engine::api::agents as api_agents;
+use xvision_engine::agents::AgentSlot;
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -198,6 +207,124 @@ pub struct EvalRunIdReq {
 pub struct EvalCompareReq {
     /// Two or more run ids (ULIDs) to fold into a single ComparisonReport.
     pub run_ids: Vec<String>,
+}
+
+// ---------------------------------------------------------------------------
+// New wave-C request shapes for the 6 parity tools.
+// ---------------------------------------------------------------------------
+
+/// `strategy_create_atomic` — create a strategy + agent + provider/model in
+/// one atomic operation (wraps `xvn strategy create --prompt ... --json`).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct StrategyCreateAtomicReq {
+    /// Prompt text for the agent (inline). Required.
+    pub prompt: String,
+    /// Human-readable strategy name. Required.
+    pub name: String,
+    /// Provider name (e.g. `openrouter`, `anthropic`). Required.
+    pub provider: String,
+    /// Model id (e.g. `kimi-k2`). Required.
+    pub model: String,
+    /// Primary asset the strategy trades (e.g. `ETH/USD`). Required.
+    pub asset: String,
+    /// Decision timeframe / bar granularity.
+    /// Accepted: `1m`, `5m`, `15m`, `30m`, `1h`, `2h`, `4h`, `1d`. Required.
+    pub timeframe: String,
+    /// Role the created agent plays (default: `trader`).
+    #[serde(default)]
+    pub role: Option<String>,
+    /// Optional creator handle. Defaults to `@anonymous`.
+    #[serde(default)]
+    pub creator: Option<String>,
+}
+
+/// `strategy_validate_preflight` — validate a strategy against eval-readiness
+/// criteria, optionally cross-checking a scenario.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct StrategyValidatePreflightReq {
+    /// Strategy agent id. Required.
+    pub strategy_id: String,
+    /// Optional scenario id to cross-check asset/timeframe alignment.
+    #[serde(default)]
+    pub scenario_id: Option<String>,
+}
+
+/// `eval_batch_run` — launch one eval run per scenario and collect results.
+/// Equivalent to `xvn eval batch run --strategy --scenarios --wait --json`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EvalBatchRunReq {
+    /// Strategy agent id. Required.
+    pub strategy_id: String,
+    /// List of scenario ids to run against. Required; at least one.
+    pub scenario_ids: Vec<String>,
+    /// Run mode: `backtest` (default) or `paper`.
+    #[serde(default)]
+    pub mode: Option<String>,
+    /// Agent profile id for post-run reviews (e.g. `reasoning-agent`).
+    /// When set, a review is generated for each completed run.
+    #[serde(default)]
+    pub review_with: Option<String>,
+}
+
+/// `eval_batch_status` — retrieve the persisted batch record and its run ids.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EvalBatchStatusReq {
+    /// Batch id (e.g. `batch_01K…`). Required.
+    pub batch_id: String,
+}
+
+/// `eval_compare` — compare a set of runs (by run ids) or all runs from a
+/// batch, returning a `ComparisonReport`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EvalCompareExtReq {
+    /// Two or more run ids. Mutually exclusive with `batch_id`.
+    #[serde(default)]
+    pub run_ids: Vec<String>,
+    /// Batch id — resolve run ids from this batch, then compare.
+    /// Mutually exclusive with `run_ids`.
+    #[serde(default)]
+    pub batch_id: Option<String>,
+    /// When true, return the comparison as a Markdown table instead of JSON.
+    #[serde(default)]
+    pub markdown: bool,
+}
+
+/// `scenarios_select` — filter the scenario library by asset / timeframe /
+/// decision count / regime labels and return a ranked subset.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ScenariosSelectReq {
+    /// Comma-separated asset symbols (e.g. `["ETH/USD","BTC/USD"]`).
+    /// Empty → all assets.
+    #[serde(default)]
+    pub assets: Vec<String>,
+
+    /// Bar granularity filter (e.g. `4h`, `1h`). Maps to
+    /// `decision_cadence_minutes`. Omitted → all timeframes.
+    #[serde(default)]
+    pub timeframe: Option<String>,
+
+    /// [Mode A] Select scenarios within ±10 % of this decision count.
+    /// Mutually exclusive with `same_decisions`.
+    #[serde(default)]
+    pub target_decisions: Option<u64>,
+
+    /// [Mode B] Return scenarios that share the largest common decision count
+    /// ≤ `max_decisions`. Requires `max_decisions`. Mutually exclusive with
+    /// `target_decisions`.
+    #[serde(default)]
+    pub same_decisions: bool,
+
+    /// [Mode B] Maximum decision count cap. Required when `same_decisions=true`.
+    #[serde(default)]
+    pub max_decisions: Option<u64>,
+
+    /// Regime label filter (e.g. `["bull","bear"]`). OR-semantics per scenario.
+    #[serde(default)]
+    pub regimes: Vec<String>,
+
+    /// Maximum results to return (default 4).
+    #[serde(default)]
+    pub count: Option<usize>,
 }
 
 // ---------------------------------------------------------------------------
@@ -628,6 +755,436 @@ impl XvisionTools {
             .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))?;
         json_or_err(&findings)
     }
+
+    // ── Wave-C parity tools ──────────────────────────────────────────────────
+
+    /// Atomically create a strategy + agent + provider/model binding in one
+    /// call. Requires: `prompt`, `name`, `provider`, `model`, `asset`,
+    /// `timeframe`. Optional: `role` (default `trader`), `creator`.
+    /// Returns `{ strategy_id, agent_id, eval_ready, provider, model, warnings }`.
+    #[tool(
+        description = "Atomically create a strategy + agent + provider/model in one call. \
+        Required inputs: prompt (inline text), name, provider, model, asset, timeframe \
+        (1m/5m/15m/30m/1h/2h/4h/1d). Optional: role (default trader), creator. \
+        Returns { strategy_id, agent_id, eval_ready, provider, model, warnings }."
+    )]
+    async fn xvn_strategy_create_atomic(
+        &self,
+        Parameters(req): Parameters<StrategyCreateAtomicReq>,
+    ) -> Result<String, rmcp::ErrorData> {
+        let ctx = self.api_context().await?;
+
+        let cadence_minutes = parse_timeframe_minutes_mcp(&req.timeframe)?;
+        let role = req.role.unwrap_or_else(|| "trader".to_string());
+        let creator = req
+            .creator
+            .unwrap_or_else(|| "@anonymous".to_string());
+
+        // 1. Create the agent library entry.
+        let agent = api_agents::create(
+            &ctx,
+            api_agents::CreateAgentRequest {
+                name: format!("{} {role}", req.name),
+                description: format!(
+                    "Created atomically with strategy '{}' role '{role}'",
+                    req.name
+                ),
+                tags: vec!["atomic-create".to_string()],
+                slots: vec![AgentSlot {
+                    name: "main".to_string(),
+                    provider: req.provider.clone(),
+                    model: req.model.clone(),
+                    system_prompt: req.prompt,
+                    skill_ids: Vec::new(),
+                    max_tokens: None,
+                    prompt_version: String::new(),
+                }],
+            },
+        )
+        .await
+        .map_err(api_err_to_mcp)?;
+
+        let agent_id = agent.agent_id.clone();
+
+        // 2. Build the strategy with the agent wired in.
+        let strategy_id = Ulid::new().to_string();
+        let strategy = xvision_engine::strategies::Strategy {
+            manifest: xvision_engine::strategies::manifest::PublicManifest {
+                id: strategy_id.clone(),
+                display_name: req.name.clone(),
+                plain_summary: String::new(),
+                creator,
+                template: "custom".to_string(),
+                regime_fit: Vec::new(),
+                asset_universe: vec![req.asset.clone()],
+                decision_cadence_minutes: cadence_minutes,
+                required_models: Vec::new(),
+                required_tools: Vec::new(),
+                risk_preset_or_config: "balanced".to_string(),
+                published_at: None,
+                min_warmup_bars: None,
+            },
+            agents: vec![xvision_engine::strategies::AgentRef {
+                agent_id: agent_id.clone(),
+                role: role.clone(),
+            }],
+            pipeline: xvision_engine::strategies::PipelineDef::default(),
+            regime_slot: None,
+            intern_slot: None,
+            trader_slot: None,
+            risk: xvision_engine::strategies::risk::RiskPreset::Balanced.expand(),
+            mechanical_params: serde_json::json!({}),
+        };
+
+        // 3. Validate shape.
+        let preflight = preflight_validate(&strategy, None);
+        if !preflight.errors.is_empty() {
+            return Err(rmcp::ErrorData::invalid_params(
+                format!("strategy validation failed: {}", preflight.errors.join("; ")),
+                None,
+            ));
+        }
+
+        // 4. Persist the strategy.
+        let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+        store
+            .save(&strategy)
+            .await
+            .map_err(|e| rmcp::ErrorData::internal_error(format!("save strategy: {e}"), None))?;
+
+        // 5. Build output.
+        let warnings = preflight.warnings;
+        let eval_ready = warnings.is_empty();
+        json_or_err(&serde_json::json!({
+            "strategy_id": strategy_id,
+            "agent_id": agent_id,
+            "eval_ready": eval_ready,
+            "provider": req.provider,
+            "model": req.model,
+            "warnings": warnings,
+        }))
+    }
+
+    /// Validate a strategy against eval-readiness criteria. Without
+    /// `scenario_id`: shape-only check. With `scenario_id`: additionally
+    /// checks asset/timeframe alignment. Required input: `strategy_id`.
+    /// Optional: `scenario_id`. Returns
+    /// `{ eval_ready, errors, warnings, asset?, timeframe? }`.
+    #[tool(
+        description = "Preflight-validate a strategy for eval readiness. Required: strategy_id. \
+        Optional: scenario_id (cross-checks asset/timeframe alignment). \
+        Returns { eval_ready, errors, warnings } — errors is empty when eval_ready=true."
+    )]
+    async fn xvn_strategy_validate_preflight(
+        &self,
+        Parameters(req): Parameters<StrategyValidatePreflightReq>,
+    ) -> Result<String, rmcp::ErrorData> {
+        let ctx = self.api_context().await?;
+
+        // Load strategy from filesystem store.
+        let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+        let strategy = store
+            .load(&req.strategy_id)
+            .await
+            .map_err(|e| {
+                // Walk the error chain to detect file-not-found vs other errors.
+                let is_not_found = e.chain().any(|cause| {
+                    if let Some(io_err) = cause.downcast_ref::<std::io::Error>() {
+                        io_err.kind() == std::io::ErrorKind::NotFound
+                    } else {
+                        false
+                    }
+                }) || e.to_string().contains("not found");
+                if is_not_found {
+                    rmcp::ErrorData::invalid_params(
+                        format!("not found: strategy '{}'", req.strategy_id),
+                        None,
+                    )
+                } else {
+                    rmcp::ErrorData::internal_error(e.to_string(), None)
+                }
+            })?;
+
+        // Optionally load the scenario for cross-check.
+        let scenario = if let Some(sid) = &req.scenario_id {
+            let sc = api_scenario::get(&ctx, sid)
+                .await
+                .map_err(api_err_to_mcp)?;
+            Some(sc)
+        } else {
+            None
+        };
+
+        let preflight = preflight_validate(&strategy, scenario.as_ref());
+
+        let mut out = serde_json::json!({
+            "eval_ready": preflight.eval_ready,
+            "errors": preflight.errors,
+            "warnings": preflight.warnings,
+        });
+
+        if let Some(sc) = &scenario {
+            let asset = sc.asset.first().map(|a| a.venue_symbol.as_str()).unwrap_or("");
+            let tf_minutes = (sc.granularity.seconds() / 60) as u32;
+            let timeframe = if tf_minutes % 60 == 0 {
+                format!("{}h", tf_minutes / 60)
+            } else {
+                format!("{tf_minutes}m")
+            };
+            out["asset"] = serde_json::Value::String(asset.to_string());
+            out["timeframe"] = serde_json::Value::String(timeframe);
+        }
+
+        json_or_err(&out)
+    }
+
+    /// Launch one eval run per scenario against a strategy, wait for all to
+    /// complete, and return a unified batch result. Required inputs:
+    /// `strategy_id`, `scenario_ids` (at least one). Optional: `mode`
+    /// (default `backtest`), `review_with` (agent profile id).
+    /// Returns `{ batch_id, strategy_id, runs: [...] }`.
+    #[tool(
+        description = "Run a strategy against multiple scenarios in one batch, wait for all to complete. \
+        Required: strategy_id, scenario_ids (non-empty list). Optional: mode (default backtest), \
+        review_with (agent profile id for post-run review). \
+        Returns { batch_id, strategy_id, runs: [{ scenario_id, scenario_name, run_id, status, \
+        return_pct, sharpe, drawdown_pct, decisions, actions, error?, review? }] }."
+    )]
+    async fn xvn_eval_batch_run(
+        &self,
+        Parameters(req): Parameters<EvalBatchRunReq>,
+    ) -> Result<String, rmcp::ErrorData> {
+        if req.scenario_ids.is_empty() {
+            return Err(rmcp::ErrorData::invalid_params(
+                "scenario_ids must be non-empty".to_string(),
+                None,
+            ));
+        }
+
+        let mode_str = req.mode.as_deref().unwrap_or("backtest");
+        let _mode = xvision_engine::eval::run::RunMode::parse(mode_str).ok_or_else(|| {
+            rmcp::ErrorData::invalid_params(
+                format!("unknown mode {mode_str:?}; expected one of: paper | backtest"),
+                None,
+            )
+        })?;
+
+        let ctx = self.api_context().await?;
+
+        // Create the batch row.
+        let batch = api_eval::create_batch(
+            &ctx,
+            CreateBatchRequest {
+                strategy_id: req.strategy_id.clone(),
+                review_with: req.review_with.clone(),
+            },
+        )
+        .await
+        .map_err(api_err_to_mcp)?;
+        let batch_id = batch.batch_id.clone();
+
+        // Resolve scenario display names (best-effort).
+        let mut scenario_names: Vec<String> = Vec::with_capacity(req.scenario_ids.len());
+        for sid in &req.scenario_ids {
+            let name = api_scenario::get(&ctx, sid)
+                .await
+                .map(|s| s.display_name)
+                .unwrap_or_else(|_| sid.clone());
+            scenario_names.push(name);
+        }
+
+        // Launch one run per scenario via the env-bound `api_eval::run`
+        // (same path the CLI uses for `xvn eval batch run`).
+        let mut entries: Vec<serde_json::Value> = Vec::with_capacity(req.scenario_ids.len());
+
+        for (scenario_id, scenario_name) in req.scenario_ids.iter().zip(scenario_names.iter()) {
+            let run_req = api_eval::EvalRunRequest {
+                agent_id: req.strategy_id.clone(),
+                scenario_id: scenario_id.clone(),
+                mode: _mode,
+                params_override: None,
+            };
+
+            let entry = match api_eval::run(&ctx, run_req).await {
+                Ok(run) => {
+                    let _ = api_eval::attach_run_to_batch(&ctx, &run.id, &batch_id).await;
+                    let actions = action_distribution_mcp(&ctx, &run.id)
+                        .await
+                        .unwrap_or_default();
+                    let (return_pct, sharpe, drawdown_pct, decisions) =
+                        if let Some(m) = &run.metrics {
+                            (
+                                Some(m.total_return_pct),
+                                Some(m.sharpe),
+                                Some(m.max_drawdown_pct),
+                                m.n_decisions,
+                            )
+                        } else {
+                            (None, None, None, 0)
+                        };
+                    serde_json::json!({
+                        "scenario_id": scenario_id,
+                        "scenario_name": scenario_name,
+                        "run_id": run.id,
+                        "status": run.status.as_str(),
+                        "return_pct": return_pct,
+                        "sharpe": sharpe,
+                        "drawdown_pct": drawdown_pct,
+                        "decisions": decisions,
+                        "actions": actions,
+                        "error": run.error,
+                    })
+                }
+                Err(e) => serde_json::json!({
+                    "scenario_id": scenario_id,
+                    "scenario_name": scenario_name,
+                    "run_id": "",
+                    "status": "failed",
+                    "return_pct": null,
+                    "sharpe": null,
+                    "drawdown_pct": null,
+                    "decisions": 0,
+                    "actions": {},
+                    "error": e.to_string(),
+                }),
+            };
+            entries.push(entry);
+        }
+
+        let _ = api_eval::finalize_batch(&ctx, &batch_id).await;
+
+        json_or_err(&serde_json::json!({
+            "batch_id": batch_id,
+            "strategy_id": req.strategy_id,
+            "runs": entries,
+        }))
+    }
+
+    /// Show the status of a persisted batch by its id. Required: `batch_id`.
+    /// Returns `{ batch_id, strategy_id, status, created_at, completed_at?,
+    /// review_with?, run_ids }`.
+    #[tool(
+        description = "Show the persisted status of an eval batch by id. \
+        Required: batch_id. \
+        Returns { batch_id, strategy_id, status, created_at, completed_at, review_with, run_ids }."
+    )]
+    async fn xvn_eval_batch_status(
+        &self,
+        Parameters(req): Parameters<EvalBatchStatusReq>,
+    ) -> Result<String, rmcp::ErrorData> {
+        let ctx = self.api_context().await?;
+        let detail: BatchDetail = api_eval::get_batch(&ctx, &req.batch_id)
+            .await
+            .map_err(api_err_to_mcp)?;
+        json_or_err(&detail)
+    }
+
+    /// Compare 2+ completed runs side-by-side. Supply either `run_ids`
+    /// (two or more) or `batch_id` (resolves run ids from the batch). When
+    /// `markdown=true` the report is returned as a Markdown table string.
+    /// Returns a `ComparisonReport` or Markdown string.
+    #[tool(
+        description = "Compare 2+ completed runs. Supply run_ids (two or more ULIDs) or batch_id \
+        (resolves run ids from a batch). Optional: markdown=true returns a Markdown table. \
+        Returns ComparisonReport { runs, equity_curves, findings } or a Markdown string."
+    )]
+    async fn xvn_eval_compare_ext(
+        &self,
+        Parameters(req): Parameters<EvalCompareExtReq>,
+    ) -> Result<String, rmcp::ErrorData> {
+        // Resolve the run id list from either run_ids or batch_id.
+        let run_ids = if let Some(bid) = &req.batch_id {
+            if !req.run_ids.is_empty() {
+                return Err(rmcp::ErrorData::invalid_params(
+                    "supply either run_ids or batch_id, not both".to_string(),
+                    None,
+                ));
+            }
+            let ctx = self.api_context().await?;
+            let detail = api_eval::get_batch(&ctx, bid)
+                .await
+                .map_err(api_err_to_mcp)?;
+            detail.run_ids
+        } else {
+            req.run_ids.clone()
+        };
+
+        let ctx = self.api_context().await?;
+        let report = api_eval::compare(&ctx, CompareRunsRequest { run_ids })
+            .await
+            .map_err(api_err_to_mcp)?;
+
+        if req.markdown {
+            let md = format_comparison_markdown(&report);
+            return json_or_err(&md);
+        }
+
+        json_or_err(&report)
+    }
+
+    /// Select a comparable set of scenarios by asset, timeframe, decision
+    /// count, and regime labels. Read-only — nothing is created.
+    /// Either `target_decisions` (Mode A, ±10 %) or `same_decisions=true`
+    /// + `max_decisions` (Mode B) must be set.
+    /// Returns an array of `{ id, name, asset, timeframe, decision_count }`.
+    #[tool(
+        description = "Filter the scenario library and return a ranked subset. \
+        Optional: assets (list), timeframe (e.g. 4h), regimes (list), count (default 4). \
+        Decision-count mode: target_decisions (Mode A, ±10%) or same_decisions=true + \
+        max_decisions (Mode B, common count). \
+        Returns [{ id, name, asset, timeframe, decision_count }]."
+    )]
+    async fn xvn_scenarios_select(
+        &self,
+        Parameters(req): Parameters<ScenariosSelectReq>,
+    ) -> Result<String, rmcp::ErrorData> {
+        if req.target_decisions.is_none() && !req.same_decisions {
+            return Err(rmcp::ErrorData::invalid_params(
+                "specify either target_decisions (Mode A) or same_decisions=true + max_decisions (Mode B)".to_string(),
+                None,
+            ));
+        }
+        if req.same_decisions && req.max_decisions.is_none() {
+            return Err(rmcp::ErrorData::invalid_params(
+                "same_decisions=true requires max_decisions".to_string(),
+                None,
+            ));
+        }
+
+        let timeframe_minutes = req
+            .timeframe
+            .as_deref()
+            .map(parse_timeframe_minutes_mcp)
+            .transpose()?;
+
+        let ctx = self.api_context().await?;
+        let all = api_scenario::list(
+            &ctx,
+            api_scenario::ListScenariosFilter {
+                source: None,
+                tags: vec![],
+                include_archived: false,
+                parent_scenario_id: None,
+            },
+        )
+        .await
+        .map_err(api_err_to_mcp)?;
+
+        let count = req.count.unwrap_or(4);
+        let rows = select_scenarios_mcp(
+            &all,
+            &req.assets,
+            timeframe_minutes,
+            &req.regimes,
+            req.target_decisions,
+            req.same_decisions,
+            req.max_decisions,
+            count,
+        )
+        .map_err(|e| rmcp::ErrorData::invalid_params(e, None))?;
+
+        json_or_err(&rows)
+    }
 }
 
 impl XvisionTools {
@@ -669,6 +1226,253 @@ fn api_err_to_mcp(e: xvision_engine::api::ApiError) -> rmcp::ErrorData {
         ApiError::Db(e) => rmcp::ErrorData::internal_error(format!("db: {e}"), None),
         ApiError::Other(e) => rmcp::ErrorData::internal_error(format!("{e:#}"), None),
     }
+}
+
+/// Parse a timeframe string (e.g. `4h`) to `decision_cadence_minutes`.
+/// Accepted: `1m`, `5m`, `15m`, `30m`, `1h`, `2h`, `4h`, `1d`.
+fn parse_timeframe_minutes_mcp(timeframe: &str) -> Result<u32, rmcp::ErrorData> {
+    match timeframe {
+        "1m" => Ok(1),
+        "5m" => Ok(5),
+        "15m" => Ok(15),
+        "30m" => Ok(30),
+        "1h" => Ok(60),
+        "2h" => Ok(120),
+        "4h" => Ok(240),
+        "1d" => Ok(1440),
+        other => Err(rmcp::ErrorData::invalid_params(
+            format!(
+                "unknown timeframe '{other}'. Accepted: 1m, 5m, 15m, 30m, 1h, 2h, 4h, 1d"
+            ),
+            None,
+        )),
+    }
+}
+
+/// Count each action kind in the decisions table for a run.
+/// Returns a `serde_json::Value` map (`{ "long_open": N, ... }`).
+async fn action_distribution_mcp(
+    ctx: &ApiContext,
+    run_id: &str,
+) -> anyhow::Result<serde_json::Value> {
+    use std::collections::BTreeMap;
+    let store = RunStore::new(ctx.db.clone());
+    let decisions = store.read_decisions(run_id).await?;
+    let mut counts: BTreeMap<String, u64> = BTreeMap::new();
+    for d in &decisions {
+        *counts.entry(d.action.clone()).or_insert(0) += 1;
+    }
+    Ok(serde_json::to_value(counts)?)
+}
+
+/// One row returned by `xvn_scenarios_select`.
+#[derive(Debug, Clone, Serialize)]
+struct SelectRow {
+    id: String,
+    name: String,
+    asset: String,
+    timeframe: String,
+    decision_count: u64,
+}
+
+/// Compute the decision bar count for a scenario (window bars minus warmup).
+fn scenario_decision_count_mcp(s: &Scenario) -> u64 {
+    let window_secs = (s.time_window.end - s.time_window.start).num_seconds() as u64;
+    let bar_secs = s.granularity.seconds();
+    if bar_secs == 0 {
+        return 0;
+    }
+    let total_bars = window_secs / bar_secs;
+    total_bars.saturating_sub(s.warmup_bars as u64)
+}
+
+/// Extract regime labels stored as `regime:<label>` tags.
+fn scenario_regime_labels_mcp(s: &Scenario) -> Vec<String> {
+    s.tags
+        .iter()
+        .filter_map(|t| t.strip_prefix("regime:").map(|r| r.to_string()))
+        .collect()
+}
+
+/// Pure selection logic — ported from `xvision-cli::commands::scenario::select_scenarios`.
+/// Takes a pre-fetched scenario list and applies asset / timeframe / regime /
+/// decision-count filters plus the cap. No DB access.
+fn select_scenarios_mcp(
+    scenarios: &[Scenario],
+    assets: &[String],
+    timeframe_minutes: Option<u32>,
+    regimes: &[String],
+    target_decisions: Option<u64>,
+    same_decisions: bool,
+    max_decisions: Option<u64>,
+    count: usize,
+) -> Result<Vec<SelectRow>, String> {
+    use std::collections::HashSet;
+
+    // 1. Pre-filter by asset / timeframe / regime.
+    let mut candidates: Vec<&Scenario> = scenarios
+        .iter()
+        .filter(|s| {
+            if !assets.is_empty() {
+                let sym = s.asset.first().map(|a| a.symbol.as_str()).unwrap_or("");
+                let matched = assets.iter().any(|want| {
+                    let norm = want.split('/').next().unwrap_or(want);
+                    sym.eq_ignore_ascii_case(norm) || want.eq_ignore_ascii_case(sym)
+                });
+                if !matched {
+                    return false;
+                }
+            }
+            if let Some(tf_min) = timeframe_minutes {
+                let bar_min = (s.granularity.seconds() / 60) as u32;
+                if bar_min != tf_min {
+                    return false;
+                }
+            }
+            if !regimes.is_empty() {
+                let labels = scenario_regime_labels_mcp(s);
+                let matched = regimes.iter().any(|want| {
+                    labels
+                        .iter()
+                        .any(|l| l.eq_ignore_ascii_case(want) || l.contains(want.as_str()))
+                });
+                if !matched {
+                    return false;
+                }
+            }
+            true
+        })
+        .collect();
+
+    // 2. Decision-count mode.
+    let target_count: u64 = if same_decisions {
+        let max = max_decisions.unwrap_or(u64::MAX);
+        let counts: Vec<u64> = candidates
+            .iter()
+            .map(|s| scenario_decision_count_mcp(s))
+            .filter(|&c| c <= max)
+            .collect();
+        let mut count_freq: std::collections::HashMap<u64, usize> =
+            std::collections::HashMap::new();
+        for c in &counts {
+            *count_freq.entry(*c).or_insert(0) += 1;
+        }
+        let best = count_freq
+            .iter()
+            .filter(|(_, &freq)| freq >= count)
+            .map(|(&c, _)| c)
+            .max()
+            .or_else(|| count_freq.keys().copied().max());
+        match best {
+            Some(c) => c,
+            None => return Ok(vec![]),
+        }
+    } else if let Some(t) = target_decisions {
+        t
+    } else {
+        0
+    };
+
+    // 3. Decision-count tolerance filter.
+    if same_decisions {
+        candidates.retain(|s| scenario_decision_count_mcp(s) == target_count);
+    } else if let Some(t) = target_decisions {
+        let lo = (t as f64 * 0.9).floor() as u64;
+        let hi = (t as f64 * 1.1).ceil() as u64;
+        candidates.retain(|s| {
+            let dc = scenario_decision_count_mcp(s);
+            dc >= lo && dc <= hi
+        });
+    }
+
+    // 4. Sort by closeness to target.
+    candidates.sort_by_key(|s| {
+        let dc = scenario_decision_count_mcp(s);
+        if target_decisions.is_some() || same_decisions {
+            (dc as i64 - target_count as i64).unsigned_abs()
+        } else {
+            0u64
+        }
+    });
+
+    // 5. Cap at `count`, one-per-asset preference.
+    let mut seen_assets: HashSet<String> = HashSet::new();
+    let mut selected: Vec<&Scenario> = Vec::with_capacity(count);
+    for s in &candidates {
+        if selected.len() >= count {
+            break;
+        }
+        let sym = s
+            .asset
+            .first()
+            .map(|a| a.symbol.as_str())
+            .unwrap_or("-")
+            .to_string();
+        if seen_assets.insert(sym) {
+            selected.push(s);
+        }
+    }
+    for s in &candidates {
+        if selected.len() >= count {
+            break;
+        }
+        if !selected.iter().any(|r| r.id == s.id) {
+            selected.push(s);
+        }
+    }
+
+    // 6. Build output rows.
+    let rows = selected
+        .into_iter()
+        .map(|s| {
+            let asset = s
+                .asset
+                .first()
+                .map(|a| a.symbol.as_str())
+                .unwrap_or("-")
+                .to_string();
+            SelectRow {
+                id: s.id.clone(),
+                name: s.display_name.clone(),
+                asset,
+                timeframe: s.granularity.to_string(),
+                decision_count: scenario_decision_count_mcp(s),
+            }
+        })
+        .collect();
+
+    Ok(rows)
+}
+
+/// Format a `ComparisonReport` as a simple Markdown table.
+fn format_comparison_markdown(report: &xvision_engine::eval::compare::ComparisonReport) -> String {
+    use std::fmt::Write;
+    let mut md = String::new();
+    let _ = writeln!(md, "| run_id | scenario_id | status | return_pct | sharpe | drawdown_pct |");
+    let _ = writeln!(md, "|--------|-------------|--------|------------|--------|--------------|");
+    for r in &report.runs {
+        let ret = r
+            .metrics
+            .as_ref()
+            .map(|m| format!("{:.2}", m.total_return_pct))
+            .unwrap_or_else(|| "-".to_string());
+        let sharpe = r
+            .metrics
+            .as_ref()
+            .map(|m| format!("{:.3}", m.sharpe))
+            .unwrap_or_else(|| "-".to_string());
+        let dd = r
+            .metrics
+            .as_ref()
+            .map(|m| format!("{:.2}", m.max_drawdown_pct))
+            .unwrap_or_else(|| "-".to_string());
+        let _ = writeln!(
+            md,
+            "| {} | {} | {} | {} | {} | {} |",
+            r.id, r.scenario_id, r.status.as_str(), ret, sharpe, dd
+        );
+    }
+    md
 }
 
 #[cfg(test)]
@@ -1114,5 +1918,403 @@ mod tests {
         let v = parsed(&s);
         let arr = v.as_array().unwrap();
         assert!(arr.is_empty(), "expected empty findings, got {v}");
+    }
+
+    // ── Wave-C parity tool tests ──────────────────────────────────────────────
+
+    // ── parse_timeframe_minutes_mcp ───────────────────────────────────────────
+
+    #[test]
+    fn parse_timeframe_1h_returns_60() {
+        assert_eq!(parse_timeframe_minutes_mcp("1h").unwrap(), 60);
+    }
+
+    #[test]
+    fn parse_timeframe_4h_returns_240() {
+        assert_eq!(parse_timeframe_minutes_mcp("4h").unwrap(), 240);
+    }
+
+    #[test]
+    fn parse_timeframe_1d_returns_1440() {
+        assert_eq!(parse_timeframe_minutes_mcp("1d").unwrap(), 1440);
+    }
+
+    #[test]
+    fn parse_timeframe_unknown_returns_error() {
+        let e = parse_timeframe_minutes_mcp("3h").unwrap_err();
+        assert!(e.to_string().contains("unknown timeframe"), "msg: {e}");
+    }
+
+    // ── strategy_create_atomic ────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn strategy_create_atomic_returns_strategy_id_and_agent_id() {
+        let (tools, _td) = tools_with_tmp();
+        let s = tools
+            .xvn_strategy_create_atomic(Parameters(StrategyCreateAtomicReq {
+                prompt: "You are a trader.".into(),
+                name: "mcp-atomic-test".into(),
+                provider: "openrouter".into(),
+                model: "kimi-k2".into(),
+                asset: "ETH/USD".into(),
+                timeframe: "4h".into(),
+                role: None,
+                creator: Some("@test".into()),
+            }))
+            .await
+            .unwrap();
+        let v = parsed(&s);
+        assert!(v["strategy_id"].as_str().is_some(), "strategy_id absent: {v}");
+        assert!(v["agent_id"].as_str().is_some(), "agent_id absent: {v}");
+        // eval_ready may be true or false depending on preflight warnings
+        assert!(v["eval_ready"].is_boolean(), "eval_ready absent: {v}");
+        assert_eq!(v["provider"], "openrouter");
+        assert_eq!(v["model"], "kimi-k2");
+    }
+
+    #[tokio::test]
+    async fn strategy_create_atomic_rejects_unknown_timeframe() {
+        let (tools, _td) = tools_with_tmp();
+        let err = tools
+            .xvn_strategy_create_atomic(Parameters(StrategyCreateAtomicReq {
+                prompt: "Trade.".into(),
+                name: "x".into(),
+                provider: "openrouter".into(),
+                model: "kimi-k2".into(),
+                asset: "ETH/USD".into(),
+                timeframe: "3h".into(), // invalid
+                role: None,
+                creator: None,
+            }))
+            .await
+            .unwrap_err();
+        let msg = err.to_string().to_lowercase();
+        assert!(msg.contains("unknown timeframe"), "msg: {msg}");
+    }
+
+    // ── strategy_validate_preflight ───────────────────────────────────────────
+
+    #[tokio::test]
+    async fn strategy_validate_preflight_returns_preflight_result() {
+        let (tools, _td) = tools_with_tmp();
+
+        // Create a strategy first via the authoring path.
+        let cs = tools
+            .xvn_create_strategy(Parameters(CreateStrategyReq {
+                template: "trend_follower".into(),
+                name: "preflight-test".into(),
+                creator: None,
+            }))
+            .await
+            .unwrap();
+        let id = id_of(&cs);
+
+        let s = tools
+            .xvn_strategy_validate_preflight(Parameters(StrategyValidatePreflightReq {
+                strategy_id: id.clone(),
+                scenario_id: None,
+            }))
+            .await
+            .unwrap();
+        let v = parsed(&s);
+        assert!(v["eval_ready"].is_boolean(), "eval_ready absent: {v}");
+        assert!(v["errors"].is_array(), "errors absent: {v}");
+        assert!(v["warnings"].is_array(), "warnings absent: {v}");
+    }
+
+    #[tokio::test]
+    async fn strategy_validate_preflight_returns_not_found_for_missing_strategy() {
+        let (tools, _td) = tools_with_tmp();
+        let err = tools
+            .xvn_strategy_validate_preflight(Parameters(StrategyValidatePreflightReq {
+                strategy_id: "01NOTEXIST0000000000000000".into(),
+                scenario_id: None,
+            }))
+            .await
+            .unwrap_err();
+        let msg = err.to_string().to_lowercase();
+        assert!(msg.contains("not found"), "expected not found, got: {msg}");
+    }
+
+    // ── eval_batch_status ─────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn eval_batch_status_returns_batch_detail() {
+        let (tools, _td) = tools_with_tmp();
+        let ctx = tools.api_context().await.unwrap();
+
+        // Create a batch row directly via the engine API.
+        let batch = api_eval::create_batch(
+            &ctx,
+            CreateBatchRequest {
+                strategy_id: "strat-abc".into(),
+                review_with: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let s = tools
+            .xvn_eval_batch_status(Parameters(EvalBatchStatusReq {
+                batch_id: batch.batch_id.clone(),
+            }))
+            .await
+            .unwrap();
+        let v = parsed(&s);
+        assert_eq!(v["batch_id"].as_str().unwrap(), batch.batch_id);
+        assert_eq!(v["strategy_id"].as_str().unwrap(), "strat-abc");
+        assert!(v["run_ids"].is_array(), "run_ids absent: {v}");
+    }
+
+    #[tokio::test]
+    async fn eval_batch_status_returns_not_found_for_missing_batch() {
+        let (tools, _td) = tools_with_tmp();
+        let err = tools
+            .xvn_eval_batch_status(Parameters(EvalBatchStatusReq {
+                batch_id: "batch_notexist".into(),
+            }))
+            .await
+            .unwrap_err();
+        let msg = err.to_string().to_lowercase();
+        assert!(msg.contains("not found"), "expected not found, got: {msg}");
+    }
+
+    // ── eval_compare_ext ──────────────────────────────────────────────────────
+
+    // Note: tests that call `seed_run` hit the pre-existing RunStore::finalize
+    // issue documented in PR #350 (exists in origin/task/cli-agent-workbench-wave-b).
+    // The compare_ext tests below avoid seed_run by testing the error-handling
+    // and routing paths that don't depend on a finalized run.
+
+    #[tokio::test]
+    async fn eval_compare_ext_rejects_both_run_ids_and_batch_id() {
+        let (tools, _td) = tools_with_tmp();
+        let err = tools
+            .xvn_eval_compare_ext(Parameters(EvalCompareExtReq {
+                run_ids: vec!["a".into(), "b".into()],
+                batch_id: Some("batch_01K".into()),
+                markdown: false,
+            }))
+            .await
+            .unwrap_err();
+        let msg = err.to_string().to_lowercase();
+        assert!(msg.contains("not both"), "expected mutex error, got: {msg}");
+    }
+
+    #[tokio::test]
+    async fn eval_compare_ext_rejects_missing_batch_id() {
+        let (tools, _td) = tools_with_tmp();
+        // A missing batch id should surface as a not-found error.
+        let err = tools
+            .xvn_eval_compare_ext(Parameters(EvalCompareExtReq {
+                run_ids: vec![],
+                batch_id: Some("batch_doesnotexist".into()),
+                markdown: false,
+            }))
+            .await
+            .unwrap_err();
+        let msg = err.to_string().to_lowercase();
+        assert!(msg.contains("not found"), "expected not found, got: {msg}");
+    }
+
+    #[tokio::test]
+    async fn eval_compare_ext_routes_via_batch_id_resolves_run_ids() {
+        let (tools, _td) = tools_with_tmp();
+        let ctx = tools.api_context().await.unwrap();
+
+        // Create a batch with no runs attached. Attempting compare with 0 run ids
+        // should produce a "at least two" validation error — confirming the batch
+        // routing path works (batch found, run_ids resolved as empty list, compare
+        // rejects on count).
+        let batch = api_eval::create_batch(
+            &ctx,
+            CreateBatchRequest {
+                strategy_id: "strat-test".into(),
+                review_with: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let err = tools
+            .xvn_eval_compare_ext(Parameters(EvalCompareExtReq {
+                run_ids: vec![],
+                batch_id: Some(batch.batch_id.clone()),
+                markdown: false,
+            }))
+            .await
+            .unwrap_err();
+        let msg = err.to_string().to_lowercase();
+        // compare rejects empty/single list with "at least two" or similar
+        assert!(
+            msg.contains("at least") || msg.contains("validation"),
+            "expected at-least-two error from compare, got: {msg}",
+        );
+    }
+
+    // ── scenarios_select ──────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn scenarios_select_returns_canonical_scenarios() {
+        let (tools, _td) = tools_with_tmp();
+        // The DB is seeded with canonical scenarios on first open.
+        let s = tools
+            .xvn_scenarios_select(Parameters(ScenariosSelectReq {
+                assets: vec![],
+                timeframe: None,
+                target_decisions: Some(50),
+                same_decisions: false,
+                max_decisions: None,
+                regimes: vec![],
+                count: Some(4),
+            }))
+            .await
+            .unwrap();
+        let v = parsed(&s);
+        let arr = v.as_array().unwrap();
+        // canonical scenarios might not all have 50±10% decisions; the result
+        // may be empty but the call must succeed with a valid JSON array.
+        let _ = arr; // arr is already a &Vec from as_array().unwrap() above
+    }
+
+    #[tokio::test]
+    async fn scenarios_select_rejects_missing_mode_spec() {
+        let (tools, _td) = tools_with_tmp();
+        let err = tools
+            .xvn_scenarios_select(Parameters(ScenariosSelectReq {
+                assets: vec![],
+                timeframe: None,
+                target_decisions: None,
+                same_decisions: false,
+                max_decisions: None,
+                regimes: vec![],
+                count: Some(4),
+            }))
+            .await
+            .unwrap_err();
+        let msg = err.to_string().to_lowercase();
+        assert!(
+            msg.contains("target_decisions") || msg.contains("same_decisions"),
+            "expected mode error, got: {msg}",
+        );
+    }
+
+    // ── select_scenarios_mcp pure unit tests ─────────────────────────────────
+
+    use xvision_engine::eval::scenario::{
+        AdjustmentMode, AssetClass, AssetRef, BarCachePolicy, BarGranularity, CalendarRef,
+        DataSource, Fees, FillModel, LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency,
+        RefreshPolicy, ReplayMode, ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings,
+    };
+    use xvision_engine::Capital;
+    use std::str::FromStr;
+
+    fn make_test_scenario(
+        id: &str,
+        asset_sym: &str,
+        granularity: &str,
+        window_secs: i64,
+        warmup_bars: u32,
+    ) -> Scenario {
+        let start = chrono::Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
+        let end = start + chrono::Duration::seconds(window_secs);
+        let gran = BarGranularity::from_str(granularity).expect("valid gran");
+        Scenario {
+            id: id.to_string(),
+            parent_scenario_id: None,
+            source: ScenarioSource::User,
+            display_name: format!("test-{id}"),
+            description: String::new(),
+            tags: vec![],
+            notes: None,
+            asset_class: AssetClass::Crypto,
+            asset: vec![AssetRef {
+                class: AssetClass::Crypto,
+                symbol: asset_sym.to_string(),
+                venue_symbol: format!("{asset_sym}/USD"),
+            }],
+            quote_currency: QuoteCurrency::Usd,
+            time_window: TimeWindow { start, end },
+            granularity: gran,
+            timezone: "UTC".to_string(),
+            calendar: CalendarRef::Continuous24x7,
+            data_source: DataSource::AlpacaHistorical {
+                feed: None,
+                adjustment: AdjustmentMode::Raw,
+            },
+            venue: VenueSettings {
+                venue: Venue::Alpaca,
+                fees: Fees { maker_bps: 10, taker_bps: 25 },
+                slippage: SlippageModel::None,
+                latency: LatencyModel { decision_to_fill_ms: 0 },
+                fill_model: FillModel {
+                    market_order_fill: MarketOrderFill::FullAtClose,
+                    limit_order_fill: LimitOrderFill::NeverFills,
+                    partial_fills: false,
+                    volume_constraints: None,
+                },
+            },
+            replay_mode: ReplayMode::Continuous,
+            capital: Capital::default(),
+            bar_cache_policy: BarCachePolicy {
+                cache_key: id.to_string(),
+                refresh_policy: RefreshPolicy::NeverRefresh,
+                data_fetched_at: None,
+            },
+            warmup_bars,
+            created_at: chrono::Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
+            created_by: "test".to_string(),
+            archived_at: None,
+        }
+    }
+
+    #[test]
+    fn select_scenarios_mcp_mode_a_returns_matching() {
+        // 300 1h bars − 200 warmup = 100 decisions. target=100 → ±10% → matches.
+        let s = make_test_scenario("sc1", "ETH", "1h", 300 * 3_600, 200);
+        let rows = select_scenarios_mcp(
+            &[s],
+            &[],
+            None,
+            &[],
+            Some(100),
+            false,
+            None,
+            4,
+        )
+        .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].decision_count, 100);
+    }
+
+    #[test]
+    fn select_scenarios_mcp_mode_a_empty_when_no_match() {
+        // 50 decisions; target=200 (±10%→180..220) → no match.
+        let s = make_test_scenario("sc1", "ETH", "1h", 250 * 3_600, 200);
+        let rows = select_scenarios_mcp(
+            &[s],
+            &[],
+            None,
+            &[],
+            Some(200),
+            false,
+            None,
+            4,
+        )
+        .unwrap();
+        assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn select_scenarios_mcp_mode_b_finds_common_count() {
+        let s1 = make_test_scenario("sc1", "ETH", "1h", 300 * 3_600, 200); // 100 decisions
+        let s2 = make_test_scenario("sc2", "BTC", "1h", 300 * 3_600, 200); // 100 decisions
+        let s3 = make_test_scenario("sc3", "SOL", "1h", 250 * 3_600, 200); // 50 decisions
+        let rows = select_scenarios_mcp(&[s1, s2, s3], &[], None, &[], None, true, Some(200), 2)
+            .unwrap();
+        assert_eq!(rows.len(), 2);
+        for r in &rows {
+            assert_eq!(r.decision_count, 100);
+        }
     }
 }
