@@ -380,6 +380,13 @@ pub enum VetoReason {
     StopLossMissing,
     StopLossTooWide,
     TakeProfitMissing,
+    /// Order notional (size × reference price) is below the venue's
+    /// configured deterministic minimum (`config/risk.toml`
+    /// `[venues.<id>].min_notional_usd`). Fired by the `MinNotional`
+    /// risk rule and by the pre-submit gate in `PaperExecutor` so the
+    /// broker never sees a known-bad order. Operator-visible as a
+    /// clean risk veto instead of an opaque broker rejection.
+    BelowVenueMinNotional,
     Custom(String),
 }
 
