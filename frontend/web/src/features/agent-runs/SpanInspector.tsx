@@ -19,7 +19,63 @@ type SpanInspectorProps = {
   onRerun: (spanId: string) => void;
   onJumpToDecision: (spanId: string, decisionIdx?: number) => void;
   onCopyJson?: (span: RunSpan) => void;
+  /**
+   * Trace-dock density flag (F-7). When `true`, the FIELDS attribute
+   * grid collapses to a single-line summary derived from the typed
+   * `RunSpan` projection of F-2's `SpanAttributes` bag. Defaults to
+   * `false` so callers that haven't wired the dock density toggle
+   * keep the existing full-grid behaviour.
+   */
+  simpleMode?: boolean;
+  /**
+   * `true` when the currently-rendered span lives in a kind that
+   * Simple mode would hide (validate brackets, state.transition). The
+   * inspector then renders a notice + a "Switch to Advanced" CTA so
+   * the operator can see the span's full context without losing their
+   * selection. F-7.
+   */
+  hiddenInSimpleMode?: boolean;
+  /**
+   * Callback fired when the operator clicks "Switch to Advanced" on
+   * the hidden-span notice. Wired to the dock store's
+   * `setAdvancedView(true)` action by the dock owners.
+   */
+  onRequestAdvanced?: () => void;
 };
+
+/**
+ * Build the Simple-mode one-line summary from the span's typed
+ * projection of F-2's `SpanAttributes` bag. Missing fields are
+ * elided rather than rendered as `null` / `undefined` — the
+ * operator's only triage signal here is what the run actually
+ * carried.
+ *
+ * Pulled out as a pure function so the unit test surface is small.
+ */
+export function buildSimpleSummary(span: RunSpan): string {
+  const parts: string[] = [];
+  parts.push(span.span_id.slice(0, 8));
+  parts.push(span.kind);
+  // Stage label (agent role) lives on the span as `name` for
+  // model.call rows projected upstream, but is most operator-readable
+  // through the model identifier when present.
+  if (span.provider && span.model) {
+    parts.push(`${span.provider}/${span.model}`);
+  } else if (span.model) {
+    parts.push(span.model);
+  }
+  if (
+    span.kind === "tool.call" ||
+    span.kind === "tool.validate_input" ||
+    span.kind === "tool.validate_output"
+  ) {
+    parts.push(`tool=${span.name}`);
+  }
+  if (span.decision_idx !== undefined) {
+    parts.push(`#${span.decision_idx}`);
+  }
+  return parts.join(" · ");
+}
 
 function durationMs(span: RunSpan): number | null {
   if (!span.finished_at) return null;
@@ -173,6 +229,9 @@ export function SpanInspector({
   onRerun,
   onJumpToDecision,
   onCopyJson,
+  simpleMode = false,
+  hiddenInSimpleMode = false,
+  onRequestAdvanced,
 }: SpanInspectorProps) {
   const color = spanColor(span.kind);
   const ms = durationMs(span);
@@ -440,38 +499,71 @@ export function SpanInspector({
           />
         ) : null}
 
-        <div className="mt-4 pt-1">
-          <div className="text-[9px] font-mono tracking-[0.18em] text-text-3 mb-1">FIELDS</div>
-          <Row k="span.id" v={span.span_id} />
-          <Row k="kind" v={span.kind} />
-          <Row k="duration" v={ms != null ? `${ms}ms` : "—"} />
-          <Row k="start" v={span.started_at} />
-          {span.provider ? <Row k="provider" v={span.provider} /> : null}
-          {span.model ? <Row k="model" v={span.model} tone="gold" /> : null}
-          {span.tokens_in !== undefined ? (
-            <Row k="tokens.in" v={span.tokens_in.toLocaleString()} />
-          ) : null}
-          {span.tokens_out !== undefined ? (
-            <Row k="tokens.out" v={span.tokens_out.toLocaleString()} />
-          ) : null}
-          <Row
-            k="cost"
-            v={
-              <span title={formatCostUsdPrecise(span.cost ?? 0)}>
-                {formatCostUsd(span.cost ?? 0)}
-              </span>
-            }
-          />
-          {span.hash ? <Row k="prompt.hash" v={span.hash} /> : null}
-          {span.response_hash ? <Row k="response.hash" v={span.response_hash} /> : null}
-          {span.prompt_payload_ref ? <Row k="prompt.ref" v={span.prompt_payload_ref} /> : null}
-          {span.response_payload_ref ? (
-            <Row k="response.ref" v={span.response_payload_ref} />
-          ) : null}
-          {span.decision_idx !== undefined ? (
-            <Row k="decision" v={`#${span.decision_idx}`} tone="gold" />
-          ) : null}
-        </div>
+        {simpleMode ? (
+          // Simple-mode collapse (F-7). One line derived from the
+          // typed projection of F-2's SpanAttributes bag. Operators
+          // triaging a run want agent · model · tool · decision at a
+          // glance; the full FIELDS grid lives in Advanced.
+          <div className="mt-4 pt-1" data-testid="span-inspector-fields-simple">
+            <div className="text-[9px] font-mono tracking-[0.18em] text-text-3 mb-1">FIELDS</div>
+            <div className="text-[11px] font-mono text-text break-all">
+              {buildSimpleSummary(span)}
+            </div>
+            {hiddenInSimpleMode ? (
+              <div className="mt-2 flex items-center gap-2 text-[11px] font-mono text-text-3">
+                <span>
+                  this span is hidden in Simple mode (kind: {span.kind})
+                </span>
+                <button
+                  type="button"
+                  data-testid="span-inspector-switch-advanced"
+                  onClick={() => onRequestAdvanced?.()}
+                  className="h-6 px-1.5 text-[10px] font-mono tracking-[0.14em] rounded"
+                  style={{
+                    background: "var(--surface-elev)",
+                    border: "1px solid var(--border)",
+                    color: "var(--text)",
+                  }}
+                >
+                  SWITCH TO ADVANCED
+                </button>
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <div className="mt-4 pt-1" data-testid="span-inspector-fields-advanced">
+            <div className="text-[9px] font-mono tracking-[0.18em] text-text-3 mb-1">FIELDS</div>
+            <Row k="span.id" v={span.span_id} />
+            <Row k="kind" v={span.kind} />
+            <Row k="duration" v={ms != null ? `${ms}ms` : "—"} />
+            <Row k="start" v={span.started_at} />
+            {span.provider ? <Row k="provider" v={span.provider} /> : null}
+            {span.model ? <Row k="model" v={span.model} tone="gold" /> : null}
+            {span.tokens_in !== undefined ? (
+              <Row k="tokens.in" v={span.tokens_in.toLocaleString()} />
+            ) : null}
+            {span.tokens_out !== undefined ? (
+              <Row k="tokens.out" v={span.tokens_out.toLocaleString()} />
+            ) : null}
+            <Row
+              k="cost"
+              v={
+                <span title={formatCostUsdPrecise(span.cost ?? 0)}>
+                  {formatCostUsd(span.cost ?? 0)}
+                </span>
+              }
+            />
+            {span.hash ? <Row k="prompt.hash" v={span.hash} /> : null}
+            {span.response_hash ? <Row k="response.hash" v={span.response_hash} /> : null}
+            {span.prompt_payload_ref ? <Row k="prompt.ref" v={span.prompt_payload_ref} /> : null}
+            {span.response_payload_ref ? (
+              <Row k="response.ref" v={span.response_payload_ref} />
+            ) : null}
+            {span.decision_idx !== undefined ? (
+              <Row k="decision" v={`#${span.decision_idx}`} tone="gold" />
+            ) : null}
+          </div>
+        )}
       </div>
 
       {/* Footer */}

@@ -34,10 +34,22 @@ export const CATEGORY_STYLES: Record<SpanCategory, CategoryStyle> = {
 export function categoryOf(kind: SpanKind): SpanCategory {
   if (kind === "agent.run" || kind === "agent.plan") return "agent";
   if (kind === "model.call") return "model";
-  if (kind === "tool.call") return "tool";
+  // F-4 validate brackets are tool-adjacent — keep them in the tool
+  // column so a flame-graph reader sees one continuous tool band per
+  // call rather than three differently-coloured slices.
+  if (
+    kind === "tool.call" ||
+    kind === "tool.validate_input" ||
+    kind === "tool.validate_output"
+  )
+    return "tool";
   if (kind === "broker.call") return "broker";
   if (kind === "artifact.write") return "artifact";
-  // approval.*, sandbox.exec, supervisor.review, financial.eval
+  // F-4 observability infrastructure spans (state.transition,
+  // recovery.attempt) plus the pre-existing approval / sandbox /
+  // supervisor / financial.eval kinds all fall under supervisor.
+  // approval.*, sandbox.exec, supervisor.review, financial.eval,
+  // state.transition, recovery.attempt, skill.invoke, ipc.notification
   return "supervisor";
 }
 
