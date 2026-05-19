@@ -137,12 +137,9 @@ fn verify_fails_on_tampered_pubkey() {
 }
 
 #[test]
-fn signed_metadata_canonical_json_is_key_order_stable() {
-    // Two attestations of the same run/scenario, with different field-insertion
-    // orders in the underlying serde Value, must produce IDENTICAL signatures
-    // when signed by the same key. The canonicalize_json helper sorts keys, so
-    // the signing input bytes are deterministic regardless of how the JSON was
-    // assembled.
+fn signing_same_payload_is_deterministic() {
+    // Two attestations of the same run/scenario must produce identical
+    // signatures when signed by the same key.
     let run = finalized_run();
     let scenario = first_scenario();
     let key = fresh_signing_key();
