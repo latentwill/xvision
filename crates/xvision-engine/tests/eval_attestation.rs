@@ -6,9 +6,7 @@ use chrono::{TimeZone, Utc};
 use ed25519_dalek::SigningKey;
 use sqlx::SqlitePool;
 use xvision_engine::eval::attestation::{sign, verify, EvalAttestation};
-use xvision_engine::eval::{
-    canonical_scenarios, MetricsSummary, Run, RunMode, RunStatus, RunStore, Scenario,
-};
+use xvision_engine::eval::{canonical_scenarios, MetricsSummary, Run, RunMode, RunStore, Scenario};
 
 async fn pool_with_migration() -> SqlitePool {
     let pool = SqlitePool::connect(":memory:").await.unwrap();
@@ -28,12 +26,16 @@ async fn pool_with_migration() -> SqlitePool {
 }
 
 fn finalized_run() -> Run {
+    // Returns a run in `queued` status. Callers that need to persist it
+    // must `store.create(&run).await; store.begin_running(&run.id).await;
+    // store.finalize(&run.id, &metrics).await;` — pre-setting
+    // `status = Completed` here would make `store.finalize` (post #325)
+    // bail with "run is already completed".
     let mut r = Run::new_queued(
         "strategy-hash-x".into(),
         "crypto-bull-q1-2025".into(),
         RunMode::Backtest,
     );
-    r.status = RunStatus::Completed;
     r.completed_at = Some(Utc.with_ymd_and_hms(2025, 4, 1, 12, 0, 0).unwrap());
     r.actual_input_tokens = Some(12_345);
     r.actual_output_tokens = Some(6_789);
@@ -197,10 +199,13 @@ async fn run_store_record_attestation_and_get_round_trips() {
     let pool = pool_with_migration().await;
     let store = RunStore::new(pool);
 
-    // Persist the run first so the FK is satisfied.
+    // Persist the run first so the FK is satisfied. Walk through legal
+    // state transitions (Queued → Running via begin_running → Completed
+    // via finalize) — `finalize` post #325 refuses pre-Completed rows.
     let mut run = finalized_run();
     let id = run.id.clone();
     store.create(&run).await.unwrap();
+    store.begin_running(&id).await.unwrap();
     store.finalize(&id, run.metrics.as_ref().unwrap()).await.unwrap();
     run = store.get(&id).await.unwrap();
 
@@ -231,6 +236,7 @@ async fn run_store_get_attestation_returns_none_when_missing() {
     let store = RunStore::new(pool);
     let mut run = finalized_run();
     store.create(&run).await.unwrap();
+    store.begin_running(&run.id).await.unwrap();
     store
         .finalize(&run.id, run.metrics.as_ref().unwrap())
         .await

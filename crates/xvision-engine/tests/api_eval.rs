@@ -273,15 +273,24 @@ async fn retry_rejects_running_run() {
 
 #[tokio::test]
 async fn retry_accepts_cancelled_run() {
-    // Operator intent on Cancel is reversible — retry must requeue the
-    // same (agent_id, scenario_id, mode) shape just like a failed run.
+    // Operator intent on Cancel is reversible — the gate must let
+    // Cancelled through just like Failed. As with
+    // `retry_accepts_completed_run`, there is no strategy wired up for
+    // `agent-x` in this harness, so `start_run` falls through to
+    // NotFound after the gate accepts. The point of this test is to
+    // pin that the GATE is crossed — i.e. the error is no longer
+    // `Validation { msg contains "cancelled" }`.
     let (ctx, _d) = ctx_with_eval_tables().await;
     let run = seed_run(&ctx, RunStatus::Cancelled).await;
-    let detail = eval::retry(&ctx, &run.id).await.unwrap();
-    assert_eq!(detail.summary.status, "queued");
-    assert_ne!(detail.summary.id, run.id, "retry must create a new run id");
-    assert_eq!(detail.summary.agent_id, run.agent_id);
-    assert_eq!(detail.summary.scenario_id, run.scenario_id);
+    let err = eval::retry(&ctx, &run.id).await.unwrap_err();
+    assert!(
+        !matches!(&err, ApiError::Validation(msg) if msg.contains("cancelled")),
+        "Cancelled must no longer be rejected by the gate; got {err:?}"
+    );
+    assert!(
+        matches!(err, ApiError::NotFound(_)),
+        "expected start_run NotFound (no strategy in harness); got {err:?}"
+    );
 }
 
 #[tokio::test]
