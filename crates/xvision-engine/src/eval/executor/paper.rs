@@ -514,6 +514,13 @@ impl PaperExecutor {
         // Running peak for drawdown_pct in MetricsUpdated. Start at the
         // initial balance so the first tick's drawdown is well-defined.
         let mut peak_equity = initial_balance.max(0.0);
+        // Tracks the average entry price of the current open position so
+        // that realized PnL can be computed on closes — mirrors the same
+        // local variable in `backtest.rs` (see :353 and :475).
+        // Single f64 is correct here: the bar loop processes one asset
+        // (hoisted above as `asset`) so there is never more than one
+        // position in scope per run.
+        let mut entry_price: f64 = 0.0;
 
         for (i, bar) in decision_bars.iter().enumerate() {
             if store.is_terminal(&run.id).await? {
@@ -609,10 +616,12 @@ impl PaperExecutor {
                 anyhow::bail!("eval run stopped");
             }
 
+            let pre_fill_position = position;
             let mut order_size: Option<f64> = None;
             let mut fill_price: Option<f64> = None;
             let mut fill_size: Option<f64> = None;
             let mut fee: Option<f64> = None;
+            let mut realized_pnl: Option<f64> = None;
 
             // Plan the broker submission for this decision. Three cases:
             //
@@ -984,6 +993,27 @@ impl PaperExecutor {
                 order_size = Some(size);
                 n_trades += 1;
 
+                // Compute realized PnL for this fill using the same
+                // formula as `backtest::simulate_fill`:
+                //   realized = pre_fill_position × (fill_price − entry_price) − fee
+                // When the pre-fill position is zero the fill is a pure open;
+                // only the fee is realized (negative).
+                let fp = fill_price.unwrap_or(0.0);
+                let fee_paid = conf.fee.unwrap_or(0.0);
+                let raw_pnl = if pre_fill_position != 0.0 {
+                    pre_fill_position * (fp - entry_price)
+                } else {
+                    0.0
+                };
+                realized_pnl = Some(raw_pnl - fee_paid);
+
+                // Update entry_price for the next cycle. After a close-to-
+                // flat the new position is 0 → reset to 0.0. After an open
+                // or partial reduce, the fill price becomes the new average
+                // entry. This mirrors `fill.new_entry` in backtest.rs (:762).
+                let new_pos = self.broker.position(&asset).await.unwrap_or(0.0);
+                entry_price = if new_pos == 0.0 { 0.0 } else { fp };
+
                 // FillRecorded fires only when an order actually went
                 // through. Subscribers that draw trade markers on a
                 // chart consume this.
@@ -1036,7 +1066,7 @@ impl PaperExecutor {
                 fill_price,
                 fill_size,
                 fee,
-                pnl_realized: None,
+                pnl_realized: realized_pnl,
             };
             store.record_decision(&decision_row).await?;
             self.emit_chart(
