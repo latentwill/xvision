@@ -13,7 +13,7 @@
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use sqlx::{Executor, SqlitePool};
+use sqlx::{sqlite::SqlitePoolOptions, Executor, SqlitePool};
 
 use xvision_observability::{
     build_export, build_report,
@@ -49,7 +49,11 @@ fn fixed_ts(offset_secs: i64) -> DateTime<Utc> {
 }
 
 async fn migrated_pool() -> SqlitePool {
-    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
     sqlx::query(MIGRATION_002).execute(&pool).await.unwrap();
     sqlx::query(MIGRATION_013).execute(&pool).await.unwrap();
     sqlx::query(MIGRATION_018).execute(&pool).await.unwrap();
