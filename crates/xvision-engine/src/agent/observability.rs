@@ -24,9 +24,10 @@ use sha2::{Digest, Sha256};
 
 use crate::agent::llm::{LlmRequest, Message, ToolDefinition};
 use xvision_observability::{
-    AssistantTextDeltaEvent, BrokerCallFinishedEvent, BrokerCallOutcome, BrokerCallStartedEvent,
-    BrokerSide, ModelCallFinishedEvent, RunEvent, RunEventBus, RunFinishedEvent, RunStartedEvent,
-    RunStatus, SpanAttributes, SpanFinishedEvent, SpanKind, SpanStartedEvent, SpanStatus,
+    AssistantTextDeltaEvent, BlobStore, BrokerCallFinishedEvent, BrokerCallOutcome,
+    BrokerCallStartedEvent, BrokerSide, ModelCallFinishedEvent, Redactor, RetentionMode, RunEvent,
+    RunEventBus, RunFinishedEvent, RunStartedEvent, RunStatus, SpanAttributes, SpanFinishedEvent,
+    SpanKind, SpanStartedEvent, SpanStatus,
 };
 
 /// Serializable digest input for `compute_prompt_hash`. Private —
@@ -54,6 +55,19 @@ struct PromptDigestInput<'a> {
 /// messages, tools) produce identical hashes regardless of
 /// run_id / span_id / model / sampling params.
 pub fn compute_prompt_hash(req: &LlmRequest) -> String {
+    let bytes = canonical_prompt_bytes(req);
+    format!("sha256:{}", hex::encode(Sha256::digest(&bytes)))
+}
+
+/// Canonical byte serialization of an `LlmRequest`'s prompt content.
+/// The same `PromptDigestInput` shape that `compute_prompt_hash`
+/// digests — so the hash stays stable across runtime knobs (model,
+/// sampling, max_tokens) that don't change prompt semantics. Used for
+/// dedup/cache-key only; the persisted blob uses
+/// [`canonical_request_bytes`] instead so operators reading the trace
+/// see the full request (including `response_schema`, which Anthropic
+/// appends into the system prompt at dispatch time).
+pub fn canonical_prompt_bytes(req: &LlmRequest) -> Vec<u8> {
     let input = PromptDigestInput {
         system_prompt: &req.system_prompt,
         messages: &req.messages,
@@ -63,10 +77,53 @@ pub fn compute_prompt_hash(req: &LlmRequest) -> String {
     // (no HashMap; structs serialize in declaration order). If
     // serialization ever fails it indicates a programming error in
     // the domain types, not a runtime condition — fall back to a
-    // marker hash so the trace ledger stays non-null.
-    let bytes = serde_json::to_vec(&input)
-        .unwrap_or_else(|_| b"prompt-digest-serialize-error".to_vec());
-    format!("sha256:{}", hex::encode(Sha256::digest(&bytes)))
+    // marker payload so the trace ledger stays non-null.
+    serde_json::to_vec(&input).unwrap_or_else(|_| b"prompt-digest-serialize-error".to_vec())
+}
+
+/// Full-request byte serialization used for the persisted prompt
+/// blob. Includes every field the provider receives — model,
+/// system_prompt, messages, max_tokens, tools, temperature,
+/// response_schema — so a FullDebug trace can reconstruct what was
+/// sent. Critically, this preserves `response_schema`: Anthropic's
+/// dispatcher splices it into the system prompt at the wire boundary,
+/// so omitting it (as the hash input does) would leave trader-call
+/// blobs missing the schema instructions. Two prompts that hash
+/// identically can still produce different request blobs.
+pub fn canonical_request_bytes(req: &LlmRequest) -> Vec<u8> {
+    // LlmRequest is itself Serialize with deny_unknown_fields, so this
+    // round-trips losslessly. Same serialize-error fallback as
+    // canonical_prompt_bytes — programming error, not runtime.
+    serde_json::to_vec(req).unwrap_or_else(|_| b"request-serialize-error".to_vec())
+}
+
+/// Truncate a payload to `cap` bytes for blob persistence, respecting
+/// UTF-8 char boundaries when present and appending an ellipsis marker
+/// so operators reading the blob can tell it was clipped. `cap == 0`
+/// means "no cap" (`max_payload_bytes` default for un-configured
+/// policies — same convention `apply_to_body` uses for the body path).
+/// Pure; safe to call without a tokio runtime.
+pub fn cap_blob_bytes(bytes: Vec<u8>, cap: usize) -> Vec<u8> {
+    if cap == 0 || bytes.len() <= cap {
+        return bytes;
+    }
+    // Try a UTF-8-safe boundary scan first — prompts and responses
+    // are typed strings, so almost always valid UTF-8.
+    if let Ok(s) = std::str::from_utf8(&bytes) {
+        let mut end = cap;
+        while end > 0 && !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        let mut out = s[..end].to_string().into_bytes();
+        out.extend_from_slice("…".as_bytes());
+        return out;
+    }
+    // Non-UTF-8 (shouldn't happen in practice): hard truncate + ASCII
+    // marker so the cap is still honored.
+    let mut out = bytes;
+    out.truncate(cap);
+    out.extend_from_slice(b"...[truncated]");
+    out
 }
 
 /// SHA-256 digest of the assistant text accumulation. Mirrors
@@ -84,7 +141,9 @@ pub fn compute_response_hash(text: &str) -> String {
 /// `ObsEmitter` without setting a policy never leaks raw bodies.
 #[derive(Clone, Copy, Debug)]
 pub struct ObsRetentionPolicy {
+    pub store_prompts: bool,
     pub store_responses: bool,
+    pub mode: RetentionMode,
     pub mode_is_full_debug: bool,
     pub max_payload_bytes: usize,
 }
@@ -95,7 +154,9 @@ impl Default for ObsRetentionPolicy {
         // calling `with_retention(...)` after reading the resolved
         // ObservabilityConfig off `ApiContext`.
         Self {
+            store_prompts: false,
             store_responses: false,
+            mode: RetentionMode::HashOnly,
             mode_is_full_debug: false,
             max_payload_bytes: 0,
         }
@@ -104,9 +165,10 @@ impl Default for ObsRetentionPolicy {
 
 impl ObsRetentionPolicy {
     pub fn from_config(cfg: &xvision_observability::ObservabilityConfig) -> Self {
-        use xvision_observability::RetentionMode;
         Self {
+            store_prompts: cfg.retention.store_prompts,
             store_responses: cfg.retention.store_responses,
+            mode: cfg.retention.mode,
             mode_is_full_debug: cfg.retention.mode == RetentionMode::FullDebug,
             max_payload_bytes: cfg.retention.max_payload_bytes as usize,
         }
@@ -153,6 +215,7 @@ pub struct ObsEmitter {
     bus: Arc<RunEventBus>,
     run_id: String,
     retention: ObsRetentionPolicy,
+    blob_store: Option<BlobStore>,
 }
 
 impl ObsEmitter {
@@ -164,6 +227,7 @@ impl ObsEmitter {
             bus,
             run_id: run_id.into(),
             retention: ObsRetentionPolicy::default(),
+            blob_store: None,
         }
     }
 
@@ -173,6 +237,22 @@ impl ObsEmitter {
     /// `ctx.obs_config` and wires it in.
     pub fn with_retention(mut self, policy: ObsRetentionPolicy) -> Self {
         self.retention = policy;
+        self
+    }
+
+    /// Attach a `BlobStore` so `emit_model_call_finished_with_payloads`
+    /// can persist prompt / response bodies under `full_debug` and
+    /// `redacted` retention. Without this call, the emitter falls
+    /// back to publishing `prompt_payload_ref: None` /
+    /// `response_payload_ref: None` regardless of retention — same
+    /// observable behaviour as `hash_only`.
+    ///
+    /// `harness-payload-blob-write`: closes PR #282's investigation
+    /// gap where `BlobStore::write` had zero production callers and
+    /// the trace dock rendered the "prompt body not captured for
+    /// this run" placeholder on every full_debug run.
+    pub fn with_blob_store(mut self, store: BlobStore) -> Self {
+        self.blob_store = Some(store);
         self
     }
 
@@ -493,6 +573,145 @@ impl ObsEmitter {
                 response_hash,
                 prompt_payload_ref: None,
                 response_payload_ref: None,
+                tool_calls_requested: None,
+                capability_path: None,
+            }))
+            .await;
+    }
+
+    /// Payload-aware companion to `emit_model_call_finished`. Persists
+    /// the prompt request body and the assistant text into the
+    /// configured `BlobStore` per the active retention policy, then
+    /// publishes `ModelCallFinishedEvent` with the resulting
+    /// `BlobRef`s wired onto `prompt_payload_ref` /
+    /// `response_payload_ref`.
+    ///
+    /// Retention semantics:
+    /// - `FullDebug` + `store_prompts`/`store_responses` → bytes written
+    ///   verbatim, refs populated.
+    /// - `Redacted` → bytes pass through `Redactor::redact` before
+    ///   write; refs populated with the post-redaction blob.
+    /// - `HashOnly` (or any other mode) → no write, refs stay `None`.
+    ///
+    /// If no `BlobStore` is attached, behaves identically to the
+    /// `emit_model_call_finished` shim and publishes `None` refs.
+    ///
+    /// `BlobStore::write` is fallible. On failure under FullDebug or
+    /// Redacted retention the emitter logs at `error!` level
+    /// (supervisor channel) and publishes the event with the ref
+    /// dropped to `None` — the run still records, the operator sees
+    /// the failure. This is intentional `feedback_alpha_root_cause`
+    /// behaviour: the failure surfaces, it does not get swallowed.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn emit_model_call_finished_with_payloads(
+        &self,
+        span_id: &str,
+        provider: &str,
+        model: &str,
+        input_tokens: Option<u32>,
+        output_tokens: Option<u32>,
+        cost_usd: Option<f64>,
+        prompt_hash: String,
+        response_hash: Option<String>,
+        prompt_request: Option<&LlmRequest>,
+        response_text: Option<&str>,
+    ) {
+        let mut prompt_payload_ref: Option<String> = None;
+        let mut response_payload_ref: Option<String> = None;
+
+        let write_prompts = self.retention.store_prompts
+            && matches!(
+                self.retention.mode,
+                RetentionMode::FullDebug | RetentionMode::Redacted
+            );
+        let write_responses = self.retention.store_responses
+            && matches!(
+                self.retention.mode,
+                RetentionMode::FullDebug | RetentionMode::Redacted
+            );
+
+        if let Some(store) = self.blob_store.as_ref() {
+            if write_prompts {
+                if let Some(req) = prompt_request {
+                    // Persist the full LlmRequest (model, tools,
+                    // response_schema, sampling), not just the hash
+                    // input — see canonical_request_bytes docstring.
+                    let bytes = canonical_request_bytes(req);
+                    let bytes = match self.retention.mode {
+                        RetentionMode::FullDebug => bytes,
+                        RetentionMode::Redacted => {
+                            let as_str = String::from_utf8_lossy(&bytes);
+                            Redactor::new().redact(as_str.as_ref()).text.into_bytes()
+                        }
+                        // Already gated by `write_prompts`; unreachable
+                        // is fine but explicit fall-through is
+                        // clearer for future modes.
+                        _ => bytes,
+                    };
+                    // Apply max_payload_bytes BEFORE the BlobStore
+                    // write, mirroring the body path's apply_to_body
+                    // cap. Without this the janitor would still
+                    // truncate eventually, but a large prompt would
+                    // live full-size until cleanup.
+                    let bytes = cap_blob_bytes(bytes, self.retention.max_payload_bytes);
+                    match store.write(&bytes) {
+                        Ok(blob_ref) => {
+                            prompt_payload_ref = Some(blob_ref.as_str().to_string());
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                run_id = %self.run_id,
+                                span_id = %span_id,
+                                error = %e,
+                                "BlobStore::write failed for prompt payload — \
+                                 ref will be None, hash still recorded",
+                            );
+                        }
+                    }
+                }
+            }
+
+            if write_responses {
+                if let Some(text) = response_text {
+                    let text_owned: String = match self.retention.mode {
+                        RetentionMode::FullDebug => text.to_string(),
+                        RetentionMode::Redacted => Redactor::new().redact(text).text,
+                        _ => text.to_string(),
+                    };
+                    let bytes = cap_blob_bytes(
+                        text_owned.into_bytes(),
+                        self.retention.max_payload_bytes,
+                    );
+                    match store.write(&bytes) {
+                        Ok(blob_ref) => {
+                            response_payload_ref = Some(blob_ref.as_str().to_string());
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                run_id = %self.run_id,
+                                span_id = %span_id,
+                                error = %e,
+                                "BlobStore::write failed for response payload — \
+                                 ref will be None, hash still recorded",
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        self.bus
+            .publish(RunEvent::ModelCallFinished(ModelCallFinishedEvent {
+                span_id: span_id.to_string(),
+                provider: provider.to_string(),
+                model: model.to_string(),
+                input_token_count: input_tokens.map(i64::from),
+                output_token_count: output_tokens.map(i64::from),
+                cost_usd,
+                prompt_hash,
+                response_hash,
+                prompt_payload_ref,
+                response_payload_ref,
                 tool_calls_requested: None,
                 capability_path: None,
             }))
