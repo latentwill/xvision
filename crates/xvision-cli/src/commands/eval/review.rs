@@ -275,7 +275,7 @@ fn map_review_error(e: ReviewError) -> CliError {
     }
 }
 
-fn build_dispatch_for_profile(
+pub(crate) fn build_dispatch_for_profile(
     ctx: &ApiContext,
     provider_name: &str,
 ) -> Result<Arc<dyn LlmDispatch>, ApiError> {
