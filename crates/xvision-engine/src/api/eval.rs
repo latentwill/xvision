@@ -1263,9 +1263,13 @@ async fn run_inner(
         .await
     {
         // Persist the failure so downstream callers (CLI, dashboard) can
-        // see why this run is not Completed.
+        // see why this run is not Completed. Route through the
+        // `FinalizeWriter` so concurrent finalize storms collapse into
+        // batched UPDATEs — fall back to the direct `RunStore` path if
+        // the queue is full or the writer has shut down so we never
+        // lose a finalize.
         let err_msg = e.to_string();
-        let _ = store.fail_active(&run.id, &err_msg).await;
+        route_mark_failed(ctx, &store, &run.id, &err_msg).await;
         // Index the failed run so it shows up in ⌘K with its current status
         // — operators frequently want to find a recently-failed run by id
         // prefix without leaving the palette.
@@ -1877,7 +1881,7 @@ async fn execute_in_background(
             error_chain = %err_msg,
             "executor failed",
         );
-        let _ = store.fail_active(&run.id, &err_msg).await;
+        route_mark_failed(&ctx, &store, &run.id, &err_msg).await;
         if let Ok(failed) = store.get(&run.id).await {
             api_search::upsert_run(&ctx, &failed).await;
         }
@@ -1936,10 +1940,40 @@ async fn execute_in_background(
     crate::eval::review::auto::fire_auto_review(&store_for_auto, &finalized.id).await;
 }
 
+/// Route a single `mark_failed` write through `ApiContext::finalize_writer`
+/// so concurrent finalize storms (the 27-runs-in-15s pattern captured in
+/// the 2026-05-19 audit) collapse into batched UPDATEs. If the writer's
+/// bounded channel is full or the receiver has shut down, fall back to
+/// the direct `RunStore::fail_active` path so we never lose a finalize.
+async fn route_mark_failed(ctx: &ApiContext, store: &RunStore, run_id: &str, err_msg: &str) {
+    let completed_at = Utc::now();
+    match ctx
+        .finalize_writer
+        .send_mark_failed(run_id.to_string(), err_msg.to_string(), completed_at)
+        .await
+    {
+        Ok(()) => {}
+        Err(e) => {
+            tracing::warn!(
+                target: "xvision::eval",
+                run_id = %run_id,
+                error = %e,
+                "finalize_writer failed; falling back to direct fail_active",
+            );
+            let _ = store.fail_active(run_id, err_msg).await;
+        }
+    }
+}
+
 /// Sweep any `Queued` or `Running` rows from a previous process and
 /// transition them to `Failed`. Background tasks die with the dashboard
 /// process so a clean restart should fail orphans out before serving
 /// traffic — otherwise the runs list shows phantom "Running" rows.
+///
+/// Stays on the direct `RunStore` path (not the `FinalizeWriter`)
+/// because it fires at most once per process start, so it never
+/// produces a burst. Routing through the writer would just add
+/// boot-time complexity for no batching benefit.
 pub async fn fail_orphan_runs(ctx: &ApiContext) -> ApiResult<u64> {
     let store = RunStore::new(ctx.db.clone());
     store
