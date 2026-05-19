@@ -36,7 +36,7 @@ use async_trait::async_trait;
 use chrono::{TimeZone, Utc};
 use sqlx::SqlitePool;
 use xvision_core::market::Ohlcv;
-use xvision_engine::agent::llm::{LlmDispatch, MockDispatch};
+use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmResponse, MockDispatch, StopReason};
 use xvision_engine::eval::executor::{classify_run_failure, Executor, PaperExecutor};
 use xvision_engine::eval::{canonical_scenarios, Run, RunMode, RunStatus, RunStore, Scenario};
 use xvision_engine::strategies::manifest::PublicManifest;
@@ -410,4 +410,99 @@ async fn alternating_error_classes_do_not_accumulate() {
     let persisted = store.get(&run.id).await.unwrap();
     assert_eq!(persisted.status, RunStatus::Completed);
     assert_eq!(metrics.n_decisions, 6);
+}
+
+/// Helper for tests that need per-tick trader actions: build an
+/// LlmResponse carrying the given canned JSON as a text block.
+fn canned_response(json: &str) -> LlmResponse {
+    LlmResponse {
+        content: vec![ContentBlock::Text { text: json.into() }],
+        stop_reason: StopReason::EndTurn,
+        input_tokens: 1,
+        output_tokens: 1,
+    }
+}
+
+/// PR #320 review (P2): a non-submit tick (`hold`, `flat`, already-long,
+/// etc.) must reset the consecutive-rejection strike state. Otherwise
+/// the sequence `reject → reject → hold → reject → reject → reject`
+/// trips the circuit breaker on the 3rd reject as "3 consecutive" even
+/// though a non-rejecting hold sat between them.
+///
+/// Script: 6 ticks. Trader emits long_open everywhere except tick 2
+/// (hold). All long_opens fail with the same `broker_min_order_size`
+/// class. Without the fix the run aborts at tick 3 (broker sees 3
+/// submits). With the fix the run survives to tick 5 (broker sees 5
+/// submits — tick 2 made no submit) and only then trips.
+#[tokio::test]
+async fn hold_between_rejections_resets_strike_counter() {
+    let script = vec![
+        BrokerScriptStep::Failure(
+            "alpaca create_order: HTTP status 403 Forbidden: cost basis must be >= minimal amount of order 10",
+        ),
+        BrokerScriptStep::Failure(
+            "alpaca create_order: HTTP status 403 Forbidden: cost basis must be >= minimal amount of order 10",
+        ),
+        // tick 2 = `hold` → no broker submit, script entry skipped.
+        BrokerScriptStep::Failure(
+            "alpaca create_order: HTTP status 403 Forbidden: cost basis must be >= minimal amount of order 10",
+        ),
+        BrokerScriptStep::Failure(
+            "alpaca create_order: HTTP status 403 Forbidden: cost basis must be >= minimal amount of order 10",
+        ),
+        BrokerScriptStep::Failure(
+            "alpaca create_order: HTTP status 403 Forbidden: cost basis must be >= minimal amount of order 10",
+        ),
+    ];
+    let pool = pool_with_migration().await;
+    let store = RunStore::new(pool);
+    let scripted = Arc::new(ScriptedBroker::new(script));
+    let broker: Arc<dyn BrokerSurface> = scripted.clone();
+    let strategy = minimal_strategy();
+    let scenario = six_hour_scenario();
+    let executor = PaperExecutor::with_bars(broker, bars_for(&scenario));
+    let mut run = Run::new_queued(
+        "test-strategy-hash".into(),
+        scenario.id.clone(),
+        RunMode::Paper,
+    );
+    store.create(&run).await.unwrap();
+
+    let long_open = r#"{"action":"long_open","conviction":0.6,"justification":"buy"}"#;
+    let hold = r#"{"action":"hold","conviction":0.0,"justification":"wait"}"#;
+    let dispatch: Arc<dyn LlmDispatch> = Arc::new(MockDispatch::sequence(vec![
+        canned_response(long_open), // tick 0 → reject (strike=1)
+        canned_response(long_open), // tick 1 → reject (strike=2)
+        canned_response(hold),      // tick 2 → no submit, strike RESET
+        canned_response(long_open), // tick 3 → reject (strike=1, NOT 3)
+        canned_response(long_open), // tick 4 → reject (strike=2)
+        canned_response(long_open), // tick 5 → reject (strike=3) ABORT
+    ]));
+    let tools = Arc::new(ToolRegistry::empty());
+
+    let err = executor
+        .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)
+        .await
+        .expect_err(
+            "the run should still abort eventually — but only after the post-hold streak hits 3, \
+             not the pre-hold streak",
+        );
+
+    assert_eq!(
+        classify_run_failure(&err),
+        "repeated_broker_error",
+        "abort must be classified as repeated_broker_error; got: {err:#}",
+    );
+
+    // 5 submits, not 3. Tick 2 (hold) made no submit; tick 5 trips.
+    // If the fix regresses, broker would see 3 submits (abort at tick 3).
+    assert_eq!(
+        scripted.submitted_count(),
+        5,
+        "hold tick must not count toward the rejection streak — broker should see 5 submits, \
+         not 3 (pre-fix behaviour)",
+    );
+
+    let persisted = store.get(&run.id).await.unwrap();
+    assert_eq!(persisted.status, RunStatus::Failed);
 }

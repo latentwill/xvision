@@ -658,6 +658,13 @@ impl PaperExecutor {
             };
 
             if let Some((side, size)) = plan {
+                // Hold this; the strike state may be reset below on
+                // successful submit. The no-plan branch resets too
+                // (see else block) so a non-submit tick — hold, flat,
+                // already-long, etc. — breaks any in-flight rejection
+                // streak. Without that, a `hold` between two rejections
+                // would still count as 2 strikes against the threshold;
+                // see PR #320 review (P2).
                 let idempotency_key = format!("{}-{}", run.id, decision_idx);
                 let req = OrderRequest {
                     asset: asset.clone(),
@@ -919,6 +926,20 @@ impl PaperExecutor {
                     qty: conf.fill_size,
                     fee: fee.unwrap_or(0.0),
                 });
+            } else {
+                // No broker submit attempted this iteration (hold /
+                // flat / already-long / already-short / short_open on
+                // long-only venue with no long open). Reset the
+                // consecutive-rejection strike state so a non-rejection
+                // tick can't be counted against the circuit-breaker
+                // threshold. Without this, the sequence
+                //   reject → reject → hold → reject
+                // would trip on the third reject as "3 consecutive"
+                // even though a non-rejecting hold sat in between.
+                // See PR #320 review (P2).
+                consecutive_broker_error_class = None;
+                consecutive_broker_error_count = 0;
+                consecutive_broker_error_last_msg.clear();
             }
 
             // DecisionEmitted fires for every cycle (actionable or not)
