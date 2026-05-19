@@ -14,6 +14,7 @@ pub mod cost;
 pub mod executor;
 pub mod export;
 pub mod findings;
+pub mod guardrails;
 pub mod metrics;
 pub mod postprocess;
 pub mod progress;

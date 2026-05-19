@@ -30,6 +30,10 @@ use crate::api::chart::{
     TradeSide,
 };
 use crate::eval::executor::Executor;
+use crate::eval::guardrails::{
+    self as guardrails, position_state_from_size, supervisor_note_content, Action as GuardAction,
+    GuardrailDecision,
+};
 use crate::eval::metrics::{
     annualization_periods_per_year, equity_to_returns, max_drawdown_pct, sharpe_from_returns,
     total_return_pct,
@@ -356,6 +360,14 @@ impl BacktestExecutor {
         let mut n_trades = 0u32;
         let mut total_input_tokens: u64 = 0;
         let mut total_output_tokens: u64 = 0;
+        // engine-trade-guardrails-pyramid-flip-block (F-7):
+        // tracks the trader's most recent emitted open direction on the
+        // asset so the guardrail can detect a same-bar flip even when
+        // the executor's live position is momentarily flat between a
+        // close and an opposite open. Cleared on emitted `flat`. Only
+        // updated from the ORIGINAL trader action — a guardrail-rewritten
+        // `hold` does not bump the direction state.
+        let mut last_open_direction: Option<GuardAction> = None;
         // Running peak for drawdown_pct in MetricsUpdated. Start at the
         // initial capital so the first tick's drawdown is well-defined.
         let mut peak_equity = initial.max(0.0);
@@ -461,16 +473,71 @@ impl BacktestExecutor {
             }
 
             let pre_fill_position = position;
-            let fill = simulate_fill(SimulateFillArgs {
-                pos: pre_fill_position,
-                entry: entry_price,
-                action: &parsed.action,
-                next_open: next_bar_open,
-                slip_bps,
-                taker_bps,
-                equity,
-                risk_pct: strategy.risk.risk_pct_per_trade,
-            });
+
+            // engine-trade-guardrails-pyramid-flip-block (F-7):
+            // Server-side gate at the apply seam. The trader's emitted
+            // action stays in `parsed.action` (preserved verbatim in
+            // `eval_decisions.action` below); `applied_action` is what
+            // drives `simulate_fill` / marker derivation. A `RewriteTo`
+            // also writes a `supervisor_notes` row so the operator sees
+            // the block.
+            let original_action = GuardAction::parse(&parsed.action);
+            let position_state = position_state_from_size(pre_fill_position);
+            let decision = guardrails::classify(original_action, position_state, last_open_direction);
+            let applied_action: String = match &decision {
+                GuardrailDecision::Allow => parsed.action.clone(),
+                GuardrailDecision::RewriteTo { action, reason } => {
+                    let note = supervisor_note_content(
+                        *reason,
+                        original_action,
+                        *action,
+                        &asset,
+                        decision_idx,
+                    );
+                    store
+                        .record_supervisor_note(&run.id, "guard", "warn", &note)
+                        .await?;
+                    tracing::warn!(
+                        run_id = %run.id,
+                        decision_index = decision_idx,
+                        asset = %asset,
+                        reason = reason.as_str(),
+                        original = original_action.as_str(),
+                        applied = action.as_str(),
+                        "eval guardrail rewrote trader action",
+                    );
+                    action.as_str().to_string()
+                }
+            };
+
+            // `simulate_fill` treats any non-(long_open|short_open) action
+            // as `want_flat` (closes any open position). That suits a
+            // trader-emitted `flat` or the guardrail one-step-flip
+            // rewrite, but a guardrail pyramid-block rewrites
+            // `long_open` → `hold` and we MUST NOT close the existing
+            // position in that case. Short-circuit a true no-op fill
+            // for `hold` so the position survives untouched.
+            let fill = if applied_action == "hold" {
+                FillOutcome {
+                    new_pos: pre_fill_position,
+                    new_entry: entry_price,
+                    fill_price: None,
+                    fill_size: None,
+                    fee: None,
+                    realized_pnl: 0.0,
+                }
+            } else {
+                simulate_fill(SimulateFillArgs {
+                    pos: pre_fill_position,
+                    entry: entry_price,
+                    action: &applied_action,
+                    next_open: next_bar_open,
+                    slip_bps,
+                    taker_bps,
+                    equity,
+                    risk_pct: strategy.risk.risk_pct_per_trade,
+                })
+            };
             position = fill.new_pos;
             entry_price = fill.new_entry;
             realized_total += fill.realized_pnl;
@@ -481,7 +548,10 @@ impl BacktestExecutor {
                 // FillRecorded — only when an actionable decision actually
                 // crossed the book. For close-to-flat decisions, side is
                 // derived from the pre-fill position direction.
-                let side = fill_side_for_action(&parsed.action, pre_fill_position);
+                // Side is derived from the APPLIED action so a
+                // guardrail-rewritten `flat` (one-step flip block) shows
+                // as a close, not a phantom short_open.
+                let side = fill_side_for_action(&applied_action, pre_fill_position);
                 self.emit(ProgressEvent::FillRecorded {
                     run_id: run.id.clone(),
                     side: side.into(),
@@ -492,7 +562,10 @@ impl BacktestExecutor {
             }
 
             // DecisionEmitted fires for every cycle so subscribers see
-            // flat/hold decisions too.
+            // flat/hold decisions too. Carries the ORIGINAL trader
+            // action — subscribers correlate the emitted intent with the
+            // matching `eval_decisions` row, which also stores the
+            // original. The supervisor_notes table carries the rewrite.
             self.emit(ProgressEvent::DecisionEmitted {
                 run_id: run.id.clone(),
                 action: parsed.action.clone(),
@@ -500,6 +573,17 @@ impl BacktestExecutor {
                 size: fill.fill_size.unwrap_or(0.0),
                 conviction: parsed.conviction,
             });
+
+            // Update the per-asset open-direction memory for the
+            // guardrail's next-cycle flip detection. Driven by the
+            // APPLIED action (a guardrail-rewritten `hold` keeps the
+            // existing direction; a `flat` clears it).
+            match GuardAction::parse(&applied_action) {
+                GuardAction::LongOpen => last_open_direction = Some(GuardAction::LongOpen),
+                GuardAction::ShortOpen => last_open_direction = Some(GuardAction::ShortOpen),
+                GuardAction::Flat => last_open_direction = None,
+                GuardAction::Hold | GuardAction::Other => {}
+            }
 
             // Mark equity to the next bar's open.
             equity = initial + realized_total + position * (next_bar_open - entry_price);
@@ -535,7 +619,11 @@ impl BacktestExecutor {
             // Only emit for actions where fill data is present (same guard
             // as split_markers uses for trade-like actions).
             let t = bar.timestamp.timestamp();
-            let marker_event = match parsed.action.as_str() {
+            // Markers reflect what actually hit the portfolio — so they
+            // use the APPLIED action, not the trader's original.
+            // The audit-side trace still has the original in
+            // `eval_decisions.action`.
+            let marker_event = match applied_action.as_str() {
                 "long_open" => {
                     if let (Some(price), Some(size)) = (fill.fill_price, fill.fill_size) {
                         Some(MarkerEvent::Trade(make_trade_marker(

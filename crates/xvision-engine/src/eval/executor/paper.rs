@@ -23,6 +23,10 @@ use crate::agent::observability::{fresh_span_id, ObsEmitter};
 use crate::agent::pipeline::{run_pipeline, PipelineInputs, ResolvedAgentSlot};
 use crate::api::chart::{ChartEquityPoint, LiveDecisionRow, RunChartEvent, RunEventBus};
 use crate::eval::executor::Executor;
+use crate::eval::guardrails::{
+    self as guardrails, position_state_from_size, supervisor_note_content, Action as GuardAction,
+    GuardrailDecision,
+};
 use crate::eval::metrics::{
     annualization_periods_per_year, equity_to_returns, max_drawdown_pct, sharpe_from_returns,
     total_return_pct,
@@ -476,6 +480,13 @@ impl PaperExecutor {
         // can self-heal.
         let mut last_broker_error: Option<BrokerErrorFeedback> = None;
 
+        // engine-trade-guardrails-pyramid-flip-block (F-7):
+        // tracks the trader's most recent emitted open direction on the
+        // asset so the guardrail can detect a one-step flip even when
+        // the live broker position is momentarily flat between a close
+        // and an opposite open. Cleared on emitted/applied `flat`.
+        let mut last_open_direction: Option<GuardAction> = None;
+
         // eval-broker-error-circuit-breaker: tracks the most recent
         // recoverable broker rejection's class and the number of
         // consecutive identical rejections. The gate is the triple
@@ -623,6 +634,50 @@ impl PaperExecutor {
             let mut fee: Option<f64> = None;
             let mut realized_pnl: Option<f64> = None;
 
+            // engine-trade-guardrails-pyramid-flip-block (F-7):
+            // Server-side gate at the apply seam. The trader's emitted
+            // action stays in `parsed.action` (preserved verbatim in
+            // `eval_decisions.action` below); `applied_action` is what
+            // the broker-submit planner sees. A non-`Allow` outcome
+            // writes a `supervisor_notes` row so the operator sees the
+            // block in the trace dock.
+            //
+            // This supersedes the legacy inline "already long/short"
+            // no-op below — the typed guardrail handles pyramid AND
+            // one-step flip uniformly. The legacy inline check is left
+            // as a defence-in-depth catch (it short-circuits the broker
+            // for the same situations) but the supervisor_notes row
+            // here is the canonical audit trail.
+            let original_action_g = GuardAction::parse(&parsed.action);
+            let position_state_g = position_state_from_size(position);
+            let guard_decision =
+                guardrails::classify(original_action_g, position_state_g, last_open_direction);
+            let applied_action: String = match &guard_decision {
+                GuardrailDecision::Allow => parsed.action.clone(),
+                GuardrailDecision::RewriteTo { action, reason } => {
+                    let note = supervisor_note_content(
+                        *reason,
+                        original_action_g,
+                        *action,
+                        &asset,
+                        decision_idx,
+                    );
+                    store
+                        .record_supervisor_note(&run.id, "guard", "warn", &note)
+                        .await?;
+                    tracing::warn!(
+                        run_id = %run.id,
+                        decision_index = decision_idx,
+                        asset = %asset,
+                        reason = reason.as_str(),
+                        original = original_action_g.as_str(),
+                        applied = action.as_str(),
+                        "eval guardrail rewrote trader action",
+                    );
+                    action.as_str().to_string()
+                }
+            };
+
             // Plan the broker submission for this decision. Three cases:
             //
             //   1. Non-actionable action (`hold`, `flat`, etc.) → no
@@ -638,9 +693,37 @@ impl PaperExecutor {
             //      run doesn't fail on broker rejection.
             //   3. Anything else actionable → submit a market order
             //      sized by `risk_pct_per_trade`.
-            let plan: Option<(Side, f64)> = if !is_actionable(&parsed.action) {
+            // Plan dispatch reads `applied_action` (the post-guardrail
+            // action). The existing inline already-long / already-short
+            // no-ops stay in place as defence-in-depth (the guardrail
+            // would also catch them).
+            //
+            // Guardrail-rewritten `flat` (one-step flip block) is a
+            // CLOSE: it must hit the broker to actually flatten the
+            // position. Trader-emitted `flat` keeps the legacy v1
+            // semantics of "no broker submit" — preserving the
+            // `paper_executor_skips_broker_for_flat_decisions`
+            // invariant. The two are distinguished by inspecting
+            // `guard_decision`.
+            let guard_rewrote_to_flat = matches!(
+                &guard_decision,
+                GuardrailDecision::RewriteTo { action: GuardAction::Flat, .. }
+            );
+            let plan: Option<(Side, f64)> = if guard_rewrote_to_flat {
+                // Close any open position. Crypto venues are long-only
+                // on Alpaca; closing a long means a sell sized to the
+                // long. With no open position the flip block is
+                // effectively a no-op.
+                if position > 0.0 {
+                    Some((Side::Sell, position))
+                } else if position < 0.0 {
+                    Some((Side::Buy, position.abs()))
+                } else {
+                    None
+                }
+            } else if !is_actionable(&applied_action) {
                 None
-            } else if parsed.action == "short_open" && is_alpaca_crypto(&asset) {
+            } else if applied_action == "short_open" && is_alpaca_crypto(&asset) {
                 let pos = self.broker.position(&asset).await.with_context(|| {
                     format!(
                         "paper eval broker position query failed: run_id={} decision_index={} asset={}",
@@ -652,15 +735,17 @@ impl PaperExecutor {
                 } else {
                     None
                 }
-            } else if parsed.action == "long_open" && position > 0.0 {
+            } else if applied_action == "long_open" && position > 0.0 {
                 // Already long this asset: don't pile on. Re-running long_open
                 // every cycle is the failure mode that produced run
                 // 01KRWZHHSXAWHRZSG1X65CZMCD — 29 consecutive long_open
                 // requests after the first fill, all rejected for insufficient
                 // cash. The decision is still recorded so the trace shows the
-                // agent's intent; we just don't submit the order.
+                // agent's intent; we just don't submit the order. The
+                // typed guardrail above already wrote a supervisor_notes
+                // row for this case.
                 None
-            } else if parsed.action == "short_open" && position < 0.0 {
+            } else if applied_action == "short_open" && position < 0.0 {
                 // Symmetric: already short.
                 None
             } else {
@@ -673,7 +758,7 @@ impl PaperExecutor {
                 let buying_power = self.broker.buying_power(&asset).await?;
                 let usd_at_risk = buying_power * strategy.risk.risk_pct_per_trade;
                 let size = (usd_at_risk / reference_price_usd).max(0.0);
-                let side = if parsed.action == "long_open" {
+                let side = if applied_action == "long_open" {
                     Side::Buy
                 } else {
                     Side::Sell
@@ -779,7 +864,10 @@ impl PaperExecutor {
                 // Buy/Sell — short-sale fills (#14 round-2 intake)
                 // surface as side=Short even though the underlying
                 // order is a Sell.
-                let trace_side = broker_side_for_action(&parsed.action, side);
+                // Trace side derived from the APPLIED action so a
+                // guardrail-rewritten `flat` reads as a close, not the
+                // trader's original short_open intent.
+                let trace_side = broker_side_for_action(&applied_action, side);
                 let span_id_opt = self.obs_emitter.as_ref().map(|_| fresh_span_id());
                 if let (Some(em), Some(sid)) = (self.obs_emitter.as_ref(), span_id_opt.as_deref()) {
                     em.emit_broker_call_started(
@@ -1074,6 +1162,18 @@ impl PaperExecutor {
                 RunChartEvent::Decision(LiveDecisionRow::from(&decision_row)),
             )
             .await;
+
+            // engine-trade-guardrails-pyramid-flip-block (F-7):
+            // Update per-asset open-direction memory for the next
+            // cycle's flip detection. Driven by the APPLIED action so
+            // a guardrail-rewritten `hold` keeps the existing direction
+            // and a rewritten `flat` (one-step flip block) clears it.
+            match GuardAction::parse(&applied_action) {
+                GuardAction::LongOpen => last_open_direction = Some(GuardAction::LongOpen),
+                GuardAction::ShortOpen => last_open_direction = Some(GuardAction::ShortOpen),
+                GuardAction::Flat => last_open_direction = None,
+                GuardAction::Hold | GuardAction::Other => {}
+            }
 
             let post_balance = self.broker.balance().await?;
             store.record_equity(&run.id, bar.timestamp, post_balance).await?;
