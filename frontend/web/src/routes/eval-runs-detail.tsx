@@ -18,6 +18,7 @@ import { chartKeys, getRunChart, openRunStream } from "@/api/chart";
 import { RunChart } from "@/components/chart/RunChart";
 import { ReviewPanel } from "@/features/eval-runs/review";
 import { RunSummaryError as RunSummaryPanel } from "@/features/eval-runs/RunSummary";
+import { useAdaptivePoll } from "@/features/eval-runs/useAdaptivePoll";
 import { useTraceDock } from "@/stores/trace-dock";
 import { isInflightRunStatus } from "@/lib/run-status";
 import {
@@ -56,15 +57,20 @@ export function EvalRunDetailRoute() {
   const { runId } = useParams<{ runId: string }>();
   const id = runId ?? "";
   const qc = useQueryClient();
+  // Status-aware adaptive cadence — see `useAdaptivePoll` for the
+  // schedule (running=2s, queued=5s, terminal=stop, 5min idle→30s).
+  // The hook returns a `(status) => interval` callable that owns the
+  // "ms since last status change" state via refs, so the 5-min stale
+  // backoff fires correctly even when nothing in the React tree
+  // re-renders. We pull the latest status off the cache rather than
+  // routing it through hook deps so we don't have to call the hook
+  // *after* useQuery and run into TDZ ordering.
+  const pollFor = useAdaptivePoll(id);
   const q = useQuery({
     queryKey: evalKeys.run(id),
     queryFn: () => getRun(id),
     enabled: id.length > 0,
-    refetchInterval: (query) => {
-      const detail = query.state.data;
-      const status = detail?.summary.status;
-      return status && isInflightRunStatus(status) ? 2000 : false;
-    },
+    refetchInterval: (query) => pollFor(query.state.data?.summary.status),
   });
   const chart = useQuery({
     queryKey: chartKeys.run(id),
