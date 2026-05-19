@@ -505,11 +505,20 @@ fn parse_poll_duration(s: &str) -> Result<Duration> {
     Ok(Duration::from_secs(n))
 }
 
-pub async fn run_batch_cmd(args: BatchRunArgs) -> CliResult<()> {
-    let ctx = open_ctx(args.xvn_home.clone())
-        .await
-        .exit_with(XvnExit::Upstream)?;
-
+/// Production batch path used by both `xvn eval batch run` and
+/// `xvn experiment run`. Delegates to `eval::run` per scenario (which
+/// resolves provider/model from the strategy's slot internally), so all
+/// callers get the same per-strategy-slot dispatch resolution. Reviews
+/// load the named agent profile and build dispatch from
+/// `profile.provider` — they never piggyback on the eval dispatch.
+///
+/// Returns the fully-finalized `BatchResult` (including persisted
+/// `batch_id`, per-run entries, and optional review summaries).
+/// Caller is responsible for printing / serializing.
+pub(crate) async fn run_batch_via_env(
+    ctx: &ApiContext,
+    args: &BatchRunArgs,
+) -> CliResult<BatchResult> {
     let mode = xvision_engine::eval::run::RunMode::parse(&args.mode).ok_or_else(|| CliError {
         exit: XvnExit::Usage,
         source: anyhow::anyhow!("unknown mode {:?}; expected one of: paper | backtest", args.mode),
@@ -526,21 +535,9 @@ pub async fn run_batch_cmd(args: BatchRunArgs) -> CliResult<()> {
 
     let _poll_interval = parse_poll_duration(&args.poll).exit_with(XvnExit::Usage)?;
 
-    // For the current sequential implementation we use run_with_deps which
-    // requires a real broker for paper mode. Build it from env/settings if
-    // needed.
-    //
-    // We re-use the same construction path as `eval::run` (which builds broker
-    // + dispatch from env internally). Since we want per-run dispatch
-    // consistency, delegate to `eval::run` (the env-bound public entrypoint)
-    // for the CLI path — this matches how `xvn eval run` works.
-    //
-    // However, this means we can't inject a mock here. That's fine for the CLI;
-    // tests use `run_batch` with explicit deps.
-
     // Persist the batch row first so the batch_id is stable before runs launch.
     let batch = eval::create_batch(
-        &ctx,
+        ctx,
         CreateBatchRequest {
             strategy_id: args.strategy.clone(),
             review_with: args.review_with.clone(),
@@ -554,7 +551,7 @@ pub async fn run_batch_cmd(args: BatchRunArgs) -> CliResult<()> {
     // Resolve scenario display names (best-effort).
     let mut scenario_names: Vec<String> = Vec::with_capacity(args.scenarios.len());
     for sid in &args.scenarios {
-        let name = api_scenario::get(&ctx, sid)
+        let name = api_scenario::get(ctx, sid)
             .await
             .map(|s| s.display_name)
             .unwrap_or_else(|_| sid.clone());
@@ -571,12 +568,12 @@ pub async fn run_batch_cmd(args: BatchRunArgs) -> CliResult<()> {
             params_override: None,
         };
 
-        let entry = match eval::run(&ctx, run_req).await {
-            Ok(run) => run_entry_from_run(&ctx, run, scenario_id, scenario_name, &batch_id).await,
+        let entry = match eval::run(ctx, run_req).await {
+            Ok(run) => run_entry_from_run(ctx, run, scenario_id, scenario_name, &batch_id).await,
             Err(e) => {
                 let cli_err = api_to_cli("eval batch run", e);
                 failed_entry_from_error(
-                    &ctx,
+                    ctx,
                     &args.strategy,
                     scenario_id,
                     scenario_name,
@@ -603,7 +600,7 @@ pub async fn run_batch_cmd(args: BatchRunArgs) -> CliResult<()> {
                 exit: XvnExit::NotFound,
                 source: anyhow::anyhow!("agent profile `{profile_id}` not found"),
             })?;
-        let rev_dispatch = super::review::build_dispatch_for_profile(&ctx, &profile.provider)
+        let rev_dispatch = super::review::build_dispatch_for_profile(ctx, &profile.provider)
             .map_err(|e| api_to_cli("eval batch review", e))?;
 
         for entry in &mut entries {
@@ -611,7 +608,7 @@ pub async fn run_batch_cmd(args: BatchRunArgs) -> CliResult<()> {
                 continue;
             }
             let run_id = entry.run_id.clone();
-            let scenario_summary = review_scenario_summary(&ctx, &run_id).await;
+            let scenario_summary = review_scenario_summary(ctx, &run_id).await;
             let outcome = review::run_review(
                 &store,
                 rev_dispatch.clone(),
@@ -647,13 +644,21 @@ pub async fn run_batch_cmd(args: BatchRunArgs) -> CliResult<()> {
 
     // Finalize the persisted batch (compute rollup status + set completed_at).
     // Runs after reviews so review failures don't change the batch status.
-    let _ = eval::finalize_batch(&ctx, &batch_id).await;
+    let _ = eval::finalize_batch(ctx, &batch_id).await;
 
-    let result = BatchResult {
+    Ok(BatchResult {
         batch_id,
         strategy_id: args.strategy.clone(),
         runs: entries,
-    };
+    })
+}
+
+pub async fn run_batch_cmd(args: BatchRunArgs) -> CliResult<()> {
+    let ctx = open_ctx(args.xvn_home.clone())
+        .await
+        .exit_with(XvnExit::Upstream)?;
+
+    let result = run_batch_via_env(&ctx, &args).await?;
 
     if args.json {
         println!(

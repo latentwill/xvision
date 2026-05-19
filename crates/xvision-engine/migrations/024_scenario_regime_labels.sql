@@ -1,4 +1,4 @@
--- 022_scenario_regime_labels.sql — first-class regime metadata on scenarios.
+-- 024_scenario_regime_labels.sql — first-class regime metadata on scenarios.
 --
 -- Adds four optional regime-classification columns to the `scenarios` table
 -- so agents and operators can filter by market regime without parsing tags.

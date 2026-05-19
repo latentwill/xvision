@@ -1,4 +1,4 @@
--- Revert 022_scenario_regime_labels.sql.
+-- Revert 024_scenario_regime_labels.sql.
 --
 -- SQLite ALTER TABLE DROP COLUMN requires SQLite >= 3.35 (2021-03-12).
 -- sqlx 0.8 bundles libsqlite3 >= 3.39, so the bare DROP COLUMN form is safe.
