@@ -1,7 +1,8 @@
-import { lazy, Suspense, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, type ReactNode } from "react";
 import { createBrowserRouter, Navigate } from "react-router-dom";
 import { Layout } from "@/components/shell/Layout";
 import { AppErrorBoundary } from "@/components/AppErrorBoundary";
+import { noteSuccessfulPageLoad } from "@/lib/chunk-reload";
 
 const HomeRoute = lazy(() => import("./routes/home").then((m) => ({ default: m.HomeRoute })));
 const StrategiesRoute = lazy(() => import("./routes/strategies").then((m) => ({ default: m.StrategiesRoute })));
@@ -26,6 +27,20 @@ const SettingsGeneralRoute = lazy(() => import("./routes/settings").then((m) => 
 const SettingsProvidersRoute = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsProvidersRoute })));
 const SettingsSkillsRoute = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsSkillsRoute })));
 
+/**
+ * Marker that only mounts after its parent Suspense has resolved
+ * (i.e., the lazy route chunk loaded successfully). Used as a sibling
+ * of the route element to clear the reload-attempted guard only once
+ * we have proof that the current bundle's chunks are reachable. See
+ * PR #317 review (P1).
+ */
+function RouteLoaded() {
+  useEffect(() => {
+    noteSuccessfulPageLoad();
+  }, []);
+  return null;
+}
+
 function page(element: ReactNode) {
   // AppErrorBoundary wraps the Suspense boundary so chunk-load errors
   // (Vite-after-deploy: stale `index.html` referencing a hash that no
@@ -35,6 +50,7 @@ function page(element: ReactNode) {
   return (
     <AppErrorBoundary>
       <Suspense fallback={<div className="px-4 py-6 text-[13px] text-text-3">Loading…</div>}>
+        <RouteLoaded />
         {element}
       </Suspense>
     </AppErrorBoundary>

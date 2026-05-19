@@ -9,10 +9,8 @@ import {
 import { router } from "./routes";
 import { ThemeProvider } from "./theme/ThemeProvider";
 import { errorSummary, logDebug, logError, logInfo } from "./lib/logger";
-import {
-  consumePostReloadNotice,
-  noteSuccessfulPageLoad,
-} from "./lib/chunk-reload";
+import { AppErrorBoundary } from "./components/AppErrorBoundary";
+import { consumePostReloadNotice } from "./lib/chunk-reload";
 
 const queryClient = new QueryClient({
   queryCache: new QueryCache({
@@ -94,20 +92,24 @@ function ChunkReloadToast() {
 }
 
 export function App() {
-  // Clear the reload-attempted flag after the React tree has committed
-  // for the first time. This is the documented clear-trigger: lazy
-  // chunks needed by the initial route have either resolved (no error
-  // surfaced) or will surface through `AppErrorBoundary` on first
-  // navigation. Clearing on first commit means a future deploy within
-  // the same browser session can still attempt one auto-reload.
-  useEffect(() => {
-    noteSuccessfulPageLoad();
-  }, []);
-
+  // The reload-attempted flag is cleared by `RouteLoaded` inside each
+  // route's Suspense (see `routes.tsx`) once the lazy chunk has
+  // actually resolved — not on App's first commit, which can happen
+  // while Suspense is still showing the fallback. Clearing too early
+  // would let a second still-failing chunk-load trigger a fresh reload
+  // and loop. See PR #317 review (P1) for the failure mode.
+  //
+  // Outer `AppErrorBoundary` catches chunk failures from layout-level
+  // lazy chunks (`LazyChatRail`, `StripDockSlot`) that render as
+  // siblings/ancestors of the per-route boundary in `routes.tsx`. The
+  // inner per-route boundary still runs first for route page errors;
+  // this one is the safety net for everything above the page Outlet.
   return (
     <ThemeProvider>
       <QueryClientProvider client={queryClient}>
-        <RouterProvider router={router} />
+        <AppErrorBoundary>
+          <RouterProvider router={router} />
+        </AppErrorBoundary>
         <ChunkReloadToast />
       </QueryClientProvider>
     </ThemeProvider>
