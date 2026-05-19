@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   agentProfileKeys,
@@ -90,7 +90,13 @@ export function AgentPicker({
         })}
       </div>
       {editing && (
+        // key={editing} so switching to a different pill while the
+        // editor is open remounts with fresh form state — otherwise
+        // React reuses the existing component instance and a Save
+        // would PATCH the newly-selected profile with the previous
+        // profile's provider/model.
         <ProfileEditor
+          key={editing}
           profileId={editing}
           profile={profilesById.get(editing) ?? null}
           onClose={() => setEditing(null)}
@@ -117,6 +123,16 @@ function ProfileEditor({
 
   const [provider, setProvider] = useState<string>(profile?.provider ?? "");
   const [model, setModel] = useState<string>(profile?.model ?? "");
+  // If the editor opens before listAgentProfiles resolves, `profile`
+  // arrives as null first and then populates. Seed the form once the
+  // real values land — but only when the user hasn't started editing
+  // yet (form still matches the empty initial state), so we don't
+  // clobber in-progress input on cache refresh.
+  useEffect(() => {
+    if (!profile) return;
+    setProvider((prev) => (prev === "" ? profile.provider : prev));
+    setModel((prev) => (prev === "" ? profile.model : prev));
+  }, [profile]);
 
   const saveMutation = useMutation({
     mutationFn: () => updateAgentProfile(profileId, { provider, model }),
