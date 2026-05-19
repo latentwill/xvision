@@ -87,7 +87,17 @@ impl RunMode {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Run {
     pub id: String, // ULID
+    /// Strategy bundle artifact hash. See migration 014: this column was
+    /// renamed from `strategy_bundle_hash` and still carries the bundle
+    /// value, NOT the workspace `agents.agent_id`. The long-lived agent
+    /// ULID lives in `agents_agent_id` below (migration 021).
     pub agent_id: String,
+    /// Long-lived workspace `agents.agent_id` ULID of the calling agent.
+    /// `None` for rows older than migration 021 (no backfill — see F-11
+    /// in `team/intake/2026-05-16-eval-review-and-v2a.md`). New runs
+    /// populate this at start via the strategy's first AgentRef.
+    #[serde(default)]
+    pub agents_agent_id: Option<String>,
     pub scenario_id: String,
     pub params_override: Option<serde_json::Value>,
     pub mode: RunMode,
@@ -107,6 +117,7 @@ impl Run {
         Self {
             id: Ulid::new().to_string(),
             agent_id,
+            agents_agent_id: None,
             scenario_id,
             params_override: None,
             mode,

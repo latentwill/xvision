@@ -500,6 +500,7 @@ mod roundtrip {
             include_str!("../../migrations/002_eval.sql"),
             include_str!("../../migrations/014_eval_agent_id.sql"),
             include_str!("../../migrations/015_eval_decisions_reasoning.sql"),
+            include_str!("../../migrations/021_eval_runs_agents_agent_id.sql"),
         ] {
             sqlx::query(migration).execute(&pool).await.unwrap();
         }

@@ -22,6 +22,7 @@ async fn pool_with_migrations() -> SqlitePool {
         include_str!("../migrations/015_eval_decisions_reasoning.sql"),
         include_str!("../migrations/016_eval_reviews.sql"),
         include_str!("../migrations/017_eval_findings_review_columns.sql"),
+        include_str!("../migrations/021_eval_runs_agents_agent_id.sql"),
     ] {
         sqlx::query(sql).execute(&pool).await.unwrap();
     }

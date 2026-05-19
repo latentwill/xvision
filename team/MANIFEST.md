@@ -51,9 +51,26 @@ table AND `v1-shipping-plan.md` in the same commit.
 | 003 | chat-rail | merged |
 | 004 | command-palette | merged |
 | 005 | eval-review-data-model | merged (#176) |
+| 007 | skills-registry | merged |
+| 010 | bars-cache | merged |
+| 011 | scenarios | merged |
+| 012 | runs-scenario-fk | merged |
+| 013 | cli-jobs | merged |
+| 014 | eval-agent-id-rename | merged |
+| 015 | eval-decisions-reasoning | merged |
+| 016 | eval-reviews | merged |
+| 017 | eval-findings-review-columns | merged |
+| 018 | agent-run-observability | merged |
+| 019 | harness-prompt-version-field (F-3) | merged |
+| 020 | eval-causal-input-sanitization | claimed (PR #354) |
+| 021 | eval-bundle-agent-id-map (F-11) | claimed |
 
-The next available number is 006. The conductor must approve and reserve in
+The next available number is 022. The conductor must approve and reserve in
 this table before a track touches `crates/xvision-engine/migrations/`.
+
+Note 2026-05-19: numbers 006, 008, 009 were never landed (collapsed during
+the QA waves); the on-disk sequence skips them. New claims continue from
+the highest filed-and-merged value.
 
 ## Historical context
 

@@ -49,6 +49,8 @@ const MIGRATION_018_AGENT_RUN_OBSERVABILITY: &str =
     include_str!("../../migrations/018_agent_run_observability.sql");
 const MIGRATION_019_AGENT_SLOT_PROMPT_VERSION: &str =
     include_str!("../../migrations/019_agent_slot_prompt_version.sql");
+const MIGRATION_021_EVAL_RUNS_AGENTS_AGENT_ID: &str =
+    include_str!("../../migrations/021_eval_runs_agents_agent_id.sql");
 
 /// Map of cache_key → per-key mutex used by `eval::bars::load_bars` to
 /// serialize concurrent misses for the same window. Kept inside an outer
@@ -149,6 +151,7 @@ impl ApiContext {
             .execute(&pool)
             .await?;
         migrate_agent_slot_prompt_version(&pool).await?;
+        migrate_eval_runs_agents_agent_id(&pool).await?;
 
         let ctx = Self::new(pool, actor, xvn_home.to_path_buf());
 
@@ -440,6 +443,20 @@ async fn migrate_eval_findings_review_columns(pool: &SqlitePool) -> ApiResult<()
 async fn migrate_agent_slot_prompt_version(pool: &SqlitePool) -> ApiResult<()> {
     if !table_has_column(pool, "agent_slots", "prompt_version").await? {
         sqlx::query(MIGRATION_019_AGENT_SLOT_PROMPT_VERSION)
+            .execute(pool)
+            .await?;
+    }
+
+    Ok(())
+}
+
+/// Apply migration 021 (F-11): add the long-lived workspace
+/// `agents_agent_id` column to `eval_runs`. Gated on column probe for
+/// idempotence on existing databases; same pattern as the other
+/// `migrate_*` helpers in this module.
+async fn migrate_eval_runs_agents_agent_id(pool: &SqlitePool) -> ApiResult<()> {
+    if !table_has_column(pool, "eval_runs", "agents_agent_id").await? {
+        sqlx::query(MIGRATION_021_EVAL_RUNS_AGENTS_AGENT_ID)
             .execute(pool)
             .await?;
     }

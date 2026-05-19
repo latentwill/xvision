@@ -253,6 +253,38 @@ pub async fn delete(ctx: &ApiContext, run_id: &str) -> ApiResult<()> {
     result
 }
 
+/// F-11: navigate from an eval run back to the workspace agent record
+/// that drove it. Reads `eval_runs.agents_agent_id` (added in migration
+/// 021) and, when populated, looks up the live agent in the agent
+/// library.
+///
+/// Returns:
+/// - `Ok(Some(agent))` when the run carries a long-lived agent id AND
+///   that row still exists in `agents`.
+/// - `Ok(None)` when either the run is missing, the column is NULL
+///   (pre-migration-021 row, intentionally not backfilled), or the
+///   referenced agent has been deleted.
+///
+/// No regex / bundle-hash fallback — by design. The whole point of the
+/// new column is to retire that heuristic.
+pub async fn lookup_agent_for_eval_run(
+    ctx: &ApiContext,
+    run_id: &str,
+) -> ApiResult<Option<crate::agents::model::Agent>> {
+    let store = RunStore::new(ctx.db.clone());
+    let aid = store
+        .get_agents_agent_id(run_id)
+        .await
+        .map_err(|e| ApiError::Internal(format!("read agents_agent_id: {e}")))?;
+    let Some(aid) = aid else { return Ok(None) };
+    let agent_store = AgentStore::new(ctx.db.clone());
+    let agent = agent_store
+        .get(&aid)
+        .await
+        .map_err(|e| ApiError::Internal(format!("load agent {aid}: {e}")))?;
+    Ok(agent)
+}
+
 pub async fn cancel(ctx: &ApiContext, run_id: &str) -> ApiResult<Run> {
     let started = Instant::now();
     let store = RunStore::new(ctx.db.clone());
@@ -822,6 +854,24 @@ fn runtime_slots<'a>(
     .collect()
 }
 
+/// Pick the long-lived `agents.agent_id` of the agent acting as the
+/// run's trader, for persistence in `eval_runs.agents_agent_id`
+/// (migration 021). Prefers the AgentRef with canonical role `trader`;
+/// falls back to the first AgentRef when no role match exists. Returns
+/// `None` for legacy strategies that still use the deprecated slot
+/// fields (no AgentRefs attached) — those rows leave the column NULL,
+/// matching the no-backfill policy in the F-11 contract.
+fn pick_agents_agent_id(strategy: &crate::strategies::Strategy) -> Option<String> {
+    if let Some(r) = strategy
+        .agents
+        .iter()
+        .find(|r| r.canonical_role().eq_ignore_ascii_case("trader"))
+    {
+        return Some(r.agent_id.clone());
+    }
+    strategy.agents.first().map(|r| r.agent_id.clone())
+}
+
 fn validate_eval_trader_source(
     strategy: &crate::strategies::Strategy,
     agent_slots: &[ResolvedAgentSlot],
@@ -1057,6 +1107,11 @@ async fn run_inner(
     //    emitter so SpanStarted events have a valid FK.
     let mut run = Run::new_queued(req.agent_id.clone(), scenario.id.clone(), req.mode);
     run.params_override = req.params_override.clone();
+    // F-11: persist the long-lived workspace `agents.agent_id` next to
+    // the existing bundle-hash `agent_id`. Migration 021 added the
+    // column; `pick_agents_agent_id` returns `None` for legacy
+    // slot-only strategies, leaving the column NULL (no backfill).
+    run.agents_agent_id = pick_agents_agent_id(&strategy);
 
     // Observability emitter (`qa-eval-observability-wiring`). Built
     // only when the dashboard injected an obs bus on the ApiContext;
@@ -1519,6 +1574,8 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
     // behind. The matching `RunFinished` is emitted by
     // `execute_in_background`.
     let mut run = Run::new_queued(req.agent_id.clone(), scenario.id.clone(), req.mode);
+    // F-11: see comment in `run_inner` above — same reasoning here.
+    run.agents_agent_id = pick_agents_agent_id(&strategy);
     let obs_emitter = ctx.obs_event_bus.as_ref().map(|bus| {
         // Mirror the FullDebug-aware emitter wiring above; same
         // blob root so the second eval entry point produces refs
