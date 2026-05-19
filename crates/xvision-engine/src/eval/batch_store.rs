@@ -67,15 +67,14 @@ impl BatchStore {
 
     /// Load a single batch row. Returns `None` when the batch_id is not found.
     pub async fn get(&self, batch_id: &str) -> Result<Option<Batch>> {
-        let row: Option<(String, String, Option<String>, String, Option<String>, String)> =
-            sqlx::query_as(
-                "SELECT batch_id, strategy_id, review_with, created_at, completed_at, status \
+        let row: Option<(String, String, Option<String>, String, Option<String>, String)> = sqlx::query_as(
+            "SELECT batch_id, strategy_id, review_with, created_at, completed_at, status \
                  FROM eval_batches WHERE batch_id = ?",
-            )
-            .bind(batch_id)
-            .fetch_optional(&self.pool)
-            .await
-            .with_context(|| format!("get eval_batches batch_id={batch_id}"))?;
+        )
+        .bind(batch_id)
+        .fetch_optional(&self.pool)
+        .await
+        .with_context(|| format!("get eval_batches batch_id={batch_id}"))?;
 
         match row {
             None => Ok(None),
@@ -84,7 +83,10 @@ impl BatchStore {
                 strategy_id: sid,
                 review_with: rw,
                 created_at: ca.parse().context("parse created_at")?,
-                completed_at: comp.map(|s| s.parse()).transpose().context("parse completed_at")?,
+                completed_at: comp
+                    .map(|s| s.parse())
+                    .transpose()
+                    .context("parse completed_at")?,
                 status,
             })),
         }
@@ -92,25 +94,24 @@ impl BatchStore {
 
     /// List batches, most-recent first. Optionally filter by strategy_id.
     pub async fn list(&self, strategy_id: Option<&str>) -> Result<Vec<Batch>> {
-        let rows: Vec<(String, String, Option<String>, String, Option<String>, String)> =
-            match strategy_id {
-                Some(sid) => sqlx::query_as(
-                    "SELECT batch_id, strategy_id, review_with, created_at, completed_at, status \
+        let rows: Vec<(String, String, Option<String>, String, Option<String>, String)> = match strategy_id {
+            Some(sid) => sqlx::query_as(
+                "SELECT batch_id, strategy_id, review_with, created_at, completed_at, status \
                      FROM eval_batches WHERE strategy_id = ? \
                      ORDER BY created_at DESC",
-                )
-                .bind(sid)
-                .fetch_all(&self.pool)
-                .await
-                .context("list eval_batches filtered")?,
-                None => sqlx::query_as(
-                    "SELECT batch_id, strategy_id, review_with, created_at, completed_at, status \
+            )
+            .bind(sid)
+            .fetch_all(&self.pool)
+            .await
+            .context("list eval_batches filtered")?,
+            None => sqlx::query_as(
+                "SELECT batch_id, strategy_id, review_with, created_at, completed_at, status \
                      FROM eval_batches ORDER BY created_at DESC",
-                )
-                .fetch_all(&self.pool)
-                .await
-                .context("list eval_batches all")?,
-            };
+            )
+            .fetch_all(&self.pool)
+            .await
+            .context("list eval_batches all")?,
+        };
 
         rows.into_iter()
             .map(|(bid, sid, rw, ca, comp, status)| {
@@ -144,10 +145,7 @@ impl BatchStore {
             .await?
             .with_context(|| format!("batch not found: {batch_id}"))?;
 
-        if matches!(
-            batch.status.as_str(),
-            "completed" | "partial" | "failed"
-        ) {
+        if matches!(batch.status.as_str(), "completed" | "partial" | "failed") {
             return Ok(batch);
         }
 
@@ -235,26 +233,17 @@ mod tests {
 
     #[test]
     fn rollup_all_completed() {
-        assert_eq!(
-            compute_rollup_status(&["completed", "completed"]),
-            "completed"
-        );
+        assert_eq!(compute_rollup_status(&["completed", "completed"]), "completed");
     }
 
     #[test]
     fn rollup_all_failed() {
-        assert_eq!(
-            compute_rollup_status(&["failed", "failed"]),
-            "failed"
-        );
+        assert_eq!(compute_rollup_status(&["failed", "failed"]), "failed");
     }
 
     #[test]
     fn rollup_mixed_is_partial() {
-        assert_eq!(
-            compute_rollup_status(&["completed", "failed"]),
-            "partial"
-        );
+        assert_eq!(compute_rollup_status(&["completed", "failed"]), "partial");
     }
 
     #[test]
@@ -309,10 +298,7 @@ mod tests {
         assert!(finalized.completed_at.is_some());
 
         // Idempotent: calling again returns the same terminal status.
-        let again = store
-            .finalize(&batch.batch_id, &["failed"])
-            .await
-            .unwrap();
+        let again = store.finalize(&batch.batch_id, &["failed"]).await.unwrap();
         assert_eq!(again.status, "completed");
     }
 
@@ -437,14 +423,8 @@ mod tests {
         run2.status = crate::eval::run::RunStatus::Completed;
 
         // Finalize batch
-        let statuses: Vec<&str> = [&run1.status, &run2.status]
-            .iter()
-            .map(|s| s.as_str())
-            .collect();
-        let done = batch_store
-            .finalize(&batch.batch_id, &statuses)
-            .await
-            .unwrap();
+        let statuses: Vec<&str> = [&run1.status, &run2.status].iter().map(|s| s.as_str()).collect();
+        let done = batch_store.finalize(&batch.batch_id, &statuses).await.unwrap();
         assert_eq!(done.status, "completed");
         assert!(done.completed_at.is_some());
 

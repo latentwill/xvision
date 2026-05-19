@@ -1,7 +1,8 @@
 use anyhow::Context;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
+use std::fmt;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 // ---- shared message + tool-use shape --------------------------------------
 //
@@ -135,6 +136,162 @@ fn decode_llm_json(provider: &str, body: &str) -> anyhow::Result<serde_json::Val
             body.len()
         )
     })
+}
+
+// ---- typed OpenAI-compat errors -------------------------------------------
+//
+// Track `eval-provider-error-classify-retry` (intake #344): the audit
+// found two failure shapes that the eval executor's
+// `classify_run_failure` string-matched against (`429 Too Many Requests`)
+// or silently fell through to `[unclassified]` (200 OK with no `choices`).
+// Both are *retriable* provider faults — the operator pays for an
+// unclassified failed run when the dispatcher could have re-tried and
+// recovered. The typed enum below lets the dispatcher distinguish them
+// at the call site (retry policy below) and lets the classifier
+// downcast for a stable class tag.
+
+/// Stable failure-class tag for OpenAI-compat dispatch errors. Mapped 1:1
+/// to `classify_run_failure` tags so review/UI consumers don't have to
+/// learn a second vocabulary.
+#[derive(Debug, Clone)]
+pub enum OpenAiCompatError {
+    /// Provider returned 429 Too Many Requests. The retry policy honours
+    /// the `X-RateLimit-Reset` header (millis since epoch) and falls
+    /// back to a fixed delay if absent. `retry_count` is the number of
+    /// retries that were attempted before the dispatcher gave up; 0
+    /// means the very first attempt 429'd and no retry was attempted
+    /// (which should never happen in the production code path — the
+    /// dispatcher always retries — but is preserved for completeness).
+    RateLimited {
+        status: u16,
+        url: String,
+        body: String,
+        reset_at_ms: Option<u64>,
+        retry_after: Option<Duration>,
+        retry_count: u32,
+    },
+    /// Provider returned 200 OK but the decoded body did not contain a
+    /// `choices` array. Empirically this happens on transient provider
+    /// upstream errors that nonetheless return 200; the body is
+    /// retriable per the dispatcher's policy below.
+    MissingChoicesArray {
+        url: String,
+        body_excerpt: String,
+        retry_count: u32,
+    },
+}
+
+impl OpenAiCompatError {
+    /// Stable `eval_runs.error` class-tag for review/UI consumers. Matches
+    /// the strings produced by `eval::executor::classify_run_failure`.
+    pub fn class_tag(&self) -> &'static str {
+        match self {
+            Self::RateLimited { .. } => "provider_rate_limited",
+            Self::MissingChoicesArray { .. } => "provider_missing_choices",
+        }
+    }
+}
+
+impl fmt::Display for OpenAiCompatError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::RateLimited {
+                status,
+                url,
+                body,
+                retry_count,
+                ..
+            } => write!(
+                f,
+                "OpenAI-compat API error {status} at {url}: {body} (rate-limited; retried {retry_count} times)"
+            ),
+            Self::MissingChoicesArray {
+                url,
+                body_excerpt,
+                retry_count,
+            } => write!(
+                f,
+                "OpenAI-compat response missing `choices` array at {url} (retried {retry_count} times); body excerpt: {body_excerpt}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for OpenAiCompatError {}
+
+/// Max retry attempts for rate-limited 429 responses (in addition to the
+/// initial attempt). 3 attempts total = 1 initial + up to 2 retries; the
+/// constant counts retries only so the bookkeeping in
+/// `OpenAiCompatError.retry_count` matches.
+const OPENAI_429_MAX_RETRIES: u32 = 2;
+/// Max retry attempts for `MissingChoicesArray` responses (in addition to
+/// the initial attempt). 3 attempts total.
+const OPENAI_MISSING_CHOICES_MAX_RETRIES: u32 = 2;
+/// Base for `MissingChoicesArray` exponential backoff: 500ms, 1000ms,
+/// 2000ms... — only the first two are exercised before the dispatcher
+/// gives up.
+const OPENAI_MISSING_CHOICES_BACKOFF_BASE: Duration = Duration::from_millis(500);
+/// Fallback wait when the provider returned 429 without an
+/// `X-RateLimit-Reset` (or `Retry-After`) header — most permissive
+/// budget that still bounds the total wall-clock cost of the retry
+/// loop.
+const OPENAI_429_FALLBACK_DELAY: Duration = Duration::from_secs(2);
+/// Hard cap on the wait derived from `X-RateLimit-Reset` so a
+/// pathological provider that returns a far-future reset can't stall
+/// the eval for minutes. Operators would rather see a typed failure
+/// after 30s than a hung run.
+const OPENAI_429_MAX_DELAY: Duration = Duration::from_secs(30);
+
+/// Parse `X-RateLimit-Reset` (millis since epoch). Returns the duration
+/// from "now" until the reset moment, clamped to `OPENAI_429_MAX_DELAY`.
+/// Falls back to `OPENAI_429_FALLBACK_DELAY` when the header is missing
+/// or unparseable.
+///
+/// Adds a small deterministic jitter (0–250ms derived from the lower
+/// bits of `now_ms`) so concurrent retries from a saturated
+/// rate-limit don't all wake up at the same instant.
+fn parse_rate_limit_reset(reset_header: Option<&str>, retry_after_header: Option<&str>) -> Duration {
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    // Jitter: 0..=250ms derived from the low bits of `now_ms`. Cheap and
+    // doesn't drag in `rand` as a dependency.
+    let jitter = Duration::from_millis((now_ms & 0xFF) as u64);
+
+    if let Some(reset_str) = reset_header {
+        if let Ok(reset_ms) = reset_str.trim().parse::<u64>() {
+            let wait_ms = reset_ms.saturating_sub(now_ms);
+            let base = Duration::from_millis(wait_ms);
+            let clamped = base.min(OPENAI_429_MAX_DELAY);
+            return clamped + jitter;
+        }
+    }
+    // Fall back to `Retry-After` (seconds) if present.
+    if let Some(retry_after) = retry_after_header {
+        if let Ok(secs) = retry_after.trim().parse::<u64>() {
+            let base = Duration::from_secs(secs);
+            return base.min(OPENAI_429_MAX_DELAY) + jitter;
+        }
+    }
+    OPENAI_429_FALLBACK_DELAY + jitter
+}
+
+/// Exponential backoff for `MissingChoicesArray` retries.
+/// attempt 0 → 500ms, attempt 1 → 1000ms.
+fn missing_choices_backoff(attempt: u32) -> Duration {
+    OPENAI_MISSING_CHOICES_BACKOFF_BASE * (1u32 << attempt)
+}
+
+/// Truncate a body string for log output without panicking on multi-byte
+/// boundaries (`String::truncate` panics if the cut isn't on a char
+/// boundary; the chars-iterator form is safe).
+fn truncate_for_log(s: &str, max_chars: usize) -> String {
+    let mut out: String = s.chars().take(max_chars).collect();
+    if s.chars().count() > max_chars {
+        out.push('…');
+    }
+    out
 }
 
 impl LlmResponse {
@@ -593,6 +750,182 @@ pub fn openai_compat_request_body(req: &LlmRequest) -> serde_json::Value {
     body
 }
 
+/// Outcome of a single `OpenaiCompatDispatch` HTTP attempt. The retry
+/// wrapper in `complete` inspects this to decide whether to backoff +
+/// retry, bubble up the typed error, or surface the response.
+enum OpenAiAttempt {
+    Ok(LlmResponse),
+    /// 429. The dispatcher should honour `reset_at_ms`/`retry_after` when
+    /// scheduling the next attempt.
+    RateLimited {
+        status: u16,
+        url: String,
+        body: String,
+        reset_at_ms: Option<u64>,
+        retry_after: Option<Duration>,
+    },
+    /// 200 OK but no `choices` array — retriable per the contract.
+    MissingChoicesArray {
+        url: String,
+        body_excerpt: String,
+    },
+    /// Non-retriable error. Surfaces as `anyhow::Error` exactly as the
+    /// pre-retry code path did.
+    Fatal(anyhow::Error),
+}
+
+impl OpenaiCompatDispatch {
+    /// One policy attempt against `/chat/completions`, including the legacy
+    /// fresh-request retry for transient invalid JSON bodies. Returns a typed
+    /// outcome so `complete` can apply its retry policy.
+    async fn complete_once(&self, body: &serde_json::Value, url: &str) -> OpenAiAttempt {
+        for decode_attempt in 0..=RESPONSE_DECODE_RETRIES {
+            let mut request = self.client.post(url).header("content-type", "application/json");
+            if !self.api_key.is_empty() {
+                request = request.header("authorization", format!("Bearer {}", self.api_key));
+            }
+            let http_resp = match request.json(body).send().await {
+                Ok(r) => r,
+                Err(e) => return OpenAiAttempt::Fatal(anyhow::Error::from(e)),
+            };
+            let status = http_resp.status();
+            if status.as_u16() == 429 {
+                // Read headers BEFORE consuming the body — once `.text()` is
+                // called the underlying response is moved.
+                let reset_at_ms = http_resp
+                    .headers()
+                    .get("x-ratelimit-reset")
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|s| s.trim().parse::<u64>().ok());
+                let retry_after = http_resp
+                    .headers()
+                    .get("retry-after")
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|s| s.trim().parse::<u64>().ok())
+                    .map(Duration::from_secs);
+                let text = http_resp.text().await.unwrap_or_default();
+                return OpenAiAttempt::RateLimited {
+                    status: 429,
+                    url: url.to_string(),
+                    body: text,
+                    reset_at_ms,
+                    retry_after,
+                };
+            }
+            if !status.is_success() {
+                let text = http_resp.text().await.unwrap_or_default();
+                tracing::warn!(
+                    target: "xvision::llm",
+                    provider = "openai-compat",
+                    url = %url,
+                    status = %status,
+                    body = %text,
+                    "OpenAI-compat API returned non-success"
+                );
+                return OpenAiAttempt::Fatal(anyhow::anyhow!(
+                    "OpenAI-compat API error {} at {}: {}",
+                    status,
+                    url,
+                    text
+                ));
+            }
+
+            let text = match http_resp.text().await {
+                Ok(t) => t,
+                Err(e) => {
+                    return OpenAiAttempt::Fatal(anyhow::Error::from(e).context(format!(
+                        "provider_decode: OpenAI-compat failed reading response body at {url}"
+                    )))
+                }
+            };
+            let resp = match decode_llm_json("OpenAI-compat", &text) {
+                Ok(value) => value,
+                Err(err) if decode_attempt < RESPONSE_DECODE_RETRIES => {
+                    tracing::warn!(
+                        target: "xvision::llm",
+                        provider = "openai-compat",
+                        url = %url,
+                        attempt = decode_attempt + 1,
+                        error = %err,
+                        "OpenAI-compat API returned undecodable JSON response; retrying request"
+                    );
+                    retry_decode_sleep(decode_attempt).await;
+                    continue;
+                }
+                Err(err) => return OpenAiAttempt::Fatal(err),
+            };
+
+            // Typed `MissingChoicesArray` — the eval audit (intake #344)
+            // showed two runs failing here with no retry. Surface it as a
+            // retriable typed error so `complete` can re-attempt.
+            let choices = match resp.get("choices").and_then(|v| v.as_array()) {
+                Some(c) => c,
+                None => {
+                    let excerpt: String = text.chars().take(240).collect();
+                    return OpenAiAttempt::MissingChoicesArray {
+                        url: url.to_string(),
+                        body_excerpt: excerpt,
+                    };
+                }
+            };
+            let choice = match choices.first() {
+                Some(c) => c,
+                None => {
+                    return OpenAiAttempt::Fatal(anyhow::anyhow!("OpenAI-compat response had no choices"))
+                }
+            };
+            let msg = match choice.get("message") {
+                Some(m) => m,
+                None => {
+                    return OpenAiAttempt::Fatal(anyhow::anyhow!(
+                        "OpenAI-compat response choice missing `message`"
+                    ))
+                }
+            };
+            if let Some(refusal) = msg["refusal"].as_str().filter(|s| !s.trim().is_empty()) {
+                return OpenAiAttempt::Fatal(anyhow::anyhow!(
+                    "OpenAI-compat model refused structured response: {refusal}"
+                ));
+            }
+            let mut content_blocks: Vec<ContentBlock> = Vec::new();
+            if let Some(text) = msg["content"].as_str() {
+                if !text.is_empty() {
+                    content_blocks.push(ContentBlock::Text {
+                        text: text.to_string(),
+                    });
+                }
+            }
+            if let Some(calls) = msg["tool_calls"].as_array() {
+                for call in calls {
+                    let id = call["id"].as_str().unwrap_or("").to_string();
+                    let name = call["function"]["name"].as_str().unwrap_or("").to_string();
+                    let raw_args = call["function"]["arguments"].as_str().unwrap_or("{}");
+                    let input: serde_json::Value = serde_json::from_str(raw_args)
+                        .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+                    content_blocks.push(ContentBlock::ToolUse { id, name, input });
+                }
+            }
+            let stop_reason = match choice["finish_reason"].as_str() {
+                Some("stop") => StopReason::EndTurn,
+                Some("tool_calls") => StopReason::ToolUse,
+                Some("length") => StopReason::MaxTokens,
+                _ => StopReason::EndTurn,
+            };
+            let input_tokens = resp["usage"]["prompt_tokens"].as_u64().unwrap_or(0) as u32;
+            let output_tokens = resp["usage"]["completion_tokens"].as_u64().unwrap_or(0) as u32;
+            return OpenAiAttempt::Ok(LlmResponse {
+                content: content_blocks,
+                stop_reason,
+                input_tokens,
+                output_tokens,
+            });
+        }
+        OpenAiAttempt::Fatal(anyhow::anyhow!(
+            "OpenAI-compat response decode loop exited without a value at {url}"
+        ))
+    }
+}
+
 #[async_trait]
 impl LlmDispatch for OpenaiCompatDispatch {
     async fn complete(&self, req: LlmRequest) -> anyhow::Result<LlmResponse> {
@@ -609,96 +942,86 @@ impl LlmDispatch for OpenaiCompatDispatch {
             "dispatching LLM request"
         );
 
-        let mut resp = None;
-        for attempt in 0..=RESPONSE_DECODE_RETRIES {
-            let mut request = self.client.post(&url).header("content-type", "application/json");
-            if !self.api_key.is_empty() {
-                request = request.header("authorization", format!("Bearer {}", self.api_key));
-            }
-            let http_resp = request.json(&body).send().await?;
-            let status = http_resp.status();
-            if !status.is_success() {
-                let text = http_resp.text().await.unwrap_or_default();
-                tracing::warn!(
-                    target: "xvision::llm",
-                    provider = "openai-compat",
-                    url = %url,
-                    status = %status,
-                    body = %text,
-                    "OpenAI-compat API returned non-success"
-                );
-                anyhow::bail!("OpenAI-compat API error {} at {}: {}", status, url, text);
-            }
-
-            let text = http_resp.text().await.with_context(|| {
-                format!("provider_decode: OpenAI-compat failed reading response body at {url}")
-            })?;
-            match decode_llm_json("OpenAI-compat", &text) {
-                Ok(value) => {
-                    resp = Some(value);
-                    break;
-                }
-                Err(err) if attempt < RESPONSE_DECODE_RETRIES => {
+        // Retry policy (intake #344 / track eval-provider-error-classify-retry):
+        //
+        //  * 429 → honour `X-RateLimit-Reset` (millis since epoch),
+        //    falling back to `Retry-After` (seconds) and then a fixed
+        //    delay. Up to `OPENAI_429_MAX_RETRIES` retries.
+        //  * MissingChoicesArray → exponential backoff base 500ms
+        //    (500, 1000, ...). Up to `OPENAI_MISSING_CHOICES_MAX_RETRIES`
+        //    retries.
+        //
+        // The two budgets are independent: a request can spend all of
+        // its 429 retries and then exhaust its MissingChoicesArray
+        // retries (or vice versa). After exhaustion the typed
+        // `OpenAiCompatError` is converted to `anyhow::Error` with the
+        // `retry_count` populated so the eval classifier can downcast.
+        let mut rate_limit_retries: u32 = 0;
+        let mut missing_choices_retries: u32 = 0;
+        loop {
+            match self.complete_once(&body, &url).await {
+                OpenAiAttempt::Ok(resp) => return Ok(resp),
+                OpenAiAttempt::Fatal(err) => return Err(err),
+                OpenAiAttempt::RateLimited {
+                    status,
+                    url: u,
+                    body: b,
+                    reset_at_ms,
+                    retry_after,
+                } => {
+                    if rate_limit_retries >= OPENAI_429_MAX_RETRIES {
+                        let typed = OpenAiCompatError::RateLimited {
+                            status,
+                            url: u,
+                            body: b,
+                            reset_at_ms,
+                            retry_after,
+                            retry_count: rate_limit_retries,
+                        };
+                        return Err(anyhow::Error::new(typed));
+                    }
+                    rate_limit_retries += 1;
+                    let reset_str = reset_at_ms.map(|n| n.to_string());
+                    let retry_after_str = retry_after.map(|d| d.as_secs().to_string());
+                    let delay = parse_rate_limit_reset(reset_str.as_deref(), retry_after_str.as_deref());
                     tracing::warn!(
                         target: "xvision::llm",
                         provider = "openai-compat",
-                        url = %url,
-                        attempt = attempt + 1,
-                        error = %err,
-                        "OpenAI-compat API returned undecodable JSON response; retrying"
+                        url = %u,
+                        status_code = status,
+                        body_excerpt = %truncate_for_log(&b, 240),
+                        attempt = rate_limit_retries,
+                        reset_at_ms = ?reset_at_ms,
+                        retry_after_secs = ?retry_after.map(|d| d.as_secs()),
+                        delay_ms = delay.as_millis() as u64,
+                        "OpenAI-compat 429; retrying after rate-limit reset"
                     );
-                    retry_decode_sleep(attempt).await;
+                    tokio::time::sleep(delay).await;
                 }
-                Err(err) => return Err(err),
+                OpenAiAttempt::MissingChoicesArray { url: u, body_excerpt } => {
+                    if missing_choices_retries >= OPENAI_MISSING_CHOICES_MAX_RETRIES {
+                        let typed = OpenAiCompatError::MissingChoicesArray {
+                            url: u,
+                            body_excerpt,
+                            retry_count: missing_choices_retries,
+                        };
+                        return Err(anyhow::Error::new(typed));
+                    }
+                    let delay = missing_choices_backoff(missing_choices_retries);
+                    missing_choices_retries += 1;
+                    tracing::warn!(
+                        target: "xvision::llm",
+                        provider = "openai-compat",
+                        url = %u,
+                        attempt = missing_choices_retries,
+                        delay_ms = delay.as_millis() as u64,
+                        body_excerpt = %body_excerpt,
+                        "OpenAI-compat response missing `choices` array; retrying with backoff"
+                    );
+                    tokio::time::sleep(delay).await;
+                }
             }
         }
-        let resp = resp.expect("response decode loop must return or set response");
-
-        let choices = resp
-            .get("choices")
-            .and_then(|v| v.as_array())
-            .ok_or_else(|| anyhow::anyhow!("OpenAI-compat response missing `choices` array"))?;
-        let choice = choices
-            .first()
-            .ok_or_else(|| anyhow::anyhow!("OpenAI-compat response had no choices"))?;
-        let msg = choice
-            .get("message")
-            .ok_or_else(|| anyhow::anyhow!("OpenAI-compat response choice missing `message`"))?;
-        if let Some(refusal) = msg["refusal"].as_str().filter(|s| !s.trim().is_empty()) {
-            anyhow::bail!("OpenAI-compat model refused structured response: {refusal}");
-        }
-        let mut content_blocks: Vec<ContentBlock> = Vec::new();
-        if let Some(text) = msg["content"].as_str() {
-            if !text.is_empty() {
-                content_blocks.push(ContentBlock::Text {
-                    text: text.to_string(),
-                });
-            }
-        }
-        if let Some(calls) = msg["tool_calls"].as_array() {
-            for call in calls {
-                let id = call["id"].as_str().unwrap_or("").to_string();
-                let name = call["function"]["name"].as_str().unwrap_or("").to_string();
-                let raw_args = call["function"]["arguments"].as_str().unwrap_or("{}");
-                let input: serde_json::Value = serde_json::from_str(raw_args)
-                    .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-                content_blocks.push(ContentBlock::ToolUse { id, name, input });
-            }
-        }
-        let stop_reason = match choice["finish_reason"].as_str() {
-            Some("stop") => StopReason::EndTurn,
-            Some("tool_calls") => StopReason::ToolUse,
-            Some("length") => StopReason::MaxTokens,
-            _ => StopReason::EndTurn,
-        };
-        let input_tokens = resp["usage"]["prompt_tokens"].as_u64().unwrap_or(0) as u32;
-        let output_tokens = resp["usage"]["completion_tokens"].as_u64().unwrap_or(0) as u32;
-        Ok(LlmResponse {
-            content: content_blocks,
-            stop_reason,
-            input_tokens,
-            output_tokens,
-        })
     }
 }
 

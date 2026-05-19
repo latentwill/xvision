@@ -15,6 +15,7 @@ pub mod cost;
 pub mod executor;
 pub mod export;
 pub mod findings;
+pub mod guardrails;
 pub mod metrics;
 pub mod postprocess;
 pub mod progress;
@@ -24,6 +25,7 @@ pub mod scenario;
 pub mod scenario_seed;
 pub mod scenario_store;
 pub mod store;
+pub mod watchdog;
 
 pub use attestation::{EvalAttestation, TokensUsed};
 pub use compare::{
@@ -34,6 +36,7 @@ pub use findings::{Finding, Severity};
 pub use progress::{send_event, ProgressBus, ProgressEvent, ProgressRx, ProgressTx};
 pub use review::{AgentProfile, EvalReview, ReviewStatus, ReviewVerdict};
 
+pub use batch_store::{Batch, BatchStore};
 pub use run::{MetricsSummary, Run, RunMode, RunStatus};
 #[allow(deprecated)]
 pub use scenario::canonical_scenarios;
@@ -42,5 +45,4 @@ pub use scenario::{
     FillModel, LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode,
     Scenario, ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings, VolumeConstraint, WalkModel,
 };
-pub use batch_store::{Batch, BatchStore};
 pub use store::{DecisionRow, ListFilter, RunStore};

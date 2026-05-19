@@ -956,7 +956,12 @@ pub fn select_scenarios(
         if selected.len() >= count {
             break;
         }
-        let sym = s.asset.first().map(|a| a.symbol.as_str()).unwrap_or("-").to_string();
+        let sym = s
+            .asset
+            .first()
+            .map(|a| a.symbol.as_str())
+            .unwrap_or("-")
+            .to_string();
         if seen_assets.insert(sym) {
             selected.push(s);
         }
@@ -977,7 +982,12 @@ pub fn select_scenarios(
     let rows = selected
         .into_iter()
         .map(|s| {
-            let asset = s.asset.first().map(|a| a.symbol.as_str()).unwrap_or("-").to_string();
+            let asset = s
+                .asset
+                .first()
+                .map(|a| a.symbol.as_str())
+                .unwrap_or("-")
+                .to_string();
             let timeframe = s.granularity.to_string();
             SelectRow {
                 id: s.id.clone(),
@@ -1050,9 +1060,15 @@ async fn run_select(ctx: &ApiContext, a: SelectArgs) -> CliResult<()> {
         return Ok(());
     }
 
-    println!("{:<30}  {:<40}  {:<10}  {:<8}  {}", "ID", "NAME", "ASSET", "TIMEFRAME", "DECISIONS");
+    println!(
+        "{:<30}  {:<40}  {:<10}  {:<8}  {}",
+        "ID", "NAME", "ASSET", "TIMEFRAME", "DECISIONS"
+    );
     for r in &rows {
-        println!("{:<30}  {:<40}  {:<10}  {:<8}  {}", r.id, r.name, r.asset, r.timeframe, r.decision_count);
+        println!(
+            "{:<30}  {:<40}  {:<10}  {:<8}  {}",
+            r.id, r.name, r.asset, r.timeframe, r.decision_count
+        );
     }
 
     Ok(())
@@ -1147,9 +1163,9 @@ pub mod select {
     use chrono::{TimeZone, Utc};
     use xvision_core::Capital;
     use xvision_engine::eval::scenario::{
-        AdjustmentMode, AssetClass, AssetRef, BarCachePolicy, BarGranularity, CalendarRef, DataSource,
-        Fees, FillModel, LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy,
-        ReplayMode, Scenario, ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings,
+        AdjustmentMode, AssetClass, AssetRef, BarCachePolicy, BarGranularity, CalendarRef, DataSource, Fees,
+        FillModel, LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode,
+        Scenario, ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings,
     };
 
     use std::str::FromStr;
@@ -1192,9 +1208,14 @@ pub mod select {
             },
             venue: VenueSettings {
                 venue: Venue::Alpaca,
-                fees: Fees { maker_bps: 10, taker_bps: 25 },
+                fees: Fees {
+                    maker_bps: 10,
+                    taker_bps: 25,
+                },
                 slippage: SlippageModel::None,
-                latency: LatencyModel { decision_to_fill_ms: 0 },
+                latency: LatencyModel {
+                    decision_to_fill_ms: 0,
+                },
                 fill_model: FillModel {
                     market_order_fill: MarketOrderFill::FullAtClose,
                     limit_order_fill: LimitOrderFill::NeverFills,
@@ -1281,9 +1302,17 @@ pub mod select {
     fn mode_a_asset_filter_excludes_wrong_asset() {
         let eth = make_scenario("sc_eth", "ETH", "1h", 300 * 3_600, 200, &[]);
         let btc = make_scenario("sc_btc", "BTC", "1h", 300 * 3_600, 200, &[]);
-        let rows =
-            select_scenarios(&[eth, btc], &["ETH".to_string()], None, &[], Some(100), false, None, 4)
-                .unwrap();
+        let rows = select_scenarios(
+            &[eth, btc],
+            &["ETH".to_string()],
+            None,
+            &[],
+            Some(100),
+            false,
+            None,
+            4,
+        )
+        .unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].asset, "ETH");
     }
@@ -1292,9 +1321,17 @@ pub mod select {
     fn mode_a_asset_filter_accepts_slash_form() {
         // `--assets ETH/USD` should match a scenario with symbol "ETH".
         let eth = make_scenario("sc_eth", "ETH", "1h", 300 * 3_600, 200, &[]);
-        let rows =
-            select_scenarios(&[eth], &["ETH/USD".to_string()], None, &[], Some(100), false, None, 4)
-                .unwrap();
+        let rows = select_scenarios(
+            &[eth],
+            &["ETH/USD".to_string()],
+            None,
+            &[],
+            Some(100),
+            false,
+            None,
+            4,
+        )
+        .unwrap();
         assert_eq!(rows.len(), 1);
     }
 
@@ -1340,8 +1377,7 @@ pub mod select {
         let s2 = make_scenario("sc2", "BTC", "1h", 300 * 3_600, 200, &[]);
         let s3 = make_scenario("sc3", "SOL", "1h", 300 * 3_600, 200, &[]);
         let s4 = make_scenario("sc4", "DOGE", "1h", 300 * 3_600, 200, &[]);
-        let rows =
-            select_scenarios(&[s1, s2, s3, s4], &[], None, &[], Some(100), false, None, 2).unwrap();
+        let rows = select_scenarios(&[s1, s2, s3, s4], &[], None, &[], Some(100), false, None, 2).unwrap();
         assert_eq!(rows.len(), 2);
     }
 
@@ -1351,8 +1387,7 @@ pub mod select {
         let eth1 = make_scenario("sc_eth1", "ETH", "1h", 300 * 3_600, 200, &[]);
         let eth2 = make_scenario("sc_eth2", "ETH", "1h", 305 * 3_600, 200, &[]);
         let btc = make_scenario("sc_btc", "BTC", "1h", 300 * 3_600, 200, &[]);
-        let rows =
-            select_scenarios(&[eth1, eth2, btc], &[], None, &[], Some(100), false, None, 2).unwrap();
+        let rows = select_scenarios(&[eth1, eth2, btc], &[], None, &[], Some(100), false, None, 2).unwrap();
         assert_eq!(rows.len(), 2);
         let assets: Vec<&str> = rows.iter().map(|r| r.asset.as_str()).collect();
         assert!(assets.contains(&"ETH"), "expected ETH in result");
@@ -1368,11 +1403,13 @@ pub mod select {
         let s2 = make_scenario("sc2", "BTC", "1h", 300 * 3_600, 200, &[]);
         let s3 = make_scenario("sc3", "SOL", "1h", 250 * 3_600, 200, &[]);
         // s1 and s2 → 100 decisions; s3 → 50 decisions.
-        let rows =
-            select_scenarios(&[s1, s2, s3], &[], None, &[], None, true, Some(200), 2).unwrap();
+        let rows = select_scenarios(&[s1, s2, s3], &[], None, &[], None, true, Some(200), 2).unwrap();
         assert_eq!(rows.len(), 2);
         for r in &rows {
-            assert_eq!(r.decision_count, 100, "all rows must have 100 decisions in mode B");
+            assert_eq!(
+                r.decision_count, 100,
+                "all rows must have 100 decisions in mode B"
+            );
         }
     }
 
@@ -1383,8 +1420,7 @@ pub mod select {
         let s1 = make_scenario("sc1", "ETH", "1h", 400 * 3_600, 200, &[]);
         let s2 = make_scenario("sc2", "BTC", "1h", 300 * 3_600, 200, &[]);
         let s3 = make_scenario("sc3", "SOL", "1h", 300 * 3_600, 200, &[]);
-        let rows =
-            select_scenarios(&[s1, s2, s3], &[], None, &[], None, true, Some(150), 4).unwrap();
+        let rows = select_scenarios(&[s1, s2, s3], &[], None, &[], None, true, Some(150), 4).unwrap();
         assert!(!rows.iter().any(|r| r.id == "sc1"), "sc1 should be excluded");
         for r in &rows {
             assert_eq!(r.decision_count, 100);
@@ -1395,8 +1431,7 @@ pub mod select {
     fn mode_b_returns_empty_when_no_candidates_under_max() {
         let s1 = make_scenario("sc1", "ETH", "1h", 400 * 3_600, 200, &[]);
         // 200 decisions; max_decisions = 50 → excluded → empty.
-        let rows =
-            select_scenarios(&[s1], &[], None, &[], None, true, Some(50), 4).unwrap();
+        let rows = select_scenarios(&[s1], &[], None, &[], None, true, Some(50), 4).unwrap();
         assert!(rows.is_empty());
     }
 

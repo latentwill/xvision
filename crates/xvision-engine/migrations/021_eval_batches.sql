@@ -1,4 +1,4 @@
--- 020_eval_batches.sql — eval-batch-persistence track.
+-- 021_eval_batches.sql — eval-batch-persistence track.
 --
 -- Persists batch metadata so `xvn eval batch status <batch_id>` has a
 -- source of truth and `xvn eval compare --batch <id>` can resolve runs

@@ -1,9 +1,9 @@
 //! `xvn eval batch` — launch one eval run per scenario, wait for all
 //! terminal states, and return a unified batch result object.
 //!
-//! ## Storage (migration 020)
+//! ## Storage (migration 021)
 //!
-//! Batches are persisted to the `eval_batches` table (migration 020).
+//! Batches are persisted to the `eval_batches` table (migration 021).
 //! Each run is attached to the batch via `eval_runs.batch_id` after it
 //! completes. `xvn eval batch status <batch_id>` reads the persisted row
 //! and the joined runs; `xvn eval compare --batch <id>` resolves run ids
@@ -29,8 +29,8 @@ use xvision_engine::agent::llm::LlmDispatch;
 use xvision_engine::api::eval::{self, CreateBatchRequest, EvalRunRequest};
 use xvision_engine::api::{scenario as api_scenario, ApiContext};
 use xvision_engine::eval::review;
-use xvision_engine::eval::run::RunMode;
-use xvision_engine::eval::store::RunStore;
+use xvision_engine::eval::run::{Run, RunMode, RunStatus};
+use xvision_engine::eval::store::{ListFilter, RunStore};
 use xvision_engine::tools::ToolRegistry;
 use xvision_execution::broker_surface::BrokerSurface;
 
@@ -199,7 +199,7 @@ pub struct BatchRunRequest {
 /// entry carries `status = "failed"` and an `error` field. The outer `Result`
 /// is only `Err` for pre-flight failures (e.g. unable to open the DB context).
 ///
-/// The batch is persisted to `eval_batches` (migration 020). Each run is
+/// The batch is persisted to `eval_batches` (migration 021). Each run is
 /// attached to the batch via `eval_runs.batch_id` after it completes, and
 /// `finalize_batch` is called at the end to roll up the final status.
 pub async fn run_batch(ctx: &ApiContext, req: BatchRunRequest) -> Result<BatchResult> {
@@ -209,12 +209,13 @@ pub async fn run_batch(ctx: &ApiContext, req: BatchRunRequest) -> Result<BatchRe
         ctx,
         CreateBatchRequest {
             strategy_id: req.agent_id.clone(),
-            review_with: None,
+            review_with: req.review_with.clone(),
         },
     )
     .await
     .map_err(|e| anyhow::anyhow!("create batch row: {e}"))?;
     let batch_id = batch.batch_id.clone();
+    let batch_started_at = batch.created_at;
 
     // Resolve scenario display names up-front (best-effort; fall back to id).
     let mut scenario_names: Vec<String> = Vec::with_capacity(req.scenario_ids.len());
@@ -253,51 +254,19 @@ pub async fn run_batch(ctx: &ApiContext, req: BatchRunRequest) -> Result<BatchRe
         )
         .await
         {
-            Ok(run) => {
-                // Attach this run to the batch immediately after it completes.
-                let _ = eval::attach_run_to_batch(ctx, &run.id, &batch_id).await;
-
-                // Tally action distribution from persisted decisions.
-                let actions =
-                    action_distribution(ctx, &run.id).await.unwrap_or_default();
-                let (return_pct, sharpe, drawdown_pct, decisions) =
-                    if let Some(m) = &run.metrics {
-                        (
-                            Some(m.total_return_pct),
-                            Some(m.sharpe),
-                            Some(m.max_drawdown_pct),
-                            m.n_decisions,
-                        )
-                    } else {
-                        (None, None, None, 0)
-                    };
-                RunEntry {
-                    scenario_id: scenario_id.clone(),
-                    scenario_name: scenario_name.clone(),
-                    run_id: run.id,
-                    status: run.status.as_str().to_owned(),
-                    return_pct,
-                    sharpe,
-                    drawdown_pct,
-                    decisions,
-                    actions,
-                    error: run.error,
-                    review: None,
-                }
+            Ok(run) => run_entry_from_run(ctx, run, scenario_id, scenario_name, &batch_id).await,
+            Err(e) => {
+                failed_entry_from_error(
+                    ctx,
+                    &req.agent_id,
+                    scenario_id,
+                    scenario_name,
+                    &batch_id,
+                    &batch_started_at,
+                    e.to_string(),
+                )
+                .await
             }
-            Err(e) => RunEntry {
-                scenario_id: scenario_id.clone(),
-                scenario_name: scenario_name.clone(),
-                run_id: String::new(),
-                status: "failed".into(),
-                return_pct: None,
-                sharpe: None,
-                drawdown_pct: None,
-                decisions: 0,
-                actions: BTreeMap::new(),
-                error: Some(e.to_string()),
-                review: None,
-            },
         };
         entries.push(entry);
     }
@@ -400,13 +369,90 @@ async fn poll_until_terminal(
     finished
 }
 
+async fn run_entry_from_run(
+    ctx: &ApiContext,
+    run: Run,
+    scenario_id: &str,
+    scenario_name: &str,
+    batch_id: &str,
+) -> RunEntry {
+    let run_id = run.id.clone();
+    let _ = eval::attach_run_to_batch(ctx, &run_id, batch_id).await;
+
+    let actions = action_distribution(ctx, &run_id).await.unwrap_or_default();
+    let (return_pct, sharpe, drawdown_pct, decisions) = if let Some(m) = &run.metrics {
+        (
+            Some(m.total_return_pct),
+            Some(m.sharpe),
+            Some(m.max_drawdown_pct),
+            m.n_decisions,
+        )
+    } else {
+        (None, None, None, 0)
+    };
+
+    RunEntry {
+        scenario_id: scenario_id.to_owned(),
+        scenario_name: scenario_name.to_owned(),
+        run_id,
+        status: run.status.as_str().to_owned(),
+        return_pct,
+        sharpe,
+        drawdown_pct,
+        decisions,
+        actions,
+        error: run.error,
+        review: None,
+    }
+}
+
+async fn failed_entry_from_error(
+    ctx: &ApiContext,
+    agent_id: &str,
+    scenario_id: &str,
+    scenario_name: &str,
+    batch_id: &str,
+    started_after: &chrono::DateTime<chrono::Utc>,
+    error: String,
+) -> RunEntry {
+    let store = RunStore::new(ctx.db.clone());
+    let persisted = store
+        .list(ListFilter {
+            agent_id: Some(agent_id.to_owned()),
+            scenario_id: Some(scenario_id.to_owned()),
+            status: Some(RunStatus::Failed),
+        })
+        .await
+        .ok()
+        .and_then(|runs| {
+            runs.into_iter()
+                .filter(|run| run.started_at >= *started_after)
+                .max_by_key(|run| run.started_at.timestamp_millis())
+        });
+
+    if let Some(run) = persisted {
+        return run_entry_from_run(ctx, run, scenario_id, scenario_name, batch_id).await;
+    }
+
+    RunEntry {
+        scenario_id: scenario_id.to_owned(),
+        scenario_name: scenario_name.to_owned(),
+        run_id: String::new(),
+        status: "failed".into(),
+        return_pct: None,
+        sharpe: None,
+        drawdown_pct: None,
+        decisions: 0,
+        actions: BTreeMap::new(),
+        error: Some(error),
+        review: None,
+    }
+}
+
 /// Resolve scenario metadata for a run so the review payload carries context.
 /// Returns `None` on any resolution failure — the review engine treats it as
 /// optional and does not fail the review if scenario metadata is absent.
-async fn review_scenario_summary(
-    ctx: &ApiContext,
-    run_id: &str,
-) -> Option<review::ReviewScenarioSummary> {
+async fn review_scenario_summary(ctx: &ApiContext, run_id: &str) -> Option<review::ReviewScenarioSummary> {
     let store = RunStore::new(ctx.db.clone());
     let run = store.get(run_id).await.ok()?;
     let scenario = api_scenario::get(ctx, &run.scenario_id).await.ok()?;
@@ -423,10 +469,7 @@ async fn review_scenario_summary(
 /// Query the decisions table for `run_id` and count each action kind.
 /// Returns a `BTreeMap<String, u64>` keyed by canonical action string
 /// (`long_open`, `short_open`, `flat`, `hold`).
-pub async fn action_distribution(
-    ctx: &ApiContext,
-    run_id: &str,
-) -> Result<BTreeMap<String, u64>> {
+pub async fn action_distribution(ctx: &ApiContext, run_id: &str) -> Result<BTreeMap<String, u64>> {
     let store = RunStore::new(ctx.db.clone());
     let decisions = store.read_decisions(run_id).await?;
     let mut counts: BTreeMap<String, u64> = BTreeMap::new();
@@ -467,14 +510,10 @@ pub async fn run_batch_cmd(args: BatchRunArgs) -> CliResult<()> {
         .await
         .exit_with(XvnExit::Upstream)?;
 
-    let mode = xvision_engine::eval::run::RunMode::parse(&args.mode)
-        .ok_or_else(|| CliError {
-            exit: XvnExit::Usage,
-            source: anyhow::anyhow!(
-                "unknown mode {:?}; expected one of: paper | backtest",
-                args.mode
-            ),
-        })?;
+    let mode = xvision_engine::eval::run::RunMode::parse(&args.mode).ok_or_else(|| CliError {
+        exit: XvnExit::Usage,
+        source: anyhow::anyhow!("unknown mode {:?}; expected one of: paper | backtest", args.mode),
+    })?;
 
     // --wait is required in v1 (non-wait path is a follow-on when async
     // launch is wired up). Accept --wait=false but warn.
@@ -485,8 +524,7 @@ pub async fn run_batch_cmd(args: BatchRunArgs) -> CliResult<()> {
         );
     }
 
-    let _poll_interval =
-        parse_poll_duration(&args.poll).exit_with(XvnExit::Usage)?;
+    let _poll_interval = parse_poll_duration(&args.poll).exit_with(XvnExit::Usage)?;
 
     // For the current sequential implementation we use run_with_deps which
     // requires a real broker for paper mode. Build it from env/settings if
@@ -505,12 +543,13 @@ pub async fn run_batch_cmd(args: BatchRunArgs) -> CliResult<()> {
         &ctx,
         CreateBatchRequest {
             strategy_id: args.strategy.clone(),
-            review_with: None,
+            review_with: args.review_with.clone(),
         },
     )
     .await
     .map_err(|e| api_to_cli("eval batch run (create batch)", e))?;
     let batch_id = batch.batch_id.clone();
+    let batch_started_at = batch.created_at;
 
     // Resolve scenario display names (best-effort).
     let mut scenario_names: Vec<String> = Vec::with_capacity(args.scenarios.len());
@@ -533,53 +572,19 @@ pub async fn run_batch_cmd(args: BatchRunArgs) -> CliResult<()> {
         };
 
         let entry = match eval::run(&ctx, run_req).await {
-            Ok(run) => {
-                // Attach run to the persisted batch.
-                let _ = eval::attach_run_to_batch(&ctx, &run.id, &batch_id).await;
-
-                let actions = action_distribution(&ctx, &run.id)
-                    .await
-                    .unwrap_or_default();
-                let (return_pct, sharpe, drawdown_pct, decisions) =
-                    if let Some(m) = &run.metrics {
-                        (
-                            Some(m.total_return_pct),
-                            Some(m.sharpe),
-                            Some(m.max_drawdown_pct),
-                            m.n_decisions,
-                        )
-                    } else {
-                        (None, None, None, 0)
-                    };
-                RunEntry {
-                    scenario_id: scenario_id.clone(),
-                    scenario_name: scenario_name.clone(),
-                    run_id: run.id,
-                    status: run.status.as_str().to_owned(),
-                    return_pct,
-                    sharpe,
-                    drawdown_pct,
-                    decisions,
-                    actions,
-                    error: run.error,
-                    review: None,
-                }
-            }
+            Ok(run) => run_entry_from_run(&ctx, run, scenario_id, scenario_name, &batch_id).await,
             Err(e) => {
                 let cli_err = api_to_cli("eval batch run", e);
-                RunEntry {
-                    scenario_id: scenario_id.clone(),
-                    scenario_name: scenario_name.clone(),
-                    run_id: String::new(),
-                    status: "failed".into(),
-                    return_pct: None,
-                    sharpe: None,
-                    drawdown_pct: None,
-                    decisions: 0,
-                    actions: BTreeMap::new(),
-                    error: Some(cli_err.source.to_string()),
-                    review: None,
-                }
+                failed_entry_from_error(
+                    &ctx,
+                    &args.strategy,
+                    scenario_id,
+                    scenario_name,
+                    &batch_id,
+                    &batch_started_at,
+                    cli_err.source.to_string(),
+                )
+                .await
             }
         };
         entries.push(entry);
@@ -598,9 +603,8 @@ pub async fn run_batch_cmd(args: BatchRunArgs) -> CliResult<()> {
                 exit: XvnExit::NotFound,
                 source: anyhow::anyhow!("agent profile `{profile_id}` not found"),
             })?;
-        let rev_dispatch =
-            super::review::build_dispatch_for_profile(&ctx, &profile.provider)
-                .map_err(|e| api_to_cli("eval batch review", e))?;
+        let rev_dispatch = super::review::build_dispatch_for_profile(&ctx, &profile.provider)
+            .map_err(|e| api_to_cli("eval batch review", e))?;
 
         for entry in &mut entries {
             if entry.status != "completed" {
@@ -723,10 +727,7 @@ pub async fn run_batch_status_cmd(args: BatchStatusArgs) -> CliResult<()> {
     if let Some(rw) = &detail.batch.review_with {
         println!("Review    {rw}");
     }
-    println!(
-        "Created   {}",
-        detail.batch.created_at.to_rfc3339()
-    );
+    println!("Created   {}", detail.batch.created_at.to_rfc3339());
     if let Some(c) = detail.batch.completed_at {
         println!("Completed {}", c.to_rfc3339());
     }

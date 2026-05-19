@@ -16,9 +16,10 @@ use std::sync::Arc;
 use sqlx::sqlite::SqlitePoolOptions;
 use xvision_data::fixtures::ensure_test_fixture;
 use xvision_engine::agent::llm::{LlmDispatch, MockDispatch};
+use xvision_engine::api::eval as api_eval;
 use xvision_engine::api::{Actor, ApiContext};
-use xvision_engine::eval::run::RunMode;
 use xvision_engine::eval::postprocess::DEFAULT_FINDINGS_MODEL;
+use xvision_engine::eval::run::RunMode;
 use xvision_engine::strategies::manifest::PublicManifest;
 use xvision_engine::strategies::risk::RiskPreset;
 use xvision_engine::strategies::slot::LLMSlot;
@@ -28,7 +29,7 @@ use xvision_engine::tools::ToolRegistry;
 use xvision_execution::broker_surface::{BrokerSurface, MockBrokerSurface};
 
 // Import the batch module from xvision-cli.
-use xvision_cli::commands::eval::batch::{BatchRunRequest, run_batch};
+use xvision_cli::commands::eval::batch::{run_batch, BatchRunRequest};
 
 async fn ctx_with_tables() -> (ApiContext, tempfile::TempDir) {
     let pool = SqlitePoolOptions::new()
@@ -36,18 +37,14 @@ async fn ctx_with_tables() -> (ApiContext, tempfile::TempDir) {
         .connect("sqlite::memory:")
         .await
         .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/001_api_audit.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/002_eval.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
+    sqlx::query(include_str!("../../xvision-engine/migrations/001_api_audit.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../../xvision-engine/migrations/002_eval.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     sqlx::query(include_str!(
         "../../xvision-engine/migrations/014_eval_agent_id.sql"
     ))
@@ -61,7 +58,7 @@ async fn ctx_with_tables() -> (ApiContext, tempfile::TempDir) {
     .await
     .unwrap();
     sqlx::query(include_str!(
-        "../../xvision-engine/migrations/020_eval_batches.sql"
+        "../../xvision-engine/migrations/021_eval_batches.sql"
     ))
     .execute(&pool)
     .await
@@ -159,7 +156,10 @@ async fn batch_run_two_scenarios_both_complete() {
     let result = run_batch(&ctx, req).await.expect("run_batch must succeed");
 
     // Basic shape assertions.
-    assert!(result.batch_id.starts_with("batch_"), "batch_id must start with 'batch_'");
+    assert!(
+        result.batch_id.starts_with("batch_"),
+        "batch_id must start with 'batch_'"
+    );
     assert_eq!(result.strategy_id, strategy_id);
     assert_eq!(result.runs.len(), 2);
 
@@ -196,10 +196,7 @@ async fn batch_run_partial_failure_surfaces_per_run_error() {
 
     let req = BatchRunRequest {
         agent_id: strategy_id.into(),
-        scenario_ids: vec![
-            "flash-crash-2024-08".into(),
-            "does-not-exist-scenario".into(),
-        ],
+        scenario_ids: vec!["flash-crash-2024-08".into(), "does-not-exist-scenario".into()],
         mode: RunMode::Backtest,
         broker: None,
         dispatch,
@@ -213,8 +210,14 @@ async fn batch_run_partial_failure_surfaces_per_run_error() {
 
     assert_eq!(result.runs.len(), 2);
 
-    let good = result.runs.iter().find(|r| r.scenario_id == "flash-crash-2024-08");
-    let bad = result.runs.iter().find(|r| r.scenario_id == "does-not-exist-scenario");
+    let good = result
+        .runs
+        .iter()
+        .find(|r| r.scenario_id == "flash-crash-2024-08");
+    let bad = result
+        .runs
+        .iter()
+        .find(|r| r.scenario_id == "does-not-exist-scenario");
 
     let good = good.expect("must have a result for the valid scenario");
     let bad = bad.expect("must have a result for the missing scenario");
@@ -223,10 +226,7 @@ async fn batch_run_partial_failure_surfaces_per_run_error() {
     assert!(good.error.is_none());
 
     assert_eq!(bad.status, "failed");
-    assert!(
-        bad.error.is_some(),
-        "failed run must carry an error message"
-    );
+    assert!(bad.error.is_some(), "failed run must carry an error message");
 }
 
 /// JSON shape check: the BatchResult serialises to the documented wire shape.
@@ -318,29 +318,39 @@ async fn ctx_with_review_migrations() -> (ApiContext, tempfile::TempDir) {
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query(include_str!("../../xvision-engine/migrations/014_eval_agent_id.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../../xvision-engine/migrations/015_eval_decisions_reasoning.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
+    sqlx::query(include_str!(
+        "../../xvision-engine/migrations/014_eval_agent_id.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(include_str!(
+        "../../xvision-engine/migrations/015_eval_decisions_reasoning.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
     // Review tables: agent_profiles + eval_reviews (016) and review-linked
     // columns on eval_findings (017).
-    sqlx::query(include_str!("../../xvision-engine/migrations/016_eval_reviews.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../../xvision-engine/migrations/017_eval_findings_review_columns.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    // Batch persistence (020) — required for run_batch's create_batch call.
-    sqlx::query(include_str!("../../xvision-engine/migrations/020_eval_batches.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
+    sqlx::query(include_str!(
+        "../../xvision-engine/migrations/016_eval_reviews.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(include_str!(
+        "../../xvision-engine/migrations/017_eval_findings_review_columns.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    // Batch persistence (021) — required for run_batch's create_batch call.
+    sqlx::query(include_str!(
+        "../../xvision-engine/migrations/021_eval_batches.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
 
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("strategies")).unwrap();
@@ -409,6 +419,10 @@ async fn review_with_populates_review_field_for_completed_run() {
 
     let result = run_batch(&ctx, req).await.expect("run_batch must succeed");
     assert_eq!(result.runs.len(), 1);
+    let detail = api_eval::get_batch(&ctx, &result.batch_id)
+        .await
+        .expect("persisted batch should be readable");
+    assert_eq!(detail.batch.review_with.as_deref(), Some("reasoning-agent"));
 
     let entry = &result.runs[0];
     assert_eq!(entry.status, "completed");
@@ -453,10 +467,7 @@ async fn review_with_skips_review_for_failed_run() {
 
     let entry = &result.runs[0];
     assert_eq!(entry.status, "failed");
-    assert!(
-        entry.review.is_none(),
-        "review must be absent for a failed run"
-    );
+    assert!(entry.review.is_none(), "review must be absent for a failed run");
 }
 
 /// JSON serialization: when `review_with` is set, completed runs have a
@@ -475,10 +486,7 @@ async fn review_with_json_shape_review_present_for_completed_absent_for_failed()
 
     let req = BatchRunRequest {
         agent_id: strategy_id.into(),
-        scenario_ids: vec![
-            "flash-crash-2024-08".into(),
-            "does-not-exist-scenario".into(),
-        ],
+        scenario_ids: vec!["flash-crash-2024-08".into(), "does-not-exist-scenario".into()],
         mode: RunMode::Backtest,
         broker: None,
         dispatch,
@@ -506,7 +514,9 @@ async fn review_with_json_shape_review_present_for_completed_absent_for_failed()
         .expect("must have one failed run");
 
     // Completed run: review object present with required keys.
-    let review_obj = completed.get("review").expect("review must be present for completed run");
+    let review_obj = completed
+        .get("review")
+        .expect("review must be present for completed run");
     assert!(review_obj["review_id"].is_string());
     assert!(review_obj["status"].is_string());
     // Failed run: review key must be absent entirely.

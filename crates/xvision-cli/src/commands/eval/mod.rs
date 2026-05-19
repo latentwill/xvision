@@ -14,14 +14,20 @@ pub mod review;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use std::collections::HashMap;
+
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
+use serde::{Deserialize, Serialize};
 use xvision_engine::api::eval::{self, CompareRunsRequest, EvalRunRequest, ListRunsRequest};
-use xvision_engine::eval::behavior::BehaviorSummary;
 use xvision_engine::api::{scenario as api_scenario, strategy as api_strategy};
 use xvision_engine::api::{Actor, ApiContext, ApiError};
+use xvision_engine::eval::behavior::{derive_behavior_summary, BehaviorSummary};
+use xvision_engine::eval::compare::ComparisonEquityCurve;
 use xvision_engine::eval::export as eval_export;
+use xvision_engine::eval::findings::Finding;
 use xvision_engine::eval::run::{RunMode, RunStatus};
+use xvision_engine::eval::store::RunStore;
 
 use crate::exit::{CliError, CliResult, ResultExt, XvnExit};
 
@@ -162,27 +168,56 @@ pub struct ScenariosArgs {
     pub json: bool,
 }
 
+/// CLI-only render shape for `xvn eval compare`. Not part of the engine API.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompareReport {
+    pub runs: Vec<CompareRunRow>,
+    pub equity_curves: Vec<ComparisonEquityCurve>,
+    pub findings: Vec<Finding>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompareRunRow {
+    pub run_id: String,
+    pub scenario_id: String,
+    pub scenario_name: String,
+    pub strategy_id: String,
+    pub status: String,
+    pub return_pct: Option<f64>,
+    pub sharpe: Option<f64>,
+    pub max_drawdown_pct: Option<f64>,
+    pub decisions: u32,
+    pub trades_opened: u32,
+    pub action_distribution: HashMap<String, u32>,
+    pub avg_bars_held: Option<f64>,
+    pub primary_failure_mode: String,
+}
+
 #[derive(Args, Debug)]
 pub struct CompareArgs {
-    /// Two or more run ids (ULIDs) to compare.
-    /// Required unless `--batch` is used as a label with `--runs`.
-    #[arg(num_args = 0..)]
+    /// Two or more run ids (ULIDs) to compare, as positional arguments.
+    #[arg(num_args = 0.., conflicts_with = "runs")]
     pub run_ids: Vec<String>,
+    /// Two or more run ids (ULIDs) to compare. Accepts either repeated values
+    /// or a comma-separated list, e.g. `--runs r1,r2`.
+    #[arg(long, value_delimiter = ',', num_args = 1..)]
+    pub runs: Vec<String>,
     /// Override the xvn home directory.
     #[arg(long)]
     pub xvn_home: Option<PathBuf>,
     /// Emit the full `ComparisonReport` as JSON (default: human-readable
     /// metrics-table summary).
-    #[arg(long)]
+    #[arg(long, conflicts_with = "markdown")]
     pub json: bool,
     /// Emit a GitHub-flavoured Markdown table suitable for drop-in to a PR
     /// description or chat reply. Aliased `--md`.
-    #[arg(long, visible_alias = "md")]
+    #[arg(long, visible_alias = "md", conflicts_with = "json")]
     pub markdown: bool,
-    /// Batch id label.  Batch ids are not persisted yet; pass `--runs`
-    /// (positional) with explicit run ids and optionally supply `--batch`
-    /// as a display label.  A future track (`cli-eval-batch-run-wait`)
-    /// will add persistence so `--batch` alone resolves runs automatically.
+    /// Sort runs by this metric: `return`, `sharpe`, or `drawdown`.
+    #[arg(long, default_value = "return")]
+    pub sort: String,
+    /// Resolve run ids from a persisted eval batch. Explicit run ids, when
+    /// supplied, take precedence and `--batch` is used as the display label.
     #[arg(long)]
     pub batch: Option<String>,
 }
@@ -469,18 +504,9 @@ async fn run_show(args: ShowArgs) -> CliResult<()> {
         } else {
             println!("  avg_bars_held            n/a");
         }
-        println!(
-            "  reentries_after_loss     {}",
-            bsummary.reentries_after_loss
-        );
-        println!(
-            "  exits_on_invalidation    {}",
-            bsummary.exits_on_invalidation
-        );
-        println!(
-            "  primary_failure_mode     {}",
-            bsummary.primary_failure_mode
-        );
+        println!("  reentries_after_loss     {}", bsummary.reentries_after_loss);
+        println!("  exits_on_invalidation    {}", bsummary.exits_on_invalidation);
+        println!("  primary_failure_mode     {}", bsummary.primary_failure_mode);
     }
     if let Some(e) = run.error.as_deref() {
         println!("\nerror: {e}");
@@ -539,64 +565,187 @@ fn print_run_status_line(run: &xvision_engine::eval::run::Run) {
     println!("{line}");
 }
 
+fn action_distribution(decisions: &[xvision_engine::eval::store::DecisionRow]) -> HashMap<String, u32> {
+    let mut map = HashMap::new();
+    for decision in decisions {
+        *map.entry(decision.action.clone()).or_insert(0) += 1;
+    }
+    map
+}
+
+fn sort_compare_rows(rows: &mut [CompareRunRow], sort_key: &str) {
+    match sort_key {
+        "sharpe" => rows.sort_by(|a, b| {
+            b.sharpe
+                .unwrap_or(f64::NEG_INFINITY)
+                .partial_cmp(&a.sharpe.unwrap_or(f64::NEG_INFINITY))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }),
+        "drawdown" => rows.sort_by(|a, b| {
+            a.max_drawdown_pct
+                .unwrap_or(f64::INFINITY)
+                .partial_cmp(&b.max_drawdown_pct.unwrap_or(f64::INFINITY))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }),
+        _ => rows.sort_by(|a, b| {
+            b.return_pct
+                .unwrap_or(f64::NEG_INFINITY)
+                .partial_cmp(&a.return_pct.unwrap_or(f64::NEG_INFINITY))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }),
+    }
+}
+
+fn format_action_distribution(dist: &HashMap<String, u32>) -> String {
+    let mut pairs: Vec<(&str, u32)> = dist.iter().map(|(k, &v)| (k.as_str(), v)).collect();
+    pairs.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0)));
+    pairs
+        .into_iter()
+        .filter(|(_, v)| *v > 0)
+        .map(|(k, v)| format!("{k} {v}"))
+        .collect::<Vec<_>>()
+        .join(" / ")
+}
+
+fn md_cell(s: &str) -> String {
+    s.replace('|', "\\|")
+}
+
+async fn build_compare_report(
+    ctx: &ApiContext,
+    report: xvision_engine::eval::compare::ComparisonReport,
+    sort_key: &str,
+) -> CompareReport {
+    let store = RunStore::new(ctx.db.clone());
+    let mut rows = Vec::with_capacity(report.runs.len());
+    for run in &report.runs {
+        let scenario_name = api_scenario::get(ctx, &run.scenario_id)
+            .await
+            .map(|scenario| scenario.display_name)
+            .unwrap_or_else(|_| run.scenario_id.clone());
+        let decisions = store.read_decisions(&run.id).await.unwrap_or_default();
+        let behavior: BehaviorSummary = derive_behavior_summary(&decisions);
+        let (return_pct, sharpe, max_drawdown_pct, decisions_count) = match &run.metrics {
+            Some(metrics) => (
+                Some(metrics.total_return_pct),
+                Some(metrics.sharpe),
+                Some(metrics.max_drawdown_pct),
+                metrics.n_decisions,
+            ),
+            None => (None, None, None, 0),
+        };
+
+        rows.push(CompareRunRow {
+            run_id: run.id.clone(),
+            scenario_id: run.scenario_id.clone(),
+            scenario_name,
+            strategy_id: run.agent_id.clone(),
+            status: run.status.as_str().to_string(),
+            return_pct,
+            sharpe,
+            max_drawdown_pct,
+            decisions: decisions_count,
+            trades_opened: behavior.trades_opened,
+            action_distribution: action_distribution(&decisions),
+            avg_bars_held: behavior.avg_bars_held,
+            primary_failure_mode: behavior.primary_failure_mode,
+        });
+    }
+
+    sort_compare_rows(&mut rows, sort_key);
+
+    CompareReport {
+        runs: rows,
+        equity_curves: report.equity_curves,
+        findings: report.findings,
+    }
+}
+
+fn render_compare_markdown(report: &CompareReport) -> String {
+    let mut out = String::new();
+    out.push_str(&format!("# Eval comparison ({} runs)\n\n", report.runs.len()));
+    out.push_str(
+        "| Run | Scenario | Return % | Sharpe | DD % | Decisions | Trades | Actions | Failure mode |\n",
+    );
+    out.push_str("|---|---|---|---|---|---|---|---|---|\n");
+    for row in &report.runs {
+        let run_prefix: String = row.run_id.chars().take(8).collect();
+        let scenario_cell = md_cell(&row.scenario_name);
+        let return_cell = row.return_pct.map_or("-".into(), |v| format!("{v:.2}"));
+        let sharpe_cell = row.sharpe.map_or("-".into(), |v| format!("{v:.2}"));
+        let dd_cell = row.max_drawdown_pct.map_or("-".into(), |v| format!("{v:.2}"));
+        let actions_cell = md_cell(&format_action_distribution(&row.action_distribution));
+        out.push_str(&format!(
+            "| {run_prefix}... | {scenario_cell} | {return_cell} | {sharpe_cell} | {dd_cell} | {} | {} | {actions_cell} | {} |\n",
+            row.decisions, row.trades_opened, row.primary_failure_mode
+        ));
+    }
+    out
+}
+
 async fn run_compare(args: CompareArgs) -> CliResult<()> {
+    let explicit_run_ids = if args.runs.is_empty() {
+        args.run_ids.clone()
+    } else if args.run_ids.is_empty() {
+        args.runs.clone()
+    } else {
+        return Err(CliError {
+            exit: XvnExit::Usage,
+            source: anyhow::anyhow!("pass run ids either as positional arguments or via --runs, not both"),
+        });
+    };
+
     let ctx = open_ctx(args.xvn_home.clone())
         .await
         .exit_with(XvnExit::Upstream)?;
 
-    // Resolve run ids. When --batch is supplied with no positional run ids,
-    // look up the persisted batch to get its runs. When positional run ids
-    // are also present they take precedence (legacy passthrough behaviour).
-    let run_ids: Vec<String> = if args.run_ids.is_empty() {
+    let run_ids = if explicit_run_ids.is_empty() {
         if let Some(batch_id) = &args.batch {
-            // Resolve runs from the persisted batch.
             let detail = eval::get_batch(&ctx, batch_id)
                 .await
                 .map_err(|e| api_to_cli("eval compare (resolve batch)", e))?;
-            if detail.run_ids.len() < 2 {
-                return Err(CliError {
-                    exit: XvnExit::Usage,
-                    source: anyhow::anyhow!(
-                        "batch '{batch_id}' has {} run(s); compare requires at least 2",
-                        detail.run_ids.len()
-                    ),
-                });
-            }
             detail.run_ids
         } else {
-            return Err(CliError {
-                exit: XvnExit::Usage,
-                source: anyhow::anyhow!(
-                    "eval compare requires at least two run ids or a --batch <id>; \
-                     pass run ids as positional arguments"
-                ),
-            });
+            Vec::new()
         }
     } else {
-        args.run_ids.clone()
+        explicit_run_ids
     };
 
     if run_ids.len() < 2 {
+        if let Some(batch_id) = &args.batch {
+            if run_ids.is_empty() {
+                return Err(CliError {
+                    exit: XvnExit::Usage,
+                    source: anyhow::anyhow!(
+                        "batch '{batch_id}' has no attached runs; compare requires at least 2"
+                    ),
+                });
+            }
+            return Err(CliError {
+                exit: XvnExit::Usage,
+                source: anyhow::anyhow!(
+                    "batch '{batch_id}' has {} run(s); compare requires at least 2",
+                    run_ids.len()
+                ),
+            });
+        }
         return Err(CliError {
             exit: XvnExit::Usage,
             source: anyhow::anyhow!(
                 "eval compare requires at least two run ids (got {}); \
-                 pass them as positional arguments or supply a --batch id with ≥2 runs",
+                 pass them as positional arguments, with --runs, or with --batch",
                 run_ids.len()
             ),
         });
     }
 
-    let report = eval::compare(
-        &ctx,
-        CompareRunsRequest {
-            run_ids: run_ids.clone(),
-        },
-    )
-    .await
-    .map_err(|e| api_to_cli("eval compare", e))?;
+    let report = eval::compare(&ctx, CompareRunsRequest { run_ids })
+        .await
+        .map_err(|e| api_to_cli("eval compare", e))?;
 
     if args.json {
+        let report = build_compare_report(&ctx, report, &args.sort).await;
         println!(
             "{}",
             serde_json::to_string_pretty(&report).exit_with(XvnExit::Upstream)?
@@ -605,16 +754,8 @@ async fn run_compare(args: CompareArgs) -> CliResult<()> {
     }
 
     if args.markdown {
-        // Use the batch id as strategy label when provided; fall back to the
-        // first run's agent_id.
-        let label = args.batch.clone().unwrap_or_else(|| {
-            report
-                .runs
-                .first()
-                .map(|r| r.agent_id.clone())
-                .unwrap_or_else(|| "unknown-strategy".into())
-        });
-        let md = compare_format::render_markdown(&report, &label);
+        let report = build_compare_report(&ctx, report, &args.sort).await;
+        let md = render_compare_markdown(&report);
         print!("{md}");
         return Ok(());
     }
@@ -757,4 +898,58 @@ async fn run_attest(args: AttestArgs) -> CliResult<()> {
         att.tokens_used.input, att.tokens_used.output
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[derive(Parser, Debug)]
+    struct TestEval {
+        #[command(subcommand)]
+        op: Op,
+    }
+
+    #[test]
+    fn compare_accepts_documented_runs_flag_with_comma_list() {
+        let parsed = TestEval::try_parse_from([
+            "x",
+            "compare",
+            "--runs",
+            "01K00000000000000000000001,01K00000000000000000000002",
+            "--markdown",
+        ])
+        .expect("--runs comma list should parse");
+
+        let Op::Compare(args) = parsed.op else {
+            panic!("expected compare subcommand");
+        };
+        assert_eq!(
+            args.runs,
+            vec![
+                "01K00000000000000000000001".to_string(),
+                "01K00000000000000000000002".to_string(),
+            ]
+        );
+        assert!(args.run_ids.is_empty());
+        assert!(args.markdown);
+    }
+
+    #[test]
+    fn compare_keeps_positional_run_ids_supported() {
+        let parsed = TestEval::try_parse_from([
+            "x",
+            "compare",
+            "01K00000000000000000000001",
+            "01K00000000000000000000002",
+        ])
+        .expect("positional run ids should still parse");
+
+        let Op::Compare(args) = parsed.op else {
+            panic!("expected compare subcommand");
+        };
+        assert_eq!(args.run_ids.len(), 2);
+        assert!(args.runs.is_empty());
+    }
 }

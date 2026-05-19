@@ -21,9 +21,7 @@ pub fn render_markdown(report: &ComparisonReport, strategy_label: &str) -> Strin
     out.push_str(
         "| Scenario | Return | Sharpe | Max DD | Decisions | Trades | Flips | Avg hold (bars) | Flat rate | Reentries | Failure mode |\n",
     );
-    out.push_str(
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |\n",
-    );
+    out.push_str("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |\n");
 
     for run in &report.runs {
         out.push_str(&markdown_row(run));
@@ -33,8 +31,7 @@ pub fn render_markdown(report: &ComparisonReport, strategy_label: &str) -> Strin
     out.push('\n');
     out.push_str("### Notes\n\n");
 
-    let completed: Vec<&ComparisonRunSummary> =
-        report.runs.iter().filter(|r| r.metrics.is_some()).collect();
+    let completed: Vec<&ComparisonRunSummary> = report.runs.iter().filter(|r| r.metrics.is_some()).collect();
 
     if completed.is_empty() {
         out.push_str("No completed runs with metrics available.\n");
@@ -65,8 +62,16 @@ pub fn render_markdown(report: &ComparisonReport, strategy_label: &str) -> Strin
 }
 
 fn cmp_return(a: &&ComparisonRunSummary, b: &&ComparisonRunSummary) -> std::cmp::Ordering {
-    let ra = a.metrics.as_ref().map(|m| m.total_return_pct).unwrap_or(f64::NEG_INFINITY);
-    let rb = b.metrics.as_ref().map(|m| m.total_return_pct).unwrap_or(f64::NEG_INFINITY);
+    let ra = a
+        .metrics
+        .as_ref()
+        .map(|m| m.total_return_pct)
+        .unwrap_or(f64::NEG_INFINITY);
+    let rb = b
+        .metrics
+        .as_ref()
+        .map(|m| m.total_return_pct)
+        .unwrap_or(f64::NEG_INFINITY);
     ra.partial_cmp(&rb).unwrap_or(std::cmp::Ordering::Equal)
 }
 
@@ -81,8 +86,7 @@ fn markdown_row(run: &ComparisonRunSummary) -> String {
         None => ("-".into(), "-".into(), "-".into(), "-".into()),
     };
 
-    let (trades_s, flips_s, avg_hold_s, flat_rate_s, reentries_s, failure_s) = match &run.behavior
-    {
+    let (trades_s, flips_s, avg_hold_s, flat_rate_s, reentries_s, failure_s) = match &run.behavior {
         Some(b) => (
             b.trades_opened.to_string(),
             b.direct_flips.to_string(),
@@ -124,9 +128,7 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use xvision_engine::eval::behavior::BehaviorSummary;
-    use xvision_engine::eval::compare::{
-        ComparisonEquityCurve, ComparisonReport, ComparisonRunSummary,
-    };
+    use xvision_engine::eval::compare::{ComparisonEquityCurve, ComparisonReport, ComparisonRunSummary};
     use xvision_engine::eval::run::{MetricsSummary, RunMode, RunStatus};
 
     fn make_run(
