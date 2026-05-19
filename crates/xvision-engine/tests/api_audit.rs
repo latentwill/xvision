@@ -1,11 +1,15 @@
-use sqlx::SqlitePool;
+use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use xvision_engine::api::{
     audit::{record, Outcome},
     Actor, ApiContext,
 };
 
 async fn pool_with_migration() -> SqlitePool {
-    let pool = SqlitePool::connect(":memory:").await.unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
     sqlx::query(include_str!("../migrations/001_api_audit.sql"))
         .execute(&pool)
         .await
