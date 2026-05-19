@@ -87,6 +87,10 @@ impl ReleaseGate {
         self.released.store(true, Ordering::Release);
         self.notify.notify_waiters();
     }
+
+    fn hold(&self) {
+        self.released.store(false, Ordering::Release);
+    }
 }
 
 #[async_trait]
@@ -140,6 +144,7 @@ async fn saturation_preserves_lifecycle_and_attributes_span_drops() {
     let pool = migrated_pool().await;
     let sqlite = Arc::new(SqliteRecorder::new(pool.clone()));
     let gate = Arc::new(ReleaseGate::new());
+    gate.release();
     let gated: Arc<dyn AgentRunRecorder> = Arc::new(GatedRecorder::new(sqlite.clone(), gate.clone()));
 
     // Tight bus so the try_send Full path triggers quickly.
@@ -149,8 +154,8 @@ async fn saturation_preserves_lifecycle_and_attributes_span_drops() {
     let span_id = "span_saturation".to_string();
     let now = Utc::now();
 
-    // 1. RunStarted is lifecycle-critical and uses backpressure. The
-    //    consumer pulls it and blocks inside handle_event (gate held).
+    // 1. Let direct run-id-bearing setup events land before saturation
+    //    so they cannot satisfy the final drop-attribution assertion.
     bus.publish(RunEvent::RunStarted(RunStartedEvent {
         run_id: run_id.clone(),
         objective: "saturation test".to_string(),
@@ -166,12 +171,13 @@ async fn saturation_preserves_lifecycle_and_attributes_span_drops() {
         mcp_servers_json: None,
     }))
     .await;
-    // Yield so the consumer task definitely picks RunStarted and enters
-    // handle_event (where it blocks on the notify).
-    tokio::time::sleep(StdDuration::from_millis(20)).await;
+    wait_for_count(
+        &pool,
+        "SELECT COUNT(*) FROM agent_runs WHERE id = 'run_saturation' AND status = 'running'",
+        1,
+    )
+    .await;
 
-    // 2. Fill the channel with a SpanStarted (carries run_id, also
-    //    populates the bus's span→run map when consumed).
     bus.publish(RunEvent::SpanStarted(SpanStartedEvent {
         span_id: span_id.clone(),
         run_id: run_id.clone(),
@@ -184,7 +190,18 @@ async fn saturation_preserves_lifecycle_and_attributes_span_drops() {
         attributes_json: None,
     }))
     .await;
-    // Then a ModelCallFinished — span-scoped, no run_id directly.
+    wait_for_count(
+        &pool,
+        "SELECT COUNT(*) FROM spans WHERE id = 'span_saturation'",
+        1,
+    )
+    .await;
+
+    // 2. Hold the recorder again, then publish one span-scoped event
+    //    for the consumer to pull and block on. The queue is empty at
+    //    saturation time, and every queued eviction below is
+    //    span-scoped.
+    gate.hold();
     bus.publish(RunEvent::ModelCallFinished(ModelCallFinishedEvent {
         span_id: span_id.clone(),
         provider: "anthropic".to_string(),
@@ -200,6 +217,7 @@ async fn saturation_preserves_lifecycle_and_attributes_span_drops() {
         capability_path: None,
     }))
     .await;
+    tokio::time::sleep(StdDuration::from_millis(20)).await;
 
     // 3. Hammer the bus with span-scoped events that should now fail
     //    `try_send` Full. Each carries `span_id` but no `run_id` —
@@ -253,15 +271,14 @@ async fn saturation_preserves_lifecycle_and_attributes_span_drops() {
     )
     .await;
 
-    // 7. Verify a BackpressureDropped supervisor_notes row exists with
-    //    a non-empty `run_id` attributed to our run — the bug the
-    //    reviewer flagged would land these rows with `run_id = ''` (or
-    //    not at all) for span-scoped event drops.
+    // 7. Verify the exact BackpressureDropped count from span-scoped
+    //    evictions. A single direct run-id-bearing setup drop cannot
+    //    satisfy this assertion.
     wait_for_count(
         &pool,
         "SELECT COUNT(*) FROM supervisor_notes \
          WHERE severity = 'warn' AND run_id = 'run_saturation' \
-         AND content LIKE 'Dropped % events under backpressure%'",
+         AND content LIKE 'Dropped 31 events under backpressure%'",
         1,
     )
     .await;
