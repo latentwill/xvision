@@ -10,10 +10,10 @@ use xvision_engine::agent::pipeline::{
     agent_slot_to_llm_slot, run_pipeline, PipelineInputs, ResolvedAgentSlot,
 };
 use xvision_engine::agents::{AgentSlot, AgentStore};
+use xvision_engine::api::scenario as api_scenario;
 use xvision_engine::api::{agents as api_agents, strategy as api_strategy, Actor, ApiContext, ApiError};
 use xvision_engine::strategies::slot::LLMSlot;
 use xvision_engine::strategies::store::{strategy_store_dir, FilesystemStore, StrategyStore};
-use xvision_engine::api::scenario as api_scenario;
 use xvision_engine::strategies::validate::{preflight_validate, validate_strategy};
 use xvision_engine::strategies::{AgentRef, PipelineDef, PipelineEdge, PipelineKind};
 use xvision_engine::templates::registry;
@@ -175,6 +175,22 @@ enum StrategyAction {
     },
 }
 
+#[derive(Debug, serde::Serialize)]
+pub struct PreflightReport {
+    pub strategy_id: String,
+    pub eval_ready: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected_decisions: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub asset: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeframe: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warmup_bars: Option<u32>,
+    pub warnings: Vec<String>,
+    pub errors: Vec<String>,
+}
+
 pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
     match cmd.action {
         StrategyAction::New {
@@ -189,7 +205,12 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
             role,
             asset,
             timeframe,
-        } => new(from_file, template, name, creator, provider, model, json, prompt, role, asset, timeframe).await,
+        } => {
+            new(
+                from_file, template, name, creator, provider, model, json, prompt, role, asset, timeframe,
+            )
+            .await
+        }
         StrategyAction::Validate { id, scenario, json } => validate(&id, scenario.as_deref(), json).await,
         StrategyAction::Ls { json } => ls(json).await,
         StrategyAction::Show { id, format } => show(&id, format).await,
@@ -468,35 +489,18 @@ async fn new_atomic(
     json: bool,
 ) -> CliResult<()> {
     // Validate required atomic-mode fields.
-    let name = name.ok_or_else(|| {
-        CliError::usage(anyhow::anyhow!(
-            "atomic mode requires --name"
-        ))
-    })?;
-    let provider = provider.ok_or_else(|| {
-        CliError::usage(anyhow::anyhow!(
-            "atomic mode requires --provider"
-        ))
-    })?;
-    let model = model.ok_or_else(|| {
-        CliError::usage(anyhow::anyhow!(
-            "atomic mode requires --model"
-        ))
-    })?;
+    let name = name.ok_or_else(|| CliError::usage(anyhow::anyhow!("atomic mode requires --name")))?;
+    let provider =
+        provider.ok_or_else(|| CliError::usage(anyhow::anyhow!("atomic mode requires --provider")))?;
+    let model = model.ok_or_else(|| CliError::usage(anyhow::anyhow!("atomic mode requires --model")))?;
     let role = role.unwrap_or_else(|| "trader".to_string());
-    let asset = asset.ok_or_else(|| {
-        CliError::usage(anyhow::anyhow!(
-            "atomic mode requires --asset (e.g. ETH/USD)"
-        ))
-    })?;
-    let timeframe = timeframe.ok_or_else(|| {
-        CliError::usage(anyhow::anyhow!(
-            "atomic mode requires --timeframe (e.g. 4h)"
-        ))
-    })?;
+    let asset = asset
+        .ok_or_else(|| CliError::usage(anyhow::anyhow!("atomic mode requires --asset (e.g. ETH/USD)")))?;
+    let timeframe = timeframe
+        .ok_or_else(|| CliError::usage(anyhow::anyhow!("atomic mode requires --timeframe (e.g. 4h)")))?;
 
-    let cadence_minutes = parse_timeframe_minutes(&timeframe)
-        .map_err(|e| CliError::usage(anyhow::anyhow!("{e}")))?;
+    let cadence_minutes =
+        parse_timeframe_minutes(&timeframe).map_err(|e| CliError::usage(anyhow::anyhow!("{e}")))?;
 
     // Read the prompt file.
     let prompt_text = std::fs::read_to_string(&prompt_path)
@@ -523,6 +527,7 @@ async fn new_atomic(
                 skill_ids: Vec::new(),
                 max_tokens: None,
                 prompt_version: String::new(),
+                inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
             }],
         },
     )
@@ -571,10 +576,7 @@ async fn new_atomic(
     }
 
     // 4. Persist the strategy.
-    store()
-        .save(&strategy)
-        .await
-        .exit_with(XvnExit::Upstream)?;
+    store().save(&strategy).await.exit_with(XvnExit::Upstream)?;
 
     // 5. Emit output.
     let warnings = preflight.warnings;
@@ -612,71 +614,270 @@ async fn validate(id: &str, scenario_id: Option<&str>, json: bool) -> CliResult<
         return Ok(());
     }
 
-    // Preflight mode: load scenario if provided.
-    let scenario = if let Some(sid) = scenario_id {
-        let ctx = open_ctx().await?;
-        let sc = api_scenario::get(&ctx, sid)
-            .await
-            .map_err(|e| api_to_cli("strategy validate (scenario)", e))?;
-        Some(sc)
-    } else {
-        None
+    let mut errors = Vec::new();
+    let mut warnings = Vec::new();
+
+    if let Err(e) = validate_strategy(&strategy) {
+        errors.push(e.to_string());
+    }
+    if !strategy.manifest.template.is_empty() && registry::get(&strategy.manifest.template).is_none() {
+        errors.push(format!(
+            "unknown template '{}' - not in registry",
+            strategy.manifest.template
+        ));
+    }
+
+    let Some(scenario_id) = scenario_id else {
+        warnings.push("no --scenario supplied; run shape-only check only".to_string());
+        let report = PreflightReport {
+            strategy_id: id.to_string(),
+            eval_ready: false,
+            expected_decisions: None,
+            asset: None,
+            timeframe: None,
+            warmup_bars: None,
+            warnings,
+            errors,
+        };
+        return emit_preflight_report(&report, json);
     };
 
-    let preflight = preflight_validate(&strategy, scenario.as_ref());
+    let ctx = open_ctx().await?;
 
-    // Any shape errors are still hard failures (non-zero exit).
-    if !preflight.errors.is_empty() {
-        if json {
-            let out = serde_json::json!({
-                "eval_ready": false,
-                "errors": preflight.errors,
-                "warnings": preflight.warnings,
-            });
-            println!("{}", serde_json::to_string_pretty(&out).exit_with(XvnExit::Upstream)?);
-        } else {
-            for e in &preflight.errors {
-                eprintln!("error: {e}");
+    let provider_list = load_provider_names(&ctx).await;
+    let mut has_trader = strategy.trader_slot.is_some();
+    for agent_ref in &strategy.agents {
+        if agent_ref.role.eq_ignore_ascii_case("trader") {
+            has_trader = true;
+        }
+
+        let agent = match api_agents::get(&ctx, &agent_ref.agent_id).await {
+            Ok(agent) => agent,
+            Err(_) => {
+                errors.push(format!(
+                    "agent '{}' (role '{}') not found",
+                    agent_ref.agent_id, agent_ref.role
+                ));
+                continue;
+            }
+        };
+
+        let Some(slot) = agent.slots.first() else {
+            errors.push(format!(
+                "agent '{}' (role '{}') has no executable slots",
+                agent_ref.agent_id, agent_ref.role
+            ));
+            continue;
+        };
+
+        let provider = slot.provider.trim();
+        if provider.is_empty() {
+            errors.push(format!(
+                "agent '{}' (role '{}') has no provider set",
+                agent_ref.agent_id, agent_ref.role
+            ));
+        } else if let Some(known) = provider_list.as_ref() {
+            if !known.iter().any(|p| p == provider) {
+                errors.push(format!(
+                    "agent '{}' (role '{}') provider '{}' not in config",
+                    agent_ref.agent_id, agent_ref.role, slot.provider
+                ));
             }
         }
-        return Err(CliError::usage(anyhow::anyhow!(
-            "strategy validation failed: {}",
-            preflight.errors.join("; ")
-        )));
+
+        if slot.model.trim().is_empty() {
+            errors.push(format!(
+                "agent '{}' (role '{}') has no model set",
+                agent_ref.agent_id, agent_ref.role
+            ));
+        }
     }
 
-    if json {
-        // Build the JSON output. `expected_decisions` is left absent for now
-        // (no scenario bar-count helper is wired in without hitting the DB+
-        // bar cache; the field is documented as optional in the spec and will
-        // land in a follow-up track that wires `scenario_store::bar_count`).
-        let mut out = serde_json::json!({
-            "eval_ready": preflight.eval_ready,
-            "warnings": preflight.warnings,
-        });
-        if let Some(sc) = &scenario {
-            let asset = sc.asset.first().map(|a| a.venue_symbol.as_str()).unwrap_or("");
-            let tf_minutes = (sc.granularity.seconds() / 60) as u32;
-            let timeframe = if tf_minutes % 60 == 0 {
-                format!("{}h", tf_minutes / 60)
-            } else {
-                format!("{tf_minutes}m")
+    if !strategy.agents.is_empty() && !has_trader {
+        errors.push("no trader agent on strategy (no AgentRef with role 'trader')".to_string());
+    }
+
+    let scenario = match api_scenario::get(&ctx, scenario_id).await {
+        Ok(scenario) => scenario,
+        Err(_) => {
+            errors.push(format!("scenario '{scenario_id}' not found"));
+            let report = PreflightReport {
+                strategy_id: id.to_string(),
+                eval_ready: false,
+                expected_decisions: None,
+                asset: None,
+                timeframe: None,
+                warmup_bars: None,
+                warnings,
+                errors,
             };
-            out["asset"] = serde_json::Value::String(asset.to_string());
-            out["timeframe"] = serde_json::Value::String(timeframe);
+            return emit_preflight_report(&report, json);
         }
-        println!("{}", serde_json::to_string_pretty(&out).exit_with(XvnExit::Upstream)?);
+    };
+
+    let preflight = preflight_validate(&strategy, Some(&scenario));
+    warnings.extend(preflight.warnings);
+
+    let asset_display = scenario
+        .asset
+        .first()
+        .map(|a| a.venue_symbol.clone())
+        .unwrap_or_default();
+    let timeframe_display = scenario.granularity.canonical();
+    collect_prompt_mismatch_warnings(&ctx, &strategy, &asset_display, &timeframe_display, &mut warnings)
+        .await;
+
+    if scenario.warmup_bars == 0 {
+        warnings.push("scenario warmup_bars is 0 - strategy may lack context bars at bar 1".to_string());
+    }
+
+    let window_secs = (scenario.time_window.end - scenario.time_window.start)
+        .num_seconds()
+        .max(0) as u64;
+    let granularity_secs = scenario.granularity.seconds();
+    let expected_decisions = if granularity_secs > 0 {
+        let total_bars = window_secs / granularity_secs;
+        (total_bars as i64) - (scenario.warmup_bars as i64)
     } else {
-        if preflight.warnings.is_empty() {
-            println!("ok");
-        } else {
-            println!("ok (with warnings)");
-            for w in &preflight.warnings {
-                eprintln!("warning: {w}");
+        0
+    };
+
+    let report = PreflightReport {
+        strategy_id: id.to_string(),
+        eval_ready: errors.is_empty() && warnings.is_empty(),
+        expected_decisions: Some(expected_decisions),
+        asset: Some(asset_display),
+        timeframe: Some(timeframe_display),
+        warmup_bars: Some(scenario.warmup_bars),
+        warnings,
+        errors,
+    };
+    emit_preflight_report(&report, json)
+}
+
+async fn load_provider_names(ctx: &ApiContext) -> Option<Vec<String>> {
+    use xvision_engine::api::settings::providers as api_providers;
+    let config_path = ctx.xvn_home.join("config").join("default.toml");
+    api_providers::list(ctx, &config_path)
+        .await
+        .ok()
+        .map(|report| report.providers.into_iter().map(|p| p.name).collect())
+}
+
+async fn collect_prompt_mismatch_warnings(
+    ctx: &ApiContext,
+    strategy: &xvision_engine::strategies::Strategy,
+    asset_display: &str,
+    timeframe_display: &str,
+    warnings: &mut Vec<String>,
+) {
+    let known_symbols = [
+        "BTC", "ETH", "SOL", "AVAX", "DOGE", "LINK", "MATIC", "DOT", "ADA", "XRP",
+    ];
+    let known_timeframes = ["1m", "5m", "15m", "1h", "4h", "6h", "1d", "1w"];
+    let scenario_symbol = asset_display
+        .split('/')
+        .next()
+        .unwrap_or(asset_display)
+        .to_ascii_uppercase();
+
+    let mut all_prompt_text = String::new();
+    for agent_ref in &strategy.agents {
+        if let Ok(agent) = api_agents::get(ctx, &agent_ref.agent_id).await {
+            for slot in &agent.slots {
+                all_prompt_text.push(' ');
+                all_prompt_text.push_str(&slot.system_prompt);
             }
         }
     }
-    Ok(())
+    for slot in [
+        &strategy.regime_slot,
+        &strategy.intern_slot,
+        &strategy.trader_slot,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        all_prompt_text.push(' ');
+        all_prompt_text.push_str(&slot.prompt);
+    }
+
+    if all_prompt_text.is_empty() {
+        return;
+    }
+
+    let prompt_tokens: Vec<String> = all_prompt_text
+        .split_whitespace()
+        .map(|w| {
+            w.trim_matches(|c: char| !c.is_ascii_alphanumeric())
+                .to_ascii_uppercase()
+        })
+        .filter(|w| !w.is_empty())
+        .collect();
+
+    for symbol in &known_symbols {
+        if prompt_tokens.iter().any(|t| t == symbol) && *symbol != scenario_symbol.as_str() {
+            warnings.push(format!(
+                "prompt mentions {symbol} but scenario asset is {asset_display}"
+            ));
+        }
+    }
+
+    let prompt_tokens_lower: Vec<String> = all_prompt_text
+        .split_whitespace()
+        .map(|w| {
+            w.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '-')
+                .to_ascii_lowercase()
+        })
+        .filter(|w| !w.is_empty())
+        .collect();
+
+    for timeframe in &known_timeframes {
+        if prompt_tokens_lower.iter().any(|t| t == timeframe) && *timeframe != timeframe_display {
+            warnings.push(format!(
+                "prompt mentions timeframe {timeframe} but scenario granularity is {timeframe_display}"
+            ));
+        }
+    }
+}
+
+fn emit_preflight_report(report: &PreflightReport, json: bool) -> CliResult<()> {
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(report).exit_with(XvnExit::Upstream)?
+        );
+    } else {
+        println!("strategy:  {}", report.strategy_id);
+        println!("eval_ready: {}", report.eval_ready);
+        if let Some(asset) = &report.asset {
+            println!("asset:     {asset}");
+        }
+        if let Some(timeframe) = &report.timeframe {
+            println!("timeframe: {timeframe}");
+        }
+        if let Some(warmup_bars) = report.warmup_bars {
+            println!("warmup_bars: {warmup_bars}");
+        }
+        if let Some(expected_decisions) = report.expected_decisions {
+            println!("expected_decisions: {expected_decisions}");
+        }
+        for warning in &report.warnings {
+            println!("warning: {warning}");
+        }
+        for error in &report.errors {
+            println!("error: {error}");
+        }
+    }
+
+    if report.eval_ready {
+        Ok(())
+    } else {
+        Err(CliError::usage(anyhow::anyhow!(
+            "strategy is not eval-ready: {} error(s)",
+            report.errors.len()
+        )))
+    }
 }
 
 async fn ls(json: bool) -> CliResult<()> {
@@ -883,17 +1084,24 @@ fn slot_to_agent_slot(
     model_override: Option<&str>,
 ) -> AgentSlot {
     let (provider, model) = provider_model_from_slot(slot, provider_override, model_override);
+    let mut skill_ids = slot.allowed_tools.clone();
+    if slot.prompt.contains("ohlcv_history") && !skill_ids.iter().any(|tool| tool == "ohlcv") {
+        skill_ids.push("ohlcv".to_string());
+    }
+    skill_ids.sort();
+    skill_ids.dedup();
     AgentSlot {
         name: "main".to_string(),
         provider,
         model,
         system_prompt: slot.prompt.clone(),
-        skill_ids: Vec::new(),
+        skill_ids,
         // Auto-resolved from the model's metadata at dispatch time
         // (q15 §1). Old auto-create paths can let this stay `None` so
         // the operator-facing UX is consistent with `+ New agent`.
         max_tokens: None,
         prompt_version: String::new(),
+        inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
     }
 }
 
@@ -1065,6 +1273,7 @@ async fn resolve_agent_slots_for_cli(
             role: agent_ref.role.clone(),
             slot: agent_slot_to_llm_slot(&agent_ref.role, slot),
             max_tokens: slot.resolve_max_tokens(),
+            inputs_policy: slot.inputs_policy,
         });
     }
     Ok(out)
@@ -1291,13 +1500,7 @@ pub mod atomic_create {
 
     #[test]
     fn atomic_output_eval_ready_true_when_no_warnings_or_errors() {
-        let out = build_atomic_create_output(
-            "strategy-123",
-            "agent-456",
-            "openrouter",
-            "kimi-k2",
-            vec![],
-        );
+        let out = build_atomic_create_output("strategy-123", "agent-456", "openrouter", "kimi-k2", vec![]);
         assert_eq!(out["strategy_id"], "strategy-123");
         assert_eq!(out["agent_id"], "agent-456");
         assert_eq!(out["eval_ready"], true);

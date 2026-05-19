@@ -130,6 +130,7 @@ pub mod get {
                         skill_ids: vec![],
                         max_tokens: Some(2048),
                         prompt_version: AgentSlot::compute_prompt_version("Trade."),
+                        inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
                     }],
                 },
             )

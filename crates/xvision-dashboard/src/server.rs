@@ -10,8 +10,9 @@ use crate::auth::{auth_middleware, AuthState};
 use crate::routes::{
     agent_runs, agents, bars, chat_rail, cli, docs,
     eval::{agent_profiles as eval_agent_profiles, review as eval_review},
-    eval_runs, health::health, scenarios, search as search_route, settings, skills,
-    static_files, strategies, wizard,
+    eval_runs,
+    health::health,
+    scenarios, search as search_route, settings, skills, static_files, strategies, wizard,
 };
 use crate::state::AppState;
 use xvision_engine::api::eval as api_eval;
@@ -255,6 +256,14 @@ pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
             "failed to recover cli jobs at startup",
         );
     }
+
+    // F-11 sub: spawn the retention janitor so the blob store at
+    // `$xvn_home/agent_runs/blobs/` is bounded by TTL + max-bytes
+    // defaults. The dashboard process owns this background task for
+    // its whole lifetime; the JoinHandle is intentionally dropped —
+    // it terminates with the process. See
+    // `crates/xvision-engine/src/api/eval.rs::spawn_retention_janitor`.
+    let _janitor = api_eval::spawn_retention_janitor(&state.api_context());
 
     // Resolve auth posture from bind address + env. Refuses to start
     // on a non-loopback bind without a configured shared secret. See

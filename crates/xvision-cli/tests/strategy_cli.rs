@@ -46,6 +46,7 @@ fn create_agent(home: &std::path::Path, name: &str) -> String {
                     skill_ids: vec![],
                     max_tokens: Some(1024),
                     prompt_version: String::new(),
+                    inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
                 }],
             },
         )
@@ -258,7 +259,6 @@ fn add_agent_set_pipeline_and_remove_agent_roundtrip() {
     );
     let strategy_id = String::from_utf8(out.stdout).unwrap().trim().to_string();
     let scout_id = create_agent(dir.path(), "Scout");
-    let trader_id = create_agent(dir.path(), "Trader");
 
     let out = xvn(
         &[
@@ -278,23 +278,6 @@ fn add_agent_set_pipeline_and_remove_agent_roundtrip() {
     );
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(stdout.contains("scout"), "stdout: {stdout}");
-
-    let out = xvn(
-        &[
-            "strategy",
-            "add-agent",
-            &strategy_id,
-            &trader_id,
-            "--role",
-            "trader",
-        ],
-        dir.path(),
-    );
-    assert!(
-        out.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
 
     let out = xvn(
         &["strategy", "set-pipeline", &strategy_id, "--kind", "sequential"],

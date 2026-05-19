@@ -193,10 +193,7 @@ fn count_reentries_after_loss(decisions: &[DecisionRow]) -> u32 {
     for d in decisions {
         match d.action.as_str() {
             "flat" => {
-                last_flat_was_loss.insert(
-                    d.asset.as_str(),
-                    d.pnl_realized.is_some_and(|p| p < 0.0),
-                );
+                last_flat_was_loss.insert(d.asset.as_str(), d.pnl_realized.is_some_and(|p| p < 0.0));
             }
             "long_open" | "short_open" => {
                 if last_flat_was_loss.get(d.asset.as_str()).copied().unwrap_or(false) {
@@ -359,10 +356,7 @@ mod tests {
     #[test]
     fn test_failure_mode_late_entries() {
         // reentries/trades > 0.4
-        assert_eq!(
-            primary_failure_mode(0.3, 5, 0, 1, Some(3_u32)),
-            "late_entries"
-        );
+        assert_eq!(primary_failure_mode(0.3, 5, 0, 1, Some(3_u32)), "late_entries");
     }
 
     // T7: failure mode — churn bucket
@@ -376,38 +370,26 @@ mod tests {
     #[test]
     fn test_failure_mode_no_edge() {
         // exits_on_invalidation/trades > 0.5
-        assert_eq!(
-            primary_failure_mode(0.3, 4, 0, 3, Some(0_u32)),
-            "no_edge"
-        );
+        assert_eq!(primary_failure_mode(0.3, 4, 0, 3, Some(0_u32)), "no_edge");
     }
 
     // T9: failure mode — over_flat bucket
     #[test]
     fn test_failure_mode_over_flat() {
         // flat_rate > 0.85
-        assert_eq!(
-            primary_failure_mode(0.90, 1, 0, 0, Some(0_u32)),
-            "over_flat"
-        );
+        assert_eq!(primary_failure_mode(0.90, 1, 0, 0, Some(0_u32)), "over_flat");
     }
 
     // T10: failure mode — none_obvious fallthrough
     #[test]
     fn test_failure_mode_none_obvious() {
-        assert_eq!(
-            primary_failure_mode(0.50, 5, 0, 1, Some(0_u32)),
-            "none_obvious"
-        );
+        assert_eq!(primary_failure_mode(0.50, 5, 0, 1, Some(0_u32)), "none_obvious");
     }
 
     // T11: avg_bars_held with no complete round trips → None
     #[test]
     fn test_avg_bars_held_no_round_trips() {
-        let decisions = vec![
-            d(0, "BTC", "long_open", None),
-            d(1, "BTC", "hold", None),
-        ];
+        let decisions = vec![d(0, "BTC", "long_open", None), d(1, "BTC", "hold", None)];
         let s = derive_behavior_summary(&decisions);
         assert!(s.avg_bars_held.is_none());
     }
