@@ -17,7 +17,19 @@ use xvision_engine::{
 // Test helpers
 // ---------------------------------------------------------------------------
 
+/// This file pins `validate_agent_for_save`'s behavior — the rejection
+/// path is the test surface. The workspace's `.cargo/config.toml` sets
+/// `XVISION_DISABLE_AGENT_SAVE_GATE=1` to bypass the gate for the broad
+/// test suite that uses short fixture prompts. We MUST clear that here
+/// or every assertion in this file flips meaning.
+///
+/// Idempotent — safe to call from every test entry point.
+fn ensure_gate_active() {
+    std::env::remove_var("XVISION_DISABLE_AGENT_SAVE_GATE");
+}
+
 async fn fresh_agent_store() -> (AgentStore, TempDir) {
+    ensure_gate_active();
     let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
     sqlx::query(include_str!("../migrations/005_agents.sql"))
         .execute(&pool)
@@ -36,6 +48,7 @@ async fn fresh_agent_store() -> (AgentStore, TempDir) {
 }
 
 async fn full_test_context() -> (ApiContext, TempDir) {
+    ensure_gate_active();
     let dir = TempDir::new().unwrap();
     let ctx = ApiContext::open(
         dir.path(),

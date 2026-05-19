@@ -33,3 +33,18 @@ pub use validator::{
     lint_agents, validate_prompt_schema, validate_prompt_schema_slots, LintFinding, PromptSchemaDriftError,
     ACTION_SCHEMA_ENUM,
 };
+
+/// Test-only helper: disable `validate_agent_for_save`'s content-quality
+/// gate by setting `XVISION_DISABLE_AGENT_SAVE_GATE=1` in this process's
+/// environment. Production callers must NEVER use this; it exists so
+/// integration tests that exercise behavior unrelated to prompt quality
+/// don't have to fabricate ≥200-char prompts at every fixture site.
+///
+/// The bypass is read by `validate::validate_agent_for_save`. Tests that
+/// specifically pin the save-gate behavior (e.g. `agent_save_validate.rs`)
+/// must NOT call this — and because each `tests/*.rs` file runs as its
+/// own binary process, env vars don't leak across them.
+#[doc(hidden)]
+pub fn disable_save_gate_for_tests() {
+    std::env::set_var("XVISION_DISABLE_AGENT_SAVE_GATE", "1");
+}

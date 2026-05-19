@@ -2,3 +2,30 @@
 # subdirectory of the workspace; cargo expands this to `cargo run -p xtask --`.
 [alias]
 xtask = "run --quiet -p xtask --"
+
+# Disable the agent save-gate (`validate_agent_for_save`) for cargo-driven
+# runs in this workspace. The gate's purpose is rejecting placeholder /
+# <200-char system_prompt values in prod; the broad test suite uses short
+# fixture prompts ("Trade.", "Decide.") because the tests exercise behavior
+# unrelated to prompt quality. Without the bypass, 23 test targets fail
+# with "save validation failed: ... system_prompt is the default placeholder
+# or fewer than 200 characters".
+#
+# Safety properties:
+#  - The validator's bypass is gated by `cfg(debug_assertions)`, so this
+#    env var has NO effect in release builds. Production binaries
+#    (`./target/release/xvn`, docker images) ignore it.
+#  - The env var is only propagated by `cargo`-driven runs (cargo test,
+#    cargo run, cargo build child processes). Running a compiled binary
+#    directly does not inherit it.
+#  - The test that pins the gate's behavior
+#    (`crates/xvision-engine/tests/agent_save_validate.rs`) calls
+#    `std::env::remove_var("XVISION_DISABLE_AGENT_SAVE_GATE")` at the top
+#    of each test fn so the gate stays active for that file.
+#
+# Dev-UX caveat: `cargo run -- agent create --prompt "Trade."` from a
+# dev's workstation will skip the gate. To pin the gate in dev, run with
+# `XVISION_DISABLE_AGENT_SAVE_GATE= cargo run …` (empty value) — env vars
+# explicitly set by the shell take precedence over `[env]` here.
+[env]
+XVISION_DISABLE_AGENT_SAVE_GATE = "1"
