@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use chrono::{TimeZone, Utc};
-use sqlx::SqlitePool;
+use sqlx::sqlite::SqlitePoolOptions;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -47,7 +47,11 @@ async fn test_ctx_with_mock_alpaca() -> (ApiContext, MockServer) {
     // In-memory pool + apply migration 005 (and friends) so `bars_cache`
     // exists. We mirror the layout of api_context tests rather than going
     // through `ApiContext::open` (no real filesystem).
-    let pool = SqlitePool::connect(":memory:").await.unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
     sqlx::query(include_str!("../migrations/001_api_audit.sql"))
         .execute(&pool)
         .await
