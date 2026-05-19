@@ -29,6 +29,37 @@ pub use backtest::BacktestExecutor;
 pub use paper::PaperExecutor;
 pub use trader_output::{TraderFailureKind, TraderOutputError};
 
+use sqlx::SqlitePool;
+use tokio::task::JoinHandle;
+
+use crate::eval::watchdog::{self, WatchdogConfig};
+
+/// Engine-side lifecycle hook for the eval-run watchdog. Callers
+/// (`xvision-dashboard::serve`, the long-running CLI daemon) invoke
+/// this once during startup. It performs the one-shot boot sweep
+/// synchronously (so any pre-existing stuck rows are finalized before
+/// the API starts serving traffic) and then spawns the periodic task
+/// for the lifetime of the process.
+///
+/// Returns the [`JoinHandle`] of the background task so the caller can
+/// abort it on shutdown. The handle is `Send + 'static` and safe to
+/// store in app state.
+///
+/// # Errors
+///
+/// Returns the underlying DB error from the boot sweep. If the boot
+/// sweep fails the periodic task is *not* spawned — the caller decides
+/// whether to surface this as a fatal startup error or downgrade to a
+/// warning.
+pub async fn start_watchdog(
+    pool: SqlitePool,
+    config: WatchdogConfig,
+) -> anyhow::Result<JoinHandle<()>> {
+    let store = crate::eval::store::RunStore::new(pool.clone());
+    watchdog::boot_sweep(&pool, &store, &config).await?;
+    Ok(watchdog::spawn(pool, config))
+}
+
 /// Stable failure-class tag for a run-level error. Paper/backtest executors
 /// prefix the persisted `eval_runs.error` string with `[<class>]` so review
 /// and UI consumers can read the class without re-parsing the full message.
