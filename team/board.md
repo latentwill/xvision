@@ -4,15 +4,20 @@
 > verification, and acceptance. This file is conductor-owned; see
 > `team/CONDUCTOR.md`.
 >
-> Last updated: 2026-05-18 conductor sync — third sweep. Harness
-> observability wave 5/7 merged today: #277 (F-1), #294 (F-2),
-> #296 (F-3, +fix #299), #297 (F-4), #298 (F-5). F-6
-> (`harness-typed-mechanical-params`) ready to claim; F-7
-> (`trace-dock-simple-advanced-toggle`) in review at PR #300.
-> Operator's image-build gate lifted earlier today — no more
-> "blocked-on-deploy" tracks in the harness section. Agent CI/CD
-> Phase-1 schema-board / migrate / daemon all landed: #278, #290,
-> #295; shadow-run remains as the only active phase-1 track.
+> Last updated: 2026-05-19 conductor sync — round-4 QA wave decomposed
+> + re-evaluated against fresh merges. 6 contracts (4 P1 + 2 P2).
+> Highest-leverage P1: `harness-payload-blob-write` (unblocks trace
+> dock prompt/response bodies on full_debug — unfinished handoff from
+> PR #282 that #277 picked up the hash-half of but dropped the blob-
+> write half). `eval-broker-error-circuit-breaker` stays P1 because
+> the operator's 2026-05-19 02:33 UTC run still looped despite the
+> post-#314 timestamp (deploy lag OR feedback ignored — safety net
+> needed). `risk-gate-min-notional` revised P1→P2: #314 (Alpaca
+> cost-basis classifier) + #286 (self-healing feedback) now handle
+> the critical failure at the classifier+feedback layer; this contract
+> is the proactive cleanup. Calendar-picker intake in `## Reserved`.
+> Harness wave near closeout: F-1..F-6 all merged (F-6 via #302); F-7
+> in review at PR #300. Agent CI/CD Phase-1 closed out (#315 merged).
 > Previous board: `team/archive/2026-05-16-migration/execution-board-2026-05-13.md`.
 
 V2 work (V2A onboarding + docs, V2B-V4 roadmap) also has its own board:
@@ -22,17 +27,27 @@ V2 work (V2A onboarding + docs, V2B-V4 roadmap) also has its own board:
 
 ### Harness Observability Audit (intake `team/intake/2026-05-18-harness-observability-audit.md`)
 
-F-1..F-5 merged. F-6 ready (no dependencies, parallel-safe with F-7). F-7 in review.
+F-1..F-6 merged (F-6 via PR #302 on 2026-05-19). F-7 in review at PR #300. Wave near closeout.
 
-- [harness-typed-mechanical-params](contracts/harness-typed-mechanical-params.md) - integration - ready - F-6 — typed `MechanicalParams` enum keyed on `manifest.template` (one variant per canonical template + `Custom(Value)` fallback). Adds `#[serde(deny_unknown_fields)]` to `InternBriefing`, `TraderDecision`, `RiskDecision`, `RiskConfig`/`Limits`/`Stops`, `RiskCaps`. Single pre-persist validate seam in `StrategyStore::save`. No migration; wire format unchanged. Parallel-safe with F-7.
 - [trace-dock-simple-advanced-toggle](contracts/trace-dock-simple-advanced-toggle.md) - leaf - pr-open #300 - F-7 — `Simple | Advanced` segmented toggle on both trace surfaces (TraceDock + /agent-runs/<id>). Simple (default) hides `tool.validate_input/output` + `state.transition` and collapses SpanInspector attributes to a one-liner. Recovery spans stay visible in both. Pure frontend.
 
 ### Agent CI/CD Phase 1 (2026-05-18, spec `docs/superpowers/specs/2026-05-18-agent-cicd-control-plane.md`)
 
-Schema-board (#278), markdown→Project migrate (#290), and daemon skeleton (#295) all merged. Shadow-run is the last Phase-1 track.
+Schema-board (#278), markdown→Project migrate (#290), daemon skeleton (#295), and shadow-run (#315) all merged. Phase-1 closed out — `agent-cicd-extract-package` remains deferred to Phase-2.
 
-- [agent-cicd-shadow-run](contracts/agent-cicd-shadow-run.md) - integration - ready - run daemon in shadow against a real 3-5 leaf cohort; ≥90% agreement gate; archived report unblocks live flip. Depends on board-schema + migrate + daemon-skeleton (all merged).
 - [agent-cicd-extract-package](contracts/agent-cicd-extract-package.md) - integration - deferred - Phase-2 work: extract `tools/agent-conductor/` to standalone npm package + `npx agent-conductor init` scaffolder. Deferred until Phase-1 is live and Phase-2 review-routing has merged.
+
+### QA Operator Round 4 (2026-05-19, intake `team/intake/2026-05-19-qa-operator-round-4.md`)
+
+Six tracks decomposed from operator findings on 2026-05-19. Re-evaluated post-#314 (Alpaca min-notional classifier) + #302 (F-6 merged): `risk-gate-min-notional` dropped from P1→P2 because #314+#286 now handle the critical failure mode at the classifier+feedback layer; `eval-broker-error-circuit-breaker` stays P1 because the operator's 2026-05-19 02:33 UTC run still looped despite the post-#314 timestamp (deploy lag OR feedback-ignored — investigation out of scope for the safety-net track). Highest-leverage P1: `harness-payload-blob-write` (trace dock body capture — unfinished from #282 handoff).
+
+- [harness-payload-blob-write](contracts/harness-payload-blob-write.md) - integration - ready - P1 — wire `BlobStore::write` into `emit_model_call_finished` so `full_debug` trace dock actually shows prompt/response bodies. Unfinished handoff from #282 — #277 shipped real hashes, but the blob-write half was dropped. `BlobStore::write` has zero production callers today.
+- [eval-broker-error-circuit-breaker](contracts/eval-broker-error-circuit-breaker.md) - integration - ready - P1 safety net — abort eval run after N=3 consecutive identical `error_class` rejections. Catches the operator's 2026-05-19 loop even though #314+#286 should have prevented it; works for unknown future deterministic broker errors too. Different error classes don't accumulate; success resets the counter.
+- [strategy-edit-top-level-fields](contracts/strategy-edit-top-level-fields.md) - integration - ready - P1 — `PATCH /api/strategy/:id` for `display_name` / `plain_summary` / `asset_universe`. Inline-edit UI on `/strategies/:id` per the no-popup rule. Operator can only fix typos by delete-and-recreate today.
+- [eval-review-400-diagnose](contracts/eval-review-400-diagnose.md) - integration - ready - P1 investigation→fix — repro the silent 400 on the operator's `01KRXY73XAE2NR65YVKJZ28JBK` review request, identify which Validation branch is firing, then either add a remediation hook (per #256 pattern) or fix the frontend's error-body surfacing. Phase-1 status note required before any code lands.
+- [risk-gate-min-notional](contracts/risk-gate-min-notional.md) - integration - ready - P2 (revised from P1) — proactive: new `MinNotional` risk rule vetoes pre-submit when notional < venue minimum, surfaces a clean `BelowVenueMinNotional` veto, and prevents the wasteful broker round-trip. #314+#286 already handle the critical failure mode at the classifier+feedback layer; this is the cleanup pass that also primes the risk crate for other deterministic broker constraints (tick size, lot size).
+- [eval-rerun-from-completed](contracts/eval-rerun-from-completed.md) - integration - ready - P2 — widen the retry route from `failed | cancelled` to also accept `completed`. Frontend `canRetry` widens; button label adapts to "Rerun" vs "Retry" with a distinguishing tooltip.
+- [stale-chunk-import-retry](contracts/stale-chunk-import-retry.md) - leaf - ready - P2 — catch Vite lazy-import chunk-fetch errors after deploy in an `AppErrorBoundary`; hard-reload once per session with a post-reload toast. Defers the proactive build-id polling approach as a follow-up.
 
 ## Deferred
 
@@ -43,8 +58,29 @@ Schema-board (#278), markdown→Project migrate (#290), and daemon skeleton (#29
 
 ## Reserved
 
-No reserved tracks at this time. New work should enter through an intake doc
-or an explicit conductor contract update.
+Awaiting conductor decomposition:
+
+- `team/intake/2026-05-19-calendar-picker.md` — inline date-range picker
+  + canonical-set calendar select on `ScenarioForm.tsx`, implementing the
+  component design package at `docs/design/calendar-picker/`. Structural
+  fix that lets us delete the Qwen-specific normalizer hacks in
+  `wizard_loop.rs::normalize_create_scenario_input`. Component-only
+  scope — no page-layout changes.
+
+## Follow-ups / research needed
+
+- **User-configurable review-agent profile** (raised 2026-05-18 from
+  operator QA round 2; moved 2026-05-19 from `team/board-v2.md` —
+  near-term Settings surface, not a V2-phase roadmap item). The current
+  review/research agent profile hardcodes `anthropic` as its provider.
+  `qa-review-agent-provider-config` shipped a runtime fallback so review
+  still runs on dashboards without Anthropic configured, but the longer
+  arc is a Settings → Review Agents UI where the operator picks the
+  profile (system prompt, provider, model, memory mode) for the review
+  pass. Output before contract: short design note under
+  `docs/superpowers/notes/` scoping the Settings surface + which review
+  passes are configurable (results review only, or also research /
+  autoresearcher passes).
 
 ## Recently Closed
 

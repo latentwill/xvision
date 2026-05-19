@@ -19,17 +19,9 @@ safe to claim in parallel.
 
 ## Follow-ups / research needed
 
-- **User-configurable review-agent profile** (raised 2026-05-18 from
-  operator QA round 2). The current review/research agent profile
-  hardcodes `anthropic` as its provider. `qa-review-agent-provider-config`
-  ships a runtime fallback so review still runs on dashboards without
-  Anthropic configured, but the longer arc is a Settings → Review
-  Agents UI where the operator picks the profile (system prompt,
-  provider, model, memory mode) for the review pass. Ties into the
-  broader "expanding and evaluating agent types" V2 piece. Output
-  before contract: short design note under `docs/superpowers/notes/`
-  scoping the Settings surface + which review passes are configurable
-  (results review only, or also research / autoresearcher passes).
+> The user-configurable review-agent profile follow-up moved to the main
+> board's "Follow-ups / research needed" section on 2026-05-19 — it's a
+> near-term Settings surface, not a V2-phase roadmap item.
 
 - **V2 "walk back"** — research + competitor comparison before scoping.
   What does "walking back" a v2 action (decision/order/agent step) look
