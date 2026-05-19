@@ -910,6 +910,7 @@ mod tests {
                 n_decisions: 4,
             }),
             error: None,
+            behavior: None,
         }
     }
 }

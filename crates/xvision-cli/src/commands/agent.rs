@@ -129,7 +129,7 @@ pub mod get {
                         system_prompt: "Trade.".into(),
                         skill_ids: vec![],
                         max_tokens: Some(2048),
-                        prompt_version: String::new(),
+                        prompt_version: AgentSlot::compute_prompt_version("Trade."),
                     }],
                 },
             )
