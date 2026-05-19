@@ -115,6 +115,7 @@ async fn save_test_strategy(ctx: &ApiContext, agent_id: &str) -> Strategy {
 
             min_warmup_bars: None,
         },
+        hypothesis: None,
         agents: Vec::new(),
         pipeline: Default::default(),
         regime_slot: None,
@@ -582,6 +583,7 @@ async fn save_openrouter_strategy_with_agent_ref(ctx: &ApiContext, strategy_id: 
 
             min_warmup_bars: None,
         },
+        hypothesis: None,
         agents: vec![AgentRef {
             agent_id,
             role: "trader".into(),

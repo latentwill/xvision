@@ -123,6 +123,7 @@ pub fn example_strategies() -> Vec<Strategy> {
                 published_at: None,
                 min_warmup_bars: None,
             },
+            hypothesis: None,
             agents: Vec::new(),
             pipeline: PipelineDef::default(),
             regime_slot: None,
@@ -162,6 +163,7 @@ pub fn example_strategies() -> Vec<Strategy> {
                 published_at: None,
                 min_warmup_bars: None,
             },
+            hypothesis: None,
             agents: Vec::new(),
             pipeline: PipelineDef::default(),
             regime_slot: Some(LLMSlot {
@@ -209,6 +211,7 @@ pub fn example_strategies() -> Vec<Strategy> {
                 published_at: None,
                 min_warmup_bars: None,
             },
+            hypothesis: None,
             agents: Vec::new(),
             pipeline: PipelineDef::default(),
             regime_slot: None,

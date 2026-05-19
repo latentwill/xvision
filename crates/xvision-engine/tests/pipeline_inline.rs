@@ -25,6 +25,7 @@ fn fixture_strategy() -> Strategy {
 
             min_warmup_bars: None,
         },
+        hypothesis: None,
         agents: Vec::new(),
         pipeline: PipelineDef::default(),
         regime_slot: Some(LLMSlot {

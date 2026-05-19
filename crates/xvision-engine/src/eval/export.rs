@@ -588,6 +588,7 @@ mod roundtrip {
                 published_at: None,
                 min_warmup_bars: None,
             },
+            hypothesis: None,
             agents: Vec::new(),
             pipeline: PipelineDef::default(),
             regime_slot: None,

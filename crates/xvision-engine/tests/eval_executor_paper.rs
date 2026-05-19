@@ -63,6 +63,7 @@ fn minimal_strategy() -> Strategy {
 
             min_warmup_bars: None,
         },
+        hypothesis: None,
         agents: Vec::new(),
         pipeline: Default::default(),
         regime_slot: None,

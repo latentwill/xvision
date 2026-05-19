@@ -835,6 +835,7 @@ impl XvisionTools {
             trader_slot: None,
             risk: xvision_engine::strategies::risk::RiskPreset::Balanced.expand(),
             mechanical_params: serde_json::json!({}),
+            hypothesis: None,
         };
 
         // 3. Validate shape.

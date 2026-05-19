@@ -69,6 +69,7 @@ fn build_strategy(agent_id: &str) -> Strategy {
             published_at: None,
             min_warmup_bars: Some(13),
         },
+        hypothesis: None,
         agents: Vec::new(),
         pipeline: Default::default(),
         regime_slot: None,

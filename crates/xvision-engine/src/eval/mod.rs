@@ -10,6 +10,7 @@ pub mod attestation;
 pub mod bars;
 pub mod batch_store;
 pub mod behavior;
+pub mod experiment_store;
 pub mod compare;
 pub mod cost;
 pub mod executor;
