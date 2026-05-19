@@ -4,8 +4,10 @@
 //!
 //! Subcommand registration only at the bottom of the file (`Op::*` →
 //! `run_*` dispatch arm). The `review` sibling lives in
-//! `commands/eval/review.rs`; everything else stays here.
+//! `commands/eval/review.rs`; markdown formatting in `compare_format.rs`;
+//! everything else stays here.
 
+pub mod compare_format;
 pub mod review;
 
 use std::path::PathBuf;
@@ -154,7 +156,8 @@ pub struct ScenariosArgs {
 #[derive(Args, Debug)]
 pub struct CompareArgs {
     /// Two or more run ids (ULIDs) to compare.
-    #[arg(num_args = 2.., required = true)]
+    /// Required unless `--batch` is used as a label with `--runs`.
+    #[arg(num_args = 0..)]
     pub run_ids: Vec<String>,
     /// Override the xvn home directory.
     #[arg(long)]
@@ -163,6 +166,16 @@ pub struct CompareArgs {
     /// metrics-table summary).
     #[arg(long)]
     pub json: bool,
+    /// Emit a GitHub-flavoured Markdown table suitable for drop-in to a PR
+    /// description or chat reply. Aliased `--md`.
+    #[arg(long, visible_alias = "md")]
+    pub markdown: bool,
+    /// Batch id label.  Batch ids are not persisted yet; pass `--runs`
+    /// (positional) with explicit run ids and optionally supply `--batch`
+    /// as a display label.  A future track (`cli-eval-batch-run-wait`)
+    /// will add persistence so `--batch` alone resolves runs automatically.
+    #[arg(long)]
+    pub batch: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -468,6 +481,35 @@ fn print_run_status_line(run: &xvision_engine::eval::run::Run) {
 }
 
 async fn run_compare(args: CompareArgs) -> CliResult<()> {
+    // Validate run ids.
+    // `--batch` without explicit run_ids is a forward-compatible stub: batch
+    // ids are not persisted yet.  Emit a sharp error pointing at the missing
+    // persistence so a follow-up track is obvious.
+    if args.run_ids.len() < 2 {
+        if let Some(batch_id) = &args.batch {
+            if args.run_ids.is_empty() {
+                return Err(CliError {
+                    exit: XvnExit::Usage,
+                    source: anyhow::anyhow!(
+                        "batch ids are not persisted yet; pass --runs <id1> <id2> ... explicitly \
+                         (batch_id={batch_id:?}). A future track (cli-eval-batch-run-wait) will \
+                         add persistence so --batch alone resolves runs."
+                    ),
+                });
+            }
+        }
+        if args.run_ids.len() < 2 {
+            return Err(CliError {
+                exit: XvnExit::Usage,
+                source: anyhow::anyhow!(
+                    "eval compare requires at least two run ids (got {}); \
+                     pass them as positional arguments",
+                    args.run_ids.len()
+                ),
+            });
+        }
+    }
+
     let ctx = open_ctx(args.xvn_home.clone())
         .await
         .exit_with(XvnExit::Upstream)?;
@@ -485,6 +527,21 @@ async fn run_compare(args: CompareArgs) -> CliResult<()> {
             "{}",
             serde_json::to_string_pretty(&report).exit_with(XvnExit::Upstream)?
         );
+        return Ok(());
+    }
+
+    if args.markdown {
+        // Use the batch id as strategy label when provided; fall back to the
+        // first run's agent_id.
+        let label = args.batch.clone().unwrap_or_else(|| {
+            report
+                .runs
+                .first()
+                .map(|r| r.agent_id.clone())
+                .unwrap_or_else(|| "unknown-strategy".into())
+        });
+        let md = compare_format::render_markdown(&report, &label);
+        print!("{md}");
         return Ok(());
     }
 
