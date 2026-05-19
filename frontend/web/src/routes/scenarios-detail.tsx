@@ -171,10 +171,17 @@ function DetailView({
     const tagsChanged =
       parsedTags.length !== s.tags.length ||
       parsedTags.some((t, i) => t !== s.tags[i]);
+    // `notes` is special-cased in `api/scenario.rs::clone`:
+    //   notes: mutations.notes,    // passthrough, NOT unwrap_or(parent)
+    // …whereas `description` / `tags` etc. use
+    // `mutations.X.unwrap_or(parent_s.X)`. Sending null for notes
+    // therefore writes empty notes, not "inherit parent". Always send
+    // the form's current notes value to preserve the prefilled parent
+    // text when the operator leaves it untouched. PR #341 review.
     onClone({
       display_name: cloneDisplayName.trim() || null,
       description: cloneDescription !== s.description ? cloneDescription : null,
-      notes: cloneNotes !== (s.notes ?? "") ? cloneNotes : null,
+      notes: cloneNotes,
       tags: tagsChanged ? parsedTags : null,
       time_window: null,
       asset: null,

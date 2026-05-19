@@ -37,6 +37,13 @@ export function WizardPreviewChart({
   // form had partial values. Gating the render behind an explicit
   // toggle also avoids hammering the preview endpoint while the
   // operator is mid-typing.
+  //
+  // PR #341 code review followup: `shown` is also reset whenever the
+  // operator changes any input. Otherwise the gate only matters the
+  // first time the chart is shown — subsequent input changes would
+  // silently refetch via `enabled: ready && shown`. Resetting forces
+  // the operator to opt back in for each materially-different
+  // preview, which matches the "make it a button" intent.
   const [shown, setShown] = useState(false);
 
   useEffect(() => {
@@ -44,6 +51,13 @@ export function WizardPreviewChart({
       setDebounced({ asset, from, to, granularity, baseline: !!includeBaseline });
     }, DEBOUNCE_MS);
     return () => clearTimeout(t);
+  }, [asset, from, to, granularity, includeBaseline]);
+
+  // Reset the button gate whenever inputs change. The dependency list
+  // mirrors the debounce useEffect above so the chart only stays
+  // visible while inputs are stable.
+  useEffect(() => {
+    setShown(false);
   }, [asset, from, to, granularity, includeBaseline]);
 
   const ready = !!debounced.asset && !!debounced.from && !!debounced.to;
