@@ -14,6 +14,7 @@ use xvision_core::AssetSymbol;
 use xvision_engine::api::eval as api_eval;
 use xvision_engine::api::scenario as api_scenario;
 use xvision_engine::api::{Actor, ApiContext, ApiError};
+use xvision_engine::eval::regime::derive_regime_labels;
 use xvision_engine::eval::scenario::{
     AdjustmentMode, AssetClass, AssetRef, BarGranularity, CalendarRef, Capital, DataSource, Fees, FillModel,
     LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, ReplayMode, Scenario, ScenarioSource,
@@ -86,6 +87,27 @@ pub enum ScenarioOp {
     ///   xvn scenario select --assets ETH/USD,BTC/USD --timeframe 4h --target-decisions 49 --count 4
     ///   xvn scenario select --same-decisions --max-decisions 200 --count 4 --json
     Select(SelectArgs),
+    /// Auto-derive regime labels for one or all scenarios from their bar window.
+    ///
+    /// Writes regime_label, volatility_label, trend_direction, and sets
+    /// regime_derived = true.  Skips scenarios that already have operator-set
+    /// labels (regime_derived = false) unless --force is given.
+    ///
+    /// Examples:
+    ///   xvn scenario classify sc_01JR3PPWB1WE5XKYGEP7NYWRT9
+    ///   xvn scenario classify --all
+    ///   xvn scenario classify sc_01JR3PPWB1WE5XKYGEP7NYWRT9 --force
+    Classify(ClassifyArgs),
+    /// Set operator-authored regime labels on a scenario (regime_derived = false).
+    ///
+    /// All three label flags are optional; omitting one leaves the existing value
+    /// unchanged.  Use --regime, --volatility, --direction to set one or more.
+    ///
+    /// Examples:
+    ///   xvn scenario set-regime sc_01JR3PPWB1WE5XKYGEP7NYWRT9 --regime expansion --volatility high --direction up
+    ///   xvn scenario set-regime sc_01JR3PPWB1WE5XKYGEP7NYWRT9 --regime crash
+    #[command(name = "set-regime")]
+    SetRegime(SetRegimeArgs),
 }
 
 #[derive(Args, Debug)]
@@ -280,6 +302,42 @@ pub struct SelectArgs {
     pub json: bool,
 }
 
+/// Arguments for `xvn scenario classify`.
+#[derive(Args, Debug)]
+pub struct ClassifyArgs {
+    /// Scenario id to classify. Mutually exclusive with `--all`.
+    #[arg(conflicts_with = "all")]
+    pub id: Option<String>,
+
+    /// Classify every scenario with a NULL regime_label (no operator override).
+    /// Mutually exclusive with positional `id`.
+    #[arg(long, conflicts_with = "id")]
+    pub all: bool,
+
+    /// Overwrite even operator-set labels (regime_derived = false).
+    #[arg(long)]
+    pub force: bool,
+}
+
+/// Arguments for `xvn scenario set-regime`.
+#[derive(Args, Debug)]
+pub struct SetRegimeArgs {
+    /// Scenario id.
+    pub id: String,
+
+    /// Broad regime label. One of: trend | chop | crash | expansion | recovery.
+    #[arg(long)]
+    pub regime: Option<String>,
+
+    /// Volatility label. One of: low | normal | high | extreme.
+    #[arg(long)]
+    pub volatility: Option<String>,
+
+    /// Trend direction. One of: up | down | sideways.
+    #[arg(long)]
+    pub direction: Option<String>,
+}
+
 pub async fn run(cmd: ScenarioCmd) -> CliResult<()> {
     let ctx = open_ctx(cmd.xvn_home.clone()).await.map_err(CliError::upstream)?;
     match cmd.op {
@@ -305,6 +363,8 @@ pub async fn run(cmd: ScenarioCmd) -> CliResult<()> {
         ScenarioOp::Tree { id } => run_tree(&ctx, id).await,
         ScenarioOp::Inspect(a) => run_inspect(&ctx, a).await,
         ScenarioOp::Select(a) => run_select(&ctx, a).await,
+        ScenarioOp::Classify(a) => run_classify(&ctx, a).await,
+        ScenarioOp::SetRegime(a) => run_set_regime(&ctx, a).await,
     }
 }
 
@@ -708,7 +768,20 @@ pub fn format_inspect_card(s: &Scenario, run_count: Option<usize>, best_return_p
         out.push_str(&format!("source: cloned_from {}\n", parent_id));
     }
 
-    // TODO: regime/volatility labels — see track #12
+    // Regime labels (migration 021 / track #12).
+    if s.regime_label.is_some() || s.volatility_label.is_some() || s.trend_direction.is_some() {
+        out.push_str("regime:\n");
+        if let Some(ref label) = s.regime_label {
+            let derived = if s.regime_derived { " (auto)" } else { " (operator)" };
+            out.push_str(&format!("  label: {}{}\n", label, derived));
+        }
+        if let Some(ref vol) = s.volatility_label {
+            out.push_str(&format!("  volatility: {}\n", vol));
+        }
+        if let Some(ref dir) = s.trend_direction {
+            out.push_str(&format!("  direction: {}\n", dir));
+        }
+    }
 
     match (run_count, best_return_pct) {
         (Some(count), best) => {
@@ -845,18 +918,30 @@ pub fn select_scenarios(
                 }
             }
 
-            // Regime filter: match against `regime:<label>` tags.
-            // A scenario qualifies when ANY of its regime tags is in the
-            // requested list (OR semantics within a scenario).
+            // Regime filter: match against the first-class `regime_label`
+            // column (migration 021) when the column is populated; fall back
+            // to `regime:<label>` tag prefix match only when the column is
+            // NULL (scenario pre-dates migration 021 or hasn't been classified).
+            // OR semantics within a scenario.
             if !regimes.is_empty() {
-                let labels = scenario_regime_labels(s);
-                let matched = regimes.iter().any(|want| {
-                    labels.iter().any(|l| {
-                        // Accept "bull" matching "trending_bull" (prefix / substring),
-                        // as well as exact matches.
-                        l.eq_ignore_ascii_case(want) || l.contains(want.as_str())
+                let matched = if let Some(ref col_label) = s.regime_label {
+                    // Column is set → use ONLY the column (authoritative).
+                    regimes.iter().any(|want| {
+                        col_label.eq_ignore_ascii_case(want)
+                            || col_label.contains(want.as_str())
                     })
-                });
+                } else {
+                    // Column is NULL → fall back to tag prefix match so
+                    // wave-B scenarios (and any hand-tagged scenarios) keep
+                    // working without needing to run `xvn scenario classify`.
+                    let labels = scenario_regime_labels(s);
+                    regimes.iter().any(|want| {
+                        labels.iter().any(|l| {
+                            // Accept "bull" matching "trending_bull" (prefix / substring).
+                            l.eq_ignore_ascii_case(want) || l.contains(want.as_str())
+                        })
+                    })
+                };
                 if !matched {
                     return false;
                 }
@@ -1058,6 +1143,205 @@ async fn run_select(ctx: &ApiContext, a: SelectArgs) -> CliResult<()> {
     Ok(())
 }
 
+// ---- scenario classify ------------------------------------------------------
+
+/// Validate and canonicalise a regime label string against the documented set.
+fn validate_regime_label(v: &str) -> Result<(), String> {
+    match v {
+        "trend" | "chop" | "crash" | "expansion" | "recovery" => Ok(()),
+        other => Err(format!(
+            "unknown regime_label '{other}'; expected one of: trend | chop | crash | expansion | recovery"
+        )),
+    }
+}
+
+fn validate_volatility_label(v: &str) -> Result<(), String> {
+    match v {
+        "low" | "normal" | "high" | "extreme" => Ok(()),
+        other => Err(format!(
+            "unknown volatility_label '{other}'; expected one of: low | normal | high | extreme"
+        )),
+    }
+}
+
+fn validate_trend_direction(v: &str) -> Result<(), String> {
+    match v {
+        "up" | "down" | "sideways" => Ok(()),
+        other => Err(format!(
+            "unknown trend_direction '{other}'; expected one of: up | down | sideways"
+        )),
+    }
+}
+
+/// Classify a single scenario by id.  Loads bars from the cache (the cache
+/// must have been warmed via `xvn bars fetch`; we don't fetch live here).
+/// Returns `Ok(true)` when labels were written, `Ok(false)` when skipped.
+async fn classify_one(ctx: &ApiContext, id: &str, force: bool) -> CliResult<bool> {
+    let s = api_scenario::get(ctx, id)
+        .await
+        .map_err(|e| api_to_cli("scenario classify", e))?;
+
+    // Skip operator-set labels unless --force.
+    if !force && !s.regime_derived && s.regime_label.is_some() {
+        println!("skipped {id} (operator-set labels; use --force to overwrite)");
+        return Ok(false);
+    }
+
+    // Try to load bars from cache; if not cached, skip gracefully.
+    let asset_pair = s
+        .asset
+        .first()
+        .map(|a| a.venue_symbol.as_str())
+        .unwrap_or("BTC/USD");
+
+    let bars = xvision_engine::eval::bars::load_bars(
+        ctx,
+        &xvision_engine::eval::bars::BarCacheArgs {
+            cache_key: s.bar_cache_policy.cache_key.clone(),
+            asset_pair: asset_pair.to_string(),
+            granularity: s.granularity,
+            start: s.time_window.start,
+            end: s.time_window.end,
+            data_source_tag: "alpaca-historical-v1".to_string(),
+        },
+    )
+    .await;
+
+    let bars = match bars {
+        Ok(b) => b,
+        Err(e) => {
+            println!("skipped {id}: bars not available ({e}); run `xvn bars fetch` first");
+            return Ok(false);
+        }
+    };
+
+    if bars.len() < 2 {
+        println!("skipped {id}: fewer than 2 bars in cache (window too short for classification)");
+        return Ok(false);
+    }
+
+    let labels = derive_regime_labels(&bars);
+
+    // regime_labels returns all-None for < 2 bars, but we checked above.
+    let regime_label = labels.regime_label.as_deref();
+    let volatility_label = labels.volatility_label.as_deref();
+    let trend_direction = labels.trend_direction.as_deref();
+
+    xvision_engine::eval::scenario_store::update_regime_labels(
+        ctx,
+        id,
+        regime_label,
+        volatility_label,
+        trend_direction,
+        true, // regime_derived = true
+    )
+    .await
+    .map_err(|e| api_to_cli("scenario classify (write)", e))?;
+
+    println!(
+        "classified {id}: regime={} vol={} direction={}",
+        regime_label.unwrap_or("null"),
+        volatility_label.unwrap_or("null"),
+        trend_direction.unwrap_or("null"),
+    );
+    Ok(true)
+}
+
+async fn run_classify(ctx: &ApiContext, a: ClassifyArgs) -> CliResult<()> {
+    if a.all {
+        // Classify every scenario that either has no regime_label (NULL) or
+        // has auto-derived labels and force is set.
+        let all = api_scenario::list(
+            ctx,
+            api_scenario::ListScenariosFilter {
+                source: None,
+                tags: vec![],
+                include_archived: false,
+                parent_scenario_id: None,
+            },
+        )
+        .await
+        .map_err(|e| api_to_cli("scenario classify --all", e))?;
+
+        let mut classified = 0usize;
+        let mut skipped = 0usize;
+        for s in &all {
+            // Without --force: only classify scenarios with no labels yet.
+            if !a.force && !s.regime_derived && s.regime_label.is_some() {
+                skipped += 1;
+                continue;
+            }
+            match classify_one(ctx, &s.id, a.force).await {
+                Ok(true) => classified += 1,
+                Ok(false) => skipped += 1,
+                Err(e) => {
+                    eprintln!("error classifying {}: {}", s.id, e);
+                    skipped += 1;
+                }
+            }
+        }
+        println!("done: {classified} classified, {skipped} skipped");
+        return Ok(());
+    }
+
+    // Single id mode.
+    let id = a.id.ok_or_else(|| {
+        CliError::usage(anyhow::anyhow!("specify a scenario id or --all"))
+    })?;
+    classify_one(ctx, &id, a.force).await?;
+    Ok(())
+}
+
+// ---- scenario set-regime ----------------------------------------------------
+
+async fn run_set_regime(ctx: &ApiContext, a: SetRegimeArgs) -> CliResult<()> {
+    // Validate provided values before touching the DB.
+    if let Some(ref v) = a.regime {
+        validate_regime_label(v).map_err(|e| CliError::usage(anyhow::anyhow!("{e}")))?;
+    }
+    if let Some(ref v) = a.volatility {
+        validate_volatility_label(v).map_err(|e| CliError::usage(anyhow::anyhow!("{e}")))?;
+    }
+    if let Some(ref v) = a.direction {
+        validate_trend_direction(v).map_err(|e| CliError::usage(anyhow::anyhow!("{e}")))?;
+    }
+
+    if a.regime.is_none() && a.volatility.is_none() && a.direction.is_none() {
+        return Err(CliError::usage(anyhow::anyhow!(
+            "specify at least one of --regime, --volatility, --direction"
+        )));
+    }
+
+    // Fetch current state to merge unset flags with existing values.
+    let current = api_scenario::get(ctx, &a.id)
+        .await
+        .map_err(|e| api_to_cli("scenario set-regime", e))?;
+
+    let regime_label = a.regime.as_deref().or(current.regime_label.as_deref());
+    let volatility_label = a.volatility.as_deref().or(current.volatility_label.as_deref());
+    let trend_direction = a.direction.as_deref().or(current.trend_direction.as_deref());
+
+    xvision_engine::eval::scenario_store::update_regime_labels(
+        ctx,
+        &a.id,
+        regime_label,
+        volatility_label,
+        trend_direction,
+        false, // regime_derived = false → operator-set
+    )
+    .await
+    .map_err(|e| api_to_cli("scenario set-regime (write)", e))?;
+
+    println!(
+        "set regime labels for {}: regime={} vol={} direction={}",
+        a.id,
+        regime_label.unwrap_or("null"),
+        volatility_label.unwrap_or("null"),
+        trend_direction.unwrap_or("null"),
+    );
+    Ok(())
+}
+
 // NOTE: `xvn scenario set create` (persisted scenario sets) is deliberately
 // deferred — it requires a new DB table (`scenario_sets`, `scenario_set_members`)
 // and a migration reservation.  See track #12 / a dedicated follow-up track.
@@ -1210,6 +1494,10 @@ pub mod select {
                 data_fetched_at: None,
             },
             warmup_bars,
+            regime_label: None,
+            volatility_label: None,
+            trend_direction: None,
+            regime_derived: false,
             created_at: Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
             created_by: "test".to_string(),
             archived_at: None,
@@ -1414,6 +1702,47 @@ pub mod select {
         assert_eq!(rows.len(), 2);
     }
 
+    // ── regime_label column matching (migration 021) ─────────────────────
+
+    #[test]
+    fn regime_column_match_takes_priority_over_tag_match() {
+        // Scenario has regime_label = "expansion" in the column, but its tag
+        // says "bear" — column wins and it should match "expansion", not "bear".
+        let mut s = make_scenario("sc1", "ETH", "1h", 300 * 3_600, 200, &["bear"]);
+        s.regime_label = Some("expansion".to_string());
+
+        let rows_expansion =
+            select_scenarios(&[s.clone()], &[], None, &["expansion".to_string()], Some(100), false, None, 4)
+                .unwrap();
+        assert_eq!(rows_expansion.len(), 1, "column 'expansion' should match");
+
+        // Bear tag should NOT match since column overrides.
+        let rows_bear =
+            select_scenarios(&[s], &[], None, &["bear".to_string()], Some(100), false, None, 4).unwrap();
+        assert!(rows_bear.is_empty(), "tag 'bear' should not match when column says 'expansion'");
+    }
+
+    #[test]
+    fn tag_fallback_when_column_is_null() {
+        // Scenario has no regime_label column (None), but has regime tag → tag fallback.
+        let s = make_scenario("sc1", "ETH", "1h", 300 * 3_600, 200, &["trending_bull"]);
+        assert!(s.regime_label.is_none());
+
+        let rows =
+            select_scenarios(&[s], &[], None, &["bull".to_string()], Some(100), false, None, 4).unwrap();
+        assert_eq!(rows.len(), 1, "tag fallback should match 'bull' substring in 'trending_bull'");
+    }
+
+    #[test]
+    fn scenario_without_regime_excluded_when_regime_filter_set() {
+        // No regime in column AND no regime tag → excluded when filter is active.
+        let s = make_scenario("sc1", "ETH", "1h", 300 * 3_600, 200, &[]);
+        let rows =
+            select_scenarios(&[s], &[], None, &["expansion".to_string()], Some(100), false, None, 4)
+                .unwrap();
+        assert!(rows.is_empty());
+    }
+
     // ── select subcommand is registered ──────────────────────────────────
 
     #[test]
@@ -1426,5 +1755,61 @@ pub mod select {
             select.is_some(),
             "`xvn scenario select` subcommand must be registered"
         );
+    }
+
+    // ── classify and set-regime subcommands are registered ───────────────
+
+    #[test]
+    fn scenario_classify_subcommand_registered() {
+        use clap::CommandFactory;
+        let cmd = crate::Cli::command();
+        let scenario = cmd.find_subcommand("scenario").expect("scenario subcommand");
+        let classify = scenario.find_subcommand("classify");
+        assert!(
+            classify.is_some(),
+            "`xvn scenario classify` subcommand must be registered"
+        );
+    }
+
+    #[test]
+    fn scenario_set_regime_subcommand_registered() {
+        use clap::CommandFactory;
+        let cmd = crate::Cli::command();
+        let scenario = cmd.find_subcommand("scenario").expect("scenario subcommand");
+        let set_regime = scenario.find_subcommand("set-regime");
+        assert!(
+            set_regime.is_some(),
+            "`xvn scenario set-regime` subcommand must be registered"
+        );
+    }
+
+    // ── validate_regime_label ──────────────────────────────────────────────
+
+    #[test]
+    fn valid_regime_labels_accepted() {
+        for label in &["trend", "chop", "crash", "expansion", "recovery"] {
+            assert!(super::validate_regime_label(label).is_ok(), "expected '{label}' to be valid");
+        }
+    }
+
+    #[test]
+    fn invalid_regime_label_rejected() {
+        assert!(super::validate_regime_label("bull").is_err());
+        assert!(super::validate_regime_label("bear").is_err());
+        assert!(super::validate_regime_label("").is_err());
+    }
+
+    #[test]
+    fn valid_volatility_labels_accepted() {
+        for label in &["low", "normal", "high", "extreme"] {
+            assert!(super::validate_volatility_label(label).is_ok());
+        }
+    }
+
+    #[test]
+    fn valid_trend_directions_accepted() {
+        for dir in &["up", "down", "sideways"] {
+            assert!(super::validate_trend_direction(dir).is_ok());
+        }
     }
 }
