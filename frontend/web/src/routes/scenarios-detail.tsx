@@ -100,6 +100,7 @@ export function ScenariosDetailRoute() {
       <Topbar
         title={q.data?.display_name ?? "Scenario"}
         sub={q.isPending ? "Loading…" : q.isError ? "Error" : id}
+        back={{ to: "/scenarios", label: "Back to scenarios" }}
       />
 
       {q.isPending ? (

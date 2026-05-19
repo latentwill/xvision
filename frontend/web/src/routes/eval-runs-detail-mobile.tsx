@@ -94,6 +94,14 @@ export function MobileEvalRunDetail({
 
   return (
     <div className="-mx-4 -mt-4 flex flex-col min-h-0">
+      <Link
+        to="/eval-runs"
+        data-testid="mobile-detail-back"
+        className="px-4 pt-3 pb-1 inline-flex items-center gap-1 text-[12px] text-text-3 hover:text-text transition-colors"
+      >
+        <span aria-hidden>←</span>
+        <span>Back to runs</span>
+      </Link>
       <LiveStrip
         state={stripState}
         isLive={isLive}

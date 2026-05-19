@@ -50,6 +50,7 @@ function InspectorPage({ id }: { id: string }) {
     <>
       <Topbar
         title="Inspector"
+        back={{ to: "/strategies", label: "Back to strategies" }}
         sub={
           strategyQ.data ? (
             <>

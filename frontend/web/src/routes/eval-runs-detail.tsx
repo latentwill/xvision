@@ -139,7 +139,11 @@ export function EvalRunDetailRoute() {
     if (isPhone) return <MobileEvalRunDetailLoading id={id} />;
     return (
       <>
-        <Topbar title="Run detail" sub={id ? id : "Loading…"} />
+        <Topbar
+          title="Run detail"
+          sub={id ? id : "Loading…"}
+          back={{ to: "/eval-runs", label: "Back to runs" }}
+        />
         <Card className="p-6 animate-pulse">
           <div className="h-5 w-72 bg-surface-elev rounded mb-3" />
           <div className="h-4 w-48 bg-surface-elev rounded" />
@@ -160,7 +164,11 @@ export function EvalRunDetailRoute() {
     }
     return (
       <>
-        <Topbar title="Run detail" sub={id} />
+        <Topbar
+          title="Run detail"
+          sub={id}
+          back={{ to: "/eval-runs", label: "Back to runs" }}
+        />
         <ErrorState err={q.error} onRetry={() => q.refetch()} runId={id} />
       </>
     );
@@ -196,6 +204,7 @@ export function EvalRunDetailRoute() {
       <Topbar
         title={labels.title}
         sub={`${labels.subtitle} · ${disambiguator}`}
+        back={{ to: "/eval-runs", label: "Back to runs" }}
       />
 
       <SummaryCard

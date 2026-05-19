@@ -80,7 +80,11 @@ export function AgentRunDetailRoute() {
   if (q.isPending) {
     return (
       <>
-        <Topbar title="Agent run" sub={runId || "Loading…"} />
+        <Topbar
+          title="Agent run"
+          sub={runId || "Loading…"}
+          back={{ to: "/eval-runs", label: "Back to runs" }}
+        />
         <Card className="p-6 animate-pulse">
           <div className="h-5 w-72 bg-surface-elev rounded mb-3" />
         </Card>
@@ -95,7 +99,11 @@ export function AgentRunDetailRoute() {
         : String(q.error);
     return (
       <>
-        <Topbar title="Agent run" sub={runId} />
+        <Topbar
+          title="Agent run"
+          sub={runId}
+          back={{ to: "/eval-runs", label: "Back to runs" }}
+        />
         <Card className="p-6 text-text-2">{message}</Card>
       </>
     );
@@ -108,6 +116,7 @@ export function AgentRunDetailRoute() {
     <>
       <Topbar
         title="Agent run"
+        back={{ to: "/eval-runs", label: "Back to runs" }}
         sub={
           <>
             <span
