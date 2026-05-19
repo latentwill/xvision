@@ -74,8 +74,35 @@ pub async fn get(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<RunDetail>, DashboardError> {
+    // Burst-poll absorption: the UI's eval-run-detail view tail-polls this
+    // route at 2s while a run is in-flight (and multiple tabs / sibling
+    // widgets compound the load — the 2026-05-19 api_audit logged 890
+    // `get_run` calls vs 64 `start` calls). A 500ms TTL cache collapses
+    // concurrent fetches into a single DB read without ever surfacing
+    // meaningfully stale data. Terminal runs are never cached — they're
+    // immutable, so the engine's `RunStore::get` is already a cheap read,
+    // and bypassing here keeps invalidation-on-state-change correctness
+    // simple (transition into terminal status always re-fetches fresh).
+    if let Some(cached) = state.eval_run_cache_get(&id) {
+        if !is_terminal_status(&cached.summary.status) {
+            return Ok(Json(cached));
+        }
+        // Cached value just transitioned to terminal between writes —
+        // fall through, fetch fresh, and don't reinsert.
+    }
+
     let detail = eval::get_run(&state.api_context(), &id).await?;
+    if !is_terminal_status(&detail.summary.status) {
+        state.eval_run_cache_put(id, detail.clone());
+    }
     Ok(Json(detail))
+}
+
+/// Centralized predicate matching the frontend's `isTerminalStatus`
+/// (`completed | failed | cancelled`). Lifted here so the cache-bypass
+/// rule and any future caller share one source of truth.
+fn is_terminal_status(status: &str) -> bool {
+    matches!(status, "completed" | "failed" | "cancelled")
 }
 
 /// `GET /api/eval/runs/:id/export` — full `EvalRunExport` snapshot of a
@@ -95,6 +122,7 @@ pub async fn delete_run(
     Path(id): Path<String>,
 ) -> Result<StatusCode, DashboardError> {
     eval::delete(&state.api_context(), &id).await?;
+    state.eval_run_cache_invalidate(&id);
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -103,6 +131,10 @@ pub async fn cancel_run(
     Path(id): Path<String>,
 ) -> Result<Json<RunSummary>, DashboardError> {
     let run = eval::cancel(&state.api_context(), &id).await?;
+    // Cancel flips the run to a terminal state — drop any non-terminal
+    // entry the burst-poll cache may have stashed so the next read fetches
+    // fresh and the UI sees the new status promptly.
+    state.eval_run_cache_invalidate(&id);
     Ok(Json(eval::summarise_run(run)))
 }
 
