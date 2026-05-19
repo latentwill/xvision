@@ -876,12 +876,27 @@ fn validate_eval_trader_source(
     strategy: &crate::strategies::Strategy,
     agent_slots: &[ResolvedAgentSlot],
 ) -> ApiResult<()> {
+    // QA22 / `strategy-require-at-least-one-agent`: empty `agents`
+    // hard-blocks at the eval boundary, regardless of legacy slot
+    // contents. The CLI `xvn strategy create` path already migrates
+    // legacy template slots to AgentRefs before save, so newly
+    // created strategies arrive here with agents populated. Old
+    // strategies stored with only `trader_slot` filled are kept
+    // runnable via the fallback below to avoid orphaning prod data,
+    // but the operator-facing error names the missing-agent
+    // condition first.
+    if strategy.agents.is_empty() && strategy.trader_slot.is_none() {
+        return Err(ApiError::Validation(format!(
+            "strategy `{}` has no agent attached. At least one agent (with a `trader` role) is required to run an eval. Attach an agent in the Strategy Inspector or via `xvn agent attach`.",
+            strategy.manifest.id
+        )));
+    }
     if agent_slots.is_empty() {
         if strategy.trader_slot.is_some() {
             return Ok(());
         }
         return Err(ApiError::Validation(format!(
-            "eval requires a trader output source for strategy `{}`. Add a legacy trader slot or attach an agent with role `trader`.",
+            "eval requires a trader output source for strategy `{}`. Attach an agent with role `trader`.",
             strategy.manifest.id
         )));
     }
@@ -2499,5 +2514,32 @@ mod tests {
         }];
 
         validate_eval_trader_source(&strategy, &agent_slots).unwrap();
+    }
+
+    #[test]
+    fn eval_trader_source_rejects_empty_agents_with_no_legacy_slots() {
+        // QA22 / `strategy-require-at-least-one-agent`: when the
+        // strategy has neither attached agents nor a legacy
+        // trader_slot, the eval boundary names the missing-agent
+        // condition explicitly (not the generic "trader output
+        // source" wording) so operators know which fix to make.
+        let legacy_slot = slot(Some("openrouter"), None, "anthropic.claude-sonnet-4.6");
+        let mut strategy = strategy_with_legacy_slot(legacy_slot);
+        strategy.agents.clear();
+        strategy.regime_slot = None;
+        strategy.intern_slot = None;
+        strategy.trader_slot = None;
+
+        let err = validate_eval_trader_source(&strategy, &[]).unwrap_err();
+        let msg = err.to_string();
+
+        assert!(
+            msg.contains("no agent attached"),
+            "expected missing-agent message, got {msg}"
+        );
+        assert!(
+            msg.contains("Attach an agent"),
+            "expected attach-agent remediation, got {msg}"
+        );
     }
 }

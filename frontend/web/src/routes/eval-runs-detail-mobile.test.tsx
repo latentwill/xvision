@@ -194,7 +194,9 @@ describe("EvalRunDetailRoute (mobile layout)", () => {
     expect(await screen.findByText("COMPLETED")).toBeInTheDocument();
     expect(screen.getAllByText("Mean reversion V3").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Flash crash 2024").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("run 01LIVE").length).toBeGreaterThan(0);
+    // Full eval id is surfaced as its own row in the hero (no `run ` prefix
+    // after QA22 / `eval-id-resurface-no-truncate`).
+    expect(screen.getAllByText("01LIVE").length).toBeGreaterThan(0);
 
     // Tab bar: four tabs as the design specifies
     const tablist = screen.getByRole("tablist");
@@ -285,7 +287,13 @@ describe("EvalRunDetailRoute (mobile layout)", () => {
     await waitFor(() =>
       expect(meta.textContent ?? "").toMatch(/Run #2\/2/),
     );
-    expect(meta.textContent ?? "").toMatch(/run 01LIVE/);
+    // Full eval id moved out of the meta strip and is rendered (untruncated)
+    // immediately below the strategy-name title. See QA22 /
+    // `eval-id-resurface-no-truncate`.
+    const idEl = await screen.findByTestId("mobile-eval-run-id");
+    expect(idEl.textContent).toBe("01LIVE");
+    // Old meta strip no longer carries the run id.
+    expect(meta.textContent ?? "").not.toMatch(/01LIVE/);
     // The redundant `strategy <id>` chip is gone from the mobile hero.
     expect(meta.textContent ?? "").not.toMatch(/strategy mean-reversion-v3/);
   });
