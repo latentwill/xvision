@@ -137,9 +137,7 @@ fn daily_bars(count: usize) -> Vec<Ohlcv> {
 /// Build a `LlmResponse` carrying a single JSON text block — the trader
 /// output the executor's `TraderOutput::parse_response` expects.
 fn trader_resp(action: &str) -> LlmResponse {
-    let body = format!(
-        r#"{{"action":"{action}","conviction":0.7,"justification":"test {action}"}}"#
-    );
+    let body = format!(r#"{{"action":"{action}","conviction":0.7,"justification":"test {action}"}}"#);
     LlmResponse {
         content: vec![ContentBlock::Text { text: body }],
         stop_reason: StopReason::EndTurn,
@@ -157,14 +155,12 @@ fn sequenced_dispatch(actions: &[&str]) -> Arc<dyn LlmDispatch> {
 async fn count_notes_with_prefix(store: &RunStore, run_id: &str, prefix: &str) -> i64 {
     let pool = store_pool(store);
     let pattern = format!("{prefix}%");
-    sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM supervisor_notes WHERE run_id = ? AND content LIKE ?",
-    )
-    .bind(run_id)
-    .bind(pattern)
-    .fetch_one(&pool)
-    .await
-    .unwrap()
+    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM supervisor_notes WHERE run_id = ? AND content LIKE ?")
+        .bind(run_id)
+        .bind(pattern)
+        .fetch_one(&pool)
+        .await
+        .unwrap()
 }
 
 async fn fetch_note_contents(store: &RunStore, run_id: &str) -> Vec<(String, String, String)> {
@@ -346,8 +342,7 @@ async fn long_open_then_short_open_one_step_flip_blocks_with_flat() {
     );
 
     // supervisor_notes carries exactly one `one-step flip blocked` row.
-    let flip_count =
-        count_notes_with_prefix(&store, &run.id, "one-step flip blocked").await;
+    let flip_count = count_notes_with_prefix(&store, &run.id, "one-step flip blocked").await;
     assert_eq!(
         flip_count, 1,
         "1 one-step-flip rewrite must produce 1 supervisor_notes row",

@@ -1240,6 +1240,7 @@ impl WizardLoop {
                     // request time (q15 §1).
                     max_tokens: None,
                     prompt_version: String::new(),
+                    inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
                 }],
             },
         )

@@ -555,6 +555,7 @@ async fn save_openrouter_strategy_with_agent_ref(ctx: &ApiContext, strategy_id: 
                 skill_ids: vec![],
                 max_tokens: Some(4096),
                 prompt_version: String::new(),
+                inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
             }],
         })
         .await

@@ -119,10 +119,7 @@ pub enum PositionState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GuardrailDecision {
     Allow,
-    RewriteTo {
-        action: Action,
-        reason: GuardrailReason,
-    },
+    RewriteTo { action: Action, reason: GuardrailReason },
 }
 
 /// Reason tag for the supervisor note. Tags are stable strings the
@@ -199,8 +196,7 @@ pub fn classify(
     // first match above already wins.
     if matches!(position_state, PositionState::Flat) {
         match (action, last_open_direction) {
-            (Action::ShortOpen, Some(Action::LongOpen))
-            | (Action::LongOpen, Some(Action::ShortOpen)) => {
+            (Action::ShortOpen, Some(Action::LongOpen)) | (Action::LongOpen, Some(Action::ShortOpen)) => {
                 return GuardrailDecision::RewriteTo {
                     action: Action::Flat,
                     reason: GuardrailReason::OneStepFlipBlocked,
@@ -276,11 +272,7 @@ mod tests {
 
     #[test]
     fn short_open_into_existing_short_rewrites_to_hold() {
-        let out = classify(
-            Action::ShortOpen,
-            PositionState::Short,
-            Some(Action::ShortOpen),
-        );
+        let out = classify(Action::ShortOpen, PositionState::Short, Some(Action::ShortOpen));
         assert_eq!(
             out,
             GuardrailDecision::RewriteTo {
@@ -305,11 +297,7 @@ mod tests {
 
     #[test]
     fn long_open_after_short_open_rewrites_to_flat() {
-        let out = classify(
-            Action::LongOpen,
-            PositionState::Short,
-            Some(Action::ShortOpen),
-        );
+        let out = classify(Action::LongOpen, PositionState::Short, Some(Action::ShortOpen));
         assert_eq!(
             out,
             GuardrailDecision::RewriteTo {
@@ -358,11 +346,7 @@ mod tests {
         // Executor lost the live position (same-bar close) but we still
         // know the prior open was long; emitting short_open should be
         // blocked as a flip.
-        let out = classify(
-            Action::ShortOpen,
-            PositionState::Flat,
-            Some(Action::LongOpen),
-        );
+        let out = classify(Action::ShortOpen, PositionState::Flat, Some(Action::LongOpen));
         assert_eq!(
             out,
             GuardrailDecision::RewriteTo {

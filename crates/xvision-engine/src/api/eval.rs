@@ -947,6 +947,7 @@ async fn resolve_agent_slots(
             role: agent_ref.role.clone(),
             slot: agent_slot_to_llm_slot(&agent_ref.role, slot),
             max_tokens: slot.resolve_max_tokens(),
+            inputs_policy: slot.inputs_policy,
         });
     }
     Ok(out)
@@ -2110,6 +2111,7 @@ mod tests {
                 "anthropic.claude-sonnet-4.6",
             ),
             max_tokens: Some(4096),
+            inputs_policy: crate::agents::InputsPolicy::Raw,
         }];
 
         let slots = runtime_slots(&strategy, &agent_slots);
@@ -2149,6 +2151,7 @@ mod tests {
                 "anthropic.claude-sonnet-4.6",
             ),
             max_tokens: Some(4096),
+            inputs_policy: crate::agents::InputsPolicy::Raw,
         }];
 
         let err = validate_eval_trader_source(&strategy, &agent_slots).unwrap_err();
@@ -2180,6 +2183,7 @@ mod tests {
                 "anthropic.claude-sonnet-4.6",
             ),
             max_tokens: Some(4096),
+            inputs_policy: crate::agents::InputsPolicy::Raw,
         }];
 
         validate_eval_trader_source(&strategy, &agent_slots).unwrap();

@@ -25,6 +25,7 @@ use xvision_data::fixtures::load_ohlcv_fixture;
 use crate::agent::llm::LlmDispatch;
 use crate::agent::observability::ObsEmitter;
 use crate::agent::pipeline::{run_pipeline, PipelineInputs, ResolvedAgentSlot};
+use crate::agents::InputsPolicy;
 use crate::api::chart::{
     ChartEquityPoint, HoldMarker, LiveDecisionRow, MarkerEvent, RunChartEvent, RunEventBus, TradeMarker,
     TradeSide,
@@ -344,6 +345,12 @@ impl BacktestExecutor {
         let combined_bars: Vec<&Ohlcv> = self.warmup_bars.iter().chain(bars.iter()).collect();
         let history_window = scenario.warmup_bars as usize;
 
+        // F-6: per-run seed-sanitization policy. Mirror of the paper
+        // executor path; `Raw` (default) reproduces the pre-F-6 JSON
+        // byte-for-byte so this branch is a no-op for every existing
+        // scenario+strategy combination that didn't opt into `Causal`.
+        let inputs_policy = resolve_inputs_policy(agent_slots);
+
         let initial = scenario.capital.initial;
         let slip_bps = match &scenario.venue.slippage {
             SlippageModel::Linear { bps } => *bps as f64,
@@ -406,36 +413,50 @@ impl BacktestExecutor {
             // `history_window` real prior bars (the QA15 fix).
             let combined_idx = warmup_count + i;
             let history_start = combined_idx.saturating_sub(history_window);
-            let bar_history: Vec<serde_json::Value> = combined_bars[history_start..combined_idx]
-                .iter()
-                .map(|b| ohlcv_to_json(b))
-                .collect();
+            let history_slice: &[&Ohlcv] = &combined_bars[history_start..combined_idx];
+            let bar_history = build_bar_history(history_slice, inputs_policy);
 
-            let seed = serde_json::json!({
-                "decision_index": decision_idx,
-                "asset": asset,
-                "timestamp": bar.timestamp,
-                "market_data": {
+            // F-6: `Causal` drops `decision_index` + `timestamp` from
+            // both the top-level seed and the current-bar inline.
+            // `Raw` / `Oracle` keep the original shape byte-for-byte
+            // — the regression-guard test pins this.
+            let current_bar_json = ohlcv_to_json(bar, inputs_policy);
+            let seed = match inputs_policy {
+                InputsPolicy::Raw | InputsPolicy::Oracle => serde_json::json!({
+                    "decision_index": decision_idx,
                     "asset": asset,
-                    "current_bar": {
-                        "timestamp": bar.timestamp,
-                        "open": bar.open,
-                        "high": bar.high,
-                        "low": bar.low,
-                        "close": bar.close,
-                        "volume": bar.volume,
+                    "timestamp": bar.timestamp,
+                    "market_data": {
+                        "asset": asset,
+                        "current_bar": current_bar_json,
+                        "next_bar_open": next_bar_open,
+                        "reference_price_usd": bar.close,
+                        "reference_price_source": "eval_bar.close",
+                        "bar_history": bar_history,
                     },
-                    "next_bar_open": next_bar_open,
-                    "reference_price_usd": bar.close,
-                    "reference_price_source": "eval_bar.close",
-                    "bar_history": bar_history,
-                },
-                "portfolio_state": {
-                    "position_size": position,
-                    "equity": equity,
-                    "mark_price": bar.close,
-                },
-            });
+                    "portfolio_state": {
+                        "position_size": position,
+                        "equity": equity,
+                        "mark_price": bar.close,
+                    },
+                }),
+                InputsPolicy::Causal => serde_json::json!({
+                    "asset": asset,
+                    "market_data": {
+                        "asset": asset,
+                        "current_bar": current_bar_json,
+                        "next_bar_open": next_bar_open,
+                        "reference_price_usd": bar.close,
+                        "reference_price_source": "eval_bar.close",
+                        "bar_history": bar_history,
+                    },
+                    "portfolio_state": {
+                        "position_size": position,
+                        "equity": equity,
+                        "mark_price": bar.close,
+                    },
+                }),
+            };
 
             let outs = run_pipeline(PipelineInputs {
                 strategy,
@@ -487,13 +508,8 @@ impl BacktestExecutor {
             let applied_action: String = match &decision {
                 GuardrailDecision::Allow => parsed.action.clone(),
                 GuardrailDecision::RewriteTo { action, reason } => {
-                    let note = supervisor_note_content(
-                        *reason,
-                        original_action,
-                        *action,
-                        &asset,
-                        decision_idx,
-                    );
+                    let note =
+                        supervisor_note_content(*reason, original_action, *action, &asset, decision_idx);
                     store
                         .record_supervisor_note(&run.id, "guard", "warn", &note)
                         .await?;
@@ -903,16 +919,60 @@ fn fill_side_for_action(action: &str, pre_fill_position: f64) -> &'static str {
 /// Serialize an Ohlcv bar as the same JSON shape used for
 /// `market_data.current_bar` so `bar_history` entries are
 /// homogeneous with the current-bar shape the trader prompt already
-/// knows about.
-fn ohlcv_to_json(bar: &Ohlcv) -> serde_json::Value {
-    serde_json::json!({
-        "timestamp": bar.timestamp,
-        "open": bar.open,
-        "high": bar.high,
-        "low": bar.low,
-        "close": bar.close,
-        "volume": bar.volume,
-    })
+/// knows about. F-6: under `Causal` we drop `timestamp` so the
+/// trader LLM can't accidentally key on a wall-clock label.
+fn ohlcv_to_json(bar: &Ohlcv, policy: InputsPolicy) -> serde_json::Value {
+    match policy {
+        InputsPolicy::Raw | InputsPolicy::Oracle => serde_json::json!({
+            "timestamp": bar.timestamp,
+            "open": bar.open,
+            "high": bar.high,
+            "low": bar.low,
+            "close": bar.close,
+            "volume": bar.volume,
+        }),
+        InputsPolicy::Causal => serde_json::json!({
+            "open": bar.open,
+            "high": bar.high,
+            "low": bar.low,
+            "close": bar.close,
+            "volume": bar.volume,
+        }),
+    }
+}
+
+/// Build the `bar_history` slice. Mirror of `paper::build_bar_history`
+/// — kept in lock-step so the two executor paths produce identical
+/// JSON under the same policy.
+fn build_bar_history(bars: &[&Ohlcv], policy: InputsPolicy) -> Vec<serde_json::Value> {
+    match policy {
+        InputsPolicy::Raw | InputsPolicy::Oracle => bars.iter().map(|b| ohlcv_to_json(b, policy)).collect(),
+        InputsPolicy::Causal => bars
+            .iter()
+            .enumerate()
+            .map(|(i, b)| {
+                serde_json::json!({
+                    "bar_index": i,
+                    "open": b.open,
+                    "high": b.high,
+                    "low": b.low,
+                    "close": b.close,
+                    "volume": b.volume,
+                })
+            })
+            .collect(),
+    }
+}
+
+/// Mirror of `paper::resolve_inputs_policy`. Sourced from the
+/// trader-role `ResolvedAgentSlot`; defaults to `Raw` so legacy
+/// strategy shapes (no attached agents) keep today's behavior.
+fn resolve_inputs_policy(agent_slots: &[ResolvedAgentSlot]) -> InputsPolicy {
+    agent_slots
+        .iter()
+        .find(|r| canonical_role(&r.role) == "trader")
+        .map(|r| r.inputs_policy)
+        .unwrap_or(InputsPolicy::Raw)
 }
 
 #[cfg(test)]
@@ -1034,6 +1094,7 @@ mod tests {
                 model: Some(model.into()),
             },
             max_tokens: None,
+            inputs_policy: crate::agents::InputsPolicy::Raw,
         }
     }
 
