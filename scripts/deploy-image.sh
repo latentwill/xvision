@@ -16,6 +16,15 @@
 #   scripts/deploy-image.sh --with-identity          # include xvision-identity (Mantle)
 #   scripts/deploy-image.sh --platform linux/arm64   # build for arm64 servers
 #   scripts/deploy-image.sh --push root@host --tag xvision:deploy-rc1
+#   scripts/deploy-image.sh --no-cleanup             # keep old images post-deploy
+#   scripts/deploy-image.sh --keep-hours 168         # prune window (default 72h)
+#
+# Post-deploy cleanup: by default this script prunes images older than 72h
+# after a successful deploy (locally for build-only, on the target host for
+# --push). Each xvision image is ~1.16GB and a 38GB Hetzner box fills up in
+# 4-5 deploys without pruning — the symptom is an xvn-app crash loop on
+# "database or disk is full" because sqlite can't open its WAL. Disable
+# with --no-cleanup if you need an old image around for rollback.
 #
 # Defaults to --platform linux/amd64 since most VPS hosts (DO, Linode, Vultr,
 # Hetzner x86, Coolify default) are x86_64. Override for Graviton / Oracle
@@ -38,13 +47,21 @@ PUSH_HOST=""
 TAG=""
 WITH_IDENTITY=0
 PLATFORM="linux/amd64"
+# Default: prune images older than CLEANUP_KEEP_HOURS after a successful
+# deploy. 38GB Hetzner boxes fill fast with 1.16GB xvision images; one
+# missed prune cycle and the next deploy crash-loops on a "database or
+# disk is full" sqlite error (xvn-app, 2026-05-19). Skip with --no-cleanup.
+CLEANUP=1
+CLEANUP_KEEP_HOURS=72
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --push)          PUSH_HOST="$2"; shift 2 ;;
-    --tag)           TAG="$2"; shift 2 ;;
-    --platform)      PLATFORM="$2"; shift 2 ;;
-    --with-identity) WITH_IDENTITY=1; shift ;;
+    --push)            PUSH_HOST="$2"; shift 2 ;;
+    --tag)             TAG="$2"; shift 2 ;;
+    --platform)        PLATFORM="$2"; shift 2 ;;
+    --with-identity)   WITH_IDENTITY=1; shift ;;
+    --no-cleanup)      CLEANUP=0; shift ;;
+    --keep-hours)      CLEANUP_KEEP_HOURS="$2"; shift 2 ;;
     -h|--help)
       sed -n '2,/^set -euo pipefail$/p' "$0" | sed 's/^# \?//;/^set/d'
       exit 0 ;;
@@ -82,6 +99,11 @@ echo "==> Image built:"
 docker image ls "$TAG" --format '    {{.Repository}}:{{.Tag}}  {{.Size}}'
 
 if [[ -z "$PUSH_HOST" ]]; then
+  if [[ "$CLEANUP" -eq 1 ]]; then
+    echo "==> Local cleanup (images older than ${CLEANUP_KEEP_HOURS}h)"
+    docker image prune -af --filter "until=${CLEANUP_KEEP_HOURS}h" 2>&1 | tail -2 || true
+    df -h / 2>/dev/null | tail -1 || true
+  fi
   cat <<EOF
 
 Built locally. Tags: $TAG, xvision:deploy-latest.
@@ -108,6 +130,19 @@ fi
 # Tag :deploy-latest on the remote so compose files can pin a stable name.
 ssh "$PUSH_HOST" "docker tag '$TAG' xvision:deploy-latest"
 
+if [[ "$CLEANUP" -eq 1 ]]; then
+  # Remote cleanup. Without this the deploy host fills up: each build
+  # produces a ~1.16GB image, the previous :deploy-latest gets orphaned,
+  # and a 38GB box hits 100% in 4-5 deploys. When sqlite can't open its
+  # WAL ("database or disk is full") xvn-app crash-loops on startup —
+  # exactly what bit us on the 2026-05-19 deploy of sha-365dc14.
+  #
+  # Skip with --no-cleanup if you need to keep older images around
+  # (e.g. for a rollback). Tune the window with --keep-hours N.
+  echo "==> Remote cleanup on $PUSH_HOST (images older than ${CLEANUP_KEEP_HOURS}h)"
+  ssh "$PUSH_HOST" "docker image prune -af --filter 'until=${CLEANUP_KEEP_HOURS}h' 2>&1 | tail -2 || true; df -h / 2>/dev/null | tail -1 || true"
+fi
+
 cat <<EOF
 
 Loaded $TAG on $PUSH_HOST and tagged xvision:deploy-latest.
@@ -116,7 +151,10 @@ Next on the server:
   ssh $PUSH_HOST
   # Recreate every stack that points at xvision:deploy-latest.
   # Example compose stacks:
-  #   cd /root/deploy/stacks/xvn && docker compose up -d
-  #   cd /root/deploy/stacks/xvnej && docker compose up -d
+  #   cd /root/deploy/stacks/xvn && docker compose up -d --force-recreate xvn
+  #   cd /root/deploy/stacks/xvnej && docker compose up -d --force-recreate xvnej
+  # The --force-recreate is needed because the app shares a netns with
+  # the ts-* sidecar; without it the container can re-attach to a stale
+  # netns and fail with "no such file or directory" on /proc/.../ns/net.
   # For Coolify-managed apps, trigger a redeploy there instead.
 EOF
