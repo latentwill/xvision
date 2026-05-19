@@ -26,6 +26,8 @@ use xvision_observability::{
     AgentRunRecorder, RunEvent, RunEventBus, RunStartedEvent, RunStatus, SqliteRecorder,
 };
 
+const MIGRATION_002: &str = include_str!("../migrations/002_eval.sql");
+const MIGRATION_013: &str = include_str!("../migrations/013_cli_jobs.sql");
 const MIGRATION_018: &str = include_str!("../migrations/018_agent_run_observability.sql");
 
 /// Failing dispatch: always returns the operator-flagged error
@@ -67,16 +69,26 @@ async fn setup_pool() -> SqlitePool {
     Box::leak(Box::new(tmp));
     let url = format!("sqlite://{}?mode=rwc", path.display());
     let pool = SqlitePool::connect(&url).await.unwrap();
-    // Disable FK enforcement: migration 018 references `cli_jobs`
-    // and `eval_runs`, which live in migrations 013 / 002 we don't
-    // apply here. The test only exercises the recorder's INSERT
-    // semantics, not cross-table integrity.
-    sqlx::query("PRAGMA foreign_keys = OFF")
-        .execute(&pool)
-        .await
-        .unwrap();
+    sqlx::query(MIGRATION_002).execute(&pool).await.unwrap();
+    sqlx::query(MIGRATION_013).execute(&pool).await.unwrap();
     sqlx::query(MIGRATION_018).execute(&pool).await.unwrap();
     pool
+}
+
+async fn seed_eval_run(pool: &SqlitePool, run_id: &str) {
+    sqlx::query(
+        "INSERT INTO eval_runs (id, strategy_bundle_hash, scenario_id, mode, status, started_at) \
+         VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(run_id)
+    .bind("strategy-test-bundle")
+    .bind("test-scenario")
+    .bind("backtest")
+    .bind("running")
+    .bind(chrono::Utc::now().to_rfc3339())
+    .execute(pool)
+    .await
+    .unwrap();
 }
 
 /// QA finding: a failing LLM dispatch from an eval run produces a
@@ -91,6 +103,7 @@ async fn failing_dispatch_emits_error_span_with_message() {
 
     let run_id = "eval-run-test-1";
     let emitter = ObsEmitter::new(bus.clone(), run_id);
+    seed_eval_run(&pool, run_id).await;
 
     // Register the run so SpanStarted has a valid FK.
     bus.publish(RunEvent::RunStarted(RunStartedEvent {
@@ -143,7 +156,7 @@ async fn failing_dispatch_emits_error_span_with_message() {
     // present, with status='error' and error_json containing the
     // dispatch's message text.
     let rows: Vec<(String, String, Option<String>)> =
-        sqlx::query_as("SELECT id, status, error_json FROM spans WHERE run_id = ?")
+        sqlx::query_as("SELECT id, status, error_json FROM spans WHERE run_id = ? AND kind = 'model.call'")
             .bind(run_id)
             .fetch_all(&pool)
             .await
