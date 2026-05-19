@@ -626,7 +626,8 @@ function historyToBubbles(history: ChatMessage[]): Bubble[] {
                 parsedResult &&
                 typeof parsedResult === "object" &&
                 parsedResult !== null &&
-                "error" in parsedResult;
+                "error" in parsedResult &&
+                Boolean((parsedResult as { error?: unknown }).error);
               prior.tools[prior.tools.length - 1] = {
                 ...tool,
                 ok: !isErr,

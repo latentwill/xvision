@@ -347,6 +347,49 @@ describe("ChatRail", () => {
 
     expect(screen.queryByText(/late token/)).not.toBeInTheDocument();
   });
+
+  it("renders historical tool results with error:null as successful", async () => {
+    vi.mocked(chatApi.resolveSession).mockResolvedValue({
+      session_id: "old-session",
+      history: [
+        {
+          id: "m1",
+          session_id: "old-session",
+          seq: 0,
+          role: "assistant",
+          content_blocks: [
+            {
+              type: "tool_use",
+              id: "tool-1",
+              name: "create_strategy",
+              input: { name: "Alpha", template: "momentum" },
+            },
+          ],
+          ts: "2026-05-13T00:01:00Z",
+        },
+        {
+          id: "m2",
+          session_id: "old-session",
+          seq: 1,
+          role: "user",
+          content_blocks: [
+            {
+              type: "tool_result",
+              tool_use_id: "tool-1",
+              content: JSON.stringify({ id: "01OK", error: null }),
+            },
+          ],
+          ts: "2026-05-13T00:02:00Z",
+        },
+      ],
+    });
+
+    renderRail();
+
+    expect(await screen.findByText("01OK")).toBeInTheDocument();
+    expect(screen.getByText("Alpha")).toBeInTheDocument();
+    expect(screen.queryByText(/Create strategy failed/i)).not.toBeInTheDocument();
+  });
 });
 
 /**
