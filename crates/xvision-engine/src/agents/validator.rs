@@ -316,6 +316,7 @@ mod tests {
             system_prompt: prompt.into(),
             skill_ids: skill_ids.into_iter().map(|s| s.to_string()).collect(),
             max_tokens: Some(4096),
+            temperature: None,
             prompt_version: String::new(),
             inputs_policy: crate::agents::InputsPolicy::Raw,
         }

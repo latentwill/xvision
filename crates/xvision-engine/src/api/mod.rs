@@ -232,10 +232,7 @@ impl ApiContext {
     /// bus). The default in `ApiContext::new` spawns a fresh writer per
     /// construction, which is fine for CLI / tests but wasteful in the
     /// dashboard's per-request `api_context()` path.
-    pub fn with_finalize_writer(
-        mut self,
-        writer: Arc<crate::eval::finalize_writer::FinalizeWriter>,
-    ) -> Self {
+    pub fn with_finalize_writer(mut self, writer: Arc<crate::eval::finalize_writer::FinalizeWriter>) -> Self {
         self.finalize_writer = writer;
         self
     }

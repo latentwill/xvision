@@ -140,9 +140,7 @@ async fn cancel_invalidates_get_run_cache() {
 
     // Cancel via the HTTP route — it invokes
     // `state.eval_run_cache_invalidate(&id)` after the engine flip.
-    let cancel = server
-        .post(&format!("/api/eval/runs/{}/cancel", run.id))
-        .await;
+    let cancel = server.post(&format!("/api/eval/runs/{}/cancel", run.id)).await;
     cancel.assert_status(StatusCode::OK);
 
     // Read-back: should see the post-cancel status, not the cached

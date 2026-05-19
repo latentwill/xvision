@@ -37,6 +37,7 @@ fn slot(name: &str, prompt: &str, skill_ids: Vec<&str>) -> AgentSlot {
         system_prompt: prompt.into(),
         skill_ids: skill_ids.into_iter().map(String::from).collect(),
         max_tokens: Some(4096),
+        temperature: None,
         prompt_version: String::new(),
         inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
     }
