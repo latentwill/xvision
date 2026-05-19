@@ -797,6 +797,7 @@ impl XvisionTools {
                     system_prompt: req.prompt,
                     skill_ids: Vec::new(),
                     max_tokens: None,
+                    temperature: None,
                     prompt_version: String::new(),
                     inputs_policy: InputsPolicy::Raw,
                 }],

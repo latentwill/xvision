@@ -207,10 +207,9 @@ async fn integration_27_finalize_failed_under_200ms() {
         "27 staged finalize-failed calls should complete under 200ms; elapsed = {elapsed:?}"
     );
 
-    let count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM eval_runs WHERE status = 'failed'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM eval_runs WHERE status = 'failed'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(count, 27);
 }

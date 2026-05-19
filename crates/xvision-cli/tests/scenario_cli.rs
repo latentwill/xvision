@@ -69,7 +69,15 @@ fn scenario_validate_from_file_does_not_create_row() {
     let out = xvn(&["scenario", "show", id, "--toml"], dir.path());
     assert!(out.status.success());
     let file = dir.path().join("scenario.toml");
-    std::fs::write(&file, out.stdout).unwrap();
+    // Rewrite the display_name so validate doesn't trip the
+    // active-scenario uniqueness gate (which now applies even to
+    // --from-file shape validation against a live store). The point of
+    // this test is "validate doesn't create a row" — collision with
+    // the just-created source row is incidental.
+    let toml = String::from_utf8(out.stdout)
+        .unwrap()
+        .replace("ETH validate source", "ETH validate source (file)");
+    std::fs::write(&file, toml).unwrap();
 
     let out = xvn(
         &[

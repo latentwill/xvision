@@ -262,6 +262,7 @@ async fn eval_run_resolves_seeded_scenario_via_db_lookup() {
 #[tokio::test]
 async fn backtest_missing_cache_and_fixture_returns_actionable_validation() {
     use std::sync::Arc;
+    use xvision_data::alpaca::AlpacaBarsFetcher;
     use xvision_engine::agent::llm::{LlmDispatch, MockDispatch};
     use xvision_engine::api::eval::{self, EvalRunRequest};
     use xvision_engine::api::ApiError;
@@ -274,9 +275,22 @@ async fn backtest_missing_cache_and_fixture_returns_actionable_validation() {
     use xvision_engine::tools::ToolRegistry;
 
     let dir = tempfile::tempdir().unwrap();
+    // The default alpaca fetcher points at the public Alpaca crypto bars
+    // endpoint, which works without credentials. With network access the
+    // cache-miss path silently back-fills the cache and the test's
+    // "missing cache + fixture should fail" precondition no longer holds.
+    // Inject a fetcher pointed at an unroutable URL so the upstream
+    // fetch deterministically errors, exercising the
+    // `missing_bars_validation` preflight branch.
+    let unroutable = Arc::new(AlpacaBarsFetcher::new(
+        "http://127.0.0.1:1".into(),
+        String::new(),
+        String::new(),
+    ));
     let ctx = ApiContext::open(dir.path(), Actor::Cli { user: "test".into() })
         .await
-        .unwrap();
+        .unwrap()
+        .with_alpaca_fetcher(unroutable);
 
     let agent_id = "01TESTBUNDLEMISSINGFIXTURE";
     let bundle = Strategy {
@@ -348,6 +362,7 @@ async fn backtest_missing_cache_and_fixture_returns_actionable_validation() {
 #[tokio::test]
 async fn backtest_db_scenario_with_warmup_does_not_fallback_to_legacy_fixture() {
     use std::sync::Arc;
+    use xvision_data::alpaca::AlpacaBarsFetcher;
     use xvision_engine::agent::llm::{LlmDispatch, MockDispatch};
     use xvision_engine::api::eval::{self, EvalRunRequest};
     use xvision_engine::api::ApiError;
@@ -360,9 +375,19 @@ async fn backtest_db_scenario_with_warmup_does_not_fallback_to_legacy_fixture() 
     use xvision_engine::tools::ToolRegistry;
 
     let dir = tempfile::tempdir().unwrap();
+    // Same hermeticity guard as `backtest_missing_cache_and_fixture_returns_actionable_validation`
+    // — the default fetcher will silently succeed against the public
+    // Alpaca crypto endpoint when network is available, defeating this
+    // test's intent to exercise the warmup-cache-miss preflight error.
+    let unroutable = Arc::new(AlpacaBarsFetcher::new(
+        "http://127.0.0.1:1".into(),
+        String::new(),
+        String::new(),
+    ));
     let ctx = ApiContext::open(dir.path(), Actor::Cli { user: "test".into() })
         .await
-        .unwrap();
+        .unwrap()
+        .with_alpaca_fetcher(unroutable);
 
     let agent_id = "01TESTWARMUPNOFALLBACKFIX";
     let bundle = Strategy {

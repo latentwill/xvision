@@ -66,6 +66,45 @@ if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; th
 fi
 [[ -z "$TAG" ]] && TAG="xvision:deploy-${SHA}${DIRTY}"
 
+# --- Branch sanity preflight ---------------------------------------------------
+# This block surfaces what's about to be built so deploys can't silently ship
+# from a branch that's parallel to main (the failure mode that produced the
+# 2026-05-19 "deployed image had none of the merged fixes" incident — the build
+# host was on a conductor coordination branch 634 commits adrift from
+# origin/main).
+#
+# Non-blocking: prints a loud warning and continues. Set XVN_DEPLOY_QUIET=1 to
+# silence (for CI / scripted retries that have already accepted the risk).
+if [[ "${XVN_DEPLOY_QUIET:-0}" != "1" ]] && command -v git >/dev/null 2>&1; then
+  BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "?")"
+  HEAD_MSG="$(git log -1 --format='%s' 2>/dev/null | head -c 80)"
+  echo "==> Preflight: branch=$BRANCH  HEAD=$SHA${DIRTY:+ ($DIRTY)}  msg=\"$HEAD_MSG\""
+  if git rev-parse --verify origin/main >/dev/null 2>&1; then
+    AHEAD_MAIN="$(git rev-list --count origin/main..HEAD 2>/dev/null || echo "?")"
+    BEHIND_MAIN="$(git rev-list --count HEAD..origin/main 2>/dev/null || echo "?")"
+    MERGE_BASE="$(git merge-base HEAD origin/main 2>/dev/null || echo "")"
+    if [[ -z "$MERGE_BASE" ]]; then
+      echo "==> WARNING: HEAD shares NO common ancestor with origin/main." >&2
+      echo "    This is almost always wrong for a deploy — you'll ship a parallel" >&2
+      echo "    history that's missing every PR merged into main." >&2
+      echo "    Override with XVN_DEPLOY_QUIET=1 if you really mean it." >&2
+      echo "    Sleeping 8s so you can Ctrl-C..." >&2
+      sleep 8
+    elif [[ "$BEHIND_MAIN" =~ ^[0-9]+$ ]] && (( BEHIND_MAIN > 20 )); then
+      echo "==> WARNING: HEAD is $BEHIND_MAIN commits behind origin/main." >&2
+      echo "    Recently merged PRs will not be in the image. If that's not what" >&2
+      echo "    you want, rebase onto origin/main first." >&2
+      echo "    Sleeping 5s so you can Ctrl-C..." >&2
+      sleep 5
+    else
+      echo "    (+$AHEAD_MAIN / -$BEHIND_MAIN vs origin/main — looks current)"
+    fi
+  fi
+  if [[ -n "$DIRTY" ]]; then
+    echo "==> Note: working tree is dirty; uncommitted changes will be baked into the image."
+  fi
+fi
+
 echo "==> Building $TAG (WITH_IDENTITY=$WITH_IDENTITY, platform=$PLATFORM)"
 # `--load` so the image lands in the local daemon (default for single-platform
 # builds, but explicit is better when buildx is the active builder).
