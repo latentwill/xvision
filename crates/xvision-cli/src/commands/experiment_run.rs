@@ -30,7 +30,7 @@
 //!
 //! ## CLI surface
 //!
-//! ```
+//! ```text
 //! xvn experiment run \
 //!   --name <slug> \
 //!   --question "<freeform>" \
