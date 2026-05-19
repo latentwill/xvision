@@ -17,6 +17,7 @@ import {
 import { chartKeys, getRunChart, openRunStream } from "@/api/chart";
 import { RunChart } from "@/components/chart/RunChart";
 import { ReviewPanel } from "@/features/eval-runs/review";
+import { RunSummaryError as RunSummaryPanel } from "@/features/eval-runs/RunSummary";
 import { useTraceDock } from "@/stores/trace-dock";
 import { isInflightRunStatus } from "@/lib/run-status";
 import {
@@ -535,16 +536,7 @@ function SummaryCard({
         <Metric label="Tokens" value={fmtTokens(summary)} />
       </div>
 
-      {summary.error ? (
-        <div className="mt-4 p-3 border border-danger/40 bg-danger/[0.06] rounded-sm">
-          <div className="text-[11px] text-danger uppercase tracking-wide mb-1">
-            error
-          </div>
-          <code className="font-mono text-[12px] text-text whitespace-pre-wrap">
-            {summary.error}
-          </code>
-        </div>
-      ) : null}
+      <RunSummaryPanel error={summary.error} />
     </Card>
   );
 }

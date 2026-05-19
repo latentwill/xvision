@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { ApiError } from "@/api/client";
 import { downloadEvalRunExport } from "@/api/eval";
 import { ReviewPanel } from "@/features/eval-runs/review";
+import { RunSummaryError as RunSummaryPanel } from "@/features/eval-runs/RunSummary";
 import { isInflightRunStatus } from "@/lib/run-status";
 import type { EvalRunLabels } from "@/lib/run-display";
 import type {
@@ -293,16 +294,7 @@ function SummaryTab({
         />
       )}
 
-      {summary.error && (
-        <div className="rounded-sm border border-danger/40 bg-danger/[0.06] px-3 py-2">
-          <div className="text-[10px] text-danger uppercase tracking-wide mb-1">
-            error
-          </div>
-          <code className="font-mono text-[11.5px] text-text whitespace-pre-wrap break-words">
-            {summary.error}
-          </code>
-        </div>
-      )}
+      <RunSummaryPanel error={summary.error} />
 
       {/* KPI grid */}
       <div className="grid grid-cols-2 gap-2">
