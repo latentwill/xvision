@@ -19,10 +19,10 @@ pub fn render_markdown(report: &ComparisonReport, strategy_label: &str) -> Strin
     out.push_str(&format!("## eval compare — {strategy_label}\n\n"));
 
     out.push_str(
-        "| Scenario | Return | Sharpe | Max DD | Decisions | Trades | Flips | Avg hold (bars) | Flat rate | Reentries | Failure mode |\n",
+        "| Scenario | Return | Baseline (buy_hold) | Sharpe | Max DD | Decisions | Trades | Flips | Avg hold (bars) | Flat rate | Reentries | Failure mode |\n",
     );
     out.push_str(
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |\n",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |\n",
     );
 
     for run in &report.runs {
@@ -71,14 +71,22 @@ fn cmp_return(a: &&ComparisonRunSummary, b: &&ComparisonRunSummary) -> std::cmp:
 }
 
 fn markdown_row(run: &ComparisonRunSummary) -> String {
-    let (ret_s, sharpe_s, dd_s, dec_s) = match &run.metrics {
-        Some(m) => (
-            format!("{:+.2}%", m.total_return_pct),
-            format!("{:.3}", m.sharpe),
-            format!("{:.2}%", m.max_drawdown_pct),
-            m.n_decisions.to_string(),
-        ),
-        None => ("-".into(), "-".into(), "-".into(), "-".into()),
+    let (ret_s, baseline_buy_hold_s, sharpe_s, dd_s, dec_s) = match &run.metrics {
+        Some(m) => {
+            let bh_s = m
+                .baselines
+                .as_ref()
+                .map(|b| format!("{:+.2}%", b.relative_to.buy_hold))
+                .unwrap_or_else(|| "-".into());
+            (
+                format!("{:+.2}%", m.total_return_pct),
+                bh_s,
+                format!("{:.3}", m.sharpe),
+                format!("{:.2}%", m.max_drawdown_pct),
+                m.n_decisions.to_string(),
+            )
+        }
+        None => ("-".into(), "-".into(), "-".into(), "-".into(), "-".into()),
     };
 
     let (trades_s, flips_s, avg_hold_s, flat_rate_s, reentries_s, failure_s) = match &run.behavior
@@ -104,9 +112,10 @@ fn markdown_row(run: &ComparisonRunSummary) -> String {
     };
 
     format!(
-        "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+        "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
         run.scenario_id,
         ret_s,
+        baseline_buy_hold_s,
         sharpe_s,
         dd_s,
         dec_s,
@@ -152,6 +161,7 @@ mod tests {
                 win_rate: 0.5,
                 n_trades: 3,
                 n_decisions,
+                baselines: None,
             }),
             error: None,
             behavior,
@@ -214,7 +224,7 @@ mod tests {
         let md = render_markdown(&report, "strat");
         assert!(
             md.contains(
-                "| Scenario | Return | Sharpe | Max DD | Decisions | Trades | Flips | Avg hold (bars) | Flat rate | Reentries | Failure mode |"
+                "| Scenario | Return | Baseline (buy_hold) | Sharpe | Max DD | Decisions | Trades | Flips | Avg hold (bars) | Flat rate | Reentries | Failure mode |"
             ),
             "table header missing; got:\n{md}"
         );
@@ -282,7 +292,7 @@ mod tests {
         let run = make_run("eth_7d", -8.85, -33.54, 8.85, 49, None);
         let row = markdown_row(&run);
         let pipes = row.chars().filter(|&c| c == '|').count();
-        assert_eq!(pipes, 12, "unexpected pipe count in row: {row}");
+        assert_eq!(pipes, 13, "unexpected pipe count in row: {row}");
     }
 
     #[test]
