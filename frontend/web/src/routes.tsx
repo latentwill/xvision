@@ -10,6 +10,7 @@ const ScenariosRoute = lazy(() => import("./routes/scenarios").then((m) => ({ de
 const ScenariosNewRoute = lazy(() => import("./routes/scenarios-new").then((m) => ({ default: m.ScenariosNewRoute })));
 const ScenariosDetailRoute = lazy(() => import("./routes/scenarios-detail").then((m) => ({ default: m.ScenariosDetailRoute })));
 const StrategiesNewRoute = lazy(() => import("./routes/strategies-new").then((m) => ({ default: m.StrategiesNewRoute })));
+const StrategyDetailRoute = lazy(() => import("./routes/strategies-detail").then((m) => ({ default: m.StrategyDetailRoute })));
 const AgentsRoute = lazy(() => import("./routes/agents").then((m) => ({ default: m.AgentsRoute })));
 const AgentsEditRoute = lazy(() => import("./routes/agents-edit").then((m) => ({ default: m.AgentsEditRoute })));
 const AuthoringRoute = lazy(() => import("./routes/authoring").then((m) => ({ default: m.AuthoringRoute })));
@@ -65,6 +66,7 @@ export const router = createBrowserRouter([
       { index: true, element: page(<HomeRoute />) },
       { path: "strategies", element: page(<StrategiesRoute />) },
       { path: "strategies/new", element: page(<StrategiesNewRoute />) },
+      { path: "strategies/:id", element: page(<StrategyDetailRoute />) },
       { path: "agents", element: page(<AgentsRoute />) },
       { path: "agents/skills", element: page(<SettingsSkillsRoute />) },
       { path: "agents/new", element: page(<AgentsEditRoute />) },
