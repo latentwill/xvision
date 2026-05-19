@@ -18,13 +18,21 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use ulid::Ulid;
 
+use std::collections::HashMap;
+
 use xvision_data as xvn;
-use xvision_engine::api::eval::{self as api_eval, CompareRunsRequest, ListRunsRequest};
-use xvision_engine::api::{Actor, ApiContext};
+use xvision_engine::api::eval::{self as api_eval, CompareRunsRequest, EvalRunRequest, ListRunsRequest};
+use xvision_engine::api::scenario as api_scenario;
+use xvision_engine::api::{agents as api_agents, Actor, ApiContext};
 use xvision_engine::authoring;
-use xvision_engine::eval::run::RunStatus;
+use xvision_engine::eval::behavior::derive_behavior_summary;
+use xvision_engine::eval::run::{RunMode, RunStatus};
 use xvision_engine::eval::store::RunStore;
-use xvision_engine::strategies::{risk::RiskConfig, store::FilesystemStore};
+use xvision_engine::strategies::validate::{preflight_validate, validate_strategy};
+use xvision_engine::strategies::{
+    risk::RiskConfig,
+    store::{FilesystemStore, StrategyStore},
+};
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -198,6 +206,125 @@ pub struct EvalRunIdReq {
 pub struct EvalCompareReq {
     /// Two or more run ids (ULIDs) to fold into a single ComparisonReport.
     pub run_ids: Vec<String>,
+}
+
+// ---------------------------------------------------------------------------
+// New verbs — F-13 MCP surface parity for CLI workbench wave A+B
+// ---------------------------------------------------------------------------
+
+/// Request for `xvn_strategy_create_atomic`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct StrategyCreateAtomicReq {
+    /// Human-readable strategy name (e.g. `btc-momentum-v1`).
+    pub name: String,
+    /// Role the created agent plays inside the strategy (e.g. `trader`).
+    pub role: String,
+    /// Full system prompt text for the agent.
+    pub prompt: String,
+    /// Provider name (e.g. `openrouter`, `anthropic`).
+    pub provider: String,
+    /// Model id (e.g. `kimi-k2`, `deepseek/deepseek-chat`).
+    pub model: String,
+    /// Primary asset the strategy trades (e.g. `ETH/USD`).
+    #[serde(default)]
+    pub asset: Option<String>,
+    /// Decision timeframe / bar granularity (e.g. `4h`, `1h`, `1d`).
+    /// Accepted: `1m`, `5m`, `15m`, `30m`, `1h`, `2h`, `4h`, `1d`.
+    #[serde(default)]
+    pub timeframe: Option<String>,
+}
+
+/// Request for `xvn_strategy_validate_preflight`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct StrategyPreflightReq {
+    /// Strategy id (ULID) to validate.
+    pub id: String,
+    /// Optional scenario id to cross-check against. When supplied the
+    /// validator also checks asset-universe and timeframe alignment.
+    #[serde(default)]
+    pub scenario_id: Option<String>,
+}
+
+/// Duplicated from `xvision_cli::commands::strategy::PreflightReport` for the
+/// MCP crate boundary. TODO: promote to a shared types crate in a follow-up.
+#[derive(Debug, serde::Serialize, JsonSchema)]
+pub struct PreflightReport {
+    pub strategy_id: String,
+    pub eval_ready: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected_decisions: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub asset: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeframe: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warmup_bars: Option<u32>,
+    pub warnings: Vec<String>,
+    pub errors: Vec<String>,
+}
+
+/// Request for `xvn_eval_batch_run`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EvalBatchRunReq {
+    /// Strategy agent id (from `xvn strategy ls`).
+    pub strategy_id: String,
+    /// Scenario ids to run against.
+    pub scenario_ids: Vec<String>,
+    /// Run mode: `backtest` (default) or `paper`.
+    #[serde(default)]
+    pub mode: Option<String>,
+    /// Agent profile id for post-run reviews (e.g. `reasoning-agent`).
+    /// When absent, no reviews are generated.
+    #[serde(default)]
+    pub review_with: Option<String>,
+}
+
+/// Request for `xvn_eval_compare_report`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EvalCompareReportReq {
+    /// Two or more run ids to compare.
+    pub run_ids: Vec<String>,
+    /// Sort metric: `return` (default), `sharpe`, or `drawdown`.
+    #[serde(default)]
+    pub sort: Option<String>,
+}
+
+/// One row in the `CompareReport` (CLI-level decorated shape).
+#[derive(Debug, serde::Serialize, JsonSchema)]
+pub struct CompareRunRow {
+    pub run_id: String,
+    pub scenario_id: String,
+    pub scenario_name: String,
+    pub strategy_id: String,
+    pub status: String,
+    pub return_pct: Option<f64>,
+    pub sharpe: Option<f64>,
+    pub max_drawdown_pct: Option<f64>,
+    pub decisions: u32,
+    pub trades_opened: u32,
+    pub action_distribution: HashMap<String, u32>,
+    pub avg_bars_held: Option<f64>,
+    pub primary_failure_mode: String,
+}
+
+/// Full compare report returned by `xvn_eval_compare_report`.
+#[derive(Debug, serde::Serialize, JsonSchema)]
+pub struct CompareReport {
+    pub runs: Vec<CompareRunRow>,
+}
+
+/// Request for `xvn_scenario_inspect_card`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ScenarioInspectCardReq {
+    /// Scenario id.
+    pub id: String,
+}
+
+/// Request for `xvn_eval_behavior`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EvalBehaviorReq {
+    /// Run id (ULID).
+    pub run_id: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -628,6 +755,517 @@ impl XvisionTools {
             .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))?;
         json_or_err(&findings)
     }
+
+    // ── F-13: MCP surface parity for new CLI verbs (workbench wave A+B) ──────
+
+    /// Atomically create a strategy + agent + provider/model binding in one
+    /// call. Equivalent to `xvn strategy create --prompt <text> --provider
+    /// --model --asset --timeframe`. Returns `{ strategy_id, agent_id,
+    /// eval_ready, provider, model, warnings }`.
+    #[tool(
+        description = "Atomically create a strategy + agent + provider/model binding. Requires name, role, prompt, provider, model. Returns {strategy_id, agent_id, eval_ready, provider, model, warnings}."
+    )]
+    async fn xvn_strategy_create_atomic(
+        &self,
+        Parameters(req): Parameters<StrategyCreateAtomicReq>,
+    ) -> Result<String, rmcp::ErrorData> {
+        use xvision_engine::agents::{AgentSlot, InputsPolicy};
+        use xvision_engine::strategies::risk::RiskPreset;
+        use xvision_engine::strategies::{manifest::PublicManifest, AgentRef, PipelineDef, Strategy};
+
+        let asset = req.asset.unwrap_or_else(|| "BTC/USD".to_string());
+        let timeframe = req.timeframe.unwrap_or_else(|| "4h".to_string());
+
+        let cadence_minutes = parse_timeframe_mcp(&timeframe)?;
+
+        let ctx = self.api_context().await?;
+
+        // 1. Create the agent library entry.
+        let agent = api_agents::create(
+            &ctx,
+            api_agents::CreateAgentRequest {
+                name: format!("{} {}", req.name, req.role),
+                description: format!(
+                    "Created atomically with strategy '{}' role '{}'",
+                    req.name, req.role
+                ),
+                tags: vec!["atomic-create".to_string(), "mcp".to_string()],
+                slots: vec![AgentSlot {
+                    name: "main".to_string(),
+                    provider: req.provider.clone(),
+                    model: req.model.clone(),
+                    system_prompt: req.prompt,
+                    skill_ids: Vec::new(),
+                    max_tokens: None,
+                    prompt_version: String::new(),
+                    inputs_policy: InputsPolicy::Raw,
+                }],
+            },
+        )
+        .await
+        .map_err(api_err_to_mcp)?;
+
+        let agent_id = agent.agent_id.clone();
+        let strategy_id = ulid::Ulid::new().to_string();
+
+        // 2. Build the strategy with the agent wired in.
+        let strategy = Strategy {
+            manifest: PublicManifest {
+                id: strategy_id.clone(),
+                display_name: req.name.clone(),
+                plain_summary: String::new(),
+                creator: "@mcp".to_string(),
+                template: "custom".to_string(),
+                regime_fit: Vec::new(),
+                asset_universe: vec![asset],
+                decision_cadence_minutes: cadence_minutes,
+                required_models: Vec::new(),
+                required_tools: Vec::new(),
+                risk_preset_or_config: "balanced".to_string(),
+                published_at: None,
+                min_warmup_bars: None,
+            },
+            agents: vec![AgentRef {
+                agent_id: agent_id.clone(),
+                role: req.role,
+            }],
+            pipeline: PipelineDef::default(),
+            regime_slot: None,
+            intern_slot: None,
+            trader_slot: None,
+            risk: RiskPreset::Balanced.expand(),
+            mechanical_params: serde_json::json!({}),
+        };
+
+        // 3. Validate shape.
+        let preflight = preflight_validate(&strategy, None);
+
+        // 4. Persist via FilesystemStore.
+        self.store().save(&strategy).await.map_err(authoring_err)?;
+
+        // 5. Return structured output.
+        let eval_ready = preflight.warnings.is_empty() && preflight.errors.is_empty();
+        json_or_err(&serde_json::json!({
+            "strategy_id": strategy_id,
+            "agent_id": agent_id,
+            "eval_ready": eval_ready,
+            "provider": req.provider,
+            "model": req.model,
+            "warnings": preflight.warnings,
+        }))
+    }
+
+    /// Preflight-validate a saved strategy, optionally cross-checking against a
+    /// scenario. Equivalent to `xvn strategy validate <id> --scenario <id> --json`.
+    /// Returns a `PreflightReport` JSON object.
+    #[tool(
+        description = "Preflight-validate a strategy (shape + agent/provider checks). Optionally cross-check against a scenario for asset/timeframe alignment. Returns PreflightReport JSON."
+    )]
+    async fn xvn_strategy_validate_preflight(
+        &self,
+        Parameters(req): Parameters<StrategyPreflightReq>,
+    ) -> Result<String, rmcp::ErrorData> {
+        let strategy = self.store().load(&req.id).await.map_err(authoring_err)?;
+
+        let mut errors = Vec::new();
+        let mut warnings = Vec::new();
+
+        if let Err(e) = validate_strategy(&strategy) {
+            errors.push(e.to_string());
+        }
+
+        let Some(scenario_id) = req.scenario_id else {
+            warnings.push("no scenario_id supplied; shape-only check".to_string());
+            let report = PreflightReport {
+                strategy_id: req.id.clone(),
+                eval_ready: errors.is_empty() && warnings.is_empty(),
+                expected_decisions: None,
+                asset: None,
+                timeframe: None,
+                warmup_bars: None,
+                warnings,
+                errors,
+            };
+            return json_or_err(&report);
+        };
+
+        let ctx = self.api_context().await?;
+
+        // Check agents exist and have provider/model.
+        for agent_ref in &strategy.agents {
+            match api_agents::get(&ctx, &agent_ref.agent_id).await {
+                Ok(agent) => {
+                    let Some(slot) = agent.slots.first() else {
+                        errors.push(format!(
+                            "agent '{}' (role '{}') has no executable slots",
+                            agent_ref.agent_id, agent_ref.role
+                        ));
+                        continue;
+                    };
+                    if slot.provider.trim().is_empty() {
+                        errors.push(format!(
+                            "agent '{}' (role '{}') has no provider set",
+                            agent_ref.agent_id, agent_ref.role
+                        ));
+                    }
+                    if slot.model.trim().is_empty() {
+                        errors.push(format!(
+                            "agent '{}' (role '{}') has no model set",
+                            agent_ref.agent_id, agent_ref.role
+                        ));
+                    }
+                }
+                Err(_) => {
+                    errors.push(format!(
+                        "agent '{}' (role '{}') not found",
+                        agent_ref.agent_id, agent_ref.role
+                    ));
+                }
+            }
+        }
+
+        let scenario = match api_scenario::get(&ctx, &scenario_id).await {
+            Ok(s) => s,
+            Err(_) => {
+                errors.push(format!("scenario '{scenario_id}' not found"));
+                let report = PreflightReport {
+                    strategy_id: req.id.clone(),
+                    eval_ready: false,
+                    expected_decisions: None,
+                    asset: None,
+                    timeframe: None,
+                    warmup_bars: None,
+                    warnings,
+                    errors,
+                };
+                return json_or_err(&report);
+            }
+        };
+
+        let pf = preflight_validate(&strategy, Some(&scenario));
+        warnings.extend(pf.warnings);
+
+        let asset_display = scenario
+            .asset
+            .first()
+            .map(|a| a.venue_symbol.clone())
+            .unwrap_or_default();
+        let timeframe_display = scenario.granularity.canonical();
+
+        let window_secs = (scenario.time_window.end - scenario.time_window.start)
+            .num_seconds()
+            .max(0) as u64;
+        let granularity_secs = scenario.granularity.seconds();
+        let expected_decisions = if granularity_secs > 0 {
+            let total_bars = window_secs / granularity_secs;
+            (total_bars as i64) - (scenario.warmup_bars as i64)
+        } else {
+            0
+        };
+
+        let report = PreflightReport {
+            strategy_id: req.id.clone(),
+            eval_ready: errors.is_empty() && warnings.is_empty(),
+            expected_decisions: Some(expected_decisions),
+            asset: Some(asset_display),
+            timeframe: Some(timeframe_display),
+            warmup_bars: Some(scenario.warmup_bars),
+            warnings,
+            errors,
+        };
+        json_or_err(&report)
+    }
+
+    /// Launch one eval run per scenario, wait for all to reach a terminal state,
+    /// and return a unified `BatchResult`. Equivalent to `xvn eval batch run
+    /// --strategy X --scenarios A,B,C --wait --json`. Calls `api_eval::run`
+    /// (env-bound, backtest mode only — no broker construction for MCP calls).
+    #[tool(
+        description = "Run a batch of eval runs (one per scenario) and return a unified BatchResult. Always waits for completion. Backtest mode only in MCP context."
+    )]
+    async fn xvn_eval_batch_run(
+        &self,
+        Parameters(req): Parameters<EvalBatchRunReq>,
+    ) -> Result<String, rmcp::ErrorData> {
+        let ctx = self.api_context().await?;
+
+        let mode_str = req.mode.as_deref().unwrap_or("backtest");
+        let mode = RunMode::parse(mode_str).ok_or_else(|| {
+            rmcp::ErrorData::invalid_params(
+                format!("unknown mode {mode_str:?}; expected backtest | paper"),
+                None,
+            )
+        })?;
+
+        // Create the batch row.
+        let batch = api_eval::create_batch(
+            &ctx,
+            api_eval::CreateBatchRequest {
+                strategy_id: req.strategy_id.clone(),
+                review_with: req.review_with.clone(),
+            },
+        )
+        .await
+        .map_err(api_err_to_mcp)?;
+        let batch_id = batch.batch_id.clone();
+
+        // Resolve scenario names (best-effort).
+        let mut scenario_names: Vec<String> = Vec::with_capacity(req.scenario_ids.len());
+        for sid in &req.scenario_ids {
+            let name = api_scenario::get(&ctx, sid)
+                .await
+                .map(|s| s.display_name)
+                .unwrap_or_else(|_| sid.clone());
+            scenario_names.push(name);
+        }
+
+        let mut entries: Vec<serde_json::Value> = Vec::with_capacity(req.scenario_ids.len());
+
+        for (scenario_id, scenario_name) in req.scenario_ids.iter().zip(scenario_names.iter()) {
+            let run_req = EvalRunRequest {
+                agent_id: req.strategy_id.clone(),
+                scenario_id: scenario_id.clone(),
+                mode,
+                params_override: None,
+            };
+
+            let entry = match api_eval::run(&ctx, run_req).await {
+                Ok(run) => {
+                    api_eval::attach_run_to_batch(&ctx, &run.id, &batch_id)
+                        .await
+                        .map_err(api_err_to_mcp)?;
+                    let (return_pct, sharpe, drawdown_pct, decisions) = if let Some(m) = &run.metrics {
+                        (
+                            Some(m.total_return_pct),
+                            Some(m.sharpe),
+                            Some(m.max_drawdown_pct),
+                            m.n_decisions,
+                        )
+                    } else {
+                        (None, None, None, 0)
+                    };
+                    serde_json::json!({
+                        "scenario_id": scenario_id,
+                        "scenario_name": scenario_name,
+                        "run_id": run.id,
+                        "status": run.status.as_str(),
+                        "return_pct": return_pct,
+                        "sharpe": sharpe,
+                        "drawdown_pct": drawdown_pct,
+                        "decisions": decisions,
+                        "error": run.error,
+                    })
+                }
+                Err(e) => {
+                    serde_json::json!({
+                        "scenario_id": scenario_id,
+                        "scenario_name": scenario_name,
+                        "run_id": null,
+                        "status": "failed",
+                        "error": e.to_string(),
+                    })
+                }
+            };
+            entries.push(entry);
+        }
+
+        let _ = api_eval::finalize_batch(&ctx, &batch_id).await;
+
+        json_or_err(&serde_json::json!({
+            "batch_id": batch_id,
+            "strategy_id": req.strategy_id,
+            "runs": entries,
+        }))
+    }
+
+    /// Compare 2+ completed eval runs. Decorates each row with behavior-summary
+    /// fields (trades_opened, action_distribution, avg_bars_held,
+    /// primary_failure_mode). Equivalent to `xvn eval compare --runs id1,id2
+    /// --json`. Always returns JSON; sort accepts `return`, `sharpe`, or
+    /// `drawdown` (default: `return`).
+    #[tool(
+        description = "Compare 2+ completed runs. Returns a CompareReport with per-run metrics + behavior decoration. Sort by return (default), sharpe, or drawdown."
+    )]
+    async fn xvn_eval_compare_report(
+        &self,
+        Parameters(req): Parameters<EvalCompareReportReq>,
+    ) -> Result<String, rmcp::ErrorData> {
+        let ctx = self.api_context().await?;
+        let sort_key = req.sort.as_deref().unwrap_or("return");
+
+        let report = api_eval::compare(&ctx, CompareRunsRequest { run_ids: req.run_ids })
+            .await
+            .map_err(api_err_to_mcp)?;
+
+        let store = RunStore::new(ctx.db.clone());
+        let mut rows: Vec<CompareRunRow> = Vec::with_capacity(report.runs.len());
+
+        for run in &report.runs {
+            let scenario_name = api_scenario::get(&ctx, &run.scenario_id)
+                .await
+                .map(|s| s.display_name)
+                .unwrap_or_else(|_| run.scenario_id.clone());
+            let decisions = store.read_decisions(&run.id).await.unwrap_or_default();
+            let behavior = derive_behavior_summary(&decisions);
+            let mut action_dist: HashMap<String, u32> = HashMap::new();
+            for d in &decisions {
+                *action_dist.entry(d.action.clone()).or_insert(0) += 1;
+            }
+            let (return_pct, sharpe, max_drawdown_pct, n_decisions) = match &run.metrics {
+                Some(m) => (
+                    Some(m.total_return_pct),
+                    Some(m.sharpe),
+                    Some(m.max_drawdown_pct),
+                    m.n_decisions,
+                ),
+                None => (None, None, None, 0),
+            };
+            rows.push(CompareRunRow {
+                run_id: run.id.clone(),
+                scenario_id: run.scenario_id.clone(),
+                scenario_name,
+                strategy_id: run.agent_id.clone(),
+                status: run.status.as_str().to_string(),
+                return_pct,
+                sharpe,
+                max_drawdown_pct,
+                decisions: n_decisions,
+                trades_opened: behavior.trades_opened,
+                action_distribution: action_dist,
+                avg_bars_held: behavior.avg_bars_held,
+                primary_failure_mode: behavior.primary_failure_mode,
+            });
+        }
+
+        // Sort.
+        match sort_key {
+            "sharpe" => rows.sort_by(|a, b| {
+                b.sharpe
+                    .unwrap_or(f64::NEG_INFINITY)
+                    .partial_cmp(&a.sharpe.unwrap_or(f64::NEG_INFINITY))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            }),
+            "drawdown" => rows.sort_by(|a, b| {
+                a.max_drawdown_pct
+                    .unwrap_or(f64::INFINITY)
+                    .partial_cmp(&b.max_drawdown_pct.unwrap_or(f64::INFINITY))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            }),
+            _ => rows.sort_by(|a, b| {
+                b.return_pct
+                    .unwrap_or(f64::NEG_INFINITY)
+                    .partial_cmp(&a.return_pct.unwrap_or(f64::NEG_INFINITY))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            }),
+        }
+
+        json_or_err(&CompareReport { runs: rows })
+    }
+
+    /// Return a compact plain-text summary card for a scenario.
+    /// Equivalent to `xvn scenario inspect <id> --card`. Returns a
+    /// text card with id, name, asset, timeframe, date_window,
+    /// warmup_bars, decision_bars, and previous_runs summary.
+    #[tool(
+        description = "Return the compact summary card for a scenario (id, name, asset, timeframe, date window, decision count, previous runs). Equivalent to `xvn scenario inspect --card`."
+    )]
+    async fn xvn_scenario_inspect_card(
+        &self,
+        Parameters(req): Parameters<ScenarioInspectCardReq>,
+    ) -> Result<String, rmcp::ErrorData> {
+        let ctx = self.api_context().await?;
+
+        let scenario = api_scenario::get(&ctx, &req.id).await.map_err(api_err_to_mcp)?;
+
+        // Aggregate previous runs (count + best return).
+        let runs_result = api_eval::list(
+            &ctx,
+            ListRunsRequest {
+                scenario_id: Some(req.id.clone()),
+                agent_id: None,
+                status: None,
+            },
+        )
+        .await;
+
+        let (run_count, best_return) = match runs_result {
+            Ok(runs) => {
+                let count = runs.len();
+                let best = runs
+                    .iter()
+                    .filter_map(|r| r.metrics.as_ref().map(|m| m.total_return_pct))
+                    .reduce(f64::max);
+                (Some(count), best)
+            }
+            Err(_) => (None, None),
+        };
+
+        // Build the card string (mirrors CLI's format_inspect_card).
+        let asset = scenario.asset.first().map(|a| a.symbol.as_str()).unwrap_or("-");
+        let quote = format!("{:?}", scenario.quote_currency).to_uppercase();
+        let asset_pair = format!("{}/{}", asset, quote);
+        let window_secs = (scenario.time_window.end - scenario.time_window.start).num_seconds() as u64;
+        let bar_secs = scenario.granularity.seconds();
+        let decision_bars = if bar_secs > 0 {
+            let total_bars = window_secs / bar_secs;
+            total_bars.saturating_sub(scenario.warmup_bars as u64)
+        } else {
+            0
+        };
+
+        let mut card = String::new();
+        card.push_str(&format!("id: {}\n", scenario.id));
+        card.push_str(&format!("name: {}\n", scenario.display_name));
+        card.push_str(&format!("asset: {}\n", asset_pair));
+        card.push_str(&format!("timeframe: {}\n", scenario.granularity));
+        card.push_str(&format!(
+            "date_window: {}..{}\n",
+            scenario.time_window.start.format("%Y-%m-%d"),
+            scenario.time_window.end.format("%Y-%m-%d"),
+        ));
+        card.push_str(&format!("warmup_bars: {}\n", scenario.warmup_bars));
+        card.push_str(&format!("decision_bars: {}\n", decision_bars));
+        if let Some(parent_id) = &scenario.parent_scenario_id {
+            card.push_str(&format!("source: cloned_from {}\n", parent_id));
+        }
+        match (run_count, best_return) {
+            (Some(count), best) => {
+                card.push_str("previous_runs:\n");
+                card.push_str(&format!("  count: {}\n", count));
+                if let Some(ret) = best {
+                    card.push_str(&format!("  best_return_pct: {:.2}\n", ret));
+                } else {
+                    card.push_str("  best_return_pct: (none)\n");
+                }
+            }
+            _ => {
+                card.push_str("previous_runs: (unavailable)\n");
+            }
+        }
+        if card.ends_with('\n') {
+            card.truncate(card.len() - 1);
+        }
+
+        json_or_err(&serde_json::json!({ "card": card }))
+    }
+
+    /// Get the behavior summary for a completed eval run — flat/long/short
+    /// rates, trade count, direct flips, avg bars held, reentries, and
+    /// primary failure mode. Equivalent to `xvn eval show <id> --behavior
+    /// --json`. Smallest of the six new tools.
+    #[tool(
+        description = "Get the BehaviorSummary for a completed eval run (action rates, trades, flips, failure mode). Returns null fields when the run has no decisions."
+    )]
+    async fn xvn_eval_behavior(
+        &self,
+        Parameters(req): Parameters<EvalBehaviorReq>,
+    ) -> Result<String, rmcp::ErrorData> {
+        let ctx = self.api_context().await?;
+        let behavior = api_eval::get_run_behavior(&ctx, &req.run_id)
+            .await
+            .map_err(api_err_to_mcp)?;
+        json_or_err(&behavior)
+    }
 }
 
 impl XvisionTools {
@@ -668,6 +1306,25 @@ fn api_err_to_mcp(e: xvision_engine::api::ApiError) -> rmcp::ErrorData {
         ApiError::Internal(msg) => rmcp::ErrorData::internal_error(msg, None),
         ApiError::Db(e) => rmcp::ErrorData::internal_error(format!("db: {e}"), None),
         ApiError::Other(e) => rmcp::ErrorData::internal_error(format!("{e:#}"), None),
+    }
+}
+
+/// Parse a CLI/MCP timeframe string to `decision_cadence_minutes`.
+/// Accepted values: `1m`, `5m`, `15m`, `30m`, `1h`, `2h`, `4h`, `1d`.
+fn parse_timeframe_mcp(timeframe: &str) -> Result<u32, rmcp::ErrorData> {
+    match timeframe {
+        "1m" => Ok(1),
+        "5m" => Ok(5),
+        "15m" => Ok(15),
+        "30m" => Ok(30),
+        "1h" => Ok(60),
+        "2h" => Ok(120),
+        "4h" => Ok(240),
+        "1d" => Ok(1440),
+        other => Err(rmcp::ErrorData::invalid_params(
+            format!("unknown timeframe '{other}'. Accepted: 1m, 5m, 15m, 30m, 1h, 2h, 4h, 1d"),
+            None,
+        )),
     }
 }
 
@@ -921,7 +1578,7 @@ mod tests {
     // --- eval verbs (Phase 3.D Task 12) ----------------------------------
 
     use chrono::{Duration as ChronoDuration, TimeZone, Utc};
-    use xvision_engine::eval::run::{MetricsSummary, Run, RunMode, RunStatus};
+    use xvision_engine::eval::run::{MetricsSummary, Run, RunMode};
     use xvision_engine::eval::store::DecisionRow;
 
     /// Seed a completed run with metrics + a few equity samples + a decision.
@@ -934,8 +1591,11 @@ mod tests {
     ) -> String {
         let ctx = tools.api_context().await.unwrap();
         let store = RunStore::new(ctx.db.clone());
-        let mut run = Run::new_queued(agent_id.into(), scenario_id.into(), RunMode::Backtest);
-        run.status = RunStatus::Completed;
+        // Create in Queued state so finalize() (which transitions queued/running →
+        // completed) can succeed. Setting status=Completed before create and then
+        // calling finalize causes "already completed" because finalize's WHERE
+        // clause requires status IN ('queued', 'running').
+        let run = Run::new_queued(agent_id.into(), scenario_id.into(), RunMode::Backtest);
         store.create(&run).await.unwrap();
 
         let t0 = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
@@ -1114,5 +1774,245 @@ mod tests {
         let v = parsed(&s);
         let arr = v.as_array().unwrap();
         assert!(arr.is_empty(), "expected empty findings, got {v}");
+    }
+
+    // ── F-13 smoke tests: 6 new MCP tools ─────────────────────────────────
+
+    /// `xvn_strategy_create_atomic` request struct round-trips through serde.
+    #[test]
+    fn strategy_create_atomic_req_serde_roundtrip() {
+        let json = serde_json::json!({
+            "name": "eth-trader",
+            "role": "trader",
+            "prompt": "You are a crypto trader.",
+            "provider": "openrouter",
+            "model": "kimi-k2",
+            "asset": "ETH/USD",
+            "timeframe": "4h",
+        });
+        let req: StrategyCreateAtomicReq = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(req.name, "eth-trader");
+        assert_eq!(req.role, "trader");
+        assert_eq!(req.provider, "openrouter");
+        assert_eq!(req.model, "kimi-k2");
+        assert_eq!(req.asset.as_deref(), Some("ETH/USD"));
+        assert_eq!(req.timeframe.as_deref(), Some("4h"));
+    }
+
+    /// `xvn_strategy_create_atomic` defaults work when asset/timeframe omitted.
+    #[test]
+    fn strategy_create_atomic_req_optional_fields_default_to_none() {
+        let json = serde_json::json!({
+            "name": "minimal",
+            "role": "trader",
+            "prompt": "Trade ETH",
+            "provider": "anthropic",
+            "model": "claude-sonnet-4-6",
+        });
+        let req: StrategyCreateAtomicReq = serde_json::from_value(json).unwrap();
+        assert!(req.asset.is_none());
+        assert!(req.timeframe.is_none());
+    }
+
+    /// `xvn_strategy_validate_preflight` request struct round-trips.
+    #[test]
+    fn strategy_preflight_req_serde_roundtrip() {
+        let json = serde_json::json!({
+            "id": "01JDE2KBNHQ5ST3K4YCJNZPCAJ",
+            "scenario_id": "crypto-bull-q1-2025",
+        });
+        let req: StrategyPreflightReq = serde_json::from_value(json).unwrap();
+        assert_eq!(req.id, "01JDE2KBNHQ5ST3K4YCJNZPCAJ");
+        assert_eq!(req.scenario_id.as_deref(), Some("crypto-bull-q1-2025"));
+    }
+
+    /// `xvn_strategy_validate_preflight` without scenario_id returns shape-only check.
+    #[tokio::test]
+    async fn strategy_validate_preflight_shape_only_no_scenario() {
+        let (tools, _td) = tools_with_tmp();
+        // Create a strategy via the existing authoring surface so we have a valid id.
+        let s = tools
+            .xvn_create_strategy(Parameters(CreateStrategyReq {
+                template: "trend_follower".into(),
+                name: "preflight-smoke".into(),
+                creator: None,
+            }))
+            .await
+            .unwrap();
+        let id = id_of(&s);
+
+        let r = tools
+            .xvn_strategy_validate_preflight(Parameters(StrategyPreflightReq {
+                id: id.clone(),
+                scenario_id: None,
+            }))
+            .await
+            .unwrap();
+        let v = parsed(&r);
+        // The strategy has no agents (template-created, no agent wired), so
+        // validate_strategy will fail; the preflight report exists regardless.
+        assert!(v["strategy_id"].as_str().is_some());
+        assert!(v["eval_ready"].is_boolean());
+        // warnings should mention the shape-only notice
+        let warnings = v["warnings"].as_array().unwrap();
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.as_str().map(|s| s.contains("no scenario")).unwrap_or(false)),
+            "expected shape-only warning, got: {v}"
+        );
+    }
+
+    /// `xvn_eval_batch_run` request struct round-trips through serde.
+    #[test]
+    fn eval_batch_run_req_serde_roundtrip() {
+        let json = serde_json::json!({
+            "strategy_id": "strat-123",
+            "scenario_ids": ["sc-a", "sc-b", "sc-c"],
+            "mode": "backtest",
+            "review_with": "reasoning-agent",
+        });
+        let req: EvalBatchRunReq = serde_json::from_value(json).unwrap();
+        assert_eq!(req.strategy_id, "strat-123");
+        assert_eq!(req.scenario_ids.len(), 3);
+        assert_eq!(req.mode.as_deref(), Some("backtest"));
+        assert_eq!(req.review_with.as_deref(), Some("reasoning-agent"));
+    }
+
+    /// `xvn_eval_compare_report` request struct round-trips with all fields.
+    #[test]
+    fn eval_compare_report_req_serde_roundtrip() {
+        let json = serde_json::json!({
+            "run_ids": ["run-1", "run-2"],
+            "sort": "sharpe",
+        });
+        let req: EvalCompareReportReq = serde_json::from_value(json).unwrap();
+        assert_eq!(req.run_ids, vec!["run-1", "run-2"]);
+        assert_eq!(req.sort.as_deref(), Some("sharpe"));
+    }
+
+    /// `xvn_eval_compare_report` returns decorated compare rows with behavior fields.
+    #[tokio::test]
+    async fn eval_compare_report_returns_decorated_rows() {
+        let (tools, _td) = tools_with_tmp();
+        let id_a = seed_run(&tools, "strat-A", "crypto-bull-q1-2025", 8.0).await;
+        let id_b = seed_run(&tools, "strat-B", "crypto-bear-q3-2024", 3.5).await;
+
+        let s = tools
+            .xvn_eval_compare_report(Parameters(EvalCompareReportReq {
+                run_ids: vec![id_a.clone(), id_b.clone()],
+                sort: Some("return".into()),
+            }))
+            .await
+            .unwrap();
+        let v = parsed(&s);
+        let runs = v["runs"].as_array().unwrap();
+        assert_eq!(runs.len(), 2, "expected 2 rows");
+        // Each row must carry behavior-decorator fields.
+        let row = &runs[0];
+        assert!(row["trades_opened"].is_number(), "missing trades_opened");
+        assert!(
+            row["primary_failure_mode"].is_string(),
+            "missing primary_failure_mode"
+        );
+        assert!(
+            row["action_distribution"].is_object(),
+            "missing action_distribution"
+        );
+        // Sorted by return desc — id_a seeded with 8.0 should be first.
+        assert_eq!(runs[0]["run_id"].as_str().unwrap(), id_a);
+        assert_eq!(runs[1]["run_id"].as_str().unwrap(), id_b);
+    }
+
+    /// `xvn_scenario_inspect_card` request struct round-trips.
+    #[test]
+    fn scenario_inspect_card_req_serde_roundtrip() {
+        let json = serde_json::json!({ "id": "crypto-bull-q1-2025" });
+        let req: ScenarioInspectCardReq = serde_json::from_value(json).unwrap();
+        assert_eq!(req.id, "crypto-bull-q1-2025");
+    }
+
+    /// `xvn_scenario_inspect_card` returns a card string for a canonical scenario.
+    #[tokio::test]
+    async fn scenario_inspect_card_returns_card_for_canonical_scenario() {
+        let (tools, _td) = tools_with_tmp();
+
+        let s = tools
+            .xvn_scenario_inspect_card(Parameters(ScenarioInspectCardReq {
+                id: "crypto-bull-q1-2025".into(),
+            }))
+            .await
+            .unwrap();
+        let v = parsed(&s);
+        let card = v["card"].as_str().unwrap();
+        assert!(card.contains("id:"), "card missing id field: {card}");
+        assert!(card.contains("name:"), "card missing name field: {card}");
+        assert!(card.contains("timeframe:"), "card missing timeframe: {card}");
+        assert!(
+            card.contains("decision_bars:"),
+            "card missing decision_bars: {card}"
+        );
+    }
+
+    /// `xvn_eval_behavior` request struct round-trips.
+    #[test]
+    fn eval_behavior_req_serde_roundtrip() {
+        let json = serde_json::json!({ "run_id": "01JDE2KBNHQ5ST3K4YCJNZPCAJ" });
+        let req: EvalBehaviorReq = serde_json::from_value(json).unwrap();
+        assert_eq!(req.run_id, "01JDE2KBNHQ5ST3K4YCJNZPCAJ");
+    }
+
+    /// `xvn_eval_behavior` returns a BehaviorSummary for a seeded run.
+    #[tokio::test]
+    async fn eval_behavior_returns_summary_for_seeded_run() {
+        let (tools, _td) = tools_with_tmp();
+        let run_id = seed_run(&tools, "strat-X", "crypto-bull-q1-2025", 5.0).await;
+
+        let s = tools
+            .xvn_eval_behavior(Parameters(EvalBehaviorReq { run_id }))
+            .await
+            .unwrap();
+        let v = parsed(&s);
+        assert!(v["flat_rate"].is_number(), "missing flat_rate");
+        assert!(
+            v["primary_failure_mode"].is_string(),
+            "missing primary_failure_mode"
+        );
+        assert!(v["trades_opened"].is_number(), "missing trades_opened");
+    }
+
+    /// `xvn_eval_behavior` returns a 404-shaped error for an unknown run.
+    #[tokio::test]
+    async fn eval_behavior_returns_not_found_for_unknown_run() {
+        let (tools, _td) = tools_with_tmp();
+        let err = tools
+            .xvn_eval_behavior(Parameters(EvalBehaviorReq {
+                run_id: "no-such-run".into(),
+            }))
+            .await
+            .unwrap_err();
+        let msg = err.to_string().to_lowercase();
+        assert!(msg.contains("not found"), "unexpected msg: {msg}");
+    }
+
+    /// `parse_timeframe_mcp` maps all accepted values correctly.
+    #[test]
+    fn parse_timeframe_mcp_known_values() {
+        assert_eq!(parse_timeframe_mcp("1m").unwrap(), 1);
+        assert_eq!(parse_timeframe_mcp("5m").unwrap(), 5);
+        assert_eq!(parse_timeframe_mcp("15m").unwrap(), 15);
+        assert_eq!(parse_timeframe_mcp("30m").unwrap(), 30);
+        assert_eq!(parse_timeframe_mcp("1h").unwrap(), 60);
+        assert_eq!(parse_timeframe_mcp("2h").unwrap(), 120);
+        assert_eq!(parse_timeframe_mcp("4h").unwrap(), 240);
+        assert_eq!(parse_timeframe_mcp("1d").unwrap(), 1440);
+    }
+
+    /// `parse_timeframe_mcp` rejects unknown strings.
+    #[test]
+    fn parse_timeframe_mcp_rejects_unknown() {
+        assert!(parse_timeframe_mcp("2d").is_err());
+        assert!(parse_timeframe_mcp("1w").is_err());
+        assert!(parse_timeframe_mcp("garbage").is_err());
     }
 }
