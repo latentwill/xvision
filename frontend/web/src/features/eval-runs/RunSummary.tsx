@@ -104,7 +104,7 @@ export function RunSummaryError({ error }: RunSummaryErrorProps): JSX.Element | 
       <div className="text-[11px] text-danger uppercase tracking-wide mb-1">
         error
       </div>
-      <code className="font-mono text-[12px] text-text whitespace-pre-wrap">
+      <code className="font-mono text-[12px] text-text whitespace-pre-wrap break-words">
         {error}
       </code>
     </div>
