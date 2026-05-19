@@ -28,8 +28,11 @@ use xvision_engine::authoring;
 use xvision_engine::eval::behavior::derive_behavior_summary;
 use xvision_engine::eval::run::{RunMode, RunStatus};
 use xvision_engine::eval::store::RunStore;
-use xvision_engine::strategies::{risk::RiskConfig, store::{FilesystemStore, StrategyStore}};
 use xvision_engine::strategies::validate::{preflight_validate, validate_strategy};
+use xvision_engine::strategies::{
+    risk::RiskConfig,
+    store::{FilesystemStore, StrategyStore},
+};
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -767,10 +770,8 @@ impl XvisionTools {
         Parameters(req): Parameters<StrategyCreateAtomicReq>,
     ) -> Result<String, rmcp::ErrorData> {
         use xvision_engine::agents::{AgentSlot, InputsPolicy};
-        use xvision_engine::strategies::{
-            manifest::PublicManifest, AgentRef, PipelineDef, Strategy,
-        };
         use xvision_engine::strategies::risk::RiskPreset;
+        use xvision_engine::strategies::{manifest::PublicManifest, AgentRef, PipelineDef, Strategy};
 
         let asset = req.asset.unwrap_or_else(|| "BTC/USD".to_string());
         let timeframe = req.timeframe.unwrap_or_else(|| "4h".to_string());
@@ -784,7 +785,10 @@ impl XvisionTools {
             &ctx,
             api_agents::CreateAgentRequest {
                 name: format!("{} {}", req.name, req.role),
-                description: format!("Created atomically with strategy '{}' role '{}'", req.name, req.role),
+                description: format!(
+                    "Created atomically with strategy '{}' role '{}'",
+                    req.name, req.role
+                ),
                 tags: vec!["atomic-create".to_string(), "mcp".to_string()],
                 slots: vec![AgentSlot {
                     name: "main".to_string(),
@@ -1027,12 +1031,19 @@ impl XvisionTools {
 
             let entry = match api_eval::run(&ctx, run_req).await {
                 Ok(run) => {
-                    let (return_pct, sharpe, drawdown_pct, decisions) =
-                        if let Some(m) = &run.metrics {
-                            (Some(m.total_return_pct), Some(m.sharpe), Some(m.max_drawdown_pct), m.n_decisions)
-                        } else {
-                            (None, None, None, 0)
-                        };
+                    api_eval::attach_run_to_batch(&ctx, &run.id, &batch_id)
+                        .await
+                        .map_err(api_err_to_mcp)?;
+                    let (return_pct, sharpe, drawdown_pct, decisions) = if let Some(m) = &run.metrics {
+                        (
+                            Some(m.total_return_pct),
+                            Some(m.sharpe),
+                            Some(m.max_drawdown_pct),
+                            m.n_decisions,
+                        )
+                    } else {
+                        (None, None, None, 0)
+                    };
                     serde_json::json!({
                         "scenario_id": scenario_id,
                         "scenario_name": scenario_name,
@@ -1101,7 +1112,12 @@ impl XvisionTools {
                 *action_dist.entry(d.action.clone()).or_insert(0) += 1;
             }
             let (return_pct, sharpe, max_drawdown_pct, n_decisions) = match &run.metrics {
-                Some(m) => (Some(m.total_return_pct), Some(m.sharpe), Some(m.max_drawdown_pct), m.n_decisions),
+                Some(m) => (
+                    Some(m.total_return_pct),
+                    Some(m.sharpe),
+                    Some(m.max_drawdown_pct),
+                    m.n_decisions,
+                ),
                 None => (None, None, None, 0),
             };
             rows.push(CompareRunRow {
@@ -1159,9 +1175,7 @@ impl XvisionTools {
     ) -> Result<String, rmcp::ErrorData> {
         let ctx = self.api_context().await?;
 
-        let scenario = api_scenario::get(&ctx, &req.id)
-            .await
-            .map_err(api_err_to_mcp)?;
+        let scenario = api_scenario::get(&ctx, &req.id).await.map_err(api_err_to_mcp)?;
 
         // Aggregate previous runs (count + best return).
         let runs_result = api_eval::list(
@@ -1190,8 +1204,7 @@ impl XvisionTools {
         let asset = scenario.asset.first().map(|a| a.symbol.as_str()).unwrap_or("-");
         let quote = format!("{:?}", scenario.quote_currency).to_uppercase();
         let asset_pair = format!("{}/{}", asset, quote);
-        let window_secs = (scenario.time_window.end - scenario.time_window.start)
-            .num_seconds() as u64;
+        let window_secs = (scenario.time_window.end - scenario.time_window.start).num_seconds() as u64;
         let bar_secs = scenario.granularity.seconds();
         let decision_bars = if bar_secs > 0 {
             let total_bars = window_secs / bar_secs;
@@ -1309,9 +1322,7 @@ fn parse_timeframe_mcp(timeframe: &str) -> Result<u32, rmcp::ErrorData> {
         "4h" => Ok(240),
         "1d" => Ok(1440),
         other => Err(rmcp::ErrorData::invalid_params(
-            format!(
-                "unknown timeframe '{other}'. Accepted: 1m, 5m, 15m, 30m, 1h, 2h, 4h, 1d"
-            ),
+            format!("unknown timeframe '{other}'. Accepted: 1m, 5m, 15m, 30m, 1h, 2h, 4h, 1d"),
             None,
         )),
     }
@@ -1567,7 +1578,7 @@ mod tests {
     // --- eval verbs (Phase 3.D Task 12) ----------------------------------
 
     use chrono::{Duration as ChronoDuration, TimeZone, Utc};
-    use xvision_engine::eval::run::{MetricsSummary, Run, RunMode, RunStatus};
+    use xvision_engine::eval::run::{MetricsSummary, Run, RunMode};
     use xvision_engine::eval::store::DecisionRow;
 
     /// Seed a completed run with metrics + a few equity samples + a decision.
@@ -1845,7 +1856,9 @@ mod tests {
         // warnings should mention the shape-only notice
         let warnings = v["warnings"].as_array().unwrap();
         assert!(
-            warnings.iter().any(|w| w.as_str().map(|s| s.contains("no scenario")).unwrap_or(false)),
+            warnings
+                .iter()
+                .any(|w| w.as_str().map(|s| s.contains("no scenario")).unwrap_or(false)),
             "expected shape-only warning, got: {v}"
         );
     }
@@ -1898,8 +1911,14 @@ mod tests {
         // Each row must carry behavior-decorator fields.
         let row = &runs[0];
         assert!(row["trades_opened"].is_number(), "missing trades_opened");
-        assert!(row["primary_failure_mode"].is_string(), "missing primary_failure_mode");
-        assert!(row["action_distribution"].is_object(), "missing action_distribution");
+        assert!(
+            row["primary_failure_mode"].is_string(),
+            "missing primary_failure_mode"
+        );
+        assert!(
+            row["action_distribution"].is_object(),
+            "missing action_distribution"
+        );
         // Sorted by return desc — id_a seeded with 8.0 should be first.
         assert_eq!(runs[0]["run_id"].as_str().unwrap(), id_a);
         assert_eq!(runs[1]["run_id"].as_str().unwrap(), id_b);
@@ -1929,7 +1948,10 @@ mod tests {
         assert!(card.contains("id:"), "card missing id field: {card}");
         assert!(card.contains("name:"), "card missing name field: {card}");
         assert!(card.contains("timeframe:"), "card missing timeframe: {card}");
-        assert!(card.contains("decision_bars:"), "card missing decision_bars: {card}");
+        assert!(
+            card.contains("decision_bars:"),
+            "card missing decision_bars: {card}"
+        );
     }
 
     /// `xvn_eval_behavior` request struct round-trips.
@@ -1952,7 +1974,10 @@ mod tests {
             .unwrap();
         let v = parsed(&s);
         assert!(v["flat_rate"].is_number(), "missing flat_rate");
-        assert!(v["primary_failure_mode"].is_string(), "missing primary_failure_mode");
+        assert!(
+            v["primary_failure_mode"].is_string(),
+            "missing primary_failure_mode"
+        );
         assert!(v["trades_opened"].is_number(), "missing trades_opened");
     }
 
