@@ -256,6 +256,14 @@ pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
         );
     }
 
+    // F-11 sub: spawn the retention janitor so the blob store at
+    // `$xvn_home/agent_runs/blobs/` is bounded by TTL + max-bytes
+    // defaults. The dashboard process owns this background task for
+    // its whole lifetime; the JoinHandle is intentionally dropped —
+    // it terminates with the process. See
+    // `crates/xvision-engine/src/api/eval.rs::spawn_retention_janitor`.
+    let _janitor = api_eval::spawn_retention_janitor(&state.api_context());
+
     // Resolve auth posture from bind address + env. Refuses to start
     // on a non-loopback bind without a configured shared secret. See
     // `crates/xvision-dashboard/src/auth.rs` and the runbook.

@@ -1734,6 +1734,101 @@ pub async fn fail_orphan_runs(ctx: &ApiContext) -> ApiResult<u64> {
         .map_err(|e| ApiError::Internal(format!("fail orphan runs: {e}")))
 }
 
+/// Default values for the retention janitor when no env override is set.
+///
+/// These bound the disk footprint of the agent-run observability blob
+/// store. The audit on 2026-05-19 found 5,568 blobs in
+/// `/data/agent_runs/blobs/` because the janitor was implemented but
+/// never spawned — see `crates/xvision-observability/src/janitor.rs`.
+///
+/// - `payload_ttl_days = 14` matches the team's stated 2-week retention
+///   target for full-debug trace payloads.
+/// - `max_payload_bytes = 4 GB` is the per-host disk-budget cap. When
+///   the blob store grows past this, the janitor evicts in
+///   mtime-ascending order until the store is back under the cap.
+/// - `tick = 1 hour` keeps the bookkeeping cost negligible while
+///   ensuring nothing past TTL lingers for more than an hour.
+pub const JANITOR_DEFAULT_TTL_DAYS: u64 = 14;
+pub const JANITOR_DEFAULT_MAX_BYTES: u64 = 4_000_000_000;
+pub const JANITOR_DEFAULT_TICK_SECS: u64 = 60 * 60;
+
+/// Resolve the janitor configuration from environment variables, falling
+/// back to the documented defaults above. Exposed for tests so they can
+/// assert env-override behaviour without spawning the task.
+pub fn resolve_janitor_config_from_env() -> (xvision_observability::JanitorConfig, std::time::Duration) {
+    let ttl_days = std::env::var("XVN_PAYLOAD_TTL_DAYS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(JANITOR_DEFAULT_TTL_DAYS);
+    let max_bytes = std::env::var("XVN_MAX_PAYLOAD_BYTES")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(JANITOR_DEFAULT_MAX_BYTES);
+    let tick_secs = std::env::var("XVN_JANITOR_INTERVAL_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(JANITOR_DEFAULT_TICK_SECS);
+    (
+        xvision_observability::JanitorConfig {
+            payload_ttl_days: ttl_days,
+            max_payload_bytes: max_bytes,
+        },
+        std::time::Duration::from_secs(tick_secs.max(1)),
+    )
+}
+
+/// Spawn the retention janitor as a periodic background task at engine
+/// boot. The handle is returned so the caller can `abort()` it at
+/// process shutdown; in practice the dashboard's `serve` lets it run
+/// for the whole process lifetime.
+///
+/// Behaviour:
+/// - Reads TTL + max-bytes from env (`XVN_PAYLOAD_TTL_DAYS`,
+///   `XVN_MAX_PAYLOAD_BYTES`); defaults documented on
+///   [`JANITOR_DEFAULT_TTL_DAYS`] / [`JANITOR_DEFAULT_MAX_BYTES`].
+/// - Builds the blob store at `$xvn_home/agent_runs/blobs/` — same path
+///   the eval emitter writes to.
+/// - If the blob root is missing it logs and silently skips (no panic).
+///   We try `create_dir_all` first so the common "fresh install"
+///   case still gets a running janitor.
+///
+/// Returns `None` when no task was spawned (blob root missing AND
+/// couldn't be created); otherwise the `JoinHandle` of the periodic
+/// task.
+pub fn spawn_retention_janitor(ctx: &ApiContext) -> Option<tokio::task::JoinHandle<()>> {
+    let blob_root = ctx.xvn_home.join("agent_runs").join("blobs");
+    // Best-effort: create the dir so the very first boot on a fresh
+    // host still gets a running janitor. If creation fails (read-only
+    // mount, permissions), log and skip — never panic.
+    if !blob_root.exists() {
+        if let Err(e) = std::fs::create_dir_all(&blob_root) {
+            tracing::warn!(
+                target: "xvision_engine::janitor",
+                blob_root = %blob_root.display(),
+                error = %e,
+                "retention janitor skipped: blob root does not exist and could not be created"
+            );
+            return None;
+        }
+    }
+    let blob_store = xvision_observability::BlobStore::new(blob_root.clone());
+    let (config, interval) = resolve_janitor_config_from_env();
+    tracing::info!(
+        target: "xvision_engine::janitor",
+        blob_root = %blob_root.display(),
+        payload_ttl_days = config.payload_ttl_days,
+        max_payload_bytes = config.max_payload_bytes,
+        tick_secs = interval.as_secs(),
+        "retention janitor spawned"
+    );
+    Some(xvision_observability::spawn_janitor(
+        ctx.db.clone(),
+        blob_store,
+        config,
+        interval,
+    ))
+}
+
 pub async fn scenarios(ctx: &ApiContext) -> ApiResult<Vec<ScenarioSummary>> {
     let started = Instant::now();
     // Pull the live set from the DB (seeded canonical rows + any
