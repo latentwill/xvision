@@ -1618,6 +1618,7 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
     };
     let agent_slots = resolve_agent_slots(ctx, &strategy).await?;
     validate_eval_trader_source(&strategy, &agent_slots)?;
+
     let (dispatch, findings_model) = build_eval_dispatch(ctx, &strategy, &agent_slots).await?;
     let tools = Arc::new(ToolRegistry::default_with_builtins());
 
@@ -1871,6 +1872,13 @@ async fn execute_in_background(
         return;
     }
 
+    // TODO(F-1 follow-up / #345): serialize finalize writes across concurrent
+    // eval runs that share the same (provider, model) slot. When many runs
+    // complete simultaneously, concurrent `store.finalize` + `upsert_run`
+    // calls can contend on the SQLite write lock and leave some runs in a
+    // "stuck running" state. PR #345 (eval-run-watchdog-and-stuck-running,
+    // F-3) already touches this path — add write batching there to avoid a
+    // merge conflict here.
     let finalized = match store.get(&run.id).await {
         Ok(r) => r,
         Err(e) => {

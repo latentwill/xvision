@@ -2,9 +2,73 @@
 //! `Agent` value type for v1; uniqueness checks against the store happen
 //! separately in `engine::api::agents::validate`.
 
+use std::collections::HashSet;
+
 use serde::{Deserialize, Serialize};
 
 use crate::agents::model::Agent;
+
+// ---------------------------------------------------------------------------
+// Save-gate constants
+// ---------------------------------------------------------------------------
+
+/// Minimum character length for a slot's system_prompt before a save is
+/// accepted. Prompts shorter than this are either placeholder stubs or
+/// clearly unfit for production use.
+pub const MIN_SYSTEM_PROMPT_CHARS: usize = 200;
+
+/// Leading text that identifies the factory default placeholder prompt.
+/// We match on the leading sentence (tolerant of trailing edits) rather
+/// than a content hash so a saved prompt that starts with this string but
+/// has had junk appended is still caught.
+const DEFAULT_PLACEHOLDER_LEADING: &str = "You are a trading agent. Decide based on the inputs provided.";
+
+/// Asset ticker slugs that the name↔prompt mismatch check recognises.
+const ASSET_SLUGS: &[&str] = &[
+    "BTC", "ETH", "SOL", "AVAX", "DOGE", "LINK", "MATIC", "DOT", "ADA", "XRP",
+];
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+/// Return the set of `ASSET_SLUGS` that appear in `text` (case-insensitive).
+fn assets_in(text: &str) -> HashSet<&'static str> {
+    let upper = text.to_uppercase();
+    ASSET_SLUGS
+        .iter()
+        .filter(|s| upper.contains(*s))
+        .copied()
+        .collect()
+}
+
+/// If the agent `name` references an asset slug that is absent from `prompt`,
+/// return an error message string for the first such slug. Returns `None`
+/// when no mismatch is detected (including when the name has no asset slug).
+fn name_prompt_asset_mismatch(name: &str, prompt: &str) -> Option<String> {
+    let in_name = assets_in(name);
+    if in_name.is_empty() {
+        return None;
+    }
+    let in_prompt = assets_in(prompt);
+    // Sort for deterministic ordering so the first reported slug is stable.
+    let mut missing: Vec<&'static str> = in_name
+        .iter()
+        .filter(|slug| !in_prompt.contains(*slug))
+        .copied()
+        .collect();
+    missing.sort_unstable();
+    missing
+        .first()
+        .map(|slug| format!("agent name mentions {slug} but system_prompt does not"))
+}
+
+/// Return `true` when `prompt` is the unmodified factory default placeholder
+/// or is too short to be a useful system prompt.
+fn is_default_placeholder(prompt: &str) -> bool {
+    let normalized = prompt.trim();
+    normalized.starts_with(DEFAULT_PLACEHOLDER_LEADING) || normalized.len() < MIN_SYSTEM_PROMPT_CHARS
+}
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(
@@ -113,6 +177,67 @@ pub fn validate_agent(agent: &Agent) -> Vec<ValidationDiagnostic> {
     }
 
     out
+}
+
+/// Validate an agent before it is persisted (create or update). Runs all
+/// structural checks from `validate_agent` **plus** two save-gate rules:
+///
+/// 1. **Name↔prompt asset mismatch** — if the agent name references a
+///    known ticker slug (BTC, ETH, SOL, …) that is absent from every
+///    slot's `system_prompt`, the save is refused. Rationale: the audit
+///    found a "SOL agent" whose prompt opened with "ETH/USD 4-hour swing
+///    trader" — silent misconfiguration.
+///
+/// 2. **Default-placeholder / too-short prompt** — refuse to save any slot
+///    whose `system_prompt` still contains the factory default text or is
+///    shorter than `MIN_SYSTEM_PROMPT_CHARS` characters. A prompt that
+///    short cannot contain meaningful trading logic.
+///
+/// Returns an `Err(String)` with a human-readable message for the first
+/// blocking violation, or `Ok(())` when all checks pass. Callers should
+/// first call `validate_agent` to surface *all* structural diagnostics;
+/// this function adds the hard rejection gates on top.
+pub fn validate_agent_for_save(agent: &Agent) -> Result<(), String> {
+    // ------------------------------------------------------------------
+    // (b) Default-placeholder / too-short prompt check.
+    //     Runs over every slot; the first violation blocks the save.
+    // ------------------------------------------------------------------
+    for slot in &agent.slots {
+        if slot.system_prompt.trim().is_empty() {
+            // Empty prompt is already a Warning from `validate_agent`; not
+            // a hard block here — the store's existing behaviour allows it
+            // so as not to break wizard drafts that save before the prompt
+            // is written. The minimum-length check below handles the actual
+            // gate.
+            continue;
+        }
+        if is_default_placeholder(&slot.system_prompt) {
+            return Err(format!(
+                "slot '{}': system_prompt is the default placeholder or fewer than \
+                 {MIN_SYSTEM_PROMPT_CHARS} characters; replace with a real trading prompt before saving",
+                slot.name,
+            ));
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // (a) Name ↔ prompt asset mismatch.
+    //     Build the combined prompt from all slots so that a multi-slot
+    //     agent where one slot mentions SOL and another doesn't still
+    //     passes when the name says SOL.
+    // ------------------------------------------------------------------
+    let combined_prompt: String = agent
+        .slots
+        .iter()
+        .map(|s| s.system_prompt.as_str())
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    if let Some(msg) = name_prompt_asset_mismatch(&agent.name, &combined_prompt) {
+        return Err(msg);
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
