@@ -424,15 +424,34 @@ pub async fn delete(ctx: &ApiContext, agent_id: &str) -> ApiResult<()> {
 
 async fn get_inner(ctx: &ApiContext, agent_id: &str) -> ApiResult<Strategy> {
     let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
-    store.load(agent_id).await.map_err(|e| {
-        if let Some(validation) = strategy_id_validation_error(&e) {
-            validation
-        } else if is_not_found(&e) {
-            ApiError::NotFound(format!("strategy '{agent_id}'"))
-        } else {
-            ApiError::Internal(e.to_string())
+    match store.load(agent_id).await {
+        Ok(strategy) => Ok(strategy),
+        Err(e) => {
+            if let Some(validation) = strategy_id_validation_error(&e) {
+                return Err(validation);
+            }
+            if is_not_found(&e) {
+                // WrongIdNamespace: before returning a generic NotFound, check
+                // whether `agent_id` is actually an agent-library id. The audit
+                // found `strategy.get` calls with an agent id — the caller had
+                // the namespaces confused and the generic NotFound gave no clue.
+                let agent_store = AgentStore::new(ctx.db.clone());
+                let is_agent_id = agent_store
+                    .get(agent_id)
+                    .await
+                    .ok()
+                    .flatten()
+                    .is_some();
+                if is_agent_id {
+                    return Err(ApiError::Validation(
+                        "id matches an agent; did you mean agents.get?".to_string(),
+                    ));
+                }
+                return Err(ApiError::NotFound(format!("strategy '{agent_id}'")));
+            }
+            Err(ApiError::Internal(e.to_string()))
         }
-    })
+    }
 }
 
 async fn delete_inner(store: &FilesystemStore, agent_id: &str) -> ApiResult<()> {

@@ -10,6 +10,7 @@ use sqlx::{Row, SqlitePool};
 use ulid::Ulid;
 
 use crate::agents::model::{Agent, AgentSlot};
+use crate::agents::validate::validate_agent_for_save;
 
 #[derive(Debug, Clone)]
 pub struct AgentStore {
@@ -45,6 +46,25 @@ impl AgentStore {
     }
 
     pub async fn create(&self, new: NewAgent) -> Result<String> {
+        // Save-gate: run the content-quality checks before touching the DB.
+        // Build a temporary Agent so validate_agent_for_save has the full
+        // picture (name + all slot prompts).
+        {
+            let now = Utc::now();
+            let probe = Agent {
+                agent_id: String::new(),
+                name: new.name.clone(),
+                description: new.description.clone(),
+                tags: new.tags.clone(),
+                slots: new.slots.clone(),
+                archived: false,
+                created_at: now,
+                updated_at: now,
+            };
+            validate_agent_for_save(&probe)
+                .map_err(|msg| anyhow::anyhow!("save validation failed: {msg}"))?;
+        }
+
         let id = Ulid::new().to_string();
         let now = Utc::now().to_rfc3339();
         let tags_json = serde_json::to_string(&new.tags).context("serialize tags")?;
@@ -125,7 +145,29 @@ impl AgentStore {
     pub async fn update(&self, agent_id: &str, patch: UpdateAgent) -> Result<Option<Agent>> {
         // Verify it exists first; return None if not.
         let existing = self.get(agent_id).await?;
-        let Some(_) = existing else { return Ok(None) };
+        let Some(ref existing_agent) = existing else {
+            return Ok(None);
+        };
+
+        // Save-gate: build the post-patch view and run content-quality checks
+        // before touching the DB. Only the fields being patched need merging.
+        {
+            let probe = Agent {
+                agent_id: existing_agent.agent_id.clone(),
+                name: patch.name.clone().unwrap_or_else(|| existing_agent.name.clone()),
+                description: patch
+                    .description
+                    .clone()
+                    .unwrap_or_else(|| existing_agent.description.clone()),
+                tags: patch.tags.clone().unwrap_or_else(|| existing_agent.tags.clone()),
+                slots: patch.slots.clone().unwrap_or_else(|| existing_agent.slots.clone()),
+                archived: existing_agent.archived,
+                created_at: existing_agent.created_at,
+                updated_at: existing_agent.updated_at,
+            };
+            validate_agent_for_save(&probe)
+                .map_err(|msg| anyhow::anyhow!("save validation failed: {msg}"))?;
+        }
 
         let now = Utc::now().to_rfc3339();
         let mut tx = self.pool.begin().await?;
@@ -310,11 +352,20 @@ mod tests {
     }
 
     fn sample_slot() -> AgentSlot {
+        // Prompt is intentionally ≥200 chars and does not start with the
+        // default-placeholder text so the save-gate checks pass.
+        let system_prompt = "You are a quantitative trading assistant. Analyse the OHLCV data \
+                             provided and respond with a JSON object containing: action \
+                             (buy/sell/hold), size_pct (0–100), and reason (string). \
+                             Apply disciplined risk management: never risk more than 1% of \
+                             notional equity per trade, and always respect the configured \
+                             stop-loss and take-profit levels. Avoid over-trading on low-volume bars."
+            .to_string();
         AgentSlot {
             name: "main".to_string(),
             provider: "anthropic".to_string(),
             model: "claude-sonnet-4-6".to_string(),
-            system_prompt: "You are a trader.".to_string(),
+            system_prompt,
             skill_ids: vec![],
             max_tokens: Some(4096),
             prompt_version: String::new(),
@@ -324,9 +375,11 @@ mod tests {
     #[tokio::test]
     async fn create_then_get_round_trips() {
         let store = AgentStore::new(fresh_pool().await);
+        // Name uses no asset slug so the name↔prompt mismatch check does not
+        // fire; the test is purely about DB round-trip fidelity.
         let id = store
             .create(NewAgent {
-                name: "btc-mean-rev-v1".to_string(),
+                name: "mean-rev-v1".to_string(),
                 description: "Buys dips on 15m.".to_string(),
                 tags: vec!["mean-rev".to_string(), "btc".to_string()],
                 slots: vec![sample_slot()],
@@ -335,7 +388,7 @@ mod tests {
             .unwrap();
 
         let loaded = store.get(&id).await.unwrap().expect("exists");
-        assert_eq!(loaded.name, "btc-mean-rev-v1");
+        assert_eq!(loaded.name, "mean-rev-v1");
         assert_eq!(loaded.tags, vec!["mean-rev", "btc"]);
         assert_eq!(loaded.slots.len(), 1);
         assert_eq!(loaded.slots[0].name, "main");
