@@ -501,13 +501,15 @@ function toolLogLine(
 ): { ok: boolean; content: ReactNode } | null {
   const args = (t.args ?? {}) as Record<string, unknown>;
   const result = (t.result ?? {}) as Record<string, unknown>;
+  const errorMsg = toolFailureMessage(result.error);
 
-  if (typeof result.error === "string") {
+  if (errorMsg || !t.ok) {
+    const detail = errorMsg ?? t.resultSummary ?? t.summary ?? "Tool failed";
     return {
       ok: false,
       content: (
         <>
-          {t.call} failed: <span className="font-mono text-text">{result.error}</span>
+          {t.call} failed: <span className="font-mono text-text">{detail}</span>
         </>
       ),
     };
@@ -575,6 +577,15 @@ function toolLogLine(
         content: t.resultSummary ? `${t.call}: ${t.resultSummary}` : `${t.call} complete`,
       };
   }
+}
+
+function toolFailureMessage(error: unknown): string | undefined {
+  if (typeof error === "string") return error;
+  if (error && typeof error === "object" && "message" in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === "string") return message;
+  }
+  return undefined;
 }
 
 function Composer({

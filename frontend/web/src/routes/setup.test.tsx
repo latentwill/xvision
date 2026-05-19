@@ -5,7 +5,7 @@ import { MemoryRouter } from "react-router-dom";
 
 import { SetupRoute } from "./setup";
 import { listProviders } from "@/api/settings";
-import { streamChat } from "@/api/chat_rail";
+import { resolveSession, streamChat } from "@/api/chat_rail";
 
 vi.mock("@/api/settings", () => ({
   settingsKeys: {
@@ -46,6 +46,10 @@ function renderRoute() {
 
 describe("SetupRoute", () => {
   beforeEach(() => {
+    vi.mocked(resolveSession).mockResolvedValue({
+      session_id: "setup-session",
+      history: [],
+    });
     vi.mocked(listProviders).mockResolvedValue({
       providers: [
         {
@@ -91,6 +95,51 @@ describe("SetupRoute", () => {
         "Only completed tool calls change the saved draft. Open the Inspector to verify the manifest before eval.",
       ),
     ).toBeInTheDocument();
+  });
+
+  it("narrates failed history tools as failures even without string errors", async () => {
+    vi.mocked(resolveSession).mockResolvedValue({
+      session_id: "setup-session",
+      history: [
+        {
+          id: "assistant-1",
+          session_id: "setup-session",
+          seq: 1,
+          role: "assistant",
+          ts: "2026-05-19T00:00:00.000Z",
+          content_blocks: [
+            {
+              type: "tool_use",
+              id: "tool-1",
+              name: "some_tool",
+              input: {},
+            },
+          ],
+        },
+        {
+          id: "user-1",
+          session_id: "setup-session",
+          seq: 2,
+          role: "user",
+          ts: "2026-05-19T00:00:01.000Z",
+          content_blocks: [
+            {
+              type: "tool_result",
+              tool_use_id: "tool-1",
+              content: JSON.stringify({
+                error: { message: "permission denied" },
+              }),
+            },
+          ],
+        },
+      ],
+    } as never);
+
+    renderRoute();
+
+    expect(await screen.findByText("permission denied")).toBeInTheDocument();
+    expect(screen.getByText(/some_tool failed:/)).toBeInTheDocument();
+    expect(screen.queryByText(/some_tool complete/)).not.toBeInTheDocument();
   });
 
   it("blocks wizard sends when no configured provider model is available", async () => {
