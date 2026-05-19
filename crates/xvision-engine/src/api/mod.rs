@@ -49,6 +49,7 @@ const MIGRATION_018_AGENT_RUN_OBSERVABILITY: &str =
     include_str!("../../migrations/018_agent_run_observability.sql");
 const MIGRATION_019_AGENT_SLOT_PROMPT_VERSION: &str =
     include_str!("../../migrations/019_agent_slot_prompt_version.sql");
+const MIGRATION_020_EVAL_BATCHES: &str = include_str!("../../migrations/020_eval_batches.sql");
 
 /// Map of cache_key → per-key mutex used by `eval::bars::load_bars` to
 /// serialize concurrent misses for the same window. Kept inside an outer
@@ -149,6 +150,7 @@ impl ApiContext {
             .execute(&pool)
             .await?;
         migrate_agent_slot_prompt_version(&pool).await?;
+        migrate_eval_batches(&pool).await?;
 
         let ctx = Self::new(pool, actor, xvn_home.to_path_buf());
 
@@ -444,6 +446,28 @@ async fn migrate_agent_slot_prompt_version(pool: &SqlitePool) -> ApiResult<()> {
             .await?;
     }
 
+    Ok(())
+}
+
+/// Apply migration 020: `eval_batches` table + `eval_runs.batch_id` column.
+/// Gated on `eval_batches` not existing so the migration is idempotent on
+/// already-upgraded databases.
+async fn migrate_eval_batches(pool: &SqlitePool) -> ApiResult<()> {
+    if !table_exists(pool, "eval_batches").await? {
+        sqlx::query(MIGRATION_020_EVAL_BATCHES).execute(pool).await?;
+        return Ok(());
+    }
+    // Table exists — ensure the batch_id column is present on eval_runs in
+    // case a partial migration left it behind. Safe to run `ADD COLUMN IF`
+    // via existence probe (SQLite has no IF NOT EXISTS for ADD COLUMN).
+    if !table_has_column(pool, "eval_runs", "batch_id").await? {
+        sqlx::query("ALTER TABLE eval_runs ADD COLUMN batch_id TEXT REFERENCES eval_batches(batch_id)")
+            .execute(pool)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_eval_runs_batch ON eval_runs(batch_id)")
+            .execute(pool)
+            .await?;
+    }
     Ok(())
 }
 
