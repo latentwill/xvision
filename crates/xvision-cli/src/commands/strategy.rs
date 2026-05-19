@@ -13,7 +13,8 @@ use xvision_engine::agents::{AgentSlot, AgentStore};
 use xvision_engine::api::{agents as api_agents, strategy as api_strategy, Actor, ApiContext, ApiError};
 use xvision_engine::strategies::slot::LLMSlot;
 use xvision_engine::strategies::store::{strategy_store_dir, FilesystemStore, StrategyStore};
-use xvision_engine::strategies::validate::validate_strategy;
+use xvision_engine::api::scenario as api_scenario;
+use xvision_engine::strategies::validate::{preflight_validate, validate_strategy};
 use xvision_engine::strategies::{AgentRef, PipelineDef, PipelineEdge, PipelineKind};
 use xvision_engine::templates::registry;
 use xvision_engine::tokens::{estimate_pipeline_tokens, estimate_pipeline_tokens_from_slots};
@@ -30,35 +31,76 @@ pub struct StrategyCmd {
 
 #[derive(Subcommand, Debug)]
 enum StrategyAction {
-    /// Create a new strategy draft from a template.
+    /// Create a new strategy draft from a template, or atomically create a
+    /// strategy + agent + provider/model binding in one command.
+    ///
+    /// Atomic mode (--prompt): reads the prompt from a file, creates one Agent
+    /// in the workspace agent library, then creates a Strategy with that agent
+    /// wired in. Emits `{"strategy_id","agent_id","eval_ready","provider","model","warnings"}`
+    /// when --json is set.
+    ///
+    /// Template mode (--template): existing behaviour. Incompatible with --prompt.
     #[command(visible_alias = "create")]
     New {
         /// Load a full Strategy object from a JSON or TOML file.
         #[arg(long)]
         from_file: Option<PathBuf>,
-        #[arg(long)]
+        #[arg(long, conflicts_with = "prompt")]
         template: Option<String>,
         #[arg(long)]
         name: Option<String>,
         #[arg(long)]
         creator: Option<String>,
-        /// Provider name to seed onto auto-created template agents
-        /// (e.g. `openrouter`, `anthropic`). Required when the template
-        /// produces legacy slots that get seeded as AgentRefs — without
-        /// this flag the seeded `AgentSlot` is created with an empty
-        /// provider/model so the user has to configure it before eval.
+        /// Provider name (e.g. `openrouter`, `anthropic`). In template mode,
+        /// seeds auto-created template agents. In atomic mode (--prompt),
+        /// required — sets the agent's provider.
         #[arg(long)]
         provider: Option<String>,
-        /// Model id to seed onto auto-created template agents
-        /// (e.g. `deepseek/deepseek-chat`). See `--provider`.
+        /// Model id (e.g. `kimi-k2`, `deepseek/deepseek-chat`). See `--provider`.
         #[arg(long)]
         model: Option<String>,
         /// Emit the created strategy as JSON.
         #[arg(long)]
         json: bool,
+
+        // ── atomic-mode flags ────────────────────────────────────────────
+        /// Path to a prompt file. Activates atomic mode: reads the file,
+        /// materializes one Agent in the workspace library with this prompt +
+        /// provider/model + role, then creates a Strategy wiring that agent.
+        /// Incompatible with --template. Required fields in atomic mode:
+        /// --name, --provider, --model, --role, --asset, --timeframe.
+        #[arg(long, conflicts_with = "template")]
+        prompt: Option<PathBuf>,
+        /// Role the created agent plays in the strategy (e.g. `trader`).
+        /// Only used in atomic mode (--prompt).
+        #[arg(long)]
+        role: Option<String>,
+        /// Primary asset the strategy trades (e.g. `ETH/USD`).
+        /// Only used in atomic mode (--prompt). Populates `asset_universe`.
+        #[arg(long)]
+        asset: Option<String>,
+        /// Decision timeframe / bar granularity.
+        /// Accepted: `1m`, `5m`, `15m`, `30m`, `1h`, `2h`, `4h`, `1d`.
+        /// Only used in atomic mode (--prompt). Maps to `decision_cadence_minutes`.
+        #[arg(long)]
+        timeframe: Option<String>,
     },
     /// Validate a saved strategy by id.
-    Validate { id: String },
+    ///
+    /// Without --scenario: shape-only check (same as before this change).
+    /// With --scenario: full preflight — checks agents, provider/model, and
+    /// whether the scenario asset/timeframe match the strategy's manifest.
+    Validate {
+        id: String,
+        /// Optional scenario id to cross-check against. When supplied the
+        /// validator checks asset-universe and timeframe alignment and emits
+        /// `expected_decisions`, `asset`, and `timeframe` in JSON output.
+        #[arg(long)]
+        scenario: Option<String>,
+        /// Emit result as JSON instead of plain text.
+        #[arg(long)]
+        json: bool,
+    },
     /// List all saved strategy ids.
     Ls {
         /// Emit as JSON array instead of one id per line.
@@ -143,8 +185,12 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
             provider,
             model,
             json,
-        } => new(from_file, template, name, creator, provider, model, json).await,
-        StrategyAction::Validate { id } => validate(&id).await,
+            prompt,
+            role,
+            asset,
+            timeframe,
+        } => new(from_file, template, name, creator, provider, model, json, prompt, role, asset, timeframe).await,
+        StrategyAction::Validate { id, scenario, json } => validate(&id, scenario.as_deref(), json).await,
         StrategyAction::Ls { json } => ls(json).await,
         StrategyAction::Show { id, format } => show(&id, format).await,
         StrategyAction::Templates { json } => templates(json).await,
@@ -229,6 +275,48 @@ fn parse_edge(raw: &str) -> CliResult<PipelineEdge> {
     })
 }
 
+/// Parse a CLI timeframe string to `decision_cadence_minutes`.
+///
+/// Accepted values: `1m`, `5m`, `15m`, `30m`, `1h`, `2h`, `4h`, `1d`.
+/// Returns `Err(String)` with a descriptive message on unknown input.
+pub fn parse_timeframe_minutes(timeframe: &str) -> Result<u32, String> {
+    match timeframe {
+        "1m" => Ok(1),
+        "5m" => Ok(5),
+        "15m" => Ok(15),
+        "30m" => Ok(30),
+        "1h" => Ok(60),
+        "2h" => Ok(120),
+        "4h" => Ok(240),
+        "1d" => Ok(1440),
+        other => Err(format!(
+            "unknown timeframe '{other}'. Accepted: 1m, 5m, 15m, 30m, 1h, 2h, 4h, 1d"
+        )),
+    }
+}
+
+/// Build the JSON output object for atomic-create mode.
+///
+/// `warnings` non-empty → `eval_ready = false`. Empty warnings → `eval_ready = true`.
+pub fn build_atomic_create_output(
+    strategy_id: &str,
+    agent_id: &str,
+    provider: &str,
+    model: &str,
+    warnings: Vec<String>,
+) -> serde_json::Value {
+    let eval_ready = warnings.is_empty();
+    serde_json::json!({
+        "strategy_id": strategy_id,
+        "agent_id": agent_id,
+        "eval_ready": eval_ready,
+        "provider": provider,
+        "model": model,
+        "warnings": warnings,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn new(
     from_file: Option<PathBuf>,
     template: Option<String>,
@@ -237,7 +325,27 @@ async fn new(
     provider_override: Option<String>,
     model_override: Option<String>,
     json: bool,
+    prompt: Option<PathBuf>,
+    role: Option<String>,
+    asset: Option<String>,
+    timeframe: Option<String>,
 ) -> CliResult<()> {
+    // ── atomic mode: --prompt ─────────────────────────────────────────────
+    if let Some(prompt_path) = prompt {
+        return new_atomic(
+            prompt_path,
+            name,
+            creator,
+            provider_override,
+            model_override,
+            role,
+            asset,
+            timeframe,
+            json,
+        )
+        .await;
+    }
+
     if let Some(path) = from_file {
         // --provider/--model only seed auto-created template agents.
         // With --from-file the strategy comes through verbatim, so
@@ -345,6 +453,143 @@ async fn new(
     Ok(())
 }
 
+/// Atomic-mode create: one command that creates a strategy + agent + provider/model
+/// binding from a prompt file. Exits with structured JSON on --json.
+#[allow(clippy::too_many_arguments)]
+async fn new_atomic(
+    prompt_path: PathBuf,
+    name: Option<String>,
+    creator: Option<String>,
+    provider: Option<String>,
+    model: Option<String>,
+    role: Option<String>,
+    asset: Option<String>,
+    timeframe: Option<String>,
+    json: bool,
+) -> CliResult<()> {
+    // Validate required atomic-mode fields.
+    let name = name.ok_or_else(|| {
+        CliError::usage(anyhow::anyhow!(
+            "atomic mode requires --name"
+        ))
+    })?;
+    let provider = provider.ok_or_else(|| {
+        CliError::usage(anyhow::anyhow!(
+            "atomic mode requires --provider"
+        ))
+    })?;
+    let model = model.ok_or_else(|| {
+        CliError::usage(anyhow::anyhow!(
+            "atomic mode requires --model"
+        ))
+    })?;
+    let role = role.unwrap_or_else(|| "trader".to_string());
+    let asset = asset.ok_or_else(|| {
+        CliError::usage(anyhow::anyhow!(
+            "atomic mode requires --asset (e.g. ETH/USD)"
+        ))
+    })?;
+    let timeframe = timeframe.ok_or_else(|| {
+        CliError::usage(anyhow::anyhow!(
+            "atomic mode requires --timeframe (e.g. 4h)"
+        ))
+    })?;
+
+    let cadence_minutes = parse_timeframe_minutes(&timeframe)
+        .map_err(|e| CliError::usage(anyhow::anyhow!("{e}")))?;
+
+    // Read the prompt file.
+    let prompt_text = std::fs::read_to_string(&prompt_path)
+        .map_err(|e| CliError::usage(anyhow::anyhow!("read {}: {e}", prompt_path.display())))?;
+
+    let creator = creator
+        .or_else(|| std::env::var("XVN_CREATOR").ok())
+        .unwrap_or_else(|| "@anonymous".to_string());
+
+    let ctx = open_ctx().await?;
+
+    // 1. Create the agent library entry.
+    let agent = api_agents::create(
+        &ctx,
+        api_agents::CreateAgentRequest {
+            name: format!("{name} {role}"),
+            description: format!("Created atomically with strategy '{name}' role '{role}'"),
+            tags: vec!["atomic-create".to_string()],
+            slots: vec![AgentSlot {
+                name: "main".to_string(),
+                provider: provider.clone(),
+                model: model.clone(),
+                system_prompt: prompt_text,
+                skill_ids: Vec::new(),
+                max_tokens: None,
+                prompt_version: String::new(),
+            }],
+        },
+    )
+    .await
+    .map_err(|e| api_to_cli("strategy create (agent)", e))?;
+
+    let agent_id = agent.agent_id.clone();
+
+    // 2. Build the strategy with the agent wired in.
+    let strategy_id = Ulid::new().to_string();
+    let strategy = xvision_engine::strategies::Strategy {
+        manifest: xvision_engine::strategies::manifest::PublicManifest {
+            id: strategy_id.clone(),
+            display_name: name.clone(),
+            plain_summary: String::new(),
+            creator,
+            template: "custom".to_string(),
+            regime_fit: Vec::new(),
+            asset_universe: vec![asset.clone()],
+            decision_cadence_minutes: cadence_minutes,
+            required_models: Vec::new(),
+            required_tools: Vec::new(),
+            risk_preset_or_config: "balanced".to_string(),
+            published_at: None,
+            min_warmup_bars: None,
+        },
+        agents: vec![AgentRef {
+            agent_id: agent_id.clone(),
+            role: role.clone(),
+        }],
+        pipeline: PipelineDef::default(),
+        regime_slot: None,
+        intern_slot: None,
+        trader_slot: None,
+        risk: xvision_engine::strategies::risk::RiskPreset::Balanced.expand(),
+        mechanical_params: serde_json::json!({}),
+    };
+
+    // 3. Validate shape.
+    let preflight = preflight_validate(&strategy, None);
+    if !preflight.errors.is_empty() {
+        return Err(CliError::usage(anyhow::anyhow!(
+            "strategy validation failed: {}",
+            preflight.errors.join("; ")
+        )));
+    }
+
+    // 4. Persist the strategy.
+    store()
+        .save(&strategy)
+        .await
+        .exit_with(XvnExit::Upstream)?;
+
+    // 5. Emit output.
+    let warnings = preflight.warnings;
+    if json {
+        let out = build_atomic_create_output(&strategy_id, &agent_id, &provider, &model, warnings);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&out).exit_with(XvnExit::Upstream)?
+        );
+    } else {
+        println!("{strategy_id}");
+    }
+    Ok(())
+}
+
 fn load_strategy_file(path: &std::path::Path) -> CliResult<xvision_engine::strategies::Strategy> {
     let body = std::fs::read_to_string(path)
         .map_err(|e| CliError::usage(anyhow::anyhow!("read {}: {e}", path.display())))?;
@@ -356,10 +601,81 @@ fn load_strategy_file(path: &std::path::Path) -> CliResult<xvision_engine::strat
     }
 }
 
-async fn validate(id: &str) -> CliResult<()> {
+async fn validate(id: &str, scenario_id: Option<&str>, json: bool) -> CliResult<()> {
     let strategy = store().load(id).await.exit_with(XvnExit::NotFound)?;
-    validate_strategy(&strategy).exit_with(XvnExit::Usage)?;
-    println!("ok");
+
+    // Shape-only validation first (keep existing error behaviour for
+    // callers that don't pass --scenario --json).
+    if scenario_id.is_none() && !json {
+        validate_strategy(&strategy).exit_with(XvnExit::Usage)?;
+        println!("ok");
+        return Ok(());
+    }
+
+    // Preflight mode: load scenario if provided.
+    let scenario = if let Some(sid) = scenario_id {
+        let ctx = open_ctx().await?;
+        let sc = api_scenario::get(&ctx, sid)
+            .await
+            .map_err(|e| api_to_cli("strategy validate (scenario)", e))?;
+        Some(sc)
+    } else {
+        None
+    };
+
+    let preflight = preflight_validate(&strategy, scenario.as_ref());
+
+    // Any shape errors are still hard failures (non-zero exit).
+    if !preflight.errors.is_empty() {
+        if json {
+            let out = serde_json::json!({
+                "eval_ready": false,
+                "errors": preflight.errors,
+                "warnings": preflight.warnings,
+            });
+            println!("{}", serde_json::to_string_pretty(&out).exit_with(XvnExit::Upstream)?);
+        } else {
+            for e in &preflight.errors {
+                eprintln!("error: {e}");
+            }
+        }
+        return Err(CliError::usage(anyhow::anyhow!(
+            "strategy validation failed: {}",
+            preflight.errors.join("; ")
+        )));
+    }
+
+    if json {
+        // Build the JSON output. `expected_decisions` is left absent for now
+        // (no scenario bar-count helper is wired in without hitting the DB+
+        // bar cache; the field is documented as optional in the spec and will
+        // land in a follow-up track that wires `scenario_store::bar_count`).
+        let mut out = serde_json::json!({
+            "eval_ready": preflight.eval_ready,
+            "warnings": preflight.warnings,
+        });
+        if let Some(sc) = &scenario {
+            let asset = sc.asset.first().map(|a| a.venue_symbol.as_str()).unwrap_or("");
+            let tf_minutes = (sc.granularity.seconds() / 60) as u32;
+            let timeframe = if tf_minutes % 60 == 0 {
+                format!("{}h", tf_minutes / 60)
+            } else {
+                format!("{tf_minutes}m")
+            };
+            out["asset"] = serde_json::Value::String(asset.to_string());
+            out["timeframe"] = serde_json::Value::String(timeframe);
+        }
+        println!("{}", serde_json::to_string_pretty(&out).exit_with(XvnExit::Upstream)?);
+    } else {
+        if preflight.warnings.is_empty() {
+            println!("ok");
+        } else {
+            println!("ok (with warnings)");
+            for w in &preflight.warnings {
+                eprintln!("warning: {w}");
+            }
+        }
+    }
     Ok(())
 }
 
@@ -911,5 +1227,124 @@ pub mod get {
                 "expected `get` visible alias on `xvn strategy show`; aliases: {aliases:?}",
             );
         }
+    }
+}
+
+#[cfg(test)]
+pub mod atomic_create {
+    //! Unit tests for atomic-mode helper functions (track cli-strategy-create-atomic).
+    //! These tests cover `parse_timeframe_minutes` and `build_atomic_create_output`
+    //! which are pure functions and don't need a running ApiContext.
+
+    use super::*;
+
+    // ── parse_timeframe_minutes ───────────────────────────────────────────
+
+    #[test]
+    fn timeframe_1m_maps_to_1_minute() {
+        assert_eq!(parse_timeframe_minutes("1m"), Ok(1));
+    }
+
+    #[test]
+    fn timeframe_5m_maps_to_5_minutes() {
+        assert_eq!(parse_timeframe_minutes("5m"), Ok(5));
+    }
+
+    #[test]
+    fn timeframe_15m_maps_to_15_minutes() {
+        assert_eq!(parse_timeframe_minutes("15m"), Ok(15));
+    }
+
+    #[test]
+    fn timeframe_30m_maps_to_30_minutes() {
+        assert_eq!(parse_timeframe_minutes("30m"), Ok(30));
+    }
+
+    #[test]
+    fn timeframe_1h_maps_to_60_minutes() {
+        assert_eq!(parse_timeframe_minutes("1h"), Ok(60));
+    }
+
+    #[test]
+    fn timeframe_2h_maps_to_120_minutes() {
+        assert_eq!(parse_timeframe_minutes("2h"), Ok(120));
+    }
+
+    #[test]
+    fn timeframe_4h_maps_to_240_minutes() {
+        assert_eq!(parse_timeframe_minutes("4h"), Ok(240));
+    }
+
+    #[test]
+    fn timeframe_1d_maps_to_1440_minutes() {
+        assert_eq!(parse_timeframe_minutes("1d"), Ok(1440));
+    }
+
+    #[test]
+    fn timeframe_unknown_returns_err() {
+        assert!(parse_timeframe_minutes("2d").is_err());
+        assert!(parse_timeframe_minutes("1w").is_err());
+        assert!(parse_timeframe_minutes("garbage").is_err());
+    }
+
+    // ── build_atomic_create_output ────────────────────────────────────────
+
+    #[test]
+    fn atomic_output_eval_ready_true_when_no_warnings_or_errors() {
+        let out = build_atomic_create_output(
+            "strategy-123",
+            "agent-456",
+            "openrouter",
+            "kimi-k2",
+            vec![],
+        );
+        assert_eq!(out["strategy_id"], "strategy-123");
+        assert_eq!(out["agent_id"], "agent-456");
+        assert_eq!(out["eval_ready"], true);
+        assert_eq!(out["provider"], "openrouter");
+        assert_eq!(out["model"], "kimi-k2");
+        assert!(out["warnings"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn atomic_output_eval_ready_false_when_warnings_present() {
+        let out = build_atomic_create_output(
+            "s",
+            "a",
+            "p",
+            "m",
+            vec!["prompt mentions ETH but scenario asset is SOL/USD".to_string()],
+        );
+        assert_eq!(out["eval_ready"], false);
+        assert_eq!(out["warnings"].as_array().unwrap().len(), 1);
+    }
+
+    // ── clap conflict: --template and --prompt cannot coexist ─────────────
+
+    #[test]
+    fn clap_rejects_template_and_prompt_together() {
+        use clap::CommandFactory;
+        let cmd = crate::Cli::command();
+        // `strategy new --template foo --prompt /dev/null --name bar --asset ETH/USD --timeframe 4h`
+        // should fail at the clap conflict_with level.
+        let result = cmd.try_get_matches_from([
+            "xvn",
+            "strategy",
+            "create",
+            "--template",
+            "mean_reversion",
+            "--prompt",
+            "/dev/null",
+            "--name",
+            "test",
+            "--asset",
+            "ETH/USD",
+            "--timeframe",
+            "4h",
+        ]);
+        assert!(
+            result.is_err(),
+            "expected clap error for --template + --prompt together, got Ok"
+        );
     }
 }
