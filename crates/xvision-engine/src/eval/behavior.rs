@@ -130,9 +130,12 @@ fn count_direct_flips(decisions: &[DecisionRow]) -> u32 {
 
     for d in decisions {
         match d.action.as_str() {
-            "flat" | "hold" => {
-                // A flat resets the "last open" for this asset — the next
-                // open after a flat does NOT count as a direct flip.
+            "flat" => {
+                // Only flat resets the "last open" for this asset — the
+                // next open after a flat does NOT count as a direct flip.
+                // `hold` is no-op: position unchanged, so a later opposite
+                // open still counts as a direct flip per the module docs
+                // ("opposite opens without a flat in between").
                 last_open.remove(d.asset.as_str());
             }
             open @ ("long_open" | "short_open") => {
@@ -179,31 +182,37 @@ fn compute_avg_bars_held(decisions: &[DecisionRow]) -> Option<f64> {
     Some(sum as f64 / durations.len() as f64)
 }
 
-/// Count opens that immediately follow a flat with negative realized PnL.
+/// Count opens that immediately follow a flat with negative realized PnL
+/// *on the same asset*. A losing flat on BTC followed by an open on ETH is
+/// not a reentry.
 fn count_reentries_after_loss(decisions: &[DecisionRow]) -> u32 {
-    let mut last_flat_was_loss = false;
+    // per-asset: whether the most recent flat for that asset closed at a loss
+    let mut last_flat_was_loss: HashMap<&str, bool> = HashMap::new();
     let mut count = 0u32;
 
     for d in decisions {
         match d.action.as_str() {
             "flat" => {
-                last_flat_was_loss = d.pnl_realized.is_some_and(|p| p < 0.0);
+                last_flat_was_loss.insert(
+                    d.asset.as_str(),
+                    d.pnl_realized.is_some_and(|p| p < 0.0),
+                );
             }
             "long_open" | "short_open" => {
-                if last_flat_was_loss {
+                if last_flat_was_loss.get(d.asset.as_str()).copied().unwrap_or(false) {
                     count += 1;
                 }
-                // After accounting for the reentry, reset — subsequent holds
-                // don't count as more reentries.
-                last_flat_was_loss = false;
+                // After accounting for the reentry on this asset, clear its
+                // loss flag — a subsequent open on the same asset without an
+                // intervening losing flat is not a reentry-after-loss.
+                last_flat_was_loss.insert(d.asset.as_str(), false);
             }
             "hold" => {
-                // hold does not reset the loss-flat flag; we want to catch
-                // opens that come after a flat+loss even with holds in between.
+                // hold does not change the per-asset loss flag; we want to
+                // catch opens that come after a flat+loss even with holds
+                // in between, on the same asset.
             }
-            _ => {
-                last_flat_was_loss = false;
-            }
+            _ => {}
         }
     }
     count
@@ -415,5 +424,37 @@ mod tests {
         let s = derive_behavior_summary(&decisions);
         // avg of [2, 4] = 3.0
         assert_eq!(s.avg_bars_held, Some(3.0));
+    }
+
+    // Regression: `hold` between two opposite opens must NOT reset
+    // the direct-flip state. The module docs define direct_flips as
+    // opposite opens "without a flat in between" — hold is no-op.
+    #[test]
+    fn test_direct_flip_survives_hold_between_opens() {
+        let decisions = vec![
+            d(0, "BTC", "long_open", None),
+            d(1, "BTC", "hold", None),
+            d(2, "BTC", "short_open", None), // still a direct flip (no flat between)
+            d(3, "BTC", "flat", Some(-1.0)),
+        ];
+        let s = derive_behavior_summary(&decisions);
+        assert_eq!(s.direct_flips, 1);
+    }
+
+    // Regression: reentries_after_loss must be tracked per-asset. A losing
+    // flat on BTC followed by an open on ETH is NOT a reentry — different
+    // asset, different position.
+    #[test]
+    fn test_reentry_after_loss_is_per_asset() {
+        let decisions = vec![
+            d(0, "BTC", "long_open", None),
+            d(1, "BTC", "flat", Some(-10.0)), // BTC loss
+            d(2, "ETH", "long_open", None),   // ETH open — NOT a reentry
+            d(3, "ETH", "flat", Some(5.0)),
+        ];
+        let s = derive_behavior_summary(&decisions);
+        assert_eq!(s.reentries_after_loss, 0);
+        // 1 loss-flat on BTC: exits_on_invalidation = 1
+        assert_eq!(s.exits_on_invalidation, 1);
     }
 }
