@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use crate::agent::llm::LlmDispatch;
+use crate::agent::llm::{LlmDispatch, OpenAiCompatError};
 use crate::agent::pipeline::ResolvedAgentSlot;
 use crate::eval::run::{MetricsSummary, Run};
 use crate::eval::scenario::Scenario;
@@ -68,7 +68,12 @@ pub async fn start_watchdog(
 ///  - Trader output classes: `empty`, `tool_use_only`, `truncated`,
 ///    `invalid_json`, `missing_field`, `invalid_field`, `missing_response`.
 ///  - Provider transport classes: `provider_timeout`, `provider_connect`,
-///    `provider_http_error`, `provider_decode`.
+///    `provider_http_error`, `provider_decode`, `provider_rate_limited`,
+///    `provider_missing_choices` (track
+///    `eval-provider-error-classify-retry`, intake #344). The last two
+///    are produced as typed `OpenAiCompatError` variants after the
+///    dispatcher exhausts its retry budget; they're surfaced to review
+///    & UI consumers via the `[<class>]` prefix on `eval_runs.error`.
 ///  - Broker transport classes: `broker_auth`, `broker_unsupported`,
 ///    `broker_insufficient_funds`, `broker_timeout`, `broker_rejected`.
 ///  - Loop-control classes: `repeated_broker_error` (eval circuit
@@ -83,6 +88,16 @@ pub async fn start_watchdog(
 pub fn classify_run_failure(err: &anyhow::Error) -> &'static str {
     if let Some(te) = err.downcast_ref::<TraderOutputError>() {
         return te.class_tag();
+    }
+    // Walk the error chain looking for the typed OpenAI-compat error
+    // surfaced by `OpenaiCompatDispatch::complete` after its retry
+    // budget is exhausted (intake #344). The chain walk matters because
+    // upstream callers wrap dispatch failures with `with_context`
+    // before they reach the executor's surface.
+    for cause in err.chain() {
+        if let Some(typed) = cause.downcast_ref::<OpenAiCompatError>() {
+            return typed.class_tag();
+        }
     }
     let s = format!("{:#}", err).to_lowercase();
     // Trader-output errors may have been wrapped with `.context(...)` and
