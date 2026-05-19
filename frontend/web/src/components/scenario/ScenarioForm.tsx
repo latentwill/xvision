@@ -11,13 +11,26 @@ import type { ReplayMode } from '../../api/types.gen/ReplayMode';
 import type { ScenarioSource } from '../../api/types.gen/ScenarioSource';
 import type { SlippageModel } from '../../api/types.gen/SlippageModel';
 import type { Venue } from '../../api/types.gen/Venue';
+import { InlineRangeBar, MobileInlineCard } from '../calendar-picker';
 import { RegimeRangePresets } from './RegimeRangePresets';
+
+type CalendarKind = 'Continuous24x7' | 'UsEquities' | 'Custom';
+
+function calendarKind(c: CalendarRef): CalendarKind {
+  if (c === 'Continuous24x7' || c === 'UsEquities') return c;
+  return 'Custom';
+}
+
+function customLabel(c: CalendarRef): string {
+  return typeof c === 'object' && c !== null && 'Custom' in c ? c.Custom : '';
+}
 
 export type ScenarioFormDraft = {
   asset: string;
   from: string;
   to: string;
   granularity: ScenarioGranularity;
+  calendar?: CalendarRef;
 };
 
 type ScenarioGranularity = string;
@@ -42,7 +55,7 @@ const ASSET_CLASS: AssetClass = 'Crypto';
 const QUOTE_CURRENCY: QuoteCurrency = 'Usd';
 const VENUE: Venue = 'Alpaca';
 const SCENARIO_SOURCE: ScenarioSource = 'User';
-const CALENDAR: CalendarRef = 'Continuous24x7';
+const DEFAULT_CALENDAR: CalendarRef = 'Continuous24x7';
 const REPLAY_MODE: ReplayMode = { mode: 'Continuous' };
 const MARKET_ORDER_FILL: MarketOrderFill = 'FullAtClose';
 const LIMIT_ORDER_FILL: LimitOrderFill = 'NeverFills';
@@ -92,6 +105,9 @@ export function ScenarioForm({
   const [to, setTo] = useState(
     initial?.time_window?.end?.slice(0, 10) ?? '',
   );
+  const [calendar, setCalendar] = useState<CalendarRef>(
+    initial?.calendar ?? DEFAULT_CALENDAR,
+  );
   const [granularity, setGranularity] = useState<ScenarioGranularity>(() => {
     const normalized = normalizeGranularity(initial?.granularity);
     return normalized && isSupportedGranularity(normalized) ? normalized : '1h';
@@ -124,10 +140,10 @@ export function ScenarioForm({
 
   useEffect(() => {
     if (onDraftChange) {
-      onDraftChange({ asset, from, to, granularity });
+      onDraftChange({ asset, from, to, granularity, calendar });
     }
     // Intentionally include onDraftChange — parent should memoize if needed.
-  }, [asset, from, to, granularity, onDraftChange]);
+  }, [asset, from, to, granularity, calendar, onDraftChange]);
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -180,7 +196,7 @@ export function ScenarioForm({
       capital: SCENARIO_CAPITAL,
       granularity: granularityValue,
       timezone: 'UTC',
-      calendar: CALENDAR,
+      calendar,
       venue: {
         venue: VENUE,
         fees: { maker_bps: feesMaker, taker_bps: feesTaker },
@@ -247,36 +263,66 @@ export function ScenarioForm({
             <span className="input block">USD</span>
           </Field>
         </Row>
-        <Row>
-          <Field label="From">
-            <input
-              type="date"
-              className="input"
-              value={from}
-              onChange={(e) => {
-                setFrom(e.target.value);
-                if (timeError) setTimeError(null);
-              }}
-              required
-            />
-          </Field>
-          <Field label="To">
-            <input
-              type="date"
-              className="input"
-              value={to}
-              onChange={(e) => {
-                setTo(e.target.value);
-                if (timeError) setTimeError(null);
-              }}
-              required
-            />
-          </Field>
-        </Row>
+        <div className="hidden sm:block">
+          <InlineRangeBar
+            startIso={from}
+            endIso={to}
+            onChange={({ startIso, endIso }) => {
+              setFrom(startIso);
+              setTo(endIso);
+              if (timeError) setTimeError(null);
+            }}
+            label="Backtest window"
+            defaultOpen={!from || !to}
+          />
+        </div>
+        <div className="block sm:hidden">
+          <MobileInlineCard
+            startIso={from}
+            endIso={to}
+            onChange={({ startIso, endIso }) => {
+              setFrom(startIso);
+              setTo(endIso);
+              if (timeError) setTimeError(null);
+            }}
+            label="Backtest window"
+          />
+        </div>
         {timeError ? (
           <div className="mt-1 text-[12px] text-rose-300">{timeError}</div>
         ) : null}
         <RegimeRangePresets onPick={(start, end) => { setFrom(start); setTo(end); }} />
+        <Row>
+          <Field label="Calendar">
+            <select
+              className="input"
+              value={calendarKind(calendar)}
+              onChange={(e) => {
+                const kind = e.target.value as CalendarKind;
+                if (kind === 'Custom') {
+                  setCalendar({ Custom: customLabel(calendar) });
+                } else {
+                  setCalendar(kind);
+                }
+              }}
+            >
+              <option value="Continuous24x7">Continuous (24/7)</option>
+              <option value="UsEquities">US equities</option>
+              <option value="Custom">Custom…</option>
+            </select>
+          </Field>
+          {calendarKind(calendar) === 'Custom' ? (
+            <Field label="Custom calendar id">
+              <input
+                className="input"
+                value={customLabel(calendar)}
+                onChange={(e) => setCalendar({ Custom: e.target.value })}
+                placeholder="e.g. nyse-extended-hours"
+                required
+              />
+            </Field>
+          ) : null}
+        </Row>
         <Field label="Granularity">
           <select
             className="input"
