@@ -33,7 +33,7 @@ fn equity_to_returns_handles_decline() {
 #[test]
 fn equity_to_returns_skips_zero_or_negative_baselines() {
     // A 0 or negative baseline can't yield a sane percentage return; skip.
-    let samples = vec![0.0, 100.0, 110.0];
+    let samples = vec![0.0, -100.0, 100.0, 110.0];
     let returns = equity_to_returns(&samples);
     // Only the 100 → 110 transition has a positive baseline.
     assert_eq!(returns.len(), 1);
