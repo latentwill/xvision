@@ -578,9 +578,9 @@ pub async fn run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<Run> {
     };
     let agent_slots = resolve_agent_slots(ctx, &strategy).await?;
     validate_eval_trader_source(&strategy, &agent_slots)?;
-    let dispatch_arc = build_eval_dispatch(ctx, &strategy, &agent_slots).await?;
+    let (dispatch_arc, findings_model) = build_eval_dispatch(ctx, &strategy, &agent_slots).await?;
     let tools_arc = Arc::new(ToolRegistry::default_with_builtins());
-    run_with_deps(ctx, req, broker, dispatch_arc, tools_arc).await
+    run_with_deps(ctx, req, broker, dispatch_arc, findings_model, tools_arc).await
 }
 
 /// Build an Alpaca paper broker, preferring credentials stored via the
@@ -615,11 +615,16 @@ async fn build_alpaca_paper_broker(ctx: &ApiContext) -> ApiResult<Arc<dyn Broker
     }
 }
 
+/// Build the LLM dispatch the eval will use plus the findings-extractor
+/// model id appropriate for that provider. The second tuple element
+/// exists because the postprocess path reuses this same dispatch, and
+/// the right Haiku id varies by provider (Anthropic-native vs OpenRouter
+/// slug); see [`crate::eval::postprocess::findings_model_for_provider`].
 async fn build_eval_dispatch(
     ctx: &ApiContext,
     strategy: &crate::strategies::Strategy,
     agent_slots: &[ResolvedAgentSlot],
-) -> ApiResult<Arc<dyn LlmDispatch>> {
+) -> ApiResult<(Arc<dyn LlmDispatch>, String)> {
     let provider_name = select_eval_provider(ctx, strategy, agent_slots).await?;
     let cfg_path = runtime_config_path(ctx);
     let cfg = tokio::task::spawn_blocking(move || config::load_runtime(&cfg_path))
@@ -637,7 +642,9 @@ async fn build_eval_dispatch(
         })?;
     let runtime_slots = runtime_slots(strategy, agent_slots);
     validate_eval_provider_models(entry, &runtime_slots)?;
-    dispatch_from_provider(entry).await
+    let findings_model = crate::eval::postprocess::findings_model_for_provider(entry);
+    let dispatch = dispatch_from_provider(entry).await?;
+    Ok((dispatch, findings_model))
 }
 
 async fn select_eval_provider(
@@ -876,13 +883,14 @@ pub async fn run_with_deps(
     req: EvalRunRequest,
     broker: Option<Arc<dyn BrokerSurface>>,
     dispatch: Arc<dyn LlmDispatch>,
+    findings_model: String,
     tools: Arc<ToolRegistry>,
 ) -> ApiResult<Run> {
     let started = Instant::now();
     let target_clone = format!("{}@{}", req.agent_id, req.scenario_id);
     let args_json = serde_json::to_string(&req).ok();
 
-    let result = run_inner(ctx, req, broker, dispatch, tools).await;
+    let result = run_inner(ctx, req, broker, dispatch, findings_model, tools).await;
 
     let (outcome, target) = match &result {
         Ok(run) => (Outcome::Ok, Some(run.id.clone())),
@@ -906,6 +914,7 @@ async fn run_inner(
     req: EvalRunRequest,
     broker: Option<Arc<dyn BrokerSurface>>,
     dispatch: Arc<dyn LlmDispatch>,
+    findings_model: String,
     tools: Arc<ToolRegistry>,
 ) -> ApiResult<Run> {
     // 1. Look up the strategy. Propagates ApiError::NotFound cleanly.
@@ -1054,7 +1063,7 @@ async fn run_inner(
         ctx,
         &finalized.id,
         dispatch_for_postprocess,
-        crate::eval::postprocess::DEFAULT_FINDINGS_MODEL,
+        &findings_model,
     )
     .await;
 
@@ -1339,7 +1348,7 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
     };
     let agent_slots = resolve_agent_slots(ctx, &strategy).await?;
     validate_eval_trader_source(&strategy, &agent_slots)?;
-    let dispatch = build_eval_dispatch(ctx, &strategy, &agent_slots).await?;
+    let (dispatch, findings_model) = build_eval_dispatch(ctx, &strategy, &agent_slots).await?;
     let tools = Arc::new(ToolRegistry::default_with_builtins());
 
     // Other entry point (`run_with_deps_in_progress`) — observability
@@ -1413,6 +1422,7 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
             agent_slots,
             executor,
             dispatch,
+            findings_model,
             tools,
             obs_emitter,
         )
@@ -1435,6 +1445,7 @@ async fn execute_in_background(
     agent_slots: Vec<ResolvedAgentSlot>,
     executor: Box<dyn Executor>,
     dispatch: Arc<dyn LlmDispatch>,
+    findings_model: String,
     tools: Arc<ToolRegistry>,
     obs_emitter: Option<crate::agent::observability::ObsEmitter>,
 ) {
@@ -1552,7 +1563,7 @@ async fn execute_in_background(
         &ctx,
         &finalized.id,
         dispatch_for_postprocess,
-        crate::eval::postprocess::DEFAULT_FINDINGS_MODEL,
+        &findings_model,
     )
     .await;
 }
