@@ -308,6 +308,12 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
+        sqlx::query(include_str!(
+            "../../../xvision-engine/migrations/014_eval_agent_id.sql"
+        ))
+        .execute(&pool)
+        .await
+        .unwrap();
         pool
     }
 

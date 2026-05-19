@@ -194,6 +194,9 @@ mod tests {
 
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("observability.toml");
+        let mut initial = ObservabilityConfig::default();
+        initial.retention.mode = RetentionMode::HashOnly;
+        write_config(&path, &initial).unwrap();
 
         // Set the env var, run `set` with a CLI flag that does NOT
         // touch the mode, then immediately remove the env var so this

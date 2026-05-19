@@ -23,9 +23,12 @@ use xvision_execution::executor::ExecutorError;
 struct MockAlpacaApi {
     create_order_result: Arc<Mutex<Option<AlpacaOrder>>>,
     get_order_result: Arc<Mutex<Option<AlpacaOrder>>>,
+    expected_order_id: String,
     account: AlpacaAccount,
     positions: Vec<AlpacaPosition>,
     captured: Arc<Mutex<Option<ApacOrderRequest>>>,
+    get_order_ids: Arc<Mutex<Vec<String>>>,
+    get_position_symbols: Arc<Mutex<Vec<String>>>,
 }
 
 impl MockAlpacaApi {
@@ -35,12 +38,16 @@ impl MockAlpacaApi {
         pending: AlpacaOrder,
         filled: AlpacaOrder,
     ) -> Self {
+        let expected_order_id = pending.id.clone();
         Self {
             create_order_result: Arc::new(Mutex::new(Some(pending))),
             get_order_result: Arc::new(Mutex::new(Some(filled))),
+            expected_order_id,
             account,
             positions,
             captured: Arc::new(Mutex::new(None)),
+            get_order_ids: Arc::new(Mutex::new(Vec::new())),
+            get_position_symbols: Arc::new(Mutex::new(Vec::new())),
         }
     }
 }
@@ -56,7 +63,13 @@ impl AlpacaApi for MockAlpacaApi {
             .ok_or_else(|| ExecutorError::Internal("no mock order".into()))
     }
 
-    async fn get_order(&self, _order_id: &str) -> Result<AlpacaOrder, ExecutorError> {
+    async fn get_order(&self, order_id: &str) -> Result<AlpacaOrder, ExecutorError> {
+        self.get_order_ids.lock().unwrap().push(order_id.to_string());
+        if order_id != self.expected_order_id {
+            return Err(ExecutorError::Internal(format!(
+                "unexpected mock order lookup: {order_id}"
+            )));
+        }
         self.get_order_result
             .lock()
             .unwrap()
@@ -72,8 +85,13 @@ impl AlpacaApi for MockAlpacaApi {
         Ok(self.positions.clone())
     }
 
-    async fn get_position(&self, _symbol: &str) -> Result<Option<AlpacaPosition>, ExecutorError> {
-        Ok(self.positions.first().cloned())
+    async fn get_position(&self, symbol: &str) -> Result<Option<AlpacaPosition>, ExecutorError> {
+        self.get_position_symbols.lock().unwrap().push(symbol.to_string());
+        Ok(self
+            .positions
+            .iter()
+            .find(|position| position.symbol == symbol)
+            .cloned())
     }
 }
 
@@ -166,10 +184,12 @@ fn order_confirmation_has_expected_fields() {
 async fn alpaca_paper_submit_buy_returns_confirmation() {
     let client_id = "test-buy-1";
     let pending = fixture_pending_order();
+    let expected_order_id = pending.id.clone();
     let filled = fixture_filled_order(client_id);
 
     let mock = MockAlpacaApi::new(fixture_account(), vec![fixture_position()], pending, filled);
     let captured = Arc::clone(&mock.captured);
+    let get_order_ids = Arc::clone(&mock.get_order_ids);
 
     let surface = AlpacaPaperSurface::with_api(Arc::new(mock));
 
@@ -201,6 +221,7 @@ async fn alpaca_paper_submit_buy_returns_confirmation() {
         cap.stop_loss_price.is_none(),
         "crypto submit must omit stop_loss_price"
     );
+    assert_eq!(*get_order_ids.lock().unwrap(), vec![expected_order_id]);
 }
 
 #[tokio::test]
@@ -401,9 +422,26 @@ async fn alpaca_paper_position_returns_qty() {
         fixture_pending_order(),
         fixture_filled_order("ignored"),
     );
+    let get_position_symbols = Arc::clone(&mock.get_position_symbols);
     let surface = AlpacaPaperSurface::with_api(Arc::new(mock));
     let qty = surface.position("BTC/USD").await.expect("position must succeed");
     assert_eq!(qty, 0.5);
+    assert_eq!(*get_position_symbols.lock().unwrap(), vec!["BTC/USD"]);
+}
+
+#[tokio::test]
+async fn alpaca_paper_position_ignores_different_symbol_holdings() {
+    let mock = MockAlpacaApi::new(
+        fixture_account(),
+        vec![fixture_position()],
+        fixture_pending_order(),
+        fixture_filled_order("ignored"),
+    );
+    let get_position_symbols = Arc::clone(&mock.get_position_symbols);
+    let surface = AlpacaPaperSurface::with_api(Arc::new(mock));
+    let qty = surface.position("ETH/USD").await.expect("position must succeed");
+    assert_eq!(qty, 0.0);
+    assert_eq!(*get_position_symbols.lock().unwrap(), vec!["ETH/USD"]);
 }
 
 #[tokio::test]

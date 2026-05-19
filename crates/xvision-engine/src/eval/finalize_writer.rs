@@ -184,9 +184,7 @@ impl FinalizeWriter {
     fn try_enqueue(&self, msg: FinalizeMsg) -> Result<(), FinalizeError> {
         match self.tx.try_send(msg) {
             Ok(()) => Ok(()),
-            Err(mpsc::error::TrySendError::Full(_)) => {
-                Err(FinalizeError::QueueFull { cap: self.capacity })
-            }
+            Err(mpsc::error::TrySendError::Full(_)) => Err(FinalizeError::QueueFull { cap: self.capacity }),
             Err(mpsc::error::TrySendError::Closed(_)) => Err(FinalizeError::WriterShutdown),
         }
     }
@@ -253,8 +251,7 @@ async fn run_receiver(pool: SqlitePool, mut rx: mpsc::Receiver<FinalizeMsg>) {
                         // window.
                         let new_deadline = tokio::time::Instant::now() + BATCH_WINDOW;
                         while new_batch.len() < BATCH_MAX {
-                            let r =
-                                new_deadline.saturating_duration_since(tokio::time::Instant::now());
+                            let r = new_deadline.saturating_duration_since(tokio::time::Instant::now());
                             if r.is_zero() {
                                 break;
                             }
@@ -319,8 +316,7 @@ async fn flush_failed(pool: &SqlitePool, batch: Vec<FinalizeMsg>) {
     let mut ids: Vec<String> = Vec::with_capacity(batch.len());
     let mut completed_at_arms: Vec<(String, String)> = Vec::with_capacity(batch.len());
     let mut error_arms: Vec<(String, String)> = Vec::with_capacity(batch.len());
-    let mut replies: Vec<oneshot::Sender<Result<(), FinalizeError>>> =
-        Vec::with_capacity(batch.len());
+    let mut replies: Vec<oneshot::Sender<Result<(), FinalizeError>>> = Vec::with_capacity(batch.len());
 
     for msg in batch {
         match msg {
@@ -376,8 +372,7 @@ async fn flush_completed(pool: &SqlitePool, batch: Vec<FinalizeMsg>) {
     let mut ids: Vec<String> = Vec::with_capacity(batch.len());
     let mut completed_at_arms: Vec<(String, String)> = Vec::with_capacity(batch.len());
     let mut metrics_arms: Vec<(String, String)> = Vec::with_capacity(batch.len());
-    let mut replies: Vec<oneshot::Sender<Result<(), FinalizeError>>> =
-        Vec::with_capacity(batch.len());
+    let mut replies: Vec<oneshot::Sender<Result<(), FinalizeError>>> = Vec::with_capacity(batch.len());
 
     for msg in batch {
         match msg {
