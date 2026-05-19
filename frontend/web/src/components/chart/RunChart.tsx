@@ -5,6 +5,7 @@ import {
   createChart,
   type IChartApi,
   type LogicalRange,
+  type MouseEventParams,
   type UTCTimestamp,
 } from "lightweight-charts";
 import type { RunChartPayload, IndicatorPoint } from "@/api/types.gen";
@@ -19,6 +20,7 @@ import { applyVerticalAutoScale, fitChartContent } from "./chart-fit";
 import { MarkerSidePanel } from "./MarkerSidePanel";
 
 type ActiveMarker = { kind: "trade" | "veto" | "hold"; decision_index: number };
+type MarkerKind = ActiveMarker["kind"];
 type Props = {
   payload: RunChartPayload;
   themeMode?: "dark" | "light";
@@ -116,6 +118,19 @@ function enterFollowMode(charts: IChartApi[]) {
   }
 }
 
+function markerId(kind: MarkerKind, decisionIndex: number) {
+  return `${kind}:${decisionIndex}`;
+}
+
+function parseMarkerId(id: unknown): ActiveMarker | null {
+  if (typeof id !== "string") return null;
+  const [kind, rawDecisionIndex] = id.split(":");
+  if (kind !== "trade" && kind !== "veto" && kind !== "hold") return null;
+  const decisionIndex = Number(rawDecisionIndex);
+  if (!Number.isInteger(decisionIndex)) return null;
+  return { kind, decision_index: decisionIndex };
+}
+
 function buildMarkers(
   payload: RunChartPayload,
   layers: Record<LayerKey, boolean>,
@@ -127,26 +142,27 @@ function buildMarkers(
     color: string;
     shape: "arrowUp" | "arrowDown" | "circle";
     text: string;
+    id: string;
   }[] = [];
   if (layers.markerBuy)
     payload.markers.trades
       .filter((t) => t.side === "Buy")
       .forEach((t) =>
-        allMarkers.push({ time: t.time as UTCTimestamp, position: "belowBar", color: theme.series.markerBuy, shape: "arrowUp", text: `Buy ${t.size}` }),
+        allMarkers.push({ time: t.time as UTCTimestamp, position: "belowBar", color: theme.series.markerBuy, shape: "arrowUp", text: `Buy ${t.size}`, id: markerId("trade", t.decision_index) }),
       );
   if (layers.markerSell)
     payload.markers.trades
       .filter((t) => t.side === "Sell")
       .forEach((t) =>
-        allMarkers.push({ time: t.time as UTCTimestamp, position: "aboveBar", color: theme.series.markerSell, shape: "arrowDown", text: `Sell ${t.size}` }),
+        allMarkers.push({ time: t.time as UTCTimestamp, position: "aboveBar", color: theme.series.markerSell, shape: "arrowDown", text: `Sell ${t.size}`, id: markerId("trade", t.decision_index) }),
       );
   if (layers.markerVeto)
     payload.markers.vetoes.forEach((v) =>
-      allMarkers.push({ time: v.time as UTCTimestamp, position: "aboveBar", color: theme.series.markerVeto, shape: "circle", text: `Veto: ${v.reason}` }),
+      allMarkers.push({ time: v.time as UTCTimestamp, position: "aboveBar", color: theme.series.markerVeto, shape: "circle", text: `Veto: ${v.reason}`, id: markerId("veto", v.decision_index) }),
     );
   if (layers.markerHold)
     payload.markers.holds.forEach((h) =>
-      allMarkers.push({ time: h.time as UTCTimestamp, position: "inBar", color: theme.series.markerHold, shape: "circle", text: "Hold" }),
+      allMarkers.push({ time: h.time as UTCTimestamp, position: "inBar", color: theme.series.markerHold, shape: "circle", text: "Hold", id: markerId("hold", h.decision_index) }),
     );
   return allMarkers.sort((a, b) => (a.time as number) - (b.time as number));
 }
@@ -319,8 +335,11 @@ export function RunChart({
       series.markerHost = priceChart.addLineSeries({ visible: false }) as SetDataSeries;
     }
 
-    // TODO(M2): wire marker click via chart.subscribeCrosshairMove to set activeMarker
-    void setActiveMarker; // referenced to satisfy noUnusedLocals
+    const handleMarkerClick = (param: MouseEventParams) => {
+      const marker = parseMarkerId(param.hoveredObjectId);
+      if (marker) setActiveMarker(marker);
+    };
+    priceChart.subscribeClick(handleMarkerClick);
 
     // --- Position band ---
     if (layers.positionBand) {
@@ -435,6 +454,7 @@ export function RunChart({
       if (seriesRef.current === series) {
         seriesRef.current = {};
       }
+      priceChart.unsubscribeClick(handleMarkerClick);
       all.forEach((c) => c.remove());
     };
   }, [layers, activeTheme]);

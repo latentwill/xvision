@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 
 import { storageKey } from "./chart-layers";
 import samplePayload from "./__fixtures__/sample-run-chart.json";
@@ -14,9 +14,11 @@ const chartMocks = vi.hoisted(() => ({
   subscribeRegistrationCountsAtScroll: [] as number[],
   initialRangesQueue: [] as Array<LogicalRangeStub | null>,
   baselineSeries: [] as Array<{ setData: ReturnType<typeof vi.fn> }>,
+  series: [] as Array<ReturnType<typeof createSeriesStub>>,
   createdCharts: [] as Array<{
     getCurrentRange: () => LogicalRangeStub | null;
     emitVisibleLogicalRangeChange: (range: LogicalRangeStub | null) => void;
+    emitClick: (param: { hoveredObjectId?: unknown }) => void;
     timeScaleApi: {
       scrollToRealTime: ReturnType<typeof vi.fn>;
       getVisibleLogicalRange: ReturnType<typeof vi.fn>;
@@ -30,12 +32,14 @@ type LogicalRangeStub = { from: number; to: number };
 const realtimeRange: LogicalRangeStub = { from: 90, to: 110 };
 
 function createSeriesStub() {
-  return {
+  const series = {
     setData: vi.fn(),
     update: vi.fn(),
     createPriceLine: vi.fn(),
     setMarkers: vi.fn(),
   };
+  chartMocks.series.push(series);
+  return series;
 }
 
 function createChartStub() {
@@ -49,6 +53,7 @@ function createChartStub() {
   const visibleRangeHandlers: Array<
     (range: LogicalRangeStub | null) => void
   > = [];
+  const clickHandlers: Array<(param: { hoveredObjectId?: unknown }) => void> = [];
   const timeScaleApi = {
     scrollToRealTime: vi.fn(() => {
       chartMocks.subscribeRegistrationCountsAtScroll.push(
@@ -81,10 +86,20 @@ function createChartStub() {
       return series;
     }),
     addHistogramSeries: vi.fn(() => createSeriesStub()),
+    subscribeClick: vi.fn((handler: (param: { hoveredObjectId?: unknown }) => void) => {
+      clickHandlers.push(handler);
+    }),
+    unsubscribeClick: vi.fn((handler: (param: { hoveredObjectId?: unknown }) => void) => {
+      const idx = clickHandlers.indexOf(handler);
+      if (idx >= 0) clickHandlers.splice(idx, 1);
+    }),
     getCurrentRange: () => currentRange,
     emitVisibleLogicalRangeChange: (range: LogicalRangeStub | null) => {
       currentRange = range;
       visibleRangeHandlers.forEach((handler) => handler(range));
+    },
+    emitClick: (param: { hoveredObjectId?: unknown }) => {
+      clickHandlers.forEach((handler) => handler(param));
     },
     timeScaleApi,
     timeScale: vi.fn(() => timeScaleApi),
@@ -124,6 +139,7 @@ describe("RunChart", () => {
     chartMocks.subscribeRegistrationCountsAtScroll.length = 0;
     chartMocks.initialRangesQueue.length = 0;
     chartMocks.baselineSeries.length = 0;
+    chartMocks.series.length = 0;
     chartMocks.createChart.mockImplementation(() => {
       const chart = createChartStub();
       chartMocks.createdCharts.push(chart);
@@ -142,6 +158,50 @@ describe("RunChart", () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     render(<RunChart payload={samplePayload as any} />);
     expect(screen.getByText(/Layers/)).toBeInTheDocument();
+  });
+
+  it("opens and closes the marker side panel from a chart marker click", () => {
+    const payload = {
+      ...(samplePayload as any),
+      markers: {
+        trades: [
+          {
+            time: 1_700_000_000,
+            side: "Buy",
+            price: 50_000,
+            size: 0.25,
+            fee: 1.5,
+            pnl_realized: null,
+            decision_index: 7,
+            justification: "Entry signal",
+          },
+        ],
+        vetoes: [],
+        holds: [],
+      },
+    };
+
+    render(<RunChart payload={payload} />);
+
+    const markerSeries = chartMocks.series.find(
+      (series) => series.setMarkers.mock.calls.length > 0,
+    );
+    expect(markerSeries?.setMarkers).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "trade:7", text: "Buy 0.25" }),
+      ]),
+    );
+
+    act(() => {
+      chartMocks.createdCharts[0]?.emitClick({ hoveredObjectId: "trade:7" });
+    });
+
+    expect(screen.getByText("Decision #7")).toBeInTheDocument();
+    expect(screen.getByText("Entry signal")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "×" }));
+
+    expect(screen.queryByText("Decision #7")).not.toBeInTheDocument();
   });
 
   it("renders chart shell range controls and data table toggle", () => {
