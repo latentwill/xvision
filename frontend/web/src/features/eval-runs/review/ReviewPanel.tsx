@@ -8,6 +8,7 @@ import {
   reviewKeys,
 } from "@/api/eval-review";
 import type { EvalReview, ReviewDetail } from "@/api/eval-review";
+import { ApiError } from "@/api/client";
 import { AgentPicker } from "./AgentPicker";
 import { ReviewContent } from "./ReviewContent";
 
@@ -89,11 +90,13 @@ export function ReviewPanel({
           onSelect={(id) => generate.mutate(id)}
         />
         {generate.isError && (
-          <div className="text-danger text-[12px] mt-2">
-            {generate.error instanceof Error
-              ? generate.error.message
-              : String(generate.error)}
-          </div>
+          <GenerateErrorAlert
+            error={generate.error}
+            onRetry={() => {
+              const last = generate.variables;
+              if (last) generate.mutate(last);
+            }}
+          />
         )}
       </div>
 
@@ -195,6 +198,77 @@ export function ReviewPanel({
       )}
     </Card>
   );
+}
+
+/// Render the `generate` mutation's error in a high-visibility alert
+/// that surfaces BOTH `error.code` (as a small badge) and
+/// `error.message`. Mirrors the visual weight of the list/detail error
+/// blocks above so a failed Review-with click no longer reads as
+/// "click did nothing".
+///
+/// When the backend returns a `DashboardError::Validation { field:
+/// "request", msg }` we strip the leading `"request: "` prefix —
+/// that field name is server-side jargon, not operator-actionable.
+/// The structured `error.code` ("validation" / "internal" / "not_found"
+/// / "conflict" / "http_error") is rendered as a tag so the operator
+/// can distinguish a missing-provider remediation from a transient
+/// 500.
+export function GenerateErrorAlert({
+  error,
+  onRetry,
+}: {
+  error: unknown;
+  onRetry?: () => void;
+}) {
+  const { code, message } = describeReviewError(error);
+  return (
+    <div
+      role="alert"
+      data-testid="review-generate-error"
+      className="border border-danger/40 rounded-card p-3 mt-3 text-danger text-[13px]"
+    >
+      <div className="flex items-center gap-2 mb-1">
+        <span
+          data-testid="review-generate-error-code"
+          className="inline-flex items-center px-1.5 py-0.5 rounded-sm text-[10px] uppercase tracking-wide border border-danger/40 text-danger/90 bg-danger/10"
+        >
+          {code}
+        </span>
+        <span className="text-danger/80 text-[12px]">
+          Could not generate review
+        </span>
+      </div>
+      <div data-testid="review-generate-error-message">{message}</div>
+      {onRetry && (
+        <button
+          type="button"
+          onClick={onRetry}
+          className="mt-2 underline decoration-dotted underline-offset-2 text-danger hover:text-danger/80 text-[12px]"
+        >
+          retry
+        </button>
+      )}
+    </div>
+  );
+}
+
+/// Extract `{ code, message }` from whatever shape react-query handed
+/// us. `ApiError` (thrown by `apiFetch`) is the structured case. Plain
+/// `Error` falls back to `code: "error"` + `error.message`. Anything
+/// else stringifies — but `code` is always present so the UI never has
+/// to render a null badge.
+function describeReviewError(error: unknown): { code: string; message: string } {
+  if (error instanceof ApiError) {
+    let message = error.message;
+    if (error.code === "validation" && message.startsWith("request: ")) {
+      message = message.slice("request: ".length);
+    }
+    return { code: error.code, message };
+  }
+  if (error instanceof Error) {
+    return { code: "error", message: error.message };
+  }
+  return { code: "error", message: String(error) };
 }
 
 function PanelHeader() {
