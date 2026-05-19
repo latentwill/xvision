@@ -1568,9 +1568,29 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
     )
     .await;
 
+    // F-1 (eval-launch-concurrency-cap, 2026-05-19): cap how many runs
+    // can be in flight against a single upstream `(provider, model)`
+    // bucket. Resolved from the trader slot (the dominant token spender);
+    // findings/intern slots ride along on the same permit because the
+    // F-1 audit (`team/intake/2026-05-16-eval-review-and-v2a.md`) tracked
+    // the burst as a single user-perceived "launch". The guard is moved
+    // into the spawned background task so it lives for the full run
+    // lifecycle and is dropped (releasing the permit) when the task
+    // exits — including via panic.
+    let (gate_provider, gate_model) =
+        resolve_launch_gate_key(&strategy, &agent_slots, &findings_model);
+    let launch_permit = ctx
+        .launch_gate
+        .acquire(&gate_provider, &gate_model)
+        .await;
+
     let ctx_bg = ctx.clone();
     let run_id = run.id.clone();
     tokio::spawn(async move {
+        // Hold the permit for the entire background task lifetime.
+        // Dropping it releases the slot back to the gate; this must
+        // outlive `execute_in_background` and `extract_and_record`.
+        let _launch_permit = launch_permit;
         execute_in_background(
             ctx_bg,
             run,
@@ -1587,6 +1607,54 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
     });
 
     get_run(ctx, &run_id).await
+}
+
+/// Resolve the `(provider, model)` pair the launch-concurrency gate
+/// should key on. Prefers the trader role from `agent_slots` (post-refactor
+/// strategies), falls back to the legacy `trader_slot` on `Strategy`, then
+/// to any other agent slot, then to the resolved `findings_model` as a
+/// last-ditch source. Empty strings still produce *some* key — we'd rather
+/// over-serialize a misconfigured strategy than skip the cap entirely.
+fn resolve_launch_gate_key(
+    strategy: &crate::strategies::Strategy,
+    agent_slots: &[ResolvedAgentSlot],
+    findings_model: &str,
+) -> (String, String) {
+    // 1. Attached agent with role == "trader".
+    if let Some(trader) = agent_slots
+        .iter()
+        .find(|resolved| resolved.role.trim().eq_ignore_ascii_case("trader"))
+    {
+        let provider = trader.slot.provider.clone().unwrap_or_default();
+        let model = trader.slot.effective_model();
+        if !provider.is_empty() && !model.is_empty() {
+            return (provider, model);
+        }
+    }
+
+    // 2. Legacy `trader_slot` on the strategy.
+    if let Some(slot) = strategy.trader_slot.as_ref() {
+        let provider = slot.provider.clone().unwrap_or_default();
+        let model = slot.effective_model();
+        if !provider.is_empty() && !model.is_empty() {
+            return (provider, model);
+        }
+    }
+
+    // 3. First attached agent with any non-empty provider/model.
+    for resolved in agent_slots {
+        let provider = resolved.slot.provider.clone().unwrap_or_default();
+        let model = resolved.slot.effective_model();
+        if !provider.is_empty() && !model.is_empty() {
+            return (provider, model);
+        }
+    }
+
+    // 4. Last-ditch: pair with the resolved findings model and an empty
+    // provider. Better than skipping the cap; this only fires on a
+    // misconfigured strategy that already shouldn't have reached
+    // `start_run`.
+    (String::new(), findings_model.to_string())
 }
 
 /// Background-task body: transition Queued → Running, drive the
