@@ -1917,6 +1917,121 @@ fn load_or_create_signing_key(xvn_home: &Path) -> anyhow::Result<SigningKey> {
     Ok(key)
 }
 
+// ── Batch persistence API (migration 020) ─────────────────────────────────────
+
+use crate::eval::batch_store::{Batch, BatchStore};
+
+/// Request shape for `create_batch`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateBatchRequest {
+    pub strategy_id: String,
+    /// Agent profile id for `--review-with` (optional).
+    pub review_with: Option<String>,
+}
+
+/// Request shape for `list_batches`.
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct ListBatchesRequest {
+    /// Optional strategy filter (most-recent-first ordering preserved).
+    pub strategy_id: Option<String>,
+}
+
+/// `Batch` + its associated run ids (joined via `eval_runs.batch_id`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchDetail {
+    #[serde(flatten)]
+    pub batch: Batch,
+    pub run_ids: Vec<String>,
+}
+
+/// Insert a new `eval_batches` row with `status = 'running'`. Returns the
+/// persisted `Batch` so callers have the generated `batch_id` immediately.
+pub async fn create_batch(ctx: &ApiContext, req: CreateBatchRequest) -> ApiResult<Batch> {
+    let store = BatchStore::new(ctx.db.clone());
+    store
+        .create(&req.strategy_id, req.review_with.as_deref())
+        .await
+        .map_err(|e| ApiError::Internal(format!("create_batch: {e}")))
+}
+
+/// Load a batch plus its associated run ids (sorted by `started_at`).
+pub async fn get_batch(ctx: &ApiContext, batch_id: &str) -> ApiResult<BatchDetail> {
+    let store = BatchStore::new(ctx.db.clone());
+    let batch = store
+        .get(batch_id)
+        .await
+        .map_err(|e| ApiError::Internal(format!("get_batch: {e}")))?
+        .ok_or_else(|| ApiError::NotFound(format!("batch '{batch_id}'")))?;
+    let run_ids = store
+        .run_ids_for_batch(batch_id)
+        .await
+        .map_err(|e| ApiError::Internal(format!("run_ids_for_batch: {e}")))?;
+    Ok(BatchDetail { batch, run_ids })
+}
+
+/// List batches most-recent first; optionally filter by `strategy_id`.
+pub async fn list_batches(ctx: &ApiContext, req: ListBatchesRequest) -> ApiResult<Vec<Batch>> {
+    let store = BatchStore::new(ctx.db.clone());
+    store
+        .list(req.strategy_id.as_deref())
+        .await
+        .map_err(|e| ApiError::Internal(format!("list_batches: {e}")))
+}
+
+/// Compute rollup status from the batch's run statuses and set `completed_at`.
+/// Idempotent: re-calling on a batch that already has a terminal status is
+/// a no-op and returns the stored row unchanged.
+pub async fn finalize_batch(ctx: &ApiContext, batch_id: &str) -> ApiResult<Batch> {
+    let batch_store = BatchStore::new(ctx.db.clone());
+    let run_store = RunStore::new(ctx.db.clone());
+
+    // Load current batch first to check if already terminal.
+    let batch = batch_store
+        .get(batch_id)
+        .await
+        .map_err(|e| ApiError::Internal(format!("get batch for finalize: {e}")))?
+        .ok_or_else(|| ApiError::NotFound(format!("batch '{batch_id}'")))?;
+
+    if matches!(batch.status.as_str(), "completed" | "partial" | "failed") {
+        return Ok(batch);
+    }
+
+    // Load run statuses for this batch.
+    let run_ids = batch_store
+        .run_ids_for_batch(batch_id)
+        .await
+        .map_err(|e| ApiError::Internal(format!("run_ids_for_batch: {e}")))?;
+
+    let mut statuses: Vec<String> = Vec::with_capacity(run_ids.len());
+    for run_id in &run_ids {
+        let run = run_store
+            .get(run_id)
+            .await
+            .map_err(|e| ApiError::Internal(format!("get run {run_id}: {e}")))?;
+        statuses.push(run.status.as_str().to_string());
+    }
+
+    let status_refs: Vec<&str> = statuses.iter().map(String::as_str).collect();
+    batch_store
+        .finalize(batch_id, &status_refs)
+        .await
+        .map_err(|e| ApiError::Internal(format!("finalize batch: {e}")))
+}
+
+/// Attach a run to an existing batch. Called by `batch run` immediately after
+/// each run completes. Idempotent if the run already carries the batch_id.
+pub async fn attach_run_to_batch(
+    ctx: &ApiContext,
+    run_id: &str,
+    batch_id: &str,
+) -> ApiResult<()> {
+    let store = BatchStore::new(ctx.db.clone());
+    store
+        .attach_run(run_id, batch_id)
+        .await
+        .map_err(|e| ApiError::Internal(format!("attach_run_to_batch: {e}")))
+}
+
 mod tests {
     use super::*;
     use crate::strategies::{

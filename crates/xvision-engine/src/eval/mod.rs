@@ -8,6 +8,7 @@
 
 pub mod attestation;
 pub mod bars;
+pub mod batch_store;
 pub mod behavior;
 pub mod compare;
 pub mod cost;
@@ -41,4 +42,5 @@ pub use scenario::{
     FillModel, LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode,
     Scenario, ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings, VolumeConstraint, WalkModel,
 };
+pub use batch_store::{Batch, BatchStore};
 pub use store::{DecisionRow, ListFilter, RunStore};
