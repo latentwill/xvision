@@ -1186,6 +1186,13 @@ async fn run_inner(
     )
     .await;
 
+    // Rule-based auto-review. Reads the just-persisted findings and
+    // writes a single `eval_reviews` row with a verdict + score. No
+    // LLM call, no dispatch dependency. Best-effort by design —
+    // failures log warn! and the run stays successful.
+    let store_for_auto = RunStore::new(ctx.db.clone());
+    crate::eval::review::auto::fire_auto_review(&store_for_auto, &finalized.id).await;
+
     Ok(finalized)
 }
 
@@ -1721,6 +1728,11 @@ async fn execute_in_background(
         &findings_model,
     )
     .await;
+
+    // Rule-based auto-review postprocess. Best-effort; reads the
+    // findings we just persisted and writes a single eval_reviews row.
+    let store_for_auto = RunStore::new(ctx.db.clone());
+    crate::eval::review::auto::fire_auto_review(&store_for_auto, &finalized.id).await;
 }
 
 /// Sweep any `Queued` or `Running` rows from a previous process and
