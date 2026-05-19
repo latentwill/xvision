@@ -540,42 +540,57 @@ fn print_run_status_line(run: &xvision_engine::eval::run::Run) {
 }
 
 async fn run_compare(args: CompareArgs) -> CliResult<()> {
-    // Validate run ids.
-    // `--batch` without explicit run_ids is a forward-compatible stub: batch
-    // ids are not persisted yet.  Emit a sharp error pointing at the missing
-    // persistence so a follow-up track is obvious.
-    if args.run_ids.len() < 2 {
-        if let Some(batch_id) = &args.batch {
-            if args.run_ids.is_empty() {
-                return Err(CliError {
-                    exit: XvnExit::Usage,
-                    source: anyhow::anyhow!(
-                        "batch ids are not persisted yet; pass --runs <id1> <id2> ... explicitly \
-                         (batch_id={batch_id:?}). A future track (cli-eval-batch-run-wait) will \
-                         add persistence so --batch alone resolves runs."
-                    ),
-                });
-            }
-        }
-        if args.run_ids.len() < 2 {
-            return Err(CliError {
-                exit: XvnExit::Usage,
-                source: anyhow::anyhow!(
-                    "eval compare requires at least two run ids (got {}); \
-                     pass them as positional arguments",
-                    args.run_ids.len()
-                ),
-            });
-        }
-    }
-
     let ctx = open_ctx(args.xvn_home.clone())
         .await
         .exit_with(XvnExit::Upstream)?;
+
+    // Resolve run ids. When --batch is supplied with no positional run ids,
+    // look up the persisted batch to get its runs. When positional run ids
+    // are also present they take precedence (legacy passthrough behaviour).
+    let run_ids: Vec<String> = if args.run_ids.is_empty() {
+        if let Some(batch_id) = &args.batch {
+            // Resolve runs from the persisted batch.
+            let detail = eval::get_batch(&ctx, batch_id)
+                .await
+                .map_err(|e| api_to_cli("eval compare (resolve batch)", e))?;
+            if detail.run_ids.len() < 2 {
+                return Err(CliError {
+                    exit: XvnExit::Usage,
+                    source: anyhow::anyhow!(
+                        "batch '{batch_id}' has {} run(s); compare requires at least 2",
+                        detail.run_ids.len()
+                    ),
+                });
+            }
+            detail.run_ids
+        } else {
+            return Err(CliError {
+                exit: XvnExit::Usage,
+                source: anyhow::anyhow!(
+                    "eval compare requires at least two run ids or a --batch <id>; \
+                     pass run ids as positional arguments"
+                ),
+            });
+        }
+    } else {
+        args.run_ids.clone()
+    };
+
+    if run_ids.len() < 2 {
+        return Err(CliError {
+            exit: XvnExit::Usage,
+            source: anyhow::anyhow!(
+                "eval compare requires at least two run ids (got {}); \
+                 pass them as positional arguments or supply a --batch id with ≥2 runs",
+                run_ids.len()
+            ),
+        });
+    }
+
     let report = eval::compare(
         &ctx,
         CompareRunsRequest {
-            run_ids: args.run_ids.clone(),
+            run_ids: run_ids.clone(),
         },
     )
     .await
@@ -709,6 +724,7 @@ async fn run_scenarios(args: ScenariosArgs) -> CliResult<()> {
 async fn run_batch_cmd(args: batch::BatchArgs) -> CliResult<()> {
     match args.op {
         batch::BatchOp::Run(run_args) => batch::run_batch_cmd(run_args).await,
+        batch::BatchOp::Status(status_args) => batch::run_batch_status_cmd(status_args).await,
     }
 }
 

@@ -1,13 +1,13 @@
-//! `xvn eval batch run` — launch one eval run per scenario, wait for all
+//! `xvn eval batch` — launch one eval run per scenario, wait for all
 //! terminal states, and return a unified batch result object.
 //!
-//! ## Storage choice: Option (a) — no new table
+//! ## Storage (migration 020)
 //!
-//! A batch is an in-memory ULID. Individual runs persist as normal
-//! `eval_runs` rows. The verb derives the result live from those rows on
-//! each poll cycle. `xvn eval batch status <batch_id>` (a future follow-on
-//! verb) would need a persistence layer to look up which run ids belong to
-//! a batch; that work is deferred to track `eval-batch-persistence-followup`.
+//! Batches are persisted to the `eval_batches` table (migration 020).
+//! Each run is attached to the batch via `eval_runs.batch_id` after it
+//! completes. `xvn eval batch status <batch_id>` reads the persisted row
+//! and the joined runs; `xvn eval compare --batch <id>` resolves run ids
+//! via `get_batch` rather than requiring explicit `--runs`.
 //!
 //! ## Concurrency
 //!
@@ -24,10 +24,9 @@ use std::time::Duration;
 use anyhow::Result;
 use clap::{Args, Subcommand};
 use serde::{Deserialize, Serialize};
-use ulid::Ulid;
 
 use xvision_engine::agent::llm::LlmDispatch;
-use xvision_engine::api::eval::{self, EvalRunRequest};
+use xvision_engine::api::eval::{self, CreateBatchRequest, EvalRunRequest};
 use xvision_engine::api::{scenario as api_scenario, ApiContext};
 use xvision_engine::eval::run::RunMode;
 use xvision_engine::eval::store::RunStore;
@@ -51,6 +50,21 @@ pub enum BatchOp {
     /// a unified batch result.
     #[command(visible_alias = "batch")]
     Run(BatchRunArgs),
+    /// Show the status of a persisted batch by its id.
+    Status(BatchStatusArgs),
+}
+
+/// Parsed CLI args for `xvn eval batch status`.
+#[derive(Args, Debug)]
+pub struct BatchStatusArgs {
+    /// Batch id (e.g. `batch_01K…`).
+    pub batch_id: String,
+    /// Override the xvn home directory.
+    #[arg(long)]
+    pub xvn_home: Option<std::path::PathBuf>,
+    /// Emit the result as JSON.
+    #[arg(long)]
+    pub json: bool,
 }
 
 /// Parsed CLI args for `xvn eval batch run`.
@@ -148,8 +162,23 @@ pub struct BatchRunRequest {
 /// if an individual run fails to launch or finishes in a failed state, the
 /// entry carries `status = "failed"` and an `error` field. The outer `Result`
 /// is only `Err` for pre-flight failures (e.g. unable to open the DB context).
+///
+/// The batch is persisted to `eval_batches` (migration 020). Each run is
+/// attached to the batch via `eval_runs.batch_id` after it completes, and
+/// `finalize_batch` is called at the end to roll up the final status.
 pub async fn run_batch(ctx: &ApiContext, req: BatchRunRequest) -> Result<BatchResult> {
-    let batch_id = format!("batch_{}", Ulid::new());
+    // Persist the batch row first so the batch_id is stable before any runs
+    // are launched. Status starts as 'running'.
+    let batch = eval::create_batch(
+        ctx,
+        CreateBatchRequest {
+            strategy_id: req.agent_id.clone(),
+            review_with: None,
+        },
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("create batch row: {e}"))?;
+    let batch_id = batch.batch_id.clone();
 
     // Resolve scenario display names up-front (best-effort; fall back to id).
     let mut scenario_names: Vec<String> = Vec::with_capacity(req.scenario_ids.len());
@@ -189,6 +218,9 @@ pub async fn run_batch(ctx: &ApiContext, req: BatchRunRequest) -> Result<BatchRe
         .await
         {
             Ok(run) => {
+                // Attach this run to the batch immediately after it completes.
+                let _ = eval::attach_run_to_batch(ctx, &run.id, &batch_id).await;
+
                 // Tally action distribution from persisted decisions.
                 let actions =
                     action_distribution(ctx, &run.id).await.unwrap_or_default();
@@ -231,6 +263,9 @@ pub async fn run_batch(ctx: &ApiContext, req: BatchRunRequest) -> Result<BatchRe
         };
         entries.push(entry);
     }
+
+    // Finalize the batch (compute rollup status + set completed_at).
+    let _ = eval::finalize_batch(ctx, &batch_id).await;
 
     Ok(BatchResult {
         batch_id,
@@ -358,7 +393,17 @@ pub async fn run_batch_cmd(args: BatchRunArgs) -> CliResult<()> {
     // However, this means we can't inject a mock here. That's fine for the CLI;
     // tests use `run_batch` with explicit deps.
 
-    let batch_id = format!("batch_{}", Ulid::new());
+    // Persist the batch row first so the batch_id is stable before runs launch.
+    let batch = eval::create_batch(
+        &ctx,
+        CreateBatchRequest {
+            strategy_id: args.strategy.clone(),
+            review_with: None,
+        },
+    )
+    .await
+    .map_err(|e| api_to_cli("eval batch run (create batch)", e))?;
+    let batch_id = batch.batch_id.clone();
 
     // Resolve scenario display names (best-effort).
     let mut scenario_names: Vec<String> = Vec::with_capacity(args.scenarios.len());
@@ -382,6 +427,9 @@ pub async fn run_batch_cmd(args: BatchRunArgs) -> CliResult<()> {
 
         let entry = match eval::run(&ctx, run_req).await {
             Ok(run) => {
+                // Attach run to the persisted batch.
+                let _ = eval::attach_run_to_batch(&ctx, &run.id, &batch_id).await;
+
                 let actions = action_distribution(&ctx, &run.id)
                     .await
                     .unwrap_or_default();
@@ -428,6 +476,9 @@ pub async fn run_batch_cmd(args: BatchRunArgs) -> CliResult<()> {
         entries.push(entry);
     }
 
+    // Finalize the persisted batch (compute rollup status + set completed_at).
+    let _ = eval::finalize_batch(&ctx, &batch_id).await;
+
     let result = BatchResult {
         batch_id,
         strategy_id: args.strategy.clone(),
@@ -465,6 +516,50 @@ pub async fn run_batch_cmd(args: BatchRunArgs) -> CliResult<()> {
         );
         if let Some(e) = &r.error {
             println!("  error: {e}");
+        }
+    }
+    Ok(())
+}
+
+/// `xvn eval batch status <batch_id>` — show the persisted batch plus its runs.
+pub async fn run_batch_status_cmd(args: BatchStatusArgs) -> CliResult<()> {
+    let ctx = open_ctx(args.xvn_home.clone())
+        .await
+        .exit_with(XvnExit::Upstream)?;
+
+    let detail = eval::get_batch(&ctx, &args.batch_id)
+        .await
+        .map_err(|e| api_to_cli("eval batch status", e))?;
+
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&detail).exit_with(XvnExit::Upstream)?
+        );
+        return Ok(());
+    }
+
+    // Human-readable output.
+    println!("Batch     {}", detail.batch.batch_id);
+    println!("Strategy  {}", detail.batch.strategy_id);
+    println!("Status    {}", detail.batch.status);
+    if let Some(rw) = &detail.batch.review_with {
+        println!("Review    {rw}");
+    }
+    println!(
+        "Created   {}",
+        detail.batch.created_at.to_rfc3339()
+    );
+    if let Some(c) = detail.batch.completed_at {
+        println!("Completed {}", c.to_rfc3339());
+    }
+    println!();
+    if detail.run_ids.is_empty() {
+        println!("(no runs attached to this batch)");
+    } else {
+        println!("Runs ({}):", detail.run_ids.len());
+        for run_id in &detail.run_ids {
+            println!("  {run_id}");
         }
     }
     Ok(())
