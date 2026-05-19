@@ -460,6 +460,40 @@ impl PaperExecutor {
         // bar's seed under `agent_error_feedback` so the trader agent
         // can self-heal.
         let mut last_broker_error: Option<BrokerErrorFeedback> = None;
+
+        // eval-broker-error-circuit-breaker: tracks the most recent
+        // recoverable broker rejection's class and the number of
+        // consecutive identical rejections. The gate is the triple
+        // `(error_class, severity, outcome)`:
+        //
+        //   - error_class — must match the previous rejection's class;
+        //     switching classes resets the counter (a transient
+        //     network blip should NOT push a deterministic
+        //     min-order-size loop over the threshold).
+        //   - severity   — only `warn`-or-higher rejections count;
+        //     informational broker chatter never gates the run.
+        //   - outcome    — only `rejected` (recoverable BrokerSurface
+        //     errors that the agent-error-feedback path is round-
+        //     tripping to the trader). Fatal errors already terminate
+        //     the run on the existing error path, so they don't reach
+        //     this counter.
+        //
+        // Successful broker outcomes (filled / accepted) reset the
+        // counter — the moment the loop makes forward progress, the
+        // strikes start over. On reaching `CIRCUIT_BREAKER_THRESHOLD`
+        // the run aborts with a classified `repeated_broker_error`
+        // anyhow chain — no further trader invocation, no further
+        // broker submits.
+        //
+        // The threshold is hard-coded for v1 per the contract's status
+        // note. Promotion to run-config or strategy-config when there's
+        // operator demand: replace this constant with a read from
+        // `strategy.risk` (preferred long-term home) or
+        // `run.params_override`, and thread the value through.
+        const CIRCUIT_BREAKER_THRESHOLD: u32 = 3;
+        let mut consecutive_broker_error_class: Option<BrokerErrorClass> = None;
+        let mut consecutive_broker_error_count: u32 = 0;
+        let mut consecutive_broker_error_last_msg: String = String::new();
         let mut total_input_tokens: u64 = 0;
         let mut total_output_tokens: u64 = 0;
         // Running peak for drawdown_pct in MetricsUpdated. Start at the
@@ -624,6 +658,13 @@ impl PaperExecutor {
             };
 
             if let Some((side, size)) = plan {
+                // Hold this; the strike state may be reset below on
+                // successful submit. The no-plan branch resets too
+                // (see else block) so a non-submit tick — hold, flat,
+                // already-long, etc. — breaks any in-flight rejection
+                // streak. Without that, a `hold` between two rejections
+                // would still count as 2 strikes against the threshold;
+                // see PR #320 review (P2).
                 let idempotency_key = format!("{}-{}", run.id, decision_idx);
                 let req = OrderRequest {
                     asset: asset.clone(),
@@ -693,6 +734,14 @@ impl PaperExecutor {
                             )
                             .await;
                         }
+                        // eval-broker-error-circuit-breaker: successful
+                        // outcome resets the consecutive-rejection
+                        // counter. Any forward progress wipes the
+                        // strike state — the next sequence has to
+                        // build from scratch.
+                        consecutive_broker_error_class = None;
+                        consecutive_broker_error_count = 0;
+                        consecutive_broker_error_last_msg.clear();
                         conf
                     }
                     Err(e) => {
@@ -790,6 +839,67 @@ impl PaperExecutor {
                                 n_recoverable = n_recoverable_broker_errors,
                                 "recoverable broker error fed back to agent for next cycle",
                             );
+
+                            // eval-broker-error-circuit-breaker: gate
+                            // on the `(error_class, severity, outcome)`
+                            // triple. We are inside the
+                            // `class.is_recoverable()` branch, so:
+                            //   - severity is `warn` (set above for
+                            //     recoverable rejections);
+                            //   - outcome is `BrokerCallOutcome::Rejected`
+                            //     (also set above for the recoverable
+                            //     branch).
+                            // The only varying axis at this point is
+                            // `error_class`. Increment when it matches
+                            // the previous strike's class; reset to
+                            // 1-with-new-class when it doesn't.
+                            if consecutive_broker_error_class == Some(class) {
+                                consecutive_broker_error_count += 1;
+                            } else {
+                                consecutive_broker_error_class = Some(class);
+                                consecutive_broker_error_count = 1;
+                            }
+                            consecutive_broker_error_last_msg = msg.clone();
+
+                            if consecutive_broker_error_count >= CIRCUIT_BREAKER_THRESHOLD {
+                                // Structured failure reason consumed by
+                                // `classify_run_failure` (extended with
+                                // `repeated_broker_error` class tag) and
+                                // surfaced in `EvalResult` / `RunSummary`
+                                // via the persisted error string. Format
+                                // is parsed by no one — the tag prefix
+                                // is the wire contract, the body is
+                                // human-readable diagnostic text
+                                // including the offending class, the
+                                // count, and the last broker message.
+                                let summary = format!(
+                                    "repeated_broker_error: aborted after {count} consecutive {class_tag} rejections; \
+                                     run_id={run_id} decision_index={decision_idx} asset={asset} \
+                                     last_error={last_msg}",
+                                    count = consecutive_broker_error_count,
+                                    class_tag = class.as_tag(),
+                                    run_id = run.id,
+                                    decision_idx = decision_idx,
+                                    asset = asset,
+                                    last_msg = consecutive_broker_error_last_msg,
+                                );
+                                tracing::error!(
+                                    run_id = %run.id,
+                                    decision_index = decision_idx,
+                                    error_class = class.as_tag(),
+                                    count = consecutive_broker_error_count,
+                                    "eval circuit breaker tripped — aborting run",
+                                );
+                                // Exit on the SAME iteration that hit
+                                // the threshold — no further trader
+                                // invocation, no further broker
+                                // submit. The outer `Executor::run`
+                                // wrapper persists the failure with
+                                // the classified `[repeated_broker_error]`
+                                // prefix via `format_failure_reason`.
+                                return Err(anyhow!(summary));
+                            }
+
                             decision_idx += 1;
                             continue;
                         } else {
@@ -816,6 +926,20 @@ impl PaperExecutor {
                     qty: conf.fill_size,
                     fee: fee.unwrap_or(0.0),
                 });
+            } else {
+                // No broker submit attempted this iteration (hold /
+                // flat / already-long / already-short / short_open on
+                // long-only venue with no long open). Reset the
+                // consecutive-rejection strike state so a non-rejection
+                // tick can't be counted against the circuit-breaker
+                // threshold. Without this, the sequence
+                //   reject → reject → hold → reject
+                // would trip on the third reject as "3 consecutive"
+                // even though a non-rejecting hold sat in between.
+                // See PR #320 review (P2).
+                consecutive_broker_error_class = None;
+                consecutive_broker_error_count = 0;
+                consecutive_broker_error_last_msg.clear();
             }
 
             // DecisionEmitted fires for every cycle (actionable or not)
