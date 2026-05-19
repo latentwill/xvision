@@ -37,3 +37,36 @@ Verification target:
 
 - Run the affected focused tests after updating all reported locations.
 - Re-run `clawpatch revalidate --finding fnd_sig-feat-test-suite-4cad510b4e-c_faae114613`.
+
+## B-2 - In-memory SQLite pool can create isolated databases per connection
+
+- Finding: `fnd_sig-feat-test-suite-806b2ebb52-5_501dd10586`
+- Severity: medium
+- Category: build-release
+- Status: open in codebase, deferred from the autonomous clawpatch loop
+
+`clawpatch fix` updated the originally cited
+`crates/xvision-engine/tests/api_eval_attest.rs` helper to use
+`SqlitePoolOptions::new().max_connections(1).connect(":memory:")`.
+Revalidation kept the finding open because the same migrated `:memory:` pool
+pattern remains in other eval test harness files.
+
+Remaining reported locations:
+
+- `crates/xvision-engine/tests/api_eval.rs`
+- `crates/xvision-engine/tests/api_eval_compare.rs`
+- `crates/xvision-engine/tests/eval_retry_from_completed.rs`
+- `crates/xvision-engine/tests/eval_retry_idempotency.rs`
+
+Recommended fix:
+
+- Replace migrated `SqlitePool::connect(":memory:")` helpers with
+  `SqlitePoolOptions::new().max_connections(1).connect(":memory:")`, or use a
+  shared-cache/file-backed temporary SQLite database for integration tests.
+- Keep the existing tests' assertions unchanged unless a helper API change is
+  needed to centralize the single-connection pool setup.
+
+Verification target:
+
+- Run the affected focused eval tests after updating all reported locations.
+- Re-run `clawpatch revalidate --finding fnd_sig-feat-test-suite-806b2ebb52-5_501dd10586`.
