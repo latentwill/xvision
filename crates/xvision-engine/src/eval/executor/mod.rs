@@ -40,6 +40,10 @@ pub use trader_output::{TraderFailureKind, TraderOutputError};
 ///    `provider_http_error`, `provider_decode`.
 ///  - Broker transport classes: `broker_auth`, `broker_unsupported`,
 ///    `broker_insufficient_funds`, `broker_timeout`, `broker_rejected`.
+///  - Loop-control classes: `repeated_broker_error` (eval circuit
+///    breaker tripped — N consecutive identical recoverable broker
+///    rejections in a row; added by
+///    `eval-broker-error-circuit-breaker`).
 ///  - `unclassified` for anything else.
 ///
 /// The matcher walks the full `anyhow::Error` source chain (via the alternate
@@ -65,6 +69,15 @@ pub fn classify_run_failure(err: &anyhow::Error) -> &'static str {
         if s.contains(&needle) {
             return kind.tag();
         }
+    }
+    // eval-broker-error-circuit-breaker: loop-control class — must
+    // match BEFORE the generic broker_* fallbacks below so the abort
+    // message (which embeds e.g. `broker_min_order_size`) doesn't get
+    // re-classified as the inner broker class. The circuit-breaker
+    // class is what downstream consumers (UI banners, retry policy)
+    // want to see; the embedded inner class is diagnostic only.
+    if s.contains("repeated_broker_error") {
+        return "repeated_broker_error";
     }
     // Broker classes — match before the generic `timeout` fallback so a
     // broker-side fill timeout doesn't get tagged `provider_timeout`.
@@ -269,6 +282,29 @@ mod tests {
             !formatted.starts_with("[broker_unsupported] [broker_unsupported]"),
             "must not double-prefix, got: {formatted}"
         );
+    }
+
+    #[test]
+    fn classify_repeated_broker_error_routes_circuit_breaker_messages() {
+        // eval-broker-error-circuit-breaker: the abort message contains
+        // `repeated_broker_error:` and the inner broker class tag (e.g.
+        // `broker_min_order_size`). The outer class wins.
+        let e = anyhow::anyhow!(
+            "repeated_broker_error: aborted after 3 consecutive broker_min_order_size rejections; \
+             run_id=R decision_index=2 asset=BTC/USD last_error=cost basis must be >= minimal amount of order 10"
+        );
+        assert_eq!(classify_run_failure(&e), "repeated_broker_error");
+
+        // Same message wrapped in `with_context` (matches how the
+        // executor surfaces the error to the outer harness):
+        let inner = anyhow::anyhow!(
+            "repeated_broker_error: aborted after 3 consecutive broker_min_order_size rejections; \
+             run_id=R decision_index=2 asset=BTC/USD last_error=cost basis must be >= minimal amount of order 10"
+        );
+        let wrapped: anyhow::Error = Err::<(), _>(inner)
+            .context("paper eval run terminated")
+            .unwrap_err();
+        assert_eq!(classify_run_failure(&wrapped), "repeated_broker_error");
     }
 
     #[test]
