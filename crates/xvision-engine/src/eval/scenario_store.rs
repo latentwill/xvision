@@ -22,12 +22,22 @@ fn source_tag(s: ScenarioSource) -> &'static str {
 
 /// Insert a scenario row plus its tags. Rows are immutable post-insert
 /// (enforced by the `scenarios_no_update` trigger from migration 006).
+///
+/// The four regime columns added by migration 021 (`regime_label`,
+/// `volatility_label`, `trend_direction`, `regime_derived`) are written from
+/// the `Scenario` struct at insert time.  Because the body_json is frozen at
+/// insert, subsequent regime-label updates are handled by a dedicated UPDATE
+/// path ([`update_regime_labels`]) that touches only those four columns — the
+/// immutability trigger does not cover them.
 pub async fn insert_scenario(ctx: &ApiContext, s: &Scenario) -> ApiResult<()> {
     let body =
         serde_json::to_string(s).map_err(|e| ApiError::Internal(format!("serialize scenario: {e}")))?;
     sqlx::query(
-        "INSERT INTO scenarios (id, parent_scenario_id, source, display_name, description, body_json, created_at, created_by, archived_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO scenarios \
+         (id, parent_scenario_id, source, display_name, description, body_json, \
+          created_at, created_by, archived_at, \
+          regime_label, volatility_label, trend_direction, regime_derived) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&s.id)
     .bind(s.parent_scenario_id.as_deref())
@@ -38,6 +48,10 @@ pub async fn insert_scenario(ctx: &ApiContext, s: &Scenario) -> ApiResult<()> {
     .bind(s.created_at.to_rfc3339())
     .bind(&s.created_by)
     .bind(s.archived_at.map(|t| t.to_rfc3339()))
+    .bind(s.regime_label.as_deref())
+    .bind(s.volatility_label.as_deref())
+    .bind(s.trend_direction.as_deref())
+    .bind(s.regime_derived)
     .execute(&ctx.db)
     .await
     .map_err(|e| ApiError::Internal(format!("insert_scenario: {e}")))?;
@@ -53,21 +67,63 @@ pub async fn insert_scenario(ctx: &ApiContext, s: &Scenario) -> ApiResult<()> {
     Ok(())
 }
 
+/// Update the four regime-label columns for an existing scenario row.
+///
+/// This is the **only** supported mutation path for regime labels after
+/// insert — the `scenarios_no_update` trigger blocks changes to
+/// `body_json`, but the four regime columns are not covered by that trigger.
+///
+/// `regime_derived` must be set by the caller:
+/// - `true` when the update comes from `xvn scenario classify` (auto).
+/// - `false` when the update comes from `xvn scenario set-regime` (operator).
+pub async fn update_regime_labels(
+    ctx: &ApiContext,
+    id: &str,
+    regime_label: Option<&str>,
+    volatility_label: Option<&str>,
+    trend_direction: Option<&str>,
+    regime_derived: bool,
+) -> ApiResult<()> {
+    let res = sqlx::query(
+        "UPDATE scenarios \
+         SET regime_label = ?, volatility_label = ?, trend_direction = ?, regime_derived = ? \
+         WHERE id = ?",
+    )
+    .bind(regime_label)
+    .bind(volatility_label)
+    .bind(trend_direction)
+    .bind(regime_derived)
+    .bind(id)
+    .execute(&ctx.db)
+    .await
+    .map_err(|e| ApiError::Internal(format!("update_regime_labels: {e}")))?;
+
+    if res.rows_affected() == 0 {
+        return Err(ApiError::NotFound(format!("scenario '{id}'")));
+    }
+    Ok(())
+}
+
+/// Row type for reading back scenario columns that can mutate after insert.
+type ScenarioRow = (String, Option<String>, Option<String>, Option<String>, Option<String>, bool);
+
 /// Fetch a single scenario by id. Returns `None` when no row matches.
 pub async fn get_scenario(ctx: &ApiContext, id: &str) -> ApiResult<Option<Scenario>> {
-    let row: Option<(String, Option<String>)> =
-        sqlx::query_as("SELECT body_json, archived_at FROM scenarios WHERE id = ?")
-            .bind(id)
-            .fetch_optional(&ctx.db)
-            .await
-            .map_err(|e| ApiError::Internal(format!("get_scenario: {e}")))?;
+    let row: Option<ScenarioRow> = sqlx::query_as(
+        "SELECT body_json, archived_at, regime_label, volatility_label, trend_direction, regime_derived \
+         FROM scenarios WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(&ctx.db)
+    .await
+    .map_err(|e| ApiError::Internal(format!("get_scenario: {e}")))?;
+
     Ok(match row {
-        Some((body, archived_at)) => {
+        Some((body, archived_at, regime_label, volatility_label, trend_direction, regime_derived)) => {
             let mut s: Scenario = serde_json::from_str(&body)
                 .map_err(|e| ApiError::Internal(format!("deserialize scenario: {e}")))?;
-            // The body_json snapshot is frozen at insert time, but
-            // `archived_at` is mutable. Prefer the column value so callers
-            // see the current state.
+            // `archived_at` and regime columns are mutable after insert —
+            // prefer the live column values over the frozen body_json snapshot.
             s.archived_at = match archived_at {
                 Some(ts) => Some(
                     chrono::DateTime::parse_from_rfc3339(&ts)
@@ -76,6 +132,10 @@ pub async fn get_scenario(ctx: &ApiContext, id: &str) -> ApiResult<Option<Scenar
                 ),
                 None => None,
             };
+            s.regime_label = regime_label;
+            s.volatility_label = volatility_label;
+            s.trend_direction = trend_direction;
+            s.regime_derived = regime_derived;
             Some(s)
         }
         None => None,
@@ -96,14 +156,16 @@ pub struct ListScenariosFilter {
 /// List scenarios newest-first. Filtering happens in-memory after the
 /// JSON pull — fine for v1 (table is bounded by user count).
 pub async fn list_scenarios(ctx: &ApiContext, filter: &ListScenariosFilter) -> ApiResult<Vec<Scenario>> {
-    let rows: Vec<(String, Option<String>)> =
-        sqlx::query_as("SELECT body_json, archived_at FROM scenarios ORDER BY created_at DESC")
-            .fetch_all(&ctx.db)
-            .await
-            .map_err(|e| ApiError::Internal(format!("list_scenarios: {e}")))?;
+    let rows: Vec<ScenarioRow> = sqlx::query_as(
+        "SELECT body_json, archived_at, regime_label, volatility_label, trend_direction, regime_derived \
+         FROM scenarios ORDER BY created_at DESC",
+    )
+    .fetch_all(&ctx.db)
+    .await
+    .map_err(|e| ApiError::Internal(format!("list_scenarios: {e}")))?;
 
     let mut out = Vec::new();
-    for (body, archived_at) in rows {
+    for (body, archived_at, regime_label, volatility_label, trend_direction, regime_derived) in rows {
         let mut s: Scenario =
             serde_json::from_str(&body).map_err(|e| ApiError::Internal(format!("deserialize: {e}")))?;
         s.archived_at = match archived_at {
@@ -114,6 +176,10 @@ pub async fn list_scenarios(ctx: &ApiContext, filter: &ListScenariosFilter) -> A
             ),
             None => None,
         };
+        s.regime_label = regime_label;
+        s.volatility_label = volatility_label;
+        s.trend_direction = trend_direction;
+        s.regime_derived = regime_derived;
 
         if let Some(src) = filter.source {
             if s.source != src {
@@ -179,8 +245,9 @@ pub async fn delete_scenario(ctx: &ApiContext, id: &str) -> ApiResult<()> {
 /// List direct children (clones / derivations) of a parent scenario,
 /// oldest-first.
 pub async fn list_children(ctx: &ApiContext, parent_id: &str) -> ApiResult<Vec<Scenario>> {
-    let rows: Vec<(String, Option<String>)> = sqlx::query_as(
-        "SELECT body_json, archived_at FROM scenarios WHERE parent_scenario_id = ? ORDER BY created_at ASC",
+    let rows: Vec<ScenarioRow> = sqlx::query_as(
+        "SELECT body_json, archived_at, regime_label, volatility_label, trend_direction, regime_derived \
+         FROM scenarios WHERE parent_scenario_id = ? ORDER BY created_at ASC",
     )
     .bind(parent_id)
     .fetch_all(&ctx.db)
@@ -188,7 +255,7 @@ pub async fn list_children(ctx: &ApiContext, parent_id: &str) -> ApiResult<Vec<S
     .map_err(|e| ApiError::Internal(format!("list_children: {e}")))?;
 
     let mut out = Vec::with_capacity(rows.len());
-    for (body, archived_at) in rows {
+    for (body, archived_at, regime_label, volatility_label, trend_direction, regime_derived) in rows {
         let mut s: Scenario =
             serde_json::from_str(&body).map_err(|e| ApiError::Internal(format!("deserialize: {e}")))?;
         s.archived_at = match archived_at {
@@ -199,6 +266,10 @@ pub async fn list_children(ctx: &ApiContext, parent_id: &str) -> ApiResult<Vec<S
             ),
             None => None,
         };
+        s.regime_label = regime_label;
+        s.volatility_label = volatility_label;
+        s.trend_direction = trend_direction;
+        s.regime_derived = regime_derived;
         out.push(s);
     }
     Ok(out)
