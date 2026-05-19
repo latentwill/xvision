@@ -6,4 +6,5 @@
 //! it into `eval::runs` if they decide the directory layout is worth the
 //! churn.
 
+pub mod agent_profiles;
 pub mod review;
