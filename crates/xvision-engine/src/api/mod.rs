@@ -21,6 +21,7 @@ pub mod agents;
 pub mod audit;
 pub mod chart;
 pub mod eval;
+pub mod experiment;
 pub mod health;
 pub mod scenario;
 pub mod search;
@@ -50,6 +51,8 @@ const MIGRATION_018_AGENT_RUN_OBSERVABILITY: &str =
 const MIGRATION_019_AGENT_SLOT_PROMPT_VERSION: &str =
     include_str!("../../migrations/019_agent_slot_prompt_version.sql");
 const MIGRATION_020_EVAL_BATCHES: &str = include_str!("../../migrations/020_eval_batches.sql");
+const MIGRATION_022_HYPOTHESIS_AND_EXPERIMENTS: &str =
+    include_str!("../../migrations/022_hypothesis_and_experiments.sql");
 
 /// Map of cache_key → per-key mutex used by `eval::bars::load_bars` to
 /// serialize concurrent misses for the same window. Kept inside an outer
@@ -151,6 +154,7 @@ impl ApiContext {
             .await?;
         migrate_agent_slot_prompt_version(&pool).await?;
         migrate_eval_batches(&pool).await?;
+        migrate_hypothesis_and_experiments(&pool).await?;
 
         let ctx = Self::new(pool, actor, xvn_home.to_path_buf());
 
@@ -465,6 +469,19 @@ async fn migrate_eval_batches(pool: &SqlitePool) -> ApiResult<()> {
             .execute(pool)
             .await?;
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_eval_runs_batch ON eval_runs(batch_id)")
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
+}
+
+/// Apply migration 022: `experiments` table.
+/// Gated on `experiments` not existing so the migration is idempotent on
+/// already-upgraded databases. The hypothesis struct field is stored in the
+/// strategy JSON file (not in SQLite), so there is no ALTER TABLE here.
+async fn migrate_hypothesis_and_experiments(pool: &SqlitePool) -> ApiResult<()> {
+    if !table_exists(pool, "experiments").await? {
+        sqlx::query(MIGRATION_022_HYPOTHESIS_AND_EXPERIMENTS)
             .execute(pool)
             .await?;
     }
