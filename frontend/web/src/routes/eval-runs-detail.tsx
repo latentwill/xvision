@@ -209,6 +209,7 @@ export function EvalRunDetailRoute() {
 
       <SummaryCard
         summary={detail.summary}
+        equityCurve={detail.equity_curve}
         labels={labels}
         disambiguator={disambiguator}
         onCancel={() => cancel.mutate(detail.summary.id)}
@@ -361,6 +362,7 @@ function isTerminalStatus(status: string): boolean {
 
 function SummaryCard({
   summary,
+  equityCurve,
   labels,
   disambiguator,
   onCancel,
@@ -372,6 +374,7 @@ function SummaryCard({
   deleting,
 }: {
   summary: RunSummary;
+  equityCurve: ReadonlyArray<{ equity_usd: number }>;
   labels: EvalRunLabels;
   disambiguator: string;
   onCancel: () => void;
@@ -537,6 +540,17 @@ function SummaryCard({
         <Metric label="Sharpe" value={fmtNumber(summary.sharpe)} />
         <Metric label="Max DD" value={fmtPct(summary.max_drawdown_pct)} />
         <Metric label="Total return" value={fmtPct(summary.total_return_pct)} />
+        {/*
+          QA22 / `eval-inspector-total-pnl-summary` — alongside the
+          % return, show the absolute terminal-PnL in account
+          currency so operators don't have to mentally apply the
+          percentage to whatever the starting capital was.
+        */}
+        <Metric
+          label="Total PnL"
+          value={fmtPnlUsd(totalPnlUsd(equityCurve))}
+          tone={pnlTone(totalPnlUsd(equityCurve))}
+        />
         <Metric label="Mode" value={summary.mode} />
         <Metric label="Started" value={fmtTime(summary.started_at)} />
         <Metric
@@ -551,15 +565,58 @@ function SummaryCard({
   );
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+function Metric({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone?: "pos" | "neg" | "neutral";
+}) {
+  const valueClass =
+    tone === "pos"
+      ? "text-gold"
+      : tone === "neg"
+        ? "text-danger"
+        : "text-text";
   return (
     <div>
       <div className="text-text-3 text-[11px] uppercase tracking-wide mb-1">
         {label}
       </div>
-      <div className="font-mono text-text">{value}</div>
+      <div className={`font-mono ${valueClass}`}>{value}</div>
     </div>
   );
+}
+
+function totalPnlUsd(
+  equityCurve: ReadonlyArray<{ equity_usd: number }>,
+): number | null {
+  if (equityCurve.length < 2) return null;
+  const start = equityCurve[0]?.equity_usd;
+  const end = equityCurve[equityCurve.length - 1]?.equity_usd;
+  if (start == null || end == null) return null;
+  return end - start;
+}
+
+function fmtPnlUsd(pnl: number | null): string {
+  if (pnl == null) return "—";
+  const abs = Math.abs(pnl);
+  const formatted = abs.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  if (pnl > 0) return `+$${formatted}`;
+  if (pnl < 0) return `−$${formatted}`;
+  return `$${formatted}`;
+}
+
+function pnlTone(pnl: number | null): "pos" | "neg" | "neutral" {
+  if (pnl == null) return "neutral";
+  if (pnl > 0) return "pos";
+  if (pnl < 0) return "neg";
+  return "neutral";
 }
 
 // One filter category per raw action — `close` collapses both "sell a

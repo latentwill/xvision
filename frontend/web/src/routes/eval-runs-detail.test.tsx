@@ -1152,6 +1152,24 @@ describe("EvalRunDetailRoute — Open positions cell", () => {
     expect(reentry.textContent).toMatch(/49,?000/);
   });
 
+  it("renders absolute Total PnL ($) in the summary panel derived from the equity curve (QA22)", async () => {
+    // QA22 / `eval-inspector-total-pnl-summary`: alongside `Total
+    // return` (%) the panel now shows the absolute terminal-PnL in
+    // account currency. Equity curve opens at $10,000 and closes at
+    // $10,642 → +$642.00.
+    vi.mocked(evalApi.getRun).mockResolvedValue(
+      detail({
+        equity_curve: [
+          { timestamp: "2026-05-13T14:00:00Z", equity_usd: 10000 },
+          { timestamp: "2026-05-13T14:30:00Z", equity_usd: 10642 },
+        ],
+      }),
+    );
+    renderDetail();
+    expect(await screen.findByText("Total PnL")).toBeInTheDocument();
+    expect(screen.getByText("+$642.00")).toBeInTheDocument();
+  });
+
   it("labels short_open as SHORT, long-close flat as SELL, short-close flat as COVER (QA22)", async () => {
     // QA22 / `decision-side-label-sell-vs-short`: the earlier mapping
     // collapsed short_open → 'SELL' and flat → 'CLOSE'. Operators

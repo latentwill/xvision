@@ -317,8 +317,8 @@ function SummaryTab({
       <div className="grid grid-cols-2 gap-2">
         <Stat
           label="PNL"
-          value={fmtPct(summary.total_return_pct)}
-          sub={summary.completed_at ? `as of ${fmtDate(summary.completed_at)}` : "in progress"}
+          value={fmtPnlUsd(totalPnlUsd(equity_curve))}
+          sub={`${fmtPct(summary.total_return_pct)}${summary.completed_at ? ` · as of ${fmtDate(summary.completed_at)}` : " · in progress"}`}
           tone={pctTone(summary.total_return_pct)}
         />
         <Stat
@@ -1022,6 +1022,32 @@ function fmtPct(n: number | null | undefined): string {
   if (n == null) return "—";
   const sign = n > 0 ? "+" : n < 0 ? "−" : "";
   return `${sign}${Math.abs(n).toFixed(2)}%`;
+}
+
+// Absolute terminal-PnL from the equity curve (terminal - start). Lives
+// here rather than via `summary` because RunSummary only carries the
+// % return, not the starting balance. See QA22 /
+// `eval-inspector-total-pnl-summary`.
+function totalPnlUsd(
+  equityCurve: ReadonlyArray<{ equity_usd: number }>,
+): number | null {
+  if (equityCurve.length < 2) return null;
+  const start = equityCurve[0]?.equity_usd;
+  const end = equityCurve[equityCurve.length - 1]?.equity_usd;
+  if (start == null || end == null) return null;
+  return end - start;
+}
+
+function fmtPnlUsd(pnl: number | null): string {
+  if (pnl == null) return "—";
+  const abs = Math.abs(pnl);
+  const formatted = abs.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  if (pnl > 0) return `+$${formatted}`;
+  if (pnl < 0) return `−$${formatted}`;
+  return `$${formatted}`;
 }
 
 function fmtTokensTotal(summary: RunSummary): string {
