@@ -438,7 +438,7 @@ impl WizardLoop {
                 // operator (see intake 2026-05-19-qa-validate-draft-cadence-
                 // false-positive: a parser bug nobody could fix by editing
                 // the prompt). Stop the turn and surface the failure.
-                self.emit_validate_loop_break();
+                self.emit_validate_loop_break().await?;
                 self.is_done = true;
                 self.pending.push(WizardEvent::Done {
                     draft_id: self.last_draft_id.clone(),
@@ -524,7 +524,12 @@ impl WizardLoop {
     /// when the convergence guard fires. The block uses the same
     /// action-card primitive as `rich_block_for_tool_result` so the chat
     /// rail renders it inline — no popup, per the frontend rule.
-    fn emit_validate_loop_break(&mut self) {
+    ///
+    /// Persists the card as an assistant message before streaming so a
+    /// chat-rail refresh / SSE drop after the guard fires still shows
+    /// the "Validation stuck" explanation in history — matches the
+    /// rich-block path at the end of `run_one_turn`.
+    async fn emit_validate_loop_break(&mut self) -> anyhow::Result<()> {
         let id = self.last_draft_id.clone().unwrap_or_else(|| "unknown".into());
         let errors_body = self
             .last_validate_signature
@@ -542,7 +547,7 @@ impl WizardLoop {
              Stopping so the operator can decide what to do.\n\n{errors_body}",
             streak = self.validate_failure_streak,
         );
-        if let Ok(card) = action_confirmation_card(
+        let card = match action_confirmation_card(
             format!("validate-loop-break:{id}"),
             "Validation stuck — operator review needed",
             body,
@@ -552,10 +557,22 @@ impl WizardLoop {
                 command: None,
             },
         ) {
-            if let Ok(block) = serde_json::to_value(card) {
-                self.pending.push(WizardEvent::ContentBlock { block });
-            }
-        }
+            Ok(card) => card,
+            Err(_) => return Ok(()),
+        };
+        let block = match serde_json::to_value(card) {
+            Ok(block) => block,
+            Err(_) => return Ok(()),
+        };
+        ChatSessionStore::append(
+            &self.pool,
+            &self.session_id,
+            "assistant",
+            std::slice::from_ref(&block),
+        )
+        .await?;
+        self.pending.push(WizardEvent::ContentBlock { block });
+        Ok(())
     }
 
     fn maybe_track_draft_id(&mut self, tool: &str, result: &serde_json::Value) {
