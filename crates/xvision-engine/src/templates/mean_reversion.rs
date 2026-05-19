@@ -17,7 +17,7 @@ Output JSON: {action, conviction (0-1), justification (one line)}.
 
 const REGIME_PROMPT: &str = r#"Classify the current crypto market regime as one of:
 trending_bull | trending_bear | range_bound | chop.
-Use indicator_panel + recent ohlcv_history. Return JSON: {regime, confidence (0-1)}.
+Use indicator_panel + recent ohlcv_history. Explain which indicators support the label, note whether mean-reversion entries should be active or suppressed, and return JSON: {regime, confidence (0-1)}. Keep the answer grounded in the current bars and avoid generic market commentary.
 "#;
 
 pub struct MeanReversion;
