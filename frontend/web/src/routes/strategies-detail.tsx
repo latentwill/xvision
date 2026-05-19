@@ -143,9 +143,6 @@ function StrategyDetailView({ id }: { id: string }) {
   return (
     <main data-testid="strategy-detail-view" data-strategy-id={m.id}>
       <header>
-        <span data-testid="strategy-detail-id" className="font-mono text-text-3">
-          {m.id}
-        </span>
         <h1>
           <InlineEditField
             id="display-name"
@@ -157,6 +154,13 @@ function StrategyDetailView({ id }: { id: string }) {
             onEditStart={() => setDisplayNameError(null)}
           />
         </h1>
+        <div
+          data-testid="strategy-detail-id"
+          className="font-mono text-[12px] text-text-3 break-all select-all"
+          aria-label={`Strategy id ${m.id}`}
+        >
+          {m.id}
+        </div>
         <p>
           <InlineEditField
             id="plain-summary"

@@ -319,11 +319,14 @@ describe("EvalRunDetailRoute", () => {
     await waitFor(() =>
       expect(meta.textContent ?? "").toMatch(/Run #2\/2/),
     );
-    // run-id chip with full id available via title attribute
-    const runChip = meta.querySelector('[aria-label="Run id 01LIVE"]');
-    expect(runChip).not.toBeNull();
-    expect(runChip?.getAttribute("title")).toBe("01LIVE");
-    // The redundant `strategy <id>` / `scenario <id>` chips are gone.
+    // Full eval id is surfaced below the title (not inside the meta strip).
+    // No truncation anywhere — the full ULID renders verbatim and is
+    // `select-all` for easy copy. See QA22 / `eval-id-resurface-no-truncate`.
+    const idEl = await screen.findByTestId("eval-run-id");
+    expect(idEl.textContent).toBe("01LIVE");
+    expect(idEl.getAttribute("aria-label")).toBe("Eval run id 01LIVE");
+    // Meta no longer carries the run-id (it moved up). Strategy/scenario id
+    // chips are also gone (they moved to display names).
     expect(meta.textContent ?? "").not.toMatch(/strategy 01AGENT/);
     expect(meta.textContent ?? "").not.toMatch(/scenario btc-4h/);
   });

@@ -417,6 +417,13 @@ function SummaryCard({
           <div className="font-serif text-[30px] leading-none text-text truncate">
             {labels.strategyName}
           </div>
+          <div
+            data-testid="eval-run-id"
+            className="mt-1 font-mono text-[12px] text-text-3 break-all select-all"
+            aria-label={`Eval run id ${summary.id}`}
+          >
+            {summary.id}
+          </div>
           <div className="mt-1 text-[14px] text-text-2 truncate">
             {labels.scenarioName}
           </div>
@@ -425,13 +432,6 @@ function SummaryCard({
             className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-text-3"
           >
             <span className="text-text-2">{disambiguator}</span>
-            <span
-              className="font-mono"
-              title={summary.id}
-              aria-label={`Run id ${summary.id}`}
-            >
-              run {labels.shortRunId}
-            </span>
             <Link
               to={`/agent-runs/${encodeURIComponent(agentRunId)}`}
               className="text-info hover:underline"

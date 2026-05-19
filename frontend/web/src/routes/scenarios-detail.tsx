@@ -161,6 +161,13 @@ function DetailView({
           <h1 className="text-text font-serif text-[28px] m-0 leading-tight">
             {s.display_name}
           </h1>
+          <div
+            data-testid="scenario-detail-id"
+            className="font-mono text-[12px] text-text-3 mt-1 break-all select-all"
+            aria-label={`Scenario id ${s.id}`}
+          >
+            {s.id}
+          </div>
           {s.description && (
             <p className="text-text-2 text-[13px] mt-1 mb-0">{s.description}</p>
           )}

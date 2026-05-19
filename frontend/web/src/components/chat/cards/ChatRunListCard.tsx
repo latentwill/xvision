@@ -5,7 +5,6 @@ import type { RunListContentBlock } from "@/api/chat_rail";
 import {
   displayScenarioName,
   displayStrategyName,
-  shortId,
 } from "@/lib/run-display";
 import { runInlineAction } from "./actions";
 
@@ -47,7 +46,10 @@ export function ChatRunListCard({ payload }: { payload: RunListContentBlock }) {
                   {strategy}
                 </span>
                 <span className="block text-[11px] text-text-3 truncate">
-                  {[scenario, `run ${shortId(run.run_id)}`].filter(Boolean).join(" / ")}
+                  {scenario ? `${scenario} · ` : ""}
+                  <span className="font-mono" title={run.run_id}>
+                    {run.run_id}
+                  </span>
                 </span>
               </span>
               <span className="flex-shrink-0 text-right">

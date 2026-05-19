@@ -272,6 +272,13 @@ function SummaryTab({
         <div className="font-serif italic text-[28px] leading-none text-text font-medium">
           {labels.strategyName}
         </div>
+        <div
+          data-testid="mobile-eval-run-id"
+          className="mt-1 font-mono text-[11px] text-text-3 break-all select-all"
+          aria-label={`Eval run id ${summary.id}`}
+        >
+          {summary.id}
+        </div>
         <div className="text-[14px] text-text-2 mt-1 truncate">
           {labels.scenarioName}
         </div>
@@ -280,8 +287,6 @@ function SummaryTab({
           className="mt-1.5 flex flex-wrap gap-x-2 font-mono text-[10px] text-text-3"
         >
           <span className="text-text-2">{disambiguator}</span>
-          <span className="text-text-4">·</span>
-          <span title={summary.id}>run {labels.shortRunId}</span>
           <span className="text-text-4">·</span>
           <span>{summary.mode}</span>
         </div>
