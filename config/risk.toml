@@ -14,3 +14,22 @@ stop_loss_min_pct           = 0.5
 stop_loss_max_pct           = 10.0
 take_profit_required        = false
 take_profit_min_rr          = 1.5  # take-profit must be ≥1.5× stop distance when present
+
+# Per-venue deterministic broker constraints. `MinNotional` risk rule
+# reads `min_notional_usd` and pre-submit-vetoes orders below the
+# minimum so the broker never sees a known-bad order (replaces the
+# wasteful round-trip + post-submit rejection loop).
+#
+# `paper` — Alpaca paper crypto rejects with `cost basis must be >=
+# minimal amount of order 10`; see PR #314 broker error classifier.
+# `live`  — Alpaca live crypto's documented minimum on most pairs is
+# $1 (https://docs.alpaca.markets/docs/crypto-trading "Order minimums");
+# kept conservative as the default until per-asset overrides land.
+#
+# Default 0.0 when a venue is unconfigured → rule is a no-op (preserves
+# today's pass-everything behavior on unknown venues).
+[venues.paper]
+min_notional_usd = 10.0
+
+[venues.live]
+min_notional_usd = 1.0
