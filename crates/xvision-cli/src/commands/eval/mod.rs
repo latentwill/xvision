@@ -17,9 +17,9 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 use xvision_engine::api::eval::{self, CompareRunsRequest, EvalRunRequest, ListRunsRequest};
-use xvision_engine::eval::behavior::BehaviorSummary;
 use xvision_engine::api::{scenario as api_scenario, strategy as api_strategy};
 use xvision_engine::api::{Actor, ApiContext, ApiError};
+use xvision_engine::eval::behavior::BehaviorSummary;
 use xvision_engine::eval::export as eval_export;
 use xvision_engine::eval::run::{RunMode, RunStatus};
 
@@ -164,10 +164,13 @@ pub struct ScenariosArgs {
 
 #[derive(Args, Debug)]
 pub struct CompareArgs {
-    /// Two or more run ids (ULIDs) to compare.
-    /// Required unless `--batch` is used as a label with `--runs`.
+    /// Two or more run ids (ULIDs) to compare, as positional arguments.
     #[arg(num_args = 0..)]
     pub run_ids: Vec<String>,
+    /// Two or more run ids (ULIDs) to compare. Accepts either repeated values
+    /// or a comma-separated list, e.g. `--runs r1,r2`.
+    #[arg(long, value_delimiter = ',', num_args = 1..)]
+    pub runs: Vec<String>,
     /// Override the xvn home directory.
     #[arg(long)]
     pub xvn_home: Option<PathBuf>,
@@ -179,10 +182,10 @@ pub struct CompareArgs {
     /// description or chat reply. Aliased `--md`.
     #[arg(long, visible_alias = "md")]
     pub markdown: bool,
-    /// Batch id label.  Batch ids are not persisted yet; pass `--runs`
-    /// (positional) with explicit run ids and optionally supply `--batch`
-    /// as a display label.  A future track (`cli-eval-batch-run-wait`)
-    /// will add persistence so `--batch` alone resolves runs automatically.
+    /// Batch id label. Batch ids are not persisted yet; pass `--runs` with
+    /// explicit run ids and optionally supply `--batch` as a display label. A
+    /// future track (`cli-eval-batch-run-wait`) will add persistence so
+    /// `--batch` alone resolves runs automatically.
     #[arg(long)]
     pub batch: Option<String>,
 }
@@ -469,18 +472,9 @@ async fn run_show(args: ShowArgs) -> CliResult<()> {
         } else {
             println!("  avg_bars_held            n/a");
         }
-        println!(
-            "  reentries_after_loss     {}",
-            bsummary.reentries_after_loss
-        );
-        println!(
-            "  exits_on_invalidation    {}",
-            bsummary.exits_on_invalidation
-        );
-        println!(
-            "  primary_failure_mode     {}",
-            bsummary.primary_failure_mode
-        );
+        println!("  reentries_after_loss     {}", bsummary.reentries_after_loss);
+        println!("  exits_on_invalidation    {}", bsummary.exits_on_invalidation);
+        println!("  primary_failure_mode     {}", bsummary.primary_failure_mode);
     }
     if let Some(e) = run.error.as_deref() {
         println!("\nerror: {e}");
@@ -540,13 +534,24 @@ fn print_run_status_line(run: &xvision_engine::eval::run::Run) {
 }
 
 async fn run_compare(args: CompareArgs) -> CliResult<()> {
+    let run_ids = if args.runs.is_empty() {
+        args.run_ids.clone()
+    } else if args.run_ids.is_empty() {
+        args.runs.clone()
+    } else {
+        return Err(CliError {
+            exit: XvnExit::Usage,
+            source: anyhow::anyhow!("pass run ids either as positional arguments or via --runs, not both"),
+        });
+    };
+
     // Validate run ids.
     // `--batch` without explicit run_ids is a forward-compatible stub: batch
     // ids are not persisted yet.  Emit a sharp error pointing at the missing
     // persistence so a follow-up track is obvious.
-    if args.run_ids.len() < 2 {
+    if run_ids.len() < 2 {
         if let Some(batch_id) = &args.batch {
-            if args.run_ids.is_empty() {
+            if run_ids.is_empty() {
                 return Err(CliError {
                     exit: XvnExit::Usage,
                     source: anyhow::anyhow!(
@@ -557,13 +562,13 @@ async fn run_compare(args: CompareArgs) -> CliResult<()> {
                 });
             }
         }
-        if args.run_ids.len() < 2 {
+        if run_ids.len() < 2 {
             return Err(CliError {
                 exit: XvnExit::Usage,
                 source: anyhow::anyhow!(
                     "eval compare requires at least two run ids (got {}); \
-                     pass them as positional arguments",
-                    args.run_ids.len()
+                     pass them as positional arguments or with --runs",
+                    run_ids.len()
                 ),
             });
         }
@@ -572,14 +577,9 @@ async fn run_compare(args: CompareArgs) -> CliResult<()> {
     let ctx = open_ctx(args.xvn_home.clone())
         .await
         .exit_with(XvnExit::Upstream)?;
-    let report = eval::compare(
-        &ctx,
-        CompareRunsRequest {
-            run_ids: args.run_ids.clone(),
-        },
-    )
-    .await
-    .map_err(|e| api_to_cli("eval compare", e))?;
+    let report = eval::compare(&ctx, CompareRunsRequest { run_ids })
+        .await
+        .map_err(|e| api_to_cli("eval compare", e))?;
 
     if args.json {
         println!(
@@ -741,4 +741,58 @@ async fn run_attest(args: AttestArgs) -> CliResult<()> {
         att.tokens_used.input, att.tokens_used.output
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[derive(Parser, Debug)]
+    struct TestEval {
+        #[command(subcommand)]
+        op: Op,
+    }
+
+    #[test]
+    fn compare_accepts_documented_runs_flag_with_comma_list() {
+        let parsed = TestEval::try_parse_from([
+            "x",
+            "compare",
+            "--runs",
+            "01K00000000000000000000001,01K00000000000000000000002",
+            "--markdown",
+        ])
+        .expect("--runs comma list should parse");
+
+        let Op::Compare(args) = parsed.op else {
+            panic!("expected compare subcommand");
+        };
+        assert_eq!(
+            args.runs,
+            vec![
+                "01K00000000000000000000001".to_string(),
+                "01K00000000000000000000002".to_string(),
+            ]
+        );
+        assert!(args.run_ids.is_empty());
+        assert!(args.markdown);
+    }
+
+    #[test]
+    fn compare_keeps_positional_run_ids_supported() {
+        let parsed = TestEval::try_parse_from([
+            "x",
+            "compare",
+            "01K00000000000000000000001",
+            "01K00000000000000000000002",
+        ])
+        .expect("positional run ids should still parse");
+
+        let Op::Compare(args) = parsed.op else {
+            panic!("expected compare subcommand");
+        };
+        assert_eq!(args.run_ids.len(), 2);
+        assert!(args.runs.is_empty());
+    }
 }

@@ -17,8 +17,8 @@ use sqlx::sqlite::SqlitePoolOptions;
 use xvision_data::fixtures::ensure_test_fixture;
 use xvision_engine::agent::llm::{LlmDispatch, MockDispatch};
 use xvision_engine::api::{Actor, ApiContext};
-use xvision_engine::eval::run::RunMode;
 use xvision_engine::eval::postprocess::DEFAULT_FINDINGS_MODEL;
+use xvision_engine::eval::run::RunMode;
 use xvision_engine::strategies::manifest::PublicManifest;
 use xvision_engine::strategies::risk::RiskPreset;
 use xvision_engine::strategies::slot::LLMSlot;
@@ -28,7 +28,7 @@ use xvision_engine::tools::ToolRegistry;
 use xvision_execution::broker_surface::{BrokerSurface, MockBrokerSurface};
 
 // Import the batch module from xvision-cli.
-use xvision_cli::commands::eval::batch::{BatchRunRequest, run_batch};
+use xvision_cli::commands::eval::batch::{run_batch, BatchRunRequest};
 
 async fn ctx_with_tables() -> (ApiContext, tempfile::TempDir) {
     let pool = SqlitePoolOptions::new()
@@ -36,18 +36,14 @@ async fn ctx_with_tables() -> (ApiContext, tempfile::TempDir) {
         .connect("sqlite::memory:")
         .await
         .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/001_api_audit.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/002_eval.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
+    sqlx::query(include_str!("../../xvision-engine/migrations/001_api_audit.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../../xvision-engine/migrations/002_eval.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     sqlx::query(include_str!(
         "../../xvision-engine/migrations/014_eval_agent_id.sql"
     ))
@@ -151,7 +147,10 @@ async fn batch_run_two_scenarios_both_complete() {
     let result = run_batch(&ctx, req).await.expect("run_batch must succeed");
 
     // Basic shape assertions.
-    assert!(result.batch_id.starts_with("batch_"), "batch_id must start with 'batch_'");
+    assert!(
+        result.batch_id.starts_with("batch_"),
+        "batch_id must start with 'batch_'"
+    );
     assert_eq!(result.strategy_id, strategy_id);
     assert_eq!(result.runs.len(), 2);
 
@@ -188,10 +187,7 @@ async fn batch_run_partial_failure_surfaces_per_run_error() {
 
     let req = BatchRunRequest {
         agent_id: strategy_id.into(),
-        scenario_ids: vec![
-            "flash-crash-2024-08".into(),
-            "does-not-exist-scenario".into(),
-        ],
+        scenario_ids: vec!["flash-crash-2024-08".into(), "does-not-exist-scenario".into()],
         mode: RunMode::Backtest,
         broker: None,
         dispatch,
@@ -203,8 +199,14 @@ async fn batch_run_partial_failure_surfaces_per_run_error() {
 
     assert_eq!(result.runs.len(), 2);
 
-    let good = result.runs.iter().find(|r| r.scenario_id == "flash-crash-2024-08");
-    let bad = result.runs.iter().find(|r| r.scenario_id == "does-not-exist-scenario");
+    let good = result
+        .runs
+        .iter()
+        .find(|r| r.scenario_id == "flash-crash-2024-08");
+    let bad = result
+        .runs
+        .iter()
+        .find(|r| r.scenario_id == "does-not-exist-scenario");
 
     let good = good.expect("must have a result for the valid scenario");
     let bad = bad.expect("must have a result for the missing scenario");
@@ -213,10 +215,7 @@ async fn batch_run_partial_failure_surfaces_per_run_error() {
     assert!(good.error.is_none());
 
     assert_eq!(bad.status, "failed");
-    assert!(
-        bad.error.is_some(),
-        "failed run must carry an error message"
-    );
+    assert!(bad.error.is_some(), "failed run must carry an error message");
 }
 
 /// JSON shape check: the BatchResult serialises to the documented wire shape.

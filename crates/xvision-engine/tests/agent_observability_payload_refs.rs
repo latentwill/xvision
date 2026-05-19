@@ -24,8 +24,8 @@ use xvision_engine::agent::observability::{ObsEmitter, ObsRetentionPolicy};
 use xvision_engine::strategies::slot::LLMSlot;
 use xvision_engine::tools::ToolRegistry;
 use xvision_observability::{
-    BlobRef, BlobStore, ModelCallFinishedEvent, NoopRecorder, ObservabilityConfig, RetentionMode,
-    RunEvent, RunEventBus,
+    BlobRef, BlobStore, ModelCallFinishedEvent, NoopRecorder, ObservabilityConfig, RetentionMode, RunEvent,
+    RunEventBus,
 };
 
 /// Fixed assistant text returned by the canned dispatcher. This is

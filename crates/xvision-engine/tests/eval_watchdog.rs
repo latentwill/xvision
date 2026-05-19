@@ -14,9 +14,7 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use sqlx::SqlitePool;
-use xvision_engine::eval::watchdog::{
-    self, WatchdogConfig, DEFAULT_MAX_RUN_DURATION, TIMEOUT_REASON,
-};
+use xvision_engine::eval::watchdog::{self, WatchdogConfig, DEFAULT_MAX_RUN_DURATION, TIMEOUT_REASON};
 use xvision_engine::eval::{Run, RunMode, RunStatus, RunStore};
 
 async fn pool_with_migration() -> SqlitePool {
@@ -67,10 +65,7 @@ async fn insert_running_run(
 async fn watchdog_tick_finalizes_stuck_running_row_as_failed_timeout() {
     let pool = pool_with_migration().await;
     let store = RunStore::new(pool.clone());
-    let config = WatchdogConfig::new(
-        Duration::from_secs(60),
-        Duration::from_millis(10),
-    );
+    let config = WatchdogConfig::new(Duration::from_secs(60), Duration::from_millis(10));
 
     let stuck_id = "01KS0A5DP8KZVQJ03TCKGKYJVN";
     // Started 10 minutes ago, way beyond the 60s budget. This mirrors
@@ -96,10 +91,7 @@ async fn watchdog_tick_finalizes_stuck_running_row_as_failed_timeout() {
 async fn watchdog_tick_leaves_fresh_running_row_alone() {
     let pool = pool_with_migration().await;
     let store = RunStore::new(pool.clone());
-    let config = WatchdogConfig::new(
-        Duration::from_secs(1800),
-        Duration::from_millis(10),
-    );
+    let config = WatchdogConfig::new(Duration::from_secs(1800), Duration::from_millis(10));
 
     let fresh_id = "01FRESH00000000000000000000";
     // Started 10 seconds ago — nowhere near the 30min budget.
@@ -121,10 +113,7 @@ async fn watchdog_tick_leaves_fresh_running_row_alone() {
 async fn boot_sweep_finalizes_preexisting_stuck_row() {
     let pool = pool_with_migration().await;
     let store = RunStore::new(pool.clone());
-    let config = WatchdogConfig::new(
-        Duration::from_secs(60),
-        Duration::from_millis(10),
-    );
+    let config = WatchdogConfig::new(Duration::from_secs(60), Duration::from_millis(10));
 
     // A row that survived a daemon restart in the `running` state and
     // is already past the budget. boot_sweep should finalize it
@@ -145,10 +134,7 @@ async fn boot_sweep_finalizes_preexisting_stuck_row() {
 async fn two_ticks_on_same_stuck_row_do_not_double_write() {
     let pool = pool_with_migration().await;
     let store = RunStore::new(pool.clone());
-    let config = WatchdogConfig::new(
-        Duration::from_secs(60),
-        Duration::from_millis(10),
-    );
+    let config = WatchdogConfig::new(Duration::from_secs(60), Duration::from_millis(10));
 
     let stuck_id = "01IDEMP000000000000000000000";
     let started_at = Utc::now() - chrono::Duration::seconds(600);
@@ -199,13 +185,7 @@ async fn per_run_override_extends_budget_beyond_global_default() {
     let extended_id = "01EXTEND000000000000000000000";
     let extended_started_at = Utc::now() - chrono::Duration::seconds(300);
     let extended_override = r#"{"max_run_duration_secs": 1800}"#;
-    insert_running_run(
-        &pool,
-        extended_id,
-        extended_started_at,
-        Some(extended_override),
-    )
-    .await;
+    insert_running_run(&pool, extended_id, extended_started_at, Some(extended_override)).await;
 
     // A second row with no override, started 5min ago → stuck under
     // the 60s global default.
@@ -247,10 +227,7 @@ async fn defaults_match_30min_budget_and_30s_tick() {
 async fn sweep_skips_completed_and_failed_rows() {
     let pool = pool_with_migration().await;
     let store = RunStore::new(pool.clone());
-    let config = WatchdogConfig::new(
-        Duration::from_secs(60),
-        Duration::from_millis(10),
-    );
+    let config = WatchdogConfig::new(Duration::from_secs(60), Duration::from_millis(10));
 
     // A completed row with an ancient started_at — must not be touched.
     let completed_id = "01COMPLETED000000000000000000";
@@ -271,11 +248,7 @@ async fn sweep_skips_completed_and_failed_rows() {
 
     // And a queued row — also not in scope for the watchdog (the
     // contract scopes to `status='running'` only).
-    let queued = Run::new_queued(
-        "strategy-test".into(),
-        "scenario-test".into(),
-        RunMode::Backtest,
-    );
+    let queued = Run::new_queued("strategy-test".into(), "scenario-test".into(), RunMode::Backtest);
     store.create(&queued).await.unwrap();
 
     let n = watchdog::sweep_once(&pool, &store, &config, Utc::now())
@@ -283,6 +256,9 @@ async fn sweep_skips_completed_and_failed_rows() {
         .unwrap();
     assert_eq!(n, 0);
 
-    assert_eq!(store.get(completed_id).await.unwrap().status, RunStatus::Completed);
+    assert_eq!(
+        store.get(completed_id).await.unwrap().status,
+        RunStatus::Completed
+    );
     assert_eq!(store.get(&queued.id).await.unwrap().status, RunStatus::Queued);
 }

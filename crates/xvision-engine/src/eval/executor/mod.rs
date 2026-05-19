@@ -51,10 +51,7 @@ use crate::eval::watchdog::{self, WatchdogConfig};
 /// sweep fails the periodic task is *not* spawned — the caller decides
 /// whether to surface this as a fatal startup error or downgrade to a
 /// warning.
-pub async fn start_watchdog(
-    pool: SqlitePool,
-    config: WatchdogConfig,
-) -> anyhow::Result<JoinHandle<()>> {
+pub async fn start_watchdog(pool: SqlitePool, config: WatchdogConfig) -> anyhow::Result<JoinHandle<()>> {
     let store = crate::eval::store::RunStore::new(pool.clone());
     watchdog::boot_sweep(&pool, &store, &config).await?;
     Ok(watchdog::spawn(pool, config))

@@ -155,8 +155,7 @@ pub async fn sweep_once(
                 continue;
             }
         };
-        let params_override_json: Option<String> =
-            row.try_get("params_override_json").ok();
+        let params_override_json: Option<String> = row.try_get("params_override_json").ok();
         let budget = per_run_budget(params_override_json.as_deref(), global_budget);
 
         let age = match now.signed_duration_since(started_at).to_std() {
@@ -203,11 +202,7 @@ pub async fn sweep_once(
 /// One-shot sweep called at engine startup. Identical body to a single
 /// [`spawn`] tick; provided as a named entry point so the startup
 /// sequence is self-documenting and tests can invoke it directly.
-pub async fn boot_sweep(
-    pool: &SqlitePool,
-    store: &RunStore,
-    config: &WatchdogConfig,
-) -> Result<u64> {
+pub async fn boot_sweep(pool: &SqlitePool, store: &RunStore, config: &WatchdogConfig) -> Result<u64> {
     let n = sweep_once(pool, store, config, Utc::now()).await?;
     if n > 0 {
         tracing::info!(
@@ -227,10 +222,7 @@ pub async fn boot_sweep(
 /// On each tick the task calls [`sweep_once`]; errors from a single
 /// pass are logged and swallowed — the watchdog never gives up just
 /// because the DB blipped.
-pub fn spawn(
-    pool: SqlitePool,
-    config: WatchdogConfig,
-) -> tokio::task::JoinHandle<()> {
+pub fn spawn(pool: SqlitePool, config: WatchdogConfig) -> tokio::task::JoinHandle<()> {
     let store = RunStore::new(pool.clone());
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(config.tick_interval);
@@ -267,9 +259,7 @@ fn per_run_budget(params_override_json: Option<&str>, default: Duration) -> Dura
         Ok(v) => v,
         Err(_) => return default,
     };
-    let secs = parsed
-        .get(PER_RUN_OVERRIDE_KEY)
-        .and_then(|v| v.as_u64());
+    let secs = parsed.get(PER_RUN_OVERRIDE_KEY).and_then(|v| v.as_u64());
     match secs {
         Some(s) => Duration::from_secs(s),
         None => default,

@@ -134,11 +134,7 @@ pub fn validate_prompt_schema_slots(slots: &[AgentSlot]) -> Result<(), PromptSch
 }
 
 fn check_slot(idx: usize, slot: &AgentSlot) -> Result<(), PromptSchemaDriftError> {
-    let registered: HashSet<String> = slot
-        .skill_ids
-        .iter()
-        .map(|s| s.to_ascii_lowercase())
-        .collect();
+    let registered: HashSet<String> = slot.skill_ids.iter().map(|s| s.to_ascii_lowercase()).collect();
 
     let mentioned = mentioned_tools(&slot.system_prompt);
     let mut missing: Vec<String> = mentioned
@@ -192,11 +188,9 @@ fn contains_whole_word(haystack: &str, needle: &str) -> bool {
     let mut start = 0;
     while let Some(pos) = haystack[start..].find(needle) {
         let abs = start + pos;
-        let left_ok = abs == 0
-            || !is_word_char(haystack[..abs].chars().next_back().unwrap_or(' '));
+        let left_ok = abs == 0 || !is_word_char(haystack[..abs].chars().next_back().unwrap_or(' '));
         let end = abs + nlen;
-        let right_ok = end == bytes.len()
-            || !is_word_char(haystack[end..].chars().next().unwrap_or(' '));
+        let right_ok = end == bytes.len() || !is_word_char(haystack[end..].chars().next().unwrap_or(' '));
         if left_ok && right_ok {
             return true;
         }
@@ -253,10 +247,7 @@ fn parse_allowed_actions(prompt: &str) -> Option<Vec<String>> {
 
     // The body runs until the first period or blank line.
     let tail = &prompt[header_pos..];
-    let body_end = tail
-        .find("\n\n")
-        .or_else(|| tail.find('.'))
-        .unwrap_or(tail.len());
+    let body_end = tail.find("\n\n").or_else(|| tail.find('.')).unwrap_or(tail.len());
     let body = &tail[..body_end];
 
     let tokens: Vec<String> = body
@@ -287,10 +278,7 @@ pub struct LintFinding {
 ///
 /// `include_archived = true` surfaces violations on archived records
 /// too — useful when auditing seed data that's been soft-deleted.
-pub async fn lint_agents(
-    store: &AgentStore,
-    include_archived: bool,
-) -> anyhow::Result<Vec<LintFinding>> {
+pub async fn lint_agents(store: &AgentStore, include_archived: bool) -> anyhow::Result<Vec<LintFinding>> {
     let agents = store
         .list(ListFilter {
             include_archived,
@@ -353,10 +341,7 @@ mod tests {
         // the SAME literal list. If `trader_output.rs` adds `exit`,
         // the `matches!` line is the source of truth and this mirror
         // must be updated alongside it.
-        assert_eq!(
-            ACTION_SCHEMA_ENUM,
-            &["long_open", "short_open", "flat", "hold"],
-        );
+        assert_eq!(ACTION_SCHEMA_ENUM, &["long_open", "short_open", "flat", "hold"],);
     }
 
     #[test]
@@ -421,7 +406,8 @@ mod tests {
 
     #[test]
     fn allowed_actions_one_per_line_is_rejected() {
-        let prompt = "Decision protocol.\n\nAllowed actions:\nlong_open\nshort_open\nflat\nhold\nexit\n\nReturn JSON.";
+        let prompt =
+            "Decision protocol.\n\nAllowed actions:\nlong_open\nshort_open\nflat\nhold\nexit\n\nReturn JSON.";
         let agent = agent_with(slot_with(prompt, vec![]));
         let err = validate_prompt_schema(&agent).expect_err("must reject");
         assert!(matches!(
@@ -456,10 +442,7 @@ mod tests {
 
     #[test]
     fn prompt_without_allowed_actions_header_is_unaffected() {
-        let agent = agent_with(slot_with(
-            "Be careful. Hold the position when unsure.",
-            vec![],
-        ));
+        let agent = agent_with(slot_with("Be careful. Hold the position when unsure.", vec![]));
         validate_prompt_schema(&agent).expect("no allowed-actions header → no rule-2 firing");
     }
 
@@ -484,18 +467,12 @@ mod tests {
     fn word_boundary_helper_edge_cases() {
         assert!(contains_whole_word("call indicator_panel now", "indicator_panel"));
         assert!(contains_whole_word("indicator_panel", "indicator_panel"));
-        assert!(contains_whole_word(
-            "use `indicator_panel`.",
-            "indicator_panel"
-        ));
+        assert!(contains_whole_word("use `indicator_panel`.", "indicator_panel"));
         assert!(!contains_whole_word(
             "use indicator_panel_v2 here",
             "indicator_panel"
         ));
-        assert!(!contains_whole_word(
-            "use my_indicator_panel",
-            "indicator_panel"
-        ));
+        assert!(!contains_whole_word("use my_indicator_panel", "indicator_panel"));
         assert!(!contains_whole_word("", "indicator_panel"));
         assert!(!contains_whole_word("indicator_panel", ""));
     }

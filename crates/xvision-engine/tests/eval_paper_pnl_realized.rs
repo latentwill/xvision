@@ -201,9 +201,7 @@ async fn paper_pnl_realized_long_then_close() {
     );
     let expected_size = (initial_balance * 0.015) / 50_000.0; // 0.03
     let expected_pnl = expected_size * (50_100.0 - 50_000.0); // 3.0
-    let actual_pnl = d1
-        .pnl_realized
-        .expect("closing row must have Some(pnl_realized)");
+    let actual_pnl = d1.pnl_realized.expect("closing row must have Some(pnl_realized)");
     assert!(
         (actual_pnl - expected_pnl).abs() < 1e-9,
         "close row pnl_realized mismatch: expected {expected_pnl}, got {actual_pnl}"
@@ -213,7 +211,8 @@ async fn paper_pnl_realized_long_then_close() {
     for (i, d) in decisions[2..].iter().enumerate() {
         assert_eq!(d.action, "hold");
         assert_eq!(
-            d.pnl_realized, None,
+            d.pnl_realized,
+            None,
             "hold row {} must have pnl_realized=None (no fill)",
             i + 2
         );

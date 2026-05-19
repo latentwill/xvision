@@ -15,8 +15,10 @@
 //! 6. Unknown id  → Ok(None)  (not found returns None, not an error)
 //! 7. Bare ULID (no prefix) → Ok(None)  (bridge ignores non-prefixed ids)
 
+use xvision_dashboard::cli_jobs::eval_run_bridge::{
+    get_synthetic_job, get_synthetic_output, EVAL_RUN_PREFIX,
+};
 use xvision_dashboard::AppState;
-use xvision_dashboard::cli_jobs::eval_run_bridge::{get_synthetic_job, get_synthetic_output, EVAL_RUN_PREFIX};
 use xvision_engine::eval::{
     run::{Run, RunMode, RunStatus},
     store::RunStore,
@@ -34,7 +36,11 @@ async fn boot_pool() -> (sqlx::SqlitePool, tempfile::TempDir) {
 /// Seed an eval run at a given status and return its id.
 async fn seed_run(pool: &sqlx::SqlitePool, status: RunStatus) -> String {
     let store = RunStore::new(pool.clone());
-    let run = Run::new_queued("agent-test".into(), "crypto-bull-q1-2025".into(), RunMode::Backtest);
+    let run = Run::new_queued(
+        "agent-test".into(),
+        "crypto-bull-q1-2025".into(),
+        RunMode::Backtest,
+    );
     store.create(&run).await.unwrap();
     if status != RunStatus::Queued {
         store.update_status(&run.id, status, None).await.unwrap();
@@ -53,7 +59,10 @@ async fn queued_run_maps_to_queued_status() {
     let run_id = seed_run(&pool, RunStatus::Queued).await;
     let job_id = prefixed(&run_id);
 
-    let job = get_synthetic_job(&pool, &job_id).await.unwrap().expect("should find job");
+    let job = get_synthetic_job(&pool, &job_id)
+        .await
+        .unwrap()
+        .expect("should find job");
     assert_eq!(job.job_id, job_id);
     assert_eq!(job.status.as_str(), "queued");
     assert!(job.started_at.is_some(), "started_at should be populated");
@@ -67,7 +76,10 @@ async fn running_run_maps_to_running_status() {
     let run_id = seed_run(&pool, RunStatus::Running).await;
     let job_id = prefixed(&run_id);
 
-    let job = get_synthetic_job(&pool, &job_id).await.unwrap().expect("should find job");
+    let job = get_synthetic_job(&pool, &job_id)
+        .await
+        .unwrap()
+        .expect("should find job");
     assert_eq!(job.status.as_str(), "running");
 }
 
@@ -77,7 +89,10 @@ async fn completed_run_maps_to_succeeded_status() {
     let run_id = seed_run(&pool, RunStatus::Completed).await;
     let job_id = prefixed(&run_id);
 
-    let job = get_synthetic_job(&pool, &job_id).await.unwrap().expect("should find job");
+    let job = get_synthetic_job(&pool, &job_id)
+        .await
+        .unwrap()
+        .expect("should find job");
     assert_eq!(job.status.as_str(), "succeeded");
     // completed_at is populated by the executor's finalize path; bare
     // update_status does not set it, so finished_at may be None here.
@@ -110,7 +125,11 @@ async fn completed_run_output_contains_eval_summary() {
 async fn failed_run_maps_to_failed_status_with_error() {
     let (pool, _tmp) = boot_pool().await;
     let store = RunStore::new(pool.clone());
-    let run = Run::new_queued("agent-test".into(), "crypto-bull-q1-2025".into(), RunMode::Backtest);
+    let run = Run::new_queued(
+        "agent-test".into(),
+        "crypto-bull-q1-2025".into(),
+        RunMode::Backtest,
+    );
     store.create(&run).await.unwrap();
     store
         .update_status(&run.id, RunStatus::Failed, Some("broker timeout"))
@@ -119,14 +138,24 @@ async fn failed_run_maps_to_failed_status_with_error() {
 
     let job_id = prefixed(&run.id);
 
-    let job = get_synthetic_job(&pool, &job_id).await.unwrap().expect("should find job");
+    let job = get_synthetic_job(&pool, &job_id)
+        .await
+        .unwrap()
+        .expect("should find job");
     assert_eq!(job.status.as_str(), "failed");
     assert_eq!(job.error_message.as_deref(), Some("broker timeout"));
 
-    let output = get_synthetic_output(&pool, &job_id).await.unwrap().expect("should find output");
+    let output = get_synthetic_output(&pool, &job_id)
+        .await
+        .unwrap()
+        .expect("should find output");
     assert_eq!(output.status.as_str(), "failed");
     // stderr carries the error message
-    assert!(output.stderr.contains("broker timeout"), "stderr should contain error: {}", output.stderr);
+    assert!(
+        output.stderr.contains("broker timeout"),
+        "stderr should contain error: {}",
+        output.stderr
+    );
 }
 
 #[tokio::test]
@@ -135,7 +164,10 @@ async fn cancelled_run_maps_to_cancelled_status() {
     let run_id = seed_run(&pool, RunStatus::Cancelled).await;
     let job_id = prefixed(&run_id);
 
-    let job = get_synthetic_job(&pool, &job_id).await.unwrap().expect("should find job");
+    let job = get_synthetic_job(&pool, &job_id)
+        .await
+        .unwrap()
+        .expect("should find job");
     assert_eq!(job.status.as_str(), "cancelled");
     assert!(job.cancel_requested);
 }
@@ -162,5 +194,8 @@ async fn bare_ulid_without_prefix_returns_none() {
     assert!(job.is_none(), "bare ulid without prefix should return None");
 
     let output = get_synthetic_output(&pool, &run_id).await.unwrap();
-    assert!(output.is_none(), "bare ulid without prefix output should return None");
+    assert!(
+        output.is_none(),
+        "bare ulid without prefix output should return None"
+    );
 }

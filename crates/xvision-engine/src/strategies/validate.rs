@@ -103,16 +103,8 @@ pub fn preflight_validate(strategy: &Strategy, scenario: Option<&Scenario>) -> P
 
     if let Some(sc) = scenario {
         // Check 5: scenario asset is in strategy's asset_universe.
-        let scenario_venue_symbol = sc
-            .asset
-            .first()
-            .map(|a| a.venue_symbol.as_str())
-            .unwrap_or("");
-        let scenario_symbol = sc
-            .asset
-            .first()
-            .map(|a| a.symbol.as_str())
-            .unwrap_or("");
+        let scenario_venue_symbol = sc.asset.first().map(|a| a.venue_symbol.as_str()).unwrap_or("");
+        let scenario_symbol = sc.asset.first().map(|a| a.symbol.as_str()).unwrap_or("");
         let in_universe = strategy.manifest.asset_universe.iter().any(|a| {
             let a_norm = normalize_asset(a);
             a_norm == normalize_asset(scenario_venue_symbol)
@@ -337,13 +329,11 @@ fn validate_agent_pipeline(b: &Strategy) -> Result<(), ValidationError> {
 mod preflight_tests {
     use super::*;
     use crate::eval::scenario::{
-        AssetClass, AssetRef, BarCachePolicy, CalendarRef, DataSource, FillModel, Fees, LatencyModel,
-        LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode, Scenario,
-        ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings, AdjustmentMode,
+        AdjustmentMode, AssetClass, AssetRef, BarCachePolicy, CalendarRef, DataSource, Fees, FillModel,
+        LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode, Scenario,
+        ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings,
     };
-    use crate::strategies::{
-        manifest::PublicManifest, risk::RiskPreset, AgentRef, PipelineDef, Strategy,
-    };
+    use crate::strategies::{manifest::PublicManifest, risk::RiskPreset, AgentRef, PipelineDef, Strategy};
     use chrono::{TimeZone, Utc};
     use xvision_data::alpaca::BarGranularity;
 
@@ -406,9 +396,14 @@ mod preflight_tests {
             },
             venue: VenueSettings {
                 venue: Venue::Alpaca,
-                fees: Fees { maker_bps: 10, taker_bps: 25 },
+                fees: Fees {
+                    maker_bps: 10,
+                    taker_bps: 25,
+                },
                 slippage: SlippageModel::None,
-                latency: LatencyModel { decision_to_fill_ms: 0 },
+                latency: LatencyModel {
+                    decision_to_fill_ms: 0,
+                },
                 fill_model: FillModel {
                     market_order_fill: MarketOrderFill::FullAtClose,
                     limit_order_fill: LimitOrderFill::NeverFills,
@@ -461,11 +456,7 @@ mod preflight_tests {
         let result = preflight_validate(&strategy, Some(&scenario));
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
         // Asset universe ["ETH/USD"] contains scenario asset "ETH/USD" → no warning
-        let asset_warnings: Vec<_> = result
-            .warnings
-            .iter()
-            .filter(|w| w.contains("asset"))
-            .collect();
+        let asset_warnings: Vec<_> = result.warnings.iter().filter(|w| w.contains("asset")).collect();
         assert!(
             asset_warnings.is_empty(),
             "expected no asset warnings, got: {asset_warnings:?}"
@@ -502,7 +493,10 @@ mod preflight_tests {
             .iter()
             .filter(|w| w.contains("timeframe") || w.contains("cadence"))
             .collect();
-        assert!(tf_warnings.is_empty(), "unexpected timeframe warnings: {tf_warnings:?}");
+        assert!(
+            tf_warnings.is_empty(),
+            "unexpected timeframe warnings: {tf_warnings:?}"
+        );
     }
 
     #[test]
@@ -512,7 +506,10 @@ mod preflight_tests {
         let scenario = make_eth_4h_scenario(); // granularity = 4h = 240 min
         let result = preflight_validate(&strategy, Some(&scenario));
         assert!(
-            result.warnings.iter().any(|w| w.contains("timeframe") || w.contains("cadence")),
+            result
+                .warnings
+                .iter()
+                .any(|w| w.contains("timeframe") || w.contains("cadence")),
             "expected timeframe mismatch warning, got: {:?}",
             result.warnings
         );

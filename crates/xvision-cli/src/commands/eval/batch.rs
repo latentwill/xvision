@@ -190,19 +190,17 @@ pub async fn run_batch(ctx: &ApiContext, req: BatchRunRequest) -> Result<BatchRe
         {
             Ok(run) => {
                 // Tally action distribution from persisted decisions.
-                let actions =
-                    action_distribution(ctx, &run.id).await.unwrap_or_default();
-                let (return_pct, sharpe, drawdown_pct, decisions) =
-                    if let Some(m) = &run.metrics {
-                        (
-                            Some(m.total_return_pct),
-                            Some(m.sharpe),
-                            Some(m.max_drawdown_pct),
-                            m.n_decisions,
-                        )
-                    } else {
-                        (None, None, None, 0)
-                    };
+                let actions = action_distribution(ctx, &run.id).await.unwrap_or_default();
+                let (return_pct, sharpe, drawdown_pct, decisions) = if let Some(m) = &run.metrics {
+                    (
+                        Some(m.total_return_pct),
+                        Some(m.sharpe),
+                        Some(m.max_drawdown_pct),
+                        m.n_decisions,
+                    )
+                } else {
+                    (None, None, None, 0)
+                };
                 RunEntry {
                     scenario_id: scenario_id.clone(),
                     scenario_name: scenario_name.clone(),
@@ -281,10 +279,7 @@ async fn poll_until_terminal(
 /// Query the decisions table for `run_id` and count each action kind.
 /// Returns a `BTreeMap<String, u64>` keyed by canonical action string
 /// (`long_open`, `short_open`, `flat`, `hold`).
-pub async fn action_distribution(
-    ctx: &ApiContext,
-    run_id: &str,
-) -> Result<BTreeMap<String, u64>> {
+pub async fn action_distribution(ctx: &ApiContext, run_id: &str) -> Result<BTreeMap<String, u64>> {
     let store = RunStore::new(ctx.db.clone());
     let decisions = store.read_decisions(run_id).await?;
     let mut counts: BTreeMap<String, u64> = BTreeMap::new();
@@ -325,14 +320,10 @@ pub async fn run_batch_cmd(args: BatchRunArgs) -> CliResult<()> {
         .await
         .exit_with(XvnExit::Upstream)?;
 
-    let mode = xvision_engine::eval::run::RunMode::parse(&args.mode)
-        .ok_or_else(|| CliError {
-            exit: XvnExit::Usage,
-            source: anyhow::anyhow!(
-                "unknown mode {:?}; expected one of: paper | backtest",
-                args.mode
-            ),
-        })?;
+    let mode = xvision_engine::eval::run::RunMode::parse(&args.mode).ok_or_else(|| CliError {
+        exit: XvnExit::Usage,
+        source: anyhow::anyhow!("unknown mode {:?}; expected one of: paper | backtest", args.mode),
+    })?;
 
     // --wait is required in v1 (non-wait path is a follow-on when async
     // launch is wired up). Accept --wait=false but warn.
@@ -343,8 +334,7 @@ pub async fn run_batch_cmd(args: BatchRunArgs) -> CliResult<()> {
         );
     }
 
-    let _poll_interval =
-        parse_poll_duration(&args.poll).exit_with(XvnExit::Usage)?;
+    let _poll_interval = parse_poll_duration(&args.poll).exit_with(XvnExit::Usage)?;
 
     // For the current sequential implementation we use run_with_deps which
     // requires a real broker for paper mode. Build it from env/settings if
@@ -382,20 +372,17 @@ pub async fn run_batch_cmd(args: BatchRunArgs) -> CliResult<()> {
 
         let entry = match eval::run(&ctx, run_req).await {
             Ok(run) => {
-                let actions = action_distribution(&ctx, &run.id)
-                    .await
-                    .unwrap_or_default();
-                let (return_pct, sharpe, drawdown_pct, decisions) =
-                    if let Some(m) = &run.metrics {
-                        (
-                            Some(m.total_return_pct),
-                            Some(m.sharpe),
-                            Some(m.max_drawdown_pct),
-                            m.n_decisions,
-                        )
-                    } else {
-                        (None, None, None, 0)
-                    };
+                let actions = action_distribution(&ctx, &run.id).await.unwrap_or_default();
+                let (return_pct, sharpe, drawdown_pct, decisions) = if let Some(m) = &run.metrics {
+                    (
+                        Some(m.total_return_pct),
+                        Some(m.sharpe),
+                        Some(m.max_drawdown_pct),
+                        m.n_decisions,
+                    )
+                } else {
+                    (None, None, None, 0)
+                };
                 RunEntry {
                     scenario_id: scenario_id.clone(),
                     scenario_name: scenario_name.clone(),

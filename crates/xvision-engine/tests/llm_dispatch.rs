@@ -181,6 +181,30 @@ mod openai_retry {
         assert!(resp.text().contains("hold"));
     }
 
+    /// Undecodable 200 OK JSON retries by issuing a fresh HTTP request, not
+    /// by reparsing the same invalid body.
+    #[tokio::test]
+    async fn invalid_json_retries_with_fresh_request_and_succeeds() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("{not json"))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(ok_completion_body()))
+            .mount(&server)
+            .await;
+
+        let dispatch = OpenaiCompatDispatch::new(server.uri(), "test-key".into());
+        let resp = dispatch.complete(req_for("test-model")).await.unwrap();
+        assert!(resp.text().contains("hold"));
+    }
+
     /// Once the `MissingChoicesArray` retry budget is exhausted (3
     /// attempts total = 1 initial + 2 retries), the typed
     /// `OpenAiCompatError::MissingChoicesArray` surfaces with the
@@ -239,8 +263,7 @@ mod openai_retry {
         // The classifier walks the chain — pin that downcast works
         // through an anyhow::Error::new wrap.
         let err: anyhow::Error = anyhow::Error::new(missing);
-        let class =
-            xvision_engine::eval::executor::classify_run_failure(&err);
+        let class = xvision_engine::eval::executor::classify_run_failure(&err);
         assert_eq!(class, "provider_missing_choices");
     }
 }

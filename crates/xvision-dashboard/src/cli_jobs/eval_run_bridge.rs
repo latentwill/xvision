@@ -85,10 +85,7 @@ pub async fn get_synthetic_job(pool: &sqlx::SqlitePool, job_id: &str) -> Result<
 /// If `job_id` starts with `eval_run_`, look up the underlying eval run and
 /// return a synthetic `CliJobOutput` where `stdout` carries the JSON eval
 /// summary. Returns `Ok(None)` if the run does not exist.
-pub async fn get_synthetic_output(
-    pool: &sqlx::SqlitePool,
-    job_id: &str,
-) -> Result<Option<CliJobOutput>> {
+pub async fn get_synthetic_output(pool: &sqlx::SqlitePool, job_id: &str) -> Result<Option<CliJobOutput>> {
     let run_id = match job_id.strip_prefix(EVAL_RUN_PREFIX) {
         Some(id) => id,
         None => return Ok(None),

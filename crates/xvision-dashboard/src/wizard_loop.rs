@@ -195,20 +195,22 @@ fn is_valid_ulid(s: &str) -> bool {
     if s.len() != ULID_LEN {
         return false;
     }
-    s.bytes().all(|b| matches!(
-        b,
-        b'0'..=b'9'
-            | b'A'..=b'H'
-            | b'J' | b'K'
-            | b'M' | b'N'
-            | b'P'..=b'T'
-            | b'V'..=b'Z'
-            | b'a'..=b'h'
-            | b'j' | b'k'
-            | b'm' | b'n'
-            | b'p'..=b't'
-            | b'v'..=b'z'
-    ))
+    s.bytes().all(|b| {
+        matches!(
+            b,
+            b'0'..=b'9'
+                | b'A'..=b'H'
+                | b'J' | b'K'
+                | b'M' | b'N'
+                | b'P'..=b'T'
+                | b'V'..=b'Z'
+                | b'a'..=b'h'
+                | b'j' | b'k'
+                | b'm' | b'n'
+                | b'p'..=b't'
+                | b'v'..=b'z'
+        )
+    })
 }
 
 /// Returns true iff `s` is a syntactically valid `job_id` for the
@@ -252,14 +254,7 @@ fn cli_job_id_rejection_reason(s: &str) -> &'static str {
     if s.starts_with(eval_run_bridge::EVAL_RUN_PREFIX) {
         return "job_id may use `eval_run_<ULID>` for eval-run bridge lookups, but the suffix must be a valid 26-character Crockford base32 ULID";
     }
-    let known_bad_prefixes = [
-        "run_",
-        "agent_",
-        "strategy_",
-        "scenario_",
-        "cycle_",
-        "draft_",
-    ];
+    let known_bad_prefixes = ["run_", "agent_", "strategy_", "scenario_", "cycle_", "draft_"];
     for p in known_bad_prefixes {
         if s.starts_with(p) {
             return "job_id must be a CLI job id (bare ULID or `job_<ULID>`); the id you supplied looks like it belongs to a different artifact (eval run, strategy, scenario, cycle, draft) — call list_cli_jobs to get the right job_id";
@@ -2265,6 +2260,8 @@ mod tests {
     use super::*;
     use sqlx::sqlite::SqliteConnectOptions;
     use xvision_engine::agent::llm::MockDispatch;
+    use xvision_engine::eval::run::{Run, RunMode};
+    use xvision_engine::eval::store::RunStore;
 
     /// Build a real sqlite-backed pool against a tempdir + run engine
     /// migrations. Each test gets its own DB so concurrent runs don't
@@ -3509,7 +3506,11 @@ mod tests {
         // Sanity: no cli_jobs row was inserted (we never created one and
         // the bad-id path never went near the store).
         let store = CliJobStore::new(wl.pool.clone());
-        assert!(store.get("eval_run_XKI6IWGw5aFZXsqkW3a3").await.unwrap().is_none());
+        assert!(store
+            .get("eval_run_XKI6IWGw5aFZXsqkW3a3")
+            .await
+            .unwrap()
+            .is_none());
     }
 
     #[tokio::test]
@@ -3517,8 +3518,7 @@ mod tests {
         // Same as above but for the output verb — the audit shows the
         // model alternated between get_cli_job and get_cli_job_output.
         let mock = Arc::new(MockDispatch::echo("ok"));
-        let (wl, _pool, _td, _sid) =
-            loop_with_session(mock, "dump that job", ContextScope::Workspace).await;
+        let (wl, _pool, _td, _sid) = loop_with_session(mock, "dump that job", ContextScope::Workspace).await;
         let result = wl
             .run_tool(
                 "get_cli_job_output",
@@ -3538,8 +3538,7 @@ mod tests {
         // check and dispatches to the store, where the existing happy-
         // path serialisation applies.
         let mock = Arc::new(MockDispatch::echo("ok"));
-        let (wl, pool, _td, _sid) =
-            loop_with_session(mock, "queue a fetch", ContextScope::Workspace).await;
+        let (wl, pool, _td, _sid) = loop_with_session(mock, "queue a fetch", ContextScope::Workspace).await;
         let store = CliJobStore::new(pool);
         let job = store
             .create_queued(vec!["bars".into(), "fetch".into()], 60)
@@ -3553,6 +3552,33 @@ mod tests {
         // field — confirms we went through the real store path, not
         // the InvalidJobId short-circuit.
         assert_eq!(result["job_id"], serde_json::Value::String(job.job_id.clone()));
+        assert_eq!(result["status"], "queued");
+        assert!(result.get("error").is_none(), "unexpected error: {result}");
+    }
+
+    #[tokio::test]
+    async fn get_cli_job_with_valid_eval_run_id_reaches_bridge() {
+        // PR #348's bridge intentionally accepts eval_run_<ULID> ids. PR #349's
+        // shape check must not reject that valid synthetic job id before the
+        // bridge can translate it.
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, pool, td, _sid) = loop_with_session(mock, "watch eval run", ContextScope::Workspace).await;
+        seed_defaults(&pool, &td).await;
+        let store = RunStore::new(pool);
+        let run = Run::new_queued(
+            "agent-test".into(),
+            "crypto-rangebound-q2-2025".into(),
+            RunMode::Backtest,
+        );
+        store.create(&run).await.expect("seed eval run");
+        let job_id = format!("{}{}", eval_run_bridge::EVAL_RUN_PREFIX, run.id);
+
+        let result = wl
+            .run_tool("get_cli_job", serde_json::json!({"job_id": job_id}))
+            .await
+            .expect("valid eval_run id should reach the bridge");
+
+        assert_eq!(result["job_id"], serde_json::Value::String(job_id));
         assert_eq!(result["status"], "queued");
         assert!(result.get("error").is_none(), "unexpected error: {result}");
     }
@@ -3666,7 +3692,10 @@ mod tests {
         let saw_unreachable = events
             .iter()
             .any(|e| matches!(e, WizardEvent::Token { text } if text.contains("should not be reached")));
-        assert!(!saw_unreachable, "loop continued past the streak cap: {events:#?}");
+        assert!(
+            !saw_unreachable,
+            "loop continued past the streak cap: {events:#?}"
+        );
     }
 
     #[tokio::test]
@@ -3697,8 +3726,7 @@ mod tests {
                 output_tokens: 1,
             },
         ]));
-        let (mut wl, _pool, _td, _sid) =
-            loop_with_session(mock, "find it", ContextScope::Workspace).await;
+        let (mut wl, _pool, _td, _sid) = loop_with_session(mock, "find it", ContextScope::Workspace).await;
         let events = drain(&mut wl).await;
 
         // No stuck card — different error classes shouldn't trip it.
@@ -3713,6 +3741,9 @@ mod tests {
         let saw_giving_up = events
             .iter()
             .any(|e| matches!(e, WizardEvent::Token { text } if text.contains("giving up")));
-        assert!(saw_giving_up, "expected loop to continue to final turn: {events:#?}");
+        assert!(
+            saw_giving_up,
+            "expected loop to continue to final turn: {events:#?}"
+        );
     }
 }

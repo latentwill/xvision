@@ -10,10 +10,10 @@ use xvision_engine::agent::pipeline::{
     agent_slot_to_llm_slot, run_pipeline, PipelineInputs, ResolvedAgentSlot,
 };
 use xvision_engine::agents::{AgentSlot, AgentStore};
+use xvision_engine::api::scenario as api_scenario;
 use xvision_engine::api::{agents as api_agents, strategy as api_strategy, Actor, ApiContext, ApiError};
 use xvision_engine::strategies::slot::LLMSlot;
 use xvision_engine::strategies::store::{strategy_store_dir, FilesystemStore, StrategyStore};
-use xvision_engine::api::scenario as api_scenario;
 use xvision_engine::strategies::validate::{preflight_validate, validate_strategy};
 use xvision_engine::strategies::{AgentRef, PipelineDef, PipelineEdge, PipelineKind};
 use xvision_engine::templates::registry;
@@ -189,7 +189,12 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
             role,
             asset,
             timeframe,
-        } => new(from_file, template, name, creator, provider, model, json, prompt, role, asset, timeframe).await,
+        } => {
+            new(
+                from_file, template, name, creator, provider, model, json, prompt, role, asset, timeframe,
+            )
+            .await
+        }
         StrategyAction::Validate { id, scenario, json } => validate(&id, scenario.as_deref(), json).await,
         StrategyAction::Ls { json } => ls(json).await,
         StrategyAction::Show { id, format } => show(&id, format).await,
@@ -468,35 +473,18 @@ async fn new_atomic(
     json: bool,
 ) -> CliResult<()> {
     // Validate required atomic-mode fields.
-    let name = name.ok_or_else(|| {
-        CliError::usage(anyhow::anyhow!(
-            "atomic mode requires --name"
-        ))
-    })?;
-    let provider = provider.ok_or_else(|| {
-        CliError::usage(anyhow::anyhow!(
-            "atomic mode requires --provider"
-        ))
-    })?;
-    let model = model.ok_or_else(|| {
-        CliError::usage(anyhow::anyhow!(
-            "atomic mode requires --model"
-        ))
-    })?;
+    let name = name.ok_or_else(|| CliError::usage(anyhow::anyhow!("atomic mode requires --name")))?;
+    let provider =
+        provider.ok_or_else(|| CliError::usage(anyhow::anyhow!("atomic mode requires --provider")))?;
+    let model = model.ok_or_else(|| CliError::usage(anyhow::anyhow!("atomic mode requires --model")))?;
     let role = role.unwrap_or_else(|| "trader".to_string());
-    let asset = asset.ok_or_else(|| {
-        CliError::usage(anyhow::anyhow!(
-            "atomic mode requires --asset (e.g. ETH/USD)"
-        ))
-    })?;
-    let timeframe = timeframe.ok_or_else(|| {
-        CliError::usage(anyhow::anyhow!(
-            "atomic mode requires --timeframe (e.g. 4h)"
-        ))
-    })?;
+    let asset = asset
+        .ok_or_else(|| CliError::usage(anyhow::anyhow!("atomic mode requires --asset (e.g. ETH/USD)")))?;
+    let timeframe = timeframe
+        .ok_or_else(|| CliError::usage(anyhow::anyhow!("atomic mode requires --timeframe (e.g. 4h)")))?;
 
-    let cadence_minutes = parse_timeframe_minutes(&timeframe)
-        .map_err(|e| CliError::usage(anyhow::anyhow!("{e}")))?;
+    let cadence_minutes =
+        parse_timeframe_minutes(&timeframe).map_err(|e| CliError::usage(anyhow::anyhow!("{e}")))?;
 
     // Read the prompt file.
     let prompt_text = std::fs::read_to_string(&prompt_path)
@@ -571,10 +559,7 @@ async fn new_atomic(
     }
 
     // 4. Persist the strategy.
-    store()
-        .save(&strategy)
-        .await
-        .exit_with(XvnExit::Upstream)?;
+    store().save(&strategy).await.exit_with(XvnExit::Upstream)?;
 
     // 5. Emit output.
     let warnings = preflight.warnings;
@@ -633,7 +618,10 @@ async fn validate(id: &str, scenario_id: Option<&str>, json: bool) -> CliResult<
                 "errors": preflight.errors,
                 "warnings": preflight.warnings,
             });
-            println!("{}", serde_json::to_string_pretty(&out).exit_with(XvnExit::Upstream)?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&out).exit_with(XvnExit::Upstream)?
+            );
         } else {
             for e in &preflight.errors {
                 eprintln!("error: {e}");
@@ -665,7 +653,10 @@ async fn validate(id: &str, scenario_id: Option<&str>, json: bool) -> CliResult<
             out["asset"] = serde_json::Value::String(asset.to_string());
             out["timeframe"] = serde_json::Value::String(timeframe);
         }
-        println!("{}", serde_json::to_string_pretty(&out).exit_with(XvnExit::Upstream)?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&out).exit_with(XvnExit::Upstream)?
+        );
     } else {
         if preflight.warnings.is_empty() {
             println!("ok");
@@ -1291,13 +1282,7 @@ pub mod atomic_create {
 
     #[test]
     fn atomic_output_eval_ready_true_when_no_warnings_or_errors() {
-        let out = build_atomic_create_output(
-            "strategy-123",
-            "agent-456",
-            "openrouter",
-            "kimi-k2",
-            vec![],
-        );
+        let out = build_atomic_create_output("strategy-123", "agent-456", "openrouter", "kimi-k2", vec![]);
         assert_eq!(out["strategy_id"], "strategy-123");
         assert_eq!(out["agent_id"], "agent-456");
         assert_eq!(out["eval_ready"], true);

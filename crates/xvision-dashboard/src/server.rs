@@ -10,8 +10,9 @@ use crate::auth::{auth_middleware, AuthState};
 use crate::routes::{
     agent_runs, agents, bars, chat_rail, cli, docs,
     eval::{agent_profiles as eval_agent_profiles, review as eval_review},
-    eval_runs, health::health, scenarios, search as search_route, settings, skills,
-    static_files, strategies, wizard,
+    eval_runs,
+    health::health,
+    scenarios, search as search_route, settings, skills, static_files, strategies, wizard,
 };
 use crate::state::AppState;
 use xvision_engine::api::eval as api_eval;

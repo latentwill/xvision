@@ -27,6 +27,6 @@ pub use store::{AgentStore, ListFilter, NewAgent, UpdateAgent};
 pub use templates::{builtin_templates, AgentTemplate};
 pub use validate::{validate_agent, Severity, ValidationDiagnostic};
 pub use validator::{
-    lint_agents, validate_prompt_schema, validate_prompt_schema_slots, LintFinding,
-    PromptSchemaDriftError, ACTION_SCHEMA_ENUM,
+    lint_agents, validate_prompt_schema, validate_prompt_schema_slots, LintFinding, PromptSchemaDriftError,
+    ACTION_SCHEMA_ENUM,
 };
