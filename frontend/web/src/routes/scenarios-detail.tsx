@@ -14,6 +14,7 @@ import {
 } from "@/api/scenarios";
 import { getScenarioChart, scenarioChartKeys } from "@/api/chart";
 import { listRuns } from "@/api/eval";
+import { listStrategies, strategyKeys } from "@/api/strategies";
 import { ScenarioChart } from "@/components/chart/ScenarioChart";
 import {
   scenarioGranularityToCli,
@@ -415,6 +416,19 @@ function RunsTab({ scenarioId }: { scenarioId: string }) {
     queryFn: () => listRuns(),
   });
 
+  // Fetch all strategies once to build a display_name lookup map. The query is
+  // cached under the global strategy list key so other parts of the UI share
+  // the same cache entry. When still loading we fall back to showing the raw
+  // agent_id ULID — no flicker, no empty placeholder.
+  const { data: strategies } = useQuery({
+    queryKey: strategyKeys.list(),
+    queryFn: listStrategies,
+  });
+
+  const strategyNameMap = new Map<string, string>(
+    (strategies ?? []).map((s) => [s.agent_id, s.display_name]),
+  );
+
   if (isPending) {
     return (
       <div className="px-6 py-8 text-center text-text-3 text-[13px]">
@@ -455,26 +469,40 @@ function RunsTab({ scenarioId }: { scenarioId: string }) {
           </tr>
         </thead>
         <tbody>
-          {filtered.map((r) => (
-            <tr key={r.id} className="border-t border-border">
-              <td className="py-2 pr-4">
-                <Link
-                  to={`/eval-runs/${r.id}`}
-                  className="font-mono text-[12px] text-text hover:underline"
-                >
-                  {r.id}
-                </Link>
-              </td>
-              <td className="py-2 pr-4 font-mono text-[12px] text-text-2">
-                {r.agent_id}
-              </td>
-              <td className="py-2 pr-4 text-text-2">{r.mode}</td>
-              <td className="py-2 pr-4 text-text-2">{r.status}</td>
-              <td className="py-2 text-text-3">
-                {r.completed_at ? fmtDate(r.completed_at) : "—"}
-              </td>
-            </tr>
-          ))}
+          {filtered.map((r) => {
+            const strategyName = strategyNameMap.get(r.agent_id);
+            return (
+              <tr key={r.id} className="border-t border-border">
+                <td className="py-2 pr-4">
+                  <Link
+                    to={`/eval-runs/${r.id}`}
+                    className="font-mono text-[12px] text-text hover:underline"
+                  >
+                    {r.id}
+                  </Link>
+                </td>
+                <td className="py-2 pr-4">
+                  {strategyName != null ? (
+                    <>
+                      <div className="text-text-2">{strategyName}</div>
+                      <div className="font-mono text-[11px] text-text-3">
+                        {r.agent_id}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="font-mono text-[12px] text-text-2">
+                      {r.agent_id}
+                    </div>
+                  )}
+                </td>
+                <td className="py-2 pr-4 text-text-2">{r.mode}</td>
+                <td className="py-2 pr-4 text-text-2">{r.status}</td>
+                <td className="py-2 text-text-3">
+                  {r.completed_at ? fmtDate(r.completed_at) : "—"}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>

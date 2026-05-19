@@ -12,11 +12,12 @@ pub mod model;
 pub mod store;
 pub mod templates;
 pub mod validate;
+pub mod validator;
 
 #[cfg(test)]
 mod max_tokens_resolution;
 
-pub use model::{Agent, AgentSlot};
+pub use model::{Agent, AgentSlot, InputsPolicy};
 // Canonical per-model metadata table lives in `xvision-core::providers`
 // so non-engine crates (CLI, dashboard) can resolve auto-tokens without
 // linking the engine. The engine re-exports the names it consumes.
@@ -25,6 +26,10 @@ pub use xvision_core::providers::{lookup_model, ModelClass, ModelMetadata};
 pub use store::{AgentStore, ListFilter, NewAgent, UpdateAgent};
 pub use templates::{builtin_templates, AgentTemplate};
 pub use validate::{
-    lint_agents, validate_agent, AuditFinding, Severity, ValidationDiagnostic,
+    validate_agent, validate_agent_for_save, AuditFinding, Severity, ValidationDiagnostic,
     DEFAULT_PLACEHOLDER_PROMPT,
+};
+pub use validator::{
+    lint_agents, validate_prompt_schema, validate_prompt_schema_slots, LintFinding, PromptSchemaDriftError,
+    ACTION_SCHEMA_ENUM,
 };

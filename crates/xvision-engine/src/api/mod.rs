@@ -49,6 +49,11 @@ const MIGRATION_018_AGENT_RUN_OBSERVABILITY: &str =
     include_str!("../../migrations/018_agent_run_observability.sql");
 const MIGRATION_019_AGENT_SLOT_PROMPT_VERSION: &str =
     include_str!("../../migrations/019_agent_slot_prompt_version.sql");
+const MIGRATION_020_AGENT_SLOT_INPUTS_POLICY: &str =
+    include_str!("../../migrations/020_agent_slot_inputs_policy.sql");
+const MIGRATION_021_EVAL_BATCHES: &str = include_str!("../../migrations/021_eval_batches.sql");
+const MIGRATION_022_EVAL_RUNS_AGENTS_AGENT_ID: &str =
+    include_str!("../../migrations/022_eval_runs_agents_agent_id.sql");
 
 /// Map of cache_key → per-key mutex used by `eval::bars::load_bars` to
 /// serialize concurrent misses for the same window. Kept inside an outer
@@ -90,6 +95,13 @@ pub struct ApiContext {
     /// `ObservabilityConfig::default()` so unit tests / CLI paths that
     /// build `ApiContext` directly don't have to thread it through.
     pub obs_config: Arc<xvision_observability::ObservabilityConfig>,
+    /// Per-`(provider, model)` semaphore gate consulted by
+    /// `eval::start_run` before spawning the executor background task.
+    /// Default = `LaunchConcurrencyGate::from_env()` so production picks
+    /// up `XVN_EVAL_MAX_CONCURRENT_PER_MODEL` automatically and tests
+    /// that don't care get a no-op-ish cap of 4. See
+    /// `crates/xvision-engine/src/eval/concurrency.rs`.
+    pub launch_gate: Arc<crate::eval::concurrency::LaunchConcurrencyGate>,
 }
 
 // `AlpacaBarsFetcher` doesn't derive Debug (it holds a reqwest::Client
@@ -149,6 +161,9 @@ impl ApiContext {
             .execute(&pool)
             .await?;
         migrate_agent_slot_prompt_version(&pool).await?;
+        migrate_agent_slot_inputs_policy(&pool).await?;
+        migrate_eval_batches(&pool).await?;
+        migrate_eval_runs_agents_agent_id(&pool).await?;
 
         let ctx = Self::new(pool, actor, xvn_home.to_path_buf());
 
@@ -181,7 +196,16 @@ impl ApiContext {
             event_bus: Arc::new(chart::RunEventBus::new()),
             obs_event_bus: None,
             obs_config: Arc::new(xvision_observability::ObservabilityConfig::default()),
+            launch_gate: Arc::new(crate::eval::concurrency::LaunchConcurrencyGate::from_env()),
         }
+    }
+
+    /// Builder override for the eval launch-concurrency gate. Tests use
+    /// this to pin a known permit count (e.g. `LaunchConcurrencyGate::new(1)`)
+    /// rather than relying on the default-from-env construction.
+    pub fn with_launch_gate(mut self, gate: Arc<crate::eval::concurrency::LaunchConcurrencyGate>) -> Self {
+        self.launch_gate = gate;
+        self
     }
 
     /// Builder override for the Alpaca fetcher. Used by tests to point
@@ -440,6 +464,59 @@ async fn migrate_eval_findings_review_columns(pool: &SqlitePool) -> ApiResult<()
 async fn migrate_agent_slot_prompt_version(pool: &SqlitePool) -> ApiResult<()> {
     if !table_has_column(pool, "agent_slots", "prompt_version").await? {
         sqlx::query(MIGRATION_019_AGENT_SLOT_PROMPT_VERSION)
+            .execute(pool)
+            .await?;
+    }
+
+    Ok(())
+}
+
+/// Apply the `agent_slots.inputs_policy` column add from migration 020
+/// against pre-020 databases. Same probe-then-apply pattern as 019 —
+/// SQLite has no `ALTER TABLE ADD COLUMN IF NOT EXISTS`, so we gate on
+/// the column probe to keep `ApiContext::open` idempotent on an
+/// already-initialized home. F-6 from the 2026-05-19 eval-traces
+/// end-to-end audit.
+async fn migrate_agent_slot_inputs_policy(pool: &SqlitePool) -> ApiResult<()> {
+    if !table_has_column(pool, "agent_slots", "inputs_policy").await? {
+        sqlx::query(MIGRATION_020_AGENT_SLOT_INPUTS_POLICY)
+            .execute(pool)
+            .await?;
+    }
+
+    Ok(())
+}
+
+/// Apply migration 021: `eval_batches` table + `eval_runs.batch_id` column.
+/// Gated on `eval_batches` not existing so the migration is idempotent on
+/// already-upgraded databases.
+async fn migrate_eval_batches(pool: &SqlitePool) -> ApiResult<()> {
+    if !table_exists(pool, "eval_batches").await? {
+        sqlx::query(MIGRATION_021_EVAL_BATCHES).execute(pool).await?;
+        return Ok(());
+    }
+    // Table exists — ensure the batch_id column is present on eval_runs in
+    // case a partial migration left it behind. Safe to run after an existence
+    // probe because SQLite has no IF NOT EXISTS for ADD COLUMN.
+    if !table_has_column(pool, "eval_runs", "batch_id").await? {
+        sqlx::query("ALTER TABLE eval_runs ADD COLUMN batch_id TEXT REFERENCES eval_batches(batch_id)")
+            .execute(pool)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_eval_runs_batch ON eval_runs(batch_id)")
+            .execute(pool)
+            .await?;
+    }
+
+    Ok(())
+}
+
+/// Apply migration 022 (F-11): add the long-lived workspace
+/// `agents_agent_id` column to `eval_runs`. Gated on column probe for
+/// idempotence on existing databases; same pattern as the other
+/// `migrate_*` helpers in this module.
+async fn migrate_eval_runs_agents_agent_id(pool: &SqlitePool) -> ApiResult<()> {
+    if !table_has_column(pool, "eval_runs", "agents_agent_id").await? {
+        sqlx::query(MIGRATION_022_EVAL_RUNS_AGENTS_AGENT_ID)
             .execute(pool)
             .await?;
     }

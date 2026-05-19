@@ -41,6 +41,16 @@ fn placeholder_prompt_sha256() -> &'static str {
 /// strict-typing pass. New entries should be debated.
 const RECOGNISED_ASSET_TOKENS: &[&str] = &["SOL", "BTC", "ETH", "DOGE", "ADA", "XRP", "AVAX"];
 
+/// Minimum character length for a slot's system_prompt before a save is
+/// accepted. Prompts shorter than this are either placeholder stubs or
+/// clearly unfit for production use.
+pub const MIN_SYSTEM_PROMPT_CHARS: usize = 200;
+
+/// Leading text that identifies the factory default placeholder prompt.
+/// We match on the leading sentence during save so a prompt that starts
+/// with the placeholder but has had junk appended is still caught.
+const DEFAULT_PLACEHOLDER_LEADING: &str = "You are a trading agent. Decide based on the inputs provided.";
+
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(
     feature = "ts-export",
@@ -285,6 +295,43 @@ pub struct AuditFinding {
     pub message: String,
 }
 
+/// Validate an agent before it is persisted (create or update). Runs the
+/// hard save-gate rules for placeholder/too-short prompts and asset
+/// name↔prompt mismatches.
+pub fn validate_agent_for_save(agent: &Agent) -> Result<(), String> {
+    for slot in &agent.slots {
+        let prompt = slot.system_prompt.trim();
+        if prompt.is_empty() {
+            continue;
+        }
+        if prompt.starts_with(DEFAULT_PLACEHOLDER_LEADING) || prompt.len() < MIN_SYSTEM_PROMPT_CHARS {
+            return Err(format!(
+                "slot '{}': system_prompt is the default placeholder or fewer than \
+                 {MIN_SYSTEM_PROMPT_CHARS} characters; replace with a real trading prompt before saving",
+                slot.name,
+            ));
+        }
+    }
+
+    let combined_prompt = agent
+        .slots
+        .iter()
+        .map(|slot| slot.system_prompt.as_str())
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase();
+    for token in RECOGNISED_ASSET_TOKENS {
+        if !name_mentions_asset_token(&agent.name, token) {
+            continue;
+        }
+        if !combined_prompt.contains(&token.to_ascii_lowercase()) {
+            return Err(format!("agent name mentions {token} but system_prompt does not"));
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -331,6 +378,7 @@ mod tests {
                 max_tokens: Some(4096),
                 temperature: None,
                 prompt_version: String::new(),
+                inputs_policy: crate::agents::InputsPolicy::Raw,
             },
             AgentSlot {
                 name: "TRADER".into(), // case-insensitive duplicate
@@ -341,6 +389,7 @@ mod tests {
                 max_tokens: Some(4096),
                 temperature: None,
                 prompt_version: String::new(),
+                inputs_policy: crate::agents::InputsPolicy::Raw,
             },
         ];
         let diags = validate_agent(&a);
@@ -409,8 +458,7 @@ mod tests {
         let mut a = good_agent();
         a.name = "SOL 4h trend breakout trader agent".into();
         a.slots[0].system_prompt =
-            "You are a single-agent ETH/USD 4-hour swing trader looking at OHLCV."
-                .into();
+            "You are a single-agent ETH/USD 4-hour swing trader looking at OHLCV.".into();
         let diags = validate_agent(&a);
         let hit = diags
             .iter()
@@ -424,8 +472,7 @@ mod tests {
     fn asset_match_passes_when_prompt_mentions_same_token() {
         let mut a = good_agent();
         a.name = "SOL 4h trend breakout trader agent".into();
-        a.slots[0].system_prompt =
-            "You are a SOL/USD 4-hour swing trader looking at OHLCV.".into();
+        a.slots[0].system_prompt = "You are a SOL/USD 4-hour swing trader looking at OHLCV.".into();
         let diags = validate_agent(&a);
         assert!(diags.iter().all(|d| d.code != "slot_prompt_asset_mismatch"));
     }
@@ -434,8 +481,7 @@ mod tests {
     fn asset_match_is_case_insensitive_in_prompt() {
         let mut a = good_agent();
         a.name = "BTC scalper".into();
-        a.slots[0].system_prompt =
-            "You are a btc/usd scalping agent.".into();
+        a.slots[0].system_prompt = "You are a btc/usd scalping agent.".into();
         let diags = validate_agent(&a);
         assert!(diags.iter().all(|d| d.code != "slot_prompt_asset_mismatch"));
     }
@@ -469,8 +515,7 @@ mod tests {
         let mut sol_agent = good_agent();
         sol_agent.agent_id = "01HZAAAA0000000000000000B".into();
         sol_agent.name = "SOL 4h trend breakout trader agent".into();
-        sol_agent.slots[0].system_prompt =
-            "You are a single-agent ETH/USD 4-hour swing trader.".into();
+        sol_agent.slots[0].system_prompt = "You are a single-agent ETH/USD 4-hour swing trader.".into();
 
         let findings = lint_agents(&[placeholder_agent, sol_agent]);
         assert!(
@@ -479,9 +524,7 @@ mod tests {
             findings
         );
         assert!(
-            findings
-                .iter()
-                .any(|f| f.code == "slot_prompt_asset_mismatch"),
+            findings.iter().any(|f| f.code == "slot_prompt_asset_mismatch"),
             "asset mismatch finding missing: {:?}",
             findings
         );

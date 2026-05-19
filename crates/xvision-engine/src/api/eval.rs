@@ -253,6 +253,38 @@ pub async fn delete(ctx: &ApiContext, run_id: &str) -> ApiResult<()> {
     result
 }
 
+/// F-11: navigate from an eval run back to the workspace agent record
+/// that drove it. Reads `eval_runs.agents_agent_id` (added in migration
+/// 021) and, when populated, looks up the live agent in the agent
+/// library.
+///
+/// Returns:
+/// - `Ok(Some(agent))` when the run carries a long-lived agent id AND
+///   that row still exists in `agents`.
+/// - `Ok(None)` when either the run is missing, the column is NULL
+///   (pre-migration-022 row, intentionally not backfilled), or the
+///   referenced agent has been deleted.
+///
+/// No regex / bundle-hash fallback — by design. The whole point of the
+/// new column is to retire that heuristic.
+pub async fn lookup_agent_for_eval_run(
+    ctx: &ApiContext,
+    run_id: &str,
+) -> ApiResult<Option<crate::agents::model::Agent>> {
+    let store = RunStore::new(ctx.db.clone());
+    let aid = store
+        .get_agents_agent_id(run_id)
+        .await
+        .map_err(|e| ApiError::Internal(format!("read agents_agent_id: {e}")))?;
+    let Some(aid) = aid else { return Ok(None) };
+    let agent_store = AgentStore::new(ctx.db.clone());
+    let agent = agent_store
+        .get(&aid)
+        .await
+        .map_err(|e| ApiError::Internal(format!("load agent {aid}: {e}")))?;
+    Ok(agent)
+}
+
 pub async fn cancel(ctx: &ApiContext, run_id: &str) -> ApiResult<Run> {
     let started = Instant::now();
     let store = RunStore::new(ctx.db.clone());
@@ -822,6 +854,24 @@ fn runtime_slots<'a>(
     .collect()
 }
 
+/// Pick the long-lived `agents.agent_id` of the agent acting as the
+/// run's trader, for persistence in `eval_runs.agents_agent_id`
+/// (migration 022). Prefers the AgentRef with canonical role `trader`;
+/// falls back to the first AgentRef when no role match exists. Returns
+/// `None` for legacy strategies that still use the deprecated slot
+/// fields (no AgentRefs attached) — those rows leave the column NULL,
+/// matching the no-backfill policy in the F-11 contract.
+fn pick_agents_agent_id(strategy: &crate::strategies::Strategy) -> Option<String> {
+    if let Some(r) = strategy
+        .agents
+        .iter()
+        .find(|r| r.canonical_role().eq_ignore_ascii_case("trader"))
+    {
+        return Some(r.agent_id.clone());
+    }
+    strategy.agents.first().map(|r| r.agent_id.clone())
+}
+
 fn validate_eval_trader_source(
     strategy: &crate::strategies::Strategy,
     agent_slots: &[ResolvedAgentSlot],
@@ -948,6 +998,7 @@ async fn resolve_agent_slots(
             slot: agent_slot_to_llm_slot(&agent_ref.role, slot),
             max_tokens: slot.resolve_max_tokens(),
             temperature: slot.temperature,
+            inputs_policy: slot.inputs_policy,
         });
     }
     Ok(out)
@@ -989,6 +1040,42 @@ fn runtime_config_path(ctx: &ApiContext) -> std::path::PathBuf {
         }
     }
     ctx.xvn_home.join("config").join("default.toml")
+}
+
+/// Load every configured provider's cached catalog so `ObsEmitter`
+/// can compute `model_calls.cost_usd` at span-close time. Missing /
+/// never-fetched catalogs are skipped silently — the emitter handles
+/// "no pricing" by leaving `cost_usd = None` and emitting one debug
+/// line per unique unpriced `(provider, model)` pair. We deliberately
+/// do NOT trigger a network refresh here: eval runs must not hang on
+/// catalog fetches.
+async fn load_provider_catalogs_for_emitter(
+    ctx: &ApiContext,
+) -> std::collections::HashMap<String, std::sync::Arc<xvision_core::providers::Catalog>> {
+    use std::collections::HashMap;
+    let cfg_path = runtime_config_path(ctx);
+    let cfg = match tokio::task::spawn_blocking(move || config::load_runtime(&cfg_path)).await {
+        Ok(Ok(c)) => c,
+        // Config load failures are not the cost path's problem —
+        // upstream handlers surface their own validation errors. Just
+        // skip catalog wiring so emit-time cost is None.
+        _ => return HashMap::new(),
+    };
+    let svc = match crate::providers::CatalogService::new(ctx.xvn_home.clone()) {
+        Ok(s) => s,
+        Err(_) => return HashMap::new(),
+    };
+    let mut out = HashMap::new();
+    for p in &cfg.providers {
+        if matches!(p.kind, ProviderKind::LocalCandle) {
+            // local-candle has no remote catalog and no pricing.
+            continue;
+        }
+        if let Ok(Some(cat)) = svc.get_or_load(&p.name).await {
+            out.insert(p.name.clone(), cat);
+        }
+    }
+    out
 }
 
 /// Testable / deps-injecting variant of `run`. Tests pass a
@@ -1058,6 +1145,11 @@ async fn run_inner(
     //    emitter so SpanStarted events have a valid FK.
     let mut run = Run::new_queued(req.agent_id.clone(), scenario.id.clone(), req.mode);
     run.params_override = req.params_override.clone();
+    // F-11: persist the long-lived workspace `agents.agent_id` next to
+    // the existing bundle-hash `agent_id`. Migration 021 added the
+    // column; `pick_agents_agent_id` returns `None` for legacy
+    // slot-only strategies, leaving the column NULL (no backfill).
+    run.agents_agent_id = pick_agents_agent_id(&strategy);
 
     // Observability emitter (`qa-eval-observability-wiring`). Built
     // only when the dashboard injected an obs bus on the ApiContext;
@@ -1066,6 +1158,17 @@ async fn run_inner(
     // executor preflight has succeeded — so the recorder's
     // `agent_runs.eval_run_id` FK is valid and a preflight failure can't
     // leave a phantom observability run behind.
+    // Load provider catalogs ONCE for the emitter so every
+    // `emit_model_call_finished*` call site can compute
+    // `cost_usd` from cached pricing — fixes the audit-time
+    // observation that 2,757/2,757 `model_calls.cost_usd` rows were
+    // NULL. Best-effort: providers without a cached catalog are
+    // skipped and the emitter falls back to publishing `None`.
+    let obs_catalogs = if ctx.obs_event_bus.is_some() {
+        load_provider_catalogs_for_emitter(ctx).await
+    } else {
+        std::collections::HashMap::new()
+    };
     let obs_emitter = ctx.obs_event_bus.as_ref().map(|bus| {
         // `harness-payload-blob-write`: attach the BlobStore so
         // `emit_model_call_finished_with_payloads` can persist
@@ -1080,6 +1183,7 @@ async fn run_inner(
                 &ctx.obs_config,
             ))
             .with_blob_store(blob_store)
+            .with_catalogs(obs_catalogs.clone())
     });
 
     // 3. Pick the executor for this run mode. For backtest mode, when the
@@ -1185,6 +1289,13 @@ async fn run_inner(
         &findings_model,
     )
     .await;
+
+    // Rule-based auto-review. Reads the just-persisted findings and
+    // writes a single `eval_reviews` row with a verdict + score. No
+    // LLM call, no dispatch dependency. Best-effort by design —
+    // failures log warn! and the run stays successful.
+    let store_for_auto = RunStore::new(ctx.db.clone());
+    crate::eval::review::auto::fire_auto_review(&store_for_auto, &finalized.id).await;
 
     Ok(finalized)
 }
@@ -1508,6 +1619,7 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
     };
     let agent_slots = resolve_agent_slots(ctx, &strategy).await?;
     validate_eval_trader_source(&strategy, &agent_slots)?;
+
     let (dispatch, findings_model) = build_eval_dispatch(ctx, &strategy, &agent_slots).await?;
     let tools = Arc::new(ToolRegistry::default_with_builtins());
 
@@ -1520,6 +1632,15 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
     // behind. The matching `RunFinished` is emitted by
     // `execute_in_background`.
     let mut run = Run::new_queued(req.agent_id.clone(), scenario.id.clone(), req.mode);
+    // F-11: see comment in `run_inner` above — same reasoning here.
+    run.agents_agent_id = pick_agents_agent_id(&strategy);
+    // Same catalog-wiring as the `start_run` path above; see the
+    // comment there for the rationale.
+    let obs_catalogs = if ctx.obs_event_bus.is_some() {
+        load_provider_catalogs_for_emitter(ctx).await
+    } else {
+        std::collections::HashMap::new()
+    };
     let obs_emitter = ctx.obs_event_bus.as_ref().map(|bus| {
         // Mirror the FullDebug-aware emitter wiring above; same
         // blob root so the second eval entry point produces refs
@@ -1530,6 +1651,7 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
                 &ctx.obs_config,
             ))
             .with_blob_store(blob_store)
+            .with_catalogs(obs_catalogs.clone())
     });
 
     let executor: Box<dyn Executor> = match req.mode {
@@ -1569,9 +1691,25 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
     )
     .await;
 
+    // F-1 (eval-launch-concurrency-cap, 2026-05-19): cap how many runs
+    // can be in flight against a single upstream `(provider, model)`
+    // bucket. Resolved from the trader slot (the dominant token spender);
+    // findings/intern slots ride along on the same permit because the
+    // F-1 audit (`team/intake/2026-05-16-eval-review-and-v2a.md`) tracked
+    // the burst as a single user-perceived "launch". The guard is moved
+    // into the spawned background task so it lives for the full run
+    // lifecycle and is dropped (releasing the permit) when the task
+    // exits — including via panic.
+    let (gate_provider, gate_model) = resolve_launch_gate_key(&strategy, &agent_slots, &findings_model);
+    let launch_permit = ctx.launch_gate.acquire(&gate_provider, &gate_model).await;
+
     let ctx_bg = ctx.clone();
     let run_id = run.id.clone();
     tokio::spawn(async move {
+        // Hold the permit for the entire background task lifetime.
+        // Dropping it releases the slot back to the gate; this must
+        // outlive `execute_in_background` and `extract_and_record`.
+        let _launch_permit = launch_permit;
         execute_in_background(
             ctx_bg,
             run,
@@ -1588,6 +1726,54 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
     });
 
     get_run(ctx, &run_id).await
+}
+
+/// Resolve the `(provider, model)` pair the launch-concurrency gate
+/// should key on. Prefers the trader role from `agent_slots` (post-refactor
+/// strategies), falls back to the legacy `trader_slot` on `Strategy`, then
+/// to any other agent slot, then to the resolved `findings_model` as a
+/// last-ditch source. Empty strings still produce *some* key — we'd rather
+/// over-serialize a misconfigured strategy than skip the cap entirely.
+fn resolve_launch_gate_key(
+    strategy: &crate::strategies::Strategy,
+    agent_slots: &[ResolvedAgentSlot],
+    findings_model: &str,
+) -> (String, String) {
+    // 1. Attached agent with role == "trader".
+    if let Some(trader) = agent_slots
+        .iter()
+        .find(|resolved| resolved.role.trim().eq_ignore_ascii_case("trader"))
+    {
+        let provider = trader.slot.provider.clone().unwrap_or_default();
+        let model = trader.slot.effective_model();
+        if !provider.is_empty() && !model.is_empty() {
+            return (provider, model);
+        }
+    }
+
+    // 2. Legacy `trader_slot` on the strategy.
+    if let Some(slot) = strategy.trader_slot.as_ref() {
+        let provider = slot.provider.clone().unwrap_or_default();
+        let model = slot.effective_model();
+        if !provider.is_empty() && !model.is_empty() {
+            return (provider, model);
+        }
+    }
+
+    // 3. First attached agent with any non-empty provider/model.
+    for resolved in agent_slots {
+        let provider = resolved.slot.provider.clone().unwrap_or_default();
+        let model = resolved.slot.effective_model();
+        if !provider.is_empty() && !model.is_empty() {
+            return (provider, model);
+        }
+    }
+
+    // 4. Last-ditch: pair with the resolved findings model and an empty
+    // provider. Better than skipping the cap; this only fires on a
+    // misconfigured strategy that already shouldn't have reached
+    // `start_run`.
+    (String::new(), findings_model.to_string())
 }
 
 /// Background-task body: transition Queued → Running, drive the
@@ -1687,6 +1873,13 @@ async fn execute_in_background(
         return;
     }
 
+    // TODO(F-1 follow-up / #345): serialize finalize writes across concurrent
+    // eval runs that share the same (provider, model) slot. When many runs
+    // complete simultaneously, concurrent `store.finalize` + `upsert_run`
+    // calls can contend on the SQLite write lock and leave some runs in a
+    // "stuck running" state. PR #345 (eval-run-watchdog-and-stuck-running,
+    // F-3) already touches this path — add write batching there to avoid a
+    // merge conflict here.
     let finalized = match store.get(&run.id).await {
         Ok(r) => r,
         Err(e) => {
@@ -1721,6 +1914,11 @@ async fn execute_in_background(
         &findings_model,
     )
     .await;
+
+    // Rule-based auto-review postprocess. Best-effort; reads the
+    // findings we just persisted and writes a single eval_reviews row.
+    let store_for_auto = RunStore::new(ctx.db.clone());
+    crate::eval::review::auto::fire_auto_review(&store_for_auto, &finalized.id).await;
 }
 
 /// Sweep any `Queued` or `Running` rows from a previous process and
@@ -1733,6 +1931,101 @@ pub async fn fail_orphan_runs(ctx: &ApiContext) -> ApiResult<u64> {
         .fail_active_runs("daemon restarted before run completed")
         .await
         .map_err(|e| ApiError::Internal(format!("fail orphan runs: {e}")))
+}
+
+/// Default values for the retention janitor when no env override is set.
+///
+/// These bound the disk footprint of the agent-run observability blob
+/// store. The audit on 2026-05-19 found 5,568 blobs in
+/// `/data/agent_runs/blobs/` because the janitor was implemented but
+/// never spawned — see `crates/xvision-observability/src/janitor.rs`.
+///
+/// - `payload_ttl_days = 14` matches the team's stated 2-week retention
+///   target for full-debug trace payloads.
+/// - `max_payload_bytes = 4 GB` is the per-host disk-budget cap. When
+///   the blob store grows past this, the janitor evicts in
+///   mtime-ascending order until the store is back under the cap.
+/// - `tick = 1 hour` keeps the bookkeeping cost negligible while
+///   ensuring nothing past TTL lingers for more than an hour.
+pub const JANITOR_DEFAULT_TTL_DAYS: u64 = 14;
+pub const JANITOR_DEFAULT_MAX_BYTES: u64 = 4_000_000_000;
+pub const JANITOR_DEFAULT_TICK_SECS: u64 = 60 * 60;
+
+/// Resolve the janitor configuration from environment variables, falling
+/// back to the documented defaults above. Exposed for tests so they can
+/// assert env-override behaviour without spawning the task.
+pub fn resolve_janitor_config_from_env() -> (xvision_observability::JanitorConfig, std::time::Duration) {
+    let ttl_days = std::env::var("XVN_PAYLOAD_TTL_DAYS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(JANITOR_DEFAULT_TTL_DAYS);
+    let max_bytes = std::env::var("XVN_MAX_PAYLOAD_BYTES")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(JANITOR_DEFAULT_MAX_BYTES);
+    let tick_secs = std::env::var("XVN_JANITOR_INTERVAL_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(JANITOR_DEFAULT_TICK_SECS);
+    (
+        xvision_observability::JanitorConfig {
+            payload_ttl_days: ttl_days,
+            max_payload_bytes: max_bytes,
+        },
+        std::time::Duration::from_secs(tick_secs.max(1)),
+    )
+}
+
+/// Spawn the retention janitor as a periodic background task at engine
+/// boot. The handle is returned so the caller can `abort()` it at
+/// process shutdown; in practice the dashboard's `serve` lets it run
+/// for the whole process lifetime.
+///
+/// Behaviour:
+/// - Reads TTL + max-bytes from env (`XVN_PAYLOAD_TTL_DAYS`,
+///   `XVN_MAX_PAYLOAD_BYTES`); defaults documented on
+///   [`JANITOR_DEFAULT_TTL_DAYS`] / [`JANITOR_DEFAULT_MAX_BYTES`].
+/// - Builds the blob store at `$xvn_home/agent_runs/blobs/` — same path
+///   the eval emitter writes to.
+/// - If the blob root is missing it logs and silently skips (no panic).
+///   We try `create_dir_all` first so the common "fresh install"
+///   case still gets a running janitor.
+///
+/// Returns `None` when no task was spawned (blob root missing AND
+/// couldn't be created); otherwise the `JoinHandle` of the periodic
+/// task.
+pub fn spawn_retention_janitor(ctx: &ApiContext) -> Option<tokio::task::JoinHandle<()>> {
+    let blob_root = ctx.xvn_home.join("agent_runs").join("blobs");
+    // Best-effort: create the dir so the very first boot on a fresh
+    // host still gets a running janitor. If creation fails (read-only
+    // mount, permissions), log and skip — never panic.
+    if !blob_root.exists() {
+        if let Err(e) = std::fs::create_dir_all(&blob_root) {
+            tracing::warn!(
+                target: "xvision_engine::janitor",
+                blob_root = %blob_root.display(),
+                error = %e,
+                "retention janitor skipped: blob root does not exist and could not be created"
+            );
+            return None;
+        }
+    }
+    let blob_store = xvision_observability::BlobStore::new(blob_root.clone());
+    let (config, interval) = resolve_janitor_config_from_env();
+    tracing::info!(
+        target: "xvision_engine::janitor",
+        blob_root = %blob_root.display(),
+        payload_ttl_days = config.payload_ttl_days,
+        max_payload_bytes = config.max_payload_bytes,
+        tick_secs = interval.as_secs(),
+        "retention janitor spawned"
+    );
+    Some(xvision_observability::spawn_janitor(
+        ctx.db.clone(),
+        blob_store,
+        config,
+        interval,
+    ))
 }
 
 pub async fn scenarios(ctx: &ApiContext) -> ApiResult<Vec<ScenarioSummary>> {
@@ -1918,6 +2211,117 @@ fn load_or_create_signing_key(xvn_home: &Path) -> anyhow::Result<SigningKey> {
     Ok(key)
 }
 
+// ── Batch persistence API (migration 020) ─────────────────────────────────────
+
+use crate::eval::batch_store::{Batch, BatchStore};
+
+/// Request shape for `create_batch`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateBatchRequest {
+    pub strategy_id: String,
+    /// Agent profile id for `--review-with` (optional).
+    pub review_with: Option<String>,
+}
+
+/// Request shape for `list_batches`.
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct ListBatchesRequest {
+    /// Optional strategy filter (most-recent-first ordering preserved).
+    pub strategy_id: Option<String>,
+}
+
+/// `Batch` + its associated run ids (joined via `eval_runs.batch_id`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchDetail {
+    #[serde(flatten)]
+    pub batch: Batch,
+    pub run_ids: Vec<String>,
+}
+
+/// Insert a new `eval_batches` row with `status = 'running'`. Returns the
+/// persisted `Batch` so callers have the generated `batch_id` immediately.
+pub async fn create_batch(ctx: &ApiContext, req: CreateBatchRequest) -> ApiResult<Batch> {
+    let store = BatchStore::new(ctx.db.clone());
+    store
+        .create(&req.strategy_id, req.review_with.as_deref())
+        .await
+        .map_err(|e| ApiError::Internal(format!("create_batch: {e}")))
+}
+
+/// Load a batch plus its associated run ids (sorted by `started_at`).
+pub async fn get_batch(ctx: &ApiContext, batch_id: &str) -> ApiResult<BatchDetail> {
+    let store = BatchStore::new(ctx.db.clone());
+    let batch = store
+        .get(batch_id)
+        .await
+        .map_err(|e| ApiError::Internal(format!("get_batch: {e}")))?
+        .ok_or_else(|| ApiError::NotFound(format!("batch '{batch_id}'")))?;
+    let run_ids = store
+        .run_ids_for_batch(batch_id)
+        .await
+        .map_err(|e| ApiError::Internal(format!("run_ids_for_batch: {e}")))?;
+    Ok(BatchDetail { batch, run_ids })
+}
+
+/// List batches most-recent first; optionally filter by `strategy_id`.
+pub async fn list_batches(ctx: &ApiContext, req: ListBatchesRequest) -> ApiResult<Vec<Batch>> {
+    let store = BatchStore::new(ctx.db.clone());
+    store
+        .list(req.strategy_id.as_deref())
+        .await
+        .map_err(|e| ApiError::Internal(format!("list_batches: {e}")))
+}
+
+/// Compute rollup status from the batch's run statuses and set `completed_at`.
+/// Idempotent: re-calling on a batch that already has a terminal status is
+/// a no-op and returns the stored row unchanged.
+pub async fn finalize_batch(ctx: &ApiContext, batch_id: &str) -> ApiResult<Batch> {
+    let batch_store = BatchStore::new(ctx.db.clone());
+    let run_store = RunStore::new(ctx.db.clone());
+
+    // Load current batch first to check if already terminal.
+    let batch = batch_store
+        .get(batch_id)
+        .await
+        .map_err(|e| ApiError::Internal(format!("get batch for finalize: {e}")))?
+        .ok_or_else(|| ApiError::NotFound(format!("batch '{batch_id}'")))?;
+
+    if matches!(batch.status.as_str(), "completed" | "partial" | "failed") {
+        return Ok(batch);
+    }
+
+    // Load run statuses for this batch.
+    let run_ids = batch_store
+        .run_ids_for_batch(batch_id)
+        .await
+        .map_err(|e| ApiError::Internal(format!("run_ids_for_batch: {e}")))?;
+
+    let mut statuses: Vec<String> = Vec::with_capacity(run_ids.len());
+    for run_id in &run_ids {
+        let run = run_store
+            .get(run_id)
+            .await
+            .map_err(|e| ApiError::Internal(format!("get run {run_id}: {e}")))?;
+        statuses.push(run.status.as_str().to_string());
+    }
+
+    let status_refs: Vec<&str> = statuses.iter().map(String::as_str).collect();
+    batch_store
+        .finalize(batch_id, &status_refs)
+        .await
+        .map_err(|e| ApiError::Internal(format!("finalize batch: {e}")))
+}
+
+/// Attach a run to an existing batch. Called by `batch run` immediately after
+/// each run completes. Idempotent if the run already carries the batch_id.
+pub async fn attach_run_to_batch(ctx: &ApiContext, run_id: &str, batch_id: &str) -> ApiResult<()> {
+    let store = BatchStore::new(ctx.db.clone());
+    store
+        .attach_run(run_id, batch_id)
+        .await
+        .map_err(|e| ApiError::Internal(format!("attach_run_to_batch: {e}")))
+}
+
 mod tests {
     use super::*;
     use crate::strategies::{
@@ -2017,6 +2421,7 @@ mod tests {
             ),
             max_tokens: Some(4096),
             temperature: None,
+            inputs_policy: crate::agents::InputsPolicy::Raw,
         }];
 
         let slots = runtime_slots(&strategy, &agent_slots);
@@ -2057,6 +2462,7 @@ mod tests {
             ),
             max_tokens: Some(4096),
             temperature: None,
+            inputs_policy: crate::agents::InputsPolicy::Raw,
         }];
 
         let err = validate_eval_trader_source(&strategy, &agent_slots).unwrap_err();
@@ -2089,6 +2495,7 @@ mod tests {
             ),
             max_tokens: Some(4096),
             temperature: None,
+            inputs_policy: crate::agents::InputsPolicy::Raw,
         }];
 
         validate_eval_trader_source(&strategy, &agent_slots).unwrap();

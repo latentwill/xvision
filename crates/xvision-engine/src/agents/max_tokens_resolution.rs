@@ -17,7 +17,7 @@
 
 #![cfg(test)]
 
-use crate::agents::model::AgentSlot;
+use crate::agents::model::{AgentSlot, InputsPolicy};
 
 fn slot_with(provider: &str, model: &str, max_tokens: Option<u32>) -> AgentSlot {
     AgentSlot {
@@ -29,6 +29,7 @@ fn slot_with(provider: &str, model: &str, max_tokens: Option<u32>) -> AgentSlot 
         max_tokens,
         temperature: None,
         prompt_version: String::new(),
+        inputs_policy: InputsPolicy::Raw,
     }
 }
 

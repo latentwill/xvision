@@ -1,0 +1,43 @@
+-- 020_agent_slot_inputs_policy.sql — F-6 causal input sanitization.
+--
+-- Adds a per-slot `inputs_policy` knob so the eval executor knows
+-- whether to strip "leaky" fields (timestamp + decision_index) before
+-- handing the seed to the trader LLM. The v4 causal prompts say
+-- "Do not use timestamp or decision_index" but the harness has been
+-- silently leaking both — see harness audit F-6
+-- (`team/intake/2026-05-19-eval-traces-end-to-end-audit.md`).
+--
+-- Allowed values:
+--   * `raw`     — today's behavior. Every field flows through verbatim.
+--                 This is the migration default so existing rows behave
+--                 exactly as before; the regression-guard unit test in
+--                 `eval::executor::paper` pins byte-identical JSON.
+--   * `causal`  — strip `timestamp` from per-bar history entries (emit
+--                 `bar_index` instead, with 0 = oldest visible bar in
+--                 the `bar_history` slice) and drop `decision_index`
+--                 from the top-level seed. The current bar still
+--                 carries its OHLCV — only the wall-clock label is
+--                 hidden.
+--   * `oracle`  — behaves identically to `raw` at runtime. The tag
+--                 exists so downstream consumers (eval review UI, the
+--                 cohort tagging in the marketplace) can mark a slot
+--                 as deliberately oracle-style without re-saving it as
+--                 `raw`. The two seeded "oracle / cheating" agents
+--                 (`BTC 1h timestamp trend rider v2`,
+--                 `BTC 1h timestamp swing oracle v3`) should be
+--                 re-saved with this value once F-6 lands.
+--
+-- The column is `TEXT NOT NULL DEFAULT 'raw'` so existing rows pick up
+-- the safe default automatically. No backfill pass is required; the
+-- next save through `AgentStore` re-stamps whatever value the operator
+-- selected in the UI/CLI.
+--
+-- The application layer enforces the allowed-values set via the
+-- `agents::model::InputsPolicy` enum's `serde(rename_all = "lowercase")`
+-- parse step. A CHECK constraint would be a tighter guard, but SQLite
+-- can't add CHECK constraints via `ALTER TABLE` — adding one would
+-- require a full table rebuild for a single-column change, which is
+-- not worth the migration complexity for a value space the engine
+-- already enforces at the Rust boundary.
+
+ALTER TABLE agent_slots ADD COLUMN inputs_policy TEXT NOT NULL DEFAULT 'raw';

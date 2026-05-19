@@ -12,6 +12,7 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::eval::behavior::{derive_behavior_summary, BehaviorSummary};
 use crate::eval::findings::Finding;
 use crate::eval::run::{MetricsSummary, RunMode, RunStatus};
 use crate::eval::store::RunStore;
@@ -46,6 +47,11 @@ pub struct ComparisonRunSummary {
     pub completed_at: Option<DateTime<Utc>>,
     pub metrics: Option<MetricsSummary>,
     pub error: Option<String>,
+    /// Derived action-distribution + behaviour summary for this run.
+    /// Populated by `compare_runs`; `None` only when the decision store
+    /// query fails for this run (treated as best-effort, not fatal).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub behavior: Option<BehaviorSummary>,
 }
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
@@ -95,6 +101,13 @@ pub async fn compare_runs(run_ids: &[String], store: &RunStore) -> Result<Compar
             .read_findings(id)
             .await
             .with_context(|| format!("compare_runs: findings for {id}"))?;
+        // Action distribution + behaviour summary — best-effort.
+        let behavior = store
+            .read_decisions(&run.id)
+            .await
+            .ok()
+            .map(|rows| derive_behavior_summary(&rows));
+
         runs.push(ComparisonRunSummary {
             id: run.id.clone(),
             agent_id: run.agent_id.clone(),
@@ -105,6 +118,7 @@ pub async fn compare_runs(run_ids: &[String], store: &RunStore) -> Result<Compar
             completed_at: run.completed_at,
             metrics: run.metrics.clone(),
             error: run.error.clone(),
+            behavior,
         });
         curves.push(ComparisonEquityCurve {
             run_id: run.id,

@@ -265,30 +265,32 @@ export function ScenarioForm({
             <span className="input block">USD</span>
           </Field>
         </Row>
-        <div className="hidden sm:block">
-          <InlineRangeBar
-            startIso={from}
-            endIso={to}
-            onChange={({ startIso, endIso }) => {
-              setFrom(startIso);
-              setTo(endIso);
-              if (timeError) setTimeError(null);
-            }}
-            label="Backtest window"
-            defaultOpen={!from || !to}
-          />
-        </div>
-        <div className="block sm:hidden">
-          <MobileInlineCard
-            startIso={from}
-            endIso={to}
-            onChange={({ startIso, endIso }) => {
-              setFrom(startIso);
-              setTo(endIso);
-              if (timeError) setTimeError(null);
-            }}
-            label="Backtest window"
-          />
+        <div className="mt-3 mb-3">
+          <div className="hidden sm:block">
+            <InlineRangeBar
+              startIso={from}
+              endIso={to}
+              onChange={({ startIso, endIso }) => {
+                setFrom(startIso);
+                setTo(endIso);
+                if (timeError) setTimeError(null);
+              }}
+              label="Backtest window"
+              defaultOpen={!from || !to}
+            />
+          </div>
+          <div className="block sm:hidden">
+            <MobileInlineCard
+              startIso={from}
+              endIso={to}
+              onChange={({ startIso, endIso }) => {
+                setFrom(startIso);
+                setTo(endIso);
+                if (timeError) setTimeError(null);
+              }}
+              label="Backtest window"
+            />
+          </div>
         </div>
         {timeError ? (
           <div className="mt-1 text-[12px] text-rose-300">{timeError}</div>

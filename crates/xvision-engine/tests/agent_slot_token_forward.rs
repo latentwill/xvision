@@ -17,11 +17,9 @@
 //! 3. `AgentSlot.temperature=None` produces an outbound body that
 //!    omits the `temperature` key on both providers.
 
-use xvision_engine::agent::llm::{
-    anthropic_request_body, openai_compat_request_body, LlmRequest, Message,
-};
+use xvision_engine::agent::llm::{anthropic_request_body, openai_compat_request_body, LlmRequest, Message};
 use xvision_engine::agent::pipeline::resolve_agent_slot;
-use xvision_engine::agents::AgentSlot;
+use xvision_engine::agents::{AgentSlot, InputsPolicy};
 
 fn slot_with(max_tokens: Option<u32>, temperature: Option<f64>) -> AgentSlot {
     AgentSlot {
@@ -33,6 +31,7 @@ fn slot_with(max_tokens: Option<u32>, temperature: Option<f64>) -> AgentSlot {
         max_tokens,
         temperature,
         prompt_version: String::new(),
+        inputs_policy: InputsPolicy::Raw,
     }
 }
 
