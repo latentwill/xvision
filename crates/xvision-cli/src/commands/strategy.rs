@@ -10,7 +10,7 @@ use xvision_engine::agent::pipeline::{
     agent_slot_to_llm_slot, run_pipeline, PipelineInputs, ResolvedAgentSlot,
 };
 use xvision_engine::agents::{AgentSlot, AgentStore};
-use xvision_engine::api::{agents as api_agents, strategy as api_strategy, Actor, ApiContext, ApiError};
+use xvision_engine::api::{agents as api_agents, scenario as api_scenario, strategy as api_strategy, Actor, ApiContext, ApiError};
 use xvision_engine::strategies::slot::LLMSlot;
 use xvision_engine::strategies::store::{strategy_store_dir, FilesystemStore, StrategyStore};
 use xvision_engine::strategies::validate::validate_strategy;
@@ -57,8 +57,9 @@ enum StrategyAction {
         #[arg(long)]
         json: bool,
     },
-    /// Validate a saved strategy by id.
-    Validate { id: String },
+    /// Validate a saved strategy by id. Optionally pair with a scenario id
+    /// to run a full eval-readiness preflight.
+    Validate(ValidateArgs),
     /// List all saved strategy ids.
     Ls {
         /// Emit as JSON array instead of one id per line.
@@ -133,6 +134,39 @@ enum StrategyAction {
     },
 }
 
+/// Args for `xvn strategy validate`.
+#[derive(Args, Debug)]
+pub struct ValidateArgs {
+    /// Strategy id to validate.
+    pub id: String,
+    /// Scenario id to run the full eval-readiness preflight against.
+    /// Without this flag only the shape-only check is performed and
+    /// `eval_ready` is always `false`.
+    #[arg(long)]
+    pub scenario: Option<String>,
+    /// Emit results as JSON.
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// Result of a strategy preflight check. Serialisable so `--json` can emit
+/// it directly.
+#[derive(Debug, serde::Serialize)]
+pub struct PreflightReport {
+    pub strategy_id: String,
+    pub eval_ready: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected_decisions: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub asset: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeframe: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warmup_bars: Option<u32>,
+    pub warnings: Vec<String>,
+    pub errors: Vec<String>,
+}
+
 pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
     match cmd.action {
         StrategyAction::New {
@@ -144,7 +178,7 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
             model,
             json,
         } => new(from_file, template, name, creator, provider, model, json).await,
-        StrategyAction::Validate { id } => validate(&id).await,
+        StrategyAction::Validate(args) => run_validate(args).await,
         StrategyAction::Ls { json } => ls(json).await,
         StrategyAction::Show { id, format } => show(&id, format).await,
         StrategyAction::Templates { json } => templates(json).await,
@@ -356,11 +390,276 @@ fn load_strategy_file(path: &std::path::Path) -> CliResult<xvision_engine::strat
     }
 }
 
-async fn validate(id: &str) -> CliResult<()> {
-    let strategy = store().load(id).await.exit_with(XvnExit::NotFound)?;
-    validate_strategy(&strategy).exit_with(XvnExit::Usage)?;
-    println!("ok");
-    Ok(())
+async fn run_validate(args: ValidateArgs) -> CliResult<()> {
+    let strategy = store().load(&args.id).await.exit_with(XvnExit::NotFound)?;
+
+    let mut errors: Vec<String> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
+
+    // Check 1 / shape-only: structural validity.
+    if let Err(e) = validate_strategy(&strategy) {
+        errors.push(format!("shape validation: {e}"));
+    }
+
+    // Check 10 / template registry: reject unknown template names.
+    if !strategy.manifest.template.is_empty() && registry::get(&strategy.manifest.template).is_none() {
+        errors.push(format!(
+            "unknown template '{}' — not in registry",
+            strategy.manifest.template
+        ));
+    }
+
+    // Without --scenario return shape-only result.
+    let Some(scenario_id) = args.scenario else {
+        warnings.push("no --scenario supplied; run shape-only check only".to_string());
+        let report = PreflightReport {
+            strategy_id: args.id.clone(),
+            eval_ready: false,
+            expected_decisions: None,
+            asset: None,
+            timeframe: None,
+            warmup_bars: None,
+            warnings,
+            errors,
+        };
+        return emit_preflight_report(&report, args.json);
+    };
+
+    // Full preflight with scenario.
+    let ctx = open_ctx().await?;
+
+    // Checks 2 + 3 + 4 + 5: attached agents exist, trader role present,
+    // provider/model configured, provider enabled.
+    let mut has_trader = false;
+    // Legacy trader slot counts as trader.
+    if strategy.trader_slot.is_some() {
+        has_trader = true;
+    }
+
+    // Load provider list once for check 5 (best-effort; skip on error).
+    let provider_list = load_provider_names(&ctx).await;
+
+    for agent_ref in &strategy.agents {
+        let role_lower = agent_ref.role.to_ascii_lowercase();
+        if role_lower == "trader" {
+            has_trader = true;
+        }
+        // Check 2: agent exists.
+        match api_agents::get(&ctx, &agent_ref.agent_id).await {
+            Err(_) => {
+                errors.push(format!(
+                    "agent '{}' (role '{}') not found",
+                    agent_ref.agent_id, agent_ref.role
+                ));
+                continue; // can't check slots on a missing agent
+            }
+            Ok(agent) => {
+                // Check 4: provider/model populated on the agent's primary slot.
+                if let Some(slot) = agent.slots.first() {
+                    if slot.provider.trim().is_empty() {
+                        warnings.push(format!(
+                            "agent '{}' (role '{}') has no provider set",
+                            agent_ref.agent_id, agent_ref.role
+                        ));
+                    } else {
+                        // Check 5: provider enabled.
+                        if let Some(ref known) = provider_list {
+                            if !known.iter().any(|p| p == slot.provider.trim()) {
+                                warnings.push(format!(
+                                    "agent '{}' (role '{}') provider '{}' not in config",
+                                    agent_ref.agent_id, agent_ref.role, slot.provider
+                                ));
+                            }
+                        }
+                    }
+                    if slot.model.trim().is_empty() {
+                        warnings.push(format!(
+                            "agent '{}' (role '{}') has no model set",
+                            agent_ref.agent_id, agent_ref.role
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    // Check 3: trader role.
+    if !strategy.agents.is_empty() && !has_trader {
+        errors.push("no trader agent on strategy (no AgentRef with role 'trader')".to_string());
+    }
+
+    // Check 6: scenario exists.
+    let scenario = match api_scenario::get(&ctx, &scenario_id).await {
+        Err(_) => {
+            errors.push(format!("scenario '{}' not found", scenario_id));
+            // Can't run scenario-based checks without the scenario.
+            let report = PreflightReport {
+                strategy_id: args.id.clone(),
+                eval_ready: errors.is_empty(),
+                expected_decisions: None,
+                asset: None,
+                timeframe: None,
+                warmup_bars: None,
+                warnings,
+                errors,
+            };
+            return emit_preflight_report(&report, args.json);
+        }
+        Ok(s) => s,
+    };
+
+    // Check 7: asset/timeframe.
+    let asset_display = scenario
+        .asset
+        .first()
+        .map(|a| a.venue_symbol.clone())
+        .unwrap_or_default();
+    let timeframe_display = scenario.granularity.canonical();
+
+    // Heuristic prompt scan: check if any agent prompt mentions known asset
+    // symbols or timeframe tokens that don't match the scenario.
+    let known_symbols = ["BTC", "ETH", "SOL", "AVAX", "DOGE", "LINK", "MATIC", "DOT", "ADA", "XRP"];
+    let known_timeframes = ["1m", "5m", "15m", "1h", "4h", "6h", "1d", "1w"];
+    let scenario_symbol = scenario
+        .asset
+        .first()
+        .map(|a| a.symbol.to_ascii_uppercase())
+        .unwrap_or_default();
+
+    // Collect all system prompt text from agent slots.
+    let mut all_prompt_text = String::new();
+    for agent_ref in &strategy.agents {
+        if let Ok(agent) = api_agents::get(&ctx, &agent_ref.agent_id).await {
+            for slot in &agent.slots {
+                all_prompt_text.push(' ');
+                all_prompt_text.push_str(&slot.system_prompt);
+            }
+        }
+    }
+    // Also include legacy slot prompts if present.
+    for slot in [&strategy.regime_slot, &strategy.intern_slot, &strategy.trader_slot]
+        .into_iter()
+        .flatten()
+    {
+        all_prompt_text.push(' ');
+        all_prompt_text.push_str(&slot.prompt);
+    }
+
+    if !all_prompt_text.is_empty() {
+        // Tokenize once — check exact word matches (trimmed lowercase without punctuation).
+        let prompt_tokens: Vec<String> = all_prompt_text
+            .split_whitespace()
+            .map(|w| {
+                w.trim_matches(|c: char| !c.is_ascii_alphanumeric())
+                    .to_ascii_uppercase()
+            })
+            .filter(|w| !w.is_empty())
+            .collect();
+
+        for sym in &known_symbols {
+            if prompt_tokens.iter().any(|t| t == sym) && *sym != scenario_symbol.as_str() {
+                warnings.push(format!(
+                    "prompt mentions {sym} but scenario asset is {asset_display}"
+                ));
+            }
+        }
+
+        let prompt_tokens_lower: Vec<String> = all_prompt_text
+            .split_whitespace()
+            .map(|w| {
+                w.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '-')
+                    .to_ascii_lowercase()
+            })
+            .filter(|w| !w.is_empty())
+            .collect();
+
+        for tf in &known_timeframes {
+            if prompt_tokens_lower.iter().any(|t| t == tf) && *tf != timeframe_display.as_str() {
+                warnings.push(format!(
+                    "prompt mentions timeframe {tf} but scenario granularity is {timeframe_display}"
+                ));
+            }
+        }
+    }
+
+    // Check 8: warmup_bars.
+    if scenario.warmup_bars == 0 {
+        warnings.push("scenario warmup_bars is 0 — strategy may lack context bars at bar 1".to_string());
+    }
+
+    // Check 9: expected_decisions.
+    let window_secs = (scenario.time_window.end - scenario.time_window.start)
+        .num_seconds()
+        .max(0) as u64;
+    let granularity_secs = scenario.granularity.seconds();
+    let expected_decisions = if granularity_secs > 0 {
+        let total_bars = window_secs / granularity_secs;
+        (total_bars as i64) - (scenario.warmup_bars as i64)
+    } else {
+        0
+    };
+
+    let report = PreflightReport {
+        strategy_id: args.id.clone(),
+        eval_ready: errors.is_empty(),
+        expected_decisions: Some(expected_decisions),
+        asset: Some(asset_display),
+        timeframe: Some(timeframe_display),
+        warmup_bars: Some(scenario.warmup_bars),
+        warnings,
+        errors,
+    };
+    emit_preflight_report(&report, args.json)
+}
+
+/// Load the names of configured providers for check 5. Returns `None`
+/// when the config is missing or unreadable — the check becomes a no-op
+/// rather than a hard error.
+async fn load_provider_names(ctx: &ApiContext) -> Option<Vec<String>> {
+    use xvision_engine::api::settings::providers as api_providers;
+    let config_path = ctx.xvn_home.join("config").join("default.toml");
+    api_providers::list(ctx, &config_path)
+        .await
+        .ok()
+        .map(|report| report.providers.into_iter().map(|p| p.name).collect())
+}
+
+fn emit_preflight_report(report: &PreflightReport, json: bool) -> CliResult<()> {
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(report).exit_with(XvnExit::Upstream)?
+        );
+    } else {
+        println!("strategy:  {}", report.strategy_id);
+        println!("eval_ready: {}", report.eval_ready);
+        if let Some(asset) = &report.asset {
+            println!("asset:     {asset}");
+        }
+        if let Some(tf) = &report.timeframe {
+            println!("timeframe: {tf}");
+        }
+        if let Some(wb) = report.warmup_bars {
+            println!("warmup_bars: {wb}");
+        }
+        if let Some(ed) = report.expected_decisions {
+            println!("expected_decisions: {ed}");
+        }
+        for w in &report.warnings {
+            println!("warning: {w}");
+        }
+        for e in &report.errors {
+            println!("error: {e}");
+        }
+    }
+    if report.eval_ready {
+        Ok(())
+    } else {
+        Err(CliError::usage(anyhow::anyhow!(
+            "strategy is not eval-ready: {} error(s)",
+            report.errors.len()
+        )))
+    }
 }
 
 async fn ls(json: bool) -> CliResult<()> {
