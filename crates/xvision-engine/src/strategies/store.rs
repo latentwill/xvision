@@ -2,9 +2,153 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 use crate::strategies::id::{validate_strategy_id_for_path, StrategyIdError};
 use crate::strategies::Strategy;
+
+/// Partial-update body for [`update_metadata`]. All fields are
+/// optional; `None` means "leave the existing value unchanged". A
+/// patch with every field `None` is a valid no-op and round-trips the
+/// stored strategy untouched.
+///
+/// Scope is deliberately narrow: only the three operator-editable
+/// top-level manifest fields a typo in the create wizard could land
+/// on. The strategy `id`, `creator`, `template`, `published_at`,
+/// `risk_preset_or_config`, `agents`, `pipeline`, `risk`, and
+/// `mechanical_params` are out of scope — they either have dedicated
+/// sub-routes (slot/agents/pipeline/risk) or are immutable
+/// post-create.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct StrategyMetadataPatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plain_summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asset_universe: Option<Vec<String>>,
+}
+
+/// Structured errors from [`update_metadata`]. Each variant maps to
+/// an operator-readable remediation message; the dashboard error
+/// classifier surfaces these as `400 validation` rather than `500
+/// internal` (#256 convention).
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum MetadataPatchError {
+    #[error("display_name cannot be empty — provide a non-blank title")]
+    EmptyDisplayName,
+    #[error("plain_summary cannot be empty — provide a non-blank description or omit the field")]
+    EmptyPlainSummary,
+    #[error("asset_universe cannot be empty — provide at least one asset symbol or omit the field")]
+    EmptyAssetUniverse,
+    #[error("asset_universe cannot include blank entries — drop the empty value or omit the field")]
+    BlankAssetEntry,
+    #[error("asset_universe entry '{0}' is not a valid asset symbol — expected SYMBOL/QUOTE (e.g. BTC/USD)")]
+    InvalidAssetSymbol(String),
+}
+
+/// Returns `Ok(normalized_assets)` if every entry is a recognizable
+/// asset symbol of the form `BASE/QUOTE`. Trims whitespace and
+/// uppercases the result for storage. De-duplicates while preserving
+/// first-seen order.
+///
+/// Kept here (rather than in `validate.rs`) because the per-entry
+/// AssetSymbol shape check is patch-time validation, not the
+/// holistic strategy-shape validation `validate_strategy` runs at
+/// agent-pipeline acceptance.
+fn normalize_asset_universe(input: Vec<String>) -> Result<Vec<String>, MetadataPatchError> {
+    let mut out: Vec<String> = Vec::with_capacity(input.len());
+    for raw in input {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return Err(MetadataPatchError::BlankAssetEntry);
+        }
+        // BASE/QUOTE shape. Both halves must be non-empty,
+        // alphanumeric. This matches what the existing prompt /
+        // manifest drift checker recognizes as an asset token.
+        let (base, quote) = trimmed
+            .split_once('/')
+            .ok_or_else(|| MetadataPatchError::InvalidAssetSymbol(trimmed.to_string()))?;
+        let base = base.trim();
+        let quote = quote.trim();
+        if base.is_empty()
+            || quote.is_empty()
+            || !base.chars().all(|c| c.is_ascii_alphanumeric())
+            || !quote.chars().all(|c| c.is_ascii_alphanumeric())
+        {
+            return Err(MetadataPatchError::InvalidAssetSymbol(trimmed.to_string()));
+        }
+        let normalized = format!("{}/{}", base.to_ascii_uppercase(), quote.to_ascii_uppercase());
+        if !out.iter().any(|existing| existing == &normalized) {
+            out.push(normalized);
+        }
+    }
+    if out.is_empty() {
+        return Err(MetadataPatchError::EmptyAssetUniverse);
+    }
+    Ok(out)
+}
+
+/// Apply a [`StrategyMetadataPatch`] to `strategy` in place. Returns
+/// `Ok(())` if every supplied field validates; otherwise returns the
+/// first encountered [`MetadataPatchError`] without mutating the
+/// strategy.
+///
+/// Two-phase: validate every Some-field first (so a partial patch
+/// failure doesn't leave the strategy half-updated), then apply.
+pub fn apply_metadata_patch(
+    strategy: &mut Strategy,
+    patch: StrategyMetadataPatch,
+) -> Result<(), MetadataPatchError> {
+    // ── phase 1: validate every provided field ────────────────────
+    let display_name = patch
+        .display_name
+        .map(|name| {
+            let trimmed = name.trim();
+            if trimmed.is_empty() {
+                Err(MetadataPatchError::EmptyDisplayName)
+            } else {
+                Ok(trimmed.to_string())
+            }
+        })
+        .transpose()?;
+
+    let plain_summary = patch
+        .plain_summary
+        .map(|summary| {
+            let trimmed = summary.trim();
+            if trimmed.is_empty() {
+                Err(MetadataPatchError::EmptyPlainSummary)
+            } else {
+                Ok(trimmed.to_string())
+            }
+        })
+        .transpose()?;
+
+    let asset_universe = patch
+        .asset_universe
+        .map(normalize_asset_universe)
+        .transpose()?;
+
+    // ── phase 2: apply ────────────────────────────────────────────
+    if let Some(name) = display_name {
+        strategy.manifest.display_name = name;
+    }
+    if let Some(summary) = plain_summary {
+        strategy.manifest.plain_summary = summary;
+    }
+    if let Some(assets) = asset_universe {
+        strategy.manifest.asset_universe = assets;
+    }
+    Ok(())
+}
 
 /// Pre-persist validation seam used by every [`StrategyStore`]
 /// implementation. Today it runs the F-6 typed parse of
@@ -39,6 +183,33 @@ pub trait StrategyStore: Send + Sync {
     async fn load(&self, id: &str) -> anyhow::Result<Strategy>;
     async fn list(&self) -> anyhow::Result<Vec<String>>;
     async fn delete(&self, id: &str) -> anyhow::Result<()>;
+
+    /// Apply a partial metadata patch to the strategy identified by
+    /// `id`. `None` fields on the patch are left unchanged on disk;
+    /// supplying an empty patch (every field `None`) is a valid no-op
+    /// that round-trips the stored strategy unchanged.
+    ///
+    /// Validation runs before persistence — an invalid patch returns
+    /// a [`MetadataPatchError`] (downcastable via `anyhow::Error::downcast`)
+    /// without touching disk. The strategy `id` is preserved; the
+    /// route layer relies on this to keep eval-run links stable.
+    ///
+    /// Default impl is load → validate → save so any `StrategyStore`
+    /// implementation gets metadata patching for free.
+    async fn update_metadata(
+        &self,
+        id: &str,
+        patch: StrategyMetadataPatch,
+    ) -> anyhow::Result<Strategy> {
+        let mut strategy = self.load(id).await?;
+        // Validation errors must surface as `MetadataPatchError` so
+        // the dashboard can map them to a classified 400 instead of
+        // a 500 — `anyhow::Error::from` keeps the typed cause in
+        // the error chain so the caller can downcast it.
+        apply_metadata_patch(&mut strategy, patch)?;
+        self.save(&strategy).await?;
+        Ok(strategy)
+    }
 }
 
 pub struct FilesystemStore {
@@ -264,5 +435,183 @@ mod tests {
             .save(&s)
             .await
             .expect("Custom arm preserves operator templates without rejection");
+    }
+
+    // ── strategy-edit-top-level-fields — metadata patch ─────────────
+
+    #[tokio::test]
+    async fn update_metadata_applies_provided_fields_and_leaves_others_alone() {
+        let (store, _td) = store_in_tmp();
+        let mut s = strategy_with_id("01HZSTRATEGYMETA0000000001");
+        s.manifest.display_name = "Old title".into();
+        s.manifest.plain_summary = "Old summary".into();
+        s.manifest.asset_universe = vec!["BTC/USD".into()];
+        s.manifest.template = "trend_follower".into();
+        // template is meaningful — it must not be mutated by the patch.
+        store.save(&s).await.unwrap();
+
+        let patched = store
+            .update_metadata(
+                "01HZSTRATEGYMETA0000000001",
+                StrategyMetadataPatch {
+                    display_name: Some("New title".into()),
+                    plain_summary: None,
+                    asset_universe: Some(vec!["eth/usd".into(), "btc/usd".into()]),
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(patched.manifest.id, "01HZSTRATEGYMETA0000000001");
+        assert_eq!(patched.manifest.display_name, "New title");
+        // Untouched field stays put.
+        assert_eq!(patched.manifest.plain_summary, "Old summary");
+        // Assets are normalized + de-duped.
+        assert_eq!(patched.manifest.asset_universe, vec!["ETH/USD", "BTC/USD"]);
+        // Out-of-scope fields untouched.
+        assert_eq!(patched.manifest.template, "trend_follower");
+        assert!(patched.manifest.published_at.is_none());
+    }
+
+    #[tokio::test]
+    async fn update_metadata_empty_patch_is_valid_noop() {
+        let (store, _td) = store_in_tmp();
+        let mut s = strategy_with_id("01HZSTRATEGYNOOP0000000001");
+        s.manifest.display_name = "Stable".into();
+        s.manifest.plain_summary = "Stable summary".into();
+        s.manifest.asset_universe = vec!["BTC/USD".into()];
+        store.save(&s).await.unwrap();
+
+        let after = store
+            .update_metadata(
+                "01HZSTRATEGYNOOP0000000001",
+                StrategyMetadataPatch::default(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(after.manifest.display_name, "Stable");
+        assert_eq!(after.manifest.plain_summary, "Stable summary");
+        assert_eq!(after.manifest.asset_universe, vec!["BTC/USD"]);
+    }
+
+    #[tokio::test]
+    async fn update_metadata_rejects_empty_display_name_without_touching_disk() {
+        let (store, _td) = store_in_tmp();
+        let mut s = strategy_with_id("01HZSTRATEGYBADNAME000000A");
+        s.manifest.display_name = "Original".into();
+        store.save(&s).await.unwrap();
+
+        let err = store
+            .update_metadata(
+                "01HZSTRATEGYBADNAME000000A",
+                StrategyMetadataPatch {
+                    display_name: Some("   ".into()),
+                    plain_summary: None,
+                    asset_universe: None,
+                },
+            )
+            .await
+            .expect_err("blank display_name must be rejected");
+        // Typed error is downcastable for the dashboard classifier.
+        let typed: Option<&MetadataPatchError> = err.downcast_ref();
+        assert_eq!(typed, Some(&MetadataPatchError::EmptyDisplayName));
+
+        // Disk is untouched — display_name stayed as "Original".
+        let loaded = store.load("01HZSTRATEGYBADNAME000000A").await.unwrap();
+        assert_eq!(loaded.manifest.display_name, "Original");
+    }
+
+    #[tokio::test]
+    async fn update_metadata_rejects_blank_asset_entry() {
+        let (store, _td) = store_in_tmp();
+        let s = strategy_with_id("01HZSTRATEGYBLANKASSET0001");
+        store.save(&s).await.unwrap();
+
+        let err = store
+            .update_metadata(
+                "01HZSTRATEGYBLANKASSET0001",
+                StrategyMetadataPatch {
+                    asset_universe: Some(vec!["BTC/USD".into(), "  ".into()]),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect_err("blank asset entry must be rejected");
+        assert_eq!(
+            err.downcast_ref::<MetadataPatchError>(),
+            Some(&MetadataPatchError::BlankAssetEntry)
+        );
+    }
+
+    #[tokio::test]
+    async fn update_metadata_rejects_invalid_asset_symbol() {
+        let (store, _td) = store_in_tmp();
+        let s = strategy_with_id("01HZSTRATEGYBADASSET00001Z");
+        store.save(&s).await.unwrap();
+
+        let err = store
+            .update_metadata(
+                "01HZSTRATEGYBADASSET00001Z",
+                StrategyMetadataPatch {
+                    asset_universe: Some(vec!["not-an-asset".into()]),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect_err("symbol without `/` must be rejected");
+        match err.downcast_ref::<MetadataPatchError>() {
+            Some(MetadataPatchError::InvalidAssetSymbol(_)) => {}
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn update_metadata_rejects_empty_asset_list() {
+        let (store, _td) = store_in_tmp();
+        let s = strategy_with_id("01HZSTRATEGYEMPTYASSETS001");
+        store.save(&s).await.unwrap();
+
+        let err = store
+            .update_metadata(
+                "01HZSTRATEGYEMPTYASSETS001",
+                StrategyMetadataPatch {
+                    asset_universe: Some(vec![]),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect_err("empty asset list must be rejected when provided");
+        assert_eq!(
+            err.downcast_ref::<MetadataPatchError>(),
+            Some(&MetadataPatchError::EmptyAssetUniverse)
+        );
+    }
+
+    #[tokio::test]
+    async fn update_metadata_preserves_strategy_id_across_edit() {
+        // The cycle-id-stable invariant: editing top-level fields must
+        // never change `manifest.id`. Eval runs reference the strategy
+        // by this id, so a rename would orphan them.
+        let (store, _td) = store_in_tmp();
+        let s = strategy_with_id("01HZSTRATEGYIDSTABLE00001A");
+        store.save(&s).await.unwrap();
+
+        let patched = store
+            .update_metadata(
+                "01HZSTRATEGYIDSTABLE00001A",
+                StrategyMetadataPatch {
+                    display_name: Some("Renamed".into()),
+                    plain_summary: Some("New summary".into()),
+                    asset_universe: Some(vec!["ETH/USD".into()]),
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(patched.manifest.id, "01HZSTRATEGYIDSTABLE00001A");
+        let reloaded = store.load("01HZSTRATEGYIDSTABLE00001A").await.unwrap();
+        assert_eq!(reloaded.manifest.id, "01HZSTRATEGYIDSTABLE00001A");
+        assert_eq!(reloaded.manifest.display_name, "Renamed");
     }
 }

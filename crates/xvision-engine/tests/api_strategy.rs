@@ -473,3 +473,88 @@ async fn remove_agent_prunes_graph_edges_for_removed_role() {
     assert!(out.agents.iter().all(|agent| agent.role != "trader"));
     assert!(out.pipeline.edges.is_empty());
 }
+
+#[tokio::test]
+async fn update_metadata_audits_and_refreshes_search_index() {
+    // PR #322 review (P2): the engine wrapper for metadata patching
+    // must write an api_audit row and refresh the search index — the
+    // dashboard route used to bypass both by calling the store
+    // directly.
+    use xvision_engine::api::search as api_search;
+    use xvision_engine::search::{SearchKind, SearchQuery};
+    use xvision_engine::strategies::store::StrategyMetadataPatch;
+
+    let (ctx, _dir) = test_context().await;
+    let s = create_sample_strategy(&ctx).await;
+    let id = s.manifest.id.clone();
+
+    let patch = StrategyMetadataPatch {
+        display_name: Some("RenamedForSearch".into()),
+        plain_summary: None,
+        asset_universe: None,
+    };
+    let updated = strategy::update_metadata(&ctx, &id, patch)
+        .await
+        .expect("update_metadata must succeed");
+    assert_eq!(updated.manifest.display_name, "RenamedForSearch");
+    assert_eq!(updated.manifest.id, id, "id stays stable across rename");
+
+    // Audit row recorded.
+    assert!(
+        audit_row_exists(&ctx, "update_metadata", &id).await,
+        "expected api_audit row for strategy/update_metadata target={id}",
+    );
+
+    // Search index refreshed — the new display_name must be findable
+    // without any other write happening in between.
+    let hits = api_search::search(
+        &ctx,
+        "RenamedForSearch",
+        &SearchQuery {
+            kind: Some(SearchKind::Strategy),
+            limit: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(
+        hits.iter().any(|hit| hit.artifact_id == id),
+        "renamed strategy must appear in /api/search results immediately after the patch; got hits: {hits:#?}",
+    );
+}
+
+#[tokio::test]
+async fn update_metadata_failed_validation_records_error_outcome_and_skips_index() {
+    // Negative coverage: a validation failure still audits (with
+    // outcome=error) but must NOT refresh the search index — the
+    // strategy on disk is unchanged.
+    use xvision_engine::strategies::store::StrategyMetadataPatch;
+
+    let (ctx, _dir) = test_context().await;
+    let s = create_sample_strategy(&ctx).await;
+    let id = s.manifest.id.clone();
+
+    let patch = StrategyMetadataPatch {
+        display_name: Some("   ".into()), // whitespace-only triggers EmptyDisplayName
+        plain_summary: None,
+        asset_universe: None,
+    };
+    let err = strategy::update_metadata(&ctx, &id, patch)
+        .await
+        .expect_err("empty display_name must fail validation");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("display_name") || msg.contains("empty"),
+        "error must surface the validation reason; got: {msg}",
+    );
+
+    // Audit row exists regardless (operation row records both ok and error).
+    assert!(
+        audit_row_exists(&ctx, "update_metadata", &id).await,
+        "audit row must be recorded even on validation failure",
+    );
+
+    // Strategy on disk unchanged — display_name is still the create-time value.
+    let reread = strategy::get(&ctx, &id).await.unwrap();
+    assert_eq!(reread.manifest.display_name, s.manifest.display_name);
+}

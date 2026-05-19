@@ -19,6 +19,22 @@ safe to claim in parallel.
 
 ## Follow-ups / research needed
 
+- **Capability-first agent model** (new). The current role-based design
+  still bakes too much behavior into `trader` vs `router` naming. Refactor
+  toward explicit capabilities that are granted separately from labels:
+  - a role label is user-facing / prompt-defined
+  - behavior comes from the prompt and attached capabilities, not the
+    class name
+  - `trade` is a capability, not an identity
+  - a router can coordinate specialists without having `trade`
+  - a trader-capable agent can be attached to any strategy shape that
+    needs it
+  - newer users can still start from templates, but templates should be
+    capability presets / examples layered on top of the base system
+  Output before contract: short design note under `docs/superpowers/notes/`
+  covering capability schema, enforcement points, and the migration path
+  from role-gated eval to capability-gated eval.
+
 - **User-configurable review-agent profile** (raised 2026-05-18 from
   operator QA round 2). The current review/research agent profile
   hardcodes `anthropic` as its provider. `qa-review-agent-provider-config`

@@ -48,7 +48,9 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/templates", get(strategies::list_templates))
         .route(
             "/api/strategy/:id",
-            get(strategies::get).delete(strategies::delete),
+            get(strategies::get)
+                .delete(strategies::delete)
+                .patch(strategies::patch_metadata),
         )
         .route("/api/strategy/:id/clone", post(strategies::clone))
         .route(

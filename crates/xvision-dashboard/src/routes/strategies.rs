@@ -11,15 +11,17 @@ use serde::{Deserialize, Serialize};
 
 use xvision_engine::api::chart::{self as chart_api, StrategyChartPayload};
 use xvision_engine::api::strategy::{
-    self, add_agent, remove_agent, rename_agent_role, set_pipeline, set_risk_config, update_slot,
-    validate_draft, AddAgentReq, CloneStrategyReq, RemoveAgentReq, RenameAgentRoleReq, SetPipelineReq,
-    StrategyAgentsOut, StrategySummary,
+    self, add_agent, remove_agent, rename_agent_role, set_pipeline, set_risk_config,
+    update_metadata, update_slot, validate_draft, AddAgentReq, CloneStrategyReq, RemoveAgentReq,
+    RenameAgentRoleReq, SetPipelineReq, StrategyAgentsOut, StrategySummary,
 };
+use xvision_engine::api::ApiError;
 use xvision_engine::authoring::{
     self, CreateStrategyOut, CreateStrategyReq, SetRiskConfigOut, SetRiskConfigReq, TemplateInfo,
     UpdateSlotOut, UpdateSlotReq, ValidateDraftOut,
 };
 use xvision_engine::strategies::risk::RiskConfig;
+use xvision_engine::strategies::store::{MetadataPatchError, StrategyMetadataPatch};
 use xvision_engine::strategies::Strategy;
 
 use crate::error::DashboardError;
@@ -259,6 +261,81 @@ pub async fn put_pipeline(
     )
     .await?;
     Ok(Json(out))
+}
+
+/// `PATCH /api/strategy/:id` — update top-level manifest fields
+/// (display_name, plain_summary, asset_universe). Out of scope:
+/// id/creator/template/published_at and the sub-resources covered by
+/// dedicated routes (slot/agents/pipeline/risk/mechanical_params).
+///
+/// `None`-valued patch fields are left unchanged on disk; an empty
+/// body (`{}`) is a valid no-op. Validation failures surface as
+/// classified `DashboardError::Validation` (→ HTTP 400 with an
+/// operator-readable remediation message), not as raw 400s.
+pub async fn patch_metadata(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    Json(patch): Json<StrategyMetadataPatch>,
+) -> Result<Json<Strategy>, DashboardError> {
+    // Route through the engine API wrapper so the mutation writes an
+    // `api_audit` row and refreshes the command-palette/search index
+    // — PR #322 review (P2). The wrapper preserves typed store errors
+    // via `ApiError::Other(anyhow)`, so the per-field classifier below
+    // still gets the original `MetadataPatchError` / IO `NotFound`.
+    match update_metadata(&state.api_context(), &id, patch).await {
+        Ok(updated) => Ok(Json(updated)),
+        Err(ApiError::Other(err)) => Err(classify_metadata_patch_error(err, &id)),
+        Err(other) => Err(DashboardError::from(other)),
+    }
+}
+
+/// Map errors from `StrategyStore::update_metadata` to a typed
+/// `DashboardError`. Three classes:
+///
+/// 1. `MetadataPatchError` (typed) — operator input failed the
+///    per-field validators. Surface as `Validation` with the typed
+///    remediation message.
+/// 2. `StrategyIdError` — the path id failed the path-safety
+///    validator. Surface as `Validation` so the caller sees a clean
+///    400 instead of a 500.
+/// 3. IO `NotFound` — the strategy doesn't exist. Surface as
+///    `NotFound`.
+/// 4. Anything else — pass through as `Internal` (which the
+///    `IntoResponse` impl renders as 500 with the generic message).
+fn classify_metadata_patch_error(err: anyhow::Error, id: &str) -> DashboardError {
+    if let Some(patch_err) = err.downcast_ref::<MetadataPatchError>() {
+        let field = match patch_err {
+            MetadataPatchError::EmptyDisplayName => "display_name",
+            MetadataPatchError::EmptyPlainSummary => "plain_summary",
+            MetadataPatchError::EmptyAssetUniverse
+            | MetadataPatchError::BlankAssetEntry
+            | MetadataPatchError::InvalidAssetSymbol(_) => "asset_universe",
+        };
+        return DashboardError::Validation {
+            field: field.to_string(),
+            msg: patch_err.to_string(),
+        };
+    }
+    if let Some(id_err) =
+        err.downcast_ref::<xvision_engine::strategies::id::StrategyIdError>()
+    {
+        return DashboardError::Validation {
+            field: "id".to_string(),
+            msg: format!("invalid strategy id: {id_err}"),
+        };
+    }
+    // Check the error chain for a NotFound IO error — the filesystem
+    // store wraps it under an `anyhow::Context` so a plain
+    // `downcast_ref::<std::io::Error>()` on the outer error misses
+    // the kind.
+    for cause in err.chain() {
+        if let Some(io_err) = cause.downcast_ref::<std::io::Error>() {
+            if io_err.kind() == std::io::ErrorKind::NotFound {
+                return DashboardError::NotFound(format!("strategy '{id}'"));
+            }
+        }
+    }
+    DashboardError::Internal(err)
 }
 
 #[cfg(test)]
