@@ -610,40 +610,6 @@ impl RunStore {
         Ok(())
     }
 
-    /// Record a `supervisor_notes` row for the given run. Used by the
-    /// eval early-stop guard (F-9) and the trade-guardrails track (F-7);
-    /// the duplicate-definition guard is the contract — if F-7 lands
-    /// its own helper first, the second writer should remove this one.
-    ///
-    /// `role` is one of `planner` | `reviewer` | `guard` | `system`.
-    /// `severity` is `info` | `warn` | `error`. The table FK to
-    /// `agent_runs(id)` is unenforced for the eval store (no
-    /// `PRAGMA foreign_keys=ON`), so eval `run_id`s are accepted as-is.
-    pub async fn record_supervisor_note(
-        &self,
-        run_id: &str,
-        role: &str,
-        severity: &str,
-        content: &str,
-    ) -> Result<()> {
-        let id = Ulid::new().to_string();
-        let created_at = Utc::now().to_rfc3339();
-        sqlx::query(
-            "INSERT INTO supervisor_notes (id, run_id, role, content, severity, created_at) \
-             VALUES (?, ?, ?, ?, ?, ?)",
-        )
-        .bind(id)
-        .bind(run_id)
-        .bind(role)
-        .bind(content)
-        .bind(severity)
-        .bind(created_at)
-        .execute(&self.pool)
-        .await
-        .with_context(|| format!("insert supervisor_notes run_id={run_id} role={role}"))?;
-        Ok(())
-    }
-
     /// Read all supervisor_notes for a run, ordered by `created_at`.
     /// Tuple shape: `(role, severity, content)`. Intended for tests; the
     /// engine doesn't read these back at runtime today.
