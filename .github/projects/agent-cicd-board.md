@@ -28,16 +28,11 @@ as `project.number`.
 Per the field-to-Project mapping in `team/schema/README.md`, create
 each field as the listed type. For SINGLE_SELECT fields, the options
 must match the schema enums exactly (case-sensitive). The native
-`Title` field stays as-is; the `Status` field below replaces (or
-re-uses) the default `Status` column.
+`Title` field stays as-is. The default `Status` field is special —
+see Step 2.5 below.
 
 ```bash
 PROJECT_NUMBER=<from step 1>
-
-# status (replace the default Status column's options if it already exists)
-gh project field-create $PROJECT_NUMBER --owner latentwill \
-  --name "status" --data-type SINGLE_SELECT \
-  --single-select-options "BACKLOG,READY,CLAIMED,CODING,PR_OPEN,REVIEWING,CHANGES_REQUESTED,FIXING,APPROVED,MERGE_READY,MERGED,DEPLOYED,ARCHIVED"
 
 # lane
 gh project field-create $PROJECT_NUMBER --owner latentwill \
@@ -64,6 +59,62 @@ done
 gh project field-create $PROJECT_NUMBER --owner latentwill \
   --name "pr" --data-type NUMBER
 ```
+
+## Step 2.5 — replace the default `Status` field options
+
+GitHub Projects v2 ships every new Project with a default
+SINGLE_SELECT field literally named `Status` (capital S). It
+**cannot** be deleted (`gh project field-delete` returns
+"Only custom fields can be deleted"), **cannot** be renamed (the
+`updateProjectV2Field { name }` mutation echoes success but the
+name silently stays `Status`), and **cannot** be shadowed by a
+sibling field named `status` (`gh project field-create` returns
+"Name has already been taken").
+
+So instead of creating a fresh `status` field, the migration
+re-uses the default `Status` and replaces its options with the
+13-state schema enum via the raw GraphQL mutation
+`updateProjectV2Field { singleSelectOptions }`:
+
+```bash
+# Find the default Status field id.
+FIELD_ID=$(gh project field-list $PROJECT_NUMBER --owner latentwill \
+  --format json | \
+  jq -r '.fields[] | select(.name == "Status") | .id')
+
+# Build the options payload separately so the JSON survives shell
+# quoting and matches the schema enum verbatim.
+cat > /tmp/update-status.json <<EOF
+{
+  "query": "mutation(\$fieldId: ID!, \$opts: [ProjectV2SingleSelectFieldOptionInput!]!) { updateProjectV2Field(input: { fieldId: \$fieldId, singleSelectOptions: \$opts }) { projectV2Field { ... on ProjectV2SingleSelectField { name options { name } } } } }",
+  "variables": {
+    "fieldId": "$FIELD_ID",
+    "opts": [
+      {"name":"BACKLOG","color":"GRAY","description":""},
+      {"name":"READY","color":"BLUE","description":""},
+      {"name":"CLAIMED","color":"BLUE","description":""},
+      {"name":"CODING","color":"YELLOW","description":""},
+      {"name":"PR_OPEN","color":"YELLOW","description":""},
+      {"name":"REVIEWING","color":"YELLOW","description":""},
+      {"name":"CHANGES_REQUESTED","color":"ORANGE","description":""},
+      {"name":"FIXING","color":"ORANGE","description":""},
+      {"name":"APPROVED","color":"GREEN","description":""},
+      {"name":"MERGE_READY","color":"GREEN","description":""},
+      {"name":"MERGED","color":"PURPLE","description":""},
+      {"name":"DEPLOYED","color":"PURPLE","description":""},
+      {"name":"ARCHIVED","color":"GRAY","description":""}
+    ]
+  }
+}
+EOF
+gh api graphql --input /tmp/update-status.json | \
+  jq '.data.updateProjectV2Field.projectV2Field.options'
+```
+
+The migration script `scripts/migrate-board.mjs` lower-cases all
+project field keys on load, so a descriptor's
+`status: 'READY'` resolves against the capital-S `Status` field
+without further configuration on either side.
 
 ## Step 3 — verify
 

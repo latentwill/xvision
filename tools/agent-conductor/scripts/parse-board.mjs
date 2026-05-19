@@ -21,6 +21,16 @@ const ROW_RE = /^-\s+\[([^\]]+)\]\(([^)]+)\)\s*-\s*(.*)$/;
 const SECTION_RE = /^###\s+(.+?)\s*$/;
 const TOP_SECTION_RE = /^##\s+(.+?)\s*$/;
 
+// Some boards (notably team/board-v2.md) use em-dash + middle-dot row
+// separators ("— · ·") instead of ASCII hyphens ("- - -"). Normalize
+// both forms to ASCII hyphens before the regex/splitter runs so the
+// downstream pipeline doesn't need to care which variant the author
+// used. Only whitespace-bracketed occurrences are rewritten, so an
+// em-dash inside a track name or summary is left alone.
+function normalizeSeparators(line) {
+  return line.replace(/\s—\s/g, ' - ').replace(/\s·\s/g, ' - ');
+}
+
 const KNOWN_LANES = new Set(['foundation', 'leaf', 'integration']);
 
 /**
@@ -44,7 +54,7 @@ export function parseBoard(markdownSource) {
 
   const lines = String(markdownSource).split(/\r?\n/);
   for (const rawLine of lines) {
-    const line = rawLine.replace(/\s+$/, '');
+    const line = normalizeSeparators(rawLine.replace(/\s+$/, ''));
 
     const topMatch = TOP_SECTION_RE.exec(line);
     if (topMatch) {

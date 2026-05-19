@@ -14,11 +14,16 @@ import {
   buildIssueListArgs,
   buildIssueCreateArgs,
   buildIssueViewArgs,
+  buildLabelListArgs,
+  buildLabelCreateArgs,
   buildProjectViewArgs,
   buildProjectFieldListArgs,
   buildProjectItemListArgs,
   buildProjectItemAddArgs,
   buildProjectItemEditArgs,
+  MIGRATION_LABEL_COLORS,
+  labelSpec,
+  requiredLabelsForDescriptors,
 } from './migrate-board.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -86,10 +91,26 @@ function makeFakeClient(initial = {}) {
     fieldSets: [],
     issueCreates: [],
     itemAdds: [],
+    existingLabels: new Set(initial.existingLabels ?? []),
+    labelEnsures: [],
+    labelCreates: [],
+    callOrder: [],
   };
 
   const client = {
     state,
+    async ensureLabels(labels) {
+      state.labelEnsures.push([...labels]);
+      state.callOrder.push('ensureLabels');
+      let created = 0;
+      for (const name of labels) {
+        if (state.existingLabels.has(name)) continue;
+        state.existingLabels.add(name);
+        state.labelCreates.push(name);
+        created++;
+      }
+      return { ensured: labels.length, created };
+    },
     async findIssueByTrackLabel(track) {
       const issue = state.issues.get(track);
       if (!issue) return null;
@@ -98,6 +119,7 @@ function makeFakeClient(initial = {}) {
       return { ...issue, url: issue.url ?? `https://example.invalid/${track}/${issue.number}` };
     },
     async createIssue({ title, body, labels }) {
+      state.callOrder.push('createIssue');
       const trackLabel = (labels ?? []).find((l) => l.startsWith('track:'));
       const track = trackLabel ? trackLabel.slice('track:'.length) : null;
       const number = state.nextIssueNumber++;
@@ -389,7 +411,7 @@ test('runMigration --dry-run prints schema-valid plan JSON', async () => {
   });
   assert.equal(res.exitCode, 0, caps.errText());
   const plan = JSON.parse(caps.outText());
-  assert.equal(plan.length, 6, `expected 6 rows, got ${plan.length}`);
+  assert.equal(plan.length, 7, `expected 7 rows, got ${plan.length}`);
 
   const byTrack = Object.fromEntries(plan.map((p) => [p.track, p]));
   assert.equal(byTrack['sample-foundation-track'].status, 'READY');
@@ -398,6 +420,10 @@ test('runMigration --dry-run prints schema-valid plan JSON', async () => {
   assert.equal(byTrack['sample-pr-open-track'].status, 'PR_OPEN');
   assert.equal(byTrack['sample-deferred-track'].status, 'BACKLOG');
   assert.equal(byTrack['sample-v2-track'].track, 'sample-v2-track');
+  // Em-dash row from board-v2-sample.md normalises through the parser
+  // and produces a schema-valid PR_OPEN descriptor.
+  assert.equal(byTrack['sample-v2-integration-track'].status, 'PR_OPEN');
+  assert.equal(byTrack['sample-v2-integration-track'].lane, 'integration');
 });
 
 // ---------- runMigration: live with fake client ----------
@@ -419,13 +445,15 @@ test('runMigration creates Issues + Project items + field values when none exist
     stderr: caps.stderr,
   });
   assert.equal(res.exitCode, 0, caps.errText());
-  assert.equal(client.state.issueCreates.length, 6, 'one Issue per row');
-  assert.equal(client.state.itemAdds.length, 6, 'one Project item per row');
+  // 5 rows from board-sample.md + 2 from the V2 fixture (em-dash
+  // format with two rows mirroring the live team/board-v2.md shape).
+  assert.equal(client.state.issueCreates.length, 7, 'one Issue per row');
+  assert.equal(client.state.itemAdds.length, 7, 'one Project item per row');
   // Each row writes its 5 SINGLE_SELECT/TEXT non-null fields (status, lane,
   // track, branch, worktree, intake_doc, review_status, deploy_status).
-  // pr/owner_agent are null → no write. Expect ≥ 6 × 8 = 48 sets,
+  // pr/owner_agent are null → no write. Expect ≥ 7 × 8 = 56 sets,
   // minus 0 (no items exist before run).
-  assert.ok(client.state.fieldSets.length >= 6 * 8, `expected >=48 field sets, got ${client.state.fieldSets.length}`);
+  assert.ok(client.state.fieldSets.length >= 7 * 8, `expected >=56 field sets, got ${client.state.fieldSets.length}`);
 });
 
 test('runMigration is idempotent — second run does nothing', async () => {
@@ -519,4 +547,189 @@ test('runMigration aborts on schema-invalid descriptor and returns non-zero', as
   } else {
     assert.match(caps.errText(), /SKIP sample-foundation-track/);
   }
+});
+
+// ---------- Gap 1: case-insensitive Status field lookup ----------
+
+test('computeFieldUpdates resolves descriptor.status against a capital-S Status field', () => {
+  // GitHub Projects v2 keeps the default `Status` field name (capital
+  // S) regardless of rename attempts. The migration normalises field
+  // keys to lower-case on insert, so a descriptor with status='READY'
+  // must find the field stored under 'status' (lowercase) even if the
+  // raw GH name is 'Status'.
+  const project = {
+    fields: {
+      status: {
+        id: 'F-status',
+        dataType: 'SINGLE_SELECT',
+        options: { READY: 'opt-r' },
+      },
+      lane: {
+        id: 'F-lane',
+        dataType: 'SINGLE_SELECT',
+        options: { leaf: 'opt-l' },
+      },
+    },
+  };
+  const item = { fieldValues: {} };
+  const descriptor = {
+    status: 'READY',
+    lane: 'leaf',
+    track: 't',
+    review_status: 'none',
+    deploy_status: 'none',
+  };
+  const updates = computeFieldUpdates({ project, item, descriptor }).filter(
+    (u) => !u.skipReason,
+  );
+  const fields = updates.map((u) => u.field);
+  assert.ok(fields.includes('status'), `expected status update, got ${fields.join(',')}`);
+  assert.ok(fields.includes('lane'));
+});
+
+// ---------- Gap 2: label argv builders + colour map ----------
+
+test('buildLabelListArgs is a sane gh invocation', () => {
+  const args = buildLabelListArgs({ repo: 'o/r' });
+  assert.deepEqual(args, ['label', 'list', '-R', 'o/r', '--limit', '200', '--json', 'name']);
+});
+
+test('buildLabelCreateArgs passes --force so it is idempotent', () => {
+  const args = buildLabelCreateArgs({
+    repo: 'o/r',
+    name: 'lane:leaf',
+    color: 'fbca04',
+    description: 'Lane: leaf track',
+  });
+  assert.ok(args.includes('--force'), 'label create must be idempotent');
+  assert.ok(args.includes('lane:leaf'));
+  assert.ok(args.includes('--color'));
+  assert.ok(args.includes('fbca04'));
+});
+
+test('labelSpec returns the per-lane colour for lane:* labels', () => {
+  assert.equal(labelSpec('lane:foundation'), MIGRATION_LABEL_COLORS['lane:foundation']);
+  assert.equal(labelSpec('lane:integration'), MIGRATION_LABEL_COLORS['lane:integration']);
+  assert.equal(labelSpec('lane:leaf'), MIGRATION_LABEL_COLORS['lane:leaf']);
+});
+
+test('labelSpec falls back to the shared track colour for track:* labels', () => {
+  const spec = labelSpec('track:anything-goes');
+  assert.equal(spec, MIGRATION_LABEL_COLORS.trackDefault);
+});
+
+test('requiredLabelsForDescriptors collects unique track + lane labels in sorted order', () => {
+  const labels = requiredLabelsForDescriptors([
+    { track: 'b', lane: 'leaf' },
+    { track: 'a', lane: 'foundation' },
+    { track: 'b', lane: 'leaf' }, // duplicate
+    { track: 'c', lane: 'integration' },
+  ]);
+  assert.deepEqual(labels, [
+    'lane:foundation',
+    'lane:integration',
+    'lane:leaf',
+    'track:a',
+    'track:b',
+    'track:c',
+  ]);
+});
+
+// ---------- Gap 2: ensureLabels pre-flight runs before createIssue ----------
+
+test('runMigration calls ensureLabels before any createIssue', async () => {
+  const client = makeFakeClient();
+  const caps = captureStreams();
+  const res = await runMigration({
+    client,
+    args: [
+      '--board', BOARD,
+      '--contracts-dir', CONTRACTS,
+      '--schema', SCHEMA,
+      '--project', '1',
+      '--repo', 'fake-owner/fake-repo',
+    ],
+    stdout: caps.stdout,
+    stderr: caps.stderr,
+  });
+  assert.equal(res.exitCode, 0, caps.errText());
+
+  // ensureLabels must run exactly once at the top of the live path.
+  assert.equal(client.state.labelEnsures.length, 1, 'ensureLabels called once');
+
+  // First entry in callOrder must be ensureLabels; no createIssue
+  // before it.
+  const firstIssueIdx = client.state.callOrder.indexOf('createIssue');
+  const firstEnsureIdx = client.state.callOrder.indexOf('ensureLabels');
+  assert.ok(firstEnsureIdx >= 0, 'ensureLabels was not invoked');
+  assert.ok(firstIssueIdx > firstEnsureIdx,
+    `ensureLabels (idx ${firstEnsureIdx}) must precede createIssue (idx ${firstIssueIdx})`);
+
+  // The set passed must be the union of track:* and lane:* labels
+  // across all rows. board-sample.md has 5 rows so we expect 5 +
+  // 3 lane labels (the V2 fixture isn't on this run since BOARD_V2
+  // is omitted).
+  const passed = client.state.labelEnsures[0];
+  const trackCount = passed.filter((l) => l.startsWith('track:')).length;
+  const laneCount = passed.filter((l) => l.startsWith('lane:')).length;
+  assert.equal(trackCount, 5, `expected 5 track: labels, got ${trackCount} (${passed.join(',')})`);
+  assert.ok(laneCount >= 2 && laneCount <= 3, `expected 2-3 lane: labels, got ${laneCount}`);
+});
+
+test('runMigration ensureLabels does not duplicate existing labels', async () => {
+  // Pre-seed all the labels for the cohort. The pre-flight should
+  // detect they exist and create none. Live path also runs.
+  const initial = {
+    existingLabels: new Set([
+      'lane:foundation', 'lane:leaf', 'lane:integration',
+      'track:sample-foundation-track',
+      'track:sample-leaf-track',
+      'track:sample-claimed-track',
+      'track:sample-pr-open-track',
+      'track:sample-deferred-track',
+    ]),
+  };
+  const client = makeFakeClient(initial);
+  const caps = captureStreams();
+  const res = await runMigration({
+    client,
+    args: [
+      '--board', BOARD,
+      '--contracts-dir', CONTRACTS,
+      '--schema', SCHEMA,
+      '--project', '1',
+      '--repo', 'fake-owner/fake-repo',
+    ],
+    stdout: caps.stdout,
+    stderr: caps.stderr,
+  });
+  assert.equal(res.exitCode, 0, caps.errText());
+  assert.equal(client.state.labelCreates.length, 0, 'no new labels should be created');
+});
+
+// ---------- Gap 3: em-dash rows from board-v2 round-trip via runMigration ----------
+
+test('runMigration --dry-run picks up em-dash rows from the V2 fixture', async () => {
+  const caps = captureStreams();
+  const res = await runMigration({
+    client: null,
+    args: [
+      '--board', BOARD_V2,
+      '--contracts-dir', CONTRACTS,
+      '--schema', SCHEMA,
+      '--project', '1',
+      '--repo', 'fake-owner/fake-repo',
+      '--dry-run',
+    ],
+    stdout: caps.stdout,
+    stderr: caps.stderr,
+  });
+  assert.equal(res.exitCode, 0, caps.errText());
+  const plan = JSON.parse(caps.outText());
+  // Both V2 rows survive parser normalisation and pass schema
+  // validation. Pre-fix this was 0 because the em-dash separator
+  // matched nothing and rows were silently dropped.
+  assert.equal(plan.length, 2, `expected 2 V2 rows, got ${plan.length}`);
+  const tracks = plan.map((p) => p.track).sort();
+  assert.deepEqual(tracks, ['sample-v2-integration-track', 'sample-v2-track']);
 });

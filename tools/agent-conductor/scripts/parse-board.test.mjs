@@ -69,12 +69,63 @@ test('parseBoard ignores prose lines that are not task rows', () => {
   }
 });
 
-test('parseBoard handles the V2 board format identically', () => {
+test('parseBoard handles the V2 board format with em-dash separators', () => {
+  // The V2 fixture uses "— · ·" instead of "- - -". Both must yield
+  // the same structured output. Two rows: one leaf-ready, one
+  // integration-pr-open.
   const rows = parseBoard(SAMPLE_V2);
+  assert.equal(rows.length, 2);
+  const tracks = rows.map((r) => r.track);
+  assert.deepEqual(tracks, [
+    'sample-v2-track',
+    'sample-v2-integration-track',
+  ]);
+  for (const r of rows) {
+    assert.equal(r.section, 'Sample V2 Wave');
+    assert.equal(r.topSection, 'Active');
+  }
+  assert.equal(rows[0].lane, 'leaf');
+  assert.equal(rows[0].status, 'ready');
+  assert.equal(rows[1].lane, 'integration');
+  assert.equal(rows[1].status, 'pr-open');
+  // Summary normalisation: em-dash and middle-dot were rewritten to
+  // ASCII hyphens before splitting, so the post-split summary is the
+  // same string the V1 format would produce.
+  assert.ok(rows[0].oneLineSummary.includes('sample V2-board row'));
+});
+
+test('parseBoard accepts mixed em-dash / hyphen rows in the same board', () => {
+  // A single board file with both formats interleaved should not
+  // confuse the parser. This guards against a regression where the
+  // normaliser is accidentally applied per-section instead of
+  // per-line.
+  const md = `## Active
+### X
+
+- [hyphen-row](contracts/h.md) - leaf - ready - hyphen separators.
+- [emdash-row](contracts/e.md) — leaf · ready · em-dash separators.
+`;
+  const rows = parseBoard(md);
+  assert.equal(rows.length, 2);
+  assert.deepEqual(rows.map((r) => r.track), ['hyphen-row', 'emdash-row']);
+  for (const r of rows) {
+    assert.equal(r.lane, 'leaf');
+    assert.equal(r.status, 'ready');
+  }
+});
+
+test('parseBoard leaves em-dash inside summary text intact', () => {
+  // Only whitespace-bracketed em-dash / middle-dot are normalised, so
+  // an em-dash inside a summary survives.
+  const md = `## Active
+### X
+
+- [keep-emdash](contracts/k.md) - leaf - ready - summary with em—dash glued.
+`;
+  const rows = parseBoard(md);
   assert.equal(rows.length, 1);
-  assert.equal(rows[0].track, 'sample-v2-track');
-  assert.equal(rows[0].section, 'Sample V2 Wave');
-  assert.equal(rows[0].topSection, 'Active');
+  assert.ok(rows[0].oneLineSummary.includes('em—dash glued'),
+    `summary should retain glued em-dash, got: ${rows[0].oneLineSummary}`);
 });
 
 test('parseBoard returns empty array for empty input', () => {
