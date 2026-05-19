@@ -1,5 +1,9 @@
+use chrono::Utc;
 use sqlx::SqlitePool;
 use xvision_engine::api::{Actor, ApiContext};
+use xvision_engine::eval::attestation::{EvalAttestation, TokensUsed};
+use xvision_engine::eval::run::MetricsSummary;
+use xvision_engine::eval::store::RunStore;
 
 #[tokio::test]
 async fn api_context_constructs_with_actor() {
@@ -132,12 +136,16 @@ async fn api_context_open_accepts_already_renamed_eval_agent_schema() {
             id TEXT PRIMARY KEY,
             agent_id TEXT NOT NULL,
             scenario_id TEXT NOT NULL,
+            params_override_json TEXT,
             mode TEXT NOT NULL,
             status TEXT NOT NULL,
-            started_at TEXT,
+            started_at TEXT NOT NULL,
             completed_at TEXT,
             metrics_json TEXT,
-            error TEXT
+            error TEXT,
+            estimated_total_tokens INTEGER,
+            actual_input_tokens INTEGER,
+            actual_output_tokens INTEGER
         )",
     )
     .execute(&pool)
@@ -149,10 +157,10 @@ async fn api_context_open_accepts_already_renamed_eval_agent_schema() {
             run_id TEXT NOT NULL,
             agent_id TEXT NOT NULL,
             scenario_id TEXT NOT NULL,
-            signed_at TEXT NOT NULL,
-            payload_json TEXT NOT NULL,
+            signed_metrics_json TEXT NOT NULL,
             signature_hex TEXT NOT NULL,
-            public_key_hex TEXT NOT NULL
+            signing_pubkey_hex TEXT NOT NULL,
+            signed_at TEXT NOT NULL
         )",
     )
     .execute(&pool)
@@ -164,15 +172,69 @@ async fn api_context_open_accepts_already_renamed_eval_agent_schema() {
         .await
         .expect("open must not try to rename missing strategy_bundle_hash");
 
-    let columns: Vec<(i64, String, String, i64, Option<String>, i64)> =
+    let run_columns: Vec<(i64, String, String, i64, Option<String>, i64)> =
         sqlx::query_as("PRAGMA table_info(eval_runs)")
             .fetch_all(&ctx.db)
             .await
             .unwrap();
-    assert!(columns.iter().any(|(_, name, _, _, _, _)| name == "agent_id"));
-    assert!(!columns
+    assert!(run_columns.iter().any(|(_, name, _, _, _, _)| name == "agent_id"));
+    assert!(!run_columns
         .iter()
         .any(|(_, name, _, _, _, _)| name == "strategy_bundle_hash"));
+
+    let attestation_columns: Vec<(i64, String, String, i64, Option<String>, i64)> =
+        sqlx::query_as("PRAGMA table_info(eval_attestations)")
+            .fetch_all(&ctx.db)
+            .await
+            .unwrap();
+    for expected in [
+        "agent_id",
+        "signed_metrics_json",
+        "signing_pubkey_hex",
+        "signed_at",
+    ] {
+        assert!(
+            attestation_columns
+                .iter()
+                .any(|(_, name, _, _, _, _)| name == expected),
+            "eval_attestations should contain {expected}, got: {attestation_columns:?}"
+        );
+    }
+    assert!(!attestation_columns
+        .iter()
+        .any(|(_, name, _, _, _, _)| name == "strategy_bundle_hash"));
+
+    let store = RunStore::new(ctx.db.clone());
+    let attestation = EvalAttestation {
+        agent_id: "agent-1".into(),
+        scenario_id: "scenario-1".into(),
+        metrics: MetricsSummary {
+            total_return_pct: 1.0,
+            sharpe: 0.5,
+            max_drawdown_pct: 0.1,
+            win_rate: 0.6,
+            n_trades: 2,
+            n_decisions: 3,
+        },
+        tokens_used: TokensUsed {
+            input: 10,
+            output: 5,
+            total: 15,
+        },
+        ran_at: Utc::now(),
+        signing_pubkey_hex: "00".repeat(32),
+        signature_hex: "11".repeat(64),
+    };
+    store
+        .record_attestation("run-1", &attestation)
+        .await
+        .expect("post-open eval_attestations schema should accept store writes");
+    let persisted = store
+        .get_attestation("run-1")
+        .await
+        .unwrap()
+        .expect("post-open eval_attestations schema should support store reads");
+    assert_eq!(persisted, attestation);
 }
 
 #[tokio::test]
