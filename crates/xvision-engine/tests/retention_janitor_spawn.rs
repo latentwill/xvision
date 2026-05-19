@@ -57,13 +57,7 @@ async fn build_pool_in(xvn_home: &PathBuf) -> SqlitePool {
 }
 
 fn ctx_from(pool: SqlitePool, xvn_home: PathBuf) -> ApiContext {
-    ApiContext::new(
-        pool,
-        Actor::Cli {
-            user: "test".into(),
-        },
-        xvn_home,
-    )
+    ApiContext::new(pool, Actor::Cli { user: "test".into() }, xvn_home)
 }
 
 async fn insert_run(pool: &SqlitePool, run_id: &str, started_at: &str) {
@@ -141,19 +135,17 @@ async fn engine_boot_spawn_evicts_aged_blob() {
         std::env::set_var("XVN_JANITOR_INTERVAL_SECS", "1");
         std::env::set_var("XVN_PAYLOAD_TTL_DAYS", "7");
         std::env::remove_var("XVN_MAX_PAYLOAD_BYTES");
-        api_eval::spawn_retention_janitor(&ctx)
-            .expect("janitor should spawn — blob root exists")
+        api_eval::spawn_retention_janitor(&ctx).expect("janitor should spawn — blob root exists")
     };
 
     // Wait for convergence: refs nulled AND blob file gone.
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            let (refs,): (i64,) = sqlx::query_as(
-                "SELECT COUNT(*) FROM model_calls WHERE prompt_payload_ref IS NOT NULL",
-            )
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+            let (refs,): (i64,) =
+                sqlx::query_as("SELECT COUNT(*) FROM model_calls WHERE prompt_payload_ref IS NOT NULL")
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
             if refs == 0 && !store.exists(&old_blob) {
                 break;
             }
@@ -165,12 +157,11 @@ async fn engine_boot_spawn_evicts_aged_blob() {
     handle.abort();
 
     // Hash columns survive (the row still records *what* was observed).
-    let (prompt_hash, response_hash): (String, Option<String>) = sqlx::query_as(
-        "SELECT prompt_hash, response_hash FROM model_calls WHERE span_id = 'span_old'",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let (prompt_hash, response_hash): (String, Option<String>) =
+        sqlx::query_as("SELECT prompt_hash, response_hash FROM model_calls WHERE span_id = 'span_old'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(prompt_hash, "h_p");
     assert_eq!(response_hash.as_deref(), Some("h_r"));
     assert!(!store.exists(&old_blob), "aged blob must be gone");
@@ -230,8 +221,7 @@ async fn engine_boot_spawn_truncates_oversize_store() {
         std::env::set_var("XVN_PAYLOAD_TTL_DAYS", "365");
         // Cap at 2 KiB so two of three 1 KiB blobs survive.
         std::env::set_var("XVN_MAX_PAYLOAD_BYTES", "2048");
-        api_eval::spawn_retention_janitor(&ctx)
-            .expect("janitor should spawn — blob root exists")
+        api_eval::spawn_retention_janitor(&ctx).expect("janitor should spawn — blob root exists")
     };
 
     // Convergence: oldest file gone, AND its row's prompt_payload_ref
@@ -240,12 +230,11 @@ async fn engine_boot_spawn_truncates_oversize_store() {
     // UPDATE, the ref would still be `Some(oldest)`.
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            let (prompt_ref,): (Option<String>,) = sqlx::query_as(
-                "SELECT prompt_payload_ref FROM model_calls WHERE span_id = 'span_x'",
-            )
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+            let (prompt_ref,): (Option<String>,) =
+                sqlx::query_as("SELECT prompt_payload_ref FROM model_calls WHERE span_id = 'span_x'")
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
             if !store.exists(&oldest) && prompt_ref.is_none() {
                 break;
             }
@@ -336,8 +325,5 @@ fn env_overrides_resolve_to_janitor_config() {
     let (cfg, interval) = api_eval::resolve_janitor_config_from_env();
     assert_eq!(cfg.payload_ttl_days, api_eval::JANITOR_DEFAULT_TTL_DAYS);
     assert_eq!(cfg.max_payload_bytes, api_eval::JANITOR_DEFAULT_MAX_BYTES);
-    assert_eq!(
-        interval,
-        Duration::from_secs(api_eval::JANITOR_DEFAULT_TICK_SECS)
-    );
+    assert_eq!(interval, Duration::from_secs(api_eval::JANITOR_DEFAULT_TICK_SECS));
 }
