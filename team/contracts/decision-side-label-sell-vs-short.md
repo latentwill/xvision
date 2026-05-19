@@ -5,7 +5,7 @@ wave: qa-operator-2026-05-19-round-4
 worktree: .worktrees/decision-side-label-sell-vs-short
 branch: task/decision-side-label-sell-vs-short
 base: origin/main
-status: claimed
+status: pr-open  # PR #340
 depends_on: []
 blocks: []
 stacking: none
