@@ -1152,6 +1152,42 @@ describe("EvalRunDetailRoute — Open positions cell", () => {
     expect(reentry.textContent).toMatch(/49,?000/);
   });
 
+  it("labels short_open as SHORT, long-close flat as SELL, short-close flat as COVER (QA22)", async () => {
+    // QA22 / `decision-side-label-sell-vs-short`: the earlier mapping
+    // collapsed short_open → 'SELL' and flat → 'CLOSE'. Operators
+    // reported seeing "SHORT" when the agent was just selling. The
+    // refactored labelling derives from the *prior* position so the
+    // verb matches the intent.
+    vi.mocked(evalApi.getRun).mockResolvedValue(
+      detail({
+        summary: { ...detail().summary, status: "completed" },
+        decisions: [
+          // 0: open long → BUY
+          decision({ decision_index: 0, action: "long_open", fill_size: 1, fill_price: 50_000 }),
+          // 1: flat (prior=long) → SELL
+          decision({ decision_index: 1, action: "flat", fill_size: 1, fill_price: 51_000 }),
+          // 2: open short → SHORT
+          decision({ decision_index: 2, action: "short_open", fill_size: 0.5, fill_price: 49_000 }),
+          // 3: flat (prior=short) → COVER
+          decision({ decision_index: 3, action: "flat", fill_size: 0.5, fill_price: 48_000 }),
+        ],
+      }),
+    );
+
+    renderDetail();
+
+    // Each verb must appear at least once on the table. The presence
+    // of all four (and the absence of the old "SHORT" mislabel on the
+    // long-close row) is the regression we're guarding. Filter buttons
+    // also render "BUY"/"SHORT" etc, so we use getAllByText and assert
+    // at least one match (the row pill).
+    expect((await screen.findAllByText("BUY")).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("SELL").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("SHORT").length).toBeGreaterThan(0);
+    // COVER is row-only (not a filter category), so getByText is fine.
+    expect(screen.getByText("COVER")).toBeInTheDocument();
+  });
+
   it("realized PnL fills in on the close decision row when the engine reports it", async () => {
     vi.mocked(evalApi.getRun).mockResolvedValue(
       detail({

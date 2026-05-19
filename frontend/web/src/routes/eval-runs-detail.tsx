@@ -34,6 +34,7 @@ import type {
 } from "@/api/types.gen";
 import {
   derivePositionsByDecision,
+  derivePriorPositionsByDecision,
   type OpenPosition,
 } from "@/features/decisions/positions";
 import {
@@ -552,7 +553,10 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-type DecisionFilter = "all" | "buy" | "sell" | "hold" | "close";
+// One filter category per raw action — `close` collapses both "sell a
+// long" and "cover a short", which the row label distinguishes
+// visually via `decisionDisplayKind`.
+type DecisionFilter = "all" | "buy" | "short" | "close" | "hold";
 
 function DecisionsPanel({ rows }: { rows: DecisionRowDto[] }) {
   const [filter, setFilter] = useState<DecisionFilter>("all");
@@ -561,6 +565,12 @@ function DecisionsPanel({ rows }: { rows: DecisionRowDto[] }) {
   // is purely display-side, but a CLOSE row's "positions after close = []"
   // only holds if we've walked every preceding fill.
   const positionsByDecision = useMemo(() => derivePositionsByDecision(rows), [rows]);
+  // Prior-position snapshot per row drives the SELL-vs-COVER label
+  // distinction on flat decisions. See QA22 / `decision-side-label-sell-vs-short`.
+  const priorPositionsByDecision = useMemo(
+    () => derivePriorPositionsByDecision(rows),
+    [rows],
+  );
   const filtered = useMemo(
     () => rows.filter((row) => filter === "all" || decisionKind(row.action) === filter),
     [rows, filter],
@@ -573,7 +583,7 @@ function DecisionsPanel({ rows }: { rows: DecisionRowDto[] }) {
       ) : (
         <>
           <div className="flex flex-wrap items-center gap-2 border-b border-border-soft px-4 py-3">
-            {(["all", "buy", "sell", "hold", "close"] as DecisionFilter[]).map((value) => (
+            {(["all", "buy", "short", "close", "hold"] as DecisionFilter[]).map((value) => (
               <button
                 key={value}
                 type="button"
@@ -587,7 +597,11 @@ function DecisionsPanel({ rows }: { rows: DecisionRowDto[] }) {
             ))}
           </div>
           <div className="xvn-scroll xvn-scroll--always max-h-[520px] overflow-x-auto">
-            <DecisionsTable rows={filtered} positionsByDecision={positionsByDecision} />
+            <DecisionsTable
+              rows={filtered}
+              positionsByDecision={positionsByDecision}
+              priorPositionsByDecision={priorPositionsByDecision}
+            />
           </div>
         </>
       )}
@@ -598,9 +612,11 @@ function DecisionsPanel({ rows }: { rows: DecisionRowDto[] }) {
 function DecisionsTable({
   rows,
   positionsByDecision,
+  priorPositionsByDecision,
 }: {
   rows: DecisionRowDto[];
   positionsByDecision: Map<number, OpenPosition[]>;
+  priorPositionsByDecision: Map<number, OpenPosition[]>;
 }) {
   return (
     <table className="w-full min-w-[1140px]">
@@ -632,7 +648,10 @@ function DecisionsTable({
             </td>
             <td className="py-2.5 px-3 font-mono text-text-2">{r.asset}</td>
             <td className="py-2.5 px-3">
-              <DecisionSignal action={r.action} />
+              <DecisionSignal
+                action={r.action}
+                priorSide={priorSideFor(r, priorPositionsByDecision)}
+              />
             </td>
             <td className="py-2.5 px-3 text-right font-mono">
               {fmtNumber(r.conviction)}
@@ -706,20 +725,51 @@ function fmtPositionEntry(price: number): string {
   return price.toPrecision(4);
 }
 
-function DecisionSignal({ action }: { action: string }) {
-  const kind = decisionKind(action);
+// Visual kind shown on the per-row decision pill. Distinct from
+// `DecisionFilter` because `flat` splits visually into SELL (closing
+// a long) or COVER (closing a short) depending on the prior position.
+// All five share styling buckets in `globals.css`.
+type DisplayKind = "buy" | "short" | "sell" | "cover" | "hold";
+
+function DecisionSignal({
+  action,
+  priorSide,
+}: {
+  action: string;
+  priorSide: "long" | "short" | "flat";
+}) {
+  const kind = decisionDisplayKind(action, priorSide);
   return (
     <span className={`dec-pill dec-pill--${kind}`}>
-      <span className="dec-pill__label">{decisionActionLabel(kind)}</span>
+      <span className="dec-pill__label">{decisionDisplayLabel(kind)}</span>
       <span className="dec-pill__raw">{action}</span>
     </span>
   );
 }
 
+function priorSideFor(
+  row: DecisionRowDto,
+  priorPositionsByDecision: Map<number, OpenPosition[]>,
+): "long" | "short" | "flat" {
+  const positions = priorPositionsByDecision.get(row.decision_index) ?? [];
+  const match = positions.find((p) => p.asset === row.asset);
+  return match?.side ?? "flat";
+}
+
 function decisionKind(action: string): Exclude<DecisionFilter, "all"> {
   if (action === "long_open") return "buy";
-  if (action === "short_open") return "sell";
+  if (action === "short_open") return "short";
   if (action === "flat") return "close";
+  return "hold";
+}
+
+function decisionDisplayKind(
+  action: string,
+  priorSide: "long" | "short" | "flat",
+): DisplayKind {
+  if (action === "long_open") return "buy";
+  if (action === "short_open") return "short";
+  if (action === "flat") return priorSide === "short" ? "cover" : "sell";
   return "hold";
 }
 
@@ -730,21 +780,28 @@ function decisionCounts(rows: DecisionRowDto[]): Record<DecisionFilter, number> 
       acc[decisionKind(row.action)] += 1;
       return acc;
     },
-    { all: 0, buy: 0, sell: 0, hold: 0, close: 0 },
+    { all: 0, buy: 0, short: 0, close: 0, hold: 0 },
   );
 }
 
 function decisionFilterLabel(filter: DecisionFilter): string {
-  return filter === "all" ? "All" : decisionActionLabel(filter);
-}
-
-function decisionActionLabel(filter: Exclude<DecisionFilter, "all">): string {
+  if (filter === "all") return "All";
   return {
     buy: "BUY",
-    sell: "SELL",
-    hold: "HOLD",
+    short: "SHORT",
     close: "CLOSE",
+    hold: "HOLD",
   }[filter];
+}
+
+function decisionDisplayLabel(kind: DisplayKind): string {
+  return {
+    buy: "BUY",
+    short: "SHORT",
+    sell: "SELL",
+    cover: "COVER",
+    hold: "HOLD",
+  }[kind];
 }
 
 function decisionReasoning(row: DecisionRowDto): string {

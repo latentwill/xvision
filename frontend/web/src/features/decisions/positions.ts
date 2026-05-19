@@ -65,6 +65,28 @@ export function derivePositionsByDecision(
   return out;
 }
 
+/**
+ * Per-decision snapshot of the position **before** the row's action
+ * is applied. Used to disambiguate `flat` (which is rendered as SELL
+ * when it closes a long and COVER when it closes a short) — see
+ * `decisionActionLabel` in `eval-runs-detail.tsx`. Same walk and
+ * sort order as `derivePositionsByDecision` so the two maps stay
+ * aligned on `decision_index`.
+ */
+export function derivePriorPositionsByDecision(
+  rows: ReadonlyArray<DecisionRowDto>,
+): Map<number, OpenPosition[]> {
+  const ordered = [...rows].sort((a, b) => a.decision_index - b.decision_index);
+  const state: RunningState = new Map();
+  const out = new Map<number, OpenPosition[]>();
+
+  for (const row of ordered) {
+    out.set(row.decision_index, snapshot(state));
+    applyAction(state, row);
+  }
+  return out;
+}
+
 function applyAction(state: RunningState, row: DecisionRowDto): void {
   const asset = row.asset;
   const current = state.get(asset) ?? { side: "flat" as PositionSide, qty: 0, entry: 0 };

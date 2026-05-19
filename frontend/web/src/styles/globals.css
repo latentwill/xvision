@@ -155,16 +155,26 @@
     background: color-mix(in srgb, var(--gold) 86%, #88d498);
   }
 
-  .dec-pill--sell .dec-pill__label {
+  /* Opening a short — red, mirrors a "SHORT" entry. */
+  .dec-pill--short .dec-pill__label {
     background: color-mix(in srgb, var(--danger) 86%, #ffb1a7);
+  }
+
+  /* Closing a long position. SELL realises a long; styled warn so it
+     reads as "exit/realisation", visually distinct from SHORT (entry). */
+  .dec-pill--sell .dec-pill__label {
+    background: color-mix(in srgb, var(--warn) 86%, #ffdd8a);
+  }
+
+  /* Closing a short position. Mirror of SELL on the warn palette; the
+     label text ("COVER") plus the row's prior-position state carries the
+     distinction. */
+  .dec-pill--cover .dec-pill__label {
+    background: color-mix(in srgb, var(--warn) 86%, #ffdd8a);
   }
 
   .dec-pill--hold .dec-pill__label {
     background: color-mix(in srgb, var(--info) 78%, #b8d9ff);
-  }
-
-  .dec-pill--close .dec-pill__label {
-    background: color-mix(in srgb, var(--warn) 86%, #ffdd8a);
   }
 
   /* Per-row open-position chip. Sibling to dec-pill, smaller + denser.
