@@ -1,4 +1,4 @@
--- 021_eval_runs_agents_agent_id.sql — F-11 eval-bundle-agent-id-map.
+-- 022_eval_runs_agents_agent_id.sql — F-11 eval-bundle-agent-id-map.
 --
 -- Adds a sibling column `agents_agent_id` to `eval_runs` carrying the
 -- long-lived `agents.agent_id` ULID of the agent that drove the run.

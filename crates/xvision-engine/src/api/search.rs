@@ -435,6 +435,59 @@ mod tests {
         assert_eq!(by_kind[0].artifact_id, f.id);
     }
 
+    /// Track `eval-provider-error-classify-retry` (intake #344):
+    /// `upsert_run` is now race-free + idempotent. Calling it twice
+    /// for the same run must not produce a `delete prior row` failure
+    /// (the audit-log shape from
+    /// `run_id=01KS09WVDZH1F01TW8527RXYED`) — the second call
+    /// re-upserts cleanly and the index ends with exactly one row for
+    /// the run.
+    #[tokio::test]
+    async fn upsert_run_is_idempotent_for_same_run_id() {
+        use crate::eval::run::{Run, RunMode, RunStatus};
+
+        let (ctx, _dir) = fresh_ctx().await;
+        let now = chrono::Utc::now();
+        let run = Run {
+            id: "01KS09WVDZH1F01TW8527RXYED".into(),
+            agent_id: "agent_x".into(),
+            agents_agent_id: None,
+            scenario_id: "btc-momentum".into(),
+            params_override: None,
+            mode: RunMode::Backtest,
+            status: RunStatus::Completed,
+            started_at: now,
+            completed_at: Some(now),
+            metrics: None,
+            error: None,
+            estimated_total_tokens: None,
+            actual_input_tokens: None,
+            actual_output_tokens: None,
+        };
+
+        // Two upserts in a row — second must not error and must not
+        // create a duplicate row in the index.
+        upsert_run(&ctx, &run).await;
+        upsert_run(&ctx, &run).await;
+
+        let hits = search(
+            &ctx,
+            "",
+            &SearchQuery {
+                kind: Some(SearchKind::Run),
+                limit: None,
+            },
+        )
+        .await
+        .unwrap();
+        let matching: Vec<_> = hits.iter().filter(|h| h.artifact_id == run.id).collect();
+        assert_eq!(
+            matching.len(),
+            1,
+            "upsert_run must be idempotent (no duplicate rows), got {matching:#?}",
+        );
+    }
+
     #[tokio::test]
     async fn reindex_all_is_idempotent() {
         let (ctx, _dir) = fresh_ctx().await;

@@ -30,7 +30,7 @@ Moltbook/forum-derived themes used for strategy design:
 
 ### First pass: four idea families on ETH/USD 4h 7-day sprint
 
-Scenario: `sc_01KRZ185GK2HXTCNG3VEFK7GF6` (`ETH 4h 7d sprint`)  
+Scenario: `sc_01KRZ185GK2HXTCNG3VEFK7GF6` (`ETH 4h 7d sprint`)
 Decision count: 49 each
 
 - `ETH 4h compression sniper` (`01KS06R5940P7J7XDGXYST3ENN`)
@@ -61,8 +61,8 @@ Decision count: 49 each
 
 ### Second pass: compression sniper v2 across four regimes
 
-Strategy: `ETH 4h compression sniper v2` (`01KS07AZ5R9V7HQ3EWQE1AQAH0`)  
-Agent: `01KS07AZN25XB43GEXC98HBY28`  
+Strategy: `ETH 4h compression sniper v2` (`01KS07AZ5R9V7HQ3EWQE1AQAH0`)
+Agent: `01KS07AZN25XB43GEXC98HBY28`
 Decision count: 49 each
 
 - ETH 7-day sprint (`sc_01KRZ185GK2HXTCNG3VEFK7GF6`)
@@ -86,10 +86,10 @@ Takeaway: selectivity helped relative to overactive families, but v2 still lost 
 
 ## Profitable proof-of-control, not deployable
 
-Strategy: `BTC 1h timestamp swing oracle v3 140022` (`01KS08KW0Z8S8VXFMWY13X70Z4`)  
-Agent: `01KS08KWZJ1ZNEYXTKM98NMXHZ`  
-Run: `01KS08KYDMB9VSZVQNV14NZQBQ`  
-Scenario: `BTC Jan 13-17 1h momentum window 135413` (`sc_01KS0880VW6854ZQVBXQBVMDHG`)  
+Strategy: `BTC 1h timestamp swing oracle v3 140022` (`01KS08KW0Z8S8VXFMWY13X70Z4`)
+Agent: `01KS08KWZJ1ZNEYXTKM98NMXHZ`
+Run: `01KS08KYDMB9VSZVQNV14NZQBQ`
+Scenario: `BTC Jan 13-17 1h momentum window 135413` (`sc_01KS0880VW6854ZQVBXQBVMDHG`)
 Decision count: 100
 
 - Return: `+0.5847%`
@@ -120,23 +120,75 @@ Completed results from `/tmp/xvn_v4_retry_safe_results.json`:
 
 Takeaway: causal v4 improved loss size versus the first active variants, but the completed runs were still negative. The 4h variants looked less churn-prone than 1h variants.
 
-## Planned 30-decision model bake-off
+## 30-decision model bake-off results
 
 Run one frozen causal strategy prompt across one shared scenario/timeframe with exactly 30 decisions per model.
 
-Candidate models:
+Shared scenario:
 
-- `google/gemini-3.1-flash-lite` or the currently enabled Gemini Flash Lite variant as baseline
+- Scenario: `BTC 1h 30-decision model bakeoff 20260519151152`
+- Scenario id: `sc_01KS0CP7P6MH8AQE87R1EP79EM`
+- Asset/timeframe: `BTC/USD`, `1h`
+- Window: `2025-01-13T16:00:00Z` → `2025-01-14T21:00:00Z`
+- Warmup bars: `200`
+- Decisions: `30` for every completed run
+- Results file: `/tmp/xvn_model_bakeoff_30_results_20260519151152.json`
+
+Completed runs:
+
+- `google/gemini-3.1-flash-lite`
+  - Run: `01KS0CPAK0CA4H50Q7XMHAG2HN`
+  - Return: `-0.02441499335868866%`
+  - Sharpe: `-19.210362382652555`
+  - Max drawdown: `0.02441499335868866%`
+  - Actions: `20 flat / 5 hold / 3 long_open / 2 short_open`
+  - Runtime: about `40s`
+  - Tokens: `701436` input / `962` output
 - `deepseek/deepseek-v4-flash`
+  - Run: `01KS0CS30E1X1N21BVFA8VPNTJ`
+  - Return: `-0.04205031631085148%`
+  - Sharpe: `-49.418862003908494`
+  - Max drawdown: `0.04205031631085148%`
+  - Actions: `19 flat / 3 hold / 8 short_open`
+  - Runtime: about `664s`
+  - Tokens: `466327` input / `54669` output
 - `qwen/qwen3.5-flash-02-23`
+  - Run: `01KS0DEY93SVJ95X39SRAF9QXN`
+  - Return: `-0.02161184249151847%`
+  - Sharpe: `-16.901919818658723`
+  - Max drawdown: `0.02161184249151847%`
+  - Actions: `23 flat / 3 hold / 2 long_open / 2 short_open`
+  - Runtime: about `835s`
+  - Tokens: `698976` input / `120458` output
 - `mistralai/mistral-small-3.2-24b-instruct`
+  - Run: `01KS0EA0SH536PBKPV28G4B71X`
+  - Return: `0.0%`
+  - Sharpe: `0.0`
+  - Max drawdown: `0.0%`
+  - Actions: `30 flat`
+  - Runtime: about `83s`
+  - Tokens: `655403` input / `775` output
 - `xiaomi/mimo-v2-flash`
-- Optional extra cheap Qwen candidate if enabled: `qwen/qwen3-30b-a3b-instruct-2507`
+  - Run: `01KS0EE204H6C08ER3BKM114VX`
+  - Return: `-0.02670993748528417%`
+  - Sharpe: `-25.399743563414084`
+  - Max drawdown: `0.02670993748528417%`
+  - Actions: `25 flat / 2 hold / 3 short_open`
+  - Runtime: about `61s`
+  - Tokens: `655748` input / `885` output
+- `qwen/qwen3-30b-a3b-instruct-2507`
+  - Run: `01KS0EHEQVQAGMPKQ768Y0DC0D`
+  - Return: `0.0%`
+  - Sharpe: `0.0`
+  - Max drawdown: `0.0%`
+  - Actions: `29 flat / 1 hold`
+  - Runtime: about `126s`
+  - Tokens: `655463` input / `1161` output
 
-Comparison criteria:
+Takeaways:
 
-- Completion reliability: completed vs failed/cancelled, provider errors, JSON validity.
-- Trading discipline: action mix, repeated re-entry/churn, ability to stay flat.
-- Outcome metrics: return, Sharpe, max drawdown.
-- Operational cost/latency: whether the model can finish 30 decisions without rate-limit issues.
-- Reasoning behavior: for reasoning-oriented models, allow longer timeouts and avoid concurrency so the model can produce stable decisions.
+- Best capital preservation: `mistralai/mistral-small-3.2-24b-instruct` and `qwen/qwen3-30b-a3b-instruct-2507` both avoided trades and finished flat at `0.0%`; this is useful as a risk baseline but not evidence of signal discovery.
+- Best active trader: `qwen/qwen3.5-flash-02-23` had the least negative active result (`-0.0216%`) with a selective action mix, but it was extremely slow and verbose.
+- Best speed/behavior compromise: `google/gemini-3.1-flash-lite` finished quickly and traded selectively, with only slightly worse active performance than Qwen 3.5 Flash.
+- Worst active result: `deepseek/deepseek-v4-flash`; it over-shorted relative to the other models and had the worst return/drawdown in this window.
+- Operationally, this run supports keeping Gemini Flash Lite as the default fast iteration model, using Qwen 3.5 Flash only for slower quality checks, and treating all-flat models as safety baselines rather than discovery engines.

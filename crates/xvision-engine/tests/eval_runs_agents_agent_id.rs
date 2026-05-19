@@ -1,4 +1,4 @@
-//! Tests for migration 021 + the `eval_runs.agents_agent_id` plumbing
+//! Tests for migration 022 + the `eval_runs.agents_agent_id` plumbing
 //! (F-11 eval-bundle-agent-id-map). Three cases:
 //!
 //! 1. Migration up + down + up round-trip preserves rows in `eval_runs`.
@@ -12,7 +12,7 @@
 
 use chrono::Utc;
 use sqlx::{Row, SqlitePool};
-use xvision_engine::agents::{AgentSlot, AgentStore, NewAgent};
+use xvision_engine::agents::{AgentSlot, AgentStore, InputsPolicy, NewAgent};
 use xvision_engine::api::eval::lookup_agent_for_eval_run;
 use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::eval::run::{Run, RunMode, RunStatus};
@@ -49,10 +49,10 @@ async fn column_exists(pool: &SqlitePool, table: &str, column: &str) -> bool {
 // ── 1. Migration round-trip ───────────────────────────────────────────
 
 #[tokio::test]
-async fn migration_021_up_down_up_round_trip_preserves_rows() {
+async fn migration_022_up_down_up_round_trip_preserves_rows() {
     let pool = pool_with_eval_baseline().await;
 
-    // Seed a pre-021 row directly (no `agents_agent_id` column yet).
+    // Seed a pre-022 row directly (no `agents_agent_id` column yet).
     let now = Utc::now().to_rfc3339();
     sqlx::query(
         "INSERT INTO eval_runs \
@@ -71,13 +71,11 @@ async fn migration_021_up_down_up_round_trip_preserves_rows() {
     .await
     .unwrap();
 
-    // up: 021 adds agents_agent_id (nullable) + index.
-    sqlx::query(include_str!(
-        "../migrations/021_eval_runs_agents_agent_id.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
+    // up: 022 adds agents_agent_id (nullable) + index.
+    sqlx::query(include_str!("../migrations/022_eval_runs_agents_agent_id.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     assert!(column_exists(&pool, "eval_runs", "agents_agent_id").await);
     let count: i64 = sqlx::query("SELECT COUNT(*) AS c FROM eval_runs")
         .fetch_one(&pool)
@@ -107,7 +105,7 @@ async fn migration_021_up_down_up_round_trip_preserves_rows() {
 
     // down: drop column + index.
     sqlx::query(include_str!(
-        "../migrations/021_eval_runs_agents_agent_id.down.sql"
+        "../migrations/022_eval_runs_agents_agent_id.down.sql"
     ))
     .execute(&pool)
     .await
@@ -122,12 +120,10 @@ async fn migration_021_up_down_up_round_trip_preserves_rows() {
     assert_eq!(count, 1, "row should survive DROP COLUMN too");
 
     // up again: idempotent on a populated table.
-    sqlx::query(include_str!(
-        "../migrations/021_eval_runs_agents_agent_id.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
+    sqlx::query(include_str!("../migrations/022_eval_runs_agents_agent_id.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     assert!(column_exists(&pool, "eval_runs", "agents_agent_id").await);
     let row = sqlx::query("SELECT agent_id, agents_agent_id FROM eval_runs WHERE id = ?")
         .bind("run-1")
@@ -145,29 +141,23 @@ async fn migration_021_up_down_up_round_trip_preserves_rows() {
 
 // ── 2. RunStore round-trips the column ────────────────────────────────
 
-async fn pool_with_021() -> SqlitePool {
+async fn pool_with_022() -> SqlitePool {
     let pool = pool_with_eval_baseline().await;
-    sqlx::query(include_str!(
-        "../migrations/021_eval_runs_agents_agent_id.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
+    sqlx::query(include_str!("../migrations/022_eval_runs_agents_agent_id.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     pool
 }
 
 #[tokio::test]
 async fn run_store_round_trips_agents_agent_id() {
-    let store = RunStore::new(pool_with_021().await);
+    let store = RunStore::new(pool_with_022().await);
 
     // 1. Run created with no agents_agent_id set: column stores NULL,
     //    reads back as None. Matches what legacy / non-attached-agent
     //    strategies look like.
-    let mut a = Run::new_queued(
-        "bundle-hash-a".into(),
-        "scenario-a".into(),
-        RunMode::Backtest,
-    );
+    let mut a = Run::new_queued("bundle-hash-a".into(), "scenario-a".into(), RunMode::Backtest);
     assert!(a.agents_agent_id.is_none());
     store.create(&a).await.unwrap();
     let read_a = store.get(&a.id).await.unwrap();
@@ -199,14 +189,9 @@ async fn run_store_round_trips_agents_agent_id() {
 #[tokio::test]
 async fn lookup_agent_for_eval_run_returns_some_for_fresh_run_and_none_for_legacy() {
     let dir = tempfile::tempdir().unwrap();
-    let ctx = ApiContext::open(
-        dir.path(),
-        Actor::Cli {
-            user: "test".into(),
-        },
-    )
-    .await
-    .unwrap();
+    let ctx = ApiContext::open(dir.path(), Actor::Cli { user: "test".into() })
+        .await
+        .unwrap();
     let seeded_scenario_id = "crypto-bull-q1-2025";
 
     // Seed an agent in the workspace library.
@@ -219,6 +204,7 @@ async fn lookup_agent_for_eval_run_returns_some_for_fresh_run_and_none_for_legac
         skill_ids: vec![],
         max_tokens: Some(2048),
         prompt_version: String::new(),
+        inputs_policy: InputsPolicy::Raw,
     };
     let agent_ulid = agent_store
         .create(NewAgent {

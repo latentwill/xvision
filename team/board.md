@@ -24,8 +24,13 @@ doc.
 
 ## Reserved
 
-No reserved tracks at this time. New work should enter through an intake doc
-or an explicit conductor contract update.
+- **QA operator round 6** — 3 tracks in `team/intake/2026-05-19-qa-operator-round-6.md`:
+  `scenario-form-calendar-whitespace` (P2), `scenario-runs-tab-show-eval-name` (P2),
+  `agent-usage-panel-wire-deployed-and-runs` (P1).
+- **Standard list component (design handoff)** — planning intake at
+  `team/intake/2026-05-19-list-component-design-intake.md`. Needs a spec under
+  `docs/superpowers/specs/` before contracts open. Phase-0 track:
+  `list-component-spec`.
 
 ## Recently Closed
 

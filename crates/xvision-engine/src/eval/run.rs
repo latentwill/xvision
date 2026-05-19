@@ -90,10 +90,10 @@ pub struct Run {
     /// Strategy bundle artifact hash. See migration 014: this column was
     /// renamed from `strategy_bundle_hash` and still carries the bundle
     /// value, NOT the workspace `agents.agent_id`. The long-lived agent
-    /// ULID lives in `agents_agent_id` below (migration 021).
+    /// ULID lives in `agents_agent_id` below (migration 022).
     pub agent_id: String,
     /// Long-lived workspace `agents.agent_id` ULID of the calling agent.
-    /// `None` for rows older than migration 021 (no backfill — see F-11
+    /// `None` for rows older than migration 022 (no backfill — see F-11
     /// in `team/intake/2026-05-16-eval-review-and-v2a.md`). New runs
     /// populate this at start via the strategy's first AgentRef.
     #[serde(default)]

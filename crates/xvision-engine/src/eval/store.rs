@@ -53,6 +53,16 @@ impl RunStore {
         Self { pool }
     }
 
+    /// Test-only accessor for the underlying pool. Integration tests
+    /// (`tests/eval_guardrails.rs`) need to issue raw `SELECT` queries
+    /// against tables (`supervisor_notes`) the store doesn't yet expose
+    /// readers for. Hidden from non-test builds so the production API
+    /// surface stays narrow.
+    #[doc(hidden)]
+    pub fn pool_for_test(&self) -> SqlitePool {
+        self.pool.clone()
+    }
+
     /// INSERT INTO eval_runs.
     pub async fn create(&self, run: &Run) -> Result<()> {
         let params_override_json = run
@@ -273,7 +283,7 @@ impl RunStore {
 
     /// Read just the `agents_agent_id` (long-lived workspace agent ULID)
     /// for a run, if any. Returns `Ok(None)` either when the run does not
-    /// exist or when the column is NULL (pre-migration-021 row). Used by
+    /// exist or when the column is NULL (pre-migration-022 row). Used by
     /// `api::eval::lookup_agent_for_eval_run` to navigate from an eval
     /// run back to the calling agent record.
     pub async fn get_agents_agent_id(&self, run_id: &str) -> Result<Option<String>> {
@@ -519,6 +529,82 @@ impl RunStore {
         Ok(())
     }
 
+    /// Append a `supervisor_notes` row scoped to this eval run.
+    ///
+    /// Used by the apply-time guardrail (`eval::guardrails`) to record
+    /// `pyramid blocked` / `one-step flip blocked` rewrites. The table
+    /// FK's `run_id` to `agent_runs(id)` upstream; in the eval-only test
+    /// harness FK enforcement is off so callers pass the eval `run_id`
+    /// here. Production wires agent_runs and eval_runs through the same
+    /// id when the run is launched via the agent-run observability bus.
+    ///
+    /// `role` is one of `planner | reviewer | guard | system` (text in
+    /// the schema; this helper does not validate). `severity` is one of
+    /// `info | warn | error`. Both are strings to keep the helper
+    /// schema-faithful without forcing a v1 enum that the
+    /// `agent-run-observability` track owns.
+    ///
+    /// ### Failure mode
+    ///
+    /// This helper is best-effort: an insert failure (e.g. the
+    /// `supervisor_notes` table doesn't exist on a pool that hasn't
+    /// applied migration 018) is logged and swallowed. The guardrail
+    /// is a safety net at the apply seam — a note write failure must
+    /// NOT abort the eval run, because that would inverse the
+    /// guardrail's purpose (block a bad trade) into a new failure
+    /// mode (kill the run on a missing-table). Production pools
+    /// always have migration 018; older eval-only test harnesses may
+    /// not.
+    pub async fn record_supervisor_note(
+        &self,
+        run_id: &str,
+        role: &str,
+        severity: &str,
+        content: &str,
+    ) -> Result<()> {
+        let id = Ulid::new().to_string();
+        let now = Utc::now().to_rfc3339();
+        let parent_res = sqlx::query(
+            "INSERT OR IGNORE INTO agent_runs \
+             (id, objective, eval_run_id, status, started_at, retention_mode) \
+             VALUES (?, 'eval guardrail supervisor note', ?, 'running', ?, 'hash_only')",
+        )
+        .bind(run_id)
+        .bind(run_id)
+        .bind(&now)
+        .execute(&self.pool)
+        .await;
+        if let Err(e) = parent_res {
+            tracing::warn!(
+                run_id = %run_id,
+                error = %e,
+                "agent_runs parent insert for supervisor_notes failed (best-effort; eval run continues)",
+            );
+        }
+        let res = sqlx::query(
+            "INSERT INTO supervisor_notes (id, run_id, role, content, severity, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(id)
+        .bind(run_id)
+        .bind(role)
+        .bind(content)
+        .bind(severity)
+        .bind(now)
+        .execute(&self.pool)
+        .await;
+        if let Err(e) = res {
+            tracing::warn!(
+                run_id = %run_id,
+                role = %role,
+                severity = %severity,
+                error = %e,
+                "supervisor_notes insert failed (best-effort; eval run continues)",
+            );
+        }
+        Ok(())
+    }
+
     pub async fn read_decisions(&self, run_id: &str) -> Result<Vec<DecisionRow>> {
         let rows = sqlx::query(
             "SELECT run_id, decision_index, timestamp, asset, action, conviction, justification, reasoning, \
@@ -541,6 +627,28 @@ impl RunStore {
             .await
             .with_context(|| format!("insert eval_equity_samples run_id={run_id}"))?;
         Ok(())
+    }
+
+    /// Read all supervisor_notes for a run, ordered by `created_at`.
+    /// Tuple shape: `(role, severity, content)`. Intended for tests; the
+    /// engine doesn't read these back at runtime today.
+    pub async fn read_supervisor_notes(&self, run_id: &str) -> Result<Vec<(String, String, String)>> {
+        let rows = sqlx::query(
+            "SELECT role, severity, content FROM supervisor_notes \
+             WHERE run_id = ? ORDER BY created_at ASC",
+        )
+        .bind(run_id)
+        .fetch_all(&self.pool)
+        .await
+        .context("read supervisor_notes")?;
+        rows.iter()
+            .map(|r| {
+                let role: String = r.try_get("role").context("read role")?;
+                let severity: String = r.try_get("severity").context("read severity")?;
+                let content: String = r.try_get("content").context("read content")?;
+                Ok((role, severity, content))
+            })
+            .collect()
     }
 
     pub async fn read_equity_curve(&self, run_id: &str) -> Result<Vec<(DateTime<Utc>, f64)>> {

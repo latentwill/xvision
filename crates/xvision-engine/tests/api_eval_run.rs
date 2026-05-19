@@ -64,12 +64,10 @@ async fn ctx_with_tables() -> (ApiContext, tempfile::TempDir) {
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query(include_str!(
-        "../migrations/021_eval_runs_agents_agent_id.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
+    sqlx::query(include_str!("../migrations/022_eval_runs_agents_agent_id.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     sqlx::query(include_str!("../migrations/015_eval_decisions_reasoning.sql"))
         .execute(&pool)
         .await
@@ -93,6 +91,10 @@ async fn ctx_with_agents_table() -> (ApiContext, tempfile::TempDir) {
         .await
         .unwrap();
     sqlx::query(include_str!("../migrations/019_agent_slot_prompt_version.sql"))
+        .execute(&ctx.db)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/020_agent_slot_inputs_policy.sql"))
         .execute(&ctx.db)
         .await
         .unwrap();
@@ -561,6 +563,7 @@ async fn save_openrouter_strategy_with_agent_ref(ctx: &ApiContext, strategy_id: 
                 skill_ids: vec![],
                 max_tokens: Some(4096),
                 prompt_version: String::new(),
+                inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
             }],
         })
         .await
