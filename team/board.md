@@ -4,13 +4,15 @@
 > verification, and acceptance. This file is conductor-owned; see
 > `team/CONDUCTOR.md`.
 >
-> Last updated: 2026-05-18 conductor sweep #2 — QA round 2/3 tail
-> (#275, #280, #282, #283, #284, #286), V2A docs (PR for
-> `v2a-in-app-docs`), and harness `prompt_hash`/`response_hash` real
-> SHA-256 digest (#277) all merged and archived to
-> `team/archive/2026-05-18-sweep-2/`. Harness operator gate cleared
-> (pre-harness image deployed). Remaining active: Agent CI/CD Phase-1
-> wave (4 ready + 1 deferred).
+> Last updated: 2026-05-19 conductor sweep — harness F-2 (#294), F-6
+> (#302), and QA Round 5 F-1/F-2/F-3/F-5 (bundled in #316) merged and
+> archived to `team/archive/2026-05-19-sweep/`. Agent CI/CD Phase-1
+> parked into a handoff doc at
+> `docs/superpowers/handoffs/2026-05-19-agent-cicd-phase-1-handoff.md`
+> (5 contracts archived). Deferred `q15-tailscale-serve-api-reachability`
+> retired (contract archived). Remaining active: QA Round 5 F-4
+> (`risk-preset-balanced-min-order-sanity`, still in intake — needs
+> broker-config investigation).
 > Previous board: `team/archive/2026-05-16-migration/execution-board-2026-05-13.md`.
 
 V2 work (V2A onboarding + docs, V2B-V4 roadmap) also has its own board:
@@ -18,44 +20,15 @@ V2 work (V2A onboarding + docs, V2B-V4 roadmap) also has its own board:
 
 ## Active
 
-### Harness Observability Audit — F-6
-
-F-1/F-2/F-3 from `team/intake/2026-05-18-harness-observability-audit.md`
-landed (PRs #277, #294, #296). F-4 (#297) and F-5 (#298) are in PR
-review on the conductor branch. F-7 is gated on F-4 merging. F-6 is
-the last unclaimed leaf in the wave; it is parallel-safe with the
-F-4/F-5 PRs (disjoint files).
-
-- [harness-typed-mechanical-params](contracts/harness-typed-mechanical-params.md) - integration - pr-open #302 - F-6 — typed `MechanicalParams` enum keyed on `manifest.template` (one variant per canonical template + `Custom(Value)` fallback). Adds `#[serde(deny_unknown_fields)]` to `InternBriefing`, `TraderDecision`, `RiskDecision`, `RiskConfig`/`Limits`/`Stops`, `RiskCaps`. Single pre-persist validate seam in `StrategyStore::save`. No migration; wire format unchanged. Parallel-safe with F-4 (merged) and F-5 PR #298.
-
 ### QA Operator Round 5 (2026-05-19)
 
 Source: [`team/intake/2026-05-19-qa-validate-draft-cadence-false-positive.md`](intake/2026-05-19-qa-validate-draft-cadence-false-positive.md).
 Operator session got stuck in a silent `validate_draft` retry loop on
-strategy `01KRZ0ZWER9HE2CTYNWT83ESYQ`. F-1/F-2/F-3/F-5 bundled into one
-PR (deploy-host edit; no per-track contracts written). F-4 stays intake.
+strategy `01KRZ0ZWER9HE2CTYNWT83ESYQ`. F-1/F-2/F-3/F-5 bundled into PR
+#316 (merged 2026-05-19). F-4 is the only remaining leaf and still
+needs broker-config investigation before a contract is written.
 
-- `validator-cadence-parse-strict-units` - leaf - pr-open - P1 — F-1: `validate_prompt_manifest_alignment` no longer treats `"3. Mean"` as "3 minutes". Exact-token unit match in cadence parser + regression test.
-- `chat-rail-validate-draft-rich-error` - leaf - pr-open - P1 — F-2: new `validate_draft` arm in `rich_block_for_tool_result` surfaces `errors[]` inline (no popup).
-- `chat-rail-validate-retry-budget` - leaf - pr-open - P2 — F-3: wizard loop tracks consecutive same-error `validate_draft` failures, force-ends turn after 2 with a user-visible "stuck" card. System prompt updated.
-- `findings-postprocess-provider-routing` - leaf - pr-open - P3 — F-5: `findings_model_for_provider` picks the right Haiku id per provider kind (Anthropic-native, OpenRouter slug, generic OpenAI-compat → first enabled model).
-- `risk-preset-balanced-min-order-sanity` - integration - intake - P2 — F-4: balanced preset triggers 44+ `broker_min_order_size` warnings on ETH paper. Not in this PR — needs broker-config investigation.
-
-### Agent CI/CD Phase 1 (2026-05-18)
-
-Implements `docs/superpowers/specs/2026-05-18-agent-cicd-control-plane.md`.
-Phase-1 closes the worktree + PR-open gap; review routing and deploy are
-Phase 2/3 (not contracted yet).
-
-- [agent-cicd-board-schema](contracts/agent-cicd-board-schema.md) - foundation - ready - JSON Schema 2020-12 for the task object + GitHub Project v2 setup doc. Blocks the other three.
-- [agent-cicd-migrate-board](contracts/agent-cicd-migrate-board.md) - integration - ready - one-time idempotent script: parse `team/board.md` + `team/board-v2.md`, enrich from contracts, create Issues + Project items. Depends on board-schema.
-- [agent-cicd-daemon-skeleton](contracts/agent-cicd-daemon-skeleton.md) - foundation - ready - Node/TS daemon at `tools/agent-conductor/` with `start|stop|pause|resume|status|watch|cancel` CLI, three-layer status surface (CLI + state.json + digest), instance identity for multi-repo Hermes, zero-host-repo-references boundary. Phase-1 transitions only. Depends on board-schema.
-- [agent-cicd-shadow-run](contracts/agent-cicd-shadow-run.md) - integration - ready - run daemon in shadow against a real 3-5 leaf cohort; ≥90% agreement gate; archived report unblocks live flip. Depends on the other three.
-- [agent-cicd-extract-package](contracts/agent-cicd-extract-package.md) - integration - deferred - Phase-2 work: extract `tools/agent-conductor/` to standalone npm package + `npx agent-conductor init` scaffolder. Deferred until Phase-1 is live and Phase-2 review-routing has merged.
-
-## Deferred
-
-- [q15-tailscale-serve-api-reachability](contracts/q15-tailscale-serve-api-reachability.md) - integration - deferred 2026-05-16. Mobile/QA over tailnet parked, not archived. Revive by flipping `status:` back to `ready` and re-adding it to `Active`.
+- `risk-preset-balanced-min-order-sanity` - integration - intake - P2 — F-4: balanced preset triggers 44+ `broker_min_order_size` warnings on ETH paper. Needs broker-config investigation before a contract can be written.
 
 ## Reserved
 
@@ -63,6 +36,13 @@ No reserved tracks at this time. New work should enter through an intake doc
 or an explicit conductor contract update.
 
 ## Recently Closed
+
+Archived 2026-05-19 (conductor sweep — see `team/archive/2026-05-19-sweep/`):
+
+- **Harness observability audit (F-2, F-6)** — `harness-span-attrs-populate` (#294, merged 2026-05-18) and `harness-typed-mechanical-params` (#302, merged 2026-05-18). F-6 added typed `MechanicalParams` enum keyed on `manifest.template` + `deny_unknown_fields` on briefing/decision/risk structs; single pre-persist validate seam in `StrategyStore::save`.
+- **QA Round 5 F-1/F-2/F-3/F-5** — bundled in PR #316 (`qa-round-5: validate_draft false positive + silent retry loop fixes`, merged 2026-05-19). Cadence parser is unit-token-strict (F-1); chat-rail surfaces `validate_draft` errors inline with no popup (F-2); wizard loop force-ends after 2 same-error retries with a stuck card (F-3); `findings_model_for_provider` picks the right Haiku id per provider kind (F-5).
+- **Parked** — `q15-tailscale-serve-api-reachability` retired from the Deferred lane (no operator demand). Contract archived; revive by restoring from `team/archive/2026-05-19-sweep/contracts/`.
+- **Parked** — Agent CI/CD Phase-1 (5 contracts) moved into a handoff doc at `docs/superpowers/handoffs/2026-05-19-agent-cicd-phase-1-handoff.md`. Shadow-run gate already passed (`team/archive/agent-cicd-phase-1-shadow/`, 17/17 = 100%); resume by following the handoff's "How to resume" section.
 
 Archived 2026-05-18 (conductor sweep #2 — see
 `team/archive/2026-05-18-sweep-2/`):
