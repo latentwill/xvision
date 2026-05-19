@@ -15,11 +15,15 @@
 //! Review-linked finding columns live on [`super::Finding`] so review
 //! findings remain first-class rows, not nested inside `raw_output_json`.
 
+pub mod auto;
 pub mod engine;
 pub mod parser;
 pub mod payload;
 pub mod prompt;
 
+pub use auto::{
+    fire_auto_review, run_auto_review, AutoReviewOptions, AutoReviewOutcome, AUTO_AGENT_PROFILE_ID,
+};
 pub use engine::{run_review, ReviewError, ReviewOutcome};
 pub use parser::{parse_review_output, ParsedReview, ReviewFinding, ReviewParseError};
 pub use payload::{build_review_payload, ReviewPayload, ReviewProfileSummary, ReviewScenarioSummary};
