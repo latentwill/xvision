@@ -204,6 +204,13 @@ export function EvalRunDetailRoute() {
         cancelling={cancel.variables === detail.summary.id && cancel.isPending}
         onRetry={() => retry.mutate(detail.summary.id)}
         retrying={retry.variables === detail.summary.id && retry.isPending}
+        retryError={
+          retry.isError && retry.error
+            ? retry.error instanceof Error
+              ? retry.error.message
+              : String(retry.error)
+            : null
+        }
         onDelete={() => remove.mutate(detail.summary.id)}
         deleting={remove.variables === detail.summary.id && remove.isPending}
       />
@@ -349,6 +356,7 @@ function SummaryCard({
   cancelling,
   onRetry,
   retrying,
+  retryError,
   onDelete,
   deleting,
 }: {
@@ -359,17 +367,32 @@ function SummaryCard({
   cancelling: boolean;
   onRetry: () => void;
   retrying: boolean;
+  retryError: string | null;
   onDelete: () => void;
   deleting: boolean;
 }) {
   const tone = STATUS_TONE[summary.status] ?? "default";
   const inflight = isInflightRunStatus(summary.status);
   const terminal = isTerminalStatus(summary.status);
-  // Cancelled runs are eligible for retry alongside failed runs — the
-  // operator typically wants to re-queue with the same inputs after
-  // halting. If the backend rejects the retry, the existing
+  // Three statuses can re-enqueue:
+  // - `failed` / `cancelled` → "Retry" (recovery after a fix or stop)
+  // - `completed` → "Rerun" (re-test the same agent/scenario for a
+  //   fresh trace; useful for verifying result stability)
+  // The button label + tooltip adapt below so the operator can tell
+  // the two semantics apart at a glance. The engine classifies the
+  // request as `RetryReason::FailureRecovery` vs `RetryReason::ManualRerun`
+  // for the audit log; if the backend rejects, the existing
   // `retry.isError` path surfaces a classified error.
-  const canRetry = summary.status === "failed" || summary.status === "cancelled";
+  const canRetry =
+    summary.status === "failed" ||
+    summary.status === "cancelled" ||
+    summary.status === "completed";
+  const isRerun = summary.status === "completed";
+  const retryLabel = isRerun ? "Rerun" : "Retry";
+  const retryInflightLabel = isRerun ? "Rerunning…" : "Retrying...";
+  const retryTooltip = isRerun
+    ? "Rerun: produces a fresh trace against the same agent/scenario inputs. Useful for re-testing a fix or verifying result stability."
+    : "Retry: re-enqueue with the same inputs.";
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const agentRunId = traceRunId(summary);
@@ -445,12 +468,13 @@ function SummaryCard({
             {canRetry ? (
               <button
                 type="button"
-                aria-label={`Retry eval run ${summary.id}`}
+                aria-label={`${retryLabel} eval run ${summary.id}`}
+                title={retryTooltip}
                 onClick={onRetry}
                 disabled={retrying}
                 className="min-w-[16ch] rounded-sm border border-info/40 bg-info/[0.08] px-2.5 py-1 text-[12px] text-info hover:border-info/70 hover:bg-info/[0.14] hover:text-text disabled:opacity-50"
               >
-                {retrying ? "Retrying..." : "Retry"}
+                {retrying ? retryInflightLabel : retryLabel}
               </button>
             ) : null}
             {terminal ? (
@@ -486,6 +510,15 @@ function SummaryCard({
       {downloadError ? (
         <div className="mb-4 rounded-sm border border-danger/30 bg-danger/[0.06] px-2 py-1 text-[12px] text-danger">
           Download failed: {downloadError}
+        </div>
+      ) : null}
+      {retryError ? (
+        <div
+          role="status"
+          data-testid="eval-retry-error"
+          className="mb-4 rounded-sm border border-danger/30 bg-danger/[0.06] px-2 py-1 text-[12px] text-danger"
+        >
+          {isRerun ? "Rerun failed" : "Retry failed"}: {retryError}
         </div>
       ) : null}
 

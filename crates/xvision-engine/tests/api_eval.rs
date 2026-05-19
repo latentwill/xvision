@@ -231,14 +231,29 @@ async fn retry_rejects_unknown_run() {
 }
 
 #[tokio::test]
-async fn retry_rejects_completed_run() {
+async fn retry_accepts_completed_run() {
+    // `eval-rerun-from-completed` (2026-05-19): the gate now accepts
+    // `Completed` sources for "Rerun" semantics. This test pins the
+    // widening — the previous assertion (Completed → Validation) was
+    // a pre-2026-05-19 invariant that no longer holds.
+    //
+    // In this harness there is no strategy wired up for `agent-x`, so
+    // `start_run` falls through to NotFound. The point of this test
+    // is that the GATE is crossed — i.e. the error is no longer
+    // `Validation { msg contains "completed" }`.
     let (ctx, _d) = ctx_with_eval_tables().await;
     let run = seed_run(&ctx, RunStatus::Completed).await;
     let err = eval::retry(&ctx, &run.id).await.unwrap_err();
-    let ApiError::Validation(msg) = err else {
-        panic!("expected Validation, got {err:?}");
-    };
-    assert!(msg.contains("completed"), "{msg}");
+    assert!(
+        !matches!(&err, ApiError::Validation(msg) if msg.contains("completed")),
+        "Completed must no longer be rejected by the gate; got {err:?}"
+    );
+    // Specifically, the downstream `start_run` error surfaces — proving
+    // the gate accepted the source.
+    assert!(
+        matches!(err, ApiError::NotFound(_)),
+        "expected start_run NotFound (no strategy in harness); got {err:?}"
+    );
 }
 
 #[tokio::test]
@@ -290,8 +305,12 @@ async fn retry_returns_inflight_sibling_idempotently() {
 
 #[tokio::test]
 async fn retry_writes_audit_row_on_rejection() {
+    // `Running` is still gated (the in-flight run is what the operator
+    // should be watching). Pre-2026-05-19 this test used `Completed`
+    // as the rejection case, but the gate now accepts Completed for
+    // "Rerun" semantics.
     let (ctx, _d) = ctx_with_eval_tables().await;
-    let run = seed_run(&ctx, RunStatus::Completed).await;
+    let run = seed_run(&ctx, RunStatus::Running).await;
     let _ = eval::retry(&ctx, &run.id).await;
 
     let (domain, op, target, outcome): (String, String, Option<String>, String) =

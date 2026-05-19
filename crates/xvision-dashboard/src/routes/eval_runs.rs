@@ -108,10 +108,29 @@ pub async fn cancel_run(
 
 /// `POST /api/eval/runs/:id/retry` — enqueue a fresh run that clones the
 /// source's `(agent_id, scenario_id, mode, params_override)` inputs.
+///
 /// Returns `202 Accepted` with the freshly-persisted `RunDetail` (status
-/// = `Queued`). `400` if the source isn't in a `failed` state; idempotent
-/// on the source's `(agent_id, scenario_id, mode)` fingerprint while a
-/// previous retry is still queued or running.
+/// = `Queued`).
+///
+/// Returns `400 Bad Request` (`code: "validation"`) if the source is in
+/// a non-terminal state — i.e. `Queued` or `Running`. The accepted set
+/// is `Failed | Cancelled | Completed`:
+///
+/// - `Failed` / `Cancelled` → "Retry" semantics (recovery after a fix
+///   or after a deliberate stop). Widened from `Failed`-only by PR #260
+///   on 2026-05-18.
+/// - `Completed` → "Rerun" semantics (re-test against the same
+///   agent/scenario for result-stability / fresh trace). Widened from
+///   `Failed | Cancelled` by the `eval-rerun-from-completed` track on
+///   2026-05-19.
+///
+/// Returns `404 Not Found` if the source run id is unknown.
+///
+/// Idempotent on the source's
+/// `(agent_id, scenario_id, mode, params_override)` fingerprint: if a
+/// previous retry is still queued or running, that run's detail is
+/// returned instead of starting another. This guarantee holds for both
+/// "Retry" and "Rerun" cases — a double-click on Rerun does NOT fan out.
 pub async fn retry_run(
     State(state): State<AppState>,
     Path(id): Path<String>,
