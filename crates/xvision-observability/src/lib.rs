@@ -43,8 +43,9 @@ pub use export::{
     ExportTotals, FinalArtifact, SpanNode, SCHEMA_VERSION,
 };
 pub use janitor::{
-    expire_old_payload_refs, run_once as run_janitor_once, spawn_periodic as spawn_janitor,
-    truncate_to_max_bytes, JanitorConfig, JanitorError, JanitorStats,
+    expire_old_payload_refs, gc_orphaned_blobs, run_once as run_janitor_once,
+    spawn_periodic as spawn_janitor, truncate_to_max_bytes, GcReport, GC_MIN_AGE_SECS,
+    JanitorConfig, JanitorError, JanitorStats,
 };
 pub use recorder::{AgentRunRecorder, Attribute, NoopRecorder, RecorderError};
 pub use redactor::{RedactionMatch, Redactor};
