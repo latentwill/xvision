@@ -129,6 +129,8 @@ pub mod get {
                         system_prompt: "Trade.".into(),
                         skill_ids: vec![],
                         max_tokens: Some(2048),
+                        prompt_version: String::new(),
+                        inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
                     }],
                 },
             )

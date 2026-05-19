@@ -45,6 +45,8 @@ fn create_agent(home: &std::path::Path, name: &str) -> String {
                     system_prompt: "Trade carefully.".into(),
                     skill_ids: vec![],
                     max_tokens: Some(1024),
+                    prompt_version: String::new(),
+                    inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
                 }],
             },
         )

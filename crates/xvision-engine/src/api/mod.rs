@@ -49,6 +49,8 @@ const MIGRATION_018_AGENT_RUN_OBSERVABILITY: &str =
     include_str!("../../migrations/018_agent_run_observability.sql");
 const MIGRATION_019_AGENT_SLOT_PROMPT_VERSION: &str =
     include_str!("../../migrations/019_agent_slot_prompt_version.sql");
+const MIGRATION_020_AGENT_SLOT_INPUTS_POLICY: &str =
+    include_str!("../../migrations/020_agent_slot_inputs_policy.sql");
 
 /// Map of cache_key → per-key mutex used by `eval::bars::load_bars` to
 /// serialize concurrent misses for the same window. Kept inside an outer
@@ -149,6 +151,7 @@ impl ApiContext {
             .execute(&pool)
             .await?;
         migrate_agent_slot_prompt_version(&pool).await?;
+        migrate_agent_slot_inputs_policy(&pool).await?;
 
         let ctx = Self::new(pool, actor, xvn_home.to_path_buf());
 
@@ -440,6 +443,22 @@ async fn migrate_eval_findings_review_columns(pool: &SqlitePool) -> ApiResult<()
 async fn migrate_agent_slot_prompt_version(pool: &SqlitePool) -> ApiResult<()> {
     if !table_has_column(pool, "agent_slots", "prompt_version").await? {
         sqlx::query(MIGRATION_019_AGENT_SLOT_PROMPT_VERSION)
+            .execute(pool)
+            .await?;
+    }
+
+    Ok(())
+}
+
+/// Apply the `agent_slots.inputs_policy` column add from migration 020
+/// against pre-020 databases. Same probe-then-apply pattern as 019 —
+/// SQLite has no `ALTER TABLE ADD COLUMN IF NOT EXISTS`, so we gate on
+/// the column probe to keep `ApiContext::open` idempotent on an
+/// already-initialized home. F-6 from the 2026-05-19 eval-traces
+/// end-to-end audit.
+async fn migrate_agent_slot_inputs_policy(pool: &SqlitePool) -> ApiResult<()> {
+    if !table_has_column(pool, "agent_slots", "inputs_policy").await? {
+        sqlx::query(MIGRATION_020_AGENT_SLOT_INPUTS_POLICY)
             .execute(pool)
             .await?;
     }

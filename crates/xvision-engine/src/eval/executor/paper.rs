@@ -21,6 +21,7 @@ use xvision_observability::{BrokerCallOutcome, BrokerSide};
 use crate::agent::llm::LlmDispatch;
 use crate::agent::observability::{fresh_span_id, ObsEmitter};
 use crate::agent::pipeline::{run_pipeline, PipelineInputs, ResolvedAgentSlot};
+use crate::agents::InputsPolicy;
 use crate::api::chart::{ChartEquityPoint, LiveDecisionRow, RunChartEvent, RunEventBus};
 use crate::eval::executor::Executor;
 use crate::eval::metrics::{
@@ -275,10 +276,34 @@ fn trader_model_id(agent_slots: &[ResolvedAgentSlot], strategy: &Strategy) -> Op
     None
 }
 
-fn bar_seed(asset: &str, bar: &Ohlcv, bar_history: Vec<serde_json::Value>) -> serde_json::Value {
+/// Determine the seed-sanitization policy for this run. The v4 causal
+/// prompts (F-6) want `timestamp` and `decision_index` stripped before
+/// the trader LLM sees the seed; today's harness leaks both.
+///
+/// Policy is sourced from the trader-role `ResolvedAgentSlot` if one is
+/// attached. If no trader role is attached (legacy `Strategy.trader_slot`
+/// only — pre-strategies-refactor shape), the legacy slot has no policy
+/// of its own, so we fall back to `Raw` for byte-identical pre-F-6
+/// behavior. This is a deliberate conservatism: anyone who wants
+/// `Causal` semantics in 2026 is already running with an attached agent.
+fn resolve_inputs_policy(agent_slots: &[ResolvedAgentSlot]) -> InputsPolicy {
+    use crate::strategies::agent_ref::canonical_role;
+    agent_slots
+        .iter()
+        .find(|r| canonical_role(&r.role) == "trader")
+        .map(|r| r.inputs_policy)
+        .unwrap_or(InputsPolicy::Raw)
+}
+
+fn bar_seed(
+    asset: &str,
+    bar: &Ohlcv,
+    bar_history: Vec<serde_json::Value>,
+    policy: InputsPolicy,
+) -> serde_json::Value {
     serde_json::json!({
         "asset": asset,
-        "current_bar": ohlcv_to_json(bar),
+        "current_bar": ohlcv_to_json(bar, policy),
         "next_bar_open": serde_json::Value::Null,
         "reference_price_usd": bar.close,
         "reference_price_source": "eval_bar.close",
@@ -289,15 +314,60 @@ fn bar_seed(asset: &str, bar: &Ohlcv, bar_history: Vec<serde_json::Value>) -> se
 /// Serialize an Ohlcv bar as the same JSON shape used for
 /// `market_data.current_bar` so `bar_history` entries are homogeneous
 /// with the trader prompt's existing current-bar shape.
-fn ohlcv_to_json(bar: &Ohlcv) -> serde_json::Value {
-    serde_json::json!({
-        "timestamp": bar.timestamp,
-        "open": bar.open,
-        "high": bar.high,
-        "low": bar.low,
-        "close": bar.close,
-        "volume": bar.volume,
-    })
+///
+/// Under `InputsPolicy::Raw` / `InputsPolicy::Oracle` the output is
+/// byte-identical to the pre-F-6 behavior (`timestamp` first, then
+/// OHLCV in OHLCV order). Under `InputsPolicy::Causal` the
+/// `timestamp` field is omitted — callers that build the
+/// `bar_history` slice replace it with a per-entry `bar_index` so the
+/// LLM has a relative-position handle without a wall-clock label.
+/// The current bar itself is also stripped (oracle leak), so callers
+/// passing `policy = Causal` from `bar_seed` must also avoid
+/// reintroducing the timestamp from outside this fn.
+fn ohlcv_to_json(bar: &Ohlcv, policy: InputsPolicy) -> serde_json::Value {
+    match policy {
+        InputsPolicy::Raw | InputsPolicy::Oracle => serde_json::json!({
+            "timestamp": bar.timestamp,
+            "open": bar.open,
+            "high": bar.high,
+            "low": bar.low,
+            "close": bar.close,
+            "volume": bar.volume,
+        }),
+        InputsPolicy::Causal => serde_json::json!({
+            "open": bar.open,
+            "high": bar.high,
+            "low": bar.low,
+            "close": bar.close,
+            "volume": bar.volume,
+        }),
+    }
+}
+
+/// Build the `bar_history` slice for a given policy. `Causal` mode
+/// emits per-bar `bar_index` (0 = oldest visible bar) in place of the
+/// `timestamp` field; `Raw` / `Oracle` produce byte-identical output
+/// to the pre-F-6 shape.
+fn build_bar_history(bars: &[&Ohlcv], policy: InputsPolicy) -> Vec<serde_json::Value> {
+    match policy {
+        InputsPolicy::Raw | InputsPolicy::Oracle => {
+            bars.iter().map(|b| ohlcv_to_json(b, policy)).collect()
+        }
+        InputsPolicy::Causal => bars
+            .iter()
+            .enumerate()
+            .map(|(i, b)| {
+                serde_json::json!({
+                    "bar_index": i,
+                    "open": b.open,
+                    "high": b.high,
+                    "low": b.low,
+                    "close": b.close,
+                    "volume": b.volume,
+                })
+            })
+            .collect(),
+    }
 }
 
 #[async_trait]
@@ -462,6 +532,12 @@ impl PaperExecutor {
         let combined_bars: Vec<&Ohlcv> = self.warmup_bars.iter().chain(decision_bars.iter()).collect();
         let history_window = scenario.warmup_bars as usize;
 
+        // F-6: per-run sanitization policy — read once off the trader
+        // slot. `Raw` (the default) reproduces the pre-F-6 JSON
+        // byte-for-byte; `Causal` strips `timestamp` per bar and
+        // `decision_index` from the top-level seed.
+        let inputs_policy = resolve_inputs_policy(agent_slots);
+
         let initial_balance = self.broker.balance().await?;
         let mut equity_samples: Vec<f64> = Vec::new();
         let mut decision_idx = 0u32;
@@ -534,30 +610,45 @@ impl PaperExecutor {
             // series.
             let combined_idx = warmup_count + i;
             let history_start = combined_idx.saturating_sub(history_window);
-            let bar_history: Vec<serde_json::Value> = combined_bars[history_start..combined_idx]
-                .iter()
-                .map(|b| ohlcv_to_json(b))
-                .collect();
+            let history_slice: &[&Ohlcv] = &combined_bars[history_start..combined_idx];
+            let bar_history = build_bar_history(history_slice, inputs_policy);
 
             let position = self.broker.position(&asset).await?;
             let balance = self.broker.balance().await?;
             let buying_power = self.broker.buying_power(&asset).await?;
-            let market_data = bar_seed(&asset, bar, bar_history);
+            let market_data = bar_seed(&asset, bar, bar_history, inputs_policy);
             let reference_price_usd = bar.close;
-            let mut seed = serde_json::json!({
-                "decision_index": decision_idx,
-                "asset": asset,
-                "timestamp": bar.timestamp,
-                "market_data": market_data,
-                "portfolio_state": {
-                    "position_size": position,
-                    "equity": balance,
-                    // Settled cash (for crypto) or buying_power (for equities).
-                    // This is the hard cap on the next buy — equity is not.
-                    "buying_power": buying_power,
-                    "mark_price": reference_price_usd,
-                },
-            });
+            // F-6: under `Causal` the top-level seed drops both
+            // `decision_index` and `timestamp`. The v4 causal prompt
+            // says "Do not use timestamp or decision_index" — we
+            // honor it by not emitting them. `Raw` / `Oracle` keep
+            // the original shape byte-for-byte (regression guard).
+            let mut seed = match inputs_policy {
+                InputsPolicy::Raw | InputsPolicy::Oracle => serde_json::json!({
+                    "decision_index": decision_idx,
+                    "asset": asset,
+                    "timestamp": bar.timestamp,
+                    "market_data": market_data,
+                    "portfolio_state": {
+                        "position_size": position,
+                        "equity": balance,
+                        // Settled cash (for crypto) or buying_power (for equities).
+                        // This is the hard cap on the next buy — equity is not.
+                        "buying_power": buying_power,
+                        "mark_price": reference_price_usd,
+                    },
+                }),
+                InputsPolicy::Causal => serde_json::json!({
+                    "asset": asset,
+                    "market_data": market_data,
+                    "portfolio_state": {
+                        "position_size": position,
+                        "equity": balance,
+                        "buying_power": buying_power,
+                        "mark_price": reference_price_usd,
+                    },
+                }),
+            };
             // agent-error-feedback-self-healing: inject the most-
             // recent recoverable broker error so the trader agent
             // can self-heal on the next cycle (re-decide with a
@@ -1160,7 +1251,132 @@ mod role_tests {
                 model: Some(model.into()),
             },
             max_tokens: None,
+            inputs_policy: crate::agents::InputsPolicy::Raw,
         }
+    }
+
+    use chrono::{TimeZone, Utc};
+    use xvision_core::market::Ohlcv;
+
+    fn mk_bar(secs: i64, close: f64) -> Ohlcv {
+        Ohlcv {
+            timestamp: Utc.timestamp_opt(secs, 0).unwrap(),
+            open: close - 1.0,
+            high: close + 1.0,
+            low: close - 2.0,
+            close,
+            volume: 100.0,
+        }
+    }
+
+    #[test]
+    fn raw_ohlcv_to_json_keeps_timestamp_field() {
+        // F-6 regression guard. Under `Raw`, the per-bar shape must be
+        // byte-identical to the pre-F-6 behavior — operators with
+        // existing strategies must not see drift.
+        let bar = mk_bar(1_700_000_000, 100.0);
+        let v = ohlcv_to_json(&bar, InputsPolicy::Raw);
+        let obj = v.as_object().unwrap();
+        assert!(obj.contains_key("timestamp"));
+        assert_eq!(obj.get("close").and_then(|v| v.as_f64()), Some(100.0));
+        assert_eq!(obj.len(), 6);
+
+        // Oracle is a runtime no-op: identical bytes.
+        let oracle = ohlcv_to_json(&bar, InputsPolicy::Oracle);
+        assert_eq!(v, oracle);
+    }
+
+    #[test]
+    fn causal_ohlcv_to_json_strips_timestamp() {
+        let bar = mk_bar(1_700_000_000, 100.0);
+        let v = ohlcv_to_json(&bar, InputsPolicy::Causal);
+        let obj = v.as_object().unwrap();
+        assert!(
+            !obj.contains_key("timestamp"),
+            "Causal must omit `timestamp` from per-bar JSON",
+        );
+        // OHLCV body is intact.
+        assert_eq!(obj.get("close").and_then(|v| v.as_f64()), Some(100.0));
+        assert_eq!(obj.len(), 5);
+    }
+
+    #[test]
+    fn build_bar_history_causal_assigns_bar_index_from_zero() {
+        let bars = vec![mk_bar(1, 10.0), mk_bar(2, 20.0), mk_bar(3, 30.0)];
+        let refs: Vec<&Ohlcv> = bars.iter().collect();
+        let history = build_bar_history(&refs, InputsPolicy::Causal);
+        assert_eq!(history.len(), 3);
+        for (i, entry) in history.iter().enumerate() {
+            let obj = entry.as_object().unwrap();
+            assert!(!obj.contains_key("timestamp"));
+            assert_eq!(
+                obj.get("bar_index").and_then(|v| v.as_u64()),
+                Some(i as u64),
+                "bar {i} must have bar_index = {i}",
+            );
+        }
+        // Sanity: oldest visible bar is bar_index=0, newest is len-1.
+        assert_eq!(history[0]["close"].as_f64(), Some(10.0));
+        assert_eq!(history[2]["close"].as_f64(), Some(30.0));
+    }
+
+    #[test]
+    fn build_bar_history_raw_matches_pre_f6_shape() {
+        // Regression: under `Raw`, every entry carries `timestamp` +
+        // OHLCV in the original order. We probe field presence so
+        // serde-internal key ordering doesn't make the test flaky.
+        let bars = vec![mk_bar(1_700_000_000, 100.0)];
+        let refs: Vec<&Ohlcv> = bars.iter().collect();
+        let history = build_bar_history(&refs, InputsPolicy::Raw);
+        let obj = history[0].as_object().unwrap();
+        for k in ["timestamp", "open", "high", "low", "close", "volume"] {
+            assert!(obj.contains_key(k), "missing `{k}` under Raw");
+        }
+        assert!(!obj.contains_key("bar_index"));
+    }
+
+    #[test]
+    fn resolve_inputs_policy_reads_from_trader_role_slot() {
+        // Trader-role policy wins. Non-trader roles do not contribute.
+        let slots = vec![
+            ResolvedAgentSlot {
+                role: "scout".into(),
+                slot: LLMSlot {
+                    role: "scout".into(),
+                    prompt: "p".into(),
+                    model_requirement: "m".into(),
+                    allowed_tools: Vec::new(),
+                    provider: None,
+                    model: Some("m".into()),
+                },
+                max_tokens: None,
+                inputs_policy: InputsPolicy::Oracle,
+            },
+            ResolvedAgentSlot {
+                role: "trader".into(),
+                slot: LLMSlot {
+                    role: "trader".into(),
+                    prompt: "p".into(),
+                    model_requirement: "m".into(),
+                    allowed_tools: Vec::new(),
+                    provider: None,
+                    model: Some("m".into()),
+                },
+                max_tokens: None,
+                inputs_policy: InputsPolicy::Causal,
+            },
+        ];
+        assert_eq!(resolve_inputs_policy(&slots), InputsPolicy::Causal);
+
+        // No trader slot — fall back to Raw (pre-F-6 behavior).
+        assert_eq!(
+            resolve_inputs_policy(&slots[..1]),
+            InputsPolicy::Raw,
+            "no trader role -> Raw default",
+        );
+
+        // Empty slots — same fallback.
+        assert_eq!(resolve_inputs_policy(&[]), InputsPolicy::Raw);
     }
 
     #[test]

@@ -16,7 +16,7 @@ pub mod validate;
 #[cfg(test)]
 mod max_tokens_resolution;
 
-pub use model::{Agent, AgentSlot};
+pub use model::{Agent, AgentSlot, InputsPolicy};
 // Canonical per-model metadata table lives in `xvision-core::providers`
 // so non-engine crates (CLI, dashboard) can resolve auto-tokens without
 // linking the engine. The engine re-exports the names it consumes.

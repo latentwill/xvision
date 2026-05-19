@@ -578,6 +578,7 @@ fn slot_to_agent_slot(
         // the operator-facing UX is consistent with `+ New agent`.
         max_tokens: None,
         prompt_version: String::new(),
+        inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
     }
 }
 
@@ -749,6 +750,7 @@ async fn resolve_agent_slots_for_cli(
             role: agent_ref.role.clone(),
             slot: agent_slot_to_llm_slot(&agent_ref.role, slot),
             max_tokens: slot.resolve_max_tokens(),
+            inputs_policy: slot.inputs_policy,
         });
     }
     Ok(out)

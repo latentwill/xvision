@@ -44,16 +44,38 @@ Then write `team/status/<track>.md` and begin.
 Reserved DB migration numbers. Never claim a new number without editing this
 table AND `v1-shipping-plan.md` in the same commit.
 
-| # | Owner | Status |
-|---|---|---|
-| 001 | engine-api | merged |
-| 002 | eval-engine | merged |
-| 003 | chat-rail | merged |
-| 004 | command-palette | merged |
-| 005 | eval-review-data-model | merged (#176) |
+The table below is the source of truth for what's actually on disk in
+`crates/xvision-engine/migrations/`. Historical gaps (006, 008, 009)
+were reserved but never landed; do not recycle those numbers — picking
+the next sequential keeps the registry monotonic and the apply-order
+unambiguous.
 
-The next available number is 006. The conductor must approve and reserve in
-this table before a track touches `crates/xvision-engine/migrations/`.
+| #   | Owner                                | Status        |
+|-----|--------------------------------------|---------------|
+| 001 | engine-api                           | merged        |
+| 002 | eval-engine                          | merged        |
+| 003 | chat-rail                            | merged        |
+| 004 | command-palette                      | merged        |
+| 005 | eval-review-data-model               | merged (#176) |
+| 006 | (gap — reserved, never landed)       | unused        |
+| 007 | skills                               | merged        |
+| 008 | (gap — reserved, never landed)       | unused        |
+| 009 | (gap — reserved, never landed)       | unused        |
+| 010 | bars-cache                           | merged        |
+| 011 | scenarios                            | merged        |
+| 012 | runs-scenario-fk                     | merged        |
+| 013 | cli-jobs                             | merged        |
+| 014 | eval-agent-id                        | merged        |
+| 015 | eval-decisions-reasoning             | merged        |
+| 016 | eval-reviews                         | merged        |
+| 017 | eval-findings-review-columns         | merged        |
+| 018 | agent-run-observability              | merged        |
+| 019 | agent-slot-prompt-version            | merged        |
+| 020 | eval-causal-input-sanitization (F-6) | in flight     |
+
+The next available number is **021**. The conductor must approve and
+reserve in this table before a track touches
+`crates/xvision-engine/migrations/`.
 
 ## Historical context
 
