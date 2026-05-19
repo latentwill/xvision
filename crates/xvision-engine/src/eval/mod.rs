@@ -23,6 +23,7 @@ pub mod scenario;
 pub mod scenario_seed;
 pub mod scenario_store;
 pub mod store;
+pub mod watchdog;
 
 pub use attestation::{EvalAttestation, TokensUsed};
 pub use compare::{
