@@ -61,13 +61,11 @@ async fn full_session_round_trip() {
     }
 
     let sidecar_path = agentd_bin();
-    if !sidecar_path.exists() {
-        eprintln!(
-            "skipping: sidecar not built at {:?}. Run `pnpm --dir xvision-agentd build` first.",
-            sidecar_path
-        );
-        return;
-    }
+    assert!(
+        sidecar_path.exists(),
+        "sidecar not built at {:?}. Run `pnpm --dir xvision-agentd build` first or set XVISION_AGENTD_PATH.",
+        sidecar_path
+    );
 
     // Mock script lives in the sidecar; gate via env var before spawn.
     // Supervisor::spawn inherits the parent process env, so this set
