@@ -8,6 +8,7 @@
 
 pub mod attestation;
 pub mod bars;
+pub mod behavior;
 pub mod compare;
 pub mod cost;
 pub mod executor;

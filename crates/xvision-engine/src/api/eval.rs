@@ -623,6 +623,31 @@ async fn get_run_inner(ctx: &ApiContext, id: &str) -> ApiResult<RunDetail> {
     })
 }
 
+/// Return the behavior summary for a run by loading its decisions on demand
+/// and running the pure derivation function. No DB writes; safe to call
+/// repeatedly.
+pub async fn get_run_behavior(
+    ctx: &ApiContext,
+    run_id: &str,
+) -> ApiResult<crate::eval::behavior::BehaviorSummary> {
+    let store = RunStore::new(ctx.db.clone());
+    // Verify the run exists so callers get a proper NotFound rather than
+    // an empty summary for a non-existent id.
+    store.get(run_id).await.map_err(|e| {
+        let msg = e.to_string();
+        if msg.contains("run not found") {
+            ApiError::NotFound(format!("eval run '{run_id}'"))
+        } else {
+            ApiError::Internal(msg)
+        }
+    })?;
+    let decisions = store
+        .read_decisions(run_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    Ok(crate::eval::behavior::derive_behavior_summary(&decisions))
+}
+
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(
     feature = "ts-export",
