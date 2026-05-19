@@ -23,6 +23,7 @@ use chrono::{TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
+use crate::cli_jobs::eval_run_bridge;
 use crate::cli_jobs::runner::CliJobRunner;
 use crate::cli_jobs::store::CliJobStore;
 use xvision_engine::agent::llm::{
@@ -810,11 +811,17 @@ impl WizardLoop {
                     .get("job_id")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow::anyhow!("get_cli_job: missing `job_id`"))?;
-                let store = CliJobStore::new(self.pool.clone());
-                let job = store
-                    .get(job_id)
-                    .await?
-                    .ok_or_else(|| anyhow::anyhow!("cli job '{job_id}' not found"))?;
+                let job = if job_id.starts_with(eval_run_bridge::EVAL_RUN_PREFIX) {
+                    eval_run_bridge::get_synthetic_job(&self.pool, job_id)
+                        .await?
+                        .ok_or_else(|| anyhow::anyhow!("eval run '{job_id}' not found"))?
+                } else {
+                    let store = CliJobStore::new(self.pool.clone());
+                    store
+                        .get(job_id)
+                        .await?
+                        .ok_or_else(|| anyhow::anyhow!("cli job '{job_id}' not found"))?
+                };
                 Ok(serde_json::json!({
                     "job_id": job.job_id,
                     "argv": job.argv,
@@ -837,11 +844,17 @@ impl WizardLoop {
                     .get("job_id")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow::anyhow!("get_cli_job_output: missing `job_id`"))?;
-                let store = CliJobStore::new(self.pool.clone());
-                let output = store
-                    .output(job_id)
-                    .await?
-                    .ok_or_else(|| anyhow::anyhow!("cli job '{job_id}' not found"))?;
+                let output = if job_id.starts_with(eval_run_bridge::EVAL_RUN_PREFIX) {
+                    eval_run_bridge::get_synthetic_output(&self.pool, job_id)
+                        .await?
+                        .ok_or_else(|| anyhow::anyhow!("eval run '{job_id}' not found"))?
+                } else {
+                    let store = CliJobStore::new(self.pool.clone());
+                    store
+                        .output(job_id)
+                        .await?
+                        .ok_or_else(|| anyhow::anyhow!("cli job '{job_id}' not found"))?
+                };
                 Ok(serde_json::json!({
                     "job_id": output.job_id,
                     "status": output.status.as_str(),
