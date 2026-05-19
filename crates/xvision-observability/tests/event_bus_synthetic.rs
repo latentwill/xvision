@@ -13,7 +13,7 @@
 //!       before tool_call N in the timeline order of `spans.started_at`)
 
 use chrono::{Duration, Utc};
-use sqlx::SqlitePool;
+use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use std::sync::Arc;
 use std::time::Duration as StdDuration;
 use xvision_observability::{
@@ -36,7 +36,11 @@ const MIGRATION_018: &str =
     include_str!("../../xvision-engine/migrations/018_agent_run_observability.sql");
 
 async fn migrated_pool() -> SqlitePool {
-    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
     sqlx::query(MIGRATION_002).execute(&pool).await.unwrap();
     sqlx::query(MIGRATION_013).execute(&pool).await.unwrap();
     sqlx::query(MIGRATION_018).execute(&pool).await.unwrap();
@@ -60,6 +64,31 @@ async fn wait_for_rows(pool: &SqlitePool, table: &str, expected: i64) {
                 row.0, expected
             );
             return;
+        }
+        tokio::time::sleep(StdDuration::from_millis(10)).await;
+    }
+}
+
+async fn wait_for_run_status(
+    pool: &SqlitePool,
+    run_id: &str,
+    expected: RunStatus,
+) -> (Option<String>, Option<String>) {
+    let deadline = std::time::Instant::now() + StdDuration::from_secs(2);
+    loop {
+        let row: Option<(String, Option<String>, Option<String>)> =
+            sqlx::query_as("SELECT status, finished_at, error FROM agent_runs WHERE id = ?")
+                .bind(run_id)
+                .fetch_optional(pool)
+                .await
+                .unwrap();
+        if let Some((status, finished_at, error)) = row {
+            if status == expected.as_db_str() {
+                return (finished_at, error);
+            }
+        }
+        if std::time::Instant::now() >= deadline {
+            panic!("agent_runs row did not reach `{}` in time", expected.as_db_str());
         }
         tokio::time::sleep(StdDuration::from_millis(10)).await;
     }
@@ -223,15 +252,7 @@ async fn synthetic_run_records_every_row_then_marks_interrupted() {
     wait_for_rows(&pool, "spans", 10).await;
 
     // The agent_runs row exists and is now `interrupted`.
-    let (status, finished_at, error): (String, Option<String>, Option<String>) =
-        sqlx::query_as(
-            "SELECT status, finished_at, error FROM agent_runs WHERE id = ?",
-        )
-        .bind(&run_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(status, RunStatus::Interrupted.as_db_str());
+    let (finished_at, error) = wait_for_run_status(&pool, &run_id, RunStatus::Interrupted).await;
     assert!(finished_at.is_some());
     assert_eq!(error.as_deref(), Some("sidecar crashed mid-run"));
 

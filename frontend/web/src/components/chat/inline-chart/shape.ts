@@ -81,15 +81,21 @@ export function histogramBars(
   points: InlinePoint[],
   viewBox: ViewBox = DEFAULT_VIEWBOX,
 ) {
-  if (points.length === 0) return [];
-  const maxAbs = Math.max(...points.map((point) => Math.abs(point.y)), 1);
+  const finitePoints = points.filter(
+    (point) => Number.isFinite(point.x) && Number.isFinite(point.y),
+  );
+  if (finitePoints.length === 0) return [];
+  const maxAbs = Math.max(...finitePoints.map((point) => Math.abs(point.y)), 1);
   const gap = 2;
   const innerW = viewBox.width - viewBox.padX * 2;
-  const barW = Math.max(2, (innerW - gap * (points.length - 1)) / points.length);
+  const barW = Math.max(
+    2,
+    (innerW - gap * (finitePoints.length - 1)) / finitePoints.length,
+  );
   const zeroY = viewBox.height / 2;
   const maxH = viewBox.height / 2 - viewBox.padY;
 
-  return points.map((point, index) => {
+  return finitePoints.map((point, index) => {
     const h = Math.max(1, (Math.abs(point.y) / maxAbs) * maxH);
     const positive = point.y >= 0;
     return {
