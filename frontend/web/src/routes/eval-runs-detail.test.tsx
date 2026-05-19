@@ -1173,3 +1173,104 @@ describe("EvalRunDetailRoute — Open positions cell", () => {
     expect(await screen.findByText("999.00")).toBeInTheDocument();
   });
 });
+
+describe("EvalRunDetailRoute — direction-aware action pill (QA22 round-4)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    FakeEventSource.instances = [];
+    vi.stubGlobal("EventSource", FakeEventSource);
+    vi.mocked(chartApi.getRunChart).mockResolvedValue(null as never);
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    vi.mocked(chartApi.openRunStream).mockImplementation(
+      (runId: string) => new EventSource(`/stream/${runId}`),
+    );
+    vi.mocked(evalReviewApi.listReviewsForRun).mockResolvedValue([]);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("renders BUY / SELL / SHORT / COVER / HOLD pills resolved against prior position side", async () => {
+    // Sequence:
+    //   0  long_open  → BUY
+    //   1  flat       → SELL  (closing a long)
+    //   2  short_open → SHORT
+    //   3  flat       → COVER (closing a short)
+    //   4  hold       → HOLD
+    vi.mocked(evalApi.getRun).mockResolvedValue(
+      detail({
+        summary: { ...detail().summary, status: "completed" },
+        decisions: [
+          decision({ decision_index: 0, action: "long_open", fill_size: 1, fill_price: 50_000 }),
+          decision({
+            decision_index: 1,
+            action: "flat",
+            fill_size: 1,
+            fill_price: 51_000,
+            pnl_realized: 1000,
+          }),
+          decision({
+            decision_index: 2,
+            action: "short_open",
+            fill_size: 0.5,
+            fill_price: 49_000,
+          }),
+          decision({
+            decision_index: 3,
+            action: "flat",
+            fill_size: 0.5,
+            fill_price: 48_500,
+            pnl_realized: 250,
+          }),
+          decision({ decision_index: 4, action: "hold", fill_size: null, fill_price: null }),
+        ],
+      }),
+    );
+
+    renderDetail();
+
+    // Find each row by the OpenPositions testid (one per decision_index),
+    // then walk up to the table row and assert the pill label inside it.
+    await screen.findByTestId("decision-open-positions-0");
+    const rowFor = (idx: number) => {
+      const cell = screen.getByTestId(`decision-open-positions-${idx}`);
+      const tr = cell.closest("tr");
+      if (!tr) throw new Error(`no <tr> ancestor for decision-open-positions-${idx}`);
+      return tr;
+    };
+
+    expect(rowFor(0).querySelector(".dec-pill__label")?.textContent).toBe("BUY");
+    expect(rowFor(1).querySelector(".dec-pill__label")?.textContent).toBe("SELL");
+    expect(rowFor(2).querySelector(".dec-pill__label")?.textContent).toBe("SHORT");
+    expect(rowFor(3).querySelector(".dec-pill__label")?.textContent).toBe("COVER");
+    expect(rowFor(4).querySelector(".dec-pill__label")?.textContent).toBe("HOLD");
+  });
+
+  it("filter tabs include Short and Cover buckets and count rows by direction-aware kind", async () => {
+    vi.mocked(evalApi.getRun).mockResolvedValue(
+      detail({
+        summary: { ...detail().summary, status: "completed" },
+        decisions: [
+          decision({ decision_index: 0, action: "short_open", fill_size: 0.5, fill_price: 60_000 }),
+          decision({
+            decision_index: 1,
+            action: "flat",
+            fill_size: 0.5,
+            fill_price: 59_000,
+            pnl_realized: 500,
+          }),
+        ],
+      }),
+    );
+
+    renderDetail();
+
+    // Both buckets should be present (per-bucket button labels) and
+    // each should report exactly one row. The accessible name is the
+    // concatenation of the label and the count span — match loosely.
+    await screen.findByRole("button", { name: /SHORT.*1/ });
+    expect(screen.getByRole("button", { name: /COVER.*1/ })).toBeInTheDocument();
+    // Sell bucket exists but is empty for this sequence (no flat-after-long).
+    expect(screen.getByRole("button", { name: /SELL.*0/ })).toBeInTheDocument();
+  });
+});
