@@ -207,6 +207,7 @@ async fn lookup_agent_for_eval_run_returns_some_for_fresh_run_and_none_for_legac
     )
     .await
     .unwrap();
+    let seeded_scenario_id = "crypto-bull-q1-2025";
 
     // Seed an agent in the workspace library.
     let agent_store = AgentStore::new(ctx.db.clone());
@@ -233,7 +234,7 @@ async fn lookup_agent_for_eval_run_returns_some_for_fresh_run_and_none_for_legac
     let run_store = RunStore::new(ctx.db.clone());
     let mut fresh = Run::new_queued(
         "bundle-hash-fresh".into(),
-        "scenario-x".into(),
+        seeded_scenario_id.into(),
         RunMode::Backtest,
     );
     fresh.agents_agent_id = Some(agent_ulid.clone());
@@ -259,7 +260,7 @@ async fn lookup_agent_for_eval_run_returns_some_for_fresh_run_and_none_for_legac
     )
     .bind(legacy_id)
     .bind("legacy-bundle-hash")
-    .bind("scenario-x")
+    .bind(seeded_scenario_id)
     .bind("backtest")
     .bind(RunStatus::Completed.as_str())
     .bind(Utc::now().to_rfc3339())
@@ -283,7 +284,7 @@ async fn lookup_agent_for_eval_run_returns_some_for_fresh_run_and_none_for_legac
     // Populated row whose agent ULID points at a deleted agent → None.
     let mut orphan = Run::new_queued(
         "bundle-hash-orphan".into(),
-        "scenario-x".into(),
+        seeded_scenario_id.into(),
         RunMode::Backtest,
     );
     orphan.agents_agent_id = Some("01HZNOTAGENTULID0000000000".into());
