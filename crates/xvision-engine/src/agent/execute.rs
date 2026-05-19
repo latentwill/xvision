@@ -230,6 +230,16 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
         // The digest is deterministic over (system_prompt, messages, tools)
         // and prefixed `sha256:` for explicit algorithm tagging.
         let prompt_hash = crate::agent::observability::compute_prompt_hash(&req);
+        // `harness-payload-blob-write`: keep a clone of the prompt so
+        // `emit_model_call_finished_with_payloads` can persist it
+        // under FullDebug / Redacted retention. The clone is cheap
+        // (Arc-shared strings + Vecs) and only retained until the
+        // companion emit closes the span, then dropped. Under
+        // HashOnly retention the emitter never reads the bytes, so
+        // the work is wasted by ~one clone per dispatch — acceptable
+        // tradeoff vs. routing the request back through the emitter.
+        let prompt_for_blob: Option<crate::agent::llm::LlmRequest> =
+            input.obs.as_ref().map(|_| req.clone());
         if let Some(obs) = input.obs.as_ref() {
             obs.emit_model_call_started(
                 &span_id,
@@ -291,7 +301,7 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
             }
         }
         if let Some(obs) = input.obs.as_ref() {
-            obs.emit_model_call_finished(
+            obs.emit_model_call_finished_with_payloads(
                 &span_id,
                 &provider_str,
                 &model_str,
@@ -300,6 +310,12 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
                 None,
                 prompt_hash,
                 response_hash,
+                prompt_for_blob.as_ref(),
+                if assistant_text.is_empty() {
+                    None
+                } else {
+                    Some(assistant_text.as_str())
+                },
             )
             .await;
             obs.emit_span_finished_ok(&span_id).await;

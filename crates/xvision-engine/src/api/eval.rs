@@ -942,12 +942,23 @@ async fn run_inner(
         .obs_event_bus
         .as_ref()
         .map(|bus| {
+            // `harness-payload-blob-write`: attach the BlobStore so
+            // `emit_model_call_finished_with_payloads` can persist
+            // prompt + response bodies under FullDebug / Redacted
+            // retention. Blob root mirrors the dashboard's resolution
+            // at `$xvn_home/agent_runs/blobs/` so the existing
+            // `GET /api/agent-runs/:id/blobs/:ref` route serves the
+            // exact files this writer produces.
+            let blob_store = xvision_observability::BlobStore::new(
+                ctx.xvn_home.join("agent_runs").join("blobs"),
+            );
             crate::agent::observability::ObsEmitter::new(bus.clone(), run.id.clone())
                 .with_retention(
                     crate::agent::observability::ObsRetentionPolicy::from_config(
                         &ctx.obs_config,
                     ),
                 )
+                .with_blob_store(blob_store)
         });
 
     // 3. Pick the executor for this run mode. For backtest mode, when the
@@ -1355,12 +1366,19 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
         .obs_event_bus
         .as_ref()
         .map(|bus| {
+            // Mirror the FullDebug-aware emitter wiring above; same
+            // blob root so the second eval entry point produces refs
+            // the dashboard's blob-fetch route resolves to.
+            let blob_store = xvision_observability::BlobStore::new(
+                ctx.xvn_home.join("agent_runs").join("blobs"),
+            );
             crate::agent::observability::ObsEmitter::new(bus.clone(), run.id.clone())
                 .with_retention(
                     crate::agent::observability::ObsRetentionPolicy::from_config(
                         &ctx.obs_config,
                     ),
                 )
+                .with_blob_store(blob_store)
         });
 
     let executor: Box<dyn Executor> = match req.mode {
