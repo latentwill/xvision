@@ -10,6 +10,7 @@ pub mod attestation;
 pub mod bars;
 pub mod behavior;
 pub mod compare;
+pub mod concurrency;
 pub mod cost;
 pub mod executor;
 pub mod export;

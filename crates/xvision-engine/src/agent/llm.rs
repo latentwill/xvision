@@ -609,48 +609,92 @@ impl LlmDispatch for OpenaiCompatDispatch {
             "dispatching LLM request"
         );
 
-        let mut resp = None;
-        for attempt in 0..=RESPONSE_DECODE_RETRIES {
-            let mut request = self.client.post(&url).header("content-type", "application/json");
-            if !self.api_key.is_empty() {
-                request = request.header("authorization", format!("Bearer {}", self.api_key));
-            }
-            let http_resp = request.json(&body).send().await?;
-            let status = http_resp.status();
-            if !status.is_success() {
-                let text = http_resp.text().await.unwrap_or_default();
-                tracing::warn!(
-                    target: "xvision::llm",
-                    provider = "openai-compat",
-                    url = %url,
-                    status = %status,
-                    body = %text,
-                    "OpenAI-compat API returned non-success"
-                );
-                anyhow::bail!("OpenAI-compat API error {} at {}: {}", status, url, text);
-            }
+        // 429 retry constants — OpenRouter returns X-RateLimit-Reset as a
+        // unix-milliseconds epoch. We parse the header, sleep until that
+        // timestamp (plus jitter, capped), and retry up to MAX_RATE_LIMIT_RETRIES
+        // times before falling through to the original anyhow::bail!.
+        const MAX_RATE_LIMIT_RETRIES: u32 = 3;
+        const RATE_LIMIT_SLEEP_CAP_MS: u64 = 60_000;
+        const RATE_LIMIT_JITTER_MAX_MS: u64 = 200;
 
-            let text = http_resp.text().await.with_context(|| {
-                format!("provider_decode: OpenAI-compat failed reading response body at {url}")
-            })?;
-            match decode_llm_json("OpenAI-compat", &text) {
-                Ok(value) => {
-                    resp = Some(value);
-                    break;
+        let mut rate_retries: u32 = 0;
+        let mut resp = None;
+        'rate_limit: loop {
+            for attempt in 0..=RESPONSE_DECODE_RETRIES {
+                let mut request = self.client.post(&url).header("content-type", "application/json");
+                if !self.api_key.is_empty() {
+                    request = request.header("authorization", format!("Bearer {}", self.api_key));
                 }
-                Err(err) if attempt < RESPONSE_DECODE_RETRIES => {
+                let http_resp = request.json(&body).send().await?;
+                let status = http_resp.status();
+                if !status.is_success() {
+                    // --- 429 rate-limit handler --------------------------------
+                    if status.as_u16() == 429 && rate_retries < MAX_RATE_LIMIT_RETRIES {
+                        let reset_ms = http_resp
+                            .headers()
+                            .get("x-ratelimit-reset")
+                            .and_then(|v| v.to_str().ok())
+                            .and_then(|s| s.parse::<i64>().ok())
+                            .unwrap_or(0);
+                        let now_ms = chrono::Utc::now().timestamp_millis();
+                        let raw_wait = (reset_ms - now_ms).max(0) as u64;
+                        // Jitter via rand_core::OsRng — already a workspace dep.
+                        use rand_core::RngCore;
+                        let jitter = rand_core::OsRng.next_u64() % RATE_LIMIT_JITTER_MAX_MS;
+                        let wait_ms = (raw_wait + jitter).min(RATE_LIMIT_SLEEP_CAP_MS);
+                        tracing::warn!(
+                            target: "xvision::llm",
+                            provider = "openai-compat",
+                            attempt = rate_retries + 1,
+                            wait_ms,
+                            reset_ms,
+                            "rate-limited (429); sleeping until reset"
+                        );
+                        tokio::time::sleep(std::time::Duration::from_millis(wait_ms)).await;
+                        rate_retries += 1;
+                        continue 'rate_limit;
+                    }
+                    // ----------------------------------------------------------
+                    // Read the body only after ruling out a retriable 429 so we
+                    // don't consume the response body before the header is read.
+                    let text = http_resp.text().await.unwrap_or_default();
                     tracing::warn!(
                         target: "xvision::llm",
                         provider = "openai-compat",
                         url = %url,
-                        attempt = attempt + 1,
-                        error = %err,
-                        "OpenAI-compat API returned undecodable JSON response; retrying"
+                        status = %status,
+                        body = %text,
+                        "OpenAI-compat API returned non-success"
                     );
-                    retry_decode_sleep(attempt).await;
+                    anyhow::bail!("OpenAI-compat API error {} at {}: {}", status, url, text);
                 }
-                Err(err) => return Err(err),
+
+                let text = http_resp.text().await.with_context(|| {
+                    format!("provider_decode: OpenAI-compat failed reading response body at {url}")
+                })?;
+                match decode_llm_json("OpenAI-compat", &text) {
+                    Ok(value) => {
+                        resp = Some(value);
+                        break 'rate_limit;
+                    }
+                    Err(err) if attempt < RESPONSE_DECODE_RETRIES => {
+                        tracing::warn!(
+                            target: "xvision::llm",
+                            provider = "openai-compat",
+                            url = %url,
+                            attempt = attempt + 1,
+                            error = %err,
+                            "OpenAI-compat API returned undecodable JSON response; retrying"
+                        );
+                        retry_decode_sleep(attempt).await;
+                    }
+                    Err(err) => return Err(err),
+                }
             }
+            // Inner decode loop exhausted without success — propagate the decode
+            // error path (the `Err(err)` arm above returned already; reaching
+            // here means break was hit but resp is None, which can't happen).
+            break;
         }
         let resp = resp.expect("response decode loop must return or set response");
 

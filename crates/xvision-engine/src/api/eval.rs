@@ -37,6 +37,7 @@ use crate::api::settings::brokers as api_brokers;
 use crate::api::{search as api_search, strategy as api_strategy, ApiContext, ApiError, ApiResult};
 use crate::eval::attestation::{self, EvalAttestation};
 use crate::eval::compare::{compare_runs, ComparisonReport};
+use crate::eval::concurrency::enforce_concurrency_cap;
 use crate::eval::executor::{BacktestExecutor, Executor, PaperExecutor};
 use crate::eval::run::{Run, RunMode, RunStatus};
 #[allow(deprecated)]
@@ -1507,6 +1508,22 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
     };
     let agent_slots = resolve_agent_slots(ctx, &strategy).await?;
     validate_eval_trader_source(&strategy, &agent_slots)?;
+
+    // --- Per-(provider, model) concurrency cap --------------------------------
+    // Resolve provider + primary model from the strategy's runtime slots so the
+    // error message is actionable. We derive the key before building the full
+    // dispatch (which is the expensive part) so a capped request returns fast.
+    let cap_provider = select_eval_provider(ctx, &strategy, &agent_slots)
+        .await
+        .unwrap_or_else(|_| "unknown".into());
+    let cap_model = runtime_slots(&strategy, &agent_slots)
+        .into_iter()
+        .find_map(|slot| slot.model.as_deref().filter(|m| !m.trim().is_empty()))
+        .unwrap_or("unknown")
+        .to_string();
+    enforce_concurrency_cap(&ctx.db, &req.agent_id, &cap_provider, &cap_model).await?;
+    // -------------------------------------------------------------------------
+
     let (dispatch, findings_model) = build_eval_dispatch(ctx, &strategy, &agent_slots).await?;
     let tools = Arc::new(ToolRegistry::default_with_builtins());
 
@@ -1686,6 +1703,13 @@ async fn execute_in_background(
         return;
     }
 
+    // TODO(F-1 follow-up / #345): serialize finalize writes across concurrent
+    // eval runs that share the same (provider, model) slot. When many runs
+    // complete simultaneously, concurrent `store.finalize` + `upsert_run`
+    // calls can contend on the SQLite write lock and leave some runs in a
+    // "stuck running" state. PR #345 (eval-run-watchdog-and-stuck-running,
+    // F-3) already touches this path — add write batching there to avoid a
+    // merge conflict here.
     let finalized = match store.get(&run.id).await {
         Ok(r) => r,
         Err(e) => {
