@@ -50,6 +50,9 @@ pub enum ExperimentOp {
     Show(ShowArgs),
     /// Apply partial mutations to an existing experiment.
     Update(UpdateArgs),
+    /// Orchestrate a full experiment in one shot: pick scenarios → run batch →
+    /// bind to experiment row → write result_json summary.
+    Run(super::experiment_run::RunArgs),
 }
 
 // ── Subcommand args ──────────────────────────────────────────────────────────
@@ -123,6 +126,14 @@ pub async fn run(cmd: ExperimentCmd) -> CliResult<()> {
         ExperimentOp::Ls(args) => run_ls(args, cmd.xvn_home).await,
         ExperimentOp::Show(args) => run_show(args, cmd.xvn_home).await,
         ExperimentOp::Update(args) => run_update(args, cmd.xvn_home).await,
+        ExperimentOp::Run(mut args) => {
+            // Propagate --xvn-home from the parent command if the subcommand
+            // did not override it.
+            if args.xvn_home.is_none() {
+                args.xvn_home = cmd.xvn_home;
+            }
+            super::experiment_run::run_experiment_cmd(args).await
+        }
     }
 }
 
