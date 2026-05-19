@@ -39,6 +39,7 @@ async fn finalized_run(store: &RunStore) -> Run {
         win_rate: 0.55,
         n_trades: 18,
         n_decisions: 60,
+        baselines: None,
     };
     store.begin_running(&r.id).await.unwrap();
     store.finalize(&r.id, &metrics).await.unwrap();

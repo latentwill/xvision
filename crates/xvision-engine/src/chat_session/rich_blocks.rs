@@ -908,6 +908,7 @@ mod tests {
                 win_rate: 0.5,
                 n_trades: 2,
                 n_decisions: 4,
+                baselines: None,
             }),
             error: None,
             behavior: None,

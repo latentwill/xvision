@@ -430,6 +430,7 @@ mod tests {
             win_rate: 0.6,
             n_trades: 10,
             n_decisions: 20,
+            baselines: None,
         };
         run_store.finalize(&run1.id, &metrics).await.unwrap();
         run_store.finalize(&run2.id, &metrics).await.unwrap();

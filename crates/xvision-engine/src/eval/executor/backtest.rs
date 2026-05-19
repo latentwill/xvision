@@ -22,6 +22,8 @@ use async_trait::async_trait;
 use xvision_core::market::Ohlcv;
 use xvision_data::fixtures::load_ohlcv_fixture;
 
+use xvision_eval::baselines::bar_baselines;
+
 use crate::agent::llm::LlmDispatch;
 use crate::agent::observability::ObsEmitter;
 use crate::agent::pipeline::{run_pipeline, PipelineInputs, ResolvedAgentSlot};
@@ -35,7 +37,7 @@ use crate::eval::metrics::{
     total_return_pct,
 };
 use crate::eval::progress::{send_event, ProgressEvent, ProgressTx};
-use crate::eval::run::{MetricsSummary, Run, RunStatus};
+use crate::eval::run::{BaselineMetrics, BaselineRelative, BaselinesReport, MetricsSummary, Run, RunStatus};
 use crate::eval::scenario::{Scenario, SlippageModel};
 use crate::eval::store::{DecisionRow, RunStore};
 use crate::strategies::agent_ref::canonical_role;
@@ -359,6 +361,17 @@ impl BacktestExecutor {
         // Running peak for drawdown_pct in MetricsUpdated. Start at the
         // initial capital so the first tick's drawdown is well-defined.
         let mut peak_equity = initial.max(0.0);
+        // Cadence-gated decision bars: the subset of `bars` where the strategy
+        // actually fired a decision. Used post-loop to compute baselines over
+        // the same bar slice the strategy saw.
+        //
+        // NOTE: `bars` here are the scenario bars AFTER warmup bars have been
+        // separated into `self.warmup_bars` (see `with_warmup()`). Warmup bars
+        // are not passed to `compute_baselines` — they are only used to seed
+        // the LLM rolling-history window and are not part of the tradable window.
+        // This comment references the bar-slice assignment on line ~308 above:
+        //   `let bars: Vec<Ohlcv> = if let Some(injected) = ... { ... } else { ... }`
+        let mut decision_bars: Vec<Ohlcv> = Vec::new();
 
         for (i, bar) in bars.iter().enumerate() {
             if store.is_terminal(&run.id).await? {
@@ -370,6 +383,10 @@ impl BacktestExecutor {
             if (bar.timestamp.timestamp() / 60) % cadence_min != 0 {
                 continue;
             }
+            // Track every cadence-gated bar so baselines can replay the same
+            // bar slice post-loop (see `compute_baselines` call below).
+            decision_bars.push(bar.clone());
+
             // A decision at bar T normally fills at T+1's open. For the
             // final bar of the window there is no T+1, so the fill source
             // falls back to the same bar's close. Without this fallback
@@ -619,15 +636,29 @@ impl BacktestExecutor {
         }
 
         let returns = equity_to_returns(&equity_curve);
-        let periods_per_year = annualization_periods_per_year(strategy.manifest.decision_cadence_minutes);
+        let cadence_minutes = strategy.manifest.decision_cadence_minutes;
+        let periods_per_year = annualization_periods_per_year(cadence_minutes);
+        let strategy_return_pct = total_return_pct(initial, equity);
+
+        // Compute the four automatic baselines over the same cadence-gated bar
+        // slice the strategy saw. `decision_bars` was populated by the loop
+        // above — one push per cadence-gate pass, matching the strategy's
+        // iteration exactly.
+        let baselines = build_baselines_report(
+            &decision_bars,
+            initial,
+            cadence_minutes,
+            strategy_return_pct,
+        );
 
         let metrics = MetricsSummary {
-            total_return_pct: total_return_pct(initial, equity),
+            total_return_pct: strategy_return_pct,
             sharpe: sharpe_from_returns(&returns, periods_per_year),
             max_drawdown_pct: max_drawdown_pct(&equity_curve),
             win_rate: 0.0,
             n_trades,
             n_decisions: decision_idx,
+            baselines: Some(baselines),
         };
 
         run.actual_input_tokens = Some(total_input_tokens);
@@ -809,6 +840,43 @@ fn fill_side_for_action(action: &str, pre_fill_position: f64) -> &'static str {
         "sell"
     } else {
         "buy"
+    }
+}
+
+/// Convert `xvision_eval`'s baseline computation result into the engine's
+/// `BaselinesReport` type (stored in `metrics_json`). The two structs have
+/// identical shapes but live in different crates; this function bridges them
+/// without requiring the eval crate to import the engine's types.
+fn build_baselines_report(
+    bars: &[Ohlcv],
+    initial_equity: f64,
+    cadence_minutes: u32,
+    strategy_return_pct: f64,
+) -> BaselinesReport {
+    let computed = bar_baselines::compute_baselines(bars, initial_equity, cadence_minutes, strategy_return_pct);
+    BaselinesReport {
+        buy_hold: BaselineMetrics {
+            return_pct: computed.buy_hold.return_pct,
+            sharpe: computed.buy_hold.sharpe,
+        },
+        always_flat: BaselineMetrics {
+            return_pct: computed.always_flat.return_pct,
+            sharpe: computed.always_flat.sharpe,
+        },
+        simple_trend: BaselineMetrics {
+            return_pct: computed.simple_trend.return_pct,
+            sharpe: computed.simple_trend.sharpe,
+        },
+        simple_mean_reversion: BaselineMetrics {
+            return_pct: computed.simple_mean_reversion.return_pct,
+            sharpe: computed.simple_mean_reversion.sharpe,
+        },
+        relative_to: BaselineRelative {
+            buy_hold: computed.relative_to.buy_hold,
+            always_flat: computed.relative_to.always_flat,
+            simple_trend: computed.relative_to.simple_trend,
+            simple_mean_reversion: computed.relative_to.simple_mean_reversion,
+        },
     }
 }
 

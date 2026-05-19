@@ -803,6 +803,7 @@ mod roundtrip {
                 win_rate: 0.0,
                 n_trades: 0,
                 n_decisions: 0,
+                baselines: None,
             },
             tokens_used: attested_tokens.clone(),
             ran_at: run.started_at,

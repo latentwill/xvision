@@ -7993,6 +7993,7 @@ dependencies = [
  "wiremock",
  "xvision-core",
  "xvision-data",
+ "xvision-eval",
  "xvision-execution",
  "xvision-observability",
  "xvision-risk",
