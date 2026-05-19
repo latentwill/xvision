@@ -5,7 +5,7 @@ wave: agent-cicd-phase-1
 worktree: .worktrees/agent-cicd-migrate-board-setup-gaps
 branch: task/agent-cicd-migrate-board-setup-gaps
 base: origin/main
-status: ready
+status: merged
 depends_on: []
 blocks:
   - agent-cicd-live-flip  # the live shadow run + plist install cannot start with these gaps open
