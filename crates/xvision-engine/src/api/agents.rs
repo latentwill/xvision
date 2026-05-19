@@ -2,9 +2,9 @@
 //! audit-emitting handlers.
 //!
 //! v1 surface; see `docs/superpowers/plans/2026-05-11-agents-page-v1.md`.
-//! Cross-references (`deployed_in`, `recent_runs`) return empty until the
-//! strategies + eval refactors land — keeping the hooks here lets the
-//! dashboard call them without knowing they're empty by design.
+//! Cross-references (`deployed_in`, `recent_runs`) are wired after the
+//! strategies refactor: strategies now carry `Vec<AgentRef>` so we can
+//! enumerate referencing strategies and their eval-run history.
 
 use std::time::Instant;
 
@@ -16,6 +16,8 @@ use crate::agents::{
 };
 use crate::api::audit::{self, Outcome};
 use crate::api::{ApiContext, ApiError, ApiResult};
+use crate::eval::store::{ListFilter as RunListFilter, RunStore};
+use crate::strategies::store::{strategy_store_dir, FilesystemStore, StrategyStore};
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(
@@ -308,10 +310,51 @@ async fn validate_inner(ctx: &ApiContext, agent_id: &str) -> ApiResult<Vec<Valid
     Ok(validate_agent(&agent))
 }
 
-/// V1 stub — returns empty until the strategies refactor lands and
-/// strategies start referencing agents.
-pub async fn deployed_in(_ctx: &ApiContext, _agent_id: &str) -> ApiResult<Vec<StrategyRef>> {
-    Ok(Vec::new())
+/// Returns the strategy ids for every on-disk strategy that contains
+/// `agent_id` in its `agents` vec. Best-effort: strategies that fail to
+/// load are skipped so a single corrupted file does not break the panel.
+async fn referencing_strategy_ids(ctx: &ApiContext, agent_id: &str) -> ApiResult<Vec<String>> {
+    let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+    let strategy_ids = store
+        .list()
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let mut out = Vec::new();
+    for sid in strategy_ids {
+        let strategy = match store.load(&sid).await {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        if strategy.agents.iter().any(|aref| aref.agent_id == agent_id) {
+            out.push(sid);
+        }
+    }
+    Ok(out)
+}
+
+/// Returns every on-disk strategy that references `agent_id`.
+pub async fn deployed_in(ctx: &ApiContext, agent_id: &str) -> ApiResult<Vec<StrategyRef>> {
+    let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+    let strategy_ids = store
+        .list()
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let mut out = Vec::new();
+    for sid in strategy_ids {
+        let strategy = match store.load(&sid).await {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        if strategy.agents.iter().any(|aref| aref.agent_id == agent_id) {
+            out.push(StrategyRef {
+                strategy_id: strategy.manifest.id.clone(),
+                name: strategy.manifest.display_name.clone(),
+            });
+        }
+    }
+    Ok(out)
 }
 
 /// Starter templates for the `/agents/new` picker. Hardcoded for v1;
@@ -321,9 +364,41 @@ pub async fn templates(_ctx: &ApiContext) -> ApiResult<Vec<AgentTemplate>> {
     Ok(builtin_templates())
 }
 
-/// V1 stub — returns empty until eval-runs are attributed to agents.
-pub async fn recent_runs(_ctx: &ApiContext, _agent_id: &str, _limit: u32) -> ApiResult<Vec<RunRef>> {
-    Ok(Vec::new())
+/// Returns the `limit` most-recent eval runs attributed to any strategy
+/// that references `agent_id`, sorted by `started_at` descending.
+pub async fn recent_runs(ctx: &ApiContext, agent_id: &str, limit: u32) -> ApiResult<Vec<RunRef>> {
+    let referencing = referencing_strategy_ids(ctx, agent_id).await?;
+    if referencing.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let run_store = RunStore::new(ctx.db.clone());
+    let mut all_runs = Vec::new();
+    for strategy_id in referencing {
+        let runs = run_store
+            .list(RunListFilter {
+                agent_id: Some(strategy_id),
+                scenario_id: None,
+                status: None,
+            })
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
+        all_runs.extend(runs);
+    }
+
+    // Sort newest-first and take the requested limit.
+    all_runs.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+    all_runs.truncate(limit as usize);
+
+    let refs = all_runs
+        .into_iter()
+        .map(|run| RunRef {
+            run_id: run.id,
+            scenario_id: run.scenario_id,
+            status: run.status.as_str().to_string(),
+        })
+        .collect();
+    Ok(refs)
 }
 
 fn outcome_of<T>(result: &ApiResult<T>) -> Outcome {
@@ -336,6 +411,15 @@ fn outcome_of<T>(result: &ApiResult<T>) -> Outcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::Actor;
+    use crate::eval::run::{Run, RunMode, RunStatus};
+    use crate::eval::store::RunStore;
+    use crate::strategies::store::{strategy_store_dir, FilesystemStore, StrategyStore};
+    use crate::strategies::{
+        manifest::PublicManifest, risk::RiskPreset, AgentRef, PipelineDef, Strategy,
+    };
+    use chrono::Utc;
+    use ulid::Ulid;
 
     #[test]
     fn create_agent_request_rejects_unknown_fields() {
@@ -345,5 +429,155 @@ mod tests {
         .expect_err("unknown create-agent fields must be rejected");
 
         assert!(err.to_string().contains("unknown field"));
+    }
+
+    // ── test helpers ──────────────────────────────────────────────────────────
+
+    async fn fresh_ctx() -> (ApiContext, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = ApiContext::open(dir.path(), Actor::Cli { user: "test".into() })
+            .await
+            .unwrap();
+        (ctx, dir)
+    }
+
+    fn strategy_referencing(id: &str, display_name: &str, agent_id: &str) -> Strategy {
+        Strategy {
+            manifest: PublicManifest {
+                id: id.to_string(),
+                display_name: display_name.to_string(),
+                plain_summary: "test".into(),
+                creator: "@test".into(),
+                template: "custom".into(),
+                regime_fit: vec![],
+                asset_universe: vec![],
+                decision_cadence_minutes: 60,
+                required_models: vec![],
+                required_tools: vec![],
+                risk_preset_or_config: "balanced".into(),
+                published_at: None,
+                min_warmup_bars: None,
+            },
+            agents: vec![AgentRef {
+                agent_id: agent_id.to_string(),
+                role: "trader".into(),
+            }],
+            pipeline: PipelineDef::default(),
+            regime_slot: None,
+            intern_slot: None,
+            trader_slot: None,
+            risk: RiskPreset::Balanced.expand(),
+            mechanical_params: serde_json::json!({}),
+        }
+    }
+
+    /// A canonical scenario id seeded by `ApiContext::open` on every fresh
+    /// `xvn_home`. Tests that need to insert eval runs must use a known
+    /// FK-valid scenario id — using this avoids inserting a separate row.
+    const SEEDED_SCENARIO_ID: &str = "crypto-bull-q1-2025";
+
+    fn queued_run(strategy_id: &str, scenario_id: &str) -> Run {
+        Run {
+            id: Ulid::new().to_string(),
+            agent_id: strategy_id.to_string(),
+            scenario_id: scenario_id.to_string(),
+            params_override: None,
+            mode: RunMode::Backtest,
+            status: RunStatus::Completed,
+            started_at: Utc::now(),
+            completed_at: None,
+            metrics: None,
+            error: None,
+            estimated_total_tokens: None,
+            actual_input_tokens: None,
+            actual_output_tokens: None,
+        }
+    }
+
+    // ── deployed_in tests ─────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn deployed_in_returns_empty_when_no_strategy_references_agent() {
+        let (ctx, _dir) = fresh_ctx().await;
+        let result = deployed_in(&ctx, "01HZAGENT_UNREFERENCED").await.unwrap();
+        assert!(result.is_empty(), "expected empty, got {result:?}");
+    }
+
+    #[tokio::test]
+    async fn deployed_in_returns_both_refs_when_two_strategies_reference_agent() {
+        let (ctx, _dir) = fresh_ctx().await;
+        let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+
+        let s1 = strategy_referencing("01HZSTRATEGY_A00000000001", "Alpha Strategy", "01HZAGENT_SHARED");
+        let s2 = strategy_referencing("01HZSTRATEGY_B00000000002", "Beta Strategy", "01HZAGENT_SHARED");
+        store.save(&s1).await.unwrap();
+        store.save(&s2).await.unwrap();
+
+        let mut result = deployed_in(&ctx, "01HZAGENT_SHARED").await.unwrap();
+        // Sort for deterministic comparison (filesystem list order varies).
+        result.sort_by_key(|r| r.strategy_id.clone());
+
+        assert_eq!(result.len(), 2, "expected 2 refs, got {result:?}");
+        assert_eq!(result[0].strategy_id, "01HZSTRATEGY_A00000000001");
+        assert_eq!(result[0].name, "Alpha Strategy");
+        assert_eq!(result[1].strategy_id, "01HZSTRATEGY_B00000000002");
+        assert_eq!(result[1].name, "Beta Strategy");
+    }
+
+    // ── recent_runs tests ─────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn recent_runs_returns_empty_when_no_strategy_references_agent() {
+        let (ctx, _dir) = fresh_ctx().await;
+        let result = recent_runs(&ctx, "01HZAGENT_NOREFERENCE", 5).await.unwrap();
+        assert!(result.is_empty(), "expected empty, got {result:?}");
+    }
+
+    #[tokio::test]
+    async fn recent_runs_returns_one_entry_when_strategy_and_run_exist() {
+        let (ctx, _dir) = fresh_ctx().await;
+        let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+
+        let strategy = strategy_referencing("01HZSTRATEGY_RUN0000000001", "Run Strategy", "01HZAGENT_WITHRUN");
+        store.save(&strategy).await.unwrap();
+
+        let run = queued_run("01HZSTRATEGY_RUN0000000001", SEEDED_SCENARIO_ID);
+        let run_id = run.id.clone();
+        RunStore::new(ctx.db.clone()).create(&run).await.unwrap();
+
+        let result = recent_runs(&ctx, "01HZAGENT_WITHRUN", 5).await.unwrap();
+        assert_eq!(result.len(), 1, "expected 1 run, got {result:?}");
+        assert_eq!(result[0].run_id, run_id);
+        assert_eq!(result[0].scenario_id, SEEDED_SCENARIO_ID);
+        assert_eq!(result[0].status, "completed");
+    }
+
+    #[tokio::test]
+    async fn recent_runs_respects_limit_and_orders_by_started_at_desc() {
+        let (ctx, _dir) = fresh_ctx().await;
+        let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+
+        let strategy = strategy_referencing("01HZSTRATEGY_LIMIT000000001", "Limit Strategy", "01HZAGENT_LIMIT");
+        store.save(&strategy).await.unwrap();
+
+        let run_store = RunStore::new(ctx.db.clone());
+        // Insert 3 runs with distinct started_at timestamps.
+        let base = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let mut run_ids = Vec::new();
+        for i in 0u32..3 {
+            let mut run = queued_run("01HZSTRATEGY_LIMIT000000001", SEEDED_SCENARIO_ID);
+            run.started_at = base + chrono::Duration::hours(i as i64);
+            run_ids.push(run.id.clone());
+            run_store.create(&run).await.unwrap();
+        }
+
+        // limit=2 should return the 2 newest, newest first.
+        let result = recent_runs(&ctx, "01HZAGENT_LIMIT", 2).await.unwrap();
+        assert_eq!(result.len(), 2, "expected 2 runs, got {result:?}");
+        // Newest first: run_ids[2] then run_ids[1].
+        assert_eq!(result[0].run_id, run_ids[2]);
+        assert_eq!(result[1].run_id, run_ids[1]);
     }
 }
