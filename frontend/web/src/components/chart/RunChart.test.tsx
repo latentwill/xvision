@@ -160,6 +160,56 @@ describe("RunChart", () => {
     expect(screen.getByText(/Layers/)).toBeInTheDocument();
   });
 
+  it("keeps the position band off the asset price scale", () => {
+    const payload = {
+      ...(samplePayload as any),
+      position: [
+        { time: 1_700_000_000, side: "Long" },
+        { time: 1_700_000_060, side: "Short" },
+      ],
+    };
+
+    render(<RunChart payload={payload} />);
+
+    const priceChart = chartMocks.createdCharts[0] as ReturnType<typeof createChartStub>;
+    expect(priceChart.addAreaSeries).toHaveBeenCalledTimes(2);
+
+    const areaCalls = priceChart.addAreaSeries.mock.calls as unknown as Array<
+      [
+        {
+          autoscaleInfoProvider: () => unknown;
+          crosshairMarkerVisible?: boolean;
+          lastValueVisible?: boolean;
+          priceLineVisible?: boolean;
+          priceScaleId?: string;
+        },
+      ]
+    >;
+    areaCalls.forEach(([options]) => {
+      expect(options).toEqual(
+        expect.objectContaining({
+          priceScaleId: "position-band",
+          lastValueVisible: false,
+          priceLineVisible: false,
+          crosshairMarkerVisible: false,
+        }),
+      );
+      expect(options.autoscaleInfoProvider()).toEqual({
+        priceRange: { minValue: 0, maxValue: 1 },
+      });
+    });
+
+    const [longSeries, shortSeries] = priceChart.addAreaSeries.mock.results.map(
+      ({ value }) => value,
+    );
+    expect(longSeries.setData).toHaveBeenCalledWith([
+      { time: 1_700_000_000, value: 1 },
+    ]);
+    expect(shortSeries.setData).toHaveBeenCalledWith([
+      { time: 1_700_000_060, value: 1 },
+    ]);
+  });
+
   it("opens and closes the marker side panel from a chart marker click", () => {
     const payload = {
       ...(samplePayload as any),

@@ -28,6 +28,9 @@ type Props = {
   follow?: boolean;
 };
 
+const POSITION_BAND_SCALE_ID = "position-band";
+const POSITION_BAND_VALUE = 1;
+
 function toLine(p: IndicatorPoint) {
   return { time: p.time as UTCTimestamp, value: p.value };
 }
@@ -203,12 +206,12 @@ function applySeriesData(
   series.longPosition?.setData(
     payload.position
       .filter((p) => p.side === "Long")
-      .map((p) => ({ time: p.time as UTCTimestamp, value: 0 })),
+      .map((p) => ({ time: p.time as UTCTimestamp, value: POSITION_BAND_VALUE })),
   );
   series.shortPosition?.setData(
     payload.position
       .filter((p) => p.side === "Short")
-      .map((p) => ({ time: p.time as UTCTimestamp, value: 0 })),
+      .map((p) => ({ time: p.time as UTCTimestamp, value: POSITION_BAND_VALUE })),
   );
   series.rsi?.setData(payload.indicators.rsi_14.map(toLine));
   series.macdLine?.setData(payload.indicators.macd.line.map(toLine));
@@ -348,13 +351,27 @@ export function RunChart({
 
     // --- Position band ---
     if (layers.positionBand) {
+      const positionBandScaleOptions = {
+        priceScaleId: POSITION_BAND_SCALE_ID,
+        lastValueVisible: false,
+        priceLineVisible: false,
+        crosshairMarkerVisible: false,
+        autoscaleInfoProvider: () => ({
+          priceRange: {
+            minValue: 0,
+            maxValue: POSITION_BAND_VALUE,
+          },
+        }),
+      };
       const longSeries = priceChart.addAreaSeries({
+        ...positionBandScaleOptions,
         topColor: palette.series.positionLong,
         bottomColor: "transparent",
         lineColor: "transparent",
       });
       series.longPosition = longSeries as SetDataSeries;
       const shortSeries = priceChart.addAreaSeries({
+        ...positionBandScaleOptions,
         topColor: palette.series.positionShort,
         bottomColor: "transparent",
         lineColor: "transparent",
