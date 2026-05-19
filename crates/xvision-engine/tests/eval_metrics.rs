@@ -73,7 +73,12 @@ fn sharpe_scales_with_periods_per_year() {
     let s_hourly = sharpe_from_returns(&returns, 8760.0);
     let s_daily = sharpe_from_returns(&returns, 365.0);
     // Annualization factor √(8760/365) ≈ √24 ≈ 4.9
-    assert!(s_hourly > s_daily, "hourly annualization > daily");
+    let ratio = s_hourly / s_daily;
+    let expected = (8760.0_f64 / 365.0).sqrt();
+    assert!(
+        (ratio - expected).abs() < 1e-9,
+        "expected annualization ratio {expected}, got {ratio}"
+    );
 }
 
 #[test]
