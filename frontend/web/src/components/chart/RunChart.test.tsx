@@ -235,18 +235,11 @@ describe("RunChart", () => {
     fireEvent.click(screen.getByText(/Layers/));
 
     // Default for sma20 is true (per DEFAULT_LAYERS in chart-layers.ts).
-    // The label wraps the bare key text and the checkbox — getByText
-    // returns the label element itself, so the checkbox lives inside it.
-    const sma20Label = screen.getByText(/^sma20$/).closest("label");
-    expect(sma20Label).not.toBeNull();
-    const sma20Checkbox = sma20Label!.querySelector(
-      "input[type='checkbox']",
-    ) as HTMLInputElement | null;
-    expect(sma20Checkbox).not.toBeNull();
-    expect(sma20Checkbox!.checked).toBe(true);
+    const sma20Checkbox = screen.getByLabelText("SMA 20") as HTMLInputElement;
+    expect(sma20Checkbox.checked).toBe(true);
 
     // Toggle it off; the useChartLayers effect writes to localStorage.
-    fireEvent.click(sma20Checkbox!);
+    fireEvent.click(sma20Checkbox);
 
     const raw = localStorage.getItem(key);
     expect(raw).not.toBeNull();
@@ -273,6 +266,26 @@ describe("RunChart", () => {
       { time: 1_700_000_060, value: 500 },
       { time: 1_700_000_120, value: -250 },
     ]);
+  });
+
+  it("removes optional panes and skips chart creation when their layers are disabled", () => {
+    render(<RunChart payload={samplePayload as any} follow={false} />);
+
+    expect(screen.getByTestId("run-chart-subpane")).toBeInTheDocument();
+    expect(screen.getByTestId("run-chart-equity-pane")).toBeInTheDocument();
+    expect(screen.getByTestId("run-chart-drawdown-pane")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText(/Layers/));
+    fireEvent.click(screen.getByLabelText("Off"));
+    fireEvent.click(screen.getByLabelText("Earnings"));
+    fireEvent.click(screen.getByLabelText("Drawdown"));
+
+    expect(screen.queryByTestId("run-chart-subpane")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("run-chart-equity-pane")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("run-chart-drawdown-pane")).not.toBeInTheDocument();
+    expect(
+      chartMocks.createdCharts.filter((chart) => chart.remove.mock.calls.length === 0),
+    ).toHaveLength(1);
   });
 
   it("does not scroll to real time while follow mode is disabled", () => {

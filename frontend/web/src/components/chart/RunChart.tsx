@@ -259,6 +259,11 @@ export function RunChart({
   const [range, setRange] = useState<RangePreset>("All");
   const { layers, toggle, set } = useChartLayers("run-detail");
   const [activeMarker, setActiveMarker] = useState<ActiveMarker | null>(null);
+  const showSubpane =
+    !layers.subpaneOff &&
+    (layers.subpaneRsi || layers.subpaneMacd || layers.subpaneAtr);
+  const showEquity = layers.equity;
+  const showDrawdown = layers.drawdown;
 
   useEffect(() => {
     const previousPayload = previousPayloadRef.current;
@@ -279,9 +284,9 @@ export function RunChart({
     const opts = buildOpts(palette);
 
     const priceChart = createChart(priceRef.current, opts);
-    const subChart = subRef.current ? createChart(subRef.current, opts) : null;
-    const eqChart = eqRef.current ? createChart(eqRef.current, opts) : null;
-    const ddChart = ddRef.current ? createChart(ddRef.current, opts) : null;
+    const subChart = subRef.current && showSubpane ? createChart(subRef.current, opts) : null;
+    const eqChart = eqRef.current && showEquity ? createChart(eqRef.current, opts) : null;
+    const ddChart = ddRef.current && showDrawdown ? createChart(ddRef.current, opts) : null;
     const volChart = volRef.current && layers.volume ? createChart(volRef.current, opts) : null;
     const series: RunChartSeries = {};
 
@@ -502,9 +507,9 @@ export function RunChart({
       }
     >
       <div ref={priceRef} style={{ height: 380 }} />
-      <div ref={subRef} style={{ height: 100 }} />
-      <div ref={eqRef} style={{ height: 100 }} />
-      <div ref={ddRef} style={{ height: 70 }} />
+      {showSubpane && <div ref={subRef} data-testid="run-chart-subpane" style={{ height: 100 }} />}
+      {showEquity && <div ref={eqRef} data-testid="run-chart-equity-pane" style={{ height: 100 }} />}
+      {showDrawdown && <div ref={ddRef} data-testid="run-chart-drawdown-pane" style={{ height: 70 }} />}
       {layers.volume && <div ref={volRef} style={{ height: 70 }} />}
       <MarkerSidePanel
         payload={payload}
