@@ -93,23 +93,91 @@ pub struct SearchQuery {
 
 /// Stateless CRUD over the `search_index` FTS5 virtual table.
 ///
-/// FTS5 doesn't support UPSERT directly; `upsert` does delete-then-insert
-/// inside a transaction so concurrent writers can't observe a partial state.
+/// FTS5 is a virtual table and does NOT support `INSERT … ON CONFLICT`
+/// or `UNIQUE` constraints, so a literal single-statement upsert isn't
+/// possible at the SQL layer. The previous implementation did a
+/// deferred-transaction delete-then-insert which raced with eval
+/// finalize under concurrent writers (audit log:
+/// `xvision_engine::api::search: search index upsert (run) failed
+/// error=delete prior row run_id=01KS09WVDZH1F01TW8527RXYED`,
+/// intake #344). The fix here is two-fold:
+///
+///   1. Open the transaction with `BEGIN IMMEDIATE` so the write lock
+///      is acquired up-front; this eliminates the deferred→immediate
+///      lock upgrade that was failing under concurrent writers.
+///   2. Issue both statements in the same transaction so a concurrent
+///      reader can never observe the "deleted but not yet
+///      re-inserted" intermediate state.
+///
+/// The result is an idempotent, race-free upsert without the new
+/// migration that an `ON CONFLICT`-capable rowid table would require.
 pub struct SearchIndex;
 
 const DEFAULT_LIMIT: u32 = 50;
+/// How many times to retry `upsert` on transient `SQLITE_BUSY` /
+/// `SQLITE_LOCKED` errors. The eval finalize path is the only
+/// remaining contender for the write lock; a couple of retries
+/// at a short backoff is enough in practice.
+const UPSERT_BUSY_RETRIES: u32 = 4;
 
 impl SearchIndex {
-    /// Insert or replace a row keyed by `(artifact_id, kind)`.
+    /// Insert or replace a row keyed by `(artifact_id, kind)`. The two
+    /// SQL statements share a `BEGIN IMMEDIATE` transaction so the
+    /// write lock is held end-to-end and concurrent writers never
+    /// observe a partial state.
     pub async fn upsert(pool: &SqlitePool, entry: &IndexEntry) -> Result<()> {
-        let mut tx = pool.begin().await.context("begin tx for upsert")?;
-        sqlx::query("DELETE FROM search_index WHERE artifact_id = ?1 AND kind = ?2")
+        let mut last_err: Option<anyhow::Error> = None;
+        for attempt in 0..=UPSERT_BUSY_RETRIES {
+            match Self::upsert_once(pool, entry).await {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    // Only retry on SQLITE_BUSY / SQLITE_LOCKED. Any
+                    // other error (schema mismatch, bad data, ...) is
+                    // a real bug and should surface immediately.
+                    if !is_busy_error(&e) || attempt == UPSERT_BUSY_RETRIES {
+                        return Err(e);
+                    }
+                    tracing::warn!(
+                        target: "xvision::search",
+                        attempt = attempt + 1,
+                        error = %e,
+                        artifact_id = %entry.artifact_id,
+                        kind = entry.kind.as_str(),
+                        "search index upsert busy; retrying"
+                    );
+                    // Cheap exponential-ish backoff (10ms, 20ms, 40ms,
+                    // 80ms). No `rand` dep — the contention pattern is
+                    // not pathological enough to need jitter.
+                    let delay = std::time::Duration::from_millis(10u64 << attempt);
+                    tokio::time::sleep(delay).await;
+                    last_err = Some(e);
+                }
+            }
+        }
+        Err(last_err.unwrap_or_else(|| anyhow::anyhow!("search upsert exhausted retries")))
+    }
+
+    async fn upsert_once(pool: &SqlitePool, entry: &IndexEntry) -> Result<()> {
+        // Acquire a dedicated connection so we can issue `BEGIN
+        // IMMEDIATE` (sqlx's `pool.begin()` issues `BEGIN` which is
+        // `DEFERRED` by default — that's the upgrade-deadlock that
+        // produced the audit-log race).
+        let mut conn = pool.acquire().await.context("acquire connection for upsert")?;
+        sqlx::query("BEGIN IMMEDIATE")
+            .execute(&mut *conn)
+            .await
+            .context("begin immediate tx for upsert")?;
+        let delete_res = sqlx::query("DELETE FROM search_index WHERE artifact_id = ?1 AND kind = ?2")
             .bind(&entry.artifact_id)
             .bind(entry.kind.as_str())
-            .execute(&mut *tx)
-            .await
-            .context("delete prior row")?;
-        sqlx::query(
+            .execute(&mut *conn)
+            .await;
+        if let Err(e) = delete_res {
+            // Best-effort rollback; surface the original error either way.
+            let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+            return Err(anyhow::Error::from(e).context("delete prior row"));
+        }
+        let insert_res = sqlx::query(
             "INSERT INTO search_index (artifact_id, kind, title, summary, tags, updated_at, href) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         )
@@ -120,10 +188,17 @@ impl SearchIndex {
         .bind(entry.tags.join(" "))
         .bind(entry.updated_at.to_rfc3339())
         .bind(&entry.href)
-        .execute(&mut *tx)
-        .await
-        .context("insert search_index row")?;
-        tx.commit().await.context("commit upsert tx")
+        .execute(&mut *conn)
+        .await;
+        if let Err(e) = insert_res {
+            let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+            return Err(anyhow::Error::from(e).context("insert search_index row"));
+        }
+        sqlx::query("COMMIT")
+            .execute(&mut *conn)
+            .await
+            .context("commit upsert tx")?;
+        Ok(())
     }
 
     /// Remove a row by `(artifact_id, kind)`. No-op if missing.
@@ -259,6 +334,31 @@ fn parse_row(
 
 fn split_tags(joined: &str) -> Vec<String> {
     joined.split_whitespace().map(str::to_string).collect()
+}
+
+/// Detect `SQLITE_BUSY` / `SQLITE_LOCKED` so `upsert` can retry transient
+/// contention without papering over real errors. sqlx surfaces these as
+/// `sqlx::Error::Database` with extended code `5` / `6` (SQLite-native).
+fn is_busy_error(err: &anyhow::Error) -> bool {
+    for cause in err.chain() {
+        if let Some(sqlx_err) = cause.downcast_ref::<sqlx::Error>() {
+            if let Some(db_err) = sqlx_err.as_database_error() {
+                if let Some(code) = db_err.code() {
+                    // SQLite primary codes: 5 = SQLITE_BUSY, 6 = SQLITE_LOCKED.
+                    if code == "5" || code == "6" {
+                        return true;
+                    }
+                }
+                // Fallback: the message is a stable enough surface for
+                // mocked / older sqlx versions.
+                let msg = db_err.message().to_lowercase();
+                if msg.contains("database is locked") || msg.contains("database table is locked") {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 #[cfg(test)]

@@ -11,7 +11,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as chartApi from "@/api/chart";
 import * as cliApi from "@/api/cli";
+import * as evalApi from "@/api/eval";
 import * as scenarioApi from "@/api/scenarios";
+import * as strategiesApi from "@/api/strategies";
 import type { Scenario } from "@/api/types.gen";
 import type { ScenarioChartPayload } from "@/api/types.gen/ScenarioChartPayload";
 import { ScenariosDetailRoute } from "./scenarios-detail";
@@ -50,6 +52,13 @@ vi.mock("@/api/chart", async () => {
 vi.mock("@/api/eval", async () => {
   const actual = await vi.importActual<typeof import("@/api/eval")>("@/api/eval");
   return { ...actual, listRuns: vi.fn().mockResolvedValue([]) };
+});
+
+vi.mock("@/api/strategies", async () => {
+  const actual = await vi.importActual<typeof import("@/api/strategies")>(
+    "@/api/strategies",
+  );
+  return { ...actual, listStrategies: vi.fn().mockResolvedValue([]) };
 });
 
 vi.mock("@/api/cli", async () => {
@@ -269,5 +278,78 @@ describe("ScenariosDetailRoute bars cache actions", () => {
     await waitFor(() => {
       expect(chartApi.getScenarioChart).toHaveBeenCalledWith(scenario.id, "1h");
     });
+  });
+});
+
+describe("RunsTab strategy name display", () => {
+  const runRow = {
+    id: "01HZ000000000000000000001",
+    agent_id: "01HZ000000000000000000002",
+    scenario_id: scenario.id,
+    mode: "Backtest",
+    status: "Completed",
+    completed_at: "2026-05-19T10:00:00Z",
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(scenarioApi.getScenario).mockResolvedValue(scenario);
+    vi.mocked(chartApi.getScenarioChart).mockResolvedValue(chartPayload);
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("renders the strategy display_name when listStrategies resolves to a matching id", async () => {
+    vi.mocked(strategiesApi.listStrategies).mockResolvedValue([
+      {
+        agent_id: runRow.agent_id,
+        display_name: "My Momentum Strategy",
+        template: "single_llm",
+        decision_cadence_minutes: 60,
+        tags: [],
+        models: [],
+        providers: [],
+      },
+    ]);
+    // @ts-expect-error — minimal RunSummary shape sufficient for test
+    vi.mocked(evalApi.listRuns).mockResolvedValue([runRow]);
+
+    renderRoute();
+
+    // Navigate to Runs tab
+    fireEvent.click(await screen.findByRole("button", { name: "Runs" }));
+
+    // Strategy display name should appear
+    expect(await screen.findByText("My Momentum Strategy")).toBeInTheDocument();
+    // ULID should appear as the muted secondary line
+    expect(screen.getByText(runRow.agent_id)).toBeInTheDocument();
+  });
+
+  it("falls back to showing only the ULID when listStrategies has no matching strategy", async () => {
+    vi.mocked(strategiesApi.listStrategies).mockResolvedValue([
+      // Different agent_id — no match for runRow.agent_id
+      {
+        agent_id: "01HZ000000000000000000099",
+        display_name: "Other Strategy",
+        template: "single_llm",
+        decision_cadence_minutes: 60,
+        tags: [],
+        models: [],
+        providers: [],
+      },
+    ]);
+    // @ts-expect-error — minimal RunSummary shape sufficient for test
+    vi.mocked(evalApi.listRuns).mockResolvedValue([runRow]);
+
+    renderRoute();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Runs" }));
+
+    // ULID appears (as the only Strategy cell content)
+    expect(await screen.findByText(runRow.agent_id)).toBeInTheDocument();
+    // Non-matching strategy name must NOT appear
+    expect(screen.queryByText("Other Strategy")).not.toBeInTheDocument();
   });
 });

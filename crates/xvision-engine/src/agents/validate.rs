@@ -160,6 +160,7 @@ mod tests {
                 skill_ids: vec![],
                 max_tokens: Some(4096),
                 prompt_version: String::new(),
+                inputs_policy: crate::agents::InputsPolicy::Raw,
             },
             AgentSlot {
                 name: "TRADER".into(), // case-insensitive duplicate
@@ -169,6 +170,7 @@ mod tests {
                 skill_ids: vec![],
                 max_tokens: Some(4096),
                 prompt_version: String::new(),
+                inputs_policy: crate::agents::InputsPolicy::Raw,
             },
         ];
         let diags = validate_agent(&a);

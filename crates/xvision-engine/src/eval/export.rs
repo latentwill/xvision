@@ -471,7 +471,7 @@ mod roundtrip {
     //! by the q15-eval-json-export contract acceptance.
 
     use chrono::{DateTime, Utc};
-    use sqlx::SqlitePool;
+    use sqlx::sqlite::SqlitePoolOptions;
 
     use super::*;
     use crate::api::{Actor, ApiContext};
@@ -485,7 +485,11 @@ mod roundtrip {
     use xvision_core::providers::{Catalog, ModelEntry};
 
     async fn ctx_with_eval_tables() -> (ApiContext, tempfile::TempDir) {
-        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(":memory:")
+            .await
+            .unwrap();
         // Migrations the export touches transitively: 001 (api_audit),
         // 002 (eval_*), 014 (agent_id rename), 015 (reasoning column).
         // The rest (scenarios, reviews, etc.) aren't needed for the
