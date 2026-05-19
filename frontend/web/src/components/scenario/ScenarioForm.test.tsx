@@ -8,21 +8,38 @@ afterEach(() => {
   cleanup();
 });
 
+// The From/To inputs are no longer native `<input type="date">` — they're
+// the InlineRangeBar component. These tests don't exercise the picker
+// directly; they just need a non-empty `from`/`to` so submit can succeed.
+// `withDateRange` returns an `initial` prop that pre-populates the state
+// without going through the picker UI.
+function withDateRange(
+  start = "2024-01-01",
+  end = "2024-01-03",
+): Partial<CreateScenarioRequest> {
+  return {
+    time_window: {
+      start: `${start}T00:00:00Z`,
+      end: `${end}T00:00:00Z`,
+    },
+  };
+}
+
 describe("ScenarioForm", () => {
   it("submits hour scenarios from the granularity control", () => {
     const onSubmit = vi.fn();
     const onDraftChange = vi.fn();
 
-    render(<ScenarioForm onSubmit={onSubmit} onDraftChange={onDraftChange} />);
+    render(
+      <ScenarioForm
+        onSubmit={onSubmit}
+        onDraftChange={onDraftChange}
+        initial={withDateRange()}
+      />,
+    );
 
     fireEvent.change(screen.getByLabelText("Name"), {
       target: { value: "ETH 4H range" },
-    });
-    fireEvent.change(screen.getByLabelText("From"), {
-      target: { value: "2024-01-01" },
-    });
-    fireEvent.change(screen.getByLabelText("To"), {
-      target: { value: "2024-01-03" },
     });
     fireEvent.change(screen.getByLabelText("Granularity"), {
       target: { value: "4h" },
@@ -44,16 +61,16 @@ describe("ScenarioForm", () => {
     const onSubmit = vi.fn();
     const onDraftChange = vi.fn();
 
-    render(<ScenarioForm onSubmit={onSubmit} onDraftChange={onDraftChange} />);
+    render(
+      <ScenarioForm
+        onSubmit={onSubmit}
+        onDraftChange={onDraftChange}
+        initial={withDateRange()}
+      />,
+    );
 
     fireEvent.change(screen.getByLabelText("Name"), {
       target: { value: "ETH 15m range" },
-    });
-    fireEvent.change(screen.getByLabelText("From"), {
-      target: { value: "2024-01-01" },
-    });
-    fireEvent.change(screen.getByLabelText("To"), {
-      target: { value: "2024-01-03" },
     });
     fireEvent.change(screen.getByLabelText("Granularity"), {
       target: { value: "15m" },
@@ -74,16 +91,10 @@ describe("ScenarioForm", () => {
   it("requires a non-empty scenario display name before submit", () => {
     const onSubmit = vi.fn();
 
-    render(<ScenarioForm onSubmit={onSubmit} />);
+    render(<ScenarioForm onSubmit={onSubmit} initial={withDateRange()} />);
 
     fireEvent.change(screen.getByLabelText("Name"), {
       target: { value: "   " },
-    });
-    fireEvent.change(screen.getByLabelText("From"), {
-      target: { value: "2024-01-01" },
-    });
-    fireEvent.change(screen.getByLabelText("To"), {
-      target: { value: "2024-01-03" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Create →" }));
 
@@ -127,7 +138,10 @@ describe("ScenarioForm", () => {
     render(
       <ScenarioForm
         onSubmit={onSubmit}
-        initial={{ granularity: "2mo" } as Partial<CreateScenarioRequest>}
+        initial={{
+          granularity: "2mo",
+          ...withDateRange("2024-01-01", "2024-06-01"),
+        } as Partial<CreateScenarioRequest>}
       />,
     );
     const select = screen.getByLabelText("Granularity") as HTMLSelectElement;
@@ -135,8 +149,6 @@ describe("ScenarioForm", () => {
     expect(Array.from(select.options).map((o) => o.value)).toContain("2mo");
 
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "ETH 2mo" } });
-    fireEvent.change(screen.getByLabelText("From"), { target: { value: "2024-01-01" } });
-    fireEvent.change(screen.getByLabelText("To"), { target: { value: "2024-06-01" } });
     fireEvent.click(screen.getByRole("button", { name: "Create →" }));
 
     expect(onSubmit).toHaveBeenCalledWith(
@@ -189,16 +201,16 @@ describe("ScenarioForm", () => {
     const onSubmit = vi.fn();
     const onDraftChange = vi.fn();
 
-    render(<ScenarioForm onSubmit={onSubmit} onDraftChange={onDraftChange} />);
+    render(
+      <ScenarioForm
+        onSubmit={onSubmit}
+        onDraftChange={onDraftChange}
+        initial={withDateRange("2024-01-01", "2024-01-10")}
+      />,
+    );
 
     fireEvent.change(screen.getByLabelText("Name"), {
       target: { value: "ETH 1d" },
-    });
-    fireEvent.change(screen.getByLabelText("From"), {
-      target: { value: "2024-01-01" },
-    });
-    fireEvent.change(screen.getByLabelText("To"), {
-      target: { value: "2024-01-10" },
     });
     fireEvent.change(screen.getByLabelText("Granularity"), {
       target: { value: "1d" },
@@ -217,16 +229,15 @@ describe("ScenarioForm", () => {
   it("requires the end date to be after the start date", () => {
     const onSubmit = vi.fn();
 
-    render(<ScenarioForm onSubmit={onSubmit} />);
+    render(
+      <ScenarioForm
+        onSubmit={onSubmit}
+        initial={withDateRange("2024-01-03", "2024-01-01")}
+      />,
+    );
 
     fireEvent.change(screen.getByLabelText("Name"), {
       target: { value: "ETH reversed" },
-    });
-    fireEvent.change(screen.getByLabelText("From"), {
-      target: { value: "2024-01-03" },
-    });
-    fireEvent.change(screen.getByLabelText("To"), {
-      target: { value: "2024-01-01" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Create →" }));
 
@@ -237,16 +248,10 @@ describe("ScenarioForm", () => {
   it("submits advanced fee, slippage, and latency fields", () => {
     const onSubmit = vi.fn();
 
-    render(<ScenarioForm onSubmit={onSubmit} />);
+    render(<ScenarioForm onSubmit={onSubmit} initial={withDateRange()} />);
 
     fireEvent.change(screen.getByLabelText("Name"), {
       target: { value: "ETH advanced" },
-    });
-    fireEvent.change(screen.getByLabelText("From"), {
-      target: { value: "2024-01-01" },
-    });
-    fireEvent.change(screen.getByLabelText("To"), {
-      target: { value: "2024-01-03" },
     });
     fireEvent.click(screen.getByRole("button", { name: "▸ Advanced" }));
     fireEvent.change(screen.getByLabelText("Fees taker (bps)"), {
@@ -280,19 +285,13 @@ describe("ScenarioForm", () => {
   it("scenario-form-warmup: defaults Context bars to 200 and submits it", () => {
     const onSubmit = vi.fn();
 
-    render(<ScenarioForm onSubmit={onSubmit} />);
+    render(<ScenarioForm onSubmit={onSubmit} initial={withDateRange()} />);
 
     const warmupField = screen.getByLabelText("Context bars") as HTMLInputElement;
     expect(warmupField.value).toBe("200");
 
     fireEvent.change(screen.getByLabelText("Name"), {
       target: { value: "ETH default warmup" },
-    });
-    fireEvent.change(screen.getByLabelText("From"), {
-      target: { value: "2024-01-01" },
-    });
-    fireEvent.change(screen.getByLabelText("To"), {
-      target: { value: "2024-01-03" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Create →" }));
 
@@ -306,16 +305,10 @@ describe("ScenarioForm", () => {
   it("scenario-form-warmup: round-trips a custom Context bars value through onSubmit", () => {
     const onSubmit = vi.fn();
 
-    render(<ScenarioForm onSubmit={onSubmit} />);
+    render(<ScenarioForm onSubmit={onSubmit} initial={withDateRange()} />);
 
     fireEvent.change(screen.getByLabelText("Name"), {
       target: { value: "ETH custom warmup" },
-    });
-    fireEvent.change(screen.getByLabelText("From"), {
-      target: { value: "2024-01-01" },
-    });
-    fireEvent.change(screen.getByLabelText("To"), {
-      target: { value: "2024-01-03" },
     });
     fireEvent.change(screen.getByLabelText("Context bars"), {
       target: { value: "50" },
@@ -339,6 +332,54 @@ describe("ScenarioForm", () => {
     expect(
       screen.getByText(/longest indicator period/i),
     ).toBeInTheDocument();
+  });
+
+  // ── Calendar select (scenario-form-date-range-picker) ────────────────
+
+  it("defaults the calendar to Continuous24x7 and submits that shape", () => {
+    const onSubmit = vi.fn();
+    render(<ScenarioForm onSubmit={onSubmit} initial={withDateRange()} />);
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "ETH default calendar" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create →" }));
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({ calendar: "Continuous24x7" }),
+    );
+  });
+
+  it("submits UsEquities when the calendar select switches", () => {
+    const onSubmit = vi.fn();
+    render(<ScenarioForm onSubmit={onSubmit} initial={withDateRange()} />);
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "ETH usequities" },
+    });
+    fireEvent.change(screen.getByLabelText("Calendar"), {
+      target: { value: "UsEquities" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create →" }));
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({ calendar: "UsEquities" }),
+    );
+  });
+
+  it("reveals the custom-id input when Custom is picked and submits the typed shape", () => {
+    const onSubmit = vi.fn();
+    render(<ScenarioForm onSubmit={onSubmit} initial={withDateRange()} />);
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "ETH custom calendar" },
+    });
+    fireEvent.change(screen.getByLabelText("Calendar"), {
+      target: { value: "Custom" },
+    });
+    const customInput = screen.getByLabelText("Custom calendar id");
+    fireEvent.change(customInput, { target: { value: "nyse-extended-hours" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create →" }));
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        calendar: { Custom: "nyse-extended-hours" },
+      }),
+    );
   });
 });
 
