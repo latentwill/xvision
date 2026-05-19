@@ -2,7 +2,10 @@ import { describe, expect, test } from "vitest";
 
 import type { DecisionRowDto } from "@/api/types.gen";
 
-import { derivePositionsByDecision } from "./positions";
+import {
+  derivePositionsByDecision,
+  derivePriorSideByDecision,
+} from "./positions";
 
 function row(
   decision_index: number,
@@ -210,5 +213,66 @@ describe("derivePositionsByDecision", () => {
       row(1, "rebalance" as string, null, null),
     ]);
     expect(m.get(1)).toEqual(m.get(0));
+  });
+});
+
+describe("derivePriorSideByDecision", () => {
+  test("first row is always 'flat' (no prior state)", () => {
+    const m = derivePriorSideByDecision([row(0, "long_open", 1, 50000)]);
+    expect(m.get(0)).toBe("flat");
+  });
+
+  test("a flat-after-long row sees prior_side='long'", () => {
+    // The on-the-wire action is `"flat"` on both legs of a close;
+    // the prior-side walk is what lets the action-pill render SELL
+    // instead of a generic CLOSE.
+    const m = derivePriorSideByDecision([
+      row(0, "long_open", 1, 50000),
+      row(1, "flat", 1, 51000),
+    ]);
+    expect(m.get(0)).toBe("flat");
+    expect(m.get(1)).toBe("long");
+  });
+
+  test("a flat-after-short row sees prior_side='short'", () => {
+    const m = derivePriorSideByDecision([
+      row(0, "short_open", 0.5, 60000),
+      row(1, "flat", 0.5, 59000),
+    ]);
+    expect(m.get(1)).toBe("short");
+  });
+
+  test("hold preserves the prior side for the *next* row's prior-state", () => {
+    // HOLD doesn't mutate state, so a subsequent close still sees
+    // the original direction.
+    const m = derivePriorSideByDecision([
+      row(0, "long_open", 1, 50000),
+      row(1, "hold", null, null),
+      row(2, "flat", 1, 51000),
+    ]);
+    expect(m.get(1)).toBe("long");
+    expect(m.get(2)).toBe("long");
+  });
+
+  test("reverse via short_open while long: the short_open row sees prior_side='long'", () => {
+    // Sim semantics: a short_open from a long collapses the long,
+    // then the short_open row itself reports prior_side=long (the
+    // state before its own action).
+    const m = derivePriorSideByDecision([
+      row(0, "long_open", 1, 50000),
+      row(1, "short_open", 1, 51000),
+    ]);
+    expect(m.get(1)).toBe("long");
+  });
+
+  test("per-asset tracking: a flat on one asset doesn't blank prior_side for the other", () => {
+    const m = derivePriorSideByDecision([
+      row(0, "long_open", 1, 50000, "BTC"),
+      row(1, "short_open", 1, 2500, "ETH"),
+      row(2, "flat", 1, 51000, "BTC"),
+      row(3, "flat", 1, 2400, "ETH"),
+    ]);
+    expect(m.get(2)).toBe("long");   // BTC was long before the close
+    expect(m.get(3)).toBe("short");  // ETH was short before the close
   });
 });

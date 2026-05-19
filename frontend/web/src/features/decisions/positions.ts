@@ -65,6 +65,31 @@ export function derivePositionsByDecision(
   return out;
 }
 
+/**
+ * Walk decisions in `decision_index` order and emit the position
+ * **side held for the row's own asset _before_ its action applies**.
+ * Used by the action-pill renderer to distinguish `flat`-after-long
+ * (a SELL) from `flat`-after-short (a COVER) — the on-the-wire action
+ * `"flat"` is direction-blind, but the operator-facing label is not.
+ *
+ * `decision_index` keys mirror `derivePositionsByDecision` so callers
+ * can share the same walk semantics across both maps.
+ */
+export function derivePriorSideByDecision(
+  rows: ReadonlyArray<DecisionRowDto>,
+): Map<number, PositionSide> {
+  const ordered = [...rows].sort((a, b) => a.decision_index - b.decision_index);
+  const state: RunningState = new Map();
+  const out = new Map<number, PositionSide>();
+
+  for (const row of ordered) {
+    const prior = state.get(row.asset)?.side ?? "flat";
+    out.set(row.decision_index, prior);
+    applyAction(state, row);
+  }
+  return out;
+}
+
 function applyAction(state: RunningState, row: DecisionRowDto): void {
   const asset = row.asset;
   const current = state.get(asset) ?? { side: "flat" as PositionSide, qty: 0, entry: 0 };
