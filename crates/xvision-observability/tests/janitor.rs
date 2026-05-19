@@ -360,8 +360,22 @@ async fn periodic_spawn_runs_at_least_once() {
         max_payload_bytes: 1024 * 1024,
     };
     let handle = spawn_janitor(pool.clone(), store.clone(), cfg, StdDuration::from_millis(50));
-    // Give it two ticks to fire.
-    tokio::time::sleep(StdDuration::from_millis(150)).await;
+
+    tokio::time::timeout(StdDuration::from_secs(2), async {
+        loop {
+            let (refs,): (i64,) =
+                sqlx::query_as("SELECT COUNT(*) FROM model_calls WHERE prompt_payload_ref IS NOT NULL")
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            if refs == 0 && !store.exists(&old_blob) {
+                break;
+            }
+            tokio::time::sleep(StdDuration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("periodic janitor should null the ref and delete the blob");
     handle.abort();
 
     let (refs,): (i64,) =
