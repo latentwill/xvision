@@ -149,6 +149,7 @@ async fn seed_two_runs(home: &std::path::Path) -> (String, String) {
                 win_rate: 0.6,
                 n_trades: 1,
                 n_decisions: decisions_a.len() as u32,
+                baselines: None,
             },
         )
         .await
@@ -239,6 +240,7 @@ async fn seed_two_runs(home: &std::path::Path) -> (String, String) {
                 win_rate: 0.8,
                 n_trades: 2,
                 n_decisions: decisions_b.len() as u32,
+                baselines: None,
             },
         )
         .await

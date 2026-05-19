@@ -2268,6 +2268,10 @@ mod tests {
             created_at: chrono::Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
             created_by: "test".to_string(),
             archived_at: None,
+            regime_label: None,
+            volatility_label: None,
+            trend_direction: None,
+            regime_derived: false,
         }
     }
 

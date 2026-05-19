@@ -114,6 +114,7 @@ fn seed_strategy_with_trader(
             trader_slot: None,
             risk: RiskPreset::Balanced.expand(),
             mechanical_params: serde_json::json!({}),
+            hypothesis: None,
         };
 
         let store = FilesystemStore::new(strategy_store_dir(&home));
