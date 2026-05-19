@@ -139,7 +139,9 @@ fn check_slot(idx: usize, slot: &AgentSlot) -> Result<(), PromptSchemaDriftError
     let mentioned = mentioned_tools(&slot.system_prompt);
     let mut missing: Vec<String> = mentioned
         .into_iter()
-        .filter(|t| !registered.contains(t.as_str()))
+        .filter(|t| {
+            !registered.contains(t.as_str()) && !(t == "ohlcv_history" && registered.contains("ohlcv"))
+        })
         .collect();
     missing.sort();
     missing.dedup();
@@ -315,6 +317,7 @@ mod tests {
             skill_ids: skill_ids.into_iter().map(|s| s.to_string()).collect(),
             max_tokens: Some(4096),
             prompt_version: String::new(),
+            inputs_policy: crate::agents::InputsPolicy::Raw,
         }
     }
 

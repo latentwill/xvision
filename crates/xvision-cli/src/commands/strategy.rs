@@ -527,6 +527,7 @@ async fn new_atomic(
                 skill_ids: Vec::new(),
                 max_tokens: None,
                 prompt_version: String::new(),
+                inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
             }],
         },
     )
@@ -1083,12 +1084,18 @@ fn slot_to_agent_slot(
     model_override: Option<&str>,
 ) -> AgentSlot {
     let (provider, model) = provider_model_from_slot(slot, provider_override, model_override);
+    let mut skill_ids = slot.allowed_tools.clone();
+    if slot.prompt.contains("ohlcv_history") && !skill_ids.iter().any(|tool| tool == "ohlcv") {
+        skill_ids.push("ohlcv".to_string());
+    }
+    skill_ids.sort();
+    skill_ids.dedup();
     AgentSlot {
         name: "main".to_string(),
         provider,
         model,
         system_prompt: slot.prompt.clone(),
-        skill_ids: Vec::new(),
+        skill_ids,
         // Auto-resolved from the model's metadata at dispatch time
         // (q15 §1). Old auto-create paths can let this stay `None` so
         // the operator-facing UX is consistent with `+ New agent`.

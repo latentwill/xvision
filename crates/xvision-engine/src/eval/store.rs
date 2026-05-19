@@ -545,6 +545,23 @@ impl RunStore {
     ) -> Result<()> {
         let id = Ulid::new().to_string();
         let now = Utc::now().to_rfc3339();
+        let parent_res = sqlx::query(
+            "INSERT OR IGNORE INTO agent_runs \
+             (id, objective, eval_run_id, status, started_at, retention_mode) \
+             VALUES (?, 'eval guardrail supervisor note', ?, 'running', ?, 'hash_only')",
+        )
+        .bind(run_id)
+        .bind(run_id)
+        .bind(&now)
+        .execute(&self.pool)
+        .await;
+        if let Err(e) = parent_res {
+            tracing::warn!(
+                run_id = %run_id,
+                error = %e,
+                "agent_runs parent insert for supervisor_notes failed (best-effort; eval run continues)",
+            );
+        }
         let res = sqlx::query(
             "INSERT INTO supervisor_notes (id, run_id, role, content, severity, created_at) \
              VALUES (?, ?, ?, ?, ?, ?)",

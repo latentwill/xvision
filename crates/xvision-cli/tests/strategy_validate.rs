@@ -74,6 +74,7 @@ fn seed_strategy_with_trader(
                     skill_ids: vec![],
                     max_tokens: Some(1024),
                     prompt_version: String::new(),
+                    inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
                 }],
             },
         )
@@ -337,8 +338,8 @@ fn validate_happy_path_eval_ready() {
         "Evaluate the market on each bar and decide: buy, sell, or hold.",
     );
 
-    // SOL / 4h scenario.
-    let scenario_id = create_scenario(dir.path(), "SOL", "4h", "happy-path-sol-scenario");
+    // BTC / 4h scenario to match the seeded strategy asset universe.
+    let scenario_id = create_scenario(dir.path(), "BTC", "4h", "happy-path-btc-scenario");
 
     let out = xvn(
         &[
@@ -382,10 +383,10 @@ fn validate_happy_path_eval_ready() {
         "expected_decisions must be positive; got {ed}; result: {result}"
     );
 
-    // Asset must reference SOL.
+    // Asset must reference BTC.
     assert!(
-        result["asset"].as_str().unwrap_or("").contains("SOL"),
-        "asset must mention SOL; got: {}; result: {result}",
+        result["asset"].as_str().unwrap_or("").contains("BTC"),
+        "asset must mention BTC; got: {}; result: {result}",
         result["asset"]
     );
 

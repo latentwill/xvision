@@ -24,6 +24,8 @@ async fn fresh_pool() -> SqlitePool {
     sqlx::query(migration_005).execute(&pool).await.unwrap();
     let migration_019 = include_str!("../migrations/019_agent_slot_prompt_version.sql");
     sqlx::query(migration_019).execute(&pool).await.unwrap();
+    let migration_020 = include_str!("../migrations/020_agent_slot_inputs_policy.sql");
+    sqlx::query(migration_020).execute(&pool).await.unwrap();
     pool
 }
 
@@ -36,6 +38,7 @@ fn slot(name: &str, prompt: &str, skill_ids: Vec<&str>) -> AgentSlot {
         skill_ids: skill_ids.into_iter().map(String::from).collect(),
         max_tokens: Some(4096),
         prompt_version: String::new(),
+        inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
     }
 }
 

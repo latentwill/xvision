@@ -90,6 +90,10 @@ async fn ctx_with_agents_table() -> (ApiContext, tempfile::TempDir) {
         .execute(&ctx.db)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/020_agent_slot_inputs_policy.sql"))
+        .execute(&ctx.db)
+        .await
+        .unwrap();
     (ctx, dir)
 }
 

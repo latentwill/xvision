@@ -43,12 +43,18 @@ async fn build_pool_in(xvn_home: &PathBuf) -> SqlitePool {
     let db_path = xvn_home.join("xvn.db");
     let url = format!("sqlite://{}?mode=rwc", db_path.display());
     let pool = SqlitePool::connect(&url).await.unwrap();
-    // The janitor's SQL touches model_calls / tool_calls / sandbox_results /
-    // checkpoints — migration 018 carries all four. The TTL clause joins
-    // through `spans.started_at`, so we need migration 018 only; FK
-    // enforcement is off so we don't have to apply 013's `cli_jobs`
-    // ancestor either, matching `eval_observability.rs`.
+    // Migration 018 declares nullable FKs to `eval_runs` and `cli_jobs`.
+    // Apply those ancestor tables in the test harness so SQLite can
+    // validate inserts no matter which pooled connection executes them.
     sqlx::query("PRAGMA foreign_keys = OFF")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/002_eval.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/013_cli_jobs.sql"))
         .execute(&pool)
         .await
         .unwrap();
