@@ -215,12 +215,21 @@ async fn ipc_emission_records_rows_with_fingerprint() {
     assert!((model_row.4.unwrap() - 0.0123).abs() < 1e-9);
 
     // Run should be marked completed.
-    let status_row: (String,) = sqlx::query_as("SELECT status FROM agent_runs WHERE id = ?")
-        .bind("r-smoke-1")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(status_row.0, "completed");
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        let status_row: (String,) = sqlx::query_as("SELECT status FROM agent_runs WHERE id = ?")
+            .bind("r-smoke-1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        if status_row.0 == "completed" {
+            break;
+        }
+        if std::time::Instant::now() >= deadline {
+            panic!("run was not marked completed; status = {}", status_row.0);
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
 
     drop(conn);
     handle.shutdown().await;
