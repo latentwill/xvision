@@ -991,6 +991,42 @@ fn runtime_config_path(ctx: &ApiContext) -> std::path::PathBuf {
     ctx.xvn_home.join("config").join("default.toml")
 }
 
+/// Load every configured provider's cached catalog so `ObsEmitter`
+/// can compute `model_calls.cost_usd` at span-close time. Missing /
+/// never-fetched catalogs are skipped silently — the emitter handles
+/// "no pricing" by leaving `cost_usd = None` and emitting one debug
+/// line per unique unpriced `(provider, model)` pair. We deliberately
+/// do NOT trigger a network refresh here: eval runs must not hang on
+/// catalog fetches.
+async fn load_provider_catalogs_for_emitter(
+    ctx: &ApiContext,
+) -> std::collections::HashMap<String, std::sync::Arc<xvision_core::providers::Catalog>> {
+    use std::collections::HashMap;
+    let cfg_path = runtime_config_path(ctx);
+    let cfg = match tokio::task::spawn_blocking(move || config::load_runtime(&cfg_path)).await {
+        Ok(Ok(c)) => c,
+        // Config load failures are not the cost path's problem —
+        // upstream handlers surface their own validation errors. Just
+        // skip catalog wiring so emit-time cost is None.
+        _ => return HashMap::new(),
+    };
+    let svc = match crate::providers::CatalogService::new(ctx.xvn_home.clone()) {
+        Ok(s) => s,
+        Err(_) => return HashMap::new(),
+    };
+    let mut out = HashMap::new();
+    for p in &cfg.providers {
+        if matches!(p.kind, ProviderKind::LocalCandle) {
+            // local-candle has no remote catalog and no pricing.
+            continue;
+        }
+        if let Ok(Some(cat)) = svc.get_or_load(&p.name).await {
+            out.insert(p.name.clone(), cat);
+        }
+    }
+    out
+}
+
 /// Testable / deps-injecting variant of `run`. Tests pass a
 /// `MockBrokerSurface` + `MockDispatch` so no network is required;
 /// production callers go through `run` which constructs deps from env.
@@ -1066,6 +1102,17 @@ async fn run_inner(
     // executor preflight has succeeded — so the recorder's
     // `agent_runs.eval_run_id` FK is valid and a preflight failure can't
     // leave a phantom observability run behind.
+    // Load provider catalogs ONCE for the emitter so every
+    // `emit_model_call_finished*` call site can compute
+    // `cost_usd` from cached pricing — fixes the audit-time
+    // observation that 2,757/2,757 `model_calls.cost_usd` rows were
+    // NULL. Best-effort: providers without a cached catalog are
+    // skipped and the emitter falls back to publishing `None`.
+    let obs_catalogs = if ctx.obs_event_bus.is_some() {
+        load_provider_catalogs_for_emitter(ctx).await
+    } else {
+        std::collections::HashMap::new()
+    };
     let obs_emitter = ctx.obs_event_bus.as_ref().map(|bus| {
         // `harness-payload-blob-write`: attach the BlobStore so
         // `emit_model_call_finished_with_payloads` can persist
@@ -1080,6 +1127,7 @@ async fn run_inner(
                 &ctx.obs_config,
             ))
             .with_blob_store(blob_store)
+            .with_catalogs(obs_catalogs.clone())
     });
 
     // 3. Pick the executor for this run mode. For backtest mode, when the
@@ -1527,6 +1575,13 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
     // behind. The matching `RunFinished` is emitted by
     // `execute_in_background`.
     let mut run = Run::new_queued(req.agent_id.clone(), scenario.id.clone(), req.mode);
+    // Same catalog-wiring as the `start_run` path above; see the
+    // comment there for the rationale.
+    let obs_catalogs = if ctx.obs_event_bus.is_some() {
+        load_provider_catalogs_for_emitter(ctx).await
+    } else {
+        std::collections::HashMap::new()
+    };
     let obs_emitter = ctx.obs_event_bus.as_ref().map(|bus| {
         // Mirror the FullDebug-aware emitter wiring above; same
         // blob root so the second eval entry point produces refs
@@ -1537,6 +1592,7 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
                 &ctx.obs_config,
             ))
             .with_blob_store(blob_store)
+            .with_catalogs(obs_catalogs.clone())
     });
 
     let executor: Box<dyn Executor> = match req.mode {

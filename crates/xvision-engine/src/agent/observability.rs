@@ -16,13 +16,16 @@
 //! the sidecar/agent-run path already uses; this module does not
 //! introduce a parallel bus.
 
-use std::sync::Arc;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use chrono::Utc;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use crate::agent::llm::{LlmRequest, Message, ToolDefinition};
+use crate::eval::cost::compute_token_cost_usd_from_catalog;
+use xvision_core::providers::Catalog;
 use xvision_observability::{
     AssistantTextDeltaEvent, BlobStore, BrokerCallFinishedEvent, BrokerCallOutcome, BrokerCallStartedEvent,
     BrokerSide, ModelCallFinishedEvent, Redactor, RetentionMode, RunEvent, RunEventBus, RunFinishedEvent,
@@ -215,6 +218,29 @@ pub struct ObsEmitter {
     run_id: String,
     retention: ObsRetentionPolicy,
     blob_store: Option<BlobStore>,
+    /// Provider catalogs the emitter consults when computing
+    /// `model_calls.cost_usd` at `emit_model_call_finished*` time.
+    /// Keyed by `ProviderEntry.name` (matches `Catalog.provider`). The
+    /// emit path falls back to scanning every catalog by model id when
+    /// the exact provider key isn't present — provider strings carried
+    /// on the `LlmRequest` (`input.slot.provider`) don't always match
+    /// the registered provider name, and "unknown model" is still
+    /// preferable to "wrong model".
+    ///
+    /// Empty map => no priced lookup; every emit publishes
+    /// `cost_usd = None`. That's the legacy behaviour and exactly what
+    /// callers who don't wire `with_catalogs(...)` get.
+    catalogs: Arc<HashMap<String, Arc<Catalog>>>,
+}
+
+/// Track which `(provider, model)` pairs we've already warned about
+/// for missing pricing. Process-wide singleton so a long-lived server
+/// emits ONE debug line per unique pair regardless of how many spans
+/// fire — protects the operator's log scrollback from a tight inner
+/// loop on an unpriced model.
+fn unpriced_seen() -> &'static Mutex<HashSet<(String, String)>> {
+    static SEEN: OnceLock<Mutex<HashSet<(String, String)>>> = OnceLock::new();
+    SEEN.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
 impl ObsEmitter {
@@ -227,7 +253,65 @@ impl ObsEmitter {
             run_id: run_id.into(),
             retention: ObsRetentionPolicy::default(),
             blob_store: None,
+            catalogs: Arc::new(HashMap::new()),
         }
+    }
+
+    /// Attach provider catalogs so the emit path can compute
+    /// `cost_usd` from `(input_tokens, output_tokens, pricing)` at
+    /// span-close time. Without this, the emitter publishes
+    /// `cost_usd = None` for every model call — matching pre-2026-05-19
+    /// behaviour where `model_calls.cost_usd` was always NULL.
+    ///
+    /// Map shape: `ProviderEntry.name` → `Arc<Catalog>`. Multiple
+    /// providers can be wired in one call; the emitter holds them in
+    /// an `Arc` so cloning the emitter is cheap.
+    pub fn with_catalogs(mut self, catalogs: HashMap<String, Arc<Catalog>>) -> Self {
+        self.catalogs = Arc::new(catalogs);
+        self
+    }
+
+    /// Compute the USD cost for a model call against the wired
+    /// catalogs. Returns `None` when:
+    ///   - no catalogs are wired (the default), OR
+    ///   - the model id isn't present in any wired catalog, OR
+    ///   - the catalog entry has no pricing populated (Anthropic /
+    ///     bare OpenAI / OpenRouter free routes).
+    ///
+    /// On the unpriced/missing-model path, emits ONE
+    /// `tracing::debug!` line per `(provider, model)` pair per
+    /// process — see `unpriced_seen` for the dedupe guard.
+    ///
+    /// Provider-key resolution: tries the exact `provider` key first,
+    /// then falls back to scanning every wired catalog. Slot-side
+    /// provider strings (`input.slot.provider`) are operator-typed and
+    /// don't always match `ProviderEntry.name`; falling back keeps the
+    /// cost path resilient without forcing a per-call provider rename.
+    fn compute_cost_usd(&self, provider: &str, model: &str, input_tokens: u64, output_tokens: u64) -> Option<f64> {
+        if self.catalogs.is_empty() {
+            // No catalogs wired — legacy behaviour, no log spam.
+            return None;
+        }
+        // Exact provider key first.
+        if let Some(cat) = self.catalogs.get(provider) {
+            if let Some(cost) = compute_token_cost_usd_from_catalog(input_tokens, output_tokens, model, cat) {
+                return Some(cost);
+            }
+        }
+        // Fallback: scan all catalogs for this model id. OpenRouter
+        // bundles models from many vendors under one provider entry,
+        // so the slot's `provider` might be "anthropic" while the
+        // priced catalog lives under "openrouter".
+        for cat in self.catalogs.values() {
+            if let Some(cost) = compute_token_cost_usd_from_catalog(input_tokens, output_tokens, model, cat) {
+                return Some(cost);
+            }
+        }
+        // No match anywhere — log once per (provider, model) so the
+        // operator can see why `model_calls.cost_usd` is NULL for this
+        // pair without drowning in repeats.
+        log_unpriced_once(provider, model);
+        None
     }
 
     /// Attach a resolved retention policy. Without this call the
@@ -551,6 +635,15 @@ impl ObsEmitter {
         prompt_hash: String,
         response_hash: Option<String>,
     ) {
+        // Resolve cost: caller-supplied wins (preserves provider-side
+        // out-of-band cost paths for Anthropic / bare OpenAI), then
+        // fall back to catalog-based math. The historical call sites
+        // all pass `None`, so this is the seam where the previously
+        // all-NULL `model_calls.cost_usd` column starts populating.
+        let resolved_cost = cost_usd.or_else(|| match (input_tokens, output_tokens) {
+            (Some(i), Some(o)) => self.compute_cost_usd(provider, model, i as u64, o as u64),
+            _ => None,
+        });
         self.bus
             .publish(RunEvent::ModelCallFinished(ModelCallFinishedEvent {
                 span_id: span_id.to_string(),
@@ -558,7 +651,7 @@ impl ObsEmitter {
                 model: model.to_string(),
                 input_token_count: input_tokens.map(i64::from),
                 output_token_count: output_tokens.map(i64::from),
-                cost_usd,
+                cost_usd: resolved_cost,
                 prompt_hash,
                 response_hash,
                 prompt_payload_ref: None,
@@ -687,6 +780,14 @@ impl ObsEmitter {
             }
         }
 
+        // Same resolution rule as `emit_model_call_finished` — see
+        // that method's comment. Catalog lookup is best-effort; an
+        // unpriced model leaves `cost_usd = None` and the unpriced-pair
+        // dedupe ensures the operator sees one debug line per pair.
+        let resolved_cost = cost_usd.or_else(|| match (input_tokens, output_tokens) {
+            (Some(i), Some(o)) => self.compute_cost_usd(provider, model, i as u64, o as u64),
+            _ => None,
+        });
         self.bus
             .publish(RunEvent::ModelCallFinished(ModelCallFinishedEvent {
                 span_id: span_id.to_string(),
@@ -694,7 +795,7 @@ impl ObsEmitter {
                 model: model.to_string(),
                 input_token_count: input_tokens.map(i64::from),
                 output_token_count: output_tokens.map(i64::from),
-                cost_usd,
+                cost_usd: resolved_cost,
                 prompt_hash,
                 response_hash,
                 prompt_payload_ref,
@@ -864,6 +965,30 @@ impl ObsEmitter {
                 }),
             }))
             .await;
+    }
+}
+
+/// Emit a `tracing::debug!` line for an unpriced `(provider, model)`
+/// pair at most once per process. The dedupe lives in
+/// [`unpriced_seen`]; a tight inner loop on the same model will not
+/// flood the log.
+fn log_unpriced_once(provider: &str, model: &str) {
+    let key = (provider.to_string(), model.to_string());
+    let mut guard = match unpriced_seen().lock() {
+        Ok(g) => g,
+        // Lock poisoning is recoverable: if a prior task panicked
+        // while inserting, we'd rather log again than swallow the
+        // signal. Treat as "first time" for this caller.
+        Err(p) => p.into_inner(),
+    };
+    if guard.insert(key) {
+        tracing::debug!(
+            provider = %provider,
+            model = %model,
+            "model_calls.cost_usd: no priced catalog entry for this (provider, model) pair; \
+             cost left NULL. Refresh the provider catalog (`xvn settings providers refresh`) \
+             if you expect pricing to be available.",
+        );
     }
 }
 
