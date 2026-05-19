@@ -32,7 +32,8 @@ async fn migrated_pool() -> SqlitePool {
 /// Recorder that blocks every `handle_event` call until the test flips
 /// `released` to true. Uses an AtomicBool so once released, all calls
 /// (including future ones) pass through without racing the notify
-/// channel.
+/// channel. The waiter is created before rechecking `released` so a
+/// concurrent `notify_waiters` cannot be missed.
 struct GatedRecorder {
     inner: Arc<SqliteRecorder>,
     released: Arc<std::sync::atomic::AtomicBool>,
@@ -42,8 +43,12 @@ struct GatedRecorder {
 #[async_trait]
 impl AgentRunRecorder for GatedRecorder {
     async fn handle_event(&self, event: &RunEvent) -> Result<(), RecorderError> {
-        while !self.released.load(std::sync::atomic::Ordering::Acquire) {
-            self.notify.notified().await;
+        loop {
+            let notified = self.notify.notified();
+            if self.released.load(std::sync::atomic::Ordering::Acquire) {
+                break;
+            }
+            notified.await;
         }
         self.inner.handle_event(event).await
     }
