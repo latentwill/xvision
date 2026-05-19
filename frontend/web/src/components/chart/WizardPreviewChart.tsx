@@ -31,6 +31,13 @@ export function WizardPreviewChart({
     granularity,
     baseline: !!includeBaseline,
   });
+  // QA22 / `eval-inspector-chart-snap-button`: the preview no longer
+  // auto-renders on every form change. Operator reported the prior
+  // always-on render produced a "tiny and squished" chart whenever the
+  // form had partial values. Gating the render behind an explicit
+  // toggle also avoids hammering the preview endpoint while the
+  // operator is mid-typing.
+  const [shown, setShown] = useState(false);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -45,11 +52,11 @@ export function WizardPreviewChart({
   const query = useQuery({
     queryKey: previewQueryKey,
     queryFn: () => getScenarioPreview(debounced),
-    enabled: ready,
+    enabled: ready && shown,
     staleTime: 30_000,
   });
   const barsFetch = useBarsFetchJob(
-    ready
+    ready && shown
       ? {
           asset: debounced.asset,
           from: debounced.from,
@@ -65,6 +72,18 @@ export function WizardPreviewChart({
       <div className="text-text-3 text-[12px]">
         Fill asset + date range to see preview…
       </div>
+    );
+  }
+  if (!shown) {
+    return (
+      <button
+        type="button"
+        data-testid="wizard-preview-show"
+        onClick={() => setShown(true)}
+        className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium border border-border text-text hover:border-text-3 transition-colors"
+      >
+        Show preview chart
+      </button>
     );
   }
   if (query.isLoading) {
@@ -134,13 +153,31 @@ export function WizardPreviewChart({
 
   return (
     <div className="border border-border rounded">
-      <div className="px-3 py-2 text-[12px] text-text-3 border-b border-border">
-        Preview — {debounced.asset} · {debounced.from} → {debounced.to} · {debounced.granularity}
-        {includeBaseline && query.data.baseline_equity && (
-          <span className="ml-2">· Buy &amp; Hold baseline ({query.data.baseline_equity.length} pts)</span>
-        )}
+      <div className="px-3 py-2 text-[12px] text-text-3 border-b border-border flex items-center justify-between gap-2">
+        <span>
+          Preview — {debounced.asset} · {debounced.from} → {debounced.to} · {debounced.granularity}
+          {includeBaseline && query.data.baseline_equity && (
+            <span className="ml-2">· Buy &amp; Hold baseline ({query.data.baseline_equity.length} pts)</span>
+          )}
+        </span>
+        <button
+          type="button"
+          data-testid="wizard-preview-hide"
+          onClick={() => setShown(false)}
+          className="text-text-3 hover:text-text transition-colors"
+          aria-label="Hide preview chart"
+        >
+          Hide
+        </button>
       </div>
-      <div style={{ maxHeight: 220, overflow: 'hidden' }}>
+      {/*
+        The inner `ScenarioChart` reserves 360px for its price pane plus
+        the cache-status header + ChartContainer chrome. The prior
+        `maxHeight: 220` cap clipped the bottom of the chart and the
+        operator saw a tiny squished render. Let the chart use its
+        natural height now that this preview is button-gated.
+      */}
+      <div>
         <ScenarioChart
           payload={payload}
           onFetch={barsFetch.start}
