@@ -498,7 +498,7 @@ async fn migrate_eval_batches(pool: &SqlitePool) -> ApiResult<()> {
     Ok(())
 }
 
-/// Apply migration 021: four regime-label columns on the `scenarios` table.
+/// Apply migration 022: four regime-label columns on the `scenarios` table.
 /// Gated on column absence so the migration is idempotent on already-upgraded
 /// databases.  All four columns are added atomically (or skipped if already
 /// present) using the same `table_has_column` probe used by prior migrations.
@@ -514,7 +514,7 @@ async fn migrate_scenario_regime_labels(pool: &SqlitePool) -> ApiResult<()> {
     Ok(())
 }
 
-/// Apply migration 022: `experiments` table.
+/// Apply migration 023: `experiments` table.
 /// Gated on `experiments` not existing so the migration is idempotent on
 /// already-upgraded databases. The hypothesis struct field is stored in the
 /// strategy JSON file (not in SQLite), so there is no ALTER TABLE here.

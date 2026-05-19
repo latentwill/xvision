@@ -1,4 +1,4 @@
--- 022_hypothesis_and_experiments.sql — strategy hypothesis + experiment ledger.
+-- 023_hypothesis_and_experiments.sql — strategy hypothesis + experiment ledger.
 --
 -- Part A: strategy hypothesis (intake #7)
 --   The intake spec proposed ALTER TABLE strategies ADD COLUMN hypothesis_json.

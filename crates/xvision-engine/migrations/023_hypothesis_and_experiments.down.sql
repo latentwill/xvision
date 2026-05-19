@@ -1,4 +1,4 @@
--- Revert 022_hypothesis_and_experiments.sql.
+-- Revert 023_hypothesis_and_experiments.sql.
 --
 -- Part A (hypothesis) stored no DDL in the forward migration, so nothing
 -- to revert here. Strategy JSON files will simply ignore the `hypothesis`
