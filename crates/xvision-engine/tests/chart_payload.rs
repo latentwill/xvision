@@ -38,6 +38,24 @@ async fn test_ctx() -> TestCtx {
     TestCtx { ctx, _dir: dir }
 }
 
+#[tokio::test]
+async fn test_ctx_removes_tmpdir_on_drop() {
+    let dir_path = {
+        let ctx = test_ctx().await;
+        let dir_path = ctx._dir.path().to_path_buf();
+        assert!(
+            dir_path.exists(),
+            "test context directory should exist while the fixture is alive"
+        );
+        dir_path
+    };
+
+    assert!(
+        !dir_path.exists(),
+        "test context directory should be removed when the fixture is dropped"
+    );
+}
+
 async fn seed_cached_bars(ctx: &ApiContext, cache_key: &str, asset: &str, count: usize) {
     let start = chrono::Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
     let mut blob = Vec::new();
