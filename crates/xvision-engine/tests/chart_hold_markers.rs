@@ -3,16 +3,30 @@ use tempfile::tempdir;
 use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::eval::{DecisionRow, Run, RunMode, RunStore};
 
-async fn test_ctx() -> ApiContext {
-    let dir = Box::leak(Box::new(tempdir().unwrap()));
-    ApiContext::open(
+struct TestCtx {
+    ctx: ApiContext,
+    _dir: tempfile::TempDir,
+}
+
+impl std::ops::Deref for TestCtx {
+    type Target = ApiContext;
+
+    fn deref(&self) -> &Self::Target {
+        &self.ctx
+    }
+}
+
+async fn test_ctx() -> TestCtx {
+    let dir = tempdir().unwrap();
+    let ctx = ApiContext::open(
         dir.path(),
         Actor::Cli {
             user: "chart-hold-marker-test".into(),
         },
     )
     .await
-    .unwrap()
+    .unwrap();
+    TestCtx { ctx, _dir: dir }
 }
 
 async fn seed_cached_bars(ctx: &ApiContext, cache_key: &str, asset: &str, count: usize) {

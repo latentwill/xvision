@@ -1,5 +1,7 @@
-use std::sync::Arc;
-use xvision_engine::agent::llm::{ContentBlock, LlmResponse, MockDispatch, StopReason};
+use std::sync::{Arc, Mutex};
+use xvision_engine::agent::llm::{
+    ContentBlock, LlmDispatch, LlmRequest, LlmResponse, MockDispatch, StopReason,
+};
 use xvision_engine::agent::pipeline::{run_pipeline, PipelineInputs, PipelineOutputs, ResolvedAgentSlot};
 use xvision_engine::strategies::manifest::{PublicManifest, RegimeFit};
 use xvision_engine::strategies::risk::RiskPreset;
@@ -68,26 +70,97 @@ fn text_response(text: &str) -> LlmResponse {
     }
 }
 
+struct RecordingDispatch {
+    canned: Mutex<Vec<LlmResponse>>,
+    requests: Mutex<Vec<LlmRequest>>,
+}
+
+impl RecordingDispatch {
+    fn sequence(responses: Vec<LlmResponse>) -> Self {
+        Self {
+            canned: Mutex::new(responses),
+            requests: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn requests(&self) -> Vec<LlmRequest> {
+        self.requests.lock().unwrap().clone()
+    }
+}
+
+#[async_trait::async_trait]
+impl LlmDispatch for RecordingDispatch {
+    async fn complete(&self, req: LlmRequest) -> anyhow::Result<LlmResponse> {
+        self.requests.lock().unwrap().push(req);
+
+        let mut q = self.canned.lock().unwrap();
+        if q.len() > 1 {
+            Ok(q.remove(0))
+        } else {
+            Ok(q.first().cloned().unwrap_or_else(|| text_response("ok")))
+        }
+    }
+}
+
+fn request_text(req: &LlmRequest) -> String {
+    req.messages
+        .iter()
+        .flat_map(|m| m.content.iter())
+        .filter_map(|block| match block {
+            ContentBlock::Text { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 #[tokio::test]
 async fn three_slot_pipeline_chains_outputs() {
     let strategy = fixture_strategy();
-    let dispatch = Arc::new(MockDispatch::echo(r#"{"ok":true}"#));
+    let dispatch = Arc::new(RecordingDispatch::sequence(vec![
+        text_response(r#"{"stage":"regime","regime_id":"range-bound-42"}"#),
+        text_response(r#"{"stage":"intern","briefing_id":"briefing-77"}"#),
+        text_response(r#"{"action":"hold","conviction":0.12,"justification":"uses briefing-77"}"#),
+    ]));
+    let pipeline_dispatch: Arc<dyn LlmDispatch> = dispatch.clone();
     let tools = Arc::new(ToolRegistry::default_with_builtins());
     let outs: PipelineOutputs = run_pipeline(PipelineInputs {
         strategy: &strategy,
         agent_slots: &[],
         seed_inputs: serde_json::json!({"ohlcv_history": [], "indicator_panel": {}}),
-        dispatch,
+        dispatch: pipeline_dispatch,
         tools,
         obs: None,
     })
     .await
     .unwrap();
-    assert!(outs.regime.is_some());
-    assert!(outs.intern.is_some());
-    assert!(outs.trader.is_some());
+    assert_eq!(
+        outs.regime.as_ref().map(LlmResponse::text).as_deref(),
+        Some(r#"{"stage":"regime","regime_id":"range-bound-42"}"#)
+    );
+    assert_eq!(
+        outs.intern.as_ref().map(LlmResponse::text).as_deref(),
+        Some(r#"{"stage":"intern","briefing_id":"briefing-77"}"#)
+    );
+    assert_eq!(
+        outs.trader.as_ref().map(LlmResponse::text).as_deref(),
+        Some(r#"{"action":"hold","conviction":0.12,"justification":"uses briefing-77"}"#)
+    );
     assert!(outs.total_input_tokens > 0);
     assert!(outs.total_output_tokens > 0);
+
+    let requests = dispatch.requests();
+    assert_eq!(requests.len(), 3);
+
+    let intern_request = request_text(&requests[1]);
+    assert!(intern_request.contains("regime_output"));
+    assert!(intern_request.contains("range-bound-42"));
+
+    let trader_request = request_text(&requests[2]);
+    assert!(trader_request.contains("regime_output"));
+    assert!(trader_request.contains("range-bound-42"));
+    assert!(trader_request.contains("intern_output"));
+    assert!(trader_request.contains("briefing-77"));
 }
 
 #[tokio::test]
@@ -130,6 +203,7 @@ async fn resolved_agent_pipeline_uses_trader_role_as_decision_output() {
                 model: None,
             },
             max_tokens: Some(4096),
+            temperature: None,
             inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
         },
         ResolvedAgentSlot {
@@ -143,6 +217,7 @@ async fn resolved_agent_pipeline_uses_trader_role_as_decision_output() {
                 model: None,
             },
             max_tokens: Some(4096),
+            temperature: None,
             inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
         },
     ];
@@ -184,6 +259,7 @@ async fn resolved_agent_pipeline_does_not_treat_non_trader_as_decision_output() 
                 model: None,
             },
             max_tokens: Some(4096),
+            temperature: None,
             inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
         },
         ResolvedAgentSlot {
@@ -197,6 +273,7 @@ async fn resolved_agent_pipeline_does_not_treat_non_trader_as_decision_output() 
                 model: None,
             },
             max_tokens: Some(4096),
+            temperature: None,
             inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
         },
     ];

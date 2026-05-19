@@ -6,7 +6,7 @@
 //! 3. Periodic spawn fires at least once and surfaces stats.
 
 use chrono::{Duration as ChronoDuration, Utc};
-use sqlx::SqlitePool;
+use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use std::fs;
 use std::time::Duration as StdDuration;
 use tempfile::TempDir;
@@ -19,7 +19,11 @@ const MIGRATION_013: &str = include_str!("../../xvision-engine/migrations/013_cl
 const MIGRATION_018: &str = include_str!("../../xvision-engine/migrations/018_agent_run_observability.sql");
 
 async fn migrated_pool() -> SqlitePool {
-    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
     sqlx::query(MIGRATION_002).execute(&pool).await.unwrap();
     sqlx::query(MIGRATION_013).execute(&pool).await.unwrap();
     sqlx::query(MIGRATION_018).execute(&pool).await.unwrap();

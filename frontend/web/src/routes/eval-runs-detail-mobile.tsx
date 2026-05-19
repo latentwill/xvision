@@ -94,14 +94,14 @@ export function MobileEvalRunDetail({
 
   return (
     <div className="-mx-4 -mt-4 flex flex-col min-h-0">
-      <div className="px-3 pt-3">
-        <Link
-          to="/eval-runs"
-          className="inline-flex items-center gap-1.5 text-[12px] text-text-2 hover:text-text mb-3"
-        >
-          ← Back to runs
-        </Link>
-      </div>
+      <Link
+        to="/eval-runs"
+        data-testid="mobile-detail-back"
+        className="px-4 pt-3 pb-1 inline-flex items-center gap-1 text-[12px] text-text-3 hover:text-text transition-colors"
+      >
+        <span aria-hidden>←</span>
+        <span>Back to runs</span>
+      </Link>
       <LiveStrip
         state={stripState}
         isLive={isLive}
@@ -284,6 +284,13 @@ function SummaryTab({
         <div className="font-serif italic text-[28px] leading-none text-text font-medium">
           {labels.strategyName}
         </div>
+        <div
+          data-testid="mobile-eval-run-id"
+          className="mt-1 font-mono text-[11px] text-text-3 break-all select-all"
+          aria-label={`Eval run id ${summary.id}`}
+        >
+          {summary.id}
+        </div>
         <div className="text-[14px] text-text-2 mt-1 truncate">
           {labels.scenarioName}
         </div>
@@ -292,8 +299,6 @@ function SummaryTab({
           className="mt-1.5 flex flex-wrap gap-x-2 font-mono text-[10px] text-text-3"
         >
           <span className="text-text-2">{disambiguator}</span>
-          <span className="text-text-4">·</span>
-          <span title={summary.id}>run {labels.shortRunId}</span>
           <span className="text-text-4">·</span>
           <span>{summary.mode}</span>
         </div>
@@ -312,8 +317,8 @@ function SummaryTab({
       <div className="grid grid-cols-2 gap-2">
         <Stat
           label="PNL"
-          value={fmtPct(summary.total_return_pct)}
-          sub={summary.completed_at ? `as of ${fmtDate(summary.completed_at)}` : "in progress"}
+          value={fmtPnlUsd(totalPnlUsd(equity_curve))}
+          sub={`${fmtPct(summary.total_return_pct)}${summary.completed_at ? ` · as of ${fmtDate(summary.completed_at)}` : " · in progress"}`}
           tone={pctTone(summary.total_return_pct)}
         />
         <Stat
@@ -996,6 +1001,32 @@ function fmtPct(n: number | null | undefined): string {
   if (n == null) return "—";
   const sign = n > 0 ? "+" : n < 0 ? "−" : "";
   return `${sign}${Math.abs(n).toFixed(2)}%`;
+}
+
+// Absolute terminal-PnL from the equity curve (terminal - start). Lives
+// here rather than via `summary` because RunSummary only carries the
+// % return, not the starting balance. See QA22 /
+// `eval-inspector-total-pnl-summary`.
+function totalPnlUsd(
+  equityCurve: ReadonlyArray<{ equity_usd: number }>,
+): number | null {
+  if (equityCurve.length < 2) return null;
+  const start = equityCurve[0]?.equity_usd;
+  const end = equityCurve[equityCurve.length - 1]?.equity_usd;
+  if (start == null || end == null) return null;
+  return end - start;
+}
+
+function fmtPnlUsd(pnl: number | null): string {
+  if (pnl == null) return "—";
+  const abs = Math.abs(pnl);
+  const formatted = abs.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  if (pnl > 0) return `+$${formatted}`;
+  if (pnl < 0) return `−$${formatted}`;
+  return `$${formatted}`;
 }
 
 function fmtTokensTotal(summary: RunSummary): string {

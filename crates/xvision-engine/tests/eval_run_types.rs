@@ -21,6 +21,10 @@ fn run_new_queued_id_is_a_ulid() {
     let r = Run::new_queued("h".into(), "s".into(), RunMode::Paper);
     // ULIDs are 26 chars Crockford base32, monotonic by encoded prefix.
     assert_eq!(r.id.len(), 26, "ULID is 26 chars");
+    assert!(
+        ulid::Ulid::from_string(&r.id).is_ok(),
+        "run ID should parse as a ULID"
+    );
 }
 
 #[test]

@@ -16,6 +16,15 @@ fn code(out: &std::process::Output) -> i32 {
     out.status.code().expect("child terminated by signal")
 }
 
+fn assert_usage_error(out: &std::process::Output, expected: &str) {
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(code(out), 2, "stderr: {stderr}");
+    assert!(
+        stderr.contains(expected),
+        "expected stderr to contain {expected:?}, got: {stderr}"
+    );
+}
+
 #[test]
 fn ab_compare_missing_bars_source_returns_2_usage() {
     let dir = tempdir().unwrap();
@@ -33,7 +42,10 @@ fn ab_compare_missing_bars_source_returns_2_usage() {
         ],
         dir.path(),
     );
-    assert_eq!(code(&out), 2, "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_usage_error(
+        &out,
+        "must supply either --bars <path> OR --from <date> + --to <date>",
+    );
 }
 
 #[test]
@@ -61,7 +73,10 @@ fn ab_compare_rejects_bars_with_date_window_as_2_usage() {
         ],
         dir.path(),
     );
-    assert_eq!(code(&out), 2, "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_usage_error(
+        &out,
+        "--bars is mutually exclusive with --from/--to; pick one source",
+    );
 }
 
 #[test]
@@ -87,5 +102,5 @@ fn ab_compare_invalid_asset_returns_2_usage() {
         ],
         dir.path(),
     );
-    assert_eq!(code(&out), 2, "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_usage_error(&out, "asset 'NOT_A_SYMBOL' is not in the Alpaca crypto whitelist");
 }

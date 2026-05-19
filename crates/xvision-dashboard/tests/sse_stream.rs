@@ -136,6 +136,7 @@ async fn sse_stream_late_subscriber_gets_immediate_close_for_completed_run() {
     let run = Run {
         id: "test-run-completed".into(),
         agent_id: "abc123".into(),
+        agents_agent_id: None,
         scenario_id: "crypto-bull-q1-2025".into(),
         params_override: None,
         mode: RunMode::Backtest,

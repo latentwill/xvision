@@ -298,7 +298,14 @@ export function TraceDock() {
             type="button"
             aria-label="pop out to dedicated view"
             title="Open in dedicated route"
-            onClick={() => navigate(`/agent-runs/${activeRunId}`)}
+            onClick={() => {
+              // QA22 / `trace-capsule-fullscreen-minimize`: the
+              // dedicated agent-run route shows the same trace at full
+              // size, so the dock + the route would be redundant.
+              // Minimize the dock as we navigate.
+              minimize();
+              navigate(`/agent-runs/${activeRunId}`);
+            }}
             className="h-7 w-8 inline-flex items-center justify-center rounded text-text-3 hover:text-text hover:bg-surface-elev"
           >
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">

@@ -53,6 +53,8 @@ const MIGRATION_019_AGENT_SLOT_PROMPT_VERSION: &str =
 const MIGRATION_020_AGENT_SLOT_INPUTS_POLICY: &str =
     include_str!("../../migrations/020_agent_slot_inputs_policy.sql");
 const MIGRATION_021_EVAL_BATCHES: &str = include_str!("../../migrations/021_eval_batches.sql");
+const MIGRATION_022_EVAL_RUNS_AGENTS_AGENT_ID: &str =
+    include_str!("../../migrations/022_eval_runs_agents_agent_id.sql");
 const MIGRATION_022_SCENARIO_REGIME_LABELS: &str =
     include_str!("../../migrations/022_scenario_regime_labels.sql");
 const MIGRATION_023_HYPOTHESIS_AND_EXPERIMENTS: &str =
@@ -98,6 +100,27 @@ pub struct ApiContext {
     /// `ObservabilityConfig::default()` so unit tests / CLI paths that
     /// build `ApiContext` directly don't have to thread it through.
     pub obs_config: Arc<xvision_observability::ObservabilityConfig>,
+    /// Per-`(provider, model)` semaphore gate consulted by
+    /// `eval::start_run` before spawning the executor background task.
+    /// Default = `LaunchConcurrencyGate::from_env()` so production picks
+    /// up `XVN_EVAL_MAX_CONCURRENT_PER_MODEL` automatically and tests
+    /// that don't care get a no-op-ish cap of 4. See
+    /// `crates/xvision-engine/src/eval/concurrency.rs`.
+    pub launch_gate: Arc<crate::eval::concurrency::LaunchConcurrencyGate>,
+    /// Single-writer, bounded mpsc serializer for `eval_runs` status
+    /// finalize writes. Used by `eval::start_run` /
+    /// `execute_in_background` to batch `UPDATE eval_runs SET
+    /// status = ...` calls so concurrent finalize storms (the 2026-05-19
+    /// audit captured 27-runs-in-15s hitting the slow-statement
+    /// threshold) don't overlap on the SQLite writer queue. See
+    /// `crates/xvision-engine/src/eval/finalize_writer.rs`.
+    ///
+    /// Default = freshly-spawned writer over the same pool. Production
+    /// callers (dashboard `AppState`) should override via
+    /// `with_finalize_writer(...)` with a single process-wide writer
+    /// so cross-request finalizes batch together (followup wiring;
+    /// see the F-2 acceptance note).
+    pub finalize_writer: Arc<crate::eval::finalize_writer::FinalizeWriter>,
 }
 
 // `AlpacaBarsFetcher` doesn't derive Debug (it holds a reqwest::Client
@@ -159,6 +182,7 @@ impl ApiContext {
         migrate_agent_slot_prompt_version(&pool).await?;
         migrate_agent_slot_inputs_policy(&pool).await?;
         migrate_eval_batches(&pool).await?;
+        migrate_eval_runs_agents_agent_id(&pool).await?;
         migrate_scenario_regime_labels(&pool).await?;
         migrate_hypothesis_and_experiments(&pool).await?;
 
@@ -179,6 +203,7 @@ impl ApiContext {
     /// `.with_alpaca_fetcher(...)`. The default fetcher uses
     /// `AlpacaData::DEFAULT_RATE_LIMIT_RPM` to match `config/default.toml`.
     pub fn new(db: SqlitePool, actor: Actor, xvn_home: PathBuf) -> Self {
+        let finalize_writer = crate::eval::finalize_writer::FinalizeWriter::start(db.clone());
         Self {
             db,
             actor,
@@ -193,7 +218,33 @@ impl ApiContext {
             event_bus: Arc::new(chart::RunEventBus::new()),
             obs_event_bus: None,
             obs_config: Arc::new(xvision_observability::ObservabilityConfig::default()),
+            launch_gate: Arc::new(crate::eval::concurrency::LaunchConcurrencyGate::from_env()),
+            finalize_writer,
         }
+    }
+
+    /// Builder override for the eval launch-concurrency gate. Tests use
+    /// this to pin a known permit count (e.g. `LaunchConcurrencyGate::new(1)`)
+    /// rather than relying on the default-from-env construction.
+    pub fn with_launch_gate(mut self, gate: Arc<crate::eval::concurrency::LaunchConcurrencyGate>) -> Self {
+        self.launch_gate = gate;
+        self
+    }
+
+    /// Builder override for the eval finalize-write serializer. The
+    /// dashboard's `AppState` constructs a single singleton
+    /// `FinalizeWriter` at boot and passes it in here so every
+    /// per-request `ApiContext` shares the same background writer task
+    /// (matching the pattern `with_event_bus` uses for the live-stream
+    /// bus). The default in `ApiContext::new` spawns a fresh writer per
+    /// construction, which is fine for CLI / tests but wasteful in the
+    /// dashboard's per-request `api_context()` path.
+    pub fn with_finalize_writer(
+        mut self,
+        writer: Arc<crate::eval::finalize_writer::FinalizeWriter>,
+    ) -> Self {
+        self.finalize_writer = writer;
+        self
     }
 
     /// Builder override for the Alpaca fetcher. Used by tests to point
@@ -498,6 +549,20 @@ async fn migrate_eval_batches(pool: &SqlitePool) -> ApiResult<()> {
     Ok(())
 }
 
+/// Apply migration 022 (F-11): add the long-lived workspace
+/// `agents_agent_id` column to `eval_runs`. Gated on column probe for
+/// idempotence on existing databases; same pattern as the other
+/// `migrate_*` helpers in this module.
+async fn migrate_eval_runs_agents_agent_id(pool: &SqlitePool) -> ApiResult<()> {
+    if !table_has_column(pool, "eval_runs", "agents_agent_id").await? {
+        sqlx::query(MIGRATION_022_EVAL_RUNS_AGENTS_AGENT_ID)
+            .execute(pool)
+            .await?;
+    }
+
+    Ok(())
+}
+
 /// Apply migration 022: four regime-label columns on the `scenarios` table.
 /// Gated on column absence so the migration is idempotent on already-upgraded
 /// databases.  All four columns are added atomically (or skipped if already
@@ -524,6 +589,7 @@ async fn migrate_hypothesis_and_experiments(pool: &SqlitePool) -> ApiResult<()> 
             .execute(pool)
             .await?;
     }
+
     Ok(())
 }
 

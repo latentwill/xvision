@@ -14,6 +14,7 @@ import {
 } from "@/api/scenarios";
 import { getScenarioChart, scenarioChartKeys } from "@/api/chart";
 import { listRuns } from "@/api/eval";
+import { listStrategies, strategyKeys } from "@/api/strategies";
 import { ScenarioChart } from "@/components/chart/ScenarioChart";
 import {
   scenarioGranularityToCli,
@@ -51,19 +52,19 @@ export function ScenariosDetailRoute() {
     enabled: !!id,
   });
 
+  // QA22 / `strategy-clone-editable-frontend` (scenario flavor):
+  // operator: "Clone to edit (can't edit clone)". The engine's clone
+  // API already accepts a `ScenarioMutations` payload that overrides
+  // display_name / description / notes / tags / time_window etc. at
+  // clone time — the SPA was passing all-nulls, so every clone was
+  // identical to its parent with no way to amend. The detail view
+  // now exposes an inline form (expanded by the "Clone to edit"
+  // button) that lets the operator override the simple text fields
+  // before submitting. Per the workspace no-popups rule the form is
+  // an inline accordion, not a modal.
   const cloneMut = useMutation({
-    mutationFn: () =>
-      cloneScenario(id, {
-        display_name: `${q.data?.display_name ?? id} (clone)`,
-        description: null,
-        time_window: null,
-        asset: null,
-        granularity: null,
-        venue: null,
-        tags: null,
-        notes: null,
-        warmup_bars: null,
-      }),
+    mutationFn: (mutations: Parameters<typeof cloneScenario>[1]) =>
+      cloneScenario(id, mutations),
     onSuccess: (newScenario) => {
       qc.invalidateQueries({ queryKey: scenarioKeys.all });
       navigate(`/scenarios/${newScenario.id}`);
@@ -100,6 +101,7 @@ export function ScenariosDetailRoute() {
       <Topbar
         title={q.data?.display_name ?? "Scenario"}
         sub={q.isPending ? "Loading…" : q.isError ? "Error" : id}
+        back={{ to: "/scenarios", label: "Back to scenarios" }}
       />
 
       {q.isPending ? (
@@ -113,7 +115,7 @@ export function ScenariosDetailRoute() {
           onTabChange={setActiveTab}
           deleteError={deleteError}
           onClearDeleteError={() => setDeleteError(null)}
-          onClone={() => cloneMut.mutate()}
+          onClone={(mutations) => cloneMut.mutate(mutations)}
           onArchive={() => archiveMut.mutate()}
           onDelete={() => { setDeleteError(null); deleteMut.mutate(); }}
           isCloning={cloneMut.isPending}
@@ -126,6 +128,8 @@ export function ScenariosDetailRoute() {
 }
 
 // ── detail view ────────────────────────────────────────────────────────────
+
+type CloneMutations = Parameters<typeof cloneScenario>[1];
 
 function DetailView({
   scenario: s,
@@ -145,13 +149,49 @@ function DetailView({
   onTabChange: (t: Tab) => void;
   deleteError: string | null;
   onClearDeleteError: () => void;
-  onClone: () => void;
+  onClone: (mutations: CloneMutations) => void;
   onArchive: () => void;
   onDelete: () => void;
   isCloning: boolean;
   isArchiving: boolean;
   isDeleting: boolean;
 }) {
+  const [cloneOpen, setCloneOpen] = useState(false);
+  const [cloneDisplayName, setCloneDisplayName] = useState(
+    `${s.display_name} (clone)`,
+  );
+  const [cloneDescription, setCloneDescription] = useState(s.description);
+  const [cloneNotes, setCloneNotes] = useState(s.notes ?? "");
+  const [cloneTags, setCloneTags] = useState(s.tags.join(", "));
+
+  function submitClone() {
+    const parsedTags = cloneTags
+      .split(",")
+      .map((t) => t.trim())
+      .filter((t) => t.length > 0);
+    const tagsChanged =
+      parsedTags.length !== s.tags.length ||
+      parsedTags.some((t, i) => t !== s.tags[i]);
+    // `notes` is special-cased in `api/scenario.rs::clone`:
+    //   notes: mutations.notes,    // passthrough, NOT unwrap_or(parent)
+    // …whereas `description` / `tags` etc. use
+    // `mutations.X.unwrap_or(parent_s.X)`. Sending null for notes
+    // therefore writes empty notes, not "inherit parent". Always send
+    // the form's current notes value to preserve the prefilled parent
+    // text when the operator leaves it untouched. PR #341 review.
+    onClone({
+      display_name: cloneDisplayName.trim() || null,
+      description: cloneDescription !== s.description ? cloneDescription : null,
+      notes: cloneNotes,
+      tags: tagsChanged ? parsedTags : null,
+      time_window: null,
+      asset: null,
+      granularity: null,
+      venue: null,
+      warmup_bars: null,
+    });
+  }
+
   return (
     <div>
       <Breadcrumb scenario={s} />
@@ -161,6 +201,13 @@ function DetailView({
           <h1 className="text-text font-serif text-[28px] m-0 leading-tight">
             {s.display_name}
           </h1>
+          <div
+            data-testid="scenario-detail-id"
+            className="font-mono text-[12px] text-text-3 mt-1 break-all select-all"
+            aria-label={`Scenario id ${s.id}`}
+          >
+            {s.id}
+          </div>
           {s.description && (
             <p className="text-text-2 text-[13px] mt-1 mb-0">{s.description}</p>
           )}
@@ -175,11 +222,14 @@ function DetailView({
           <div className="flex gap-2">
             <button
               type="button"
-              onClick={onClone}
+              onClick={() => setCloneOpen((open) => !open)}
               disabled={isCloning}
+              aria-expanded={cloneOpen}
+              aria-controls="scenario-clone-form"
+              data-testid="clone-to-edit"
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-[13px] font-medium border border-border text-text hover:border-text-3 transition-colors disabled:opacity-50"
             >
-              {isCloning ? "Cloning…" : "Clone to edit"}
+              {isCloning ? "Cloning…" : cloneOpen ? "Cancel clone" : "Clone to edit"}
             </button>
 
             {!s.archived_at && (
@@ -218,6 +268,82 @@ function DetailView({
           )}
         </div>
       </div>
+
+      {cloneOpen && (
+        <div
+          id="scenario-clone-form"
+          data-testid="scenario-clone-form"
+          className="mb-4 rounded border border-border-soft bg-surface-elev p-4"
+        >
+          <div className="mb-3 text-[12px] uppercase tracking-wide text-text-3">
+            Edit before cloning
+          </div>
+          <div className="grid grid-cols-1 gap-3">
+            <label className="block">
+              <span className="block text-[12px] text-text-2 mb-1">
+                Display name
+              </span>
+              <input
+                value={cloneDisplayName}
+                onChange={(e) => setCloneDisplayName(e.target.value)}
+                className="w-full px-3 py-2 bg-surface-panel border border-border rounded-sm text-[13.5px] text-text focus:outline-none focus:border-gold/40"
+              />
+            </label>
+            <label className="block">
+              <span className="block text-[12px] text-text-2 mb-1">
+                Description
+              </span>
+              <textarea
+                value={cloneDescription}
+                onChange={(e) => setCloneDescription(e.target.value)}
+                rows={2}
+                className="w-full px-3 py-2 bg-surface-panel border border-border rounded-sm text-[13.5px] text-text focus:outline-none focus:border-gold/40 resize-vertical"
+              />
+            </label>
+            <label className="block">
+              <span className="block text-[12px] text-text-2 mb-1">Notes</span>
+              <textarea
+                value={cloneNotes}
+                onChange={(e) => setCloneNotes(e.target.value)}
+                rows={2}
+                className="w-full px-3 py-2 bg-surface-panel border border-border rounded-sm text-[13.5px] text-text focus:outline-none focus:border-gold/40 resize-vertical"
+              />
+            </label>
+            <label className="block">
+              <span className="block text-[12px] text-text-2 mb-1">
+                Tags (comma-separated)
+              </span>
+              <input
+                value={cloneTags}
+                onChange={(e) => setCloneTags(e.target.value)}
+                className="w-full px-3 py-2 bg-surface-panel border border-border rounded-sm text-[13.5px] text-text focus:outline-none focus:border-gold/40"
+              />
+            </label>
+          </div>
+          <p className="m-0 mt-3 text-[12px] text-text-3 leading-snug">
+            Other fields (asset / window / venue / granularity) are inherited
+            from the parent. Use the wizard to clone with structural changes.
+          </p>
+          <div className="mt-3 flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setCloneOpen(false)}
+              className="px-3 py-1.5 rounded text-[12.5px] text-text-3 hover:text-text"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={submitClone}
+              disabled={isCloning || cloneDisplayName.trim().length === 0}
+              data-testid="scenario-clone-submit"
+              className="px-3.5 py-1.5 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft disabled:opacity-50"
+            >
+              {isCloning ? "Cloning…" : "Create clone"}
+            </button>
+          </div>
+        </div>
+      )}
 
       <TabBar value={activeTab} onChange={onTabChange} />
 
@@ -415,6 +541,19 @@ function RunsTab({ scenarioId }: { scenarioId: string }) {
     queryFn: () => listRuns(),
   });
 
+  // Fetch all strategies once to build a display_name lookup map. The query is
+  // cached under the global strategy list key so other parts of the UI share
+  // the same cache entry. When still loading we fall back to showing the raw
+  // agent_id ULID — no flicker, no empty placeholder.
+  const { data: strategies } = useQuery({
+    queryKey: strategyKeys.list(),
+    queryFn: listStrategies,
+  });
+
+  const strategyNameMap = new Map<string, string>(
+    (strategies ?? []).map((s) => [s.agent_id, s.display_name]),
+  );
+
   if (isPending) {
     return (
       <div className="px-6 py-8 text-center text-text-3 text-[13px]">
@@ -455,26 +594,40 @@ function RunsTab({ scenarioId }: { scenarioId: string }) {
           </tr>
         </thead>
         <tbody>
-          {filtered.map((r) => (
-            <tr key={r.id} className="border-t border-border">
-              <td className="py-2 pr-4">
-                <Link
-                  to={`/eval-runs/${r.id}`}
-                  className="font-mono text-[12px] text-text hover:underline"
-                >
-                  {r.id}
-                </Link>
-              </td>
-              <td className="py-2 pr-4 font-mono text-[12px] text-text-2">
-                {r.agent_id}
-              </td>
-              <td className="py-2 pr-4 text-text-2">{r.mode}</td>
-              <td className="py-2 pr-4 text-text-2">{r.status}</td>
-              <td className="py-2 text-text-3">
-                {r.completed_at ? fmtDate(r.completed_at) : "—"}
-              </td>
-            </tr>
-          ))}
+          {filtered.map((r) => {
+            const strategyName = strategyNameMap.get(r.agent_id);
+            return (
+              <tr key={r.id} className="border-t border-border">
+                <td className="py-2 pr-4">
+                  <Link
+                    to={`/eval-runs/${r.id}`}
+                    className="font-mono text-[12px] text-text hover:underline"
+                  >
+                    {r.id}
+                  </Link>
+                </td>
+                <td className="py-2 pr-4">
+                  {strategyName != null ? (
+                    <>
+                      <div className="text-text-2">{strategyName}</div>
+                      <div className="font-mono text-[11px] text-text-3">
+                        {r.agent_id}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="font-mono text-[12px] text-text-2">
+                      {r.agent_id}
+                    </div>
+                  )}
+                </td>
+                <td className="py-2 pr-4 text-text-2">{r.mode}</td>
+                <td className="py-2 pr-4 text-text-2">{r.status}</td>
+                <td className="py-2 text-text-3">
+                  {r.completed_at ? fmtDate(r.completed_at) : "—"}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>

@@ -253,6 +253,38 @@ pub async fn delete(ctx: &ApiContext, run_id: &str) -> ApiResult<()> {
     result
 }
 
+/// F-11: navigate from an eval run back to the workspace agent record
+/// that drove it. Reads `eval_runs.agents_agent_id` (added in migration
+/// 021) and, when populated, looks up the live agent in the agent
+/// library.
+///
+/// Returns:
+/// - `Ok(Some(agent))` when the run carries a long-lived agent id AND
+///   that row still exists in `agents`.
+/// - `Ok(None)` when either the run is missing, the column is NULL
+///   (pre-migration-022 row, intentionally not backfilled), or the
+///   referenced agent has been deleted.
+///
+/// No regex / bundle-hash fallback — by design. The whole point of the
+/// new column is to retire that heuristic.
+pub async fn lookup_agent_for_eval_run(
+    ctx: &ApiContext,
+    run_id: &str,
+) -> ApiResult<Option<crate::agents::model::Agent>> {
+    let store = RunStore::new(ctx.db.clone());
+    let aid = store
+        .get_agents_agent_id(run_id)
+        .await
+        .map_err(|e| ApiError::Internal(format!("read agents_agent_id: {e}")))?;
+    let Some(aid) = aid else { return Ok(None) };
+    let agent_store = AgentStore::new(ctx.db.clone());
+    let agent = agent_store
+        .get(&aid)
+        .await
+        .map_err(|e| ApiError::Internal(format!("load agent {aid}: {e}")))?;
+    Ok(agent)
+}
+
 pub async fn cancel(ctx: &ApiContext, run_id: &str) -> ApiResult<Run> {
     let started = Instant::now();
     let store = RunStore::new(ctx.db.clone());
@@ -822,16 +854,49 @@ fn runtime_slots<'a>(
     .collect()
 }
 
+/// Pick the long-lived `agents.agent_id` of the agent acting as the
+/// run's trader, for persistence in `eval_runs.agents_agent_id`
+/// (migration 022). Prefers the AgentRef with canonical role `trader`;
+/// falls back to the first AgentRef when no role match exists. Returns
+/// `None` for legacy strategies that still use the deprecated slot
+/// fields (no AgentRefs attached) — those rows leave the column NULL,
+/// matching the no-backfill policy in the F-11 contract.
+fn pick_agents_agent_id(strategy: &crate::strategies::Strategy) -> Option<String> {
+    if let Some(r) = strategy
+        .agents
+        .iter()
+        .find(|r| r.canonical_role().eq_ignore_ascii_case("trader"))
+    {
+        return Some(r.agent_id.clone());
+    }
+    strategy.agents.first().map(|r| r.agent_id.clone())
+}
+
 fn validate_eval_trader_source(
     strategy: &crate::strategies::Strategy,
     agent_slots: &[ResolvedAgentSlot],
 ) -> ApiResult<()> {
+    // QA22 / `strategy-require-at-least-one-agent`: empty `agents`
+    // hard-blocks at the eval boundary, regardless of legacy slot
+    // contents. The CLI `xvn strategy create` path already migrates
+    // legacy template slots to AgentRefs before save, so newly
+    // created strategies arrive here with agents populated. Old
+    // strategies stored with only `trader_slot` filled are kept
+    // runnable via the fallback below to avoid orphaning prod data,
+    // but the operator-facing error names the missing-agent
+    // condition first.
+    if strategy.agents.is_empty() && strategy.trader_slot.is_none() {
+        return Err(ApiError::Validation(format!(
+            "strategy `{}` has no agent attached. At least one agent (with a `trader` role) is required to run an eval. Attach an agent in the Strategy Inspector or via `xvn agent attach`.",
+            strategy.manifest.id
+        )));
+    }
     if agent_slots.is_empty() {
         if strategy.trader_slot.is_some() {
             return Ok(());
         }
         return Err(ApiError::Validation(format!(
-            "eval requires a trader output source for strategy `{}`. Add a legacy trader slot or attach an agent with role `trader`.",
+            "eval requires a trader output source for strategy `{}`. Attach an agent with role `trader`.",
             strategy.manifest.id
         )));
     }
@@ -947,6 +1012,7 @@ async fn resolve_agent_slots(
             role: agent_ref.role.clone(),
             slot: agent_slot_to_llm_slot(&agent_ref.role, slot),
             max_tokens: slot.resolve_max_tokens(),
+            temperature: slot.temperature,
             inputs_policy: slot.inputs_policy,
         });
     }
@@ -989,6 +1055,42 @@ fn runtime_config_path(ctx: &ApiContext) -> std::path::PathBuf {
         }
     }
     ctx.xvn_home.join("config").join("default.toml")
+}
+
+/// Load every configured provider's cached catalog so `ObsEmitter`
+/// can compute `model_calls.cost_usd` at span-close time. Missing /
+/// never-fetched catalogs are skipped silently — the emitter handles
+/// "no pricing" by leaving `cost_usd = None` and emitting one debug
+/// line per unique unpriced `(provider, model)` pair. We deliberately
+/// do NOT trigger a network refresh here: eval runs must not hang on
+/// catalog fetches.
+async fn load_provider_catalogs_for_emitter(
+    ctx: &ApiContext,
+) -> std::collections::HashMap<String, std::sync::Arc<xvision_core::providers::Catalog>> {
+    use std::collections::HashMap;
+    let cfg_path = runtime_config_path(ctx);
+    let cfg = match tokio::task::spawn_blocking(move || config::load_runtime(&cfg_path)).await {
+        Ok(Ok(c)) => c,
+        // Config load failures are not the cost path's problem —
+        // upstream handlers surface their own validation errors. Just
+        // skip catalog wiring so emit-time cost is None.
+        _ => return HashMap::new(),
+    };
+    let svc = match crate::providers::CatalogService::new(ctx.xvn_home.clone()) {
+        Ok(s) => s,
+        Err(_) => return HashMap::new(),
+    };
+    let mut out = HashMap::new();
+    for p in &cfg.providers {
+        if matches!(p.kind, ProviderKind::LocalCandle) {
+            // local-candle has no remote catalog and no pricing.
+            continue;
+        }
+        if let Ok(Some(cat)) = svc.get_or_load(&p.name).await {
+            out.insert(p.name.clone(), cat);
+        }
+    }
+    out
 }
 
 /// Testable / deps-injecting variant of `run`. Tests pass a
@@ -1058,6 +1160,11 @@ async fn run_inner(
     //    emitter so SpanStarted events have a valid FK.
     let mut run = Run::new_queued(req.agent_id.clone(), scenario.id.clone(), req.mode);
     run.params_override = req.params_override.clone();
+    // F-11: persist the long-lived workspace `agents.agent_id` next to
+    // the existing bundle-hash `agent_id`. Migration 021 added the
+    // column; `pick_agents_agent_id` returns `None` for legacy
+    // slot-only strategies, leaving the column NULL (no backfill).
+    run.agents_agent_id = pick_agents_agent_id(&strategy);
 
     // Observability emitter (`qa-eval-observability-wiring`). Built
     // only when the dashboard injected an obs bus on the ApiContext;
@@ -1066,6 +1173,17 @@ async fn run_inner(
     // executor preflight has succeeded — so the recorder's
     // `agent_runs.eval_run_id` FK is valid and a preflight failure can't
     // leave a phantom observability run behind.
+    // Load provider catalogs ONCE for the emitter so every
+    // `emit_model_call_finished*` call site can compute
+    // `cost_usd` from cached pricing — fixes the audit-time
+    // observation that 2,757/2,757 `model_calls.cost_usd` rows were
+    // NULL. Best-effort: providers without a cached catalog are
+    // skipped and the emitter falls back to publishing `None`.
+    let obs_catalogs = if ctx.obs_event_bus.is_some() {
+        load_provider_catalogs_for_emitter(ctx).await
+    } else {
+        std::collections::HashMap::new()
+    };
     let obs_emitter = ctx.obs_event_bus.as_ref().map(|bus| {
         // `harness-payload-blob-write`: attach the BlobStore so
         // `emit_model_call_finished_with_payloads` can persist
@@ -1080,6 +1198,7 @@ async fn run_inner(
                 &ctx.obs_config,
             ))
             .with_blob_store(blob_store)
+            .with_catalogs(obs_catalogs.clone())
     });
 
     // 3. Pick the executor for this run mode. For backtest mode, when the
@@ -1144,9 +1263,13 @@ async fn run_inner(
         .await
     {
         // Persist the failure so downstream callers (CLI, dashboard) can
-        // see why this run is not Completed.
+        // see why this run is not Completed. Route through the
+        // `FinalizeWriter` so concurrent finalize storms collapse into
+        // batched UPDATEs — fall back to the direct `RunStore` path if
+        // the queue is full or the writer has shut down so we never
+        // lose a finalize.
         let err_msg = e.to_string();
-        let _ = store.fail_active(&run.id, &err_msg).await;
+        route_mark_failed(ctx, &store, &run.id, &err_msg).await;
         // Index the failed run so it shows up in ⌘K with its current status
         // — operators frequently want to find a recently-failed run by id
         // prefix without leaving the palette.
@@ -1185,6 +1308,13 @@ async fn run_inner(
         &findings_model,
     )
     .await;
+
+    // Rule-based auto-review. Reads the just-persisted findings and
+    // writes a single `eval_reviews` row with a verdict + score. No
+    // LLM call, no dispatch dependency. Best-effort by design —
+    // failures log warn! and the run stays successful.
+    let store_for_auto = RunStore::new(ctx.db.clone());
+    crate::eval::review::auto::fire_auto_review(&store_for_auto, &finalized.id).await;
 
     Ok(finalized)
 }
@@ -1508,6 +1638,7 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
     };
     let agent_slots = resolve_agent_slots(ctx, &strategy).await?;
     validate_eval_trader_source(&strategy, &agent_slots)?;
+
     let (dispatch, findings_model) = build_eval_dispatch(ctx, &strategy, &agent_slots).await?;
     let tools = Arc::new(ToolRegistry::default_with_builtins());
 
@@ -1520,6 +1651,15 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
     // behind. The matching `RunFinished` is emitted by
     // `execute_in_background`.
     let mut run = Run::new_queued(req.agent_id.clone(), scenario.id.clone(), req.mode);
+    // F-11: see comment in `run_inner` above — same reasoning here.
+    run.agents_agent_id = pick_agents_agent_id(&strategy);
+    // Same catalog-wiring as the `start_run` path above; see the
+    // comment there for the rationale.
+    let obs_catalogs = if ctx.obs_event_bus.is_some() {
+        load_provider_catalogs_for_emitter(ctx).await
+    } else {
+        std::collections::HashMap::new()
+    };
     let obs_emitter = ctx.obs_event_bus.as_ref().map(|bus| {
         // Mirror the FullDebug-aware emitter wiring above; same
         // blob root so the second eval entry point produces refs
@@ -1530,6 +1670,7 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
                 &ctx.obs_config,
             ))
             .with_blob_store(blob_store)
+            .with_catalogs(obs_catalogs.clone())
     });
 
     let executor: Box<dyn Executor> = match req.mode {
@@ -1569,9 +1710,25 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
     )
     .await;
 
+    // F-1 (eval-launch-concurrency-cap, 2026-05-19): cap how many runs
+    // can be in flight against a single upstream `(provider, model)`
+    // bucket. Resolved from the trader slot (the dominant token spender);
+    // findings/intern slots ride along on the same permit because the
+    // F-1 audit (`team/intake/2026-05-16-eval-review-and-v2a.md`) tracked
+    // the burst as a single user-perceived "launch". The guard is moved
+    // into the spawned background task so it lives for the full run
+    // lifecycle and is dropped (releasing the permit) when the task
+    // exits — including via panic.
+    let (gate_provider, gate_model) = resolve_launch_gate_key(&strategy, &agent_slots, &findings_model);
+    let launch_permit = ctx.launch_gate.acquire(&gate_provider, &gate_model).await;
+
     let ctx_bg = ctx.clone();
     let run_id = run.id.clone();
     tokio::spawn(async move {
+        // Hold the permit for the entire background task lifetime.
+        // Dropping it releases the slot back to the gate; this must
+        // outlive `execute_in_background` and `extract_and_record`.
+        let _launch_permit = launch_permit;
         execute_in_background(
             ctx_bg,
             run,
@@ -1588,6 +1745,54 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
     });
 
     get_run(ctx, &run_id).await
+}
+
+/// Resolve the `(provider, model)` pair the launch-concurrency gate
+/// should key on. Prefers the trader role from `agent_slots` (post-refactor
+/// strategies), falls back to the legacy `trader_slot` on `Strategy`, then
+/// to any other agent slot, then to the resolved `findings_model` as a
+/// last-ditch source. Empty strings still produce *some* key — we'd rather
+/// over-serialize a misconfigured strategy than skip the cap entirely.
+fn resolve_launch_gate_key(
+    strategy: &crate::strategies::Strategy,
+    agent_slots: &[ResolvedAgentSlot],
+    findings_model: &str,
+) -> (String, String) {
+    // 1. Attached agent with role == "trader".
+    if let Some(trader) = agent_slots
+        .iter()
+        .find(|resolved| resolved.role.trim().eq_ignore_ascii_case("trader"))
+    {
+        let provider = trader.slot.provider.clone().unwrap_or_default();
+        let model = trader.slot.effective_model();
+        if !provider.is_empty() && !model.is_empty() {
+            return (provider, model);
+        }
+    }
+
+    // 2. Legacy `trader_slot` on the strategy.
+    if let Some(slot) = strategy.trader_slot.as_ref() {
+        let provider = slot.provider.clone().unwrap_or_default();
+        let model = slot.effective_model();
+        if !provider.is_empty() && !model.is_empty() {
+            return (provider, model);
+        }
+    }
+
+    // 3. First attached agent with any non-empty provider/model.
+    for resolved in agent_slots {
+        let provider = resolved.slot.provider.clone().unwrap_or_default();
+        let model = resolved.slot.effective_model();
+        if !provider.is_empty() && !model.is_empty() {
+            return (provider, model);
+        }
+    }
+
+    // 4. Last-ditch: pair with the resolved findings model and an empty
+    // provider. Better than skipping the cap; this only fires on a
+    // misconfigured strategy that already shouldn't have reached
+    // `start_run`.
+    (String::new(), findings_model.to_string())
 }
 
 /// Background-task body: transition Queued → Running, drive the
@@ -1676,7 +1881,7 @@ async fn execute_in_background(
             error_chain = %err_msg,
             "executor failed",
         );
-        let _ = store.fail_active(&run.id, &err_msg).await;
+        route_mark_failed(&ctx, &store, &run.id, &err_msg).await;
         if let Ok(failed) = store.get(&run.id).await {
             api_search::upsert_run(&ctx, &failed).await;
         }
@@ -1687,6 +1892,13 @@ async fn execute_in_background(
         return;
     }
 
+    // TODO(F-1 follow-up / #345): serialize finalize writes across concurrent
+    // eval runs that share the same (provider, model) slot. When many runs
+    // complete simultaneously, concurrent `store.finalize` + `upsert_run`
+    // calls can contend on the SQLite write lock and leave some runs in a
+    // "stuck running" state. PR #345 (eval-run-watchdog-and-stuck-running,
+    // F-3) already touches this path — add write batching there to avoid a
+    // merge conflict here.
     let finalized = match store.get(&run.id).await {
         Ok(r) => r,
         Err(e) => {
@@ -1721,12 +1933,47 @@ async fn execute_in_background(
         &findings_model,
     )
     .await;
+
+    // Rule-based auto-review postprocess. Best-effort; reads the
+    // findings we just persisted and writes a single eval_reviews row.
+    let store_for_auto = RunStore::new(ctx.db.clone());
+    crate::eval::review::auto::fire_auto_review(&store_for_auto, &finalized.id).await;
+}
+
+/// Route a single `mark_failed` write through `ApiContext::finalize_writer`
+/// so concurrent finalize storms (the 27-runs-in-15s pattern captured in
+/// the 2026-05-19 audit) collapse into batched UPDATEs. If the writer's
+/// bounded channel is full or the receiver has shut down, fall back to
+/// the direct `RunStore::fail_active` path so we never lose a finalize.
+async fn route_mark_failed(ctx: &ApiContext, store: &RunStore, run_id: &str, err_msg: &str) {
+    let completed_at = Utc::now();
+    match ctx
+        .finalize_writer
+        .send_mark_failed(run_id.to_string(), err_msg.to_string(), completed_at)
+        .await
+    {
+        Ok(()) => {}
+        Err(e) => {
+            tracing::warn!(
+                target: "xvision::eval",
+                run_id = %run_id,
+                error = %e,
+                "finalize_writer failed; falling back to direct fail_active",
+            );
+            let _ = store.fail_active(run_id, err_msg).await;
+        }
+    }
 }
 
 /// Sweep any `Queued` or `Running` rows from a previous process and
 /// transition them to `Failed`. Background tasks die with the dashboard
 /// process so a clean restart should fail orphans out before serving
 /// traffic — otherwise the runs list shows phantom "Running" rows.
+///
+/// Stays on the direct `RunStore` path (not the `FinalizeWriter`)
+/// because it fires at most once per process start, so it never
+/// produces a burst. Routing through the writer would just add
+/// boot-time complexity for no batching benefit.
 pub async fn fail_orphan_runs(ctx: &ApiContext) -> ApiResult<u64> {
     let store = RunStore::new(ctx.db.clone());
     store
@@ -2223,6 +2470,7 @@ mod tests {
                 "anthropic.claude-sonnet-4.6",
             ),
             max_tokens: Some(4096),
+            temperature: None,
             inputs_policy: crate::agents::InputsPolicy::Raw,
         }];
 
@@ -2263,6 +2511,7 @@ mod tests {
                 "anthropic.claude-sonnet-4.6",
             ),
             max_tokens: Some(4096),
+            temperature: None,
             inputs_policy: crate::agents::InputsPolicy::Raw,
         }];
 
@@ -2295,9 +2544,37 @@ mod tests {
                 "anthropic.claude-sonnet-4.6",
             ),
             max_tokens: Some(4096),
+            temperature: None,
             inputs_policy: crate::agents::InputsPolicy::Raw,
         }];
 
         validate_eval_trader_source(&strategy, &agent_slots).unwrap();
+    }
+
+    #[test]
+    fn eval_trader_source_rejects_empty_agents_with_no_legacy_slots() {
+        // QA22 / `strategy-require-at-least-one-agent`: when the
+        // strategy has neither attached agents nor a legacy
+        // trader_slot, the eval boundary names the missing-agent
+        // condition explicitly (not the generic "trader output
+        // source" wording) so operators know which fix to make.
+        let legacy_slot = slot(Some("openrouter"), None, "anthropic.claude-sonnet-4.6");
+        let mut strategy = strategy_with_legacy_slot(legacy_slot);
+        strategy.agents.clear();
+        strategy.regime_slot = None;
+        strategy.intern_slot = None;
+        strategy.trader_slot = None;
+
+        let err = validate_eval_trader_source(&strategy, &[]).unwrap_err();
+        let msg = err.to_string();
+
+        assert!(
+            msg.contains("no agent attached"),
+            "expected missing-agent message, got {msg}"
+        );
+        assert!(
+            msg.contains("Attach an agent"),
+            "expected attach-agent remediation, got {msg}"
+        );
     }
 }

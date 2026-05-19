@@ -38,6 +38,14 @@ async fn start_session_mock(socket_path: PathBuf) -> tokio::task::JoinHandle<()>
                         let p = &req["params"];
                         assert_eq!(p["run_id"], "r1");
                         assert_eq!(p["provider_id"], "xvision-mock");
+                        assert_eq!(p["model_id"], "mock-model");
+                        assert_eq!(p["api_key"], "test");
+                        assert!(p["base_url"].is_null());
+                        assert_eq!(p["system_prompt"], "test");
+                        assert_eq!(p["allowed_tools"], json!(["echo"]));
+                        assert_eq!(p["budget_limits"]["max_input_tokens"], 1000);
+                        assert_eq!(p["budget_limits"]["max_output_tokens"], 1000);
+                        assert_eq!(p["budget_limits"]["max_wall_ms"], 30_000);
                         json!({
                             "jsonrpc": "2.0",
                             "id": id,

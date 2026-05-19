@@ -130,3 +130,39 @@ fn canonicalize_json(v: &serde_json::Value) -> serde_json::Value {
         other => other.clone(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::{Map, Value};
+
+    use super::canonicalize_json;
+
+    #[test]
+    fn canonicalize_json_is_key_order_stable() {
+        let mut ordered = Map::new();
+        ordered.insert("agent_id".into(), Value::String("agent-a".into()));
+        ordered.insert(
+            "metrics".into(),
+            serde_json::json!({ "sharpe": 1.42, "n_trades": 17 }),
+        );
+        ordered.insert("ran_at".into(), Value::String("2025-04-01T12:00:00Z".into()));
+        ordered.insert("scenario_id".into(), Value::String("crypto-bull-q1-2025".into()));
+
+        let mut reversed = Map::new();
+        reversed.insert("scenario_id".into(), Value::String("crypto-bull-q1-2025".into()));
+        reversed.insert("ran_at".into(), Value::String("2025-04-01T12:00:00Z".into()));
+        reversed.insert(
+            "metrics".into(),
+            serde_json::json!({ "n_trades": 17, "sharpe": 1.42 }),
+        );
+        reversed.insert("agent_id".into(), Value::String("agent-a".into()));
+
+        let canonical_ordered = serde_json::to_vec(&canonicalize_json(&Value::Object(ordered))).unwrap();
+        let canonical_reversed = serde_json::to_vec(&canonicalize_json(&Value::Object(reversed))).unwrap();
+
+        assert_eq!(
+            canonical_ordered, canonical_reversed,
+            "canonical JSON bytes must be stable across object insertion orders",
+        );
+    }
+}

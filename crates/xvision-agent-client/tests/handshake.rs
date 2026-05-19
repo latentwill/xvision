@@ -14,6 +14,7 @@ async fn start_fake_sidecar(sock: PathBuf, protocol_version: &'static str) {
             let mut line = String::new();
             while br.read_line(&mut line).await.unwrap_or(0) > 0 {
                 let req: serde_json::Value = serde_json::from_str(&line).unwrap();
+                assert_eq!(req["method"], "runtime.health");
                 let id = req["id"].clone();
                 let resp = serde_json::json!({
                     "jsonrpc": "2.0",
@@ -42,7 +43,11 @@ async fn handshake_accepts_matching_protocol() {
     let sock = dir.path().join("sock");
     start_fake_sidecar(sock.clone(), "0.1.0").await;
     let t = UdsTransport::connect(&sock).await.unwrap();
-    AgentClient::handshake(&t).await.expect("handshake ok");
+    let h = AgentClient::handshake(&t).await.expect("handshake ok");
+    assert_eq!(h.protocol_version, "0.1.0");
+    assert_eq!(h.sidecar_version, "0.1.0");
+    assert_eq!(h.cline_sdk_version, "1.0.0");
+    assert_eq!(h.status, "ok");
 }
 
 #[tokio::test]

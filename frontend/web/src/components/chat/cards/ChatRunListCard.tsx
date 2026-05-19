@@ -5,7 +5,6 @@ import type { RunListContentBlock } from "@/api/chat_rail";
 import {
   displayScenarioName,
   displayStrategyName,
-  shortId,
 } from "@/lib/run-display";
 import { runInlineAction } from "./actions";
 
@@ -46,8 +45,20 @@ export function ChatRunListCard({ payload }: { payload: RunListContentBlock }) {
                 <span className="block text-[12px] text-text truncate">
                   {strategy}
                 </span>
-                <span className="block text-[11px] text-text-3 truncate">
-                  {[scenario, `run ${shortId(run.run_id)}`].filter(Boolean).join(" / ")}
+                {scenario ? (
+                  <span className="block text-[11px] text-text-3 truncate">
+                    {scenario}
+                  </span>
+                ) : null}
+                {/*
+                  PR #341 review: the eval-id rule from QA22 is "not
+                  truncated anywhere", so the run id renders on its own
+                  line with `break-all` (the chat-rail card is narrow,
+                  so the ULID wraps across two lines rather than getting
+                  CSS-ellipsized).
+                */}
+                <span className="block font-mono text-[11px] text-text-3 break-all">
+                  {run.run_id}
                 </span>
               </span>
               <span className="flex-shrink-0 text-right">

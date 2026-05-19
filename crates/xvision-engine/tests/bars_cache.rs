@@ -7,13 +7,26 @@
 use std::sync::Arc;
 
 use chrono::{TimeZone, Utc};
-use sqlx::SqlitePool;
+use sqlx::sqlite::SqlitePoolOptions;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use xvision_data::alpaca::{AlpacaBarsFetcher, BarGranularity};
 use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::eval::bars::{compute_cache_key, load_bars, BarCacheArgs};
+
+struct TestCtx {
+    ctx: ApiContext,
+    _dir: tempfile::TempDir,
+}
+
+impl std::ops::Deref for TestCtx {
+    type Target = ApiContext;
+
+    fn deref(&self) -> &Self::Target {
+        &self.ctx
+    }
+}
 
 fn utc(ts: &str) -> chrono::DateTime<Utc> {
     chrono::DateTime::parse_from_rfc3339(ts)
@@ -24,7 +37,7 @@ fn utc(ts: &str) -> chrono::DateTime<Utc> {
 /// Build an in-memory `ApiContext` whose Alpaca fetcher points at a wiremock
 /// server returning four hourly bars for the test window. Wiremock counts
 /// requests for us, so we don't need a separate counter on `ApiContext`.
-async fn test_ctx_with_mock_alpaca() -> (ApiContext, MockServer) {
+async fn test_ctx_with_mock_alpaca() -> (TestCtx, MockServer) {
     let server = MockServer::start().await;
 
     let body = serde_json::json!({
@@ -47,7 +60,11 @@ async fn test_ctx_with_mock_alpaca() -> (ApiContext, MockServer) {
     // In-memory pool + apply migration 005 (and friends) so `bars_cache`
     // exists. We mirror the layout of api_context tests rather than going
     // through `ApiContext::open` (no real filesystem).
-    let pool = SqlitePool::connect(":memory:").await.unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
     sqlx::query(include_str!("../migrations/001_api_audit.sql"))
         .execute(&pool)
         .await
@@ -71,10 +88,7 @@ async fn test_ctx_with_mock_alpaca() -> (ApiContext, MockServer) {
         dir.path().to_path_buf(),
     )
     .with_alpaca_fetcher(fetcher);
-    // Hold the tempdir for the lifetime of the test via Box::leak —
-    // keeps it on disk for any code that reads xvn_home.
-    Box::leak(Box::new(dir));
-    (ctx, server)
+    (TestCtx { ctx, _dir: dir }, server)
 }
 
 #[tokio::test]

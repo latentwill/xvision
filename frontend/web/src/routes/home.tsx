@@ -15,7 +15,6 @@ import { isInflightRunStatus } from "@/lib/run-status";
 import {
   displayScenarioName,
   displayStrategyName,
-  shortId,
 } from "@/lib/run-display";
 import type {
   BrokerEntry,
@@ -459,7 +458,7 @@ function buildAttention(input: {
       title: `${failed.length} failed eval run${failed.length === 1 ? "" : "s"}`,
       detail:
         failed[0].error ??
-        `latest: ${displayStrategyName(failed[0].agent_id, input.strategies)} on ${displayScenarioName(failed[0].scenario_id, input.scenarios)} (${shortId(failed[0].id)})`,
+        `latest: ${displayStrategyName(failed[0].agent_id, input.strategies)} on ${displayScenarioName(failed[0].scenario_id, input.scenarios)} (${failed[0].id})`,
       link: { to: "/eval-runs", label: "review" },
     });
   }

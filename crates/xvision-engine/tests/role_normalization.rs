@@ -70,6 +70,7 @@ fn resolved_agent_slot(role: &str) -> ResolvedAgentSlot {
             model: Some("mock".into()),
         },
         max_tokens: None,
+        temperature: None,
         inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
     }
 }
@@ -132,8 +133,8 @@ fn graph_edge_validation_uses_canonical_form() {
         PipelineDef {
             kind: PipelineKind::Graph,
             edges: vec![PipelineEdge {
-                from_role: "SCOUT".into(),
-                to_role: "trader".into(),
+                from_role: " SCOUT ".into(),
+                to_role: " trader ".into(),
             }],
         },
     );
@@ -231,6 +232,7 @@ fn agent_slot_to_llm_slot_smoke() {
         system_prompt: "p".into(),
         skill_ids: Vec::new(),
         max_tokens: None,
+        temperature: None,
         prompt_version: String::new(),
         inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
     };

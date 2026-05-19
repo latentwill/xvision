@@ -45,6 +45,10 @@ async fn fresh_store() -> RunStore {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/022_eval_runs_agents_agent_id.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     sqlx::query(include_str!("../migrations/015_eval_decisions_reasoning.sql"))
         .execute(&pool)
         .await
@@ -190,6 +194,7 @@ async fn bar_one_seed_carries_warmup_history_when_warmup_provided() {
     // 13 warmup bars on the dates immediately before window_start.
     let warmup_start = window_start - Duration::days(13);
     let warmup = daily_bars(warmup_start, 13);
+    let expected_warmup_timestamps: Vec<_> = warmup.iter().map(|bar| bar.timestamp).collect();
     // 30 decision bars covering the scenario window.
     let decision_bars = daily_bars(window_start, 30);
 
@@ -233,6 +238,39 @@ async fn bar_one_seed_carries_warmup_history_when_warmup_provided() {
         history.len() >= 13,
         "bar-1 seed must carry ≥ 13 history bars when warmup_bars=13; got {}",
         history.len(),
+    );
+    let history_timestamps: Vec<_> = history
+        .iter()
+        .map(|bar| {
+            let ts = bar
+                .get("timestamp")
+                .and_then(|v| v.as_str())
+                .unwrap_or_else(|| panic!("history bar missing timestamp: {bar}"));
+            chrono::DateTime::parse_from_rfc3339(ts)
+                .unwrap_or_else(|e| panic!("history bar timestamp must be RFC3339: {e}; got {ts:?}"))
+                .with_timezone(&Utc)
+        })
+        .collect();
+    assert!(
+        history_timestamps.iter().all(|ts| *ts < window_start),
+        "bar-1 history must contain only pre-window warmup bars; got {history_timestamps:?}",
+    );
+    let history_tail = &history_timestamps[history_timestamps.len() - expected_warmup_timestamps.len()..];
+    assert_eq!(
+        history_tail,
+        expected_warmup_timestamps.as_slice(),
+        "bar-1 history tail must match the 13 warmup bars in chronological order",
+    );
+    let current_bar_timestamp = bar1_payload
+        .pointer("/market_data/current_bar/timestamp")
+        .and_then(|v| v.as_str())
+        .expect("bar-1 seed must include current_bar.timestamp");
+    let current_bar_timestamp = chrono::DateTime::parse_from_rfc3339(current_bar_timestamp)
+        .expect("current_bar.timestamp must be RFC3339")
+        .with_timezone(&Utc);
+    assert!(
+        !history_timestamps.contains(&current_bar_timestamp),
+        "bar-1 history must not duplicate current_bar timestamp {current_bar_timestamp}",
     );
 }
 
