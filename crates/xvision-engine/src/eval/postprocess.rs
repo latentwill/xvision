@@ -21,6 +21,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use serde_json::json;
+use xvision_core::config::{ProviderEntry, ProviderKind};
 
 use crate::agent::llm::LlmDispatch;
 use crate::api::audit::{self, Outcome};
@@ -28,11 +29,45 @@ use crate::api::{search as api_search, ApiContext};
 use crate::eval::findings::extractor::extract_findings;
 use crate::eval::store::{DecisionRow, RunStore};
 
-/// Default model for the v1 findings extractor. Cheap + fast — the
-/// extractor is summarization-shaped, not deep reasoning. Override by
-/// editing the constant; the wallet-plan-era providers registry will
-/// surface this as a configurable slot.
+/// Default model for the v1 findings extractor when the eval's provider
+/// is Anthropic-native. Cheap + fast — the extractor is summarization-
+/// shaped, not deep reasoning. Other provider kinds map via
+/// [`findings_model_for_provider`] (e.g. OpenRouter needs the
+/// `anthropic/claude-haiku-4.5` slug; sending the Anthropic-native id
+/// returns 400).
 pub const DEFAULT_FINDINGS_MODEL: &str = "claude-haiku-4-5-20251001";
+
+/// OpenRouter's slug for the same Claude Haiku 4.5 model. The
+/// findings-postprocess dispatch is shared with the eval's trader
+/// runtime; routing the Anthropic-native id through OpenRouter's
+/// `/v1/chat/completions` returns 400 ("not a valid model ID").
+const OPENROUTER_FINDINGS_MODEL: &str = "anthropic/claude-haiku-4.5";
+
+/// Pick a findings-extractor model id for the eval's resolved provider.
+/// Best-effort — when the provider's shape is unknown we fall back to
+/// the operator's first enabled model (already vetted for this
+/// provider), then to [`DEFAULT_FINDINGS_MODEL`] as a last resort.
+pub fn findings_model_for_provider(entry: &ProviderEntry) -> String {
+    match entry.kind {
+        ProviderKind::Anthropic => DEFAULT_FINDINGS_MODEL.to_string(),
+        ProviderKind::OpenaiCompat => {
+            if entry.base_url.contains("openrouter.ai") {
+                OPENROUTER_FINDINGS_MODEL.to_string()
+            } else {
+                entry
+                    .enabled_models
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| DEFAULT_FINDINGS_MODEL.to_string())
+            }
+        }
+        ProviderKind::LocalCandle => entry
+            .enabled_models
+            .first()
+            .cloned()
+            .unwrap_or_else(|| DEFAULT_FINDINGS_MODEL.to_string()),
+    }
+}
 
 /// Drive findings extraction against a finalized run. Audited as
 /// `eval/extract_findings`. Returns the count of persisted findings on
@@ -357,6 +392,41 @@ mod tests {
         assert_eq!(v["losses"], 1);
         assert_eq!(v["realized_pnl_sum"], 75.0);
         assert_eq!(v["assets"], serde_json::json!(["BTC/USD"]));
+    }
+
+    #[test]
+    fn findings_model_routes_per_provider_kind() {
+        let anthropic = ProviderEntry {
+            name: "anthropic".into(),
+            kind: ProviderKind::Anthropic,
+            base_url: "https://api.anthropic.com".into(),
+            api_key_env: "ANTHROPIC_API_KEY".into(),
+            enabled_models: vec![],
+        };
+        assert_eq!(findings_model_for_provider(&anthropic), DEFAULT_FINDINGS_MODEL);
+
+        // OpenRouter (OpenAI-compat shape) must use the slug form —
+        // the Anthropic-native id is what blew up in production
+        // (2026-05-19, eval 01KRZ18JTMZ1S7W1MBKC1PNNSJ).
+        let openrouter = ProviderEntry {
+            name: "openrouter".into(),
+            kind: ProviderKind::OpenaiCompat,
+            base_url: "https://openrouter.ai/api/v1".into(),
+            api_key_env: "OPENROUTER_API_KEY".into(),
+            enabled_models: vec![],
+        };
+        assert_eq!(findings_model_for_provider(&openrouter), OPENROUTER_FINDINGS_MODEL);
+
+        // Generic OpenAI-compat: fall back to the operator's enabled
+        // models (already vetted for this provider).
+        let generic = ProviderEntry {
+            name: "custom".into(),
+            kind: ProviderKind::OpenaiCompat,
+            base_url: "https://api.example.com/v1".into(),
+            api_key_env: "CUSTOM_KEY".into(),
+            enabled_models: vec!["gpt-4o-mini".into()],
+        };
+        assert_eq!(findings_model_for_provider(&generic), "gpt-4o-mini");
     }
 
     #[test]

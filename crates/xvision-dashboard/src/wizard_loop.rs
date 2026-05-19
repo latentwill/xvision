@@ -101,7 +101,12 @@ impl AgentProfile {
                  Do not say a tool change succeeded until the tool_result says it succeeded. For \
                  strategy tools, pass `id` or `strategy_id` as a top-level field, never nested under \
                  the tool name. Ask one targeted clarification only when the available strategies/scenarios \
-                 are genuinely ambiguous."
+                 are genuinely ambiguous. \
+                 When `validate_draft` returns `ok: false`, quote the `errors[]` text to the user \
+                 verbatim before attempting any fix. If a second `validate_draft` call returns the \
+                 same error class, stop editing and ask the user how to proceed — do not silently \
+                 retry. A repeating validation error often means the validator itself is wrong, \
+                 not the prompt."
             }
         }
     }
@@ -149,10 +154,24 @@ pub struct WizardLoop {
     /// failing schema instead of the generic "stuck calling tools"
     /// message.
     last_tool_error: Option<(String, String)>,
+    /// Signature of the most recent `validate_draft` failure (sorted +
+    /// joined `errors[]`). Reset on success or when the failure shape
+    /// changes. Paired with `validate_failure_streak` to break out of
+    /// "edit prompt → revalidate → same error" loops that the operator
+    /// can never resolve (e.g. a false-positive validator rule).
+    last_validate_signature: Option<String>,
+    validate_failure_streak: u32,
     /// Pending events queued during the current `next_event` invocation.
     pending: Vec<WizardEvent>,
     is_done: bool,
 }
+
+/// Hard cap on consecutive `validate_draft` failures with overlapping
+/// error text before the wizard loop forcibly ends the turn and surfaces
+/// the error to the user. Two means: one initial failure plus one
+/// "tried to fix it and got the same error" — beyond that, the model is
+/// not making progress and silently retrying just hides the real issue.
+const MAX_VALIDATE_FAILURE_STREAK: u32 = 2;
 
 #[derive(Debug, Deserialize)]
 struct CreateStrategyAgentReq {
@@ -262,6 +281,8 @@ impl WizardLoop {
             cli_runner,
             last_draft_id: None,
             last_tool_error: None,
+            last_validate_signature: None,
+            validate_failure_streak: 0,
             pending: vec![],
             is_done: false,
         })
@@ -386,6 +407,9 @@ impl WizardLoop {
                     }
                 };
                 self.maybe_track_draft_id(&name, &result_value);
+                if name == "validate_draft" {
+                    self.update_validate_streak(&result_value);
+                }
                 self.pending.push(WizardEvent::ToolResult {
                     tool: name.clone(),
                     result: result_value.clone(),
@@ -405,6 +429,21 @@ impl WizardLoop {
                 for block in rich_blocks {
                     self.pending.push(WizardEvent::ContentBlock { block });
                 }
+            }
+
+            if self.validate_failure_streak >= MAX_VALIDATE_FAILURE_STREAK {
+                // Convergence guard: the model has hit the same
+                // validate_draft error class twice in a row without making
+                // progress. Silently looping hides the error from the
+                // operator (see intake 2026-05-19-qa-validate-draft-cadence-
+                // false-positive: a parser bug nobody could fix by editing
+                // the prompt). Stop the turn and surface the failure.
+                self.emit_validate_loop_break();
+                self.is_done = true;
+                self.pending.push(WizardEvent::Done {
+                    draft_id: self.last_draft_id.clone(),
+                });
+                return Ok(());
             }
 
             if !matches!(resp.stop_reason, StopReason::ToolUse) {
@@ -450,6 +489,73 @@ impl WizardLoop {
             });
         }
         Ok(out)
+    }
+
+    /// Track consecutive `validate_draft` failures with identical error
+    /// shape. Resets on success or when the error text changes (different
+    /// error class → progress, even if still failing).
+    fn update_validate_streak(&mut self, result: &serde_json::Value) {
+        let ok = result.get("ok").and_then(|v| v.as_bool()).unwrap_or(true);
+        if ok {
+            self.last_validate_signature = None;
+            self.validate_failure_streak = 0;
+            return;
+        }
+        let mut errors: Vec<String> = result
+            .get("errors")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        errors.sort();
+        let signature = errors.join("\n");
+        if self.last_validate_signature.as_deref() == Some(signature.as_str()) {
+            self.validate_failure_streak = self.validate_failure_streak.saturating_add(1);
+        } else {
+            self.last_validate_signature = Some(signature);
+            self.validate_failure_streak = 1;
+        }
+    }
+
+    /// Surface the stuck-validation state as a user-visible content block
+    /// when the convergence guard fires. The block uses the same
+    /// action-card primitive as `rich_block_for_tool_result` so the chat
+    /// rail renders it inline — no popup, per the frontend rule.
+    fn emit_validate_loop_break(&mut self) {
+        let id = self.last_draft_id.clone().unwrap_or_else(|| "unknown".into());
+        let errors_body = self
+            .last_validate_signature
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .map(|s| {
+                s.lines()
+                    .map(|line| format!("• {line}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .unwrap_or_else(|| "(no error text returned)".to_string());
+        let body = format!(
+            "Validation failed {streak}× in a row with the same error. \
+             Stopping so the operator can decide what to do.\n\n{errors_body}",
+            streak = self.validate_failure_streak,
+        );
+        if let Ok(card) = action_confirmation_card(
+            format!("validate-loop-break:{id}"),
+            "Validation stuck — operator review needed",
+            body,
+            InlineAction {
+                label: "Open draft".into(),
+                href: Some(format!("/authoring/{id}")),
+                command: None,
+            },
+        ) {
+            if let Ok(block) = serde_json::to_value(card) {
+                self.pending.push(WizardEvent::ContentBlock { block });
+            }
+        }
     }
 
     fn maybe_track_draft_id(&mut self, tool: &str, result: &serde_json::Value) {
@@ -1585,6 +1691,43 @@ fn rich_block_for_tool_result(tool: &str, result: &serde_json::Value) -> Option<
                 InlineAction {
                     label: "Open eval runs".into(),
                     href: Some("/eval-runs".into()),
+                    command: None,
+                },
+            )
+            .ok()?
+        }
+        "validate_draft" => {
+            // Only render a card on failure — successful validation is a
+            // no-op the model can speak to directly.
+            if result.get("ok").and_then(|v| v.as_bool()).unwrap_or(true) {
+                return None;
+            }
+            let id = result.get("id")?.as_str()?;
+            let errors: Vec<String> = result
+                .get("errors")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let body = if errors.is_empty() {
+                "Validation failed but the engine returned no error text. Open the draft to inspect.".to_string()
+            } else {
+                errors
+                    .iter()
+                    .map(|e| format!("• {e}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            };
+            action_confirmation_card(
+                format!("validate-failed:{id}"),
+                "Validation failed",
+                body,
+                InlineAction {
+                    label: "Open draft".into(),
+                    href: Some(format!("/authoring/{id}")),
                     command: None,
                 },
             )

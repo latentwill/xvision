@@ -155,6 +155,7 @@ async fn eval_run_returns_notfound_for_unseeded_scenario_id() {
         },
         broker,
         dispatch,
+        xvision_engine::eval::postprocess::DEFAULT_FINDINGS_MODEL.to_string(),
         tools,
     )
     .await;
@@ -248,6 +249,7 @@ async fn eval_run_resolves_seeded_scenario_via_db_lookup() {
         },
         broker,
         dispatch,
+        xvision_engine::eval::postprocess::DEFAULT_FINDINGS_MODEL.to_string(),
         tools,
     )
     .await
@@ -327,6 +329,7 @@ async fn backtest_missing_cache_and_fixture_returns_actionable_validation() {
         },
         None,
         dispatch,
+        xvision_engine::eval::postprocess::DEFAULT_FINDINGS_MODEL.to_string(),
         tools,
     )
     .await
@@ -428,6 +431,7 @@ async fn backtest_db_scenario_with_warmup_does_not_fallback_to_legacy_fixture() 
         },
         None,
         dispatch,
+        xvision_engine::eval::postprocess::DEFAULT_FINDINGS_MODEL.to_string(),
         tools,
     )
     .await

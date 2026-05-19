@@ -28,6 +28,19 @@ F-4/F-5 PRs (disjoint files).
 
 - [harness-typed-mechanical-params](contracts/harness-typed-mechanical-params.md) - integration - pr-open #302 - F-6 — typed `MechanicalParams` enum keyed on `manifest.template` (one variant per canonical template + `Custom(Value)` fallback). Adds `#[serde(deny_unknown_fields)]` to `InternBriefing`, `TraderDecision`, `RiskDecision`, `RiskConfig`/`Limits`/`Stops`, `RiskCaps`. Single pre-persist validate seam in `StrategyStore::save`. No migration; wire format unchanged. Parallel-safe with F-4 (merged) and F-5 PR #298.
 
+### QA Operator Round 5 (2026-05-19)
+
+Source: [`team/intake/2026-05-19-qa-validate-draft-cadence-false-positive.md`](intake/2026-05-19-qa-validate-draft-cadence-false-positive.md).
+Operator session got stuck in a silent `validate_draft` retry loop on
+strategy `01KRZ0ZWER9HE2CTYNWT83ESYQ`. F-1/F-2/F-3/F-5 bundled into one
+PR (deploy-host edit; no per-track contracts written). F-4 stays intake.
+
+- `validator-cadence-parse-strict-units` - leaf - pr-open - P1 — F-1: `validate_prompt_manifest_alignment` no longer treats `"3. Mean"` as "3 minutes". Exact-token unit match in cadence parser + regression test.
+- `chat-rail-validate-draft-rich-error` - leaf - pr-open - P1 — F-2: new `validate_draft` arm in `rich_block_for_tool_result` surfaces `errors[]` inline (no popup).
+- `chat-rail-validate-retry-budget` - leaf - pr-open - P2 — F-3: wizard loop tracks consecutive same-error `validate_draft` failures, force-ends turn after 2 with a user-visible "stuck" card. System prompt updated.
+- `findings-postprocess-provider-routing` - leaf - pr-open - P3 — F-5: `findings_model_for_provider` picks the right Haiku id per provider kind (Anthropic-native, OpenRouter slug, generic OpenAI-compat → first enabled model).
+- `risk-preset-balanced-min-order-sanity` - integration - intake - P2 — F-4: balanced preset triggers 44+ `broker_min_order_size` warnings on ETH paper. Not in this PR — needs broker-config investigation.
+
 ### Agent CI/CD Phase 1 (2026-05-18)
 
 Implements `docs/superpowers/specs/2026-05-18-agent-cicd-control-plane.md`.

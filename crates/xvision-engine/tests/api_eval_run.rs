@@ -183,6 +183,7 @@ async fn run_with_deps_completes_paper_run_with_mocks() {
         },
         broker,
         dispatch,
+        xvision_engine::eval::postprocess::DEFAULT_FINDINGS_MODEL.to_string(),
         tools,
     )
     .await
@@ -216,6 +217,7 @@ async fn run_returns_not_found_for_unknown_strategy() {
         },
         broker,
         dispatch,
+        xvision_engine::eval::postprocess::DEFAULT_FINDINGS_MODEL.to_string(),
         tools,
     )
     .await;
@@ -246,6 +248,7 @@ async fn run_returns_not_found_for_unknown_scenario() {
         },
         broker,
         dispatch,
+        xvision_engine::eval::postprocess::DEFAULT_FINDINGS_MODEL.to_string(),
         tools,
     )
     .await;
@@ -323,6 +326,7 @@ async fn run_with_deps_completes_backtest_run_with_mocks() {
         },
         None, // backtest mode doesn't need a broker
         dispatch,
+        xvision_engine::eval::postprocess::DEFAULT_FINDINGS_MODEL.to_string(),
         tools,
     )
     .await
@@ -363,6 +367,7 @@ async fn run_rejects_paper_mode_without_broker() {
         },
         None,
         dispatch,
+        xvision_engine::eval::postprocess::DEFAULT_FINDINGS_MODEL.to_string(),
         tools,
     )
     .await;
@@ -394,6 +399,7 @@ async fn run_writes_audit_row_on_completion() {
         },
         broker,
         dispatch,
+        xvision_engine::eval::postprocess::DEFAULT_FINDINGS_MODEL.to_string(),
         tools,
     )
     .await
@@ -432,6 +438,7 @@ async fn run_persists_run_to_runstore_so_get_finds_it() {
         },
         broker,
         dispatch,
+        xvision_engine::eval::postprocess::DEFAULT_FINDINGS_MODEL.to_string(),
         tools,
     )
     .await
