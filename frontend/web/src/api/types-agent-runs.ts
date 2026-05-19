@@ -31,13 +31,19 @@ export type SpanKind =
   | "agent.plan"
   | "model.call"
   | "tool.call"
+  | "tool.validate_input"
+  | "tool.validate_output"
   | "approval.request"
   | "approval.response"
   | "sandbox.exec"
   | "supervisor.review"
   | "financial.eval"
   | "artifact.write"
-  | "broker.call";
+  | "ipc.notification"
+  | "skill.invoke"
+  | "broker.call"
+  | "recovery.attempt"
+  | "state.transition";
 
 /**
  * Trace-dock-visible side of a broker submit. `Close` / `Short` are
