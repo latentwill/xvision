@@ -13,6 +13,19 @@ use xvision_engine::eval::scenario::{
 };
 use xvision_engine::eval::scenario_store as store;
 
+struct TestCtx {
+    ctx: ApiContext,
+    _dir: tempfile::TempDir,
+}
+
+impl std::ops::Deref for TestCtx {
+    type Target = ApiContext;
+
+    fn deref(&self) -> &Self::Target {
+        &self.ctx
+    }
+}
+
 fn make_test_scenario(id: &str) -> Scenario {
     Scenario {
         id: id.into(),
@@ -71,11 +84,12 @@ fn make_test_scenario(id: &str) -> Scenario {
     }
 }
 
-async fn test_ctx() -> ApiContext {
-    let dir = Box::leak(Box::new(tempfile::tempdir().unwrap()));
-    ApiContext::open(dir.path(), Actor::Cli { user: "test".into() })
+async fn test_ctx() -> TestCtx {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = ApiContext::open(dir.path(), Actor::Cli { user: "test".into() })
         .await
-        .unwrap()
+        .unwrap();
+    TestCtx { ctx, _dir: dir }
 }
 
 #[tokio::test]
