@@ -120,6 +120,7 @@ async fn failing_dispatch_emits_error_span_with_message() {
         tools,
         response_schema: None,
         max_tokens: None,
+        temperature: None,
         obs: Some(emitter.clone()),
     })
     .await;
@@ -190,6 +191,7 @@ async fn execute_slot_with_no_emitter_does_not_touch_bus() {
         tools,
         response_schema: None,
         max_tokens: None,
+        temperature: None,
         obs: None,
     })
     .await;

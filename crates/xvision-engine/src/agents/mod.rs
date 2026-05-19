@@ -24,4 +24,7 @@ pub use xvision_core::providers::{lookup_model, ModelClass, ModelMetadata};
 
 pub use store::{AgentStore, ListFilter, NewAgent, UpdateAgent};
 pub use templates::{builtin_templates, AgentTemplate};
-pub use validate::{validate_agent, Severity, ValidationDiagnostic};
+pub use validate::{
+    lint_agents, validate_agent, AuditFinding, Severity, ValidationDiagnostic,
+    DEFAULT_PLACEHOLDER_PROMPT,
+};

@@ -58,6 +58,21 @@ pub struct AgentSlot {
     #[serde(default)]
     #[cfg_attr(feature = "ts-export", ts(type = "number | null"))]
     pub max_tokens: Option<u32>,
+    /// Optional operator override for the sampling temperature
+    /// forwarded to the provider. `None` lets the provider's default
+    /// apply (Anthropic ~1.0, OpenAI 1.0). `Some(t)` is passed through
+    /// verbatim — no clamping. Eval-baseline operators set a low
+    /// value (e.g. 0.2) when they want reproducible decisions; agent-
+    /// loop operators leave it unset.
+    ///
+    /// Not yet persisted to SQLite (a follow-up migration will add the
+    /// column). For now the field round-trips through JSON via
+    /// `#[serde(default)]`; rows loaded from the store always come
+    /// back as `None`, so existing seeded agents see the provider
+    /// default until they're re-saved with an explicit value.
+    #[serde(default)]
+    #[cfg_attr(feature = "ts-export", ts(type = "number | null"))]
+    pub temperature: Option<f64>,
     /// Server-computed content digest of `system_prompt`. Format is the
     /// lowercase 16-char prefix of `sha256(system_prompt)` — short
     /// enough to eyeball in the agents UI, long enough to make
@@ -146,6 +161,7 @@ impl Agent {
                 system_prompt: String::new(),
                 skill_ids: Vec::new(),
                 max_tokens: None,
+                temperature: None,
                 prompt_version: String::new(),
             }],
             archived: false,

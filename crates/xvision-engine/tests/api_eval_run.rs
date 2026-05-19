@@ -554,6 +554,7 @@ async fn save_openrouter_strategy_with_agent_ref(ctx: &ApiContext, strategy_id: 
                 system_prompt: "Decide.".into(),
                 skill_ids: vec![],
                 max_tokens: Some(4096),
+                temperature: None,
                 prompt_version: String::new(),
             }],
         })

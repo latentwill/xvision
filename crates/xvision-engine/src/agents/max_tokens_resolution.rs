@@ -27,6 +27,7 @@ fn slot_with(provider: &str, model: &str, max_tokens: Option<u32>) -> AgentSlot 
         system_prompt: "p".into(),
         skill_ids: Vec::new(),
         max_tokens,
+        temperature: None,
         prompt_version: String::new(),
     }
 }

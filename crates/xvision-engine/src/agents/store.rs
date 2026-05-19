@@ -231,6 +231,7 @@ impl AgentStore {
                 system_prompt: row.try_get("system_prompt")?,
                 skill_ids,
                 max_tokens,
+                temperature: None,
                 prompt_version: row.try_get("prompt_version").unwrap_or_default(),
             });
         }
@@ -317,6 +318,7 @@ mod tests {
             system_prompt: "You are a trader.".to_string(),
             skill_ids: vec![],
             max_tokens: Some(4096),
+            temperature: None,
             prompt_version: String::new(),
         }
     }

@@ -1160,6 +1160,7 @@ mod role_tests {
                 model: Some(model.into()),
             },
             max_tokens: None,
+            temperature: None,
         }
     }
 

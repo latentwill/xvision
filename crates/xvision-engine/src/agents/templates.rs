@@ -51,6 +51,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     .into(),
                 skill_ids: vec![],
                 max_tokens: None,
+                temperature: None,
                 prompt_version: String::new(),
             }],
         },
@@ -72,6 +73,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                         .into(),
                     skill_ids: vec![],
                     max_tokens: None,
+                    temperature: None,
                     prompt_version: String::new(),
                 },
                 AgentSlot {
@@ -85,6 +87,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                         .into(),
                     skill_ids: vec![],
                     max_tokens: None,
+                    temperature: None,
                     prompt_version: String::new(),
                 },
             ],
@@ -107,6 +110,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                         .into(),
                     skill_ids: vec![],
                     max_tokens: None,
+                    temperature: None,
                     prompt_version: String::new(),
                 },
                 AgentSlot {
@@ -119,6 +123,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                         .into(),
                     skill_ids: vec![],
                     max_tokens: None,
+                    temperature: None,
                     prompt_version: String::new(),
                 },
                 AgentSlot {
@@ -132,6 +137,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                         .into(),
                     skill_ids: vec![],
                     max_tokens: None,
+                    temperature: None,
                     prompt_version: String::new(),
                 },
             ],
