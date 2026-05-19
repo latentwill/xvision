@@ -77,18 +77,20 @@ describe("GenerateErrorAlert", () => {
     cleanup();
   });
 
-  test("renders ApiError code + cleaned message (strips 'request: ' prefix on validation)", () => {
+  test("renders ApiError code + message verbatim from the structured 400 body", () => {
+    // Backend now emits `{ code, message, field }` with no `field: msg`
+    // prefix embedded in `message` — see `crates/xvision-dashboard/src/error.rs`.
+    // The alert renders `message` verbatim; no client-side massaging required.
     const err = new ApiError(
       400,
       "validation",
-      "request: review skipped: agent profile `reasoning-agent` requires provider `anthropic` which is not configured in Settings → Providers (configured: openrouter). Add a compatible provider to run this review.",
+      "review skipped: agent profile `reasoning-agent` requires provider `anthropic` which is not configured in Settings → Providers (configured: openrouter). Add a compatible provider to run this review.",
+      "request",
     );
     render(<GenerateErrorAlert error={err} />);
     const code = screen.getByTestId("review-generate-error-code");
     expect(code.textContent).toBe("validation");
     const message = screen.getByTestId("review-generate-error-message");
-    // The leading `request: ` prefix from DashboardError::Validation
-    // formatting is server-side jargon and must be stripped.
     expect(message.textContent).not.toMatch(/^request:/);
     expect(message.textContent).toMatch(/review skipped/);
     expect(message.textContent).toMatch(/anthropic/);
@@ -125,7 +127,7 @@ describe("GenerateErrorAlert", () => {
     const onRetry = vi.fn();
     render(
       <GenerateErrorAlert
-        error={new ApiError(400, "validation", "request: oops")}
+        error={new ApiError(400, "validation", "oops", "request")}
         onRetry={onRetry}
       />,
     );
@@ -150,7 +152,8 @@ describe("ReviewPanel — operator-visible 400 surfacing", () => {
       postBody: {
         code: "validation",
         message:
-          "request: review skipped: agent profile `reasoning-agent` requires provider `anthropic` which is not configured in Settings → Providers (configured: openrouter). Add a compatible provider to run this review.",
+          "review skipped: agent profile `reasoning-agent` requires provider `anthropic` which is not configured in Settings → Providers (configured: openrouter). Add a compatible provider to run this review.",
+        field: "request",
       },
     });
 
@@ -181,8 +184,9 @@ describe("ReviewPanel — operator-visible 400 surfacing", () => {
     expect(message.textContent).toMatch(/review skipped/);
     expect(message.textContent).toMatch(/anthropic/);
     expect(message.textContent).toMatch(/Settings → Providers/);
-    // The `request: ` server-side prefix must be stripped before the
-    // operator sees it.
+    // Backend emits clean copy — the legacy `request: ` server-side
+    // prefix is no longer attached to `message` (see
+    // `crates/xvision-dashboard/src/error.rs`).
     expect(message.textContent).not.toMatch(/^request:/);
     expect(screen.getByRole("alert")).toBeInTheDocument();
   });
