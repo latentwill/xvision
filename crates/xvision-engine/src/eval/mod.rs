@@ -11,6 +11,7 @@ pub mod bars;
 pub mod behavior;
 pub mod compare;
 pub mod cost;
+pub mod early_stop;
 pub mod executor;
 pub mod export;
 pub mod findings;

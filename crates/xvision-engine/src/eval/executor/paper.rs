@@ -22,6 +22,7 @@ use crate::agent::llm::LlmDispatch;
 use crate::agent::observability::{fresh_span_id, ObsEmitter};
 use crate::agent::pipeline::{run_pipeline, PipelineInputs, ResolvedAgentSlot};
 use crate::api::chart::{ChartEquityPoint, LiveDecisionRow, RunChartEvent, RunEventBus};
+use crate::eval::early_stop::{self, EarlyStopConfig};
 use crate::eval::executor::Executor;
 use crate::eval::metrics::{
     annualization_periods_per_year, equity_to_returns, max_drawdown_pct, sharpe_from_returns,
@@ -515,6 +516,19 @@ impl PaperExecutor {
         // initial balance so the first tick's drawdown is well-defined.
         let mut peak_equity = initial_balance.max(0.0);
 
+        // eval-flat-degeneracy-early-stop (F-9): rolling history of the
+        // last `cfg.window` actions + convictions, plus a counter for
+        // inherited decisions still owed when the policy is in skip
+        // mode. The buffer is flushed when the policy fires (so we
+        // don't re-trigger immediately after the skip window ends) and
+        // on any reset trigger — non-`flat`/`hold` action or a
+        // portfolio change.
+        let early_stop_cfg = EarlyStopConfig::from_env_or_default();
+        let mut recent_actions: Vec<early_stop::Action> = Vec::with_capacity(early_stop_cfg.window);
+        let mut recent_convictions: Vec<f64> = Vec::with_capacity(early_stop_cfg.window);
+        let mut inherit_remaining: u32 = 0;
+        let mut prev_position: f64 = 0.0;
+
         for (i, bar) in decision_bars.iter().enumerate() {
             if store.is_terminal(&run.id).await? {
                 anyhow::bail!("eval run stopped");
@@ -572,6 +586,99 @@ impl PaperExecutor {
                         serde_json::to_value(&fb).unwrap_or(serde_json::Value::Null),
                     );
                 }
+            }
+
+            // eval-flat-degeneracy-early-stop (F-9): before paying the
+            // LLM tax, check whether we should inherit this decision
+            // as a flat. Path (a) keeps draining a skip window already
+            // in progress; path (b) is the fresh trigger. Both emit a
+            // dense equity sample (balance unchanged because we don't
+            // touch the broker) and a `flat`/conviction=0.0 decision
+            // row with a clear `inherited from early-stop policy`
+            // justification, so the operator can audit the skipped
+            // bars in the trace.
+            let policy_plan = if inherit_remaining == 0 {
+                early_stop::should_skip_next_decision(
+                    &recent_actions,
+                    &recent_convictions,
+                    position == prev_position,
+                    &early_stop_cfg,
+                )
+            } else {
+                None
+            };
+            if let Some(plan) = policy_plan.as_ref() {
+                tracing::info!(
+                    run_id = %run.id,
+                    decision_index = decision_idx,
+                    skip_count = plan.skip_count,
+                    "early-stop policy fired — inheriting flat decisions"
+                );
+                store
+                    .record_supervisor_note(&run.id, "guard", "info", &plan.reason)
+                    .await?;
+                inherit_remaining = plan.skip_count;
+                recent_actions.clear();
+                recent_convictions.clear();
+            }
+            if inherit_remaining > 0 {
+                let inherited_row = DecisionRow {
+                    run_id: run.id.clone(),
+                    decision_index: decision_idx,
+                    timestamp: bar.timestamp,
+                    asset: asset.clone(),
+                    action: "flat".into(),
+                    conviction: Some(0.0),
+                    justification: Some("inherited from early-stop policy".into()),
+                    reasoning: None,
+                    order_size: None,
+                    fill_price: None,
+                    fill_size: None,
+                    fee: None,
+                    pnl_realized: None,
+                };
+                store.record_decision(&inherited_row).await?;
+                self.emit_chart(
+                    &run.id,
+                    RunChartEvent::Decision(LiveDecisionRow::from(&inherited_row)),
+                )
+                .await;
+                self.emit(ProgressEvent::DecisionEmitted {
+                    run_id: run.id.clone(),
+                    action: "flat".into(),
+                    asset: asset.clone(),
+                    size: 0.0,
+                    conviction: 0.0,
+                });
+                let balance_now = self.broker.balance().await?;
+                store.record_equity(&run.id, bar.timestamp, balance_now).await?;
+                self.emit_chart(
+                    &run.id,
+                    RunChartEvent::Equity(ChartEquityPoint {
+                        time: bar.timestamp.timestamp(),
+                        equity_usd: balance_now,
+                    }),
+                )
+                .await;
+                equity_samples.push(balance_now);
+                if balance_now > peak_equity {
+                    peak_equity = balance_now;
+                }
+                let drawdown_pct = if peak_equity > 0.0 {
+                    ((peak_equity - balance_now) / peak_equity * 100.0).max(0.0)
+                } else {
+                    0.0
+                };
+                self.emit(ProgressEvent::MetricsUpdated {
+                    run_id: run.id.clone(),
+                    equity: balance_now,
+                    drawdown_pct,
+                    n_trades,
+                });
+                inherit_remaining -= 1;
+                prev_position = position;
+                decision_idx += 1;
+                continue;
             }
 
             let outs = run_pipeline(PipelineInputs {
@@ -739,6 +846,12 @@ impl PaperExecutor {
                 let balance_now = self.broker.balance().await?;
                 store.record_equity(&run.id, bar.timestamp, balance_now).await?;
                 equity_samples.push(balance_now);
+                // F-9: a min-notional veto means the trader tried to
+                // act and got pre-empted — not a flat/hold streak
+                // tick. Reset the early-stop counter.
+                recent_actions.clear();
+                recent_convictions.clear();
+                prev_position = position;
                 decision_idx += 1;
                 continue;
             }
@@ -932,6 +1045,13 @@ impl PaperExecutor {
                             }
                             consecutive_broker_error_last_msg = msg.clone();
 
+                            // F-9: recoverable broker error means the
+                            // trader attempted to act — not a flat/hold
+                            // streak tick. Reset the early-stop counter.
+                            recent_actions.clear();
+                            recent_convictions.clear();
+                            prev_position = position;
+
                             if consecutive_broker_error_count >= CIRCUIT_BREAKER_THRESHOLD {
                                 // Structured failure reason consumed by
                                 // `classify_run_failure` (extended with
@@ -1074,6 +1194,28 @@ impl PaperExecutor {
                 drawdown_pct,
                 n_trades,
             });
+
+            // F-9: roll the early-stop buffer and apply reset triggers.
+            // A portfolio change (position size delta — open, close, or
+            // resize) wipes the streak; so does any non-flat/non-hold
+            // action. Otherwise we append + truncate to window.
+            let post_position = self.broker.position(&asset).await.unwrap_or(prev_position);
+            let portfolio_changed = post_position != prev_position;
+            let cls = early_stop::Action::classify(&parsed.action);
+            if portfolio_changed || !matches!(cls, early_stop::Action::Flat | early_stop::Action::Hold) {
+                recent_actions.clear();
+                recent_convictions.clear();
+            } else {
+                recent_actions.push(cls);
+                recent_convictions.push(parsed.conviction);
+                let cap = early_stop_cfg.window;
+                if recent_actions.len() > cap {
+                    let drop_n = recent_actions.len() - cap;
+                    recent_actions.drain(0..drop_n);
+                    recent_convictions.drain(0..drop_n);
+                }
+            }
+            prev_position = post_position;
 
             decision_idx += 1;
         }
