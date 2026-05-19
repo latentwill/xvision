@@ -6,6 +6,7 @@ import type { ScenarioChartPayload } from "@/api/types.gen/ScenarioChartPayload"
 
 const chartMocks = vi.hoisted(() => ({
   createChart: vi.fn(),
+  createdCharts: [] as unknown[],
 }));
 
 function createSeriesStub() {
@@ -27,6 +28,12 @@ function createChartStub() {
     })),
     remove: vi.fn(),
   };
+}
+
+function latestChart() {
+  return chartMocks.createdCharts[
+    chartMocks.createdCharts.length - 1
+  ] as ReturnType<typeof createChartStub>;
 }
 
 vi.mock("lightweight-charts", () => ({
@@ -96,7 +103,12 @@ const payload: ScenarioChartPayload = {
 describe("ScenarioChart", () => {
   beforeEach(() => {
     localStorage.clear();
-    chartMocks.createChart.mockImplementation(createChartStub);
+    chartMocks.createdCharts.length = 0;
+    chartMocks.createChart.mockImplementation(() => {
+      const chart = createChartStub();
+      chartMocks.createdCharts.push(chart);
+      return chart;
+    });
   });
 
   afterEach(() => {
@@ -104,7 +116,7 @@ describe("ScenarioChart", () => {
     vi.clearAllMocks();
   });
 
-  it("uses the shared layer panel with expanded moving average controls", () => {
+  it("uses the shared layer panel without unsupported subpane controls", () => {
     render(<ScenarioChart payload={payload} />);
 
     fireEvent.click(screen.getByText(/Layers/));
@@ -112,7 +124,20 @@ describe("ScenarioChart", () => {
     expect(screen.getByText("SMA 30")).toBeInTheDocument();
     expect(screen.getByText("SMA 60")).toBeInTheDocument();
     expect(screen.getByText("SMA 90")).toBeInTheDocument();
-    expect(screen.getByText("RSI 14")).toBeInTheDocument();
+    expect(screen.queryByText("RSI 14")).not.toBeInTheDocument();
+    expect(screen.queryByText("MACD")).not.toBeInTheDocument();
+    expect(screen.queryByText("ATR 14")).not.toBeInTheDocument();
+  });
+
+  it("honors the Candles layer toggle", () => {
+    render(<ScenarioChart payload={payload} />);
+
+    expect(latestChart().addCandlestickSeries).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByText(/Layers/));
+    fireEvent.click(screen.getByLabelText("Candles"));
+
+    expect(latestChart().addCandlestickSeries).not.toHaveBeenCalled();
   });
 
   it("renders scenario candles, cache status, and data table fallback", () => {
