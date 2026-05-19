@@ -745,6 +745,69 @@ impl RunStore {
         rows.iter().map(row_to_agent_profile).collect()
     }
 
+    /// Patch a subset of mutable fields on an agent profile.
+    /// `None` leaves a column unchanged. Returns `Ok(None)` when the
+    /// profile does not exist so the API layer can surface 404. Always
+    /// stamps `updated_at = now`.
+    ///
+    /// We deliberately do NOT expose `id`, `type`, or `enabled` here —
+    /// `id` is the key, `type` is a persona tag the engine treats as
+    /// stable, and toggling `enabled` is a different operation (the seed
+    /// migration enables all four; disabling is a separate concern).
+    pub async fn update_agent_profile(
+        &self,
+        id: &str,
+        provider: Option<&str>,
+        model: Option<&str>,
+        temperature: Option<f64>,
+        max_tokens: Option<u32>,
+        system_prompt: Option<&str>,
+    ) -> Result<Option<AgentProfile>> {
+        if self.get_agent_profile(id).await?.is_none() {
+            return Ok(None);
+        }
+        let now = Utc::now().to_rfc3339();
+        let mut sets: Vec<&str> = Vec::new();
+        if provider.is_some() {
+            sets.push("provider = ?");
+        }
+        if model.is_some() {
+            sets.push("model = ?");
+        }
+        if temperature.is_some() {
+            sets.push("temperature = ?");
+        }
+        if max_tokens.is_some() {
+            sets.push("max_tokens = ?");
+        }
+        if system_prompt.is_some() {
+            sets.push("system_prompt = ?");
+        }
+        sets.push("updated_at = ?");
+        let sql = format!("UPDATE agent_profiles SET {} WHERE id = ?", sets.join(", "));
+        let mut q = sqlx::query(&sql);
+        if let Some(v) = provider {
+            q = q.bind(v);
+        }
+        if let Some(v) = model {
+            q = q.bind(v);
+        }
+        if let Some(v) = temperature {
+            q = q.bind(v);
+        }
+        if let Some(v) = max_tokens {
+            q = q.bind(v as i64);
+        }
+        if let Some(v) = system_prompt {
+            q = q.bind(v);
+        }
+        q = q.bind(&now).bind(id);
+        q.execute(&self.pool)
+            .await
+            .with_context(|| format!("update agent_profiles id={id}"))?;
+        self.get_agent_profile(id).await
+    }
+
     // --- Eval reviews ----------------------------------------------------
 
     /// INSERT INTO eval_reviews. Callers construct via

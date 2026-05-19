@@ -34,6 +34,8 @@ import type {
 } from "@/api/types.gen";
 import {
   derivePositionsByDecision,
+  derivePriorSideByDecision,
+  type PositionSide,
   type OpenPosition,
 } from "@/features/decisions/positions";
 import {
@@ -552,18 +554,31 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-type DecisionFilter = "all" | "buy" | "sell" | "hold" | "close";
+type DecisionFilter = "all" | "buy" | "short" | "sell" | "cover" | "hold";
+type DecisionKind = Exclude<DecisionFilter, "all">;
 
 function DecisionsPanel({ rows }: { rows: DecisionRowDto[] }) {
   const [filter, setFilter] = useState<DecisionFilter>("all");
-  const counts = useMemo(() => decisionCounts(rows), [rows]);
   // Derive open positions across the FULL unfiltered sequence — filtering
-  // is purely display-side, but a CLOSE row's "positions after close = []"
-  // only holds if we've walked every preceding fill.
+  // is purely display-side, but a close row's "positions after close = []"
+  // only holds if we've walked every preceding fill. Prior-side walk runs
+  // in lockstep so the action-pill can distinguish sell-a-long from
+  // cover-a-short on rows whose on-the-wire action is `"flat"`.
   const positionsByDecision = useMemo(() => derivePositionsByDecision(rows), [rows]);
+  const priorSideByDecision = useMemo(() => derivePriorSideByDecision(rows), [rows]);
+  const counts = useMemo(
+    () => decisionCounts(rows, priorSideByDecision),
+    [rows, priorSideByDecision],
+  );
   const filtered = useMemo(
-    () => rows.filter((row) => filter === "all" || decisionKind(row.action) === filter),
-    [rows, filter],
+    () =>
+      rows.filter(
+        (row) =>
+          filter === "all" ||
+          decisionKind(row.action, priorSideByDecision.get(row.decision_index) ?? "flat") ===
+            filter,
+      ),
+    [rows, filter, priorSideByDecision],
   );
 
   return (
@@ -573,21 +588,27 @@ function DecisionsPanel({ rows }: { rows: DecisionRowDto[] }) {
       ) : (
         <>
           <div className="flex flex-wrap items-center gap-2 border-b border-border-soft px-4 py-3">
-            {(["all", "buy", "sell", "hold", "close"] as DecisionFilter[]).map((value) => (
-              <button
-                key={value}
-                type="button"
-                onClick={() => setFilter(value)}
-                className={`dec-filter ${filter === value ? "dec-filter--active" : ""}`}
-                aria-pressed={filter === value}
-              >
-                <span>{decisionFilterLabel(value)}</span>
-                <span className="dec-filter__count">{counts[value]}</span>
-              </button>
-            ))}
+            {(["all", "buy", "short", "sell", "cover", "hold"] as DecisionFilter[]).map(
+              (value) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setFilter(value)}
+                  className={`dec-filter ${filter === value ? "dec-filter--active" : ""}`}
+                  aria-pressed={filter === value}
+                >
+                  <span>{decisionFilterLabel(value)}</span>
+                  <span className="dec-filter__count">{counts[value]}</span>
+                </button>
+              ),
+            )}
           </div>
           <div className="xvn-scroll xvn-scroll--always max-h-[520px] overflow-x-auto">
-            <DecisionsTable rows={filtered} positionsByDecision={positionsByDecision} />
+            <DecisionsTable
+              rows={filtered}
+              positionsByDecision={positionsByDecision}
+              priorSideByDecision={priorSideByDecision}
+            />
           </div>
         </>
       )}
@@ -598,9 +619,11 @@ function DecisionsPanel({ rows }: { rows: DecisionRowDto[] }) {
 function DecisionsTable({
   rows,
   positionsByDecision,
+  priorSideByDecision,
 }: {
   rows: DecisionRowDto[];
   positionsByDecision: Map<number, OpenPosition[]>;
+  priorSideByDecision: Map<number, PositionSide>;
 }) {
   return (
     <table className="w-full min-w-[1140px]">
@@ -632,7 +655,10 @@ function DecisionsTable({
             </td>
             <td className="py-2.5 px-3 font-mono text-text-2">{r.asset}</td>
             <td className="py-2.5 px-3">
-              <DecisionSignal action={r.action} />
+              <DecisionSignal
+                action={r.action}
+                priorSide={priorSideByDecision.get(r.decision_index) ?? "flat"}
+              />
             </td>
             <td className="py-2.5 px-3 text-right font-mono">
               {fmtNumber(r.conviction)}
@@ -706,8 +732,14 @@ function fmtPositionEntry(price: number): string {
   return price.toPrecision(4);
 }
 
-function DecisionSignal({ action }: { action: string }) {
-  const kind = decisionKind(action);
+function DecisionSignal({
+  action,
+  priorSide,
+}: {
+  action: string;
+  priorSide: PositionSide;
+}) {
+  const kind = decisionKind(action, priorSide);
   return (
     <span className={`dec-pill dec-pill--${kind}`}>
       <span className="dec-pill__label">{decisionActionLabel(kind)}</span>
@@ -716,21 +748,31 @@ function DecisionSignal({ action }: { action: string }) {
   );
 }
 
-function decisionKind(action: string): Exclude<DecisionFilter, "all"> {
+function decisionKind(action: string, priorSide: PositionSide): DecisionKind {
   if (action === "long_open") return "buy";
-  if (action === "short_open") return "sell";
-  if (action === "flat") return "close";
+  if (action === "short_open") return "short";
+  if (action === "flat") {
+    if (priorSide === "long") return "sell";
+    if (priorSide === "short") return "cover";
+    // flat-from-flat is a no-op; render neutrally rather than mint a
+    // misleading SELL/COVER pill on a row that closed nothing.
+    return "hold";
+  }
   return "hold";
 }
 
-function decisionCounts(rows: DecisionRowDto[]): Record<DecisionFilter, number> {
+function decisionCounts(
+  rows: DecisionRowDto[],
+  priorSideByDecision: Map<number, PositionSide>,
+): Record<DecisionFilter, number> {
   return rows.reduce<Record<DecisionFilter, number>>(
     (acc, row) => {
       acc.all += 1;
-      acc[decisionKind(row.action)] += 1;
+      const prior = priorSideByDecision.get(row.decision_index) ?? "flat";
+      acc[decisionKind(row.action, prior)] += 1;
       return acc;
     },
-    { all: 0, buy: 0, sell: 0, hold: 0, close: 0 },
+    { all: 0, buy: 0, short: 0, sell: 0, cover: 0, hold: 0 },
   );
 }
 
@@ -738,12 +780,13 @@ function decisionFilterLabel(filter: DecisionFilter): string {
   return filter === "all" ? "All" : decisionActionLabel(filter);
 }
 
-function decisionActionLabel(filter: Exclude<DecisionFilter, "all">): string {
+function decisionActionLabel(filter: DecisionKind): string {
   return {
     buy: "BUY",
+    short: "SHORT",
     sell: "SELL",
+    cover: "COVER",
     hold: "HOLD",
-    close: "CLOSE",
   }[filter];
 }
 

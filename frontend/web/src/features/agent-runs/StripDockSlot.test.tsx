@@ -6,7 +6,9 @@ import { MemoryRouter } from "react-router-dom";
 import { StripDockSlot } from "./StripDockSlot";
 import { useTraceDock } from "@/stores/trace-dock";
 import * as agentRunsApi from "@/api/agent-runs";
+import * as evalApi from "@/api/eval";
 import type { AgentRunDetail, AgentRunSummary } from "@/api/types-agent-runs";
+import type { RunDetail, RunSummary as EvalRunSummary } from "@/api/types.gen";
 
 vi.mock("@/api/agent-runs", async () => {
   const actual = await vi.importActual<typeof import("@/api/agent-runs")>(
@@ -16,6 +18,28 @@ vi.mock("@/api/agent-runs", async () => {
     ...actual,
     getAgentRun: vi.fn(),
   };
+});
+
+vi.mock("@/api/eval", async () => {
+  const actual =
+    await vi.importActual<typeof import("@/api/eval")>("@/api/eval");
+  return {
+    ...actual,
+    listRuns: vi.fn(),
+    getRun: vi.fn(),
+  };
+});
+
+vi.mock("@/api/agents", async () => {
+  const actual =
+    await vi.importActual<typeof import("@/api/agents")>("@/api/agents");
+  return { ...actual, listAgents: vi.fn().mockResolvedValue([]) };
+});
+
+vi.mock("@/api/scenarios", async () => {
+  const actual =
+    await vi.importActual<typeof import("@/api/scenarios")>("@/api/scenarios");
+  return { ...actual, listScenarios: vi.fn().mockResolvedValue([]) };
 });
 
 function renderSlot() {
@@ -151,5 +175,182 @@ describe("StripDockSlot", () => {
     const strip = await screen.findByTestId("run-status-strip");
     // 32_000 ms → "32.0s" via fmtPostHoc.
     expect(strip.textContent ?? "").toMatch(/32\.0s/);
+  });
+
+  test("does NOT poll sibling eval-runs when the focused agent-run has no financial_eval_id", async () => {
+    vi.mocked(agentRunsApi.getAgentRun).mockResolvedValue(
+      makeDetail({ financial_eval_id: null }),
+    );
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    useTraceDock.setState({
+      activeRunId: "run_abc1234",
+      height: "collapsed",
+      mode: "live",
+    });
+    renderSlot();
+    await screen.findByTestId("run-status-strip");
+    // Scope guard: live-strategy runs (no eval link) must not trigger the
+    // eval-runs polling. listRuns is only the eval-runs endpoint, so it
+    // should never be invoked here.
+    expect(evalApi.listRuns).not.toHaveBeenCalled();
+  });
+
+  test("polls both running and failed eval-runs when an eval link is present", async () => {
+    vi.mocked(agentRunsApi.getAgentRun).mockResolvedValue(
+      makeDetail({ financial_eval_id: "eval_focus_xyz" }),
+    );
+    vi.mocked(evalApi.getRun).mockResolvedValue({
+      summary: {
+        id: "eval_focus_xyz",
+        agent_id: "ag1",
+        scenario_id: "sc1",
+        mode: "backtest",
+        status: "running",
+        started_at: "2026-05-19T20:00:00Z",
+        completed_at: null,
+        sharpe: null,
+        max_drawdown_pct: null,
+        total_return_pct: null,
+        error: null,
+        actual_input_tokens: null,
+        actual_output_tokens: null,
+      } as EvalRunSummary,
+    } as RunDetail);
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    useTraceDock.setState({
+      activeRunId: "run_abc1234",
+      height: "collapsed",
+      mode: "live",
+    });
+    renderSlot();
+    await screen.findByTestId("run-status-strip");
+    // Both slices polled — running and failed — so freshly-errored
+    // siblings can auto-promote.
+    await waitFor(() => {
+      expect(evalApi.listRuns).toHaveBeenCalledWith({ status: "running" });
+      expect(evalApi.listRuns).toHaveBeenCalledWith({ status: "failed" });
+    });
+  });
+
+  test("surfaces a recently-failed sibling so error promotion can fire", async () => {
+    const nowIso = new Date(Date.now() - 30_000).toISOString();
+    vi.mocked(agentRunsApi.getAgentRun).mockResolvedValue(
+      makeDetail({ financial_eval_id: "eval_focus_xyz" }),
+    );
+    vi.mocked(evalApi.getRun).mockResolvedValue({
+      summary: {
+        id: "eval_focus_xyz",
+        agent_id: "ag1",
+        scenario_id: "sc1",
+        mode: "backtest",
+        status: "running",
+        started_at: "2026-05-19T20:00:00Z",
+        completed_at: null,
+        sharpe: null,
+        max_drawdown_pct: null,
+        total_return_pct: null,
+        error: null,
+        actual_input_tokens: null,
+        actual_output_tokens: null,
+      } as EvalRunSummary,
+    } as RunDetail);
+
+    vi.mocked(evalApi.listRuns).mockImplementation((params) => {
+      if (params?.status === "failed") {
+        return Promise.resolve([
+          {
+            id: "eval_failed_sibling",
+            agent_id: "ag-failed",
+            scenario_id: "sc-failed",
+            mode: "backtest",
+            status: "failed",
+            started_at: new Date(Date.now() - 60_000).toISOString(),
+            completed_at: nowIso,
+            sharpe: null,
+            max_drawdown_pct: null,
+            total_return_pct: null,
+            error: "boom",
+            actual_input_tokens: null,
+            actual_output_tokens: null,
+          },
+        ] as EvalRunSummary[]);
+      }
+      return Promise.resolve([]);
+    });
+
+    useTraceDock.setState({
+      activeRunId: "run_abc1234",
+      height: "collapsed",
+      mode: "live",
+    });
+    renderSlot();
+    const strip = await screen.findByTestId("run-status-strip");
+    // The failed sibling surfaces both as a row (one of N + the focused
+    // row, so `2 EVALS RUNNING ON CLUSTER` appears in the footer) and as
+    // an ERROR-toned line inside the expanded stack. The capsule auto-
+    // opens on a new error, so the sibling row is visible without manual
+    // interaction. `failed` is also the trailing 6-char id-slice for the
+    // fixture's `agent_id="ag-failed"`, so it appears in the short tag.
+    await waitFor(() => {
+      expect(strip.textContent ?? "").toMatch(/2 EVALS RUNNING/);
+      expect(strip.textContent ?? "").toMatch(/ERROR/);
+    });
+  });
+
+  test("drops failed siblings whose completion is outside the recency window", async () => {
+    const oldIso = new Date(Date.now() - 10 * 60_000).toISOString();
+    vi.mocked(agentRunsApi.getAgentRun).mockResolvedValue(
+      makeDetail({ financial_eval_id: "eval_focus_xyz" }),
+    );
+    vi.mocked(evalApi.getRun).mockResolvedValue({
+      summary: {
+        id: "eval_focus_xyz",
+        agent_id: "ag1",
+        scenario_id: "sc1",
+        mode: "backtest",
+        status: "running",
+        started_at: "2026-05-19T20:00:00Z",
+        completed_at: null,
+        sharpe: null,
+        max_drawdown_pct: null,
+        total_return_pct: null,
+        error: null,
+        actual_input_tokens: null,
+        actual_output_tokens: null,
+      } as EvalRunSummary,
+    } as RunDetail);
+    vi.mocked(evalApi.listRuns).mockImplementation((params) => {
+      if (params?.status === "failed") {
+        return Promise.resolve([
+          {
+            id: "eval_stale_failure",
+            agent_id: "ag-stale",
+            scenario_id: "sc-stale",
+            mode: "backtest",
+            status: "failed",
+            started_at: oldIso,
+            completed_at: oldIso,
+            sharpe: null,
+            max_drawdown_pct: null,
+            total_return_pct: null,
+            error: "old",
+            actual_input_tokens: null,
+            actual_output_tokens: null,
+          },
+        ] as EvalRunSummary[]);
+      }
+      return Promise.resolve([]);
+    });
+    useTraceDock.setState({
+      activeRunId: "run_abc1234",
+      height: "collapsed",
+      mode: "live",
+    });
+    renderSlot();
+    const strip = await screen.findByTestId("run-status-strip");
+    // Wait briefly to give the failedQ a chance to resolve, then assert
+    // the stale failure never appears.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(strip.textContent ?? "").not.toMatch(/c-stale/);
   });
 });

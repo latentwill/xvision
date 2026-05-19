@@ -8,8 +8,10 @@ use tower_http::{compression::CompressionLayer, trace::TraceLayer};
 
 use crate::auth::{auth_middleware, AuthState};
 use crate::routes::{
-    agent_runs, agents, bars, chat_rail, cli, docs, eval::review as eval_review, eval_runs, health::health,
-    scenarios, search as search_route, settings, skills, static_files, strategies, wizard,
+    agent_runs, agents, bars, chat_rail, cli, docs,
+    eval::{agent_profiles as eval_agent_profiles, review as eval_review},
+    eval_runs, health::health, scenarios, search as search_route, settings, skills,
+    static_files, strategies, wizard,
 };
 use crate::state::AppState;
 use xvision_engine::api::eval as api_eval;
@@ -109,6 +111,14 @@ pub fn build_router(state: AppState) -> Router {
             get(eval_review::list_for_run),
         )
         .route("/api/eval/reviews/:id", get(eval_review::get))
+        // Review-agent profile config: list + per-profile patch so
+        // operators can reseat seeded profiles against whatever
+        // provider they have configured (see file docstring for why).
+        .route("/api/eval/agent-profiles", get(eval_agent_profiles::list))
+        .route(
+            "/api/eval/agent-profiles/:id",
+            get(eval_agent_profiles::get).patch(eval_agent_profiles::patch),
+        )
         .route("/api/bars/:cache_key", get(bars::cache_row))
         .route("/api/cli/jobs", post(cli::create))
         .route("/api/cli/jobs/:id", get(cli::get))
