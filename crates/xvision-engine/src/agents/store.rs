@@ -10,6 +10,7 @@ use sqlx::{Row, SqlitePool};
 use ulid::Ulid;
 
 use crate::agents::model::{Agent, AgentSlot};
+use crate::agents::validator::{validate_prompt_schema_slots, PromptSchemaDriftError};
 
 #[derive(Debug, Clone)]
 pub struct AgentStore {
@@ -45,6 +46,13 @@ impl AgentStore {
     }
 
     pub async fn create(&self, new: NewAgent) -> Result<String> {
+        // F-5 pre-persist drift gate: refuse agents whose prompts
+        // reference tools that aren't registered for the slot or
+        // declare an `Allowed actions:` list that drifts from the
+        // `trader_output` schema enum. See
+        // `crates/xvision-engine/src/agents/validator.rs`.
+        validate_prompt_schema_slots(&new.slots).map_err(PromptSchemaDriftError::into_anyhow)?;
+
         let id = Ulid::new().to_string();
         let now = Utc::now().to_rfc3339();
         let tags_json = serde_json::to_string(&new.tags).context("serialize tags")?;
@@ -156,6 +164,10 @@ impl AgentStore {
                 .await?;
         }
         if let Some(slots) = patch.slots {
+            // F-5 pre-persist drift gate (same rules as `create`).
+            // Validate before deleting the old slot rows so a rejected
+            // update leaves the previous version intact.
+            validate_prompt_schema_slots(&slots).map_err(PromptSchemaDriftError::into_anyhow)?;
             // Replace all slots — simpler than diffing in v1.
             sqlx::query("DELETE FROM agent_slots WHERE agent_id = ?")
                 .bind(agent_id)

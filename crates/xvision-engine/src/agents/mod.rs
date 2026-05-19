@@ -12,6 +12,7 @@ pub mod model;
 pub mod store;
 pub mod templates;
 pub mod validate;
+pub mod validator;
 
 #[cfg(test)]
 mod max_tokens_resolution;
@@ -25,3 +26,7 @@ pub use xvision_core::providers::{lookup_model, ModelClass, ModelMetadata};
 pub use store::{AgentStore, ListFilter, NewAgent, UpdateAgent};
 pub use templates::{builtin_templates, AgentTemplate};
 pub use validate::{validate_agent, Severity, ValidationDiagnostic};
+pub use validator::{
+    lint_agents, validate_prompt_schema, validate_prompt_schema_slots, LintFinding,
+    PromptSchemaDriftError, ACTION_SCHEMA_ENUM,
+};
