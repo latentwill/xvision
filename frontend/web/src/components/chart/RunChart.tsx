@@ -4,6 +4,7 @@ import {
   CrosshairMode,
   createChart,
   type IChartApi,
+  type Logical,
   type LogicalRange,
   type MouseEventParams,
   type UTCTimestamp,
@@ -93,6 +94,32 @@ function applyLogicalRange(charts: IChartApi[], range: LogicalRange) {
   });
 }
 
+function applyRangePreset(
+  charts: IChartApi[],
+  range: RangePreset,
+  len: number,
+  granularity: string,
+) {
+  if (len <= 0 || charts.length === 0) return;
+  if (range === "All") {
+    charts.forEach((chart) => fitChartContent(chart));
+    return;
+  }
+
+  const barSeconds = granularitySeconds(granularity) ?? 60 * 60;
+  const rangeSeconds =
+    range === "1d" ? 86_400 :
+    range === "1w" ? 7 * 86_400 :
+    range === "1m" ? 30 * 86_400 :
+    90 * 86_400;
+  const count = Math.max(1, Math.ceil(rangeSeconds / barSeconds));
+  applyLogicalRange(charts, {
+    from: Math.max(0, len - count) as Logical,
+    to: (len + 2) as Logical,
+  });
+  charts.forEach((chart) => applyVerticalAutoScale(chart));
+}
+
 function applyAnchorLogicalRangeToPeers(
   charts: IChartApi[],
   anchorChart: IChartApi,
@@ -107,6 +134,47 @@ function applyAnchorLogicalRangeToPeers(
 
 function sameLogicalRange(a: LogicalRange | null, b: LogicalRange | null) {
   return a?.from === b?.from && a?.to === b?.to;
+}
+
+function granularitySeconds(granularity: string): number | null {
+  const normalized = formatGranularity(granularity);
+  const match = normalized.match(/^(\d+)(m|h|d|w|mo)$/);
+  if (!match) return null;
+  const amount = Number(match[1]);
+  switch (match[2]) {
+    case "m":
+      return amount * 60;
+    case "h":
+      return amount * 60 * 60;
+    case "d":
+      return amount * 86_400;
+    case "w":
+      return amount * 7 * 86_400;
+    case "mo":
+      return amount * 30 * 86_400;
+    default:
+      return null;
+  }
+}
+
+function formatGranularity(granularity: string): string {
+  const legacy = granularity.match(/^(Minute|Hour|Day|Week|Month)(\d+)$/);
+  if (!legacy) return granularity;
+  const amount = legacy[2];
+  switch (legacy[1]) {
+    case "Minute":
+      return `${amount}m`;
+    case "Hour":
+      return `${amount}h`;
+    case "Day":
+      return `${amount}d`;
+    case "Week":
+      return `${amount}w`;
+    case "Month":
+      return `${amount}mo`;
+    default:
+      return granularity;
+  }
 }
 
 function enterFollowMode(charts: IChartApi[]) {
@@ -254,6 +322,7 @@ export function RunChart({
   const buildVersionRef = useRef(0);
   const followTransitionBuildVersionRef = useRef<number | null>(null);
   const lastSynchronizedRangeRef = useRef<LogicalRange | null>(null);
+  const previousRangeRef = useRef<RangePreset>("All");
   const subRef = useRef<HTMLDivElement>(null);
   const eqRef = useRef<HTMLDivElement>(null);
   const ddRef = useRef<HTMLDivElement>(null);
@@ -278,6 +347,18 @@ export function RunChart({
       enterFollowMode(chartSetRef.current);
     }
   }, [payload, layers, activeTheme]);
+
+  useEffect(() => {
+    const rangeChanged = previousRangeRef.current !== range;
+    previousRangeRef.current = range;
+    if (follow && range === "All" && !rangeChanged) return;
+    applyRangePreset(
+      chartSetRef.current,
+      range,
+      payload.bars.length,
+      payload.granularity,
+    );
+  }, [range, payload.bars.length, payload.granularity, follow]);
 
   useEffect(() => {
     if (!priceRef.current) return;

@@ -21,6 +21,7 @@ const chartMocks = vi.hoisted(() => ({
     emitClick: (param: { hoveredObjectId?: unknown }) => void;
     timeScaleApi: {
       scrollToRealTime: ReturnType<typeof vi.fn>;
+      fitContent: ReturnType<typeof vi.fn>;
       getVisibleLogicalRange: ReturnType<typeof vi.fn>;
       setVisibleLogicalRange: ReturnType<typeof vi.fn>;
     };
@@ -276,6 +277,55 @@ describe("RunChart", () => {
     expect(screen.getByText("row")).toBeInTheDocument();
   });
 
+  it("applies range preset buttons to every current chart viewport", () => {
+    const bars = Array.from({ length: 48 }, (_, index) => ({
+      time: 1_700_000_000 + index * 3_600,
+      open: 100 + index,
+      high: 101 + index,
+      low: 99 + index,
+      close: 100.5 + index,
+      volume: 10,
+    }));
+    const indicatorPoints = bars.map((bar) => ({
+      time: bar.time,
+      value: bar.close,
+    }));
+    const payload = {
+      ...(samplePayload as any),
+      granularity: "1h",
+      bars,
+      indicators: {
+        ...(samplePayload as any).indicators,
+        sma_20: indicatorPoints,
+        sma_50: indicatorPoints,
+        sma_200: indicatorPoints,
+        rsi_14: indicatorPoints,
+      },
+    };
+
+    render(<RunChart payload={payload} follow={false} />);
+    const charts = [...chartMocks.createdCharts];
+
+    charts.forEach((chart) => chart.timeScaleApi.setVisibleLogicalRange.mockClear());
+    fireEvent.click(screen.getByRole("button", { name: "1d" }));
+
+    charts.forEach((chart) => {
+      expect(chart.timeScaleApi.setVisibleLogicalRange).toHaveBeenCalledWith({
+        from: 24,
+        to: 50,
+      });
+    });
+
+    charts.forEach((chart) => chart.timeScaleApi.fitContent.mockClear());
+    chartMocks.fitContent.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "All" }));
+
+    charts.forEach((chart) => {
+      expect(chart.timeScaleApi.fitContent).toHaveBeenCalledTimes(1);
+    });
+    expect(chartMocks.fitContent).toHaveBeenCalledTimes(charts.length);
+  });
+
   it("persists layer toggles to localStorage", () => {
     const key = storageKey("run-detail");
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -352,6 +402,7 @@ describe("RunChart", () => {
     const { rerender } = render(<RunChart payload={payload} follow />);
     const createChartCallsBeforePayloadUpdate =
       chartMocks.createChart.mock.calls.length;
+    chartMocks.fitContent.mockClear();
 
     rerender(
       <RunChart
@@ -381,6 +432,7 @@ describe("RunChart", () => {
     expect(chartMocks.createChart.mock.calls.length).toBe(
       createChartCallsBeforePayloadUpdate,
     );
+    expect(chartMocks.fitContent).not.toHaveBeenCalled();
   });
 
   it("restores the frozen visible logical range across rebuilds after follow mode is disabled", () => {
