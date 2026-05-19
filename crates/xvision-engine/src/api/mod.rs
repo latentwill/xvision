@@ -52,6 +52,8 @@ const MIGRATION_019_AGENT_SLOT_PROMPT_VERSION: &str =
 const MIGRATION_020_AGENT_SLOT_INPUTS_POLICY: &str =
     include_str!("../../migrations/020_agent_slot_inputs_policy.sql");
 const MIGRATION_021_EVAL_BATCHES: &str = include_str!("../../migrations/021_eval_batches.sql");
+const MIGRATION_022_EVAL_RUNS_AGENTS_AGENT_ID: &str =
+    include_str!("../../migrations/022_eval_runs_agents_agent_id.sql");
 
 /// Map of cache_key → per-key mutex used by `eval::bars::load_bars` to
 /// serialize concurrent misses for the same window. Kept inside an outer
@@ -161,6 +163,7 @@ impl ApiContext {
         migrate_agent_slot_prompt_version(&pool).await?;
         migrate_agent_slot_inputs_policy(&pool).await?;
         migrate_eval_batches(&pool).await?;
+        migrate_eval_runs_agents_agent_id(&pool).await?;
 
         let ctx = Self::new(pool, actor, xvn_home.to_path_buf());
 
@@ -200,10 +203,7 @@ impl ApiContext {
     /// Builder override for the eval launch-concurrency gate. Tests use
     /// this to pin a known permit count (e.g. `LaunchConcurrencyGate::new(1)`)
     /// rather than relying on the default-from-env construction.
-    pub fn with_launch_gate(
-        mut self,
-        gate: Arc<crate::eval::concurrency::LaunchConcurrencyGate>,
-    ) -> Self {
+    pub fn with_launch_gate(mut self, gate: Arc<crate::eval::concurrency::LaunchConcurrencyGate>) -> Self {
         self.launch_gate = gate;
         self
     }
@@ -503,6 +503,20 @@ async fn migrate_eval_batches(pool: &SqlitePool) -> ApiResult<()> {
             .execute(pool)
             .await?;
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_eval_runs_batch ON eval_runs(batch_id)")
+            .execute(pool)
+            .await?;
+    }
+
+    Ok(())
+}
+
+/// Apply migration 022 (F-11): add the long-lived workspace
+/// `agents_agent_id` column to `eval_runs`. Gated on column probe for
+/// idempotence on existing databases; same pattern as the other
+/// `migrate_*` helpers in this module.
+async fn migrate_eval_runs_agents_agent_id(pool: &SqlitePool) -> ApiResult<()> {
+    if !table_has_column(pool, "eval_runs", "agents_agent_id").await? {
+        sqlx::query(MIGRATION_022_EVAL_RUNS_AGENTS_AGENT_ID)
             .execute(pool)
             .await?;
     }

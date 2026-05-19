@@ -233,12 +233,7 @@ mod tests {
     #[test]
     fn eight_holds_is_eligible() {
         let cfg = EarlyStopConfig::default();
-        let plan = should_skip_next_decision(
-            &vec![Action::Hold; 8],
-            &convictions(8, 0.05),
-            true,
-            &cfg,
-        );
+        let plan = should_skip_next_decision(&vec![Action::Hold; 8], &convictions(8, 0.05), true, &cfg);
         assert!(plan.is_some());
     }
 

@@ -52,7 +52,8 @@ async fn api_context_exposes_launch_gate_by_default() {
     // construction).
     let g = timeout(
         Duration::from_secs(1),
-        ctx.launch_gate.acquire("openrouter", "google/gemini-3.1-flash-lite"),
+        ctx.launch_gate
+            .acquire("openrouter", "google/gemini-3.1-flash-lite"),
     )
     .await
     .expect("default gate must admit a single acquire");
@@ -105,9 +106,7 @@ async fn ten_acquires_against_same_key_cap_at_four_in_flight() {
         let handle = tokio::spawn(async move {
             // Acquire on the foreground (as start_run does), then move
             // the guard into the simulated background task body.
-            let permit = gate
-                .acquire("openrouter", "google/gemini-3.1-flash-lite")
-                .await;
+            let permit = gate.acquire("openrouter", "google/gemini-3.1-flash-lite").await;
             tokio::spawn(async move {
                 let _permit = permit; // held for run lifetime
                 let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;

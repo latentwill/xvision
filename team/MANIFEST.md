@@ -71,12 +71,17 @@ unambiguous.
 | 017 | eval-findings-review-columns         | merged        |
 | 018 | agent-run-observability              | merged        |
 | 019 | agent-slot-prompt-version            | merged        |
-| 020 | eval-causal-input-sanitization (F-6) | in flight     |
-| 021 | eval-batch-persistence               | in flight     |
+| 020 | eval-causal-input-sanitization (F-6) | merged        |
+| 021 | eval-batch-persistence               | merged        |
+| 022 | eval-bundle-agent-id-map (F-11)      | in flight     |
 
-The next available number is **022**. The conductor must approve and
+The next available number is **023**. The conductor must approve and
 reserve in this table before a track touches
 `crates/xvision-engine/migrations/`.
+
+Note 2026-05-19: numbers 006, 008, 009 were never landed (collapsed during
+the QA waves); the on-disk sequence skips them. New claims continue from
+the highest filed-and-merged value.
 
 ## Historical context
 

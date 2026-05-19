@@ -177,7 +177,10 @@ async fn flat_degeneracy_triggers_inherited_skip_window() {
         .await
         .expect("backtest should complete");
 
-    assert_eq!(metrics.n_decisions, 12, "all 12 bars should produce decision rows");
+    assert_eq!(
+        metrics.n_decisions, 12,
+        "all 12 bars should produce decision rows"
+    );
 
     // 8 real model calls; 4 inherited (no call).
     assert_eq!(
@@ -222,7 +225,10 @@ async fn flat_degeneracy_triggers_inherited_skip_window() {
     assert_eq!(equity.len(), 12, "every bar emits an equity sample");
     let expected_bars = synthetic_bars(12);
     for (i, (ts, _eq)) in equity.iter().enumerate() {
-        assert_eq!(*ts, expected_bars[i].timestamp, "equity sample {i} must align with bar {i}");
+        assert_eq!(
+            *ts, expected_bars[i].timestamp,
+            "equity sample {i} must align with bar {i}"
+        );
     }
 }
 

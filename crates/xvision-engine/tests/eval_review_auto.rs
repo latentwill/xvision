@@ -10,8 +10,8 @@ use sqlx::{Row, SqlitePool};
 use ulid::Ulid;
 use xvision_engine::eval::findings::{Finding, Severity};
 use xvision_engine::eval::review::{
-    fire_auto_review, run_auto_review, AutoReviewOptions, AutoReviewOutcome, ReviewStatus,
-    ReviewVerdict, AUTO_AGENT_PROFILE_ID,
+    fire_auto_review, run_auto_review, AutoReviewOptions, AutoReviewOutcome, ReviewStatus, ReviewVerdict,
+    AUTO_AGENT_PROFILE_ID,
 };
 use xvision_engine::eval::{MetricsSummary, Run, RunMode, RunStatus, RunStore};
 
@@ -33,11 +33,7 @@ async fn pool_with_migrations() -> SqlitePool {
 }
 
 async fn finalized_run(store: &RunStore) -> Run {
-    let mut r = Run::new_queued(
-        "agent-h".into(),
-        "crypto-bull-q1-2025".into(),
-        RunMode::Backtest,
-    );
+    let mut r = Run::new_queued("agent-h".into(), "crypto-bull-q1-2025".into(), RunMode::Backtest);
     r.status = RunStatus::Queued;
     store.create(&r).await.unwrap();
     let metrics = MetricsSummary {
@@ -83,9 +79,24 @@ async fn auto_review_writes_one_row_with_expected_verdict_and_score_band() {
 
     // Two warnings, one info → expect "weak" with score in [26, 50].
     for f in [
-        finding(&run.id, Severity::Warning, "underperformance", "Win rate below threshold."),
-        finding(&run.id, Severity::Warning, "win_rate_anomaly", "Streaky win pattern."),
-        finding(&run.id, Severity::Info, "regime_fit_mismatch", "Bull regime mismatch."),
+        finding(
+            &run.id,
+            Severity::Warning,
+            "underperformance",
+            "Win rate below threshold.",
+        ),
+        finding(
+            &run.id,
+            Severity::Warning,
+            "win_rate_anomaly",
+            "Streaky win pattern.",
+        ),
+        finding(
+            &run.id,
+            Severity::Info,
+            "regime_fit_mismatch",
+            "Bull regime mismatch.",
+        ),
     ] {
         store.record_finding(&f).await.unwrap();
     }
@@ -172,12 +183,7 @@ async fn auto_review_promising_when_only_info_findings() {
 
     for _ in 0..2 {
         store
-            .record_finding(&finding(
-                &run.id,
-                Severity::Info,
-                "observation",
-                "Noted a thing.",
-            ))
+            .record_finding(&finding(&run.id, Severity::Info, "observation", "Noted a thing."))
             .await
             .unwrap();
     }
@@ -188,10 +194,7 @@ async fn auto_review_promising_when_only_info_findings() {
     match outcome {
         AutoReviewOutcome::Inserted { verdict, score, .. } => {
             assert_eq!(verdict, ReviewVerdict::Promising);
-            assert!(
-                (75..=100).contains(&score),
-                "score {score} not in promising band"
-            );
+            assert!((75..=100).contains(&score), "score {score} not in promising band");
         }
         _ => panic!("expected Inserted"),
     }
@@ -276,12 +279,7 @@ async fn auto_review_respects_explicit_agent_profile_id() {
     let run = finalized_run(&store).await;
 
     store
-        .record_finding(&finding(
-            &run.id,
-            Severity::Info,
-            "observation",
-            "fyi.",
-        ))
+        .record_finding(&finding(&run.id, Severity::Info, "observation", "fyi."))
         .await
         .unwrap();
 
