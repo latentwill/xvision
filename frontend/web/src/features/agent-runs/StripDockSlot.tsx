@@ -66,6 +66,14 @@ function fmtElapsedSec(totalSec: number): string {
 }
 
 /**
+ * How long a freshly-failed sibling should stay in the capsule after its
+ * `completed_at` timestamp. Past this window the row drops out — the
+ * operator has either acknowledged it or navigated away. Keeps the
+ * capsule from accumulating every historical failure on the cluster.
+ */
+const RECENT_FAILURE_WINDOW_MS = 120_000;
+
+/**
  * Compute the focused-row "current span" chip from the trace-dock streaming
  * slice while live. Mirrors the legacy `useLiveActiveSpanChip` hook so the
  * capsule keeps the same active-span behavior as the old strip.
@@ -126,15 +134,40 @@ export function StripDockSlot() {
   // to "post-hoc" the moment status leaves the inflight set).
   const isLive = q.data?.summary.status === "running" && mode === "live";
 
-  // Concurrent siblings — other in-flight eval-runs on the cluster. Only
-  // polled while the capsule is mounted (i.e. there's a focused run). We
-  // include the focused eval-run-id in the dedupe key so the focused row
-  // never appears as its own sibling.
+  // Concurrent siblings — other eval-runs of interest on the cluster.
+  //
+  // Scope is intentionally eval-only: we require the focused agent-run to
+  // be linked to an eval-run (`financial_eval_id`) before polling or
+  // rendering any siblings. Live-strategy multi-run observability is a
+  // separate problem with a different grouping key and is deferred — the
+  // capsule simply renders a single row when there's no eval link.
+  //
+  // We poll two slices of the eval-runs list and merge them:
+  //   * `running`  — currently in flight, the bread-and-butter sibling set
+  //   * `failed`   — pulled so freshly-errored siblings can auto-promote
+  //                  and force-open the capsule. Without this slice the
+  //                  errored eval would drop out of the running set on
+  //                  failure and never surface in the capsule, defeating
+  //                  the design's auto-open-on-error behavior.
+  //
+  // The failed slice is recency-filtered client-side to runs that
+  // completed within the last `RECENT_FAILURE_WINDOW_MS`, so we don't
+  // render every historical failure ever recorded on the cluster.
+  // Queued runs are NOT polled — they aren't running concurrently with
+  // the focused eval, just waiting; surfacing them adds noise without
+  // changing operator action.
   const focusedEvalId = q.data?.summary.financial_eval_id ?? null;
-  const siblingsQ = useQuery({
-    queryKey: [...evalKeys.runs({ status: "running" }), "capsule-siblings"] as const,
+  const runningQ = useQuery({
+    queryKey: [...evalKeys.runs({ status: "running" }), "capsule-siblings-running"] as const,
     queryFn: () => listRuns({ status: "running" }),
-    enabled: !!activeRunId,
+    enabled: !!focusedEvalId,
+    refetchInterval: 4000,
+    staleTime: 2000,
+  });
+  const failedQ = useQuery({
+    queryKey: [...evalKeys.runs({ status: "failed" }), "capsule-siblings-failed"] as const,
+    queryFn: () => listRuns({ status: "failed" }),
+    enabled: !!focusedEvalId,
     refetchInterval: 4000,
     staleTime: 2000,
   });
@@ -145,13 +178,13 @@ export function StripDockSlot() {
   const agentsQ = useQuery({
     queryKey: agentKeys.list(undefined),
     queryFn: () => listAgents(),
-    enabled: !!activeRunId,
+    enabled: !!focusedEvalId,
     staleTime: 60_000,
   });
   const scenariosQ = useQuery({
     queryKey: scenarioKeys.list(undefined),
     queryFn: () => listScenarios(),
-    enabled: !!activeRunId,
+    enabled: !!focusedEvalId,
     staleTime: 60_000,
   });
 
@@ -228,16 +261,31 @@ export function StripDockSlot() {
     currentSpan: liveChip,
   };
 
-  const rawSiblings = siblingsQ.data ?? [];
-  const siblings: EvalCapsuleRow[] = rawSiblings
+  // Merge the polled slices. Siblings are eval-only (gated above), so when
+  // there's no focused eval-link the lists are empty by construction.
+  // `failed` is recency-filtered so we surface freshly-errored siblings
+  // (the auto-promote / auto-open behavior the design promises) without
+  // dragging in historical failures.
+  const nowMs = Date.now();
+  const runningSiblings = runningQ.data ?? [];
+  const failedSiblings = (failedQ.data ?? []).filter((r) => {
+    if (!r.completed_at) return false;
+    const finished = new Date(r.completed_at).getTime();
+    if (!Number.isFinite(finished)) return false;
+    return nowMs - finished <= RECENT_FAILURE_WINDOW_MS;
+  });
+  const siblings: EvalCapsuleRow[] = [...runningSiblings, ...failedSiblings]
     .filter((r) =>
-      // Exclude the focused eval-run from its own sibling list.
+      // Exclude the focused eval-run from its own sibling list. Guarded
+      // above on `focusedEvalId != null`, so the inner branch is the
+      // only one that runs in practice, but we keep the legacy fallback
+      // for safety in case the gate is loosened later.
       focusedEvalId == null ? r.id !== summary.run_id : r.id !== focusedEvalId,
     )
     .map((r) => {
       const sibStartedMs = new Date(r.started_at).getTime();
       const sibElapsedSec = Number.isFinite(sibStartedMs)
-        ? Math.max(0, Math.floor((Date.now() - sibStartedMs) / 1000))
+        ? Math.max(0, Math.floor((nowMs - sibStartedMs) / 1000))
         : 0;
       return {
         id: r.id,
