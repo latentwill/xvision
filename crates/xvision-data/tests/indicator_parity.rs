@@ -775,8 +775,18 @@ fn fib_uptrend_hand_computed() {
     assert_eq!(f.direction, Direction::Up);
     assert!((f.high - 20.0).abs() < 1e-9);
     assert!((f.low - 10.0).abs() < 1e-9);
-    let expected = [17.64, 16.18, 15.00, 13.82, 12.14];
-    for (i, (&(ratio, level), &exp)) in f.levels.iter().zip(expected.iter()).enumerate() {
+    let expected = [
+        (0.236, 17.64),
+        (0.382, 16.18),
+        (0.500, 15.00),
+        (0.618, 13.82),
+        (0.786, 12.14),
+    ];
+    for (i, (&(ratio, level), &(expected_ratio, exp))) in f.levels.iter().zip(expected.iter()).enumerate() {
+        assert!(
+            (ratio - expected_ratio).abs() < 1e-12,
+            "fib_uptrend ratio[{i}]: expected={expected_ratio}, got={ratio}"
+        );
         assert!(
             (level - exp).abs() < 1e-9,
             "fib_uptrend level[{i}] ratio={ratio}: expected={exp:.4}, got={level:.4}"
@@ -802,6 +812,10 @@ fn fib_downtrend_hand_computed() {
     let ratios = [0.236, 0.382, 0.500, 0.618, 0.786];
     for (i, (&(ratio, level), &r)) in f.levels.iter().zip(ratios.iter()).enumerate() {
         let exp = 100.0 - r * span;
+        assert!(
+            (ratio - r).abs() < 1e-12,
+            "fib_downtrend ratio[{i}]: expected={r}, got={ratio}"
+        );
         assert!(
             (level - exp).abs() < 1e-9,
             "fib_downtrend level[{i}] ratio={ratio}: expected={exp:.4}, got={level:.4}"
