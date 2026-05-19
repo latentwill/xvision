@@ -4,13 +4,89 @@
 // still consumed (for provider-catalog tooling / labels), so the lookup
 // behaviour stays under test.
 
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router-dom";
 import {
   autoMaxTokens,
   hasModelMetadata,
   isReasoning,
   lookupModel,
 } from "./modelMetadata";
+import { AgentForm } from "./AgentForm";
+import * as agentsApi from "@/api/agents";
+import * as settingsApi from "@/api/settings";
+
+vi.mock("@/api/agents", async () => {
+  const actual = await vi.importActual<typeof import("@/api/agents")>(
+    "@/api/agents",
+  );
+  return {
+    ...actual,
+    getAgent: vi.fn(),
+    deployedInStrategies: vi.fn(),
+    recentRuns: vi.fn(),
+    createAgent: vi.fn(),
+    updateAgent: vi.fn(),
+    archiveAgent: vi.fn(),
+    validateAgent: vi.fn(),
+  };
+});
+
+vi.mock("@/api/settings", () => ({
+  settingsKeys: {
+    providers: () => ["settings", "providers"],
+  },
+  listProviders: vi.fn(),
+}));
+
+const baseAgent = {
+  agent_id: "agent-1",
+  name: "Server name",
+  description: "Server description",
+  tags: ["server"],
+  slots: [
+    {
+      name: "main",
+      provider: "openrouter",
+      model: "claude-sonnet-4-6",
+      system_prompt: "Follow the plan.",
+      skill_ids: [],
+      max_tokens: null,
+    },
+  ],
+  archived: false,
+  created_at: "2026-05-13T14:52:21Z",
+  updated_at: "2026-05-13T14:52:21Z",
+} satisfies agentsApi.Agent;
+
+function renderAgentForm(agentId = "agent-1") {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const view = render(
+    <MemoryRouter>
+      <QueryClientProvider client={client}>
+        <AgentForm agentId={agentId} />
+      </QueryClientProvider>
+    </MemoryRouter>,
+  );
+  return { client, ...view };
+}
+
+beforeEach(() => {
+  vi.mocked(agentsApi.getAgent).mockResolvedValue(baseAgent);
+  vi.mocked(agentsApi.deployedInStrategies).mockResolvedValue([]);
+  vi.mocked(agentsApi.recentRuns).mockResolvedValue([]);
+  vi.mocked(settingsApi.listProviders).mockResolvedValue({ providers: [] });
+});
+
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 describe("modelMetadata table", () => {
   it("falls back to a non-reasoning default for unknown models", () => {
@@ -64,5 +140,70 @@ describe("modelMetadata table", () => {
     expect(hasModelMetadata("gpt-4.1")).toBe(true);
     expect(hasModelMetadata("acme-co/nightly-7b")).toBe(false);
     expect(hasModelMetadata("")).toBe(false);
+  });
+});
+
+describe("AgentForm edit hydration", () => {
+  it("preserves dirty draft fields when the agent detail query is replaced", async () => {
+    const user = userEvent.setup();
+    const { client } = renderAgentForm();
+
+    const name = await screen.findByLabelText(/^Name$/);
+    expect(name).toHaveValue("Server name");
+
+    await user.clear(name);
+    await user.type(name, "Unsaved draft");
+
+    client.setQueryData(agentsApi.agentKeys.detail("agent-1"), {
+      ...baseAgent,
+      name: "Refetched server name",
+      updated_at: "2026-05-13T15:00:00Z",
+    });
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/^Name$/)).toHaveValue("Unsaved draft");
+    });
+  });
+});
+
+describe("AgentForm cross references", () => {
+  it("shows loading states instead of empty states while cross-reference queries are pending", async () => {
+    vi.mocked(agentsApi.deployedInStrategies).mockReturnValue(
+      new Promise(() => {}),
+    );
+    vi.mocked(agentsApi.recentRuns).mockReturnValue(new Promise(() => {}));
+
+    renderAgentForm();
+
+    expect(await screen.findByText("Loading deployed strategies…")).toBeInTheDocument();
+    expect(screen.getByText("Loading recent runs…")).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Not deployed in any strategy yet/),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/No runs yet/)).not.toBeInTheDocument();
+  });
+
+  it("shows error states instead of empty states when cross-reference queries fail", async () => {
+    vi.mocked(agentsApi.deployedInStrategies).mockRejectedValue(
+      new Error("strategies unavailable"),
+    );
+    vi.mocked(agentsApi.recentRuns).mockRejectedValue(
+      new Error("runs unavailable"),
+    );
+
+    renderAgentForm();
+
+    expect(
+      await screen.findByText(
+        "Couldn't load deployed strategies: strategies unavailable",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Couldn't load recent runs: runs unavailable"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Not deployed in any strategy yet/),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/No runs yet/)).not.toBeInTheDocument();
   });
 });

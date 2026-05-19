@@ -226,9 +226,7 @@ async fn bar_one_seed_carries_warmup_history_when_warmup_provided() {
         .pointer("/market_data/bar_history")
         .and_then(|v| v.as_array())
         .unwrap_or_else(|| {
-            panic!(
-                "expected market_data.bar_history array in bar-1 seed, got: {bar1_payload}",
-            )
+            panic!("expected market_data.bar_history array in bar-1 seed, got: {bar1_payload}",)
         });
     assert!(
         history.len() >= 13,

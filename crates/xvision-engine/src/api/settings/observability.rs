@@ -137,10 +137,7 @@ pub async fn get(ctx: &ApiContext) -> ApiResult<ObservabilityReport> {
 /// redact; hash_only disables stores). TTL / max-payload-bytes are
 /// preserved from disk so an operator who tuned them via the CLI doesn't
 /// lose those tweaks when toggling the headline mode in the UI.
-pub async fn set_mode(
-    ctx: &ApiContext,
-    req: UpdateObservabilityRequest,
-) -> ApiResult<ObservabilityReport> {
+pub async fn set_mode(ctx: &ApiContext, req: UpdateObservabilityRequest) -> ApiResult<ObservabilityReport> {
     let started = Instant::now();
     let path = config_path(ctx);
 
@@ -178,8 +175,7 @@ pub async fn set_mode(
         }
     }
 
-    write_config(&path, &cfg)
-        .map_err(|e| ApiError::Internal(format!("write observability.toml: {e}")))?;
+    write_config(&path, &cfg).map_err(|e| ApiError::Internal(format!("write observability.toml: {e}")))?;
 
     let report = report_from_cfg(&cfg, true);
 
@@ -207,13 +203,7 @@ mod tests {
     async fn test_ctx() -> (ApiContext, TempDir) {
         let tmp = TempDir::new().unwrap();
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-        let ctx = ApiContext::new(
-            pool,
-            Actor::Cli {
-                user: "test".into(),
-            },
-            tmp.path().to_path_buf(),
-        );
+        let ctx = ApiContext::new(pool, Actor::Cli { user: "test".into() }, tmp.path().to_path_buf());
         (ctx, tmp)
     }
 

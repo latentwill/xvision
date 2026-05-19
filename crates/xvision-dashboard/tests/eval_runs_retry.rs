@@ -38,11 +38,7 @@ async fn retry_returns_202_for_completed_source_with_queued_sibling() {
         .unwrap();
     let store = RunStore::new(pool);
 
-    let mut completed = Run::new_queued(
-        "agent-x".into(),
-        "crypto-bull-q1-2025".into(),
-        RunMode::Backtest,
-    );
+    let mut completed = Run::new_queued("agent-x".into(), "crypto-bull-q1-2025".into(), RunMode::Backtest);
     completed.status = RunStatus::Queued;
     store.create(&completed).await.unwrap();
     store
@@ -155,17 +151,11 @@ async fn retry_still_returns_202_for_failed_source_with_queued_sibling() {
         .await
         .unwrap();
 
-    let sibling = Run::new_queued(
-        failed.agent_id.clone(),
-        failed.scenario_id.clone(),
-        failed.mode,
-    );
+    let sibling = Run::new_queued(failed.agent_id.clone(), failed.scenario_id.clone(), failed.mode);
     let sibling_id = sibling.id.clone();
     store.create(&sibling).await.unwrap();
 
-    let response = server
-        .post(&format!("/api/eval/runs/{}/retry", failed.id))
-        .await;
+    let response = server.post(&format!("/api/eval/runs/{}/retry", failed.id)).await;
     response.assert_status(StatusCode::ACCEPTED);
     let body: serde_json::Value = response.json();
     assert_eq!(body["summary"]["id"], sibling_id);

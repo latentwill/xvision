@@ -124,7 +124,11 @@ async fn review_create_get_round_trip() {
     let review = EvalReview::new_queued(run.id.clone(), "reasoning-agent".into());
     store.create_review(&review).await.unwrap();
 
-    let got = store.get_review(&review.id).await.unwrap().expect("review present");
+    let got = store
+        .get_review(&review.id)
+        .await
+        .unwrap()
+        .expect("review present");
     assert_eq!(got.id, review.id);
     assert_eq!(got.eval_run_id, run.id);
     assert_eq!(got.agent_profile_id, "reasoning-agent");
@@ -196,21 +200,11 @@ async fn review_fail_records_error_and_blocks_further_transitions() {
 
     let got = store.get_review(&review.id).await.unwrap().unwrap();
     assert_eq!(got.status, ReviewStatus::Failed);
-    assert_eq!(
-        got.error.as_deref(),
-        Some("provider 'anthropic' returned 500")
-    );
+    assert_eq!(got.error.as_deref(), Some("provider 'anthropic' returned 500"));
 
     // Completing a failed review must not flip it back to completed.
     let revived = store
-        .complete_review(
-            &review.id,
-            ReviewVerdict::Inconclusive,
-            0.0,
-            0,
-            "ignored",
-            "{}",
-        )
+        .complete_review(&review.id, ReviewVerdict::Inconclusive, 0.0, 0, "ignored", "{}")
         .await
         .unwrap();
     assert!(!revived);
@@ -480,14 +474,7 @@ async fn complete_review_accepts_bounds_inclusive() {
     store.create_review(&hi).await.unwrap();
     store.begin_review_running(&hi.id).await.unwrap();
     let ok = store
-        .complete_review(
-            &hi.id,
-            ReviewVerdict::Promising,
-            1.0,
-            100,
-            "high end",
-            "{}",
-        )
+        .complete_review(&hi.id, ReviewVerdict::Promising, 1.0, 100, "high end", "{}")
         .await
         .expect("1.0 / 100 must be accepted");
     assert!(ok);

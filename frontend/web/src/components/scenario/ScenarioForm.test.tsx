@@ -276,6 +276,60 @@ describe("ScenarioForm", () => {
     );
   });
 
+  it("preserves initial linear slippage when the field is not edited", () => {
+    const onSubmit = vi.fn();
+
+    render(
+      <ScenarioForm
+        onSubmit={onSubmit}
+        initial={{
+          ...withDateRange(),
+          venue: { slippage: { model: "linear", bps: 25 } },
+        } as Partial<CreateScenarioRequest>}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "ETH cloned linear slippage" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create →" }));
+
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        venue: expect.objectContaining({
+          slippage: { model: "linear", bps: 25 },
+        }),
+      }),
+    );
+  });
+
+  it("preserves initial none slippage when the field is not edited", () => {
+    const onSubmit = vi.fn();
+
+    render(
+      <ScenarioForm
+        onSubmit={onSubmit}
+        initial={{
+          ...withDateRange(),
+          venue: { slippage: { model: "none" } },
+        } as Partial<CreateScenarioRequest>}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "ETH cloned no slippage" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create →" }));
+
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        venue: expect.objectContaining({
+          slippage: { model: "none" },
+        }),
+      }),
+    );
+  });
+
   // ── q15-scenario-warmup-bars ─────────────────────────────────────────
   // The "Context bars" field is the operator surface for the warmup
   // window. These tests pin: (1) the default value, (2) round-trip

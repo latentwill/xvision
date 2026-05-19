@@ -110,7 +110,9 @@ fn daily_bars(count: usize) -> Vec<Ohlcv> {
 /// the persisted decision count, the metrics-summary decision count,
 /// and the first/last decision timestamps. Single helper so every
 /// parameterized assertion has consistent setup.
-async fn run_backtest_with_bars(bar_count: usize) -> (u32, u32, chrono::DateTime<Utc>, chrono::DateTime<Utc>) {
+async fn run_backtest_with_bars(
+    bar_count: usize,
+) -> (u32, u32, chrono::DateTime<Utc>, chrono::DateTime<Utc>) {
     let store = fresh_store().await;
     #[allow(deprecated)]
     let scenario = canonical_scenarios()
@@ -119,7 +121,11 @@ async fn run_backtest_with_bars(bar_count: usize) -> (u32, u32, chrono::DateTime
         .expect("flash-crash-2024-08 scenario must exist");
     let agent_id = format!("01TESTQADECISIONS{:013}", bar_count);
     let strategy = build_strategy(&agent_id);
-    let mut run = Run::new_queued(strategy.manifest.id.clone(), scenario.id.clone(), RunMode::Backtest);
+    let mut run = Run::new_queued(
+        strategy.manifest.id.clone(),
+        scenario.id.clone(),
+        RunMode::Backtest,
+    );
     store.create(&run).await.unwrap();
 
     let bars = daily_bars(bar_count);
@@ -146,8 +152,14 @@ async fn run_backtest_with_bars(bar_count: usize) -> (u32, u32, chrono::DateTime
 #[tokio::test]
 async fn backtest_n_bars_yields_n_decisions_for_5_bars() {
     let (persisted, summarized, _, _) = run_backtest_with_bars(5).await;
-    assert_eq!(persisted, 5, "5 bars must yield 5 decisions in the decisions table");
-    assert_eq!(summarized, 5, "metrics.n_decisions must agree with persisted count");
+    assert_eq!(
+        persisted, 5,
+        "5 bars must yield 5 decisions in the decisions table"
+    );
+    assert_eq!(
+        summarized, 5,
+        "metrics.n_decisions must agree with persisted count"
+    );
 }
 
 #[tokio::test]
@@ -155,15 +167,24 @@ async fn backtest_n_bars_yields_n_decisions_for_30_bars() {
     // The operator-reported case (2026-05-18). Prior to the
     // qa-decisions-30day-count fix this returned 29.
     let (persisted, summarized, _, _) = run_backtest_with_bars(30).await;
-    assert_eq!(persisted, 30, "30 bars must yield 30 decisions (was 29 before the fix)");
-    assert_eq!(summarized, 30, "metrics.n_decisions must agree with persisted count");
+    assert_eq!(
+        persisted, 30,
+        "30 bars must yield 30 decisions (was 29 before the fix)"
+    );
+    assert_eq!(
+        summarized, 30,
+        "metrics.n_decisions must agree with persisted count"
+    );
 }
 
 #[tokio::test]
 async fn backtest_n_bars_yields_n_decisions_for_100_bars() {
     let (persisted, summarized, _, _) = run_backtest_with_bars(100).await;
     assert_eq!(persisted, 100, "100 bars must yield 100 decisions");
-    assert_eq!(summarized, 100, "metrics.n_decisions must agree with persisted count");
+    assert_eq!(
+        summarized, 100,
+        "metrics.n_decisions must agree with persisted count"
+    );
 }
 
 /// The 1-bar edge case must also honor "N bars → N decisions". The
@@ -173,5 +194,8 @@ async fn backtest_n_bars_yields_n_decisions_for_100_bars() {
 async fn backtest_n_bars_yields_n_decisions_for_1_bar() {
     let (persisted, summarized, _, _) = run_backtest_with_bars(1).await;
     assert_eq!(persisted, 1, "1 bar must yield 1 decision");
-    assert_eq!(summarized, 1, "metrics.n_decisions must agree with persisted count");
+    assert_eq!(
+        summarized, 1,
+        "metrics.n_decisions must agree with persisted count"
+    );
 }

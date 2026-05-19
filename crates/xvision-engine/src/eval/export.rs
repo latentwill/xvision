@@ -337,10 +337,7 @@ fn build_provider_diagnostics(
             },
         },
     };
-    let ran_at = attestation
-        .as_ref()
-        .map(|a| a.ran_at)
-        .unwrap_or(run.started_at);
+    let ran_at = attestation.as_ref().map(|a| a.ran_at).unwrap_or(run.started_at);
 
     let trader_output_failure = run
         .error
@@ -397,7 +394,10 @@ fn single_executable_provider_model(strategy: &Strategy, agents: &[Agent]) -> Op
         .into_iter()
         .flatten()
         {
-            pairs.push(provider_model_pair(slot.provider.as_deref(), slot.model.as_deref())?);
+            pairs.push(provider_model_pair(
+                slot.provider.as_deref(),
+                slot.model.as_deref(),
+            )?);
         }
     } else {
         for agent_ref in &strategy.agents {
@@ -662,8 +662,7 @@ mod roundtrip {
         // Round-trip back into the typed struct — this asserts the
         // Serialize/Deserialize pair is symmetric. Bumps to the shape
         // that break round-trip surface here as a Deserialize error.
-        let decoded: EvalRunExport =
-            serde_json::from_str(&json).expect("deserialize EvalRunExport");
+        let decoded: EvalRunExport = serde_json::from_str(&json).expect("deserialize EvalRunExport");
         assert_eq!(decoded.schema_version, export.schema_version);
         assert_eq!(decoded.decisions.len(), export.decisions.len());
     }
@@ -721,7 +720,10 @@ mod roundtrip {
         match err {
             ApiError::Validation(msg) => {
                 assert!(msg.contains("queued"), "expected status in message, got: {msg}");
-                assert!(msg.contains("terminal"), "expected terminal-only hint, got: {msg}");
+                assert!(
+                    msg.contains("terminal"),
+                    "expected terminal-only hint, got: {msg}"
+                );
             }
             other => panic!("expected Validation, got: {other:?}"),
         }

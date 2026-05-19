@@ -364,7 +364,10 @@ mod span_attributes_tests {
         // Present fields make it through.
         assert_eq!(obj.get("run_id").and_then(|v| v.as_str()), Some("run-1"));
         assert_eq!(obj.get("stage").and_then(|v| v.as_str()), Some("trader"));
-        assert_eq!(obj.get("model").and_then(|v| v.as_str()), Some("claude-sonnet-4.6"));
+        assert_eq!(
+            obj.get("model").and_then(|v| v.as_str()),
+            Some("claude-sonnet-4.6")
+        );
         assert_eq!(obj.get("provider").and_then(|v| v.as_str()), Some("anthropic"));
         // None fields are absent, not serialized as null. Keeps the
         // payload compact and forward-compatible.
@@ -429,10 +432,7 @@ mod span_attributes_tests {
         base.insert("run_id".into(), serde_json::json!("from-base"));
         let merged = attrs.merge_into_object(base);
         let parsed: serde_json::Value = serde_json::from_str(&merged).unwrap();
-        assert_eq!(
-            parsed.get("run_id").and_then(|v| v.as_str()),
-            Some("from-base")
-        );
+        assert_eq!(parsed.get("run_id").and_then(|v| v.as_str()), Some("from-base"));
     }
 
     #[test]

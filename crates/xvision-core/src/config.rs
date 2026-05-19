@@ -604,8 +604,7 @@ mod tests {
             "take_profit_required": true,
             "take_profit_min_rr": 1.5,
         });
-        let err = serde_json::from_value::<RiskStops>(bad)
-            .expect_err("min > max must fail deserialization");
+        let err = serde_json::from_value::<RiskStops>(bad).expect_err("min > max must fail deserialization");
         let msg = err.to_string();
         assert!(msg.contains("stop_loss_min_pct"), "{msg}");
         assert!(msg.contains("stop_loss_max_pct"), "{msg}");
@@ -647,9 +646,7 @@ take_profit_min_rr = 1.5
         let err = load_risk(&path).expect_err("inverted min/max must reject");
         match err {
             ConfigError::Parse { .. } | ConfigError::CrossField { .. } => {}
-            other => panic!(
-                "expected Parse or CrossField error, got {other:?}",
-            ),
+            other => panic!("expected Parse or CrossField error, got {other:?}",),
         }
     }
 

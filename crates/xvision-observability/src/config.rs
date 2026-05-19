@@ -210,41 +210,27 @@ impl ObservabilityConfig {
                 self.retention.mode = mode;
             }
         }
-        if let Ok(v) =
-            std::env::var(format!("{ENV_OVERRIDE_PREFIX}_RETENTION_STORE_PROMPTS"))
-        {
+        if let Ok(v) = std::env::var(format!("{ENV_OVERRIDE_PREFIX}_RETENTION_STORE_PROMPTS")) {
             self.retention.store_prompts = parse_bool(&v);
         }
-        if let Ok(v) =
-            std::env::var(format!("{ENV_OVERRIDE_PREFIX}_RETENTION_STORE_RESPONSES"))
-        {
+        if let Ok(v) = std::env::var(format!("{ENV_OVERRIDE_PREFIX}_RETENTION_STORE_RESPONSES")) {
             self.retention.store_responses = parse_bool(&v);
         }
-        if let Ok(v) =
-            std::env::var(format!("{ENV_OVERRIDE_PREFIX}_RETENTION_STORE_TOOL_INPUTS"))
-        {
+        if let Ok(v) = std::env::var(format!("{ENV_OVERRIDE_PREFIX}_RETENTION_STORE_TOOL_INPUTS")) {
             self.retention.store_tool_inputs = parse_bool(&v);
         }
-        if let Ok(v) = std::env::var(format!(
-            "{ENV_OVERRIDE_PREFIX}_RETENTION_STORE_TOOL_OUTPUTS"
-        )) {
+        if let Ok(v) = std::env::var(format!("{ENV_OVERRIDE_PREFIX}_RETENTION_STORE_TOOL_OUTPUTS")) {
             self.retention.store_tool_outputs = parse_bool(&v);
         }
-        if let Ok(v) =
-            std::env::var(format!("{ENV_OVERRIDE_PREFIX}_RETENTION_REDACT_SECRETS"))
-        {
+        if let Ok(v) = std::env::var(format!("{ENV_OVERRIDE_PREFIX}_RETENTION_REDACT_SECRETS")) {
             self.retention.redact_secrets = parse_bool(&v);
         }
-        if let Ok(v) =
-            std::env::var(format!("{ENV_OVERRIDE_PREFIX}_RETENTION_PAYLOAD_TTL_DAYS"))
-        {
+        if let Ok(v) = std::env::var(format!("{ENV_OVERRIDE_PREFIX}_RETENTION_PAYLOAD_TTL_DAYS")) {
             if let Ok(n) = v.parse::<u64>() {
                 self.retention.payload_ttl_days = n;
             }
         }
-        if let Ok(v) =
-            std::env::var(format!("{ENV_OVERRIDE_PREFIX}_RETENTION_MAX_PAYLOAD_BYTES"))
-        {
+        if let Ok(v) = std::env::var(format!("{ENV_OVERRIDE_PREFIX}_RETENTION_MAX_PAYLOAD_BYTES")) {
             if let Ok(n) = v.parse::<u64>() {
                 self.retention.max_payload_bytes = n;
             }
@@ -314,8 +300,7 @@ mod tests {
     #[test]
     fn missing_file_returns_default() {
         let tmp = TempDir::new().unwrap();
-        let cfg = ObservabilityConfig::load_from_file(&tmp.path().join("nope.toml"))
-            .unwrap();
+        let cfg = ObservabilityConfig::load_from_file(&tmp.path().join("nope.toml")).unwrap();
         assert_eq!(cfg, ObservabilityConfig::default());
     }
 

@@ -282,8 +282,7 @@ mod broker_error_classifier_tests {
 
     #[test]
     fn auth_failed_is_fatal() {
-        let class =
-            classify_broker_error_message("alpaca create_order: 401 Unauthorized: invalid_api_key");
+        let class = classify_broker_error_message("alpaca create_order: 401 Unauthorized: invalid_api_key");
         assert_eq!(class, BrokerErrorClass::AuthFailed);
         assert!(!class.is_recoverable());
     }

@@ -136,13 +136,17 @@ pub fn parse_review_output(text: &str, payload: &ReviewPayload) -> Result<Parsed
     let summary = raw.summary.ok_or(ReviewParseError::MissingField("summary"))?;
     let verdict_str = raw.verdict.ok_or(ReviewParseError::MissingField("verdict"))?;
     let verdict = validate_verdict(&verdict_str)?;
-    let confidence = raw.confidence.ok_or(ReviewParseError::MissingField("confidence"))?;
+    let confidence = raw
+        .confidence
+        .ok_or(ReviewParseError::MissingField("confidence"))?;
     validate_unit_interval("confidence", confidence)?;
     let score_i64 = raw.score.ok_or(ReviewParseError::MissingField("score"))?;
     let score = validate_score(score_i64)?;
     let findings_raw = raw.findings.ok_or(ReviewParseError::MissingField("findings"))?;
     let risks = raw.risks.ok_or(ReviewParseError::MissingField("risks"))?;
-    let next_tests = raw.next_tests.ok_or(ReviewParseError::MissingField("next_tests"))?;
+    let next_tests = raw
+        .next_tests
+        .ok_or(ReviewParseError::MissingField("next_tests"))?;
     let questions = raw.questions.ok_or(ReviewParseError::MissingField("questions"))?;
 
     // Inconclusive verdicts may have zero findings; everything else must
@@ -209,7 +213,9 @@ fn parse_finding(
         .confidence
         .ok_or(ReviewParseError::MissingField("findings[].confidence"))?;
     validate_unit_interval(&format!("findings[{index}].confidence"), confidence)?;
-    let title = raw.title.ok_or(ReviewParseError::MissingField("findings[].title"))?;
+    let title = raw
+        .title
+        .ok_or(ReviewParseError::MissingField("findings[].title"))?;
     let description = raw
         .description
         .ok_or(ReviewParseError::MissingField("findings[].description"))?;
@@ -222,15 +228,14 @@ fn parse_finding(
 
     let mut evidence = Vec::with_capacity(evidence_raw.len());
     for e in evidence_raw {
-        let kind = e.kind.ok_or(ReviewParseError::MissingField("findings[].evidence[].kind"))?;
+        let kind = e
+            .kind
+            .ok_or(ReviewParseError::MissingField("findings[].evidence[].kind"))?;
         let reference = e
             .reference
             .ok_or(ReviewParseError::MissingField("findings[].evidence[].reference"))?;
         if !payload.valid_evidence_refs.contains(&reference) {
-            return Err(ReviewParseError::UngroundedEvidence {
-                index,
-                reference,
-            });
+            return Err(ReviewParseError::UngroundedEvidence { index, reference });
         }
         evidence.push(EvidenceRef { kind, reference });
     }
@@ -314,8 +319,8 @@ fn slice_json_object(text: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::eval::review::AgentProfile;
     use crate::eval::review::payload::build_review_payload;
+    use crate::eval::review::AgentProfile;
     use crate::eval::run::{MetricsSummary, Run, RunMode, RunStatus};
     use crate::eval::store::DecisionRow;
     use chrono::{TimeZone, Utc};
@@ -410,34 +415,40 @@ mod tests {
         let payload = fixture_payload();
         let response = well_formed_response("metric:invented");
         let err = parse_review_output(&response, &payload).unwrap_err();
-        assert!(matches!(err, ReviewParseError::UngroundedEvidence { .. }), "got: {err:?}");
+        assert!(
+            matches!(err, ReviewParseError::UngroundedEvidence { .. }),
+            "got: {err:?}"
+        );
     }
 
     #[test]
     fn rejects_unknown_verdict() {
         let payload = fixture_payload();
-        let mut r: serde_json::Value =
-            serde_json::from_str(&well_formed_response("metric:sharpe")).unwrap();
+        let mut r: serde_json::Value = serde_json::from_str(&well_formed_response("metric:sharpe")).unwrap();
         r["verdict"] = serde_json::json!("amazing");
         let err = parse_review_output(&r.to_string(), &payload).unwrap_err();
-        assert!(matches!(err, ReviewParseError::InvalidField { .. }), "got: {err:?}");
+        assert!(
+            matches!(err, ReviewParseError::InvalidField { .. }),
+            "got: {err:?}"
+        );
     }
 
     #[test]
     fn rejects_score_out_of_range() {
         let payload = fixture_payload();
-        let mut r: serde_json::Value =
-            serde_json::from_str(&well_formed_response("metric:sharpe")).unwrap();
+        let mut r: serde_json::Value = serde_json::from_str(&well_formed_response("metric:sharpe")).unwrap();
         r["score"] = serde_json::json!(150);
         let err = parse_review_output(&r.to_string(), &payload).unwrap_err();
-        assert!(matches!(err, ReviewParseError::InvalidField { .. }), "got: {err:?}");
+        assert!(
+            matches!(err, ReviewParseError::InvalidField { .. }),
+            "got: {err:?}"
+        );
     }
 
     #[test]
     fn rejects_findings_count_outside_3_to_10_for_non_inconclusive() {
         let payload = fixture_payload();
-        let mut r: serde_json::Value =
-            serde_json::from_str(&well_formed_response("metric:sharpe")).unwrap();
+        let mut r: serde_json::Value = serde_json::from_str(&well_formed_response("metric:sharpe")).unwrap();
         r["findings"] = serde_json::json!([finding_obj("metric:sharpe")]);
         let err = parse_review_output(&r.to_string(), &payload).unwrap_err();
         assert!(matches!(err, ReviewParseError::FindingsCountInvalid { count: 1 }));
@@ -446,8 +457,7 @@ mod tests {
     #[test]
     fn allows_empty_findings_when_inconclusive() {
         let payload = fixture_payload();
-        let mut r: serde_json::Value =
-            serde_json::from_str(&well_formed_response("metric:sharpe")).unwrap();
+        let mut r: serde_json::Value = serde_json::from_str(&well_formed_response("metric:sharpe")).unwrap();
         r["verdict"] = serde_json::json!("inconclusive");
         r["findings"] = serde_json::json!([]);
         r["risks"] = serde_json::json!([]);
@@ -469,8 +479,7 @@ mod tests {
     #[test]
     fn missing_required_field_is_an_error() {
         let payload = fixture_payload();
-        let mut r: serde_json::Value =
-            serde_json::from_str(&well_formed_response("metric:sharpe")).unwrap();
+        let mut r: serde_json::Value = serde_json::from_str(&well_formed_response("metric:sharpe")).unwrap();
         r.as_object_mut().unwrap().remove("summary");
         let err = parse_review_output(&r.to_string(), &payload).unwrap_err();
         assert!(matches!(err, ReviewParseError::MissingField("summary")));

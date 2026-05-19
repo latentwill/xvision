@@ -143,8 +143,7 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
             role: "user".into(),
             content: vec![ContentBlock::ToolResult {
                 tool_use_id,
-                content: serde_json::to_string(&feedback)
-                    .unwrap_or_else(|_| "{}".to_string()),
+                content: serde_json::to_string(&feedback).unwrap_or_else(|_| "{}".to_string()),
                 is_error: Some(true),
             }],
         });
@@ -238,17 +237,10 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
         // HashOnly retention the emitter never reads the bytes, so
         // the work is wasted by ~one clone per dispatch — acceptable
         // tradeoff vs. routing the request back through the emitter.
-        let prompt_for_blob: Option<crate::agent::llm::LlmRequest> =
-            input.obs.as_ref().map(|_| req.clone());
+        let prompt_for_blob: Option<crate::agent::llm::LlmRequest> = input.obs.as_ref().map(|_| req.clone());
         if let Some(obs) = input.obs.as_ref() {
-            obs.emit_model_call_started(
-                &span_id,
-                None,
-                &provider_str,
-                &model_str,
-                Some(&input.slot.role),
-            )
-            .await;
+            obs.emit_model_call_started(&span_id, None, &provider_str, &model_str, Some(&input.slot.role))
+                .await;
         }
 
         let resp = match input.dispatch.complete(req).await {
@@ -296,8 +288,7 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
         // counts, just without raw text.
         if let Some(obs) = input.obs.as_ref() {
             if !assistant_text.is_empty() {
-                obs.emit_assistant_text_delta(&span_id, &assistant_text)
-                    .await;
+                obs.emit_assistant_text_delta(&span_id, &assistant_text).await;
             }
         }
         if let Some(obs) = input.obs.as_ref() {
@@ -376,11 +367,10 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
                 obs.emit_tool_validate_input(&fresh_span_id(), None, &tu_name)
                     .await;
             }
-            let (content, is_error) =
-                match tool_call::invoke(&tu_name, tu_input, input.tools.clone()).await {
-                    Ok(s) => (s, None),
-                    Err(e) => (format!("tool error: {e}"), Some(true)),
-                };
+            let (content, is_error) = match tool_call::invoke(&tu_name, tu_input, input.tools.clone()).await {
+                Ok(s) => (s, None),
+                Err(e) => (format!("tool error: {e}"), Some(true)),
+            };
             if let Some(obs) = input.obs.as_ref() {
                 obs.emit_tool_validate_output(&fresh_span_id(), None, &tu_name)
                     .await;

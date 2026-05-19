@@ -9,9 +9,7 @@ use std::sync::Mutex;
 use tempfile::TempDir;
 use tracing::subscriber::with_default;
 use tracing_subscriber::fmt::MakeWriter;
-use xvision_observability::{
-    resolve_retention, CliOverrides, RetentionMode, Source, ENV_OVERRIDE_PREFIX,
-};
+use xvision_observability::{resolve_retention, CliOverrides, RetentionMode, Source, ENV_OVERRIDE_PREFIX};
 
 const MODE_KEY: &str = "XVISION_OBSERVABILITY_RETENTION";
 const TTL_KEY: &str = "XVISION_OBSERVABILITY_RETENTION_PAYLOAD_TTL_DAYS";

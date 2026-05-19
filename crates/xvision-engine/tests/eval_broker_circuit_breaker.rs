@@ -44,9 +44,7 @@ use xvision_engine::strategies::risk::RiskPreset;
 use xvision_engine::strategies::slot::LLMSlot;
 use xvision_engine::strategies::Strategy;
 use xvision_engine::tools::ToolRegistry;
-use xvision_execution::broker_surface::{
-    BrokerSurface, OrderConfirmation, OrderRequest,
-};
+use xvision_execution::broker_surface::{BrokerSurface, OrderConfirmation, OrderRequest};
 
 async fn pool_with_migration() -> SqlitePool {
     let pool = SqlitePool::connect(":memory:").await.unwrap();
@@ -246,16 +244,14 @@ async fn harness_with_script(
     let strategy = minimal_strategy();
     let scenario = six_hour_scenario();
     let executor = PaperExecutor::with_bars(broker, bars_for(&scenario));
-    let run = Run::new_queued(
-        "test-strategy-hash".into(),
-        scenario.id.clone(),
-        RunMode::Paper,
-    );
+    let run = Run::new_queued("test-strategy-hash".into(), scenario.id.clone(), RunMode::Paper);
     store.create(&run).await.unwrap();
     let canned = r#"{"action":"long_open","conviction":0.6,"justification":"keep buying"}"#;
     let dispatch: Arc<dyn LlmDispatch> = Arc::new(MockDispatch::echo(canned));
     let tools = Arc::new(ToolRegistry::empty());
-    (scripted, executor, store, run, strategy, scenario, dispatch, tools)
+    (
+        scripted, executor, store, run, strategy, scenario, dispatch, tools,
+    )
 }
 
 /// Three consecutive identical `broker_min_order_size` rejections must
@@ -461,11 +457,7 @@ async fn hold_between_rejections_resets_strike_counter() {
     let strategy = minimal_strategy();
     let scenario = six_hour_scenario();
     let executor = PaperExecutor::with_bars(broker, bars_for(&scenario));
-    let mut run = Run::new_queued(
-        "test-strategy-hash".into(),
-        scenario.id.clone(),
-        RunMode::Paper,
-    );
+    let mut run = Run::new_queued("test-strategy-hash".into(), scenario.id.clone(), RunMode::Paper);
     store.create(&run).await.unwrap();
 
     let long_open = r#"{"action":"long_open","conviction":0.6,"justification":"buy"}"#;

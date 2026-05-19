@@ -20,9 +20,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use clap::{Args, ValueEnum};
 use xvision_core::config::{self, ProviderEntry, ProviderKind};
-use xvision_engine::agent::llm::{
-    AnthropicDispatch, LlmDispatch, MockDispatch, OpenaiCompatDispatch,
-};
+use xvision_engine::agent::llm::{AnthropicDispatch, LlmDispatch, MockDispatch, OpenaiCompatDispatch};
 use xvision_engine::api::{scenario as api_scenario, ApiContext, ApiError};
 use xvision_engine::eval::review::{self, ReviewError, ReviewScenarioSummary, ReviewStatus};
 use xvision_engine::eval::store::RunStore;
@@ -94,9 +92,7 @@ pub async fn run_review_cmd(args: ReviewArgs) -> CliResult<()> {
                 source: anyhow::anyhow!("list reviews for {}: {e}", args.run_id),
             })?
             .into_iter()
-            .find(|r| {
-                r.agent_profile_id == args.agent && !matches!(r.status, ReviewStatus::Failed)
-            })
+            .find(|r| r.agent_profile_id == args.agent && !matches!(r.status, ReviewStatus::Failed))
     };
 
     let outcome_id = if let Some(prior) = existing {
@@ -121,21 +117,15 @@ pub async fn run_review_cmd(args: ReviewArgs) -> CliResult<()> {
                 source: anyhow::anyhow!("agent profile `{}` is disabled", args.agent),
             });
         }
-        let dispatch = build_dispatch_for_profile(&ctx, &profile.provider)
-            .map_err(|e| api_to_cli("eval review", e))?;
+        let dispatch =
+            build_dispatch_for_profile(&ctx, &profile.provider).map_err(|e| api_to_cli("eval review", e))?;
         // Resolve scenario metadata so the payload carries asset /
         // granularity / time-window context (the engine docstring asks
         // the caller to provide this when available).
         let scenario_summary = resolve_scenario_summary(&ctx, &args.run_id).await;
-        let outcome = review::run_review(
-            &store,
-            dispatch,
-            &args.run_id,
-            &profile.id,
-            scenario_summary,
-        )
-        .await
-        .map_err(map_review_error)?;
+        let outcome = review::run_review(&store, dispatch, &args.run_id, &profile.id, scenario_summary)
+            .await
+            .map_err(map_review_error)?;
         outcome.review_id
     };
 
@@ -213,13 +203,7 @@ fn print_human(out: &CliReviewOutput) {
         for (i, f) in out.findings.iter().enumerate() {
             let kind = f.review_type.as_deref().unwrap_or(f.kind.as_str());
             let title = f.title.as_deref().unwrap_or(f.summary.as_str());
-            println!(
-                "  {:>2}. [{}/{}] {}",
-                i + 1,
-                kind,
-                f.severity.as_str(),
-                title
-            );
+            println!("  {:>2}. [{}/{}] {}", i + 1, kind, f.severity.as_str(), title);
             if let Some(desc) = f.description.as_deref() {
                 println!("      {desc}");
             }
@@ -241,10 +225,7 @@ fn print_human(out: &CliReviewOutput) {
 /// Duplicated with the dashboard route handler. A future track that
 /// touches `xvision-engine/src/api/eval.rs` should centralize both the
 /// scenario resolver and the provider-dispatch builder there.
-async fn resolve_scenario_summary(
-    ctx: &ApiContext,
-    run_id: &str,
-) -> Option<ReviewScenarioSummary> {
+async fn resolve_scenario_summary(ctx: &ApiContext, run_id: &str) -> Option<ReviewScenarioSummary> {
     let store = RunStore::new(ctx.db.clone());
     let run = store.get(run_id).await.ok()?;
     let scenario = api_scenario::get(ctx, &run.scenario_id).await.ok()?;
@@ -299,8 +280,8 @@ fn build_dispatch_for_profile(
     provider_name: &str,
 ) -> Result<Arc<dyn LlmDispatch>, ApiError> {
     let cfg_path = runtime_config_path(ctx);
-    let cfg = config::load_runtime(&cfg_path)
-        .map_err(|e| ApiError::Validation(format!("load config: {e}")))?;
+    let cfg =
+        config::load_runtime(&cfg_path).map_err(|e| ApiError::Validation(format!("load config: {e}")))?;
     let entry = cfg
         .providers
         .iter()
@@ -332,9 +313,7 @@ fn dispatch_from_provider(entry: &ProviderEntry) -> Result<Arc<dyn LlmDispatch>,
     }
     Ok(match entry.kind {
         ProviderKind::Anthropic => Arc::new(AnthropicDispatch::new(api_key)),
-        ProviderKind::OpenaiCompat => {
-            Arc::new(OpenaiCompatDispatch::new(entry.base_url.clone(), api_key))
-        }
+        ProviderKind::OpenaiCompat => Arc::new(OpenaiCompatDispatch::new(entry.base_url.clone(), api_key)),
         ProviderKind::LocalCandle => Arc::new(MockDispatch::echo(
             r#"{"summary":"local-candle stub","verdict":"inconclusive","confidence":0.0,"score":0,"findings":[],"risks":[],"next_tests":[],"questions":[]}"#,
         )),
@@ -367,8 +346,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let xvn_home = tmp.path().to_path_buf();
         std::fs::create_dir_all(xvn_home.join("config")).unwrap();
-        let mut cfg = std::fs::read_to_string("../../config/default.toml")
-            .expect("read workspace config/default.toml");
+        let mut cfg =
+            std::fs::read_to_string("../../config/default.toml").expect("read workspace config/default.toml");
         cfg.push_str(
             "\n[[providers]]\nname = \"anthropic\"\nkind = \"local-candle\"\nbase_url = \"\"\napi_key_env = \"\"\n",
         );
@@ -489,14 +468,9 @@ mod tests {
     #[tokio::test]
     async fn build_dispatch_for_profile_reads_local_candle_provider() {
         let (_tmp, xvn_home) = fresh_home().await;
-        let ctx = ApiContext::open(
-            &xvn_home,
-            xvision_engine::api::Actor::Cli {
-                user: "test".into(),
-            },
-        )
-        .await
-        .expect("open ctx");
+        let ctx = ApiContext::open(&xvn_home, xvision_engine::api::Actor::Cli { user: "test".into() })
+            .await
+            .expect("open ctx");
         let dispatch = build_dispatch_for_profile(&ctx, "anthropic").expect("build");
         // Smoke-test: dispatch returns the canned stub.
         let req = xvision_engine::agent::llm::LlmRequest {
@@ -518,14 +492,9 @@ mod tests {
         // points at one and confirm the resolver returns a populated
         // ReviewScenarioSummary (not None).
         let (_tmp, xvn_home) = fresh_home().await;
-        let ctx = ApiContext::open(
-            &xvn_home,
-            xvision_engine::api::Actor::Cli {
-                user: "test".into(),
-            },
-        )
-        .await
-        .expect("open ctx");
+        let ctx = ApiContext::open(&xvn_home, xvision_engine::api::Actor::Cli { user: "test".into() })
+            .await
+            .expect("open ctx");
 
         let scenario_id = xvision_engine::eval::canonical_scenarios()
             .into_iter()
@@ -561,11 +530,9 @@ mod tests {
 
         let good = TestApp::try_parse_from(["x", "--agent", "reasoning-agent", "--format", "json", "RUN"]);
         assert!(good.is_ok(), "json should parse");
-        let bad =
-            TestApp::try_parse_from(["x", "--agent", "reasoning-agent", "--format", "yaml", "RUN"]);
+        let bad = TestApp::try_parse_from(["x", "--agent", "reasoning-agent", "--format", "yaml", "RUN"]);
         assert!(bad.is_err(), "yaml should be rejected as invalid value");
-        let typo =
-            TestApp::try_parse_from(["x", "--agent", "reasoning-agent", "--format", "jsno", "RUN"]);
+        let typo = TestApp::try_parse_from(["x", "--agent", "reasoning-agent", "--format", "jsno", "RUN"]);
         assert!(typo.is_err(), "typo should be rejected as invalid value");
     }
 
@@ -595,9 +562,7 @@ mod tests {
             .await
             .unwrap()
             .into_iter()
-            .find(|r| {
-                r.agent_profile_id == "reasoning-agent" && !matches!(r.status, ReviewStatus::Failed)
-            });
+            .find(|r| r.agent_profile_id == "reasoning-agent" && !matches!(r.status, ReviewStatus::Failed));
         assert!(existing.is_none(), "Failed rows must not be reused");
     }
 
@@ -606,14 +571,9 @@ mod tests {
         let (_tmp, xvn_home) = fresh_home().await;
         // Use a real file-backed ApiContext so the CLI command can
         // reach the same pool as the engine's RunStore.
-        let ctx = ApiContext::open(
-            &xvn_home,
-            xvision_engine::api::Actor::Cli {
-                user: "test".into(),
-            },
-        )
-        .await
-        .expect("open ctx");
+        let ctx = ApiContext::open(&xvn_home, xvision_engine::api::Actor::Cli { user: "test".into() })
+            .await
+            .expect("open ctx");
         let store = RunStore::new(ctx.db.clone());
 
         // Seed against the same pool.

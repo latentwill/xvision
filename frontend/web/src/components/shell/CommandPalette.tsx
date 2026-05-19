@@ -205,6 +205,10 @@ export function CommandPalette() {
     [groups],
   );
 
+  useEffect(() => {
+    setActiveIdx((i) => Math.min(i, Math.max(flatRows.length - 1, 0)));
+  }, [flatRows.length]);
+
   const close = useCallback(() => setOpen(false), [setOpen]);
 
   const navigateTo = useCallback(
@@ -242,6 +246,12 @@ export function CommandPalette() {
     if (e.target === dialogRef.current) close();
   }
 
+  function onQueryChange(nextQuery: string) {
+    setQuery(nextQuery);
+    setHits([]);
+    setActiveIdx(0);
+  }
+
   return (
     <dialog
       ref={dialogRef}
@@ -257,7 +267,7 @@ export function CommandPalette() {
           ref={inputRef}
           type="text"
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => onQueryChange(e.target.value)}
           onKeyDown={onInputKey}
           placeholder="Jump to a strategy, run, scenario, or action…"
           autoComplete="off"

@@ -115,9 +115,7 @@ pub mod get {
         /// real strategy → agent_ref → agent_store path. Without this,
         /// the parity test below compares the agent to itself and the
         /// export surface can drift silently (review feedback on #189).
-        async fn seed_agent_in_strategy_and_completed_run(
-            ctx: &ApiContext,
-        ) -> (String, String) {
+        async fn seed_agent_in_strategy_and_completed_run(ctx: &ApiContext) -> (String, String) {
             let agent = agents_api::create(
                 ctx,
                 CreateAgentRequest {
@@ -244,8 +242,7 @@ pub mod get {
                 .expect("seeded agent must appear in EvalRunExport.agents[]");
 
             let direct_json = serde_json::to_value(&direct).expect("agent->json");
-            let export_json =
-                serde_json::to_value(from_export).expect("export.agent->json");
+            let export_json = serde_json::to_value(from_export).expect("export.agent->json");
             assert_eq!(
                 direct_json, export_json,
                 "agent shape from `xvn agent get` must equal `EvalRunExport.agents[]`",

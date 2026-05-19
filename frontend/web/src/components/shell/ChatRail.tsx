@@ -102,6 +102,7 @@ export function ChatRail({
     () => safeStorageGet(RAIL_MODEL_LS) ?? "",
   );
   const abortRef = useRef<AbortController | null>(null);
+  const sessionIdRef = useRef<string | null>(null);
   const lastScopeKeyRef = useRef<string | null>(null);
 
   const providers = useQuery({
@@ -141,11 +142,20 @@ export function ChatRail({
     safeStorageSet(RAIL_OPEN_LS, open ? "1" : "0");
   }, [open, variant]);
 
+  useEffect(() => {
+    sessionIdRef.current = sessionId;
+  }, [sessionId]);
+
+  const abortActiveStream = useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
+
   // When the rail is open and the scope changes, resolve a session for
   // the current scope. The server owns session lifecycle — the rail
   // never holds a stale id across DB resets or fresh deploys.
   useEffect(() => {
     if (variant === "desktop" && !open) return;
+    if (lastScopeKeyRef.current !== key) abortActiveStream();
     if (lastScopeKeyRef.current === key && sessionId) return;
     lastScopeKeyRef.current = key;
 
@@ -155,6 +165,7 @@ export function ChatRail({
       try {
         const resolved = await resolveSession(scope);
         if (cancelled) return;
+        sessionIdRef.current = resolved.session_id;
         setSessionId(resolved.session_id);
         setBubbles(historyToBubbles(resolved.history));
       } catch (e) {
@@ -165,14 +176,18 @@ export function ChatRail({
     return () => {
       cancelled = true;
     };
-  }, [open, key, scope, sessionId, variant]);
+  }, [abortActiveStream, open, key, scope, sessionId, variant]);
 
-  // Cancel any in-flight stream when rail closes or component unmounts.
+  useEffect(() => {
+    if (variant === "desktop" && !open) abortActiveStream();
+  }, [abortActiveStream, open, variant]);
+
+  // Cancel any in-flight stream when the component unmounts.
   useEffect(
     () => () => {
-      abortRef.current?.abort();
+      abortActiveStream();
     },
-    [],
+    [abortActiveStream],
   );
 
   const send = useCallback(
@@ -188,6 +203,8 @@ export function ChatRail({
       ]);
       setIsStreaming(true);
       const ctrl = new AbortController();
+      const streamSessionId = sessionId;
+      const streamScopeKey = key;
       abortRef.current = ctrl;
       try {
         for await (const ev of streamChat(
@@ -200,6 +217,13 @@ export function ChatRail({
           },
           ctrl.signal,
         )) {
+          if (
+            ctrl.signal.aborted ||
+            sessionIdRef.current !== streamSessionId ||
+            lastScopeKeyRef.current !== streamScopeKey
+          ) {
+            continue;
+          }
           applyEvent(setBubbles, ev);
           invalidateForToolResult(qc, ev);
         }
@@ -207,24 +231,27 @@ export function ChatRail({
         if ((e as Error).name === "AbortError") return;
         setError(formatErr(e));
       } finally {
-        setIsStreaming(false);
-        abortRef.current = null;
+        if (abortRef.current === ctrl) {
+          setIsStreaming(false);
+          abortRef.current = null;
+        }
       }
     },
-    [sessionId, isStreaming, providerName, modelId, qc],
+    [sessionId, isStreaming, providerName, modelId, key, qc],
   );
 
   const stopStreaming = useCallback(() => {
-    abortRef.current?.abort();
-  }, []);
+    abortActiveStream();
+  }, [abortActiveStream]);
 
   const startFresh = useCallback(async () => {
-    abortRef.current?.abort();
+    abortActiveStream();
     setInput("");
     setBubbles([]);
     setError(null);
     try {
       const created = await createSession(scope);
+      sessionIdRef.current = created.session_id;
       setSessionId(created.session_id);
       setBubbles(historyToBubbles(created.history));
       lastScopeKeyRef.current = key;
@@ -232,7 +259,7 @@ export function ChatRail({
     } catch (e) {
       setError(formatErr(e));
     }
-  }, [key, scope, sessionsQ]);
+  }, [abortActiveStream, key, scope, sessionsQ]);
 
   const recentScopeSessions = useMemo(() => {
     return (sessionsQ.data ?? [])
@@ -320,7 +347,9 @@ export function ChatRail({
                   }
                   ready={isActive && !isStreaming && !!activeFirstAssistant}
                   onClick={async () => {
+                    abortActiveStream();
                     try {
+                      sessionIdRef.current = s.id;
                       setSessionId(s.id);
                       const h = await loadSessionHistory(s.id);
                       setBubbles(historyToBubbles(h));
@@ -597,7 +626,8 @@ function historyToBubbles(history: ChatMessage[]): Bubble[] {
                 parsedResult &&
                 typeof parsedResult === "object" &&
                 parsedResult !== null &&
-                "error" in parsedResult;
+                "error" in parsedResult &&
+                Boolean((parsedResult as { error?: unknown }).error);
               prior.tools[prior.tools.length - 1] = {
                 ...tool,
                 ok: !isErr,

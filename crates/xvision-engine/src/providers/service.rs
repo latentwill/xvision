@@ -110,10 +110,7 @@ impl CatalogService {
     /// (provider_name, result) pairs so partial failures (one provider
     /// unreachable) don't fail the whole batch — the CLI / API can
     /// surface which ones succeeded.
-    pub async fn refresh_all(
-        &self,
-        providers: &[ProviderEntry],
-    ) -> Vec<(String, Result<Arc<Catalog>>)> {
+    pub async fn refresh_all(&self, providers: &[ProviderEntry]) -> Vec<(String, Result<Arc<Catalog>>)> {
         let mut joins = Vec::with_capacity(providers.len());
         for p in providers {
             // local-candle has no remote catalog; surface as a soft
@@ -187,7 +184,12 @@ mod tests {
     #[tokio::test]
     async fn get_or_load_promotes_disk_to_memory_on_first_access() {
         let tmp = TempDir::new().unwrap();
-        put_disk_cache(tmp.path(), "anthropic", vec![ModelEntry::minimal("claude-opus-4-7")]).await;
+        put_disk_cache(
+            tmp.path(),
+            "anthropic",
+            vec![ModelEntry::minimal("claude-opus-4-7")],
+        )
+        .await;
         let svc = CatalogService::new(tmp.path().to_path_buf()).unwrap();
         // Cold cache: in-memory map should be empty.
         assert!(svc.providers_in_memory().await.is_empty());
@@ -226,4 +228,3 @@ mod tests {
         assert!(err.to_string().contains("local-candle"));
     }
 }
-

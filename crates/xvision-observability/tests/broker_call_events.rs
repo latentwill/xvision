@@ -7,8 +7,7 @@
 //! status / error class.
 
 use xvision_observability::{
-    BrokerCallFinishedEvent, BrokerCallOutcome, BrokerCallStartedEvent, BrokerSide, RunEvent,
-    SpanKind,
+    BrokerCallFinishedEvent, BrokerCallOutcome, BrokerCallStartedEvent, BrokerSide, RunEvent, SpanKind,
 };
 
 #[test]

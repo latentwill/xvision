@@ -7,7 +7,7 @@
 //   3. On success, run validate() and surface diagnostics inline
 //   4. Errors (Validation/Conflict) surface as inline messages above Save
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type SetStateAction } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 
@@ -74,21 +74,38 @@ export function AgentForm({
       ? { ...BLANK_AGENT_DRAFT, slots: initialSlots }
       : BLANK_AGENT_DRAFT,
   );
+  const [hydratedAgentId, setHydratedAgentId] = useState<string | null>(null);
+  const [draftDirty, setDraftDirty] = useState(false);
   const [diagnostics, setDiagnostics] = useState<ValidationDiagnostic[]>([]);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  // Load existing into local state once.
   useEffect(() => {
-    if (existing.data) {
-      const a = existing.data;
-      setDraft({
-        name: a.name,
-        description: a.description,
-        tags: a.tags,
-        slots: a.slots.length > 0 ? a.slots : [BLANK_SLOT],
-      });
-    }
-  }, [existing.data]);
+    setHydratedAgentId(null);
+    setDraftDirty(false);
+  }, [agentId]);
+
+  // Load existing into local state once per agent. Background refetches must
+  // not replace unsaved operator edits.
+  useEffect(() => {
+    if (!agentId || !existing.data) return;
+    if (hydratedAgentId === agentId && draftDirty) return;
+    if (hydratedAgentId === agentId) return;
+
+    const a = existing.data;
+    setDraft({
+      name: a.name,
+      description: a.description,
+      tags: a.tags,
+      slots: a.slots.length > 0 ? a.slots : [BLANK_SLOT],
+    });
+    setHydratedAgentId(agentId);
+    setDraftDirty(false);
+  }, [agentId, draftDirty, existing.data, hydratedAgentId]);
+
+  function editDraft(update: SetStateAction<AgentDraft>) {
+    setDraftDirty(true);
+    setDraft(update);
+  }
 
   const createM = useMutation({
     mutationFn: createAgent,
@@ -143,28 +160,28 @@ export function AgentForm({
   }
 
   function patchSlot(idx: number, next: AgentSlot) {
-    setDraft((d) => ({
+    editDraft((d) => ({
       ...d,
       slots: d.slots.map((s, i) => (i === idx ? next : s)),
     }));
   }
 
   function addSlot() {
-    setDraft((d) => ({
+    editDraft((d) => ({
       ...d,
       slots: [...d.slots, { ...BLANK_SLOT, name: `slot_${d.slots.length + 1}` }],
     }));
   }
 
   function removeSlot(idx: number) {
-    setDraft((d) => ({
+    editDraft((d) => ({
       ...d,
       slots: d.slots.filter((_, i) => i !== idx),
     }));
   }
 
   function duplicateSlot(idx: number) {
-    setDraft((d) => {
+    editDraft((d) => {
       const src = d.slots[idx];
       if (!src) return d;
       return {
@@ -214,7 +231,7 @@ export function AgentForm({
               type="text"
               value={draft.name}
               onChange={(e) =>
-                setDraft((d) => ({ ...d, name: e.target.value }))
+                editDraft((d) => ({ ...d, name: e.target.value }))
               }
               placeholder="e.g. btc-mean-rev-v1"
               className="w-full px-3 py-2 bg-surface-panel border border-border rounded-sm text-[13.5px] text-text font-mono focus:outline-none focus:border-gold/40"
@@ -229,7 +246,7 @@ export function AgentForm({
               type="text"
               value={draft.description}
               onChange={(e) =>
-                setDraft((d) => ({ ...d, description: e.target.value }))
+                editDraft((d) => ({ ...d, description: e.target.value }))
               }
               placeholder="One-line summary of what this agent does"
               className="w-full px-3 py-2 bg-surface-panel border border-border rounded-sm text-[13.5px] text-text focus:outline-none focus:border-gold/40"
@@ -244,7 +261,7 @@ export function AgentForm({
               type="text"
               value={draft.tags.join(", ")}
               onChange={(e) =>
-                setDraft((d) => ({
+                editDraft((d) => ({
                   ...d,
                   tags: e.target.value
                     .split(",")
@@ -356,7 +373,15 @@ function CrossRefs({ agentId }: { agentId: string }) {
           <h4 className="text-[12px] uppercase tracking-wide text-text-3 mb-2 font-medium">
             Deployed in strategies
           </h4>
-          {deployedQ.data && deployedQ.data.length > 0 ? (
+          {deployedQ.isPending ? (
+            <p className="text-text-3 text-[12.5px] m-0 leading-snug">
+              Loading deployed strategies…
+            </p>
+          ) : deployedQ.isError ? (
+            <p className="text-danger text-[12.5px] m-0 leading-snug">
+              Couldn't load deployed strategies: {errorMessage(deployedQ.error)}
+            </p>
+          ) : deployedQ.data && deployedQ.data.length > 0 ? (
             <ul className="space-y-1.5">
               {deployedQ.data.map((s) => (
                 <li key={s.strategy_id} className="text-[13px] text-text-2">
@@ -376,7 +401,15 @@ function CrossRefs({ agentId }: { agentId: string }) {
           <h4 className="text-[12px] uppercase tracking-wide text-text-3 mb-2 font-medium">
             Recent runs
           </h4>
-          {runsQ.data && runsQ.data.length > 0 ? (
+          {runsQ.isPending ? (
+            <p className="text-text-3 text-[12.5px] m-0 leading-snug">
+              Loading recent runs…
+            </p>
+          ) : runsQ.isError ? (
+            <p className="text-danger text-[12.5px] m-0 leading-snug">
+              Couldn't load recent runs: {errorMessage(runsQ.error)}
+            </p>
+          ) : runsQ.data && runsQ.data.length > 0 ? (
             <ul className="space-y-1.5">
               {runsQ.data.map((r) => (
                 <li

@@ -7,10 +7,7 @@
 //! `SqliteRecorder` to write the corresponding row(s) without needing
 //! to round-trip back to the producer.
 
-use crate::types::{
-    CapabilityPath, RiskLevel, RunStatus, SideEffectLevel, SpanKind, SpanStatus,
-    ToolOrigin,
-};
+use crate::types::{CapabilityPath, RiskLevel, RunStatus, SideEffectLevel, SpanKind, SpanStatus, ToolOrigin};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -377,10 +374,7 @@ impl RunEvent {
     pub fn is_lifecycle_critical(&self) -> bool {
         matches!(
             self,
-            Self::RunStarted(_)
-                | Self::RunFinished(_)
-                | Self::RunInterrupted(_)
-                | Self::SidecarError(_)
+            Self::RunStarted(_) | Self::RunFinished(_) | Self::RunInterrupted(_) | Self::SidecarError(_)
         )
     }
 }

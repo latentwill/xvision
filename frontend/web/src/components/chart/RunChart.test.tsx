@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 
 import { storageKey } from "./chart-layers";
 import samplePayload from "./__fixtures__/sample-run-chart.json";
@@ -14,11 +14,14 @@ const chartMocks = vi.hoisted(() => ({
   subscribeRegistrationCountsAtScroll: [] as number[],
   initialRangesQueue: [] as Array<LogicalRangeStub | null>,
   baselineSeries: [] as Array<{ setData: ReturnType<typeof vi.fn> }>,
+  series: [] as Array<ReturnType<typeof createSeriesStub>>,
   createdCharts: [] as Array<{
     getCurrentRange: () => LogicalRangeStub | null;
     emitVisibleLogicalRangeChange: (range: LogicalRangeStub | null) => void;
+    emitClick: (param: { hoveredObjectId?: unknown }) => void;
     timeScaleApi: {
       scrollToRealTime: ReturnType<typeof vi.fn>;
+      fitContent: ReturnType<typeof vi.fn>;
       getVisibleLogicalRange: ReturnType<typeof vi.fn>;
       setVisibleLogicalRange: ReturnType<typeof vi.fn>;
     };
@@ -30,12 +33,14 @@ type LogicalRangeStub = { from: number; to: number };
 const realtimeRange: LogicalRangeStub = { from: 90, to: 110 };
 
 function createSeriesStub() {
-  return {
+  const series = {
     setData: vi.fn(),
     update: vi.fn(),
     createPriceLine: vi.fn(),
     setMarkers: vi.fn(),
   };
+  chartMocks.series.push(series);
+  return series;
 }
 
 function createChartStub() {
@@ -49,6 +54,7 @@ function createChartStub() {
   const visibleRangeHandlers: Array<
     (range: LogicalRangeStub | null) => void
   > = [];
+  const clickHandlers: Array<(param: { hoveredObjectId?: unknown }) => void> = [];
   const timeScaleApi = {
     scrollToRealTime: vi.fn(() => {
       chartMocks.subscribeRegistrationCountsAtScroll.push(
@@ -81,10 +87,20 @@ function createChartStub() {
       return series;
     }),
     addHistogramSeries: vi.fn(() => createSeriesStub()),
+    subscribeClick: vi.fn((handler: (param: { hoveredObjectId?: unknown }) => void) => {
+      clickHandlers.push(handler);
+    }),
+    unsubscribeClick: vi.fn((handler: (param: { hoveredObjectId?: unknown }) => void) => {
+      const idx = clickHandlers.indexOf(handler);
+      if (idx >= 0) clickHandlers.splice(idx, 1);
+    }),
     getCurrentRange: () => currentRange,
     emitVisibleLogicalRangeChange: (range: LogicalRangeStub | null) => {
       currentRange = range;
       visibleRangeHandlers.forEach((handler) => handler(range));
+    },
+    emitClick: (param: { hoveredObjectId?: unknown }) => {
+      clickHandlers.forEach((handler) => handler(param));
     },
     timeScaleApi,
     timeScale: vi.fn(() => timeScaleApi),
@@ -124,6 +140,7 @@ describe("RunChart", () => {
     chartMocks.subscribeRegistrationCountsAtScroll.length = 0;
     chartMocks.initialRangesQueue.length = 0;
     chartMocks.baselineSeries.length = 0;
+    chartMocks.series.length = 0;
     chartMocks.createChart.mockImplementation(() => {
       const chart = createChartStub();
       chartMocks.createdCharts.push(chart);
@@ -142,6 +159,100 @@ describe("RunChart", () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     render(<RunChart payload={samplePayload as any} />);
     expect(screen.getByText(/Layers/)).toBeInTheDocument();
+  });
+
+  it("keeps the position band off the asset price scale", () => {
+    const payload = {
+      ...(samplePayload as any),
+      position: [
+        { time: 1_700_000_000, side: "Long" },
+        { time: 1_700_000_060, side: "Short" },
+      ],
+    };
+
+    render(<RunChart payload={payload} />);
+
+    const priceChart = chartMocks.createdCharts[0] as ReturnType<typeof createChartStub>;
+    expect(priceChart.addAreaSeries).toHaveBeenCalledTimes(2);
+
+    const areaCalls = priceChart.addAreaSeries.mock.calls as unknown as Array<
+      [
+        {
+          autoscaleInfoProvider: () => unknown;
+          crosshairMarkerVisible?: boolean;
+          lastValueVisible?: boolean;
+          priceLineVisible?: boolean;
+          priceScaleId?: string;
+        },
+      ]
+    >;
+    areaCalls.forEach(([options]) => {
+      expect(options).toEqual(
+        expect.objectContaining({
+          priceScaleId: "position-band",
+          lastValueVisible: false,
+          priceLineVisible: false,
+          crosshairMarkerVisible: false,
+        }),
+      );
+      expect(options.autoscaleInfoProvider()).toEqual({
+        priceRange: { minValue: 0, maxValue: 1 },
+      });
+    });
+
+    const [longSeries, shortSeries] = priceChart.addAreaSeries.mock.results.map(
+      ({ value }) => value,
+    );
+    expect(longSeries.setData).toHaveBeenCalledWith([
+      { time: 1_700_000_000, value: 1 },
+    ]);
+    expect(shortSeries.setData).toHaveBeenCalledWith([
+      { time: 1_700_000_060, value: 1 },
+    ]);
+  });
+
+  it("opens and closes the marker side panel from a chart marker click", () => {
+    const payload = {
+      ...(samplePayload as any),
+      markers: {
+        trades: [
+          {
+            time: 1_700_000_000,
+            side: "Buy",
+            price: 50_000,
+            size: 0.25,
+            fee: 1.5,
+            pnl_realized: null,
+            decision_index: 7,
+            justification: "Entry signal",
+          },
+        ],
+        vetoes: [],
+        holds: [],
+      },
+    };
+
+    render(<RunChart payload={payload} />);
+
+    const markerSeries = chartMocks.series.find(
+      (series) => series.setMarkers.mock.calls.length > 0,
+    );
+    expect(markerSeries?.setMarkers).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "trade:7", text: "Buy 0.25" }),
+      ]),
+    );
+
+    act(() => {
+      chartMocks.createdCharts[0]?.emitClick({ hoveredObjectId: "trade:7" });
+    });
+
+    expect(screen.getByText("Decision #7")).toBeInTheDocument();
+    expect(screen.getByText("Entry signal")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "×" }));
+
+    expect(screen.queryByText("Decision #7")).not.toBeInTheDocument();
   });
 
   it("renders chart shell range controls and data table toggle", () => {
@@ -166,6 +277,55 @@ describe("RunChart", () => {
     expect(screen.getByText("row")).toBeInTheDocument();
   });
 
+  it("applies range preset buttons to every current chart viewport", () => {
+    const bars = Array.from({ length: 48 }, (_, index) => ({
+      time: 1_700_000_000 + index * 3_600,
+      open: 100 + index,
+      high: 101 + index,
+      low: 99 + index,
+      close: 100.5 + index,
+      volume: 10,
+    }));
+    const indicatorPoints = bars.map((bar) => ({
+      time: bar.time,
+      value: bar.close,
+    }));
+    const payload = {
+      ...(samplePayload as any),
+      granularity: "1h",
+      bars,
+      indicators: {
+        ...(samplePayload as any).indicators,
+        sma_20: indicatorPoints,
+        sma_50: indicatorPoints,
+        sma_200: indicatorPoints,
+        rsi_14: indicatorPoints,
+      },
+    };
+
+    render(<RunChart payload={payload} follow={false} />);
+    const charts = [...chartMocks.createdCharts];
+
+    charts.forEach((chart) => chart.timeScaleApi.setVisibleLogicalRange.mockClear());
+    fireEvent.click(screen.getByRole("button", { name: "1d" }));
+
+    charts.forEach((chart) => {
+      expect(chart.timeScaleApi.setVisibleLogicalRange).toHaveBeenCalledWith({
+        from: 24,
+        to: 50,
+      });
+    });
+
+    charts.forEach((chart) => chart.timeScaleApi.fitContent.mockClear());
+    chartMocks.fitContent.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "All" }));
+
+    charts.forEach((chart) => {
+      expect(chart.timeScaleApi.fitContent).toHaveBeenCalledTimes(1);
+    });
+    expect(chartMocks.fitContent).toHaveBeenCalledTimes(charts.length);
+  });
+
   it("persists layer toggles to localStorage", () => {
     const key = storageKey("run-detail");
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -175,18 +335,11 @@ describe("RunChart", () => {
     fireEvent.click(screen.getByText(/Layers/));
 
     // Default for sma20 is true (per DEFAULT_LAYERS in chart-layers.ts).
-    // The label wraps the bare key text and the checkbox — getByText
-    // returns the label element itself, so the checkbox lives inside it.
-    const sma20Label = screen.getByText(/^sma20$/).closest("label");
-    expect(sma20Label).not.toBeNull();
-    const sma20Checkbox = sma20Label!.querySelector(
-      "input[type='checkbox']",
-    ) as HTMLInputElement | null;
-    expect(sma20Checkbox).not.toBeNull();
-    expect(sma20Checkbox!.checked).toBe(true);
+    const sma20Checkbox = screen.getByLabelText("SMA 20") as HTMLInputElement;
+    expect(sma20Checkbox.checked).toBe(true);
 
     // Toggle it off; the useChartLayers effect writes to localStorage.
-    fireEvent.click(sma20Checkbox!);
+    fireEvent.click(sma20Checkbox);
 
     const raw = localStorage.getItem(key);
     expect(raw).not.toBeNull();
@@ -215,6 +368,26 @@ describe("RunChart", () => {
     ]);
   });
 
+  it("removes optional panes and skips chart creation when their layers are disabled", () => {
+    render(<RunChart payload={samplePayload as any} follow={false} />);
+
+    expect(screen.getByTestId("run-chart-subpane")).toBeInTheDocument();
+    expect(screen.getByTestId("run-chart-equity-pane")).toBeInTheDocument();
+    expect(screen.getByTestId("run-chart-drawdown-pane")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText(/Layers/));
+    fireEvent.click(screen.getByLabelText("Off"));
+    fireEvent.click(screen.getByLabelText("Earnings"));
+    fireEvent.click(screen.getByLabelText("Drawdown"));
+
+    expect(screen.queryByTestId("run-chart-subpane")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("run-chart-equity-pane")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("run-chart-drawdown-pane")).not.toBeInTheDocument();
+    expect(
+      chartMocks.createdCharts.filter((chart) => chart.remove.mock.calls.length === 0),
+    ).toHaveLength(1);
+  });
+
   it("does not scroll to real time while follow mode is disabled", () => {
     const payload = samplePayload as any;
     const { rerender } = render(<RunChart payload={payload} follow={false} />);
@@ -229,6 +402,7 @@ describe("RunChart", () => {
     const { rerender } = render(<RunChart payload={payload} follow />);
     const createChartCallsBeforePayloadUpdate =
       chartMocks.createChart.mock.calls.length;
+    chartMocks.fitContent.mockClear();
 
     rerender(
       <RunChart
@@ -258,6 +432,7 @@ describe("RunChart", () => {
     expect(chartMocks.createChart.mock.calls.length).toBe(
       createChartCallsBeforePayloadUpdate,
     );
+    expect(chartMocks.fitContent).not.toHaveBeenCalled();
   });
 
   it("restores the frozen visible logical range across rebuilds after follow mode is disabled", () => {

@@ -146,7 +146,7 @@ impl Agent {
                 system_prompt: String::new(),
                 skill_ids: Vec::new(),
                 max_tokens: None,
-            prompt_version: String::new(),
+                prompt_version: String::new(),
             }],
             archived: false,
             created_at: now,

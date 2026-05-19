@@ -49,7 +49,7 @@ use opentelemetry_sdk::trace::{Config as SdkTraceConfig, Tracer as SdkTracer};
 use opentelemetry_sdk::Resource;
 use std::env;
 use std::sync::Arc;
-use tracing::{Span, span, Level};
+use tracing::{span, Level, Span};
 use tracing_opentelemetry::{OpenTelemetryLayer, OpenTelemetrySpanExt};
 
 /// Environment variable contract — these are the upstream OTel
@@ -74,14 +74,11 @@ pub fn init_otel_pipeline<S>() -> Result<OpenTelemetryLayer<S, SdkTracer>, OtelI
 where
     S: tracing::Subscriber + for<'span> tracing_subscriber::registry::LookupSpan<'span>,
 {
-    let endpoint = env::var(ENV_OTLP_ENDPOINT)
-        .unwrap_or_else(|_| "http://localhost:4317".to_owned());
+    let endpoint = env::var(ENV_OTLP_ENDPOINT).unwrap_or_else(|_| "http://localhost:4317".to_owned());
     let service_name = env::var(ENV_SERVICE_NAME).unwrap_or_else(|_| "xvision".to_owned());
     let resource = build_resource(&service_name);
 
-    let exporter = opentelemetry_otlp::new_exporter()
-        .tonic()
-        .with_endpoint(endpoint);
+    let exporter = opentelemetry_otlp::new_exporter().tonic().with_endpoint(endpoint);
 
     let tracer = opentelemetry_otlp::new_pipeline()
         .tracing()
@@ -97,8 +94,7 @@ where
 /// form) and merge with the service name into an OTel [`Resource`].
 /// Exposed so tests / alternate pipelines can reuse the same parsing.
 pub fn build_resource(service_name: &str) -> Resource {
-    let mut kvs: Vec<KeyValue> =
-        vec![KeyValue::new("service.name", service_name.to_owned())];
+    let mut kvs: Vec<KeyValue> = vec![KeyValue::new("service.name", service_name.to_owned())];
     if let Ok(raw) = env::var(ENV_RESOURCE_ATTRIBUTES) {
         for pair in raw.split(',') {
             let pair = pair.trim();
@@ -283,11 +279,7 @@ fn emit_otel_for(event: &RunEvent) {
             let s = span!(Level::INFO, "xvision.run.finished");
             let _g = s.enter();
             add_attribute(&s, attr::RUN_ID, Attribute::id(&e.run_id));
-            add_attribute(
-                &s,
-                attr::SPAN_STATUS,
-                Attribute::id(e.status.as_db_str()),
-            );
+            add_attribute(&s, attr::SPAN_STATUS, Attribute::id(e.status.as_db_str()));
         }
         RunEvent::RunInterrupted(e) => {
             let s = span!(Level::WARN, "xvision.run.interrupted");
@@ -310,11 +302,7 @@ fn emit_otel_for(event: &RunEvent) {
             let s = span!(Level::INFO, "xvision.span.finished");
             let _g = s.enter();
             add_attribute(&s, attr::SPAN_ID, Attribute::id(&e.span_id));
-            add_attribute(
-                &s,
-                attr::SPAN_STATUS,
-                Attribute::id(e.status.as_db_str()),
-            );
+            add_attribute(&s, attr::SPAN_STATUS, Attribute::id(e.status.as_db_str()));
         }
         RunEvent::ModelCallFinished(e) => {
             let s = span!(Level::INFO, "xvision.model.call");
@@ -328,11 +316,7 @@ fn emit_otel_for(event: &RunEvent) {
             if let Some(n) = e.output_token_count {
                 add_attribute(&s, attr::MODEL_OUTPUT_TOKENS, Attribute::count(n));
             }
-            add_attribute(
-                &s,
-                attr::MODEL_PROMPT_HASH,
-                Attribute::hash(&e.prompt_hash),
-            );
+            add_attribute(&s, attr::MODEL_PROMPT_HASH, Attribute::hash(&e.prompt_hash));
             if let Some(h) = &e.response_hash {
                 add_attribute(&s, attr::MODEL_RESPONSE_HASH, Attribute::hash(h));
             }
@@ -345,11 +329,7 @@ fn emit_otel_for(event: &RunEvent) {
             let _g = s.enter();
             add_attribute(&s, attr::SPAN_ID, Attribute::id(&e.span_id));
             add_attribute(&s, attr::TOOL_NAME, Attribute::id(&e.tool_name));
-            add_attribute(
-                &s,
-                attr::TOOL_ORIGIN,
-                Attribute::id(e.origin.as_db_string()),
-            );
+            add_attribute(&s, attr::TOOL_ORIGIN, Attribute::id(e.origin.as_db_string()));
             add_attribute(&s, attr::TOOL_INPUT_HASH, Attribute::hash(&e.input_hash));
             add_attribute(
                 &s,
@@ -411,11 +391,7 @@ fn emit_otel_for(event: &RunEvent) {
             add_attribute(&s, attr::CHECKPOINT_ID, Attribute::id(&e.checkpoint_id));
             add_attribute(&s, attr::SPAN_ID, Attribute::id(&e.span_id));
             add_attribute(&s, attr::RUN_ID, Attribute::id(&e.run_id));
-            add_attribute(
-                &s,
-                attr::CHECKPOINT_SEQUENCE,
-                Attribute::count(e.sequence),
-            );
+            add_attribute(&s, attr::CHECKPOINT_SEQUENCE, Attribute::count(e.sequence));
             add_attribute(&s, "xvision.checkpoint.kind", Attribute::id(&e.kind));
             add_attribute(&s, attr::TOOL_INPUT_HASH, Attribute::hash(&e.input_hash));
             if let Some(h) = &e.output_hash {
@@ -441,11 +417,7 @@ fn emit_otel_for(event: &RunEvent) {
             let _g = s.enter();
             add_attribute(&s, attr::RUN_ID, Attribute::id(&e.run_id));
             add_attribute(&s, "xvision.supervisor.role", Attribute::id(&e.role));
-            add_attribute(
-                &s,
-                "xvision.supervisor.severity",
-                Attribute::id(&e.severity),
-            );
+            add_attribute(&s, "xvision.supervisor.severity", Attribute::id(&e.severity));
         }
         RunEvent::ArtifactWritten(e) => {
             let s = span!(Level::INFO, "xvision.artifact.written");
@@ -458,11 +430,7 @@ fn emit_otel_for(event: &RunEvent) {
             let s = span!(Level::ERROR, "xvision.sidecar.error");
             let _g = s.enter();
             add_attribute(&s, attr::RUN_ID, Attribute::id(&e.run_id));
-            add_attribute(
-                &s,
-                "xvision.sidecar.severity",
-                Attribute::id(&e.severity),
-            );
+            add_attribute(&s, "xvision.sidecar.severity", Attribute::id(&e.severity));
         }
         RunEvent::BackpressureDropped(e) => {
             let s = span!(Level::WARN, "xvision.bus.backpressure_dropped");

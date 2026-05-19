@@ -13,30 +13,28 @@
 //!       before tool_call N in the timeline order of `spans.started_at`)
 
 use chrono::{Duration, Utc};
-use sqlx::SqlitePool;
+use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use std::sync::Arc;
 use std::time::Duration as StdDuration;
+use xvision_observability::types::{RiskLevel, RunStatus, SideEffectLevel, SpanKind, SpanStatus, ToolOrigin};
 use xvision_observability::{
     events::{
-        ModelCallFinishedEvent, RunFinishedEvent, RunInterruptedEvent,
-        RunStartedEvent, SpanFinishedEvent, SpanStartedEvent,
-        ToolCallFinishedEvent, ToolCallStartedEvent,
+        ModelCallFinishedEvent, RunFinishedEvent, RunInterruptedEvent, RunStartedEvent, SpanFinishedEvent,
+        SpanStartedEvent, ToolCallFinishedEvent, ToolCallStartedEvent,
     },
     AgentRunRecorder, RunEvent, RunEventBus, SqliteRecorder,
 };
-use xvision_observability::types::{
-    RiskLevel, RunStatus, SideEffectLevel, SpanKind, SpanStatus, ToolOrigin,
-};
 
-const MIGRATION_002: &str =
-    include_str!("../../xvision-engine/migrations/002_eval.sql");
-const MIGRATION_013: &str =
-    include_str!("../../xvision-engine/migrations/013_cli_jobs.sql");
-const MIGRATION_018: &str =
-    include_str!("../../xvision-engine/migrations/018_agent_run_observability.sql");
+const MIGRATION_002: &str = include_str!("../../xvision-engine/migrations/002_eval.sql");
+const MIGRATION_013: &str = include_str!("../../xvision-engine/migrations/013_cli_jobs.sql");
+const MIGRATION_018: &str = include_str!("../../xvision-engine/migrations/018_agent_run_observability.sql");
 
 async fn migrated_pool() -> SqlitePool {
-    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
     sqlx::query(MIGRATION_002).execute(&pool).await.unwrap();
     sqlx::query(MIGRATION_013).execute(&pool).await.unwrap();
     sqlx::query(MIGRATION_018).execute(&pool).await.unwrap();
@@ -48,11 +46,10 @@ async fn migrated_pool() -> SqlitePool {
 async fn wait_for_rows(pool: &SqlitePool, table: &str, expected: i64) {
     let deadline = std::time::Instant::now() + StdDuration::from_secs(2);
     loop {
-        let row: (i64,) =
-            sqlx::query_as(&format!("SELECT COUNT(*) FROM {table}"))
-                .fetch_one(pool)
-                .await
-                .unwrap();
+        let row: (i64,) = sqlx::query_as(&format!("SELECT COUNT(*) FROM {table}"))
+            .fetch_one(pool)
+            .await
+            .unwrap();
         if row.0 >= expected || std::time::Instant::now() >= deadline {
             assert_eq!(
                 row.0, expected,
@@ -60,6 +57,31 @@ async fn wait_for_rows(pool: &SqlitePool, table: &str, expected: i64) {
                 row.0, expected
             );
             return;
+        }
+        tokio::time::sleep(StdDuration::from_millis(10)).await;
+    }
+}
+
+async fn wait_for_run_status(
+    pool: &SqlitePool,
+    run_id: &str,
+    expected: RunStatus,
+) -> (Option<String>, Option<String>) {
+    let deadline = std::time::Instant::now() + StdDuration::from_secs(2);
+    loop {
+        let row: Option<(String, Option<String>, Option<String>)> =
+            sqlx::query_as("SELECT status, finished_at, error FROM agent_runs WHERE id = ?")
+                .bind(run_id)
+                .fetch_optional(pool)
+                .await
+                .unwrap();
+        if let Some((status, finished_at, error)) = row {
+            if status == expected.as_db_str() {
+                return (finished_at, error);
+            }
+        }
+        if std::time::Instant::now() >= deadline {
+            panic!("agent_runs row did not reach `{}` in time", expected.as_db_str());
         }
         tokio::time::sleep(StdDuration::from_millis(10)).await;
     }
@@ -223,36 +245,25 @@ async fn synthetic_run_records_every_row_then_marks_interrupted() {
     wait_for_rows(&pool, "spans", 10).await;
 
     // The agent_runs row exists and is now `interrupted`.
-    let (status, finished_at, error): (String, Option<String>, Option<String>) =
-        sqlx::query_as(
-            "SELECT status, finished_at, error FROM agent_runs WHERE id = ?",
-        )
-        .bind(&run_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(status, RunStatus::Interrupted.as_db_str());
+    let (finished_at, error) = wait_for_run_status(&pool, &run_id, RunStatus::Interrupted).await;
     assert!(finished_at.is_some());
     assert_eq!(error.as_deref(), Some("sidecar crashed mid-run"));
 
     // Spans that were finished stay `ok`; the dangling span + the
     // run-level span are now `interrupted`.
-    let (ok_count,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM spans WHERE run_id = ? AND status = 'ok'",
-    )
-    .bind(&run_id)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let (ok_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM spans WHERE run_id = ? AND status = 'ok'")
+        .bind(&run_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(ok_count, 8, "expected 8 ok spans (3 model + 5 tool)");
 
-    let (interrupted_count,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM spans WHERE run_id = ? AND status = 'interrupted'",
-    )
-    .bind(&run_id)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let (interrupted_count,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM spans WHERE run_id = ? AND status = 'interrupted'")
+            .bind(&run_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(
         interrupted_count, 2,
         "expected 2 interrupted spans (run-level + dangling tool)"
@@ -270,8 +281,7 @@ async fn synthetic_run_records_every_row_then_marks_interrupted() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn run_finished_then_recorder_writes_completed_status() {
     let pool = migrated_pool().await;
-    let recorder: Arc<dyn AgentRunRecorder> =
-        Arc::new(SqliteRecorder::new(pool.clone()));
+    let recorder: Arc<dyn AgentRunRecorder> = Arc::new(SqliteRecorder::new(pool.clone()));
     let bus = RunEventBus::new(vec![recorder]);
 
     let run_id = "run_clean_close".to_string();
@@ -306,12 +316,11 @@ async fn run_finished_then_recorder_writes_completed_status() {
     // is still "running".
     let deadline = std::time::Instant::now() + StdDuration::from_secs(2);
     loop {
-        let row: Option<(String,)> =
-            sqlx::query_as("SELECT status FROM agent_runs WHERE id = ?")
-                .bind(&run_id)
-                .fetch_optional(&pool)
-                .await
-                .unwrap();
+        let row: Option<(String,)> = sqlx::query_as("SELECT status FROM agent_runs WHERE id = ?")
+            .bind(&run_id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
         if let Some((status,)) = row {
             if status == RunStatus::Completed.as_db_str() {
                 return;

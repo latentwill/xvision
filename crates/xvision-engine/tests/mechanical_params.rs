@@ -56,7 +56,10 @@ fn each_template_default_params_validate_end_to_end() {
     // parse via the typed enum, (b) round-trip through Strategy's
     // custom Deserialize, and (c) re-serialize without drift.
     let cases: Vec<(&str, serde_json::Value)> = vec![
-        ("trend_follower", json!({"ema_fast": 12, "ema_mid": 26, "ema_slow": 50})),
+        (
+            "trend_follower",
+            json!({"ema_fast": 12, "ema_mid": 26, "ema_slow": 50}),
+        ),
         (
             "mean_reversion",
             json!({
@@ -123,14 +126,19 @@ fn unknown_field_on_canonical_template_rejected_at_strategy_deserialize() {
     let err = serde_json::from_value::<Strategy>(strategy_json.clone())
         .expect_err("unknown field for canonical template must reject");
     let msg = err.to_string();
-    assert!(msg.contains("unknown field"), "expected unknown field error, got: {msg}");
-    assert!(msg.contains("not_a_real_param"), "should name the bad key, got: {msg}");
+    assert!(
+        msg.contains("unknown field"),
+        "expected unknown field error, got: {msg}"
+    );
+    assert!(
+        msg.contains("not_a_real_param"),
+        "should name the bad key, got: {msg}"
+    );
 
     // Sanity check: removing the bad key parses cleanly.
-    strategy_json["mechanical_params"] =
-        json!({"ema_fast": 12, "ema_mid": 26, "ema_slow": 50});
-    let strategy: Strategy = serde_json::from_value(strategy_json)
-        .expect("valid mechanical_params must parse");
+    strategy_json["mechanical_params"] = json!({"ema_fast": 12, "ema_mid": 26, "ema_slow": 50});
+    let strategy: Strategy =
+        serde_json::from_value(strategy_json).expect("valid mechanical_params must parse");
     assert_eq!(strategy.manifest.template, "trend_follower");
 }
 
@@ -160,8 +168,7 @@ fn legacy_strategy_json_roundtrips_byte_for_byte() {
         "risk": RiskPreset::Balanced.expand(),
         "mechanical_params": original_params.clone(),
     });
-    let strategy: Strategy = serde_json::from_value(strategy_json.clone())
-        .expect("legacy shape must parse");
+    let strategy: Strategy = serde_json::from_value(strategy_json.clone()).expect("legacy shape must parse");
     let reserialized = serde_json::to_value(&strategy).expect("strategy must serialize");
     // The relevant invariant is that mechanical_params is byte-identical
     // on the round trip (manifest serialization includes default fields

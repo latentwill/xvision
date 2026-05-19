@@ -3,12 +3,12 @@
 
 use std::path::PathBuf;
 
+use anyhow::Context;
 use clap::{Args, Subcommand, ValueEnum};
 use xvision_observability::{
-    clear_config, default_config_path, resolve_retention, write_config, CliOverrides,
-    ObservabilityConfig, RetentionMode,
+    clear_config, default_config_path, resolve_retention, write_config, CliOverrides, ObservabilityConfig,
+    RetentionMode,
 };
-use anyhow::Context;
 
 #[derive(Args, Debug)]
 pub struct RetentionCmd {
@@ -111,17 +111,14 @@ fn show(args: ShowArgs) -> anyhow::Result<()> {
 }
 
 fn set(args: SetArgs) -> anyhow::Result<()> {
-    let path = args
-        .config
-        .clone()
-        .unwrap_or_else(default_config_path);
+    let path = args.config.clone().unwrap_or_else(default_config_path);
     // Seed from the file on disk only — never from the env-resolved
     // view. Otherwise a transient `XVISION_OBSERVABILITY_*` export in
     // the shell would get baked into `observability.toml` whenever the
     // operator runs an unrelated `set`. Missing file → start from
     // defaults; the CLI flags below overlay on top.
-    let mut cfg: ObservabilityConfig = ObservabilityConfig::load_from_file(&path)
-        .with_context(|| format!("reading {}", path.display()))?;
+    let mut cfg: ObservabilityConfig =
+        ObservabilityConfig::load_from_file(&path).with_context(|| format!("reading {}", path.display()))?;
 
     if let Some(m) = args.mode {
         cfg.retention.mode = m.into();

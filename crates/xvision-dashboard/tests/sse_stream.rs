@@ -38,45 +38,28 @@ async fn boot_server() -> (String, TempDir, AppState) {
     (base_url, tmp, state)
 }
 
+async fn wait_for_run_subscription(bus: &xvision_engine::api::chart::RunEventBus, run_id: &str) {
+    timeout(Duration::from_secs(2), async {
+        loop {
+            if bus.sender(run_id).await.receiver_count() > 0 {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("SSE handler did not subscribe to run bus");
+}
+
 #[tokio::test]
 async fn sse_stream_emits_equity_and_status_then_closes() {
     let (base_url, _tmp, state) = boot_server().await;
     let bus = state.event_bus.clone();
 
-    // Spawn a task that emits events after a short delay so the HTTP
-    // connection has time to establish before the stream starts.
-    let bus_task = bus.clone();
-    tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        bus_task
-            .emit(
-                "test-run",
-                RunChartEvent::Equity(ChartEquityPoint {
-                    time: 1,
-                    equity_usd: 100.0,
-                }),
-            )
-            .await;
-        bus_task
-            .emit(
-                "test-run",
-                RunChartEvent::Status {
-                    phase: "completed".into(),
-                    message: None,
-                },
-            )
-            .await;
-        // Drop the channel so the SSE handler sees RecvError::Closed and
-        // terminates the stream. Without this the handler waits for the next
-        // tick to flush and the test would stall.
-        bus_task.drop_channel("test-run").await;
-    });
-
     let url = format!("{base_url}/api/eval/runs/test-run/stream");
     let client = reqwest::Client::new();
 
-    // Give the server up to 5 s to deliver the full SSE body and close.
-    let body = timeout(Duration::from_secs(5), async {
+    let body_task = tokio::spawn(async move {
         let resp = client
             .get(&url)
             .send()
@@ -96,9 +79,35 @@ async fn sse_stream_emits_equity_and_status_then_closes() {
 
         // Consume the full body (stream terminates once drop_channel fires).
         resp.bytes().await.expect("read body")
-    })
-    .await
-    .expect("SSE stream did not close within 5 s");
+    });
+
+    wait_for_run_subscription(&bus, "test-run").await;
+    bus.emit(
+        "test-run",
+        RunChartEvent::Equity(ChartEquityPoint {
+            time: 1,
+            equity_usd: 100.0,
+        }),
+    )
+    .await;
+    bus.emit(
+        "test-run",
+        RunChartEvent::Status {
+            phase: "completed".into(),
+            message: None,
+        },
+    )
+    .await;
+    // Drop the channel so the SSE handler sees RecvError::Closed and
+    // terminates the stream. Without this the handler waits for the next
+    // tick to flush and the test would stall.
+    bus.drop_channel("test-run").await;
+
+    // Give the server up to 5 s to deliver the full SSE body and close.
+    let body = timeout(Duration::from_secs(5), body_task)
+        .await
+        .expect("SSE stream did not close within 5 s")
+        .expect("SSE request task panicked");
 
     let text = std::str::from_utf8(&body).expect("body is utf-8");
 

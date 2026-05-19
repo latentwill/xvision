@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 pub use crate::strategies::agent_ref::{AgentRef, PipelineDef, PipelineEdge, PipelineKind};
 use crate::strategies::manifest::PublicManifest;
 pub use crate::strategies::mechanical::{
-    BreakoutParams, MechanicalParams, MeanReversionParams, MomentumParams, NewsTraderParams,
+    BreakoutParams, MeanReversionParams, MechanicalParams, MomentumParams, NewsTraderParams,
     RangeTradeParams, ScalpingParams, TrendFollowerParams,
 };
 use crate::strategies::risk::RiskConfig;
@@ -203,10 +203,7 @@ mod tests {
 
     #[test]
     fn min_warmup_bars_derives_from_max_indicator_period_when_unset() {
-        let s = strategy_with_params(
-            None,
-            json!({"ema_fast": 12, "ema_mid": 26, "ema_slow": 50}),
-        );
+        let s = strategy_with_params(None, json!({"ema_fast": 12, "ema_mid": 26, "ema_slow": 50}));
         // Max period is 50 -> doubled to 100.
         assert_eq!(s.min_warmup_bars(), 100);
     }

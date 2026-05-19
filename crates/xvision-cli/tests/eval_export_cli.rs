@@ -33,11 +33,7 @@ async fn seed_run(home: &std::path::Path) -> String {
     // `crypto-bull-q1-2025` is one of the canonical scenarios seeded by
     // the engine on first migration; using it lets the run row pass the
     // FK check on `eval_runs.scenario_id`.
-    let run = Run::new_queued(
-        "agent-X".into(),
-        "crypto-bull-q1-2025".into(),
-        RunMode::Backtest,
-    );
+    let run = Run::new_queued("agent-X".into(), "crypto-bull-q1-2025".into(), RunMode::Backtest);
     let id = run.id.clone();
     store.create(&run).await.expect("seed run");
     // Export is terminal-only — drive the seeded run to Completed so
@@ -60,10 +56,13 @@ fn eval_export_stdout_carries_full_envelope() {
     let run_id = rt.block_on(async { seed_run(dir.path()).await });
 
     let out = xvn(&["eval", "export", &run_id], dir.path());
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 
-    let body: serde_json::Value =
-        serde_json::from_slice(&out.stdout).expect("stdout must be valid JSON");
+    let body: serde_json::Value = serde_json::from_slice(&out.stdout).expect("stdout must be valid JSON");
     assert_eq!(body["schema_version"], "1");
     assert_eq!(body["run"]["id"], run_id);
 
@@ -114,8 +113,7 @@ fn eval_export_output_flag_writes_byte_identical_file() {
     );
 
     let file_bytes = std::fs::read(&out_path).expect("file written");
-    let body: serde_json::Value =
-        serde_json::from_slice(&file_bytes).expect("file must be valid JSON");
+    let body: serde_json::Value = serde_json::from_slice(&file_bytes).expect("file must be valid JSON");
     assert_eq!(body["schema_version"], "1");
     assert_eq!(body["run"]["id"], run_id);
 
@@ -148,11 +146,7 @@ fn eval_export_in_flight_run_returns_2_usage() {
         .expect("open ApiContext");
         let store = RunStore::new(ctx.db.clone());
         // Leave the run in Queued — no update_status transition.
-        let run = Run::new_queued(
-            "agent-X".into(),
-            "crypto-bull-q1-2025".into(),
-            RunMode::Backtest,
-        );
+        let run = Run::new_queued("agent-X".into(), "crypto-bull-q1-2025".into(), RunMode::Backtest);
         let id = run.id.clone();
         store.create(&run).await.expect("seed run");
         id

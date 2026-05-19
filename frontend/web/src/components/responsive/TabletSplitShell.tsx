@@ -15,12 +15,14 @@ export function TabletSplitShell({
 }) {
   return (
     <div className="grid grid-cols-[360px_minmax(0,1fr)] h-[100dvh] bg-bg text-text overflow-hidden">
-      <Suspense fallback={null}>
-        <ChatRailComponent
-          variant="panel"
-          className="min-w-0 border-r border-border-soft overflow-hidden"
-        />
-      </Suspense>
+      <div className="min-w-0 overflow-hidden">
+        <Suspense fallback={null}>
+          <ChatRailComponent
+            variant="panel"
+            className="min-w-0 border-r border-border-soft overflow-hidden"
+          />
+        </Suspense>
+      </div>
       <main className="min-w-0 min-h-0 overflow-y-auto overflow-x-hidden px-6 pt-6 pb-6">
         <Outlet />
       </main>

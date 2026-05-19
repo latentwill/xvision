@@ -60,11 +60,7 @@ async fn boot() -> (TestServer, TempDir) {
 
 fn write_fake_cli(root: &std::path::Path) -> std::path::PathBuf {
     let cli = root.join("fake-xvn");
-    fs::write(
-        &cli,
-        "#!/bin/sh\nexit 0\n",
-    )
-    .unwrap();
+    fs::write(&cli, "#!/bin/sh\nexit 0\n").unwrap();
     let mut perms = fs::metadata(&cli).unwrap().permissions();
     perms.set_mode(0o755);
     fs::set_permissions(&cli, perms).unwrap();

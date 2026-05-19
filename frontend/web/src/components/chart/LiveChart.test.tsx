@@ -68,6 +68,10 @@ function renderWithQuery(ui: React.ReactElement) {
   return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
 }
 
+function cloneSamplePayload(): RunChartPayload {
+  return JSON.parse(JSON.stringify(samplePayload)) as RunChartPayload;
+}
+
 describe("LiveChart", () => {
   beforeEach(() => {
     liveChartMocks.runChartProps.mockClear();
@@ -146,6 +150,96 @@ describe("LiveChart", () => {
       expect(screen.getByTestId("run-chart-mock")).toHaveAttribute(
         "data-follow",
         "true",
+      ),
+    );
+  });
+
+  it("loads a fresh payload before merging stream events after the run changes", async () => {
+    const firstPayload = cloneSamplePayload();
+    firstPayload.run_id = "r_test";
+    firstPayload.bars = [
+      { time: 1_704_067_200, open: 100, high: 101, low: 99, close: 100.5, volume: 10 },
+    ];
+    firstPayload.indicators.sma_20 = [
+      { time: 1_704_067_200, value: 100.5 },
+    ];
+
+    const nextPayload = cloneSamplePayload();
+    nextPayload.run_id = "r_next";
+    nextPayload.bars = [];
+    nextPayload.indicators.sma_20 = [];
+
+    vi.mocked(globalThis.fetch).mockImplementation((input) => {
+      const path = String(input);
+      const payload = path.includes("/r_next/") ? nextPayload : firstPayload;
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(payload),
+      } as Response);
+    });
+
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const { rerender } = render(
+      <QueryClientProvider client={client}>
+        <LiveChart runId="r_test" />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() =>
+      expect(liveChartMocks.runChartProps).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          payload: expect.objectContaining({ run_id: "r_test" }),
+        }),
+      ),
+    );
+    await waitFor(() => expect(eventSources).toHaveLength(1));
+
+    rerender(
+      <QueryClientProvider client={client}>
+        <LiveChart runId="r_next" />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() =>
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "/api/eval/runs/r_next/chart",
+        expect.anything(),
+      ),
+    );
+    await waitFor(() =>
+      expect(liveChartMocks.runChartProps).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          payload: expect.objectContaining({
+            run_id: "r_next",
+            bars: [],
+            indicators: expect.objectContaining({ sma_20: [] }),
+          }),
+        }),
+      ),
+    );
+    await waitFor(() => expect(eventSources).toHaveLength(2));
+
+    eventSources[1].emit("indicator_tail", {
+      event: "indicator_tail",
+      data: {
+        sma_20: { time: 1_704_070_800, value: 102.25 },
+      },
+    });
+
+    await waitFor(() =>
+      expect(liveChartMocks.runChartProps).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          payload: expect.objectContaining({
+            run_id: "r_next",
+            bars: [],
+            indicators: expect.objectContaining({
+              sma_20: [{ time: 1_704_070_800, value: 102.25 }],
+            }),
+          }),
+        }),
       ),
     );
   });

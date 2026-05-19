@@ -111,10 +111,7 @@ impl RunEventBus {
         Self::with_capacity(Self::DEFAULT_CAPACITY, subscribers)
     }
 
-    pub fn with_capacity(
-        capacity: usize,
-        subscribers: Vec<Arc<dyn AgentRunRecorder>>,
-    ) -> Self {
+    pub fn with_capacity(capacity: usize, subscribers: Vec<Arc<dyn AgentRunRecorder>>) -> Self {
         let inner = Arc::new(Inner {
             capacity: capacity.max(1),
             queue: Mutex::new(VecDeque::with_capacity(capacity.max(1))),
@@ -163,9 +160,7 @@ impl RunEventBus {
                     self.inner.notify_consumer.notify_one();
                     return;
                 }
-                if let Some(idx) =
-                    q.iter().position(|e| !e.is_lifecycle_critical())
-                {
+                if let Some(idx) = q.iter().position(|e| !e.is_lifecycle_critical()) {
                     let evicted = q.remove(idx).expect("idx was just observed");
                     q.push_back(pending);
                     PublishOutcome::Evicted(evicted)
@@ -179,13 +174,7 @@ impl RunEventBus {
             match outcome {
                 PublishOutcome::Evicted(e) => {
                     let key = drop_key_for(&e);
-                    *self
-                        .inner
-                        .drops
-                        .lock()
-                        .await
-                        .entry(key)
-                        .or_insert(0) += 1;
+                    *self.inner.drops.lock().await.entry(key).or_insert(0) += 1;
                     self.inner.notify_consumer.notify_one();
                     return;
                 }
@@ -239,10 +228,7 @@ impl RunEventBus {
     }
 }
 
-async fn consumer_loop(
-    inner: Arc<Inner>,
-    subscribers: Vec<Arc<dyn AgentRunRecorder>>,
-) {
+async fn consumer_loop(inner: Arc<Inner>, subscribers: Vec<Arc<dyn AgentRunRecorder>>) {
     loop {
         let event = match next_event(&inner).await {
             Some(e) => e,
@@ -340,8 +326,7 @@ async fn flush_drops(inner: &Arc<Inner>, just_handled: &RunEvent) {
             out.push(BackpressureDroppedEvent {
                 run_id: String::new(),
                 dropped: unattributed,
-                note: "bus capacity exceeded; drops not attributable to a run"
-                    .to_owned(),
+                note: "bus capacity exceeded; drops not attributable to a run".to_owned(),
             });
         }
         out

@@ -85,6 +85,7 @@ const GRANULARITY_OPTIONS = [
 /// inline rather than imported from `types.gen` because that module
 /// only exports type aliases, not constants.
 const DEFAULT_WARMUP_BARS = 200;
+const DEFAULT_SLIPPAGE: SlippageModel = { model: 'linear', bps: 5 };
 
 export function ScenarioForm({
   initial,
@@ -124,7 +125,9 @@ export function ScenarioForm({
   const [feesTaker, setFeesTaker] = useState(
     initial?.venue?.fees?.taker_bps ?? 25,
   );
-  const [slippageBps, setSlippageBps] = useState(5);
+  const [slippage, setSlippage] = useState<SlippageModel>(
+    initial?.venue?.slippage ?? DEFAULT_SLIPPAGE,
+  );
   const [latencyMs, setLatencyMs] = useState(
     initial?.venue?.latency?.decision_to_fill_ms ?? 500,
   );
@@ -173,7 +176,6 @@ export function ScenarioForm({
     }
     setWarmupError(null);
 
-    const slippage: SlippageModel = { model: 'linear', bps: slippageBps };
     const fillModel: FillModel = {
       market_order_fill: MARKET_ORDER_FILL,
       limit_order_fill: LIMIT_ORDER_FILL,
@@ -402,8 +404,8 @@ export function ScenarioForm({
                 <input
                   type="number"
                   className="input"
-                  value={slippageBps}
-                  onChange={(e) => setSlippageBps(+e.target.value)}
+                  value={slippage.model === 'linear' ? slippage.bps : 0}
+                  onChange={(e) => setSlippage({ model: 'linear', bps: +e.target.value })}
                 />
               </Field>
               <Field label="Latency (ms)">

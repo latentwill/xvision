@@ -59,6 +59,60 @@ async fn seed_run_row(state: &AppState, run_id: &str) {
     .expect("seed agent_runs row");
 }
 
+async fn publish_live_events(bus: &xvision_observability::RunEventBus, run_id: &str) {
+    bus.publish(RunEvent::RunStarted(RunStartedEvent {
+        run_id: run_id.into(),
+        objective: "integration test run".into(),
+        strategy_id: None,
+        eval_run_id: None,
+        source_cli_job_id: None,
+        started_at: Utc::now(),
+        retention_mode: "summary".into(),
+        sidecar_version: Some("test-sidecar".into()),
+        cline_sdk_version: Some("test-cline".into()),
+        protocol_version: Some("xvision/1".into()),
+        skills_json: None,
+        mcp_servers_json: None,
+    }))
+    .await;
+    bus.publish(RunEvent::SpanStarted(SpanStartedEvent {
+        span_id: "span_run".into(),
+        run_id: run_id.into(),
+        parent_span_id: None,
+        kind: SpanKind::AgentRun,
+        name: "agent.run".into(),
+        started_at: Utc::now(),
+        otel_trace_id: None,
+        otel_span_id: None,
+        attributes_json: None,
+    }))
+    .await;
+    bus.publish(RunEvent::ModelCallFinished(ModelCallFinishedEvent {
+        span_id: "span_run".into(),
+        provider: "test-provider".into(),
+        model: "test-model".into(),
+        input_token_count: Some(5),
+        output_token_count: Some(3),
+        cost_usd: None,
+        prompt_hash: "sha256:prompt".into(),
+        response_hash: Some("sha256:response".into()),
+        prompt_payload_ref: None,
+        response_payload_ref: None,
+        tool_calls_requested: None,
+        capability_path: None,
+    }))
+    .await;
+    // Closing lifecycle event so the SSE handler ends gracefully.
+    bus.publish(RunEvent::RunFinished(RunFinishedEvent {
+        run_id: run_id.into(),
+        finished_at: Utc::now(),
+        status: RunStatus::Completed,
+        final_artifact_id: None,
+        error: None,
+    }))
+    .await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sse_stream_emits_snapshot_then_live_event_then_closes() {
     let (base_url, _tmp, state) = boot_server().await;
@@ -66,65 +120,7 @@ async fn sse_stream_emits_snapshot_then_live_event_then_closes() {
     let run_id = "run_sse_int_01";
     seed_run_row(&state, run_id).await;
 
-    // Subscribe BEFORE we open the HTTP request would race; instead,
-    // open the request first and emit events from a spawned task once
-    // the server has had a moment to subscribe.
     let bus = state.obs_event_bus.clone();
-    let run_id_emit = run_id.to_string();
-    tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(150)).await;
-        bus.publish(RunEvent::RunStarted(RunStartedEvent {
-            run_id: run_id_emit.clone(),
-            objective: "integration test run".into(),
-            strategy_id: None,
-            eval_run_id: None,
-            source_cli_job_id: None,
-            started_at: Utc::now(),
-            retention_mode: "summary".into(),
-            sidecar_version: Some("test-sidecar".into()),
-            cline_sdk_version: Some("test-cline".into()),
-            protocol_version: Some("xvision/1".into()),
-            skills_json: None,
-            mcp_servers_json: None,
-        }))
-        .await;
-        bus.publish(RunEvent::SpanStarted(SpanStartedEvent {
-            span_id: "span_run".into(),
-            run_id: run_id_emit.clone(),
-            parent_span_id: None,
-            kind: SpanKind::AgentRun,
-            name: "agent.run".into(),
-            started_at: Utc::now(),
-            otel_trace_id: None,
-            otel_span_id: None,
-            attributes_json: None,
-        }))
-        .await;
-        bus.publish(RunEvent::ModelCallFinished(ModelCallFinishedEvent {
-            span_id: "span_run".into(),
-            provider: "test-provider".into(),
-            model: "test-model".into(),
-            input_token_count: Some(5),
-            output_token_count: Some(3),
-            cost_usd: None,
-            prompt_hash: "sha256:prompt".into(),
-            response_hash: Some("sha256:response".into()),
-            prompt_payload_ref: None,
-            response_payload_ref: None,
-            tool_calls_requested: None,
-            capability_path: None,
-        }))
-        .await;
-        // Closing lifecycle event so the SSE handler ends gracefully.
-        bus.publish(RunEvent::RunFinished(RunFinishedEvent {
-            run_id: run_id_emit.clone(),
-            finished_at: Utc::now(),
-            status: RunStatus::Completed,
-            final_artifact_id: None,
-            error: None,
-        }))
-        .await;
-    });
 
     let url = format!("{base_url}/api/agent-runs/{run_id}/stream");
     let client = reqwest::Client::new();
@@ -154,11 +150,22 @@ async fn sse_stream_emits_snapshot_then_live_event_then_closes() {
         // streaming API to avoid waiting on a 15s keep-alive.
         let mut stream = resp.bytes_stream();
         let mut acc: Vec<u8> = Vec::new();
+        let mut emitted_live_events = false;
         while let Some(chunk) = stream.next().await {
             let bytes = chunk.expect("read chunk");
             acc.extend_from_slice(&bytes);
-            let text = std::str::from_utf8(&acc).unwrap_or("");
-            if text.contains("event: snapshot") && text.contains("event: run_finished") {
+            let (has_snapshot, has_run_finished) = {
+                let text = std::str::from_utf8(&acc).unwrap_or("");
+                (
+                    text.contains("event: snapshot"),
+                    text.contains("event: run_finished"),
+                )
+            };
+            if has_snapshot && !emitted_live_events {
+                emitted_live_events = true;
+                publish_live_events(&bus, run_id).await;
+            }
+            if has_snapshot && has_run_finished {
                 break;
             }
         }

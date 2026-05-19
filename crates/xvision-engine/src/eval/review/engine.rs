@@ -31,9 +31,7 @@ use ulid::Ulid;
 use crate::agent::llm::{LlmDispatch, LlmRequest, Message};
 use crate::eval::findings::{Finding, Severity};
 use crate::eval::review::parser::{parse_review_output, ParsedReview};
-use crate::eval::review::payload::{
-    build_review_payload, ReviewPayload, ReviewScenarioSummary,
-};
+use crate::eval::review::payload::{build_review_payload, ReviewPayload, ReviewScenarioSummary};
 use crate::eval::review::prompt::{build_system_prompt, render_evidence_legend};
 use crate::eval::review::{AgentProfile, EvalReview, ReviewStatus, ReviewVerdict};
 use crate::eval::store::RunStore;
@@ -182,8 +180,7 @@ async fn call_model(
     payload: &ReviewPayload,
 ) -> Result<String, String> {
     let system_prompt = build_system_prompt(profile);
-    let body = serde_json::to_string_pretty(payload)
-        .map_err(|e| format!("serialize review payload: {e}"))?;
+    let body = serde_json::to_string_pretty(payload).map_err(|e| format!("serialize review payload: {e}"))?;
     let legend = render_evidence_legend(&payload.valid_evidence_refs);
     let user_text = format!("{legend}\n\nReview payload:\n{body}");
 
@@ -200,10 +197,7 @@ async fn call_model(
         temperature: Some(profile.temperature),
         response_schema: None,
     };
-    let resp = dispatch
-        .complete(req)
-        .await
-        .map_err(|e| format!("{e}"))?;
+    let resp = dispatch.complete(req).await.map_err(|e| format!("{e}"))?;
     Ok(resp.text())
 }
 
@@ -220,14 +214,7 @@ async fn persist_inconclusive(
     })
     .to_string();
     let _ = store
-        .complete_review(
-            review_id,
-            ReviewVerdict::Inconclusive,
-            0.0,
-            0,
-            reason,
-            &raw_audit,
-        )
+        .complete_review(review_id, ReviewVerdict::Inconclusive, 0.0, 0, reason, &raw_audit)
         .await
         .map_err(|e| ReviewError::Db(e.context("persist inconclusive review")))?;
     Ok(ReviewOutcome {
@@ -358,10 +345,7 @@ mod tests {
     async fn seed_completed_run(store: &RunStore) -> Run {
         let mut run = Run::new_queued("agent-1".into(), "sc-1".into(), RunMode::Backtest);
         store.create(&run).await.expect("create run");
-        store
-            .begin_running(&run.id)
-            .await
-            .expect("begin running");
+        store.begin_running(&run.id).await.expect("begin running");
         let metrics = MetricsSummary {
             total_return_pct: 5.0,
             sharpe: 1.2,
@@ -501,11 +485,7 @@ mod tests {
             .await
             .expect("no panic");
         assert_eq!(outcome.verdict, Some(ReviewVerdict::Inconclusive));
-        let review = store
-            .get_review(&outcome.review_id)
-            .await
-            .unwrap()
-            .unwrap();
+        let review = store.get_review(&outcome.review_id).await.unwrap().unwrap();
         assert_eq!(review.status, ReviewStatus::Completed);
         assert!(review.summary.unwrap().contains("validation failed"));
     }
@@ -517,8 +497,7 @@ mod tests {
         let store = RunStore::new(pool.clone());
         let _ = seed_completed_run(&store).await;
 
-        let mut body: serde_json::Value =
-            serde_json::from_str(&well_formed_response()).unwrap();
+        let mut body: serde_json::Value = serde_json::from_str(&well_formed_response()).unwrap();
         // Replace evidence reference with one that isn't in the allowlist.
         for f in body["findings"].as_array_mut().unwrap() {
             f["evidence"][0]["reference"] = serde_json::json!("metric:made_up_metric");
@@ -533,11 +512,7 @@ mod tests {
             .await
             .expect("no panic");
         assert_eq!(outcome.verdict, Some(ReviewVerdict::Inconclusive));
-        let review = store
-            .get_review(&outcome.review_id)
-            .await
-            .unwrap()
-            .unwrap();
+        let review = store.get_review(&outcome.review_id).await.unwrap().unwrap();
         assert!(review
             .summary
             .as_deref()
@@ -596,11 +571,7 @@ mod tests {
             .expect("dispatch failure is recorded, not propagated");
         assert_eq!(outcome.status, ReviewStatus::Failed);
         assert_eq!(outcome.verdict, None);
-        let review = store
-            .get_review(&outcome.review_id)
-            .await
-            .unwrap()
-            .unwrap();
+        let review = store.get_review(&outcome.review_id).await.unwrap().unwrap();
         assert!(review.error.unwrap().contains("simulated provider 500"));
     }
 

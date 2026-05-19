@@ -246,15 +246,14 @@ async fn run_export(args: ExportArgs) -> CliResult<()> {
 
     match args.output {
         Some(path) => {
-            std::fs::write(&path, &bytes).with_context(|| format!("write export to {path:?}"))
+            std::fs::write(&path, &bytes)
+                .with_context(|| format!("write export to {path:?}"))
                 .exit_with(XvnExit::Upstream)?;
             eprintln!("eval export → {} ({} bytes)", path.display(), bytes.len());
         }
         None => {
             use std::io::Write;
-            std::io::stdout()
-                .write_all(&bytes)
-                .exit_with(XvnExit::Upstream)?;
+            std::io::stdout().write_all(&bytes).exit_with(XvnExit::Upstream)?;
             // Trailing newline for shell-friendly redirection; the JSON
             // itself contains no newlines in compact form.
             if !args.pretty {

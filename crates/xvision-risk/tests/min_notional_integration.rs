@@ -14,7 +14,9 @@ use std::collections::BTreeMap;
 
 use chrono::Utc;
 use uuid::Uuid;
-use xvision_core::{Action, AssetSymbol, Direction, OpenPosition, PortfolioState, RiskDecision, TraderDecision, VetoReason};
+use xvision_core::{
+    Action, AssetSymbol, Direction, OpenPosition, PortfolioState, RiskDecision, TraderDecision, VetoReason,
+};
 
 use xvision_risk::config::{Limits, RiskConfig, Stops, VenueLimits};
 use xvision_risk::whitelist::{AssetEntry, Whitelist};
@@ -102,11 +104,8 @@ fn decision(size_bps: u32) -> TraderDecision {
 /// notional gate (other rules still apply).
 #[test]
 fn no_venue_means_no_min_notional_rule() {
-    let layer = RiskLayer::with_default_rules(
-        risk_config(10.0, 1.0),
-        whitelist_with_btc_and_eth_enabled(),
-        None,
-    );
+    let layer =
+        RiskLayer::with_default_rules(risk_config(10.0, 1.0), whitelist_with_btc_and_eth_enabled(), None);
     // Tiny portfolio, tiny size → would be vetoed under paper if the
     // venue were configured. Without a venue, it's approved.
     let result = layer.evaluate(decision(50), &portfolio(1_000.0), AssetSymbol::Btc);

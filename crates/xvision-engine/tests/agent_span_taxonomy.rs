@@ -29,9 +29,7 @@ use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmRequest, LlmRespo
 use xvision_engine::agent::observability::ObsEmitter;
 use xvision_engine::strategies::slot::LLMSlot;
 use xvision_engine::tools::ToolRegistry;
-use xvision_observability::{
-    AgentRunRecorder, NoopRecorder, RunEvent, RunEventBus, RunStatus, SpanKind,
-};
+use xvision_observability::{AgentRunRecorder, NoopRecorder, RunEvent, RunEventBus, RunStatus, SpanKind};
 
 fn trader_slot() -> LLMSlot {
     LLMSlot {
@@ -152,10 +150,7 @@ async fn validate_brackets_wrap_each_tool_call_in_order() {
         .iter()
         .filter_map(|e| match e {
             RunEvent::SpanStarted(s)
-                if matches!(
-                    s.kind,
-                    SpanKind::ToolValidateInput | SpanKind::ToolValidateOutput
-                ) =>
+                if matches!(s.kind, SpanKind::ToolValidateInput | SpanKind::ToolValidateOutput) =>
             {
                 Some(s)
             }
@@ -185,9 +180,7 @@ async fn validate_brackets_wrap_each_tool_call_in_order() {
     // F-4 reserves `recovery.attempt` but does NOT emit it. Guards
     // against accidental emission slipping in via a future rebase.
     assert!(
-        !kinds
-            .iter()
-            .any(|k| matches!(k, SpanKind::RecoveryAttempt)),
+        !kinds.iter().any(|k| matches!(k, SpanKind::RecoveryAttempt)),
         "F-4 must not emit recovery.attempt — F-5 owns that seam. kinds={kinds:?}"
     );
 }

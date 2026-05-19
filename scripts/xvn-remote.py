@@ -64,6 +64,10 @@ def endpoint(base_url: str, path: str) -> str:
     return f"{normalize_base_url(base_url)}{path}"
 
 
+def path_segment(value: str) -> str:
+    return urllib.parse.quote(value, safe="")
+
+
 def submit_job(base_url: str, argv: list[str], timeout_secs: int) -> dict[str, Any]:
     result = request_json(
         "POST",
@@ -72,11 +76,13 @@ def submit_job(base_url: str, argv: list[str], timeout_secs: int) -> dict[str, A
     )
     if not isinstance(result.payload, dict):
         raise RemoteCliError("unexpected response shape from submit")
+    if not isinstance(result.payload.get("job_id"), str) or not result.payload["job_id"]:
+        raise RemoteCliError("unexpected response shape from submit: missing job_id")
     return result.payload
 
 
 def get_job(base_url: str, job_id: str) -> dict[str, Any]:
-    result = request_json("GET", endpoint(base_url, f"/api/cli/jobs/{urllib.parse.quote(job_id)}"))
+    result = request_json("GET", endpoint(base_url, f"/api/cli/jobs/{path_segment(job_id)}"))
     if not isinstance(result.payload, dict):
         raise RemoteCliError("unexpected response shape from status")
     return result.payload
@@ -84,7 +90,7 @@ def get_job(base_url: str, job_id: str) -> dict[str, Any]:
 
 def get_output(base_url: str, job_id: str) -> dict[str, Any]:
     result = request_json(
-        "GET", endpoint(base_url, f"/api/cli/jobs/{urllib.parse.quote(job_id)}/output")
+        "GET", endpoint(base_url, f"/api/cli/jobs/{path_segment(job_id)}/output")
     )
     if not isinstance(result.payload, dict):
         raise RemoteCliError("unexpected response shape from output")
@@ -93,7 +99,7 @@ def get_output(base_url: str, job_id: str) -> dict[str, Any]:
 
 def cancel_job(base_url: str, job_id: str) -> dict[str, Any]:
     result = request_json(
-        "POST", endpoint(base_url, f"/api/cli/jobs/{urllib.parse.quote(job_id)}/cancel")
+        "POST", endpoint(base_url, f"/api/cli/jobs/{path_segment(job_id)}/cancel")
     )
     if not isinstance(result.payload, dict):
         raise RemoteCliError("unexpected response shape from cancel")

@@ -34,11 +34,10 @@ fn agentd_bin() -> PathBuf {
         .join("xvision-agentd/dist/index.js")
 }
 
-fn fixture_name() -> Option<String> {
-    // Set XVN_OHLCV_FIXTURE to a fixture name known to
-    // xvision_data::fixtures::load_ohlcv_fixture. Test is skipped if unset.
-    // The repo ships `test-fixture-btc-2024-01` in data/probes/.
-    std::env::var("XVN_OHLCV_FIXTURE").ok()
+fn fixture_name() -> String {
+    // Override XVN_OHLCV_FIXTURE to use another fixture known to
+    // xvision_data::fixtures::load_ohlcv_fixture.
+    std::env::var("XVN_OHLCV_FIXTURE").unwrap_or_else(|_| "test-fixture-btc-2024-01".to_string())
 }
 
 #[tokio::test]
@@ -48,10 +47,7 @@ async fn ohlcv_tool_round_trips_through_sidecar() {
         eprintln!("skipping: build xvision-agentd first");
         return;
     }
-    let Some(fixture) = fixture_name() else {
-        eprintln!("skipping: XVN_OHLCV_FIXTURE not set");
-        return;
-    };
+    let fixture = fixture_name();
 
     let dir = TempDir::new().unwrap();
     let sock = dir.path().join("sock");

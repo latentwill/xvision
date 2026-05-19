@@ -180,7 +180,7 @@ function MarkdownView({ text }: { text: string }) {
             href={href}
             className="text-gold underline decoration-gold/40 hover:decoration-gold"
             target="_blank"
-            rel="noreferrer"
+            rel="noopener noreferrer"
           >
             {children}
           </a>
@@ -221,12 +221,13 @@ function toolLogLine(
   const result = (t.result ?? {}) as Record<string, unknown>;
   const errorMsg =
     typeof result.error === "string" ? result.error : undefined;
-  if (errorMsg) {
+  if (errorMsg || !t.ok) {
+    const detail = errorMsg ?? t.resultSummary ?? t.summary ?? "Tool failed";
     return {
       ok: false,
       content: (
         <>
-          {friendlyVerb(t.call)} failed: <span>{errorMsg}</span>
+          {friendlyVerb(t.call)} failed: <span>{detail}</span>
         </>
       ),
     };

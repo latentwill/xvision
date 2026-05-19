@@ -12,12 +12,12 @@ use axum::{
 use serde::Deserialize;
 use std::path::PathBuf;
 
+use xvision_core::providers::Catalog;
 use xvision_engine::api::settings::providers::{
     self, AddProviderRequest, ProviderModelsReport, ProviderRow, ProvidersReport, TestConnectionReport,
     UpdateProviderRequest,
 };
 use xvision_engine::api::settings::providers_catalog::{self, RefreshOutcome};
-use xvision_core::providers::Catalog;
 
 use crate::error::DashboardError;
 use crate::state::AppState;

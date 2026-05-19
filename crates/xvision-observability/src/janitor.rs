@@ -233,9 +233,7 @@ pub async fn truncate_to_max_bytes(
         let metadata = fs::metadata(&path)?;
         let len = metadata.len();
         total += len;
-        let mtime = metadata
-            .modified()
-            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        let mtime = metadata.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
         entries.push((mtime, name.to_owned(), path, len));
     }
     if total <= max_bytes {
@@ -265,10 +263,7 @@ pub async fn truncate_to_max_bytes(
 /// Returns the total number of rows touched (each row counts once per
 /// statement that updated it; a row with both prompt+response refs
 /// pointing at the same hash counts as one).
-async fn null_refs_for_hash(
-    pool: &SqlitePool,
-    sha: &str,
-) -> Result<u64, JanitorError> {
+async fn null_refs_for_hash(pool: &SqlitePool, sha: &str) -> Result<u64, JanitorError> {
     let mut nulled = 0u64;
     let stmts: [&str; 4] = [
         "UPDATE model_calls SET \
@@ -304,18 +299,16 @@ async fn null_refs_for_hash(
 async fn live_blob_refs(pool: &SqlitePool) -> Result<HashSet<String>, JanitorError> {
     let mut set = HashSet::new();
     // Union across all tables that carry payload refs.
-    let rows: Vec<(Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT prompt_payload_ref, response_payload_ref FROM model_calls",
-    )
-    .fetch_all(pool)
-    .await?;
+    let rows: Vec<(Option<String>, Option<String>)> =
+        sqlx::query_as("SELECT prompt_payload_ref, response_payload_ref FROM model_calls")
+            .fetch_all(pool)
+            .await?;
     push_pairs(&mut set, rows);
 
-    let rows: Vec<(Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT input_payload_ref, output_payload_ref FROM tool_calls",
-    )
-    .fetch_all(pool)
-    .await?;
+    let rows: Vec<(Option<String>, Option<String>)> =
+        sqlx::query_as("SELECT input_payload_ref, output_payload_ref FROM tool_calls")
+            .fetch_all(pool)
+            .await?;
     push_pairs(&mut set, rows);
 
     let rows: Vec<(Option<String>, Option<String>)> =
@@ -324,20 +317,16 @@ async fn live_blob_refs(pool: &SqlitePool) -> Result<HashSet<String>, JanitorErr
             .await?;
     push_pairs(&mut set, rows);
 
-    let rows: Vec<(Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT input_payload_ref, output_payload_ref FROM checkpoints",
-    )
-    .fetch_all(pool)
-    .await?;
+    let rows: Vec<(Option<String>, Option<String>)> =
+        sqlx::query_as("SELECT input_payload_ref, output_payload_ref FROM checkpoints")
+            .fetch_all(pool)
+            .await?;
     push_pairs(&mut set, rows);
 
     Ok(set)
 }
 
-fn push_pairs(
-    set: &mut HashSet<String>,
-    rows: Vec<(Option<String>, Option<String>)>,
-) {
+fn push_pairs(set: &mut HashSet<String>, rows: Vec<(Option<String>, Option<String>)>) {
     for (a, b) in rows {
         if let Some(v) = a {
             set.insert(v);

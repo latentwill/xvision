@@ -36,8 +36,7 @@ struct SeedSummary {
 }
 
 pub async fn run(xvn_home_override: Option<PathBuf>, args: SeedArgs) -> CliResultUnit {
-    let xvn_home = crate::commands::home::resolve_xvn_home(xvn_home_override)
-        .map_err(CliError::usage)?;
+    let xvn_home = crate::commands::home::resolve_xvn_home(xvn_home_override).map_err(CliError::usage)?;
     let user = std::env::var("USER")
         .or_else(|_| std::env::var("USERNAME"))
         .unwrap_or_else(|_| "operator".to_string());
@@ -66,11 +65,7 @@ pub async fn run(xvn_home_override: Option<PathBuf>, args: SeedArgs) -> CliResul
     Ok(())
 }
 
-async fn seed_strategies(
-    store: &FilesystemStore,
-    reset: bool,
-    summary: &mut SeedSummary,
-) -> CliResultUnit {
+async fn seed_strategies(store: &FilesystemStore, reset: bool, summary: &mut SeedSummary) -> CliResultUnit {
     if reset {
         let existing_ids = store
             .list()
@@ -161,9 +156,7 @@ async fn seed_scenarios(ctx: &ApiContext, reset: bool, summary: &mut SeedSummary
                 Err(ApiError::Validation(_)) => {
                     // delete_scenario surfaces a Validation error when
                     // `eval_runs` references the scenario. Keep the row.
-                    summary
-                        .scenarios_preserved_referenced
-                        .push(scenario.id.clone());
+                    summary.scenarios_preserved_referenced.push(scenario.id.clone());
                 }
                 Err(e) => return Err(api_to_cli("seed delete", e)),
             }
@@ -278,8 +271,8 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
     use xvision_engine::strategies::templates::{
-        EXAMPLE_SCENARIO_QUICKSTART_BULL, EXAMPLE_SCENARIO_QUICKSTART_FLASH,
-        EXAMPLE_STRATEGY_BREAKOUT, EXAMPLE_STRATEGY_MEAN_REVERSION, EXAMPLE_STRATEGY_TREND_FOLLOWER,
+        EXAMPLE_SCENARIO_QUICKSTART_BULL, EXAMPLE_SCENARIO_QUICKSTART_FLASH, EXAMPLE_STRATEGY_BREAKOUT,
+        EXAMPLE_STRATEGY_MEAN_REVERSION, EXAMPLE_STRATEGY_TREND_FOLLOWER,
     };
 
     async fn seed_fresh(xvn_home: &Path, reset: bool) -> SeedSummary {
@@ -397,8 +390,10 @@ mod tests {
             .any(|id| id == EXAMPLE_SCENARIO_QUICKSTART_BULL));
         // The unreferenced flash-crash scenario still gets removed and
         // recreated on the same reset call.
-        assert!(summary.scenarios_removed.iter().any(|id| id
-            == xvision_engine::strategies::templates::EXAMPLE_SCENARIO_QUICKSTART_FLASH));
+        assert!(summary
+            .scenarios_removed
+            .iter()
+            .any(|id| id == xvision_engine::strategies::templates::EXAMPLE_SCENARIO_QUICKSTART_FLASH));
     }
 
     #[tokio::test]

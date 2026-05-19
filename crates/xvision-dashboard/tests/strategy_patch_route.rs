@@ -102,7 +102,10 @@ async fn patch_metadata_empty_display_name_returns_classified_400() {
         .await;
     response.assert_status_bad_request();
     let body: serde_json::Value = response.json();
-    assert_eq!(body["code"], "validation", "expected classified validation error, got {body}");
+    assert_eq!(
+        body["code"], "validation",
+        "expected classified validation error, got {body}"
+    );
     let msg = body["message"].as_str().unwrap_or_default();
     assert!(
         msg.contains("display_name"),
@@ -237,12 +240,8 @@ async fn patch_metadata_combined_update_round_trips() {
     let response = server.get(&format!("/api/strategy/{id}")).await;
     let fetched: serde_json::Value = response.json();
     assert_eq!(fetched["manifest"]["display_name"], "Multi-Update");
-    assert_eq!(
-        fetched["manifest"]["plain_summary"], "Updated summary text."
-    );
-    let assets = fetched["manifest"]["asset_universe"]
-        .as_array()
-        .expect("array");
+    assert_eq!(fetched["manifest"]["plain_summary"], "Updated summary text.");
+    let assets = fetched["manifest"]["asset_universe"].as_array().expect("array");
     assert_eq!(assets.len(), 2);
     assert_eq!(assets[0], "BTC/USD");
     assert_eq!(assets[1], "ETH/USD");
