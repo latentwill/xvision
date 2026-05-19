@@ -11,10 +11,16 @@ pub mod review;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use std::collections::HashMap;
+
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
+use serde::{Deserialize, Serialize};
 use xvision_engine::api::eval::{self, CompareRunsRequest, EvalRunRequest, ListRunsRequest};
-use xvision_engine::eval::behavior::BehaviorSummary;
+use xvision_engine::eval::behavior::{derive_behavior_summary, BehaviorSummary};
+use xvision_engine::eval::compare::ComparisonEquityCurve;
+use xvision_engine::eval::findings::Finding;
+use xvision_engine::eval::store::RunStore;
 use xvision_engine::api::{scenario as api_scenario, strategy as api_strategy};
 use xvision_engine::api::{Actor, ApiContext, ApiError};
 use xvision_engine::eval::export as eval_export;
@@ -157,18 +163,53 @@ pub struct ScenariosArgs {
     pub json: bool,
 }
 
+/// CLI-only render shape for `xvn eval compare`. Not part of the engine API.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompareReport {
+    pub runs: Vec<CompareRunRow>,
+    pub equity_curves: Vec<ComparisonEquityCurve>,
+    pub findings: Vec<Finding>,
+}
+
+/// One row in `CompareReport.runs`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompareRunRow {
+    pub run_id: String,
+    pub scenario_id: String,
+    pub scenario_name: String,
+    pub strategy_id: String,
+    pub status: String,
+    pub return_pct: Option<f64>,
+    pub sharpe: Option<f64>,
+    pub max_drawdown_pct: Option<f64>,
+    pub decisions: u32,
+    pub trades_opened: u32,
+    pub action_distribution: HashMap<String, u32>,
+    pub avg_bars_held: Option<f64>,
+    pub primary_failure_mode: String,
+}
+
 #[derive(Args, Debug)]
 pub struct CompareArgs {
-    /// Two or more run ids (ULIDs) to compare.
-    #[arg(num_args = 2.., required = true)]
+    /// Two or more run ids (ULIDs) to compare, as positional arguments.
+    #[arg(num_args = 0.., conflicts_with = "runs")]
     pub run_ids: Vec<String>,
+    /// Two or more run ids to compare, comma-separated (e.g. --runs id1,id2,id3).
+    /// Alternative to positional run_ids.
+    #[arg(long, value_delimiter = ',')]
+    pub runs: Option<Vec<String>>,
     /// Override the xvn home directory.
     #[arg(long)]
     pub xvn_home: Option<PathBuf>,
-    /// Emit the full `ComparisonReport` as JSON (default: human-readable
-    /// metrics-table summary).
-    #[arg(long)]
+    /// Emit the report as JSON.
+    #[arg(long, conflicts_with = "markdown")]
     pub json: bool,
+    /// Emit the report as a Markdown table.
+    #[arg(long, conflicts_with = "json")]
+    pub markdown: bool,
+    /// Sort runs by this metric (return | sharpe | drawdown). Default: return (descending).
+    #[arg(long, default_value = "return")]
+    pub sort: String,
 }
 
 #[derive(Args, Debug)]
@@ -522,81 +563,239 @@ fn print_run_status_line(run: &xvision_engine::eval::run::Run) {
     println!("{line}");
 }
 
+/// Resolve the effective run_ids from either positional args or `--runs`.
+/// Returns a Usage error if fewer than 2 ids are provided.
+fn resolve_run_ids(args: &CompareArgs) -> CliResult<Vec<String>> {
+    let ids: Vec<String> = if let Some(ref r) = args.runs {
+        r.clone()
+    } else {
+        args.run_ids.clone()
+    };
+    if ids.len() < 2 {
+        return Err(CliError {
+            exit: XvnExit::Usage,
+            source: anyhow::anyhow!(
+                "eval compare requires at least 2 run ids; got {}. \
+                 Pass them as positional args or via --runs id1,id2,...",
+                ids.len()
+            ),
+        });
+    }
+    Ok(ids)
+}
+
+/// Build the action distribution map from decision rows.
+fn action_distribution(decisions: &[xvision_engine::eval::store::DecisionRow]) -> HashMap<String, u32> {
+    let mut map: HashMap<String, u32> = HashMap::new();
+    for d in decisions {
+        *map.entry(d.action.clone()).or_insert(0) += 1;
+    }
+    map
+}
+
+/// Sort a mutable slice of `CompareRunRow` by the requested key.
+/// Sorting is stable (sort_by preserves equal-key order) and descending
+/// (best metric first). For drawdown, lower is better so we sort ascending.
+fn sort_rows(rows: &mut Vec<CompareRunRow>, sort_key: &str) {
+    match sort_key {
+        "sharpe" => rows.sort_by(|a, b| {
+            b.sharpe.unwrap_or(f64::NEG_INFINITY)
+                .partial_cmp(&a.sharpe.unwrap_or(f64::NEG_INFINITY))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }),
+        "drawdown" => rows.sort_by(|a, b| {
+            // Lower drawdown is better → ascending
+            a.max_drawdown_pct.unwrap_or(f64::INFINITY)
+                .partial_cmp(&b.max_drawdown_pct.unwrap_or(f64::INFINITY))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }),
+        _ => rows.sort_by(|a, b| {
+            // default: return, descending
+            b.return_pct.unwrap_or(f64::NEG_INFINITY)
+                .partial_cmp(&a.return_pct.unwrap_or(f64::NEG_INFINITY))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }),
+    }
+}
+
+/// Compact `key N` list for the Markdown Actions column (non-zero counts only,
+/// sorted by count descending so the dominant action is first).
+fn format_action_distribution(dist: &HashMap<String, u32>) -> String {
+    let mut pairs: Vec<(&str, u32)> = dist.iter().map(|(k, &v)| (k.as_str(), v)).collect();
+    pairs.sort_by(|a, b| b.1.cmp(&a.1));
+    pairs
+        .into_iter()
+        .filter(|(_, v)| *v > 0)
+        .map(|(k, v)| format!("{k} {v}"))
+        .collect::<Vec<_>>()
+        .join(" / ")
+}
+
+/// Escape pipe characters in a string so it's safe inside a Markdown table cell.
+fn md_cell(s: &str) -> String {
+    s.replace('|', "\\|")
+}
+
 async fn run_compare(args: CompareArgs) -> CliResult<()> {
+    let run_ids = resolve_run_ids(&args)?;
+
     let ctx = open_ctx(args.xvn_home.clone())
         .await
         .exit_with(XvnExit::Upstream)?;
     let report = eval::compare(
         &ctx,
         CompareRunsRequest {
-            run_ids: args.run_ids.clone(),
+            run_ids: run_ids.clone(),
         },
     )
     .await
     .map_err(|e| api_to_cli("eval compare", e))?;
 
+    // Neither --json nor --markdown → keep legacy text shape for back-compat.
+    if !args.json && !args.markdown {
+        println!("RUN_ID\tSTRATEGY\tSCENARIO\tSTATUS\tTOTAL_RETURN_%\tSHARPE\tMAX_DD_%\tWIN_RATE\tN_TRADES\tN_DECISIONS");
+        for r in &report.runs {
+            let (tr, sh, dd, wr, nt, nd) = match &r.metrics {
+                Some(m) => (
+                    format!("{:.2}", m.total_return_pct),
+                    format!("{:.3}", m.sharpe),
+                    format!("{:.2}", m.max_drawdown_pct),
+                    format!("{:.2}", m.win_rate),
+                    m.n_trades.to_string(),
+                    m.n_decisions.to_string(),
+                ),
+                None => (
+                    "-".into(),
+                    "-".into(),
+                    "-".into(),
+                    "-".into(),
+                    "-".into(),
+                    "-".into(),
+                ),
+            };
+            println!(
+                "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                r.id,
+                r.agent_id,
+                r.scenario_id,
+                r.status.as_str(),
+                tr,
+                sh,
+                dd,
+                wr,
+                nt,
+                nd,
+            );
+        }
+        println!("\nEquity curves");
+        for c in &report.equity_curves {
+            println!("  {}: {} samples", c.run_id, c.samples.len());
+        }
+        if !report.findings.is_empty() {
+            println!("\nFindings ({} total)", report.findings.len());
+            for f in &report.findings {
+                println!(
+                    "  [{}] run={} {}: {}",
+                    f.severity.as_str(),
+                    f.run_id,
+                    f.kind,
+                    f.summary,
+                );
+            }
+        } else {
+            println!("\nFindings: (none)");
+        }
+        return Ok(());
+    }
+
+    // Build enriched rows: fetch decisions + derive behavior for each run.
+    let store = RunStore::new(ctx.db.clone());
+    let mut rows: Vec<CompareRunRow> = Vec::with_capacity(report.runs.len());
+    for r in &report.runs {
+        // Fetch scenario display_name (fall back to scenario_id on any error).
+        let scenario_name = api_scenario::get(&ctx, &r.scenario_id)
+            .await
+            .map(|s| s.display_name)
+            .unwrap_or_else(|_| r.scenario_id.clone());
+
+        // Read decisions for behavior summary + action distribution.
+        let decisions = store
+            .read_decisions(&r.id)
+            .await
+            .unwrap_or_default();
+        let behavior: BehaviorSummary = derive_behavior_summary(&decisions);
+        let action_dist = action_distribution(&decisions);
+
+        let (return_pct, sharpe, max_drawdown_pct, decisions_count) = match &r.metrics {
+            Some(m) => (
+                Some(m.total_return_pct),
+                Some(m.sharpe),
+                Some(m.max_drawdown_pct),
+                m.n_decisions,
+            ),
+            None => (None, None, None, 0),
+        };
+
+        rows.push(CompareRunRow {
+            run_id: r.id.clone(),
+            scenario_id: r.scenario_id.clone(),
+            scenario_name,
+            strategy_id: r.agent_id.clone(),
+            status: r.status.as_str().to_string(),
+            return_pct,
+            sharpe,
+            max_drawdown_pct,
+            decisions: decisions_count,
+            trades_opened: behavior.trades_opened,
+            action_distribution: action_dist,
+            avg_bars_held: behavior.avg_bars_held,
+            primary_failure_mode: behavior.primary_failure_mode,
+        });
+    }
+
+    sort_rows(&mut rows, &args.sort);
+
+    let compare_report = CompareReport {
+        runs: rows,
+        equity_curves: report.equity_curves,
+        findings: report.findings,
+    };
+
     if args.json {
         println!(
             "{}",
-            serde_json::to_string_pretty(&report).exit_with(XvnExit::Upstream)?
+            serde_json::to_string_pretty(&compare_report).exit_with(XvnExit::Upstream)?
         );
         return Ok(());
     }
 
-    // Headline metrics table — one column per run, one row per metric.
-    println!("RUN_ID\tSTRATEGY\tSCENARIO\tSTATUS\tTOTAL_RETURN_%\tSHARPE\tMAX_DD_%\tWIN_RATE\tN_TRADES\tN_DECISIONS");
-    for r in &report.runs {
-        let (tr, sh, dd, wr, nt, nd) = match &r.metrics {
-            Some(m) => (
-                format!("{:.2}", m.total_return_pct),
-                format!("{:.3}", m.sharpe),
-                format!("{:.2}", m.max_drawdown_pct),
-                format!("{:.2}", m.win_rate),
-                m.n_trades.to_string(),
-                m.n_decisions.to_string(),
-            ),
-            None => (
-                "-".into(),
-                "-".into(),
-                "-".into(),
-                "-".into(),
-                "-".into(),
-                "-".into(),
-            ),
-        };
+    // Markdown rendering.
+    println!("# Eval comparison ({} runs)", compare_report.runs.len());
+    println!();
+    println!("| Run | Scenario | Return % | Sharpe | DD % | Decisions | Trades | Actions | Failure mode |");
+    println!("|---|---|---|---|---|---|---|---|---|");
+    for row in &compare_report.runs {
+        let run_prefix: String = row.run_id.chars().take(8).collect();
+        let scenario_cell = md_cell(&row.scenario_name);
+        let return_cell = row.return_pct.map_or("-".into(), |v| format!("{v:.2}"));
+        let sharpe_cell = row.sharpe.map_or("-".into(), |v| format!("{v:.2}"));
+        let dd_cell = row.max_drawdown_pct.map_or("-".into(), |v| format!("{v:.2}"));
+        let actions_cell = md_cell(&format_action_distribution(&row.action_distribution));
         println!(
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-            r.id,
-            r.agent_id,
-            r.scenario_id,
-            r.status.as_str(),
-            tr,
-            sh,
-            dd,
-            wr,
-            nt,
-            nd,
+            "| {run_prefix}… | {scenario_cell} | {return_cell} | {sharpe_cell} | {dd_cell} | {} | {} | {actions_cell} | {} |",
+            row.decisions,
+            row.trades_opened,
+            row.primary_failure_mode,
         );
     }
 
-    println!("\nEquity curves");
-    for c in &report.equity_curves {
-        println!("  {}: {} samples", c.run_id, c.samples.len());
-    }
-
-    if !report.findings.is_empty() {
-        println!("\nFindings ({} total)", report.findings.len());
-        for f in &report.findings {
-            println!(
-                "  [{}] run={} {}: {}",
-                f.severity.as_str(),
-                f.run_id,
-                f.kind,
-                f.summary,
-            );
+    if !compare_report.findings.is_empty() {
+        println!();
+        println!("## Findings");
+        println!();
+        for f in &compare_report.findings {
+            println!("- run={} [{}] {}: {}", f.run_id, f.severity.as_str(), f.kind, f.summary);
         }
-    } else {
-        println!("\nFindings: (none)");
     }
 
     Ok(())
