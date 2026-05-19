@@ -1,6 +1,7 @@
 import { lazy, Suspense, type ReactNode } from "react";
 import { createBrowserRouter, Navigate } from "react-router-dom";
 import { Layout } from "@/components/shell/Layout";
+import { AppErrorBoundary } from "@/components/AppErrorBoundary";
 
 const HomeRoute = lazy(() => import("./routes/home").then((m) => ({ default: m.HomeRoute })));
 const StrategiesRoute = lazy(() => import("./routes/strategies").then((m) => ({ default: m.StrategiesRoute })));
@@ -26,10 +27,17 @@ const SettingsProvidersRoute = lazy(() => import("./routes/settings").then((m) =
 const SettingsSkillsRoute = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsSkillsRoute })));
 
 function page(element: ReactNode) {
+  // AppErrorBoundary wraps the Suspense boundary so chunk-load errors
+  // (Vite-after-deploy: stale `index.html` referencing a hash that no
+  // longer exists) are caught here and routed through
+  // `attemptChunkReload` rather than crashing to the global error UI.
+  // Non-chunk errors fall through unchanged.
   return (
-    <Suspense fallback={<div className="px-4 py-6 text-[13px] text-text-3">Loading…</div>}>
-      {element}
-    </Suspense>
+    <AppErrorBoundary>
+      <Suspense fallback={<div className="px-4 py-6 text-[13px] text-text-3">Loading…</div>}>
+        {element}
+      </Suspense>
+    </AppErrorBoundary>
   );
 }
 
