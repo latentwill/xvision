@@ -47,6 +47,14 @@ async fn boot_http() -> (String, TempDir, tokio::task::JoinHandle<()>) {
     (format!("http://{addr}"), tmp, handle)
 }
 
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 async fn boot_existing_home(root: &std::path::Path) -> TestServer {
     arm_devmode();
     let cli = write_fake_cli(root);
@@ -232,6 +240,7 @@ async fn cancel_job_marks_cancelled_status() {
 #[tokio::test]
 async fn sse_stream_emits_job_started_and_job_finished_events() {
     let (base_url, _tmp, handle) = boot_http().await;
+    let _server = AbortOnDrop(handle);
     let client = reqwest::Client::new();
 
     let create = client
@@ -247,18 +256,23 @@ async fn sse_stream_emits_job_started_and_job_finished_events() {
     let body: serde_json::Value = create.json().await.unwrap();
     let job_id = body["job_id"].as_str().unwrap();
 
-    let response = client
-        .get(format!("{base_url}/api/cli/jobs/{job_id}/events"))
-        .send()
-        .await
-        .unwrap();
+    let response = tokio::time::timeout(
+        Duration::from_secs(5),
+        client
+            .get(format!("{base_url}/api/cli/jobs/{job_id}/events"))
+            .send(),
+    )
+    .await
+    .expect("SSE request timed out")
+    .unwrap();
     assert!(response.status().is_success());
-    let text = response.text().await.unwrap();
+    let text = tokio::time::timeout(Duration::from_secs(5), response.text())
+        .await
+        .expect("SSE stream did not close after expected events")
+        .unwrap();
 
     assert!(text.contains("event: job_started"));
     assert!(text.contains("event: job_finished"));
-
-    handle.abort();
 }
 
 #[tokio::test]
