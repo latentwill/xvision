@@ -2,9 +2,12 @@
 // (proxied via Vite in dev, same-origin in prod via the embedded SPA).
 //
 // Error shape mirrors `DashboardError`'s JSON body:
-//   { "code": "not_found" | "validation" | "conflict" | "internal", "message": string }
+//   { "code": "not_found" | "validation" | "conflict" | "internal",
+//     "message": string,
+//     "field"?: string }   // present only on `validation`
 //
-// On non-2xx the helper throws `ApiError` with the parsed code + message.
+// On non-2xx the helper throws `ApiError` with the parsed code + message
+// (plus `field` when the body carried one).
 
 import {
   bodySummary,
@@ -18,11 +21,17 @@ import {
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
+  /// Optional structured field name accompanying a `validation` error.
+  /// Backend emits this as a sibling of `message` so the message itself
+  /// stays operator-readable (no `"field: msg"` prefix). Undefined for
+  /// non-validation responses.
+  readonly field?: string;
 
-  constructor(status: number, code: string, message: string) {
+  constructor(status: number, code: string, message: string, field?: string) {
     super(message);
     this.status = status;
     this.code = code;
+    this.field = field;
     this.name = "ApiError";
   }
 }
@@ -30,6 +39,7 @@ export class ApiError extends Error {
 type ApiErrorShape = {
   code: string;
   message: string;
+  field?: string;
 };
 
 export async function apiFetch<T>(
@@ -81,6 +91,7 @@ export async function apiFetch<T>(
       res.status,
       body?.code ?? "http_error",
       body?.message ?? res.statusText ?? `HTTP ${res.status}`,
+      body?.field,
     );
   }
 

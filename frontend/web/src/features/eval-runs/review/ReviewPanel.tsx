@@ -206,9 +206,10 @@ export function ReviewPanel({
 /// blocks above so a failed Review-with click no longer reads as
 /// "click did nothing".
 ///
-/// When the backend returns a `DashboardError::Validation { field:
-/// "request", msg }` we strip the leading `"request: "` prefix —
-/// that field name is server-side jargon, not operator-actionable.
+/// The backend emits `{ code, message, field? }` for validation errors
+/// (and `{ code, message }` for the rest); `message` is already an
+/// operator-actionable string with no server-side jargon prefix —
+/// see `crates/xvision-dashboard/src/error.rs`'s `IntoResponse` impl.
 /// The structured `error.code` ("validation" / "internal" / "not_found"
 /// / "conflict" / "http_error") is rendered as a tag so the operator
 /// can distinguish a missing-provider remediation from a transient
@@ -259,11 +260,7 @@ export function GenerateErrorAlert({
 /// to render a null badge.
 function describeReviewError(error: unknown): { code: string; message: string } {
   if (error instanceof ApiError) {
-    let message = error.message;
-    if (error.code === "validation" && message.startsWith("request: ")) {
-      message = message.slice("request: ".length);
-    }
-    return { code: error.code, message };
+    return { code: error.code, message: error.message };
   }
   if (error instanceof Error) {
     return { code: "error", message: error.message };

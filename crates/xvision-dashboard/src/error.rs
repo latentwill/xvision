@@ -36,21 +36,41 @@ impl From<ApiError> for DashboardError {
 
 impl IntoResponse for DashboardError {
     fn into_response(self) -> Response {
-        let (status, code, msg) = match &self {
-            DashboardError::NotFound(m) => (StatusCode::NOT_FOUND, "not_found", m.clone()),
-            DashboardError::Validation { field, msg } => {
-                (StatusCode::BAD_REQUEST, "validation", format!("{field}: {msg}"))
-            }
-            DashboardError::Conflict(m) => (StatusCode::CONFLICT, "conflict", m.clone()),
+        // `Validation` is the only variant that carries a separate
+        // structured `field` worth surfacing to the client. The other
+        // variants emit `{ code, message }` only. Lifting `field` to a
+        // sibling JSON property (rather than embedding it as a
+        // `"{field}: {msg}"` prefix in `message`) keeps the operator
+        // copy clean and lets typed UI consumers read the field
+        // separately if they care.
+        match &self {
+            DashboardError::Validation { field, msg } => (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "code": "validation",
+                    "message": msg.clone(),
+                    "field": field.clone(),
+                })),
+            )
+                .into_response(),
+            DashboardError::NotFound(m) => (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "code": "not_found", "message": m.clone() })),
+            )
+                .into_response(),
+            DashboardError::Conflict(m) => (
+                StatusCode::CONFLICT,
+                Json(json!({ "code": "conflict", "message": m.clone() })),
+            )
+                .into_response(),
             DashboardError::Internal(e) => {
                 tracing::error!(error = ?e, "internal error");
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    "internal",
-                    "internal error".into(),
+                    Json(json!({ "code": "internal", "message": "internal error" })),
                 )
+                    .into_response()
             }
-        };
-        (status, Json(json!({ "code": code, "message": msg }))).into_response()
+        }
     }
 }
