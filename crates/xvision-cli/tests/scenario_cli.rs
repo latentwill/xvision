@@ -69,7 +69,11 @@ fn scenario_validate_from_file_does_not_create_row() {
     let out = xvn(&["scenario", "show", id, "--toml"], dir.path());
     assert!(out.status.success());
     let file = dir.path().join("scenario.toml");
-    std::fs::write(&file, out.stdout).unwrap();
+    let toml = String::from_utf8(out.stdout).unwrap().replace(
+        "display_name = \"ETH validate source\"",
+        "display_name = \"ETH validate dry run\"",
+    );
+    std::fs::write(&file, toml).unwrap();
 
     let out = xvn(
         &[
