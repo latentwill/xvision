@@ -1857,29 +1857,99 @@ fn strategy_tool_defs() -> Vec<ToolDefinition> {
                         "type": "object",
                         "properties": {
                             "venue": {"type": "string", "enum": ["Alpaca"]},
-                            "fees":     {"type": "object"},
-                            "slippage": {"type": "object"},
-                            "latency":  {"type": "object"},
-                            "fill_model": {"type": "object"}
+                            "fees": {
+                                "type": "object",
+                                "properties": {
+                                    "maker_bps": {"type": "integer", "minimum": 0},
+                                    "taker_bps": {"type": "integer", "minimum": 0}
+                                },
+                                "required": ["maker_bps", "taker_bps"]
+                            },
+                            "slippage": {
+                                "oneOf": [
+                                    {
+                                        "type": "object",
+                                        "properties": {
+                                            "model": {"const": "none"}
+                                        },
+                                        "required": ["model"],
+                                        "additionalProperties": false
+                                    },
+                                    {
+                                        "type": "object",
+                                        "properties": {
+                                            "model": {"const": "linear"},
+                                            "bps": {"type": "integer", "minimum": 0}
+                                        },
+                                        "required": ["model", "bps"],
+                                        "additionalProperties": false
+                                    }
+                                ],
+                                "description": "Slippage model. Tagged variant — `{\"model\": \"none\"}` or `{\"model\": \"linear\", \"bps\": <int>}`."
+                            },
+                            "latency": {
+                                "type": "object",
+                                "properties": {
+                                    "decision_to_fill_ms": {"type": "integer", "minimum": 0}
+                                },
+                                "required": ["decision_to_fill_ms"]
+                            },
+                            "fill_model": {
+                                "type": "object",
+                                "properties": {
+                                    "market_order_fill": {
+                                        "type": "string",
+                                        "enum": ["FullAtClose", "NextBarOpen"]
+                                    },
+                                    "limit_order_fill": {
+                                        "type": "string",
+                                        "enum": ["NeverFills", "FillIfTouched"]
+                                    },
+                                    "partial_fills": {"type": "boolean"},
+                                    "volume_constraints": {"type": ["object", "null"]}
+                                },
+                                "required": ["market_order_fill", "limit_order_fill", "partial_fills"]
+                            }
                         },
-                        "required": ["venue"]
+                        "required": ["venue", "fees", "slippage", "latency", "fill_model"]
                     },
                     "data_source": {
                         "type": "object",
                         "properties": {
                             "type": {"type": "string", "enum": ["AlpacaHistorical"]},
                             "feed": {"type": ["string", "null"]},
-                            "adjustment": {"type": "string", "enum": ["Raw", "Split", "Dividend", "All"]}
+                            "adjustment": {
+                                "type": "string",
+                                "enum": ["Raw", "SplitAdjusted", "SplitDividendAdjusted"],
+                                "description": "Bar adjustment policy. `Raw` for unadjusted prices, `SplitAdjusted` for split-only adjustments, `SplitDividendAdjusted` for both."
+                            }
                         },
-                        "required": ["type"]
+                        "required": ["type", "adjustment"]
                     },
                     "replay_mode": {
-                        "type": "object",
-                        "properties": {
-                            "mode": {"type": "string", "enum": ["Continuous", "Discrete"]}
-                        },
-                        "required": ["mode"],
-                        "description": "Replay mode object. Pass `{\"mode\": \"Continuous\"}` — NOT a bare string."
+                        "oneOf": [
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "mode": {
+                                        "type": "string",
+                                        "enum": ["Continuous", "Stepped", "Realtime"]
+                                    }
+                                },
+                                "required": ["mode"],
+                                "additionalProperties": false
+                            },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "mode": {"const": "Accelerated"},
+                                    "speed": {"type": "number", "exclusiveMinimum": 0}
+                                },
+                                "required": ["mode", "speed"],
+                                "additionalProperties": false
+                            }
+                        ],
+                        "description": "Replay mode object. Pass `{\"mode\": \"Continuous\"}`, `\"Stepped\"`, or `\"Realtime\"` for the simple modes; `{\"mode\": \"Accelerated\", \"speed\": 2.0}` for accelerated playback. NOT a bare string."
                     },
                     "tags": {"type": "array", "items": {"type": "string"}},
                     "notes": {"type": ["string", "null"]},
@@ -3252,5 +3322,171 @@ mod tests {
             obj.get("calendar"),
             Some(&serde_json::json!({"Custom": "asia_session"})),
         );
+    }
+
+    /// PR #326 review (P2): the advertised `create_scenario` JSON schema
+    /// must only enumerate values that `CreateScenarioRequest` can
+    /// actually deserialize. Past regressions:
+    ///   - `replay_mode.mode` advertised `"Discrete"`; serde only accepts
+    ///     Continuous / Stepped / Accelerated / Realtime.
+    ///   - `data_source.adjustment` advertised `Split` / `Dividend` /
+    ///     `All`; serde only accepts Raw / SplitAdjusted /
+    ///     SplitDividendAdjusted.
+    ///   - `venue` only required `venue`; serde requires the full
+    ///     fees / slippage / latency / fill_model bag.
+    ///
+    /// This test round-trips a maximally-explicit payload built from the
+    /// advertised enum sets through `serde_json::from_value::<CreateScenarioRequest>()`
+    /// so a future drift breaks here loudly rather than in a chat-rail
+    /// session.
+    #[test]
+    fn create_scenario_schema_only_advertises_serde_valid_values() {
+        let defs = wizard_tool_defs();
+        let create = defs
+            .iter()
+            .find(|d| d.name == "create_scenario")
+            .expect("create_scenario tool def must exist");
+
+        // Pull the advertised enums out of the schema and walk every
+        // value through serde. If any value fails to deserialize, the
+        // schema is lying to the model.
+        let replay_modes = create
+            .input_schema
+            .pointer("/properties/replay_mode/oneOf")
+            .and_then(|v| v.as_array())
+            .expect("replay_mode schema must be a oneOf");
+        let advertised_modes: Vec<String> = replay_modes
+            .iter()
+            .flat_map(|variant| {
+                variant
+                    .pointer("/properties/mode/enum")
+                    .and_then(|e| e.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                            .collect::<Vec<_>>()
+                    })
+                    .or_else(|| {
+                        variant
+                            .pointer("/properties/mode/const")
+                            .and_then(|c| c.as_str())
+                            .map(|s| vec![s.to_string()])
+                    })
+                    .unwrap_or_default()
+            })
+            .collect();
+        assert!(
+            !advertised_modes.is_empty(),
+            "replay_mode schema advertises no modes",
+        );
+        // Banned by the bug: "Discrete" was the typo. Make absence explicit.
+        assert!(
+            !advertised_modes.iter().any(|m| m == "Discrete"),
+            "replay_mode must not advertise the bogus `Discrete` variant",
+        );
+
+        let advertised_adjustments: Vec<String> = create
+            .input_schema
+            .pointer("/properties/data_source/properties/adjustment/enum")
+            .and_then(|e| e.as_array())
+            .expect("data_source adjustment schema must enumerate variants")
+            .iter()
+            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .collect();
+        for bogus in ["Split", "Dividend", "All"] {
+            assert!(
+                !advertised_adjustments.iter().any(|a| a == bogus),
+                "adjustment must not advertise the bogus `{bogus}` variant",
+            );
+        }
+
+        // venue object must require the same fields VenueSettings does.
+        let venue_required: Vec<String> = create
+            .input_schema
+            .pointer("/properties/venue/required")
+            .and_then(|r| r.as_array())
+            .expect("venue schema must list required fields")
+            .iter()
+            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .collect();
+        for field in ["venue", "fees", "slippage", "latency", "fill_model"] {
+            assert!(
+                venue_required.iter().any(|f| f == field),
+                "venue schema must require `{field}` (VenueSettings has no default); required={venue_required:?}",
+            );
+        }
+
+        // Round-trip a fully-populated payload through the deserializer.
+        // If the advertised vocabulary drifts again, this fails loudly.
+        let payload = serde_json::json!({
+            "display_name": "schema-roundtrip-test",
+            "description": "Wizard-built scenario must deserialize through CreateScenarioRequest.",
+            "asset_class": "Crypto",
+            "asset": [{"class": "Crypto", "symbol": "BTC", "venue_symbol": "BTC/USD"}],
+            "quote_currency": "Usd",
+            "time_window": {
+                "start": "2024-01-01T00:00:00Z",
+                "end":   "2024-01-02T00:00:00Z"
+            },
+            "capital": {"initial": 100000.0, "currency": "USD"},
+            "granularity": "1h",
+            "timezone": "UTC",
+            "calendar": "Continuous24x7",
+            "venue": {
+                "venue": "Alpaca",
+                "fees": {"maker_bps": 10, "taker_bps": 25},
+                "slippage": {"model": "none"},
+                "latency": {"decision_to_fill_ms": 0},
+                "fill_model": {
+                    "market_order_fill": "FullAtClose",
+                    "limit_order_fill": "NeverFills",
+                    "partial_fills": false,
+                    "volume_constraints": null
+                }
+            },
+            "data_source": {
+                "type": "AlpacaHistorical",
+                "feed": null,
+                "adjustment": "Raw"
+            },
+            "replay_mode": {"mode": "Continuous"},
+            "tags": [],
+            "source": "Generated"
+        });
+        let _: CreateScenarioRequest = serde_json::from_value(payload).expect(
+            "fully-populated schema-advertised payload must deserialize through CreateScenarioRequest",
+        );
+
+        // Accelerated variant has an extra `speed` field.
+        let accelerated = serde_json::json!({
+            "display_name": "accel",
+            "description": "ok",
+            "asset_class": "Crypto",
+            "asset": [{"class": "Crypto", "symbol": "ETH", "venue_symbol": "ETH/USD"}],
+            "quote_currency": "Usd",
+            "time_window": {"start": "2024-01-01T00:00:00Z", "end": "2024-01-02T00:00:00Z"},
+            "capital": {"initial": 50000.0, "currency": "USD"},
+            "granularity": "1h",
+            "timezone": "UTC",
+            "calendar": "Continuous24x7",
+            "venue": {
+                "venue": "Alpaca",
+                "fees": {"maker_bps": 0, "taker_bps": 0},
+                "slippage": {"model": "linear", "bps": 5},
+                "latency": {"decision_to_fill_ms": 100},
+                "fill_model": {
+                    "market_order_fill": "NextBarOpen",
+                    "limit_order_fill": "FillIfTouched",
+                    "partial_fills": true,
+                    "volume_constraints": null
+                }
+            },
+            "data_source": {"type": "AlpacaHistorical", "feed": null, "adjustment": "SplitAdjusted"},
+            "replay_mode": {"mode": "Accelerated", "speed": 2.0},
+            "tags": [],
+            "source": "Generated"
+        });
+        let _: CreateScenarioRequest = serde_json::from_value(accelerated)
+            .expect("Accelerated replay mode with speed must deserialize");
     }
 }
