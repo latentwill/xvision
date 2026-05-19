@@ -131,8 +131,8 @@ fn graph_edge_validation_uses_canonical_form() {
         PipelineDef {
             kind: PipelineKind::Graph,
             edges: vec![PipelineEdge {
-                from_role: "SCOUT".into(),
-                to_role: "trader".into(),
+                from_role: " SCOUT ".into(),
+                to_role: " trader ".into(),
             }],
         },
     );

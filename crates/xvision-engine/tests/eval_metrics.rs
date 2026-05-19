@@ -33,7 +33,7 @@ fn equity_to_returns_handles_decline() {
 #[test]
 fn equity_to_returns_skips_zero_or_negative_baselines() {
     // A 0 or negative baseline can't yield a sane percentage return; skip.
-    let samples = vec![0.0, 100.0, 110.0];
+    let samples = vec![0.0, -100.0, 100.0, 110.0];
     let returns = equity_to_returns(&samples);
     // Only the 100 → 110 transition has a positive baseline.
     assert_eq!(returns.len(), 1);
@@ -73,7 +73,12 @@ fn sharpe_scales_with_periods_per_year() {
     let s_hourly = sharpe_from_returns(&returns, 8760.0);
     let s_daily = sharpe_from_returns(&returns, 365.0);
     // Annualization factor √(8760/365) ≈ √24 ≈ 4.9
-    assert!(s_hourly > s_daily, "hourly annualization > daily");
+    let ratio = s_hourly / s_daily;
+    let expected = (8760.0_f64 / 365.0).sqrt();
+    assert!(
+        (ratio - expected).abs() < 1e-9,
+        "expected annualization ratio {expected}, got {ratio}"
+    );
 }
 
 #[test]

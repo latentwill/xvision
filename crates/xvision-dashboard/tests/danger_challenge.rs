@@ -64,6 +64,31 @@ async fn reset_workspace_accepts_correct_phrase() {
 }
 
 #[tokio::test]
+async fn factory_reset_accepts_correct_phrase() {
+    let (server, _tmp) = boot().await;
+    let resp = server
+        .post("/api/settings/danger/factory-reset")
+        .json(&serde_json::json!({ "confirm": FACTORY_RESET_CONFIRM }))
+        .await;
+    resp.assert_status_ok();
+}
+
+#[tokio::test]
+async fn factory_reset_rejects_legacy_token() {
+    let (server, _tmp) = boot().await;
+    let resp = server
+        .post("/api/settings/danger/factory-reset")
+        .json(&serde_json::json!({ "confirm": "yes-i-am-sure" }))
+        .await;
+    resp.assert_status(axum::http::StatusCode::BAD_REQUEST);
+    let body = resp.text();
+    assert!(
+        body.contains(FACTORY_RESET_CONFIRM),
+        "rejection must guide operator to the factory reset phrase, got: {body}"
+    );
+}
+
+#[tokio::test]
 async fn factory_reset_rejects_reset_workspace_phrase() {
     // Per-route phrases must defend against a single typed string
     // accidentally firing the wrong destructive op. The

@@ -78,6 +78,16 @@ async fn seed_sibling_queued(ctx: &ApiContext, failed: &Run, params: Option<serd
     store.get(&sibling.id).await.unwrap()
 }
 
+async fn seed_sibling_running(ctx: &ApiContext, failed: &Run, params: Option<serde_json::Value>) -> Run {
+    let store = RunStore::new(ctx.db.clone());
+    let sibling = seed_sibling_queued(ctx, failed, params).await;
+    store
+        .update_status(&sibling.id, RunStatus::Running, None)
+        .await
+        .unwrap();
+    store.get(&sibling.id).await.unwrap()
+}
+
 async fn assert_retry_takes_start_path(ctx: &ApiContext, failed_id: &str) {
     let err = eval::retry(ctx, failed_id)
         .await
@@ -136,6 +146,38 @@ async fn retry_coalesces_when_params_override_matches() {
 
     let runs = eval::list(&ctx, ListRunsRequest::default()).await.unwrap();
     assert_eq!(runs.len(), 2, "no third run should be created");
+}
+
+/// Running siblings are also in-flight: identical `params_override` must
+/// coalesce just like queued siblings.
+#[tokio::test]
+async fn retry_coalesces_when_running_params_override_matches() {
+    let (ctx, _d) = ctx_with_eval_tables().await;
+
+    let params = Some(json!({"alpha": 1, "beta": "x"}));
+    let failed = seed_failed(&ctx, params.clone()).await;
+    let sibling = seed_sibling_running(&ctx, &failed, params).await;
+
+    let detail = eval::retry(&ctx, &failed.id)
+        .await
+        .expect("matching-params running sibling coalesces, no start_run path taken");
+    assert_eq!(detail.summary.id, sibling.id);
+    assert_eq!(detail.summary.status, "running");
+
+    let runs = eval::list(&ctx, ListRunsRequest::default()).await.unwrap();
+    assert_eq!(runs.len(), 2, "no third run should be created");
+}
+
+/// Running siblings with a different `params_override` are a different
+/// workload and must not be returned by retry.
+#[tokio::test]
+async fn retry_does_not_coalesce_when_running_params_override_differs() {
+    let (ctx, _d) = ctx_with_eval_tables().await;
+
+    let failed = seed_failed(&ctx, Some(json!({"alpha": 1}))).await;
+    let _sibling = seed_sibling_running(&ctx, &failed, Some(json!({"alpha": 2}))).await;
+
+    assert_retry_takes_start_path(&ctx, &failed.id).await;
 }
 
 /// Happy path: both source and sibling have `params_override == None`.

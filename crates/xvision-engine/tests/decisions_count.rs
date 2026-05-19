@@ -11,15 +11,16 @@
 //! the invariant `decisions.len() == bars.len()` is exercised at the
 //! 1-bar edge case, a typical-month size, and a longer window.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
+use async_trait::async_trait;
 use chrono::{Duration, TimeZone, Utc};
 use sqlx::SqlitePool;
 use xvision_core::market::Ohlcv;
-use xvision_engine::agent::llm::{LlmDispatch, MockDispatch};
+use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmRequest, LlmResponse, MockDispatch};
 use xvision_engine::eval::executor::{BacktestExecutor, Executor};
 use xvision_engine::eval::run::{Run, RunMode};
-use xvision_engine::eval::scenario::canonical_scenarios;
+use xvision_engine::eval::scenario::{canonical_scenarios, SlippageModel};
 use xvision_engine::eval::store::RunStore;
 use xvision_engine::strategies::manifest::PublicManifest;
 use xvision_engine::strategies::risk::RiskPreset;
@@ -56,6 +57,55 @@ fn hold_dispatch() -> Arc<dyn LlmDispatch> {
     Arc::new(MockDispatch::echo(
         r#"{"action":"hold","conviction":0.1,"justification":"qa-30day-count"}"#,
     ))
+}
+
+struct CapturingDispatch {
+    inner: MockDispatch,
+    captured: Mutex<Vec<LlmRequest>>,
+}
+
+impl CapturingDispatch {
+    fn new(canned_text: &str) -> Self {
+        Self {
+            inner: MockDispatch::echo(canned_text),
+            captured: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn take(&self) -> Vec<LlmRequest> {
+        std::mem::take(&mut *self.captured.lock().unwrap())
+    }
+}
+
+#[async_trait]
+impl LlmDispatch for CapturingDispatch {
+    async fn complete(&self, req: LlmRequest) -> anyhow::Result<LlmResponse> {
+        self.captured.lock().unwrap().push(req.clone());
+        self.inner.complete(req).await
+    }
+}
+
+fn request_inputs(req: &LlmRequest) -> serde_json::Value {
+    let text = req
+        .messages
+        .iter()
+        .find(|msg| msg.role == "user")
+        .and_then(|msg| {
+            msg.content.iter().find_map(|block| match block {
+                ContentBlock::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+        })
+        .expect("request should contain a user text block");
+    let json = text
+        .strip_prefix("Inputs:\n")
+        .and_then(|s| {
+            s.split_once("\n\nFollow the slot's instructions.")
+                .map(|(json, _)| json)
+        })
+        .expect("request user text should wrap JSON inputs");
+
+    serde_json::from_str(json).expect("request inputs should be valid JSON")
 }
 
 fn build_strategy(agent_id: &str) -> Strategy {
@@ -201,5 +251,68 @@ async fn backtest_n_bars_yields_n_decisions_for_1_bar() {
     assert_eq!(
         summarized, 1,
         "metrics.n_decisions must agree with persisted count"
+    );
+}
+
+#[tokio::test]
+async fn final_bar_uses_close_as_next_open_fallback() {
+    let store = fresh_store().await;
+    #[allow(deprecated)]
+    let scenario = canonical_scenarios()
+        .into_iter()
+        .find(|s| s.id == "flash-crash-2024-08")
+        .expect("flash-crash-2024-08 scenario must exist");
+    let strategy = build_strategy("01TESTQAFINALBARCLOSE");
+    let mut run = Run::new_queued(
+        strategy.manifest.id.clone(),
+        scenario.id.clone(),
+        RunMode::Backtest,
+    );
+    store.create(&run).await.unwrap();
+
+    let bars = daily_bars(1);
+    let final_close = bars[0].close;
+    let dispatch = Arc::new(CapturingDispatch::new(
+        r#"{"action":"long_open","conviction":0.8,"justification":"qa-final-bar-close"}"#,
+    ));
+    let dispatch_for_run: Arc<dyn LlmDispatch> = dispatch.clone();
+    let executor = BacktestExecutor::with_bars(bars);
+
+    executor
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &[],
+            dispatch_for_run,
+            Arc::new(ToolRegistry::empty()),
+            &store,
+        )
+        .await
+        .expect("backtest run should complete");
+
+    let requests = dispatch.take();
+    assert_eq!(requests.len(), 1, "single-bar run should dispatch once");
+    let inputs = request_inputs(&requests[0]);
+    assert_eq!(
+        inputs
+            .pointer("/market_data/next_bar_open")
+            .and_then(|v| v.as_f64()),
+        Some(final_close),
+        "final bar must expose its close as next_bar_open"
+    );
+
+    let decisions = store.read_decisions(&run.id).await.unwrap();
+    assert_eq!(decisions.len(), 1, "single-bar run should persist one decision");
+    let fill_price = decisions[0]
+        .fill_price
+        .expect("actionable final-bar decision should be filled");
+    let expected_fill = match &scenario.venue.slippage {
+        SlippageModel::Linear { bps } => final_close * (1.0 + *bps as f64 / 10_000.0),
+        SlippageModel::None => final_close,
+    };
+    assert!(
+        (fill_price - expected_fill).abs() < 1e-6,
+        "long fill should derive from final close plus configured slippage"
     );
 }

@@ -300,11 +300,16 @@ async fn settings_brokers_reflects_set_env_vars() {
 
     assert_eq!(body["alpaca"]["configured"], true);
     let creds = body["alpaca"]["credentials"].as_array().unwrap();
-    for c in creds {
-        if c["env_var"] == "APCA_API_KEY_ID" {
-            assert_eq!(c["is_set"], true);
-            assert!(c.get("value").is_none(), "env var values must not be returned");
-        }
+    for env_var in ["APCA_API_KEY_ID", "APCA_API_SECRET_KEY"] {
+        let cred = creds
+            .iter()
+            .find(|c| c["env_var"] == env_var)
+            .unwrap_or_else(|| panic!("{env_var} credential must be present"));
+        assert_eq!(cred["is_set"], true, "{env_var} must be reported as set");
+        assert!(
+            cred.get("value").is_none(),
+            "{env_var} value must not be returned"
+        );
     }
 }
 
@@ -1450,11 +1455,14 @@ async fn eval_export_rejects_in_flight_run() {
     store.create(&run).await.expect("seed run");
 
     let response = server.get(&format!("/api/eval/runs/{run_id}/export")).await;
-    assert!(
-        !response.status_code().is_success(),
-        "expected error status for in-flight export, got {}",
-        response.status_code(),
-    );
+    response.assert_status(StatusCode::BAD_REQUEST);
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["code"], "validation");
+    assert_eq!(body["field"], "request");
+    assert!(body["message"]
+        .as_str()
+        .expect("validation error message")
+        .contains("export is only defined for terminal runs"));
 }
 
 #[tokio::test]

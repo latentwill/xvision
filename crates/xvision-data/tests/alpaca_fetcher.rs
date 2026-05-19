@@ -1,6 +1,6 @@
 use chrono::{TimeZone, Utc};
 use std::str::FromStr;
-use wiremock::matchers::{method, path, query_param};
+use wiremock::matchers::{header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 use xvision_data::alpaca::{AlpacaBarsFetcher, BarGranularity, FetchError};
 
@@ -56,6 +56,8 @@ async fn fetch_crypto_bars_single_page() {
 
     Mock::given(method("GET"))
         .and(path("/v1beta3/crypto/us/bars"))
+        .and(header("APCA-API-KEY-ID", "key"))
+        .and(header("APCA-API-SECRET-KEY", "secret"))
         .and(query_param("symbols", "ETH/USD"))
         .and(query_param("timeframe", "1Hour"))
         .respond_with(ResponseTemplate::new(200).set_body_json(body))

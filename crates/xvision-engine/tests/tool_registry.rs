@@ -38,3 +38,28 @@ async fn ohlcv_tool_returns_real_bars_for_known_fixture() {
         "bars array must not be empty"
     );
 }
+
+#[tokio::test]
+async fn indicator_panel_tool_returns_panel_for_known_fixture() {
+    // Ensure the fixture parquet exists before invoking the tool.
+    xvision_data::fixtures::ensure_test_fixture("test-fixture-btc-2024-01").expect("fixture creation");
+
+    let reg = ToolRegistry::default_with_builtins();
+    let tool = reg
+        .get(&ToolName::new("indicator_panel"))
+        .expect("indicator_panel tool must be registered");
+    let out = tool
+        .invoke(serde_json::json!({
+            "asset": "BTC/USD",
+            "fixture": "test-fixture-btc-2024-01"
+        }))
+        .await
+        .expect("invoke must succeed");
+
+    for field in ["rsi_14", "sma_20", "ema_12", "bb_middle", "atr_14"] {
+        assert!(
+            out.get(field).and_then(|value| value.as_f64()).is_some(),
+            "{field} must be a numeric indicator value"
+        );
+    }
+}

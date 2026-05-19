@@ -2,7 +2,7 @@
 //! (which it FK-references). Also verifies that the down migration drops
 //! everything.
 
-use sqlx::SqlitePool;
+use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 
 const MIGRATION_002: &str = include_str!("../../xvision-engine/migrations/002_eval.sql");
 const MIGRATION_013: &str = include_str!("../../xvision-engine/migrations/013_cli_jobs.sql");
@@ -11,7 +11,11 @@ const MIGRATION_018_DOWN: &str =
     include_str!("../../xvision-engine/migrations/018_agent_run_observability.down.sql");
 
 async fn pool() -> SqlitePool {
-    SqlitePool::connect("sqlite::memory:").await.unwrap()
+    SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap()
 }
 
 #[tokio::test]

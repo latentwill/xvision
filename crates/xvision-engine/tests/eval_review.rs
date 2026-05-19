@@ -7,7 +7,7 @@
 //! `eval-review-run-detail-ui`).
 
 use chrono::Utc;
-use sqlx::{Row, SqlitePool};
+use sqlx::{sqlite::SqlitePoolOptions, Row, SqlitePool};
 use xvision_engine::eval::findings::{Finding, Severity};
 use xvision_engine::eval::review::{EvalReview, ReviewStatus, ReviewVerdict};
 use xvision_engine::eval::{MetricsSummary, Run, RunMode, RunStatus, RunStore};
@@ -15,7 +15,11 @@ use xvision_engine::eval::{MetricsSummary, Run, RunMode, RunStatus, RunStore};
 /// Build an in-memory pool with every migration that touches eval state
 /// applied — the same prefix `ApiContext::open` walks at startup.
 async fn pool_with_migrations() -> SqlitePool {
-    let pool = SqlitePool::connect(":memory:").await.unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(":memory:")
+        .await
+        .unwrap();
     for sql in [
         include_str!("../migrations/002_eval.sql"),
         include_str!("../migrations/014_eval_agent_id.sql"),
@@ -27,6 +31,22 @@ async fn pool_with_migrations() -> SqlitePool {
         sqlx::query(sql).execute(&pool).await.unwrap();
     }
     pool
+}
+
+#[tokio::test]
+async fn migrated_memory_pool_uses_only_one_connection() {
+    let pool = pool_with_migrations().await;
+    let mut conn = pool.acquire().await.unwrap();
+
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM agent_profiles")
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+    assert_eq!(count, 4);
+    assert!(
+        pool.try_acquire().is_none(),
+        "in-memory SQLite test pool must not open a second isolated connection"
+    );
 }
 
 async fn finalized_run(store: &RunStore) -> Run {
