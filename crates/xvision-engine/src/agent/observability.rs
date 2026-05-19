@@ -61,10 +61,12 @@ pub fn compute_prompt_hash(req: &LlmRequest) -> String {
 
 /// Canonical byte serialization of an `LlmRequest`'s prompt content.
 /// The same `PromptDigestInput` shape that `compute_prompt_hash`
-/// digests — so the persisted blob and its hash come from the same
-/// bytes. Producer-side `emit_model_call_finished_with_payloads` uses
-/// this when persisting the prompt under `full_debug` / `redacted`
-/// retention.
+/// digests — so the hash stays stable across runtime knobs (model,
+/// sampling, max_tokens) that don't change prompt semantics. Used for
+/// dedup/cache-key only; the persisted blob uses
+/// [`canonical_request_bytes`] instead so operators reading the trace
+/// see the full request (including `response_schema`, which Anthropic
+/// appends into the system prompt at dispatch time).
 pub fn canonical_prompt_bytes(req: &LlmRequest) -> Vec<u8> {
     let input = PromptDigestInput {
         system_prompt: &req.system_prompt,
@@ -77,6 +79,51 @@ pub fn canonical_prompt_bytes(req: &LlmRequest) -> Vec<u8> {
     // the domain types, not a runtime condition — fall back to a
     // marker payload so the trace ledger stays non-null.
     serde_json::to_vec(&input).unwrap_or_else(|_| b"prompt-digest-serialize-error".to_vec())
+}
+
+/// Full-request byte serialization used for the persisted prompt
+/// blob. Includes every field the provider receives — model,
+/// system_prompt, messages, max_tokens, tools, temperature,
+/// response_schema — so a FullDebug trace can reconstruct what was
+/// sent. Critically, this preserves `response_schema`: Anthropic's
+/// dispatcher splices it into the system prompt at the wire boundary,
+/// so omitting it (as the hash input does) would leave trader-call
+/// blobs missing the schema instructions. Two prompts that hash
+/// identically can still produce different request blobs.
+pub fn canonical_request_bytes(req: &LlmRequest) -> Vec<u8> {
+    // LlmRequest is itself Serialize with deny_unknown_fields, so this
+    // round-trips losslessly. Same serialize-error fallback as
+    // canonical_prompt_bytes — programming error, not runtime.
+    serde_json::to_vec(req).unwrap_or_else(|_| b"request-serialize-error".to_vec())
+}
+
+/// Truncate a payload to `cap` bytes for blob persistence, respecting
+/// UTF-8 char boundaries when present and appending an ellipsis marker
+/// so operators reading the blob can tell it was clipped. `cap == 0`
+/// means "no cap" (`max_payload_bytes` default for un-configured
+/// policies — same convention `apply_to_body` uses for the body path).
+/// Pure; safe to call without a tokio runtime.
+pub fn cap_blob_bytes(bytes: Vec<u8>, cap: usize) -> Vec<u8> {
+    if cap == 0 || bytes.len() <= cap {
+        return bytes;
+    }
+    // Try a UTF-8-safe boundary scan first — prompts and responses
+    // are typed strings, so almost always valid UTF-8.
+    if let Ok(s) = std::str::from_utf8(&bytes) {
+        let mut end = cap;
+        while end > 0 && !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        let mut out = s[..end].to_string().into_bytes();
+        out.extend_from_slice("…".as_bytes());
+        return out;
+    }
+    // Non-UTF-8 (shouldn't happen in practice): hard truncate + ASCII
+    // marker so the cap is still honored.
+    let mut out = bytes;
+    out.truncate(cap);
+    out.extend_from_slice(b"...[truncated]");
+    out
 }
 
 /// SHA-256 digest of the assistant text accumulation. Mirrors
@@ -586,7 +633,10 @@ impl ObsEmitter {
         if let Some(store) = self.blob_store.as_ref() {
             if write_prompts {
                 if let Some(req) = prompt_request {
-                    let bytes = canonical_prompt_bytes(req);
+                    // Persist the full LlmRequest (model, tools,
+                    // response_schema, sampling), not just the hash
+                    // input — see canonical_request_bytes docstring.
+                    let bytes = canonical_request_bytes(req);
                     let bytes = match self.retention.mode {
                         RetentionMode::FullDebug => bytes,
                         RetentionMode::Redacted => {
@@ -598,6 +648,12 @@ impl ObsEmitter {
                         // clearer for future modes.
                         _ => bytes,
                     };
+                    // Apply max_payload_bytes BEFORE the BlobStore
+                    // write, mirroring the body path's apply_to_body
+                    // cap. Without this the janitor would still
+                    // truncate eventually, but a large prompt would
+                    // live full-size until cleanup.
+                    let bytes = cap_blob_bytes(bytes, self.retention.max_payload_bytes);
                     match store.write(&bytes) {
                         Ok(blob_ref) => {
                             prompt_payload_ref = Some(blob_ref.as_str().to_string());
@@ -622,7 +678,11 @@ impl ObsEmitter {
                         RetentionMode::Redacted => Redactor::new().redact(text).text,
                         _ => text.to_string(),
                     };
-                    match store.write(text_owned.as_bytes()) {
+                    let bytes = cap_blob_bytes(
+                        text_owned.into_bytes(),
+                        self.retention.max_payload_bytes,
+                    );
+                    match store.write(&bytes) {
                         Ok(blob_ref) => {
                             response_payload_ref = Some(blob_ref.as_str().to_string());
                         }
