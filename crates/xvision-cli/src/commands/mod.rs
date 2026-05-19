@@ -7,6 +7,7 @@ pub mod doctor;
 pub mod eod;
 pub mod eval;
 pub mod example;
+pub mod experiment;
 pub mod fire_trade;
 pub mod home;
 pub mod indicator;
