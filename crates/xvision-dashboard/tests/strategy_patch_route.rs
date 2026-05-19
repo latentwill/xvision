@@ -189,6 +189,37 @@ async fn patch_metadata_unknown_strategy_returns_404() {
 }
 
 #[tokio::test]
+async fn patch_metadata_refreshes_search_index_after_rename() {
+    // PR #322 review (P2): the route previously called
+    // FilesystemStore::update_metadata directly, bypassing
+    // index_strategy_after_mutation. The command palette / search
+    // would then return the OLD display_name until something else
+    // touched the strategy. Engine API wrapper fixes that —
+    // confirm an immediate /api/search hit reflects the new name.
+    let (server, _tmp) = boot().await;
+    let id = create_strategy(&server).await;
+
+    let response = server
+        .patch(&format!("/api/strategy/{id}"))
+        .json(&serde_json::json!({ "display_name": "FreshlyRenamed" }))
+        .await;
+    response.assert_status_ok();
+
+    let response = server
+        .get("/api/search")
+        .add_query_param("q", "FreshlyRenamed")
+        .add_query_param("kind", "strategy")
+        .await;
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    let hits = body["hits"].as_array().expect("search returns hits array");
+    assert!(
+        hits.iter().any(|hit| hit["artifact_id"] == id),
+        "renamed strategy must appear in search results for its new display_name; got: {hits:#?}",
+    );
+}
+
+#[tokio::test]
 async fn patch_metadata_combined_update_round_trips() {
     let (server, _tmp) = boot().await;
     let id = create_strategy(&server).await;

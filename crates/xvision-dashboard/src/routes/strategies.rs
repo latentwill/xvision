@@ -11,18 +11,17 @@ use serde::{Deserialize, Serialize};
 
 use xvision_engine::api::chart::{self as chart_api, StrategyChartPayload};
 use xvision_engine::api::strategy::{
-    self, add_agent, remove_agent, rename_agent_role, set_pipeline, set_risk_config, update_slot,
-    validate_draft, AddAgentReq, CloneStrategyReq, RemoveAgentReq, RenameAgentRoleReq, SetPipelineReq,
-    StrategyAgentsOut, StrategySummary,
+    self, add_agent, remove_agent, rename_agent_role, set_pipeline, set_risk_config,
+    update_metadata, update_slot, validate_draft, AddAgentReq, CloneStrategyReq, RemoveAgentReq,
+    RenameAgentRoleReq, SetPipelineReq, StrategyAgentsOut, StrategySummary,
 };
+use xvision_engine::api::ApiError;
 use xvision_engine::authoring::{
     self, CreateStrategyOut, CreateStrategyReq, SetRiskConfigOut, SetRiskConfigReq, TemplateInfo,
     UpdateSlotOut, UpdateSlotReq, ValidateDraftOut,
 };
 use xvision_engine::strategies::risk::RiskConfig;
-use xvision_engine::strategies::store::{
-    strategy_store_dir, FilesystemStore, MetadataPatchError, StrategyMetadataPatch, StrategyStore,
-};
+use xvision_engine::strategies::store::{MetadataPatchError, StrategyMetadataPatch};
 use xvision_engine::strategies::Strategy;
 
 use crate::error::DashboardError;
@@ -278,12 +277,16 @@ pub async fn patch_metadata(
     State(state): State<AppState>,
     Json(patch): Json<StrategyMetadataPatch>,
 ) -> Result<Json<Strategy>, DashboardError> {
-    let store = FilesystemStore::new(strategy_store_dir(&state.xvn_home));
-    let updated = store
-        .update_metadata(&id, patch)
-        .await
-        .map_err(|err| classify_metadata_patch_error(err, &id))?;
-    Ok(Json(updated))
+    // Route through the engine API wrapper so the mutation writes an
+    // `api_audit` row and refreshes the command-palette/search index
+    // — PR #322 review (P2). The wrapper preserves typed store errors
+    // via `ApiError::Other(anyhow)`, so the per-field classifier below
+    // still gets the original `MetadataPatchError` / IO `NotFound`.
+    match update_metadata(&state.api_context(), &id, patch).await {
+        Ok(updated) => Ok(Json(updated)),
+        Err(ApiError::Other(err)) => Err(classify_metadata_patch_error(err, &id)),
+        Err(other) => Err(DashboardError::from(other)),
+    }
 }
 
 /// Map errors from `StrategyStore::update_metadata` to a typed

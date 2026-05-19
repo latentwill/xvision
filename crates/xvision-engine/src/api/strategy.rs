@@ -19,7 +19,7 @@ use crate::authoring::{
     UpdateManifestReq, UpdateSlotOut, UpdateSlotReq, ValidateDraftOut,
 };
 use crate::strategies::{
-    store::{strategy_store_dir, FilesystemStore, StrategyStore},
+    store::{strategy_store_dir, FilesystemStore, StrategyMetadataPatch, StrategyStore},
     AgentRef, PipelineDef, PipelineEdge, PipelineKind, Strategy,
 };
 use std::path::PathBuf;
@@ -858,6 +858,52 @@ pub async fn update_manifest(ctx: &ApiContext, req: UpdateManifestReq) -> ApiRes
         index_strategy_after_mutation(ctx, &store, &agent_id).await;
     }
     result
+}
+
+/// Patch the strategy's top-level manifest metadata
+/// (display_name, plain_summary, asset_universe). Audits the operation
+/// as `strategy/update_metadata` and refreshes the search index on
+/// success — the dashboard route used to bypass both by calling
+/// `FilesystemStore::update_metadata` directly. PR #322 review (P2).
+///
+/// Errors from the store (`MetadataPatchError`, `StrategyIdError`, IO
+/// `NotFound`) pass through `ApiError::Other(anyhow)` so the route
+/// handler can downcast typed errors and produce field-specific 400s.
+/// IO errors stay as `Other` for the same reason — the route's
+/// `classify_metadata_patch_error` walks the error chain to find the
+/// NotFound kind.
+pub async fn update_metadata(
+    ctx: &ApiContext,
+    id: &str,
+    patch: StrategyMetadataPatch,
+) -> ApiResult<Strategy> {
+    let started = Instant::now();
+    let args_json = serde_json::to_string(&patch).ok();
+    let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+    let result = store.update_metadata(id, patch).await;
+
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let _ = audit::record(
+        ctx,
+        "strategy",
+        "update_metadata",
+        Some(id),
+        args_json.as_deref(),
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+
+    match result {
+        Ok(strategy) => {
+            index_strategy_after_mutation(ctx, &store, id).await;
+            Ok(strategy)
+        }
+        Err(err) => Err(ApiError::Other(err)),
+    }
 }
 
 pub async fn add_agent(ctx: &ApiContext, req: AddAgentReq) -> ApiResult<StrategyAgentsOut> {
