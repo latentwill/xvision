@@ -1245,6 +1245,7 @@ mod tests {
                 model: Some(model.into()),
             },
             max_tokens: None,
+            temperature: None,
             inputs_policy: crate::agents::InputsPolicy::Raw,
         }
     }

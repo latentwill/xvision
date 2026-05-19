@@ -997,6 +997,7 @@ async fn resolve_agent_slots(
             role: agent_ref.role.clone(),
             slot: agent_slot_to_llm_slot(&agent_ref.role, slot),
             max_tokens: slot.resolve_max_tokens(),
+            temperature: slot.temperature,
             inputs_policy: slot.inputs_policy,
         });
     }
@@ -2419,6 +2420,7 @@ mod tests {
                 "anthropic.claude-sonnet-4.6",
             ),
             max_tokens: Some(4096),
+            temperature: None,
             inputs_policy: crate::agents::InputsPolicy::Raw,
         }];
 
@@ -2459,6 +2461,7 @@ mod tests {
                 "anthropic.claude-sonnet-4.6",
             ),
             max_tokens: Some(4096),
+            temperature: None,
             inputs_policy: crate::agents::InputsPolicy::Raw,
         }];
 
@@ -2491,6 +2494,7 @@ mod tests {
                 "anthropic.claude-sonnet-4.6",
             ),
             max_tokens: Some(4096),
+            temperature: None,
             inputs_policy: crate::agents::InputsPolicy::Raw,
         }];
 

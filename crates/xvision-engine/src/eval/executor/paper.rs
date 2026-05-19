@@ -1519,6 +1519,7 @@ mod role_tests {
                 model: Some(model.into()),
             },
             max_tokens: None,
+            temperature: None,
             inputs_policy: crate::agents::InputsPolicy::Raw,
         }
     }
@@ -1618,6 +1619,7 @@ mod role_tests {
                     model: Some("m".into()),
                 },
                 max_tokens: None,
+                temperature: None,
                 inputs_policy: InputsPolicy::Oracle,
             },
             ResolvedAgentSlot {
@@ -1631,6 +1633,7 @@ mod role_tests {
                     model: Some("m".into()),
                 },
                 max_tokens: None,
+                temperature: None,
                 inputs_policy: InputsPolicy::Causal,
             },
         ];

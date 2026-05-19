@@ -114,6 +114,7 @@ async fn full_debug_execute_slot_writes_prompt_and_response_blobs() {
         tools: Arc::new(ToolRegistry::default_with_builtins()),
         response_schema: None,
         max_tokens: None,
+        temperature: None,
         obs: Some(emitter),
     })
     .await
@@ -188,6 +189,7 @@ async fn hash_only_execute_slot_leaves_payload_refs_none() {
         tools: Arc::new(ToolRegistry::default_with_builtins()),
         response_schema: None,
         max_tokens: None,
+        temperature: None,
         obs: Some(emitter),
     })
     .await

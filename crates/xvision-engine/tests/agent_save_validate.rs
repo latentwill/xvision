@@ -64,6 +64,7 @@ fn rich_slot(asset: &str) -> AgentSlot {
         ),
         skill_ids: vec![],
         max_tokens: Some(4096),
+        temperature: None,
         prompt_version: String::new(),
         inputs_policy: InputsPolicy::Raw,
     }
@@ -156,6 +157,7 @@ async fn reject_short_prompt() {
                 system_prompt: "Trade carefully.".into(), // far below 200 chars
                 skill_ids: vec![],
                 max_tokens: None,
+                temperature: None,
                 prompt_version: String::new(),
                 inputs_policy: InputsPolicy::Raw,
             }],
@@ -192,6 +194,7 @@ async fn reject_default_placeholder_prompt() {
                 system_prompt: placeholder,
                 skill_ids: vec![],
                 max_tokens: None,
+                temperature: None,
                 prompt_version: String::new(),
                 inputs_policy: InputsPolicy::Raw,
             }],
@@ -240,6 +243,7 @@ async fn wrong_id_namespace_strategy_get_with_agent_id() {
                 ),
                 skill_ids: vec![],
                 max_tokens: Some(4096),
+                temperature: None,
                 prompt_version: String::new(),
                 inputs_policy: InputsPolicy::Raw,
             }],

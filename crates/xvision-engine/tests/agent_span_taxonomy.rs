@@ -98,6 +98,7 @@ async fn validate_brackets_wrap_each_tool_call_in_order() {
         tools: Arc::new(ToolRegistry::empty()),
         response_schema: None,
         max_tokens: None,
+        temperature: None,
         obs: Some(emitter),
     };
 
