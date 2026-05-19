@@ -364,6 +364,7 @@ mod preflight_tests {
                 published_at: None,
                 min_warmup_bars: None,
             },
+            hypothesis: None,
             agents: vec![AgentRef {
                 agent_id: "01HZAGENT".into(),
                 role: "trader".into(),

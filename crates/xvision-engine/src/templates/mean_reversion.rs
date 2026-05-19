@@ -54,6 +54,7 @@ impl Template for MeanReversion {
 
                 min_warmup_bars: None,
             },
+            hypothesis: None,
             agents: Vec::new(),
             pipeline: PipelineDef::default(),
             regime_slot: Some(LLMSlot {

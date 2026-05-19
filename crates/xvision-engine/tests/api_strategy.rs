@@ -162,6 +162,7 @@ async fn list_returns_summaries_for_existing_strategys() {
 
             min_warmup_bars: None,
         },
+        hypothesis: None,
         agents: Vec::new(),
         pipeline: xvision_engine::strategies::PipelineDef::default(),
         regime_slot: None,

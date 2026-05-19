@@ -47,6 +47,7 @@ fn fixture_strategy_with_agents(agents: Vec<AgentRef>, pipeline: PipelineDef) ->
             published_at: None,
             min_warmup_bars: None,
         },
+        hypothesis: None,
         agents,
         pipeline,
         regime_slot: None,

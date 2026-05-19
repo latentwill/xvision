@@ -19,9 +19,78 @@ pub use crate::strategies::mechanical::{
 use crate::strategies::risk::RiskConfig;
 use crate::strategies::slot::LLMSlot;
 
+// ── Strategy hypothesis (intake #7) ──────────────────────────────────────────
+//
+// Stored as an optional JSON blob inside the strategy's filesystem JSON file
+// (not in SQLite — strategies are file-backed via FilesystemStore, not in
+// xvn.db). Design rationale in migration 022 comment.
+//
+// All fields are `Option<_>` / `Vec<_>` with skip_serializing_if so existing
+// strategy JSON files deserialise cleanly (unknown field → ignored; missing
+// field → None/empty).
+
+/// Optional hints about risk sizing and flip behaviour for a strategy's
+/// hypothesis.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(deny_unknown_fields)]
+pub struct RiskLogicHints {
+    /// Rough trade frequency expectation: `"low"` | `"medium"` | `"high"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_trade_frequency: Option<String>,
+    /// When `true`, the strategy should avoid flip-flop direction changes
+    /// between consecutive decisions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub no_direct_flips: Option<bool>,
+}
+
+/// Structured hypothesis annotation for a strategy.
+///
+/// Every field is optional; strategies without a hypothesis round-trip
+/// with `hypothesis: null` in the JSON (or the field is absent entirely).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(deny_unknown_fields)]
+pub struct Hypothesis {
+    /// Template / family label, e.g. `"compression-breakout"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub family: Option<String>,
+    /// Free-form 1-2 sentence hypothesis statement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub statement: Option<String>,
+    /// Market regimes this strategy is expected to perform well in.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub target_regime: Vec<String>,
+    /// Market regimes this strategy should avoid or be expected to underperform in.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub avoid_regime: Vec<String>,
+    /// Assumptions about asset characteristics (e.g. `"high liquidity"`,
+    /// `"overnight gaps acceptable"`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub asset_assumptions: Vec<String>,
+    /// Preferred bar / decision timeframe, e.g. `"4h"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeframe_preferred: Option<String>,
+    /// Conditions under which the strategy enters a position.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub entry_logic: Vec<String>,
+    /// Conditions under which the strategy exits a position.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exit_logic: Vec<String>,
+    /// Optional risk-sizing and flip-behaviour hints.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub risk_logic: Option<RiskLogicHints>,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Strategy {
     pub manifest: PublicManifest,
+
+    // ── Strategy hypothesis (intake #7) ──────────────────────────────────
+    /// Optional structured hypothesis for this strategy. Stored in the
+    /// strategy's JSON file alongside the rest of the struct.
+    /// `None` when the operator has not annotated the strategy with a
+    /// hypothesis; serialises as `"hypothesis": null` / absent in JSON.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hypothesis: Option<Hypothesis>,
 
     // ── New: agent composition (refactor T1) ──────────────────────────
     /// Agent references composing this strategy's pipeline. Empty for
@@ -131,6 +200,8 @@ impl Strategy {
 struct StrategyRaw {
     manifest: PublicManifest,
     #[serde(default)]
+    hypothesis: Option<Hypothesis>,
+    #[serde(default)]
     agents: Vec<AgentRef>,
     #[serde(default)]
     pipeline: PipelineDef,
@@ -157,6 +228,7 @@ impl<'de> Deserialize<'de> for Strategy {
             .map_err(serde::de::Error::custom)?;
         Ok(Strategy {
             manifest: raw.manifest,
+            hypothesis: raw.hypothesis,
             agents: raw.agents,
             pipeline: raw.pipeline,
             regime_slot: raw.regime_slot,
@@ -184,6 +256,7 @@ mod tests {
                 min_warmup_bars: min_explicit,
                 ..make_manifest()
             },
+            hypothesis: None,
             agents: Vec::new(),
             pipeline: PipelineDef::default(),
             regime_slot: None,
@@ -342,6 +415,7 @@ mod tests {
         // wire shape so existing JSON stays diff-clean.
         let strategy = Strategy {
             manifest: make_manifest(),
+            hypothesis: None,
             agents: Vec::new(),
             pipeline: PipelineDef::default(),
             regime_slot: None,
@@ -353,6 +427,7 @@ mod tests {
         let s = serde_json::to_string(&strategy).unwrap();
         assert!(!s.contains("\"agents\""), "empty agents omitted: {s}");
         assert!(!s.contains("\"pipeline\""), "default pipeline omitted: {s}");
+        assert!(!s.contains("\"hypothesis\""), "None hypothesis omitted: {s}");
         // But populated agents/pipeline DO surface.
         let strategy = Strategy {
             agents: vec![AgentRef {
@@ -365,5 +440,94 @@ mod tests {
         let s = serde_json::to_string(&strategy).unwrap();
         assert!(s.contains("\"agents\""), "populated agents serialized");
         assert!(s.contains("\"pipeline\""), "non-default pipeline serialized");
+    }
+
+    // ── hypothesis round-trip ───────────────────────────────────────────────
+
+    #[test]
+    fn hypothesis_none_omitted_in_serialization() {
+        let strategy = Strategy {
+            manifest: make_manifest(),
+            hypothesis: None,
+            agents: Vec::new(),
+            pipeline: PipelineDef::default(),
+            regime_slot: None,
+            intern_slot: None,
+            trader_slot: None,
+            risk: RiskPreset::Balanced.expand(),
+            mechanical_params: json!({}),
+        };
+        let s = serde_json::to_string(&strategy).unwrap();
+        assert!(!s.contains("\"hypothesis\""), "None hypothesis must be omitted: {s}");
+    }
+
+    #[test]
+    fn hypothesis_some_serializes_and_deserializes() {
+        let raw = json!({
+            "manifest": make_manifest(),
+            "hypothesis": {
+                "family": "compression-breakout",
+                "statement": "BTC consolidates then breaks out.",
+                "target_regime": ["post-compression trend"],
+                "avoid_regime": ["chop", "late parabolic move"],
+                "asset_assumptions": ["high liquidity"],
+                "timeframe_preferred": "4h",
+                "entry_logic": ["price breaks above compression high"],
+                "exit_logic": ["price reverses 2 ATR"],
+                "risk_logic": {
+                    "max_trade_frequency": "low",
+                    "no_direct_flips": true
+                }
+            },
+            "risk": RiskPreset::Balanced.expand(),
+            "mechanical_params": {}
+        });
+        let strategy: Strategy = serde_json::from_value(raw).unwrap();
+        let h = strategy.hypothesis.as_ref().expect("hypothesis must be Some");
+        assert_eq!(h.family.as_deref(), Some("compression-breakout"));
+        assert_eq!(h.statement.as_deref(), Some("BTC consolidates then breaks out."));
+        assert_eq!(h.target_regime, vec!["post-compression trend"]);
+        assert_eq!(h.avoid_regime, vec!["chop", "late parabolic move"]);
+        assert_eq!(h.timeframe_preferred.as_deref(), Some("4h"));
+        assert_eq!(h.entry_logic, vec!["price breaks above compression high"]);
+        let rl = h.risk_logic.as_ref().expect("risk_logic must be Some");
+        assert_eq!(rl.max_trade_frequency.as_deref(), Some("low"));
+        assert_eq!(rl.no_direct_flips, Some(true));
+
+        // Round-trip: serialize back and the hypothesis field is present
+        let s = serde_json::to_string(&strategy).unwrap();
+        assert!(s.contains("\"hypothesis\""), "populated hypothesis must be serialized: {s}");
+        assert!(s.contains("compression-breakout"), "family must appear in JSON: {s}");
+    }
+
+    #[test]
+    fn strategy_without_hypothesis_field_deserializes_to_none() {
+        // Legacy strategy JSON with no hypothesis key → defaults to None.
+        let raw = json!({
+            "manifest": make_manifest(),
+            "risk": RiskPreset::Balanced.expand(),
+            "mechanical_params": {}
+        });
+        let strategy: Strategy = serde_json::from_value(raw).unwrap();
+        assert!(strategy.hypothesis.is_none(), "missing hypothesis field must deserialise to None");
+    }
+
+    #[test]
+    fn hypothesis_partial_fields_round_trip() {
+        // Only statement + family set; vecs and optionals default to empty/None.
+        let raw = json!({
+            "manifest": make_manifest(),
+            "hypothesis": {
+                "family": "mean-reversion",
+                "statement": "Asset reverts after extension."
+            },
+            "risk": RiskPreset::Balanced.expand(),
+            "mechanical_params": {}
+        });
+        let strategy: Strategy = serde_json::from_value(raw).unwrap();
+        let h = strategy.hypothesis.as_ref().unwrap();
+        assert_eq!(h.family.as_deref(), Some("mean-reversion"));
+        assert!(h.target_regime.is_empty());
+        assert!(h.risk_logic.is_none());
     }
 }

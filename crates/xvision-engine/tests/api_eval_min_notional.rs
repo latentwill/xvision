@@ -118,6 +118,7 @@ async fn save_tiny_risk_strategy(ctx: &ApiContext, agent_id: &str) -> Strategy {
             published_at: None,
             min_warmup_bars: None,
         },
+        hypothesis: None,
         agents: Vec::new(),
         pipeline: Default::default(),
         regime_slot: None,
