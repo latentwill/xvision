@@ -52,6 +52,7 @@ fn sample_slot(policy: InputsPolicy) -> AgentSlot {
         system_prompt: "Decide.".into(),
         skill_ids: vec![],
         max_tokens: Some(4096),
+        temperature: None,
         prompt_version: String::new(),
         inputs_policy: policy,
     }
