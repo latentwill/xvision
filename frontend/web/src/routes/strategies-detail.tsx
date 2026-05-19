@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { Navigate, useParams } from "react-router-dom";
+import { Link, Navigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiFetch, ApiError } from "@/api/client";
@@ -143,6 +143,12 @@ function StrategyDetailView({ id }: { id: string }) {
   return (
     <main data-testid="strategy-detail-view" data-strategy-id={m.id}>
       <header>
+        <Link
+          to="/strategies"
+          className="inline-flex items-center gap-1.5 text-[12px] text-text-2 hover:text-text mb-3"
+        >
+          ← Back to strategies
+        </Link>
         <span data-testid="strategy-detail-id" className="font-mono text-text-3">
           {m.id}
         </span>

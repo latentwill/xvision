@@ -1,6 +1,6 @@
 // frontend/web/src/routes/agent-runs-detail.tsx
 import { useEffect, useMemo, useState } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
@@ -110,6 +110,12 @@ export function AgentRunDetailRoute() {
         title={`Run ${detail.summary.run_id}`}
         sub={detail.summary.objective}
       />
+      <Link
+        to="/agent-runs"
+        className="inline-flex items-center gap-1.5 text-[12px] text-text-2 hover:text-text mb-3"
+      >
+        ← Back to agent runs
+      </Link>
       <Card className="p-5 mb-4 flex flex-wrap items-center gap-4">
         <div className="font-mono text-[12px] text-text-3">{detail.summary.run_id}</div>
         <Pill tone={detail.summary.error_count > 0 ? "danger" : "default"}>{detail.summary.status}</Pill>
