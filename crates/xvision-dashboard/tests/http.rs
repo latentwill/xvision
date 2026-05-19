@@ -1455,11 +1455,14 @@ async fn eval_export_rejects_in_flight_run() {
     store.create(&run).await.expect("seed run");
 
     let response = server.get(&format!("/api/eval/runs/{run_id}/export")).await;
-    assert!(
-        !response.status_code().is_success(),
-        "expected error status for in-flight export, got {}",
-        response.status_code(),
-    );
+    response.assert_status(StatusCode::BAD_REQUEST);
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["code"], "validation");
+    assert_eq!(body["field"], "request");
+    assert!(body["message"]
+        .as_str()
+        .expect("validation error message")
+        .contains("export is only defined for terminal runs"));
 }
 
 #[tokio::test]
