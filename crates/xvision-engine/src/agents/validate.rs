@@ -21,8 +21,7 @@ pub const MIN_SYSTEM_PROMPT_CHARS: usize = 200;
 /// We match on the leading sentence (tolerant of trailing edits) rather
 /// than a content hash so a saved prompt that starts with this string but
 /// has had junk appended is still caught.
-const DEFAULT_PLACEHOLDER_LEADING: &str =
-    "You are a trading agent. Decide based on the inputs provided.";
+const DEFAULT_PLACEHOLDER_LEADING: &str = "You are a trading agent. Decide based on the inputs provided.";
 
 /// Asset ticker slugs that the name↔prompt mismatch check recognises.
 const ASSET_SLUGS: &[&str] = &[
@@ -286,6 +285,7 @@ mod tests {
                 skill_ids: vec![],
                 max_tokens: Some(4096),
                 prompt_version: String::new(),
+                inputs_policy: crate::agents::InputsPolicy::Raw,
             },
             AgentSlot {
                 name: "TRADER".into(), // case-insensitive duplicate
@@ -295,6 +295,7 @@ mod tests {
                 skill_ids: vec![],
                 max_tokens: Some(4096),
                 prompt_version: String::new(),
+                inputs_policy: crate::agents::InputsPolicy::Raw,
             },
         ];
         let diags = validate_agent(&a);

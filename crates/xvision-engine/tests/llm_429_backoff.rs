@@ -114,10 +114,7 @@ async fn persistent_429_fails_after_max_retries() {
     let dispatch = OpenaiCompatDispatch::new(server.uri(), "test-key".into());
     let result = dispatch.complete(simple_request()).await;
 
-    assert!(
-        result.is_err(),
-        "expected error after exhausting retries; got Ok"
-    );
+    assert!(result.is_err(), "expected error after exhausting retries; got Ok");
     let err_msg = result.unwrap_err().to_string();
     assert!(
         err_msg.contains("429"),

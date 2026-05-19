@@ -167,6 +167,27 @@ describe("AgentForm edit hydration", () => {
 });
 
 describe("AgentForm cross references", () => {
+  it("renders strategy name and run id when both API mocks return one-item arrays", async () => {
+    vi.mocked(agentsApi.deployedInStrategies).mockResolvedValue([
+      { strategy_id: "strat-1", name: "My Alpha Strategy" },
+    ]);
+    vi.mocked(agentsApi.recentRuns).mockResolvedValue([
+      { run_id: "01HZRUN123456", scenario_id: "crypto-bull-q1-2025", status: "completed" },
+    ]);
+
+    renderAgentForm();
+
+    expect(await screen.findByText("My Alpha Strategy")).toBeInTheDocument();
+    // The UI renders run_id.slice(0,12)+"… — "+status as separate adjacent text
+    // nodes inside one <li>, so getByText(exact string) won't match the full
+    // element text. Use a regex against the combined textContent instead.
+    expect(screen.getByText((_, el) => {
+      return !!el && el.tagName === "LI" && (el.textContent ?? "").includes("01HZRUN12345");
+    })).toBeInTheDocument();
+    expect(screen.queryByText(/Not deployed in any strategy yet/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/No runs yet/)).not.toBeInTheDocument();
+  });
+
   it("shows loading states instead of empty states while cross-reference queries are pending", async () => {
     vi.mocked(agentsApi.deployedInStrategies).mockReturnValue(
       new Promise(() => {}),

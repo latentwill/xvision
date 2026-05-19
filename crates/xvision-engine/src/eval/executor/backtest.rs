@@ -25,11 +25,17 @@ use xvision_data::fixtures::load_ohlcv_fixture;
 use crate::agent::llm::LlmDispatch;
 use crate::agent::observability::ObsEmitter;
 use crate::agent::pipeline::{run_pipeline, PipelineInputs, ResolvedAgentSlot};
+use crate::agents::InputsPolicy;
 use crate::api::chart::{
     ChartEquityPoint, HoldMarker, LiveDecisionRow, MarkerEvent, RunChartEvent, RunEventBus, TradeMarker,
     TradeSide,
 };
+use crate::eval::early_stop::{self, EarlyStopConfig};
 use crate::eval::executor::Executor;
+use crate::eval::guardrails::{
+    self as guardrails, position_state_from_size, supervisor_note_content, Action as GuardAction,
+    GuardrailDecision,
+};
 use crate::eval::metrics::{
     annualization_periods_per_year, equity_to_returns, max_drawdown_pct, sharpe_from_returns,
     total_return_pct,
@@ -340,6 +346,12 @@ impl BacktestExecutor {
         let combined_bars: Vec<&Ohlcv> = self.warmup_bars.iter().chain(bars.iter()).collect();
         let history_window = scenario.warmup_bars as usize;
 
+        // F-6: per-run seed-sanitization policy. Mirror of the paper
+        // executor path; `Raw` (default) reproduces the pre-F-6 JSON
+        // byte-for-byte so this branch is a no-op for every existing
+        // scenario+strategy combination that didn't opt into `Causal`.
+        let inputs_policy = resolve_inputs_policy(agent_slots);
+
         let initial = scenario.capital.initial;
         let slip_bps = match &scenario.venue.slippage {
             SlippageModel::Linear { bps } => *bps as f64,
@@ -356,9 +368,29 @@ impl BacktestExecutor {
         let mut n_trades = 0u32;
         let mut total_input_tokens: u64 = 0;
         let mut total_output_tokens: u64 = 0;
+        // engine-trade-guardrails-pyramid-flip-block (F-7):
+        // tracks the trader's most recent emitted open direction on the
+        // asset so the guardrail can detect a same-bar flip even when
+        // the executor's live position is momentarily flat between a
+        // close and an opposite open. Cleared on emitted `flat`. Only
+        // updated from the ORIGINAL trader action — a guardrail-rewritten
+        // `hold` does not bump the direction state.
+        let mut last_open_direction: Option<GuardAction> = None;
         // Running peak for drawdown_pct in MetricsUpdated. Start at the
         // initial capital so the first tick's drawdown is well-defined.
         let mut peak_equity = initial.max(0.0);
+
+        // eval-flat-degeneracy-early-stop (F-9): rolling history of the
+        // last `cfg.window` actions + convictions, plus a counter for
+        // inherited decisions still owed when the policy is in skip
+        // mode. The buffer is flushed when the policy fires (so we don't
+        // re-trigger immediately after the skip window ends) and on any
+        // reset trigger — non-`flat`/`hold` action or a portfolio change.
+        let early_stop_cfg = EarlyStopConfig::from_env_or_default();
+        let mut recent_actions: Vec<early_stop::Action> = Vec::with_capacity(early_stop_cfg.window);
+        let mut recent_convictions: Vec<f64> = Vec::with_capacity(early_stop_cfg.window);
+        let mut inherit_remaining: u32 = 0;
+        let mut prev_position: f64 = position;
 
         for (i, bar) in bars.iter().enumerate() {
             if store.is_terminal(&run.id).await? {
@@ -394,36 +426,166 @@ impl BacktestExecutor {
             // `history_window` real prior bars (the QA15 fix).
             let combined_idx = warmup_count + i;
             let history_start = combined_idx.saturating_sub(history_window);
-            let bar_history: Vec<serde_json::Value> = combined_bars[history_start..combined_idx]
-                .iter()
-                .map(|b| ohlcv_to_json(b))
-                .collect();
+            let history_slice: &[&Ohlcv] = &combined_bars[history_start..combined_idx];
+            let bar_history = build_bar_history(history_slice, inputs_policy);
 
-            let seed = serde_json::json!({
-                "decision_index": decision_idx,
-                "asset": asset,
-                "timestamp": bar.timestamp,
-                "market_data": {
+            // F-6: `Causal` drops `decision_index` + `timestamp` from
+            // both the top-level seed and the current-bar inline.
+            // `Raw` / `Oracle` keep the original shape byte-for-byte
+            // — the regression-guard test pins this.
+            let current_bar_json = ohlcv_to_json(bar, inputs_policy);
+            let seed = match inputs_policy {
+                InputsPolicy::Raw | InputsPolicy::Oracle => serde_json::json!({
+                    "decision_index": decision_idx,
                     "asset": asset,
-                    "current_bar": {
-                        "timestamp": bar.timestamp,
-                        "open": bar.open,
-                        "high": bar.high,
-                        "low": bar.low,
-                        "close": bar.close,
-                        "volume": bar.volume,
+                    "timestamp": bar.timestamp,
+                    "market_data": {
+                        "asset": asset,
+                        "current_bar": current_bar_json,
+                        "next_bar_open": next_bar_open,
+                        "reference_price_usd": bar.close,
+                        "reference_price_source": "eval_bar.close",
+                        "bar_history": bar_history,
                     },
-                    "next_bar_open": next_bar_open,
-                    "reference_price_usd": bar.close,
-                    "reference_price_source": "eval_bar.close",
-                    "bar_history": bar_history,
-                },
-                "portfolio_state": {
-                    "position_size": position,
-                    "equity": equity,
-                    "mark_price": bar.close,
-                },
-            });
+                    "portfolio_state": {
+                        "position_size": position,
+                        "equity": equity,
+                        "mark_price": bar.close,
+                    },
+                }),
+                InputsPolicy::Causal => serde_json::json!({
+                    "asset": asset,
+                    "market_data": {
+                        "asset": asset,
+                        "current_bar": current_bar_json,
+                        "next_bar_open": next_bar_open,
+                        "reference_price_usd": bar.close,
+                        "reference_price_source": "eval_bar.close",
+                        "bar_history": bar_history,
+                    },
+                    "portfolio_state": {
+                        "position_size": position,
+                        "equity": equity,
+                        "mark_price": bar.close,
+                    },
+                }),
+            };
+
+            // eval-flat-degeneracy-early-stop (F-9): before paying the
+            // LLM tax, check whether we should inherit this decision as
+            // a flat. Two entry paths:
+            //
+            //   (a) `inherit_remaining > 0` — we're mid-skip-window from
+            //       a prior trigger. Keep inheriting until the counter
+            //       drains. No supervisor note here; the entry-row note
+            //       was already written when the policy fired.
+            //
+            //   (b) Policy fires NOW based on the rolling history. Write
+            //       ONE supervisor-note row, set `inherit_remaining`,
+            //       then fall through into the inherit branch.
+            //
+            // Both paths short-circuit `run_pipeline`, write an
+            // `eval_decisions` row with `action=flat, conviction=0.0,
+            // justification="inherited from early-stop policy"`, record
+            // equity (kept dense per bar so the chart series stays
+            // continuous), and `continue` to the next bar.
+            let policy_plan = if inherit_remaining == 0 {
+                early_stop::should_skip_next_decision(
+                    &recent_actions,
+                    &recent_convictions,
+                    position == prev_position,
+                    &early_stop_cfg,
+                )
+            } else {
+                None
+            };
+            if let Some(plan) = policy_plan.as_ref() {
+                tracing::info!(
+                    run_id = %run.id,
+                    decision_index = decision_idx,
+                    skip_count = plan.skip_count,
+                    "early-stop policy fired — inheriting flat decisions"
+                );
+                store
+                    .record_supervisor_note(&run.id, "guard", "info", &plan.reason)
+                    .await?;
+                inherit_remaining = plan.skip_count;
+                // Flush the rolling buffer so the policy can't re-fire
+                // on the next bar without a fresh streak rebuilding.
+                recent_actions.clear();
+                recent_convictions.clear();
+            }
+            if inherit_remaining > 0 {
+                let inherited_row = DecisionRow {
+                    run_id: run.id.clone(),
+                    decision_index: decision_idx,
+                    timestamp: bar.timestamp,
+                    asset: asset.clone(),
+                    action: "flat".into(),
+                    conviction: Some(0.0),
+                    justification: Some("inherited from early-stop policy".into()),
+                    reasoning: None,
+                    order_size: None,
+                    fill_price: None,
+                    fill_size: None,
+                    fee: None,
+                    pnl_realized: None,
+                };
+                store.record_decision(&inherited_row).await?;
+                self.emit_chart(
+                    &run.id,
+                    RunChartEvent::Decision(LiveDecisionRow::from(&inherited_row)),
+                )
+                .await;
+                self.emit(ProgressEvent::DecisionEmitted {
+                    run_id: run.id.clone(),
+                    action: "flat".into(),
+                    asset: asset.clone(),
+                    size: 0.0,
+                    conviction: 0.0,
+                });
+
+                // Mark equity to next bar's open with no position change
+                // — `flat` on an already-flat or held position is a
+                // no-op fill. The existing `simulate_fill` semantics
+                // already give us this when `pos == 0`; for `pos != 0`
+                // an inherited flat would close the position, which
+                // would BE a portfolio change. We don't want the
+                // inherit branch to mutate position state, so we update
+                // equity in-place from current state instead of going
+                // through simulate_fill.
+                equity = initial + realized_total + position * (next_bar_open - entry_price);
+                store.record_equity(&run.id, bar.timestamp, equity).await?;
+                self.emit_chart(
+                    &run.id,
+                    RunChartEvent::Equity(ChartEquityPoint {
+                        time: bar.timestamp.timestamp(),
+                        equity_usd: equity,
+                    }),
+                )
+                .await;
+                equity_curve.push(equity);
+
+                if equity > peak_equity {
+                    peak_equity = equity;
+                }
+                let drawdown_pct = if peak_equity > 0.0 {
+                    ((peak_equity - equity) / peak_equity * 100.0).max(0.0)
+                } else {
+                    0.0
+                };
+                self.emit(ProgressEvent::MetricsUpdated {
+                    run_id: run.id.clone(),
+                    equity,
+                    drawdown_pct,
+                    n_trades,
+                });
+
+                inherit_remaining -= 1;
+                prev_position = position;
+                decision_idx += 1;
+                continue;
+            }
 
             let outs = run_pipeline(PipelineInputs {
                 strategy,
@@ -461,16 +623,66 @@ impl BacktestExecutor {
             }
 
             let pre_fill_position = position;
-            let fill = simulate_fill(SimulateFillArgs {
-                pos: pre_fill_position,
-                entry: entry_price,
-                action: &parsed.action,
-                next_open: next_bar_open,
-                slip_bps,
-                taker_bps,
-                equity,
-                risk_pct: strategy.risk.risk_pct_per_trade,
-            });
+
+            // engine-trade-guardrails-pyramid-flip-block (F-7):
+            // Server-side gate at the apply seam. The trader's emitted
+            // action stays in `parsed.action` (preserved verbatim in
+            // `eval_decisions.action` below); `applied_action` is what
+            // drives `simulate_fill` / marker derivation. A `RewriteTo`
+            // also writes a `supervisor_notes` row so the operator sees
+            // the block.
+            let original_action = GuardAction::parse(&parsed.action);
+            let position_state = position_state_from_size(pre_fill_position);
+            let decision = guardrails::classify(original_action, position_state, last_open_direction);
+            let applied_action: String = match &decision {
+                GuardrailDecision::Allow => parsed.action.clone(),
+                GuardrailDecision::RewriteTo { action, reason } => {
+                    let note =
+                        supervisor_note_content(*reason, original_action, *action, &asset, decision_idx);
+                    store
+                        .record_supervisor_note(&run.id, "guard", "warn", &note)
+                        .await?;
+                    tracing::warn!(
+                        run_id = %run.id,
+                        decision_index = decision_idx,
+                        asset = %asset,
+                        reason = reason.as_str(),
+                        original = original_action.as_str(),
+                        applied = action.as_str(),
+                        "eval guardrail rewrote trader action",
+                    );
+                    action.as_str().to_string()
+                }
+            };
+
+            // `simulate_fill` treats any non-(long_open|short_open) action
+            // as `want_flat` (closes any open position). That suits a
+            // trader-emitted `flat` or the guardrail one-step-flip
+            // rewrite, but a guardrail pyramid-block rewrites
+            // `long_open` → `hold` and we MUST NOT close the existing
+            // position in that case. Short-circuit a true no-op fill
+            // for `hold` so the position survives untouched.
+            let fill = if applied_action == "hold" {
+                FillOutcome {
+                    new_pos: pre_fill_position,
+                    new_entry: entry_price,
+                    fill_price: None,
+                    fill_size: None,
+                    fee: None,
+                    realized_pnl: 0.0,
+                }
+            } else {
+                simulate_fill(SimulateFillArgs {
+                    pos: pre_fill_position,
+                    entry: entry_price,
+                    action: &applied_action,
+                    next_open: next_bar_open,
+                    slip_bps,
+                    taker_bps,
+                    equity,
+                    risk_pct: strategy.risk.risk_pct_per_trade,
+                })
+            };
             position = fill.new_pos;
             entry_price = fill.new_entry;
             realized_total += fill.realized_pnl;
@@ -481,7 +693,10 @@ impl BacktestExecutor {
                 // FillRecorded — only when an actionable decision actually
                 // crossed the book. For close-to-flat decisions, side is
                 // derived from the pre-fill position direction.
-                let side = fill_side_for_action(&parsed.action, pre_fill_position);
+                // Side is derived from the APPLIED action so a
+                // guardrail-rewritten `flat` (one-step flip block) shows
+                // as a close, not a phantom short_open.
+                let side = fill_side_for_action(&applied_action, pre_fill_position);
                 self.emit(ProgressEvent::FillRecorded {
                     run_id: run.id.clone(),
                     side: side.into(),
@@ -492,7 +707,10 @@ impl BacktestExecutor {
             }
 
             // DecisionEmitted fires for every cycle so subscribers see
-            // flat/hold decisions too.
+            // flat/hold decisions too. Carries the ORIGINAL trader
+            // action — subscribers correlate the emitted intent with the
+            // matching `eval_decisions` row, which also stores the
+            // original. The supervisor_notes table carries the rewrite.
             self.emit(ProgressEvent::DecisionEmitted {
                 run_id: run.id.clone(),
                 action: parsed.action.clone(),
@@ -500,6 +718,17 @@ impl BacktestExecutor {
                 size: fill.fill_size.unwrap_or(0.0),
                 conviction: parsed.conviction,
             });
+
+            // Update the per-asset open-direction memory for the
+            // guardrail's next-cycle flip detection. Driven by the
+            // APPLIED action (a guardrail-rewritten `hold` keeps the
+            // existing direction; a `flat` clears it).
+            match GuardAction::parse(&applied_action) {
+                GuardAction::LongOpen => last_open_direction = Some(GuardAction::LongOpen),
+                GuardAction::ShortOpen => last_open_direction = Some(GuardAction::ShortOpen),
+                GuardAction::Flat => last_open_direction = None,
+                GuardAction::Hold | GuardAction::Other => {}
+            }
 
             // Mark equity to the next bar's open.
             equity = initial + realized_total + position * (next_bar_open - entry_price);
@@ -535,7 +764,11 @@ impl BacktestExecutor {
             // Only emit for actions where fill data is present (same guard
             // as split_markers uses for trade-like actions).
             let t = bar.timestamp.timestamp();
-            let marker_event = match parsed.action.as_str() {
+            // Markers reflect what actually hit the portfolio — so they
+            // use the APPLIED action, not the trader's original.
+            // The audit-side trace still has the original in
+            // `eval_decisions.action`.
+            let marker_event = match applied_action.as_str() {
                 "long_open" => {
                     if let (Some(price), Some(size)) = (fill.fill_price, fill.fill_size) {
                         Some(MarkerEvent::Trade(make_trade_marker(
@@ -610,6 +843,28 @@ impl BacktestExecutor {
                 drawdown_pct,
                 n_trades,
             });
+
+            // eval-flat-degeneracy-early-stop (F-9): roll the buffer and
+            // apply reset triggers. A portfolio change (position size
+            // delta — open, close, or resize) wipes the streak; so does
+            // any non-flat/non-hold action. Otherwise we append and
+            // truncate to the configured window.
+            let portfolio_changed = position != prev_position;
+            let cls = early_stop::Action::classify(&parsed.action);
+            if portfolio_changed || !matches!(cls, early_stop::Action::Flat | early_stop::Action::Hold) {
+                recent_actions.clear();
+                recent_convictions.clear();
+            } else {
+                recent_actions.push(cls);
+                recent_convictions.push(parsed.conviction);
+                let cap = early_stop_cfg.window;
+                if recent_actions.len() > cap {
+                    let drop_n = recent_actions.len() - cap;
+                    recent_actions.drain(0..drop_n);
+                    recent_convictions.drain(0..drop_n);
+                }
+            }
+            prev_position = position;
 
             decision_idx += 1;
         }
@@ -815,16 +1070,60 @@ fn fill_side_for_action(action: &str, pre_fill_position: f64) -> &'static str {
 /// Serialize an Ohlcv bar as the same JSON shape used for
 /// `market_data.current_bar` so `bar_history` entries are
 /// homogeneous with the current-bar shape the trader prompt already
-/// knows about.
-fn ohlcv_to_json(bar: &Ohlcv) -> serde_json::Value {
-    serde_json::json!({
-        "timestamp": bar.timestamp,
-        "open": bar.open,
-        "high": bar.high,
-        "low": bar.low,
-        "close": bar.close,
-        "volume": bar.volume,
-    })
+/// knows about. F-6: under `Causal` we drop `timestamp` so the
+/// trader LLM can't accidentally key on a wall-clock label.
+fn ohlcv_to_json(bar: &Ohlcv, policy: InputsPolicy) -> serde_json::Value {
+    match policy {
+        InputsPolicy::Raw | InputsPolicy::Oracle => serde_json::json!({
+            "timestamp": bar.timestamp,
+            "open": bar.open,
+            "high": bar.high,
+            "low": bar.low,
+            "close": bar.close,
+            "volume": bar.volume,
+        }),
+        InputsPolicy::Causal => serde_json::json!({
+            "open": bar.open,
+            "high": bar.high,
+            "low": bar.low,
+            "close": bar.close,
+            "volume": bar.volume,
+        }),
+    }
+}
+
+/// Build the `bar_history` slice. Mirror of `paper::build_bar_history`
+/// — kept in lock-step so the two executor paths produce identical
+/// JSON under the same policy.
+fn build_bar_history(bars: &[&Ohlcv], policy: InputsPolicy) -> Vec<serde_json::Value> {
+    match policy {
+        InputsPolicy::Raw | InputsPolicy::Oracle => bars.iter().map(|b| ohlcv_to_json(b, policy)).collect(),
+        InputsPolicy::Causal => bars
+            .iter()
+            .enumerate()
+            .map(|(i, b)| {
+                serde_json::json!({
+                    "bar_index": i,
+                    "open": b.open,
+                    "high": b.high,
+                    "low": b.low,
+                    "close": b.close,
+                    "volume": b.volume,
+                })
+            })
+            .collect(),
+    }
+}
+
+/// Mirror of `paper::resolve_inputs_policy`. Sourced from the
+/// trader-role `ResolvedAgentSlot`; defaults to `Raw` so legacy
+/// strategy shapes (no attached agents) keep today's behavior.
+fn resolve_inputs_policy(agent_slots: &[ResolvedAgentSlot]) -> InputsPolicy {
+    agent_slots
+        .iter()
+        .find(|r| canonical_role(&r.role) == "trader")
+        .map(|r| r.inputs_policy)
+        .unwrap_or(InputsPolicy::Raw)
 }
 
 #[cfg(test)]
@@ -946,6 +1245,7 @@ mod tests {
                 model: Some(model.into()),
             },
             max_tokens: None,
+            inputs_policy: crate::agents::InputsPolicy::Raw,
         }
     }
 

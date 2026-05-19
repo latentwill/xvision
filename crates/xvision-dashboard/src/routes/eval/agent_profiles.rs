@@ -53,9 +53,7 @@ pub struct UpdateRequest {
     pub system_prompt: Option<String>,
 }
 
-pub async fn list(
-    State(state): State<AppState>,
-) -> Result<Json<AgentProfileListResponse>, DashboardError> {
+pub async fn list(State(state): State<AppState>) -> Result<Json<AgentProfileListResponse>, DashboardError> {
     let store = RunStore::new(state.api_context().db.clone());
     let items = store
         .list_agent_profiles(false)
@@ -73,9 +71,7 @@ pub async fn get(
         .get_agent_profile(&id)
         .await
         .map_err(DashboardError::Internal)?
-        .ok_or_else(|| {
-            DashboardError::from(ApiError::NotFound(format!("agent profile `{id}` not found")))
-        })?;
+        .ok_or_else(|| DashboardError::from(ApiError::NotFound(format!("agent profile `{id}` not found"))))?;
     Ok(Json(profile))
 }
 
@@ -93,9 +89,7 @@ pub async fn patch(
         let cfg = tokio::task::spawn_blocking(move || config::load_runtime(&cfg_path))
             .await
             .map_err(|e| DashboardError::Internal(anyhow::anyhow!("spawn_blocking: {e}")))?
-            .map_err(|e| {
-                DashboardError::from(ApiError::Validation(format!("load config: {e}")))
-            })?;
+            .map_err(|e| DashboardError::from(ApiError::Validation(format!("load config: {e}"))))?;
         if !cfg.providers.iter().any(|p| p.name == *provider) {
             let configured = if cfg.providers.is_empty() {
                 "none".to_string()
@@ -124,9 +118,7 @@ pub async fn patch(
         )
         .await
         .map_err(DashboardError::Internal)?
-        .ok_or_else(|| {
-            DashboardError::from(ApiError::NotFound(format!("agent profile `{id}` not found")))
-        })?;
+        .ok_or_else(|| DashboardError::from(ApiError::NotFound(format!("agent profile `{id}` not found"))))?;
     Ok(Json(updated))
 }
 
@@ -149,8 +141,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let xvn_home = tmp.path().to_path_buf();
         std::fs::create_dir_all(xvn_home.join("config")).unwrap();
-        let mut cfg = std::fs::read_to_string("../../config/default.toml")
-            .expect("read workspace config/default.toml");
+        let mut cfg =
+            std::fs::read_to_string("../../config/default.toml").expect("read workspace config/default.toml");
         cfg.push_str(providers_toml);
         std::fs::write(xvn_home.join("config/default.toml"), cfg).unwrap();
         let state = AppState::new(xvn_home).await.expect("AppState::new");
@@ -160,8 +152,7 @@ mod tests {
     #[tokio::test]
     async fn list_returns_seeded_profiles() {
         let (state, _tmp) = fresh_state_with_providers("").await;
-        let server =
-            TestServer::new(crate::server::build_router(state.clone())).expect("TestServer");
+        let server = TestServer::new(crate::server::build_router(state.clone())).expect("TestServer");
         let resp = server.get("/api/eval/agent-profiles").await;
         resp.assert_status_ok();
         let v: serde_json::Value = resp.json();
@@ -181,8 +172,7 @@ mod tests {
             "\n[[providers]]\nname = \"openrouter\"\nkind = \"openai-compat\"\nbase_url = \"https://openrouter.ai/api/v1\"\napi_key_env = \"OPENROUTER_KEY\"\n",
         )
         .await;
-        let server =
-            TestServer::new(crate::server::build_router(state.clone())).expect("TestServer");
+        let server = TestServer::new(crate::server::build_router(state.clone())).expect("TestServer");
 
         let resp = server
             .patch("/api/eval/agent-profiles/fast-trader-agent")
@@ -209,8 +199,7 @@ mod tests {
             "\n[[providers]]\nname = \"openrouter\"\nkind = \"openai-compat\"\nbase_url = \"https://openrouter.ai/api/v1\"\napi_key_env = \"OPENROUTER_KEY\"\n",
         )
         .await;
-        let server =
-            TestServer::new(crate::server::build_router(state.clone())).expect("TestServer");
+        let server = TestServer::new(crate::server::build_router(state.clone())).expect("TestServer");
 
         let resp = server
             .patch("/api/eval/agent-profiles/fast-trader-agent")
@@ -230,8 +219,7 @@ mod tests {
     #[tokio::test]
     async fn patch_404s_for_unknown_profile() {
         let (state, _tmp) = fresh_state_with_providers("").await;
-        let server =
-            TestServer::new(crate::server::build_router(state.clone())).expect("TestServer");
+        let server = TestServer::new(crate::server::build_router(state.clone())).expect("TestServer");
         let resp = server
             .patch("/api/eval/agent-profiles/ghost-agent")
             .json(&serde_json::json!({"model": "anything"}))

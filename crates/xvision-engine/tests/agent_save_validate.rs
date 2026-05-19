@@ -6,15 +6,12 @@
 //!   (d) WrongIdNamespace: strategy.get with an agent id returns a typed
 //!       Validation error rather than NotFound.
 
-use xvision_engine::{
-    agents::{store::NewAgent, AgentSlot, AgentStore},
-    api::{
-        strategy,
-        Actor, ApiContext, ApiError,
-    },
-};
 use sqlx::SqlitePool;
 use tempfile::TempDir;
+use xvision_engine::{
+    agents::{store::NewAgent, AgentSlot, AgentStore, InputsPolicy},
+    api::{strategy, Actor, ApiContext, ApiError},
+};
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -27,6 +24,10 @@ async fn fresh_agent_store() -> (AgentStore, TempDir) {
         .await
         .unwrap();
     sqlx::query(include_str!("../migrations/019_agent_slot_prompt_version.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/020_agent_slot_inputs_policy.sql"))
         .execute(&pool)
         .await
         .unwrap();
@@ -64,6 +65,7 @@ fn rich_slot(asset: &str) -> AgentSlot {
         skill_ids: vec![],
         max_tokens: Some(4096),
         prompt_version: String::new(),
+        inputs_policy: InputsPolicy::Raw,
     }
 }
 
@@ -103,10 +105,7 @@ async fn reject_sol_name_with_eth_prompt() {
             slots: vec![eth_slot],
         })
         .await;
-    assert!(
-        result.is_err(),
-        "SOL name + ETH-only prompt should be rejected",
-    );
+    assert!(result.is_err(), "SOL name + ETH-only prompt should be rejected",);
     let msg = result.unwrap_err().to_string();
     assert!(
         msg.contains("SOL") && msg.contains("system_prompt"),
@@ -121,9 +120,8 @@ async fn happy_multi_asset_prompt_name_subset() {
     let (store, _dir) = fresh_agent_store().await;
     let mut slot = rich_slot("BTC");
     // Append ETH mention so the prompt has both, but the name only claims BTC.
-    slot.system_prompt.push_str(
-        " Secondary signal: ETH/USD RSI divergence can inform position sizing.",
-    );
+    slot.system_prompt
+        .push_str(" Secondary signal: ETH/USD RSI divergence can inform position sizing.");
     let result = store
         .create(NewAgent {
             name: "btc-with-eth-context".into(),
@@ -159,13 +157,11 @@ async fn reject_short_prompt() {
                 skill_ids: vec![],
                 max_tokens: None,
                 prompt_version: String::new(),
+                inputs_policy: InputsPolicy::Raw,
             }],
         })
         .await;
-    assert!(
-        result.is_err(),
-        "short prompt (<200 chars) should be rejected",
-    );
+    assert!(result.is_err(), "short prompt (<200 chars) should be rejected",);
     let msg = result.unwrap_err().to_string();
     assert!(
         msg.contains("200") || msg.contains("placeholder") || msg.contains("validation"),
@@ -197,6 +193,7 @@ async fn reject_default_placeholder_prompt() {
                 skill_ids: vec![],
                 max_tokens: None,
                 prompt_version: String::new(),
+                inputs_policy: InputsPolicy::Raw,
             }],
         })
         .await;
@@ -239,12 +236,12 @@ async fn wrong_id_namespace_strategy_get_with_agent_id() {
                      and generate a JSON decision with fields: action (buy/sell/hold), \
                      size_pct (0-100), and reason (string). Use the 20/50 EMA crossover \
                      as your primary signal. {}",
-                    "Apply strict risk controls: never risk more than 1% of notional per trade. "
-                        .repeat(4),
+                    "Apply strict risk controls: never risk more than 1% of notional per trade. ".repeat(4),
                 ),
                 skill_ids: vec![],
                 max_tokens: Some(4096),
                 prompt_version: String::new(),
+                inputs_policy: InputsPolicy::Raw,
             }],
         })
         .await

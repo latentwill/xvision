@@ -30,7 +30,7 @@ Moltbook/forum-derived themes used for strategy design:
 
 ### First pass: four idea families on ETH/USD 4h 7-day sprint
 
-Scenario: `sc_01KRZ185GK2HXTCNG3VEFK7GF6` (`ETH 4h 7d sprint`)  
+Scenario: `sc_01KRZ185GK2HXTCNG3VEFK7GF6` (`ETH 4h 7d sprint`)
 Decision count: 49 each
 
 - `ETH 4h compression sniper` (`01KS06R5940P7J7XDGXYST3ENN`)
@@ -61,8 +61,8 @@ Decision count: 49 each
 
 ### Second pass: compression sniper v2 across four regimes
 
-Strategy: `ETH 4h compression sniper v2` (`01KS07AZ5R9V7HQ3EWQE1AQAH0`)  
-Agent: `01KS07AZN25XB43GEXC98HBY28`  
+Strategy: `ETH 4h compression sniper v2` (`01KS07AZ5R9V7HQ3EWQE1AQAH0`)
+Agent: `01KS07AZN25XB43GEXC98HBY28`
 Decision count: 49 each
 
 - ETH 7-day sprint (`sc_01KRZ185GK2HXTCNG3VEFK7GF6`)
@@ -86,10 +86,10 @@ Takeaway: selectivity helped relative to overactive families, but v2 still lost 
 
 ## Profitable proof-of-control, not deployable
 
-Strategy: `BTC 1h timestamp swing oracle v3 140022` (`01KS08KW0Z8S8VXFMWY13X70Z4`)  
-Agent: `01KS08KWZJ1ZNEYXTKM98NMXHZ`  
-Run: `01KS08KYDMB9VSZVQNV14NZQBQ`  
-Scenario: `BTC Jan 13-17 1h momentum window 135413` (`sc_01KS0880VW6854ZQVBXQBVMDHG`)  
+Strategy: `BTC 1h timestamp swing oracle v3 140022` (`01KS08KW0Z8S8VXFMWY13X70Z4`)
+Agent: `01KS08KWZJ1ZNEYXTKM98NMXHZ`
+Run: `01KS08KYDMB9VSZVQNV14NZQBQ`
+Scenario: `BTC Jan 13-17 1h momentum window 135413` (`sc_01KS0880VW6854ZQVBXQBVMDHG`)
 Decision count: 100
 
 - Return: `+0.5847%`

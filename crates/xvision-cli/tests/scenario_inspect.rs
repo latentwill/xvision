@@ -129,13 +129,7 @@ fn scenario_inspect_card_clone_shows_source() {
     let parent_id = parent_body["id"].as_str().unwrap();
 
     let clone_out = xvn(
-        &[
-            "scenario",
-            "clone",
-            parent_id,
-            "--name",
-            "SOL clone for inspect",
-        ],
+        &["scenario", "clone", parent_id, "--name", "SOL clone for inspect"],
         dir.path(),
     );
     assert!(

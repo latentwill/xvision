@@ -436,12 +436,7 @@ async fn get_inner(ctx: &ApiContext, agent_id: &str) -> ApiResult<Strategy> {
                 // found `strategy.get` calls with an agent id — the caller had
                 // the namespaces confused and the generic NotFound gave no clue.
                 let agent_store = AgentStore::new(ctx.db.clone());
-                let is_agent_id = agent_store
-                    .get(agent_id)
-                    .await
-                    .ok()
-                    .flatten()
-                    .is_some();
+                let is_agent_id = agent_store.get(agent_id).await.ok().flatten().is_some();
                 if is_agent_id {
                     return Err(ApiError::Validation(
                         "id matches an agent; did you mean agents.get?".to_string(),
