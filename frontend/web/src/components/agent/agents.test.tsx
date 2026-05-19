@@ -165,3 +165,45 @@ describe("AgentForm edit hydration", () => {
     });
   });
 });
+
+describe("AgentForm cross references", () => {
+  it("shows loading states instead of empty states while cross-reference queries are pending", async () => {
+    vi.mocked(agentsApi.deployedInStrategies).mockReturnValue(
+      new Promise(() => {}),
+    );
+    vi.mocked(agentsApi.recentRuns).mockReturnValue(new Promise(() => {}));
+
+    renderAgentForm();
+
+    expect(await screen.findByText("Loading deployed strategies…")).toBeInTheDocument();
+    expect(screen.getByText("Loading recent runs…")).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Not deployed in any strategy yet/),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/No runs yet/)).not.toBeInTheDocument();
+  });
+
+  it("shows error states instead of empty states when cross-reference queries fail", async () => {
+    vi.mocked(agentsApi.deployedInStrategies).mockRejectedValue(
+      new Error("strategies unavailable"),
+    );
+    vi.mocked(agentsApi.recentRuns).mockRejectedValue(
+      new Error("runs unavailable"),
+    );
+
+    renderAgentForm();
+
+    expect(
+      await screen.findByText(
+        "Couldn't load deployed strategies: strategies unavailable",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Couldn't load recent runs: runs unavailable"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Not deployed in any strategy yet/),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/No runs yet/)).not.toBeInTheDocument();
+  });
+});

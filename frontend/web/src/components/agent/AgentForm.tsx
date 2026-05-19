@@ -373,7 +373,15 @@ function CrossRefs({ agentId }: { agentId: string }) {
           <h4 className="text-[12px] uppercase tracking-wide text-text-3 mb-2 font-medium">
             Deployed in strategies
           </h4>
-          {deployedQ.data && deployedQ.data.length > 0 ? (
+          {deployedQ.isPending ? (
+            <p className="text-text-3 text-[12.5px] m-0 leading-snug">
+              Loading deployed strategies…
+            </p>
+          ) : deployedQ.isError ? (
+            <p className="text-danger text-[12.5px] m-0 leading-snug">
+              Couldn't load deployed strategies: {errorMessage(deployedQ.error)}
+            </p>
+          ) : deployedQ.data && deployedQ.data.length > 0 ? (
             <ul className="space-y-1.5">
               {deployedQ.data.map((s) => (
                 <li key={s.strategy_id} className="text-[13px] text-text-2">
@@ -393,7 +401,15 @@ function CrossRefs({ agentId }: { agentId: string }) {
           <h4 className="text-[12px] uppercase tracking-wide text-text-3 mb-2 font-medium">
             Recent runs
           </h4>
-          {runsQ.data && runsQ.data.length > 0 ? (
+          {runsQ.isPending ? (
+            <p className="text-text-3 text-[12.5px] m-0 leading-snug">
+              Loading recent runs…
+            </p>
+          ) : runsQ.isError ? (
+            <p className="text-danger text-[12.5px] m-0 leading-snug">
+              Couldn't load recent runs: {errorMessage(runsQ.error)}
+            </p>
+          ) : runsQ.data && runsQ.data.length > 0 ? (
             <ul className="space-y-1.5">
               {runsQ.data.map((r) => (
                 <li
