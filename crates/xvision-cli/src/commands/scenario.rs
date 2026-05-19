@@ -7,6 +7,7 @@ use chrono::NaiveDate;
 use clap::{Args, Subcommand};
 
 use xvision_core::AssetSymbol;
+use xvision_engine::api::eval as api_eval;
 use xvision_engine::api::scenario as api_scenario;
 use xvision_engine::api::{Actor, ApiContext, ApiError};
 use xvision_engine::eval::scenario::{
@@ -70,6 +71,10 @@ pub enum ScenarioOp {
         /// Scenario id.
         id: String,
     },
+    /// Print a compact plain-text summary card for an agent to read fast.
+    /// Use --card (required) to request the card layout; other formats will be
+    /// added later without breaking this layout commitment.
+    Inspect(InspectArgs),
 }
 
 #[derive(Args, Debug)]
@@ -191,6 +196,16 @@ pub struct ValidateArgs {
     pub json: bool,
 }
 
+#[derive(Args, Debug)]
+pub struct InspectArgs {
+    /// Scenario id.
+    pub id: String,
+    /// Print the compact plain-text summary card. Required (other formats will
+    /// be added as `--json`, `--table` later without changing this layout).
+    #[arg(long)]
+    pub card: bool,
+}
+
 pub async fn run(cmd: ScenarioCmd) -> CliResult<()> {
     let ctx = open_ctx(cmd.xvn_home.clone()).await.map_err(CliError::upstream)?;
     match cmd.op {
@@ -214,6 +229,7 @@ pub async fn run(cmd: ScenarioCmd) -> CliResult<()> {
             Ok(())
         }
         ScenarioOp::Tree { id } => run_tree(&ctx, id).await,
+        ScenarioOp::Inspect(a) => run_inspect(&ctx, a).await,
     }
 }
 
@@ -575,6 +591,107 @@ async fn run_tree(ctx: &ApiContext, id: String) -> CliResult<()> {
         println!("  (no parent, no children)");
     }
 
+    Ok(())
+}
+
+/// Build the compact plain-text summary card string for a scenario.
+///
+/// `run_count` and `best_return_pct` come from the caller after aggregating
+/// the eval runs list; pass `None` for both when the runs list is unavailable.
+pub fn format_inspect_card(s: &Scenario, run_count: Option<usize>, best_return_pct: Option<f64>) -> String {
+    let mut out = String::new();
+
+    let asset = s.asset.first().map(|a| a.symbol.as_str()).unwrap_or("-");
+    let quote = format!("{:?}", s.quote_currency).to_uppercase();
+    let asset_pair = format!("{}/{}", asset, quote);
+
+    out.push_str(&format!("id: {}\n", s.id));
+    out.push_str(&format!("name: {}\n", s.display_name));
+    out.push_str(&format!("asset: {}\n", asset_pair));
+    out.push_str(&format!("timeframe: {}\n", s.granularity));
+    out.push_str(&format!(
+        "date_window: {}..{}\n",
+        s.time_window.start.format("%Y-%m-%d"),
+        s.time_window.end.format("%Y-%m-%d"),
+    ));
+    out.push_str(&format!("warmup_bars: {}\n", s.warmup_bars));
+
+    // decision_bars: derive from the window duration ÷ granularity bar seconds,
+    // then subtract warmup_bars. We use the granularity's seconds_per_bar to
+    // compute how many decision bars fit in the window.
+    let window_secs = (s.time_window.end - s.time_window.start).num_seconds() as u64;
+    let bar_secs = s.granularity.seconds();
+    let decision_bars = if bar_secs > 0 {
+        let total_bars = window_secs / bar_secs;
+        total_bars.saturating_sub(s.warmup_bars as u64)
+    } else {
+        0
+    };
+    out.push_str(&format!("decision_bars: {}\n", decision_bars));
+
+    if let Some(parent_id) = &s.parent_scenario_id {
+        out.push_str(&format!("source: cloned_from {}\n", parent_id));
+    }
+
+    // TODO: regime/volatility labels — see track #12
+
+    match (run_count, best_return_pct) {
+        (Some(count), best) => {
+            out.push_str("previous_runs:\n");
+            out.push_str(&format!("  count: {}\n", count));
+            if let Some(ret) = best {
+                out.push_str(&format!("  best_return_pct: {:.2}\n", ret));
+            } else {
+                out.push_str("  best_return_pct: (none)\n");
+            }
+        }
+        _ => {
+            out.push_str("previous_runs: (unavailable)\n");
+        }
+    }
+
+    // Trim trailing newline for clean output.
+    if out.ends_with('\n') {
+        out.truncate(out.len() - 1);
+    }
+    out
+}
+
+async fn run_inspect(ctx: &ApiContext, a: InspectArgs) -> CliResult<()> {
+    if !a.card {
+        return Err(CliError::usage(anyhow::anyhow!(
+            "specify --card (other formats will be added later: --json, --table)"
+        )));
+    }
+
+    let s = api_scenario::get(ctx, &a.id)
+        .await
+        .map_err(|e| api_to_cli("scenario inspect", e))?;
+
+    // Aggregate previous runs: count + best total_return_pct.
+    let runs_result = api_eval::list(
+        ctx,
+        api_eval::ListRunsRequest {
+            scenario_id: Some(a.id.clone()),
+            agent_id: None,
+            status: None,
+        },
+    )
+    .await;
+
+    let (run_count, best_return) = match runs_result {
+        Ok(runs) => {
+            let count = runs.len();
+            let best = runs
+                .iter()
+                .filter_map(|r| r.metrics.as_ref().map(|m| m.total_return_pct))
+                .reduce(f64::max);
+            (Some(count), best)
+        }
+        Err(_) => (None, None),
+    };
+
+    println!("{}", format_inspect_card(&s, run_count, best_return));
     Ok(())
 }
 

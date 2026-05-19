@@ -14,6 +14,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 use xvision_engine::api::eval::{self, CompareRunsRequest, EvalRunRequest, ListRunsRequest};
+use xvision_engine::eval::behavior::BehaviorSummary;
 use xvision_engine::api::{scenario as api_scenario, strategy as api_strategy};
 use xvision_engine::api::{Actor, ApiContext, ApiError};
 use xvision_engine::eval::export as eval_export;
@@ -121,6 +122,11 @@ pub struct ShowArgs {
     /// Output the full Run as JSON.
     #[arg(long)]
     pub json: bool,
+    /// Compute and display the behavior summary for this run.
+    /// When combined with `--json`, the output is wrapped as
+    /// `{"run": ..., "behavior_summary": ...}`.
+    #[arg(long)]
+    pub behavior: bool,
 }
 
 #[derive(Args, Debug)]
@@ -385,13 +391,39 @@ async fn run_show(args: ShowArgs) -> CliResult<()> {
     let run = eval::get(&ctx, &args.run_id)
         .await
         .map_err(|e| api_to_cli("eval get", e))?;
+
+    // Optionally fetch the behavior summary (on-demand derivation, no DB write).
+    let behavior: Option<BehaviorSummary> = if args.behavior {
+        Some(
+            eval::get_run_behavior(&ctx, &args.run_id)
+                .await
+                .map_err(|e| api_to_cli("eval behavior", e))?,
+        )
+    } else {
+        None
+    };
+
     if args.json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&run).exit_with(XvnExit::Upstream)?
-        );
+        if let Some(ref bsummary) = behavior {
+            // Wrap run + behavior_summary in a single object. Only done when
+            // --behavior is set so the plain `--json` shape is unchanged.
+            let wrapped = serde_json::json!({
+                "run": run,
+                "behavior_summary": bsummary,
+            });
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&wrapped).exit_with(XvnExit::Upstream)?
+            );
+        } else {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&run).exit_with(XvnExit::Upstream)?
+            );
+        }
         return Ok(());
     }
+
     println!("id              {}", run.id);
     println!("status          {}", run.status.as_str());
     println!("mode            {}", run.mode.as_str());
@@ -409,6 +441,29 @@ async fn run_show(args: ShowArgs) -> CliResult<()> {
         println!("  win_rate      {:.2}", m.win_rate);
         println!("  n_trades      {}", m.n_trades);
         println!("  n_decisions   {}", m.n_decisions);
+    }
+    if let Some(ref bsummary) = behavior {
+        println!("\nbehavior_summary:");
+        println!("  flat_rate                {:.2}", bsummary.flat_rate);
+        println!("  trades_opened            {}", bsummary.trades_opened);
+        println!("  direct_flips             {}", bsummary.direct_flips);
+        if let Some(avg) = bsummary.avg_bars_held {
+            println!("  avg_bars_held            {:.1}", avg);
+        } else {
+            println!("  avg_bars_held            n/a");
+        }
+        println!(
+            "  reentries_after_loss     {}",
+            bsummary.reentries_after_loss
+        );
+        println!(
+            "  exits_on_invalidation    {}",
+            bsummary.exits_on_invalidation
+        );
+        println!(
+            "  primary_failure_mode     {}",
+            bsummary.primary_failure_mode
+        );
     }
     if let Some(e) = run.error.as_deref() {
         println!("\nerror: {e}");
