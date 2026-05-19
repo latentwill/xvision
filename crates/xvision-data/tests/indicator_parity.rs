@@ -575,6 +575,70 @@ fn macd_period_small_hand_computed() {
 }
 
 #[test]
+fn macd_period_small_nonconstant_signal_hand_computed() {
+    // Non-linear prices make the MACD input to the signal EMA vary.
+    // fast=2 alpha=2/3, slow=3 alpha=1/2, signal=2 alpha=2/3.
+    //
+    // prices = [1,3,2,6,4,7,5,9]
+    //
+    // fast EMA valid values:
+    //   [1]=2, [2]=2, [3]=14/3, [4]=38/9,
+    //   [5]=164/27, [6]=434/81, [7]=1892/243
+    // slow EMA valid values:
+    //   [2]=2, [3]=4, [4]=4, [5]=11/2, [6]=21/4, [7]=57/8
+    // macd_line:
+    //   [2]=0, [3]=2/3, [4]=2/9, [5]=31/54, [6]=35/324, [7]=1285/1944
+    //
+    // Signal is EMA(2) over macd_line[2..]:
+    //   seed local[1] = (0 + 2/3)/2 = 1/3
+    //   local[2] = 7/27, local[3] = 38/81,
+    //   local[4] = 37/162, local[5] = 1507/2916
+    let prices = [1.0_f64, 3.0, 2.0, 6.0, 4.0, 7.0, 5.0, 9.0];
+    let m = macd(&prices, 2, 3, 2);
+
+    let nan = f64::NAN;
+    let expected_macd = [
+        nan,
+        nan,
+        0.0,
+        2.0 / 3.0,
+        2.0 / 9.0,
+        31.0 / 54.0,
+        35.0 / 324.0,
+        1285.0 / 1944.0,
+    ];
+    let expected_signal = [
+        nan,
+        nan,
+        nan,
+        1.0 / 3.0,
+        7.0 / 27.0,
+        38.0 / 81.0,
+        37.0 / 162.0,
+        1507.0 / 2916.0,
+    ];
+    let expected_histogram = [
+        nan,
+        nan,
+        nan,
+        1.0 / 3.0,
+        -1.0 / 27.0,
+        17.0 / 162.0,
+        -13.0 / 108.0,
+        841.0 / 5832.0,
+    ];
+
+    assert_series_eq("macd_nonconstant_line", &m.macd, &expected_macd, 1e-10);
+    assert_series_eq("macd_nonconstant_signal", &m.signal, &expected_signal, 1e-10);
+    assert_series_eq(
+        "macd_nonconstant_histogram",
+        &m.histogram,
+        &expected_histogram,
+        1e-10,
+    );
+}
+
+#[test]
 fn macd_standard_warmup_indices() {
     // Standard MACD(12, 26, 9) on 100 bars:
     // - slow_ema valid from index 25
