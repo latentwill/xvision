@@ -225,8 +225,8 @@ async fn otel_tee_records_sqlite_and_emits_parallel_span_tree() {
     bus.publish(RunEvent::SpanFinished(SpanFinishedEvent {
         span_id: tool_span,
         ended_at: tts + Duration::milliseconds(3),
-        status: SpanStatus::Ok,
-        error_json: None,
+        status: SpanStatus::Error,
+        error_json: Some(r#"{"input":"TOOL_INPUT_LEAK","output":"TOOL_OUTPUT_LEAK"}"#.to_string()),
     }))
     .await;
 
