@@ -251,6 +251,7 @@ mod tests {
             win_rate: 0.41,
             n_trades: 12,
             n_decisions: 30,
+            baselines: None,
         };
         (run, metrics)
     }

@@ -65,6 +65,31 @@ pub struct Scenario {
     #[serde(default = "default_warmup_bars")]
     pub warmup_bars: u32,
 
+    // ── Regime labels (migration 021) ─────────────────────────────────────
+    // Optional first-class regime metadata.  `None` = unset (neither operator
+    // nor auto-derivation has run for this scenario yet).
+    //
+    // Documented value sets (validated at the API layer; TEXT in SQLite):
+    //   regime_label:     "trend" | "chop" | "crash" | "expansion" | "recovery"
+    //   volatility_label: "low" | "normal" | "high" | "extreme"
+    //   trend_direction:  "up" | "down" | "sideways"
+    //
+    // `regime_derived = false` → operator-set (classify does NOT overwrite).
+    // `regime_derived = true`  → auto-derived (classify may refresh).
+    /// Broad market-regime character.
+    #[serde(default)]
+    pub regime_label: Option<String>,
+    /// Per-bar volatility bucket.
+    #[serde(default)]
+    pub volatility_label: Option<String>,
+    /// Net price direction over the window.
+    #[serde(default)]
+    pub trend_direction: Option<String>,
+    /// `true` when labels were derived by `xvn scenario classify`;
+    /// `false` (default) when set by the operator.
+    #[serde(default)]
+    pub regime_derived: bool,
+
     #[cfg_attr(feature = "ts-export", ts(type = "string"))]
     pub created_at: DateTime<Utc>,
     pub created_by: String,
@@ -197,6 +222,10 @@ mod warmup_bars_tests {
                 data_fetched_at: None,
             },
             warmup_bars: 42,
+            regime_label: None,
+            volatility_label: None,
+            trend_direction: None,
+            regime_derived: false,
             created_at: Utc::now(),
             created_by: "t".into(),
             archived_at: None,
@@ -655,6 +684,10 @@ pub fn canonical_scenarios() -> Vec<Scenario> {
                 data_fetched_at: None,
             },
             warmup_bars: DEFAULT_WARMUP_BARS,
+            regime_label: None,
+            volatility_label: None,
+            trend_direction: None,
+            regime_derived: false,
             created_at,
             created_by: creator.clone(),
             archived_at: None,

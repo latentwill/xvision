@@ -28,6 +28,7 @@
 
 pub mod always_long;
 pub mod always_short;
+pub mod bar_baselines;
 pub mod bollinger_atr_breakout;
 pub mod buy_and_hold;
 pub mod ma_crossover;
@@ -38,6 +39,7 @@ pub mod trader_arm;
 
 pub use always_long::AlwaysLong;
 pub use always_short::AlwaysShort;
+pub use bar_baselines::{compute_baselines, BaselineResult, BaselinesReport, RelativeTo};
 pub use bollinger_atr_breakout::BollingerATRBreakout;
 pub use buy_and_hold::BuyAndHold;
 pub use ma_crossover::MaCrossover;

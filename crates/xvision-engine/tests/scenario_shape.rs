@@ -53,6 +53,10 @@ fn valid_crypto_scenario(symbol: &str) -> Scenario {
         },
 
         warmup_bars: xvision_engine::eval::scenario::DEFAULT_WARMUP_BARS,
+        regime_label: None,
+        volatility_label: None,
+        trend_direction: None,
+        regime_derived: false,
         created_at: Utc.with_ymd_and_hms(2026, 5, 11, 0, 0, 0).unwrap(),
         created_by: "edkenne@gmail.com".into(),
         archived_at: None,
@@ -121,6 +125,10 @@ fn scenario_serde_roundtrip() {
         },
 
         warmup_bars: xvision_engine::eval::scenario::DEFAULT_WARMUP_BARS,
+        regime_label: None,
+        volatility_label: None,
+        trend_direction: None,
+        regime_derived: false,
         created_at: Utc.with_ymd_and_hms(2026, 5, 11, 0, 0, 0).unwrap(),
         created_by: "edkenne@gmail.com".into(),
         archived_at: None,

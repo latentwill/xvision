@@ -13,6 +13,7 @@ use xvision_engine::agents::{AgentSlot, AgentStore};
 use xvision_engine::api::scenario as api_scenario;
 use xvision_engine::api::{agents as api_agents, strategy as api_strategy, Actor, ApiContext, ApiError};
 use xvision_engine::strategies::slot::LLMSlot;
+use xvision_engine::strategies::Hypothesis;
 use xvision_engine::strategies::store::{strategy_store_dir, FilesystemStore, StrategyStore};
 use xvision_engine::strategies::validate::{preflight_validate, validate_strategy};
 use xvision_engine::strategies::{AgentRef, PipelineDef, PipelineEdge, PipelineKind};
@@ -84,6 +85,28 @@ enum StrategyAction {
         /// Only used in atomic mode (--prompt). Maps to `decision_cadence_minutes`.
         #[arg(long)]
         timeframe: Option<String>,
+
+        // ── hypothesis flags (intake #7) ─────────────────────────────────
+        /// Hypothesis family / template label (e.g. `compression-breakout`).
+        /// When any hypothesis flag is provided, a `Hypothesis` struct is
+        /// attached to the strategy before saving.
+        #[arg(long)]
+        family: Option<String>,
+        /// One-to-two sentence hypothesis statement.
+        #[arg(long = "hypothesis")]
+        hypothesis_statement: Option<String>,
+        /// Target regime for the strategy (e.g. `post-compression trend`).
+        /// Repeatable: `--target-regime <val> --target-regime <val>`.
+        #[arg(long = "target-regime")]
+        target_regime: Vec<String>,
+        /// Regime the strategy should avoid (e.g. `chop`).
+        /// Repeatable: `--avoid-regime <val> --avoid-regime <val>`.
+        #[arg(long = "avoid-regime")]
+        avoid_regime: Vec<String>,
+        /// Path to a YAML or JSON file containing a complete Hypothesis object.
+        /// Overrides individual hypothesis flags when provided.
+        #[arg(long = "hypothesis-file")]
+        hypothesis_file: Option<PathBuf>,
     },
     /// Validate a saved strategy by id.
     ///
@@ -205,9 +228,22 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
             role,
             asset,
             timeframe,
+            family,
+            hypothesis_statement,
+            target_regime,
+            avoid_regime,
+            hypothesis_file,
         } => {
+            let hypothesis_flags = HypothesisFlags {
+                family,
+                statement: hypothesis_statement,
+                target_regime,
+                avoid_regime,
+                hypothesis_file,
+            };
             new(
-                from_file, template, name, creator, provider, model, json, prompt, role, asset, timeframe,
+                from_file, template, name, creator, provider, model, json, prompt, role, asset,
+                timeframe, hypothesis_flags,
             )
             .await
         }
@@ -296,6 +332,55 @@ fn parse_edge(raw: &str) -> CliResult<PipelineEdge> {
     })
 }
 
+// ── Hypothesis helpers (intake #7) ──────────────────────────────────────────
+
+/// Collects the hypothesis-related CLI flags for `xvn strategy new`.
+pub struct HypothesisFlags {
+    pub family: Option<String>,
+    pub statement: Option<String>,
+    pub target_regime: Vec<String>,
+    pub avoid_regime: Vec<String>,
+    /// Path to a YAML/JSON file that represents a full `Hypothesis` object.
+    /// Takes precedence over the individual flags when supplied.
+    pub hypothesis_file: Option<PathBuf>,
+}
+
+/// Build an `Option<Hypothesis>` from the CLI flags. Returns `None` when no
+/// hypothesis-related flag was provided (so existing strategies aren't
+/// spuriously annotated). Returns a `CliError` on file read / parse failure.
+pub fn parse_hypothesis(flags: HypothesisFlags) -> CliResult<Option<Hypothesis>> {
+    // If a --hypothesis-file was provided, load and parse it (JSON or YAML).
+    if let Some(ref path) = flags.hypothesis_file {
+        let raw = std::fs::read_to_string(path)
+            .map_err(|e| CliError::upstream(anyhow::anyhow!("read hypothesis file: {e}")))?;
+        // Try JSON first, then YAML (serde_yaml is not a dependency, so
+        // we accept JSON/JSON-superset only for now; YAML is close enough
+        // to JSON that serde_json often parses it, but for strict YAML
+        // callers should convert to JSON first).
+        let h: Hypothesis = serde_json::from_str(&raw)
+            .map_err(|e| CliError::usage(anyhow::anyhow!("parse hypothesis file as JSON: {e}")))?;
+        return Ok(Some(h));
+    }
+
+    // If any individual flag was set, build a Hypothesis from them.
+    let any_flag = flags.family.is_some()
+        || flags.statement.is_some()
+        || !flags.target_regime.is_empty()
+        || !flags.avoid_regime.is_empty();
+
+    if !any_flag {
+        return Ok(None);
+    }
+
+    Ok(Some(Hypothesis {
+        family: flags.family,
+        statement: flags.statement,
+        target_regime: flags.target_regime,
+        avoid_regime: flags.avoid_regime,
+        ..Default::default()
+    }))
+}
+
 /// Parse a CLI timeframe string to `decision_cadence_minutes`.
 ///
 /// Accepted values: `1m`, `5m`, `15m`, `30m`, `1h`, `2h`, `4h`, `1d`.
@@ -350,6 +435,7 @@ async fn new(
     role: Option<String>,
     asset: Option<String>,
     timeframe: Option<String>,
+    hypothesis_flags: HypothesisFlags,
 ) -> CliResult<()> {
     // ── atomic mode: --prompt ─────────────────────────────────────────────
     if let Some(prompt_path) = prompt {
@@ -457,6 +543,10 @@ async fn new(
         draft.intern_slot = None;
         draft.trader_slot = None;
     }
+    // ── hypothesis annotation (intake #7) ─────────────────────────────────
+    if let Some(h) = parse_hypothesis(hypothesis_flags)? {
+        draft.hypothesis = Some(h);
+    }
     validate_strategy(&draft).exit_with(XvnExit::Usage)?;
     store().save(&draft).await.exit_with(XvnExit::Upstream)?;
     if json {
@@ -555,6 +645,7 @@ async fn new_atomic(
             published_at: None,
             min_warmup_bars: None,
         },
+        hypothesis: None,
         agents: vec![AgentRef {
             agent_id: agent_id.clone(),
             role: role.clone(),

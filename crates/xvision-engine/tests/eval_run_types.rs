@@ -72,6 +72,7 @@ fn metrics_summary_round_trips() {
         win_rate: 0.58,
         n_trades: 17,
         n_decisions: 42,
+        baselines: None,
     };
     let s = serde_json::to_string(&m).unwrap();
     let back: MetricsSummary = serde_json::from_str(&s).unwrap();

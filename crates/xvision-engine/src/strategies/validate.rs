@@ -354,6 +354,7 @@ mod preflight_tests {
                 published_at: None,
                 min_warmup_bars: None,
             },
+            hypothesis: None,
             agents: vec![AgentRef {
                 agent_id: "01HZAGENT".into(),
                 role: "trader".into(),
@@ -419,6 +420,10 @@ mod preflight_tests {
                 data_fetched_at: None,
             },
             warmup_bars: 200,
+            regime_label: None,
+            volatility_label: None,
+            trend_direction: None,
+            regime_derived: false,
             created_at: Utc::now(),
             created_by: "t".into(),
             archived_at: None,
