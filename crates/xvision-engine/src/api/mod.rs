@@ -93,6 +93,13 @@ pub struct ApiContext {
     /// `ObservabilityConfig::default()` so unit tests / CLI paths that
     /// build `ApiContext` directly don't have to thread it through.
     pub obs_config: Arc<xvision_observability::ObservabilityConfig>,
+    /// Per-`(provider, model)` semaphore gate consulted by
+    /// `eval::start_run` before spawning the executor background task.
+    /// Default = `LaunchConcurrencyGate::from_env()` so production picks
+    /// up `XVN_EVAL_MAX_CONCURRENT_PER_MODEL` automatically and tests
+    /// that don't care get a no-op-ish cap of 4. See
+    /// `crates/xvision-engine/src/eval/concurrency.rs`.
+    pub launch_gate: Arc<crate::eval::concurrency::LaunchConcurrencyGate>,
 }
 
 // `AlpacaBarsFetcher` doesn't derive Debug (it holds a reqwest::Client
@@ -186,7 +193,19 @@ impl ApiContext {
             event_bus: Arc::new(chart::RunEventBus::new()),
             obs_event_bus: None,
             obs_config: Arc::new(xvision_observability::ObservabilityConfig::default()),
+            launch_gate: Arc::new(crate::eval::concurrency::LaunchConcurrencyGate::from_env()),
         }
+    }
+
+    /// Builder override for the eval launch-concurrency gate. Tests use
+    /// this to pin a known permit count (e.g. `LaunchConcurrencyGate::new(1)`)
+    /// rather than relying on the default-from-env construction.
+    pub fn with_launch_gate(
+        mut self,
+        gate: Arc<crate::eval::concurrency::LaunchConcurrencyGate>,
+    ) -> Self {
+        self.launch_gate = gate;
+        self
     }
 
     /// Builder override for the Alpaca fetcher. Used by tests to point

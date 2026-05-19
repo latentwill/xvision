@@ -11,6 +11,7 @@ pub mod bars;
 pub mod batch_store;
 pub mod behavior;
 pub mod compare;
+pub mod concurrency;
 pub mod cost;
 pub mod early_stop;
 pub mod executor;
