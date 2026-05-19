@@ -319,11 +319,14 @@ describe("EvalRunDetailRoute", () => {
     await waitFor(() =>
       expect(meta.textContent ?? "").toMatch(/Run #2\/2/),
     );
-    // run-id chip with full id available via title attribute
-    const runChip = meta.querySelector('[aria-label="Run id 01LIVE"]');
-    expect(runChip).not.toBeNull();
-    expect(runChip?.getAttribute("title")).toBe("01LIVE");
-    // The redundant `strategy <id>` / `scenario <id>` chips are gone.
+    // Full eval id is surfaced below the title (not inside the meta strip).
+    // No truncation anywhere — the full ULID renders verbatim and is
+    // `select-all` for easy copy. See QA22 / `eval-id-resurface-no-truncate`.
+    const idEl = await screen.findByTestId("eval-run-id");
+    expect(idEl.textContent).toBe("01LIVE");
+    expect(idEl.getAttribute("aria-label")).toBe("Eval run id 01LIVE");
+    // Meta no longer carries the run-id (it moved up). Strategy/scenario id
+    // chips are also gone (they moved to display names).
     expect(meta.textContent ?? "").not.toMatch(/strategy 01AGENT/);
     expect(meta.textContent ?? "").not.toMatch(/scenario btc-4h/);
   });
@@ -1147,6 +1150,59 @@ describe("EvalRunDetailRoute — Open positions cell", () => {
     expect(reentry.textContent).toMatch(/short/i);
     // Entry price 49_000 renders without grouping (>=1000 → no decimals).
     expect(reentry.textContent).toMatch(/49,?000/);
+  });
+
+  it("renders absolute Total PnL ($) in the summary panel derived from the equity curve (QA22)", async () => {
+    // QA22 / `eval-inspector-total-pnl-summary`: alongside `Total
+    // return` (%) the panel now shows the absolute terminal-PnL in
+    // account currency. Equity curve opens at $10,000 and closes at
+    // $10,642 → +$642.00.
+    vi.mocked(evalApi.getRun).mockResolvedValue(
+      detail({
+        equity_curve: [
+          { timestamp: "2026-05-13T14:00:00Z", equity_usd: 10000 },
+          { timestamp: "2026-05-13T14:30:00Z", equity_usd: 10642 },
+        ],
+      }),
+    );
+    renderDetail();
+    expect(await screen.findByText("Total PnL")).toBeInTheDocument();
+    expect(screen.getByText("+$642.00")).toBeInTheDocument();
+  });
+
+  it("labels short_open as SHORT, long-close flat as SELL, short-close flat as COVER (QA22)", async () => {
+    // QA22 / `decision-side-label-sell-vs-short`: the earlier mapping
+    // collapsed short_open → 'SELL' and flat → 'CLOSE'. Operators
+    // reported seeing "SHORT" when the agent was just selling. The
+    // refactored labelling derives from the *prior* position so the
+    // verb matches the intent.
+    vi.mocked(evalApi.getRun).mockResolvedValue(
+      detail({
+        summary: { ...detail().summary, status: "completed" },
+        decisions: [
+          // 0: open long → BUY
+          decision({ decision_index: 0, action: "long_open", fill_size: 1, fill_price: 50_000 }),
+          // 1: flat (prior=long) → SELL
+          decision({ decision_index: 1, action: "flat", fill_size: 1, fill_price: 51_000 }),
+          // 2: open short → SHORT
+          decision({ decision_index: 2, action: "short_open", fill_size: 0.5, fill_price: 49_000 }),
+          // 3: flat (prior=short) → COVER
+          decision({ decision_index: 3, action: "flat", fill_size: 0.5, fill_price: 48_000 }),
+        ],
+      }),
+    );
+
+    renderDetail();
+
+    // Each verb must appear at least once on the table. The presence
+    // of all four (and the absence of the old "SHORT" mislabel on the
+    // long-close row) is the regression we're guarding. Filter buttons
+    // also render "BUY"/"SHORT" etc, so we use getAllByText and assert
+    // at least one match (the row pill).
+    expect((await screen.findAllByText("BUY")).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("SELL").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("SHORT").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("COVER").length).toBeGreaterThan(0);
   });
 
   it("realized PnL fills in on the close decision row when the engine reports it", async () => {

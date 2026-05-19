@@ -14,7 +14,6 @@ import { isInflightRunStatus } from "@/lib/run-status";
 import {
   displayScenarioName,
   displayStrategyName,
-  shortId,
 } from "@/lib/run-display";
 import type {
   ComparisonRunSummary,
@@ -194,8 +193,8 @@ function MetricsTable({
                   >
                     {displayStrategyName(r.agent_id, strategies)}
                   </Link>
-                  <div className="mt-0.5 font-mono text-[11px] text-text-3">
-                    run {shortId(r.id)}
+                  <div className="mt-0.5 font-mono text-[11px] text-text-3 break-all select-all">
+                    {r.id}
                   </div>
                 </td>
                 <td className="py-2.5 px-3">
@@ -281,7 +280,7 @@ function FindingsTable({
                 >
                   {run
                     ? displayStrategyName(run.agent_id, strategies)
-                    : `Run ${shortId(f.run_id)}`}
+                    : `Run ${f.run_id}`}
                 </Link>
                 {run ? (
                   <div className="mt-0.5 text-[11px] text-text-3">

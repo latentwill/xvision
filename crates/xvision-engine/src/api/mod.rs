@@ -102,6 +102,20 @@ pub struct ApiContext {
     /// that don't care get a no-op-ish cap of 4. See
     /// `crates/xvision-engine/src/eval/concurrency.rs`.
     pub launch_gate: Arc<crate::eval::concurrency::LaunchConcurrencyGate>,
+    /// Single-writer, bounded mpsc serializer for `eval_runs` status
+    /// finalize writes. Used by `eval::start_run` /
+    /// `execute_in_background` to batch `UPDATE eval_runs SET
+    /// status = ...` calls so concurrent finalize storms (the 2026-05-19
+    /// audit captured 27-runs-in-15s hitting the slow-statement
+    /// threshold) don't overlap on the SQLite writer queue. See
+    /// `crates/xvision-engine/src/eval/finalize_writer.rs`.
+    ///
+    /// Default = freshly-spawned writer over the same pool. Production
+    /// callers (dashboard `AppState`) should override via
+    /// `with_finalize_writer(...)` with a single process-wide writer
+    /// so cross-request finalizes batch together (followup wiring;
+    /// see the F-2 acceptance note).
+    pub finalize_writer: Arc<crate::eval::finalize_writer::FinalizeWriter>,
 }
 
 // `AlpacaBarsFetcher` doesn't derive Debug (it holds a reqwest::Client
@@ -182,6 +196,7 @@ impl ApiContext {
     /// `.with_alpaca_fetcher(...)`. The default fetcher uses
     /// `AlpacaData::DEFAULT_RATE_LIMIT_RPM` to match `config/default.toml`.
     pub fn new(db: SqlitePool, actor: Actor, xvn_home: PathBuf) -> Self {
+        let finalize_writer = crate::eval::finalize_writer::FinalizeWriter::start(db.clone());
         Self {
             db,
             actor,
@@ -197,6 +212,7 @@ impl ApiContext {
             obs_event_bus: None,
             obs_config: Arc::new(xvision_observability::ObservabilityConfig::default()),
             launch_gate: Arc::new(crate::eval::concurrency::LaunchConcurrencyGate::from_env()),
+            finalize_writer,
         }
     }
 
@@ -205,6 +221,22 @@ impl ApiContext {
     /// rather than relying on the default-from-env construction.
     pub fn with_launch_gate(mut self, gate: Arc<crate::eval::concurrency::LaunchConcurrencyGate>) -> Self {
         self.launch_gate = gate;
+        self
+    }
+
+    /// Builder override for the eval finalize-write serializer. The
+    /// dashboard's `AppState` constructs a single singleton
+    /// `FinalizeWriter` at boot and passes it in here so every
+    /// per-request `ApiContext` shares the same background writer task
+    /// (matching the pattern `with_event_bus` uses for the live-stream
+    /// bus). The default in `ApiContext::new` spawns a fresh writer per
+    /// construction, which is fine for CLI / tests but wasteful in the
+    /// dashboard's per-request `api_context()` path.
+    pub fn with_finalize_writer(
+        mut self,
+        writer: Arc<crate::eval::finalize_writer::FinalizeWriter>,
+    ) -> Self {
+        self.finalize_writer = writer;
         self
     }
 

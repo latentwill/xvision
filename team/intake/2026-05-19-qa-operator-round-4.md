@@ -277,6 +277,113 @@ path or are flagged as invalid in the eval pipeline.
 
 Out of scope: prescribing *which* agents — only "at least one".
 
+## Status update — 2026-05-19 PR #341
+
+8 of the 11 tracks landed in PR #341 (`worktree-qa22-inspector-polish`),
+one commit per track for easy cherry-pick. Status:
+
+| Track | Status | Commit | Notes |
+|---|---|---|---|
+| `eval-id-resurface-no-truncate` | ✅ landed | `7c7c55a` | — |
+| `decision-side-label-sell-vs-short` | ✅ landed | `bc92de7` | Adds `derivePriorPositionsByDecision` for the SELL-vs-COVER distinction |
+| `inspector-back-to-list-buttons` | ✅ landed | `fca80fa` | Topbar gains optional `back` prop |
+| `eval-inspector-chart-snap-button` | ✅ landed | `0706e43` | `WizardPreviewChart` gated + maxHeight clamp removed |
+| `trace-capsule-fullscreen-minimize` | ✅ landed | `34f33d7` | — |
+| `eval-inspector-total-pnl-summary` | ✅ landed | `df5d185` | PnL derived from `equity_curve`; mobile flips PNL tile primary to $ |
+| `strategy-require-at-least-one-agent` | 🟡 partial | `3849680` | See **Followups** below |
+| `strategy-clone-editable-frontend` | 🟡 partial | `53f3e3f` | Scope: simple text fields only. See **Followups** below |
+| `mcp-eval-run-job-bridge` | ⏸ not started | — | Needs cli_jobs store ↔ eval_runs registry investigation |
+| `paper-eval-inspector-parity` | ⏸ not started | — | Mode-dispatch dig in `api/eval.rs` first |
+| `trace-capsule-multi-eval-behavior` | ⏸ not started | — | Design spike — needs the one-page note before code |
+
+## Followups (carved out of in-flight tracks)
+
+### `strategy-require-at-least-one-agent-fixture-migration` (P2, leaf)
+
+Carved from PR #341 / commit `3849680`. The original track called for
+dropping the legacy `trader_slot` fallback inside
+`validate_eval_trader_source` entirely. That's the right end state
+but requires migrating ~13 engine test fixtures that build
+`Strategy` structs with `agents: vec![]` + `trader_slot: Some(...)`:
+
+- `crates/xvision-engine/tests/risk_min_notional.rs`
+- `crates/xvision-engine/tests/pipeline_inline.rs`
+- `crates/xvision-engine/tests/eval_progress.rs`
+- `crates/xvision-engine/tests/decisions_count.rs`
+- `crates/xvision-engine/tests/strategy_store.rs`
+- `crates/xvision-engine/tests/api_eval_min_notional.rs`
+- `crates/xvision-engine/tests/strategy_roundtrip.rs`
+- `crates/xvision-engine/tests/eval_executor_warmup.rs`
+- `crates/xvision-engine/tests/eval_executor_paper.rs`
+- `crates/xvision-engine/tests/eval_broker_circuit_breaker.rs`
+- `crates/xvision-engine/tests/eval_progress_backtest.rs`
+- `crates/xvision-engine/tests/api_eval_run.rs`
+- `crates/xvision-engine/tests/eval_run_scenario.rs`
+
+Migration shape per fixture: insert an `Agent` record with a `trader`
+slot via the test's agent store; replace
+`agents: vec![]` + `trader_slot: Some(LLMSlot { ... })` with
+`agents: vec![AgentRef { agent_id, role: "trader" }]` + drop the
+legacy slot. After all fixtures are migrated, drop the
+legacy-trader_slot branch in `api/eval.rs::validate_eval_trader_source`
+and delete the matching `eval_trader_source_accepts_legacy_trader_slot_without_agents`
+test.
+
+Out of scope: the seven seed templates' `new_draft()` paths still
+emit legacy slots — CLI `xvn strategy create` auto-migrates those at
+save time, so the templates themselves don't need to change in this
+followup. (A separate cleanup can rewrite the templates to emit
+agents directly later.)
+
+Acceptance:
+- `validate_eval_trader_source` rejects every empty-agents strategy
+  with the no-agent-attached error, regardless of `trader_slot`.
+- `cargo test --workspace` green.
+- The CLI auto-migration path remains intact (already exercised by
+  `xvn strategy create --template ...`).
+
+### `scenario-clone-form-structural-fields` (P2, integration)
+
+Carved from PR #341 / commit `53f3e3f`. The inline clone-edit form
+on `/scenarios/:id` covers the simple text overrides
+(display_name, description, notes, tags). The engine's
+`ScenarioMutations` payload also accepts:
+
+- `time_window` (TimeWindow)
+- `asset` (Vec<AssetRef>)
+- `granularity` (BarGranularity)
+- `venue` (VenueSettings)
+- `warmup_bars` (u32)
+
+These have cascading effects on the bar-cache key, fetch jobs,
+indicator window, and so on. Extending the inline form should
+reuse the wizard's existing form widgets (asset picker, date-range
+picker, granularity selector, venue settings) so the operator gets
+the same validation + preview UX as the new-scenario wizard.
+
+Recommended approach:
+1. Lift `ScenarioForm` from `routes/scenarios-new.tsx` into a shared
+   component that can hydrate from either a blank draft or a parent
+   `Scenario`.
+2. Use it inside the existing inline accordion on
+   `routes/scenarios-detail.tsx` — same submit handler, just a
+   richer `ScenarioMutations` payload.
+3. Confirm the engine handles partial mutations correctly (today
+   `null` fields inherit from parent, so the form can default-fill
+   from parent and only send fields the operator actually changed).
+
+Acceptance:
+- Operator can clone a scenario from `/scenarios/:id` and override
+  asset / window / granularity / venue / warmup_bars before
+  submission, all without leaving the page (no popups).
+- New scenario lands with the operator's overrides applied and the
+  bar-cache key recomputed.
+- The existing simple-text-field clone path still works.
+
+Out of scope: in-place mutation of scenarios (would need an
+`update_scenario` API + the engine's invariants around cache keys).
+Clone-with-mutations stays the canonical authoring path.
+
 ## Verbatim findings
 
 > QA22

@@ -16,6 +16,7 @@ pub mod cost;
 pub mod early_stop;
 pub mod executor;
 pub mod export;
+pub mod finalize_writer;
 pub mod findings;
 pub mod guardrails;
 pub mod metrics;
