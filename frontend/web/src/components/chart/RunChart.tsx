@@ -4,7 +4,9 @@ import {
   CrosshairMode,
   createChart,
   type IChartApi,
+  type Logical,
   type LogicalRange,
+  type MouseEventParams,
   type UTCTimestamp,
 } from "lightweight-charts";
 import type { RunChartPayload, IndicatorPoint } from "@/api/types.gen";
@@ -19,12 +21,16 @@ import { applyVerticalAutoScale, fitChartContent } from "./chart-fit";
 import { MarkerSidePanel } from "./MarkerSidePanel";
 
 type ActiveMarker = { kind: "trade" | "veto" | "hold"; decision_index: number };
+type MarkerKind = ActiveMarker["kind"];
 type Props = {
   payload: RunChartPayload;
   themeMode?: "dark" | "light";
   theme?: ResolvedTheme;
   follow?: boolean;
 };
+
+const POSITION_BAND_SCALE_ID = "position-band";
+const POSITION_BAND_VALUE = 1;
 
 function toLine(p: IndicatorPoint) {
   return { time: p.time as UTCTimestamp, value: p.value };
@@ -88,6 +94,32 @@ function applyLogicalRange(charts: IChartApi[], range: LogicalRange) {
   });
 }
 
+function applyRangePreset(
+  charts: IChartApi[],
+  range: RangePreset,
+  len: number,
+  granularity: string,
+) {
+  if (len <= 0 || charts.length === 0) return;
+  if (range === "All") {
+    charts.forEach((chart) => fitChartContent(chart));
+    return;
+  }
+
+  const barSeconds = granularitySeconds(granularity) ?? 60 * 60;
+  const rangeSeconds =
+    range === "1d" ? 86_400 :
+    range === "1w" ? 7 * 86_400 :
+    range === "1m" ? 30 * 86_400 :
+    90 * 86_400;
+  const count = Math.max(1, Math.ceil(rangeSeconds / barSeconds));
+  applyLogicalRange(charts, {
+    from: Math.max(0, len - count) as Logical,
+    to: (len + 2) as Logical,
+  });
+  charts.forEach((chart) => applyVerticalAutoScale(chart));
+}
+
 function applyAnchorLogicalRangeToPeers(
   charts: IChartApi[],
   anchorChart: IChartApi,
@@ -104,6 +136,47 @@ function sameLogicalRange(a: LogicalRange | null, b: LogicalRange | null) {
   return a?.from === b?.from && a?.to === b?.to;
 }
 
+function granularitySeconds(granularity: string): number | null {
+  const normalized = formatGranularity(granularity);
+  const match = normalized.match(/^(\d+)(m|h|d|w|mo)$/);
+  if (!match) return null;
+  const amount = Number(match[1]);
+  switch (match[2]) {
+    case "m":
+      return amount * 60;
+    case "h":
+      return amount * 60 * 60;
+    case "d":
+      return amount * 86_400;
+    case "w":
+      return amount * 7 * 86_400;
+    case "mo":
+      return amount * 30 * 86_400;
+    default:
+      return null;
+  }
+}
+
+function formatGranularity(granularity: string): string {
+  const legacy = granularity.match(/^(Minute|Hour|Day|Week|Month)(\d+)$/);
+  if (!legacy) return granularity;
+  const amount = legacy[2];
+  switch (legacy[1]) {
+    case "Minute":
+      return `${amount}m`;
+    case "Hour":
+      return `${amount}h`;
+    case "Day":
+      return `${amount}d`;
+    case "Week":
+      return `${amount}w`;
+    case "Month":
+      return `${amount}mo`;
+    default:
+      return granularity;
+  }
+}
+
 function enterFollowMode(charts: IChartApi[]) {
   const anchorChart = charts[0];
   if (!anchorChart) return;
@@ -114,6 +187,19 @@ function enterFollowMode(charts: IChartApi[]) {
   if (anchorRange) {
     applyAnchorLogicalRangeToPeers(charts, anchorChart, anchorRange);
   }
+}
+
+function markerId(kind: MarkerKind, decisionIndex: number) {
+  return `${kind}:${decisionIndex}`;
+}
+
+function parseMarkerId(id: unknown): ActiveMarker | null {
+  if (typeof id !== "string") return null;
+  const [kind, rawDecisionIndex] = id.split(":");
+  if (kind !== "trade" && kind !== "veto" && kind !== "hold") return null;
+  const decisionIndex = Number(rawDecisionIndex);
+  if (!Number.isInteger(decisionIndex)) return null;
+  return { kind, decision_index: decisionIndex };
 }
 
 function buildMarkers(
@@ -127,26 +213,27 @@ function buildMarkers(
     color: string;
     shape: "arrowUp" | "arrowDown" | "circle";
     text: string;
+    id: string;
   }[] = [];
   if (layers.markerBuy)
     payload.markers.trades
       .filter((t) => t.side === "Buy")
       .forEach((t) =>
-        allMarkers.push({ time: t.time as UTCTimestamp, position: "belowBar", color: theme.series.markerBuy, shape: "arrowUp", text: `Buy ${t.size}` }),
+        allMarkers.push({ time: t.time as UTCTimestamp, position: "belowBar", color: theme.series.markerBuy, shape: "arrowUp", text: `Buy ${t.size}`, id: markerId("trade", t.decision_index) }),
       );
   if (layers.markerSell)
     payload.markers.trades
       .filter((t) => t.side === "Sell")
       .forEach((t) =>
-        allMarkers.push({ time: t.time as UTCTimestamp, position: "aboveBar", color: theme.series.markerSell, shape: "arrowDown", text: `Sell ${t.size}` }),
+        allMarkers.push({ time: t.time as UTCTimestamp, position: "aboveBar", color: theme.series.markerSell, shape: "arrowDown", text: `Sell ${t.size}`, id: markerId("trade", t.decision_index) }),
       );
   if (layers.markerVeto)
     payload.markers.vetoes.forEach((v) =>
-      allMarkers.push({ time: v.time as UTCTimestamp, position: "aboveBar", color: theme.series.markerVeto, shape: "circle", text: `Veto: ${v.reason}` }),
+      allMarkers.push({ time: v.time as UTCTimestamp, position: "aboveBar", color: theme.series.markerVeto, shape: "circle", text: `Veto: ${v.reason}`, id: markerId("veto", v.decision_index) }),
     );
   if (layers.markerHold)
     payload.markers.holds.forEach((h) =>
-      allMarkers.push({ time: h.time as UTCTimestamp, position: "inBar", color: theme.series.markerHold, shape: "circle", text: "Hold" }),
+      allMarkers.push({ time: h.time as UTCTimestamp, position: "inBar", color: theme.series.markerHold, shape: "circle", text: "Hold", id: markerId("hold", h.decision_index) }),
     );
   return allMarkers.sort((a, b) => (a.time as number) - (b.time as number));
 }
@@ -187,12 +274,12 @@ function applySeriesData(
   series.longPosition?.setData(
     payload.position
       .filter((p) => p.side === "Long")
-      .map((p) => ({ time: p.time as UTCTimestamp, value: 0 })),
+      .map((p) => ({ time: p.time as UTCTimestamp, value: POSITION_BAND_VALUE })),
   );
   series.shortPosition?.setData(
     payload.position
       .filter((p) => p.side === "Short")
-      .map((p) => ({ time: p.time as UTCTimestamp, value: 0 })),
+      .map((p) => ({ time: p.time as UTCTimestamp, value: POSITION_BAND_VALUE })),
   );
   series.rsi?.setData(payload.indicators.rsi_14.map(toLine));
   series.macdLine?.setData(payload.indicators.macd.line.map(toLine));
@@ -235,6 +322,7 @@ export function RunChart({
   const buildVersionRef = useRef(0);
   const followTransitionBuildVersionRef = useRef<number | null>(null);
   const lastSynchronizedRangeRef = useRef<LogicalRange | null>(null);
+  const previousRangeRef = useRef<RangePreset>("All");
   const subRef = useRef<HTMLDivElement>(null);
   const eqRef = useRef<HTMLDivElement>(null);
   const ddRef = useRef<HTMLDivElement>(null);
@@ -243,6 +331,11 @@ export function RunChart({
   const [range, setRange] = useState<RangePreset>("All");
   const { layers, toggle, set } = useChartLayers("run-detail");
   const [activeMarker, setActiveMarker] = useState<ActiveMarker | null>(null);
+  const showSubpane =
+    !layers.subpaneOff &&
+    (layers.subpaneRsi || layers.subpaneMacd || layers.subpaneAtr);
+  const showEquity = layers.equity;
+  const showDrawdown = layers.drawdown;
 
   useEffect(() => {
     const previousPayload = previousPayloadRef.current;
@@ -256,6 +349,18 @@ export function RunChart({
   }, [payload, layers, activeTheme]);
 
   useEffect(() => {
+    const rangeChanged = previousRangeRef.current !== range;
+    previousRangeRef.current = range;
+    if (follow && range === "All" && !rangeChanged) return;
+    applyRangePreset(
+      chartSetRef.current,
+      range,
+      payload.bars.length,
+      payload.granularity,
+    );
+  }, [range, payload.bars.length, payload.granularity, follow]);
+
+  useEffect(() => {
     if (!priceRef.current) return;
     const buildVersion = buildVersionRef.current + 1;
     buildVersionRef.current = buildVersion;
@@ -263,9 +368,9 @@ export function RunChart({
     const opts = buildOpts(palette);
 
     const priceChart = createChart(priceRef.current, opts);
-    const subChart = subRef.current ? createChart(subRef.current, opts) : null;
-    const eqChart = eqRef.current ? createChart(eqRef.current, opts) : null;
-    const ddChart = ddRef.current ? createChart(ddRef.current, opts) : null;
+    const subChart = subRef.current && showSubpane ? createChart(subRef.current, opts) : null;
+    const eqChart = eqRef.current && showEquity ? createChart(eqRef.current, opts) : null;
+    const ddChart = ddRef.current && showDrawdown ? createChart(ddRef.current, opts) : null;
     const volChart = volRef.current && layers.volume ? createChart(volRef.current, opts) : null;
     const series: RunChartSeries = {};
 
@@ -319,18 +424,35 @@ export function RunChart({
       series.markerHost = priceChart.addLineSeries({ visible: false }) as SetDataSeries;
     }
 
-    // TODO(M2): wire marker click via chart.subscribeCrosshairMove to set activeMarker
-    void setActiveMarker; // referenced to satisfy noUnusedLocals
+    const handleMarkerClick = (param: MouseEventParams) => {
+      const marker = parseMarkerId(param.hoveredObjectId);
+      if (marker) setActiveMarker(marker);
+    };
+    priceChart.subscribeClick(handleMarkerClick);
 
     // --- Position band ---
     if (layers.positionBand) {
+      const positionBandScaleOptions = {
+        priceScaleId: POSITION_BAND_SCALE_ID,
+        lastValueVisible: false,
+        priceLineVisible: false,
+        crosshairMarkerVisible: false,
+        autoscaleInfoProvider: () => ({
+          priceRange: {
+            minValue: 0,
+            maxValue: POSITION_BAND_VALUE,
+          },
+        }),
+      };
       const longSeries = priceChart.addAreaSeries({
+        ...positionBandScaleOptions,
         topColor: palette.series.positionLong,
         bottomColor: "transparent",
         lineColor: "transparent",
       });
       series.longPosition = longSeries as SetDataSeries;
       const shortSeries = priceChart.addAreaSeries({
+        ...positionBandScaleOptions,
         topColor: palette.series.positionShort,
         bottomColor: "transparent",
         lineColor: "transparent",
@@ -435,6 +557,7 @@ export function RunChart({
       if (seriesRef.current === series) {
         seriesRef.current = {};
       }
+      priceChart.unsubscribeClick(handleMarkerClick);
       all.forEach((c) => c.remove());
     };
   }, [layers, activeTheme]);
@@ -482,9 +605,9 @@ export function RunChart({
       }
     >
       <div ref={priceRef} style={{ height: 380 }} />
-      <div ref={subRef} style={{ height: 100 }} />
-      <div ref={eqRef} style={{ height: 100 }} />
-      <div ref={ddRef} style={{ height: 70 }} />
+      {showSubpane && <div ref={subRef} data-testid="run-chart-subpane" style={{ height: 100 }} />}
+      {showEquity && <div ref={eqRef} data-testid="run-chart-equity-pane" style={{ height: 100 }} />}
+      {showDrawdown && <div ref={ddRef} data-testid="run-chart-drawdown-pane" style={{ height: 70 }} />}
       {layers.volume && <div ref={volRef} style={{ height: 70 }} />}
       <MarkerSidePanel
         payload={payload}

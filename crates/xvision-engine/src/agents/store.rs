@@ -9,7 +9,9 @@ use chrono::{DateTime, Utc};
 use sqlx::{Row, SqlitePool};
 use ulid::Ulid;
 
-use crate::agents::model::{Agent, AgentSlot};
+use crate::agents::model::{Agent, AgentSlot, InputsPolicy};
+use crate::agents::validate::validate_agent_for_save;
+use crate::agents::validator::{validate_prompt_schema_slots, PromptSchemaDriftError};
 
 #[derive(Debug, Clone)]
 pub struct AgentStore {
@@ -45,6 +47,31 @@ impl AgentStore {
     }
 
     pub async fn create(&self, new: NewAgent) -> Result<String> {
+        // Save-gate: run the content-quality checks before touching the DB.
+        // Build a temporary Agent so validate_agent_for_save has the full
+        // picture (name + all slot prompts).
+        {
+            let now = Utc::now();
+            let probe = Agent {
+                agent_id: String::new(),
+                name: new.name.clone(),
+                description: new.description.clone(),
+                tags: new.tags.clone(),
+                slots: new.slots.clone(),
+                archived: false,
+                created_at: now,
+                updated_at: now,
+            };
+            validate_agent_for_save(&probe)
+                .map_err(|msg| anyhow::anyhow!("save validation failed: {msg}"))?;
+        }
+        // F-5 pre-persist drift gate: refuse agents whose prompts
+        // reference tools that aren't registered for the slot or
+        // declare an `Allowed actions:` list that drifts from the
+        // `trader_output` schema enum. See
+        // `crates/xvision-engine/src/agents/validator.rs`.
+        validate_prompt_schema_slots(&new.slots).map_err(PromptSchemaDriftError::into_anyhow)?;
+
         let id = Ulid::new().to_string();
         let now = Utc::now().to_rfc3339();
         let tags_json = serde_json::to_string(&new.tags).context("serialize tags")?;
@@ -125,7 +152,32 @@ impl AgentStore {
     pub async fn update(&self, agent_id: &str, patch: UpdateAgent) -> Result<Option<Agent>> {
         // Verify it exists first; return None if not.
         let existing = self.get(agent_id).await?;
-        let Some(_) = existing else { return Ok(None) };
+        let Some(ref existing_agent) = existing else {
+            return Ok(None);
+        };
+
+        // Save-gate: build the post-patch view and run content-quality checks
+        // before touching the DB. Only the fields being patched need merging.
+        {
+            let probe = Agent {
+                agent_id: existing_agent.agent_id.clone(),
+                name: patch.name.clone().unwrap_or_else(|| existing_agent.name.clone()),
+                description: patch
+                    .description
+                    .clone()
+                    .unwrap_or_else(|| existing_agent.description.clone()),
+                tags: patch.tags.clone().unwrap_or_else(|| existing_agent.tags.clone()),
+                slots: patch
+                    .slots
+                    .clone()
+                    .unwrap_or_else(|| existing_agent.slots.clone()),
+                archived: existing_agent.archived,
+                created_at: existing_agent.created_at,
+                updated_at: existing_agent.updated_at,
+            };
+            validate_agent_for_save(&probe)
+                .map_err(|msg| anyhow::anyhow!("save validation failed: {msg}"))?;
+        }
 
         let now = Utc::now().to_rfc3339();
         let mut tx = self.pool.begin().await?;
@@ -156,6 +208,10 @@ impl AgentStore {
                 .await?;
         }
         if let Some(slots) = patch.slots {
+            // F-5 pre-persist drift gate (same rules as `create`).
+            // Validate before deleting the old slot rows so a rejected
+            // update leaves the previous version intact.
+            validate_prompt_schema_slots(&slots).map_err(PromptSchemaDriftError::into_anyhow)?;
             // Replace all slots — simpler than diffing in v1.
             sqlx::query("DELETE FROM agent_slots WHERE agent_id = ?")
                 .bind(agent_id)
@@ -207,7 +263,7 @@ impl AgentStore {
 
     async fn load_slots(&self, agent_id: &str) -> Result<Vec<AgentSlot>> {
         let rows = sqlx::query(
-            "SELECT name, provider, model, system_prompt, skill_ids_json, max_tokens, prompt_version \
+            "SELECT name, provider, model, system_prompt, skill_ids_json, max_tokens, prompt_version, inputs_policy \
              FROM agent_slots WHERE agent_id = ? ORDER BY slot_index ASC",
         )
         .bind(agent_id)
@@ -224,6 +280,12 @@ impl AgentStore {
             // metadata at dispatch time (q15 §1).
             let stored: i64 = row.try_get("max_tokens")?;
             let max_tokens = if stored <= 0 { None } else { Some(stored as u32) };
+            // `inputs_policy` was added in migration 020 with default
+            // `'raw'`; unknown / unparseable values also fall back to
+            // `Raw` via `parse_or_raw` so the read path never panics
+            // on a future typo.
+            let inputs_policy_s: String = row.try_get("inputs_policy").unwrap_or_default();
+            let inputs_policy = InputsPolicy::parse_or_raw(&inputs_policy_s);
             out.push(AgentSlot {
                 name: row.try_get("name")?,
                 provider: row.try_get("provider")?,
@@ -231,7 +293,9 @@ impl AgentStore {
                 system_prompt: row.try_get("system_prompt")?,
                 skill_ids,
                 max_tokens,
+                temperature: None,
                 prompt_version: row.try_get("prompt_version").unwrap_or_default(),
+                inputs_policy,
             });
         }
         Ok(out)
@@ -251,8 +315,8 @@ async fn insert_slot(
     let prompt_version = AgentSlot::compute_prompt_version(&slot.system_prompt);
     sqlx::query(
         "INSERT INTO agent_slots \
-         (agent_id, slot_index, name, provider, model, system_prompt, skill_ids_json, max_tokens, prompt_version) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         (agent_id, slot_index, name, provider, model, system_prompt, skill_ids_json, max_tokens, prompt_version, inputs_policy) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(agent_id)
     .bind(idx)
@@ -265,6 +329,11 @@ async fn insert_slot(
     // unset to keep round-trips stable.
     .bind(slot.max_tokens.unwrap_or(0) as i64)
     .bind(prompt_version)
+    // F-6: persisted as one of `raw` | `causal` | `oracle`. The DB
+    // column has DEFAULT 'raw' (migration 020), but we always bind
+    // the explicit string here so the row is unambiguous and the
+    // read-side roundtrip is byte-stable.
+    .bind(slot.inputs_policy.as_str())
     .execute(&mut **tx)
     .await
     .with_context(|| format!("insert slot {} for agent {}", slot.name, agent_id))?;
@@ -304,30 +373,45 @@ mod tests {
         // 019 adds agent_slots.prompt_version, which AgentStore::insert_slot
         // writes on every save. Without it, every test that creates an
         // agent fails on insert.
-        let migration_019 =
-            include_str!("../../migrations/019_agent_slot_prompt_version.sql");
+        let migration_019 = include_str!("../../migrations/019_agent_slot_prompt_version.sql");
         sqlx::query(migration_019).execute(&pool).await.unwrap();
+        // 020 adds agent_slots.inputs_policy (F-6 causal sanitization).
+        let migration_020 = include_str!("../../migrations/020_agent_slot_inputs_policy.sql");
+        sqlx::query(migration_020).execute(&pool).await.unwrap();
         pool
     }
 
     fn sample_slot() -> AgentSlot {
+        // Prompt is intentionally ≥200 chars and does not start with the
+        // default-placeholder text so the save-gate checks pass.
+        let system_prompt = "You are a quantitative trading assistant. Analyse the OHLCV data \
+                             provided and respond with a JSON object containing: action \
+                             (buy/sell/hold), size_pct (0–100), and reason (string). \
+                             Apply disciplined risk management: never risk more than 1% of \
+                             notional equity per trade, and always respect the configured \
+                             stop-loss and take-profit levels. Avoid over-trading on low-volume bars."
+            .to_string();
         AgentSlot {
             name: "main".to_string(),
             provider: "anthropic".to_string(),
             model: "claude-sonnet-4-6".to_string(),
-            system_prompt: "You are a trader.".to_string(),
+            system_prompt,
             skill_ids: vec![],
             max_tokens: Some(4096),
+            temperature: None,
             prompt_version: String::new(),
+            inputs_policy: InputsPolicy::Raw,
         }
     }
 
     #[tokio::test]
     async fn create_then_get_round_trips() {
         let store = AgentStore::new(fresh_pool().await);
+        // Name uses no asset slug so the name↔prompt mismatch check does not
+        // fire; the test is purely about DB round-trip fidelity.
         let id = store
             .create(NewAgent {
-                name: "btc-mean-rev-v1".to_string(),
+                name: "mean-rev-v1".to_string(),
                 description: "Buys dips on 15m.".to_string(),
                 tags: vec!["mean-rev".to_string(), "btc".to_string()],
                 slots: vec![sample_slot()],
@@ -336,7 +420,7 @@ mod tests {
             .unwrap();
 
         let loaded = store.get(&id).await.unwrap().expect("exists");
-        assert_eq!(loaded.name, "btc-mean-rev-v1");
+        assert_eq!(loaded.name, "mean-rev-v1");
         assert_eq!(loaded.tags, vec!["mean-rev", "btc"]);
         assert_eq!(loaded.slots.len(), 1);
         assert_eq!(loaded.slots[0].name, "main");
@@ -461,6 +545,63 @@ mod tests {
             .unwrap();
         let loaded = store.get(&id).await.unwrap().expect("exists");
         assert_eq!(loaded.slots[0].max_tokens, None);
+    }
+
+    #[tokio::test]
+    async fn inputs_policy_round_trips_through_create_and_update() {
+        // F-6: AgentStore must round-trip the three policy values
+        // through both `create` and `update`. This is the wire-level
+        // half of the contract; the executor's policy-aware
+        // serialization is pinned in `tests/eval_executor_paper.rs`.
+        let store = AgentStore::new(fresh_pool().await);
+        for policy in [InputsPolicy::Raw, InputsPolicy::Causal, InputsPolicy::Oracle] {
+            let id = store
+                .create(NewAgent {
+                    name: format!("policy-{}", policy.as_str()),
+                    description: String::new(),
+                    tags: vec![],
+                    slots: vec![AgentSlot {
+                        inputs_policy: policy,
+                        ..sample_slot()
+                    }],
+                })
+                .await
+                .unwrap();
+            let loaded = store.get(&id).await.unwrap().expect("exists");
+            assert_eq!(
+                loaded.slots[0].inputs_policy, policy,
+                "create round-trip failed for {policy:?}",
+            );
+        }
+
+        // Update path: flip a Raw slot to Causal, confirm the column
+        // moves with it.
+        let id = store
+            .create(NewAgent {
+                name: "flip-me".to_string(),
+                description: String::new(),
+                tags: vec![],
+                slots: vec![sample_slot()], // Raw default
+            })
+            .await
+            .unwrap();
+        let loaded = store.get(&id).await.unwrap().expect("exists");
+        assert_eq!(loaded.slots[0].inputs_policy, InputsPolicy::Raw);
+        let updated = store
+            .update(
+                &id,
+                UpdateAgent {
+                    slots: Some(vec![AgentSlot {
+                        inputs_policy: InputsPolicy::Causal,
+                        ..sample_slot()
+                    }]),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap()
+            .expect("exists");
+        assert_eq!(updated.slots[0].inputs_policy, InputsPolicy::Causal);
     }
 
     #[tokio::test]

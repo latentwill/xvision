@@ -70,22 +70,24 @@ export function ScenarioChart({
 
     if (payload.bars.length > 0) {
       const indicators = payload.indicators ?? emptyIndicators();
-      const candle = c.addCandlestickSeries({
-        upColor: palette.series.candleUp,
-        downColor: palette.series.candleDown,
-        wickUpColor: palette.series.candleUp,
-        wickDownColor: palette.series.candleDown,
-        borderVisible: false,
-      });
-      candle.setData(
-        payload.bars.map((b) => ({
-          time: b.time as UTCTimestamp,
-          open: b.open,
-          high: b.high,
-          low: b.low,
-          close: b.close,
-        })),
-      );
+      if (layers.candles) {
+        const candle = c.addCandlestickSeries({
+          upColor: palette.series.candleUp,
+          downColor: palette.series.candleDown,
+          wickUpColor: palette.series.candleUp,
+          wickDownColor: palette.series.candleDown,
+          borderVisible: false,
+        });
+        candle.setData(
+          payload.bars.map((b) => ({
+            time: b.time as UTCTimestamp,
+            open: b.open,
+            high: b.high,
+            low: b.low,
+            close: b.close,
+          })),
+        );
+      }
 
       if (layers.sma20)
         c.addLineSeries({ color: palette.series.sma20, lineWidth: 1 }).setData(indicators.sma_20.map(toLine));
@@ -165,6 +167,7 @@ export function ScenarioChart({
             layers={layers}
             toggle={toggle}
             set={set}
+            subpane={false}
             radioName="scenario-chart-subpane"
           />
         }

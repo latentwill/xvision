@@ -12,9 +12,9 @@
 
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use chrono::{TimeZone, Utc};
 use sqlx::SqlitePool;
-use async_trait::async_trait;
 use xvision_core::market::Ohlcv;
 use xvision_engine::agent::llm::{
     ContentBlock, LlmDispatch, LlmRequest, LlmResponse, MockDispatch, StopReason,
@@ -35,6 +35,10 @@ async fn pool_with_migration() -> SqlitePool {
         .await
         .unwrap();
     sqlx::query(include_str!("../migrations/014_eval_agent_id.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/022_eval_runs_agents_agent_id.sql"))
         .execute(&pool)
         .await
         .unwrap();
@@ -247,11 +251,7 @@ async fn paper_executor_skips_broker_for_crypto_short_open() {
         .expect("crypto short_open must not fail the run");
 
     let submitted = mock.submitted();
-    assert_eq!(
-        submitted.len(),
-        0,
-        "crypto short_open must not hit the broker"
-    );
+    assert_eq!(submitted.len(), 0, "crypto short_open must not hit the broker");
     assert_eq!(metrics.n_trades, 0);
     assert_eq!(metrics.n_decisions, 4);
 

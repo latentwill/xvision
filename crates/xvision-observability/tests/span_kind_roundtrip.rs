@@ -47,11 +47,7 @@ fn all_variants() -> Vec<(SpanKind, &'static str)> {
 #[test]
 fn as_db_str_matches_serde_wire_string_for_every_variant() {
     for (variant, expected) in all_variants() {
-        assert_eq!(
-            variant.as_db_str(),
-            expected,
-            "as_db_str() drift for {variant:?}"
-        );
+        assert_eq!(variant.as_db_str(), expected, "as_db_str() drift for {variant:?}");
         let json = serde_json::to_string(&variant).expect("serialize");
         // serde wire form is a quoted JSON string, e.g. `"agent.run"`.
         assert_eq!(

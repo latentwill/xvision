@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use crate::agent::llm::LlmDispatch;
+use crate::agent::llm::{LlmDispatch, OpenAiCompatError};
 use crate::agent::pipeline::ResolvedAgentSlot;
 use crate::eval::run::{MetricsSummary, Run};
 use crate::eval::scenario::Scenario;
@@ -29,6 +29,34 @@ pub use backtest::BacktestExecutor;
 pub use paper::PaperExecutor;
 pub use trader_output::{TraderFailureKind, TraderOutputError};
 
+use sqlx::SqlitePool;
+use tokio::task::JoinHandle;
+
+use crate::eval::watchdog::{self, WatchdogConfig};
+
+/// Engine-side lifecycle hook for the eval-run watchdog. Callers
+/// (`xvision-dashboard::serve`, the long-running CLI daemon) invoke
+/// this once during startup. It performs the one-shot boot sweep
+/// synchronously (so any pre-existing stuck rows are finalized before
+/// the API starts serving traffic) and then spawns the periodic task
+/// for the lifetime of the process.
+///
+/// Returns the [`JoinHandle`] of the background task so the caller can
+/// abort it on shutdown. The handle is `Send + 'static` and safe to
+/// store in app state.
+///
+/// # Errors
+///
+/// Returns the underlying DB error from the boot sweep. If the boot
+/// sweep fails the periodic task is *not* spawned — the caller decides
+/// whether to surface this as a fatal startup error or downgrade to a
+/// warning.
+pub async fn start_watchdog(pool: SqlitePool, config: WatchdogConfig) -> anyhow::Result<JoinHandle<()>> {
+    let store = crate::eval::store::RunStore::new(pool.clone());
+    watchdog::boot_sweep(&pool, &store, &config).await?;
+    Ok(watchdog::spawn(pool, config))
+}
+
 /// Stable failure-class tag for a run-level error. Paper/backtest executors
 /// prefix the persisted `eval_runs.error` string with `[<class>]` so review
 /// and UI consumers can read the class without re-parsing the full message.
@@ -37,7 +65,12 @@ pub use trader_output::{TraderFailureKind, TraderOutputError};
 ///  - Trader output classes: `empty`, `tool_use_only`, `truncated`,
 ///    `invalid_json`, `missing_field`, `invalid_field`, `missing_response`.
 ///  - Provider transport classes: `provider_timeout`, `provider_connect`,
-///    `provider_http_error`, `provider_decode`.
+///    `provider_http_error`, `provider_decode`, `provider_rate_limited`,
+///    `provider_missing_choices` (track
+///    `eval-provider-error-classify-retry`, intake #344). The last two
+///    are produced as typed `OpenAiCompatError` variants after the
+///    dispatcher exhausts its retry budget; they're surfaced to review
+///    & UI consumers via the `[<class>]` prefix on `eval_runs.error`.
 ///  - Broker transport classes: `broker_auth`, `broker_unsupported`,
 ///    `broker_insufficient_funds`, `broker_timeout`, `broker_rejected`.
 ///  - Loop-control classes: `repeated_broker_error` (eval circuit
@@ -52,6 +85,16 @@ pub use trader_output::{TraderFailureKind, TraderOutputError};
 pub fn classify_run_failure(err: &anyhow::Error) -> &'static str {
     if let Some(te) = err.downcast_ref::<TraderOutputError>() {
         return te.class_tag();
+    }
+    // Walk the error chain looking for the typed OpenAI-compat error
+    // surfaced by `OpenaiCompatDispatch::complete` after its retry
+    // budget is exhausted (intake #344). The chain walk matters because
+    // upstream callers wrap dispatch failures with `with_context`
+    // before they reach the executor's surface.
+    for cause in err.chain() {
+        if let Some(typed) = cause.downcast_ref::<OpenAiCompatError>() {
+            return typed.class_tag();
+        }
     }
     let s = format!("{:#}", err).to_lowercase();
     // Trader-output errors may have been wrapped with `.context(...)` and
@@ -175,9 +218,8 @@ mod tests {
         let e2 = anyhow::anyhow!("alpaca create_order: bracket orders not supported for this asset class");
         assert_eq!(classify_run_failure(&e2), "broker_unsupported");
 
-        let e3 = anyhow::anyhow!(
-            "alpaca create_order: order_type market is not supported for this asset class"
-        );
+        let e3 =
+            anyhow::anyhow!("alpaca create_order: order_type market is not supported for this asset class");
         assert_eq!(classify_run_failure(&e3), "broker_unsupported");
     }
 

@@ -1,15 +1,11 @@
 use axum::{extract::State, Json};
 
-use xvision_engine::api::settings::observability::{
-    self, ObservabilityReport, UpdateObservabilityRequest,
-};
+use xvision_engine::api::settings::observability::{self, ObservabilityReport, UpdateObservabilityRequest};
 
 use crate::error::DashboardError;
 use crate::state::AppState;
 
-pub async fn get(
-    State(state): State<AppState>,
-) -> Result<Json<ObservabilityReport>, DashboardError> {
+pub async fn get(State(state): State<AppState>) -> Result<Json<ObservabilityReport>, DashboardError> {
     let report = observability::get(&state.api_context()).await?;
     Ok(Json(report))
 }

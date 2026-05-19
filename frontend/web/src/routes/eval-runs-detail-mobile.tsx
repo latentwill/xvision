@@ -5,12 +5,12 @@ import { ApiError } from "@/api/client";
 import { downloadEvalRunExport } from "@/api/eval";
 import { ReviewPanel } from "@/features/eval-runs/review";
 import { RunSummaryError as RunSummaryPanel } from "@/features/eval-runs/RunSummary";
+import {
+  derivePriorSideByDecision,
+  type PositionSide,
+} from "@/features/decisions/positions";
 import { isInflightRunStatus } from "@/lib/run-status";
 import type { EvalRunLabels } from "@/lib/run-display";
-import {
-  derivePriorPositionsByDecision,
-  type OpenPosition,
-} from "@/features/decisions/positions";
 import type {
   DecisionRowDto,
   EquityPoint,
@@ -634,11 +634,11 @@ function DecisionsTab({ decisions }: { decisions: DecisionRowDto[] }) {
     () => decisions.filter((d) => d.pnl_realized != null).length,
     [decisions],
   );
-  // Prior-position lookup for the SELL-vs-COVER distinction on flat
-  // decisions — same data shape as the desktop inspector. See QA22 /
-  // `decision-side-label-sell-vs-short`.
-  const priorPositionsByDecision = useMemo(
-    () => derivePriorPositionsByDecision(decisions),
+  // Same prior-side derivation as the desktop view — drives the
+  // direction-aware action label on each card (SELL vs COVER for a
+  // `flat`, SHORT vs BUY for an open).
+  const priorSideByDecision = useMemo(
+    () => derivePriorSideByDecision(decisions),
     [decisions],
   );
   if (decisions.length === 0) {
@@ -662,20 +662,14 @@ function DecisionsTab({ decisions }: { decisions: DecisionRowDto[] }) {
         <DecisionCard
           key={d.decision_index}
           d={d}
-          priorSide={priorSideFor(d, priorPositionsByDecision)}
+          priorSide={priorSideByDecision.get(d.decision_index) ?? "flat"}
         />
       ))}
     </div>
   );
 }
 
-function DecisionCard({
-  d,
-  priorSide,
-}: {
-  d: DecisionRowDto;
-  priorSide: "long" | "short" | "flat";
-}) {
+function DecisionCard({ d, priorSide }: { d: DecisionRowDto; priorSide: PositionSide }) {
   const action = actionLabel(d.action, priorSide);
   const pnl = d.pnl_realized;
   const conviction = clamp01(d.conviction);
@@ -725,15 +719,10 @@ function DecisionCard({
   );
 }
 
+type MobileActionLabel = "BUY" | "SHORT" | "SELL" | "COVER" | "HOLD";
+
 function ActionPill({ action }: { action: MobileActionLabel }) {
-  // Visual buckets mirror the desktop dec-pill palette (see
-  // `globals.css#dec-pill--*`): BUY is gold (long entry), SHORT is
-  // danger (short entry), SELL/COVER share the warn palette as
-  // realisation/exit signals, HOLD is neutral.
-  const styles: Record<
-    MobileActionLabel,
-    { color: string; bg: string; bd: string }
-  > = {
+  const styles: Record<MobileActionLabel, { color: string; bg: string; bd: string }> = {
     BUY: { color: "var(--gold)", bg: "var(--gold-bg)", bd: "var(--gold-soft)" },
     SHORT: {
       color: "var(--danger)",
@@ -742,13 +731,13 @@ function ActionPill({ action }: { action: MobileActionLabel }) {
     },
     SELL: {
       color: "var(--warn)",
-      bg: "rgba(200,150,40,0.10)",
-      bd: "rgba(200,150,40,0.45)",
+      bg: "rgba(212,165,71,0.10)",
+      bd: "rgba(212,165,71,0.45)",
     },
     COVER: {
-      color: "var(--warn)",
-      bg: "rgba(200,150,40,0.10)",
-      bd: "rgba(200,150,40,0.45)",
+      color: "var(--info)",
+      bg: "rgba(111,143,184,0.10)",
+      bd: "rgba(111,143,184,0.45)",
     },
     HOLD: { color: "var(--text-3)", bg: "transparent", bd: "var(--border)" },
   };
@@ -963,25 +952,15 @@ function decisionReasoning(row: DecisionRowDto): string {
   return extended.reasoning?.trim() || row.justification?.trim() || "—";
 }
 
-type MobileActionLabel = "BUY" | "SHORT" | "SELL" | "COVER" | "HOLD";
-
-function actionLabel(
-  action: string,
-  priorSide: "long" | "short" | "flat",
-): MobileActionLabel {
+function actionLabel(action: string, priorSide: PositionSide): MobileActionLabel {
   if (action === "long_open") return "BUY";
   if (action === "short_open") return "SHORT";
-  if (action === "flat") return priorSide === "short" ? "COVER" : "SELL";
+  if (action === "flat") {
+    if (priorSide === "long") return "SELL";
+    if (priorSide === "short") return "COVER";
+    return "HOLD";
+  }
   return "HOLD";
-}
-
-function priorSideFor(
-  row: DecisionRowDto,
-  priorPositionsByDecision: Map<number, OpenPosition[]>,
-): "long" | "short" | "flat" {
-  const positions = priorPositionsByDecision.get(row.decision_index) ?? [];
-  const match = positions.find((p) => p.asset === row.asset);
-  return match?.side ?? "flat";
 }
 
 function pnlClass(n: number | null | undefined): string {

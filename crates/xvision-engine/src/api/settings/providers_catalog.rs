@@ -30,11 +30,7 @@ use crate::providers::CatalogService;
 
 /// Refresh one provider's catalog by name. Errors if the provider is
 /// `local-candle` (no remote catalog) or unknown.
-pub async fn refresh(
-    ctx: &ApiContext,
-    config_path: &Path,
-    name: &str,
-) -> ApiResult<Arc<Catalog>> {
+pub async fn refresh(ctx: &ApiContext, config_path: &Path, name: &str) -> ApiResult<Arc<Catalog>> {
     let started = Instant::now();
     let result = refresh_inner(ctx, config_path, name).await;
     let outcome = match &result {
@@ -54,11 +50,7 @@ pub async fn refresh(
     result
 }
 
-async fn refresh_inner(
-    ctx: &ApiContext,
-    config_path: &Path,
-    name: &str,
-) -> ApiResult<Arc<Catalog>> {
+async fn refresh_inner(ctx: &ApiContext, config_path: &Path, name: &str) -> ApiResult<Arc<Catalog>> {
     let provider = load_provider(config_path, name)?;
     let svc = CatalogService::new(ctx.xvn_home.clone())
         .map_err(|e| ApiError::Internal(format!("init catalog service: {e}")))?;
@@ -71,10 +63,7 @@ async fn refresh_inner(
 /// row per attempted provider so the caller can render a per-row
 /// success/failure indicator. Local-candle providers are skipped
 /// silently — they appear in the config but have nothing to fetch.
-pub async fn refresh_all(
-    ctx: &ApiContext,
-    config_path: &Path,
-) -> ApiResult<Vec<RefreshOutcome>> {
+pub async fn refresh_all(ctx: &ApiContext, config_path: &Path) -> ApiResult<Vec<RefreshOutcome>> {
     let started = Instant::now();
     let result = refresh_all_inner(ctx, config_path).await;
     let outcome = match &result {
@@ -94,12 +83,8 @@ pub async fn refresh_all(
     result
 }
 
-async fn refresh_all_inner(
-    ctx: &ApiContext,
-    config_path: &Path,
-) -> ApiResult<Vec<RefreshOutcome>> {
-    let cfg = load_runtime(config_path)
-        .map_err(|e| ApiError::Validation(format!("load config: {e}")))?;
+async fn refresh_all_inner(ctx: &ApiContext, config_path: &Path) -> ApiResult<Vec<RefreshOutcome>> {
+    let cfg = load_runtime(config_path).map_err(|e| ApiError::Validation(format!("load config: {e}")))?;
     let refreshable: Vec<ProviderEntry> = cfg
         .providers
         .into_iter()
@@ -139,11 +124,7 @@ async fn refresh_all_inner(
 /// - `Ok(None)` when the provider is configured but its catalog has
 ///   never been fetched. The caller surfaces "click refresh" UX.
 /// - `Ok(Some(arc))` on a cache hit.
-pub async fn get(
-    ctx: &ApiContext,
-    config_path: &Path,
-    name: &str,
-) -> ApiResult<Option<Arc<Catalog>>> {
+pub async fn get(ctx: &ApiContext, config_path: &Path, name: &str) -> ApiResult<Option<Arc<Catalog>>> {
     // Validate before touching disk — `load_provider` returns
     // `ApiError::NotFound` when the name isn't registered, which the
     // dashboard maps to 404 and the CLI surfaces as a clear error.
@@ -176,8 +157,7 @@ pub struct RefreshOutcome {
 }
 
 fn load_provider(config_path: &Path, name: &str) -> ApiResult<ProviderEntry> {
-    let cfg = load_runtime(config_path)
-        .map_err(|e| ApiError::Validation(format!("load config: {e}")))?;
+    let cfg = load_runtime(config_path).map_err(|e| ApiError::Validation(format!("load config: {e}")))?;
     cfg.providers
         .into_iter()
         .find(|p| p.name == name)
@@ -237,14 +217,9 @@ sqlite_url = "sqlite://x.db"
 
     async fn fresh_ctx() -> (TempDir, ApiContext) {
         let tmp = TempDir::new().unwrap();
-        let ctx = ApiContext::open(
-            tmp.path(),
-            Actor::Cli {
-                user: "test".into(),
-            },
-        )
-        .await
-        .unwrap();
+        let ctx = ApiContext::open(tmp.path(), Actor::Cli { user: "test".into() })
+            .await
+            .unwrap();
         (tmp, ctx)
     }
 
@@ -271,9 +246,7 @@ sqlite_url = "sqlite://x.db"
         // cache layer.
         let (tmp, ctx) = fresh_ctx().await;
         let cfg = write_config(tmp.path(), BASE_CONFIG);
-        let err = get(&ctx, &cfg, "openrouter-not-configured")
-            .await
-            .unwrap_err();
+        let err = get(&ctx, &cfg, "openrouter-not-configured").await.unwrap_err();
         assert!(
             matches!(err, ApiError::NotFound(_)),
             "expected NotFound, got: {err:?}"

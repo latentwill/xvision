@@ -145,11 +145,7 @@ pub struct Catalog {
 
 impl Catalog {
     /// Build a catalog with a `now` stamp.
-    pub fn new(
-        provider: impl Into<String>,
-        source_url: impl Into<String>,
-        models: Vec<ModelEntry>,
-    ) -> Self {
+    pub fn new(provider: impl Into<String>, source_url: impl Into<String>, models: Vec<ModelEntry>) -> Self {
         Self {
             provider: provider.into(),
             fetched_at: chrono::Utc::now(),

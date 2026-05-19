@@ -116,6 +116,7 @@ export function useRunStream(runId: string, initial?: RunChartPayload) {
   );
   const esRef = useRef<EventSource | null>(null);
   const dataRef = useRef<RunChartPayload | undefined>(initial);
+  const runIdRef = useRef(runId);
 
   // Keep ref in sync with state so the SSE handlers can read the latest
   // payload without forcing a re-subscribe.
@@ -164,6 +165,12 @@ export function useRunStream(runId: string, initial?: RunChartPayload) {
 
   useEffect(() => {
     if (!runId) return;
+    if (runIdRef.current !== runId) {
+      runIdRef.current = runId;
+      dataRef.current = undefined;
+      setData(undefined);
+      setStatus("snapshot");
+    }
     let cancelled = false;
     let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
     let reconnectCount = 0;

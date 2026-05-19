@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -240,6 +241,154 @@ describe("ChatRail", () => {
       expect(capturedSignal?.aborted).toBe(true);
     });
     expect(composer).toHaveValue("keep this draft");
+  });
+
+  it("aborts the active chat request when the desktop rail is collapsed", async () => {
+    let capturedSignal: AbortSignal | undefined;
+    vi.mocked(chatApi.streamChat).mockImplementation(async function* (
+      _req,
+      signal,
+    ) {
+      capturedSignal = signal;
+      await new Promise<void>((resolve) => {
+        signal?.addEventListener("abort", () => resolve(), { once: true });
+      });
+      throw Object.assign(new Error("aborted"), { name: "AbortError" });
+    });
+    renderRail();
+
+    const composer = await screen.findByPlaceholderText(
+      /ask anything about your workspace/i,
+    );
+    fireEvent.change(composer, {
+      target: { value: "start long request" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    await waitFor(() => {
+      expect(chatApi.streamChat).toHaveBeenCalled();
+    });
+    fireEvent.click(screen.getByTitle("Collapse rail"));
+
+    await waitFor(() => {
+      expect(capturedSignal?.aborted).toBe(true);
+    });
+  });
+
+  it("aborts and ignores stale stream events when selecting another conversation", async () => {
+    vi.mocked(chatApi.listSessions).mockResolvedValue([
+      {
+        id: "old-session",
+        scope: workspaceScope,
+        started_at: "2026-05-13T00:00:00Z",
+        last_activity_at: "2026-05-13T00:05:00Z",
+      },
+      {
+        id: "next-session",
+        scope: workspaceScope,
+        started_at: "2026-05-14T00:00:00Z",
+        last_activity_at: "2026-05-14T00:05:00Z",
+      },
+    ]);
+    vi.mocked(chatApi.loadSessionHistory).mockResolvedValue([
+      {
+        id: "m2",
+        session_id: "next-session",
+        seq: 0,
+        role: "user",
+        content_blocks: [{ type: "text", text: "selected question" }],
+        ts: "2026-05-14T00:01:00Z",
+      },
+      {
+        id: "m3",
+        session_id: "next-session",
+        seq: 1,
+        role: "assistant",
+        content_blocks: [{ type: "text", text: "selected answer" }],
+        ts: "2026-05-14T00:02:00Z",
+      },
+    ]);
+    let capturedSignal: AbortSignal | undefined;
+    let releaseStream: ((ev: WizardEvent) => void) | undefined;
+    vi.mocked(chatApi.streamChat).mockImplementation(async function* (
+      _req,
+      signal,
+    ) {
+      capturedSignal = signal;
+      const ev = await new Promise<WizardEvent>((resolve) => {
+        releaseStream = resolve;
+      });
+      yield ev;
+    });
+    renderRail();
+
+    const composer = await screen.findByPlaceholderText(
+      /ask anything about your workspace/i,
+    );
+    fireEvent.change(composer, {
+      target: { value: "start long request" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    await waitFor(() => {
+      expect(chatApi.streamChat).toHaveBeenCalled();
+    });
+    fireEvent.click(await screen.findByTestId("chat-history-item-next-session"));
+
+    await waitFor(() => {
+      expect(chatApi.loadSessionHistory).toHaveBeenCalledWith("next-session");
+    });
+    expect(capturedSignal?.aborted).toBe(true);
+    expect(await screen.findByText("selected answer")).toBeInTheDocument();
+
+    await act(async () => {
+      releaseStream?.({ type: "token", text: "late token" });
+    });
+
+    expect(screen.queryByText(/late token/)).not.toBeInTheDocument();
+  });
+
+  it("renders historical tool results with error:null as successful", async () => {
+    vi.mocked(chatApi.resolveSession).mockResolvedValue({
+      session_id: "old-session",
+      history: [
+        {
+          id: "m1",
+          session_id: "old-session",
+          seq: 0,
+          role: "assistant",
+          content_blocks: [
+            {
+              type: "tool_use",
+              id: "tool-1",
+              name: "create_strategy",
+              input: { name: "Alpha", template: "momentum" },
+            },
+          ],
+          ts: "2026-05-13T00:01:00Z",
+        },
+        {
+          id: "m2",
+          session_id: "old-session",
+          seq: 1,
+          role: "user",
+          content_blocks: [
+            {
+              type: "tool_result",
+              tool_use_id: "tool-1",
+              content: JSON.stringify({ id: "01OK", error: null }),
+            },
+          ],
+          ts: "2026-05-13T00:02:00Z",
+        },
+      ],
+    });
+
+    renderRail();
+
+    expect(await screen.findByText("01OK")).toBeInTheDocument();
+    expect(screen.getByText("Alpha")).toBeInTheDocument();
+    expect(screen.queryByText(/Create strategy failed/i)).not.toBeInTheDocument();
   });
 });
 

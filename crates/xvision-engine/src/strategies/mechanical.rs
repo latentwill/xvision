@@ -219,12 +219,7 @@ impl MomentumParams {
         // `adx_threshold` is not a period — drop it. macd_fast/slow/
         // signal and adx_period all match `is_period_like_key`
         // (`macd_*`, `adx_*`, `*_period`).
-        warmup_from_periods(&[
-            self.macd_fast,
-            self.macd_slow,
-            self.macd_signal,
-            self.adx_period,
-        ])
+        warmup_from_periods(&[self.macd_fast, self.macd_slow, self.macd_signal, self.adx_period])
     }
 }
 
@@ -302,15 +297,10 @@ fn custom_max_period_inner(value: &serde_json::Value, key: Option<&str>) -> Opti
             as_u64.and_then(|n| u32::try_from(n).ok()).filter(|n| *n > 0)
         }
         Value::Number(_) => None,
-        Value::Array(arr) => arr
-            .iter()
-            .filter_map(|v| custom_max_period_inner(v, key))
-            .max(),
+        Value::Array(arr) => arr.iter().filter_map(|v| custom_max_period_inner(v, key)).max(),
         Value::Object(map) => map
             .iter()
-            .filter_map(|(child_key, child_value)| {
-                custom_max_period_inner(child_value, Some(child_key))
-            })
+            .filter_map(|(child_key, child_value)| custom_max_period_inner(child_value, Some(child_key)))
             .max(),
         Value::Null | Value::Bool(_) | Value::String(_) => None,
     }
@@ -415,11 +405,7 @@ mod tests {
                 .unwrap_or_else(|e| panic!("template {} failed: {}", template, e));
             // Re-serialize round-trips to the same shape.
             let round = parsed.to_value();
-            assert_eq!(
-                round, params,
-                "round-trip drift for template {}",
-                template
-            );
+            assert_eq!(round, params, "round-trip drift for template {}", template);
         }
     }
 

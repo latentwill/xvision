@@ -20,6 +20,9 @@ coverage
 data/*
 !data/probes/
 !data/probes/**
+# Content-addressed bar-cache probes (64-char hex names) are local-run
+# artifacts, not fixtures — keep them out of the image.
+data/probes/[0-9a-f]*.parquet
 !data/examples/
 !data/examples/**
 *.db

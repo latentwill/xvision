@@ -166,11 +166,8 @@
     background: color-mix(in srgb, var(--warn) 86%, #ffdd8a);
   }
 
-  /* Closing a short position. Mirror of SELL on the warn palette; the
-     label text ("COVER") plus the row's prior-position state carries the
-     distinction. */
   .dec-pill--cover .dec-pill__label {
-    background: color-mix(in srgb, var(--warn) 86%, #ffdd8a);
+    background: color-mix(in srgb, var(--warn) 70%, var(--info) 30%);
   }
 
   .dec-pill--hold .dec-pill__label {

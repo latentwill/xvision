@@ -419,7 +419,10 @@ mod tests {
         // The same legacy convention applies across providers; cover the
         // common ones so a future addition doesn't silently regress.
         let openai = lookup_model("openai.gpt-4o");
-        assert_eq!(openai.output_token_ceiling, lookup_model("gpt-4o").output_token_ceiling);
+        assert_eq!(
+            openai.output_token_ceiling,
+            lookup_model("gpt-4o").output_token_ceiling
+        );
 
         let deepseek = lookup_model("deepseek.deepseek-r1");
         let r1 = lookup_model("deepseek-r1");

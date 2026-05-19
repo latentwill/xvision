@@ -8,9 +8,11 @@ use tower_http::{compression::CompressionLayer, trace::TraceLayer};
 
 use crate::auth::{auth_middleware, AuthState};
 use crate::routes::{
-    agent_runs, agents, bars, chat_rail, cli, docs, eval::review as eval_review, eval_runs,
-    health::health, scenarios, search as search_route, settings, skills, static_files,
-    strategies, wizard,
+    agent_runs, agents, bars, chat_rail, cli, docs,
+    eval::{agent_profiles as eval_agent_profiles, review as eval_review},
+    eval_runs,
+    health::health,
+    scenarios, search as search_route, settings, skills, static_files, strategies, wizard,
 };
 use crate::state::AppState;
 use xvision_engine::api::eval as api_eval;
@@ -110,6 +112,14 @@ pub fn build_router(state: AppState) -> Router {
             get(eval_review::list_for_run),
         )
         .route("/api/eval/reviews/:id", get(eval_review::get))
+        // Review-agent profile config: list + per-profile patch so
+        // operators can reseat seeded profiles against whatever
+        // provider they have configured (see file docstring for why).
+        .route("/api/eval/agent-profiles", get(eval_agent_profiles::list))
+        .route(
+            "/api/eval/agent-profiles/:id",
+            get(eval_agent_profiles::get).patch(eval_agent_profiles::patch),
+        )
         .route("/api/bars/:cache_key", get(bars::cache_row))
         .route("/api/cli/jobs", post(cli::create))
         .route("/api/cli/jobs/:id", get(cli::get))
@@ -247,6 +257,14 @@ pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
         );
     }
 
+    // F-11 sub: spawn the retention janitor so the blob store at
+    // `$xvn_home/agent_runs/blobs/` is bounded by TTL + max-bytes
+    // defaults. The dashboard process owns this background task for
+    // its whole lifetime; the JoinHandle is intentionally dropped —
+    // it terminates with the process. See
+    // `crates/xvision-engine/src/api/eval.rs::spawn_retention_janitor`.
+    let _janitor = api_eval::spawn_retention_janitor(&state.api_context());
+
     // Resolve auth posture from bind address + env. Refuses to start
     // on a non-loopback bind without a configured shared secret. See
     // `crates/xvision-dashboard/src/auth.rs` and the runbook.
@@ -263,10 +281,6 @@ pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
     let app = wrap_with_auth(build_router(state), auth);
     tracing::info!(%addr, "xvision-dashboard listening");
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .await?;
+    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await?;
     Ok(())
 }

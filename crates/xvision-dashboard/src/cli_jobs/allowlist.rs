@@ -61,9 +61,7 @@ pub fn check_argv(argv: &[String]) -> AllowlistDecision {
     // Mirrors and extends the previous denylist on `routes::cli`.
     let head = argv[0].as_str();
     if DENYLIST_SUBCOMMANDS.iter().any(|d| *d == head) {
-        return AllowlistDecision::Reject(format!(
-            "subcommand `{head}` is not allowed over remote cli"
-        ));
+        return AllowlistDecision::Reject(format!("subcommand `{head}` is not allowed over remote cli"));
     }
 
     if devmode_enabled() {
@@ -149,8 +147,16 @@ mod tests {
     fn bars_fetch_with_full_argv_is_allowed() {
         let _guard = clear_devmode();
         assert_allow(&[
-            "bars", "fetch", "--asset", "BTC/USD", "--granularity", "1h", "--from",
-            "2025-01-01", "--to", "2025-02-01",
+            "bars",
+            "fetch",
+            "--asset",
+            "BTC/USD",
+            "--granularity",
+            "1h",
+            "--from",
+            "2025-01-01",
+            "--to",
+            "2025-02-01",
         ]);
     }
 

@@ -129,8 +129,10 @@ fn validator_rejects_nul_byte() {
 
 #[tokio::test]
 async fn store_save_rejects_traversal_and_leaves_root_empty() {
-    let dir = tempdir().unwrap();
-    let store = FilesystemStore::new(dir.path().to_path_buf());
+    let parent = tempdir().unwrap();
+    let root = parent.path().join("strategies");
+    std::fs::create_dir_all(&root).unwrap();
+    let store = FilesystemStore::new(root.clone());
     let strategy = strategy_with_id("../escape");
 
     let err = store.save(&strategy).await.unwrap_err();
@@ -142,9 +144,13 @@ async fn store_save_rejects_traversal_and_leaves_root_empty() {
     // No file under the store root, and no `escape.json` written one
     // level up (which is where the traversal would have aimed had the
     // validation slipped).
-    assert_store_root_unchanged(dir.path(), &[]);
-    let parent_bait = dir.path().parent().unwrap().join("escape.json");
-    assert!(!parent_bait.exists(), "traversal target was created: {}", parent_bait.display());
+    assert_store_root_unchanged(&root, &[]);
+    let parent_bait = parent.path().join("escape.json");
+    assert!(
+        !parent_bait.exists(),
+        "traversal target was created: {}",
+        parent_bait.display()
+    );
 }
 
 #[tokio::test]

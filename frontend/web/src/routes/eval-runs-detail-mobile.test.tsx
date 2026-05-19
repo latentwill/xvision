@@ -346,4 +346,35 @@ describe("EvalRunDetailRoute (mobile layout)", () => {
     expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
     expect(screen.queryByText("PNL")).not.toBeInTheDocument();
   });
+
+  it("DECISIONS tab renders SHORT / COVER pills resolved against prior side (QA22 round-4)", async () => {
+    vi.mocked(evalApi.getRun).mockResolvedValue(
+      detail({
+        decisions: [
+          decision({
+            decision_index: 0,
+            action: "short_open",
+            fill_size: 0.5,
+            fill_price: 60_000,
+          }),
+          decision({
+            decision_index: 1,
+            action: "flat",
+            fill_size: 0.5,
+            fill_price: 59_000,
+            pnl_realized: 500,
+          }),
+        ],
+      }),
+    );
+
+    renderRoute();
+
+    fireEvent.click(await screen.findByRole("tab", { name: "DECISIONS" }));
+
+    // Pill #0 should read SHORT (short_open from flat).
+    expect(await screen.findByText("SHORT")).toBeInTheDocument();
+    // Pill #1 should read COVER (flat closing a short).
+    expect(screen.getByText("COVER")).toBeInTheDocument();
+  });
 });

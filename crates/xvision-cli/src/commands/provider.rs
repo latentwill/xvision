@@ -102,9 +102,7 @@ pub async fn run(cmd: ProviderCmd) -> Result<()> {
             api_key,
         } => add(&ctx, &config_path, name, kind, base_url, api_key_env, api_key).await,
         ProviderAction::Remove { name } => remove(&ctx, &config_path, &name).await,
-        ProviderAction::RefreshModels { name } => {
-            refresh_models(&ctx, &config_path, name.as_deref()).await
-        }
+        ProviderAction::RefreshModels { name } => refresh_models(&ctx, &config_path, name.as_deref()).await,
         ProviderAction::Models { name } => models(&ctx, &config_path, &name).await,
     }
 }
@@ -261,11 +259,7 @@ async fn remove(ctx: &ApiContext, config_path: &std::path::Path, name: &str) -> 
     Ok(())
 }
 
-async fn refresh_models(
-    ctx: &ApiContext,
-    config_path: &std::path::Path,
-    name: Option<&str>,
-) -> Result<()> {
+async fn refresh_models(ctx: &ApiContext, config_path: &std::path::Path, name: Option<&str>) -> Result<()> {
     match name {
         Some(n) => {
             let cat = providers_catalog::refresh(ctx, config_path, n)
@@ -293,24 +287,15 @@ async fn refresh_models(
                     .model_count
                     .map(|n| n.to_string())
                     .unwrap_or_else(|| "—".into());
-                let trailing = row
-                    .source_url
-                    .unwrap_or_else(|| row.error.unwrap_or_default());
-                println!(
-                    "{:<18} {:<6} {:>6}  {}",
-                    row.provider, status, count, trailing
-                );
+                let trailing = row.source_url.unwrap_or_else(|| row.error.unwrap_or_default());
+                println!("{:<18} {:<6} {:>6}  {}", row.provider, status, count, trailing);
             }
         }
     }
     Ok(())
 }
 
-async fn models(
-    ctx: &ApiContext,
-    config_path: &std::path::Path,
-    name: &str,
-) -> Result<()> {
+async fn models(ctx: &ApiContext, config_path: &std::path::Path, name: &str) -> Result<()> {
     let cat = providers_catalog::get(ctx, config_path, name)
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -328,10 +313,7 @@ async fn models(
         cat.models.len(),
         cat.fetched_at.to_rfc3339()
     );
-    println!(
-        "{:<48} {:>10} {:>10} {:>6}",
-        "ID", "CONTEXT", "MAX_OUT", "REASON"
-    );
+    println!("{:<48} {:>10} {:>10} {:>6}", "ID", "CONTEXT", "MAX_OUT", "REASON");
     for m in &cat.models {
         let ctx_str = m
             .context_window

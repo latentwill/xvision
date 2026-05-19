@@ -12,16 +12,48 @@ use xvision_engine::api::{Actor, ApiContext, ApiError};
 /// Uses `ApiContext::open` so all migrations are applied and the canonical
 /// scenario seed runs — identical to the pattern in `scenario_api.rs` and
 /// `api_context.rs`.
-async fn test_ctx() -> ApiContext {
-    let dir = Box::leak(Box::new(tempdir().unwrap()));
-    ApiContext::open(
+struct TestCtx {
+    ctx: ApiContext,
+    _dir: tempfile::TempDir,
+}
+
+impl std::ops::Deref for TestCtx {
+    type Target = ApiContext;
+
+    fn deref(&self) -> &Self::Target {
+        &self.ctx
+    }
+}
+
+async fn test_ctx() -> TestCtx {
+    let dir = tempdir().unwrap();
+    let ctx = ApiContext::open(
         dir.path(),
         Actor::Cli {
             user: "chart-test".into(),
         },
     )
     .await
-    .unwrap()
+    .unwrap();
+    TestCtx { ctx, _dir: dir }
+}
+
+#[tokio::test]
+async fn test_ctx_removes_tmpdir_on_drop() {
+    let dir_path = {
+        let ctx = test_ctx().await;
+        let dir_path = ctx._dir.path().to_path_buf();
+        assert!(
+            dir_path.exists(),
+            "test context directory should exist while the fixture is alive"
+        );
+        dir_path
+    };
+
+    assert!(
+        !dir_path.exists(),
+        "test context directory should be removed when the fixture is dropped"
+    );
 }
 
 async fn seed_cached_bars(ctx: &ApiContext, cache_key: &str, asset: &str, count: usize) {

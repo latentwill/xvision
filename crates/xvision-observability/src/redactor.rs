@@ -29,7 +29,10 @@ pub struct RedactedString {
 
 impl RedactedString {
     pub fn untouched(text: impl Into<String>) -> Self {
-        Self { text: text.into(), matches: vec![] }
+        Self {
+            text: text.into(),
+            matches: vec![],
+        }
     }
 }
 
@@ -83,7 +86,10 @@ impl Redactor {
         }
         out.push_str(&input[cursor..]);
 
-        RedactedString { text: out, matches: coalesced }
+        RedactedString {
+            text: out,
+            matches: coalesced,
+        }
     }
 }
 
@@ -129,10 +135,8 @@ fn patterns() -> &'static [Pattern] {
             // is 30+).
             Pattern {
                 name: "jwt",
-                regex: Regex::new(
-                    r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b",
-                )
-                .unwrap(),
+                regex: Regex::new(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b")
+                    .unwrap(),
             },
             // 64-char hex private key (Ethereum / generic secp256k1).
             // Conservative: require the canonical 64-hex shape with word
@@ -147,10 +151,7 @@ fn patterns() -> &'static [Pattern] {
             // the format and keeps false-positive rate acceptable.
             Pattern {
                 name: "mnemonic_phrase",
-                regex: Regex::new(
-                    r"\b(?:[a-z]{3,8} ){11,23}[a-z]{3,8}\b",
-                )
-                .unwrap(),
+                regex: Regex::new(r"\b(?:[a-z]{3,8} ){11,23}[a-z]{3,8}\b").unwrap(),
             },
         ]
     })
@@ -173,7 +174,11 @@ mod tests {
         let r = Redactor::new();
         let input = "key=sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789";
         let out = r.redact(input);
-        assert!(out.text.contains("[redacted:anthropic_api_key]"), "got: {}", out.text);
+        assert!(
+            out.text.contains("[redacted:anthropic_api_key]"),
+            "got: {}",
+            out.text
+        );
         assert_eq!(out.matches.len(), 1);
         assert_eq!(out.matches[0].pattern, "anthropic_api_key");
     }
@@ -183,29 +188,44 @@ mod tests {
         let r = Redactor::new();
         let input = "OPENAI_API_KEY=sk-abcdEFGH1234567890ABCDEFGHIJ1234";
         let out = r.redact(input);
-        assert!(out.text.contains("[redacted:openai_api_key]"), "got: {}", out.text);
+        assert!(
+            out.text.contains("[redacted:openai_api_key]"),
+            "got: {}",
+            out.text
+        );
     }
 
     #[test]
     fn redacts_aws_key() {
         let r = Redactor::new();
         let out = r.redact("AKIAIOSFODNN7EXAMPLE in this string");
-        assert!(out.text.contains("[redacted:aws_access_key]"), "got: {}", out.text);
+        assert!(
+            out.text.contains("[redacted:aws_access_key]"),
+            "got: {}",
+            out.text
+        );
     }
 
     #[test]
     fn redacts_alpaca_key() {
         let r = Redactor::new();
         let out = r.redact("APCA-API-KEY-ID: PKABCDEF1234567890XY");
-        assert!(out.text.contains("[redacted:alpaca_api_key]"), "got: {}", out.text);
+        assert!(
+            out.text.contains("[redacted:alpaca_api_key]"),
+            "got: {}",
+            out.text
+        );
     }
 
     #[test]
     fn redacts_orderly_key() {
         let r = Redactor::new();
-        let out =
-            r.redact("orderly_key=ed25519:6KSi7BSqsNuTUyA4LBKj9X8AhVgi6gT9HpsMxNGmH5RR");
-        assert!(out.text.contains("[redacted:orderly_api_key]"), "got: {}", out.text);
+        let out = r.redact("orderly_key=ed25519:6KSi7BSqsNuTUyA4LBKj9X8AhVgi6gT9HpsMxNGmH5RR");
+        assert!(
+            out.text.contains("[redacted:orderly_api_key]"),
+            "got: {}",
+            out.text
+        );
     }
 
     #[test]
@@ -222,7 +242,11 @@ mod tests {
         let r = Redactor::new();
         let key = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
         let out = r.redact(&format!("private_key=0x{key}"));
-        assert!(out.text.contains("[redacted:hex_private_key]"), "got: {}", out.text);
+        assert!(
+            out.text.contains("[redacted:hex_private_key]"),
+            "got: {}",
+            out.text
+        );
     }
 
     #[test]
@@ -230,14 +254,17 @@ mod tests {
         let r = Redactor::new();
         let input = "seed: abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
         let out = r.redact(input);
-        assert!(out.text.contains("[redacted:mnemonic_phrase]"), "got: {}", out.text);
+        assert!(
+            out.text.contains("[redacted:mnemonic_phrase]"),
+            "got: {}",
+            out.text
+        );
     }
 
     #[test]
     fn multiple_secrets_in_one_string() {
         let r = Redactor::new();
-        let input =
-            "ANTHROPIC=sk-ant-abcdefghijklmnopqrstuvwxyz0123456789 AWS=AKIAIOSFODNN7EXAMPLE";
+        let input = "ANTHROPIC=sk-ant-abcdefghijklmnopqrstuvwxyz0123456789 AWS=AKIAIOSFODNN7EXAMPLE";
         let out = r.redact(input);
         assert_eq!(out.matches.len(), 2);
         assert!(out.text.contains("[redacted:anthropic_api_key]"));

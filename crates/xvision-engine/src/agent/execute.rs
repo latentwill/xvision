@@ -64,19 +64,32 @@ pub struct SlotInput<'a> {
     pub dispatch: Arc<dyn LlmDispatch>,
     pub tools: Arc<ToolRegistry>,
     pub response_schema: Option<ResponseSchema>,
-    /// **Deprecated.** Vestigial per-request budget that used to thread
-    /// the operator's `AgentSlot.max_tokens` override through to the
-    /// dispatcher. Retained on the struct so existing callers (the eval
-    /// pipeline, in-tree integration tests) keep compiling — but
-    /// `execute_slot` ignores this field and always hands the dispatcher
-    /// `None`, which makes the llm-layer resolve the cap from the model
-    /// library (`lookup_model(model).auto_max_tokens()` for Anthropic;
-    /// OpenAI-compat omits the field and lets the provider apply its
-    /// own default). See the 2026-05-17 `qa-remove-agent-max-tokens`
-    /// track for the rationale — leaving operators a per-slot override
-    /// was a footgun (4096 set on a 384k-output model silently capped
-    /// production runs).
+    /// Operator's per-request output-token budget. Threaded directly
+    /// into the `LlmRequest.max_tokens` field on every dispatch
+    /// iteration. `None` lets each provider decide: Anthropic falls
+    /// back to the per-model auto value at the wire boundary (the API
+    /// requires the field), OpenAI-compat omits the field entirely
+    /// (so the provider applies its own — usually much larger —
+    /// default). Explicit `Some(n)` values pass through verbatim —
+    /// no clamping.
+    ///
+    /// History: an earlier `qa-remove-agent-max-tokens` (2026-05-17)
+    /// track temporarily hard-coded this to `None` because the
+    /// persisted `AgentSlot.max_tokens` shape had no way to *unset* a
+    /// previously-saved cap. That footgun has been replaced by the
+    /// `Option<u32>` shape (SQLite sentinel `0` round-trips back to
+    /// `None`), so harness audit F-4
+    /// (`agent-config-asset-coherence-and-token-forward`, 2026-05-19)
+    /// re-enables forwarding.
     pub max_tokens: Option<u32>,
+    /// Operator's per-request sampling temperature. Threaded through
+    /// from `ResolvedAgentSlot.temperature` so the outbound dispatch
+    /// body carries the operator's intent. `None` lets the provider
+    /// apply its own default — the OpenAI-compat and Anthropic body
+    /// builders both omit `temperature` from the JSON when this is
+    /// `None`, so legacy callers (the agent-loop pipeline, in-tree
+    /// integration tests) opt out trivially.
+    pub temperature: Option<f64>,
     /// Observability emitter (`qa-eval-observability-wiring`, 2026-05-17).
     /// When `Some`, every LLM dispatch inside this slot emits a
     /// `ModelCall` span + `ModelCallFinished` (success) or
@@ -143,8 +156,7 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
             role: "user".into(),
             content: vec![ContentBlock::ToolResult {
                 tool_use_id,
-                content: serde_json::to_string(&feedback)
-                    .unwrap_or_else(|_| "{}".to_string()),
+                content: serde_json::to_string(&feedback).unwrap_or_else(|_| "{}".to_string()),
                 is_error: Some(true),
             }],
         });
@@ -158,12 +170,19 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
     let mut total_input_tokens = 0u32;
     let mut total_output_tokens = 0u32;
 
-    // Per qa-remove-agent-max-tokens (2026-05-17): always hand the
-    // dispatcher `None`. `input.max_tokens` (whether it came from a
-    // legacy persisted `AgentSlot.max_tokens` or a caller that
-    // hand-built a `SlotInput`) is intentionally ignored so the cap
-    // resolves from the model library, not from operator config.
-    let dispatcher_max_tokens: Option<u32> = None;
+    // Per harness audit F-4 (`agent-config-asset-coherence-and-token-
+    // forward`, 2026-05-19): the operator's `AgentSlot.max_tokens` is
+    // now forwarded to the dispatcher. The earlier
+    // `qa-remove-agent-max-tokens` (2026-05-17) hard-coded `None` here
+    // because the API surface offered no way to *unset* a previously-
+    // saved cap; that footgun has been replaced by the
+    // `AgentSlot.max_tokens: Option<u32>` shape (the SQLite sentinel
+    // `0` round-trips back to `None`), so explicit operator values can
+    // safely flow through. `None` still means "let the dispatcher
+    // decide" — Anthropic falls back to the per-model auto value at
+    // the wire boundary; OpenAI-compat omits the field entirely.
+    let dispatcher_max_tokens: Option<u32> = input.max_tokens;
+    let dispatcher_temperature: Option<f64> = input.temperature;
 
     // Cap on tool-use round-trips (qa-execute-slot-cap, 2026-05-17). A
     // misbehaving model that always emits `ToolUse` would otherwise
@@ -203,7 +222,7 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
             messages: messages.clone(),
             max_tokens: dispatcher_max_tokens,
             tools: tool_defs.clone(),
-            temperature: None,
+            temperature: dispatcher_temperature,
             response_schema: input
                 .response_schema
                 .clone()
@@ -238,17 +257,10 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
         // HashOnly retention the emitter never reads the bytes, so
         // the work is wasted by ~one clone per dispatch — acceptable
         // tradeoff vs. routing the request back through the emitter.
-        let prompt_for_blob: Option<crate::agent::llm::LlmRequest> =
-            input.obs.as_ref().map(|_| req.clone());
+        let prompt_for_blob: Option<crate::agent::llm::LlmRequest> = input.obs.as_ref().map(|_| req.clone());
         if let Some(obs) = input.obs.as_ref() {
-            obs.emit_model_call_started(
-                &span_id,
-                None,
-                &provider_str,
-                &model_str,
-                Some(&input.slot.role),
-            )
-            .await;
+            obs.emit_model_call_started(&span_id, None, &provider_str, &model_str, Some(&input.slot.role))
+                .await;
         }
 
         let resp = match input.dispatch.complete(req).await {
@@ -296,8 +308,7 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
         // counts, just without raw text.
         if let Some(obs) = input.obs.as_ref() {
             if !assistant_text.is_empty() {
-                obs.emit_assistant_text_delta(&span_id, &assistant_text)
-                    .await;
+                obs.emit_assistant_text_delta(&span_id, &assistant_text).await;
             }
         }
         if let Some(obs) = input.obs.as_ref() {
@@ -376,11 +387,10 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
                 obs.emit_tool_validate_input(&fresh_span_id(), None, &tu_name)
                     .await;
             }
-            let (content, is_error) =
-                match tool_call::invoke(&tu_name, tu_input, input.tools.clone()).await {
-                    Ok(s) => (s, None),
-                    Err(e) => (format!("tool error: {e}"), Some(true)),
-                };
+            let (content, is_error) = match tool_call::invoke(&tu_name, tu_input, input.tools.clone()).await {
+                Ok(s) => (s, None),
+                Err(e) => (format!("tool error: {e}"), Some(true)),
+            };
             if let Some(obs) = input.obs.as_ref() {
                 obs.emit_tool_validate_output(&fresh_span_id(), None, &tu_name)
                     .await;
@@ -480,16 +490,19 @@ mod tests {
         }
     }
 
-    /// Acceptance test for the 2026-05-17 `qa-remove-agent-max-tokens`
-    /// track: `execute_slot` MUST hand the dispatcher `max_tokens: None`
-    /// regardless of what `SlotInput.max_tokens` carries, so the
-    /// downstream Anthropic dispatcher falls back to
-    /// `lookup_model(model).auto_max_tokens()` (the model-library cap)
-    /// and the OpenAI-compat dispatcher omits the field. Operators
-    /// previously setting `4096` on a 384k-output model used to silently
-    /// cap real production runs; that override is now ignored.
+    /// Acceptance test for the 2026-05-19 F-4 carve
+    /// (`agent-config-asset-coherence-and-token-forward`): operator-
+    /// persisted `AgentSlot.max_tokens` IS now forwarded to the
+    /// dispatcher. The earlier 2026-05-17 `qa-remove-agent-max-tokens`
+    /// track had hard-coded `None` here because the persisted shape
+    /// offered no way to *unset* a previously-saved cap; the
+    /// `Option<u32>` shape (SQLite sentinel `0` round-trips to `None`)
+    /// fixes that footgun so explicit operator values flow through
+    /// safely. See the F-4 audit (`3 agent_slots carry max_tokens=0,
+    /// but the actual outbound prompt blob has max_tokens: None`) for
+    /// the motivating regression.
     #[tokio::test]
-    async fn execute_slot_ignores_persisted_max_tokens_and_hands_dispatcher_none() {
+    async fn execute_slot_forwards_persisted_max_tokens_to_dispatcher() {
         let slot = LLMSlot {
             role: "trader".into(),
             prompt: "decide".into(),
@@ -503,7 +516,6 @@ mod tests {
         ));
         let tools = std::sync::Arc::new(ToolRegistry::default_with_builtins());
 
-        // Operator persisted a stale 4096 override on this agent slot.
         let out = execute_slot(SlotInput {
             slot: &slot,
             upstream_inputs: serde_json::json!({}),
@@ -511,6 +523,7 @@ mod tests {
             tools,
             response_schema: None,
             max_tokens: Some(4096),
+            temperature: Some(0.2),
             obs: None,
         })
         .await
@@ -519,10 +532,16 @@ mod tests {
         assert!(out.text().contains("hold"));
         let req = dispatch.last_request();
         assert_eq!(
-            req.max_tokens, None,
-            "execute_slot must drop persisted max_tokens so llm.rs resolves \
-             the cap from the model library; got {:?}",
             req.max_tokens,
+            Some(4096),
+            "execute_slot must forward SlotInput.max_tokens verbatim; got {:?}",
+            req.max_tokens,
+        );
+        assert_eq!(
+            req.temperature,
+            Some(0.2),
+            "execute_slot must forward SlotInput.temperature verbatim; got {:?}",
+            req.temperature,
         );
     }
 
@@ -551,6 +570,7 @@ mod tests {
             tools,
             response_schema: None,
             max_tokens: None,
+            temperature: None,
             obs: None,
         })
         .await

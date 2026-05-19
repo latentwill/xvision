@@ -12,7 +12,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::agents::model::AgentSlot;
+use crate::agents::model::{AgentSlot, InputsPolicy};
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(
@@ -51,7 +51,9 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     .into(),
                 skill_ids: vec![],
                 max_tokens: None,
+                temperature: None,
                 prompt_version: String::new(),
+                inputs_policy: InputsPolicy::Raw,
             }],
         },
         AgentTemplate {
@@ -72,7 +74,9 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                         .into(),
                     skill_ids: vec![],
                     max_tokens: None,
-            prompt_version: String::new(),
+                    temperature: None,
+                    prompt_version: String::new(),
+                    inputs_policy: InputsPolicy::Raw,
                 },
                 AgentSlot {
                     name: "executor".into(),
@@ -85,7 +89,9 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                         .into(),
                     skill_ids: vec![],
                     max_tokens: None,
+                    temperature: None,
                     prompt_version: String::new(),
+                    inputs_policy: InputsPolicy::Raw,
                 },
             ],
         },
@@ -107,7 +113,9 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                         .into(),
                     skill_ids: vec![],
                     max_tokens: None,
+                    temperature: None,
                     prompt_version: String::new(),
+                    inputs_policy: InputsPolicy::Raw,
                 },
                 AgentSlot {
                     name: "risk_check".into(),
@@ -119,7 +127,9 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                         .into(),
                     skill_ids: vec![],
                     max_tokens: None,
+                    temperature: None,
                     prompt_version: String::new(),
+                    inputs_policy: InputsPolicy::Raw,
                 },
                 AgentSlot {
                     name: "executor".into(),
@@ -132,7 +142,9 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                         .into(),
                     skill_ids: vec![],
                     max_tokens: None,
+                    temperature: None,
                     prompt_version: String::new(),
+                    inputs_policy: InputsPolicy::Raw,
                 },
             ],
         },

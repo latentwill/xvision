@@ -16,6 +16,45 @@ use uuid::Uuid;
 
 use crate::commands::venue::Venue;
 
+fn parse_fire_trade_size_bps(value: &str) -> Result<u32, String> {
+    let parsed: u32 = value
+        .parse()
+        .map_err(|_| "size-bps must be an integer between 0 and 2000".to_string())?;
+    if parsed <= 2000 {
+        Ok(parsed)
+    } else {
+        Err("size-bps must be between 0 and 2000".to_string())
+    }
+}
+
+fn parse_fire_trade_stop_loss_pct(value: &str) -> Result<f32, String> {
+    parse_finite_pct_in_range(value, 0.1, 20.0, "stop-loss-pct")
+}
+
+fn parse_fire_trade_take_profit_pct(value: &str) -> Result<f32, String> {
+    parse_finite_pct_in_range(value, 0.1, 50.0, "take-profit-pct")
+}
+
+fn parse_finite_pct_in_range(value: &str, min: f32, max: f32, name: &str) -> Result<f32, String> {
+    let parsed: f32 = value
+        .parse()
+        .map_err(|_| format!("{name} must be a finite number between {min} and {max}"))?;
+    if parsed.is_finite() && parsed >= min && parsed <= max {
+        Ok(parsed)
+    } else {
+        Err(format!("{name} must be a finite number between {min} and {max}"))
+    }
+}
+
+fn parse_fire_trade_summary(value: &str) -> Result<String, String> {
+    let len = value.chars().count();
+    if (10..=500).contains(&len) {
+        Ok(value.to_string())
+    } else {
+        Err("summary must be between 10 and 500 characters".to_string())
+    }
+}
+
 #[derive(Parser, Debug)]
 #[command(
     name = "xvn",
@@ -104,16 +143,16 @@ pub enum Command {
         #[arg(long)]
         side: commands::fire_trade::Side,
         /// Position size in basis points of equity (100 bps = 1%). Range: 0–2000.
-        #[arg(long)]
+        #[arg(long, value_parser = parse_fire_trade_size_bps)]
         size_bps: u32,
         /// Stop-loss distance from mid as a percent. Range: 0.1–20.0.
-        #[arg(long, default_value_t = 1.0)]
+        #[arg(long, default_value_t = 1.0, value_parser = parse_fire_trade_stop_loss_pct)]
         stop_loss_pct: f32,
         /// Take-profit distance from mid as a percent. Range: 0.1–50.0.
-        #[arg(long, default_value_t = 2.0)]
+        #[arg(long, default_value_t = 2.0, value_parser = parse_fire_trade_take_profit_pct)]
         take_profit_pct: f32,
         /// Audit-trail summary string written into the TraderDecision (10–500 chars).
-        #[arg(long, default_value = "manual fire-trade smoke from xvn cli")]
+        #[arg(long, default_value = "manual fire-trade smoke from xvn cli", value_parser = parse_fire_trade_summary)]
         summary: String,
     },
     /// Read live portfolio state from a venue.

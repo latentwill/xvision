@@ -66,22 +66,25 @@ export function derivePositionsByDecision(
 }
 
 /**
- * Per-decision snapshot of the position **before** the row's action
- * is applied. Used to disambiguate `flat` (which is rendered as SELL
- * when it closes a long and COVER when it closes a short) — see
- * `decisionActionLabel` in `eval-runs-detail.tsx`. Same walk and
- * sort order as `derivePositionsByDecision` so the two maps stay
- * aligned on `decision_index`.
+ * Walk decisions in `decision_index` order and emit the position
+ * **side held for the row's own asset _before_ its action applies**.
+ * Used by the action-pill renderer to distinguish `flat`-after-long
+ * (a SELL) from `flat`-after-short (a COVER) — the on-the-wire action
+ * `"flat"` is direction-blind, but the operator-facing label is not.
+ *
+ * `decision_index` keys mirror `derivePositionsByDecision` so callers
+ * can share the same walk semantics across both maps.
  */
-export function derivePriorPositionsByDecision(
+export function derivePriorSideByDecision(
   rows: ReadonlyArray<DecisionRowDto>,
-): Map<number, OpenPosition[]> {
+): Map<number, PositionSide> {
   const ordered = [...rows].sort((a, b) => a.decision_index - b.decision_index);
   const state: RunningState = new Map();
-  const out = new Map<number, OpenPosition[]>();
+  const out = new Map<number, PositionSide>();
 
   for (const row of ordered) {
-    out.set(row.decision_index, snapshot(state));
+    const prior = state.get(row.asset)?.side ?? "flat";
+    out.set(row.decision_index, prior);
     applyAction(state, row);
   }
   return out;

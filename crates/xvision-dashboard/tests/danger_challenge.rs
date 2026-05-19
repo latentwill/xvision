@@ -10,9 +10,7 @@ use axum_test::TestServer;
 use tempfile::TempDir;
 use xvision_dashboard::server::build_router;
 use xvision_dashboard::AppState;
-use xvision_engine::api::settings::danger::{
-    FACTORY_RESET_CONFIRM, RESET_WORKSPACE_CONFIRM,
-};
+use xvision_engine::api::settings::danger::{FACTORY_RESET_CONFIRM, RESET_WORKSPACE_CONFIRM};
 
 async fn boot() -> (TestServer, TempDir) {
     let tmp = TempDir::new().unwrap();
@@ -63,6 +61,31 @@ async fn reset_workspace_accepts_correct_phrase() {
         .json(&serde_json::json!({ "confirm": RESET_WORKSPACE_CONFIRM }))
         .await;
     resp.assert_status_ok();
+}
+
+#[tokio::test]
+async fn factory_reset_accepts_correct_phrase() {
+    let (server, _tmp) = boot().await;
+    let resp = server
+        .post("/api/settings/danger/factory-reset")
+        .json(&serde_json::json!({ "confirm": FACTORY_RESET_CONFIRM }))
+        .await;
+    resp.assert_status_ok();
+}
+
+#[tokio::test]
+async fn factory_reset_rejects_legacy_token() {
+    let (server, _tmp) = boot().await;
+    let resp = server
+        .post("/api/settings/danger/factory-reset")
+        .json(&serde_json::json!({ "confirm": "yes-i-am-sure" }))
+        .await;
+    resp.assert_status(axum::http::StatusCode::BAD_REQUEST);
+    let body = resp.text();
+    assert!(
+        body.contains(FACTORY_RESET_CONFIRM),
+        "rejection must guide operator to the factory reset phrase, got: {body}"
+    );
 }
 
 #[tokio::test]

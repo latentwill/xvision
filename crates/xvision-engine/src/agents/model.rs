@@ -5,6 +5,67 @@ use serde::{Deserialize, Serialize};
 
 use xvision_core::providers::{lookup_model, ModelMetadata};
 
+/// How the eval executor sanitizes the seed JSON before handing it to
+/// the trader LLM. Persisted as the `inputs_policy` column on
+/// `agent_slots` (migration 020). See harness audit F-6
+/// (`team/intake/2026-05-19-eval-traces-end-to-end-audit.md`).
+///
+/// - `Raw` — today's behavior. `decision_index` lives on the top-level
+///   seed; every `bar_history` entry carries `timestamp`. This is the
+///   migration default, so existing rows are unaffected. The
+///   regression-guard unit test in `eval::executor::paper` pins this
+///   shape byte-for-byte.
+/// - `Causal` — drop `decision_index` from the top-level seed and
+///   replace each `bar_history` entry's `timestamp` field with
+///   `bar_index` (0 = oldest visible bar in the `bar_history` slice).
+///   The current bar still carries its OHLCV — only the wall-clock
+///   label is hidden, which matches the v4 causal prompts.
+/// - `Oracle` — behaves identically to `Raw` at runtime. The tag
+///   exists so downstream consumers can mark a slot as deliberately
+///   oracle-style (the two seeded oracle agents are documented in the
+///   F-6 audit). It's distinct from `Raw` so the UI / cohort tagging
+///   can tell "left at default" apart from "deliberately full
+///   visibility."
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum InputsPolicy {
+    /// Default — preserve the raw seed shape.
+    #[default]
+    Raw,
+    /// Strip `timestamp` (per bar) and `decision_index` (top-level).
+    Causal,
+    /// Tag-only; runtime behavior matches `Raw`.
+    Oracle,
+}
+
+impl InputsPolicy {
+    /// Wire representation persisted in the `agent_slots.inputs_policy`
+    /// column. Stable — downstream consumers parse this verbatim.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            InputsPolicy::Raw => "raw",
+            InputsPolicy::Causal => "causal",
+            InputsPolicy::Oracle => "oracle",
+        }
+    }
+
+    /// Parse a value from the DB column. Unrecognised strings fall back
+    /// to `Raw` so a future column-value typo can't crash the store
+    /// reader on every read — the operator just sees the safe default.
+    pub fn parse_or_raw(s: &str) -> Self {
+        match s {
+            "causal" => InputsPolicy::Causal,
+            "oracle" => InputsPolicy::Oracle,
+            _ => InputsPolicy::Raw,
+        }
+    }
+}
+
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(
     feature = "ts-export",
@@ -58,6 +119,21 @@ pub struct AgentSlot {
     #[serde(default)]
     #[cfg_attr(feature = "ts-export", ts(type = "number | null"))]
     pub max_tokens: Option<u32>,
+    /// Optional operator override for the sampling temperature
+    /// forwarded to the provider. `None` lets the provider's default
+    /// apply (Anthropic ~1.0, OpenAI 1.0). `Some(t)` is passed through
+    /// verbatim — no clamping. Eval-baseline operators set a low
+    /// value (e.g. 0.2) when they want reproducible decisions; agent-
+    /// loop operators leave it unset.
+    ///
+    /// Not yet persisted to SQLite (a follow-up migration will add the
+    /// column). For now the field round-trips through JSON via
+    /// `#[serde(default)]`; rows loaded from the store always come
+    /// back as `None`, so existing seeded agents see the provider
+    /// default until they're re-saved with an explicit value.
+    #[serde(default)]
+    #[cfg_attr(feature = "ts-export", ts(type = "number | null"))]
+    pub temperature: Option<f64>,
     /// Server-computed content digest of `system_prompt`. Format is the
     /// lowercase 16-char prefix of `sha256(system_prompt)` — short
     /// enough to eyeball in the agents UI, long enough to make
@@ -78,6 +154,14 @@ pub struct AgentSlot {
     /// See harness audit F-3 (`team/intake/2026-05-18-harness-observability-audit.md`).
     #[serde(default)]
     pub prompt_version: String,
+    /// How the eval executor sanitizes the seed JSON before the trader
+    /// LLM sees it. Persisted on the `agent_slots.inputs_policy`
+    /// column (migration 020). Defaults to `Raw` so existing rows and
+    /// clients that omit the field keep today's behavior. See
+    /// harness audit F-6
+    /// (`team/intake/2026-05-19-eval-traces-end-to-end-audit.md`).
+    #[serde(default)]
+    pub inputs_policy: InputsPolicy,
 }
 
 impl AgentSlot {
@@ -146,7 +230,9 @@ impl Agent {
                 system_prompt: String::new(),
                 skill_ids: Vec::new(),
                 max_tokens: None,
-            prompt_version: String::new(),
+                temperature: None,
+                prompt_version: String::new(),
+                inputs_policy: InputsPolicy::default(),
             }],
             archived: false,
             created_at: now,
@@ -175,5 +261,29 @@ mod tests {
         assert!(a.slots[0].system_prompt.is_empty());
         assert!(!a.archived);
         assert!(a.tags.is_empty());
+        // F-6: new slots default to `Raw` so existing behavior is
+        // preserved; operators opt into `Causal` / `Oracle` explicitly.
+        assert_eq!(a.slots[0].inputs_policy, InputsPolicy::Raw);
+    }
+
+    #[test]
+    fn inputs_policy_wire_format_is_lowercase() {
+        // Persisted column value + JSON wire shape both use lowercase
+        // strings. Pin so a future rename doesn't silently invalidate
+        // every persisted row.
+        assert_eq!(InputsPolicy::Raw.as_str(), "raw");
+        assert_eq!(InputsPolicy::Causal.as_str(), "causal");
+        assert_eq!(InputsPolicy::Oracle.as_str(), "oracle");
+        for v in [InputsPolicy::Raw, InputsPolicy::Causal, InputsPolicy::Oracle] {
+            let s = serde_json::to_string(&v).unwrap();
+            let back: InputsPolicy = serde_json::from_str(&s).unwrap();
+            assert_eq!(v, back);
+        }
+        // Unknown strings parse back to the safe default rather than
+        // crashing the store reader.
+        assert_eq!(InputsPolicy::parse_or_raw("weird"), InputsPolicy::Raw);
+        assert_eq!(InputsPolicy::parse_or_raw(""), InputsPolicy::Raw);
+        assert_eq!(InputsPolicy::parse_or_raw("causal"), InputsPolicy::Causal);
+        assert_eq!(InputsPolicy::parse_or_raw("oracle"), InputsPolicy::Oracle);
     }
 }

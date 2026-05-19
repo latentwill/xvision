@@ -37,9 +37,7 @@ use xvision_core::config::{self, ProviderEntry, ProviderKind};
 use xvision_engine::agent::llm::{AnthropicDispatch, LlmDispatch, MockDispatch, OpenaiCompatDispatch};
 use xvision_engine::api::{scenario as api_scenario, ApiContext, ApiError};
 use xvision_engine::eval::findings::Finding;
-use xvision_engine::eval::review::{
-    self, AgentProfile, EvalReview, ReviewScenarioSummary, ReviewStatus,
-};
+use xvision_engine::eval::review::{self, AgentProfile, EvalReview, ReviewScenarioSummary, ReviewStatus};
 use xvision_engine::eval::store::RunStore;
 
 use crate::error::DashboardError;
@@ -78,9 +76,7 @@ pub async fn generate(
     // (Queued / Running) review. A prior Failed row is retry-eligible —
     // returning it here would make transient dispatch errors sticky.
     if !body.force {
-        if let Some(existing) =
-            find_reusable_review(&store, &run_id, &body.agent_profile_id).await?
-        {
+        if let Some(existing) = find_reusable_review(&store, &run_id, &body.agent_profile_id).await? {
             let findings = store
                 .read_findings_for_review(&existing.id)
                 .await
@@ -207,19 +203,16 @@ async fn find_reusable_review(
         .list_reviews_for_run(run_id)
         .await
         .map_err(|e| DashboardError::Internal(e))?;
-    Ok(all.into_iter().find(|r| {
-        r.agent_profile_id == profile_id && !matches!(r.status, ReviewStatus::Failed)
-    }))
+    Ok(all
+        .into_iter()
+        .find(|r| r.agent_profile_id == profile_id && !matches!(r.status, ReviewStatus::Failed)))
 }
 
 /// Resolve `(run.scenario_id → ReviewScenarioSummary)` so the review
 /// payload carries scenario context. Returns `None` silently when the
 /// scenario row is missing or the run lookup fails — we don't want a
 /// scenario-resolution hiccup to take down the review request itself.
-async fn resolve_scenario_summary(
-    ctx: &ApiContext,
-    run_id: &str,
-) -> Option<ReviewScenarioSummary> {
+async fn resolve_scenario_summary(ctx: &ApiContext, run_id: &str) -> Option<ReviewScenarioSummary> {
     let store = RunStore::new(ctx.db.clone());
     let run = match store.get(run_id).await {
         Ok(r) => r,
@@ -261,9 +254,9 @@ fn map_review_error(e: review::ReviewError) -> DashboardError {
         ReviewError::RunNotCompleted(m) => DashboardError::from(ApiError::Validation(format!(
             "review requires a completed run, got status `{m}`"
         ))),
-        ReviewError::Dispatch(m) => DashboardError::from(ApiError::Internal(format!(
-            "review dispatch failed: {m}"
-        ))),
+        ReviewError::Dispatch(m) => {
+            DashboardError::from(ApiError::Internal(format!("review dispatch failed: {m}")))
+        }
         ReviewError::Db(e) => {
             // Engine routes "run not found" through the untyped Db
             // variant (see engine/review/engine.rs doc comment). Surface
@@ -374,9 +367,7 @@ fn dispatch_from_provider(entry: &ProviderEntry) -> Result<Arc<dyn LlmDispatch>,
     }
     Ok(match entry.kind {
         ProviderKind::Anthropic => Arc::new(AnthropicDispatch::new(api_key)),
-        ProviderKind::OpenaiCompat => {
-            Arc::new(OpenaiCompatDispatch::new(entry.base_url.clone(), api_key))
-        }
+        ProviderKind::OpenaiCompat => Arc::new(OpenaiCompatDispatch::new(entry.base_url.clone(), api_key)),
         ProviderKind::LocalCandle => Arc::new(MockDispatch::echo(
             r#"{"summary":"local-candle stub","verdict":"inconclusive","confidence":0.0,"score":0,"findings":[],"risks":[],"next_tests":[],"questions":[]}"#,
         )),
@@ -416,8 +407,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let xvn_home = tmp.path().to_path_buf();
         std::fs::create_dir_all(xvn_home.join("config")).unwrap();
-        let mut cfg = std::fs::read_to_string("../../config/default.toml")
-            .expect("read workspace config/default.toml");
+        let mut cfg =
+            std::fs::read_to_string("../../config/default.toml").expect("read workspace config/default.toml");
         cfg.push_str(providers_toml);
         std::fs::write(xvn_home.join("config/default.toml"), cfg).unwrap();
         let state = AppState::new(xvn_home).await.expect("AppState::new");
@@ -481,8 +472,7 @@ mod tests {
 
     async fn boot() -> (TestServer, TempDir, AppState) {
         let (state, tmp) = fresh_state().await;
-        let server =
-            TestServer::new(crate::server::build_router(state.clone())).expect("TestServer");
+        let server = TestServer::new(crate::server::build_router(state.clone())).expect("TestServer");
         (server, tmp, state)
     }
 
@@ -536,8 +526,7 @@ mod tests {
         assert_eq!(second["review"]["id"].as_str().unwrap(), first_id);
 
         // Third POST WITH force creates a new id.
-        let force_body =
-            serde_json::json!({"agent_profile_id": "reasoning-agent", "force": true});
+        let force_body = serde_json::json!({"agent_profile_id": "reasoning-agent", "force": true});
         let third: serde_json::Value = server
             .post(&format!("/api/eval/runs/{run_id}/review"))
             .json(&force_body)
@@ -616,9 +605,7 @@ mod tests {
         // hiccup shouldn't take down the review request" contract.
         let (_server, _tmp, state) = boot().await;
         let ctx = state.api_context();
-        assert!(resolve_scenario_summary(&ctx, "does-not-exist")
-            .await
-            .is_none());
+        assert!(resolve_scenario_summary(&ctx, "does-not-exist").await.is_none());
     }
 
     #[tokio::test]
@@ -661,8 +648,7 @@ mod tests {
     async fn list_reviews_returns_newest_first() {
         let (server, _tmp, state) = boot().await;
         let run_id = seed_completed_run(&state.pool).await;
-        let body =
-            serde_json::json!({"agent_profile_id": "reasoning-agent", "force": true});
+        let body = serde_json::json!({"agent_profile_id": "reasoning-agent", "force": true});
         // Two forced reviews so we have ordering to assert on.
         for _ in 0..2 {
             server
@@ -671,9 +657,7 @@ mod tests {
                 .await
                 .assert_status_ok();
         }
-        let resp = server
-            .get(&format!("/api/eval/runs/{run_id}/reviews"))
-            .await;
+        let resp = server.get(&format!("/api/eval/runs/{run_id}/reviews")).await;
         resp.assert_status_ok();
         let v: serde_json::Value = resp.json();
         let items = v["items"].as_array().unwrap();
@@ -698,16 +682,12 @@ mod tests {
     async fn post_review_substitutes_same_kind_provider_with_different_name() {
         // SAFETY: env var mutation is process-global; this key is
         // namespaced and other tests in this file don't read it.
-        std::env::set_var(
-            "QA_REVIEW_SUBSTITUTE_TEST_KEY",
-            "fake-key-for-substitution-test",
-        );
+        std::env::set_var("QA_REVIEW_SUBSTITUTE_TEST_KEY", "fake-key-for-substitution-test");
         let (state, _tmp) = fresh_state_with_providers(
             "\n[[providers]]\nname = \"anthropic-prod\"\nkind = \"anthropic\"\nbase_url = \"https://api.anthropic.com\"\napi_key_env = \"QA_REVIEW_SUBSTITUTE_TEST_KEY\"\n",
         )
         .await;
-        let server =
-            TestServer::new(crate::server::build_router(state.clone())).expect("TestServer");
+        let server = TestServer::new(crate::server::build_router(state.clone())).expect("TestServer");
         let run_id = seed_completed_run(&state.pool).await;
 
         let resp = server
@@ -738,8 +718,7 @@ mod tests {
             "\n[[providers]]\nname = \"openrouter\"\nkind = \"openai-compat\"\nbase_url = \"https://openrouter.ai/api/v1\"\napi_key_env = \"OPENROUTER_KEY\"\n",
         )
         .await;
-        let server =
-            TestServer::new(crate::server::build_router(state.clone())).expect("TestServer");
+        let server = TestServer::new(crate::server::build_router(state.clone())).expect("TestServer");
         let run_id = seed_completed_run(&state.pool).await;
 
         let resp = server
@@ -767,8 +746,7 @@ mod tests {
     #[tokio::test]
     async fn post_review_returns_clearer_error_when_no_providers() {
         let (state, _tmp) = fresh_state_with_providers("").await;
-        let server =
-            TestServer::new(crate::server::build_router(state.clone())).expect("TestServer");
+        let server = TestServer::new(crate::server::build_router(state.clone())).expect("TestServer");
         let run_id = seed_completed_run(&state.pool).await;
 
         let resp = server

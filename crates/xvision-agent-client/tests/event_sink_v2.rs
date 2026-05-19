@@ -12,24 +12,23 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use sqlx::SqlitePool;
+use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use tempfile::TempDir;
 use tokio::io::AsyncWriteExt;
 use tokio::net::UnixStream;
 use xvision_agent_client::{start_event_sink, SidecarFingerprint};
-use xvision_observability::{
-    AgentRunRecorder, RecorderError, RunEvent, RunEventBus, SqliteRecorder,
-};
+use xvision_observability::{AgentRunRecorder, RecorderError, RunEvent, RunEventBus, SqliteRecorder};
 
-const MIGRATION_002: &str =
-    include_str!("../../xvision-engine/migrations/002_eval.sql");
-const MIGRATION_013: &str =
-    include_str!("../../xvision-engine/migrations/013_cli_jobs.sql");
-const MIGRATION_018: &str =
-    include_str!("../../xvision-engine/migrations/018_agent_run_observability.sql");
+const MIGRATION_002: &str = include_str!("../../xvision-engine/migrations/002_eval.sql");
+const MIGRATION_013: &str = include_str!("../../xvision-engine/migrations/013_cli_jobs.sql");
+const MIGRATION_018: &str = include_str!("../../xvision-engine/migrations/018_agent_run_observability.sql");
 
 async fn migrated_pool() -> SqlitePool {
-    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
     sqlx::query(MIGRATION_002).execute(&pool).await.unwrap();
     sqlx::query(MIGRATION_013).execute(&pool).await.unwrap();
     sqlx::query(MIGRATION_018).execute(&pool).await.unwrap();
@@ -37,11 +36,10 @@ async fn migrated_pool() -> SqlitePool {
 }
 
 async fn count_rows(pool: &SqlitePool, table: &str) -> i64 {
-    let row: (i64,) =
-        sqlx::query_as(&format!("SELECT COUNT(*) FROM {table}"))
-            .fetch_one(pool)
-            .await
-            .unwrap();
+    let row: (i64,) = sqlx::query_as(&format!("SELECT COUNT(*) FROM {table}"))
+        .fetch_one(pool)
+        .await
+        .unwrap();
     row.0
 }
 
@@ -103,8 +101,7 @@ impl AgentRunRecorder for CapturingRecorder {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn v2_assistant_text_delta_publishes_event_but_no_sqlite_row() {
     let pool = migrated_pool().await;
-    let sqlite: Arc<dyn AgentRunRecorder> =
-        Arc::new(SqliteRecorder::new(pool.clone()));
+    let sqlite: Arc<dyn AgentRunRecorder> = Arc::new(SqliteRecorder::new(pool.clone()));
     let capture = Arc::new(CapturingRecorder::default());
     let bus = Arc::new(RunEventBus::new(vec![
         sqlite,
@@ -187,7 +184,12 @@ async fn v2_assistant_text_delta_publishes_event_but_no_sqlite_row() {
     // on).
     for _ in 0..50 {
         let snap = capture.snapshot().await;
-        if snap.iter().filter(|e| matches!(e, RunEvent::AssistantTextDelta(_))).count() >= 2 {
+        if snap
+            .iter()
+            .filter(|e| matches!(e, RunEvent::AssistantTextDelta(_)))
+            .count()
+            >= 2
+        {
             break;
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
@@ -203,12 +205,27 @@ async fn v2_assistant_text_delta_publishes_event_but_no_sqlite_row() {
         .collect();
     assert_eq!(deltas, vec![7usize, 5usize], "two deltas in arrival order");
 
-    // Phase A retention: AssistantTextDelta is stream-only — recorder
-    // writes no dedicated table. Spans + model_calls land normally.
-    // (No `assistant_text_deltas` table exists — assert via the rows
-    // that DO exist for the same span.)
+    // Phase A retention: AssistantTextDelta is stream-only. Spans +
+    // model_calls land normally, but the deltas do not get a table row.
     let spans_count = count_rows(&pool, "spans").await;
     assert!(spans_count >= 1, "ModelCall span row should exist");
+    let event_rows: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM events WHERE run_id = ? AND span_id = ?")
+        .bind("r-delta")
+        .bind("sp-m1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(event_rows.0, 0, "assistant deltas should not persist event rows");
+    let delta_tables: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?")
+            .bind("assistant_text_deltas")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        delta_tables.0, 0,
+        "assistant deltas should not have a detail table"
+    );
 
     drop(conn);
     handle.shutdown().await;
@@ -217,8 +234,7 @@ async fn v2_assistant_text_delta_publishes_event_but_no_sqlite_row() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn v2_tool_call_cancelled_closes_span_and_records_detail() {
     let pool = migrated_pool().await;
-    let recorder: Arc<dyn AgentRunRecorder> =
-        Arc::new(SqliteRecorder::new(pool.clone()));
+    let recorder: Arc<dyn AgentRunRecorder> = Arc::new(SqliteRecorder::new(pool.clone()));
     let bus = Arc::new(RunEventBus::new(vec![recorder]));
 
     let dir = TempDir::new().unwrap();
@@ -266,16 +282,21 @@ async fn v2_tool_call_cancelled_closes_span_and_records_detail() {
     wait_for_rows(&pool, "agent_runs", 1).await;
     wait_for_rows(&pool, "tool_calls", 1).await;
 
-    // Span should be marked cancelled (closes after the cancellation
-    // notification fires).
+    // Span should be marked cancelled with the cancellation detail
+    // preserved (closes after the cancellation notification fires).
     let deadline = std::time::Instant::now() + Duration::from_secs(2);
     loop {
-        let row: (String,) = sqlx::query_as("SELECT status FROM spans WHERE id = ?")
-            .bind("sp-t1")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+        let row: (String, Option<String>) =
+            sqlx::query_as("SELECT status, error_json FROM spans WHERE id = ?")
+                .bind("sp-t1")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         if row.0 == "cancelled" {
+            let error_json = row.1.expect("cancelled span should record detail");
+            let error: serde_json::Value =
+                serde_json::from_str(&error_json).expect("cancel detail should be JSON");
+            assert_eq!(error["reason"], "user abort");
             break;
         }
         if std::time::Instant::now() >= deadline {
@@ -291,8 +312,7 @@ async fn v2_tool_call_cancelled_closes_span_and_records_detail() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn v2_overloaded_publishes_backpressure_dropped() {
     let pool = migrated_pool().await;
-    let sqlite: Arc<dyn AgentRunRecorder> =
-        Arc::new(SqliteRecorder::new(pool.clone()));
+    let sqlite: Arc<dyn AgentRunRecorder> = Arc::new(SqliteRecorder::new(pool.clone()));
     let capture = Arc::new(CapturingRecorder::default());
     let bus = Arc::new(RunEventBus::new(vec![
         sqlite,
@@ -323,13 +343,14 @@ async fn v2_overloaded_publishes_backpressure_dropped() {
         "event.overloaded",
         serde_json::json!({
             "run_id": "r-overload",
-            "dropped": 0,
+            "dropped": 3,
             "note": "outbound buffer high",
         }),
     )
     .await;
 
     wait_for_rows(&pool, "agent_runs", 1).await;
+    wait_for_rows(&pool, "supervisor_notes", 1).await;
     // Wait for the overload to appear in the capture.
     for _ in 0..50 {
         let snap = capture.snapshot().await;
@@ -347,7 +368,25 @@ async fn v2_overloaded_publishes_backpressure_dropped() {
         })
         .expect("BackpressureDropped should be published");
     assert_eq!(backpressure.run_id, "r-overload");
+    assert_eq!(backpressure.dropped, 3);
     assert_eq!(backpressure.note, "outbound buffer high");
+    let note: (String, String) =
+        sqlx::query_as("SELECT severity, content FROM supervisor_notes WHERE run_id = ? AND role = 'system'")
+            .bind("r-overload")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(note.0, "warn");
+    assert!(
+        note.1.contains("Dropped 3 events under backpressure"),
+        "warn row should include dropped count: {}",
+        note.1
+    );
+    assert!(
+        note.1.contains("outbound buffer high"),
+        "warn row should include sidecar note: {}",
+        note.1
+    );
 
     drop(conn);
     handle.shutdown().await;
@@ -358,8 +397,7 @@ async fn v2_per_iteration_model_call_pair_records_model_row() {
     // Verify that the start→delta→finish sequence records one
     // model_calls row with usage attached to the per-iteration span.
     let pool = migrated_pool().await;
-    let recorder: Arc<dyn AgentRunRecorder> =
-        Arc::new(SqliteRecorder::new(pool.clone()));
+    let recorder: Arc<dyn AgentRunRecorder> = Arc::new(SqliteRecorder::new(pool.clone()));
     let bus = Arc::new(RunEventBus::new(vec![recorder]));
 
     let dir = TempDir::new().unwrap();

@@ -10,17 +10,16 @@
 //! `ExecuteSlotError::ToolLoopCapExceeded` carrying enough payload to
 //! diagnose which slot wedged and what it tried to call.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc, Mutex,
+};
 
 use async_trait::async_trait;
-use xvision_engine::agent::execute::{
-    execute_slot, ExecuteSlotError, SlotInput, MAX_TOOL_LOOP_ITERATIONS,
-};
-use xvision_engine::agent::llm::{
-    ContentBlock, LlmDispatch, LlmRequest, LlmResponse, StopReason,
-};
+use xvision_engine::agent::execute::{execute_slot, ExecuteSlotError, SlotInput, MAX_TOOL_LOOP_ITERATIONS};
+use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmRequest, LlmResponse, StopReason};
 use xvision_engine::strategies::slot::LLMSlot;
-use xvision_engine::tools::ToolRegistry;
+use xvision_engine::tools::{Tool, ToolName, ToolRegistry};
 
 /// Dispatch double that always returns a `ToolUse` block calling
 /// `xvision_health_ping`. Counts how many times it was called so a
@@ -62,6 +61,26 @@ impl LlmDispatch for LoopingDispatch {
     }
 }
 
+struct CountingHealthTool {
+    invoke_count: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl Tool for CountingHealthTool {
+    fn name(&self) -> ToolName {
+        ToolName::new("xvision_health_ping")
+    }
+
+    fn description(&self) -> &'static str {
+        "test health ping"
+    }
+
+    async fn invoke(&self, _input: serde_json::Value) -> anyhow::Result<serde_json::Value> {
+        self.invoke_count.fetch_add(1, Ordering::SeqCst);
+        Ok(serde_json::json!({"ok": true}))
+    }
+}
+
 fn trader_slot_with_health_tool() -> LLMSlot {
     LLMSlot {
         role: "trader".into(),
@@ -81,7 +100,12 @@ fn trader_slot_with_health_tool() -> LLMSlot {
 async fn execute_slot_caps_runaway_tool_use_loop() {
     let slot = trader_slot_with_health_tool();
     let dispatch = Arc::new(LoopingDispatch::new("xvision_health_ping"));
-    let tools = Arc::new(ToolRegistry::default_with_builtins());
+    let tool_invocations = Arc::new(AtomicUsize::new(0));
+    let mut registry = ToolRegistry::empty();
+    registry.register(Arc::new(CountingHealthTool {
+        invoke_count: tool_invocations.clone(),
+    }));
+    let tools = Arc::new(registry);
 
     let err = execute_slot(SlotInput {
         slot: &slot,
@@ -90,6 +114,7 @@ async fn execute_slot_caps_runaway_tool_use_loop() {
         tools,
         response_schema: None,
         max_tokens: None,
+        temperature: None,
         obs: None,
     })
     .await
@@ -146,5 +171,10 @@ async fn execute_slot_caps_runaway_tool_use_loop() {
         MAX_TOOL_LOOP_ITERATIONS,
         "dispatcher must be invoked exactly MAX_TOOL_LOOP_ITERATIONS times — \
          no extra call after the cap",
+    );
+    assert_eq!(
+        tool_invocations.load(Ordering::SeqCst),
+        MAX_TOOL_LOOP_ITERATIONS,
+        "registered tool must be invoked once per capped iteration",
     );
 }

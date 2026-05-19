@@ -105,10 +105,48 @@ export function generateReview(
   );
 }
 
+export const agentProfileKeys = {
+  all: ["agent-profiles"] as const,
+  list: () => [...agentProfileKeys.all, "list"] as const,
+};
+
+/// `GET /api/eval/agent-profiles` — list the seeded review profiles
+/// with their current provider/model assignment. Used by the agent
+/// picker so the operator sees what each profile will actually
+/// dispatch to (and can change it).
+export function listAgentProfiles(): Promise<AgentProfile[]> {
+  return apiFetch<{ items: AgentProfile[] }>("/api/eval/agent-profiles").then(
+    (r) => r.items,
+  );
+}
+
+/// `PATCH /api/eval/agent-profiles/:id` — reseat a profile against a
+/// different provider/model. Backend validates that `provider` (when
+/// supplied) is a name present in `$XVN_HOME/config/default.toml`;
+/// passing an unknown name surfaces an `ApiError` with `code:
+/// "validation"`.
+export function updateAgentProfile(
+  id: string,
+  body: {
+    provider?: string;
+    model?: string;
+    temperature?: number;
+    max_tokens?: number;
+    system_prompt?: string;
+  },
+): Promise<AgentProfile> {
+  return apiFetch<AgentProfile>(
+    `/api/eval/agent-profiles/${encodeURIComponent(id)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    },
+  );
+}
+
 /// Canonical review-agent profile ids seeded by migration 016.
-/// The agent picker uses this list as a fallback when the dashboard
-/// hasn't seeded /api/agent-profiles yet (no such endpoint today —
-/// the dashboard discovers profiles via the review-listing fallback).
+/// Used as a static fallback for label/blurb metadata that isn't
+/// stored on the AgentProfile row itself.
 export const CANONICAL_AGENT_PROFILES: ReadonlyArray<{
   id: string;
   label: string;

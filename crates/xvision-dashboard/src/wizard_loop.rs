@@ -23,6 +23,7 @@ use chrono::{TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
+use crate::cli_jobs::eval_run_bridge;
 use crate::cli_jobs::runner::CliJobRunner;
 use crate::cli_jobs::store::CliJobStore;
 use xvision_engine::agent::llm::{
@@ -154,24 +155,162 @@ pub struct WizardLoop {
     /// failing schema instead of the generic "stuck calling tools"
     /// message.
     last_tool_error: Option<(String, String)>,
-    /// Signature of the most recent `validate_draft` failure (sorted +
-    /// joined `errors[]`). Reset on success or when the failure shape
-    /// changes. Paired with `validate_failure_streak` to break out of
-    /// "edit prompt → revalidate → same error" loops that the operator
-    /// can never resolve (e.g. a false-positive validator rule).
-    last_validate_signature: Option<String>,
-    validate_failure_streak: u32,
+    /// Signature of the most recent failing tool call:
+    /// `(tool_name, error_class)`. `error_class` is a stable summary of
+    /// the failure shape — sorted+joined `errors[]` for `validate_draft`,
+    /// and the `error` string for any tool that surfaced its failure via
+    /// the `Ok(json!({"error": ...}))` tool_result path (including the
+    /// pre-dispatch `InvalidJobId` shape check on `get_cli_job{,_output}`
+    /// added for F-10). Reset on success or when either the tool name or
+    /// the error class changes. Paired with `tool_failure_streak` to
+    /// break out of "model retries the same tool with the same broken
+    /// argument" loops that the operator can never resolve (e.g. a
+    /// false-positive validator rule, or a hallucinated `eval_run_*`
+    /// job_id that will never resolve).
+    last_tool_failure: Option<(String, String)>,
+    tool_failure_streak: u32,
     /// Pending events queued during the current `next_event` invocation.
     pending: Vec<WizardEvent>,
     is_done: bool,
 }
 
-/// Hard cap on consecutive `validate_draft` failures with overlapping
-/// error text before the wizard loop forcibly ends the turn and surfaces
-/// the error to the user. Two means: one initial failure plus one
-/// "tried to fix it and got the same error" — beyond that, the model is
-/// not making progress and silently retrying just hides the real issue.
-const MAX_VALIDATE_FAILURE_STREAK: u32 = 2;
+/// Hard cap on consecutive failures of the **same tool with the same
+/// error class** before the wizard loop forcibly ends the turn and
+/// surfaces the error to the user. Two means: one initial failure plus
+/// one "tried to fix it and got the same error" — beyond that, the
+/// model is not making progress and silently retrying just hides the
+/// real issue. Originally added in PR #316 for `validate_draft`
+/// (qa-round-5 F-3 / chat-rail-validate-retry-budget); generalised in
+/// F-10 to cover `get_cli_job` / `get_cli_job_output` shape-check loops
+/// without duplicating the data structure.
+const MAX_TOOL_FAILURE_STREAK: u32 = 2;
+
+/// Crockford base32 alphabet used by ULID (case-insensitive). Excludes
+/// I, L, O, and U to avoid visual ambiguity. ULIDs are exactly 26 chars.
+const ULID_LEN: usize = 26;
+
+/// Returns true iff `s` is 26 chars of Crockford base32 (case-
+/// insensitive). Excludes I, L, O, U per the ULID spec.
+fn is_valid_ulid(s: &str) -> bool {
+    if s.len() != ULID_LEN {
+        return false;
+    }
+    s.bytes().all(|b| {
+        matches!(
+            b,
+            b'0'..=b'9'
+                | b'A'..=b'H'
+                | b'J' | b'K'
+                | b'M' | b'N'
+                | b'P'..=b'T'
+                | b'V'..=b'Z'
+                | b'a'..=b'h'
+                | b'j' | b'k'
+                | b'm' | b'n'
+                | b'p'..=b't'
+                | b'v'..=b'z'
+        )
+    })
+}
+
+/// Returns true iff `s` is a syntactically valid `job_id` for the
+/// `get_cli_job` / `get_cli_job_output` tools. Accepts the shapes the
+/// workspace path can legitimately produce:
+///
+/// - A bare ULID (26 chars), e.g. when the model has been handed one
+///   directly. Strictly the F-10 contract.
+/// - `job_<ULID>` (30 chars), which is the shape `CliJobStore::create_queued`
+///   actually produces today (`format!("job_{}", ulid::Ulid::new())`).
+///   Rejecting these would break the entire `fetch_bars → get_cli_job`
+///   flow, so we accept this single specific prefix.
+/// - `eval_run_<ULID>`, a synthetic read-only bridge over `eval_runs`.
+///   The wizard receives this shape from run-eval workflows; accepting it
+///   keeps `get_cli_job{,_output}` able to resolve eval-run status without
+///   writing duplicate cli_jobs rows.
+///
+/// Anything else — including the audit-evidence pattern
+/// `eval_run_XKI6IWGw5aFZXsqkW3a3` (the suffix isn't even 26 chars) — is
+/// rejected before the store is touched.
+fn is_valid_cli_job_id(s: &str) -> bool {
+    if is_valid_ulid(s) {
+        return true;
+    }
+    if let Some(rest) = s.strip_prefix("job_") {
+        return is_valid_ulid(rest);
+    }
+    if let Some(rest) = s.strip_prefix(eval_run_bridge::EVAL_RUN_PREFIX) {
+        return is_valid_ulid(rest);
+    }
+    false
+}
+
+/// Reason a `job_id` failed the pre-dispatch shape check. Returned in
+/// the `InvalidJobId` tool_result so the model gets a structured hint
+/// (and doesn't just re-emit the same hallucinated id).
+fn cli_job_id_rejection_reason(s: &str) -> &'static str {
+    // Specifically diagnose the audit anti-pattern: an `eval_run_` /
+    // `run_` / arbitrary-prefix id, where the model has stuffed a
+    // different artifact's id (or a hallucinated one) into job_id.
+    if s.starts_with(eval_run_bridge::EVAL_RUN_PREFIX) {
+        return "job_id may use `eval_run_<ULID>` for eval-run bridge lookups, but the suffix must be a valid 26-character Crockford base32 ULID";
+    }
+    let known_bad_prefixes = ["run_", "agent_", "strategy_", "scenario_", "cycle_", "draft_"];
+    for p in known_bad_prefixes {
+        if s.starts_with(p) {
+            return "job_id must be a CLI job id (bare ULID or `job_<ULID>`); the id you supplied looks like it belongs to a different artifact (eval run, strategy, scenario, cycle, draft) — call list_cli_jobs to get the right job_id";
+        }
+    }
+    if !s.starts_with("job_") {
+        "job_id must be a bare 26-character ULID (Crockford base32: 0-9, A-Z minus I/L/O/U; case-insensitive) or the `job_<ULID>` shape returned by fetch_bars"
+    } else {
+        "job_id has the expected `job_` prefix but the suffix is not a valid 26-character Crockford base32 ULID"
+    }
+}
+
+/// Classify a tool_result value into a stable signature string for the
+/// `(tool_name, error_class)` retry-budget guard, or `None` if the
+/// result represents progress (no error → reset streak).
+///
+/// - `validate_draft`: classify by sorted+joined `errors[]` whenever
+///   `ok: false`. Matches the original PR #316 semantics.
+/// - Any tool whose result has a top-level `"error"` string (the
+///   convention used by the per-tool `Ok(json!({"error": ...}))` path
+///   AND by the catch-all `Err(e) -> json!({"error": e.to_string()})`
+///   wrapper in `run_one_turn`): classify by that string. F-10 extends
+///   this to cover `get_cli_job` / `get_cli_job_output` shape-check
+///   failures and underlying "cli job '...' not found" lookups.
+///
+/// Note: `error` may be a JSON string (the existing wrapper) OR a JSON
+/// object/code (e.g. `{"code": "InvalidJobId", "provided": ..., "reason": ...}`).
+/// We accept either: if it's a string we use it directly; if it's an
+/// object we canonicalise via `to_string()` so two equivalent objects
+/// produce the same signature.
+fn tool_failure_signature(tool: &str, result: &serde_json::Value) -> Option<String> {
+    if tool == "validate_draft" {
+        let ok = result.get("ok").and_then(|v| v.as_bool()).unwrap_or(true);
+        if ok {
+            return None;
+        }
+        let mut errors: Vec<String> = result
+            .get("errors")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        errors.sort();
+        return Some(errors.join("\n"));
+    }
+    if let Some(err) = result.get("error") {
+        return Some(match err.as_str() {
+            Some(s) => s.to_string(),
+            None => err.to_string(),
+        });
+    }
+    None
+}
 
 #[derive(Debug, Deserialize)]
 struct CreateStrategyAgentReq {
@@ -281,8 +420,8 @@ impl WizardLoop {
             cli_runner,
             last_draft_id: None,
             last_tool_error: None,
-            last_validate_signature: None,
-            validate_failure_streak: 0,
+            last_tool_failure: None,
+            tool_failure_streak: 0,
             pending: vec![],
             is_done: false,
         })
@@ -407,9 +546,7 @@ impl WizardLoop {
                     }
                 };
                 self.maybe_track_draft_id(&name, &result_value);
-                if name == "validate_draft" {
-                    self.update_validate_streak(&result_value);
-                }
+                self.update_tool_failure_streak(&name, &result_value);
                 self.pending.push(WizardEvent::ToolResult {
                     tool: name.clone(),
                     result: result_value.clone(),
@@ -431,14 +568,18 @@ impl WizardLoop {
                 }
             }
 
-            if self.validate_failure_streak >= MAX_VALIDATE_FAILURE_STREAK {
-                // Convergence guard: the model has hit the same
-                // validate_draft error class twice in a row without making
-                // progress. Silently looping hides the error from the
-                // operator (see intake 2026-05-19-qa-validate-draft-cadence-
-                // false-positive: a parser bug nobody could fix by editing
-                // the prompt). Stop the turn and surface the failure.
-                self.emit_validate_loop_break().await?;
+            if self.tool_failure_streak >= MAX_TOOL_FAILURE_STREAK {
+                // Convergence guard: the model has hit the same tool +
+                // error class twice in a row without making progress.
+                // Silently looping hides the error from the operator
+                // (see intake 2026-05-19-qa-validate-draft-cadence-
+                // false-positive: a parser bug nobody could fix by
+                // editing the prompt; and the F-10 audit
+                // chat_session 01KRXXHPRBKYKVEM2Q1VBS2YJ4 where the
+                // model called get_cli_job_output with a hallucinated
+                // `eval_run_*` id repeatedly). Stop the turn and surface
+                // the failure as a stuck card.
+                self.emit_tool_loop_break().await?;
                 self.is_done = true;
                 self.pending.push(WizardEvent::Done {
                     draft_id: self.last_draft_id.clone(),
@@ -491,71 +632,98 @@ impl WizardLoop {
         Ok(out)
     }
 
-    /// Track consecutive `validate_draft` failures with identical error
-    /// shape. Resets on success or when the error text changes (different
-    /// error class → progress, even if still failing).
-    fn update_validate_streak(&mut self, result: &serde_json::Value) {
-        let ok = result.get("ok").and_then(|v| v.as_bool()).unwrap_or(true);
-        if ok {
-            self.last_validate_signature = None;
-            self.validate_failure_streak = 0;
-            return;
-        }
-        let mut errors: Vec<String> = result
-            .get("errors")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .collect()
-            })
-            .unwrap_or_default();
-        errors.sort();
-        let signature = errors.join("\n");
-        if self.last_validate_signature.as_deref() == Some(signature.as_str()) {
-            self.validate_failure_streak = self.validate_failure_streak.saturating_add(1);
-        } else {
-            self.last_validate_signature = Some(signature);
-            self.validate_failure_streak = 1;
+    /// Track consecutive same-tool same-error failures. Generalised from
+    /// the `validate_draft`-only guard in PR #316 so it also covers
+    /// shape-check failures on `get_cli_job` / `get_cli_job_output`
+    /// (F-10) and any future tool whose error surface follows the
+    /// `Ok(json!({"error": ...}))` tool_result convention.
+    ///
+    /// Resets the streak on success, on a different tool, or on a
+    /// different error class (different error class → progress, even if
+    /// still failing).
+    fn update_tool_failure_streak(&mut self, tool: &str, result: &serde_json::Value) {
+        let signature = tool_failure_signature(tool, result);
+        match signature {
+            None => {
+                // Tool succeeded (or didn't surface an error class we
+                // recognise) — clear the streak so a later same-shape
+                // failure starts a fresh count.
+                self.last_tool_failure = None;
+                self.tool_failure_streak = 0;
+            }
+            Some(class) => {
+                let key = (tool.to_string(), class);
+                if self.last_tool_failure.as_ref() == Some(&key) {
+                    self.tool_failure_streak = self.tool_failure_streak.saturating_add(1);
+                } else {
+                    self.last_tool_failure = Some(key);
+                    self.tool_failure_streak = 1;
+                }
+            }
         }
     }
 
-    /// Surface the stuck-validation state as a user-visible content block
-    /// when the convergence guard fires. The block uses the same
+    /// Surface the stuck-tool state as a user-visible content block when
+    /// the convergence guard fires. The block uses the same
     /// action-card primitive as `rich_block_for_tool_result` so the chat
     /// rail renders it inline — no popup, per the frontend rule.
     ///
     /// Persists the card as an assistant message before streaming so a
     /// chat-rail refresh / SSE drop after the guard fires still shows
-    /// the "Validation stuck" explanation in history — matches the
-    /// rich-block path at the end of `run_one_turn`.
-    async fn emit_validate_loop_break(&mut self) -> anyhow::Result<()> {
+    /// the explanation in history — matches the rich-block path at the
+    /// end of `run_one_turn`.
+    ///
+    /// Was originally `emit_validate_loop_break` (validate_draft-only,
+    /// PR #316). Generalised in F-10 so the same surface covers
+    /// `get_cli_job` / `get_cli_job_output` shape-check loops.
+    async fn emit_tool_loop_break(&mut self) -> anyhow::Result<()> {
         let id = self.last_draft_id.clone().unwrap_or_else(|| "unknown".into());
-        let errors_body = self
-            .last_validate_signature
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .map(|s| {
-                s.lines()
-                    .map(|line| format!("• {line}"))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            })
-            .unwrap_or_else(|| "(no error text returned)".to_string());
+        let (failing_tool, signature) = match &self.last_tool_failure {
+            Some((tool, sig)) => (tool.clone(), sig.clone()),
+            None => ("(unknown)".to_string(), String::new()),
+        };
+        let errors_body = if signature.is_empty() {
+            "(no error text returned)".to_string()
+        } else {
+            signature
+                .lines()
+                .map(|line| format!("• {line}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let (title, action) = if failing_tool == "validate_draft" {
+            (
+                "Validation stuck — operator review needed".to_string(),
+                InlineAction {
+                    label: "Open draft".into(),
+                    href: Some(format!("/authoring/{id}")),
+                    command: None,
+                },
+            )
+        } else {
+            // For non-validate-draft tools (F-10: get_cli_job{,_output})
+            // there isn't a specific draft URL to deep-link to. Send the
+            // operator to the workspace home, which still lets them
+            // pivot to whatever artifact the stuck tool was looking at.
+            (
+                format!("{failing_tool} stuck — operator review needed"),
+                InlineAction {
+                    label: "Open workspace".into(),
+                    href: Some("/".to_string()),
+                    command: None,
+                },
+            )
+        };
         let body = format!(
-            "Validation failed {streak}× in a row with the same error. \
+            "`{failing_tool}` failed {streak}× in a row with the same error. \
              Stopping so the operator can decide what to do.\n\n{errors_body}",
-            streak = self.validate_failure_streak,
+            streak = self.tool_failure_streak,
         );
         let card = match action_confirmation_card(
-            format!("validate-loop-break:{id}"),
-            "Validation stuck — operator review needed",
+            format!("tool-loop-break:{failing_tool}:{id}"),
+            title,
             body,
-            InlineAction {
-                label: "Open draft".into(),
-                href: Some(format!("/authoring/{id}")),
-                command: None,
-            },
+            action,
         ) {
             Ok(card) => card,
             Err(_) => return Ok(()),
@@ -615,9 +783,7 @@ impl WizardLoop {
                 // strict so the public API / MCP surface is unchanged.
                 let raw: WizardCreateStrategyInput = serde_json::from_value(input)?;
                 let req = authoring::CreateStrategyReq {
-                    template: raw
-                        .template
-                        .unwrap_or_else(|| WIZARD_BLANK_TEMPLATE.into()),
+                    template: raw.template.unwrap_or_else(|| WIZARD_BLANK_TEMPLATE.into()),
                     name: raw.name,
                     creator: raw.creator,
                 };
@@ -812,11 +978,36 @@ impl WizardLoop {
                     .get("job_id")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow::anyhow!("get_cli_job: missing `job_id`"))?;
-                let store = CliJobStore::new(self.pool.clone());
-                let job = store
-                    .get(job_id)
-                    .await?
-                    .ok_or_else(|| anyhow::anyhow!("cli job '{job_id}' not found"))?;
+                // F-10 pre-dispatch shape check: reject anything that
+                // isn't a recognisable cli-job id before hitting the
+                // store. The audit pattern `eval_run_XKI6IWGw5aFZXsqkW3a3`
+                // (chat_session 01KRXXHPRBKYKVEM2Q1VBS2YJ4) would
+                // otherwise loop forever returning "cli job '<bad-id>'
+                // not found". The structured `InvalidJobId` error
+                // surfaces via the existing tool_result path (same
+                // mechanism as validate_draft errors, PR #316 F-2) and
+                // feeds the generalised retry-budget guard so the
+                // wizard force-ends after two same-error retries.
+                if !is_valid_cli_job_id(job_id) {
+                    return Ok(serde_json::json!({
+                        "error": {
+                            "code": "InvalidJobId",
+                            "provided": job_id,
+                            "reason": cli_job_id_rejection_reason(job_id),
+                        }
+                    }));
+                }
+                let job = if job_id.starts_with(eval_run_bridge::EVAL_RUN_PREFIX) {
+                    eval_run_bridge::get_synthetic_job(&self.pool, job_id)
+                        .await?
+                        .ok_or_else(|| anyhow::anyhow!("eval run '{job_id}' not found"))?
+                } else {
+                    let store = CliJobStore::new(self.pool.clone());
+                    store
+                        .get(job_id)
+                        .await?
+                        .ok_or_else(|| anyhow::anyhow!("cli job '{job_id}' not found"))?
+                };
                 Ok(serde_json::json!({
                     "job_id": job.job_id,
                     "argv": job.argv,
@@ -839,11 +1030,29 @@ impl WizardLoop {
                     .get("job_id")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow::anyhow!("get_cli_job_output: missing `job_id`"))?;
-                let store = CliJobStore::new(self.pool.clone());
-                let output = store
-                    .output(job_id)
-                    .await?
-                    .ok_or_else(|| anyhow::anyhow!("cli job '{job_id}' not found"))?;
+                // F-10 pre-dispatch shape check — see `get_cli_job`
+                // arm above for the rationale. Same audit anti-pattern,
+                // same surfacing mechanism.
+                if !is_valid_cli_job_id(job_id) {
+                    return Ok(serde_json::json!({
+                        "error": {
+                            "code": "InvalidJobId",
+                            "provided": job_id,
+                            "reason": cli_job_id_rejection_reason(job_id),
+                        }
+                    }));
+                }
+                let output = if job_id.starts_with(eval_run_bridge::EVAL_RUN_PREFIX) {
+                    eval_run_bridge::get_synthetic_output(&self.pool, job_id)
+                        .await?
+                        .ok_or_else(|| anyhow::anyhow!("eval run '{job_id}' not found"))?
+                } else {
+                    let store = CliJobStore::new(self.pool.clone());
+                    store
+                        .output(job_id)
+                        .await?
+                        .ok_or_else(|| anyhow::anyhow!("cli job '{job_id}' not found"))?
+                };
                 Ok(serde_json::json!({
                     "job_id": output.job_id,
                     "status": output.status.as_str(),
@@ -1030,7 +1239,8 @@ impl WizardLoop {
                     // resolves this from the model's metadata at
                     // request time (q15 §1).
                     max_tokens: None,
-            prompt_version: String::new(),
+                    prompt_version: String::new(),
+                    inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
                 }],
             },
         )
@@ -1730,7 +1940,8 @@ fn rich_block_for_tool_result(tool: &str, result: &serde_json::Value) -> Option<
                 })
                 .unwrap_or_default();
             let body = if errors.is_empty() {
-                "Validation failed but the engine returned no error text. Open the draft to inspect.".to_string()
+                "Validation failed but the engine returned no error text. Open the draft to inspect."
+                    .to_string()
             } else {
                 errors
                     .iter()
@@ -2050,7 +2261,8 @@ mod tests {
     use super::*;
     use sqlx::sqlite::SqliteConnectOptions;
     use xvision_engine::agent::llm::MockDispatch;
-
+    use xvision_engine::eval::run::{Run, RunMode};
+    use xvision_engine::eval::store::RunStore;
 
     /// Build a real sqlite-backed pool against a tempdir + run engine
     /// migrations. Each test gets its own DB so concurrent runs don't
@@ -2275,10 +2487,7 @@ mod tests {
             tw["start"].as_str().is_some(),
             "time_window.start must be a string"
         );
-        assert!(
-            tw["end"].as_str().is_some(),
-            "time_window.end must be a string"
-        );
+        assert!(tw["end"].as_str().is_some(), "time_window.end must be a string");
     }
 
     #[tokio::test]
@@ -2317,8 +2526,7 @@ mod tests {
         // 'type'`. Unwrap to the bare string variant before serde sees
         // it.
         let mock = Arc::new(MockDispatch::echo("ok"));
-        let (wl, _pool, _td, _sid) =
-            loop_with_session(mock, "btc scenario", ContextScope::Workspace).await;
+        let (wl, _pool, _td, _sid) = loop_with_session(mock, "btc scenario", ContextScope::Workspace).await;
 
         let out = wl
             .run_tool(
@@ -2348,10 +2556,7 @@ mod tests {
             "display_name".into(),
             serde_json::Value::String("BTC Q1 2026".into()),
         );
-        obj.insert(
-            "calendar".into(),
-            serde_json::json!({"type": "UsEquities"}),
-        );
+        obj.insert("calendar".into(), serde_json::json!({"type": "UsEquities"}));
         normalize_create_scenario_input(&mut obj);
         assert_eq!(obj.get("calendar"), Some(&serde_json::json!("UsEquities")));
     }
@@ -2389,10 +2594,7 @@ mod tests {
             "display_name".into(),
             serde_json::Value::String("BTC Q1 2026".into()),
         );
-        obj.insert(
-            "calendar".into(),
-            serde_json::json!({"type": "Custom"}),
-        );
+        obj.insert("calendar".into(), serde_json::json!({"type": "Custom"}));
         normalize_create_scenario_input(&mut obj);
         assert_eq!(
             obj.get("calendar"),
@@ -2443,7 +2645,12 @@ mod tests {
         // Canonical | User | Clone | Generated. Map the LLM-invented
         // name to the closest valid variant (Generated) so the tool
         // call succeeds.
-        for input in ["UserGenerated", "user_generated", "user-generated", "AutoGenerated"] {
+        for input in [
+            "UserGenerated",
+            "user_generated",
+            "user-generated",
+            "AutoGenerated",
+        ] {
             let mut obj = serde_json::Map::new();
             obj.insert(
                 "display_name".into(),
@@ -2500,10 +2707,8 @@ mod tests {
         // bail uses. The full loop-cap reproduction would require a
         // mock dispatch that returns 12+ malformed tool_use blocks;
         // covered here at the message level instead.
-        let last_tool_error: Option<(String, String)> = Some((
-            "create_scenario".into(),
-            "missing field `time_window`".into(),
-        ));
+        let last_tool_error: Option<(String, String)> =
+            Some(("create_scenario".into(), "missing field `time_window`".into()));
         let trailer = match &last_tool_error {
             Some((tool, msg)) => format!(" — last failure: {tool} → {msg}"),
             None => " — no tool errors recorded".to_string(),
@@ -2705,10 +2910,7 @@ mod tests {
             loop_with_session(mock, "make me a strategy", ContextScope::Workspace).await;
 
         let out = wl
-            .run_tool(
-                "create_strategy",
-                serde_json::json!({ "name": "Blank Run" }),
-            )
+            .run_tool("create_strategy", serde_json::json!({ "name": "Blank Run" }))
             .await
             .expect("create_strategy without template must succeed");
 
@@ -3168,6 +3370,381 @@ mod tests {
             prompts[0].contains("Run · 01HABC"),
             "system prompt did not include scope header: {}",
             prompts[0]
+        );
+    }
+
+    // ---- F-10: chat-rail-tool-id-validation -------------------------------
+    //
+    // Audit (chat_session 01KRXXHPRBKYKVEM2Q1VBS2YJ4): the model called
+    // get_cli_job / get_cli_job_output with `eval_run_XKI6IWGw5aFZXsqkW3a3`,
+    // got "cli job '<bad-id>' not found" back, and retried forever. The
+    // F-10 fix is a pre-dispatch shape check that surfaces a typed
+    // InvalidJobId via the existing tool_result error path, plus
+    // extending the PR #316 (qa-round-5 F-3) retry-budget guard to
+    // cover these two new tools without duplicating the data
+    // structure.
+
+    #[test]
+    fn is_valid_ulid_accepts_canonical_26char_crockford() {
+        // ULID spec: 26 chars of Crockford base32 (0-9, A-Z minus I/L/O/U),
+        // case-insensitive. `ulid::Ulid::new().to_string()` is a known-
+        // good fixture; round-trip a freshly generated id.
+        let fresh = ulid::Ulid::new().to_string();
+        assert_eq!(fresh.len(), 26);
+        assert!(is_valid_ulid(&fresh), "fresh ulid rejected: {fresh}");
+        // Lowercase is also accepted (case-insensitive per the spec).
+        assert!(is_valid_ulid(&fresh.to_lowercase()));
+    }
+
+    #[test]
+    fn is_valid_ulid_rejects_audit_anti_pattern() {
+        // Exact audit fixture: prefix + 20-char suffix. Two reasons to
+        // reject: wrong length AND contains `_` and lowercase
+        // i/l-adjacent chars outside Crockford.
+        assert!(!is_valid_ulid("eval_run_XKI6IWGw5aFZXsqkW3a3"));
+        // Bare suffix is also not 26 chars.
+        assert!(!is_valid_ulid("XKI6IWGw5aFZXsqkW3a3"));
+        // Empty.
+        assert!(!is_valid_ulid(""));
+        // 26 chars but contains a disallowed letter (I).
+        assert!(!is_valid_ulid("IIIIIIIIIIIIIIIIIIIIIIIIII"));
+        // 26 chars but contains `_`.
+        assert!(!is_valid_ulid("0123456789ABCDEFGHJKMNPQR_"));
+    }
+
+    #[test]
+    fn is_valid_cli_job_id_accepts_bare_and_job_prefix() {
+        let fresh = ulid::Ulid::new().to_string();
+        assert!(is_valid_cli_job_id(&fresh), "bare ulid rejected: {fresh}");
+        // The actual shape `CliJobStore::create_queued` mints — must be
+        // accepted so the existing fetch_bars → get_cli_job flow works.
+        let prefixed = format!("job_{}", fresh);
+        assert!(is_valid_cli_job_id(&prefixed), "job_<ulid> rejected: {prefixed}");
+        // Eval runs are bridged into the cli-job surface using this
+        // synthetic prefix. The suffix still has to be a real ULID.
+        let eval_prefixed = format!("{}{}", eval_run_bridge::EVAL_RUN_PREFIX, fresh);
+        assert!(
+            is_valid_cli_job_id(&eval_prefixed),
+            "eval_run_<ulid> rejected: {eval_prefixed}"
+        );
+    }
+
+    #[test]
+    fn is_valid_cli_job_id_rejects_audit_anti_pattern() {
+        assert!(!is_valid_cli_job_id("eval_run_XKI6IWGw5aFZXsqkW3a3"));
+        // Other artifact-id shapes the model might confuse for a job
+        // id — all rejected by the same check.
+        assert!(!is_valid_cli_job_id("run_01HABCDEFGHJKMNPQRSTVWXYZ"));
+        assert!(!is_valid_cli_job_id("strategy_01HABCDEFGHJKMNPQRSTVWXYZ"));
+        // A `job_` prefix with a bad suffix is still rejected.
+        assert!(!is_valid_cli_job_id("job_eval_run_XKI6IWGw5aFZXsqkW3a3"));
+        assert!(!is_valid_cli_job_id("job_"));
+    }
+
+    #[test]
+    fn cli_job_id_rejection_reason_calls_out_wrong_artifact() {
+        let reason = cli_job_id_rejection_reason("eval_run_XKI6IWGw5aFZXsqkW3a3");
+        assert!(
+            reason.contains("eval_run_<ULID>") && reason.contains("suffix"),
+            "reason should mention the invalid eval-run suffix, got: {reason}"
+        );
+    }
+
+    #[test]
+    fn tool_failure_signature_classifies_invalid_job_id_object() {
+        // The shape `get_cli_job` returns when it rejects a bad id —
+        // `error` is an object, not a string. The signature function
+        // must canonicalise it so two equal bad-id retries produce the
+        // same signature and the streak guard triggers.
+        let result = serde_json::json!({
+            "error": {
+                "code": "InvalidJobId",
+                "provided": "eval_run_XKI6IWGw5aFZXsqkW3a3",
+                "reason": "any reason",
+            }
+        });
+        let sig1 = tool_failure_signature("get_cli_job", &result).expect("classified");
+        let sig2 = tool_failure_signature("get_cli_job", &result).expect("classified");
+        assert_eq!(sig1, sig2, "same input must produce same signature");
+        assert!(sig1.contains("InvalidJobId"), "sig: {sig1}");
+    }
+
+    #[test]
+    fn tool_failure_signature_classifies_validate_draft_errors() {
+        // Preserve PR #316 semantics: validate_draft `ok: false` with a
+        // sorted-joined errors[] list. This guards against a regression
+        // where the rename to the generalised guard accidentally drops
+        // the validate_draft path.
+        let result = serde_json::json!({
+            "ok": false,
+            "errors": ["b error", "a error"],
+        });
+        let sig = tool_failure_signature("validate_draft", &result).expect("classified");
+        assert_eq!(sig, "a error\nb error");
+        // ok: true returns None (resets the streak).
+        let ok_result = serde_json::json!({ "ok": true });
+        assert!(tool_failure_signature("validate_draft", &ok_result).is_none());
+    }
+
+    #[tokio::test]
+    async fn get_cli_job_with_audit_anti_pattern_returns_invalid_job_id_without_hitting_store() {
+        // Acceptance #1: the exact audit fixture must short-circuit
+        // before the store is touched.
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) =
+            loop_with_session(mock, "look up that job", ContextScope::Workspace).await;
+        let result = wl
+            .run_tool(
+                "get_cli_job",
+                serde_json::json!({"job_id": "eval_run_XKI6IWGw5aFZXsqkW3a3"}),
+            )
+            .await
+            .expect("shape check must surface via Ok(tool_result), not anyhow::Err");
+        let err = result.get("error").expect("error key present");
+        assert_eq!(err["code"], "InvalidJobId");
+        assert_eq!(err["provided"], "eval_run_XKI6IWGw5aFZXsqkW3a3");
+        assert!(err["reason"].as_str().is_some());
+        // Sanity: no cli_jobs row was inserted (we never created one and
+        // the bad-id path never went near the store).
+        let store = CliJobStore::new(wl.pool.clone());
+        assert!(store
+            .get("eval_run_XKI6IWGw5aFZXsqkW3a3")
+            .await
+            .unwrap()
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn get_cli_job_output_with_audit_anti_pattern_returns_invalid_job_id() {
+        // Same as above but for the output verb — the audit shows the
+        // model alternated between get_cli_job and get_cli_job_output.
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) = loop_with_session(mock, "dump that job", ContextScope::Workspace).await;
+        let result = wl
+            .run_tool(
+                "get_cli_job_output",
+                serde_json::json!({"job_id": "eval_run_XKI6IWGw5aFZXsqkW3a3"}),
+            )
+            .await
+            .expect("shape check must surface via Ok(tool_result)");
+        let err = result.get("error").expect("error key present");
+        assert_eq!(err["code"], "InvalidJobId");
+        assert_eq!(err["provided"], "eval_run_XKI6IWGw5aFZXsqkW3a3");
+    }
+
+    #[tokio::test]
+    async fn get_cli_job_with_valid_id_reaches_store() {
+        // Acceptance #2: a valid id (the `job_<ULID>` shape the store
+        // actually mints) is NOT short-circuited — it passes the shape
+        // check and dispatches to the store, where the existing happy-
+        // path serialisation applies.
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, pool, _td, _sid) = loop_with_session(mock, "queue a fetch", ContextScope::Workspace).await;
+        let store = CliJobStore::new(pool);
+        let job = store
+            .create_queued(vec!["bars".into(), "fetch".into()], 60)
+            .await
+            .expect("create queued job for shape-check happy path");
+        let result = wl
+            .run_tool("get_cli_job", serde_json::json!({"job_id": job.job_id}))
+            .await
+            .expect("valid id should reach the store");
+        // Store-backed response includes the same job_id and a status
+        // field — confirms we went through the real store path, not
+        // the InvalidJobId short-circuit.
+        assert_eq!(result["job_id"], serde_json::Value::String(job.job_id.clone()));
+        assert_eq!(result["status"], "queued");
+        assert!(result.get("error").is_none(), "unexpected error: {result}");
+    }
+
+    #[tokio::test]
+    async fn get_cli_job_with_valid_eval_run_id_reaches_bridge() {
+        // PR #348's bridge intentionally accepts eval_run_<ULID> ids. PR #349's
+        // shape check must not reject that valid synthetic job id before the
+        // bridge can translate it.
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, pool, td, _sid) = loop_with_session(mock, "watch eval run", ContextScope::Workspace).await;
+        seed_defaults(&pool, &td).await;
+        let store = RunStore::new(pool);
+        let run = Run::new_queued(
+            "agent-test".into(),
+            "crypto-rangebound-q2-2025".into(),
+            RunMode::Backtest,
+        );
+        store.create(&run).await.expect("seed eval run");
+        let job_id = format!("{}{}", eval_run_bridge::EVAL_RUN_PREFIX, run.id);
+
+        let result = wl
+            .run_tool("get_cli_job", serde_json::json!({"job_id": job_id}))
+            .await
+            .expect("valid eval_run id should reach the bridge");
+
+        assert_eq!(result["job_id"], serde_json::Value::String(job_id));
+        assert_eq!(result["status"], "queued");
+        assert!(result.get("error").is_none(), "unexpected error: {result}");
+    }
+
+    #[tokio::test]
+    async fn get_cli_job_with_bare_ulid_passes_shape_check() {
+        // Bare 26-char ULID (no `job_` prefix) — passes shape check,
+        // then hits the store and returns the underlying "not found"
+        // error via the anyhow::bail! → Err path (which the wrapper
+        // converts to `{"error": "..."}` in the tool_use loop). At the
+        // `run_tool` level this surfaces as Err — the important thing
+        // is that we did NOT short-circuit with InvalidJobId.
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) =
+            loop_with_session(mock, "look up that job", ContextScope::Workspace).await;
+        let bare = ulid::Ulid::new().to_string();
+        let result = wl
+            .run_tool("get_cli_job", serde_json::json!({"job_id": bare.clone()}))
+            .await;
+        match result {
+            Err(e) => {
+                let msg = e.to_string();
+                assert!(
+                    msg.contains("not found"),
+                    "expected store-level 'not found', got: {msg}"
+                );
+                assert!(
+                    !msg.contains("InvalidJobId"),
+                    "bare ulid must not be rejected by shape check: {msg}"
+                );
+            }
+            Ok(v) => {
+                // If a future change makes the store return Ok with an
+                // error key, that still counts as reaching the store —
+                // just confirm we didn't short-circuit with InvalidJobId.
+                if let Some(err) = v.get("error") {
+                    assert_ne!(err.get("code").and_then(|c| c.as_str()), Some("InvalidJobId"));
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn two_same_error_get_cli_job_output_retries_force_end_with_stuck_card() {
+        // Acceptance #3: two consecutive get_cli_job_output calls with
+        // the same bad id trip the generalised retry-budget guard
+        // (PR #316 extended to cover get_cli_job{,_output} in F-10).
+        // The loop force-ends and a stuck card is emitted via the same
+        // action_confirmation_card primitive validate_draft uses.
+        let bad = serde_json::json!({"job_id": "eval_run_XKI6IWGw5aFZXsqkW3a3"});
+        let mock = Arc::new(MockDispatch::sequence(vec![
+            // Turn 1: model calls get_cli_job_output with the bad id.
+            MockDispatch::tool_use("tu_1", "get_cli_job_output", bad.clone()),
+            // Turn 2: model retries with the same bad id (same error
+            // class → streak increments to 2 → MAX_TOOL_FAILURE_STREAK).
+            MockDispatch::tool_use("tu_2", "get_cli_job_output", bad.clone()),
+            // Defensive trailing response in case the loop isn't
+            // force-ended (test will fail loudly on the assertions below).
+            LlmResponse {
+                content: vec![ContentBlock::Text {
+                    text: "should not be reached".into(),
+                }],
+                stop_reason: StopReason::EndTurn,
+                input_tokens: 1,
+                output_tokens: 1,
+            },
+        ]));
+        let (mut wl, _pool, _td, _sid) =
+            loop_with_session(mock, "dump that job", ContextScope::Workspace).await;
+        let events = drain(&mut wl).await;
+
+        // Count how many times we dispatched the bad tool.
+        let bad_calls = events
+            .iter()
+            .filter(|e| matches!(e, WizardEvent::ToolCall { tool, .. } if tool == "get_cli_job_output"))
+            .count();
+        assert_eq!(
+            bad_calls, 2,
+            "loop must force-end after the 2nd same-error retry, not keep dispatching: {events:#?}"
+        );
+
+        // Stuck card surfaced — same primitive validate_draft uses.
+        // The RichContentBlock serialises as `{"type": "action_card",
+        // "action_id": "tool-loop-break:<tool>:<id>", ...}`.
+        let card = events.iter().find_map(|e| match e {
+            WizardEvent::ContentBlock { block } => {
+                let action_id = block.get("action_id").and_then(|v| v.as_str()).unwrap_or("");
+                if action_id.starts_with("tool-loop-break:get_cli_job_output") {
+                    Some(block)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        });
+        assert!(
+            card.is_some(),
+            "expected a tool-loop-break ContentBlock for get_cli_job_output, got: {events:#?}"
+        );
+
+        // Turn ends with Done — the wizard reports completion so the
+        // chat-rail SSE stream closes cleanly.
+        assert!(
+            matches!(events.last(), Some(WizardEvent::Done { .. })),
+            "expected Done last, got: {:?}",
+            events.last()
+        );
+
+        // Trailing "should not be reached" assistant text never made it
+        // to the rail (the loop ended before the third LLM call).
+        let saw_unreachable = events
+            .iter()
+            .any(|e| matches!(e, WizardEvent::Token { text } if text.contains("should not be reached")));
+        assert!(
+            !saw_unreachable,
+            "loop continued past the streak cap: {events:#?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn different_error_classes_do_not_trip_the_guard() {
+        // Regression guard: the retry-budget only fires when the SAME
+        // tool returns the SAME error class twice in a row. Two
+        // different bad ids (different InvalidJobId.provided ⇒ different
+        // signature) must NOT force-end the turn — that would be
+        // over-eager and break legitimate exploration where the model
+        // tries a few different ids in a row.
+        let mock = Arc::new(MockDispatch::sequence(vec![
+            MockDispatch::tool_use(
+                "tu_1",
+                "get_cli_job",
+                serde_json::json!({"job_id": "eval_run_AAAAAAAAAAAAAAAAAAAA"}),
+            ),
+            MockDispatch::tool_use(
+                "tu_2",
+                "get_cli_job",
+                serde_json::json!({"job_id": "strategy_BBBBBBBBBBBBBBBBBBBB"}),
+            ),
+            LlmResponse {
+                content: vec![ContentBlock::Text {
+                    text: "giving up".into(),
+                }],
+                stop_reason: StopReason::EndTurn,
+                input_tokens: 1,
+                output_tokens: 1,
+            },
+        ]));
+        let (mut wl, _pool, _td, _sid) = loop_with_session(mock, "find it", ContextScope::Workspace).await;
+        let events = drain(&mut wl).await;
+
+        // No stuck card — different error classes shouldn't trip it.
+        let stuck = events.iter().any(|e| matches!(
+            e,
+            WizardEvent::ContentBlock { block }
+                if block.get("action_id").and_then(|v| v.as_str()).map(|s| s.starts_with("tool-loop-break:")).unwrap_or(false)
+        ));
+        assert!(!stuck, "guard fired on two DIFFERENT error classes: {events:#?}");
+
+        // Final assistant text reached the rail — loop continued.
+        let saw_giving_up = events
+            .iter()
+            .any(|e| matches!(e, WizardEvent::Token { text } if text.contains("giving up")));
+        assert!(
+            saw_giving_up,
+            "expected loop to continue to final turn: {events:#?}"
         );
     }
 }

@@ -13,14 +13,13 @@
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use sqlx::{Executor, SqlitePool};
+use sqlx::{sqlite::SqlitePoolOptions, Executor, SqlitePool};
 
 use xvision_observability::{
     build_export, build_report,
     events::{
-        ArtifactWrittenEvent, ModelCallFinishedEvent, RunFinishedEvent, RunStartedEvent,
-        SpanFinishedEvent, SpanStartedEvent, SupervisorNoteEvent, ToolCallFinishedEvent,
-        ToolCallStartedEvent,
+        ArtifactWrittenEvent, ModelCallFinishedEvent, RunFinishedEvent, RunStartedEvent, SpanFinishedEvent,
+        SpanStartedEvent, SupervisorNoteEvent, ToolCallFinishedEvent, ToolCallStartedEvent,
     },
     types::{RiskLevel, RunStatus, SideEffectLevel, SpanKind, SpanStatus, ToolOrigin},
     AgentRunRecorder, RunEvent, RunEventBus, SqliteRecorder,
@@ -28,8 +27,7 @@ use xvision_observability::{
 
 const MIGRATION_002: &str = include_str!("../../xvision-engine/migrations/002_eval.sql");
 const MIGRATION_013: &str = include_str!("../../xvision-engine/migrations/013_cli_jobs.sql");
-const MIGRATION_018: &str =
-    include_str!("../../xvision-engine/migrations/018_agent_run_observability.sql");
+const MIGRATION_018: &str = include_str!("../../xvision-engine/migrations/018_agent_run_observability.sql");
 
 const GOLDEN_JSON: &str = include_str!("fixtures/xvn_run_v1.golden.json");
 
@@ -51,7 +49,11 @@ fn fixed_ts(offset_secs: i64) -> DateTime<Utc> {
 }
 
 async fn migrated_pool() -> SqlitePool {
-    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
     sqlx::query(MIGRATION_002).execute(&pool).await.unwrap();
     sqlx::query(MIGRATION_013).execute(&pool).await.unwrap();
     sqlx::query(MIGRATION_018).execute(&pool).await.unwrap();
@@ -238,20 +240,18 @@ async fn seed_run(pool: &SqlitePool) {
     // the recorder write that propagates `otel_trace_id` from
     // RunStarted; until that lands we set it via a small direct UPDATE
     // so the export surface can prove it round-trips.
-    pool.execute(sqlx::query(
-        "UPDATE agent_runs SET otel_trace_id = 'trace_export_fixture' WHERE id = ?",
+    pool.execute(
+        sqlx::query("UPDATE agent_runs SET otel_trace_id = 'trace_export_fixture' WHERE id = ?").bind(RUN_ID),
     )
-    .bind(RUN_ID))
     .await
     .unwrap();
 
     // Pin the supervisor note id so the golden file stays stable —
     // recorder generates a UUID per `SupervisorNote`, which would
     // otherwise diff on every run.
-    pool.execute(sqlx::query(
-        "UPDATE supervisor_notes SET id = 'note_fixture_01' WHERE run_id = ?",
+    pool.execute(
+        sqlx::query("UPDATE supervisor_notes SET id = 'note_fixture_01' WHERE run_id = ?").bind(RUN_ID),
     )
-    .bind(RUN_ID))
     .await
     .unwrap();
 }
@@ -259,12 +259,11 @@ async fn seed_run(pool: &SqlitePool) {
 async fn wait_for_terminal_status(pool: &SqlitePool) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
     loop {
-        let row: Option<(String,)> =
-            sqlx::query_as("SELECT status FROM agent_runs WHERE id = ?")
-                .bind(RUN_ID)
-                .fetch_optional(pool)
-                .await
-                .unwrap();
+        let row: Option<(String,)> = sqlx::query_as("SELECT status FROM agent_runs WHERE id = ?")
+            .bind(RUN_ID)
+            .fetch_optional(pool)
+            .await
+            .unwrap();
         if let Some((status,)) = row {
             if status == "completed" || std::time::Instant::now() >= deadline {
                 return;
@@ -295,10 +294,7 @@ async fn json_export_matches_golden_file() {
             let a = actual_lines.get(i).copied().unwrap_or("<missing>");
             let e = expected_lines.get(i).copied().unwrap_or("<missing>");
             if a != e {
-                diff.push_str(&format!(
-                    "line {}:\n  expected: {e}\n  actual:   {a}\n",
-                    i + 1
-                ));
+                diff.push_str(&format!("line {}:\n  expected: {e}\n  actual:   {a}\n", i + 1));
             }
         }
         panic!(

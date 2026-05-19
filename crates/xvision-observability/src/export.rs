@@ -38,8 +38,7 @@ use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 use thiserror::Error;
 
 use crate::rows::{
-    AgentRunRow, ApprovalRow, ModelCallRow, SandboxResultRow, SpanRow,
-    SupervisorNoteRow, ToolCallRow,
+    AgentRunRow, ApprovalRow, ModelCallRow, SandboxResultRow, SpanRow, SupervisorNoteRow, ToolCallRow,
 };
 
 /// Schema-version tag stamped onto every export. **Do not** mutate v1
@@ -245,7 +244,9 @@ pub fn render_report(export: &AgentRunExport) -> AgentRunReport {
     let _ = writeln!(
         out,
         "- Started at: {}",
-        export.started_at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+        export
+            .started_at
+            .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
     );
     if let Some(finished) = export.finished_at {
         let _ = writeln!(
@@ -386,7 +387,9 @@ pub async fn find_blob_owner(
     .fetch_optional(pool)
     .await?;
 
-    Ok(row.map(|r| r.try_get::<String, _>("retention_mode")).transpose()?)
+    Ok(row
+        .map(|r| r.try_get::<String, _>("retention_mode"))
+        .transpose()?)
 }
 
 // ─── per-table loaders ──────────────────────────────────────────────────────
@@ -465,10 +468,7 @@ async fn load_spans(pool: &SqlitePool, run_id: &str) -> Result<Vec<SpanRow>, Exp
         .collect()
 }
 
-async fn load_model_calls(
-    pool: &SqlitePool,
-    run_id: &str,
-) -> Result<Vec<ModelCallRow>, ExportError> {
+async fn load_model_calls(pool: &SqlitePool, run_id: &str) -> Result<Vec<ModelCallRow>, ExportError> {
     let rows: Vec<SqliteRow> = sqlx::query(
         "SELECT mc.span_id, mc.provider, mc.model, mc.input_token_count, \
                 mc.output_token_count, mc.cost_usd, mc.prompt_hash, \
@@ -503,10 +503,7 @@ async fn load_model_calls(
         .collect()
 }
 
-async fn load_tool_calls(
-    pool: &SqlitePool,
-    run_id: &str,
-) -> Result<Vec<ToolCallRow>, ExportError> {
+async fn load_tool_calls(pool: &SqlitePool, run_id: &str) -> Result<Vec<ToolCallRow>, ExportError> {
     let rows: Vec<SqliteRow> = sqlx::query(
         "SELECT tc.span_id, tc.tool_name, tc.origin, tc.tool_version, tc.tool_hash, \
                 tc.input_hash, tc.output_hash, tc.input_payload_ref, tc.output_payload_ref, \
@@ -578,10 +575,7 @@ async fn load_approvals(pool: &SqlitePool, run_id: &str) -> Result<Vec<ApprovalR
         .collect()
 }
 
-async fn load_sandbox_results(
-    pool: &SqlitePool,
-    run_id: &str,
-) -> Result<Vec<SandboxResultRow>, ExportError> {
+async fn load_sandbox_results(pool: &SqlitePool, run_id: &str) -> Result<Vec<SandboxResultRow>, ExportError> {
     let rows: Vec<SqliteRow> = sqlx::query(
         "SELECT sr.span_id, sr.command, sr.cwd, sr.stdout_ref, sr.stderr_ref, \
                 sr.exit_code, sr.duration_ms \
@@ -638,10 +632,7 @@ async fn load_supervisor_notes(
         .collect()
 }
 
-async fn load_artifact(
-    pool: &SqlitePool,
-    artifact_id: &str,
-) -> Result<Option<FinalArtifact>, ExportError> {
+async fn load_artifact(pool: &SqlitePool, artifact_id: &str) -> Result<Option<FinalArtifact>, ExportError> {
     let row: Option<SqliteRow> = sqlx::query(
         "SELECT id, run_id, kind, title, summary, hypothesis, recommendation, \
                 evidence_json, next_experiments_json, created_at \
@@ -745,11 +736,7 @@ fn into_tree(rows: Vec<SpanRow>) -> Vec<SpanNode> {
     // intermediate map; when we pop parents we already have their
     // children list ready.
     let mut leaves_first: Vec<SpanRow> = rows;
-    leaves_first.sort_by(|a, b| {
-        b.started_at
-            .cmp(&a.started_at)
-            .then_with(|| b.id.cmp(&a.id))
-    });
+    leaves_first.sort_by(|a, b| b.started_at.cmp(&a.started_at).then_with(|| b.id.cmp(&a.id)));
 
     for row in leaves_first {
         let node = SpanNode {
@@ -758,10 +745,7 @@ fn into_tree(rows: Vec<SpanRow>) -> Vec<SpanNode> {
         };
         match &node.row.parent_span_id {
             Some(parent_id) if id_set.contains(parent_id) => {
-                children_of
-                    .entry(parent_id.clone())
-                    .or_default()
-                    .push(node);
+                children_of.entry(parent_id.clone()).or_default().push(node);
             }
             _ => roots.push(node),
         }
@@ -796,7 +780,7 @@ fn sort_children(node: &mut SpanNode) {
 #[cfg(test)]
 mod blob_owner_tests {
     use super::*;
-    use sqlx::SqlitePool;
+    use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 
     const MIGRATION_002: &str = include_str!("../../xvision-engine/migrations/002_eval.sql");
     const MIGRATION_013: &str = include_str!("../../xvision-engine/migrations/013_cli_jobs.sql");
@@ -804,7 +788,11 @@ mod blob_owner_tests {
         include_str!("../../xvision-engine/migrations/018_agent_run_observability.sql");
 
     async fn migrated_pool() -> SqlitePool {
-        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
         sqlx::query(MIGRATION_002).execute(&pool).await.unwrap();
         sqlx::query(MIGRATION_013).execute(&pool).await.unwrap();
         sqlx::query(MIGRATION_018).execute(&pool).await.unwrap();
@@ -857,8 +845,7 @@ mod blob_owner_tests {
     const REF_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const REF_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     const REF_C: &str = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
-    const REF_NOT_OWNED: &str =
-        "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+    const REF_NOT_OWNED: &str = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
 
     #[tokio::test]
     async fn returns_retention_mode_when_model_call_owns_prompt_ref() {

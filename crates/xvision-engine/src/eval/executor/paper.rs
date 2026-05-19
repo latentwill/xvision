@@ -13,16 +13,22 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use xvision_core::market::Ohlcv;
 use xvision_execution::broker_surface::{
-    classify_broker_error_message, extract_requested_available, is_alpaca_crypto,
-    BrokerErrorClass, BrokerSurface, OrderRequest, Side,
+    classify_broker_error_message, extract_requested_available, is_alpaca_crypto, BrokerErrorClass,
+    BrokerSurface, OrderRequest, Side,
 };
 use xvision_observability::{BrokerCallOutcome, BrokerSide};
 
 use crate::agent::llm::LlmDispatch;
 use crate::agent::observability::{fresh_span_id, ObsEmitter};
 use crate::agent::pipeline::{run_pipeline, PipelineInputs, ResolvedAgentSlot};
+use crate::agents::InputsPolicy;
 use crate::api::chart::{ChartEquityPoint, LiveDecisionRow, RunChartEvent, RunEventBus};
+use crate::eval::early_stop::{self, EarlyStopConfig};
 use crate::eval::executor::Executor;
+use crate::eval::guardrails::{
+    self as guardrails, position_state_from_size, supervisor_note_content, Action as GuardAction,
+    GuardrailDecision,
+};
 use crate::eval::metrics::{
     annualization_periods_per_year, equity_to_returns, max_drawdown_pct, sharpe_from_returns,
     total_return_pct,
@@ -259,14 +265,8 @@ fn recoverable_broker_decision_row(
 /// agent with role `trader`, then falls back to the legacy
 /// `strategy.trader_slot`. Returns `None` when neither is present or
 /// neither has a model pinned.
-fn trader_model_id(
-    agent_slots: &[ResolvedAgentSlot],
-    strategy: &Strategy,
-) -> Option<String> {
-    if let Some(resolved) = agent_slots
-        .iter()
-        .find(|r| canonical_role(&r.role) == "trader")
-    {
+fn trader_model_id(agent_slots: &[ResolvedAgentSlot], strategy: &Strategy) -> Option<String> {
+    if let Some(resolved) = agent_slots.iter().find(|r| canonical_role(&r.role) == "trader") {
         let model = resolved.slot.effective_model();
         if !model.trim().is_empty() {
             return Some(model);
@@ -281,10 +281,34 @@ fn trader_model_id(
     None
 }
 
-fn bar_seed(asset: &str, bar: &Ohlcv, bar_history: Vec<serde_json::Value>) -> serde_json::Value {
+/// Determine the seed-sanitization policy for this run. The v4 causal
+/// prompts (F-6) want `timestamp` and `decision_index` stripped before
+/// the trader LLM sees the seed; today's harness leaks both.
+///
+/// Policy is sourced from the trader-role `ResolvedAgentSlot` if one is
+/// attached. If no trader role is attached (legacy `Strategy.trader_slot`
+/// only — pre-strategies-refactor shape), the legacy slot has no policy
+/// of its own, so we fall back to `Raw` for byte-identical pre-F-6
+/// behavior. This is a deliberate conservatism: anyone who wants
+/// `Causal` semantics in 2026 is already running with an attached agent.
+fn resolve_inputs_policy(agent_slots: &[ResolvedAgentSlot]) -> InputsPolicy {
+    use crate::strategies::agent_ref::canonical_role;
+    agent_slots
+        .iter()
+        .find(|r| canonical_role(&r.role) == "trader")
+        .map(|r| r.inputs_policy)
+        .unwrap_or(InputsPolicy::Raw)
+}
+
+fn bar_seed(
+    asset: &str,
+    bar: &Ohlcv,
+    bar_history: Vec<serde_json::Value>,
+    policy: InputsPolicy,
+) -> serde_json::Value {
     serde_json::json!({
         "asset": asset,
-        "current_bar": ohlcv_to_json(bar),
+        "current_bar": ohlcv_to_json(bar, policy),
         "next_bar_open": serde_json::Value::Null,
         "reference_price_usd": bar.close,
         "reference_price_source": "eval_bar.close",
@@ -295,15 +319,58 @@ fn bar_seed(asset: &str, bar: &Ohlcv, bar_history: Vec<serde_json::Value>) -> se
 /// Serialize an Ohlcv bar as the same JSON shape used for
 /// `market_data.current_bar` so `bar_history` entries are homogeneous
 /// with the trader prompt's existing current-bar shape.
-fn ohlcv_to_json(bar: &Ohlcv) -> serde_json::Value {
-    serde_json::json!({
-        "timestamp": bar.timestamp,
-        "open": bar.open,
-        "high": bar.high,
-        "low": bar.low,
-        "close": bar.close,
-        "volume": bar.volume,
-    })
+///
+/// Under `InputsPolicy::Raw` / `InputsPolicy::Oracle` the output is
+/// byte-identical to the pre-F-6 behavior (`timestamp` first, then
+/// OHLCV in OHLCV order). Under `InputsPolicy::Causal` the
+/// `timestamp` field is omitted — callers that build the
+/// `bar_history` slice replace it with a per-entry `bar_index` so the
+/// LLM has a relative-position handle without a wall-clock label.
+/// The current bar itself is also stripped (oracle leak), so callers
+/// passing `policy = Causal` from `bar_seed` must also avoid
+/// reintroducing the timestamp from outside this fn.
+fn ohlcv_to_json(bar: &Ohlcv, policy: InputsPolicy) -> serde_json::Value {
+    match policy {
+        InputsPolicy::Raw | InputsPolicy::Oracle => serde_json::json!({
+            "timestamp": bar.timestamp,
+            "open": bar.open,
+            "high": bar.high,
+            "low": bar.low,
+            "close": bar.close,
+            "volume": bar.volume,
+        }),
+        InputsPolicy::Causal => serde_json::json!({
+            "open": bar.open,
+            "high": bar.high,
+            "low": bar.low,
+            "close": bar.close,
+            "volume": bar.volume,
+        }),
+    }
+}
+
+/// Build the `bar_history` slice for a given policy. `Causal` mode
+/// emits per-bar `bar_index` (0 = oldest visible bar) in place of the
+/// `timestamp` field; `Raw` / `Oracle` produce byte-identical output
+/// to the pre-F-6 shape.
+fn build_bar_history(bars: &[&Ohlcv], policy: InputsPolicy) -> Vec<serde_json::Value> {
+    match policy {
+        InputsPolicy::Raw | InputsPolicy::Oracle => bars.iter().map(|b| ohlcv_to_json(b, policy)).collect(),
+        InputsPolicy::Causal => bars
+            .iter()
+            .enumerate()
+            .map(|(i, b)| {
+                serde_json::json!({
+                    "bar_index": i,
+                    "open": b.open,
+                    "high": b.high,
+                    "low": b.low,
+                    "close": b.close,
+                    "volume": b.volume,
+                })
+            })
+            .collect(),
+    }
 }
 
 #[async_trait]
@@ -465,9 +532,14 @@ impl PaperExecutor {
         // each decision and surface them in the seed as
         // `market_data.bar_history`. Same mechanism as BacktestExecutor.
         let warmup_count = self.warmup_bars.len();
-        let combined_bars: Vec<&Ohlcv> =
-            self.warmup_bars.iter().chain(decision_bars.iter()).collect();
+        let combined_bars: Vec<&Ohlcv> = self.warmup_bars.iter().chain(decision_bars.iter()).collect();
         let history_window = scenario.warmup_bars as usize;
+
+        // F-6: per-run sanitization policy — read once off the trader
+        // slot. `Raw` (the default) reproduces the pre-F-6 JSON
+        // byte-for-byte; `Causal` strips `timestamp` per bar and
+        // `decision_index` from the top-level seed.
+        let inputs_policy = resolve_inputs_policy(agent_slots);
 
         let initial_balance = self.broker.balance().await?;
         let mut equity_samples: Vec<f64> = Vec::new();
@@ -482,6 +554,13 @@ impl PaperExecutor {
         // bar's seed under `agent_error_feedback` so the trader agent
         // can self-heal.
         let mut last_broker_error: Option<BrokerErrorFeedback> = None;
+
+        // engine-trade-guardrails-pyramid-flip-block (F-7):
+        // tracks the trader's most recent emitted open direction on the
+        // asset so the guardrail can detect a one-step flip even when
+        // the live broker position is momentarily flat between a close
+        // and an opposite open. Cleared on emitted/applied `flat`.
+        let mut last_open_direction: Option<GuardAction> = None;
 
         // eval-broker-error-circuit-breaker: tracks the most recent
         // recoverable broker rejection's class and the number of
@@ -521,6 +600,26 @@ impl PaperExecutor {
         // Running peak for drawdown_pct in MetricsUpdated. Start at the
         // initial balance so the first tick's drawdown is well-defined.
         let mut peak_equity = initial_balance.max(0.0);
+        // Tracks the average entry price of the current open position so
+        // that realized PnL can be computed on closes — mirrors the same
+        // local variable in `backtest.rs` (see :353 and :475).
+        // Single f64 is correct here: the bar loop processes one asset
+        // (hoisted above as `asset`) so there is never more than one
+        // position in scope per run.
+        let mut entry_price: f64 = 0.0;
+
+        // eval-flat-degeneracy-early-stop (F-9): rolling history of the
+        // last `cfg.window` actions + convictions, plus a counter for
+        // inherited decisions still owed when the policy is in skip
+        // mode. The buffer is flushed when the policy fires (so we
+        // don't re-trigger immediately after the skip window ends) and
+        // on any reset trigger — non-`flat`/`hold` action or a
+        // portfolio change.
+        let early_stop_cfg = EarlyStopConfig::from_env_or_default();
+        let mut recent_actions: Vec<early_stop::Action> = Vec::with_capacity(early_stop_cfg.window);
+        let mut recent_convictions: Vec<f64> = Vec::with_capacity(early_stop_cfg.window);
+        let mut inherit_remaining: u32 = 0;
+        let mut prev_position: f64 = 0.0;
 
         for (i, bar) in decision_bars.iter().enumerate() {
             if store.is_terminal(&run.id).await? {
@@ -541,30 +640,45 @@ impl PaperExecutor {
             // series.
             let combined_idx = warmup_count + i;
             let history_start = combined_idx.saturating_sub(history_window);
-            let bar_history: Vec<serde_json::Value> = combined_bars[history_start..combined_idx]
-                .iter()
-                .map(|b| ohlcv_to_json(b))
-                .collect();
+            let history_slice: &[&Ohlcv] = &combined_bars[history_start..combined_idx];
+            let bar_history = build_bar_history(history_slice, inputs_policy);
 
             let position = self.broker.position(&asset).await?;
             let balance = self.broker.balance().await?;
             let buying_power = self.broker.buying_power(&asset).await?;
-            let market_data = bar_seed(&asset, bar, bar_history);
+            let market_data = bar_seed(&asset, bar, bar_history, inputs_policy);
             let reference_price_usd = bar.close;
-            let mut seed = serde_json::json!({
-                "decision_index": decision_idx,
-                "asset": asset,
-                "timestamp": bar.timestamp,
-                "market_data": market_data,
-                "portfolio_state": {
-                    "position_size": position,
-                    "equity": balance,
-                    // Settled cash (for crypto) or buying_power (for equities).
-                    // This is the hard cap on the next buy — equity is not.
-                    "buying_power": buying_power,
-                    "mark_price": reference_price_usd,
-                },
-            });
+            // F-6: under `Causal` the top-level seed drops both
+            // `decision_index` and `timestamp`. The v4 causal prompt
+            // says "Do not use timestamp or decision_index" — we
+            // honor it by not emitting them. `Raw` / `Oracle` keep
+            // the original shape byte-for-byte (regression guard).
+            let mut seed = match inputs_policy {
+                InputsPolicy::Raw | InputsPolicy::Oracle => serde_json::json!({
+                    "decision_index": decision_idx,
+                    "asset": asset,
+                    "timestamp": bar.timestamp,
+                    "market_data": market_data,
+                    "portfolio_state": {
+                        "position_size": position,
+                        "equity": balance,
+                        // Settled cash (for crypto) or buying_power (for equities).
+                        // This is the hard cap on the next buy — equity is not.
+                        "buying_power": buying_power,
+                        "mark_price": reference_price_usd,
+                    },
+                }),
+                InputsPolicy::Causal => serde_json::json!({
+                    "asset": asset,
+                    "market_data": market_data,
+                    "portfolio_state": {
+                        "position_size": position,
+                        "equity": balance,
+                        "buying_power": buying_power,
+                        "mark_price": reference_price_usd,
+                    },
+                }),
+            };
             // agent-error-feedback-self-healing: inject the most-
             // recent recoverable broker error so the trader agent
             // can self-heal on the next cycle (re-decide with a
@@ -579,6 +693,99 @@ impl PaperExecutor {
                         serde_json::to_value(&fb).unwrap_or(serde_json::Value::Null),
                     );
                 }
+            }
+
+            // eval-flat-degeneracy-early-stop (F-9): before paying the
+            // LLM tax, check whether we should inherit this decision
+            // as a flat. Path (a) keeps draining a skip window already
+            // in progress; path (b) is the fresh trigger. Both emit a
+            // dense equity sample (balance unchanged because we don't
+            // touch the broker) and a `flat`/conviction=0.0 decision
+            // row with a clear `inherited from early-stop policy`
+            // justification, so the operator can audit the skipped
+            // bars in the trace.
+            let policy_plan = if inherit_remaining == 0 {
+                early_stop::should_skip_next_decision(
+                    &recent_actions,
+                    &recent_convictions,
+                    position == prev_position,
+                    &early_stop_cfg,
+                )
+            } else {
+                None
+            };
+            if let Some(plan) = policy_plan.as_ref() {
+                tracing::info!(
+                    run_id = %run.id,
+                    decision_index = decision_idx,
+                    skip_count = plan.skip_count,
+                    "early-stop policy fired — inheriting flat decisions"
+                );
+                store
+                    .record_supervisor_note(&run.id, "guard", "info", &plan.reason)
+                    .await?;
+                inherit_remaining = plan.skip_count;
+                recent_actions.clear();
+                recent_convictions.clear();
+            }
+            if inherit_remaining > 0 {
+                let inherited_row = DecisionRow {
+                    run_id: run.id.clone(),
+                    decision_index: decision_idx,
+                    timestamp: bar.timestamp,
+                    asset: asset.clone(),
+                    action: "flat".into(),
+                    conviction: Some(0.0),
+                    justification: Some("inherited from early-stop policy".into()),
+                    reasoning: None,
+                    order_size: None,
+                    fill_price: None,
+                    fill_size: None,
+                    fee: None,
+                    pnl_realized: None,
+                };
+                store.record_decision(&inherited_row).await?;
+                self.emit_chart(
+                    &run.id,
+                    RunChartEvent::Decision(LiveDecisionRow::from(&inherited_row)),
+                )
+                .await;
+                self.emit(ProgressEvent::DecisionEmitted {
+                    run_id: run.id.clone(),
+                    action: "flat".into(),
+                    asset: asset.clone(),
+                    size: 0.0,
+                    conviction: 0.0,
+                });
+                let balance_now = self.broker.balance().await?;
+                store.record_equity(&run.id, bar.timestamp, balance_now).await?;
+                self.emit_chart(
+                    &run.id,
+                    RunChartEvent::Equity(ChartEquityPoint {
+                        time: bar.timestamp.timestamp(),
+                        equity_usd: balance_now,
+                    }),
+                )
+                .await;
+                equity_samples.push(balance_now);
+                if balance_now > peak_equity {
+                    peak_equity = balance_now;
+                }
+                let drawdown_pct = if peak_equity > 0.0 {
+                    ((peak_equity - balance_now) / peak_equity * 100.0).max(0.0)
+                } else {
+                    0.0
+                };
+                self.emit(ProgressEvent::MetricsUpdated {
+                    run_id: run.id.clone(),
+                    equity: balance_now,
+                    drawdown_pct,
+                    n_trades,
+                });
+                inherit_remaining -= 1;
+                prev_position = position;
+                decision_idx += 1;
+                continue;
             }
 
             let outs = run_pipeline(PipelineInputs {
@@ -616,10 +823,51 @@ impl PaperExecutor {
                 anyhow::bail!("eval run stopped");
             }
 
+            let pre_fill_position = position;
             let mut order_size: Option<f64> = None;
             let mut fill_price: Option<f64> = None;
             let mut fill_size: Option<f64> = None;
             let mut fee: Option<f64> = None;
+            let mut realized_pnl: Option<f64> = None;
+
+            // engine-trade-guardrails-pyramid-flip-block (F-7):
+            // Server-side gate at the apply seam. The trader's emitted
+            // action stays in `parsed.action` (preserved verbatim in
+            // `eval_decisions.action` below); `applied_action` is what
+            // the broker-submit planner sees. A non-`Allow` outcome
+            // writes a `supervisor_notes` row so the operator sees the
+            // block in the trace dock.
+            //
+            // This supersedes the legacy inline "already long/short"
+            // no-op below — the typed guardrail handles pyramid AND
+            // one-step flip uniformly. The legacy inline check is left
+            // as a defence-in-depth catch (it short-circuits the broker
+            // for the same situations) but the supervisor_notes row
+            // here is the canonical audit trail.
+            let original_action_g = GuardAction::parse(&parsed.action);
+            let position_state_g = position_state_from_size(position);
+            let guard_decision =
+                guardrails::classify(original_action_g, position_state_g, last_open_direction);
+            let applied_action: String = match &guard_decision {
+                GuardrailDecision::Allow => parsed.action.clone(),
+                GuardrailDecision::RewriteTo { action, reason } => {
+                    let note =
+                        supervisor_note_content(*reason, original_action_g, *action, &asset, decision_idx);
+                    store
+                        .record_supervisor_note(&run.id, "guard", "warn", &note)
+                        .await?;
+                    tracing::warn!(
+                        run_id = %run.id,
+                        decision_index = decision_idx,
+                        asset = %asset,
+                        reason = reason.as_str(),
+                        original = original_action_g.as_str(),
+                        applied = action.as_str(),
+                        "eval guardrail rewrote trader action",
+                    );
+                    action.as_str().to_string()
+                }
+            };
 
             // Plan the broker submission for this decision. Three cases:
             //
@@ -636,9 +884,40 @@ impl PaperExecutor {
             //      run doesn't fail on broker rejection.
             //   3. Anything else actionable → submit a market order
             //      sized by `risk_pct_per_trade`.
-            let plan: Option<(Side, f64)> = if !is_actionable(&parsed.action) {
+            // Plan dispatch reads `applied_action` (the post-guardrail
+            // action). The existing inline already-long / already-short
+            // no-ops stay in place as defence-in-depth (the guardrail
+            // would also catch them).
+            //
+            // Guardrail-rewritten `flat` (one-step flip block) is a
+            // CLOSE: it must hit the broker to actually flatten the
+            // position. Trader-emitted `flat` keeps the legacy v1
+            // semantics of "no broker submit" — preserving the
+            // `paper_executor_skips_broker_for_flat_decisions`
+            // invariant. The two are distinguished by inspecting
+            // `guard_decision`.
+            let guard_rewrote_to_flat = matches!(
+                &guard_decision,
+                GuardrailDecision::RewriteTo {
+                    action: GuardAction::Flat,
+                    ..
+                }
+            );
+            let plan: Option<(Side, f64)> = if guard_rewrote_to_flat {
+                // Close any open position. Crypto venues are long-only
+                // on Alpaca; closing a long means a sell sized to the
+                // long. With no open position the flip block is
+                // effectively a no-op.
+                if position > 0.0 {
+                    Some((Side::Sell, position))
+                } else if position < 0.0 {
+                    Some((Side::Buy, position.abs()))
+                } else {
+                    None
+                }
+            } else if !is_actionable(&applied_action) {
                 None
-            } else if parsed.action == "short_open" && is_alpaca_crypto(&asset) {
+            } else if applied_action == "short_open" && is_alpaca_crypto(&asset) {
                 let pos = self.broker.position(&asset).await.with_context(|| {
                     format!(
                         "paper eval broker position query failed: run_id={} decision_index={} asset={}",
@@ -650,15 +929,17 @@ impl PaperExecutor {
                 } else {
                     None
                 }
-            } else if parsed.action == "long_open" && position > 0.0 {
+            } else if applied_action == "long_open" && position > 0.0 {
                 // Already long this asset: don't pile on. Re-running long_open
                 // every cycle is the failure mode that produced run
                 // 01KRWZHHSXAWHRZSG1X65CZMCD — 29 consecutive long_open
                 // requests after the first fill, all rejected for insufficient
                 // cash. The decision is still recorded so the trace shows the
-                // agent's intent; we just don't submit the order.
+                // agent's intent; we just don't submit the order. The
+                // typed guardrail above already wrote a supervisor_notes
+                // row for this case.
                 None
-            } else if parsed.action == "short_open" && position < 0.0 {
+            } else if applied_action == "short_open" && position < 0.0 {
                 // Symmetric: already short.
                 None
             } else {
@@ -671,7 +952,7 @@ impl PaperExecutor {
                 let buying_power = self.broker.buying_power(&asset).await?;
                 let usd_at_risk = buying_power * strategy.risk.risk_pct_per_trade;
                 let size = (usd_at_risk / reference_price_usd).max(0.0);
-                let side = if parsed.action == "long_open" {
+                let side = if applied_action == "long_open" {
                     Side::Buy
                 } else {
                     Side::Sell
@@ -690,19 +971,16 @@ impl PaperExecutor {
             // that track owns the post-submit rejection path; this gate
             // is strictly pre-submit and short-circuits before the
             // broker.call span fires.
-            let min_notional_veto = self
-                .min_notional_usd
-                .filter(|m| *m > 0.0)
-                .and_then(|min| {
-                    plan.and_then(|(_side, size)| {
-                        let notional = size * reference_price_usd;
-                        if size > 0.0 && notional > 0.0 && notional < min {
-                            Some((notional, min))
-                        } else {
-                            None
-                        }
-                    })
-                });
+            let min_notional_veto = self.min_notional_usd.filter(|m| *m > 0.0).and_then(|min| {
+                plan.and_then(|(_side, size)| {
+                    let notional = size * reference_price_usd;
+                    if size > 0.0 && notional > 0.0 && notional < min {
+                        Some((notional, min))
+                    } else {
+                        None
+                    }
+                })
+            });
             if let Some((notional, min)) = min_notional_veto {
                 tracing::warn!(
                     run_id = %run.id,
@@ -734,11 +1012,8 @@ impl PaperExecutor {
                     pnl_realized: None,
                 };
                 store.record_decision(&row).await?;
-                self.emit_chart(
-                    &run.id,
-                    RunChartEvent::Decision(LiveDecisionRow::from(&row)),
-                )
-                .await;
+                self.emit_chart(&run.id, RunChartEvent::Decision(LiveDecisionRow::from(&row)))
+                    .await;
                 self.emit(ProgressEvent::DecisionEmitted {
                     run_id: run.id.clone(),
                     action: parsed.action.clone(),
@@ -750,10 +1025,14 @@ impl PaperExecutor {
                 // stays dense per bar — same pattern as the recoverable
                 // broker-error path above.
                 let balance_now = self.broker.balance().await?;
-                store
-                    .record_equity(&run.id, bar.timestamp, balance_now)
-                    .await?;
+                store.record_equity(&run.id, bar.timestamp, balance_now).await?;
                 equity_samples.push(balance_now);
+                // F-9: a min-notional veto means the trader tried to
+                // act and got pre-empted — not a flat/hold streak
+                // tick. Reset the early-stop counter.
+                recent_actions.clear();
+                recent_convictions.clear();
+                prev_position = position;
                 decision_idx += 1;
                 continue;
             }
@@ -785,11 +1064,12 @@ impl PaperExecutor {
                 // Buy/Sell — short-sale fills (#14 round-2 intake)
                 // surface as side=Short even though the underlying
                 // order is a Sell.
-                let trace_side = broker_side_for_action(&parsed.action, side);
+                // Trace side derived from the APPLIED action so a
+                // guardrail-rewritten `flat` reads as a close, not the
+                // trader's original short_open intent.
+                let trace_side = broker_side_for_action(&applied_action, side);
                 let span_id_opt = self.obs_emitter.as_ref().map(|_| fresh_span_id());
-                if let (Some(em), Some(sid)) =
-                    (self.obs_emitter.as_ref(), span_id_opt.as_deref())
-                {
+                if let (Some(em), Some(sid)) = (self.obs_emitter.as_ref(), span_id_opt.as_deref()) {
                     em.emit_broker_call_started(
                         sid,
                         None,
@@ -819,9 +1099,7 @@ impl PaperExecutor {
 
                 let conf = match submit_res {
                     Ok(conf) => {
-                        if let (Some(em), Some(sid)) =
-                            (self.obs_emitter.as_ref(), span_id_opt.as_deref())
-                        {
+                        if let (Some(em), Some(sid)) = (self.obs_emitter.as_ref(), span_id_opt.as_deref()) {
                             em.emit_broker_call_finished(
                                 sid,
                                 BrokerCallOutcome::Filled,
@@ -857,19 +1135,13 @@ impl PaperExecutor {
                         let msg = format!("{e:#}");
                         let class = classify_broker_error_message(&msg);
                         let (requested, available) = extract_requested_available(&msg);
-                        let severity = if class.is_recoverable() {
-                            "warn"
-                        } else {
-                            "error"
-                        };
+                        let severity = if class.is_recoverable() { "warn" } else { "error" };
                         let outcome = if class.is_recoverable() {
                             BrokerCallOutcome::Rejected
                         } else {
                             BrokerCallOutcome::Failed
                         };
-                        if let (Some(em), Some(sid)) =
-                            (self.obs_emitter.as_ref(), span_id_opt.as_deref())
-                        {
+                        if let (Some(em), Some(sid)) = (self.obs_emitter.as_ref(), span_id_opt.as_deref()) {
                             em.emit_broker_call_finished(
                                 sid,
                                 outcome,
@@ -919,18 +1191,13 @@ impl PaperExecutor {
                                 available,
                             );
                             store.record_decision(&row).await?;
-                            self.emit_chart(
-                                &run.id,
-                                RunChartEvent::Decision(LiveDecisionRow::from(&row)),
-                            )
-                            .await;
+                            self.emit_chart(&run.id, RunChartEvent::Decision(LiveDecisionRow::from(&row)))
+                                .await;
                             // Equity is unchanged (no fill); still
                             // record it so the chart series stays
                             // dense per bar.
                             let balance_now = self.broker.balance().await?;
-                            store
-                                .record_equity(&run.id, bar.timestamp, balance_now)
-                                .await?;
+                            store.record_equity(&run.id, bar.timestamp, balance_now).await?;
                             equity_samples.push(balance_now);
                             n_recoverable_broker_errors += 1;
                             tracing::warn!(
@@ -961,6 +1228,13 @@ impl PaperExecutor {
                                 consecutive_broker_error_count = 1;
                             }
                             consecutive_broker_error_last_msg = msg.clone();
+
+                            // F-9: recoverable broker error means the
+                            // trader attempted to act — not a flat/hold
+                            // streak tick. Reset the early-stop counter.
+                            recent_actions.clear();
+                            recent_convictions.clear();
+                            prev_position = position;
 
                             if consecutive_broker_error_count >= CIRCUIT_BREAKER_THRESHOLD {
                                 // Structured failure reason consumed by
@@ -1014,6 +1288,27 @@ impl PaperExecutor {
                 order_size = Some(size);
                 n_trades += 1;
 
+                // Compute realized PnL for this fill using the same
+                // formula as `backtest::simulate_fill`:
+                //   realized = pre_fill_position × (fill_price − entry_price) − fee
+                // When the pre-fill position is zero the fill is a pure open;
+                // only the fee is realized (negative).
+                let fp = fill_price.unwrap_or(0.0);
+                let fee_paid = conf.fee.unwrap_or(0.0);
+                let raw_pnl = if pre_fill_position != 0.0 {
+                    pre_fill_position * (fp - entry_price)
+                } else {
+                    0.0
+                };
+                realized_pnl = Some(raw_pnl - fee_paid);
+
+                // Update entry_price for the next cycle. After a close-to-
+                // flat the new position is 0 → reset to 0.0. After an open
+                // or partial reduce, the fill price becomes the new average
+                // entry. This mirrors `fill.new_entry` in backtest.rs (:762).
+                let new_pos = self.broker.position(&asset).await.unwrap_or(0.0);
+                entry_price = if new_pos == 0.0 { 0.0 } else { fp };
+
                 // FillRecorded fires only when an order actually went
                 // through. Subscribers that draw trade markers on a
                 // chart consume this.
@@ -1066,7 +1361,7 @@ impl PaperExecutor {
                 fill_price,
                 fill_size,
                 fee,
-                pnl_realized: None,
+                pnl_realized: realized_pnl,
             };
             store.record_decision(&decision_row).await?;
             self.emit_chart(
@@ -1074,6 +1369,18 @@ impl PaperExecutor {
                 RunChartEvent::Decision(LiveDecisionRow::from(&decision_row)),
             )
             .await;
+
+            // engine-trade-guardrails-pyramid-flip-block (F-7):
+            // Update per-asset open-direction memory for the next
+            // cycle's flip detection. Driven by the APPLIED action so
+            // a guardrail-rewritten `hold` keeps the existing direction
+            // and a rewritten `flat` (one-step flip block) clears it.
+            match GuardAction::parse(&applied_action) {
+                GuardAction::LongOpen => last_open_direction = Some(GuardAction::LongOpen),
+                GuardAction::ShortOpen => last_open_direction = Some(GuardAction::ShortOpen),
+                GuardAction::Flat => last_open_direction = None,
+                GuardAction::Hold | GuardAction::Other => {}
+            }
 
             let post_balance = self.broker.balance().await?;
             store.record_equity(&run.id, bar.timestamp, post_balance).await?;
@@ -1104,6 +1411,28 @@ impl PaperExecutor {
                 drawdown_pct,
                 n_trades,
             });
+
+            // F-9: roll the early-stop buffer and apply reset triggers.
+            // A portfolio change (position size delta — open, close, or
+            // resize) wipes the streak; so does any non-flat/non-hold
+            // action. Otherwise we append + truncate to window.
+            let post_position = self.broker.position(&asset).await.unwrap_or(prev_position);
+            let portfolio_changed = post_position != prev_position;
+            let cls = early_stop::Action::classify(&parsed.action);
+            if portfolio_changed || !matches!(cls, early_stop::Action::Flat | early_stop::Action::Hold) {
+                recent_actions.clear();
+                recent_convictions.clear();
+            } else {
+                recent_actions.push(cls);
+                recent_convictions.push(parsed.conviction);
+                let cap = early_stop_cfg.window;
+                if recent_actions.len() > cap {
+                    let drop_n = recent_actions.len() - cap;
+                    recent_actions.drain(0..drop_n);
+                    recent_convictions.drain(0..drop_n);
+                }
+            }
+            prev_position = post_position;
 
             decision_idx += 1;
         }
@@ -1190,7 +1519,135 @@ mod role_tests {
                 model: Some(model.into()),
             },
             max_tokens: None,
+            temperature: None,
+            inputs_policy: crate::agents::InputsPolicy::Raw,
         }
+    }
+
+    use chrono::{TimeZone, Utc};
+    use xvision_core::market::Ohlcv;
+
+    fn mk_bar(secs: i64, close: f64) -> Ohlcv {
+        Ohlcv {
+            timestamp: Utc.timestamp_opt(secs, 0).unwrap(),
+            open: close - 1.0,
+            high: close + 1.0,
+            low: close - 2.0,
+            close,
+            volume: 100.0,
+        }
+    }
+
+    #[test]
+    fn raw_ohlcv_to_json_keeps_timestamp_field() {
+        // F-6 regression guard. Under `Raw`, the per-bar shape must be
+        // byte-identical to the pre-F-6 behavior — operators with
+        // existing strategies must not see drift.
+        let bar = mk_bar(1_700_000_000, 100.0);
+        let v = ohlcv_to_json(&bar, InputsPolicy::Raw);
+        let obj = v.as_object().unwrap();
+        assert!(obj.contains_key("timestamp"));
+        assert_eq!(obj.get("close").and_then(|v| v.as_f64()), Some(100.0));
+        assert_eq!(obj.len(), 6);
+
+        // Oracle is a runtime no-op: identical bytes.
+        let oracle = ohlcv_to_json(&bar, InputsPolicy::Oracle);
+        assert_eq!(v, oracle);
+    }
+
+    #[test]
+    fn causal_ohlcv_to_json_strips_timestamp() {
+        let bar = mk_bar(1_700_000_000, 100.0);
+        let v = ohlcv_to_json(&bar, InputsPolicy::Causal);
+        let obj = v.as_object().unwrap();
+        assert!(
+            !obj.contains_key("timestamp"),
+            "Causal must omit `timestamp` from per-bar JSON",
+        );
+        // OHLCV body is intact.
+        assert_eq!(obj.get("close").and_then(|v| v.as_f64()), Some(100.0));
+        assert_eq!(obj.len(), 5);
+    }
+
+    #[test]
+    fn build_bar_history_causal_assigns_bar_index_from_zero() {
+        let bars = vec![mk_bar(1, 10.0), mk_bar(2, 20.0), mk_bar(3, 30.0)];
+        let refs: Vec<&Ohlcv> = bars.iter().collect();
+        let history = build_bar_history(&refs, InputsPolicy::Causal);
+        assert_eq!(history.len(), 3);
+        for (i, entry) in history.iter().enumerate() {
+            let obj = entry.as_object().unwrap();
+            assert!(!obj.contains_key("timestamp"));
+            assert_eq!(
+                obj.get("bar_index").and_then(|v| v.as_u64()),
+                Some(i as u64),
+                "bar {i} must have bar_index = {i}",
+            );
+        }
+        // Sanity: oldest visible bar is bar_index=0, newest is len-1.
+        assert_eq!(history[0]["close"].as_f64(), Some(10.0));
+        assert_eq!(history[2]["close"].as_f64(), Some(30.0));
+    }
+
+    #[test]
+    fn build_bar_history_raw_matches_pre_f6_shape() {
+        // Regression: under `Raw`, every entry carries `timestamp` +
+        // OHLCV in the original order. We probe field presence so
+        // serde-internal key ordering doesn't make the test flaky.
+        let bars = vec![mk_bar(1_700_000_000, 100.0)];
+        let refs: Vec<&Ohlcv> = bars.iter().collect();
+        let history = build_bar_history(&refs, InputsPolicy::Raw);
+        let obj = history[0].as_object().unwrap();
+        for k in ["timestamp", "open", "high", "low", "close", "volume"] {
+            assert!(obj.contains_key(k), "missing `{k}` under Raw");
+        }
+        assert!(!obj.contains_key("bar_index"));
+    }
+
+    #[test]
+    fn resolve_inputs_policy_reads_from_trader_role_slot() {
+        // Trader-role policy wins. Non-trader roles do not contribute.
+        let slots = vec![
+            ResolvedAgentSlot {
+                role: "scout".into(),
+                slot: LLMSlot {
+                    role: "scout".into(),
+                    prompt: "p".into(),
+                    model_requirement: "m".into(),
+                    allowed_tools: Vec::new(),
+                    provider: None,
+                    model: Some("m".into()),
+                },
+                max_tokens: None,
+                temperature: None,
+                inputs_policy: InputsPolicy::Oracle,
+            },
+            ResolvedAgentSlot {
+                role: "trader".into(),
+                slot: LLMSlot {
+                    role: "trader".into(),
+                    prompt: "p".into(),
+                    model_requirement: "m".into(),
+                    allowed_tools: Vec::new(),
+                    provider: None,
+                    model: Some("m".into()),
+                },
+                max_tokens: None,
+                temperature: None,
+                inputs_policy: InputsPolicy::Causal,
+            },
+        ];
+        assert_eq!(resolve_inputs_policy(&slots), InputsPolicy::Causal);
+
+        // No trader slot — fall back to Raw (pre-F-6 behavior).
+        assert_eq!(
+            resolve_inputs_policy(&slots[..1]),
+            InputsPolicy::Raw,
+            "no trader role -> Raw default",
+        );
+
+        // Empty slots — same fallback.
+        assert_eq!(resolve_inputs_policy(&[]), InputsPolicy::Raw);
     }
 
     #[test]

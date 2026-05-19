@@ -26,9 +26,14 @@ use xvision_observability::{
     AgentRunRecorder, RunEvent, RunEventBus, RunStartedEvent, RunStatus, SqliteRecorder,
 };
 
-const MIGRATION_018: &str = include_str!(
-    "../migrations/018_agent_run_observability.sql"
-);
+const MIGRATION_002: &str = include_str!("../migrations/002_eval.sql");
+const MIGRATION_013: &str = include_str!("../migrations/013_cli_jobs.sql");
+const MIGRATION_018: &str = include_str!("../migrations/018_agent_run_observability.sql");
+
+struct TestPool {
+    pool: SqlitePool,
+    _tmp: tempfile::TempDir,
+}
 
 /// Failing dispatch: always returns the operator-flagged error
 /// shape so the test exercises the same code path that produced
@@ -56,7 +61,7 @@ fn slot() -> LLMSlot {
     }
 }
 
-async fn setup_pool() -> SqlitePool {
+async fn setup_pool() -> TestPool {
     // Temp-file SQLite. `:memory:` would give each pool connection
     // its own private database — migration would land on one
     // connection, recorder writes on another, test queries on a
@@ -64,21 +69,28 @@ async fn setup_pool() -> SqlitePool {
     // file is shared across the pool.
     let tmp = tempfile::TempDir::new().unwrap();
     let path = tmp.path().join("test.db");
-    // Leak the TempDir so the file survives until process exit;
-    // a per-process tempdir is fine for a unit test.
-    Box::leak(Box::new(tmp));
     let url = format!("sqlite://{}?mode=rwc", path.display());
     let pool = SqlitePool::connect(&url).await.unwrap();
-    // Disable FK enforcement: migration 018 references `cli_jobs`
-    // and `eval_runs`, which live in migrations 013 / 002 we don't
-    // apply here. The test only exercises the recorder's INSERT
-    // semantics, not cross-table integrity.
-    sqlx::query("PRAGMA foreign_keys = OFF")
-        .execute(&pool)
-        .await
-        .unwrap();
+    sqlx::query(MIGRATION_002).execute(&pool).await.unwrap();
+    sqlx::query(MIGRATION_013).execute(&pool).await.unwrap();
     sqlx::query(MIGRATION_018).execute(&pool).await.unwrap();
-    pool
+    TestPool { pool, _tmp: tmp }
+}
+
+async fn seed_eval_run(pool: &SqlitePool, run_id: &str) {
+    sqlx::query(
+        "INSERT INTO eval_runs (id, strategy_bundle_hash, scenario_id, mode, status, started_at) \
+         VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(run_id)
+    .bind("strategy-test-bundle")
+    .bind("test-scenario")
+    .bind("backtest")
+    .bind("running")
+    .bind(chrono::Utc::now().to_rfc3339())
+    .execute(pool)
+    .await
+    .unwrap();
 }
 
 /// QA finding: a failing LLM dispatch from an eval run produces a
@@ -88,11 +100,12 @@ async fn setup_pool() -> SqlitePool {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn failing_dispatch_emits_error_span_with_message() {
     let pool = setup_pool().await;
-    let recorder: Arc<dyn AgentRunRecorder> = Arc::new(SqliteRecorder::new(pool.clone()));
+    let recorder: Arc<dyn AgentRunRecorder> = Arc::new(SqliteRecorder::new(pool.pool.clone()));
     let bus = Arc::new(RunEventBus::new(vec![recorder]));
 
     let run_id = "eval-run-test-1";
     let emitter = ObsEmitter::new(bus.clone(), run_id);
+    seed_eval_run(&pool.pool, run_id).await;
 
     // Register the run so SpanStarted has a valid FK.
     bus.publish(RunEvent::RunStarted(RunStartedEvent {
@@ -122,6 +135,7 @@ async fn failing_dispatch_emits_error_span_with_message() {
         tools,
         response_schema: None,
         max_tokens: None,
+        temperature: None,
         obs: Some(emitter.clone()),
     })
     .await;
@@ -144,13 +158,12 @@ async fn failing_dispatch_emits_error_span_with_message() {
     // Inspect the spans table. Exactly one ModelCall span should be
     // present, with status='error' and error_json containing the
     // dispatch's message text.
-    let rows: Vec<(String, String, Option<String>)> = sqlx::query_as(
-        "SELECT id, status, error_json FROM spans WHERE run_id = ?",
-    )
-    .bind(run_id)
-    .fetch_all(&pool)
-    .await
-    .unwrap();
+    let rows: Vec<(String, String, Option<String>)> =
+        sqlx::query_as("SELECT id, status, error_json FROM spans WHERE run_id = ? AND kind = 'model.call'")
+            .bind(run_id)
+            .fetch_all(&pool.pool)
+            .await
+            .unwrap();
     assert_eq!(rows.len(), 1, "exactly one span recorded, got: {rows:?}");
     let (_span_id, status, error_json) = &rows[0];
     assert_eq!(status, "error", "span status must be 'error'");
@@ -167,7 +180,7 @@ async fn failing_dispatch_emits_error_span_with_message() {
     // And the run row reflects 'failed'.
     let run_status: String = sqlx::query_scalar("SELECT status FROM agent_runs WHERE id = ?")
         .bind(run_id)
-        .fetch_one(&pool)
+        .fetch_one(&pool.pool)
         .await
         .unwrap();
     assert_eq!(run_status, "failed");
@@ -180,7 +193,7 @@ async fn failing_dispatch_emits_error_span_with_message() {
 #[tokio::test]
 async fn execute_slot_with_no_emitter_does_not_touch_bus() {
     let pool = setup_pool().await;
-    let recorder: Arc<dyn AgentRunRecorder> = Arc::new(SqliteRecorder::new(pool.clone()));
+    let recorder: Arc<dyn AgentRunRecorder> = Arc::new(SqliteRecorder::new(pool.pool.clone()));
     let _bus = Arc::new(RunEventBus::new(vec![recorder]));
 
     let slot = slot();
@@ -193,6 +206,7 @@ async fn execute_slot_with_no_emitter_does_not_touch_bus() {
         tools,
         response_schema: None,
         max_tokens: None,
+        temperature: None,
         obs: None,
     })
     .await;
@@ -200,7 +214,7 @@ async fn execute_slot_with_no_emitter_does_not_touch_bus() {
 
     // No spans should exist — emission was opted out.
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM spans")
-        .fetch_one(&pool)
+        .fetch_one(&pool.pool)
         .await
         .unwrap();
     assert_eq!(count, 0, "no spans emitted when obs is None");

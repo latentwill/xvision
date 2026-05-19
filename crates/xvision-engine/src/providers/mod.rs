@@ -13,6 +13,8 @@ pub mod cache;
 pub mod fetcher;
 pub mod service;
 
-pub use cache::{catalog_cache_dir, is_stale, load as load_cached_catalog, save as save_cached_catalog, DEFAULT_TTL};
+pub use cache::{
+    catalog_cache_dir, is_stale, load as load_cached_catalog, save as save_cached_catalog, DEFAULT_TTL,
+};
 pub use fetcher::{build_http_client, fetcher_for, resolve_api_key, CatalogFetcher};
 pub use service::CatalogService;

@@ -16,13 +16,17 @@
 //!    semantically-equal JSON with reordered keys — still coalesces.
 
 use serde_json::json;
-use sqlx::SqlitePool;
+use sqlx::sqlite::SqlitePoolOptions;
 use xvision_engine::api::eval::{self, ListRunsRequest};
 use xvision_engine::api::{Actor, ApiContext, ApiError};
 use xvision_engine::eval::{Run, RunMode, RunStatus, RunStore};
 
 async fn ctx_with_eval_tables() -> (ApiContext, tempfile::TempDir) {
-    let pool = SqlitePool::connect(":memory:").await.unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(":memory:")
+        .await
+        .unwrap();
     sqlx::query(include_str!("../migrations/001_api_audit.sql"))
         .execute(&pool)
         .await
@@ -32,6 +36,10 @@ async fn ctx_with_eval_tables() -> (ApiContext, tempfile::TempDir) {
         .await
         .unwrap();
     sqlx::query(include_str!("../migrations/014_eval_agent_id.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/022_eval_runs_agents_agent_id.sql"))
         .execute(&pool)
         .await
         .unwrap();
@@ -67,6 +75,16 @@ async fn seed_sibling_queued(ctx: &ApiContext, failed: &Run, params: Option<serd
     let mut sibling = Run::new_queued(failed.agent_id.clone(), failed.scenario_id.clone(), failed.mode);
     sibling.params_override = params;
     store.create(&sibling).await.unwrap();
+    store.get(&sibling.id).await.unwrap()
+}
+
+async fn seed_sibling_running(ctx: &ApiContext, failed: &Run, params: Option<serde_json::Value>) -> Run {
+    let store = RunStore::new(ctx.db.clone());
+    let sibling = seed_sibling_queued(ctx, failed, params).await;
+    store
+        .update_status(&sibling.id, RunStatus::Running, None)
+        .await
+        .unwrap();
     store.get(&sibling.id).await.unwrap()
 }
 
@@ -128,6 +146,38 @@ async fn retry_coalesces_when_params_override_matches() {
 
     let runs = eval::list(&ctx, ListRunsRequest::default()).await.unwrap();
     assert_eq!(runs.len(), 2, "no third run should be created");
+}
+
+/// Running siblings are also in-flight: identical `params_override` must
+/// coalesce just like queued siblings.
+#[tokio::test]
+async fn retry_coalesces_when_running_params_override_matches() {
+    let (ctx, _d) = ctx_with_eval_tables().await;
+
+    let params = Some(json!({"alpha": 1, "beta": "x"}));
+    let failed = seed_failed(&ctx, params.clone()).await;
+    let sibling = seed_sibling_running(&ctx, &failed, params).await;
+
+    let detail = eval::retry(&ctx, &failed.id)
+        .await
+        .expect("matching-params running sibling coalesces, no start_run path taken");
+    assert_eq!(detail.summary.id, sibling.id);
+    assert_eq!(detail.summary.status, "running");
+
+    let runs = eval::list(&ctx, ListRunsRequest::default()).await.unwrap();
+    assert_eq!(runs.len(), 2, "no third run should be created");
+}
+
+/// Running siblings with a different `params_override` are a different
+/// workload and must not be returned by retry.
+#[tokio::test]
+async fn retry_does_not_coalesce_when_running_params_override_differs() {
+    let (ctx, _d) = ctx_with_eval_tables().await;
+
+    let failed = seed_failed(&ctx, Some(json!({"alpha": 1}))).await;
+    let _sibling = seed_sibling_running(&ctx, &failed, Some(json!({"alpha": 2}))).await;
+
+    assert_retry_takes_start_path(&ctx, &failed.id).await;
 }
 
 /// Happy path: both source and sibling have `params_override == None`.

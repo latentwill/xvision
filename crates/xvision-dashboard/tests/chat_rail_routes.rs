@@ -1,5 +1,6 @@
 //! Integration tests for the chat rail REST surface:
 //!   POST   /api/chat-rail/sessions
+//!   GET    /api/chat-rail/sessions
 //!   POST   /api/chat-rail/sessions/resolve
 //!   GET    /api/chat-rail/sessions/:id/history
 //!   DELETE /api/chat-rail/sessions/:id
@@ -76,6 +77,48 @@ async fn create_session_always_starts_new_history_without_deleting_old_session()
         .await
         .unwrap();
     assert_eq!(old_history.len(), 1, "old conversation stays available");
+}
+
+#[tokio::test]
+async fn list_sessions_returns_summaries_newest_first() {
+    let (server, _tmp, state) = boot().await;
+    let route_scope = ContextScope::Route {
+        route: "/strategies".into(),
+    };
+    let run_scope = ContextScope::Run {
+        run_id: "01HABC".into(),
+    };
+    let older_id = ChatSessionStore::create_session(&state.pool, &route_scope)
+        .await
+        .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    let newer_id = ChatSessionStore::create_session(&state.pool, &run_scope)
+        .await
+        .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    ChatSessionStore::append(
+        &state.pool,
+        &older_id,
+        "user",
+        &[json!({"type":"text","text":"bring this session forward"})],
+    )
+    .await
+    .unwrap();
+
+    let resp = server.get("/api/chat-rail/sessions").await;
+    resp.assert_status_ok();
+    let body: Value = resp.json();
+    let sessions = body.as_array().expect("sessions array");
+    assert_eq!(sessions.len(), 2);
+    assert_eq!(sessions[0]["id"], older_id);
+    assert_eq!(
+        sessions[0]["scope"],
+        json!({"scope": "route", "route": "/strategies"})
+    );
+    assert!(sessions[0]["started_at"].as_str().is_some());
+    assert!(sessions[0]["last_activity_at"].as_str().is_some());
+    assert_eq!(sessions[1]["id"], newer_id);
+    assert_eq!(sessions[1]["scope"], json!({"scope": "run", "run_id": "01HABC"}));
 }
 
 #[tokio::test]

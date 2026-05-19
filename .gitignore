@@ -29,6 +29,10 @@ env/
 data/*
 !data/probes/
 !data/probes/**
+# Content-addressed bar-cache probes (64-char hex names) are local-run artifacts,
+# not fixtures. Named fixtures like scenario-*.parquet / test-fixture-*.parquet
+# stay tracked.
+data/probes/[0-9a-f]*.parquet
 !data/examples/
 !data/examples/**
 logs/

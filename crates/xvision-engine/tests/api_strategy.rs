@@ -78,7 +78,9 @@ async fn create_sample_agent(ctx: &ApiContext, name: &str) -> xvision_engine::ag
                 system_prompt: "Trade carefully.".into(),
                 skill_ids: vec![],
                 max_tokens: Some(1024),
-            prompt_version: String::new(),
+                temperature: None,
+                prompt_version: String::new(),
+                inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
             }],
         },
     )
@@ -307,6 +309,59 @@ async fn set_pipeline_rejects_single_for_multi_agent_strategy() {
         matches!(err, ApiError::Validation(_)),
         "expected Validation, got {err:?}",
     );
+}
+
+#[tokio::test]
+async fn set_pipeline_accepts_valid_graph_edges_persists_and_audits() {
+    let (ctx, _dir) = test_context().await;
+    let strategy_strategy = create_sample_strategy(&ctx).await;
+    let scout = create_sample_agent(&ctx, "Scout").await;
+    let trader = create_sample_agent(&ctx, "Trader").await;
+    let strategy_id = strategy_strategy.manifest.id.clone();
+
+    let _ = strategy::add_agent(
+        &ctx,
+        AddAgentReq {
+            strategy_id: strategy_id.clone(),
+            agent_id: scout.agent_id,
+            role: "scout".into(),
+        },
+    )
+    .await
+    .unwrap();
+    let _ = strategy::add_agent(
+        &ctx,
+        AddAgentReq {
+            strategy_id: strategy_id.clone(),
+            agent_id: trader.agent_id,
+            role: "trader".into(),
+        },
+    )
+    .await
+    .unwrap();
+
+    let edges = vec![PipelineEdge {
+        from_role: "scout".into(),
+        to_role: "trader".into(),
+    }];
+    let out = strategy::set_pipeline(
+        &ctx,
+        SetPipelineReq {
+            strategy_id: strategy_id.clone(),
+            kind: PipelineKind::Graph,
+            edges: edges.clone(),
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(out.pipeline.kind, PipelineKind::Graph);
+    assert_eq!(out.pipeline.edges, edges);
+
+    let reloaded = strategy::get(&ctx, &strategy_id).await.unwrap();
+    assert_eq!(reloaded.pipeline.kind, PipelineKind::Graph);
+    assert_eq!(reloaded.pipeline.edges, out.pipeline.edges);
+    assert!(audit_row_exists(&ctx, "strategy_set_pipeline", &strategy_id).await);
 }
 
 #[tokio::test]

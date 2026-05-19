@@ -97,11 +97,7 @@ impl RiskLayer {
 
     /// Build with the standard v1 rule set. `venue_id`, when supplied,
     /// activates the `MinNotional` rule against `RiskConfig::venue_limits`.
-    pub fn with_default_rules(
-        config: RiskConfig,
-        whitelist: Whitelist,
-        venue_id: Option<&str>,
-    ) -> Self {
+    pub fn with_default_rules(config: RiskConfig, whitelist: Whitelist, venue_id: Option<&str>) -> Self {
         use rules::*;
 
         let max_pos_bps = (config.limits.max_position_pct_nav * 100.0).round() as u32;

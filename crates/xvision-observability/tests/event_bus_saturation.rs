@@ -12,31 +12,30 @@
 
 use async_trait::async_trait;
 use chrono::Utc;
-use sqlx::SqlitePool;
+use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration as StdDuration;
 use tokio::sync::Notify;
+use xvision_observability::types::{RiskLevel, RunStatus, SideEffectLevel, SpanKind, ToolOrigin};
 use xvision_observability::{
     events::{
-        ModelCallFinishedEvent, RunFinishedEvent, RunStartedEvent, SpanStartedEvent,
-        ToolCallStartedEvent,
+        ModelCallFinishedEvent, RunFinishedEvent, RunStartedEvent, SpanStartedEvent, ToolCallStartedEvent,
     },
     recorder::RecorderError,
     AgentRunRecorder, RunEvent, RunEventBus, SqliteRecorder,
 };
-use xvision_observability::types::{
-    RiskLevel, RunStatus, SideEffectLevel, SpanKind, ToolOrigin,
-};
 
-const MIGRATION_002: &str =
-    include_str!("../../xvision-engine/migrations/002_eval.sql");
-const MIGRATION_013: &str =
-    include_str!("../../xvision-engine/migrations/013_cli_jobs.sql");
-const MIGRATION_018: &str =
-    include_str!("../../xvision-engine/migrations/018_agent_run_observability.sql");
+const MIGRATION_002: &str = include_str!("../../xvision-engine/migrations/002_eval.sql");
+const MIGRATION_013: &str = include_str!("../../xvision-engine/migrations/013_cli_jobs.sql");
+const MIGRATION_018: &str = include_str!("../../xvision-engine/migrations/018_agent_run_observability.sql");
 
 async fn migrated_pool() -> SqlitePool {
-    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
     sqlx::query(MIGRATION_002).execute(&pool).await.unwrap();
     sqlx::query(MIGRATION_013).execute(&pool).await.unwrap();
     sqlx::query(MIGRATION_018).execute(&pool).await.unwrap();
@@ -48,12 +47,53 @@ async fn migrated_pool() -> SqlitePool {
 /// `try_send` Full path.
 struct GatedRecorder {
     inner: Arc<SqliteRecorder>,
-    release: Arc<Notify>,
+    gate: Arc<ReleaseGate>,
 }
 
 impl GatedRecorder {
-    fn new(inner: Arc<SqliteRecorder>, release: Arc<Notify>) -> Self {
-        Self { inner, release }
+    fn new(inner: Arc<SqliteRecorder>, gate: Arc<ReleaseGate>) -> Self {
+        Self { inner, gate }
+    }
+}
+
+struct ReleaseGate {
+    released: AtomicBool,
+    notify: Notify,
+}
+
+impl ReleaseGate {
+    fn new() -> Self {
+        Self {
+            released: AtomicBool::new(false),
+            notify: Notify::new(),
+        }
+    }
+
+    async fn wait(&self) {
+        loop {
+            if self.released.load(Ordering::Acquire) {
+                return;
+            }
+
+            let notified = self.notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+
+            if self.released.load(Ordering::Acquire) {
+                return;
+            }
+
+            notified.await;
+        }
+    }
+
+    fn release(&self) {
+        self.released.store(true, Ordering::Release);
+        self.notify.notify_waiters();
+    }
+
+    fn hold(&self) {
+        self.released.store(false, Ordering::Release);
     }
 }
 
@@ -62,7 +102,7 @@ impl AgentRunRecorder for GatedRecorder {
     async fn handle_event(&self, event: &RunEvent) -> Result<(), RecorderError> {
         // Block until the test releases us. The notify is permanently
         // signalled after release, so subsequent events pass through.
-        self.release.notified().await;
+        self.gate.wait().await;
         self.inner.handle_event(event).await
     }
 
@@ -85,6 +125,19 @@ async fn wait_for_count(pool: &SqlitePool, sql: &str, expected: i64) {
     }
 }
 
+#[tokio::test]
+async fn released_gate_stays_open_for_future_waiters() {
+    let gate = ReleaseGate::new();
+
+    gate.release();
+
+    for _ in 0..3 {
+        tokio::time::timeout(StdDuration::from_millis(50), gate.wait())
+            .await
+            .expect("released gate should not block future waiters");
+    }
+}
+
 /// Saturate the bus while the recorder is gated, then verify:
 ///   (a) `RunFinished` still reaches SQLite (run is not left running),
 ///   (b) the span-scoped drops are attributed to the run via a
@@ -94,9 +147,9 @@ async fn wait_for_count(pool: &SqlitePool, sql: &str, expected: i64) {
 async fn saturation_preserves_lifecycle_and_attributes_span_drops() {
     let pool = migrated_pool().await;
     let sqlite = Arc::new(SqliteRecorder::new(pool.clone()));
-    let release = Arc::new(Notify::new());
-    let gated: Arc<dyn AgentRunRecorder> =
-        Arc::new(GatedRecorder::new(sqlite.clone(), release.clone()));
+    let gate = Arc::new(ReleaseGate::new());
+    gate.release();
+    let gated: Arc<dyn AgentRunRecorder> = Arc::new(GatedRecorder::new(sqlite.clone(), gate.clone()));
 
     // Tight bus so the try_send Full path triggers quickly.
     let bus = Arc::new(RunEventBus::with_capacity(2, vec![gated]));
@@ -105,8 +158,8 @@ async fn saturation_preserves_lifecycle_and_attributes_span_drops() {
     let span_id = "span_saturation".to_string();
     let now = Utc::now();
 
-    // 1. RunStarted is lifecycle-critical and uses backpressure. The
-    //    consumer pulls it and blocks inside handle_event (gate held).
+    // 1. Let direct run-id-bearing setup events land before saturation
+    //    so they cannot satisfy the final drop-attribution assertion.
     bus.publish(RunEvent::RunStarted(RunStartedEvent {
         run_id: run_id.clone(),
         objective: "saturation test".to_string(),
@@ -122,12 +175,13 @@ async fn saturation_preserves_lifecycle_and_attributes_span_drops() {
         mcp_servers_json: None,
     }))
     .await;
-    // Yield so the consumer task definitely picks RunStarted and enters
-    // handle_event (where it blocks on the notify).
-    tokio::time::sleep(StdDuration::from_millis(20)).await;
+    wait_for_count(
+        &pool,
+        "SELECT COUNT(*) FROM agent_runs WHERE id = 'run_saturation' AND status = 'running'",
+        1,
+    )
+    .await;
 
-    // 2. Fill the channel with a SpanStarted (carries run_id, also
-    //    populates the bus's span→run map when consumed).
     bus.publish(RunEvent::SpanStarted(SpanStartedEvent {
         span_id: span_id.clone(),
         run_id: run_id.clone(),
@@ -140,7 +194,18 @@ async fn saturation_preserves_lifecycle_and_attributes_span_drops() {
         attributes_json: None,
     }))
     .await;
-    // Then a ModelCallFinished — span-scoped, no run_id directly.
+    wait_for_count(
+        &pool,
+        "SELECT COUNT(*) FROM spans WHERE id = 'span_saturation'",
+        1,
+    )
+    .await;
+
+    // 2. Hold the recorder again, then publish one span-scoped event
+    //    for the consumer to pull and block on. The queue is empty at
+    //    saturation time, and every queued eviction below is
+    //    span-scoped.
+    gate.hold();
     bus.publish(RunEvent::ModelCallFinished(ModelCallFinishedEvent {
         span_id: span_id.clone(),
         provider: "anthropic".to_string(),
@@ -156,6 +221,7 @@ async fn saturation_preserves_lifecycle_and_attributes_span_drops() {
         capability_path: None,
     }))
     .await;
+    tokio::time::sleep(StdDuration::from_millis(20)).await;
 
     // 3. Hammer the bus with span-scoped events that should now fail
     //    `try_send` Full. Each carries `span_id` but no `run_id` —
@@ -196,19 +262,9 @@ async fn saturation_preserves_lifecycle_and_attributes_span_drops() {
             .await;
     });
 
-    // 5. Release the gate. notify_waiters wakes every current and
-    //    future awaiter (we re-arm by signalling on every handle_event
-    //    via a second mechanism below).
-    //
-    // Simplest: spawn a permanent releaser that keeps signalling so
+    // 5. Release the gate once. The release state is durable, so
     // subsequent handle_event calls don't re-block.
-    let release_loop = release.clone();
-    let releaser = tokio::spawn(async move {
-        for _ in 0..512 {
-            release_loop.notify_waiters();
-            tokio::time::sleep(StdDuration::from_millis(2)).await;
-        }
-    });
+    gate.release();
 
     // 6. Wait for RunFinished to land and the run to reach `completed`.
     finish_task.await.unwrap();
@@ -219,19 +275,15 @@ async fn saturation_preserves_lifecycle_and_attributes_span_drops() {
     )
     .await;
 
-    // 7. Verify a BackpressureDropped supervisor_notes row exists with
-    //    a non-empty `run_id` attributed to our run — the bug the
-    //    reviewer flagged would land these rows with `run_id = ''` (or
-    //    not at all) for span-scoped event drops.
+    // 7. Verify the exact BackpressureDropped count from span-scoped
+    //    evictions. A single direct run-id-bearing setup drop cannot
+    //    satisfy this assertion.
     wait_for_count(
         &pool,
         "SELECT COUNT(*) FROM supervisor_notes \
          WHERE severity = 'warn' AND run_id = 'run_saturation' \
-         AND content LIKE 'Dropped % events under backpressure%'",
+         AND content LIKE 'Dropped 31 events under backpressure%'",
         1,
     )
     .await;
-
-    releaser.abort();
-    let _ = releaser.await;
 }

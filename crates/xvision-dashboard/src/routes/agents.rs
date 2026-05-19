@@ -183,7 +183,8 @@ pub mod get {
                     system_prompt: "Trade.".into(),
                     skill_ids: vec![],
                     max_tokens: Some(2048),
-            prompt_version: String::new(),
+                    prompt_version: String::new(),
+                    inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
                 }],
             },
         )
@@ -233,9 +234,7 @@ pub mod get {
         // The export resolves the same agent through a different path
         // (strategy → AgentRef → agent_store::get). Asserting parity
         // against the real export output is what catches drift.
-        let direct = agents_api::get(&ctx, &agent.agent_id)
-            .await
-            .expect("agent get");
+        let direct = agents_api::get(&ctx, &agent.agent_id).await.expect("agent get");
         let export = eval_export::build_export(&ctx, &run.id)
             .await
             .expect("build_export");

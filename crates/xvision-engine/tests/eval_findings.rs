@@ -3,19 +3,27 @@
 use std::sync::Arc;
 
 use chrono::{TimeZone, Utc};
-use sqlx::SqlitePool;
+use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use xvision_engine::agent::llm::{LlmDispatch, MockDispatch};
 use xvision_engine::eval::findings::extractor::extract_findings;
 use xvision_engine::eval::findings::{Finding, Severity};
 use xvision_engine::eval::{MetricsSummary, Run, RunMode, RunStatus, RunStore};
 
 async fn pool_with_migration() -> SqlitePool {
-    let pool = SqlitePool::connect(":memory:").await.unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
     sqlx::query(include_str!("../migrations/002_eval.sql"))
         .execute(&pool)
         .await
         .unwrap();
     sqlx::query(include_str!("../migrations/014_eval_agent_id.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/022_eval_runs_agents_agent_id.sql"))
         .execute(&pool)
         .await
         .unwrap();

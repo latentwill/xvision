@@ -3,6 +3,7 @@ import {
   ColorType,
   CrosshairMode,
   createChart,
+  type Logical,
   type UTCTimestamp,
 } from "lightweight-charts";
 import type { StrategyChartPayload } from "@/api/types.gen/StrategyChartPayload";
@@ -10,7 +11,7 @@ import type { ResolvedTheme } from "@/theme/themes";
 import { useTheme } from "@/theme/useTheme";
 import { chartTheme, normalizeChartTheme } from "./chart-theme";
 import { ChartContainer, type RangePreset } from "./ChartContainer";
-import { fitChartContent } from "./chart-fit";
+import { applyVerticalAutoScale, fitChartContent } from "./chart-fit";
 
 const SCENARIO_PALETTE = [
   "#22d3ee",
@@ -74,10 +75,10 @@ export function StrategyChart({
       );
     }
 
-    fitChartContent(c);
+    applyRange(c, range, collectVisibleTimes(payload));
 
     return () => c.remove();
-  }, [payload, activeTheme, scenarioColors]);
+  }, [payload, activeTheme, scenarioColors, range]);
 
   if (payload.run_series.length === 0) {
     return (
@@ -102,6 +103,47 @@ export function StrategyChart({
       </ChartContainer>
     </div>
   );
+}
+
+function collectVisibleTimes(payload: StrategyChartPayload) {
+  const times = new Set<number>();
+  payload.run_series.forEach((run) => {
+    run.equity_normalised.forEach((point) => times.add(point.time));
+  });
+  return [...times].sort((a, b) => a - b);
+}
+
+function applyRange(
+  chart: ReturnType<typeof createChart>,
+  range: RangePreset,
+  times: number[],
+) {
+  if (times.length <= 0) return;
+  if (range === "All") {
+    fitChartContent(chart);
+    return;
+  }
+
+  const barSeconds = inferBarSeconds(times) ?? 60 * 60;
+  const rangeSeconds =
+    range === "1d" ? 86_400 :
+    range === "1w" ? 7 * 86_400 :
+    range === "1m" ? 30 * 86_400 :
+    90 * 86_400;
+  const count = Math.max(1, Math.ceil(rangeSeconds / barSeconds));
+  chart.timeScale().setVisibleLogicalRange({
+    from: Math.max(0, times.length - count) as Logical,
+    to: (times.length + 2) as Logical,
+  });
+  applyVerticalAutoScale(chart);
+}
+
+function inferBarSeconds(times: number[]): number | null {
+  for (let i = times.length - 1; i > 0; i -= 1) {
+    const diff = times[i] - times[i - 1];
+    if (diff > 0) return diff;
+  }
+  return null;
 }
 
 function Legend({

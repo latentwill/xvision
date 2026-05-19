@@ -26,6 +26,7 @@ async fn execute_slot_returns_parsed_output() {
         tools,
         response_schema: None,
         max_tokens: Some(4096),
+        temperature: None,
         obs: None,
     })
     .await
@@ -73,6 +74,7 @@ async fn execute_slot_loops_through_tool_use_to_final_text() {
         tools,
         response_schema: None,
         max_tokens: Some(4096),
+        temperature: None,
         obs: None,
     })
     .await
@@ -129,6 +131,7 @@ async fn execute_slot_allows_more_than_eight_productive_tool_calls() {
         tools,
         response_schema: None,
         max_tokens: Some(4096),
+        temperature: None,
         obs: None,
     })
     .await
@@ -159,6 +162,7 @@ async fn execute_slot_succeeds_even_when_caller_passes_extra_inputs() {
         tools,
         response_schema: None,
         max_tokens: Some(4096),
+        temperature: None,
         obs: None,
     })
     .await;

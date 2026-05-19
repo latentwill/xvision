@@ -300,11 +300,16 @@ async fn settings_brokers_reflects_set_env_vars() {
 
     assert_eq!(body["alpaca"]["configured"], true);
     let creds = body["alpaca"]["credentials"].as_array().unwrap();
-    for c in creds {
-        if c["env_var"] == "APCA_API_KEY_ID" {
-            assert_eq!(c["is_set"], true);
-            assert!(c.get("value").is_none(), "env var values must not be returned");
-        }
+    for env_var in ["APCA_API_KEY_ID", "APCA_API_SECRET_KEY"] {
+        let cred = creds
+            .iter()
+            .find(|c| c["env_var"] == env_var)
+            .unwrap_or_else(|| panic!("{env_var} credential must be present"));
+        assert_eq!(cred["is_set"], true, "{env_var} must be reported as set");
+        assert!(
+            cred.get("value").is_none(),
+            "{env_var} value must not be returned"
+        );
     }
 }
 
@@ -550,7 +555,7 @@ async fn eval_compare_returns_404_when_a_run_is_missing() {
 async fn eval_compare_returns_report_for_seeded_runs() {
     use chrono::Utc;
     use xvision_engine::eval::{
-        run::{MetricsSummary, Run, RunMode, RunStatus},
+        run::{MetricsSummary, Run, RunMode},
         store::RunStore,
     };
 
@@ -561,14 +566,17 @@ async fn eval_compare_returns_report_for_seeded_runs() {
     let store = RunStore::new(pool);
 
     // Seed two completed runs against the same canonical scenario so the
-    // report has fully-populated metrics + equity curves.
+    // report has fully-populated metrics + equity curves. Walk through
+    // the legal state machine (Queued → Running → Completed via
+    // finalize); RunStore::finalize (post #325) rejects a row that's
+    // already Completed.
     let scenario_id = "crypto-bull-q1-2025";
-    let mut run_a = Run::new_queued("h-A".into(), scenario_id.into(), RunMode::Backtest);
-    run_a.status = RunStatus::Completed;
-    let mut run_b = Run::new_queued("h-B".into(), scenario_id.into(), RunMode::Backtest);
-    run_b.status = RunStatus::Completed;
+    let run_a = Run::new_queued("h-A".into(), scenario_id.into(), RunMode::Backtest);
+    let run_b = Run::new_queued("h-B".into(), scenario_id.into(), RunMode::Backtest);
     store.create(&run_a).await.unwrap();
     store.create(&run_b).await.unwrap();
+    store.begin_running(&run_a.id).await.unwrap();
+    store.begin_running(&run_b.id).await.unwrap();
 
     let now = Utc::now();
     store.record_equity(&run_a.id, now, 10_000.0).await.unwrap();
@@ -663,6 +671,7 @@ fn minimal_create_request() -> serde_json::Value {
         },
         "data_source": { "type": "AlpacaHistorical", "feed": null, "adjustment": "Raw" },
         "replay_mode": { "mode": "Continuous" },
+        "capital": { "initial": 10000.0, "currency": "USD" },
         "tags": ["test"],
         "notes": null,
         "parent_scenario_id": null,
@@ -905,6 +914,7 @@ async fn providers_show_returns_404_for_unknown() {
 #[tokio::test]
 async fn providers_add_creates_and_persists_row() {
     let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _openai_key = scoped_unset("OPENAI_API_KEY");
     let (server, tmp) = boot().await;
     let cfg = write_config(&tmp);
     let _g = scoped_set("XVN_CONFIG_PATH", cfg.to_str().unwrap());
@@ -999,6 +1009,7 @@ async fn providers_remove_default_clears_default_with_204() {
 #[tokio::test]
 async fn providers_update_edits_row() {
     let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _anthropic_proxy_key = scoped_unset("ANTHROPIC_PROXY_KEY");
     let (server, tmp) = boot().await;
     let cfg = write_config(&tmp);
     let _g = scoped_set("XVN_CONFIG_PATH", cfg.to_str().unwrap());
@@ -1023,6 +1034,7 @@ async fn providers_update_edits_row() {
 #[tokio::test]
 async fn providers_remove_drops_row_and_returns_204() {
     let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _openai_key = scoped_unset("OPENAI_API_KEY");
     let (server, tmp) = boot().await;
     let cfg = write_config(&tmp);
     let _g = scoped_set("XVN_CONFIG_PATH", cfg.to_str().unwrap());
@@ -1294,9 +1306,7 @@ async fn eval_retry_rejects_queued_run() {
     // Leave the run in `Queued` — that's the non-terminal status we now
     // reject from the retry route.
 
-    let response = server
-        .post(&format!("/api/eval/runs/{run_id}/retry"))
-        .await;
+    let response = server.post(&format!("/api/eval/runs/{run_id}/retry")).await;
     response.assert_status_bad_request();
     let body: serde_json::Value = response.json();
     assert_eq!(body["code"], "validation");
@@ -1323,17 +1333,11 @@ async fn eval_retry_returns_inflight_sibling_without_starting_a_third_run() {
         .await
         .unwrap();
 
-    let sibling = Run::new_queued(
-        failed.agent_id.clone(),
-        failed.scenario_id.clone(),
-        failed.mode,
-    );
+    let sibling = Run::new_queued(failed.agent_id.clone(), failed.scenario_id.clone(), failed.mode);
     let sibling_id = sibling.id.clone();
     store.create(&sibling).await.unwrap();
 
-    let response = server
-        .post(&format!("/api/eval/runs/{}/retry", failed.id))
-        .await;
+    let response = server.post(&format!("/api/eval/runs/{}/retry", failed.id)).await;
     response.assert_status(axum::http::StatusCode::ACCEPTED);
     let body: serde_json::Value = response.json();
     assert_eq!(body["summary"]["id"], sibling_id);
@@ -1387,7 +1391,11 @@ async fn eval_export_returns_full_envelope_for_seeded_run() {
         .unwrap();
     let store = RunStore::new(pool);
 
-    let run = Run::new_queued("agent-export".into(), "crypto-bull-q1-2025".into(), RunMode::Backtest);
+    let run = Run::new_queued(
+        "agent-export".into(),
+        "crypto-bull-q1-2025".into(),
+        RunMode::Backtest,
+    );
     let run_id = run.id.clone();
     store.create(&run).await.expect("seed run");
     // Export is terminal-only — drive the seeded run to Completed
@@ -1438,16 +1446,23 @@ async fn eval_export_rejects_in_flight_run() {
 
     // A run that stays in `Queued` is not terminal — the export
     // surface must reject it rather than capture a moving snapshot.
-    let run = Run::new_queued("agent-export".into(), "crypto-bull-q1-2025".into(), RunMode::Backtest);
+    let run = Run::new_queued(
+        "agent-export".into(),
+        "crypto-bull-q1-2025".into(),
+        RunMode::Backtest,
+    );
     let run_id = run.id.clone();
     store.create(&run).await.expect("seed run");
 
     let response = server.get(&format!("/api/eval/runs/{run_id}/export")).await;
-    assert!(
-        !response.status_code().is_success(),
-        "expected error status for in-flight export, got {}",
-        response.status_code(),
-    );
+    response.assert_status(StatusCode::BAD_REQUEST);
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["code"], "validation");
+    assert_eq!(body["field"], "request");
+    assert!(body["message"]
+        .as_str()
+        .expect("validation error message")
+        .contains("export is only defined for terminal runs"));
 }
 
 #[tokio::test]

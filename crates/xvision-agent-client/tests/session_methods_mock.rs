@@ -10,9 +10,7 @@ use tempfile::TempDir;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
 
-use xvision_agent_client::{
-    BudgetLimits, EndRunParams, StartRunParams, StepParams, UdsTransport,
-};
+use xvision_agent_client::{BudgetLimits, EndRunParams, StartRunParams, StepParams, UdsTransport};
 
 async fn start_session_mock(socket_path: PathBuf) -> tokio::task::JoinHandle<()> {
     let listener = UnixListener::bind(&socket_path).expect("bind");
@@ -40,6 +38,14 @@ async fn start_session_mock(socket_path: PathBuf) -> tokio::task::JoinHandle<()>
                         let p = &req["params"];
                         assert_eq!(p["run_id"], "r1");
                         assert_eq!(p["provider_id"], "xvision-mock");
+                        assert_eq!(p["model_id"], "mock-model");
+                        assert_eq!(p["api_key"], "test");
+                        assert!(p["base_url"].is_null());
+                        assert_eq!(p["system_prompt"], "test");
+                        assert_eq!(p["allowed_tools"], json!(["echo"]));
+                        assert_eq!(p["budget_limits"]["max_input_tokens"], 1000);
+                        assert_eq!(p["budget_limits"]["max_output_tokens"], 1000);
+                        assert_eq!(p["budget_limits"]["max_wall_ms"], 30_000);
                         json!({
                             "jsonrpc": "2.0",
                             "id": id,
@@ -128,7 +134,10 @@ async fn step_round_trip() {
     let res: xvision_agent_client::StepResult = t
         .call::<StepParams, _>(
             "session.step",
-            Some(StepParams { run_id: "r1".into(), prompt: "hi".into() }),
+            Some(StepParams {
+                run_id: "r1".into(),
+                prompt: "hi".into(),
+            }),
         )
         .await
         .expect("rpc");
@@ -146,10 +155,7 @@ async fn end_run_round_trip() {
 
     let t = UdsTransport::connect(&sock).await.expect("connect");
     let res: xvision_agent_client::EndRunResult = t
-        .call::<EndRunParams, _>(
-            "session.end_run",
-            Some(EndRunParams { run_id: "r1".into() }),
-        )
+        .call::<EndRunParams, _>("session.end_run", Some(EndRunParams { run_id: "r1".into() }))
         .await
         .expect("rpc");
     assert!(res.ended);

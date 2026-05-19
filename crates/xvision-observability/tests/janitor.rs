@@ -6,24 +6,24 @@
 //! 3. Periodic spawn fires at least once and surfaces stats.
 
 use chrono::{Duration as ChronoDuration, Utc};
-use sqlx::SqlitePool;
+use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use std::fs;
 use std::time::Duration as StdDuration;
 use tempfile::TempDir;
 use xvision_observability::{
-    expire_old_payload_refs, run_janitor_once, spawn_janitor, truncate_to_max_bytes,
-    BlobStore, JanitorConfig,
+    expire_old_payload_refs, run_janitor_once, spawn_janitor, truncate_to_max_bytes, BlobStore, JanitorConfig,
 };
 
-const MIGRATION_002: &str =
-    include_str!("../../xvision-engine/migrations/002_eval.sql");
-const MIGRATION_013: &str =
-    include_str!("../../xvision-engine/migrations/013_cli_jobs.sql");
-const MIGRATION_018: &str =
-    include_str!("../../xvision-engine/migrations/018_agent_run_observability.sql");
+const MIGRATION_002: &str = include_str!("../../xvision-engine/migrations/002_eval.sql");
+const MIGRATION_013: &str = include_str!("../../xvision-engine/migrations/013_cli_jobs.sql");
+const MIGRATION_018: &str = include_str!("../../xvision-engine/migrations/018_agent_run_observability.sql");
 
 async fn migrated_pool() -> SqlitePool {
-    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
     sqlx::query(MIGRATION_002).execute(&pool).await.unwrap();
     sqlx::query(MIGRATION_013).execute(&pool).await.unwrap();
     sqlx::query(MIGRATION_018).execute(&pool).await.unwrap();
@@ -46,12 +46,7 @@ async fn insert_run(pool: &SqlitePool, run_id: &str, started_at: &str) {
     .unwrap();
 }
 
-async fn insert_span(
-    pool: &SqlitePool,
-    span_id: &str,
-    run_id: &str,
-    started_at: &str,
-) {
+async fn insert_span(pool: &SqlitePool, span_id: &str, run_id: &str, started_at: &str) {
     sqlx::query(
         "INSERT INTO spans (id, run_id, kind, name, status, started_at) \
          VALUES (?, ?, 'model.call', 'm', 'ok', ?)",
@@ -64,12 +59,7 @@ async fn insert_span(
     .unwrap();
 }
 
-async fn insert_model_call(
-    pool: &SqlitePool,
-    span_id: &str,
-    prompt_ref: &str,
-    response_ref: &str,
-) {
+async fn insert_model_call(pool: &SqlitePool, span_id: &str, prompt_ref: &str, response_ref: &str) {
     sqlx::query(
         "INSERT INTO model_calls (span_id, provider, model, prompt_hash, response_hash, \
          prompt_payload_ref, response_payload_ref) \
@@ -132,13 +122,7 @@ async fn ttl_nulls_old_refs_and_deletes_orphaned_blobs() {
 
     insert_run(&pool, "run_fresh", &fresh).await;
     insert_span(&pool, "span_fresh", "run_fresh", &fresh).await;
-    insert_model_call(
-        &pool,
-        "span_fresh",
-        fresh_blob.as_str(),
-        fresh_blob.as_str(),
-    )
-    .await;
+    insert_model_call(&pool, "span_fresh", fresh_blob.as_str(), fresh_blob.as_str()).await;
 
     let stats = expire_old_payload_refs(&pool, &store, 7).await.unwrap();
     assert_eq!(
@@ -164,22 +148,18 @@ async fn ttl_nulls_old_refs_and_deletes_orphaned_blobs() {
     .await
     .unwrap();
     assert!(prompt_ref.is_none(), "old prompt_payload_ref should be null");
-    assert!(
-        response_ref.is_none(),
-        "old response_payload_ref should be null"
-    );
+    assert!(response_ref.is_none(), "old response_payload_ref should be null");
     assert_eq!(prompt_hash, "h_p", "hash column must survive janitor");
     assert_eq!(response_hash.as_deref(), Some("h_r"));
 
     // Fresh row: refs intact.
-    let (fresh_prompt, fresh_response): (Option<String>, Option<String>) =
-        sqlx::query_as(
-            "SELECT prompt_payload_ref, response_payload_ref \
+    let (fresh_prompt, fresh_response): (Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT prompt_payload_ref, response_payload_ref \
          FROM model_calls WHERE span_id = 'span_fresh'",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
     assert_eq!(fresh_prompt.as_deref(), Some(fresh_blob.as_str()));
     assert_eq!(fresh_response.as_deref(), Some(fresh_blob.as_str()));
 
@@ -215,14 +195,13 @@ async fn ttl_pass_handles_checkpoints_table_too() {
     assert_eq!(stats.row_refs_nulled, 1);
     assert_eq!(stats.blob_files_deleted, 1);
 
-    let (in_ref, out_ref, in_hash): (Option<String>, Option<String>, String) =
-        sqlx::query_as(
-            "SELECT input_payload_ref, output_payload_ref, input_hash \
+    let (in_ref, out_ref, in_hash): (Option<String>, Option<String>, String) = sqlx::query_as(
+        "SELECT input_payload_ref, output_payload_ref, input_hash \
          FROM checkpoints WHERE id = 'cp_1'",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
     assert!(in_ref.is_none());
     assert!(out_ref.is_none());
     assert_eq!(in_hash, "h_in");
@@ -385,16 +364,29 @@ async fn periodic_spawn_runs_at_least_once() {
         max_payload_bytes: 1024 * 1024,
     };
     let handle = spawn_janitor(pool.clone(), store.clone(), cfg, StdDuration::from_millis(50));
-    // Give it two ticks to fire.
-    tokio::time::sleep(StdDuration::from_millis(150)).await;
+
+    tokio::time::timeout(StdDuration::from_secs(2), async {
+        loop {
+            let (refs,): (i64,) =
+                sqlx::query_as("SELECT COUNT(*) FROM model_calls WHERE prompt_payload_ref IS NOT NULL")
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            if refs == 0 && !store.exists(&old_blob) {
+                break;
+            }
+            tokio::time::sleep(StdDuration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("periodic janitor should null the ref and delete the blob");
     handle.abort();
 
-    let (refs,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM model_calls WHERE prompt_payload_ref IS NOT NULL",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let (refs,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM model_calls WHERE prompt_payload_ref IS NOT NULL")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(refs, 0, "periodic janitor should have nulled the ref");
     assert!(!store.exists(&old_blob));
 }
@@ -447,14 +439,13 @@ async fn max_bytes_nulls_payload_refs_for_evicted_blobs() {
     // The model_calls row's prompt_payload_ref pointed at `oldest`;
     // after eviction it must be NULL while the response ref (which
     // pointed at `newest`, still present) is preserved.
-    let (prompt_ref, response_ref): (Option<String>, Option<String>) =
-        sqlx::query_as(
-            "SELECT prompt_payload_ref, response_payload_ref \
+    let (prompt_ref, response_ref): (Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT prompt_payload_ref, response_payload_ref \
              FROM model_calls WHERE span_id = 'span_x'",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
     assert!(
         prompt_ref.is_none(),
         "prompt_payload_ref must be NULL after the blob was evicted"

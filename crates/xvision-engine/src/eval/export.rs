@@ -337,10 +337,7 @@ fn build_provider_diagnostics(
             },
         },
     };
-    let ran_at = attestation
-        .as_ref()
-        .map(|a| a.ran_at)
-        .unwrap_or(run.started_at);
+    let ran_at = attestation.as_ref().map(|a| a.ran_at).unwrap_or(run.started_at);
 
     let trader_output_failure = run
         .error
@@ -397,7 +394,10 @@ fn single_executable_provider_model(strategy: &Strategy, agents: &[Agent]) -> Op
         .into_iter()
         .flatten()
         {
-            pairs.push(provider_model_pair(slot.provider.as_deref(), slot.model.as_deref())?);
+            pairs.push(provider_model_pair(
+                slot.provider.as_deref(),
+                slot.model.as_deref(),
+            )?);
         }
     } else {
         for agent_ref in &strategy.agents {
@@ -471,7 +471,7 @@ mod roundtrip {
     //! by the q15-eval-json-export contract acceptance.
 
     use chrono::{DateTime, Utc};
-    use sqlx::SqlitePool;
+    use sqlx::sqlite::SqlitePoolOptions;
 
     use super::*;
     use crate::api::{Actor, ApiContext};
@@ -485,7 +485,11 @@ mod roundtrip {
     use xvision_core::providers::{Catalog, ModelEntry};
 
     async fn ctx_with_eval_tables() -> (ApiContext, tempfile::TempDir) {
-        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(":memory:")
+            .await
+            .unwrap();
         // Migrations the export touches transitively: 001 (api_audit),
         // 002 (eval_*), 014 (agent_id rename), 015 (reasoning column).
         // The rest (scenarios, reviews, etc.) aren't needed for the
@@ -496,6 +500,7 @@ mod roundtrip {
             include_str!("../../migrations/002_eval.sql"),
             include_str!("../../migrations/014_eval_agent_id.sql"),
             include_str!("../../migrations/015_eval_decisions_reasoning.sql"),
+            include_str!("../../migrations/022_eval_runs_agents_agent_id.sql"),
         ] {
             sqlx::query(migration).execute(&pool).await.unwrap();
         }
@@ -662,8 +667,7 @@ mod roundtrip {
         // Round-trip back into the typed struct — this asserts the
         // Serialize/Deserialize pair is symmetric. Bumps to the shape
         // that break round-trip surface here as a Deserialize error.
-        let decoded: EvalRunExport =
-            serde_json::from_str(&json).expect("deserialize EvalRunExport");
+        let decoded: EvalRunExport = serde_json::from_str(&json).expect("deserialize EvalRunExport");
         assert_eq!(decoded.schema_version, export.schema_version);
         assert_eq!(decoded.decisions.len(), export.decisions.len());
     }
@@ -721,7 +725,10 @@ mod roundtrip {
         match err {
             ApiError::Validation(msg) => {
                 assert!(msg.contains("queued"), "expected status in message, got: {msg}");
-                assert!(msg.contains("terminal"), "expected terminal-only hint, got: {msg}");
+                assert!(
+                    msg.contains("terminal"),
+                    "expected terminal-only hint, got: {msg}"
+                );
             }
             other => panic!("expected Validation, got: {other:?}"),
         }

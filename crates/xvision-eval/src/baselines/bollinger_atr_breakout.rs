@@ -137,7 +137,10 @@ mod tests {
         let strat = BollingerATRBreakout::new();
         // price 70_000, upper 69_500, atr 700 (1.0%) → above min_atr_pct 0.8%
         let snap = fixture_snapshot(70_000.0, Some(69_500.0), Some(68_000.0), Some(700.0));
-        let dec = strat.decide(&snap).await.expect("upper breakout must return Some");
+        let dec = strat
+            .decide(&snap)
+            .await
+            .expect("upper breakout must return Some");
         assert_eq!(dec.action, Action::Buy);
         assert_eq!(dec.direction, Direction::Long);
         assert_eq!(dec.size_bps, 600);
@@ -149,7 +152,10 @@ mod tests {
     async fn decide_returns_short_on_lower_breakout() {
         let strat = BollingerATRBreakout::new();
         let snap = fixture_snapshot(67_000.0, Some(69_000.0), Some(67_500.0), Some(600.0));
-        let dec = strat.decide(&snap).await.expect("lower breakout must return Some");
+        let dec = strat
+            .decide(&snap)
+            .await
+            .expect("lower breakout must return Some");
         assert_eq!(dec.action, Action::Sell);
         assert_eq!(dec.direction, Direction::Short);
     }
@@ -158,7 +164,10 @@ mod tests {
     async fn decide_returns_none_when_inside_bands() {
         let strat = BollingerATRBreakout::new();
         let snap = fixture_snapshot(68_500.0, Some(69_000.0), Some(68_000.0), Some(600.0));
-        assert!(strat.decide(&snap).await.is_none(), "inside bands must return None");
+        assert!(
+            strat.decide(&snap).await.is_none(),
+            "inside bands must return None"
+        );
     }
 
     #[tokio::test]
@@ -173,6 +182,9 @@ mod tests {
     async fn edge_case_missing_indicators_returns_none() {
         let strat = BollingerATRBreakout::new();
         let snap = fixture_snapshot(70_000.0, None, None, None);
-        assert!(strat.decide(&snap).await.is_none(), "missing indicators must return None");
+        assert!(
+            strat.decide(&snap).await.is_none(),
+            "missing indicators must return None"
+        );
     }
 }

@@ -5,7 +5,7 @@ import type { ResolvedTheme } from "@/theme/themes";
 import { useTheme } from "@/theme/useTheme";
 import { chartTheme, normalizeChartTheme } from "./chart-theme";
 import { ChartContainer, type RangePreset } from "./ChartContainer";
-import { fitChartContent } from "./chart-fit";
+import { applyVerticalAutoScale, fitChartContent } from "./chart-fit";
 
 const RUN_COLORS = [
   "#22d3ee",
@@ -82,13 +82,10 @@ export function CompareChart({
       );
     });
 
-    // CompareChart's price series live on the `left` scale (see the
-    // `priceScaleId: "left"` config above); fitChartContent's default
-    // `right` is a no-op for this chart, so pass the actual id.
-    fitChartContent(c, ["left"]);
+    applyRange(c, range, collectVisibleTimes(payload, showBackdrop));
 
     return () => c.remove();
-  }, [payload, activeTheme, showBackdrop]);
+  }, [payload, activeTheme, showBackdrop, range]);
 
   return (
     <ChartContainer
@@ -112,4 +109,51 @@ export function CompareChart({
       <div ref={ref} style={{ height: 480 }} />
     </ChartContainer>
   );
+}
+
+function collectVisibleTimes(payload: CompareChartPayload, includeBackdrop: boolean) {
+  const times = new Set<number>();
+  payload.runs.forEach((run) => {
+    run.equity.forEach((point) => times.add(point.time));
+  });
+  if (includeBackdrop && payload.price_backdrop) {
+    payload.price_backdrop.forEach((bar) => times.add(bar.time));
+  }
+  return [...times].sort((a, b) => a - b);
+}
+
+function applyRange(
+  chart: ReturnType<typeof createChart>,
+  range: RangePreset,
+  times: number[],
+) {
+  if (times.length <= 0) return;
+  if (range === "All") {
+    // CompareChart's price series live on the `left` scale (see the
+    // backdrop `priceScaleId: "left"` config above); fitChartContent's
+    // default `right` is a no-op for this chart, so pass the actual id.
+    fitChartContent(chart, ["left"]);
+    return;
+  }
+
+  const barSeconds = inferBarSeconds(times) ?? 60 * 60;
+  const rangeSeconds =
+    range === "1d" ? 86_400 :
+    range === "1w" ? 7 * 86_400 :
+    range === "1m" ? 30 * 86_400 :
+    90 * 86_400;
+  const count = Math.max(1, Math.ceil(rangeSeconds / barSeconds));
+  chart.timeScale().setVisibleLogicalRange({
+    from: Math.max(0, times.length - count),
+    to: times.length + 2,
+  });
+  applyVerticalAutoScale(chart, ["left"]);
+}
+
+function inferBarSeconds(times: number[]): number | null {
+  for (let i = times.length - 1; i > 0; i -= 1) {
+    const diff = times[i] - times[i - 1];
+    if (diff > 0) return diff;
+  }
+  return null;
 }

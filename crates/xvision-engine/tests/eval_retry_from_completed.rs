@@ -21,13 +21,17 @@
 //! 6. The legacy `retry(...) -> RunDetail` signature still works — it
 //!    just discards lineage.
 
-use sqlx::SqlitePool;
+use sqlx::sqlite::SqlitePoolOptions;
 use xvision_engine::api::eval::{self, ListRunsRequest, RetryReason};
 use xvision_engine::api::{Actor, ApiContext, ApiError};
 use xvision_engine::eval::{Run, RunMode, RunStatus, RunStore};
 
 async fn ctx_with_eval_tables() -> (ApiContext, tempfile::TempDir) {
-    let pool = SqlitePool::connect(":memory:").await.unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(":memory:")
+        .await
+        .unwrap();
     sqlx::query(include_str!("../migrations/001_api_audit.sql"))
         .execute(&pool)
         .await
@@ -37,6 +41,10 @@ async fn ctx_with_eval_tables() -> (ApiContext, tempfile::TempDir) {
         .await
         .unwrap();
     sqlx::query(include_str!("../migrations/014_eval_agent_id.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/022_eval_runs_agents_agent_id.sql"))
         .execute(&pool)
         .await
         .unwrap();
@@ -60,10 +68,7 @@ async fn seed_run(ctx: &ApiContext, status: RunStatus) -> Run {
     let run = Run::new_queued("agent-x".into(), "scenario-x".into(), RunMode::Backtest);
     store.create(&run).await.unwrap();
     if status != RunStatus::Queued {
-        store
-            .update_status(&run.id, status, None)
-            .await
-            .unwrap();
+        store.update_status(&run.id, status, None).await.unwrap();
     }
     store.get(&run.id).await.unwrap()
 }

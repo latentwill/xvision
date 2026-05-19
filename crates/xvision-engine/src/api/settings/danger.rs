@@ -146,10 +146,7 @@ pub struct FactoryResetReport {
 
 // ─── reset_workspace ─────────────────────────────────────────────────────
 
-pub async fn reset_workspace(
-    ctx: &ApiContext,
-    confirm: &str,
-) -> ApiResult<ResetWorkspaceReport> {
+pub async fn reset_workspace(ctx: &ApiContext, confirm: &str) -> ApiResult<ResetWorkspaceReport> {
     let started = Instant::now();
     let result = reset_workspace_inner(ctx, confirm).await;
     let outcome = audit_outcome(&result);
@@ -166,10 +163,7 @@ pub async fn reset_workspace(
     result
 }
 
-async fn reset_workspace_inner(
-    ctx: &ApiContext,
-    confirm: &str,
-) -> ApiResult<ResetWorkspaceReport> {
+async fn reset_workspace_inner(ctx: &ApiContext, confirm: &str) -> ApiResult<ResetWorkspaceReport> {
     check_confirm(confirm, RESET_WORKSPACE_CONFIRM)?;
 
     // Enumerate user tables from sqlite_master so we can't miss a table
@@ -484,11 +478,7 @@ fn check_confirm(confirm: &str, expected: &str) -> ApiResult<()> {
 ///    `docker cp` it out before restart.
 fn pick_audit_log_path(xvn_home: &std::path::Path) -> PathBuf {
     let audit_dir = std::env::var_os("XVN_AUDIT_DIR").map(PathBuf::from);
-    pick_audit_log_path_with(
-        xvn_home,
-        audit_dir.as_deref(),
-        &std::env::temp_dir(),
-    )
+    pick_audit_log_path_with(xvn_home, audit_dir.as_deref(), &std::env::temp_dir())
 }
 
 /// Env-free core of `pick_audit_log_path` — same algorithm, but the
@@ -761,7 +751,9 @@ mod tests {
         tokio::fs::write(strategies.join("b.json"), b"{}").await.unwrap();
         let secrets = xvn_home.join("secrets");
         tokio::fs::create_dir_all(&secrets).await.unwrap();
-        tokio::fs::write(secrets.join("alpaca.toml"), b"key=hi").await.unwrap();
+        tokio::fs::write(secrets.join("alpaca.toml"), b"key=hi")
+            .await
+            .unwrap();
 
         let report = reset_workspace(&ctx, RESET_WORKSPACE_CONFIRM).await.unwrap();
 
@@ -823,13 +815,12 @@ mod tests {
         tokio::fs::create_dir_all(&xvn_home).await.unwrap();
         tokio::fs::write(xvn_home.join("marker"), b"hi").await.unwrap();
         // Nested subdir, to confirm recursive rm.
-        tokio::fs::create_dir_all(xvn_home.join("strategies/draft")).await.unwrap();
-        tokio::fs::write(
-            xvn_home.join("strategies/draft/x.json"),
-            b"{}",
-        )
-        .await
-        .unwrap();
+        tokio::fs::create_dir_all(xvn_home.join("strategies/draft"))
+            .await
+            .unwrap();
+        tokio::fs::write(xvn_home.join("strategies/draft/x.json"), b"{}")
+            .await
+            .unwrap();
 
         let ctx = ApiContext::open(&xvn_home, Actor::Cli { user: "test".into() })
             .await
@@ -845,7 +836,11 @@ mod tests {
 
         // The dir itself must still exist AND must be the same
         // directory (same inode). Contents wiped.
-        assert!(xvn_home.exists(), "xvn_home must still exist at {}", xvn_home.display());
+        assert!(
+            xvn_home.exists(),
+            "xvn_home must still exist at {}",
+            xvn_home.display()
+        );
         let xvn_home_inode_after = std::fs::metadata(&xvn_home).unwrap().ino();
         assert_eq!(
             xvn_home_inode_before, xvn_home_inode_after,
@@ -939,11 +934,7 @@ mod tests {
         // old picker handed back /xvn-last-factory-reset.log; the new
         // picker must skip the root and use temp_dir.
         let temp = TempDir::new().unwrap();
-        let pick = pick_audit_log_path_with(
-            std::path::Path::new("/data"),
-            None,
-            temp.path(),
-        );
+        let pick = pick_audit_log_path_with(std::path::Path::new("/data"), None, temp.path());
         assert_eq!(pick, temp.path().join("xvn-last-factory-reset.log"));
     }
 

@@ -7,6 +7,7 @@ type Props = {
   markers?: boolean;
   equity?: boolean;
   volume?: boolean;
+  subpane?: boolean;
   radioName?: string;
 };
 
@@ -82,6 +83,7 @@ export function ChartLayersPanel({
   markers = false,
   equity = false,
   volume = true,
+  subpane = true,
   radioName = "chart-subpane",
 }: Props) {
   const priceKeys = markers
@@ -102,22 +104,26 @@ export function ChartLayersPanel({
         </label>
       ))}
 
-      <div className="text-text-3 mb-1 mt-3">Subpane</div>
-      {SUBPANE_KEYS.map((key) => (
-        <label key={key} className="flex items-center gap-2">
-          <input
-            type="radio"
-            name={radioName}
-            checked={layers[key]}
-            onChange={() => {
-              SUBPANE_KEYS.forEach((candidate) =>
-                set(candidate, candidate === key),
-              );
-            }}
-          />{" "}
-          {LAYER_LABELS[key]}
-        </label>
-      ))}
+      {subpane ? (
+        <>
+          <div className="text-text-3 mb-1 mt-3">Subpane</div>
+          {SUBPANE_KEYS.map((key) => (
+            <label key={key} className="flex items-center gap-2">
+              <input
+                type="radio"
+                name={radioName}
+                checked={layers[key]}
+                onChange={() => {
+                  SUBPANE_KEYS.forEach((candidate) =>
+                    set(candidate, candidate === key),
+                  );
+                }}
+              />{" "}
+              {LAYER_LABELS[key]}
+            </label>
+          ))}
+        </>
+      ) : null}
 
       {equity ? (
         <>

@@ -146,11 +146,13 @@ function StrategyDetailView({ id }: { id: string }) {
         <Link
           to="/strategies"
           data-testid="strategy-detail-back"
-          className="inline-flex items-center gap-1 mb-1 text-[12px] text-text-3 hover:text-text transition-colors"
+          className="inline-flex items-center gap-1.5 text-[12px] text-text-2 hover:text-text mb-3"
         >
-          <span aria-hidden>←</span>
-          <span>Back to strategies</span>
+          ← Back to strategies
         </Link>
+        <span data-testid="strategy-detail-id" className="font-mono text-text-3">
+          {m.id}
+        </span>
         <h1>
           <InlineEditField
             id="display-name"
