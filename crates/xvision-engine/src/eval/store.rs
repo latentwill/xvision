@@ -610,6 +610,62 @@ impl RunStore {
         Ok(())
     }
 
+    /// Record a `supervisor_notes` row for the given run. Used by the
+    /// eval early-stop guard (F-9) and the trade-guardrails track (F-7);
+    /// the duplicate-definition guard is the contract — if F-7 lands
+    /// its own helper first, the second writer should remove this one.
+    ///
+    /// `role` is one of `planner` | `reviewer` | `guard` | `system`.
+    /// `severity` is `info` | `warn` | `error`. The table FK to
+    /// `agent_runs(id)` is unenforced for the eval store (no
+    /// `PRAGMA foreign_keys=ON`), so eval `run_id`s are accepted as-is.
+    pub async fn record_supervisor_note(
+        &self,
+        run_id: &str,
+        role: &str,
+        severity: &str,
+        content: &str,
+    ) -> Result<()> {
+        let id = Ulid::new().to_string();
+        let created_at = Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT INTO supervisor_notes (id, run_id, role, content, severity, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(id)
+        .bind(run_id)
+        .bind(role)
+        .bind(content)
+        .bind(severity)
+        .bind(created_at)
+        .execute(&self.pool)
+        .await
+        .with_context(|| format!("insert supervisor_notes run_id={run_id} role={role}"))?;
+        Ok(())
+    }
+
+    /// Read all supervisor_notes for a run, ordered by `created_at`.
+    /// Tuple shape: `(role, severity, content)`. Intended for tests; the
+    /// engine doesn't read these back at runtime today.
+    pub async fn read_supervisor_notes(&self, run_id: &str) -> Result<Vec<(String, String, String)>> {
+        let rows = sqlx::query(
+            "SELECT role, severity, content FROM supervisor_notes \
+             WHERE run_id = ? ORDER BY created_at ASC",
+        )
+        .bind(run_id)
+        .fetch_all(&self.pool)
+        .await
+        .context("read supervisor_notes")?;
+        rows.iter()
+            .map(|r| {
+                let role: String = r.try_get("role").context("read role")?;
+                let severity: String = r.try_get("severity").context("read severity")?;
+                let content: String = r.try_get("content").context("read content")?;
+                Ok((role, severity, content))
+            })
+            .collect()
+    }
+
     pub async fn read_equity_curve(&self, run_id: &str) -> Result<Vec<(DateTime<Utc>, f64)>> {
         let rows = sqlx::query(
             "SELECT timestamp, equity_usd FROM eval_equity_samples \
