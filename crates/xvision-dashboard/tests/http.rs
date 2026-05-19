@@ -1271,9 +1271,15 @@ async fn eval_retry_returns_404_for_unknown_run() {
 }
 
 #[tokio::test]
-async fn eval_retry_rejects_completed_run() {
+async fn eval_retry_rejects_queued_run() {
+    // Source in a non-terminal state (Queued / Running) has nothing to
+    // retry — the existing in-flight run is what the operator should be
+    // watching. The `eval-rerun-from-completed` track (2026-05-19)
+    // widened the accepted source set from `Failed | Cancelled` to also
+    // include `Completed`, so the rejection assertion now pins
+    // `Queued` instead of `Completed`.
     use xvision_engine::eval::{
-        run::{Run, RunMode, RunStatus},
+        run::{Run, RunMode},
         store::RunStore,
     };
 
@@ -1285,10 +1291,8 @@ async fn eval_retry_rejects_completed_run() {
     let run = Run::new_queued("agent-x".into(), "crypto-bull-q1-2025".into(), RunMode::Backtest);
     let run_id = run.id.clone();
     store.create(&run).await.unwrap();
-    store
-        .update_status(&run_id, RunStatus::Completed, None)
-        .await
-        .unwrap();
+    // Leave the run in `Queued` — that's the non-terminal status we now
+    // reject from the retry route.
 
     let response = server
         .post(&format!("/api/eval/runs/{run_id}/retry"))

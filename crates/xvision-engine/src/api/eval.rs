@@ -311,31 +311,107 @@ async fn get_inner(ctx: &ApiContext, run_id: &str) -> ApiResult<Run> {
     })
 }
 
-/// Retry a failed eval run by enqueueing a new run with the same
+/// Classifies *why* a retry was issued, so downstream surfaces (review
+/// queue, lineage ribbon, audit log readers) can distinguish a deliberate
+/// rerun of a `Completed` run from a recovery retry of a `Failed` or
+/// `Cancelled` run. Derived deterministically from source status —
+/// callers do not supply it.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RetryReason {
+    /// Source run was `Failed` or `Cancelled`. Operator wants to retry
+    /// the same workload now that the underlying problem is fixed.
+    FailureRecovery,
+    /// Source run was `Completed`. Operator wants a fresh trace against
+    /// the same agent/scenario for result-stability or re-test.
+    ManualRerun,
+}
+
+impl RetryReason {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            RetryReason::FailureRecovery => "failure_recovery",
+            RetryReason::ManualRerun => "manual_rerun",
+        }
+    }
+}
+
+/// Rich return shape from `retry_with_outcome`: the freshly-enqueued (or
+/// coalesced-in-flight) `RunDetail`, plus the lineage breadcrumbs the
+/// shorter `retry(...) -> RunDetail` form discards. Lineage is also
+/// written to the audit log so downstream readers can pick it up
+/// without a schema change to `eval_runs`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RetryOutcome {
+    pub detail: RunDetail,
+    pub reason: RetryReason,
+    pub source_run_id: String,
+}
+
+/// Retry an eval run by enqueueing a new run with the same
 /// `(agent_id, scenario_id, mode, params_override)` inputs.
 ///
-/// Rejected with `ApiError::Validation` if the source run is not in
-/// `Failed` state — Cancelled runs are intentional and Completed runs
-/// don't need retrying. Idempotent on the source-run fingerprint: if any
-/// run with the same `(agent_id, scenario_id, mode, params_override)` is
-/// already queued or running, returns that run's detail instead of
-/// starting another to avoid retry storms when the operator double-clicks
-/// the Retry button. A queued or running sibling that shares
+/// Accepted source statuses: `Failed`, `Cancelled`, `Completed`.
+///
+/// - `Failed` / `Cancelled` → `RetryReason::FailureRecovery`. The
+///   operator typically wants to re-run after fixing a transient error
+///   or after deliberately stopping a run.
+/// - `Completed` → `RetryReason::ManualRerun`. The operator wants a
+///   fresh trace against the same agent/scenario inputs (re-test a fix,
+///   verify result stability). This is NOT A/B compare and NOT a
+///   fingerprint-dedup case — the operator explicitly wants a new run.
+///
+/// Rejected with `ApiError::Validation` if the source is `Queued` or
+/// `Running` — there's nothing to retry, and the existing run is what
+/// the operator should be watching.
+///
+/// Idempotent on the source-run fingerprint: if any run with the same
+/// `(agent_id, scenario_id, mode, params_override)` is already queued or
+/// running, returns that run's detail instead of starting another to
+/// avoid retry storms when the operator double-clicks the Retry/Rerun
+/// button. A queued or running sibling that shares
 /// `(agent_id, scenario_id, mode)` but differs on `params_override` is a
 /// distinct workload and does NOT coalesce — retry starts a new run.
+///
+/// Lineage (`source_run_id` + classified `RetryReason`) is recorded in
+/// the audit log's `args_json` column and returned in
+/// `retry_with_outcome`'s `RetryOutcome`.
 pub async fn retry(ctx: &ApiContext, source_id: &str) -> ApiResult<RunDetail> {
+    retry_with_outcome(ctx, source_id).await.map(|o| o.detail)
+}
+
+/// Same gate, idempotency, and side effects as [`retry`] — additionally
+/// surfaces `RetryReason` and the source run id so callers that want
+/// lineage in their typed response (frontend, CLI, MCP) don't have to
+/// re-read the audit log.
+pub async fn retry_with_outcome(ctx: &ApiContext, source_id: &str) -> ApiResult<RetryOutcome> {
     let started = Instant::now();
     let result = retry_inner(ctx, source_id).await;
     let outcome = match &result {
         Ok(_) => Outcome::Ok,
         Err(e) => Outcome::Error(e.to_string()),
     };
+    // Capture lineage in audit args_json so downstream readers can
+    // distinguish a deliberate Rerun from a FailureRecovery retry
+    // without a migration to `eval_runs`.
+    let args_json = result.as_ref().ok().and_then(|o| {
+        serde_json::to_string(&serde_json::json!({
+            "reason": o.reason.as_str(),
+            "source_run_id": o.source_run_id,
+        }))
+        .ok()
+    });
     let _ = audit::record(
         ctx,
         "eval",
         "retry",
         Some(source_id),
-        None,
+        args_json.as_deref(),
         outcome,
         started.elapsed().as_millis() as i64,
     )
@@ -343,18 +419,25 @@ pub async fn retry(ctx: &ApiContext, source_id: &str) -> ApiResult<RunDetail> {
     result
 }
 
-async fn retry_inner(ctx: &ApiContext, source_id: &str) -> ApiResult<RunDetail> {
+async fn retry_inner(ctx: &ApiContext, source_id: &str) -> ApiResult<RetryOutcome> {
     let source = get_inner(ctx, source_id).await?;
-    if !matches!(source.status, RunStatus::Failed | RunStatus::Cancelled) {
-        return Err(ApiError::Validation(format!(
-            "run '{source_id}' cannot be retried from status {}; retry requires a 'failed' or 'cancelled' run",
-            source.status.as_str()
-        )));
-    }
+    let reason = match source.status {
+        RunStatus::Failed | RunStatus::Cancelled => RetryReason::FailureRecovery,
+        RunStatus::Completed => RetryReason::ManualRerun,
+        RunStatus::Queued | RunStatus::Running => {
+            return Err(ApiError::Validation(format!(
+                "run '{source_id}' cannot be retried from status {}; retry requires a 'failed', 'cancelled', or 'completed' run",
+                source.status.as_str()
+            )));
+        }
+    };
 
     // Idempotency: if any run with the same fingerprint is still in
     // flight, return it instead of starting another. Prevents retry
-    // storms when the operator double-clicks the Retry button.
+    // storms when the operator double-clicks the Retry/Rerun button.
+    // This guarantee holds equally for FailureRecovery and ManualRerun
+    // — a deliberate rerun of a Completed source still coalesces onto a
+    // queued/running sibling rather than fanning out.
     let store = RunStore::new(ctx.db.clone());
     let siblings = store
         .list(ListFilter {
@@ -370,16 +453,26 @@ async fn retry_inner(ctx: &ApiContext, source_id: &str) -> ApiResult<RunDetail> 
             && r.params_override == source.params_override
             && matches!(r.status, RunStatus::Queued | RunStatus::Running)
     }) {
-        return get_run(ctx, &existing.id).await;
+        let detail = get_run(ctx, &existing.id).await?;
+        return Ok(RetryOutcome {
+            detail,
+            reason,
+            source_run_id: source.id,
+        });
     }
 
     let req = EvalRunRequest {
-        agent_id: source.agent_id,
-        scenario_id: source.scenario_id,
+        agent_id: source.agent_id.clone(),
+        scenario_id: source.scenario_id.clone(),
         mode: source.mode,
-        params_override: source.params_override,
+        params_override: source.params_override.clone(),
     };
-    start_run(ctx, req).await
+    let detail = start_run(ctx, req).await?;
+    Ok(RetryOutcome {
+        detail,
+        reason,
+        source_run_id: source.id,
+    })
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]

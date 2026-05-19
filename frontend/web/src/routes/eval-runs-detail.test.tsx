@@ -873,18 +873,15 @@ describe("EvalRunDetailRoute", () => {
     ).not.toBeInTheDocument();
   });
 
-  it.each(["completed", "queued", "running", "cancelled"] as const)(
-    "hides the Retry button on %s runs",
+  it.each(["queued", "running"] as const)(
+    "hides the Retry/Rerun button on %s runs",
     async (status) => {
       vi.mocked(evalApi.getRun).mockResolvedValue(
         detail({
           summary: {
             ...detail().summary,
             status,
-            completed_at:
-              status === "running" || status === "queued"
-                ? null
-                : "2026-05-13T14:30:00Z",
+            completed_at: null,
           },
         }),
       );
@@ -893,11 +890,127 @@ describe("EvalRunDetailRoute", () => {
 
       // Wait for some content to render (the id is enough to confirm load).
       await screen.findByText("01LIVE");
+      // Neither label should appear on in-flight runs.
       expect(
         screen.queryByRole("button", { name: "Retry eval run 01LIVE" }),
       ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Rerun eval run 01LIVE" }),
+      ).not.toBeInTheDocument();
     },
   );
+
+  // eval-rerun-from-completed (2026-05-19): completed runs now show a
+  // distinct "Rerun" button (semantics: fresh trace against the same
+  // agent/scenario inputs). The tooltip text disambiguates it from the
+  // failure-recovery "Retry" button.
+  it("renders 'Rerun' (not 'Retry') on completed runs with disambiguating tooltip", async () => {
+    vi.mocked(evalApi.getRun).mockResolvedValue(
+      detail({
+        summary: {
+          ...detail().summary,
+          status: "completed",
+          completed_at: "2026-05-13T14:30:00Z",
+        },
+      }),
+    );
+
+    renderDetail();
+
+    const rerun = await screen.findByRole("button", {
+      name: "Rerun eval run 01LIVE",
+    });
+    expect(rerun).toBeInTheDocument();
+    expect(rerun.getAttribute("title")).toMatch(
+      /fresh trace.*same agent\/scenario/i,
+    );
+    // The failure-recovery label must not appear on a completed run.
+    expect(
+      screen.queryByRole("button", { name: "Retry eval run 01LIVE" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("clicking Rerun on a completed run posts and navigates to the new run id", async () => {
+    const completedDetail = detail({
+      summary: {
+        ...detail().summary,
+        status: "completed",
+        completed_at: "2026-05-13T14:30:00Z",
+      },
+    });
+    const newRunDetail = detail({
+      summary: { ...detail().summary, id: "01RERUN", status: "queued" },
+    });
+    vi.mocked(evalApi.getRun).mockImplementation(async (id: string) =>
+      id === "01RERUN" ? newRunDetail : completedDetail,
+    );
+    vi.mocked(evalApi.retryRun).mockResolvedValue(newRunDetail);
+
+    renderDetail();
+
+    const rerun = await screen.findByRole("button", {
+      name: "Rerun eval run 01LIVE",
+    });
+    fireEvent.click(rerun);
+
+    await waitFor(() => expect(evalApi.retryRun).toHaveBeenCalled());
+    expect(vi.mocked(evalApi.retryRun).mock.calls[0]?.[0]).toBe("01LIVE");
+    await waitFor(() =>
+      expect(
+        vi.mocked(evalApi.getRun).mock.calls.some(([id]) => id === "01RERUN"),
+      ).toBe(true),
+    );
+  });
+
+  // Pin: the "Retry" label on a failed run still includes the
+  // failure-recovery tooltip wording (NOT the rerun wording).
+  it("renders 'Retry' label with failure-recovery tooltip on failed runs", async () => {
+    vi.mocked(evalApi.getRun).mockResolvedValue(
+      detail({
+        summary: {
+          ...detail().summary,
+          status: "failed",
+          completed_at: "2026-05-13T14:30:00Z",
+          error: "provider 5xx",
+        },
+      }),
+    );
+
+    renderDetail();
+
+    const retry = await screen.findByRole("button", {
+      name: "Retry eval run 01LIVE",
+    });
+    expect(retry.getAttribute("title")).not.toMatch(
+      /fresh trace.*same agent\/scenario/i,
+    );
+  });
+
+  it("surfaces a classified retry error inline when the mutation rejects", async () => {
+    vi.mocked(evalApi.getRun).mockResolvedValue(
+      detail({
+        summary: {
+          ...detail().summary,
+          status: "failed",
+          completed_at: "2026-05-13T14:30:00Z",
+          error: "provider 5xx",
+        },
+      }),
+    );
+    vi.mocked(evalApi.retryRun).mockRejectedValue(
+      new Error("backend says no"),
+    );
+
+    renderDetail();
+
+    const retry = await screen.findByRole("button", {
+      name: "Retry eval run 01LIVE",
+    });
+    fireEvent.click(retry);
+
+    const banner = await screen.findByTestId("eval-retry-error");
+    expect(banner.textContent).toMatch(/Retry failed: backend says no/);
+  });
 
   it("clicking Retry posts and navigates to the new run id", async () => {
     const failedDetail = detail({

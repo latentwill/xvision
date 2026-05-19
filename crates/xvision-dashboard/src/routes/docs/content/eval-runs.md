@@ -40,13 +40,25 @@ the selected decision (use the per-row link to jump to a span).
 two or more runs. Use it to spot regressions when iterating on a
 strategy: arms of the same `ab-compare` invocation land here.
 
-## Retry and Delete
+## Retry, Rerun, and Delete
 
 - **Retry** — supported on `failed` and `cancelled` runs. Spawns a
-  new run with the same `(agent_id, scenario_id, mode)` fingerprint
-  under a fresh id.
+  new run with the same
+  `(agent_id, scenario_id, mode, params_override)` fingerprint under
+  a fresh id. Tagged internally as `FailureRecovery`.
+- **Rerun** — supported on `completed` runs. Same action surface as
+  Retry; spawns a new run with the same fingerprint and is tagged
+  `ManualRerun`. Use it to repeat a known-good run (e.g. against a
+  refreshed bar cache) without re-entering parameters.
+- **Idempotency** — both Retry and Rerun are coalesced: if a sibling
+  with the same fingerprint is already `queued` or `running`, the
+  existing run is returned instead of starting a duplicate. Safe to
+  double-click the button.
 - **Delete** — available in the eval inspector. Deletes the
   `eval_runs` row, decisions, and trace artifacts.
+
+`queued` and `running` runs cannot be retried or rerun — wait for them
+to terminate first, or cancel them.
 
 ## Failure classes
 
