@@ -448,6 +448,23 @@ impl PaperExecutor {
         let history_window = scenario.warmup_bars as usize;
 
         let initial_balance = self.broker.balance().await?;
+        // Cash-starvation pre-flight log. Paper-mode runs share a single
+        // Alpaca paper account whose positions persist across runs; a
+        // prior run that left a long open (BTC, AAPL, …) leaves only the
+        // residual cash for this run's sizing math. Surface it loudly at
+        // run start so the operator doesn't have to reverse-engineer the
+        // $416-of-$99k-equity case from a downstream broker rejection.
+        let initial_buying_power = self.broker.buying_power(&asset).await?;
+        if initial_balance > 0.0 && initial_buying_power < initial_balance * 0.10 {
+            tracing::warn!(
+                run_id = %run.id,
+                asset = %asset,
+                buying_power = initial_buying_power,
+                balance = initial_balance,
+                ratio = initial_buying_power / initial_balance,
+                "paper eval start: buying_power < 10% of equity — prior-run positions are tying up cash; consider running scripts/alpaca-paper-reset.sh before this eval"
+            );
+        }
         let mut equity_samples: Vec<f64> = Vec::new();
         let mut decision_idx = 0u32;
         let mut n_trades = 0u32;
@@ -491,6 +508,11 @@ impl PaperExecutor {
         // `strategy.risk` (preferred long-term home) or
         // `run.params_override`, and thread the value through.
         const CIRCUIT_BREAKER_THRESHOLD: u32 = 3;
+        // Alpaca crypto rejects sub-$10 notionals with "cost basis must be >=
+        // minimal amount of order 10". The cash-aware pre-flight gate below
+        // uses this floor to skip orders we know will be rejected, rather
+        // than letting them count against the circuit breaker.
+        const MIN_ORDER_NOTIONAL_USD: f64 = 10.0;
         let mut consecutive_broker_error_class: Option<BrokerErrorClass> = None;
         let mut consecutive_broker_error_count: u32 = 0;
         let mut consecutive_broker_error_last_msg: String = String::new();
@@ -646,15 +668,61 @@ impl PaperExecutor {
                 // constant while cash drops, so equity-based sizing chronically
                 // overshoots available cash and Alpaca returns 403
                 // "insufficient balance for USD".
-                let buying_power = self.broker.buying_power(&asset).await?;
-                let usd_at_risk = buying_power * strategy.risk.risk_pct_per_trade;
-                let size = (usd_at_risk / reference_price_usd).max(0.0);
-                let side = if parsed.action == "long_open" {
-                    Side::Buy
+                let bp = self.broker.buying_power(&asset).await?;
+                let usd_at_risk = bp * strategy.risk.risk_pct_per_trade;
+                // Pre-flight: Alpaca rejects crypto orders with notional below
+                // MIN_ORDER_NOTIONAL_USD ("cost basis must be >= minimal amount
+                // of order 10"). Without this gate we'd submit a known-DOA
+                // order, eat a broker rejection, and let the circuit-breaker
+                // tear the run down after CIRCUIT_BREAKER_THRESHOLD attempts —
+                // see run 01KRZG1HBEMEB66DWRNYED8RY7 where buying_power was
+                // $416 (the rest of the $100k equity tied up in an unrelated
+                // BTC long from a prior run), risk_pct ~1.5%, usd_at_risk
+                // $6.24, below the $10 floor on every bar.
+                //
+                // When this gate fires we skip the submit, write a
+                // recoverable broker decision row (so the operator sees the
+                // skipped intent in the trace), and round-trip a synthetic
+                // MinOrderSize feedback to the trader's next seed so it can
+                // switch to `flat` / `hold` until cash frees up. This is the
+                // same self-healing channel the broker uses on real
+                // rejections; the agent's experience is identical.
+                if usd_at_risk < MIN_ORDER_NOTIONAL_USD {
+                    let msg = format!(
+                        "cash starved: usd_at_risk=${:.2} (buying_power=${:.2} × risk_pct={:.4}) is below the ${:.2} minimum notional. Other open positions are tying up cash; pick `flat` or `hold` until they close.",
+                        usd_at_risk,
+                        bp,
+                        strategy.risk.risk_pct_per_trade,
+                        MIN_ORDER_NOTIONAL_USD,
+                    );
+                    tracing::warn!(
+                        run_id = %run.id,
+                        decision_index = decision_idx,
+                        asset = %asset,
+                        buying_power = bp,
+                        risk_pct = strategy.risk.risk_pct_per_trade,
+                        usd_at_risk = usd_at_risk,
+                        min_notional = MIN_ORDER_NOTIONAL_USD,
+                        "paper eval pre-flight: skipping submit, usd_at_risk below min notional"
+                    );
+                    last_broker_error = Some(BrokerErrorFeedback {
+                        class: BrokerErrorClass::MinOrderSize,
+                        message: msg,
+                        requested: Some(usd_at_risk),
+                        available: Some(MIN_ORDER_NOTIONAL_USD),
+                        asset: asset.clone(),
+                        decision_index: decision_idx,
+                    });
+                    None
                 } else {
-                    Side::Sell
-                };
-                Some((side, size))
+                    let size = (usd_at_risk / reference_price_usd).max(0.0);
+                    let side = if parsed.action == "long_open" {
+                        Side::Buy
+                    } else {
+                        Side::Sell
+                    };
+                    Some((side, size))
+                }
             };
 
             if let Some((side, size)) = plan {
