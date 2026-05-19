@@ -63,6 +63,7 @@ async fn seed_completed_run(store: &RunStore, scenario_id: &str) -> Run {
         win_rate: 0.6,
         n_trades: 3,
         n_decisions: 5,
+        baselines: None,
     };
     store.finalize(&run.id, &metrics).await.unwrap();
     // Re-read so we have completed_at + metrics on the run we hand back.

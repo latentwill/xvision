@@ -53,6 +53,7 @@ fn finalized_run() -> Run {
         win_rate: 0.41,
         n_trades: 12,
         n_decisions: 30,
+        baselines: None,
     });
     r
 }

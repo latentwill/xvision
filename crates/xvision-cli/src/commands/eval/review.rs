@@ -384,6 +384,7 @@ mod tests {
                     win_rate: 0.55,
                     n_trades: 4,
                     n_decisions: 3,
+                    baselines: None,
                 },
             )
             .await

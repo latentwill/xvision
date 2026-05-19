@@ -125,6 +125,7 @@ fn metrics(total_return_pct: f64, sharpe: f64) -> MetricsSummary {
         win_rate: 0.55,
         n_trades: 10,
         n_decisions: 12,
+        baselines: None,
     }
 }
 

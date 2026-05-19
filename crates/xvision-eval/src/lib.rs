@@ -15,4 +15,5 @@ pub mod result;
 
 pub use algorithm::Algorithm;
 pub use backtest::{BacktestConfig, BacktestExecutor, BacktestState, DailyPnl, MarketBar, TickReport};
+pub use baselines::{compute_baselines, BaselineResult, BaselinesReport, RelativeTo};
 pub use result::{ArmResult, BacktestResult, EquityPoint};

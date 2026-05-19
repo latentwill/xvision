@@ -1777,6 +1777,7 @@ mod tests {
             win_rate: 0.5,
             n_trades: 1,
             n_decisions: 1,
+            baselines: None,
         };
         store.finalize(&run.id, &metrics).await.unwrap();
         run.id
