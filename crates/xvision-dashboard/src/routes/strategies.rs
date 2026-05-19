@@ -11,9 +11,9 @@ use serde::{Deserialize, Serialize};
 
 use xvision_engine::api::chart::{self as chart_api, StrategyChartPayload};
 use xvision_engine::api::strategy::{
-    self, add_agent, remove_agent, rename_agent_role, set_pipeline, set_risk_config,
-    update_metadata, update_slot, validate_draft, AddAgentReq, CloneStrategyReq, RemoveAgentReq,
-    RenameAgentRoleReq, SetPipelineReq, StrategyAgentsOut, StrategySummary,
+    self, add_agent, remove_agent, rename_agent_role, set_pipeline, set_risk_config, update_metadata,
+    update_slot, validate_draft, AddAgentReq, CloneStrategyReq, RemoveAgentReq, RenameAgentRoleReq,
+    SetPipelineReq, StrategyAgentsOut, StrategySummary,
 };
 use xvision_engine::api::ApiError;
 use xvision_engine::authoring::{
@@ -316,9 +316,7 @@ fn classify_metadata_patch_error(err: anyhow::Error, id: &str) -> DashboardError
             msg: patch_err.to_string(),
         };
     }
-    if let Some(id_err) =
-        err.downcast_ref::<xvision_engine::strategies::id::StrategyIdError>()
-    {
+    if let Some(id_err) = err.downcast_ref::<xvision_engine::strategies::id::StrategyIdError>() {
         return DashboardError::Validation {
             field: "id".to_string(),
             msg: format!("invalid strategy id: {id_err}"),
@@ -374,11 +372,7 @@ pub mod get {
         .expect("create strategy");
 
         let store = RunStore::new(ctx.db.clone());
-        let mut run = Run::new_queued(
-            out.id.clone(),
-            "crypto-bull-q1-2025".into(),
-            RunMode::Backtest,
-        );
+        let mut run = Run::new_queued(out.id.clone(), "crypto-bull-q1-2025".into(), RunMode::Backtest);
         run.status = RunStatus::Completed;
         store.create(&run).await.expect("seed run");
         store
@@ -407,9 +401,7 @@ pub mod get {
         // `Json(api_strategy::get(...))` — same struct as the export
         // embeds. Compare structurally so format differences don't
         // affect equality.
-        let direct = api_strategy::get(&ctx, &strategy_id)
-            .await
-            .expect("strategy get");
+        let direct = api_strategy::get(&ctx, &strategy_id).await.expect("strategy get");
         let export = eval_export::build_export(&ctx, &run_id)
             .await
             .expect("build_export");

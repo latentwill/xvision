@@ -307,9 +307,7 @@ impl TraderOutput {
         let (kind, detail) = if stopped_at_max {
             (
                 TraderFailureKind::Truncated,
-                format!(
-                    "trader output truncated at MaxTokens; final text was invalid JSON: {detail_inner}"
-                ),
+                format!("trader output truncated at MaxTokens; final text was invalid JSON: {detail_inner}"),
             )
         } else if missing_field {
             (
@@ -340,10 +338,7 @@ impl TraderOutput {
         response: Option<&LlmResponse>,
         raw: &str,
     ) -> Result<(), TraderOutputError> {
-        if !matches!(
-            self.action.as_str(),
-            "long_open" | "short_open" | "flat" | "hold"
-        ) {
+        if !matches!(self.action.as_str(), "long_open" | "short_open" | "flat" | "hold") {
             return Err(TraderOutputError::build(
                 TraderFailureKind::InvalidField,
                 run_id,
@@ -737,8 +732,7 @@ mod tests {
         // 240 chars with an ellipsis. The exact length isn't asserted (the
         // ellipsis adds a char), only that the marker is present.
         let garbage = "z".repeat(300);
-        let err =
-            TraderOutput::parse_strict(&garbage, "01TEST", 0).expect_err("garbage must not parse");
+        let err = TraderOutput::parse_strict(&garbage, "01TEST", 0).expect_err("garbage must not parse");
         let message = err.to_string();
         assert!(message.contains('…'), "expected truncation marker in {message}");
     }
@@ -890,5 +884,3 @@ mod tests {
         }
     }
 }
-
-

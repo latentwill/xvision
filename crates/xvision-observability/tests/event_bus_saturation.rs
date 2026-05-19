@@ -13,27 +13,22 @@
 use async_trait::async_trait;
 use chrono::Utc;
 use sqlx::SqlitePool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration as StdDuration;
 use tokio::sync::Notify;
+use xvision_observability::types::{RiskLevel, RunStatus, SideEffectLevel, SpanKind, ToolOrigin};
 use xvision_observability::{
     events::{
-        ModelCallFinishedEvent, RunFinishedEvent, RunStartedEvent, SpanStartedEvent,
-        ToolCallStartedEvent,
+        ModelCallFinishedEvent, RunFinishedEvent, RunStartedEvent, SpanStartedEvent, ToolCallStartedEvent,
     },
     recorder::RecorderError,
     AgentRunRecorder, RunEvent, RunEventBus, SqliteRecorder,
 };
-use xvision_observability::types::{
-    RiskLevel, RunStatus, SideEffectLevel, SpanKind, ToolOrigin,
-};
 
-const MIGRATION_002: &str =
-    include_str!("../../xvision-engine/migrations/002_eval.sql");
-const MIGRATION_013: &str =
-    include_str!("../../xvision-engine/migrations/013_cli_jobs.sql");
-const MIGRATION_018: &str =
-    include_str!("../../xvision-engine/migrations/018_agent_run_observability.sql");
+const MIGRATION_002: &str = include_str!("../../xvision-engine/migrations/002_eval.sql");
+const MIGRATION_013: &str = include_str!("../../xvision-engine/migrations/013_cli_jobs.sql");
+const MIGRATION_018: &str = include_str!("../../xvision-engine/migrations/018_agent_run_observability.sql");
 
 async fn migrated_pool() -> SqlitePool {
     let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
@@ -48,12 +43,49 @@ async fn migrated_pool() -> SqlitePool {
 /// `try_send` Full path.
 struct GatedRecorder {
     inner: Arc<SqliteRecorder>,
-    release: Arc<Notify>,
+    gate: Arc<ReleaseGate>,
 }
 
 impl GatedRecorder {
-    fn new(inner: Arc<SqliteRecorder>, release: Arc<Notify>) -> Self {
-        Self { inner, release }
+    fn new(inner: Arc<SqliteRecorder>, gate: Arc<ReleaseGate>) -> Self {
+        Self { inner, gate }
+    }
+}
+
+struct ReleaseGate {
+    released: AtomicBool,
+    notify: Notify,
+}
+
+impl ReleaseGate {
+    fn new() -> Self {
+        Self {
+            released: AtomicBool::new(false),
+            notify: Notify::new(),
+        }
+    }
+
+    async fn wait(&self) {
+        loop {
+            if self.released.load(Ordering::Acquire) {
+                return;
+            }
+
+            let notified = self.notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+
+            if self.released.load(Ordering::Acquire) {
+                return;
+            }
+
+            notified.await;
+        }
+    }
+
+    fn release(&self) {
+        self.released.store(true, Ordering::Release);
+        self.notify.notify_waiters();
     }
 }
 
@@ -62,7 +94,7 @@ impl AgentRunRecorder for GatedRecorder {
     async fn handle_event(&self, event: &RunEvent) -> Result<(), RecorderError> {
         // Block until the test releases us. The notify is permanently
         // signalled after release, so subsequent events pass through.
-        self.release.notified().await;
+        self.gate.wait().await;
         self.inner.handle_event(event).await
     }
 
@@ -85,6 +117,19 @@ async fn wait_for_count(pool: &SqlitePool, sql: &str, expected: i64) {
     }
 }
 
+#[tokio::test]
+async fn released_gate_stays_open_for_future_waiters() {
+    let gate = ReleaseGate::new();
+
+    gate.release();
+
+    for _ in 0..3 {
+        tokio::time::timeout(StdDuration::from_millis(50), gate.wait())
+            .await
+            .expect("released gate should not block future waiters");
+    }
+}
+
 /// Saturate the bus while the recorder is gated, then verify:
 ///   (a) `RunFinished` still reaches SQLite (run is not left running),
 ///   (b) the span-scoped drops are attributed to the run via a
@@ -94,9 +139,8 @@ async fn wait_for_count(pool: &SqlitePool, sql: &str, expected: i64) {
 async fn saturation_preserves_lifecycle_and_attributes_span_drops() {
     let pool = migrated_pool().await;
     let sqlite = Arc::new(SqliteRecorder::new(pool.clone()));
-    let release = Arc::new(Notify::new());
-    let gated: Arc<dyn AgentRunRecorder> =
-        Arc::new(GatedRecorder::new(sqlite.clone(), release.clone()));
+    let gate = Arc::new(ReleaseGate::new());
+    let gated: Arc<dyn AgentRunRecorder> = Arc::new(GatedRecorder::new(sqlite.clone(), gate.clone()));
 
     // Tight bus so the try_send Full path triggers quickly.
     let bus = Arc::new(RunEventBus::with_capacity(2, vec![gated]));
@@ -196,19 +240,9 @@ async fn saturation_preserves_lifecycle_and_attributes_span_drops() {
             .await;
     });
 
-    // 5. Release the gate. notify_waiters wakes every current and
-    //    future awaiter (we re-arm by signalling on every handle_event
-    //    via a second mechanism below).
-    //
-    // Simplest: spawn a permanent releaser that keeps signalling so
+    // 5. Release the gate once. The release state is durable, so
     // subsequent handle_event calls don't re-block.
-    let release_loop = release.clone();
-    let releaser = tokio::spawn(async move {
-        for _ in 0..512 {
-            release_loop.notify_waiters();
-            tokio::time::sleep(StdDuration::from_millis(2)).await;
-        }
-    });
+    gate.release();
 
     // 6. Wait for RunFinished to land and the run to reach `completed`.
     finish_task.await.unwrap();
@@ -231,7 +265,4 @@ async fn saturation_preserves_lifecycle_and_attributes_span_drops() {
         1,
     )
     .await;
-
-    releaser.abort();
-    let _ = releaser.await;
 }

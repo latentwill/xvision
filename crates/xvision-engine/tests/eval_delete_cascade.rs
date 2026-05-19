@@ -83,16 +83,14 @@ async fn delete_eval_run_cascades_through_agent_runs_and_spans() {
     .execute(&ctx.db)
     .await
     .unwrap();
-    sqlx::query(
-        "INSERT INTO model_calls (span_id, provider, model, prompt_hash) VALUES (?, ?, ?, ?)",
-    )
-    .bind("sp_1")
-    .bind("anthropic")
-    .bind("claude-sonnet")
-    .bind("hash:abc")
-    .execute(&ctx.db)
-    .await
-    .unwrap();
+    sqlx::query("INSERT INTO model_calls (span_id, provider, model, prompt_hash) VALUES (?, ?, ?, ?)")
+        .bind("sp_1")
+        .bind("anthropic")
+        .bind("claude-sonnet")
+        .bind("hash:abc")
+        .execute(&ctx.db)
+        .await
+        .unwrap();
     sqlx::query(
         "INSERT INTO tool_calls \
          (span_id, tool_name, input_hash, side_effect_level, risk_level) \
@@ -120,26 +118,22 @@ async fn delete_eval_run_cascades_through_agent_runs_and_spans() {
     .execute(&ctx.db)
     .await
     .unwrap();
-    sqlx::query(
-        "INSERT INTO sandbox_results (span_id, command, exit_code) VALUES (?, ?, ?)",
-    )
-    .bind("sp_1")
-    .bind("echo hello")
-    .bind(0_i64)
-    .execute(&ctx.db)
-    .await
-    .unwrap();
-    sqlx::query(
-        "INSERT INTO events (id, run_id, span_id, kind, created_at) VALUES (?, ?, ?, ?, ?)",
-    )
-    .bind("ev_1")
-    .bind("ag_1")
-    .bind("sp_1")
-    .bind("ipc.notification")
-    .bind("2026-05-18T00:00:05Z")
-    .execute(&ctx.db)
-    .await
-    .unwrap();
+    sqlx::query("INSERT INTO sandbox_results (span_id, command, exit_code) VALUES (?, ?, ?)")
+        .bind("sp_1")
+        .bind("echo hello")
+        .bind(0_i64)
+        .execute(&ctx.db)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO events (id, run_id, span_id, kind, created_at) VALUES (?, ?, ?, ?, ?)")
+        .bind("ev_1")
+        .bind("ag_1")
+        .bind("sp_1")
+        .bind("ipc.notification")
+        .bind("2026-05-18T00:00:05Z")
+        .execute(&ctx.db)
+        .await
+        .unwrap();
     sqlx::query(
         "INSERT INTO checkpoints \
          (id, run_id, span_id, sequence, kind, input_hash, created_at) \
@@ -169,16 +163,14 @@ async fn delete_eval_run_cascades_through_agent_runs_and_spans() {
     .execute(&ctx.db)
     .await
     .unwrap();
-    sqlx::query(
-        "INSERT INTO artifacts (id, run_id, kind, created_at) VALUES (?, ?, ?, ?)",
-    )
-    .bind("art_1")
-    .bind("ag_1")
-    .bind("final")
-    .bind("2026-05-18T00:00:08Z")
-    .execute(&ctx.db)
-    .await
-    .unwrap();
+    sqlx::query("INSERT INTO artifacts (id, run_id, kind, created_at) VALUES (?, ?, ?, ?)")
+        .bind("art_1")
+        .bind("ag_1")
+        .bind("final")
+        .bind("2026-05-18T00:00:08Z")
+        .execute(&ctx.db)
+        .await
+        .unwrap();
 
     // Direct children of eval_runs.
     sqlx::query(
@@ -194,15 +186,13 @@ async fn delete_eval_run_cascades_through_agent_runs_and_spans() {
     .execute(&ctx.db)
     .await
     .unwrap();
-    sqlx::query(
-        "INSERT INTO eval_equity_samples (run_id, timestamp, equity_usd) VALUES (?, ?, ?)",
-    )
-    .bind("r_with_kids")
-    .bind("2026-05-18T00:00:10Z")
-    .bind(10_000.0_f64)
-    .execute(&ctx.db)
-    .await
-    .unwrap();
+    sqlx::query("INSERT INTO eval_equity_samples (run_id, timestamp, equity_usd) VALUES (?, ?, ?)")
+        .bind("r_with_kids")
+        .bind("2026-05-18T00:00:10Z")
+        .bind(10_000.0_f64)
+        .execute(&ctx.db)
+        .await
+        .unwrap();
 
     let fk_on: (i64,) = sqlx::query_as("PRAGMA foreign_keys")
         .fetch_one(&ctx.db)
@@ -231,11 +221,7 @@ async fn delete_eval_run_cascades_through_agent_runs_and_spans() {
         ("eval_equity_samples", "run_id = ?", "r_with_kids"),
     ] {
         let sql = format!("SELECT COUNT(*) FROM {table} WHERE {where_clause}");
-        let count: (i64,) = sqlx::query_as(&sql)
-            .bind(val)
-            .fetch_one(&ctx.db)
-            .await
-            .unwrap();
+        let count: (i64,) = sqlx::query_as(&sql).bind(val).fetch_one(&ctx.db).await.unwrap();
         assert_eq!(count.0, 0, "{table} must be empty after cascade delete");
     }
 }

@@ -88,9 +88,7 @@ async fn pipeline_output_assigned_for_role_variants() {
             },
         );
         let slots = vec![resolved_agent_slot(variant)];
-        let dispatch = Arc::new(MockDispatch::echo(
-            r#"{"action":"long_open","reasoning":"r"}"#,
-        ));
+        let dispatch = Arc::new(MockDispatch::echo(r#"{"action":"long_open","reasoning":"r"}"#));
         let tools = Arc::new(ToolRegistry::default_with_builtins());
         let outs = run_pipeline(PipelineInputs {
             strategy: &strategy,
@@ -231,7 +229,7 @@ fn agent_slot_to_llm_slot_smoke() {
         system_prompt: "p".into(),
         skill_ids: Vec::new(),
         max_tokens: None,
-            prompt_version: String::new(),
+        prompt_version: String::new(),
     };
     let llm = agent_slot_to_llm_slot("trader", &s);
     assert_eq!(llm.role, "trader");

@@ -40,8 +40,7 @@ fn from_env_non_loopback_without_token_refuses() {
     let prev = std::env::var(AUTH_TOKEN_ENV).ok();
     std::env::remove_var(AUTH_TOKEN_ENV);
     let addr: SocketAddr = "203.0.113.5:8788".parse().unwrap();
-    let err = AuthState::from_env(&addr)
-        .expect_err("non-loopback bind without token must refuse to start");
+    let err = AuthState::from_env(&addr).expect_err("non-loopback bind without token must refuse to start");
     let msg = err.to_string();
     assert!(
         msg.contains(AUTH_TOKEN_ENV) && msg.contains("non-loopback"),
@@ -70,7 +69,6 @@ fn unspecified_bind_treated_as_non_loopback() {
     let prev = std::env::var(AUTH_TOKEN_ENV).ok();
     std::env::remove_var(AUTH_TOKEN_ENV);
     let addr: SocketAddr = "0.0.0.0:8788".parse().unwrap();
-    AuthState::from_env(&addr)
-        .expect_err("0.0.0.0 bind must require a configured token");
+    AuthState::from_env(&addr).expect_err("0.0.0.0 bind must require a configured token");
     restore_env(prev);
 }

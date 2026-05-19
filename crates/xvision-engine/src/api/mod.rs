@@ -145,7 +145,9 @@ impl ApiContext {
         migrate_eval_decisions_reasoning(&pool).await?;
         sqlx::query(MIGRATION_016_EVAL_REVIEWS).execute(&pool).await?;
         migrate_eval_findings_review_columns(&pool).await?;
-        sqlx::query(MIGRATION_018_AGENT_RUN_OBSERVABILITY).execute(&pool).await?;
+        sqlx::query(MIGRATION_018_AGENT_RUN_OBSERVABILITY)
+            .execute(&pool)
+            .await?;
         migrate_agent_slot_prompt_version(&pool).await?;
 
         let ctx = Self::new(pool, actor, xvn_home.to_path_buf());
@@ -204,10 +206,7 @@ impl ApiContext {
     /// this with the dashboard's singleton `ObsRunEventBus`; CLI and
     /// unit tests leave it `None` and the eval path no-ops the
     /// emission.
-    pub fn with_obs_event_bus(
-        mut self,
-        bus: Arc<xvision_observability::RunEventBus>,
-    ) -> Self {
+    pub fn with_obs_event_bus(mut self, bus: Arc<xvision_observability::RunEventBus>) -> Self {
         self.obs_event_bus = Some(bus);
         self
     }
@@ -216,10 +215,7 @@ impl ApiContext {
     /// (dashboard `AppState`) load the resolved view from disk +
     /// env + CLI flags at startup and pass it here so the engine's
     /// emit_run_started picks up the operator's actual choice.
-    pub fn with_obs_config(
-        mut self,
-        cfg: Arc<xvision_observability::ObservabilityConfig>,
-    ) -> Self {
+    pub fn with_obs_config(mut self, cfg: Arc<xvision_observability::ObservabilityConfig>) -> Self {
         self.obs_config = cfg;
         self
     }

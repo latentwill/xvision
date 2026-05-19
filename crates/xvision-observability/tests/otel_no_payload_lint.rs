@@ -100,6 +100,5 @@ fn add_attribute_signature_takes_attribute_not_str() {
     // The coercion itself is the assertion: if this line stops
     // compiling, someone changed the OTel attribute API to accept a
     // non-`Attribute` value and the lint trips.
-    let _coerced: fn(&tracing::Span, &'static str, Attribute) =
-        otel_add_attribute;
+    let _coerced: fn(&tracing::Span, &'static str, Attribute) = otel_add_attribute;
 }

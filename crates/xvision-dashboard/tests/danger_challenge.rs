@@ -10,9 +10,7 @@ use axum_test::TestServer;
 use tempfile::TempDir;
 use xvision_dashboard::server::build_router;
 use xvision_dashboard::AppState;
-use xvision_engine::api::settings::danger::{
-    FACTORY_RESET_CONFIRM, RESET_WORKSPACE_CONFIRM,
-};
+use xvision_engine::api::settings::danger::{FACTORY_RESET_CONFIRM, RESET_WORKSPACE_CONFIRM};
 
 async fn boot() -> (TestServer, TempDir) {
     let tmp = TempDir::new().unwrap();

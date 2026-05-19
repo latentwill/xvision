@@ -24,24 +24,18 @@ use sqlx::SqlitePool;
 use std::sync::Arc;
 use std::time::Duration as StdDuration;
 use tracing_subscriber::prelude::*;
+use xvision_observability::types::{RiskLevel, RunStatus, SideEffectLevel, SpanKind, SpanStatus, ToolOrigin};
 use xvision_observability::{
     events::{
-        ModelCallFinishedEvent, RunFinishedEvent, RunStartedEvent,
-        SpanFinishedEvent, SpanStartedEvent, ToolCallFinishedEvent,
-        ToolCallStartedEvent,
+        ModelCallFinishedEvent, RunFinishedEvent, RunStartedEvent, SpanFinishedEvent, SpanStartedEvent,
+        ToolCallFinishedEvent, ToolCallStartedEvent,
     },
     AgentRunRecorder, OtelTeeRecorder, RunEvent, RunEventBus, SqliteRecorder,
 };
-use xvision_observability::types::{
-    RiskLevel, RunStatus, SideEffectLevel, SpanKind, SpanStatus, ToolOrigin,
-};
 
-const MIGRATION_002: &str =
-    include_str!("../../xvision-engine/migrations/002_eval.sql");
-const MIGRATION_013: &str =
-    include_str!("../../xvision-engine/migrations/013_cli_jobs.sql");
-const MIGRATION_018: &str =
-    include_str!("../../xvision-engine/migrations/018_agent_run_observability.sql");
+const MIGRATION_002: &str = include_str!("../../xvision-engine/migrations/002_eval.sql");
+const MIGRATION_013: &str = include_str!("../../xvision-engine/migrations/013_cli_jobs.sql");
+const MIGRATION_018: &str = include_str!("../../xvision-engine/migrations/018_agent_run_observability.sql");
 
 async fn migrated_pool() -> SqlitePool {
     let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
@@ -54,11 +48,10 @@ async fn migrated_pool() -> SqlitePool {
 async fn wait_for_rows(pool: &SqlitePool, table: &str, expected: i64) {
     let deadline = std::time::Instant::now() + StdDuration::from_secs(2);
     loop {
-        let row: (i64,) =
-            sqlx::query_as(&format!("SELECT COUNT(*) FROM {table}"))
-                .fetch_one(pool)
-                .await
-                .unwrap();
+        let row: (i64,) = sqlx::query_as(&format!("SELECT COUNT(*) FROM {table}"))
+            .fetch_one(pool)
+            .await
+            .unwrap();
         if row.0 >= expected || std::time::Instant::now() >= deadline {
             assert_eq!(
                 row.0, expected,
@@ -98,14 +91,12 @@ async fn otel_tee_records_sqlite_and_emits_parallel_span_tree() {
     // `set_default` would not propagate. Use the global default so any
     // task in this test process picks up the OTel layer. This is the
     // only test in the crate that installs a global subscriber.
-    tracing::subscriber::set_global_default(subscriber)
-        .expect("global subscriber already set");
+    tracing::subscriber::set_global_default(subscriber).expect("global subscriber already set");
 
     // ── Bus + tee on top of SqliteRecorder ──────────────────────────
     let pool = migrated_pool().await;
     let sqlite = Arc::new(SqliteRecorder::new(pool.clone()));
-    let tee: Arc<dyn AgentRunRecorder> =
-        Arc::new(OtelTeeRecorder::new(sqlite.clone()));
+    let tee: Arc<dyn AgentRunRecorder> = Arc::new(OtelTeeRecorder::new(sqlite.clone()));
     let bus = RunEventBus::new(vec![tee]);
 
     let run_id = "run_otel_smoke_01".to_string();
@@ -141,9 +132,7 @@ async fn otel_tee_records_sqlite_and_emits_parallel_span_tree() {
         otel_span_id: None,
         // attributes_json could contain user text; the tee must NOT
         // mirror it. Stuff a needle into the JSON.
-        attributes_json: Some(
-            r#"{"note":"OBJECTIVE_SECRET_LEAK"}"#.to_string(),
-        ),
+        attributes_json: Some(r#"{"note":"OBJECTIVE_SECRET_LEAK"}"#.to_string()),
     }))
     .await;
 
@@ -179,9 +168,7 @@ async fn otel_tee_records_sqlite_and_emits_parallel_span_tree() {
         response_payload_ref: None,
         // `tool_calls_requested` could be unbounded JSON. Stash a
         // needle to verify the tee does NOT mirror it.
-        tool_calls_requested: Some(
-            r#"[{"name":"x","args":"PROMPT_SECRET_LEAK"}]"#.to_string(),
-        ),
+        tool_calls_requested: Some(r#"[{"name":"x","args":"PROMPT_SECRET_LEAK"}]"#.to_string()),
         capability_path: None,
     }))
     .await;
@@ -260,13 +247,11 @@ async fn otel_tee_records_sqlite_and_emits_parallel_span_tree() {
     wait_for_rows(&pool, "tool_calls", 1).await;
     wait_for_rows(&pool, "spans", 3).await;
 
-    let (status,): (String,) = sqlx::query_as(
-        "SELECT status FROM agent_runs WHERE id = ?",
-    )
-    .bind(&run_id)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let (status,): (String,) = sqlx::query_as("SELECT status FROM agent_runs WHERE id = ?")
+        .bind(&run_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(status, RunStatus::Completed.as_db_str());
 
     // ── (2) OTel side: parallel span tree captured ──────────────────
@@ -294,8 +279,7 @@ async fn otel_tee_records_sqlite_and_emits_parallel_span_tree() {
 
     // The span names we expect to see at minimum, mirroring each
     // recorder call.
-    let names: Vec<String> =
-        spans.iter().map(|s| s.name.to_string()).collect();
+    let names: Vec<String> = spans.iter().map(|s| s.name.to_string()).collect();
     for required in [
         "xvision.run.started",
         "xvision.span.started",
@@ -345,11 +329,9 @@ async fn otel_tee_records_sqlite_and_emits_parallel_span_tree() {
 
     // Anti-overreach sanity: at least one span carries the
     // `xvision.run.id` attribute (otherwise we'd be asserting nothing).
-    let has_run_id_attr = spans.iter().any(|s| {
-        s.attributes
-            .iter()
-            .any(|kv| kv.key.as_str() == "xvision.run.id")
-    });
+    let has_run_id_attr = spans
+        .iter()
+        .any(|s| s.attributes.iter().any(|kv| kv.key.as_str() == "xvision.run.id"));
     assert!(
         has_run_id_attr,
         "no OTel span carries `xvision.run.id` — recorder did not attach any attributes"

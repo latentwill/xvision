@@ -72,7 +72,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                         .into(),
                     skill_ids: vec![],
                     max_tokens: None,
-            prompt_version: String::new(),
+                    prompt_version: String::new(),
                 },
                 AgentSlot {
                     name: "executor".into(),

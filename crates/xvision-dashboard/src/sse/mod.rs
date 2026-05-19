@@ -58,10 +58,7 @@ fn event_name(ev: &RunEvent) -> &'static str {
 
 /// Is this event a stream-closing lifecycle event?
 fn is_terminal(ev: &RunEvent) -> bool {
-    matches!(
-        ev,
-        RunEvent::RunFinished(_) | RunEvent::RunInterrupted(_)
-    )
+    matches!(ev, RunEvent::RunFinished(_) | RunEvent::RunInterrupted(_))
 }
 
 /// Build the SSE response. The snapshot is emitted as the first event
@@ -136,10 +133,8 @@ pub fn agent_run_sse(
 mod tests {
     use super::*;
     use chrono::Utc;
-    use xvision_observability::{
-        RunEvent, RunFinishedEvent, RunStartedEvent,
-    };
     use xvision_observability::types::RunStatus;
+    use xvision_observability::{RunEvent, RunFinishedEvent, RunStartedEvent};
 
     fn run_started(id: &str) -> RunEvent {
         RunEvent::RunStarted(RunStartedEvent {

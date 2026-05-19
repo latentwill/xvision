@@ -158,11 +158,7 @@ pub mod get {
         let scenario_id = "crypto-bull-q1-2025";
 
         let store = RunStore::new(ctx.db.clone());
-        let mut run = Run::new_queued(
-            "agent-fixture".into(),
-            scenario_id.into(),
-            RunMode::Backtest,
-        );
+        let mut run = Run::new_queued("agent-fixture".into(), scenario_id.into(), RunMode::Backtest);
         run.status = RunStatus::Completed;
         store.create(&run).await.expect("seed run");
         store
@@ -170,9 +166,7 @@ pub mod get {
             .await
             .expect("transition");
 
-        let direct = api_scenario::get(&ctx, scenario_id)
-            .await
-            .expect("scenario get");
+        let direct = api_scenario::get(&ctx, scenario_id).await.expect("scenario get");
         let export = eval_export::build_export(&ctx, &run.id)
             .await
             .expect("build_export");

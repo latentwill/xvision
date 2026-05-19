@@ -175,9 +175,8 @@ mod tests {
         let e2 = anyhow::anyhow!("alpaca create_order: bracket orders not supported for this asset class");
         assert_eq!(classify_run_failure(&e2), "broker_unsupported");
 
-        let e3 = anyhow::anyhow!(
-            "alpaca create_order: order_type market is not supported for this asset class"
-        );
+        let e3 =
+            anyhow::anyhow!("alpaca create_order: order_type market is not supported for this asset class");
         assert_eq!(classify_run_failure(&e3), "broker_unsupported");
     }
 

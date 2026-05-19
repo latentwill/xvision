@@ -42,9 +42,7 @@ pub fn emit_object<T: Serialize>(value: &T, format: ObjectFormat) -> CliResult<(
         ObjectFormat::JsonCompact => serde_json::to_vec(value).exit_with(XvnExit::Upstream)?,
     };
     use std::io::Write;
-    std::io::stdout()
-        .write_all(&bytes)
-        .exit_with(XvnExit::Upstream)?;
+    std::io::stdout().write_all(&bytes).exit_with(XvnExit::Upstream)?;
     // Trailing newline keeps `xvn <obj> get > out.json` shell-friendly
     // and matches what `xvn eval export` emits.
     println!();

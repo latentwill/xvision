@@ -60,10 +60,7 @@ async fn seed_run(ctx: &ApiContext, status: RunStatus) -> Run {
     let run = Run::new_queued("agent-x".into(), "scenario-x".into(), RunMode::Backtest);
     store.create(&run).await.unwrap();
     if status != RunStatus::Queued {
-        store
-            .update_status(&run.id, status, None)
-            .await
-            .unwrap();
+        store.update_status(&run.id, status, None).await.unwrap();
     }
     store.get(&run.id).await.unwrap()
 }

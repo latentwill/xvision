@@ -13,8 +13,8 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use xvision_core::market::Ohlcv;
 use xvision_execution::broker_surface::{
-    classify_broker_error_message, extract_requested_available, is_alpaca_crypto,
-    BrokerErrorClass, BrokerSurface, OrderRequest, Side,
+    classify_broker_error_message, extract_requested_available, is_alpaca_crypto, BrokerErrorClass,
+    BrokerSurface, OrderRequest, Side,
 };
 use xvision_observability::{BrokerCallOutcome, BrokerSide};
 
@@ -259,14 +259,8 @@ fn recoverable_broker_decision_row(
 /// agent with role `trader`, then falls back to the legacy
 /// `strategy.trader_slot`. Returns `None` when neither is present or
 /// neither has a model pinned.
-fn trader_model_id(
-    agent_slots: &[ResolvedAgentSlot],
-    strategy: &Strategy,
-) -> Option<String> {
-    if let Some(resolved) = agent_slots
-        .iter()
-        .find(|r| canonical_role(&r.role) == "trader")
-    {
+fn trader_model_id(agent_slots: &[ResolvedAgentSlot], strategy: &Strategy) -> Option<String> {
+    if let Some(resolved) = agent_slots.iter().find(|r| canonical_role(&r.role) == "trader") {
         let model = resolved.slot.effective_model();
         if !model.trim().is_empty() {
             return Some(model);
@@ -465,8 +459,7 @@ impl PaperExecutor {
         // each decision and surface them in the seed as
         // `market_data.bar_history`. Same mechanism as BacktestExecutor.
         let warmup_count = self.warmup_bars.len();
-        let combined_bars: Vec<&Ohlcv> =
-            self.warmup_bars.iter().chain(decision_bars.iter()).collect();
+        let combined_bars: Vec<&Ohlcv> = self.warmup_bars.iter().chain(decision_bars.iter()).collect();
         let history_window = scenario.warmup_bars as usize;
 
         let initial_balance = self.broker.balance().await?;
@@ -690,19 +683,16 @@ impl PaperExecutor {
             // that track owns the post-submit rejection path; this gate
             // is strictly pre-submit and short-circuits before the
             // broker.call span fires.
-            let min_notional_veto = self
-                .min_notional_usd
-                .filter(|m| *m > 0.0)
-                .and_then(|min| {
-                    plan.and_then(|(_side, size)| {
-                        let notional = size * reference_price_usd;
-                        if size > 0.0 && notional > 0.0 && notional < min {
-                            Some((notional, min))
-                        } else {
-                            None
-                        }
-                    })
-                });
+            let min_notional_veto = self.min_notional_usd.filter(|m| *m > 0.0).and_then(|min| {
+                plan.and_then(|(_side, size)| {
+                    let notional = size * reference_price_usd;
+                    if size > 0.0 && notional > 0.0 && notional < min {
+                        Some((notional, min))
+                    } else {
+                        None
+                    }
+                })
+            });
             if let Some((notional, min)) = min_notional_veto {
                 tracing::warn!(
                     run_id = %run.id,
@@ -734,11 +724,8 @@ impl PaperExecutor {
                     pnl_realized: None,
                 };
                 store.record_decision(&row).await?;
-                self.emit_chart(
-                    &run.id,
-                    RunChartEvent::Decision(LiveDecisionRow::from(&row)),
-                )
-                .await;
+                self.emit_chart(&run.id, RunChartEvent::Decision(LiveDecisionRow::from(&row)))
+                    .await;
                 self.emit(ProgressEvent::DecisionEmitted {
                     run_id: run.id.clone(),
                     action: parsed.action.clone(),
@@ -750,9 +737,7 @@ impl PaperExecutor {
                 // stays dense per bar — same pattern as the recoverable
                 // broker-error path above.
                 let balance_now = self.broker.balance().await?;
-                store
-                    .record_equity(&run.id, bar.timestamp, balance_now)
-                    .await?;
+                store.record_equity(&run.id, bar.timestamp, balance_now).await?;
                 equity_samples.push(balance_now);
                 decision_idx += 1;
                 continue;
@@ -787,9 +772,7 @@ impl PaperExecutor {
                 // order is a Sell.
                 let trace_side = broker_side_for_action(&parsed.action, side);
                 let span_id_opt = self.obs_emitter.as_ref().map(|_| fresh_span_id());
-                if let (Some(em), Some(sid)) =
-                    (self.obs_emitter.as_ref(), span_id_opt.as_deref())
-                {
+                if let (Some(em), Some(sid)) = (self.obs_emitter.as_ref(), span_id_opt.as_deref()) {
                     em.emit_broker_call_started(
                         sid,
                         None,
@@ -819,9 +802,7 @@ impl PaperExecutor {
 
                 let conf = match submit_res {
                     Ok(conf) => {
-                        if let (Some(em), Some(sid)) =
-                            (self.obs_emitter.as_ref(), span_id_opt.as_deref())
-                        {
+                        if let (Some(em), Some(sid)) = (self.obs_emitter.as_ref(), span_id_opt.as_deref()) {
                             em.emit_broker_call_finished(
                                 sid,
                                 BrokerCallOutcome::Filled,
@@ -857,19 +838,13 @@ impl PaperExecutor {
                         let msg = format!("{e:#}");
                         let class = classify_broker_error_message(&msg);
                         let (requested, available) = extract_requested_available(&msg);
-                        let severity = if class.is_recoverable() {
-                            "warn"
-                        } else {
-                            "error"
-                        };
+                        let severity = if class.is_recoverable() { "warn" } else { "error" };
                         let outcome = if class.is_recoverable() {
                             BrokerCallOutcome::Rejected
                         } else {
                             BrokerCallOutcome::Failed
                         };
-                        if let (Some(em), Some(sid)) =
-                            (self.obs_emitter.as_ref(), span_id_opt.as_deref())
-                        {
+                        if let (Some(em), Some(sid)) = (self.obs_emitter.as_ref(), span_id_opt.as_deref()) {
                             em.emit_broker_call_finished(
                                 sid,
                                 outcome,
@@ -919,18 +894,13 @@ impl PaperExecutor {
                                 available,
                             );
                             store.record_decision(&row).await?;
-                            self.emit_chart(
-                                &run.id,
-                                RunChartEvent::Decision(LiveDecisionRow::from(&row)),
-                            )
-                            .await;
+                            self.emit_chart(&run.id, RunChartEvent::Decision(LiveDecisionRow::from(&row)))
+                                .await;
                             // Equity is unchanged (no fill); still
                             // record it so the chart series stays
                             // dense per bar.
                             let balance_now = self.broker.balance().await?;
-                            store
-                                .record_equity(&run.id, bar.timestamp, balance_now)
-                                .await?;
+                            store.record_equity(&run.id, bar.timestamp, balance_now).await?;
                             equity_samples.push(balance_now);
                             n_recoverable_broker_errors += 1;
                             tracing::warn!(

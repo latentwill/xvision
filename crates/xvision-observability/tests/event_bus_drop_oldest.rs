@@ -10,24 +10,16 @@ use sqlx::SqlitePool;
 use std::sync::Arc;
 use std::time::Duration as StdDuration;
 use tokio::sync::Notify;
+use xvision_observability::types::{RiskLevel, SideEffectLevel, SpanKind, ToolOrigin};
 use xvision_observability::{
-    events::{
-        ModelCallFinishedEvent, RunStartedEvent, SpanStartedEvent,
-        ToolCallStartedEvent,
-    },
+    events::{ModelCallFinishedEvent, RunStartedEvent, SpanStartedEvent, ToolCallStartedEvent},
     recorder::RecorderError,
     AgentRunRecorder, RunEvent, RunEventBus, SqliteRecorder,
 };
-use xvision_observability::types::{
-    RiskLevel, SideEffectLevel, SpanKind, ToolOrigin,
-};
 
-const MIGRATION_002: &str =
-    include_str!("../../xvision-engine/migrations/002_eval.sql");
-const MIGRATION_013: &str =
-    include_str!("../../xvision-engine/migrations/013_cli_jobs.sql");
-const MIGRATION_018: &str =
-    include_str!("../../xvision-engine/migrations/018_agent_run_observability.sql");
+const MIGRATION_002: &str = include_str!("../../xvision-engine/migrations/002_eval.sql");
+const MIGRATION_013: &str = include_str!("../../xvision-engine/migrations/013_cli_jobs.sql");
+const MIGRATION_018: &str = include_str!("../../xvision-engine/migrations/018_agent_run_observability.sql");
 
 async fn migrated_pool() -> SqlitePool {
     let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
@@ -60,10 +52,7 @@ impl AgentRunRecorder for GatedRecorder {
     }
 }
 
-fn release(
-    released: &Arc<std::sync::atomic::AtomicBool>,
-    notify: &Arc<Notify>,
-) {
+fn release(released: &Arc<std::sync::atomic::AtomicBool>, notify: &Arc<Notify>) {
     released.store(true, std::sync::atomic::Ordering::Release);
     notify.notify_waiters();
 }
@@ -198,17 +187,11 @@ async fn full_queue_evicts_oldest_not_newest() {
     );
 
     // The span for run_NEW (the survivor) should be recorded.
-    wait_for_count(
-        &pool,
-        "SELECT COUNT(*) FROM spans WHERE id = 'span_new'",
-        1,
-    )
-    .await;
-    let (old_spans,): (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM spans WHERE id = 'span_old'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    wait_for_count(&pool, "SELECT COUNT(*) FROM spans WHERE id = 'span_new'", 1).await;
+    let (old_spans,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM spans WHERE id = 'span_old'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(old_spans, 0, "evicted span_old must NOT have landed in spans");
 }
 

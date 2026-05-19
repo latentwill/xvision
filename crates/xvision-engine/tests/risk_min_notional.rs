@@ -141,8 +141,7 @@ async fn min_notional_gate_skips_broker_for_below_min_orders() {
     let broker: Arc<dyn BrokerSurface> = mock.clone();
     let strategy = tiny_risk_strategy();
     let scenario = short_scenario();
-    let executor = PaperExecutor::with_bars(broker, eth_like_bars(&scenario))
-        .with_min_notional_usd(10.0); // paper venue minimum
+    let executor = PaperExecutor::with_bars(broker, eth_like_bars(&scenario)).with_min_notional_usd(10.0); // paper venue minimum
     let mut run = Run::new_queued("test-min-notional".into(), scenario.id.clone(), RunMode::Paper);
     store.create(&run).await.unwrap();
     let dispatch: Arc<dyn LlmDispatch> = Arc::new(MockDispatch::echo(canned));
@@ -246,8 +245,7 @@ async fn zero_min_notional_is_noop() {
     let broker: Arc<dyn BrokerSurface> = mock.clone();
     let strategy = tiny_risk_strategy();
     let scenario = short_scenario();
-    let executor = PaperExecutor::with_bars(broker, eth_like_bars(&scenario))
-        .with_min_notional_usd(0.0);
+    let executor = PaperExecutor::with_bars(broker, eth_like_bars(&scenario)).with_min_notional_usd(0.0);
     let mut run = Run::new_queued(
         "test-min-notional-zero".into(),
         scenario.id.clone(),
@@ -288,13 +286,8 @@ async fn above_min_notional_orders_pass_through() {
         s
     };
     let scenario = short_scenario();
-    let executor = PaperExecutor::with_bars(broker, eth_like_bars(&scenario))
-        .with_min_notional_usd(10.0);
-    let mut run = Run::new_queued(
-        "test-above-min".into(),
-        scenario.id.clone(),
-        RunMode::Paper,
-    );
+    let executor = PaperExecutor::with_bars(broker, eth_like_bars(&scenario)).with_min_notional_usd(10.0);
+    let mut run = Run::new_queued("test-above-min".into(), scenario.id.clone(), RunMode::Paper);
     store.create(&run).await.unwrap();
     let dispatch: Arc<dyn LlmDispatch> = Arc::new(MockDispatch::echo(canned));
     let tools = Arc::new(ToolRegistry::empty());

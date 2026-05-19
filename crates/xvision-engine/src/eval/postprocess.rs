@@ -411,7 +411,10 @@ mod tests {
             api_key_env: "OPENROUTER_API_KEY".into(),
             enabled_models: vec![],
         };
-        assert_eq!(findings_model_for_provider(&openrouter), OPENROUTER_FINDINGS_MODEL);
+        assert_eq!(
+            findings_model_for_provider(&openrouter),
+            OPENROUTER_FINDINGS_MODEL
+        );
 
         // Generic OpenAI-compat: fall back to the operator's enabled
         // models (already vetted for this provider).

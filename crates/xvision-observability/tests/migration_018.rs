@@ -4,12 +4,9 @@
 
 use sqlx::SqlitePool;
 
-const MIGRATION_002: &str =
-    include_str!("../../xvision-engine/migrations/002_eval.sql");
-const MIGRATION_013: &str =
-    include_str!("../../xvision-engine/migrations/013_cli_jobs.sql");
-const MIGRATION_018: &str =
-    include_str!("../../xvision-engine/migrations/018_agent_run_observability.sql");
+const MIGRATION_002: &str = include_str!("../../xvision-engine/migrations/002_eval.sql");
+const MIGRATION_013: &str = include_str!("../../xvision-engine/migrations/013_cli_jobs.sql");
+const MIGRATION_018: &str = include_str!("../../xvision-engine/migrations/018_agent_run_observability.sql");
 const MIGRATION_018_DOWN: &str =
     include_str!("../../xvision-engine/migrations/018_agent_run_observability.down.sql");
 
@@ -83,7 +80,10 @@ async fn migration_018_down_removes_everything() {
         .fetch_one(&pool)
         .await
         .unwrap();
-        assert_eq!(row.0, 0, "table `{table}` should have been dropped by the down migration");
+        assert_eq!(
+            row.0, 0,
+            "table `{table}` should have been dropped by the down migration"
+        );
     }
 }
 
@@ -108,13 +108,12 @@ async fn agent_runs_round_trips_a_minimal_row() {
     .await
     .unwrap();
 
-    let (id, status, retention): (String, String, String) = sqlx::query_as(
-        "SELECT id, status, retention_mode FROM agent_runs WHERE id = ?",
-    )
-    .bind(run_id)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let (id, status, retention): (String, String, String) =
+        sqlx::query_as("SELECT id, status, retention_mode FROM agent_runs WHERE id = ?")
+            .bind(run_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(id, run_id);
     assert_eq!(status, "queued");
     assert_eq!(retention, "hash_only");

@@ -23,10 +23,10 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::UnixListener;
 use tokio::task::JoinHandle;
 use xvision_observability::{
-    AssistantTextDeltaEvent, BackpressureDroppedEvent, ModelCallFinishedEvent,
-    RunEvent, RunEventBus, RunFinishedEvent, RunInterruptedEvent, RunStartedEvent,
-    SidecarErrorEvent, SpanFinishedEvent, SpanStartedEvent, ToolCallCancelledEvent,
-    ToolCallFailedEvent, ToolCallFinishedEvent, ToolCallStartedEvent,
+    AssistantTextDeltaEvent, BackpressureDroppedEvent, ModelCallFinishedEvent, RunEvent, RunEventBus,
+    RunFinishedEvent, RunInterruptedEvent, RunStartedEvent, SidecarErrorEvent, SpanFinishedEvent,
+    SpanStartedEvent, ToolCallCancelledEvent, ToolCallFailedEvent, ToolCallFinishedEvent,
+    ToolCallStartedEvent,
 };
 use xvision_observability::{
     CapabilityPath, RiskLevel, RunStatus, SideEffectLevel, SpanKind, SpanStatus, ToolOrigin,
@@ -145,11 +145,7 @@ fn parse_notification(line: &str, fp: &SidecarFingerprint) -> Vec<RunEvent> {
 /// hashes) so the wire schema stays small. Future SDK upgrades may
 /// stream span boundaries explicitly; this layer absorbs that shift
 /// without touching the recorder.
-pub fn dispatch(
-    method: &str,
-    params: &serde_json::Value,
-    fp: &SidecarFingerprint,
-) -> Vec<RunEvent> {
+pub fn dispatch(method: &str, params: &serde_json::Value, fp: &SidecarFingerprint) -> Vec<RunEvent> {
     dispatch_inner(method, params, fp).unwrap_or_default()
 }
 
@@ -252,7 +248,9 @@ fn dispatch_inner(
                     span_id: span_id.clone(),
                     ended_at: now,
                     status: SpanStatus::Error,
-                    error_json: err.as_ref().map(|m| serde_json::json!({ "message": m }).to_string()),
+                    error_json: err
+                        .as_ref()
+                        .map(|m| serde_json::json!({ "message": m }).to_string()),
                 }),
                 RunEvent::ToolCallFailed(ToolCallFailedEvent {
                     span_id,
@@ -356,10 +354,7 @@ fn dispatch_inner(
                         .as_ref()
                         .map(|r| serde_json::json!({ "reason": r }).to_string()),
                 }),
-                RunEvent::ToolCallCancelled(ToolCallCancelledEvent {
-                    span_id,
-                    reason,
-                }),
+                RunEvent::ToolCallCancelled(ToolCallCancelledEvent { span_id, reason }),
             ]
         }
 
@@ -395,8 +390,7 @@ fn parse_run_status(s: &str) -> RunStatus {
 }
 
 fn ms_to_utc(ms: u64) -> chrono::DateTime<chrono::Utc> {
-    chrono::DateTime::<chrono::Utc>::from_timestamp_millis(ms as i64)
-        .unwrap_or_else(|| Utc::now())
+    chrono::DateTime::<chrono::Utc>::from_timestamp_millis(ms as i64).unwrap_or_else(|| Utc::now())
 }
 
 /// Helper used by `AgentClient` to emit `RunInterrupted` events for any

@@ -13,12 +13,8 @@
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use xvision_engine::agent::execute::{
-    execute_slot, ExecuteSlotError, SlotInput, MAX_TOOL_LOOP_ITERATIONS,
-};
-use xvision_engine::agent::llm::{
-    ContentBlock, LlmDispatch, LlmRequest, LlmResponse, StopReason,
-};
+use xvision_engine::agent::execute::{execute_slot, ExecuteSlotError, SlotInput, MAX_TOOL_LOOP_ITERATIONS};
+use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmRequest, LlmResponse, StopReason};
 use xvision_engine::strategies::slot::LLMSlot;
 use xvision_engine::tools::ToolRegistry;
 

@@ -22,9 +22,7 @@ pub mod prompt;
 
 pub use engine::{run_review, ReviewError, ReviewOutcome};
 pub use parser::{parse_review_output, ParsedReview, ReviewFinding, ReviewParseError};
-pub use payload::{
-    build_review_payload, ReviewPayload, ReviewProfileSummary, ReviewScenarioSummary,
-};
+pub use payload::{build_review_payload, ReviewPayload, ReviewProfileSummary, ReviewScenarioSummary};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

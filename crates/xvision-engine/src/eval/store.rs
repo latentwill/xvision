@@ -846,9 +846,7 @@ impl RunStore {
             );
         }
         if !(0..=100).contains(&score) {
-            anyhow::bail!(
-                "complete_review: score {score} out of range [0, 100] (review id={id})"
-            );
+            anyhow::bail!("complete_review: score {score} out of range [0, 100] (review id={id})");
         }
         let now = Utc::now().to_rfc3339();
         let res = sqlx::query(
@@ -1007,18 +1005,14 @@ fn row_to_review(row: &sqlx::sqlite::SqliteRow) -> Result<EvalReview> {
     let verdict_str: Option<String> = row.try_get("verdict").context("read eval_review verdict")?;
     let verdict = verdict_str
         .as_deref()
-        .map(|s| {
-            ReviewVerdict::parse(s)
-                .ok_or_else(|| anyhow::anyhow!("unknown ReviewVerdict {s:?}"))
-        })
+        .map(|s| ReviewVerdict::parse(s).ok_or_else(|| anyhow::anyhow!("unknown ReviewVerdict {s:?}")))
         .transpose()?;
     let confidence: Option<f64> = row.try_get("confidence").context("read eval_review confidence")?;
     let score_i64: Option<i64> = row.try_get("score").context("read eval_review score")?;
     let score = score_i64
         .map(|n| {
-            i32::try_from(n).with_context(|| {
-                format!("eval_review {id}: score={n} does not fit in i32 (DB corruption?)")
-            })
+            i32::try_from(n)
+                .with_context(|| format!("eval_review {id}: score={n} does not fit in i32 (DB corruption?)"))
         })
         .transpose()?;
     let summary: Option<String> = row.try_get("summary").context("read eval_review summary")?;
@@ -1026,15 +1020,11 @@ fn row_to_review(row: &sqlx::sqlite::SqliteRow) -> Result<EvalReview> {
         .try_get("raw_output_json")
         .context("read eval_review raw_output_json")?;
     let error: Option<String> = row.try_get("error").context("read eval_review error")?;
-    let created_at_str: String = row
-        .try_get("created_at")
-        .context("read eval_review created_at")?;
+    let created_at_str: String = row.try_get("created_at").context("read eval_review created_at")?;
     let created_at = DateTime::parse_from_rfc3339(&created_at_str)
         .with_context(|| format!("parse eval_review created_at {created_at_str:?}"))?
         .with_timezone(&Utc);
-    let updated_at_str: String = row
-        .try_get("updated_at")
-        .context("read eval_review updated_at")?;
+    let updated_at_str: String = row.try_get("updated_at").context("read eval_review updated_at")?;
     let updated_at = DateTime::parse_from_rfc3339(&updated_at_str)
         .with_context(|| format!("parse eval_review updated_at {updated_at_str:?}"))?
         .with_timezone(&Utc);

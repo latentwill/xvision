@@ -144,7 +144,11 @@ async fn store_save_rejects_traversal_and_leaves_root_empty() {
     // validation slipped).
     assert_store_root_unchanged(dir.path(), &[]);
     let parent_bait = dir.path().parent().unwrap().join("escape.json");
-    assert!(!parent_bait.exists(), "traversal target was created: {}", parent_bait.display());
+    assert!(
+        !parent_bait.exists(),
+        "traversal target was created: {}",
+        parent_bait.display()
+    );
 }
 
 #[tokio::test]

@@ -78,7 +78,7 @@ async fn create_sample_agent(ctx: &ApiContext, name: &str) -> xvision_engine::ag
                 system_prompt: "Trade carefully.".into(),
                 skill_ids: vec![],
                 max_tokens: Some(1024),
-            prompt_version: String::new(),
+                prompt_version: String::new(),
             }],
         },
     )

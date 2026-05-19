@@ -27,8 +27,8 @@ use xvision_engine::agent::llm::{
 };
 use xvision_engine::agent::observability::{ObsEmitter, ObsRetentionPolicy};
 use xvision_observability::{
-    BlobRef, BlobStore, ModelCallFinishedEvent, NoopRecorder, ObservabilityConfig, RetentionMode,
-    RunEvent, RunEventBus,
+    BlobRef, BlobStore, ModelCallFinishedEvent, NoopRecorder, ObservabilityConfig, RetentionMode, RunEvent,
+    RunEventBus,
 };
 
 /// LlmDispatch that returns a fixed assistant text. The body is the
@@ -144,10 +144,7 @@ async fn full_debug_persists_prompt_and_response_blobs() {
     );
 
     let resp_bytes = store.read(&BlobRef(rref.clone())).expect("response blob");
-    assert_eq!(
-        std::str::from_utf8(&resp_bytes).unwrap(),
-        "The answer is 4."
-    );
+    assert_eq!(std::str::from_utf8(&resp_bytes).unwrap(), "The answer is 4.");
 
     let _ = CannedDispatch { text: assistant };
 }
@@ -307,8 +304,7 @@ async fn prompt_blob_includes_response_schema_for_reconstruction() {
         .as_ref()
         .expect("full_debug must populate prompt_payload_ref");
     let prompt_bytes = store.read(&BlobRef(pref.clone())).expect("prompt blob");
-    let parsed: serde_json::Value =
-        serde_json::from_slice(&prompt_bytes).expect("prompt blob is JSON");
+    let parsed: serde_json::Value = serde_json::from_slice(&prompt_bytes).expect("prompt blob is JSON");
 
     assert_eq!(
         parsed["response_schema"]["name"].as_str(),

@@ -17,16 +17,11 @@ use tempfile::TempDir;
 use tokio::io::AsyncWriteExt;
 use tokio::net::UnixStream;
 use xvision_agent_client::{start_event_sink, SidecarFingerprint};
-use xvision_observability::{
-    AgentRunRecorder, RecorderError, RunEvent, RunEventBus, SqliteRecorder,
-};
+use xvision_observability::{AgentRunRecorder, RecorderError, RunEvent, RunEventBus, SqliteRecorder};
 
-const MIGRATION_002: &str =
-    include_str!("../../xvision-engine/migrations/002_eval.sql");
-const MIGRATION_013: &str =
-    include_str!("../../xvision-engine/migrations/013_cli_jobs.sql");
-const MIGRATION_018: &str =
-    include_str!("../../xvision-engine/migrations/018_agent_run_observability.sql");
+const MIGRATION_002: &str = include_str!("../../xvision-engine/migrations/002_eval.sql");
+const MIGRATION_013: &str = include_str!("../../xvision-engine/migrations/013_cli_jobs.sql");
+const MIGRATION_018: &str = include_str!("../../xvision-engine/migrations/018_agent_run_observability.sql");
 
 async fn migrated_pool() -> SqlitePool {
     let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
@@ -37,11 +32,10 @@ async fn migrated_pool() -> SqlitePool {
 }
 
 async fn count_rows(pool: &SqlitePool, table: &str) -> i64 {
-    let row: (i64,) =
-        sqlx::query_as(&format!("SELECT COUNT(*) FROM {table}"))
-            .fetch_one(pool)
-            .await
-            .unwrap();
+    let row: (i64,) = sqlx::query_as(&format!("SELECT COUNT(*) FROM {table}"))
+        .fetch_one(pool)
+        .await
+        .unwrap();
     row.0
 }
 
@@ -103,8 +97,7 @@ impl AgentRunRecorder for CapturingRecorder {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn v2_assistant_text_delta_publishes_event_but_no_sqlite_row() {
     let pool = migrated_pool().await;
-    let sqlite: Arc<dyn AgentRunRecorder> =
-        Arc::new(SqliteRecorder::new(pool.clone()));
+    let sqlite: Arc<dyn AgentRunRecorder> = Arc::new(SqliteRecorder::new(pool.clone()));
     let capture = Arc::new(CapturingRecorder::default());
     let bus = Arc::new(RunEventBus::new(vec![
         sqlite,
@@ -187,7 +180,12 @@ async fn v2_assistant_text_delta_publishes_event_but_no_sqlite_row() {
     // on).
     for _ in 0..50 {
         let snap = capture.snapshot().await;
-        if snap.iter().filter(|e| matches!(e, RunEvent::AssistantTextDelta(_))).count() >= 2 {
+        if snap
+            .iter()
+            .filter(|e| matches!(e, RunEvent::AssistantTextDelta(_)))
+            .count()
+            >= 2
+        {
             break;
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
@@ -217,8 +215,7 @@ async fn v2_assistant_text_delta_publishes_event_but_no_sqlite_row() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn v2_tool_call_cancelled_closes_span_and_records_detail() {
     let pool = migrated_pool().await;
-    let recorder: Arc<dyn AgentRunRecorder> =
-        Arc::new(SqliteRecorder::new(pool.clone()));
+    let recorder: Arc<dyn AgentRunRecorder> = Arc::new(SqliteRecorder::new(pool.clone()));
     let bus = Arc::new(RunEventBus::new(vec![recorder]));
 
     let dir = TempDir::new().unwrap();
@@ -291,8 +288,7 @@ async fn v2_tool_call_cancelled_closes_span_and_records_detail() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn v2_overloaded_publishes_backpressure_dropped() {
     let pool = migrated_pool().await;
-    let sqlite: Arc<dyn AgentRunRecorder> =
-        Arc::new(SqliteRecorder::new(pool.clone()));
+    let sqlite: Arc<dyn AgentRunRecorder> = Arc::new(SqliteRecorder::new(pool.clone()));
     let capture = Arc::new(CapturingRecorder::default());
     let bus = Arc::new(RunEventBus::new(vec![
         sqlite,
@@ -358,8 +354,7 @@ async fn v2_per_iteration_model_call_pair_records_model_row() {
     // Verify that the start→delta→finish sequence records one
     // model_calls row with usage attached to the per-iteration span.
     let pool = migrated_pool().await;
-    let recorder: Arc<dyn AgentRunRecorder> =
-        Arc::new(SqliteRecorder::new(pool.clone()));
+    let recorder: Arc<dyn AgentRunRecorder> = Arc::new(SqliteRecorder::new(pool.clone()));
     let bus = Arc::new(RunEventBus::new(vec![recorder]));
 
     let dir = TempDir::new().unwrap();

@@ -24,10 +24,9 @@ use sha2::{Digest, Sha256};
 
 use crate::agent::llm::{LlmRequest, Message, ToolDefinition};
 use xvision_observability::{
-    AssistantTextDeltaEvent, BlobStore, BrokerCallFinishedEvent, BrokerCallOutcome,
-    BrokerCallStartedEvent, BrokerSide, ModelCallFinishedEvent, Redactor, RetentionMode, RunEvent,
-    RunEventBus, RunFinishedEvent, RunStartedEvent, RunStatus, SpanAttributes, SpanFinishedEvent,
-    SpanKind, SpanStartedEvent, SpanStatus,
+    AssistantTextDeltaEvent, BlobStore, BrokerCallFinishedEvent, BrokerCallOutcome, BrokerCallStartedEvent,
+    BrokerSide, ModelCallFinishedEvent, Redactor, RetentionMode, RunEvent, RunEventBus, RunFinishedEvent,
+    RunStartedEvent, RunStatus, SpanAttributes, SpanFinishedEvent, SpanKind, SpanStartedEvent, SpanStatus,
 };
 
 /// Serializable digest input for `compute_prompt_hash`. Private —
@@ -277,11 +276,7 @@ impl ObsEmitter {
     /// prior state. Span ordering: `RunStarted` is published first so
     /// the recorder has the `agent_runs` row before the
     /// `state.transition` span tries to FK into it.
-    pub async fn emit_run_started(
-        &self,
-        objective: impl Into<String>,
-        retention_mode: impl Into<String>,
-    ) {
+    pub async fn emit_run_started(&self, objective: impl Into<String>, retention_mode: impl Into<String>) {
         self.bus
             .publish(RunEvent::RunStarted(RunStartedEvent {
                 run_id: self.run_id.clone(),
@@ -310,13 +305,8 @@ impl ObsEmitter {
     /// `RunFinished` event so the trace dock sees the closing
     /// transition while the run row is still in the running state.
     pub async fn emit_run_finished(&self, status: RunStatus, error: Option<String>) {
-        self.emit_state_transition(
-            &fresh_span_id(),
-            None,
-            Some(RunStatus::Running),
-            status,
-        )
-        .await;
+        self.emit_state_transition(&fresh_span_id(), None, Some(RunStatus::Running), status)
+            .await;
         self.bus
             .publish(RunEvent::RunFinished(RunFinishedEvent {
                 run_id: self.run_id.clone(),
@@ -678,10 +668,7 @@ impl ObsEmitter {
                         RetentionMode::Redacted => Redactor::new().redact(text).text,
                         _ => text.to_string(),
                     };
-                    let bytes = cap_blob_bytes(
-                        text_owned.into_bytes(),
-                        self.retention.max_payload_bytes,
-                    );
+                    let bytes = cap_blob_bytes(text_owned.into_bytes(), self.retention.max_payload_bytes);
                     match store.write(&bytes) {
                         Ok(blob_ref) => {
                             response_payload_ref = Some(blob_ref.as_str().to_string());
@@ -846,9 +833,9 @@ impl ObsEmitter {
         let span_status = match outcome {
             BrokerCallOutcome::Filled => SpanStatus::Ok,
             BrokerCallOutcome::Rejected if severity == Some("warn") => SpanStatus::Ok,
-            BrokerCallOutcome::Rejected
-            | BrokerCallOutcome::Cancelled
-            | BrokerCallOutcome::Failed => SpanStatus::Error,
+            BrokerCallOutcome::Rejected | BrokerCallOutcome::Cancelled | BrokerCallOutcome::Failed => {
+                SpanStatus::Error
+            }
         };
         self.bus
             .publish(RunEvent::BrokerCallFinished(BrokerCallFinishedEvent {
@@ -932,7 +919,10 @@ mod retention_tests {
         let p = full_debug_policy(10);
         let out = p.apply_to_body("abcdefghijklmnopqrstuvwxyz");
         assert!(out.ends_with('…'), "expected truncation marker, got: {out:?}");
-        assert!(out.starts_with("abcdefghij"), "expected first 10 bytes, got: {out:?}");
+        assert!(
+            out.starts_with("abcdefghij"),
+            "expected first 10 bytes, got: {out:?}"
+        );
     }
 
     #[test]

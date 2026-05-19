@@ -1040,28 +1040,21 @@ async fn run_inner(
     // executor preflight has succeeded — so the recorder's
     // `agent_runs.eval_run_id` FK is valid and a preflight failure can't
     // leave a phantom observability run behind.
-    let obs_emitter = ctx
-        .obs_event_bus
-        .as_ref()
-        .map(|bus| {
-            // `harness-payload-blob-write`: attach the BlobStore so
-            // `emit_model_call_finished_with_payloads` can persist
-            // prompt + response bodies under FullDebug / Redacted
-            // retention. Blob root mirrors the dashboard's resolution
-            // at `$xvn_home/agent_runs/blobs/` so the existing
-            // `GET /api/agent-runs/:id/blobs/:ref` route serves the
-            // exact files this writer produces.
-            let blob_store = xvision_observability::BlobStore::new(
-                ctx.xvn_home.join("agent_runs").join("blobs"),
-            );
-            crate::agent::observability::ObsEmitter::new(bus.clone(), run.id.clone())
-                .with_retention(
-                    crate::agent::observability::ObsRetentionPolicy::from_config(
-                        &ctx.obs_config,
-                    ),
-                )
-                .with_blob_store(blob_store)
-        });
+    let obs_emitter = ctx.obs_event_bus.as_ref().map(|bus| {
+        // `harness-payload-blob-write`: attach the BlobStore so
+        // `emit_model_call_finished_with_payloads` can persist
+        // prompt + response bodies under FullDebug / Redacted
+        // retention. Blob root mirrors the dashboard's resolution
+        // at `$xvn_home/agent_runs/blobs/` so the existing
+        // `GET /api/agent-runs/:id/blobs/:ref` route serves the
+        // exact files this writer produces.
+        let blob_store = xvision_observability::BlobStore::new(ctx.xvn_home.join("agent_runs").join("blobs"));
+        crate::agent::observability::ObsEmitter::new(bus.clone(), run.id.clone())
+            .with_retention(crate::agent::observability::ObsRetentionPolicy::from_config(
+                &ctx.obs_config,
+            ))
+            .with_blob_store(blob_store)
+    });
 
     // 3. Pick the executor for this run mode. For backtest mode, when the
     //    scenario came from the DB we try to source bars through the
@@ -1073,9 +1066,7 @@ async fn run_inner(
             let b = broker.ok_or_else(|| ApiError::Validation("paper mode requires a broker".into()))?;
             build_paper_executor(ctx, &scenario, from_db, b, obs_emitter.clone()).await?
         }
-        RunMode::Backtest => {
-            build_backtest_executor(ctx, &scenario, from_db, obs_emitter.clone()).await?
-        }
+        RunMode::Backtest => build_backtest_executor(ctx, &scenario, from_db, obs_emitter.clone()).await?,
     };
 
     let store = RunStore::new(ctx.db.clone());
@@ -1137,17 +1128,15 @@ async fn run_inner(
             api_search::upsert_run(ctx, &failed).await;
         }
         if let Some(em) = obs_emitter.as_ref() {
-            em.emit_run_finished(
-                xvision_observability::RunStatus::Failed,
-                Some(err_msg.clone()),
-            )
-            .await;
+            em.emit_run_finished(xvision_observability::RunStatus::Failed, Some(err_msg.clone()))
+                .await;
         }
         return Err(ApiError::Internal(format!("executor: {err_msg}")));
     }
 
     if let Some(em) = obs_emitter.as_ref() {
-        em.emit_run_finished(xvision_observability::RunStatus::Completed, None).await;
+        em.emit_run_finished(xvision_observability::RunStatus::Completed, None)
+            .await;
     }
 
     // Re-read from the store so the returned Run reflects the canonical
@@ -1505,33 +1494,24 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
     // behind. The matching `RunFinished` is emitted by
     // `execute_in_background`.
     let mut run = Run::new_queued(req.agent_id.clone(), scenario.id.clone(), req.mode);
-    let obs_emitter = ctx
-        .obs_event_bus
-        .as_ref()
-        .map(|bus| {
-            // Mirror the FullDebug-aware emitter wiring above; same
-            // blob root so the second eval entry point produces refs
-            // the dashboard's blob-fetch route resolves to.
-            let blob_store = xvision_observability::BlobStore::new(
-                ctx.xvn_home.join("agent_runs").join("blobs"),
-            );
-            crate::agent::observability::ObsEmitter::new(bus.clone(), run.id.clone())
-                .with_retention(
-                    crate::agent::observability::ObsRetentionPolicy::from_config(
-                        &ctx.obs_config,
-                    ),
-                )
-                .with_blob_store(blob_store)
-        });
+    let obs_emitter = ctx.obs_event_bus.as_ref().map(|bus| {
+        // Mirror the FullDebug-aware emitter wiring above; same
+        // blob root so the second eval entry point produces refs
+        // the dashboard's blob-fetch route resolves to.
+        let blob_store = xvision_observability::BlobStore::new(ctx.xvn_home.join("agent_runs").join("blobs"));
+        crate::agent::observability::ObsEmitter::new(bus.clone(), run.id.clone())
+            .with_retention(crate::agent::observability::ObsRetentionPolicy::from_config(
+                &ctx.obs_config,
+            ))
+            .with_blob_store(blob_store)
+    });
 
     let executor: Box<dyn Executor> = match req.mode {
         RunMode::Paper => {
             let b = broker.expect("paper mode broker built above");
             build_paper_executor(ctx, &scenario, from_db, b, obs_emitter.clone()).await?
         }
-        RunMode::Backtest => {
-            build_backtest_executor(ctx, &scenario, from_db, obs_emitter.clone()).await?
-        }
+        RunMode::Backtest => build_backtest_executor(ctx, &scenario, from_db, obs_emitter.clone()).await?,
     };
 
     run.params_override = req.params_override.clone();
@@ -1675,11 +1655,8 @@ async fn execute_in_background(
             api_search::upsert_run(&ctx, &failed).await;
         }
         if let Some(em) = obs_emitter.as_ref() {
-            em.emit_run_finished(
-                xvision_observability::RunStatus::Failed,
-                Some(err_msg),
-            )
-            .await;
+            em.emit_run_finished(xvision_observability::RunStatus::Failed, Some(err_msg))
+                .await;
         }
         return;
     }

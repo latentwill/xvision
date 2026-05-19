@@ -287,11 +287,7 @@ async fn retry_returns_inflight_sibling_idempotently() {
     let (ctx, _d) = ctx_with_eval_tables().await;
     let failed = seed_run(&ctx, RunStatus::Failed).await;
     let store = RunStore::new(ctx.db.clone());
-    let sibling = Run::new_queued(
-        failed.agent_id.clone(),
-        failed.scenario_id.clone(),
-        failed.mode,
-    );
+    let sibling = Run::new_queued(failed.agent_id.clone(), failed.scenario_id.clone(), failed.mode);
     store.create(&sibling).await.unwrap();
 
     let detail = eval::retry(&ctx, &failed.id).await.unwrap();
@@ -300,7 +296,12 @@ async fn retry_returns_inflight_sibling_idempotently() {
 
     // No third run created.
     let runs = eval::list(&ctx, ListRunsRequest::default()).await.unwrap();
-    assert_eq!(runs.len(), 2, "expected 2 runs (failed + sibling), got {}", runs.len());
+    assert_eq!(
+        runs.len(),
+        2,
+        "expected 2 runs (failed + sibling), got {}",
+        runs.len()
+    );
 }
 
 #[tokio::test]

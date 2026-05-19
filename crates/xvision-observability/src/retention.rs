@@ -15,8 +15,7 @@
 //! Phase B UI leaf will consume.
 
 use crate::config::{
-    default_config_path, ObservabilityConfig, RetentionConfig, RetentionMode,
-    ENV_OVERRIDE_PREFIX,
+    default_config_path, ObservabilityConfig, RetentionConfig, RetentionMode, ENV_OVERRIDE_PREFIX,
 };
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -121,16 +120,52 @@ impl ResolvedView {
     /// Human-readable table for `xvn obs retention show`.
     pub fn to_table(&self) -> String {
         let rows = [
-            ("sqlite_enabled", format!("{}", self.sqlite_enabled.value), self.sqlite_enabled.source),
-            ("otel_enabled", format!("{}", self.otel_enabled.value), self.otel_enabled.source),
+            (
+                "sqlite_enabled",
+                format!("{}", self.sqlite_enabled.value),
+                self.sqlite_enabled.source,
+            ),
+            (
+                "otel_enabled",
+                format!("{}", self.otel_enabled.value),
+                self.otel_enabled.source,
+            ),
             ("mode", self.mode.value.as_db_str().to_string(), self.mode.source),
-            ("store_prompts", format!("{}", self.store_prompts.value), self.store_prompts.source),
-            ("store_responses", format!("{}", self.store_responses.value), self.store_responses.source),
-            ("store_tool_inputs", format!("{}", self.store_tool_inputs.value), self.store_tool_inputs.source),
-            ("store_tool_outputs", format!("{}", self.store_tool_outputs.value), self.store_tool_outputs.source),
-            ("redact_secrets", format!("{}", self.redact_secrets.value), self.redact_secrets.source),
-            ("payload_ttl_days", format!("{}", self.payload_ttl_days.value), self.payload_ttl_days.source),
-            ("max_payload_bytes", format!("{}", self.max_payload_bytes.value), self.max_payload_bytes.source),
+            (
+                "store_prompts",
+                format!("{}", self.store_prompts.value),
+                self.store_prompts.source,
+            ),
+            (
+                "store_responses",
+                format!("{}", self.store_responses.value),
+                self.store_responses.source,
+            ),
+            (
+                "store_tool_inputs",
+                format!("{}", self.store_tool_inputs.value),
+                self.store_tool_inputs.source,
+            ),
+            (
+                "store_tool_outputs",
+                format!("{}", self.store_tool_outputs.value),
+                self.store_tool_outputs.source,
+            ),
+            (
+                "redact_secrets",
+                format!("{}", self.redact_secrets.value),
+                self.redact_secrets.source,
+            ),
+            (
+                "payload_ttl_days",
+                format!("{}", self.payload_ttl_days.value),
+                self.payload_ttl_days.source,
+            ),
+            (
+                "max_payload_bytes",
+                format!("{}", self.max_payload_bytes.value),
+                self.max_payload_bytes.source,
+            ),
         ];
         let key_w = rows.iter().map(|(k, _, _)| k.len()).max().unwrap_or(0);
         let val_w = rows.iter().map(|(_, v, _)| v.len()).max().unwrap_or(0);
@@ -138,14 +173,21 @@ impl ResolvedView {
         out.push_str(&format!(
             "config file: {} ({})\n",
             self.config_path.display(),
-            if self.config_file_present { "present" } else { "absent" }
+            if self.config_file_present {
+                "present"
+            } else {
+                "absent"
+            }
         ));
         out.push('\n');
         for (k, v, s) in &rows {
             out.push_str(&format!(
                 "  {:<key_w$}  {:<val_w$}  ({})\n",
-                k, v, s.label(),
-                key_w = key_w, val_w = val_w
+                k,
+                v,
+                s.label(),
+                key_w = key_w,
+                val_w = val_w
             ));
         }
         out
@@ -158,10 +200,7 @@ impl ResolvedView {
 ///
 /// Emits the `full_debug retention enabled` startup WARN exactly once
 /// when the resolved mode is `full_debug`.
-pub fn resolve(
-    config_path: &Path,
-    overrides: &CliOverrides,
-) -> Result<ResolvedView, RetentionError> {
+pub fn resolve(config_path: &Path, overrides: &CliOverrides) -> Result<ResolvedView, RetentionError> {
     let file_cfg = ObservabilityConfig::load_from_file(config_path)?;
     let default_cfg = ObservabilityConfig::default();
     let env_cfg = {
@@ -175,14 +214,18 @@ pub fn resolve(
     let sqlite_enabled = resolve_bool(
         overrides.sqlite_enabled,
         env_var_bool(&env_key("SQLITE_ENABLED")),
-        file_present.then_some(file_cfg.sqlite_enabled).filter(|v| *v != default_cfg.sqlite_enabled),
+        file_present
+            .then_some(file_cfg.sqlite_enabled)
+            .filter(|v| *v != default_cfg.sqlite_enabled),
         default_cfg.sqlite_enabled,
         || env_cfg.sqlite_enabled,
     );
     let otel_enabled = resolve_bool(
         overrides.otel_enabled,
         env_var_bool(&env_key("OTEL_ENABLED")),
-        file_present.then_some(file_cfg.otel_enabled).filter(|v| *v != default_cfg.otel_enabled),
+        file_present
+            .then_some(file_cfg.otel_enabled)
+            .filter(|v| *v != default_cfg.otel_enabled),
         default_cfg.otel_enabled,
         || env_cfg.otel_enabled,
     );
@@ -202,35 +245,45 @@ pub fn resolve(
     let store_prompts = resolve_bool(
         overrides.store_prompts,
         env_var_bool(&env_key("RETENTION_STORE_PROMPTS")),
-        file_present.then_some(file_cfg.retention.store_prompts).filter(|v| *v != default_cfg.retention.store_prompts),
+        file_present
+            .then_some(file_cfg.retention.store_prompts)
+            .filter(|v| *v != default_cfg.retention.store_prompts),
         default_cfg.retention.store_prompts,
         || env_cfg.retention.store_prompts,
     );
     let store_responses = resolve_bool(
         overrides.store_responses,
         env_var_bool(&env_key("RETENTION_STORE_RESPONSES")),
-        file_present.then_some(file_cfg.retention.store_responses).filter(|v| *v != default_cfg.retention.store_responses),
+        file_present
+            .then_some(file_cfg.retention.store_responses)
+            .filter(|v| *v != default_cfg.retention.store_responses),
         default_cfg.retention.store_responses,
         || env_cfg.retention.store_responses,
     );
     let store_tool_inputs = resolve_bool(
         overrides.store_tool_inputs,
         env_var_bool(&env_key("RETENTION_STORE_TOOL_INPUTS")),
-        file_present.then_some(file_cfg.retention.store_tool_inputs).filter(|v| *v != default_cfg.retention.store_tool_inputs),
+        file_present
+            .then_some(file_cfg.retention.store_tool_inputs)
+            .filter(|v| *v != default_cfg.retention.store_tool_inputs),
         default_cfg.retention.store_tool_inputs,
         || env_cfg.retention.store_tool_inputs,
     );
     let store_tool_outputs = resolve_bool(
         overrides.store_tool_outputs,
         env_var_bool(&env_key("RETENTION_STORE_TOOL_OUTPUTS")),
-        file_present.then_some(file_cfg.retention.store_tool_outputs).filter(|v| *v != default_cfg.retention.store_tool_outputs),
+        file_present
+            .then_some(file_cfg.retention.store_tool_outputs)
+            .filter(|v| *v != default_cfg.retention.store_tool_outputs),
         default_cfg.retention.store_tool_outputs,
         || env_cfg.retention.store_tool_outputs,
     );
     let redact_secrets = resolve_bool(
         overrides.redact_secrets,
         env_var_bool(&env_key("RETENTION_REDACT_SECRETS")),
-        file_present.then_some(file_cfg.retention.redact_secrets).filter(|v| *v != default_cfg.retention.redact_secrets),
+        file_present
+            .then_some(file_cfg.retention.redact_secrets)
+            .filter(|v| *v != default_cfg.retention.redact_secrets),
         default_cfg.retention.redact_secrets,
         || env_cfg.retention.redact_secrets,
     );
@@ -238,14 +291,18 @@ pub fn resolve(
     let payload_ttl_days = resolve_u64(
         overrides.payload_ttl_days,
         env_var_u64(&env_key("RETENTION_PAYLOAD_TTL_DAYS")),
-        file_present.then_some(file_cfg.retention.payload_ttl_days).filter(|v| *v != default_cfg.retention.payload_ttl_days),
+        file_present
+            .then_some(file_cfg.retention.payload_ttl_days)
+            .filter(|v| *v != default_cfg.retention.payload_ttl_days),
         default_cfg.retention.payload_ttl_days,
         || env_cfg.retention.payload_ttl_days,
     );
     let max_payload_bytes = resolve_u64(
         overrides.max_payload_bytes,
         env_var_u64(&env_key("RETENTION_MAX_PAYLOAD_BYTES")),
-        file_present.then_some(file_cfg.retention.max_payload_bytes).filter(|v| *v != default_cfg.retention.max_payload_bytes),
+        file_present
+            .then_some(file_cfg.retention.max_payload_bytes)
+            .filter(|v| *v != default_cfg.retention.max_payload_bytes),
         default_cfg.retention.max_payload_bytes,
         || env_cfg.retention.max_payload_bytes,
     );
@@ -368,10 +425,7 @@ pub fn full_debug_sentinel_path(config_path: &Path) -> PathBuf {
 /// Write a fresh `observability.toml` at `config_path` carrying the
 /// values in `cfg`. Creates parent dirs as needed. When the resolved
 /// mode is `full_debug`, also writes the dashboard banner sentinel.
-pub fn write_config(
-    config_path: &Path,
-    cfg: &ObservabilityConfig,
-) -> Result<(), RetentionError> {
+pub fn write_config(config_path: &Path, cfg: &ObservabilityConfig) -> Result<(), RetentionError> {
     if let Some(parent) = config_path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -425,10 +479,7 @@ fn render_toml(cfg: &ObservabilityConfig) -> String {
         "store_tool_outputs = {}\n",
         cfg.retention.store_tool_outputs
     ));
-    s.push_str(&format!(
-        "redact_secrets = {}\n",
-        cfg.retention.redact_secrets
-    ));
+    s.push_str(&format!("redact_secrets = {}\n", cfg.retention.redact_secrets));
     s.push_str(&format!(
         "payload_ttl_days = {}\n",
         cfg.retention.payload_ttl_days

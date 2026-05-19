@@ -878,9 +878,7 @@ pub mod get {
 
             let (strategy_id, run_id) = seed_strategy_and_completed_run(&ctx).await;
 
-            let direct = api_strategy::get(&ctx, &strategy_id)
-                .await
-                .expect("strategy get");
+            let direct = api_strategy::get(&ctx, &strategy_id).await.expect("strategy get");
             let export = eval_export::build_export(&ctx, &run_id)
                 .await
                 .expect("build_export");
@@ -905,12 +903,8 @@ pub mod get {
             // operators flips silently — this test pins the contract.
             use clap::CommandFactory;
             let cmd = crate::Cli::command();
-            let strategy = cmd
-                .find_subcommand("strategy")
-                .expect("strategy subcommand");
-            let show = strategy
-                .find_subcommand("show")
-                .expect("show subcommand");
+            let strategy = cmd.find_subcommand("strategy").expect("strategy subcommand");
+            let show = strategy.find_subcommand("show").expect("show subcommand");
             let aliases: Vec<&str> = show.get_visible_aliases().collect();
             assert!(
                 aliases.contains(&"get"),

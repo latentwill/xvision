@@ -4,8 +4,8 @@ use std::sync::Arc;
 use crate::errors::{AgentClientError, Result};
 use crate::event_sink::{start_event_sink, EventSinkHandle, SidecarFingerprint};
 use crate::protocol::{
-    EndRunParams, EndRunResult, RuntimeHealthResult, StartRunParams, StartRunResult, StepParams,
-    StepResult, ToolDescriptor, ToolRegistryGetResult, ToolRegistrySetParams, ToolRegistrySetResult,
+    EndRunParams, EndRunResult, RuntimeHealthResult, StartRunParams, StartRunResult, StepParams, StepResult,
+    ToolDescriptor, ToolRegistryGetResult, ToolRegistrySetParams, ToolRegistrySetResult,
     SUPPORTED_PROTOCOL_VERSION,
 };
 use crate::supervisor::Supervisor;

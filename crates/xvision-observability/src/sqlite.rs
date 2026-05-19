@@ -229,25 +229,24 @@ impl AgentRunRecorder for SqliteRecorder {
             RunEvent::ToolCallFailed(e) => {
                 // Mark the span as errored. The tool_calls row remains as
                 // a record of what was attempted.
-                sqlx::query(
-                    "UPDATE spans SET status = 'error', error_json = ? WHERE id = ?",
-                )
-                .bind(&e.error_json)
-                .bind(&e.span_id)
-                .execute(&self.pool)
-                .await?;
+                sqlx::query("UPDATE spans SET status = 'error', error_json = ? WHERE id = ?")
+                    .bind(&e.error_json)
+                    .bind(&e.span_id)
+                    .execute(&self.pool)
+                    .await?;
             }
 
             RunEvent::ToolCallCancelled(e) => {
                 let payload = e.reason.as_deref().unwrap_or("");
-                let err_json = format!(r#"{{"cancelled":true,"reason":{}}}"#, serde_json::to_string(payload).unwrap_or_else(|_| "\"\"".into()));
-                sqlx::query(
-                    "UPDATE spans SET status = 'cancelled', error_json = ? WHERE id = ?",
-                )
-                .bind(err_json)
-                .bind(&e.span_id)
-                .execute(&self.pool)
-                .await?;
+                let err_json = format!(
+                    r#"{{"cancelled":true,"reason":{}}}"#,
+                    serde_json::to_string(payload).unwrap_or_else(|_| "\"\"".into())
+                );
+                sqlx::query("UPDATE spans SET status = 'cancelled', error_json = ? WHERE id = ?")
+                    .bind(err_json)
+                    .bind(&e.span_id)
+                    .execute(&self.pool)
+                    .await?;
             }
 
             RunEvent::BrokerCallStarted(_) => {
@@ -398,8 +397,7 @@ impl AgentRunRecorder for SqliteRecorder {
 
             RunEvent::BackpressureDropped(e) => {
                 let id = format!("note_{}", uuid::Uuid::new_v4());
-                let content =
-                    format!("Dropped {} events under backpressure: {}", e.dropped, e.note);
+                let content = format!("Dropped {} events under backpressure: {}", e.dropped, e.note);
                 sqlx::query(
                     "INSERT INTO supervisor_notes (\
                         id, run_id, role, content, severity, created_at) \

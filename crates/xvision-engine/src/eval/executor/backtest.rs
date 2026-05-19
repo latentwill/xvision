@@ -319,10 +319,7 @@ impl BacktestExecutor {
         // narrower than that is a contract bug at the loader layer, not
         // a runtime input the executor should silently tolerate.
         if bars.is_empty() {
-            anyhow::bail!(
-                "scenario {} has no bars; nothing to backtest",
-                scenario.id,
-            );
+            anyhow::bail!("scenario {} has no bars; nothing to backtest", scenario.id,);
         }
 
         // Used by RunTick to report bar-clock progress. Cadence can make
@@ -676,14 +673,8 @@ struct FillOutcome {
 /// agent with role `trader`, then falls back to the legacy
 /// `strategy.trader_slot`. Returns `None` when neither is present or
 /// neither has a model pinned.
-fn trader_model_id(
-    agent_slots: &[ResolvedAgentSlot],
-    strategy: &Strategy,
-) -> Option<String> {
-    if let Some(resolved) = agent_slots
-        .iter()
-        .find(|r| canonical_role(&r.role) == "trader")
-    {
+fn trader_model_id(agent_slots: &[ResolvedAgentSlot], strategy: &Strategy) -> Option<String> {
+    if let Some(resolved) = agent_slots.iter().find(|r| canonical_role(&r.role) == "trader") {
         let model = resolved.slot.effective_model();
         if !model.trim().is_empty() {
             return Some(model);

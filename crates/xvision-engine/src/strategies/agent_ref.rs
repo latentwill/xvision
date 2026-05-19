@@ -258,7 +258,10 @@ mod tests {
             role: " Trader ".into(),
         };
         let s = serde_json::to_string(&r).unwrap();
-        assert!(s.contains("\"trader\""), "expected canonical role on wire, got `{s}`");
+        assert!(
+            s.contains("\"trader\""),
+            "expected canonical role on wire, got `{s}`"
+        );
         assert!(!s.contains(" Trader"), "expected no whitespace on wire");
     }
 

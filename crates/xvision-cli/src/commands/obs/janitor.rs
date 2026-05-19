@@ -5,8 +5,7 @@ use std::path::PathBuf;
 use clap::{Args, Subcommand};
 use sqlx::SqlitePool;
 use xvision_observability::{
-    default_config_path, resolve_retention, run_janitor_once, BlobStore, CliOverrides,
-    JanitorConfig,
+    default_config_path, resolve_retention, run_janitor_once, BlobStore, CliOverrides, JanitorConfig,
 };
 
 #[derive(Args, Debug)]
@@ -75,12 +74,10 @@ async fn run_once_cmd(args: RunArgs) -> anyhow::Result<()> {
 }
 
 fn default_blob_root() -> PathBuf {
-    let base = std::env::var("XVN_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            dirs::home_dir()
-                .map(|h| h.join(".xvn"))
-                .unwrap_or_else(|| PathBuf::from("."))
-        });
+    let base = std::env::var("XVN_HOME").map(PathBuf::from).unwrap_or_else(|_| {
+        dirs::home_dir()
+            .map(|h| h.join(".xvn"))
+            .unwrap_or_else(|| PathBuf::from("."))
+    });
     base.join("agent_runs").join("blobs")
 }

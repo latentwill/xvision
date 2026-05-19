@@ -19,8 +19,8 @@ use tempfile::TempDir;
 use tokio::time::timeout;
 
 use xvision_agent_client::{
-    AgentClient, BudgetLimits, EndRunParams, SideEffectLevel, StartRunParams, StepParams,
-    ToolDescriptor, ToolDispatch, ToolDispatchError,
+    AgentClient, BudgetLimits, EndRunParams, SideEffectLevel, StartRunParams, StepParams, ToolDescriptor,
+    ToolDispatch, ToolDispatchError,
 };
 
 struct EchoDispatch;
@@ -148,7 +148,9 @@ async fn full_session_round_trip() {
 
     // Step 4: end_run.
     let ended = client
-        .end_run(EndRunParams { run_id: "wave2-it-1".into() })
+        .end_run(EndRunParams {
+            run_id: "wave2-it-1".into(),
+        })
         .await
         .expect("end_run");
     assert!(ended.ended);

@@ -8,9 +8,8 @@ use tower_http::{compression::CompressionLayer, trace::TraceLayer};
 
 use crate::auth::{auth_middleware, AuthState};
 use crate::routes::{
-    agent_runs, agents, bars, chat_rail, cli, docs, eval::review as eval_review, eval_runs,
-    health::health, scenarios, search as search_route, settings, skills, static_files,
-    strategies, wizard,
+    agent_runs, agents, bars, chat_rail, cli, docs, eval::review as eval_review, eval_runs, health::health,
+    scenarios, search as search_route, settings, skills, static_files, strategies, wizard,
 };
 use crate::state::AppState;
 use xvision_engine::api::eval as api_eval;
@@ -263,10 +262,6 @@ pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
     let app = wrap_with_auth(build_router(state), auth);
     tracing::info!(%addr, "xvision-dashboard listening");
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .await?;
+    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await?;
     Ok(())
 }

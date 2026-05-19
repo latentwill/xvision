@@ -75,7 +75,13 @@ mod tests {
         let slugs: Vec<&str> = rows.iter().map(|m| m.slug).collect();
         assert_eq!(
             slugs,
-            vec!["quickstart", "strategies", "scenarios", "eval-runs", "cli-reference"],
+            vec![
+                "quickstart",
+                "strategies",
+                "scenarios",
+                "eval-runs",
+                "cli-reference"
+            ],
             "index must enumerate all baked pages",
         );
         for m in &rows {

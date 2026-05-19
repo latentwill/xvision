@@ -23,16 +23,11 @@ use tempfile::TempDir;
 use tokio::io::AsyncWriteExt;
 use tokio::net::UnixStream;
 use xvision_agent_client::{start_event_sink, SidecarFingerprint};
-use xvision_observability::{
-    AgentRunRecorder, RunEventBus, SqliteRecorder,
-};
+use xvision_observability::{AgentRunRecorder, RunEventBus, SqliteRecorder};
 
-const MIGRATION_002: &str =
-    include_str!("../../xvision-engine/migrations/002_eval.sql");
-const MIGRATION_013: &str =
-    include_str!("../../xvision-engine/migrations/013_cli_jobs.sql");
-const MIGRATION_018: &str =
-    include_str!("../../xvision-engine/migrations/018_agent_run_observability.sql");
+const MIGRATION_002: &str = include_str!("../../xvision-engine/migrations/002_eval.sql");
+const MIGRATION_013: &str = include_str!("../../xvision-engine/migrations/013_cli_jobs.sql");
+const MIGRATION_018: &str = include_str!("../../xvision-engine/migrations/018_agent_run_observability.sql");
 
 async fn migrated_pool() -> SqlitePool {
     let pool = SqlitePoolOptions::new()
@@ -47,11 +42,10 @@ async fn migrated_pool() -> SqlitePool {
 }
 
 async fn count_rows(pool: &SqlitePool, table: &str) -> i64 {
-    let row: (i64,) =
-        sqlx::query_as(&format!("SELECT COUNT(*) FROM {table}"))
-            .fetch_one(pool)
-            .await
-            .unwrap();
+    let row: (i64,) = sqlx::query_as(&format!("SELECT COUNT(*) FROM {table}"))
+        .fetch_one(pool)
+        .await
+        .unwrap();
     row.0
 }
 
@@ -88,8 +82,7 @@ async fn push(conn: &mut UnixStream, method: &str, params: serde_json::Value) {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn ipc_emission_records_rows_with_fingerprint() {
     let pool = migrated_pool().await;
-    let recorder: Arc<dyn AgentRunRecorder> =
-        Arc::new(SqliteRecorder::new(pool.clone()));
+    let recorder: Arc<dyn AgentRunRecorder> = Arc::new(SqliteRecorder::new(pool.clone()));
     let bus = Arc::new(RunEventBus::new(vec![recorder]));
 
     let dir = TempDir::new().unwrap();
@@ -200,11 +193,10 @@ async fn ipc_emission_records_rows_with_fingerprint() {
     assert_eq!(row.2.as_deref(), Some("0.1.0"));
 
     // Assert tool call captured the input hash.
-    let tool_row: (String, String) =
-        sqlx::query_as("SELECT tool_name, input_hash FROM tool_calls LIMIT 1")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let tool_row: (String, String) = sqlx::query_as("SELECT tool_name, input_hash FROM tool_calls LIMIT 1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(tool_row.0, "echo");
     assert_eq!(tool_row.1, "h-input");
 
@@ -223,12 +215,11 @@ async fn ipc_emission_records_rows_with_fingerprint() {
     assert!((model_row.4.unwrap() - 0.0123).abs() < 1e-9);
 
     // Run should be marked completed.
-    let status_row: (String,) =
-        sqlx::query_as("SELECT status FROM agent_runs WHERE id = ?")
-            .bind("r-smoke-1")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let status_row: (String,) = sqlx::query_as("SELECT status FROM agent_runs WHERE id = ?")
+        .bind("r-smoke-1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(status_row.0, "completed");
 
     drop(conn);
@@ -238,8 +229,7 @@ async fn ipc_emission_records_rows_with_fingerprint() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn unknown_notification_method_is_silently_ignored() {
     let pool = migrated_pool().await;
-    let recorder: Arc<dyn AgentRunRecorder> =
-        Arc::new(SqliteRecorder::new(pool.clone()));
+    let recorder: Arc<dyn AgentRunRecorder> = Arc::new(SqliteRecorder::new(pool.clone()));
     let bus = Arc::new(RunEventBus::new(vec![recorder]));
 
     let dir = TempDir::new().unwrap();
@@ -278,8 +268,7 @@ async fn unknown_notification_method_is_silently_ignored() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sidecar_crash_marks_runs_interrupted() {
     let pool = migrated_pool().await;
-    let recorder: Arc<dyn AgentRunRecorder> =
-        Arc::new(SqliteRecorder::new(pool.clone()));
+    let recorder: Arc<dyn AgentRunRecorder> = Arc::new(SqliteRecorder::new(pool.clone()));
     let bus = Arc::new(RunEventBus::new(vec![recorder]));
 
     let dir = TempDir::new().unwrap();
@@ -306,12 +295,8 @@ async fn sidecar_crash_marks_runs_interrupted() {
 
     // Simulate Rust supervisor detecting sidecar crash and asking the
     // sink to mark open runs interrupted.
-    xvision_agent_client::mark_runs_interrupted(
-        &bus,
-        ["r-crash".to_string()],
-        "sidecar exited unexpectedly",
-    )
-    .await;
+    xvision_agent_client::mark_runs_interrupted(&bus, ["r-crash".to_string()], "sidecar exited unexpectedly")
+        .await;
 
     // Recorder should update the run to `interrupted`.
     let deadline = std::time::Instant::now() + Duration::from_secs(2);

@@ -26,9 +26,7 @@ use xvision_observability::{
     AgentRunRecorder, RunEvent, RunEventBus, RunStartedEvent, RunStatus, SqliteRecorder,
 };
 
-const MIGRATION_018: &str = include_str!(
-    "../migrations/018_agent_run_observability.sql"
-);
+const MIGRATION_018: &str = include_str!("../migrations/018_agent_run_observability.sql");
 
 /// Failing dispatch: always returns the operator-flagged error
 /// shape so the test exercises the same code path that produced
@@ -144,13 +142,12 @@ async fn failing_dispatch_emits_error_span_with_message() {
     // Inspect the spans table. Exactly one ModelCall span should be
     // present, with status='error' and error_json containing the
     // dispatch's message text.
-    let rows: Vec<(String, String, Option<String>)> = sqlx::query_as(
-        "SELECT id, status, error_json FROM spans WHERE run_id = ?",
-    )
-    .bind(run_id)
-    .fetch_all(&pool)
-    .await
-    .unwrap();
+    let rows: Vec<(String, String, Option<String>)> =
+        sqlx::query_as("SELECT id, status, error_json FROM spans WHERE run_id = ?")
+            .bind(run_id)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
     assert_eq!(rows.len(), 1, "exactly one span recorded, got: {rows:?}");
     let (_span_id, status, error_json) = &rows[0];
     assert_eq!(status, "error", "span status must be 'error'");

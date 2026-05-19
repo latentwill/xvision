@@ -132,10 +132,7 @@ pub fn apply_metadata_patch(
         })
         .transpose()?;
 
-    let asset_universe = patch
-        .asset_universe
-        .map(normalize_asset_universe)
-        .transpose()?;
+    let asset_universe = patch.asset_universe.map(normalize_asset_universe).transpose()?;
 
     // ── phase 2: apply ────────────────────────────────────────────
     if let Some(name) = display_name {
@@ -196,11 +193,7 @@ pub trait StrategyStore: Send + Sync {
     ///
     /// Default impl is load → validate → save so any `StrategyStore`
     /// implementation gets metadata patching for free.
-    async fn update_metadata(
-        &self,
-        id: &str,
-        patch: StrategyMetadataPatch,
-    ) -> anyhow::Result<Strategy> {
+    async fn update_metadata(&self, id: &str, patch: StrategyMetadataPatch) -> anyhow::Result<Strategy> {
         let mut strategy = self.load(id).await?;
         // Validation errors must surface as `MetadataPatchError` so
         // the dashboard can map them to a classified 400 instead of
@@ -483,10 +476,7 @@ mod tests {
         store.save(&s).await.unwrap();
 
         let after = store
-            .update_metadata(
-                "01HZSTRATEGYNOOP0000000001",
-                StrategyMetadataPatch::default(),
-            )
+            .update_metadata("01HZSTRATEGYNOOP0000000001", StrategyMetadataPatch::default())
             .await
             .unwrap();
 

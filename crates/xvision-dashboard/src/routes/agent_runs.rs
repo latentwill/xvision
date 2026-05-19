@@ -36,8 +36,8 @@ use tokio_stream::Stream;
 use serde_json::json;
 
 use xvision_observability::{
-    build_export, build_report, find_blob_owner, AgentRunExport, BlobRef, BlobStore,
-    BlobStoreError, ExportError,
+    build_export, build_report, find_blob_owner, AgentRunExport, BlobRef, BlobStore, BlobStoreError,
+    ExportError,
 };
 
 use crate::error::DashboardError;
@@ -193,13 +193,9 @@ pub async fn get_blob(
             "code": "forbidden",
             "message": "retention is hash_only — blob bodies are not stored on disk for this run",
         });
-        let payload = serde_json::to_vec(&body)
-            .unwrap_or_else(|_| b"{\"code\":\"forbidden\"}".to_vec());
+        let payload = serde_json::to_vec(&body).unwrap_or_else(|_| b"{\"code\":\"forbidden\"}".to_vec());
         let mut headers = HeaderMap::new();
-        headers.insert(
-            header::CONTENT_TYPE,
-            HeaderValue::from_static("application/json"),
-        );
+        headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
         return Ok((StatusCode::FORBIDDEN, headers, payload).into_response());
     }
 

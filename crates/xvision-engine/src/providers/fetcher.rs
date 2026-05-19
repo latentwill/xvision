@@ -67,10 +67,7 @@ pub trait CatalogFetcher: Send + Sync {
 /// call time, not stored on the fetcher). Empty string is allowed for
 /// no-auth endpoints (Ollama, vLLM with --no-auth) — those will still
 /// be tried; the fetcher just won't send an Authorization header.
-pub fn fetcher_for(
-    provider: &ProviderEntry,
-    api_key: String,
-) -> Result<Box<dyn CatalogFetcher>> {
+pub fn fetcher_for(provider: &ProviderEntry, api_key: String) -> Result<Box<dyn CatalogFetcher>> {
     match provider.kind {
         ProviderKind::Anthropic => Ok(Box::new(AnthropicFetcher::new(
             provider.name.clone(),
@@ -154,9 +151,7 @@ impl CatalogFetcher for AnthropicFetcher {
     }
 
     async fn fetch(&self, http: &reqwest::Client) -> Result<Catalog> {
-        let mut req = http
-            .get(&self.url)
-            .header("anthropic-version", "2023-06-01");
+        let mut req = http.get(&self.url).header("anthropic-version", "2023-06-01");
         if !self.api_key.is_empty() {
             req = req.header("x-api-key", &self.api_key);
         }
@@ -307,13 +302,8 @@ pub(crate) fn parse_openrouter_models(json: &Value) -> Result<Vec<ModelEntry>> {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("OpenRouter row missing `id`: {row}"))?
             .to_string();
-        let display_name = row
-            .get("name")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        let context_window = row
-            .get("context_length")
-            .and_then(json_to_u32);
+        let display_name = row.get("name").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let context_window = row.get("context_length").and_then(json_to_u32);
         // `top_provider.max_completion_tokens` is the hard output cap
         // the routed provider will accept. Falls back to context_length
         // when the field is absent (a few open-weights routes lack it).
@@ -657,49 +647,25 @@ mod tests {
 
     #[test]
     fn openrouter_fetcher_normalizes_base_urls() {
-        let f = OpenRouterFetcher::new(
-            "or".into(),
-            "https://openrouter.ai/api/v1".into(),
-            String::new(),
-        );
+        let f = OpenRouterFetcher::new("or".into(), "https://openrouter.ai/api/v1".into(), String::new());
         assert_eq!(f.source_url(), "https://openrouter.ai/api/v1/models");
-        let f2 = OpenRouterFetcher::new(
-            "or".into(),
-            "https://openrouter.ai".into(),
-            String::new(),
-        );
+        let f2 = OpenRouterFetcher::new("or".into(), "https://openrouter.ai".into(), String::new());
         assert_eq!(f2.source_url(), "https://openrouter.ai/api/v1/models");
-        let f3 = OpenRouterFetcher::new(
-            "or".into(),
-            "https://openrouter.ai/api/v1/".into(),
-            String::new(),
-        );
+        let f3 = OpenRouterFetcher::new("or".into(), "https://openrouter.ai/api/v1/".into(), String::new());
         assert_eq!(f3.source_url(), "https://openrouter.ai/api/v1/models");
     }
 
     #[test]
     fn anthropic_fetcher_appends_v1_models() {
-        let f = AnthropicFetcher::new(
-            "a".into(),
-            "https://api.anthropic.com".into(),
-            String::new(),
-        );
+        let f = AnthropicFetcher::new("a".into(), "https://api.anthropic.com".into(), String::new());
         assert_eq!(f.source_url(), "https://api.anthropic.com/v1/models");
     }
 
     #[test]
     fn openai_compat_fetcher_handles_base_url_with_or_without_v1() {
-        let f = OpenAiCompatFetcher::new(
-            "g".into(),
-            "https://api.groq.com/openai/v1".into(),
-            String::new(),
-        );
+        let f = OpenAiCompatFetcher::new("g".into(), "https://api.groq.com/openai/v1".into(), String::new());
         assert_eq!(f.source_url(), "https://api.groq.com/openai/v1/models");
-        let f2 = OpenAiCompatFetcher::new(
-            "d".into(),
-            "https://api.deepseek.com".into(),
-            String::new(),
-        );
+        let f2 = OpenAiCompatFetcher::new("d".into(), "https://api.deepseek.com".into(), String::new());
         assert_eq!(f2.source_url(), "https://api.deepseek.com/v1/models");
     }
 

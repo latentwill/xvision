@@ -612,11 +612,7 @@ pub mod get {
             // Seed a completed run so `EvalRunExport.scenario` is
             // populated for the parity compare.
             let store = RunStore::new(ctx.db.clone());
-            let mut run = Run::new_queued(
-                "agent-fixture".into(),
-                scenario_id.into(),
-                RunMode::Backtest,
-            );
+            let mut run = Run::new_queued("agent-fixture".into(), scenario_id.into(), RunMode::Backtest);
             run.status = RunStatus::Completed;
             store.create(&run).await.expect("seed run");
             store
@@ -624,9 +620,7 @@ pub mod get {
                 .await
                 .expect("transition");
 
-            let direct = api_scenario::get(&ctx, scenario_id)
-                .await
-                .expect("scenario get");
+            let direct = api_scenario::get(&ctx, scenario_id).await.expect("scenario get");
             let export = eval_export::build_export(&ctx, &run.id)
                 .await
                 .expect("build_export");
@@ -648,12 +642,8 @@ pub mod get {
         fn scenario_show_has_get_alias() {
             use clap::CommandFactory;
             let cmd = crate::Cli::command();
-            let scenario = cmd
-                .find_subcommand("scenario")
-                .expect("scenario subcommand");
-            let show = scenario
-                .find_subcommand("show")
-                .expect("show subcommand");
+            let scenario = cmd.find_subcommand("scenario").expect("scenario subcommand");
+            let show = scenario.find_subcommand("show").expect("show subcommand");
             let aliases: Vec<&str> = show.get_visible_aliases().collect();
             assert!(
                 aliases.contains(&"get"),

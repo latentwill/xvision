@@ -202,9 +202,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let dir = catalog_cache_dir(tmp.path());
         tokio::fs::create_dir_all(&dir).await.unwrap();
-        tokio::fs::write(dir.join("bad.json"), b"not json")
-            .await
-            .unwrap();
+        tokio::fs::write(dir.join("bad.json"), b"not json").await.unwrap();
         let err = load(tmp.path(), "bad").await.unwrap_err();
         assert!(err.to_string().contains("parse cached catalog"));
     }
@@ -313,9 +311,6 @@ mod tests {
     async fn load_rejects_unsafe_names_without_touching_disk() {
         let tmp = TempDir::new().unwrap();
         let err = load(tmp.path(), "../etc/passwd").await.unwrap_err();
-        assert!(
-            err.to_string().contains("disallowed character"),
-            "got: {err}"
-        );
+        assert!(err.to_string().contains("disallowed character"), "got: {err}");
     }
 }
