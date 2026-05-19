@@ -366,7 +366,12 @@ pub struct RunArgs {
 
     // ── Batch / run args ─────────────────────────────────────────────────────
 
-    /// Decision budget cap stored in the experiment row.
+    /// Decision-budget metadata recorded on the experiment ledger row.
+    /// Does NOT cap eval execution — the underlying eval pipeline still runs
+    /// every cadence-gated decision for each scenario. The field exists to
+    /// record operator intent ("this experiment was designed around N
+    /// decisions per scenario") so cross-experiment comparison is meaningful.
+    /// An actual per-run decision cap is a follow-on (eval-pipeline change).
     #[arg(long)]
     pub decision_budget: Option<i64>,
 
@@ -406,9 +411,27 @@ pub struct RunArgs {
 // ── CLI handler ───────────────────────────────────────────────────────────────
 
 /// CLI handler for `xvn experiment run`.
+///
+/// Orchestration order (production path):
+///   1. Resolve scenarios (explicit `--scenarios` or wave-B selector).
+///   2. Create the experiment ledger row.
+///   3. Run the batch via `eval::batch::run_batch_via_env` — the SAME path as
+///      `xvn eval batch run`. That helper internally calls `eval::run` per
+///      scenario, which resolves provider/model from each strategy's slot,
+///      and (when `--review-with` is set) builds the review dispatch from the
+///      named agent profile's provider. Prior versions of this verb built a
+///      single generic dispatch from "the first configured provider" and
+///      threaded it through the testable `run_batch` helper, which bypassed
+///      slot-driven dispatch resolution; this matches PR-374 review.
+///   4. Bind the persisted batch_id to the experiment row.
+///   5. Compute and persist `result_json` summary.
 pub async fn run_experiment_cmd(args: RunArgs) -> CliResult<()> {
-    use crate::commands::eval::{api_to_cli, open_ctx};
-    use crate::commands::eval::review::build_dispatch_for_profile;
+    use crate::commands::eval::batch::{run_batch_via_env, BatchRunArgs};
+    use crate::commands::eval::open_ctx;
+    use xvision_engine::api::experiment::{
+        create_experiment, update_experiment, CreateExperimentRequest, UpdateExperimentRequest,
+    };
+    use xvision_engine::eval::experiment_store::ExperimentStore;
 
     let ctx = open_ctx(args.xvn_home.clone())
         .await
@@ -447,59 +470,75 @@ pub async fn run_experiment_cmd(args: RunArgs) -> CliResult<()> {
         });
     }
 
-    // Build the dispatch from a configured provider. We resolve the first
-    // enabled provider in the runtime config. If `--review-with` is set,
-    // we also build a review dispatch using the same provider.
-    //
-    // Note: for the CLI path we load the runtime config directly; tests use
-    // the testable `run_experiment` helper with injected mock dispatch instead.
-    let provider_name = {
-        use crate::commands::eval::review::runtime_config_path_pub;
-        use xvision_core::config;
-        let cfg_path = runtime_config_path_pub(&ctx);
-        config::load_runtime(&cfg_path)
-            .map_err(|e| CliError::upstream(anyhow::anyhow!("load runtime config: {e}")))?
-            .providers
-            .into_iter()
-            .next()
-            .map(|p| p.name)
-            .ok_or_else(|| CliError {
-                exit: XvnExit::Usage,
-                source: anyhow::anyhow!(
-                    "no provider configured; run `xvn provider add` first"
-                ),
-            })?
-    };
+    // Step 1: Create the experiment ledger row up front so the experiment_id
+    // exists even if the batch later partially fails.
+    let exp = create_experiment(
+        &ctx,
+        CreateExperimentRequest {
+            name: args.name.clone(),
+            question: args.question.clone(),
+            strategy_ids: vec![args.strategy.clone()],
+            scenario_ids: scenario_ids.clone(),
+            decision_budget: args.decision_budget,
+        },
+    )
+    .await
+    .map_err(|e| CliError::upstream(anyhow::anyhow!("create_experiment: {e}")))?;
+    let exp_id = exp.experiment_id.clone();
 
-    let dispatch = build_dispatch_for_profile(&ctx, &provider_name)
-        .map_err(|e| api_to_cli("experiment run (dispatch)", e))?;
-
-    let review_dispatch: Option<Arc<dyn LlmDispatch>> = if args.review_with.is_some() {
-        Some(dispatch.clone())
-    } else {
-        None
-    };
-
-    let tools = Arc::new(ToolRegistry::empty());
-
-    let req = ExperimentRunRequest {
-        name: args.name.clone(),
-        question: args.question.clone(),
-        strategy_id: args.strategy.clone(),
-        scenario_ids,
-        decision_budget: args.decision_budget,
-        mode: RunMode::Backtest,
-        broker: None,
-        dispatch,
-        findings_model: DEFAULT_FINDINGS_MODEL.to_string(),
-        tools,
+    // Step 2: Run the batch via the SAME production path as `xvn eval batch run`.
+    // run_batch_via_env calls eval::run per scenario, which builds dispatch from
+    // each strategy slot's provider/model. When --review-with is set, it loads
+    // the named agent profile and builds review dispatch from profile.provider.
+    let batch_args = BatchRunArgs {
+        strategy: args.strategy.clone(),
+        scenarios: scenario_ids.clone(),
+        mode: "backtest".to_string(),
+        wait: true,
+        poll: "2s".to_string(),
+        json: false,
         review_with: args.review_with.clone(),
-        review_dispatch,
+        xvn_home: args.xvn_home.clone(),
     };
+    let batch_result = run_batch_via_env(&ctx, &batch_args).await?;
 
-    let mut output = run_experiment(&ctx, req)
+    // Step 3: Bind the persisted batch to the experiment row.
+    update_experiment(
+        &ctx,
+        &exp_id,
+        UpdateExperimentRequest {
+            batch_id: Some(batch_result.batch_id.clone()),
+            ..Default::default()
+        },
+    )
+    .await
+    .map_err(|e| CliError::upstream(anyhow::anyhow!("update_experiment (bind batch): {e}")))?;
+
+    // Step 4: Build the result summary and persist as result_json.
+    let summary = build_result_summary(&batch_result);
+    let result_value = serde_json::to_value(&summary)
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("serialize result_json: {e}")))?;
+    let store = ExperimentStore::new(ctx.db.clone());
+    let final_exp = store
+        .set_result(&exp_id, result_value)
         .await
-        .exit_with(XvnExit::Upstream)?;
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("set_result: {e}")))?;
+
+    let mut output = ExperimentRunOutput {
+        experiment_id: final_exp.experiment_id.clone(),
+        name: final_exp.name.clone(),
+        question: final_exp.question.clone(),
+        strategy_ids: final_exp.strategy_ids.clone(),
+        scenario_ids: final_exp.scenario_ids.clone(),
+        batch_id: batch_result.batch_id.clone(),
+        decision_budget: final_exp.decision_budget,
+        result: summary,
+        conclusion: final_exp.conclusion.clone(),
+        next_recommendation: final_exp.next_recommendation.clone(),
+        compare_markdown: None,
+        experiment: final_exp,
+        batch: batch_result,
+    };
 
     // --compare --markdown: render and attach (or write to --output file).
     if args.compare && args.markdown {
