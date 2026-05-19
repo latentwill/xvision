@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use sqlx::SqlitePool;
+use sqlx::sqlite::SqlitePoolOptions;
 use xvision_data::fixtures::ensure_test_fixture;
 use xvision_engine::agent::llm::{LlmDispatch, MockDispatch};
 use xvision_engine::agents::{AgentSlot, AgentStore, NewAgent};
@@ -24,8 +24,34 @@ use xvision_engine::strategies::{AgentRef, PipelineDef, Strategy};
 use xvision_engine::tools::ToolRegistry;
 use xvision_execution::broker_surface::{BrokerSurface, MockBrokerSurface};
 
+static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+struct EnvGuard {
+    key: &'static str,
+    prev: Option<String>,
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        match self.prev.take() {
+            Some(value) => std::env::set_var(self.key, value),
+            None => std::env::remove_var(self.key),
+        }
+    }
+}
+
+fn scoped_unset(key: &'static str) -> EnvGuard {
+    let prev = std::env::var(key).ok();
+    std::env::remove_var(key);
+    EnvGuard { key, prev }
+}
+
 async fn ctx_with_tables() -> (ApiContext, tempfile::TempDir) {
-    let pool = SqlitePool::connect(":memory:").await.unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
     sqlx::query(include_str!("../migrations/001_api_audit.sql"))
         .execute(&pool)
         .await
@@ -57,6 +83,10 @@ async fn ctx_with_tables() -> (ApiContext, tempfile::TempDir) {
 async fn ctx_with_agents_table() -> (ApiContext, tempfile::TempDir) {
     let (ctx, dir) = ctx_with_tables().await;
     sqlx::query(include_str!("../migrations/005_agents.sql"))
+        .execute(&ctx.db)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/019_agent_slot_prompt_version.sql"))
         .execute(&ctx.db)
         .await
         .unwrap();
@@ -524,7 +554,7 @@ async fn save_openrouter_strategy_with_agent_ref(ctx: &ApiContext, strategy_id: 
                 system_prompt: "Decide.".into(),
                 skill_ids: vec![],
                 max_tokens: Some(4096),
-            prompt_version: String::new(),
+                prompt_version: String::new(),
             }],
         })
         .await
@@ -564,6 +594,8 @@ async fn save_openrouter_strategy_with_agent_ref(ctx: &ApiContext, strategy_id: 
 
 #[tokio::test]
 async fn eval_run_dispatches_through_openrouter_for_openrouter_agent_ref() {
+    let _env_lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _openrouter_key = scoped_unset("OPENROUTER_API_KEY");
     let (ctx, tmp) = ctx_with_agents_table().await;
     write_openrouter_only_config_with_deepseek(tmp.path());
     let strategy_id = "01KRMYS1N4QT5B9EM32VNXJJ9V";
@@ -576,8 +608,6 @@ async fn eval_run_dispatches_through_openrouter_for_openrouter_agent_ref() {
     // `OPENROUTER_API_KEY` as its `api_key_env`, so an unset value
     // yields ApiError::Validation("no API key for provider `openrouter`
     // (env var OPENROUTER_API_KEY is unset). ...").
-    let prev_openrouter = std::env::var("OPENROUTER_API_KEY").ok();
-    std::env::remove_var("OPENROUTER_API_KEY");
     // ANTHROPIC_API_KEY is intentionally not removed: even if it is
     // configured in the host environment, the resolution path must not
     // select Anthropic. The provider config only declares `openrouter`,
@@ -594,10 +624,6 @@ async fn eval_run_dispatches_through_openrouter_for_openrouter_agent_ref() {
         },
     )
     .await;
-
-    if let Some(prev) = prev_openrouter {
-        std::env::set_var("OPENROUTER_API_KEY", prev);
-    }
 
     let err = r.expect_err("missing OPENROUTER_API_KEY must surface a validation error");
     let msg = err.to_string();
