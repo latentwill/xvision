@@ -19,7 +19,7 @@ async fn boot() -> (TestServer, TempDir, AppState) {
 
 #[tokio::test]
 async fn post_alpaca_persists_and_get_reports_redacted() {
-    let (server, _tmp, _state) = boot().await;
+    let (server, tmp, state) = boot().await;
 
     let resp = server
         .post("/api/settings/brokers/alpaca")
@@ -34,7 +34,15 @@ async fn post_alpaca_persists_and_get_reports_redacted() {
     assert_eq!(body["stored"], true);
     assert_eq!(body["stored_key_id_suffix"], "0001");
 
-    let snapshot = server.get("/api/settings/brokers").await;
+    drop(server);
+    drop(state);
+
+    let restarted_state = AppState::new(tmp.path().to_path_buf())
+        .await
+        .expect("reload dashboard state");
+    let restarted_server = TestServer::new(build_router(restarted_state)).unwrap();
+
+    let snapshot = restarted_server.get("/api/settings/brokers").await;
     snapshot.assert_status_ok();
     let snap_body: serde_json::Value = snapshot.json();
     assert_eq!(snap_body["alpaca"]["stored"], true);
