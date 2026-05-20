@@ -10,6 +10,10 @@ import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
 import { Icon } from "@/components/primitives/Icon";
+import {
+  ListPagination,
+  useListPagination,
+} from "@/components/primitives/ListPagination";
 import { ApiError } from "@/api/client";
 import { chartKeys, getRunChart } from "@/api/chart";
 import { RunChart } from "@/components/chart/RunChart";
@@ -105,7 +109,16 @@ export function EvalRunsRoute() {
     const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, [hasInflight]);
-  const latestRunId = q.data?.[0]?.id ?? "";
+  // Page-size + page-nav state (QA-round-7 list wave / F-4). Operates on
+  // the already-fetched, server-sorted run list — the engine returns runs
+  // most-recent-first (eval/store.rs ORDER BY started_at DESC), so a
+  // simple client-side slice gives the user a page-size picker without
+  // teaching every backend endpoint to paginate. The unified list
+  // component planned in team/intake/2026-05-19-list-component-design-intake.md
+  // will swap this for proper server-side pagination later.
+  const runs = q.data ?? [];
+  const pagination = useListPagination(runs);
+  const latestRunId = runs[0]?.id ?? "";
   const latestChart = useQuery({
     queryKey: chartKeys.run(latestRunId),
     queryFn: () => getRunChart(latestRunId),
@@ -209,7 +222,8 @@ export function EvalRunsRoute() {
           <EmptyState />
         ) : (
           <RunsTable
-            items={q.data ?? []}
+            items={pagination.visible}
+            allItems={runs}
             selected={selected}
             onToggle={toggleSelected}
             nowMs={nowMs}
@@ -218,6 +232,15 @@ export function EvalRunsRoute() {
           />
         )}
       </Card>
+
+      <ListPagination
+        total={pagination.total}
+        page={pagination.page}
+        pageSize={pagination.pageSize}
+        onPageChange={pagination.setPage}
+        onPageSizeChange={pagination.setPageSize}
+        itemLabel="runs"
+      />
 
       <h2 className="font-serif italic text-[20px] text-text mt-8 mb-3">
         Latest run chart
@@ -300,6 +323,7 @@ function CompareToolbar({
 
 function RunsTable({
   items,
+  allItems,
   selected,
   onToggle,
   nowMs,
@@ -307,6 +331,10 @@ function RunsTable({
   scenarios,
 }: {
   items: RunSummary[];
+  /** Full unpaginated set — used as the sibling pool for the
+   *  evalRunDisambiguator ordinal so "Run #3/7" stays stable across
+   *  pages instead of resetting per-page. */
+  allItems: RunSummary[];
   selected: Set<string>;
   onToggle: (id: string) => void;
   nowMs: number;
@@ -383,7 +411,7 @@ function RunsTable({
               </div>
               <div className="mt-1 font-mono text-[11px] text-text-3">
                 <span className="text-text-2">
-                  {evalRunDisambiguator(row, items)}
+                  {evalRunDisambiguator(row, allItems)}
                 </span>
                 <span className="mx-1.5 text-text-4">·</span>
                 <span>{row.mode}</span>
@@ -519,7 +547,7 @@ function RunsTable({
                       {strategyName(row.agent_id)}
                     </div>
                     <div className="mt-0.5 text-[11px] text-text-2">
-                      {evalRunDisambiguator(row, items)}
+                      {evalRunDisambiguator(row, allItems)}
                     </div>
                     <div
                       className="mt-0.5 font-mono text-[11px] text-text-3 break-all select-all"

@@ -6,6 +6,10 @@ import { Card } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
 import { ApiError } from "@/api/client";
 import { listScenarios, scenarioKeys } from "@/api/scenarios";
+import {
+  ListPagination,
+  useListPagination,
+} from "@/components/primitives/ListPagination";
 import type { Scenario, ScenarioSource, ListScenariosFilter } from "@/api/types.gen";
 
 const SOURCE_TONE: Record<ScenarioSource, "default" | "gold" | "info" | "warn"> = {
@@ -48,6 +52,12 @@ export function ScenariosRoute() {
     queryFn: () => listScenarios(filter),
   });
 
+  // QA-round-7 list wave (F-4): scenarios already come back sorted
+  // created_at DESC (see crates/xvision-engine/src/eval/scenario_store.rs),
+  // so the slice here is "newest N scenarios for the active filter."
+  const items = q.data ?? [];
+  const pagination = useListPagination(items);
+
   return (
     <>
       <Topbar title="Scenarios" sub={subtitleFor(q)} />
@@ -73,9 +83,18 @@ export function ScenariosRoute() {
         ) : q.data && q.data.length === 0 ? (
           <EmptyState />
         ) : (
-          <ScenariosTable items={q.data ?? []} />
+          <ScenariosTable items={pagination.visible} />
         )}
       </Card>
+
+      <ListPagination
+        total={pagination.total}
+        page={pagination.page}
+        pageSize={pagination.pageSize}
+        onPageChange={pagination.setPage}
+        onPageSizeChange={pagination.setPageSize}
+        itemLabel="scenarios"
+      />
     </>
   );
 }

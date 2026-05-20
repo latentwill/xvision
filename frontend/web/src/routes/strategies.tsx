@@ -4,6 +4,10 @@ import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
 import { Icon } from "@/components/primitives/Icon";
+import {
+  ListPagination,
+  useListPagination,
+} from "@/components/primitives/ListPagination";
 import { ApiError } from "@/api/client";
 import {
   listStrategies,
@@ -17,6 +21,14 @@ export function StrategiesRoute() {
     queryKey: strategyKeys.list(),
     queryFn: listStrategies,
   });
+
+  // QA-round-7 list wave (F-4): the engine returns strategies newest-first
+  // (api/strategy.rs sorts ids DESC; strategy ids are time-ordered ULIDs),
+  // so a client-side slice gives the user a 25/50/100 page-size picker
+  // without backend pagination churn. Recency-first default is locked in
+  // upstream so the visible window is "newest N strategies".
+  const items = q.data ?? [];
+  const pagination = useListPagination(items);
 
   return (
     <>
@@ -35,9 +47,18 @@ export function StrategiesRoute() {
         ) : q.data && q.data.length === 0 ? (
           <EmptyState />
         ) : (
-          <StrategiesTable items={q.data ?? []} />
+          <StrategiesTable items={pagination.visible} />
         )}
       </Card>
+
+      <ListPagination
+        total={pagination.total}
+        page={pagination.page}
+        pageSize={pagination.pageSize}
+        onPageChange={pagination.setPage}
+        onPageSizeChange={pagination.setPageSize}
+        itemLabel="strategies"
+      />
     </>
   );
 }
