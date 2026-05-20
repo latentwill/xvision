@@ -298,7 +298,22 @@ pub struct AuditFinding {
 /// Validate an agent before it is persisted (create or update). Runs the
 /// hard save-gate rules for placeholder/too-short prompts and asset
 /// name↔prompt mismatches.
+///
+/// Honors `XVISION_DISABLE_AGENT_SAVE_GATE=1` as a test-only bypass —
+/// **debug builds only**. The `cfg(debug_assertions)` guard means the
+/// env var is silently ignored in release builds, so production binaries
+/// always run the gate regardless of environment.
+///
+/// The gate intentionally stays on by default; integration tests that
+/// exercise behavior unrelated to prompt quality set the env var so they
+/// don't have to fabricate a 200-char prompt at every AgentSlot
+/// construction site. See PR #364 (gate origin) and the unblock commit
+/// that introduced this bypass.
 pub fn validate_agent_for_save(agent: &Agent) -> Result<(), String> {
+    #[cfg(debug_assertions)]
+    if std::env::var_os("XVISION_DISABLE_AGENT_SAVE_GATE").is_some() {
+        return Ok(());
+    }
     for slot in &agent.slots {
         let prompt = slot.system_prompt.trim();
         if prompt.is_empty() {
