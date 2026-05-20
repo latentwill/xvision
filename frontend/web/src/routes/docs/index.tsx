@@ -46,6 +46,22 @@ export function DocsRoute() {
     );
   }, [pages, filter]);
 
+  // Group the filtered pages by `section`, preserving the order in which
+  // each section first appears. The backend guarantees pages with the same
+  // section are contiguous, so a linear walk is enough — no re-sorting.
+  const grouped = useMemo(() => {
+    const groups: { section: string; pages: typeof filtered }[] = [];
+    for (const p of filtered) {
+      const last = groups[groups.length - 1];
+      if (last && last.section === p.section) {
+        last.pages.push(p);
+      } else {
+        groups.push({ section: p.section, pages: [p] });
+      }
+    }
+    return groups;
+  }, [filtered]);
+
   // Derive the active slug from the URL param. If the param names a slug
   // that isn't in the loaded index (unknown or index not yet loaded), fall
   // back to the first entry so the main pane always shows something useful.
@@ -91,25 +107,39 @@ export function DocsRoute() {
                 No pages match "{filter}".
               </div>
             ) : (
-              filtered.map((p) => {
-                const isActive = p.slug === activeSlug;
-                return (
-                  <button
-                    key={p.slug}
-                    type="button"
-                    onClick={() => setSearchParams({ slug: p.slug })}
-                    aria-current={isActive ? "page" : undefined}
-                    data-testid={`docs-index-item-${p.slug}`}
-                    className={`text-left text-[13px] rounded px-2 py-1.5 border transition-colors ${
-                      isActive
-                        ? "border-gold/40 text-text bg-gold/5"
-                        : "border-border-soft text-text-2 hover:text-text"
-                    }`}
+              grouped.map((group) => (
+                <div
+                  key={group.section}
+                  className="flex flex-col gap-1"
+                  data-testid={`docs-section-${group.section.toLowerCase().replace(/\s+/g, "-")}`}
+                >
+                  <h3
+                    className="text-[10px] uppercase tracking-wider text-text-3 px-2 pt-2 pb-0.5 font-medium"
+                    data-testid="docs-section-header"
                   >
-                    {p.title}
-                  </button>
-                );
-              })
+                    {group.section}
+                  </h3>
+                  {group.pages.map((p) => {
+                    const isActive = p.slug === activeSlug;
+                    return (
+                      <button
+                        key={p.slug}
+                        type="button"
+                        onClick={() => setSearchParams({ slug: p.slug })}
+                        aria-current={isActive ? "page" : undefined}
+                        data-testid={`docs-index-item-${p.slug}`}
+                        className={`text-left text-[13px] rounded px-2 py-1.5 border transition-colors ${
+                          isActive
+                            ? "border-gold/40 text-text bg-gold/5"
+                            : "border-border-soft text-text-2 hover:text-text"
+                        }`}
+                      >
+                        {p.title}
+                      </button>
+                    );
+                  })}
+                </div>
+              ))
             )}
           </nav>
         </aside>

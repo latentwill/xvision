@@ -32,11 +32,11 @@ function renderRoute(initialEntry = "/docs") {
 }
 
 const INDEX = [
-  { slug: "quickstart", title: "Quickstart" },
-  { slug: "strategies", title: "Strategies" },
-  { slug: "scenarios", title: "Scenarios" },
-  { slug: "eval-runs", title: "Eval Runs" },
-  { slug: "cli-reference", title: "CLI Reference" },
+  { slug: "quickstart", title: "Quickstart", section: "Quickstart" },
+  { slug: "strategies", title: "Strategies", section: "Concepts" },
+  { slug: "scenarios", title: "Scenarios", section: "Concepts" },
+  { slug: "eval-runs", title: "Eval Runs", section: "Concepts" },
+  { slug: "cli-reference", title: "CLI Reference", section: "CLI" },
 ];
 
 beforeEach(() => {
@@ -152,5 +152,22 @@ describe("DocsRoute", () => {
       "aria-current",
       "page",
     );
+  });
+
+  test("sidebar renders one header per declared section", async () => {
+    renderRoute();
+    // Wait for the index to land.
+    await screen.findByTestId("docs-index-item-quickstart");
+    const headers = screen.getAllByTestId("docs-section-header");
+    // Three distinct sections in the fixture: Quickstart, Concepts, CLI.
+    expect(headers.map((h) => h.textContent)).toEqual([
+      "Quickstart",
+      "Concepts",
+      "CLI",
+    ]);
+    // Every page button still renders.
+    for (const p of INDEX) {
+      expect(screen.getByTestId(`docs-index-item-${p.slug}`)).toBeTruthy();
+    }
   });
 });
