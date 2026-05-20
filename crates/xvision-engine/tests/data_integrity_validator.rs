@@ -50,6 +50,12 @@ async fn pool_with_migrations() -> SqlitePool {
         .execute(&pool)
         .await
         .unwrap();
+    // Migration 026 — V2E trace-surface foundation (determinism_receipts,
+    // findings.evidence_cycle_ids_json + findings.produced_by_check).
+    sqlx::query(include_str!("../migrations/026_trace_surface_foundation.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     // Migration 027 — adds bars_content_hash, manifest_canonical, bars_manifest.
     sqlx::query(include_str!("../migrations/027_run_bars_manifest.sql"))
         .execute(&pool)
