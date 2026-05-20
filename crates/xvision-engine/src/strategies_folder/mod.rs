@@ -23,9 +23,16 @@
 //! v1 is read-only. Writing (`xvn strategies init`, `xvn strategies import`)
 //! ships in wave-2 tracks.
 
+pub mod import;
 pub mod prepop;
 pub mod reader;
+pub mod summary;
 pub mod types;
 
+pub use import::{
+    import_bytes, import_from_path, ImportFinding, ImportOptions, ImportOutcome, ACCEPTED_EXTENSIONS,
+    MAX_IMPORT_BYTES,
+};
 pub use reader::{folder_root, list, read, MAX_FILE_BYTES, SUBFOLDER_ALLOWLIST};
+pub use summary::{summarize_csv, summarize_pdf, SummaryOutcome};
 pub use types::{FileContent, FileKind, FolderEntry};

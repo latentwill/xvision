@@ -13,4 +13,5 @@ pub mod settings;
 pub mod skills;
 pub mod static_files;
 pub mod strategies;
+pub mod strategies_folder;
 pub mod wizard;

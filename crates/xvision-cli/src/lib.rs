@@ -231,7 +231,8 @@ pub enum Command {
     Strategy(commands::strategy::StrategyCmd),
     /// Operations on `$XVN_HOME/strategies/` — `init` populates the
     /// per-user notes/docs/library folders + the curated template
-    /// library. Future sub-verbs: `import`.
+    /// library; `import` adds user files (md/txt/csv/pdf/json) with
+    /// summary sidecars for csv/pdf.
     Strategies(commands::strategies::StrategiesCmd),
     /// Stage 1 (Intern) in isolation — preview prompt or run a backend call.
     Intern(commands::intern::InternCmd),
