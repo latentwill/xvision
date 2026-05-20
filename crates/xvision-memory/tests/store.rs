@@ -71,3 +71,15 @@ async fn query_isolates_by_namespace() {
     assert_eq!(hits_b[0].id, "b");
     assert_eq!(hits_g.len(), 0);
 }
+
+#[tokio::test]
+async fn forget_namespace_clears_only_that_namespace() {
+    let store = MemoryStore::open_in_memory().await.unwrap();
+    store.upsert(&make_item("a", "agent:A", "alpha", vec![1.0, 0.0]), "test").await.unwrap();
+    store.upsert(&make_item("b", "global",  "beta",  vec![1.0, 0.0]), "test").await.unwrap();
+    store.forget("agent:A").await.unwrap();
+    let hits_a = store.query("agent:A", &[1.0, 0.0], 5).await.unwrap();
+    let hits_g = store.query("global",  &[1.0, 0.0], 5).await.unwrap();
+    assert!(hits_a.is_empty());
+    assert_eq!(hits_g.len(), 1);
+}

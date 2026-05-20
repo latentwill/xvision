@@ -112,4 +112,12 @@ impl MemoryStore {
         scored.truncate(k);
         Ok(scored)
     }
+
+    pub async fn forget(&self, namespace: &str) -> anyhow::Result<u64> {
+        let res = sqlx::query("DELETE FROM memory_items WHERE namespace = ?")
+            .bind(namespace)
+            .execute(&self.pool)
+            .await?;
+        Ok(res.rows_affected())
+    }
 }
