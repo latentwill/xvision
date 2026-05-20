@@ -23,6 +23,7 @@
 //! v1 is read-only. Writing (`xvn strategies init`, `xvn strategies import`)
 //! ships in wave-2 tracks.
 
+pub mod prepop;
 pub mod reader;
 pub mod types;
 
