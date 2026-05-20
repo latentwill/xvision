@@ -177,3 +177,33 @@ Verification target:
 
 - Re-run `clawpatch revalidate --finding fnd_sig-feat-ui-flow-368150e279-c2d1_425d678994`
   after a broader fix.
+
+## B-7 - CacheStatusBadge generated component tests fail validation
+
+- Finding: `fnd_sig-feat-ui-flow-7f1ddf7f4e-f0c9_fc3d85213c`
+- Severity: low
+- Category: test-gap
+- Status: open in codebase, deferred from the autonomous clawpatch loop
+
+`clawpatch fix` attempted to add
+`frontend/web/src/components/scenario/CacheStatusBadge.test.tsx`, but the
+generated test file failed clawpatch's validation after applying. The untracked
+generated test file was removed so the autonomous loop could continue from a
+clean tree.
+
+Recommendation from clawpatch:
+
+- Add focused React Testing Library tests for `CacheStatusBadge` covering the
+  three status variants, button rendering/click behavior, disabled state, and
+  fetchStatus-only rendering when `onFetch` is absent.
+
+Minimum fix scope from clawpatch:
+
+- Add a component-level test file under
+  `frontend/web/src/components/scenario` and include it in the existing
+  `pnpm --dir frontend/web test` suite.
+
+Verification target:
+
+- Re-run `clawpatch revalidate --finding fnd_sig-feat-ui-flow-7f1ddf7f4e-f0c9_fc3d85213c`
+  after a broader fix.
