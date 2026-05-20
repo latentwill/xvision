@@ -49,9 +49,13 @@ doc.
   `scenario-form-calendar-whitespace` (P2), `scenario-runs-tab-show-eval-name` (P2),
   `agent-usage-panel-wire-deployed-and-runs` (P1).
 - **Standard list component (design handoff)** — planning intake at
-  `team/intake/2026-05-19-list-component-design-intake.md`. Needs a spec under
-  `docs/superpowers/specs/` before contracts open. Phase-0 track:
-  `list-component-spec`.
+  `team/intake/2026-05-19-list-component-design-intake.md`. Phase-0
+  spec landed at
+  `docs/superpowers/specs/2026-05-20-standard-list-component.md`
+  (operator-approved 2026-05-20; mobile `<MListSheet>` kept as a
+  narrow, named exemption to the no-popups rule, scoped to phone
+  list filters only). Contracts 1a/1b/1c queued — to be authored
+  next.
 
 ## Recently Closed
 
