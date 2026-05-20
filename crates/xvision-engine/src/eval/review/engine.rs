@@ -353,6 +353,7 @@ mod tests {
             win_rate: 0.55,
             n_trades: 4,
             n_decisions: 3,
+            baselines: None,
         };
         store.finalize(&run.id, &metrics).await.expect("finalize");
         run.metrics = Some(metrics);

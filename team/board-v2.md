@@ -6,7 +6,7 @@
 > Same rules as the main board (`team/board.md`): one line per active track,
 > each linking to a `team/contracts/<slug>.md`. Conductor-owned.
 >
-> Last updated: 2026-05-17.
+> Last updated: 2026-05-20.
 
 ## Active — V2A (onboarding & docs)
 
@@ -16,6 +16,56 @@
 `v2a-example-artifacts` merged via #205 on 2026-05-17; archived under
 `team/archive/2026-05-17-v2a/`. The remaining two leaves are independent —
 safe to claim in parallel.
+
+## Active — V2E (eval accuracy & trace surface)
+
+Decomposed 2026-05-20 from `team/intake/2026-05-19-eval-accuracy-and-trace-surface.md`.
+**All seven contracts are `status: ready` — no worker has claimed any of
+them yet, no worktrees exist.** This is intentional: the conductor is
+holding V2E in the dock until the V2A leaves merge so capacity isn't
+split between waves.
+
+The intake's optional 9→7 re-pairing is applied:
+`eval-cost-model-per-bar-and-volume-share` merges items 19+20 from the
+research doc; `eval-candle-integrity-and-manifest` merges items 18+21.
+See the V2E notes section below for why and the dependency graph.
+
+- [eval-trace-surface-foundation](contracts/eval-trace-surface-foundation.md) — foundation · ready · **lands first, blocks 3 downstream**
+- [eval-candle-integrity-and-manifest](contracts/eval-candle-integrity-and-manifest.md) — foundation · ready · independent (claims migration 024)
+- [eval-cost-model-per-bar-and-volume-share](contracts/eval-cost-model-per-bar-and-volume-share.md) — foundation · ready · blocks intra-bar (no migration; per-bar arrays live in bars Parquet)
+- [eval-intra-bar-fill-ordering](contracts/eval-intra-bar-fill-ordering.md) — leaf · ready · depends on cost-model + foundation
+- [eval-lookahead-bias-prober](contracts/eval-lookahead-bias-prober.md) — leaf · ready · depends on foundation
+- [eval-broker-rule-findings](contracts/eval-broker-rule-findings.md) — leaf · ready · independent
+- [eval-net-of-inference-cost-metric](contracts/eval-net-of-inference-cost-metric.md) — leaf · ready · depends on foundation + `model-call-cost-usd-population`
+
+Recommended sequencing (per the intake's dependency graph):
+
+1. `eval-trace-surface-foundation` lands first as a solo step — every
+   downstream track emits into the trace shape it lands. Resist letting
+   item-1 leaves ship in parallel against the foundation; the per-finding
+   retrofit cost is higher than the wait.
+2. After foundation merges, fan out the remaining six. Three sequenced
+   pairs:
+   - `eval-cost-model-per-bar-and-volume-share` →
+     `eval-intra-bar-fill-ordering` (intra-bar strictly consumes the
+     fill-price machinery).
+   - `eval-candle-integrity-and-manifest` →
+     (no downstream within V2E, but trust-receipt renderer follow-up
+     depends on it).
+   - `eval-broker-rule-findings`,
+     `eval-lookahead-bias-prober`, and
+     `eval-net-of-inference-cost-metric` are independent leaves —
+     parallel safe.
+
+Migration coordination: foundation claims **023**, candle-integrity
+claims **024**; both reserved in `team/MANIFEST.md` 2026-05-20.
+`eval-net-of-inference-cost-metric` may claim **025** if it needs a
+small `run_metrics_summary.net_return_pct` column — decide at the
+contract author's first checkpoint.
+
+`crates/xvision-engine/src/eval/executor/backtest.rs` is now a four-track
+multi-owner zone (foundation + cost-model + intra-bar + broker-rule);
+see `team/OWNERSHIP.md` for the disjoint-region rule.
 
 ## Follow-ups / research needed
 
@@ -102,6 +152,63 @@ V2D is a prerequisite for the V3 autoresearcher: a mutator/judge loop without
 persistent memory keeps re-discovering the same lessons. Land before V3 unless
 the autoresearcher track is explicitly scoped as stateless v1.
 
+### V2E — eval accuracy & trace surface (new phase; also enables V3 autoresearcher)
+
+| # | Item | Source |
+|---|---|---|
+| 17 | Trace-surface foundation — schema enrichment, cycle features parquet, determinism receipts, findings ↔ cycle backreference | `docs/superpowers/research/2026-05-19-eval-data-and-execution-accuracy.md` §5 |
+| 18 | Candle integrity validator — OHLC sanity, gap detection, timestamp monotonicity, duplicate-bar guard | Research doc §3.1 |
+| 19 | Per-bar cost arrays — scenario fees/slippage/spread as per-bar arrays, not flat scenario constants | Research doc §4.2 |
+| 20 | Volume-share slippage — zipline-style `price * (1 ± impact * volume_share²)` with 2.5% volume cap | Research doc §4.3 |
+| 21 | Pinned canonical fixtures + content-hash receipts + data manifest (feed / adjustment / calendar / timezone) | Research doc §3.2 |
+| 22 | Lookahead-bias prober — freqtrade-style two-pass diff | Research doc §3.5 |
+| 23 | Broker-rule findings (crypto-first) — emit findings for orders that would be rejected at the live venue | Research doc §4.12 |
+| 24 | Adaptive intra-bar fill ordering — NautilusTrader-style `O→H→L→C` / gap-past-trigger logic; minimal `OrderState` enum; maker/taker aggressor classification | Research doc §4.7 + §4.5 (promoted from follow-up via 2026-05-20 intake update) |
+| 25 | Net-of-inference-cost profitability metric — `net_return_pct = gross_return_pct − (inference_cost_quote_total / capital_initial)`; new `inference_cost_dominates_return` finding | Operator review of LLM strategy eval results (2026-05-20 intake update) |
+
+V2E is the second prerequisite for V3 autoresearcher (alongside V2D memory).
+The autoresearcher's diff harness, failed-decision reservoir, and feature-vector
+ML hooks all assume the trace shape from item 17 already exists; building it
+once up front avoids retrofitting traces for every emitted finding kind.
+
+The §4.9b live-micro-calibration harness gates **signed marketplace
+attestations** (V2C item 10 readback flow needs honest cost-model inputs);
+schedule it pre-marketplace. The §4.9 paper-parity calibration is a parity
+test only — useful for software regression, not a truth claim for live
+execution.
+
+Pre-existing equities-only items (§3.4 corporate-action ledger, §3.6
+point-in-time universe, §4.10 funding/borrow accrual, §4.11 market-impact
+research) are punted to a separate equities-readiness follow-up; not in V2E.
+
+See "V2E notes" below for the wave's dependency graph and the review-derived
+accept/defer table.
+
+### V2F — strategy authoring & user knowledge (new phase; small, runs parallel with V2E)
+
+| # | Item | Source |
+|---|---|---|
+| 26 | Strategies folder (read-only): per-workspace `<workspace>/.xvn/strategies/` tree with `notes/`, `docs/`, `strategy-files/`, `evals/`, `library/`; agent tool pair `list_strategies_folder` / `read_strategies_file` | `team/intake/2026-05-20-strategies-folder-and-template-refactor.md` track 1 |
+| 27 | Strategies folder pre-population from `docs/strategies/` + `xvn strategies init` CLI | Intake track 2 |
+| 28 | Expanded agent-pipeline template library (4–8 new templates beyond the current 3 in `crates/xvision-engine/src/agents/templates.rs`) | Intake track 3 |
+| 29 | Strategy ideas tool surface for the wizard (`list_strategy_ideas`) | Intake track 4 |
+| 30 | Wizard prompt refresh for strategies folder + expanded templates; closes the loop on the template-optional relaxation from #275 | Intake track 5 |
+| 31 | User import flow (`xvn strategies import` + dashboard drop-zone; minimal PDF/CSV → `.summary.md` parse) | Intake track 6 |
+
+V2F is a small, mostly-independent phase. It builds on the already-
+merged `wizard-strategy-template-optional` (#275) by giving agents
+*more references to consult* (expanded templates + a user-curated
+knowledge folder) without re-imposing the requirement that was just
+removed.
+
+Conductor's call on phase label: V2F as a standalone phase, or folded
+into V2D as an additional "agent-facing knowledge surface" item.
+
+Pre-existing alternative placement: this could ride alongside V2D
+(memory) since both are agent-facing knowledge surfaces. The
+distinction is user-curated (V2F) vs agent-learned (V2D). They don't
+share files; safe to run in parallel either way.
+
 ### V3 — autoresearcher
 
 | # | Item | Source |
@@ -175,9 +282,81 @@ decomposition (preliminary, conductor refines on intake):
 4. `v2d-memory-mode-ui` (leaf) — Memory selector in agent edit window.
 5. `v2d-eval-review-memory-surface` (leaf) — show memory usage in eval review.
 
+## V2E notes — eval accuracy & trace surface
+
+Source research doc (do not re-derive): `docs/superpowers/research/2026-05-19-eval-data-and-execution-accuracy.md`.
+That doc captures the codebase audit, the SOTA reference scan, the
+review-derived accept/defer table, and §8.4's suggested execution order.
+The intake doc decomposes it into tracks; the research doc is the
+"why" reference.
+
+**Dependency shape (intake will formalize):**
+
+- `eval-trace-surface-foundation` is the foundation track. Items 17–25
+  all emit into the trace shape it lands. Conductor should resist letting
+  later items ship before this — retrofitting is more expensive than
+  coordinated up-front schema bump.
+- `eval-per-bar-cost-arrays` (19) is a foundation for
+  `eval-volume-share-slippage` (20) and
+  `eval-intra-bar-fill-ordering` (24). Order matters.
+- `eval-candle-integrity-validator` (18),
+  `eval-pinned-fixtures-and-manifest` (21),
+  `eval-lookahead-bias-prober` (22),
+  `eval-broker-rule-findings` (23), and
+  `eval-net-of-inference-cost-metric` (25) are independent leaves once
+  the trace foundation is in.
+
+**Review-derived decisions baked into the intake** (full table in research
+doc §8.2):
+
+- §4.9 paper-fill calibration renamed to paper-parity-only; live-money
+  truth is a separate §4.9b harness that gates signed marketplace
+  attestations.
+- Run-receipt manifest expands to include `feed` / `adjustment` /
+  `calendar` / `timezone` / `session_filter`.
+- `broker_rule_violation` family of findings shipped crypto-first;
+  equity-specific kinds (PDT, extended-hours, margin) are no-op stubs
+  until equities reach the marketplace.
+- Trust-receipt UX surface deferred to a renderer after the findings
+  substrate exists.
+- Agent anti-overfitting suite (hidden scenarios, walk-forward + embargo,
+  metric stability, leakage guards, simplicity penalty) deferred to the
+  marketplace track.
+
+**2026-05-20 intake update — operator review additions:**
+
+- Item 24 (`eval-intra-bar-fill-ordering`) promoted from research doc's
+  "follow-up wave" into V2E. Rationale: without intra-bar fill ordering,
+  the per-bar cost model in item 19 + volume-share slippage in item 20
+  still produces dishonest fills for limit/stop/TP orders, because every
+  one of them still fills at next-bar open. Stops and TPs being
+  theatrical isn't a follow-up nicety; it's an active honesty problem
+  on the strategies already being evaluated. Promoting closes the gap
+  and avoids retrofitting trace foundation for `FillBranch` provenance
+  later. Also folds in §4.5 (maker/taker aggressor-side fees) since it
+  requires the order lifecycle this item introduces.
+- Item 25 (`eval-net-of-inference-cost-metric`) added net-new. Driver:
+  operator review of LLM strategy eval results
+  (`.worktrees/cli-workbench-wave-b/docs/tests/2026-05-19-llm-strategy-eval-notes.md`)
+  noted causal v4 variants returning -0.1% to -1% gross across 49–100
+  decisions per scenario. Net of inference cost those runs are
+  materially worse, and the eval surface reports only gross. Today
+  every "profitable" finding in xvision is a half-truth. The trace
+  foundation already records `tokens_in` / `tokens_out` / `model_id`;
+  the missing piece is a top-line `net_return_pct` and an
+  `inference_cost_dominates_return` finding.
+- Rejected addition: backtest smoke-test hardening as a standalone
+  track. Verification of the new model belongs inside each track's
+  contract (intake "Verification" section enumerates per-track
+  coverage); hardening tests of a model being replaced is wasted work.
+
+Intake doc when this opens: `team/intake/2026-05-19-eval-accuracy-and-trace-surface.md`.
+
 ## Wave intake
 
 - V2A intake: `team/intake/2026-05-16-eval-review-and-v2a.md` (V2A items 1–3 decomposed).
+- V2E intake: `team/intake/2026-05-19-eval-accuracy-and-trace-surface.md` (items 17–25 decomposed; 7 contracts in `team/contracts/eval-*` all `status: ready`).
+- V2F intake: `team/intake/2026-05-20-strategies-folder-and-template-refactor.md` (items 26–31, **not yet decomposed**).
 - V2B/V2C/V2D/V3/V4: no intake yet.
 
 ## Closeout

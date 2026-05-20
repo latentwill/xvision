@@ -105,6 +105,7 @@ async fn cancelled_run_cannot_be_revived_or_finalized() {
         win_rate: 0.58,
         n_trades: 17,
         n_decisions: 42,
+        baselines: None,
     };
     let err = store.finalize(&id, &metrics).await.unwrap_err();
     assert!(
@@ -169,6 +170,7 @@ async fn finalize_sets_metrics_status_and_completed_at() {
         win_rate: 0.58,
         n_trades: 17,
         n_decisions: 42,
+        baselines: None,
     };
     store.finalize(&id, &metrics).await.unwrap();
     let back = store.get(&id).await.unwrap();

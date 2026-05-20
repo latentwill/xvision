@@ -66,6 +66,45 @@ if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; th
 fi
 [[ -z "$TAG" ]] && TAG="xvision:deploy-${SHA}${DIRTY}"
 
+# --- Branch sanity preflight ---------------------------------------------------
+# This block surfaces what's about to be built so deploys can't silently ship
+# from a branch that's parallel to main (the failure mode that produced the
+# 2026-05-19 "deployed image had none of the merged fixes" incident — the build
+# host was on a conductor coordination branch 634 commits adrift from
+# origin/main).
+#
+# Non-blocking: prints a loud warning and continues. Set XVN_DEPLOY_QUIET=1 to
+# silence (for CI / scripted retries that have already accepted the risk).
+if [[ "${XVN_DEPLOY_QUIET:-0}" != "1" ]] && command -v git >/dev/null 2>&1; then
+  BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "?")"
+  HEAD_MSG="$(git log -1 --format='%s' 2>/dev/null | head -c 80)"
+  echo "==> Preflight: branch=$BRANCH  HEAD=$SHA${DIRTY:+ ($DIRTY)}  msg=\"$HEAD_MSG\""
+  if git rev-parse --verify origin/main >/dev/null 2>&1; then
+    AHEAD_MAIN="$(git rev-list --count origin/main..HEAD 2>/dev/null || echo "?")"
+    BEHIND_MAIN="$(git rev-list --count HEAD..origin/main 2>/dev/null || echo "?")"
+    MERGE_BASE="$(git merge-base HEAD origin/main 2>/dev/null || echo "")"
+    if [[ -z "$MERGE_BASE" ]]; then
+      echo "==> WARNING: HEAD shares NO common ancestor with origin/main." >&2
+      echo "    This is almost always wrong for a deploy — you'll ship a parallel" >&2
+      echo "    history that's missing every PR merged into main." >&2
+      echo "    Override with XVN_DEPLOY_QUIET=1 if you really mean it." >&2
+      echo "    Sleeping 8s so you can Ctrl-C..." >&2
+      sleep 8
+    elif [[ "$BEHIND_MAIN" =~ ^[0-9]+$ ]] && (( BEHIND_MAIN > 20 )); then
+      echo "==> WARNING: HEAD is $BEHIND_MAIN commits behind origin/main." >&2
+      echo "    Recently merged PRs will not be in the image. If that's not what" >&2
+      echo "    you want, rebase onto origin/main first." >&2
+      echo "    Sleeping 5s so you can Ctrl-C..." >&2
+      sleep 5
+    else
+      echo "    (+$AHEAD_MAIN / -$BEHIND_MAIN vs origin/main — looks current)"
+    fi
+  fi
+  if [[ -n "$DIRTY" ]]; then
+    echo "==> Note: working tree is dirty; uncommitted changes will be baked into the image."
+  fi
+fi
+
 echo "==> Building $TAG (WITH_IDENTITY=$WITH_IDENTITY, platform=$PLATFORM)"
 # `--load` so the image lands in the local daemon (default for single-platform
 # builds, but explicit is better when buildx is the active builder).
@@ -96,6 +135,53 @@ EOF
   exit 0
 fi
 
+# --- Remote disk preflight ---------------------------------------------------
+# Refuses (or warns) if the target host's root partition is too full to safely
+# receive the image. Driven by the 2026-05-20 incident: deploy succeeded at
+# image-load but xvn-app entered a restart loop because `/` was at 100% — SQLite
+# couldn't write the migration journal. The 38 GB Hetzner host fills with old
+# image layers + leftover Cargo `target/` debris in worktrees and silently
+# bricks deploys.
+#
+# Threshold defaults: refuse at 95%, warn at 85%. Override with
+# XVN_DEPLOY_DISK_REFUSE_PCT / XVN_DEPLOY_DISK_WARN_PCT. Bypass refusal with
+# XVN_DEPLOY_SKIP_DISK_CHECK=1.
+REFUSE_PCT="${XVN_DEPLOY_DISK_REFUSE_PCT:-95}"
+WARN_PCT="${XVN_DEPLOY_DISK_WARN_PCT:-85}"
+if [[ "${XVN_DEPLOY_SKIP_DISK_CHECK:-0}" != "1" ]]; then
+  REMOTE_DF="$(ssh "$PUSH_HOST" "df -P / | awk 'NR==2 {print \$5,\$4}'" 2>/dev/null || true)"
+  if [[ -n "$REMOTE_DF" ]]; then
+    REMOTE_USED_PCT="${REMOTE_DF%%%*}"
+    REMOTE_USED_PCT="${REMOTE_USED_PCT// /}"
+    REMOTE_AVAIL_KB="$(awk '{print $2}' <<<"$REMOTE_DF")"
+    REMOTE_AVAIL_HUMAN="$(awk -v k="$REMOTE_AVAIL_KB" 'BEGIN{
+      split("K M G T",u); v=k;i=1;
+      while (v>=1024 && i<4){v/=1024;i++}
+      printf("%.1f%sB", v, u[i])
+    }')"
+    echo "==> Remote disk: ${REMOTE_USED_PCT}% used on / (${REMOTE_AVAIL_HUMAN} free)"
+    if [[ "$REMOTE_USED_PCT" =~ ^[0-9]+$ ]] && (( REMOTE_USED_PCT >= REFUSE_PCT )); then
+      echo "==> REFUSING: ${REMOTE_USED_PCT}% >= ${REFUSE_PCT}% threshold." >&2
+      echo "    Image will load but containers using SQLite will hit \"database or disk is full\"." >&2
+      echo "    Free space on \$PUSH_HOST then retry. Common reclaim targets:" >&2
+      echo "      journalctl --vacuum-size=200M" >&2
+      echo "      docker image prune -f                       # dangling only" >&2
+      echo "      docker images xvision --format '{{.Tag}}'   # find old deploy-<sha> tags" >&2
+      echo "      find /root/deploy/xvision/.worktrees -name target -type d -prune -exec rm -rf {} +" >&2
+      echo "    Bypass: XVN_DEPLOY_SKIP_DISK_CHECK=1 $0 ..." >&2
+      exit 1
+    elif [[ "$REMOTE_USED_PCT" =~ ^[0-9]+$ ]] && (( REMOTE_USED_PCT >= WARN_PCT )); then
+      echo "==> WARNING: ${REMOTE_USED_PCT}% >= ${WARN_PCT}% — deploy will likely succeed but disk is getting tight." >&2
+      echo "    Sleeping 5s so you can Ctrl-C..." >&2
+      sleep 5
+    fi
+  fi
+fi
+
+# Capture the prior :deploy-latest image id (if any) so post-load cleanup can
+# drop its now-stale sha tag safely.
+PRIOR_LATEST_ID="$(ssh "$PUSH_HOST" "docker image inspect xvision:deploy-latest --format '{{.Id}}' 2>/dev/null" || true)"
+
 echo "==> Saving + streaming to $PUSH_HOST"
 # pv if available gives a progress bar; otherwise fall back to silent pipe.
 if command -v pv >/dev/null 2>&1; then
@@ -107,6 +193,41 @@ fi
 
 # Tag :deploy-latest on the remote so compose files can pin a stable name.
 ssh "$PUSH_HOST" "docker tag '$TAG' xvision:deploy-latest"
+
+NEW_LATEST_ID="$(ssh "$PUSH_HOST" "docker image inspect xvision:deploy-latest --format '{{.Id}}'")"
+
+# --- Post-load cleanup -------------------------------------------------------
+# Drop the prior :deploy-latest's sha tag IFF (a) it's a different image than
+# what we just loaded, and (b) no container still references that image. Keeps
+# the host from accumulating 1.1 GB per deploy. Other xvision: tags (including
+# what xvnej-app is pinned to, ghcr.io/* mirrors, or anything actively in use)
+# are untouched. Bypass with XVN_DEPLOY_SKIP_CLEANUP=1.
+if [[ "${XVN_DEPLOY_SKIP_CLEANUP:-0}" != "1" \
+      && -n "$PRIOR_LATEST_ID" \
+      && "$PRIOR_LATEST_ID" != "$NEW_LATEST_ID" ]]; then
+  echo "==> Post-load cleanup: prior :deploy-latest was $PRIOR_LATEST_ID; checking if reclaimable"
+  ssh "$PUSH_HOST" "
+    OLD_ID='$PRIOR_LATEST_ID'
+    # Any container (running or stopped) still on the old image?
+    if docker ps -a --format '{{.ImageID}} {{.Image}}' | awk '{print \$1}' | grep -Fq \"\$OLD_ID\"; then
+      echo '    keeping prior image — still referenced by a container'
+    else
+      # List xvision-namespace tags pointing at the old image id and drop them.
+      # docker emits the 12-char short id in column 2; OLD_ID is the full
+      # sha256:... form, so we test whether the short id is a substring of it.
+      docker images --format '{{.Repository}}:{{.Tag}} {{.ID}}' \
+        | awk -v id=\"\$OLD_ID\" '\$1 ~ /^xvision:/ && index(id, \$2) > 0 { print \$1 }' \
+        | while read t; do
+            [ \"\$t\" = 'xvision:deploy-latest' ] && continue
+            [ \"\$t\" = '$TAG' ] && continue
+            echo \"    docker image rm \$t\"
+            docker image rm \"\$t\" 2>&1 | tail -1 || true
+          done
+    fi
+    # Sweep dangling layers freed by any of the above.
+    docker image prune -f 2>&1 | tail -1
+  "
+fi
 
 cat <<EOF
 

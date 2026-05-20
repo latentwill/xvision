@@ -2415,6 +2415,7 @@ mod tests {
                 published_at: None,
                 min_warmup_bars: None,
             },
+            hypothesis: None,
             agents: vec![AgentRef {
                 agent_id: "01TESTAGENT".into(),
                 role: "trader".into(),

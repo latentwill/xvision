@@ -20,6 +20,31 @@ The target host only needs `docker`. After the image lands, the consuming
 service (Compose, Coolify) must be recreated/redeployed so the running
 container switches to the new image.
 
+`--push` is bracketed by a remote-disk preflight and a post-load
+cleanup (`scripts/deploy-image.sh`, commit `8fd7d48`, PR #377):
+
+- **Preflight**: refuse at ≥95% root-fs used (warn at ≥85%). Driven
+  by the 2026-05-20 incident where deploy succeeded at image-load
+  but `xvn-app` entered a restart loop because `/` was at 100% and
+  SQLite couldn't write the migration journal. The error message
+  prints the standard reclaim targets: `journalctl --vacuum-size`,
+  `docker image prune -f`, inspecting `docker images xvision`, and
+  removing stale `/root/deploy/xvision/.worktrees/*/target/` trees.
+- **Cleanup**: drop the prior `:deploy-latest` sha tag iff it points
+  at a different image than the one just loaded **and** no
+  container still references it. Other `xvision:*` tags (including
+  whatever `xvnej-app` is pinned to and `ghcr.io/*` mirrors) are
+  untouched.
+
+Env overrides:
+
+```
+XVN_DEPLOY_DISK_REFUSE_PCT=95      # default
+XVN_DEPLOY_DISK_WARN_PCT=85        # default
+XVN_DEPLOY_SKIP_DISK_CHECK=1       # bypass preflight
+XVN_DEPLOY_SKIP_CLEANUP=1          # keep prior :deploy-latest tag
+```
+
 Before pushing, load the dev-server key into the local SSH agent/keychain:
 
 ```bash

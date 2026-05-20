@@ -61,6 +61,12 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
 # ──────────────────────────────────────────────────────────────────────────
 FROM rust:1.95.0-bookworm AS chef
 WORKDIR /xvision
+# Override the host repo's `.cargo/config.toml` which sets target-dir = "../target"
+# (used to keep host-side worktrees from each spawning their own 30 GB target/).
+# Inside the build container, that would resolve to `/target/` instead of
+# `/xvision/target/`, breaking the `cp target/$BUILD_PROFILE/xvn ...` step below.
+# The env var takes precedence over the in-tree config.
+ENV CARGO_TARGET_DIR=/xvision/target
 RUN cargo install cargo-chef --locked --version ^0.1
 
 FROM chef AS planner

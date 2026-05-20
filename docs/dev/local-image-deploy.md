@@ -114,3 +114,45 @@ For Coolify-managed apps, use the Coolify redeploy action instead of
 - Cross-building `linux/amd64` from Apple Silicon uses Docker buildx/QEMU and
   can be slower than a native build. Use `--platform linux/arm64` only when the
   server is ARM.
+
+## When the SSH stream is slow (GHCR fallback)
+
+`scripts/deploy-image.sh --push` ships the image as a single
+`docker save | gzip | ssh ... docker load` pipeline. On a constrained home
+uplink — even with a direct Tailscale path — a 300+ MB image can crawl at
+tens of KB/s with heavy retransmits and take an hour. If the local script is
+already past the build step, don't waste it: side-load via GHCR instead of
+restarting the SSH stream.
+
+Verify direct Tailscale before assuming the registry is the answer:
+
+```bash
+tailscale status | grep <host>     # want "direct ...:port", not a DERP relay
+```
+
+If the link is direct but still slow, the bottleneck is upstream of Tailscale
+(home upload). Push to GHCR from the build host and pull on the deploy host:
+
+```bash
+# build host (already has the image in the local daemon)
+gh auth token | docker login ghcr.io -u <gh-user> --password-stdin
+docker tag xvision:deploy-<sha> ghcr.io/latentwill/xvision:deploy-<sha>
+docker tag xvision:deploy-<sha> ghcr.io/latentwill/xvision:deploy-latest
+docker push ghcr.io/latentwill/xvision:deploy-<sha>
+docker push ghcr.io/latentwill/xvision:deploy-latest
+
+# deploy host
+ssh root@<host> "\
+  docker pull ghcr.io/latentwill/xvision:deploy-<sha> && \
+  docker tag ghcr.io/latentwill/xvision:deploy-<sha> xvision:deploy-<sha> && \
+  docker tag ghcr.io/latentwill/xvision:deploy-<sha> xvision:deploy-latest && \
+  cd /root/deploy/stacks/xvn && docker compose up -d --force-recreate"
+```
+
+The Hetzner box has a fat downlink, so the box→GHCR leg is fast even when the
+build-host→GHCR leg is bound by the same uplink that was hurting SSH. The
+local→GHCR push is also parallelized per layer (vs. the serial save/load pipe)
+and resumable on failure, so a flaky connection won't cost you the whole
+transfer. This is distinct from `scripts/deploy-ghcr.sh`, which triggers a
+full GitHub Actions rebuild — here we're only using GHCR as a transport for
+the image we already built locally.

@@ -1,5 +1,5 @@
-//! Retention janitor — TTL-based blob expiry and a max-bytes truncation
-//! pass. Runs once per call, or on a periodic tokio task.
+//! Retention janitor — TTL-based blob expiry, max-bytes truncation, and
+//! orphan blob GC. Runs once per call, or on a periodic tokio task.
 //!
 //! Step 1 — TTL: any row whose timestamp is older than
 //! `payload_ttl_days` has its `*_payload_ref` column nulled. The
@@ -16,6 +16,12 @@
 //! file is removed, so a partial run never leaves rows pointing at
 //! missing blobs (`BlobStore::read` would return `NotFound` for what
 //! still looks like a live ref).
+//!
+//! Step 3 — orphan GC: walk the blob root and delete any blob file
+//! that is not referenced by any live DB row, or that is referenced
+//! only by `hash_only` runs (which must never have written payloads).
+//! A `min_age_secs` guard protects blobs written within the last N
+//! seconds so an in-flight write is never removed mid-rename.
 
 use crate::blobs::BlobStore;
 use sqlx::SqlitePool;
@@ -23,7 +29,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::ops::AddAssign;
 use std::path::PathBuf;
-use std::time::Duration as StdDuration;
+use std::time::{Duration as StdDuration, SystemTime};
 use thiserror::Error;
 use tokio::task::JoinHandle;
 use tracing::warn;
@@ -59,8 +65,196 @@ impl AddAssign for JanitorStats {
     }
 }
 
+/// Default minimum blob age (in seconds) before the orphan GC will delete
+/// a file. 60 seconds gives in-flight writes plenty of runway: BlobStore
+/// writes atomically via `.tmp-<sha>` → rename, so the window is the
+/// rename itself — but a conservative guard is cheap insurance.
+pub const GC_MIN_AGE_SECS: u64 = 60;
+
+/// Results from a single [`gc_orphaned_blobs`] pass.
+#[derive(Debug, Default, Clone)]
+pub struct GcReport {
+    /// Total blob files examined on disk.
+    pub scanned: usize,
+    /// Blob files deleted (orphaned or owned by `hash_only` runs).
+    pub deleted: usize,
+    /// Blob files kept because they are referenced by a non-`hash_only` run.
+    pub retained_referenced: usize,
+    /// Blob files kept for other reasons (e.g. younger than `min_age_secs`,
+    /// temp files, unreadable metadata).
+    pub retained_other: usize,
+    /// Per-file errors that did not abort the sweep.
+    pub errors: Vec<String>,
+}
+
+/// Walk the blob root and delete every blob that is not referenced by a live
+/// DB row from a run that actually stores payloads (`full_debug` or
+/// `redacted`). Specifically:
+///
+/// - Blobs not referenced by **any** row are orphaned — delete.
+/// - Blobs referenced only by `hash_only` runs are logically orphaned
+///   (those runs must never have written payloads) — delete.
+/// - Blobs referenced by at least one `full_debug` or `redacted` row — keep.
+///
+/// The `min_age_secs` guard skips files whose mtime is within the last N
+/// seconds to protect blobs whose in-flight rename hasn't landed yet.
+/// Use [`GC_MIN_AGE_SECS`] (60 s) as the default.
+pub async fn gc_orphaned_blobs(
+    pool: &SqlitePool,
+    blob_store: &BlobStore,
+    min_age_secs: u64,
+) -> Result<GcReport, JanitorError> {
+    let mut report = GcReport::default();
+    let root = blob_store.root();
+    if !root.exists() {
+        return Ok(report);
+    }
+
+    // Collect refs that are legitimately "live" — referenced by at least
+    // one run whose retention_mode is NOT hash_only.  We do this via two
+    // union queries (model_calls and checkpoints) joined through spans back
+    // to agent_runs.  tool_calls and sandbox_results carry the same payload
+    // pattern; include them for completeness.
+    let protected: HashSet<String> = protected_blob_refs(pool).await?;
+
+    let min_age = StdDuration::from_secs(min_age_secs);
+    let now = SystemTime::now();
+
+    for entry in fs::read_dir(root)? {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(e) => {
+                report.errors.push(format!("readdir entry error: {e}"));
+                continue;
+            }
+        };
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()).map(str::to_owned) else {
+            report.retained_other += 1;
+            continue;
+        };
+        // Skip temp files left by atomic writes.
+        if name.starts_with(".tmp-") {
+            report.retained_other += 1;
+            continue;
+        }
+
+        report.scanned += 1;
+
+        // Age guard: skip blobs that are too fresh to be safely GC-d.
+        let metadata = match fs::metadata(&path) {
+            Ok(m) => m,
+            Err(e) => {
+                report.errors.push(format!("stat {name}: {e}"));
+                report.retained_other += 1;
+                continue;
+            }
+        };
+        let mtime = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+        let age = now.duration_since(mtime).unwrap_or(StdDuration::ZERO);
+        if age < min_age {
+            report.retained_other += 1;
+            continue;
+        }
+
+        // Protected refs belong to full_debug / redacted runs — keep.
+        if protected.contains(&name) {
+            report.retained_referenced += 1;
+            continue;
+        }
+
+        // Orphaned (not referenced at all) or only referenced by hash_only
+        // runs — delete.
+        match fs::remove_file(&path) {
+            Ok(()) => report.deleted += 1,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                // Concurrent deletion — treat as success.
+                report.deleted += 1;
+            }
+            Err(e) => {
+                report.errors.push(format!("delete {name}: {e}"));
+                report.retained_other += 1;
+            }
+        }
+    }
+
+    if report.deleted > 0 || !report.errors.is_empty() {
+        tracing::info!(
+            target: "xvision_observability::janitor",
+            scanned         = report.scanned,
+            deleted         = report.deleted,
+            retained_ref    = report.retained_referenced,
+            retained_other  = report.retained_other,
+            errors          = report.errors.len(),
+            "blob GC pass complete"
+        );
+    }
+
+    Ok(report)
+}
+
+/// Collect every blob hash referenced by at least one run whose
+/// `retention_mode` is `full_debug` or `redacted`.  Refs from `hash_only`
+/// runs are intentionally excluded — those blobs are logically orphaned.
+async fn protected_blob_refs(pool: &SqlitePool) -> Result<HashSet<String>, JanitorError> {
+    let mut set = HashSet::new();
+
+    // model_calls: join span → agent_run for retention_mode filter.
+    let rows: Vec<(Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT mc.prompt_payload_ref, mc.response_payload_ref \
+         FROM model_calls mc \
+         JOIN spans s ON s.id = mc.span_id \
+         JOIN agent_runs ar ON ar.id = s.run_id \
+         WHERE ar.retention_mode != 'hash_only' \
+           AND (mc.prompt_payload_ref IS NOT NULL OR mc.response_payload_ref IS NOT NULL)",
+    )
+    .fetch_all(pool)
+    .await?;
+    push_pairs(&mut set, rows);
+
+    // tool_calls: same join path.
+    let rows: Vec<(Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT tc.input_payload_ref, tc.output_payload_ref \
+         FROM tool_calls tc \
+         JOIN spans s ON s.id = tc.span_id \
+         JOIN agent_runs ar ON ar.id = s.run_id \
+         WHERE ar.retention_mode != 'hash_only' \
+           AND (tc.input_payload_ref IS NOT NULL OR tc.output_payload_ref IS NOT NULL)",
+    )
+    .fetch_all(pool)
+    .await?;
+    push_pairs(&mut set, rows);
+
+    // sandbox_results: same join path.
+    let rows: Vec<(Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT sr.stdout_ref, sr.stderr_ref \
+         FROM sandbox_results sr \
+         JOIN spans s ON s.id = sr.span_id \
+         JOIN agent_runs ar ON ar.id = s.run_id \
+         WHERE ar.retention_mode != 'hash_only' \
+           AND (sr.stdout_ref IS NOT NULL OR sr.stderr_ref IS NOT NULL)",
+    )
+    .fetch_all(pool)
+    .await?;
+    push_pairs(&mut set, rows);
+
+    // checkpoints: run_id is a direct column, no span join needed.
+    let rows: Vec<(Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT cp.input_payload_ref, cp.output_payload_ref \
+         FROM checkpoints cp \
+         JOIN agent_runs ar ON ar.id = cp.run_id \
+         WHERE ar.retention_mode != 'hash_only' \
+           AND (cp.input_payload_ref IS NOT NULL OR cp.output_payload_ref IS NOT NULL)",
+    )
+    .fetch_all(pool)
+    .await?;
+    push_pairs(&mut set, rows);
+
+    Ok(set)
+}
+
 /// Run a single janitor pass: TTL expiry followed by max-bytes
-/// truncation. Returns combined stats.
+/// truncation followed by orphan blob GC. Returns combined stats.
 pub async fn run_once(
     pool: &SqlitePool,
     blob_store: &BlobStore,
@@ -69,6 +263,21 @@ pub async fn run_once(
     let mut stats = JanitorStats::default();
     stats += expire_old_payload_refs(pool, blob_store, config.payload_ttl_days).await?;
     stats += truncate_to_max_bytes(pool, blob_store, config.max_payload_bytes).await?;
+    // Orphan GC: delete blobs not referenced by any live non-hash_only run.
+    // Errors are logged inside gc_orphaned_blobs and reported in GcReport;
+    // we fold the deleted count into stats so the caller sees a full picture.
+    match gc_orphaned_blobs(pool, blob_store, GC_MIN_AGE_SECS).await {
+        Ok(report) => {
+            stats.blob_files_deleted += report.deleted as u64;
+        }
+        Err(e) => {
+            warn!(
+                target: "xvision_observability::janitor",
+                error = %e,
+                "orphan blob GC pass failed"
+            );
+        }
+    }
     Ok(stats)
 }
 

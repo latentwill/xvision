@@ -80,6 +80,7 @@ fn minimal_strategy() -> Strategy {
         }),
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({}),
+        hypothesis: None,
     }
 }
 

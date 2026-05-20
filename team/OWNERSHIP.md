@@ -109,6 +109,37 @@ violation unless the contract is updated first.
 | `crates/xvision-dashboard/src/state.rs` | `q15-tailscale-serve-api-reachability` (deferred) | q15 |
 | `scripts/serve-tailscale.sh` | `q15-tailscale-serve-api-reachability` (deferred) | q15 |
 | `docs/runbook/tailscale-serve.md` | `q15-tailscale-serve-api-reachability` (deferred) | q15 |
+| `crates/xvision-engine/src/eval/cycle_features.rs` | `eval-trace-surface-foundation` (NEW file) | v2e |
+| `crates/xvision-engine/src/eval/determinism.rs` | `eval-trace-surface-foundation` (NEW file) | v2e |
+| `crates/xvision-engine/migrations/023_trace_surface_foundation.sql` | `eval-trace-surface-foundation` (NEW) | v2e |
+| `crates/xvision-engine/migrations/023_trace_surface_foundation.down.sql` | `eval-trace-surface-foundation` (NEW) | v2e |
+| `crates/xvision-engine/tests/trace_surface_*.rs` | `eval-trace-surface-foundation` (NEW) | v2e |
+| `crates/xvision-data/src/fixtures.rs` | `eval-candle-integrity-and-manifest` | v2e |
+| `crates/xvision-data/src/validate.rs` | `eval-candle-integrity-and-manifest` (NEW file) | v2e |
+| `crates/xvision-data/src/manifest.rs` | `eval-candle-integrity-and-manifest` (NEW file) | v2e |
+| `crates/xvision-data/Cargo.toml` | `eval-candle-integrity-and-manifest` | v2e |
+| `crates/xvision-engine/migrations/024_run_bars_manifest.sql` | `eval-candle-integrity-and-manifest` (NEW) | v2e |
+| `crates/xvision-engine/migrations/024_run_bars_manifest.down.sql` | `eval-candle-integrity-and-manifest` (NEW) | v2e |
+| `crates/xvision-data/tests/**` | `eval-candle-integrity-and-manifest` | v2e |
+| `crates/xvision-engine/tests/data_integrity_*.rs` | `eval-candle-integrity-and-manifest` (NEW) | v2e |
+| `crates/xvision-engine/src/eval/cost_arrays.rs` | `eval-cost-model-per-bar-and-volume-share` (NEW file) | v2e |
+| `crates/xvision-engine/tests/cost_model_*.rs` | `eval-cost-model-per-bar-and-volume-share` (NEW) | v2e |
+| `crates/xvision-engine/src/eval/orders.rs` | `eval-intra-bar-fill-ordering` (NEW file) | v2e |
+| `crates/xvision-engine/tests/intra_bar_*.rs` | `eval-intra-bar-fill-ordering` (NEW) | v2e |
+| `crates/xvision-eval/src/baselines/**` | `eval-lookahead-bias-prober` (audit-only — no behavior change unless a baseline fails side-effect-freedom audit) | v2e |
+| `crates/xvision-eval/src/prober/mod.rs` | `eval-lookahead-bias-prober` (NEW file) | v2e |
+| `crates/xvision-eval/src/prober/lookahead.rs` | `eval-lookahead-bias-prober` (NEW file) | v2e |
+| `crates/xvision-eval/Cargo.toml` | `eval-lookahead-bias-prober` | v2e |
+| `crates/xvision-engine/tests/lookahead_prober_*.rs` | `eval-lookahead-bias-prober` (NEW) | v2e |
+| `crates/xvision-engine/src/eval/broker_rules.rs` | `eval-broker-rule-findings` (NEW file) | v2e |
+| `crates/xvision-engine/tests/broker_rules_*.rs` | `eval-broker-rule-findings` (NEW) | v2e |
+| `crates/xvision-engine/src/eval/metrics.rs` | `eval-net-of-inference-cost-metric` | v2e |
+| `crates/xvision-engine/src/api/eval/runs.rs` | `eval-net-of-inference-cost-metric` | v2e |
+| `crates/xvision-eval/src/metrics.rs` | `eval-net-of-inference-cost-metric` | v2e |
+| `crates/xvision-engine/tests/inference_cost_metric_*.rs` | `eval-net-of-inference-cost-metric` (NEW) | v2e |
+| `frontend/web/src/features/eval-runs/RunSummaryCard.tsx` | `eval-net-of-inference-cost-metric` | v2e |
+| `frontend/web/src/features/eval-runs/RunSummaryCard.test.tsx` | `eval-net-of-inference-cost-metric` | v2e |
+| `frontend/web/src/routes/eval-compare.tsx` | `eval-net-of-inference-cost-metric` | v2e |
 
 ## Multi-owner Exemptions
 
@@ -123,6 +154,15 @@ violation unless the contract is updated first.
 | `crates/xvision-engine/src/agent/execute.rs` | `harness-prompt-hash-real-digest`, `agent-error-feedback-self-healing` | harness-prompt-hash-real-digest replaces the placeholder digest with the real one. agent-error-feedback-self-healing wires recoverable broker errors back into the agent's next turn. Disjoint. |
 | `crates/xvision-engine/src/agent/observability.rs` | `harness-prompt-hash-real-digest`, `agent-error-feedback-self-healing` | Same disjoint-regions rule as the execute.rs row. |
 | `frontend/web/src/features/agent-runs/SpanInspector.tsx` | `qa-trace-broker-spans`, `qa-retention-prompt-storage-bug` | qa-trace-broker-spans owns the broker_call rendering. qa-retention-prompt-storage-bug owns the prompt-asymmetry fix. Disjoint. |
+| `crates/xvision-engine/src/eval/executor/backtest.rs` | `eval-trace-surface-foundation`, `eval-cost-model-per-bar-and-volume-share`, `eval-intra-bar-fill-ordering`, `eval-broker-rule-findings` | Four V2E tracks own disjoint regions of the simulator: trace-foundation owns decisions/fills emit schema; cost-model owns fill-price math; intra-bar owns fill-trigger ordering + maker/taker; broker-rule owns the order-emission validation hook. Coordinate disjoint hunks via team/queue/; rebase smaller diff onto larger. Intra-bar strictly depends on cost-model (sequential within wave). |
+| `crates/xvision-engine/src/eval/executor/paper.rs` | `eval-trace-surface-foundation` (V2E), plus the pre-existing `qa-trace-broker-spans`/`agent-error-feedback-self-healing` row above | V2E foundation adds decisions+fills emit-site changes; coordinate disjoint hunks with the qa-2026-05-18 tracks if they're still active. |
+| `crates/xvision-engine/src/eval/scenario.rs` | `eval-cost-model-per-bar-and-volume-share`, `eval-candle-integrity-and-manifest` | Cost-model adds `VenueOverride` + per-bar array fields to `VenueSettings`; candle-integrity adds `data_source` + manifest fields on `Scenario`. Disjoint regions. |
+| `crates/xvision-engine/src/eval/findings.rs` | `eval-trace-surface-foundation`, `eval-candle-integrity-and-manifest`, `eval-cost-model-per-bar-and-volume-share`, `eval-lookahead-bias-prober`, `eval-broker-rule-findings`, `eval-net-of-inference-cost-metric` | All V2E tracks add new finding-kind variants. Foundation also bumps the schema (adds `evidence_cycle_ids`, `produced_by_check`). Foundation lands first; the other five rebase onto its schema bump and each adds an enum variant in a separate region. |
+| `crates/xvision-engine/src/eval/compare.rs` | `eval-candle-integrity-and-manifest`, `eval-net-of-inference-cost-metric` | Candle-integrity adds manifest-mismatch refusal; net-of-inference-cost adds `net_return_pct` per-arm column. Disjoint regions. |
+| `crates/xvision-engine/Cargo.toml` | `eval-trace-surface-foundation` (parquet dep if needed), `eval-broker-rule-findings` (if a glob dep is added) | Disjoint additions. If both lands a dep, second rebases. |
+| `crates/xvision-engine/src/eval/cost.rs` | `model-call-cost-usd-population` (per-call cost emit), `eval-net-of-inference-cost-metric` (per-decision cost lookup + per-run aggregation) | Disjoint regions. Sequential: model-call-cost-usd-population lands first (per-call cost_usd populated), then net-of-inference-cost reads those values and aggregates. |
+| `team/MANIFEST.md` | `eval-trace-surface-foundation` (claim 023), `eval-candle-integrity-and-manifest` (claim 024), plus any earlier eval-* contracts with migration claims still active | Migration registry. Disjoint rows; first to merge holds; second confirms on rebase. |
+| `frontend/web/src/api/types.gen/**` | regenerated by any V2E track that edits a ts-export Rust type (per the existing "regenerated by any track" convention earlier in this file) | generated |
 
 ## Out of Scope
 
