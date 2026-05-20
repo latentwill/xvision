@@ -24,6 +24,20 @@ doc.
 
 ## Reserved
 
+- **QA operator round 7** — 9 findings in `team/intake/2026-05-20-qa-operator-round-7.md`.
+  Clusters:
+  - **List wave** — F-2 (search/filter never landed; revisit
+    `list-component-spec` direction) + F-3 (recency-default sort) +
+    F-4 (page size).
+  - **Eval-inspector wave** — F-1 (strategy/scenario/agents top bar)
+    + F-6 (capsule short-title click-through) + F-8 (total cost on
+    summary) + F-9 (cost-decimal precision audit).
+  - **Trace wave** — F-5 (PAYLOAD REF → human-readable labels) +
+    F-7 (remove Super button, add Trade button, investigate why
+    trade events are missing from the trace).
+
+  F-2 needs an operator direction call (unified component vs. per-page
+  quick fix on the eval-runs list) before the conductor decomposes.
 - **Skills refresh for new xvn verbs** — planning intake at
   `team/intake/2026-05-20-skills-update-for-new-xvn-verbs.md`. Refresh
   `.claude/skills/xvision-cli`, `xvision-cli-qa`, `xvision-dev`, and
