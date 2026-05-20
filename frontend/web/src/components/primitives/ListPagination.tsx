@@ -162,3 +162,54 @@ export function useListPagination<T>(
     total,
   };
 }
+
+/// Hook that owns page/pageSize state for SERVER-paginated lists.
+///
+/// Unlike `useListPagination`, this hook does not slice an array — the
+/// caller is expected to feed `limit`/`offset` into a TanStack Query
+/// key and rely on the backend to return one page at a time. The
+/// returned `total` reflects the server's reported total, not the
+/// length of the (partial) `items` array.
+///
+/// Returns `limit`/`offset` derived from the current page so the
+/// caller can pass them to the API client without re-deriving the
+/// math. Clamps `page` when the server's reported total shrinks
+/// underneath the user (e.g. a filter change), mirroring the
+/// client-side hook's semantics.
+export function useServerPagination(
+  total: number,
+  initialPageSize: number = DEFAULT_PAGE_SIZE,
+): {
+  page: number;
+  pageSize: number;
+  setPage: (p: number) => void;
+  setPageSize: (s: number) => void;
+  total: number;
+  limit: number;
+  offset: number;
+} {
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(initialPageSize);
+
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  const safePage = Math.min(Math.max(1, page), pageCount);
+
+  useEffect(() => {
+    if (page !== safePage) {
+      setPage(safePage);
+    }
+  }, [page, safePage]);
+
+  const limit = pageSize;
+  const offset = (safePage - 1) * pageSize;
+
+  return {
+    page: safePage,
+    pageSize,
+    setPage,
+    setPageSize,
+    total,
+    limit,
+    offset,
+  };
+}

@@ -15,25 +15,53 @@ import type {
 
 type ScenariosListResponse = {
   items: Scenario[];
+  total: number;
+};
+
+/// Paged response envelope returned by `listScenariosPaged`.
+export type ScenariosPage = {
+  items: Scenario[];
+  total: number;
 };
 
 export const scenarioKeys = {
   all: ["scenarios"] as const,
+  /// Cache key includes the full filter (including `limit`/`offset`)
+  /// so page changes refetch instead of slicing the same response.
   list: (filter?: ListScenariosFilter) =>
     [...scenarioKeys.all, "list", filter ?? {}] as const,
   detail: (id: string) => [...scenarioKeys.all, "detail", id] as const,
 };
 
-export function listScenarios(filter?: ListScenariosFilter): Promise<Scenario[]> {
+function buildScenariosListUrl(filter?: ListScenariosFilter): string {
   const params = new URLSearchParams();
   if (filter?.source) params.set("source", String(filter.source));
   if (filter?.include_archived) params.set("include_archived", "true");
   if (filter?.parent_scenario_id)
     params.set("parent_scenario_id", filter.parent_scenario_id);
+  if (filter?.limit !== undefined && filter.limit !== null)
+    params.set("limit", String(filter.limit));
+  if (filter?.offset !== undefined && filter.offset !== null)
+    params.set("offset", String(filter.offset));
   filter?.tags?.forEach((t) => params.append("tags", t));
   const qs = params.toString();
-  const path = qs ? `/api/scenarios?${qs}` : "/api/scenarios";
-  return apiFetch<ScenariosListResponse>(path).then((r) => r.items);
+  return qs ? `/api/scenarios?${qs}` : "/api/scenarios";
+}
+
+export function listScenarios(filter?: ListScenariosFilter): Promise<Scenario[]> {
+  return apiFetch<ScenariosListResponse>(buildScenariosListUrl(filter)).then(
+    (r) => r.items,
+  );
+}
+
+/// Paged variant — preserves the `total` field so the dashboard's
+/// pager can render "page X of N" without a second round-trip.
+export function listScenariosPaged(
+  filter?: ListScenariosFilter,
+): Promise<ScenariosPage> {
+  return apiFetch<ScenariosListResponse>(buildScenariosListUrl(filter)).then(
+    (r) => ({ items: r.items, total: r.total }),
+  );
 }
 
 export function getScenario(id: string): Promise<Scenario> {

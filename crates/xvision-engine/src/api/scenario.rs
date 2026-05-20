@@ -75,6 +75,21 @@ pub struct ListScenariosFilter {
     pub tags: Vec<String>,
     pub include_archived: bool,
     pub parent_scenario_id: Option<String>,
+    /// Optional page-size cap. The dashboard list endpoint sets both
+    /// `limit` and `offset`; CLI / MCP callers leave them unset.
+    #[serde(default)]
+    #[cfg_attr(feature = "ts-export", ts(type = "number | null"))]
+    pub limit: Option<i64>,
+    #[serde(default)]
+    #[cfg_attr(feature = "ts-export", ts(type = "number | null"))]
+    pub offset: Option<i64>,
+}
+
+/// Paged-list envelope used by `/api/scenarios`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PagedScenariosResp {
+    pub items: Vec<Scenario>,
+    pub total: u64,
 }
 
 /// Mutations applied on top of a parent scenario when cloning. `None`
@@ -175,8 +190,32 @@ pub async fn list(ctx: &ApiContext, filter: ListScenariosFilter) -> ApiResult<Ve
         tags: filter.tags,
         include_archived: filter.include_archived,
         parent_scenario_id: filter.parent_scenario_id,
+        limit: filter.limit,
+        offset: filter.offset,
     };
     scenario_store::list_scenarios(ctx, &store_filter).await
+}
+
+/// Paged variant of `list`. Same filter semantics, plus a `total` field
+/// reflecting the row count AFTER filtering (before slicing) so the
+/// dashboard pager can render "page X of N".
+pub async fn list_paged(
+    ctx: &ApiContext,
+    filter: ListScenariosFilter,
+) -> ApiResult<PagedScenariosResp> {
+    let store_filter = scenario_store::ListScenariosFilter {
+        source: filter.source,
+        tags: filter.tags,
+        include_archived: filter.include_archived,
+        parent_scenario_id: filter.parent_scenario_id,
+        limit: filter.limit,
+        offset: filter.offset,
+    };
+    let paged = scenario_store::list_scenarios_paged(ctx, &store_filter).await?;
+    Ok(PagedScenariosResp {
+        items: paged.items,
+        total: paged.total,
+    })
 }
 
 /// Derive a new scenario from an existing one, applying `mutations`.

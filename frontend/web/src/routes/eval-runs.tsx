@@ -12,7 +12,7 @@ import { Pill } from "@/components/primitives/Pill";
 import { Icon } from "@/components/primitives/Icon";
 import {
   ListPagination,
-  useListPagination,
+  useServerPagination,
 } from "@/components/primitives/ListPagination";
 import { ApiError } from "@/api/client";
 import { chartKeys, getRunChart } from "@/api/chart";
@@ -21,7 +21,7 @@ import {
   evalKeys,
   cancelRun,
   deleteRun,
-  listRuns,
+  listRunsPaged,
   startRun,
   type StartRunReq,
 } from "@/api/eval";
@@ -66,24 +66,36 @@ const STATUS_TONE: Record<string, "gold" | "warn" | "danger" | "default" | "info
 export function EvalRunsRoute() {
   const [searchParams, setSearchParams] = useSearchParams();
   const strategyFilter = searchParams.get("strategy")?.trim() ?? "";
+  // QA-round-7 backend-pagination follow-up (#386 gap): `limit`/`offset`
+  // drive the query key so each page change is a fresh request.
+  const [totalFromServer, setTotalFromServer] = useState(0);
+  const pager = useServerPagination(totalFromServer);
+  const listParams = {
+    agent_id: strategyFilter || undefined,
+    limit: pager.limit,
+    offset: pager.offset,
+  };
   const q = useQuery({
-    queryKey: evalKeys.runs({
-      agent_id: strategyFilter || undefined,
-    }),
-    queryFn: () =>
-      listRuns({
-        agent_id: strategyFilter || undefined,
-      }),
-    // Poll while any run is still in flight; stop once everything's
-    // terminal. Background eval tasks drive in the dashboard process
-    // and can take minutes — without this the list looks frozen.
+    queryKey: evalKeys.runs(listParams),
+    queryFn: () => listRunsPaged(listParams),
+    placeholderData: (prev) => prev,
+    // Poll while any run on the current page is still in flight; stop
+    // once everything visible is terminal. Background eval tasks drive
+    // in the dashboard process and can take minutes — without this the
+    // list looks frozen.
     refetchInterval: (query) => {
-      const items = query.state.data as RunSummary[] | undefined;
+      const data = query.state.data as { items?: RunSummary[] } | undefined;
+      const items = data?.items;
       if (!items) return false;
       const inflight = items.some((r) => isInflightRunStatus(r.status));
       return inflight ? 2000 : false;
     },
   });
+  useEffect(() => {
+    if (q.data?.total !== undefined && q.data.total !== totalFromServer) {
+      setTotalFromServer(q.data.total);
+    }
+  }, [q.data?.total, totalFromServer]);
   const navigate = useNavigate();
   const preselectedStrategy = strategyFilter;
   const startRequested = searchParams.get("start") === "1";
@@ -91,9 +103,9 @@ export function EvalRunsRoute() {
   // render the action button next to the run count.
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [startOpen, setStartOpen] = useState(startRequested);
-  const hasInflight =
-    q.data?.some((r) => isInflightRunStatus(r.status)) ??
-    false;
+  const runs = q.data?.items ?? [];
+  const total = q.data?.total ?? 0;
+  const hasInflight = runs.some((r) => isInflightRunStatus(r.status));
   const [nowMs, setNowMs] = useState(() => Date.now());
 
   useEffect(() => {
@@ -109,15 +121,13 @@ export function EvalRunsRoute() {
     const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, [hasInflight]);
-  // Page-size + page-nav state (QA-round-7 list wave / F-4). Operates on
-  // the already-fetched, server-sorted run list — the engine returns runs
-  // most-recent-first (eval/store.rs ORDER BY started_at DESC), so a
-  // simple client-side slice gives the user a page-size picker without
-  // teaching every backend endpoint to paginate. The unified list
-  // component planned in team/intake/2026-05-19-list-component-design-intake.md
-  // will swap this for proper server-side pagination later.
-  const runs = q.data ?? [];
-  const pagination = useListPagination(runs);
+  // "Latest run chart" still wants the first row of the current page.
+  // When the user is on page 1 of the recency-sorted list that's
+  // identical to the previous behavior (the engine returns runs
+  // ORDER BY started_at DESC, id DESC). When they paginate further
+  // it surfaces the newest run of THAT page — acceptable for v1; the
+  // unified-list-component spec will move "latest run" to its own
+  // dedicated query.
   const latestRunId = runs[0]?.id ?? "";
   const latestChart = useQuery({
     queryKey: chartKeys.run(latestRunId),
@@ -218,11 +228,11 @@ export function EvalRunsRoute() {
           <LoadingSkeleton />
         ) : q.isError ? (
           <ErrorState err={q.error} onRetry={() => q.refetch()} />
-        ) : q.data && q.data.length === 0 ? (
+        ) : total === 0 ? (
           <EmptyState />
         ) : (
           <RunsTable
-            items={pagination.visible}
+            items={runs}
             allItems={runs}
             selected={selected}
             onToggle={toggleSelected}
@@ -234,11 +244,11 @@ export function EvalRunsRoute() {
       </Card>
 
       <ListPagination
-        total={pagination.total}
-        page={pagination.page}
-        pageSize={pagination.pageSize}
-        onPageChange={pagination.setPage}
-        onPageSizeChange={pagination.setPageSize}
+        total={total}
+        page={pager.page}
+        pageSize={pager.pageSize}
+        onPageChange={pager.setPage}
+        onPageSizeChange={pager.setPageSize}
         itemLabel="runs"
       />
 
@@ -272,12 +282,13 @@ export function EvalRunsRoute() {
 
 // ── Existing helpers ───────────────────────────────────────────────────────
 
-function subtitleFor(q: ReturnType<typeof useQuery>, strategyFilterLabel: string) {
+function subtitleFor(
+  q: { isPending: boolean; isError: boolean; data?: { total?: number } },
+  strategyFilterLabel: string,
+) {
   if (q.isPending) return "Loading…";
   if (q.isError) return "Couldn't load runs";
-  const data = q.data as { length: number } | undefined;
-  if (!data) return "";
-  const n = data.length;
+  const n = q.data?.total ?? 0;
   const base = `${n} ${n === 1 ? "run" : "runs"}`;
   return strategyFilterLabel ? `${base} for ${strategyFilterLabel}` : base;
 }

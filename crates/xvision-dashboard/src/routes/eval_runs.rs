@@ -31,6 +31,15 @@ use xvision_engine::eval::store::RunStore;
 use crate::error::DashboardError;
 use crate::state::AppState;
 
+/// Default page size when the caller omits `limit`. Matches the
+/// frontend's `DEFAULT_PAGE_SIZE` in
+/// `frontend/web/src/components/primitives/ListPagination.tsx`.
+const DEFAULT_LIMIT: i64 = 50;
+/// Hard cap on `limit`. Defensive — large lists still work but no
+/// operator can pull 10k rows in a single request. The unified list
+/// component intake will revisit this once SQL-side filtering lands.
+const MAX_LIMIT: i64 = 200;
+
 #[derive(Debug, Default, Deserialize)]
 pub struct ListParams {
     pub agent_id: Option<String>,
@@ -39,11 +48,44 @@ pub struct ListParams {
     /// typed `RunStatus` enum below; unknown values surface as a validation
     /// error.
     pub status: Option<String>,
+    /// Page size. Defaults to `DEFAULT_LIMIT`, capped at `MAX_LIMIT`.
+    pub limit: Option<i64>,
+    /// Row offset. Defaults to 0.
+    pub offset: Option<i64>,
 }
 
 #[derive(Serialize)]
 pub struct RunsListResponse {
     pub items: Vec<RunSummary>,
+    /// Total row count matching the filter, BEFORE LIMIT/OFFSET. The
+    /// SPA needs this to render "page X of N" without a second
+    /// round-trip per page.
+    pub total: u64,
+}
+
+/// Normalize a caller-supplied `(limit, offset)` pair into the values
+/// the store layer should receive. Validates that neither field is
+/// negative and applies the `DEFAULT_LIMIT` / `MAX_LIMIT` policy.
+fn normalize_pagination(
+    limit: Option<i64>,
+    offset: Option<i64>,
+) -> Result<(i64, i64), DashboardError> {
+    let limit = limit.unwrap_or(DEFAULT_LIMIT);
+    if limit < 0 {
+        return Err(DashboardError::Validation {
+            field: "limit".into(),
+            msg: "must be non-negative".into(),
+        });
+    }
+    let limit = limit.min(MAX_LIMIT);
+    let offset = offset.unwrap_or(0);
+    if offset < 0 {
+        return Err(DashboardError::Validation {
+            field: "offset".into(),
+            msg: "must be non-negative".into(),
+        });
+    }
+    Ok((limit, offset))
 }
 
 pub async fn list(
@@ -61,13 +103,20 @@ pub async fn list(
         })
         .transpose()?;
 
+    let (limit, offset) = normalize_pagination(params.limit, params.offset)?;
+
     let req = ListRunsRequest {
         agent_id: params.agent_id,
         scenario_id: params.scenario_id,
         status,
+        limit: Some(limit),
+        offset: Some(offset),
     };
-    let items = eval::list_summaries(&state.api_context(), req).await?;
-    Ok(Json(RunsListResponse { items }))
+    let page = eval::list_summaries_paged(&state.api_context(), req).await?;
+    Ok(Json(RunsListResponse {
+        items: page.items,
+        total: page.total,
+    }))
 }
 
 pub async fn get(

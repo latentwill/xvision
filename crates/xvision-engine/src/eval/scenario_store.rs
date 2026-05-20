@@ -151,6 +151,17 @@ pub struct ListScenariosFilter {
     pub tags: Vec<String>,
     pub include_archived: bool,
     pub parent_scenario_id: Option<String>,
+    /// Optional pagination window applied AFTER the in-memory filter
+    /// runs. `None` returns every matching row.
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
+}
+
+/// Paged result envelope for the dashboard's `/api/scenarios` list route.
+/// `total` reflects the row count AFTER filtering but BEFORE slicing.
+pub struct PagedScenarios {
+    pub items: Vec<Scenario>,
+    pub total: u64,
 }
 
 /// List scenarios newest-first. Filtering happens in-memory after the
@@ -200,6 +211,30 @@ pub async fn list_scenarios(ctx: &ApiContext, filter: &ListScenariosFilter) -> A
         out.push(s);
     }
     Ok(out)
+}
+
+/// Paged variant of `list_scenarios` — runs the same in-memory filter
+/// over `created_at DESC` rows, then returns `(items[offset..offset+limit], total)`.
+/// `total` is computed against the filtered set so the pager UI shows
+/// an honest "of N" even when source/tags/include_archived narrows the
+/// result. Filtering still happens in-memory because the SQL store
+/// pulls a full row dump; that's a known limitation we live with in
+/// v1 (table is small). A future migration to SQL-side filters will
+/// move this into a single query — see
+/// `team/intake/2026-05-19-list-component-design-intake.md`.
+pub async fn list_scenarios_paged(
+    ctx: &ApiContext,
+    filter: &ListScenariosFilter,
+) -> ApiResult<PagedScenarios> {
+    // Reuse the unpaged path so the filter rules stay single-sourced.
+    let all = list_scenarios(ctx, filter).await?;
+    let total = all.len() as u64;
+    let offset = filter.offset.unwrap_or(0).max(0) as usize;
+    let items: Vec<Scenario> = match filter.limit {
+        Some(limit) if limit > 0 => all.into_iter().skip(offset).take(limit as usize).collect(),
+        _ => all.into_iter().skip(offset).collect(),
+    };
+    Ok(PagedScenarios { items, total })
 }
 
 /// Soft-delete via `archived_at`. The migration 006 trigger allows this

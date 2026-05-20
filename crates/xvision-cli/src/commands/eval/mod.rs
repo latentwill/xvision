@@ -406,6 +406,7 @@ async fn run_list(args: ListArgs) -> CliResult<()> {
             .map(parse_status)
             .transpose()
             .exit_with(XvnExit::Usage)?,
+        ..Default::default()
     };
     let runs = eval::list(&ctx, req)
         .await

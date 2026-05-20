@@ -44,6 +44,20 @@ type PipelineDef = {
 
 type StrategiesListResponse = {
   items: StrategyListItem[];
+  total: number;
+};
+
+/// Paged response envelope returned by `listStrategiesPaged`.
+export type StrategiesPage = {
+  items: StrategyListItem[];
+  total: number;
+};
+
+export type ListStrategiesParams = {
+  /// Page size. Server defaults to 50, caps at 200.
+  limit?: number;
+  /// Row offset. Server treats `undefined` as 0.
+  offset?: number;
 };
 
 type LLMSlot = {
@@ -141,15 +155,46 @@ export type CloneStrategyReq = {
 
 export const strategyKeys = {
   all: ["strategies"] as const,
-  list: () => [...strategyKeys.all, "list"] as const,
+  /// Cache key includes `limit`/`offset` so page changes refetch.
+  list: (params?: ListStrategiesParams) =>
+    [
+      ...strategyKeys.all,
+      "list",
+      params?.limit ?? null,
+      params?.offset ?? null,
+    ] as const,
   detail: (id: string) => [...strategyKeys.all, "detail", id] as const,
   validate: (id: string) => [...strategyKeys.all, "validate", id] as const,
   templates: () => [...strategyKeys.all, "templates"] as const,
 };
 
+function buildStrategiesListUrl(params?: ListStrategiesParams): string {
+  const qs = new URLSearchParams();
+  if (params?.limit !== undefined) qs.set("limit", String(params.limit));
+  if (params?.offset !== undefined) qs.set("offset", String(params.offset));
+  const suffix = qs.size > 0 ? `?${qs.toString()}` : "";
+  return `/api/strategies${suffix}`;
+}
+
 export function listStrategies(): Promise<StrategyListItem[]> {
-  return apiFetch<StrategiesListResponse>("/api/strategies").then(
+  // Unpaged convenience wrapper — callers that want a "names + ids"
+  // lookup table (eval-runs page, run-detail page) don't need
+  // pagination. Internally this still hits the paginated endpoint;
+  // the SPA caps at `DEFAULT_LIMIT` strategies which is plenty for the
+  // lookup tables that consume this. Callers that need true paging
+  // (the /strategies list page) use `listStrategiesPaged`.
+  return apiFetch<StrategiesListResponse>(buildStrategiesListUrl()).then(
     (r) => r.items,
+  );
+}
+
+/// Paged variant — preserves the `total` field so the dashboard's
+/// pager can render "page X of N".
+export function listStrategiesPaged(
+  params?: ListStrategiesParams,
+): Promise<StrategiesPage> {
+  return apiFetch<StrategiesListResponse>(buildStrategiesListUrl(params)).then(
+    (r) => ({ items: r.items, total: r.total }),
   );
 }
 

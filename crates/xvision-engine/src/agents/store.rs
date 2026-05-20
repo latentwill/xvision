@@ -39,6 +39,10 @@ pub struct ListFilter {
     pub include_archived: bool,
     pub name_contains: Option<String>,
     pub limit: Option<i64>,
+    /// Optional row offset. `None` is treated as 0. SQLite ignores
+    /// OFFSET without LIMIT, so the store only emits the clause when
+    /// both are present.
+    pub offset: Option<i64>,
 }
 
 impl AgentStore {
@@ -129,6 +133,9 @@ impl AgentStore {
         sql.push_str(" ORDER BY updated_at DESC");
         if filter.limit.is_some() {
             sql.push_str(" LIMIT ?");
+            if filter.offset.is_some() {
+                sql.push_str(" OFFSET ?");
+            }
         }
 
         let mut q = sqlx::query(&sql);
@@ -137,6 +144,9 @@ impl AgentStore {
         }
         if let Some(limit) = filter.limit {
             q = q.bind(limit);
+            if let Some(offset) = filter.offset {
+                q = q.bind(offset);
+            }
         }
 
         let rows = q.fetch_all(&self.pool).await?;
@@ -147,6 +157,24 @@ impl AgentStore {
             out.push(row_to_agent(row, slots)?);
         }
         Ok(out)
+    }
+
+    /// Count rows matching `filter` (ignoring `limit`/`offset`). Mirrors
+    /// `list`'s WHERE clauses so paginated callers get an honest total.
+    pub async fn count(&self, filter: &ListFilter) -> Result<u64> {
+        let mut sql = String::from("SELECT COUNT(*) FROM agents WHERE 1=1");
+        if !filter.include_archived {
+            sql.push_str(" AND archived = 0");
+        }
+        if filter.name_contains.is_some() {
+            sql.push_str(" AND name LIKE ?");
+        }
+        let mut q = sqlx::query_scalar::<_, i64>(&sql);
+        if let Some(ref needle) = filter.name_contains {
+            q = q.bind(format!("%{}%", needle));
+        }
+        let n: i64 = q.fetch_one(&self.pool).await.context("count agents")?;
+        Ok(n as u64)
     }
 
     pub async fn update(&self, agent_id: &str, patch: UpdateAgent) -> Result<Option<Agent>> {

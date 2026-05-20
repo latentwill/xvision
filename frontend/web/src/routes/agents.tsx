@@ -7,44 +7,51 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
 import { Icon } from "@/components/primitives/Icon";
 import { AgentList } from "@/components/agent/AgentList";
-import { agentKeys, listAgents, type Agent } from "@/api/agents";
+import { agentKeys, listAgentsPaged } from "@/api/agents";
 import { ApiError } from "@/api/client";
 import {
   ListPagination,
-  useListPagination,
+  useServerPagination,
 } from "@/components/primitives/ListPagination";
 
 export function AgentsRoute() {
   const [includeArchived, setIncludeArchived] = useState(false);
   const [search, setSearch] = useState("");
 
+  // QA-round-7 backend-pagination follow-up (#386 gap): page-size +
+  // page-nav drive `limit`/`offset` in the query key so page changes
+  // refetch instead of slicing one big response.
+  const [totalFromServer, setTotalFromServer] = useState(0);
+  const pager = useServerPagination(totalFromServer);
+  const params = {
+    include_archived: includeArchived,
+    q: search || undefined,
+    limit: pager.limit,
+    offset: pager.offset,
+  };
   const q = useQuery({
-    queryKey: agentKeys.list({
-      include_archived: includeArchived,
-      q: search || undefined,
-    }),
-    queryFn: () =>
-      listAgents({
-        include_archived: includeArchived,
-        q: search || undefined,
-      }),
+    queryKey: agentKeys.list(params),
+    queryFn: () => listAgentsPaged(params),
+    placeholderData: (prev) => prev,
   });
+  useEffect(() => {
+    if (q.data?.total !== undefined && q.data.total !== totalFromServer) {
+      setTotalFromServer(q.data.total);
+    }
+  }, [q.data?.total, totalFromServer]);
 
-  // QA-round-7 list wave (F-4): agents already come back sorted
-  // updated_at DESC from the agent store (crates/xvision-engine/src/agents/store.rs),
-  // so the slice here is "most-recently-touched N agents."
-  const items = q.data ?? [];
-  const pagination = useListPagination(items);
+  const items = q.data?.items ?? [];
+  const total = q.data?.total ?? 0;
 
   return (
     <>
-      <Topbar title="Agents" sub={subtitleFor(q)} />
+      <Topbar title="Agents" sub={subtitleFor(q, total)} />
 
       <FilterBar
         search={search}
@@ -58,30 +65,32 @@ export function AgentsRoute() {
           <LoadingSkeleton />
         ) : q.isError ? (
           <ErrorState err={q.error} onRetry={() => q.refetch()} />
-        ) : (q.data ?? []).length === 0 ? (
+        ) : total === 0 ? (
           <EmptyState />
         ) : (
-          <AgentList items={pagination.visible} />
+          <AgentList items={items} />
         )}
       </Card>
 
       <ListPagination
-        total={pagination.total}
-        page={pagination.page}
-        pageSize={pagination.pageSize}
-        onPageChange={pagination.setPage}
-        onPageSizeChange={pagination.setPageSize}
+        total={total}
+        page={pager.page}
+        pageSize={pager.pageSize}
+        onPageChange={pager.setPage}
+        onPageSizeChange={pager.setPageSize}
         itemLabel="agents"
       />
     </>
   );
 }
 
-function subtitleFor(q: { isPending: boolean; isError: boolean; data?: Agent[] }) {
+function subtitleFor(
+  q: { isPending: boolean; isError: boolean },
+  total: number,
+) {
   if (q.isPending) return "Loading…";
   if (q.isError) return "Couldn't load agents";
-  const n = q.data?.length ?? 0;
-  return `${n} ${n === 1 ? "agent" : "agents"}`;
+  return `${total} ${total === 1 ? "agent" : "agents"}`;
 }
 
 function FilterBar({

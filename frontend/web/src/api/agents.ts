@@ -71,6 +71,14 @@ export type ListAgentsQuery = {
   include_archived?: boolean;
   q?: string;
   limit?: number;
+  /// Row offset for paged listings. Server treats `undefined` as 0.
+  offset?: number;
+};
+
+/// Paged response envelope returned by `listAgentsPaged`.
+export type AgentsPage = {
+  items: Agent[];
+  total: number;
 };
 
 function buildListUrl(q?: ListAgentsQuery): string {
@@ -78,14 +86,22 @@ function buildListUrl(q?: ListAgentsQuery): string {
   const params = new URLSearchParams();
   if (q.include_archived) params.set("include_archived", "true");
   if (q.q) params.set("q", q.q);
-  if (q.limit) params.set("limit", String(q.limit));
+  if (q.limit !== undefined) params.set("limit", String(q.limit));
+  if (q.offset !== undefined) params.set("offset", String(q.offset));
   const qs = params.toString();
   return qs ? `/api/agents?${qs}` : "/api/agents";
 }
 
 export async function listAgents(q?: ListAgentsQuery): Promise<Agent[]> {
-  const res = await apiFetch<{ items: Agent[] }>(buildListUrl(q));
+  const res = await apiFetch<{ items: Agent[]; total: number }>(buildListUrl(q));
   return res.items;
+}
+
+/// Paged variant — returns the `total` field so the dashboard's
+/// `ListPagination` primitive can render "page X of N".
+export async function listAgentsPaged(q?: ListAgentsQuery): Promise<AgentsPage> {
+  const res = await apiFetch<{ items: Agent[]; total: number }>(buildListUrl(q));
+  return { items: res.items, total: res.total };
 }
 
 export async function getAgent(agentId: string): Promise<Agent> {
@@ -168,6 +184,8 @@ export type AgentStatus = "Draft" | "Validated" | "In use" | "Archived";
 
 export const agentKeys = {
   all: ["agents"] as const,
+  /// Cache key includes the full query (including `limit`/`offset`)
+  /// so page changes refetch instead of slicing the same response.
   list: (q?: ListAgentsQuery) =>
     [...agentKeys.all, "list", q ?? {}] as const,
   detail: (id: string) => [...agentKeys.all, "detail", id] as const,

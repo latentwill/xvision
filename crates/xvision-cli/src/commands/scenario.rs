@@ -553,6 +553,7 @@ async fn run_ls(ctx: &ApiContext, a: LsArgs) -> CliResult<()> {
         tags: a.tag,
         include_archived: a.archived,
         parent_scenario_id: None,
+        ..Default::default()
     };
     let rows = api_scenario::list(ctx, filter)
         .await
@@ -823,6 +824,7 @@ async fn run_inspect(ctx: &ApiContext, a: InspectArgs) -> CliResult<()> {
             scenario_id: Some(a.id.clone()),
             agent_id: None,
             status: None,
+            ..Default::default()
         },
     )
     .await;
@@ -1113,6 +1115,7 @@ async fn run_select(ctx: &ApiContext, a: SelectArgs) -> CliResult<()> {
             tags: vec![],
             include_archived: false,
             parent_scenario_id: None,
+            ..Default::default()
         },
     )
     .await
@@ -1274,6 +1277,7 @@ async fn run_classify(ctx: &ApiContext, a: ClassifyArgs) -> CliResult<()> {
                 tags: vec![],
                 include_archived: false,
                 parent_scenario_id: None,
+                ..Default::default()
             },
         )
         .await

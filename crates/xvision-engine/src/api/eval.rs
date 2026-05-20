@@ -55,6 +55,23 @@ pub struct ListRunsRequest {
     pub agent_id: Option<String>,
     pub scenario_id: Option<String>,
     pub status: Option<RunStatus>,
+    /// Optional pagination — when both fields are absent, every matching
+    /// row is returned. The dashboard's list endpoint passes both;
+    /// internal callers (retry idempotency, chart preview) pass neither
+    /// because they need the full match set.
+    #[serde(default)]
+    pub limit: Option<i64>,
+    #[serde(default)]
+    pub offset: Option<i64>,
+}
+
+/// Paged-list envelope used by the dashboard's `/api/eval/runs` route.
+/// Carries the total row count so the SPA can render "page X of N"
+/// without a second round-trip per page.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PagedRunSummaries {
+    pub items: Vec<RunSummary>,
+    pub total: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -169,11 +186,70 @@ async fn list_inner(ctx: &ApiContext, req: &ListRunsRequest) -> ApiResult<Vec<Ru
         agent_id: req.agent_id.clone(),
         scenario_id: req.scenario_id.clone(),
         status: req.status,
+        limit: req.limit,
+        offset: req.offset,
     };
     store
         .list(filter)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))
+}
+
+/// Paged variant of `list_summaries` — returns one page of `RunSummary`
+/// rows plus the total count. The dashboard's `/api/eval/runs` route
+/// drives this so the SPA's pager has both halves of the contract in a
+/// single round-trip.
+pub async fn list_summaries_paged(
+    ctx: &ApiContext,
+    req: ListRunsRequest,
+) -> ApiResult<PagedRunSummaries> {
+    let started = Instant::now();
+    let result = list_summaries_paged_inner(ctx, &req).await;
+
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let args_json = serde_json::to_string(&req).ok();
+    let _ = audit::record(
+        ctx,
+        "eval",
+        "list_summaries_paged",
+        None,
+        args_json.as_deref(),
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    result
+}
+
+async fn list_summaries_paged_inner(
+    ctx: &ApiContext,
+    req: &ListRunsRequest,
+) -> ApiResult<PagedRunSummaries> {
+    let store = RunStore::new(ctx.db.clone());
+    let filter = ListFilter {
+        agent_id: req.agent_id.clone(),
+        scenario_id: req.scenario_id.clone(),
+        status: req.status,
+        limit: req.limit,
+        offset: req.offset,
+    };
+    // Compute total BEFORE slicing so the pager renders an honest
+    // "of N" even when the active page is the last and partial.
+    let total = store
+        .count(&filter)
+        .await
+        .map_err(|e| ApiError::Internal(format!("count eval_runs: {e}")))?;
+    let runs = store
+        .list(filter)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    Ok(PagedRunSummaries {
+        items: runs.into_iter().map(summarise).collect(),
+        total,
+    })
 }
 
 /// Same as `list` but returns the slim `RunSummary` shape.
@@ -476,6 +552,7 @@ async fn retry_inner(ctx: &ApiContext, source_id: &str) -> ApiResult<RetryOutcom
             agent_id: Some(source.agent_id.clone()),
             scenario_id: Some(source.scenario_id.clone()),
             status: None,
+            ..Default::default()
         })
         .await
         .map_err(|e| ApiError::Internal(format!("list runs for retry idempotency: {e}")))?;

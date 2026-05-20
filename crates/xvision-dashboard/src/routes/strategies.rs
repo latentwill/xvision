@@ -3,7 +3,7 @@
 //! follow-up) consumes these.
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     Json,
 };
@@ -12,8 +12,8 @@ use serde::{Deserialize, Serialize};
 use xvision_engine::api::chart::{self as chart_api, StrategyChartPayload};
 use xvision_engine::api::strategy::{
     self, add_agent, remove_agent, rename_agent_role, set_pipeline, set_risk_config, update_metadata,
-    update_slot, validate_draft, AddAgentReq, CloneStrategyReq, RemoveAgentReq, RenameAgentRoleReq,
-    SetPipelineReq, StrategyAgentsOut, StrategySummary,
+    update_slot, validate_draft, AddAgentReq, CloneStrategyReq, ListStrategiesRequest, RemoveAgentReq,
+    RenameAgentRoleReq, SetPipelineReq, StrategyAgentsOut, StrategySummary,
 };
 use xvision_engine::api::ApiError;
 use xvision_engine::authoring::{
@@ -27,14 +27,55 @@ use xvision_engine::strategies::Strategy;
 use crate::error::DashboardError;
 use crate::state::AppState;
 
+/// Default page size when the caller omits `limit`.
+const DEFAULT_LIMIT: i64 = 50;
+/// Hard cap on `limit`.
+const MAX_LIMIT: i64 = 200;
+
+#[derive(Debug, Default, Deserialize)]
+pub struct ListParams {
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
+}
+
 #[derive(Serialize)]
 pub struct StrategiesListResponse {
     pub items: Vec<StrategySummary>,
+    /// Total strategy count on disk, BEFORE LIMIT/OFFSET.
+    pub total: u64,
 }
 
-pub async fn list(State(state): State<AppState>) -> Result<Json<StrategiesListResponse>, DashboardError> {
-    let items = strategy::list(&state.api_context()).await?;
-    Ok(Json(StrategiesListResponse { items }))
+pub async fn list(
+    State(state): State<AppState>,
+    Query(params): Query<ListParams>,
+) -> Result<Json<StrategiesListResponse>, DashboardError> {
+    let limit_raw = params.limit.unwrap_or(DEFAULT_LIMIT);
+    if limit_raw < 0 {
+        return Err(DashboardError::Validation {
+            field: "limit".into(),
+            msg: "must be non-negative".into(),
+        });
+    }
+    let limit = limit_raw.min(MAX_LIMIT);
+    let offset = params.offset.unwrap_or(0);
+    if offset < 0 {
+        return Err(DashboardError::Validation {
+            field: "offset".into(),
+            msg: "must be non-negative".into(),
+        });
+    }
+    let page = strategy::list_paged(
+        &state.api_context(),
+        ListStrategiesRequest {
+            limit: Some(limit),
+            offset: Some(offset),
+        },
+    )
+    .await?;
+    Ok(Json(StrategiesListResponse {
+        items: page.items,
+        total: page.total,
+    }))
 }
 
 #[derive(Serialize)]
