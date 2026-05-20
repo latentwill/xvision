@@ -1,73 +1,60 @@
 # Strategies
 
-A `Strategy` is the immutable pipeline configuration that drives an eval.
-It composes one or more `Agent`s and binds them to roles
-(intern → trader → risk → executor by convention). The `intern` role is
-being renamed to "default agent" in the UI; both terms remain valid during
-the crossover period.
+A strategy is a saved configuration that says: this hypothesis, these agents,
+this risk gate, this asset, this timeframe. It composes one or more agents
+that play named roles — the default agent (formerly "intern"), a trader, and
+optionally a risk gatekeeper — and wires them together into a pipeline.
+Strategies are the thing you iterate on; scenarios are the market window you
+run them against.
 
-## Anatomy
+See [Agents](/docs?slug=agents) for how to manage the reusable agent library
+that strategies draw from.
 
-- **Manifest** — display name, creator, template label, `asset_universe`,
-  `decision_cadence_minutes`, `regime_fit`, `risk_preset_or_config`,
-  `required_models`, `required_tools`, and optional `min_warmup_bars`.
-- **AgentRefs** — `{ agent_id, role }` pointers into the workspace agent
-  library. Agents are reusable across strategies; a strategy references them
-  by ULID.
-- **Pipeline** — wiring spec for the agent refs. `{ kind: "single" }` for
-  one-agent strategies; `{ kind: "sequential" }` for ordered multi-stage
-  pipelines; `{ kind: "graph", edges: [...] }` for arbitrary DAG topologies.
-  Edges are `from_role:to_role` pairs.
-- **Risk** — gate parameters that the executor reads: `risk_pct_per_trade`,
-  `max_leverage`, stop-loss, and related fields stored in `RiskConfig`.
-- **Mechanical params** — template-specific numeric parameters (EMA periods,
-  RSI thresholds, Donchian length, etc.) stored as a typed JSON blob keyed
-  on `manifest.template`.
+---
 
-## Hypothesis manifest
+## Author a strategy from the dashboard
 
-Added in wave-C, the `Hypothesis` struct attaches structured intent to a
-strategy. It is additive — it does not replace the agent's freeform prompt.
-Its purpose is grouping and comparison: experiments that share a hypothesis
-family can be filtered and ranked together.
+1. Open `/strategies/new`.
+2. Pick a template from the template picker (optional). Templates autofill
+   the strategy name, asset, cadence, and default agent roles.
+3. Fill in the form sections:
+   - **Name** — a display name for the strategy.
+   - **Template** — optional starting scaffold (`trend-follower`,
+     `mean-reversion`, `custom`, etc.).
+   - **Asset** — primary asset this strategy trades (e.g. `ETH/USD`).
+   - **Timeframe** — bar granularity: `1m`, `5m`, `15m`, `30m`, `1h`, `2h`,
+     `4h`, or `1d`.
+   - **Agents** — attach agents from the workspace agent library and assign
+     each a role (`trader`, `risk`, etc.).
+   - **Pipeline** — single agent, sequential chain, or graph wiring.
+   - **Hypothesis** (optional) — family label, hypothesis statement, target
+     regimes, regimes to avoid.
+4. Click **Save**. The dashboard validates the strategy and surfaces any
+   missing-agent or missing-provider issues inline.
 
-All fields are optional. A strategy without any hypothesis annotation
-round-trips cleanly.
+---
 
-| Field | Type | Purpose |
-|---|---|---|
-| `family` | `string` | Template or grouping label, e.g. `compression-breakout` |
-| `statement` | `string` | One-to-two sentence hypothesis statement |
-| `target_regime` | `string[]` | Regimes the strategy is expected to perform well in |
-| `avoid_regime` | `string[]` | Regimes the strategy should avoid |
-| `asset_assumptions` | `string[]` | Asset characteristics assumed (e.g. `high liquidity`) |
-| `timeframe_preferred` | `string` | Preferred bar granularity, e.g. `4h` |
-| `entry_logic` | `string[]` | Conditions under which the strategy enters a position |
-| `exit_logic` | `string[]` | Conditions under which the strategy exits a position |
-| `risk_logic` | `object` | Optional hints: `max_trade_frequency` (`low`/`medium`/`high`) and `no_direct_flips` (bool) |
+## Author a strategy from the CLI
 
-For experiment grouping and cross-strategy comparison, see
-[Experiments](/docs?slug=experiments).
+### Template mode
 
-## Author flow
+Create a strategy draft from a registered template:
 
-### Dashboard
+```sh
+xvn strategy create \
+  --template trend-follower \
+  --name "ETH Trend 4h" \
+  --provider openrouter \
+  --model deepseek/deepseek-chat
+```
 
-1. Open `/strategies/new` — choose an optional template from the picker.
-   Picking a template autofills the name, asset, cadence, and agent slots.
-2. **Save** creates a draft in `$XVN_HOME/strategies/<id>.json`.
-3. **Attach agents** through the Inspector (Strategy detail page). Use the
-   chat rail to compose a new agent or attach an existing one from the agent
-   library.
-4. **Validate** — the dashboard surfaces missing-agent, missing-provider, and
-   model-resolution drift inline using the same checks the CLI runs.
+`--provider` and `--model` seed the auto-created agent for each template role.
+Run `xvn strategy templates` to list available template names.
 
-### CLI atomic create
+### Atomic mode
 
-`xvn strategy create --prompt <file>` bundles strategy + agent +
-provider/model binding + role assignment in a single command. Required flags:
-`--name`, `--provider`, `--model`, `--asset`, `--timeframe`. `--role`
-defaults to `trader`.
+`--prompt` creates a strategy and its agent in one command. Required in this
+mode: `--name`, `--provider`, `--model`, `--asset`, `--timeframe`.
 
 ```sh
 xvn strategy create \
@@ -85,88 +72,98 @@ xvn strategy create \
   --json
 ```
 
-`--json` output shape:
+`--role` defaults to `trader`. `--template` and `--prompt` are mutually
+exclusive.
+
+**Hypothesis flags** (all optional; usable in template mode too):
+
+| Flag | What you type |
+|---|---|
+| `--family <label>` | Hypothesis family label, e.g. `compression-breakout` |
+| `--hypothesis <text>` | One-to-two sentence hypothesis statement |
+| `--target-regime <val>` | Regime the strategy targets (repeatable) |
+| `--avoid-regime <val>` | Regime the strategy should avoid (repeatable) |
+| `--hypothesis-file <path>` | Path to a JSON file with a complete hypothesis object; overrides individual flags |
+
+Use `--hypothesis-file` when you need to supply the full long-form hypothesis
+object. The file must be valid JSON.
+
+**`--json` output (atomic mode):**
 
 ```json
 {
   "strategy_id": "01HZSTRATEGY...",
-  "agent_id": "01HZAGENT...",
-  "eval_ready": true,
-  "provider": "openrouter",
-  "model": "deepseek/deepseek-chat",
-  "warnings": []
+  "agent_id":    "01HZAGENT...",
+  "eval_ready":  true,
+  "provider":    "openrouter",
+  "model":       "deepseek/deepseek-chat",
+  "warnings":    []
 }
 ```
 
-`eval_ready` is `false` when `warnings` is non-empty (e.g. prompt mentions
-a different asset than `--asset`). `--template` and `--prompt` are mutually
-exclusive.
+`eval_ready` is `false` when `warnings` is non-empty (for example, if the
+prompt text mentions a different asset than `--asset`).
 
-To supply the full hypothesis object including `asset_assumptions`,
-`timeframe_preferred`, `entry_logic`, `exit_logic`, and `risk_logic`, pass
-`--hypothesis-file <path>` with a JSON file instead of individual flags.
+---
 
 ## Validate
 
-`xvn strategy validate <id>` is shape-only — checks agent composition,
-pipeline wiring, asset universe, and risk config.
+Shape-only check (no scenario required):
 
-`xvn strategy validate <id> --scenario <scenario-id> --json` runs full
-preflight, additionally checking:
+```sh
+xvn strategy validate <id>
+```
 
-- Agents exist in the workspace library and have provider + model set.
+Full preflight with a scenario:
+
+```sh
+xvn strategy validate <id> --scenario <scenario-id> --json
+```
+
+With `--scenario`, the preflight checks:
+
+- All attached agents exist in the workspace library with provider and model
+  set.
 - Provider names resolve against the active config.
-- Scenario asset is in `manifest.asset_universe`.
-- Scenario granularity matches `manifest.decision_cadence_minutes`.
-- Warmup bars adequacy.
+- The scenario asset is in the strategy's asset universe.
+- The scenario granularity matches the strategy's timeframe.
+- Warmup bar adequacy.
 
-JSON output:
+`--json` output:
 
 ```json
 {
-  "strategy_id": "...",
-  "eval_ready": true,
+  "strategy_id":        "...",
+  "eval_ready":         true,
   "expected_decisions": 42,
-  "asset": "ETH/USD",
-  "timeframe": "4h",
-  "warmup_bars": 200,
-  "warnings": [],
-  "errors": []
+  "asset":              "ETH/USD",
+  "timeframe":          "4h",
+  "warmup_bars":        200,
+  "warnings":           [],
+  "errors":             []
 }
 ```
 
-`eval_ready` is `true` only when both `errors` and `warnings` are empty.
+`eval_ready` is `true` only when both `errors` and `warnings` are empty. The
+command exits non-zero when the strategy is not eval-ready.
 
-## Templates
+---
 
-Templates are reference scaffolds, not enforcement. They live in
-`crates/xvision-engine/src/agents/templates.rs` (three shapes: `single-trader`,
-`analyst-executor`, `risk-checked-trader`) and in the strategy template
-registry at `crates/xvision-engine/src/templates/` (role labels include
-`intern`/default agent, `trader`, `risk`). Strategies may rename or invent
-roles freely.
-
-List available strategy templates: `xvn strategy templates [--json]`.
-
-## CLI parity
+## CLI verbs at a glance
 
 See [CLI Reference](/docs?slug=cli-reference) for full flag documentation.
 
-- `xvn strategy create [--template <name>] [--prompt <file>]` — create a
-  strategy draft from a template, or atomically from a prompt file.
-- `xvn strategy ls [--json]` — list saved strategy ids.
-- `xvn strategy show <id> [--format json|json-compact]` — print a single
-  strategy (`get` is a visible alias).
-- `xvn strategy validate <id> [--scenario <id>] [--json]` — shape-only or
-  full preflight check.
-- `xvn strategy templates [--json]` — list available strategy templates.
-- `xvn strategy add-agent <strategy-id> --role <role> <agent-id>` — attach
-  a library agent to a strategy.
-- `xvn strategy remove-agent <strategy-id> --role <role>` — detach an agent
-  by role.
-- `xvn strategy set-pipeline <strategy-id> --kind single|sequential|graph
-  [--edge from:to ...]` — set the pipeline wiring.
-- `xvn strategy migrate-agents [--dry-run]` — lift legacy slot-shaped
-  strategies into agent references.
-- `xvn strategy run <id> --fixture <name> [--decisions N] [--mock]` — run
-  inline against a fixture parquet without the eval engine.
+| Verb | Effect |
+|---|---|
+| `xvn strategy create --template <name> --name <name>` | Create a strategy draft from a template. Alias: `new`. |
+| `xvn strategy create --prompt <file> --name <n> --provider <p> --model <m> --asset <sym> --timeframe <tf>` | Atomic mode: create strategy + agent in one command. |
+| `xvn strategy create --from-file <path>` | Load and persist a strategy from a JSON or TOML file. |
+| `xvn strategy ls [--json]` | List saved strategy ids. |
+| `xvn strategy show <id> [--format json\|json-compact]` | Print a strategy as JSON. Alias: `get`. |
+| `xvn strategy validate <id> [--scenario <id>] [--json]` | Shape-only or full preflight check. |
+| `xvn strategy templates [--json]` | List available strategy templates. |
+| `xvn strategy add-agent <strategy-id> <agent-id> --role <role>` | Attach a library agent to a strategy. |
+| `xvn strategy remove-agent <strategy-id> --role <role>` | Detach an agent reference by role. |
+| `xvn strategy set-pipeline <strategy-id> --kind single\|sequential\|graph [--edge from:to …]` | Set the pipeline wiring. |
+| `xvn strategy migrate-agents [--dry-run]` | Migrate legacy slot-shaped strategies into agent references. |
+| `xvn strategy run <id> --fixture <name> [--decisions <n>] [--mock]` | Run a strategy inline against a fixture parquet. |

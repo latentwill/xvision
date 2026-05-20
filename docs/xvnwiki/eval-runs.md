@@ -1,8 +1,10 @@
 # Eval Runs
 
-An **eval run** is one strategy executed against one scenario in one
-mode (backtest or paper). Each run is a row in `eval_runs` keyed by an
-immutable ULID.
+An **eval run** is one strategy executed against one scenario in one mode
+(backtest, paper, or live). Each run is a row in the dashboard's eval list
+with a stable ULID that never changes after creation.
+
+---
 
 ## Lifecycle
 
@@ -10,36 +12,115 @@ immutable ULID.
 queued → running → completed | failed | cancelled
 ```
 
-- **queued** — the run is in `RunStore` and the scheduler has not
-  picked it up yet.
-- **running** — the engine is iterating through the scenario's bars,
-  emitting decisions. The dashboard streams progress via SSE.
-- **completed** — all bars processed; metrics finalised.
-- **failed** — a typed failure class is recorded (see Failure classes
-  below). The detail page surfaces the class and the underlying error.
-- **cancelled** — operator hit Stop; partial decisions are retained.
+- **queued** — the run is registered and waiting for the engine to pick it
+  up.
+- **running** — the engine is iterating through the scenario's bars and
+  emitting decisions. The dashboard streams progress live.
+- **completed** — all bars processed; metrics are finalised.
+- **failed** — the run stopped with an error; a failure class is recorded
+  and the dashboard filters on it. See [Failure classes](#failure-classes)
+  below.
+- **cancelled** — the operator hit Stop; partial decisions are retained.
+
+---
 
 ## Decisions surface
 
-For each bar, the engine produces one decision row containing:
+For each bar the engine produces one decision row containing:
 
-- the bar timestamp, OHLCV snapshot;
-- the `TraderDecision` (action, qty, rationale, references);
-- the `RiskDecision` (Approved / Modified / Vetoed + reason);
-- the executor outcome (filled / rejected / no-op);
-- realised + unrealised PnL after this bar.
+- bar timestamp and OHLCV snapshot
+- trader action, quantity, rationale, and references
+- risk verdict: Approved, Modified, or Vetoed, plus reason
+- executor outcome: filled, rejected, or no-op
+- realised and unrealised PnL after this bar
 
-The decisions list paginates lazily; scroll-bottom triggers a fetch.
-The flame graph + span inspector in the trace dock are anchored on the
-selected decision (use the per-row link to jump to a span).
+The decisions list paginates lazily; scrolling to the bottom fetches the
+next page. The trace dock (flame graph + span inspector) is anchored on the
+selected decision — use the per-row link to jump to a span.
+
+Dashboard route: `/eval-runs/<id>`
+
+---
+
+## Comparing runs
+
+Open a side-by-side equity chart in the dashboard:
+
+```
+/eval-runs/compare?ids=<id1>,<id2>,...
+```
+
+Or use the CLI for a Markdown table suitable for pasting into a PR or chat:
+
+```bash
+# Two or more run ids as positional arguments
+xvn eval compare <id-1> <id-2> <id-3>
+
+# Flag form; comma-separated list is also accepted
+xvn eval compare --runs <id1>,<id2>,<id3> --markdown
+
+# Machine-readable JSON
+xvn eval compare --runs <id1>,<id2> --json
+
+# All runs from a batch
+xvn eval compare --batch <batch-id> --markdown
+
+# Sort by a specific metric: return | sharpe | drawdown (default: return)
+xvn eval compare --batch <batch-id> --sort sharpe --markdown
+```
+
+The `--markdown` table columns are: **Scenario | Return | Baseline
+(buy_hold) | Sharpe | Max DD | Decisions | Trades | Flips | Avg hold
+(bars) | Flat rate | Reentries | Failure mode**. The **Baseline
+(buy_hold)** column shows the strategy's return delta versus the
+buy-and-hold baseline, so you can tell at a glance whether the strategy
+beat the trivial passive alternative.
+
+---
+
+## Baselines
+
+Every completed backtest automatically runs four baseline strategies over
+the same bar slice the strategy saw: buy-and-hold, always-flat,
+simple-trend, and simple-mean-reversion. The compare table shows the
+strategy's return delta against each. Paper-mode runs do not produce
+baseline arms; the baseline columns show `-` for those rows.
+
+---
+
+## Behavior summary
+
+After a run completes the engine can derive a short summary of **how** the
+strategy traded — not just whether it made money. The summary describes
+what fraction of bars the strategy was flat, how many trades it opened, how
+often it flipped direction without going flat in between, the average number
+of bars held per trade, how often it re-entered after a losing exit, and how
+often it exited on an invalidation. A heuristic failure-mode label
+(`late_entries`, `churn`, `no_edge`, `over_flat`, or `none_obvious`) is
+also derived and surfaced in the compare table's **Failure mode** column.
+
+The behavior summary is computed on demand from the existing decision rows —
+there is no extra database write and no migration needed.
+
+```bash
+# Human-readable behavior block appended to the normal show output
+xvn eval show <run-id> --behavior
+
+# JSON: {"run": ..., "behavior_summary": {...}}
+xvn eval show <run-id> --behavior --json
+```
+
+Dashboard equivalent: the **Behavior** tab on the run detail page.
+
+---
 
 ## Batch runs
 
-A batch launches one run per scenario for a single strategy and waits
-for all runs to reach a terminal state.
+A batch launches one run per scenario for a single strategy and waits for
+all runs to reach a terminal state.
 
 ```bash
-# Launch, wait, and print a side-by-side summary table
+# Launch, block until all terminal, and print a summary table
 xvn eval batch run \
   --strategy <strategy-id> \
   --scenarios sc_01K...,sc_01K...,sc_01K... \
@@ -53,165 +134,62 @@ xvn eval batch run \
   --wait \
   --review-with reasoning-agent
 
-# Poll a persisted batch by id
+# Check the status of a persisted batch
 xvn eval batch status <batch-id>
 
-# Side-by-side compare all runs in a batch
+# Compare all runs in a batch
 xvn eval compare --batch <batch-id> --markdown
 ```
 
-The `--wait` flag is required; the command blocks until every run
-reaches `completed`, `failed`, or `cancelled`. The response is a single
-`BatchResult` object containing:
+The `--wait` flag blocks until every run reaches `completed`, `failed`, or
+`cancelled`. The JSON output is a single batch object with:
 
 | Field | Description |
 |---|---|
 | `batch_id` | Stable ULID assigned at batch creation |
-| `strategy_id` | Strategy agent id |
-| `runs[]` | One `RunEntry` per scenario |
+| `strategy_id` | Strategy id |
+| `runs[]` | One entry per scenario |
 
-Each `RunEntry` carries: `scenario_id`, `scenario_name`, `run_id`,
-`status`, `return_pct`, `sharpe`, `drawdown_pct`, `decisions`,
-`actions` (action-kind counts), `error`, and optionally `review`.
+Each run entry carries: `scenario_id`, `scenario_name`, `run_id`, `status`,
+`return_pct`, `sharpe`, `drawdown_pct`, `decisions`, `actions` (action-kind
+counts), `error`, and — when `--review-with` was set — a `review` object
+with `review_id`, `status`, `summary`, `verdict`, and `error`.
 
-When `--review-with <profile>` is set, each completed run is reviewed
-in sequence after all runs finish. The `review` field in the
-`RunEntry` holds `review_id`, `status`, `summary`, `verdict`, and
-`error`. Failed reviews do not abort the batch.
+When `--review-with <profile>` is set, each completed run is reviewed in
+sequence after all runs finish. A failed review does not abort the batch.
 
-`xvn eval batch status <batch-id>` shows the persisted batch row and
-the list of attached run ids. Combine with `xvn eval compare --batch
-<batch-id>` for a full metrics breakdown without re-typing run ids.
+`xvn eval batch status <batch-id>` shows the persisted batch row and the
+list of attached run ids. Combine with `xvn eval compare --batch <batch-id>`
+to get a full metrics breakdown without retyping run ids.
 
-## Comparing runs
+---
 
-```bash
-# Positional run ids
-xvn eval compare <run-id-1> <run-id-2> <run-id-3>
+## Review
 
-# Flag form; comma-separated list is accepted
-xvn eval compare --runs <id1>,<id2>,<id3> --markdown
-
-# Machine-readable JSON
-xvn eval compare --runs <id1>,<id2> --json
-
-# All runs from a batch
-xvn eval compare --batch <batch-id> --markdown
-
-# Sort by a specific metric (return | sharpe | drawdown)
-xvn eval compare --batch <batch-id> --sort sharpe --markdown
-```
-
-`--markdown` emits a GitHub-flavoured Markdown table. The table
-includes a **Baseline (buy_hold)** column — the strategy return minus
-the buy-and-hold return for that bar slice — alongside Return, Sharpe,
-Max DD, Decisions, Trades, Flips, Avg hold (bars), Flat rate,
-Reentries, and Failure mode.
-
-`/eval-runs/compare?ids=...` in the dashboard opens the same
-side-by-side equity chart view.
-
-## Baseline auto-comparison
-
-Every completed backtest automatically runs four baseline arms over the
-same bar slice the strategy saw: buy-and-hold, always-flat,
-simple-trend, and simple-mean-reversion (via `xvision-eval`). Results
-are stored in `MetricsSummary.baselines` (inside the existing
-`metrics_json` column; no migration required — old rows deserialise
-with `baselines: null`).
-
-The `BaselinesReport` shape:
-
-| Path | Type | Description |
-|---|---|---|
-| `baselines.buy_hold.return_pct` | f64 | Buy-and-hold total return % |
-| `baselines.buy_hold.sharpe` | f64 | Buy-and-hold Sharpe |
-| `baselines.always_flat.return_pct` | f64 | Always-flat return % |
-| `baselines.always_flat.sharpe` | f64 | Always-flat Sharpe |
-| `baselines.simple_trend.return_pct` | f64 | Simple-trend return % |
-| `baselines.simple_trend.sharpe` | f64 | Simple-trend Sharpe |
-| `baselines.simple_mean_reversion.return_pct` | f64 | Simple mean-reversion return % |
-| `baselines.simple_mean_reversion.sharpe` | f64 | Simple mean-reversion Sharpe |
-| `baselines.relative_to.buy_hold` | f64 | strategy − buy_hold (return_pct delta) |
-| `baselines.relative_to.always_flat` | f64 | strategy − always_flat delta |
-| `baselines.relative_to.simple_trend` | f64 | strategy − simple_trend delta |
-| `baselines.relative_to.simple_mean_reversion` | f64 | strategy − simple_mean_reversion delta |
-
-Positive `relative_to.*` values mean the strategy beat that baseline
-on raw total return. The compare Markdown report surfaces
-`relative_to.buy_hold` as the **Baseline (buy_hold)** column.
-
-Paper-mode runs do not produce baseline arms (bars are not available
-post-hoc); `baselines` is `null` for those rows.
-
-## Behavior summary
-
-For every completed run the engine can derive a behavior summary
-on-demand from the existing decision rows — no DB write, no migration.
-
-```bash
-# Human-readable behavior block appended to the normal show output
-xvn eval show <run-id> --behavior
-
-# Wrapped JSON: {"run": ..., "behavior_summary": ...}
-xvn eval show <run-id> --behavior --json
-```
-
-The dashboard surfaces the same fields in the **Behavior** tab of the
-run detail page.
-
-| Field | Type | Description |
-|---|---|---|
-| `flat_rate` | f64 | Fraction of decisions that are `flat` or `hold` (0–1) |
-| `trades_opened` | u32 | Count of `long_open` + `short_open` decisions |
-| `direct_flips` | u32 | Opposite-direction opens without a `flat` in between |
-| `avg_bars_held` | f64? | Mean bars between an open and the next `flat` per asset; `null` when no complete round-trips |
-| `reentries_after_loss` | u32 | Opens immediately following a `flat` with `pnl_realized < 0` on the same asset |
-| `exits_on_invalidation` | u32 | `flat` decisions with `pnl_realized < 0` |
-| `primary_failure_mode` | string | Heuristic label: `late_entries`, `churn`, `no_edge`, `over_flat`, `none_obvious` |
-
-`primary_failure_mode` rules (first match wins):
-
-| Label | Condition |
-|---|---|
-| `late_entries` | `reentries_after_loss / max(1, trades) > 0.4` |
-| `churn` | `direct_flips / max(1, trades) > 0.2` |
-| `no_edge` | trades > 0 and `exits_on_invalidation / max(1, trades) > 0.5` |
-| `over_flat` | `flat_rate > 0.85` |
-| `none_obvious` | fallthrough |
-
-The `compare --markdown` report includes behavior columns (Trades,
-Flips, Avg hold, Flat rate, Reentries, Failure mode) derived inline
-from each run's decision rows.
-
-## Review agent
-
-A review pass sends the strategy's decisions, metrics, and scenario
-context to an LLM agent for analytical commentary.
+A review pass sends the strategy's decisions, metrics, and scenario context
+to an LLM agent for analytical commentary.
 
 ```bash
 # Run a review after the run completes
 xvn eval review <run-id> --agent reasoning-agent
 
-# JSON output (full EvalReview + findings)
+# Full output as JSON (review + findings)
 xvn eval review <run-id> --agent reasoning-agent --format json
 
-# Write JSON to a file
+# Write the JSON to a file
 xvn eval review <run-id> --agent reasoning-agent --output review.json
 
 # Force a fresh review even if one already exists for this (run, profile)
 xvn eval review <run-id> --agent reasoning-agent --force
 ```
 
-The `--agent` flag accepts any agent profile id configured in the
-workspace (`fast-trader-agent`, `reasoning-agent`, `risk-agent`,
-`research-agent`, or an operator-defined profile). The reviewer is
-itself an agent — provider and model are resolved from the named
-profile's `provider` column, using the same posture as the chat rail.
+The `--agent` flag accepts any agent profile id configured in the workspace
+(`fast-trader-agent`, `reasoning-agent`, `risk-agent`, `research-agent`, or
+an operator-defined profile). Provider and model are resolved from the named
+profile.
 
-A prior `failed` review for the same (run, profile) pair is
-retry-eligible; the CLI will dispatch a fresh attempt rather than
-returning the stale failure.
+A prior `failed` review for the same (run, profile) pair is retry-eligible;
+the CLI dispatches a fresh attempt rather than returning the stale failure.
 
 The review output carries:
 
@@ -225,35 +203,36 @@ The review output carries:
 | `summary` | Free-text analytical summary |
 | `findings[]` | Structured finding records with severity, kind, title, description, recommendation |
 
-Dashboard equivalent: `/eval-runs/<id>` → **Review** panel. The panel
-shows the same fields plus a findings list with severity badges.
+Dashboard equivalent: `/eval-runs/<id>` → **Review** panel. The panel shows
+the same fields plus a findings list with severity badges.
+
+---
 
 ## Retry, Rerun, and Delete
 
-- **Retry** — supported on `failed` and `cancelled` runs. Spawns a
-  new run with the same
-  `(agent_id, scenario_id, mode, params_override)` fingerprint under a
-  fresh id. Tagged internally as `FailureRecovery`.
-- **Rerun** — supported on `completed` runs. Same action surface as
-  Retry; spawns a new run with the same fingerprint and is tagged
-  `ManualRerun`. Use it to repeat a known-good run (e.g. against a
-  refreshed bar cache) without re-entering parameters.
-- **Idempotency** — both Retry and Rerun are coalesced: if a sibling
-  with the same fingerprint is already `queued` or `running`, the
-  existing run is returned instead of starting a duplicate. Safe to
-  double-click the button.
-- **Delete** — available in the eval inspector. Deletes the
-  `eval_runs` row, decisions, and trace artifacts.
+- **Retry** — available on `failed` and `cancelled` runs. Spawns a new run
+  with the same `(strategy, scenario, mode, params)` fingerprint under a
+  fresh id.
+- **Rerun** — available on `completed` runs. Same action as Retry; use it
+  to repeat a known-good run (for example, against a refreshed bar cache)
+  without re-entering parameters.
+- **Idempotency** — both Retry and Rerun are coalesced: if a sibling with
+  the same fingerprint is already `queued` or `running`, the existing run is
+  returned instead of starting a duplicate. Safe to double-click the button.
+- **Delete** — available in the eval inspector. Removes the run row,
+  decisions, and trace artifacts.
 
-`queued` and `running` runs cannot be retried or rerun — wait for them
-to terminate first, or cancel them.
+`queued` and `running` runs cannot be retried or rerun — wait for them to
+reach a terminal state first, or cancel them.
+
+---
 
 ## Failure classes
 
 `failed` runs carry a `[<class>]` prefix on the `error` field. The
-dashboard filters by class on the eval-runs list.
+dashboard's eval-runs list can filter by class.
 
-**Trader output** (model returned something the engine could not parse):
+**Trader output** (the model returned something the engine could not use):
 
 `empty`, `tool_use_only`, `truncated`, `invalid_json`, `missing_field`,
 `invalid_field`, `missing_response`
