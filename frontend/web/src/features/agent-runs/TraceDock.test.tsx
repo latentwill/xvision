@@ -81,15 +81,27 @@ describe("TraceDock", () => {
   });
 
   test("inspector selection falls back to the first filtered span", async () => {
-    useTraceDock.setState({ activeRunId: "run_abc1234", height: "working" });
+    useTraceDock.setState({
+      activeRunId: "run_abc1234",
+      height: "working",
+      advanced_view: false,
+    });
     renderDock();
     await screen.findByTestId("trace-dock-body");
     await screen.findByTestId("flame-bar-s1");
 
+    // The Simple-mode inspector summary embeds the span_id inside a
+    // longer string ("s1 · agent.run · …"), so we assert by reading
+    // the summary container's text content rather than searching for
+    // a bare "s1" / "s3" text node.
+    const inspectorBefore = await screen.findByTestId("span-inspector-fields-simple");
+    expect(inspectorBefore).toHaveTextContent(/s1 · agent\.run/);
+
     await userEvent.click(screen.getByRole("button", { name: /^MODEL$/i }));
 
-    expect(screen.queryByText("s1")).not.toBeInTheDocument();
-    expect(await screen.findByText("s3")).toBeInTheDocument();
+    const inspectorAfter = await screen.findByTestId("span-inspector-fields-simple");
+    expect(inspectorAfter).toHaveTextContent(/s3 · model\.call/);
+    expect(inspectorAfter).not.toHaveTextContent(/s1 · agent\.run/);
   });
 
   test("Trade button (F-7) renders disabled when no broker.call spans are present", async () => {
