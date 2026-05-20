@@ -29,3 +29,45 @@ async fn open_lazy_creates_schema() {
     let _store2 = MemoryStore::open(&path).await.unwrap();
     drop(store);
 }
+
+use xvision_memory::types::MemoryItem;
+
+fn make_item(id: &str, ns: &str, text: &str, emb: Vec<f32>) -> MemoryItem {
+    MemoryItem {
+        id: id.into(),
+        namespace: ns.into(),
+        text: text.into(),
+        embedding: emb,
+        created_at: chrono::Utc::now(),
+        source_run_id: None,
+        source_cycle_id: None,
+    }
+}
+
+#[tokio::test]
+async fn upsert_then_query_returns_top_k_by_cosine() {
+    let store = MemoryStore::open_in_memory().await.unwrap();
+    store.upsert(&make_item("a", "global", "alpha", vec![1.0, 0.0, 0.0]), "test-embedder").await.unwrap();
+    store.upsert(&make_item("b", "global", "beta",  vec![0.0, 1.0, 0.0]), "test-embedder").await.unwrap();
+    store.upsert(&make_item("c", "global", "gamma", vec![0.9, 0.1, 0.0]), "test-embedder").await.unwrap();
+    let hits = store.query("global", &[1.0, 0.0, 0.0], 2).await.unwrap();
+    assert_eq!(hits.len(), 2);
+    assert_eq!(hits[0].id, "a");
+    assert_eq!(hits[1].id, "c");
+    assert!(hits[0].score > hits[1].score);
+}
+
+#[tokio::test]
+async fn query_isolates_by_namespace() {
+    let store = MemoryStore::open_in_memory().await.unwrap();
+    store.upsert(&make_item("a", "agent:A", "alpha", vec![1.0, 0.0]), "test").await.unwrap();
+    store.upsert(&make_item("b", "agent:B", "beta",  vec![1.0, 0.0]), "test").await.unwrap();
+    let hits_a = store.query("agent:A", &[1.0, 0.0], 5).await.unwrap();
+    let hits_b = store.query("agent:B", &[1.0, 0.0], 5).await.unwrap();
+    let hits_g = store.query("global",  &[1.0, 0.0], 5).await.unwrap();
+    assert_eq!(hits_a.len(), 1);
+    assert_eq!(hits_a[0].id, "a");
+    assert_eq!(hits_b.len(), 1);
+    assert_eq!(hits_b[0].id, "b");
+    assert_eq!(hits_g.len(), 0);
+}
