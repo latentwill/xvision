@@ -26,6 +26,11 @@ struct Template {
     permitted_flags: &'static [&'static str],
 }
 
+struct DeniedNested {
+    head: &'static str,
+    path: &'static [&'static str],
+}
+
 const STRICT_TEMPLATES: &[Template] = &[Template {
     head: &["bars", "fetch"],
     permitted_flags: &["--asset", "--granularity", "--from", "--to"],
@@ -38,6 +43,7 @@ const DENYLIST_SUBCOMMANDS: &[&str] = &[
     "mcp",            // starts an MCP server/session
     "fire-trade",     // explicit live order smoke test
     "close-position", // explicit live position mutation
+    "migrate",        // applies migrations/seeds to the dashboard host
 ];
 
 /// Top-level commands that are supported through the remote CLI job API.
@@ -77,10 +83,108 @@ const SUPPORTED_SUBCOMMANDS: &[&str] = &[
     "trader",
 ];
 
-/// Mutating or destructive subcommands below otherwise-supported heads.
-const DENIED_NESTED_SUBCOMMANDS: &[(&str, &[&str])] = &[
-    ("bars", &["rm", "gc"]),
-    ("provider", &["add", "remove", "refresh-models"]),
+/// Mutating, destructive, or host-admin paths below otherwise-supported heads.
+const DENIED_NESTED_SUBCOMMANDS: &[DeniedNested] = &[
+    DeniedNested {
+        head: "bars",
+        path: &["rm"],
+    },
+    DeniedNested {
+        head: "bars",
+        path: &["gc"],
+    },
+    DeniedNested {
+        head: "provider",
+        path: &["add"],
+    },
+    DeniedNested {
+        head: "provider",
+        path: &["remove"],
+    },
+    DeniedNested {
+        head: "provider",
+        path: &["refresh-models"],
+    },
+    DeniedNested {
+        head: "scenario",
+        path: &["create"],
+    },
+    DeniedNested {
+        head: "scenario",
+        path: &["clone"],
+    },
+    DeniedNested {
+        head: "scenario",
+        path: &["archive"],
+    },
+    DeniedNested {
+        head: "scenario",
+        path: &["rm"],
+    },
+    DeniedNested {
+        head: "scenario",
+        path: &["classify"],
+    },
+    DeniedNested {
+        head: "scenario",
+        path: &["set-regime"],
+    },
+    DeniedNested {
+        head: "strategy",
+        path: &["new"],
+    },
+    DeniedNested {
+        head: "strategy",
+        path: &["create"],
+    },
+    DeniedNested {
+        head: "strategy",
+        path: &["add-agent"],
+    },
+    DeniedNested {
+        head: "strategy",
+        path: &["remove-agent"],
+    },
+    DeniedNested {
+        head: "strategy",
+        path: &["set-pipeline"],
+    },
+    DeniedNested {
+        head: "strategy",
+        path: &["migrate-agents"],
+    },
+    DeniedNested {
+        head: "experiment",
+        path: &["new"],
+    },
+    DeniedNested {
+        head: "experiment",
+        path: &["create"],
+    },
+    DeniedNested {
+        head: "experiment",
+        path: &["update"],
+    },
+    DeniedNested {
+        head: "example",
+        path: &["seed"],
+    },
+    DeniedNested {
+        head: "obs",
+        path: &["retention", "set"],
+    },
+    DeniedNested {
+        head: "obs",
+        path: &["retention", "clear"],
+    },
+    DeniedNested {
+        head: "obs",
+        path: &["janitor", "run"],
+    },
+    DeniedNested {
+        head: "store",
+        path: &["migrate"],
+    },
 ];
 
 /// Check argv against the remote CLI policy. Empty argv is the caller's
@@ -93,9 +197,7 @@ pub fn check_argv(argv: &[String]) -> AllowlistDecision {
 
     let head = argv[0].as_str();
     if DENYLIST_SUBCOMMANDS.iter().any(|d| *d == head) {
-        return AllowlistDecision::Reject(format!(
-            "subcommand `{head}` is not allowed over remote cli"
-        ));
+        return AllowlistDecision::Reject(format!("subcommand `{head}` is not allowed over remote cli"));
     }
 
     if !SUPPORTED_SUBCOMMANDS.iter().any(|cmd| *cmd == head) {
@@ -122,15 +224,26 @@ pub fn check_argv(argv: &[String]) -> AllowlistDecision {
 
 fn denied_nested_subcommand(argv: &[String]) -> Option<String> {
     let head = argv.first()?.as_str();
-    let nested = argv.get(1)?.as_str();
-    for (command, denied) in DENIED_NESTED_SUBCOMMANDS {
-        if *command == head && denied.iter().any(|d| *d == nested) {
-            return Some(format!(
-                "subcommand `{head} {nested}` is not allowed over remote cli"
-            ));
+    for denied in DENIED_NESTED_SUBCOMMANDS {
+        if denied.head == head && argv_matches_path(argv, denied.path) {
+            let path = std::iter::once(head)
+                .chain(denied.path.iter().copied())
+                .collect::<Vec<_>>()
+                .join(" ");
+            return Some(format!("subcommand `{path}` is not allowed over remote cli"));
         }
     }
     None
+}
+
+fn argv_matches_path(argv: &[String], path: &[&str]) -> bool {
+    if argv.len() < path.len() + 1 {
+        return false;
+    }
+    argv.iter()
+        .skip(1)
+        .zip(path.iter())
+        .all(|(got, want)| got.as_str() == *want)
 }
 
 fn matching_strict_template_head(argv: &[String]) -> Option<&'static Template> {
@@ -249,16 +362,11 @@ mod tests {
     }
 
     #[test]
-    fn strategy_and_scenario_authoring_are_allowed_without_devmode() {
-        assert_allow(&[
-            "strategy",
-            "new",
-            "--name",
-            "remote-test",
-            "--template",
-            "mean_reversion",
-        ]);
-        assert_allow(&["scenario", "clone", "sc_1", "--name", "copy"]);
+    fn strategy_and_scenario_read_paths_are_allowed_without_devmode() {
+        assert_allow(&["strategy", "show", "st_1"]);
+        assert_allow(&["strategy", "validate", "st_1", "--scenario", "sc_1"]);
+        assert_allow(&["scenario", "show", "sc_1"]);
+        assert_allow(&["scenario", "select", "--asset", "BTC/USD", "--count", "4"]);
     }
 
     #[test]
@@ -289,13 +397,57 @@ mod tests {
 
     #[test]
     fn close_position_subcommand_is_rejected() {
-        assert_reject(&["close-position", "--asset", "BTC/USD"], "not allowed over remote cli");
+        assert_reject(
+            &["close-position", "--asset", "BTC/USD"],
+            "not allowed over remote cli",
+        );
     }
 
     #[test]
     fn destructive_nested_commands_are_rejected() {
-        assert_reject(&["bars", "rm", "--asset", "BTC/USD"], "not allowed over remote cli");
-        assert_reject(&["provider", "remove", "--name", "openrouter"], "not allowed over remote cli");
+        assert_reject(
+            &["bars", "rm", "--asset", "BTC/USD"],
+            "not allowed over remote cli",
+        );
+        assert_reject(&["bars", "gc"], "not allowed over remote cli");
+        assert_reject(
+            &["provider", "remove", "--name", "openrouter"],
+            "not allowed over remote cli",
+        );
         assert_reject(&["provider", "add", "--name", "x"], "not allowed over remote cli");
+        assert_reject(&["provider", "refresh-models"], "not allowed over remote cli");
+    }
+
+    #[test]
+    fn authoring_and_admin_nested_commands_are_rejected() {
+        for parts in [
+            &["scenario", "create", "--name", "remote-test"][..],
+            &["scenario", "clone", "sc_1", "--name", "copy"][..],
+            &["scenario", "archive", "sc_1"][..],
+            &["scenario", "rm", "sc_1"][..],
+            &["scenario", "classify", "--all"][..],
+            &["scenario", "set-regime", "sc_1", "--regime", "trend"][..],
+            &["strategy", "new", "--name", "remote-test"][..],
+            &["strategy", "create", "--name", "remote-test"][..],
+            &["strategy", "add-agent", "st_1", "ag_1", "--role", "trader"][..],
+            &["strategy", "remove-agent", "st_1", "--role", "trader"][..],
+            &["strategy", "set-pipeline", "st_1", "--kind", "single"][..],
+            &["strategy", "migrate-agents"][..],
+            &["experiment", "new", "--name", "remote-test"][..],
+            &["experiment", "create", "--name", "remote-test"][..],
+            &["experiment", "update", "exp_1", "--conclusion", "done"][..],
+            &["example", "seed"][..],
+            &["obs", "retention", "set", "--mode", "full-debug"][..],
+            &["obs", "retention", "clear"][..],
+            &["obs", "janitor", "run"][..],
+            &["store", "migrate"][..],
+        ] {
+            assert_reject(parts, "not allowed over remote cli");
+        }
+    }
+
+    #[test]
+    fn top_level_migrate_is_rejected() {
+        assert_reject(&["migrate", "--dry-run"], "not allowed over remote cli");
     }
 }

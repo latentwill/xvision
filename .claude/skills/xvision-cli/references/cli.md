@@ -277,5 +277,7 @@ Rules:
 - no caller-controlled env in v1
 - normal operator/eval/research commands are supported without a dev-mode bypass
 - reject server/live-trading heads such as `dashboard`, `mcp`, `fire-trade`, and `close-position`
-- reject destructive nested forms such as `bars rm`, `bars gc`, and provider config mutations
+- reject destructive/admin nested forms such as `bars rm`, `bars gc`, provider config mutations,
+  scenario/strategy authoring mutations, `example seed`, `store migrate`, and observability
+  retention/janitor writes
 - trust boundary is Tailscale reachability plus dashboard auth when bound outside loopback

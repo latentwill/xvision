@@ -162,3 +162,27 @@ async fn fire_trade_is_rejected_in_default_mode() {
     let body = resp.text();
     assert!(body.contains("not allowed over remote cli") || body.contains("fire-trade"));
 }
+
+#[tokio::test]
+async fn mutating_nested_subcommands_are_rejected() {
+    let _guard = devmode_off();
+    let (server, _tmp) = boot().await;
+
+    for argv in [
+        serde_json::json!(["scenario", "rm", "sc_1"]),
+        serde_json::json!(["strategy", "remove-agent", "st_1", "--role", "trader"]),
+        serde_json::json!(["obs", "retention", "set", "--mode", "full-debug"]),
+        serde_json::json!(["store", "migrate"]),
+    ] {
+        let resp = server
+            .post("/api/cli/jobs")
+            .json(&serde_json::json!({ "argv": argv }))
+            .await;
+        resp.assert_status(axum::http::StatusCode::BAD_REQUEST);
+        let body = resp.text();
+        assert!(
+            body.contains("not allowed over remote cli"),
+            "validation error must mention remote cli policy, got: {body}"
+        );
+    }
+}

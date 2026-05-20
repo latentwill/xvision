@@ -86,8 +86,15 @@ mutate live broker state:
 - `close-position`
 
 Some nested commands under otherwise-supported heads are also rejected where
-they are destructive or mutate provider configuration, such as `bars rm`,
-`bars gc`, `provider add`, `provider remove`, and `provider refresh-models`.
+they are destructive, mutate host configuration, or perform authoring/admin
+writes that belong in typed dashboard/API flows. That includes `bars rm`,
+`bars gc`, `provider add`, `provider remove`, `provider refresh-models`,
+scenario authoring/deletion (`scenario create`, `clone`, `archive`, `rm`,
+`classify`, `set-regime`), strategy authoring mutations (`strategy new`,
+`add-agent`, `remove-agent`, `set-pipeline`, `migrate-agents`), experiment
+ledger edits (`experiment new`, `create`, `update`), `example seed`, `store migrate`,
+and observability admin writes (`obs retention set`, `obs retention clear`,
+`obs janitor run`). Top-level `migrate` is also rejected.
 
 This policy is not a substitute for the auth gate above. Non-loopback binds
 still require `XVN_DASHBOARD_TOKEN`.
