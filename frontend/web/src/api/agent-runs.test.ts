@@ -252,6 +252,103 @@ describe("validateAgentRunDetail", () => {
       expect(span.error_message).toBeUndefined();
     }
   });
+
+  // PR #385 followup: broker.call spans must surface
+  // `decision_idx` projected from `attributes_json.broker_call.idempotency_key`
+  // so the FilterBar dropdown / per-cycle filter chip / DecisionJump
+  // button can resolve the cycle a span is attached to without each
+  // consumer re-parsing the key.
+  test("projects decision_idx onto broker.call spans from idempotency_key", () => {
+    const payload = {
+      ...EXPORT_PAYLOAD,
+      run_id: "run_with_broker",
+      spans: [
+        {
+          id: "span_broker",
+          run_id: "run_with_broker",
+          parent_span_id: null,
+          kind: "broker.call",
+          name: "alpaca-paper AAPL Buy",
+          status: "ok",
+          started_at: "2026-05-17T16:00:00Z",
+          ended_at: "2026-05-17T16:00:01Z",
+          duration_ms: 1000,
+          attributes_json: JSON.stringify({
+            run_id: "run_with_broker",
+            broker_call: {
+              side: "buy",
+              symbol: "AAPL",
+              qty: 1,
+              intended_price: 195.0,
+              order_type: "market",
+              venue: "alpaca-paper",
+              idempotency_key: "run_with_broker-14",
+              outcome: "filled",
+              fill_price: 195.01,
+              fill_qty: 1,
+            },
+          }),
+          error_json: null,
+          children: [],
+        },
+      ],
+      model_calls: [],
+      tool_calls: [],
+    };
+    const detail = validateAgentRunDetail(payload);
+    const broker = detail.spans.find((s) => s.span_id === "span_broker");
+    expect(broker?.decision_idx).toBe(14);
+    expect(broker?.broker_call?.idempotency_key).toBe("run_with_broker-14");
+  });
+
+  test("does not populate decision_idx on non-broker spans", () => {
+    // Today only broker.call spans carry the carrier; model.call /
+    // tool.call etc. should never get a stray decision_idx because
+    // their attributes don't currently encode one and we don't want to
+    // fabricate values.
+    const detail = validateAgentRunDetail(EXPORT_PAYLOAD);
+    for (const span of detail.spans) {
+      expect(span.decision_idx).toBeUndefined();
+    }
+  });
+
+  test("omits decision_idx on broker.call spans with a malformed idempotency_key", () => {
+    const payload = {
+      ...EXPORT_PAYLOAD,
+      run_id: "run_malformed_key",
+      spans: [
+        {
+          id: "span_broker_bad",
+          run_id: "run_malformed_key",
+          parent_span_id: null,
+          kind: "broker.call",
+          name: "alpaca-paper AAPL Buy",
+          status: "ok",
+          started_at: "2026-05-17T16:00:00Z",
+          ended_at: "2026-05-17T16:00:01Z",
+          duration_ms: 1000,
+          attributes_json: JSON.stringify({
+            broker_call: {
+              side: "buy",
+              symbol: "AAPL",
+              qty: 1,
+              order_type: "market",
+              venue: "alpaca-paper",
+              idempotency_key: "no-trailing-integer-here",
+            },
+          }),
+          error_json: null,
+          children: [],
+        },
+      ],
+      model_calls: [],
+      tool_calls: [],
+    };
+    const detail = validateAgentRunDetail(payload);
+    const broker = detail.spans.find((s) => s.span_id === "span_broker_bad");
+    expect(broker).toBeDefined();
+    expect(broker?.decision_idx).toBeUndefined();
+  });
 });
 
 describe("agent-runs real-mode branch", () => {

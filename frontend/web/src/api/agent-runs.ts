@@ -16,6 +16,7 @@
 // the flag explicitly.
 
 import { ApiError, apiFetch } from "./client";
+import { decisionIdxFromAttributes } from "@/features/agent-runs/decision-idx";
 import {
   MOCK_RUN_COMPLETED,
   MOCK_RUN_ERROR,
@@ -177,6 +178,13 @@ function flattenExportSpans(spans: unknown, out: RunSpan[] = []): RunSpan[] {
     // re-reading attributes. `qa-trace-broker-spans`.
     const brokerCall =
       kind === "broker.call" ? extractBrokerCall(attrs) : undefined;
+    // Project the per-decision-cycle index off the broker submit's
+    // idempotency_key ("<run_id>-<decision_idx>") onto `RunSpan.decision_idx`
+    // so the FilterBar dropdown + `use-span-filter` + `deriveDecisions`
+    // can match by cycle. PR #385 followup — see decision-idx.ts header
+    // for the carrier contract.
+    const decisionIdx =
+      kind === "broker.call" ? decisionIdxFromAttributes(attrs) : undefined;
     out.push({
       span_id: id,
       parent_span_id: asNullableString(raw.parent_span_id),
@@ -188,6 +196,7 @@ function flattenExportSpans(spans: unknown, out: RunSpan[] = []): RunSpan[] {
       attributes: attrs,
       ...(errorMessage ? { error_message: errorMessage } : {}),
       ...(brokerCall ? { broker_call: brokerCall } : {}),
+      ...(decisionIdx != null ? { decision_idx: decisionIdx } : {}),
     });
     flattenExportSpans(raw.children, out);
   }
