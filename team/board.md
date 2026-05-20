@@ -4,69 +4,61 @@
 > verification, and acceptance. This file is conductor-owned; see
 > `team/CONDUCTOR.md`.
 >
-> Last updated: 2026-05-19 conductor sweep — harness F-2 (#294), F-6
-> (#302), QA Round 5 F-1/F-2/F-3/F-5 (bundled in #316), and QA Round 5
-> F-4 (`risk-preset-balanced-min-order-sanity`) all closed. Agent CI/CD
-> Phase-1 parked into a handoff doc at
-> `docs/superpowers/handoffs/2026-05-19-agent-cicd-phase-1-handoff.md`
-> (5 contracts archived). Deferred `q15-tailscale-serve-api-reachability`
-> retired. **Active section empty** — next wave should come through intake.
-> Previous board: `team/archive/2026-05-16-migration/execution-board-2026-05-13.md`.
+> Last updated: 2026-05-20 conductor sweep — Lists v1 phase 1 (1a/1b/1c)
+> merged (PRs #390, #395, #396) plus backend-pagination follow-up #397.
+> QA Round 7 all 9 findings shipped via #385/#386/#387/#391/#397. QA
+> Round 6 all 3 tracks shipped via #360. Skills refresh shipped via
+> #379 (cycle-migration explicitly punted by operator). **Only Standard
+> list component phase 2+ remains Reserved.** Previous sweep:
+> 2026-05-19 (see `team/archive/2026-05-19-sweep/`).
 
 V2 work (V2A onboarding + docs, V2B-V4 roadmap) also has its own board:
 `team/board-v2.md`.
 
 ## Active
 
-- **Lists v1 — phase 1** (3 parallel-safe foundation tracks implementing
+- **Lists v1 — phase 2** (3 serial migration tracks; spec Decision 5,
   `docs/superpowers/specs/2026-05-20-standard-list-component.md`):
-  - [list-component-port-desktop](contracts/list-component-port-desktop.md) — foundation · ready · unblocks 1c + phase-2 migrations
-  - [list-component-port-mobile](contracts/list-component-port-mobile.md) — foundation · ready · also lands the `<MListSheet>` no-popups-rule exemption in `CLAUDE.md`
-  - [list-component-tokens-reconcile](contracts/list-component-tokens-reconcile.md) — integration · ready · rebase-blocked on 1a + 1b (imports both)
+  - [list-migrate-eval-runs](contracts/list-migrate-eval-runs.md) — integration · ready · 2a — migrates `/eval-runs` to `<ResponsiveListCard>` + `useListState` + `useListUrlState`. Lands F-2 (search/filter) from QA Round 7. Blocks 2b.
+  - [list-migrate-strategies](contracts/list-migrate-strategies.md) — integration · ready · 2b — same migration for `/strategies`. Depends on 2a.
+  - [list-migrate-decisions-and-tail](contracts/list-migrate-decisions-and-tail.md) — integration · ready · 2c — `/scenarios` + `/agents`, plus final deletion of the transitional `<ListPagination>` JSX primitive. Depends on 2b.
 
-  Sequencing: 1a + 1b in parallel; 1c lands after both. Phase-2
-  migration contracts (`list-migrate-eval-runs`, then `-strategies`,
-  then `-decisions-and-tail`) are authored once 1c merges and are
-  the natural absorption point for QA Round 7 F-2/F-3/F-4 (the list
-  wave findings).
+  Sequencing: serial 2a → 2b → 2c per spec Decision 5; pattern lifts
+  forward. Phase 3 (`list-component-density-toggle`) remains deferred.
 
 ## Reserved
 
-- **QA operator round 7** — 9 findings in `team/intake/2026-05-20-qa-operator-round-7.md`.
-  Clusters:
-  - **List wave** — F-2 (search/filter never landed; revisit
-    `list-component-spec` direction) + F-3 (recency-default sort) +
-    F-4 (page size).
-  - **Eval-inspector wave** — F-1 (strategy/scenario/agents top bar)
-    + F-6 (capsule short-title click-through) + F-8 (total cost on
-    summary) + F-9 (cost-decimal precision audit).
-  - **Trace wave** — F-5 (PAYLOAD REF → human-readable labels) +
-    F-7 (remove Super button, add Trade button, investigate why
-    trade events are missing from the trace).
-
-  F-2 needs an operator direction call (unified component vs. per-page
-  quick fix on the eval-runs list) before the conductor decomposes.
-- **Skills refresh for new xvn verbs** — planning intake at
-  `team/intake/2026-05-20-skills-update-for-new-xvn-verbs.md`. Refresh
-  `.claude/skills/xvision-cli`, `xvision-cli-qa`, `xvision-dev`, and
-  `cycle-migration` to cover the experiment orchestrator, hypothesis
-  flags, scenario regime labels, baseline compare column, 6 new MCP
-  peers, and deploy-image preflight + cleanup. Immediate-board work,
-  not V2.
-- **QA operator round 6** — 3 tracks in `team/intake/2026-05-19-qa-operator-round-6.md`:
-  `scenario-form-calendar-whitespace` (P2), `scenario-runs-tab-show-eval-name` (P2),
-  `agent-usage-panel-wire-deployed-and-runs` (P1).
-- **Standard list component — phase 2+** — intake at
-  `team/intake/2026-05-19-list-component-design-intake.md`, spec at
-  `docs/superpowers/specs/2026-05-20-standard-list-component.md`
-  (operator-approved 2026-05-20; mobile `<MListSheet>` kept as a
-  narrow, named exemption to the no-popups rule, scoped to phone
-  list filters only). Phase 1 is Active above; phase 2 contracts
-  (`list-migrate-eval-runs`, `list-migrate-strategies`,
-  `list-migrate-decisions-and-tail`) author once phase 1 lands.
-  Phase 3 (`list-component-density-toggle`) is deferred.
+_(empty — next decomposition wave should come through intake; see
+the V2 board for V2A leaves and V2E contracts already laid down.)_
 
 ## Recently Closed
+
+Archived 2026-05-20 (conductor sweep — see `team/archive/2026-05-20-lists-v1-phase-1/`):
+
+- **Lists v1 phase 1** — `list-component-port-desktop` (#390),
+  `list-component-port-mobile` (#395), `list-component-tokens-reconcile`
+  (#396), all merged 2026-05-20. Foundation `<ListCard>` / `useListState`
+  / `<ListToolbar>` / `<ListActiveChips>` (1a), mobile `<MListCard>` /
+  `<MListRow>` / `<MListSheet>` + `CLAUDE.md` no-popups exemption (1b),
+  `<ResponsiveListCard>` wrapper + token audit (1c). Backend-pagination
+  follow-up `{items, total}` envelope across all four list endpoints
+  shipped via #397.
+- **QA operator round 7** — all 9 findings shipped without contract
+  files (intake-direct PRs). Trace wave F-5/F-7 (#385), List wave
+  F-3/F-4 (#386 — recency-first sort + `ListPagination` primitive
+  wired across eval-runs/strategies/scenarios/agents), Eval-inspector
+  wave F-1/F-6/F-8/F-9 (#387), `decision_idx` populate follow-up
+  (#391). F-2 (search/filter) **rolls into phase 2 list migration**
+  rather than a separate quick fix.
+- **QA operator round 6** — `scenario-form-calendar-whitespace` (P2),
+  `scenario-runs-tab-show-eval-name` (P2),
+  `agent-usage-panel-wire-deployed-and-runs` (P1) bundled in #360
+  (2026-05-19, but archived in this sweep for traceability).
+- **Skills refresh** — `xvision-cli`, `xvision-cli-qa`, `xvision-dev`
+  refreshed for new xvn verbs in #379. `cycle-migration` explicitly
+  punted by operator (narrow migration-authoring skill, not in the
+  usage/contribution orientation surface this wave covers). Drift
+  prevention shipped as "skills owner" footers.
 
 Archived 2026-05-19 (conductor sweep — see `team/archive/2026-05-19-sweep/`):
 

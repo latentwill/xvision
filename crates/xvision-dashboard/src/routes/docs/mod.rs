@@ -7,15 +7,20 @@
 //!
 //! ## Source of truth
 //!
-//! Pages live under `docs/xvnwiki/` at the workspace root. The order +
-//! slug + title for each page is declared in `docs/xvnwiki/index.toml`.
+//! Pages live under `crates/xvision-dashboard/wiki/`. The order +
+//! slug + title for each page is declared in `wiki/index.toml`.
 //! The crate's `build.rs` reads that manifest and emits a generated
 //! `PAGES` table to `$OUT_DIR/docs_pages.rs`, which is `include!`'d
 //! below. Every body is embedded via `include_str!` so the binary
 //! carries the content — no runtime filesystem read at startup.
 //!
-//! To add a page: drop `docs/xvnwiki/<slug>.md`, add a `[[page]]` entry
-//! to `docs/xvnwiki/index.toml`, and rebuild. No Rust edits required.
+//! To add a page: drop `wiki/<slug>.md`, add a `[[page]]` entry
+//! to `wiki/index.toml`, and rebuild. No Rust edits required.
+//!
+//! The wiki sits inside the crate (not under repo-root `docs/`)
+//! because `docs/` is gitignored as a dev scratch area and is also
+//! excluded by `.dockerignore`. Keeping the source next to its
+//! consumer prevents deploy-context misses.
 //!
 //! Two endpoints:
 //!
@@ -52,11 +57,7 @@ pub async fn index() -> Json<Vec<DocPageMeta>> {
     Json(
         PAGES
             .iter()
-            .map(|(slug, title, section, _)| DocPageMeta {
-                slug,
-                title,
-                section,
-            })
+            .map(|(slug, title, section, _)| DocPageMeta { slug, title, section })
             .collect(),
     )
 }
@@ -167,7 +168,7 @@ mod tests {
     }
 
     /// Every page must carry a `last_reviewed` date in
-    /// `docs/xvnwiki/index.toml` no older than 90 days. The test runs on
+    /// `wiki/index.toml` no older than 90 days. The test runs on
     /// every PR; when it fails, the right fix is to actually re-read the
     /// page, update it for any drift, and bump the date — not to nudge
     /// the threshold.
@@ -180,13 +181,12 @@ mod tests {
         let stale: Vec<(&str, &str, i64)> = LAST_REVIEWED
             .iter()
             .map(|(slug, date_str)| {
-                let date = NaiveDate::parse_from_str(date_str, "%Y-%m-%d")
-                    .unwrap_or_else(|_| {
-                        panic!(
-                            "build.rs should have rejected invalid \
+                let date = NaiveDate::parse_from_str(date_str, "%Y-%m-%d").unwrap_or_else(|_| {
+                    panic!(
+                        "build.rs should have rejected invalid \
                              last_reviewed `{date_str}` for `{slug}`",
-                        )
-                    });
+                    )
+                });
                 let age = today.signed_duration_since(date).num_days();
                 (*slug, *date_str, age)
             })
@@ -196,14 +196,12 @@ mod tests {
         if !stale.is_empty() {
             let lines: Vec<String> = stale
                 .iter()
-                .map(|(slug, date, age)| {
-                    format!("  - {slug} (last_reviewed {date}, {age} days ago)")
-                })
+                .map(|(slug, date, age)| format!("  - {slug} (last_reviewed {date}, {age} days ago)"))
                 .collect();
             panic!(
                 "{} doc page(s) older than {MAX_AGE_DAYS} days. \
                  Re-read each, fix any drift, and bump `last_reviewed` in \
-                 docs/xvnwiki/index.toml:\n{}",
+                 crates/xvision-dashboard/wiki/index.toml:\n{}",
                 stale.len(),
                 lines.join("\n"),
             );
