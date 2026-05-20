@@ -104,6 +104,31 @@ export function TraceDock() {
   // Decisions derived from spans that carry a decision_idx, deduped and sorted.
   const decisions = useMemo(() => deriveDecisions(q.data?.spans ?? []), [q.data]);
 
+  // F-7 (qa round 7): the Trade quick-filter is enabled iff the run
+  // carries at least one broker.call span. When the executor stage
+  // hasn't emitted a broker submit (intern-only runs, planning runs,
+  // or any cycle that never reached the trader's APPROVED branch) the
+  // button is rendered disabled — the affordance still exists so the
+  // operator knows it's a first-class concept, but a click would be a
+  // no-op.
+  const brokerCallSpans = useMemo(
+    () =>
+      (q.data?.spans ?? []).filter((s) => s.kind === "broker.call"),
+    [q.data?.spans],
+  );
+  const tradeAvailable = brokerCallSpans.length > 0;
+  const onShowTrade = () => {
+    if (!tradeAvailable) return;
+    // Filter the dock to the trade-flow kinds (`broker` + `model`)
+    // and select the first broker.call so the inspector immediately
+    // shows BrokerCall + the trader's decision context. Operator can
+    // step through subsequent brokers via flame-graph clicks; the
+    // model.call rows alongside surface the TraderDecision summaries
+    // via F-5's PAYLOAD REF labels.
+    filter.setKinds(["broker", "model"]);
+    setSelectedSpan(brokerCallSpans[0].span_id);
+  };
+
   const summary = q.data?.summary;
   const isLive = summary?.status === "running";
 
@@ -278,6 +303,45 @@ export function TraceDock() {
           </button>
         </div>
         <div className="ml-auto flex items-center gap-1">
+          {/*
+            F-7 (qa round 7): Trade quick-filter. Investigation: broker.call
+            spans are emitted by `xvision-engine/src/eval/executor/paper.rs`
+            (lines 1073/1103/1145, `emit_broker_call_{started,finished}`)
+            and projected onto `RunSpan.broker_call` by
+            `frontend/web/src/api/agent-runs.ts:178`. Trade events DO reach
+            the trace; the gap operators noticed is that BROKR was not a
+            first-class filter (KIND_ORDER omitted it) and there was no
+            one-click view for the trade flow. The button below sets the
+            kind filter to `broker` + `model` (the trader→broker pair)
+            and selects the first broker.call span so the SpanInspector
+            renders BROKER CALL detail immediately.
+          */}
+          <button
+            type="button"
+            data-testid="trace-dock-trade-button"
+            disabled={!tradeAvailable}
+            onClick={onShowTrade}
+            title={
+              tradeAvailable
+                ? `Jump to the first broker submit (${brokerCallSpans.length} total) and filter to trader→broker spans`
+                : "No broker.call spans in this run — the executor stage never reached a broker submit"
+            }
+            aria-label="trade view"
+            className="h-6 px-1.5 text-[10px] font-mono tracking-[0.14em] flex items-center gap-1 rounded"
+            style={{
+              background: tradeAvailable ? "var(--surface-elev)" : "transparent",
+              border: `1px solid ${tradeAvailable ? "var(--border)" : "var(--border)"}`,
+              color: tradeAvailable ? "var(--text)" : "var(--text-4)",
+              cursor: tradeAvailable ? "pointer" : "not-allowed",
+            }}
+          >
+            <span aria-hidden style={{ color: "#f472b6" }}>$</span>
+            TRADE
+            {tradeAvailable ? (
+              <span className="text-text-3 ml-0.5">{brokerCallSpans.length}</span>
+            ) : null}
+          </button>
+          <span aria-hidden className="opacity-30 px-1">|</span>
           {isLive && summary?.strategy_id ? (
             <HaltStrategyButton
               strategyName={summary.strategy_id}

@@ -4,7 +4,14 @@ import { DecisionJump, type DecisionRef } from "./DecisionJump";
 import { CATEGORY_STYLES, type SpanCategory } from "./span-colors";
 import type { StatusFilter } from "./use-span-filter";
 
-const KIND_ORDER: SpanCategory[] = ["agent", "model", "tool", "supervisor", "artifact"];
+// QA round 7, F-7: the `supervisor` (SUPER) chip is removed — no
+// operator workflow filtered on it. Supervisor-category spans
+// (approval.*, sandbox.exec, supervisor.review, financial.eval,
+// state.transition, recovery.attempt, skill.invoke, ipc.notification —
+// see `span-colors.ts::categoryOf`) remain in the trace and are still
+// queryable via the search input (`title:approval.request`,
+// `kind:supervisor` in the URL/localStorage state).
+const KIND_ORDER: SpanCategory[] = ["agent", "model", "tool", "broker", "artifact"];
 
 const STATUS_DEF: Array<{ k: StatusFilter; glyph: string; tint: string; bg: string; bd: string }> = [
   { k: "green", glyph: "✓", tint: "var(--gold)",   bg: "var(--gold-bg)",         bd: "var(--gold-soft)" },

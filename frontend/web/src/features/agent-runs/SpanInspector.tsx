@@ -12,6 +12,7 @@ import { formatCostUsd, formatCostUsdPrecise } from "@/lib/format";
 import { useTraceDock } from "@/stores/trace-dock";
 import { spanColor, withAlpha } from "./span-colors";
 import { PullQuote } from "./PullQuote";
+import { formatTraceLabel } from "./trace-labels";
 
 type SpanInspectorProps = {
   span: RunSpan;
@@ -126,17 +127,24 @@ export const promptPlaceholderReason = (mode: RetentionMode | undefined): string
 
 /**
  * Inline `<details>` block that fetches the body bytes referenced by
- * `payloadRef` on first expand. The ref string is the visible summary
- * so operators can still see / copy / paste it. Errors land inline as
- * muted text — no popup, per project UI rule.
+ * `payloadRef` on first expand.
+ *
+ * F-5 (qa round 7): the visible `<summary>` now renders a human-readable
+ * label derived from the span (`formatTraceLabel`), not the raw hash.
+ * The hash stays accessible via a small copy button next to the label
+ * so operators can still cross-reference. Errors land inline as muted
+ * text — no popup, per project UI rule.
  */
 function PayloadRefDetails({
   runId,
   payloadRef,
+  label,
   testIdPrefix,
 }: {
   runId: string | null;
   payloadRef: string;
+  /** Human-readable descriptor built by `formatTraceLabel`. */
+  label: string;
   testIdPrefix: string;
 }) {
   const [phase, setPhase] = useState<
@@ -178,8 +186,33 @@ function PayloadRefDetails({
       className="text-[11px] font-mono text-text-2 break-all"
       onToggle={onToggle}
     >
-      <summary className="cursor-pointer select-none">
-        payload ref: <span className="text-text">{payloadRef}</span>
+      <summary className="cursor-pointer select-none flex items-center gap-2 flex-wrap">
+        <span
+          data-testid={`${testIdPrefix}-label`}
+          className="text-text"
+        >
+          {label}
+        </span>
+        <button
+          type="button"
+          // Stop the click from toggling the parent <details> — the
+          // operator wants the hash, not a fetch-on-open side effect.
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            navigator.clipboard?.writeText(payloadRef);
+          }}
+          title={`copy ref · ${payloadRef}`}
+          aria-label="copy payload ref"
+          data-testid={`${testIdPrefix}-copy`}
+          className="h-5 px-1.5 text-[9px] font-mono tracking-[0.14em] rounded text-text-3 hover:text-text"
+          style={{
+            background: "transparent",
+            border: "1px solid var(--border)",
+          }}
+        >
+          COPY REF
+        </button>
       </summary>
       <div className="mt-2 border-l-2 border-border pl-2">
         {phase.kind === "idle" ? (
@@ -364,6 +397,11 @@ export function SpanInspector({
                 <PayloadRefDetails
                   runId={activeRunId}
                   payloadRef={span.prompt_payload_ref}
+                  label={formatTraceLabel({
+                    span,
+                    refKind: "prompt",
+                    ref: span.prompt_payload_ref,
+                  })}
                   testIdPrefix="span-inspector-prompt-ref"
                 />
               ) : (
@@ -452,6 +490,11 @@ export function SpanInspector({
                 <PayloadRefDetails
                   runId={activeRunId}
                   payloadRef={span.response_payload_ref}
+                  label={formatTraceLabel({
+                    span,
+                    refKind: "response",
+                    ref: span.response_payload_ref,
+                  })}
                   testIdPrefix="span-inspector-response-ref"
                 />
               ) : (
