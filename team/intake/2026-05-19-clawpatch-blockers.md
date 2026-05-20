@@ -148,3 +148,32 @@ Verification target:
 
 - Re-run `clawpatch revalidate --finding fnd_sig-feat-test-suite-bb1a90129a-9_8b36947666`
   after a broader fix.
+
+## B-6 - HealthPill generated component tests fail validation
+
+- Finding: `fnd_sig-feat-ui-flow-368150e279-c2d1_425d678994`
+- Severity: low
+- Category: test-gap
+- Status: open in codebase, deferred from the autonomous clawpatch loop
+
+`clawpatch fix` attempted to add
+`frontend/web/src/components/shell/HealthPill.test.tsx`, but the generated
+test file failed clawpatch's validation after applying. The untracked generated
+test file was removed so the autonomous loop could continue from a clean tree.
+
+Recommendation from clawpatch:
+
+- Add focused HealthPill tests that render the component under
+  `QueryClientProvider` with mocked `getHealth` responses for pending/loading,
+  rejected/offline, ok, degraded, and down states, including the title summary
+  built from probes.
+
+Minimum fix scope from clawpatch:
+
+- Add HealthPill-specific component tests; no production code change is
+  required for this finding.
+
+Verification target:
+
+- Re-run `clawpatch revalidate --finding fnd_sig-feat-ui-flow-368150e279-c2d1_425d678994`
+  after a broader fix.
