@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::{TimeZone, Utc};
-use sqlx::SqlitePool;
+use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use xvision_core::market::Ohlcv;
 use xvision_engine::agent::llm::{
     ContentBlock, LlmDispatch, LlmRequest, LlmResponse, MockDispatch, StopReason,
@@ -29,7 +29,11 @@ use xvision_engine::tools::ToolRegistry;
 use xvision_execution::broker_surface::{BrokerSurface, MockBrokerSurface, Side};
 
 async fn pool_with_migration() -> SqlitePool {
-    let pool = SqlitePool::connect(":memory:").await.unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
     sqlx::query(include_str!("../migrations/002_eval.sql"))
         .execute(&pool)
         .await
@@ -67,6 +71,7 @@ fn minimal_strategy() -> Strategy {
 
             min_warmup_bars: None,
         },
+        hypothesis: None,
         agents: Vec::new(),
         pipeline: Default::default(),
         regime_slot: None,
@@ -144,12 +149,43 @@ async fn paper_harness(
     (mock, executor, store, run, strategy, scenario, dispatch, tools)
 }
 
+struct RunningStatusDispatch {
+    store: RunStore,
+    run_id: String,
+    response_text: String,
+}
+
+#[async_trait]
+impl LlmDispatch for RunningStatusDispatch {
+    async fn complete(&self, _req: LlmRequest) -> anyhow::Result<LlmResponse> {
+        let persisted = self.store.get(&self.run_id).await?;
+        assert_eq!(
+            persisted.status,
+            RunStatus::Running,
+            "run must be persisted as Running while dispatch is in progress"
+        );
+        Ok(LlmResponse {
+            content: vec![ContentBlock::Text {
+                text: self.response_text.clone(),
+            }],
+            stop_reason: StopReason::EndTurn,
+            input_tokens: 1,
+            output_tokens: 1,
+        })
+    }
+}
+
 #[tokio::test]
 async fn paper_executor_runs_to_completion() {
     let canned = r#"{"action":"hold","conviction":0.0,"justification":"test mock decision"}"#;
-    let (_mock, executor, store, mut run, strategy, scenario, dispatch, tools) =
+    let (_mock, executor, store, mut run, strategy, scenario, _dispatch, tools) =
         paper_harness(canned, 100_000.0).await;
     let id = run.id.clone();
+    let dispatch: Arc<dyn LlmDispatch> = Arc::new(RunningStatusDispatch {
+        store: store.clone(),
+        run_id: id.clone(),
+        response_text: canned.into(),
+    });
 
     let metrics = executor
         .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)

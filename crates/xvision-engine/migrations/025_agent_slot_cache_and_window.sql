@@ -1,4 +1,4 @@
--- 023_agent_slot_cache_and_window.sql — F-8 rolling history window cap.
+-- 025_agent_slot_cache_and_window.sql — F-8 rolling history window cap.
 --
 -- Adds a per-slot `bar_history_limit` knob so an operator can cap the
 -- number of `bar_history` entries the eval executor surfaces to the

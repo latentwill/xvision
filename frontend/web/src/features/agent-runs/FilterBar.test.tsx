@@ -28,11 +28,23 @@ describe("FilterBar", () => {
     ).toBeInTheDocument();
   });
 
-  test("renders 5 kind chips: AGENT MODEL TOOL SUPER ARTIF", () => {
+  test("renders 5 kind chips: AGENT MODEL TOOL BROKR ARTIF (F-7: SUPER removed)", () => {
     render(<FilterBar {...baseProps} />);
-    ["AGENT", "MODEL", "TOOL", "SUPER", "ARTIF"].forEach((label) => {
+    ["AGENT", "MODEL", "TOOL", "BROKR", "ARTIF"].forEach((label) => {
       expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
     });
+  });
+
+  test("does NOT render the SUPER chip (qa-round-7 F-7)", () => {
+    render(<FilterBar {...baseProps} />);
+    expect(screen.queryByRole("button", { name: "SUPER" })).toBeNull();
+  });
+
+  test("clicking the BROKR chip toggles the broker category", async () => {
+    const props = { ...baseProps, toggleKind: vi.fn() };
+    render(<FilterBar {...props} />);
+    await userEvent.click(screen.getByRole("button", { name: "BROKR" }));
+    expect(props.toggleKind).toHaveBeenCalledWith("broker");
   });
 
   test("clicking a kind chip calls toggleKind with that category", async () => {

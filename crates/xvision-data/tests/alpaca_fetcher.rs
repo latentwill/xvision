@@ -83,6 +83,10 @@ async fn fetch_crypto_bars_single_page() {
 #[tokio::test]
 async fn fetch_crypto_bars_paginated() {
     let server = MockServer::start().await;
+    let start = Utc.with_ymd_and_hms(2024, 2, 3, 0, 0, 0).unwrap();
+    let end = Utc.with_ymd_and_hms(2024, 2, 3, 2, 0, 0).unwrap();
+    let start_rfc3339 = start.to_rfc3339();
+    let end_rfc3339 = end.to_rfc3339();
 
     let page1 = serde_json::json!({
         "bars": {"ETH/USD": [{"t": "2024-02-03T00:00:00Z", "o": 1.0, "h": 1.0, "l": 1.0, "c": 1.0, "v": 1.0}]},
@@ -95,24 +99,27 @@ async fn fetch_crypto_bars_paginated() {
 
     Mock::given(method("GET"))
         .and(path("/v1beta3/crypto/us/bars"))
+        .and(query_param("symbols", "ETH/USD"))
+        .and(query_param("timeframe", "1Hour"))
+        .and(query_param("start", start_rfc3339.as_str()))
+        .and(query_param("end", end_rfc3339.as_str()))
         .and(query_param("page_token", ""))
         .respond_with(ResponseTemplate::new(200).set_body_json(page1))
         .mount(&server)
         .await;
     Mock::given(method("GET"))
         .and(path("/v1beta3/crypto/us/bars"))
+        .and(query_param("symbols", "ETH/USD"))
+        .and(query_param("timeframe", "1Hour"))
+        .and(query_param("start", start_rfc3339.as_str()))
+        .and(query_param("end", end_rfc3339.as_str()))
         .and(query_param("page_token", "TOKEN_2"))
         .respond_with(ResponseTemplate::new(200).set_body_json(page2))
         .mount(&server)
         .await;
 
     let bars = AlpacaBarsFetcher::new(server.uri(), "k".into(), "s".into())
-        .fetch_crypto_bars(
-            "ETH/USD",
-            BarGranularity::Hour1,
-            Utc.with_ymd_and_hms(2024, 2, 3, 0, 0, 0).unwrap(),
-            Utc.with_ymd_and_hms(2024, 2, 3, 2, 0, 0).unwrap(),
-        )
+        .fetch_crypto_bars("ETH/USD", BarGranularity::Hour1, start, end)
         .await
         .unwrap();
 

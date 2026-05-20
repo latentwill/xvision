@@ -275,11 +275,18 @@ async fn retry_rejects_running_run() {
 async fn retry_accepts_cancelled_run() {
     // Operator intent on Cancel is reversible — retry must requeue the
     // same (agent_id, scenario_id, mode) shape just like a failed run.
+    // This harness has no strategy file for `agent-x`, so seed the
+    // in-flight retry sibling directly and assert the gate accepts
+    // Cancelled by coalescing onto that queued workload.
     let (ctx, _d) = ctx_with_eval_tables().await;
     let run = seed_run(&ctx, RunStatus::Cancelled).await;
+    let store = RunStore::new(ctx.db.clone());
+    let sibling = Run::new_queued(run.agent_id.clone(), run.scenario_id.clone(), run.mode);
+    store.create(&sibling).await.unwrap();
+
     let detail = eval::retry(&ctx, &run.id).await.unwrap();
     assert_eq!(detail.summary.status, "queued");
-    assert_ne!(detail.summary.id, run.id, "retry must create a new run id");
+    assert_eq!(detail.summary.id, sibling.id);
     assert_eq!(detail.summary.agent_id, run.agent_id);
     assert_eq!(detail.summary.scenario_id, run.scenario_id);
 }

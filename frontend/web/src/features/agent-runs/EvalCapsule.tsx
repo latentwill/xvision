@@ -9,6 +9,7 @@
 // capsule open.
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Link } from "react-router-dom";
 
 export type EvalCapsuleStatus = "eval" | "pass" | "warn" | "error" | "queued";
 
@@ -81,11 +82,8 @@ function EvalLine({
 }): ReactNode {
   const tok = STATUS[run.status] ?? STATUS.eval;
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={focused}
-      className="h-9 w-full flex items-center gap-3 px-3 text-left transition-colors"
+    <div
+      className="relative h-9 w-full flex items-center gap-3 px-3 text-left transition-colors"
       style={{
         background: focused ? "rgba(212,165,71,0.06)" : "transparent",
         borderLeft: `2px solid ${focused ? "var(--gold)" : "transparent"}`,
@@ -102,20 +100,42 @@ function EvalLine({
         if (!focused) e.currentTarget.style.background = "transparent";
       }}
     >
+      {!focused && onClick && (
+        <button
+          type="button"
+          onClick={onClick}
+          aria-label={`Switch focus to eval run ${run.short}`}
+          className="absolute inset-0 z-0 cursor-pointer border-0 bg-transparent p-0"
+        />
+      )}
       <span
-        className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 ${tok.pulse ? "animate-pulse" : ""}`}
+        className={`relative z-10 pointer-events-none inline-block w-1.5 h-1.5 rounded-full shrink-0 ${tok.pulse ? "animate-pulse" : ""}`}
         style={{ background: tok.tint, boxShadow: `0 0 0 3px ${tok.tint}22` }}
       />
 
-      <span className="flex items-center gap-2 shrink-0">
+      <span className="relative z-10 pointer-events-none flex items-center gap-2 shrink-0">
         <span className="text-[10px] font-mono tracking-[0.18em] text-text-3">EVAL</span>
-        <span className="text-[11px] font-mono" style={{ color: tok.tint }}>{run.short}</span>
+        {/*
+          F-6 (qa-round-7): the short `strategy·scenario` tag routes to the
+          dedicated eval-inspector for this run. Keep it as a sibling of the
+          switch-focus button overlay so the focused row remains navigable and
+          middle-click / cmd-click keep native link behavior.
+        */}
+        <Link
+          to={`/eval-runs/${encodeURIComponent(run.id)}`}
+          onClick={(e) => e.stopPropagation()}
+          className="relative z-20 pointer-events-auto text-[11px] font-mono hover:underline"
+          style={{ color: tok.tint }}
+          aria-label={`Open eval run ${run.short}`}
+        >
+          {run.short}
+        </Link>
         <span className="text-[10px] font-mono tracking-[0.18em] text-text-3">· {tok.label}</span>
       </span>
 
-      <span className="w-px h-4 shrink-0" style={{ background: "var(--border)" }} />
+      <span className="relative z-10 pointer-events-none w-px h-4 shrink-0" style={{ background: "var(--border)" }} />
 
-      <span className="text-text font-mono text-[11px] shrink-0">
+      <span className="relative z-10 pointer-events-none text-text font-mono text-[11px] shrink-0">
         <span className="text-text-3">spans </span>
         <span className="tabular-nums">{run.spans}</span>
         <span className="text-text-4 mx-2">·</span>
@@ -126,8 +146,8 @@ function EvalLine({
 
       {focused && currentSpan && (
         <>
-          <span className="w-px h-4 shrink-0" style={{ background: "var(--border)" }} />
-          <span className="flex items-center gap-1.5 min-w-0 max-w-[260px]">
+          <span className="relative z-10 pointer-events-none w-px h-4 shrink-0" style={{ background: "var(--border)" }} />
+          <span className="relative z-10 pointer-events-none flex items-center gap-1.5 min-w-0 max-w-[260px]">
             <span
               className="w-1.5 h-1.5 rounded-full animate-pulse shrink-0"
               style={{ background: currentSpan.color, boxShadow: `0 0 0 3px ${currentSpan.color}22` }}
@@ -149,11 +169,11 @@ function EvalLine({
       )}
 
       {!focused && (
-        <span className="ml-auto text-[9px] font-mono tracking-[0.18em] text-text-4 shrink-0">
+        <span className="relative z-10 pointer-events-none ml-auto text-[9px] font-mono tracking-[0.18em] text-text-4 shrink-0">
           SWITCH →
         </span>
       )}
-    </button>
+    </div>
   );
 }
 

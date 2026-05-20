@@ -29,7 +29,16 @@ async fn fresh_pool() -> SqlitePool {
     pool
 }
 
-fn slot(name: &str, prompt: &str, skill_ids: Vec<&str>) -> AgentSlot {
+fn long_prompt(body: &str) -> String {
+    format!(
+        "{body}. For SOL-focused agents, keep the SOL market thesis explicit. Before each decision, review scenario context, portfolio exposure, risk limits, \
+         market structure, and recent execution state. Explain the evidence used, the invalidation \
+         level, and the reason the action fits the current conditions. Return only structured JSON \
+         that the evaluator can parse."
+    )
+}
+
+fn slot(name: &str, prompt: impl Into<String>, skill_ids: Vec<&str>) -> AgentSlot {
     AgentSlot {
         name: name.into(),
         provider: "anthropic".into(),
@@ -37,6 +46,7 @@ fn slot(name: &str, prompt: &str, skill_ids: Vec<&str>) -> AgentSlot {
         system_prompt: prompt.into(),
         skill_ids: skill_ids.into_iter().map(String::from).collect(),
         max_tokens: Some(4096),
+        temperature: None,
         prompt_version: String::new(),
         inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
         bar_history_limit: None,
@@ -53,8 +63,10 @@ async fn create_rejects_unregistered_tool_reference() {
             tags: vec![],
             slots: vec![slot(
                 "trader",
-                "You may call `indicator_panel` at most once per decision and pair it \
-                 with the latest `ohlcv_history` window.",
+                long_prompt(
+                    "You may call `indicator_panel` at most once per decision and pair it \
+                     with the latest `ohlcv_history` window.",
+                ),
                 vec![],
             )],
         })
@@ -91,7 +103,9 @@ async fn create_rejects_allowed_actions_with_exit() {
             slots: vec![slot(
                 "trader",
                 // No tool reference here — isolates the schema-enum rule.
-                "Return a JSON decision. Allowed actions: long_open, short_open, flat, hold, exit",
+                long_prompt(
+                    "Return a JSON decision. Allowed actions: long_open, short_open, flat, hold, exit",
+                ),
                 vec![],
             )],
         })
@@ -124,7 +138,7 @@ async fn create_accepts_prompt_when_referenced_tool_is_registered() {
             tags: vec![],
             slots: vec![slot(
                 "trader",
-                "You may call `indicator_panel` at most once per decision.",
+                long_prompt("You may call `indicator_panel` at most once per decision."),
                 vec!["indicator_panel"],
             )],
         })
@@ -141,12 +155,13 @@ async fn create_accepts_prompt_when_referenced_tool_is_registered() {
 #[tokio::test]
 async fn update_enforces_the_same_drift_gate() {
     let store = AgentStore::new(fresh_pool().await);
+    let clean_prompt = long_prompt("Use current scenario context to make disciplined trading decisions.");
     let id = store
         .create(NewAgent {
             name: "clean".into(),
             description: String::new(),
             tags: vec![],
-            slots: vec![slot("trader", "Be careful.", vec![])],
+            slots: vec![slot("trader", clean_prompt.clone(), vec![])],
         })
         .await
         .expect("clean agent persists");
@@ -157,7 +172,7 @@ async fn update_enforces_the_same_drift_gate() {
             UpdateAgent {
                 slots: Some(vec![slot(
                     "trader",
-                    "Allowed actions: long_open, short_open, flat, hold, exit",
+                    long_prompt("Allowed actions: long_open, short_open, flat, hold, exit"),
                     vec![],
                 )]),
                 ..Default::default()
@@ -170,7 +185,7 @@ async fn update_enforces_the_same_drift_gate() {
     // The pre-existing slot must still be intact (validation happens
     // before the DELETE).
     let loaded = store.get(&id).await.unwrap().expect("still there");
-    assert_eq!(loaded.slots[0].system_prompt, "Be careful.");
+    assert_eq!(loaded.slots[0].system_prompt, clean_prompt);
 }
 
 /// Simulates the legacy-seeded case: drift-violating rows that were
@@ -188,7 +203,11 @@ async fn lint_surfaces_legacy_seeded_violations() {
             name: "clean".into(),
             description: String::new(),
             tags: vec![],
-            slots: vec![slot("trader", "Be careful.", vec![])],
+            slots: vec![slot(
+                "trader",
+                long_prompt("Use current scenario context to make disciplined trading decisions."),
+                vec![],
+            )],
         })
         .await
         .unwrap();

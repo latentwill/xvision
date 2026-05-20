@@ -298,16 +298,21 @@ mod tests {
 
     async fn empty_pool() -> SqlitePool {
         let pool = SqlitePool::connect(":memory:").await.unwrap();
+        // Run the full migration set so this test's eval_runs schema
+        // matches what the prod EOD command sees. The previous hand-rolled
+        // setup that include_str!'d only 001 + 002 silently drifted out of
+        // sync the moment migration 014 renamed
+        // `eval_runs.strategy_bundle_hash` → `eval_runs.agent_id`.
+        sqlx::migrate!("../xvision-engine/migrations")
+            .run(&pool)
+            .await
+            .unwrap();
         sqlx::query(include_str!(
-            "../../../xvision-engine/migrations/001_api_audit.sql"
+            "../../../xvision-engine/migrations/014_eval_agent_id.sql"
         ))
         .execute(&pool)
         .await
         .unwrap();
-        sqlx::query(include_str!("../../../xvision-engine/migrations/002_eval.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
         pool
     }
 
@@ -333,6 +338,17 @@ mod tests {
     async fn populated_state_surfaces_runs_and_audit() {
         let pool = empty_pool().await;
         let now = Utc::now();
+        // Seed the parent scenarios row — migration 012 added the FK
+        // from eval_runs.scenario_id to scenarios.id, so the INSERT
+        // below fails with foreign-key violation without this.
+        sqlx::query(
+            "INSERT INTO scenarios (id, source, display_name, body_json, created_at, created_by) \
+             VALUES ('flash-crash-2024-08', 'test', 'Flash crash 2024-08', '{}', ?1, 'test')",
+        )
+        .bind(now.to_rfc3339())
+        .execute(&pool)
+        .await
+        .unwrap();
         // Insert one completed eval run with metrics.
         let metrics = serde_json::json!({
             "total_return_pct": 12.5,

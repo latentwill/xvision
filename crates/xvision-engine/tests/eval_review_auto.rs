@@ -26,6 +26,7 @@ async fn pool_with_migrations() -> SqlitePool {
         include_str!("../migrations/015_eval_decisions_reasoning.sql"),
         include_str!("../migrations/016_eval_reviews.sql"),
         include_str!("../migrations/017_eval_findings_review_columns.sql"),
+        include_str!("../migrations/022_eval_runs_agents_agent_id.sql"),
     ] {
         sqlx::query(sql).execute(&pool).await.unwrap();
     }
@@ -43,6 +44,7 @@ async fn finalized_run(store: &RunStore) -> Run {
         win_rate: 0.55,
         n_trades: 18,
         n_decisions: 60,
+        baselines: None,
     };
     store.begin_running(&r.id).await.unwrap();
     store.finalize(&r.id, &metrics).await.unwrap();

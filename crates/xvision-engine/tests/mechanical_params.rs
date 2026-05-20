@@ -34,6 +34,7 @@ fn manifest_for(template: &str) -> PublicManifest {
 fn strategy_with(template: &str, params: serde_json::Value) -> Strategy {
     Strategy {
         manifest: manifest_for(template),
+        hypothesis: None,
         agents: vec![],
         pipeline: PipelineDef::default(),
         regime_slot: None,

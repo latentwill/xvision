@@ -185,15 +185,39 @@ mod tests {
     /// would get baked into `observability.toml` on the next unrelated
     /// `set --payload-ttl-days 30`. After the fix, `set` reads the
     /// file directly so env vars do not influence what is persisted.
+    ///
+    /// The old version of this test asserted `persisted.mode ==
+    /// HashOnly` against an empty file. That worked when
+    /// `RetentionConfig::default()` was HashOnly. After the
+    /// sibling track flipped the default to FullDebug (so fresh
+    /// installs can debug from the first run), an empty file resolved
+    /// to FullDebug regardless of env, making the test a no-op for the
+    /// regression it was supposed to pin. This version pre-populates
+    /// the file with an explicit non-default mode so the env-leakage
+    /// check has signal again.
     #[test]
     fn set_does_not_persist_env_overrides() {
-        // Sentinel value lets us prove the env var was actually live
-        // for the duration of the test; the persisted file must NOT
-        // reflect it.
         const KEY: &str = "XVISION_OBSERVABILITY_RETENTION";
 
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("observability.toml");
+        let mut initial = ObservabilityConfig::default();
+        initial.retention.mode = RetentionMode::HashOnly;
+        write_config(&path, &initial).unwrap();
+
+        // Pre-populate the file with HashOnly so the env-vs-file
+        // contrast is meaningful. If `set` ever folds env back in, the
+        // env value (FullDebug) will overwrite the file's HashOnly when
+        // we run a flag-only `set` below.
+        {
+            let mut seed = ObservabilityConfig::default();
+            seed.retention.mode = RetentionMode::HashOnly;
+            seed.retention.store_prompts = false;
+            seed.retention.store_responses = false;
+            seed.retention.store_tool_inputs = false;
+            seed.retention.store_tool_outputs = false;
+            write_config(&path, &seed).unwrap();
+        }
 
         // Set the env var, run `set` with a CLI flag that does NOT
         // touch the mode, then immediately remove the env var so this
@@ -224,7 +248,7 @@ mod tests {
         assert_eq!(
             persisted.retention.mode,
             RetentionMode::HashOnly,
-            "env var must NOT have leaked into the persisted mode"
+            "env var must NOT have leaked into the persisted mode (file said HashOnly, env said FullDebug, file should win)"
         );
         assert_eq!(
             persisted.retention.payload_ttl_days, 30,

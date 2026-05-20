@@ -166,10 +166,16 @@ pub async fn list(ctx: &ApiContext) -> ApiResult<Vec<StrategySummary>> {
 async fn list_inner(ctx: &ApiContext) -> ApiResult<Vec<StrategySummary>> {
     let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
     let agent_store = AgentStore::new(ctx.db.clone());
-    let ids = store
+    let mut ids = store
         .list()
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
+    // Most-recent-first default sort. Strategy ids are ULIDs (time-ordered
+    // lexicographically), so a descending sort by id approximates "newest
+    // strategy at the top" without needing a separate created_at column on
+    // the filesystem-backed store. Required by the QA-round-7 list-wave
+    // contract (F-3): every list page in the dashboard defaults to recency.
+    ids.sort_by(|a, b| b.cmp(a));
     let mut out = Vec::with_capacity(ids.len());
     for id in ids {
         let strategy = store

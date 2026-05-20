@@ -482,7 +482,14 @@ impl RunStore {
             sql.push_str(" WHERE ");
             sql.push_str(&conditions.join(" AND "));
         }
-        sql.push_str(" ORDER BY started_at ASC");
+        // Newest first: the dashboard's eval-runs list and every
+        // downstream consumer (the "latest run chart" preview, the
+        // CLI's `xvn eval list`, the QA-round-7 list-wave default-sort
+        // contract) wants most-recent eval runs at the top. Secondary
+        // sort by id keeps the order stable when two runs share a
+        // started_at — ULIDs are lexicographically time-ordered, so id
+        // DESC tracks creation order within the same instant.
+        sql.push_str(" ORDER BY started_at DESC, id DESC");
 
         let mut q = sqlx::query(&sql);
         if let Some(ref h) = filter.agent_id {

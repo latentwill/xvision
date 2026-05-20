@@ -8,7 +8,12 @@ fn top_level_help_and_eval_help_describe_eval_run_as_available() {
         .expect("xvn --help");
     assert!(top.status.success());
     let top_stdout = String::from_utf8(top.stdout).unwrap();
-    assert!(top_stdout.contains("Eval"), "top-level help should list eval");
+    // Match either case — clap renders subcommand names lowercase, but
+    // earlier the description column contained a capitalized variant.
+    assert!(
+        top_stdout.contains("eval") || top_stdout.contains("Eval"),
+        "top-level help should list eval"
+    );
     assert!(top_stdout.contains("doctor"), "top-level help should list doctor");
 
     let eval = Command::new(env!("CARGO_BIN_EXE_xvn"))

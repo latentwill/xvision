@@ -116,6 +116,7 @@ pub mod get {
         /// the parity test below compares the agent to itself and the
         /// export surface can drift silently (review feedback on #189).
         async fn seed_agent_in_strategy_and_completed_run(ctx: &ApiContext) -> (String, String) {
+            let system_prompt = "Use the supplied OHLCV context, risk limits, and scenario metadata to produce a disciplined trading decision. Explain position sizing, invalidation, and risk controls before choosing an action. Avoid placeholders and keep the response grounded in the active market data.";
             let agent = agents_api::create(
                 ctx,
                 CreateAgentRequest {
@@ -126,10 +127,11 @@ pub mod get {
                         name: "main".into(),
                         provider: "openai".into(),
                         model: "gpt-4o-mini".into(),
-                        system_prompt: "Trade.".into(),
+                        system_prompt: system_prompt.into(),
                         skill_ids: vec![],
                         max_tokens: Some(2048),
-                        prompt_version: AgentSlot::compute_prompt_version("Trade."),
+                        temperature: None,
+                        prompt_version: AgentSlot::compute_prompt_version(system_prompt),
                         inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
                         bar_history_limit: None,
                     }],

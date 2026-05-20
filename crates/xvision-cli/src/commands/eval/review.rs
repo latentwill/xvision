@@ -320,6 +320,12 @@ fn dispatch_from_provider(entry: &ProviderEntry) -> Result<Arc<dyn LlmDispatch>,
     })
 }
 
+/// Exposed as `pub(crate)` so sibling modules (e.g. `experiment_run`) can
+/// locate the runtime config without duplicating the env-var override logic.
+pub(crate) fn runtime_config_path_pub(ctx: &ApiContext) -> std::path::PathBuf {
+    runtime_config_path(ctx)
+}
+
 fn runtime_config_path(ctx: &ApiContext) -> std::path::PathBuf {
     if let Ok(p) = std::env::var("XVN_CONFIG_PATH") {
         if !p.is_empty() {
@@ -384,6 +390,7 @@ mod tests {
                     win_rate: 0.55,
                     n_trades: 4,
                     n_decisions: 3,
+                    baselines: None,
                 },
             )
             .await

@@ -16,8 +16,31 @@ fn code(out: &std::process::Output) -> i32 {
 }
 
 fn new_strategy_id(home: &std::path::Path) -> String {
+    let prompt_path = home.join("strategy-prompt.txt");
+    std::fs::write(
+        &prompt_path,
+        "Use the supplied OHLCV context, risk limits, and scenario metadata to produce a disciplined trading decision. Explain position sizing, invalidation, and risk controls before choosing an action. Avoid placeholders and keep the response grounded in active market data.",
+    )
+    .unwrap();
     let out = xvn(
-        &["strategy", "new", "--template", "mean_reversion", "--name", "x"],
+        &[
+            "strategy",
+            "new",
+            "--prompt",
+            prompt_path.to_str().unwrap(),
+            "--name",
+            "x",
+            "--provider",
+            "anthropic",
+            "--model",
+            "claude-sonnet-4-6",
+            "--role",
+            "trader",
+            "--asset",
+            "BTC/USD",
+            "--timeframe",
+            "1h",
+        ],
         home,
     );
     assert_eq!(code(&out), 0, "stderr: {}", String::from_utf8_lossy(&out.stderr));

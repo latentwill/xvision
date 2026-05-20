@@ -12,4 +12,58 @@ describe("MarkdownView", () => {
     expect(link).toHaveAttribute("target", "_blank");
     expect(link).toHaveAttribute("rel", "noopener noreferrer");
   });
+
+  it("does not render raw HTML or preserve dangerous link protocols", () => {
+    const { container } = render(
+      <MarkdownView
+        text={'[bad](javascript:alert(1)) <script>alert("x")</script>'}
+      />,
+    );
+
+    const link = screen.getByRole("link", { name: "bad" });
+    expect(link.getAttribute("href") ?? "").not.toMatch(/^javascript:/i);
+    expect(container.querySelector("script")).not.toBeInTheDocument();
+  });
+
+  it("renders fenced and inline code with code styling", () => {
+    const { container } = render(
+      <MarkdownView text={"Use `inline`.\n\n```ts\nconst value = 1;\n```"} />,
+    );
+
+    expect(screen.getByText("inline")).toHaveClass(
+      "bg-surface-2/70",
+      "font-mono",
+    );
+    expect(screen.getByText(/const value = 1/)).toHaveClass("font-mono");
+    expect(container.querySelector("pre")).toHaveClass(
+      "overflow-x-auto",
+      "bg-surface-2/70",
+    );
+  });
+
+  it("renders GFM tables with table structure and cell styling", () => {
+    render(
+      <MarkdownView
+        text={"| Asset | Weight |\n| --- | ---: |\n| SPY | 60% |"}
+      />,
+    );
+
+    expect(screen.getByRole("table")).toHaveClass("border-collapse");
+    expect(screen.getByRole("columnheader", { name: "Asset" })).toHaveClass(
+      "border",
+      "font-medium",
+    );
+    expect(screen.getByRole("cell", { name: "SPY" })).toHaveClass("border");
+  });
+
+  it("renders paragraphs and ordered lists with expected structure", () => {
+    const { container } = render(
+      <MarkdownView text={"First paragraph.\n\n1. Review\n2. Ship"} />,
+    );
+
+    expect(screen.getByText("First paragraph.").tagName).toBe("P");
+    expect(screen.getByRole("list")).toHaveClass("list-decimal");
+    expect(screen.getAllByRole("listitem")).toHaveLength(2);
+    expect(container.querySelector("p")).toHaveClass("my-1");
+  });
 });

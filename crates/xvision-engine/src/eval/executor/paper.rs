@@ -1496,6 +1496,9 @@ impl PaperExecutor {
             win_rate: 0.0,
             n_trades,
             n_decisions: decision_idx,
+            // PaperExecutor does not have access to the raw bar slice post-hoc,
+            // so baselines cannot be computed for paper-mode runs.
+            baselines: None,
         };
 
         run.actual_input_tokens = Some(total_input_tokens);
@@ -1548,6 +1551,7 @@ mod role_tests {
                 published_at: None,
                 min_warmup_bars: None,
             },
+            hypothesis: None,
             agents: Vec::new(),
             pipeline: PipelineDef::default(),
             regime_slot: None,

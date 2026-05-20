@@ -133,8 +133,67 @@ impl Run {
     }
 }
 
+/// Per-baseline performance numbers for one of the four automatic baselines.
+///
+/// Stored inside `MetricsSummary.baselines` (packed into `metrics_json` on
+/// the `eval_runs` row). No separate DB column or migration is required —
+/// old rows without the key simply deserialize with `baselines: None`.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct BaselineMetrics {
+    /// Total return as a percentage of starting capital. E.g. `6.80` means +6.80%.
+    pub return_pct: f64,
+    /// Annualised Sharpe ratio. `0.0` when flat or < 2 bars.
+    pub sharpe: f64,
+}
+
+/// Strategy outperformance (return_pct delta) versus each of the four baselines.
+/// Positive = the strategy beat the baseline on raw total return.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct BaselineRelative {
+    pub buy_hold: f64,
+    pub always_flat: f64,
+    pub simple_trend: f64,
+    pub simple_mean_reversion: f64,
+}
+
+/// All four automatic baselines computed over the same bar slice the strategy
+/// saw, plus the per-baseline return delta (`strategy_return_pct −
+/// baseline_return_pct`).
+///
+/// Serialized as `{"baselines": ..., "relative_to": ...}` and packed into
+/// `MetricsSummary.baselines` (stored in the existing `metrics_json` column).
+/// No DB migration required; old rows deserialize with `baselines: None`.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct BaselinesReport {
+    pub buy_hold: BaselineMetrics,
+    pub always_flat: BaselineMetrics,
+    pub simple_trend: BaselineMetrics,
+    pub simple_mean_reversion: BaselineMetrics,
+    /// `strategy_return_pct − baseline_return_pct` for each baseline.
+    pub relative_to: BaselineRelative,
+}
+
 /// Headline metrics the eval engine computes after a run completes.
 /// Persisted as `metrics_json` on the `eval_runs` row by `RunStore::finalize`.
+///
+/// The `baselines` field is optional and backward-compatible: old rows that
+/// were finalized before baselines were introduced deserialize with
+/// `baselines: None`. New runs always populate it.
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(
     feature = "ts-export",
@@ -148,4 +207,9 @@ pub struct MetricsSummary {
     pub win_rate: f64,
     pub n_trades: u32,
     pub n_decisions: u32,
+    /// Automatic baseline comparison computed over the same bar slice the
+    /// strategy saw. `None` for old runs that predate baselines support or
+    /// for paper-mode runs where bars are not available post-hoc.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub baselines: Option<BaselinesReport>,
 }

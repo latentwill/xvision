@@ -61,6 +61,10 @@ fn long_open_dispatch() -> Arc<dyn LlmDispatch> {
     ))
 }
 
+fn invalid_dispatch() -> Arc<dyn LlmDispatch> {
+    Arc::new(MockDispatch::echo("definitely not json"))
+}
+
 fn build_strategy(agent_id: &str) -> Strategy {
     Strategy {
         manifest: PublicManifest {
@@ -79,6 +83,7 @@ fn build_strategy(agent_id: &str) -> Strategy {
 
             min_warmup_bars: None,
         },
+        hypothesis: None,
         agents: Vec::new(),
         pipeline: Default::default(),
         regime_slot: None,
@@ -114,6 +119,68 @@ fn scenario_bars(scenario: &Scenario) -> Vec<Ohlcv> {
         i += 1.0;
     }
     bars
+}
+
+#[tokio::test]
+async fn paper_executor_emits_run_failed_on_unparseable_trader_output() {
+    let store = fresh_store().await;
+    let scenario = canonical_scenarios()
+        .into_iter()
+        .find(|s| s.id == "flash-crash-2024-08")
+        .expect("flash-crash-2024-08 scenario must exist");
+    let strategy = build_strategy("01TESTSTRATEGYPROGRESS00000C");
+
+    let mut run = Run::new_queued(strategy.manifest.id.clone(), scenario.id.clone(), RunMode::Paper);
+    store.create(&run).await.unwrap();
+
+    let bus = ProgressBus::new(1024);
+    let mut rx = bus.subscribe();
+    let tx = bus.sender();
+
+    let mock_broker = Arc::new(MockBrokerSurface::new(100_000.0));
+    let broker: Arc<dyn BrokerSurface> = mock_broker;
+    let tools = Arc::new(ToolRegistry::empty());
+    let executor = PaperExecutor::with_bars_and_progress(broker, scenario_bars(&scenario), tx);
+
+    let err = executor
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &[],
+            invalid_dispatch(),
+            tools,
+            &store,
+        )
+        .await
+        .expect_err("invalid trader JSON must fail the paper run");
+    assert!(
+        err.to_string().contains("invalid JSON"),
+        "unexpected error: {err}"
+    );
+
+    use tokio::sync::broadcast::error::TryRecvError;
+    let mut saw_failed = false;
+    let mut saw_completed = false;
+    loop {
+        match rx.try_recv() {
+            Ok(ProgressEvent::RunFailed { run_id, error }) => {
+                assert_eq!(run_id, run.id);
+                assert!(error.contains("invalid JSON"), "unexpected error: {error}");
+                saw_failed = true;
+            }
+            Ok(ProgressEvent::RunCompleted { .. }) => saw_completed = true,
+            Ok(_) => {}
+            Err(TryRecvError::Empty) => break,
+            Err(TryRecvError::Closed) => break,
+            Err(TryRecvError::Lagged(n)) => panic!("bus lagged by {n}"),
+        }
+    }
+    assert!(saw_failed, "expected RunFailed event");
+    assert!(
+        !saw_completed,
+        "RunCompleted must not be emitted on parse failure"
+    );
 }
 
 #[tokio::test]

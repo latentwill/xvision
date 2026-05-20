@@ -13,7 +13,7 @@
 //! and an `error_json` containing the dispatch message. That's the
 //! exact data the trace dock consumes from `/api/agent-runs/<id>`.
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use sqlx::SqlitePool;
@@ -93,6 +93,48 @@ async fn seed_eval_run(pool: &SqlitePool, run_id: &str) {
     .unwrap();
 }
 
+async fn wait_for_persisted_failure(
+    pool: &SqlitePool,
+    bus: &RunEventBus,
+    run_id: &str,
+) -> (Vec<(String, String, Option<String>)>, String) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+
+    loop {
+        bus.quiesce().await;
+
+        let rows: Vec<(String, String, Option<String>)> = sqlx::query_as(
+            "SELECT id, status, error_json FROM spans WHERE run_id = ? AND kind = 'model.call'",
+        )
+        .bind(run_id)
+        .fetch_all(pool)
+        .await
+        .unwrap();
+        let run_status: Option<String> = sqlx::query_scalar("SELECT status FROM agent_runs WHERE id = ?")
+            .bind(run_id)
+            .fetch_optional(pool)
+            .await
+            .unwrap();
+
+        if rows.len() == 1
+            && rows[0].1 == "error"
+            && rows[0]
+                .2
+                .as_deref()
+                .is_some_and(|error| error.contains("EOF while parsing") && error.contains("[unclassified]"))
+            && run_status.as_deref() == Some("failed")
+        {
+            return (rows, run_status.unwrap());
+        }
+
+        if tokio::time::Instant::now() >= deadline {
+            panic!("timed out waiting for persisted failed run; rows: {rows:?}, run_status: {run_status:?}");
+        }
+
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
 /// QA finding: a failing LLM dispatch from an eval run produces a
 /// span row with `status='error'` and an `error_json` carrying the
 /// dispatch's error message. `SpanInspector.parseErrorJson`
@@ -147,23 +189,10 @@ async fn failing_dispatch_emits_error_span_with_message() {
         .emit_run_finished(RunStatus::Failed, Some("dispatch failed".to_string()))
         .await;
 
-    // Drain the bus and yield enough times for the consumer task to
-    // process every queued event. `quiesce()` is a single
-    // `yield_now`; multi-event tests need a longer settle.
-    for _ in 0..50 {
-        bus.quiesce().await;
-        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
-    }
-
     // Inspect the spans table. Exactly one ModelCall span should be
     // present, with status='error' and error_json containing the
     // dispatch's message text.
-    let rows: Vec<(String, String, Option<String>)> =
-        sqlx::query_as("SELECT id, status, error_json FROM spans WHERE run_id = ? AND kind = 'model.call'")
-            .bind(run_id)
-            .fetch_all(&pool.pool)
-            .await
-            .unwrap();
+    let (rows, run_status) = wait_for_persisted_failure(&pool.pool, &bus, run_id).await;
     assert_eq!(rows.len(), 1, "exactly one span recorded, got: {rows:?}");
     let (_span_id, status, error_json) = &rows[0];
     assert_eq!(status, "error", "span status must be 'error'");
@@ -178,11 +207,6 @@ async fn failing_dispatch_emits_error_span_with_message() {
     );
 
     // And the run row reflects 'failed'.
-    let run_status: String = sqlx::query_scalar("SELECT status FROM agent_runs WHERE id = ?")
-        .bind(run_id)
-        .fetch_one(&pool.pool)
-        .await
-        .unwrap();
     assert_eq!(run_status, "failed");
 }
 

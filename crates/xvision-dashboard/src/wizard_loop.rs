@@ -1221,6 +1221,7 @@ impl WizardLoop {
             .filter(|s| !s.is_empty())
             .or_else(|| prompt_for_strategy_role(&strategy, &role))
             .unwrap_or_default();
+        let skill_ids = tools_for_strategy_role(&strategy, &role);
         let agent = api_agents::create(
             &self.api_context,
             api_agents::CreateAgentRequest {
@@ -1235,11 +1236,12 @@ impl WizardLoop {
                     provider: provider.clone(),
                     model: model.clone(),
                     system_prompt,
-                    skill_ids: vec![],
+                    skill_ids,
                     // Default to "auto from model"; the dispatcher
                     // resolves this from the model's metadata at
                     // request time (q15 §1).
                     max_tokens: None,
+                    temperature: None,
                     prompt_version: String::new(),
                     inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
                     bar_history_limit: None,
@@ -1325,6 +1327,32 @@ fn prompt_for_strategy_role(strategy: &xvision_engine::strategies::Strategy, rol
         return strategy.regime_slot.as_ref().map(|slot| slot.prompt.clone());
     }
     None
+}
+
+fn tools_for_strategy_role(strategy: &xvision_engine::strategies::Strategy, role: &str) -> Vec<String> {
+    let role = role.trim().to_ascii_lowercase();
+    if role == "trader" {
+        return strategy
+            .trader_slot
+            .as_ref()
+            .map(|slot| slot.allowed_tools.clone())
+            .unwrap_or_default();
+    }
+    if role == "intern" {
+        return strategy
+            .intern_slot
+            .as_ref()
+            .map(|slot| slot.allowed_tools.clone())
+            .unwrap_or_default();
+    }
+    if role == "regime" {
+        return strategy
+            .regime_slot
+            .as_ref()
+            .map(|slot| slot.allowed_tools.clone())
+            .unwrap_or_default();
+    }
+    Vec::new()
 }
 
 fn strategy_resolution_json(strategy: &api_strategy::StrategySummary) -> serde_json::Value {

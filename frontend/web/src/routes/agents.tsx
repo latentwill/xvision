@@ -15,6 +15,10 @@ import { Icon } from "@/components/primitives/Icon";
 import { AgentList } from "@/components/agent/AgentList";
 import { agentKeys, listAgents, type Agent } from "@/api/agents";
 import { ApiError } from "@/api/client";
+import {
+  ListPagination,
+  useListPagination,
+} from "@/components/primitives/ListPagination";
 
 export function AgentsRoute() {
   const [includeArchived, setIncludeArchived] = useState(false);
@@ -31,6 +35,12 @@ export function AgentsRoute() {
         q: search || undefined,
       }),
   });
+
+  // QA-round-7 list wave (F-4): agents already come back sorted
+  // updated_at DESC from the agent store (crates/xvision-engine/src/agents/store.rs),
+  // so the slice here is "most-recently-touched N agents."
+  const items = q.data ?? [];
+  const pagination = useListPagination(items);
 
   return (
     <>
@@ -51,9 +61,18 @@ export function AgentsRoute() {
         ) : (q.data ?? []).length === 0 ? (
           <EmptyState />
         ) : (
-          <AgentList items={q.data ?? []} />
+          <AgentList items={pagination.visible} />
         )}
       </Card>
+
+      <ListPagination
+        total={pagination.total}
+        page={pagination.page}
+        pageSize={pagination.pageSize}
+        onPageChange={pagination.setPage}
+        onPageSizeChange={pagination.setPageSize}
+        itemLabel="agents"
+      />
     </>
   );
 }

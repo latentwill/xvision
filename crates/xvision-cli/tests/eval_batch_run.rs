@@ -63,6 +63,12 @@ async fn ctx_with_tables() -> (ApiContext, tempfile::TempDir) {
     .execute(&pool)
     .await
     .unwrap();
+    sqlx::query(include_str!(
+        "../../xvision-engine/migrations/022_eval_runs_agents_agent_id.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
 
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("strategies")).unwrap();
@@ -93,6 +99,7 @@ async fn save_test_strategy(ctx: &ApiContext, agent_id: &str) {
             published_at: None,
             min_warmup_bars: None,
         },
+        hypothesis: None,
         agents: Vec::new(),
         pipeline: Default::default(),
         regime_slot: None,
@@ -347,6 +354,12 @@ async fn ctx_with_review_migrations() -> (ApiContext, tempfile::TempDir) {
     // Batch persistence (021) — required for run_batch's create_batch call.
     sqlx::query(include_str!(
         "../../xvision-engine/migrations/021_eval_batches.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(include_str!(
+        "../../xvision-engine/migrations/022_eval_runs_agents_agent_id.sql"
     ))
     .execute(&pool)
     .await

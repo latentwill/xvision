@@ -42,7 +42,9 @@ fn seed_strategy_with_trader(
     let home = home.to_path_buf();
     let strategy_name = strategy_name.to_string();
     let role = role.to_string();
-    let system_prompt = system_prompt.to_string();
+    let system_prompt = format!(
+        "{system_prompt} Use the supplied OHLCV context, risk limits, and scenario metadata to produce a disciplined trading decision. Explain position sizing, invalidation, and risk controls before choosing an action. Avoid placeholders and keep the response grounded in active market data."
+    );
 
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -73,6 +75,7 @@ fn seed_strategy_with_trader(
                     system_prompt,
                     skill_ids: vec![],
                     max_tokens: Some(1024),
+                    temperature: None,
                     prompt_version: String::new(),
                     inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
                     bar_history_limit: None,
@@ -115,6 +118,7 @@ fn seed_strategy_with_trader(
             trader_slot: None,
             risk: RiskPreset::Balanced.expand(),
             mechanical_params: serde_json::json!({}),
+            hypothesis: None,
         };
 
         let store = FilesystemStore::new(strategy_store_dir(&home));

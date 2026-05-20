@@ -29,6 +29,7 @@ fn strategy_with_id(id: &str) -> Strategy {
             published_at: None,
             min_warmup_bars: None,
         },
+        hypothesis: None,
         agents: vec![],
         pipeline: Default::default(),
         regime_slot: None,

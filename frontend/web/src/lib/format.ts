@@ -33,6 +33,13 @@ export function formatCostUsd(value: number | null | undefined): string {
 }
 
 /**
+ * Spec alias used by callers that follow the
+ * `formatUsdCost(value)` naming from the QA round-7 intake. Delegates to
+ * `formatCostUsd` so the precision rules stay defined in one place.
+ */
+export const formatUsdCost = formatCostUsd;
+
+/**
  * Full-precision USD string for tooltips. Renders up to 12 fraction
  * digits with trailing zeros trimmed so the operator can confirm the
  * exact paid amount on hover (e.g. "$0.00000123" rather than guessing

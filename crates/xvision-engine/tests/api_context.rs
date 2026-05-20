@@ -215,6 +215,7 @@ async fn api_context_open_accepts_already_renamed_eval_agent_schema() {
             win_rate: 0.6,
             n_trades: 2,
             n_decisions: 3,
+            baselines: None,
         },
         tokens_used: TokensUsed {
             input: 10,

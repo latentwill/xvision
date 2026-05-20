@@ -1,0 +1,105 @@
+# In-app docs manifest.
+#
+# Edit this file + drop a sibling `<slug>.md` to add a baked page to the
+# dashboard's `/docs` route. The `build.rs` in `crates/xvision-dashboard`
+# reads this manifest at build time and generates the `PAGES` table
+# consumed by `crates/xvision-dashboard/src/routes/docs/mod.rs`.
+#
+# No runtime filesystem read — the content is `include_str!`'d into the
+# binary at compile time. The deployed image carries every page.
+#
+# Order matters: this is the sidebar render order. The `section` field
+# groups pages under a header in the sidebar; pages with the same
+# `section` value are kept together and the section label is preserved
+# in the order it first appears.
+
+[[page]]
+slug = "quickstart"
+title = "Quickstart"
+section = "Quickstart"
+last_reviewed = "2026-05-20"
+path = "quickstart.md"
+
+[[page]]
+slug = "strategies"
+title = "Strategies"
+section = "Concepts"
+last_reviewed = "2026-05-20"
+path = "strategies.md"
+
+[[page]]
+slug = "agents"
+title = "Agents"
+section = "Concepts"
+last_reviewed = "2026-05-20"
+path = "agents.md"
+
+[[page]]
+slug = "providers"
+title = "Providers & Brokers"
+section = "Concepts"
+last_reviewed = "2026-05-20"
+path = "providers.md"
+
+[[page]]
+slug = "scenarios"
+title = "Scenarios"
+section = "Concepts"
+last_reviewed = "2026-05-20"
+path = "scenarios.md"
+
+[[page]]
+slug = "eval-runs"
+title = "Eval Runs"
+section = "Concepts"
+last_reviewed = "2026-05-20"
+path = "eval-runs.md"
+
+[[page]]
+slug = "experiments"
+title = "Experiments"
+section = "Concepts"
+last_reviewed = "2026-05-20"
+path = "experiments.md"
+
+[[page]]
+slug = "cli-reference"
+title = "CLI Reference"
+section = "CLI"
+last_reviewed = "2026-05-20"
+path = "cli-reference.md"
+
+[[page]]
+slug = "driving-xvn-as-an-agent"
+title = "Driving xvn as an agent"
+section = "Agent"
+last_reviewed = "2026-05-20"
+path = "driving-xvn-as-an-agent.md"
+
+[[page]]
+slug = "mcp"
+title = "MCP surface"
+section = "Agent"
+last_reviewed = "2026-05-20"
+path = "mcp.md"
+
+[[page]]
+slug = "operator-manual"
+title = "Operator Manual"
+section = "Operator"
+last_reviewed = "2026-05-20"
+path = "operator-manual.md"
+
+[[page]]
+slug = "cli-non-surfaced"
+title = "Why some commands aren't in xvn"
+section = "Operator"
+last_reviewed = "2026-05-20"
+path = "cli-non-surfaced.md"
+
+[[page]]
+slug = "runbook"
+title = "Operator Runbook"
+section = "Operator"
+last_reviewed = "2026-05-20"
+path = "runbook.md"

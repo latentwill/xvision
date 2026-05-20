@@ -126,6 +126,7 @@ async fn strategies_list_returns_seeded_strategy() {
 
                 min_warmup_bars: None,
             },
+            hypothesis: None,
             agents: Vec::new(),
             pipeline: Default::default(),
             regime_slot: None,
@@ -588,6 +589,7 @@ async fn eval_compare_returns_report_for_seeded_runs() {
         win_rate: 0.55,
         n_trades: 4,
         n_decisions: 8,
+        baselines: None,
     };
     store.finalize(&run_a.id, &metrics).await.unwrap();
     store.finalize(&run_b.id, &metrics).await.unwrap();
@@ -1150,6 +1152,7 @@ async fn strategy_chart_returns_empty_run_series_for_unused_strategy() {
 
                 min_warmup_bars: None,
             },
+            hypothesis: None,
             agents: Vec::new(),
             pipeline: Default::default(),
             regime_slot: None,

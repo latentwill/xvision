@@ -261,6 +261,8 @@ pub enum Command {
     Example(commands::example::ExampleCmd),
     /// Agent-run observability operations (retention, janitor).
     Obs(commands::obs::ObsCmd),
+    /// Experiment ledger: group research questions + strategies + scenarios.
+    Experiment(commands::experiment::ExperimentCmd),
     /// Agent-run inspection — materialize `xvn_run.json` + `xvn_report.md`
     /// for a finished run by reading the SQLite ledger.
     Run(commands::run::RunCmd),
@@ -371,6 +373,7 @@ impl Cli {
             Command::Example(cmd) => commands::example::run(cmd).await,
             Command::Obs(cmd) => commands::obs::run(cmd).await.map_err(Into::into),
             Command::Run(cmd) => commands::run::run(cmd).await,
+            Command::Experiment(cmd) => commands::experiment::run(cmd).await,
         }
     }
 }

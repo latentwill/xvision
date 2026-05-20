@@ -286,7 +286,7 @@ impl AgentStore {
             // on a future typo.
             let inputs_policy_s: String = row.try_get("inputs_policy").unwrap_or_default();
             let inputs_policy = InputsPolicy::parse_or_raw(&inputs_policy_s);
-            // `bar_history_limit` was added in migration 022 as a
+            // `bar_history_limit` was added in migration 025 as a
             // NULLable INTEGER. `None` (the default) preserves today's
             // behavior; non-positive ints are treated as `None` so a
             // stray `0` can't accidentally clear the trader's view.
@@ -324,7 +324,7 @@ async fn insert_slot(
     // column is a true content digest, not free-text metadata. See F-3.
     let prompt_version = AgentSlot::compute_prompt_version(&slot.system_prompt);
     // F-8: `bar_history_limit` persists as a NULLable INTEGER
-    // (migration 022). `None` and non-positive ints both map to SQL
+    // (migration 025). `None` and non-positive ints both map to SQL
     // NULL so the read path's "Some(0) → None" normalisation has a
     // round-trippable wire form.
     let bar_history_limit_db: Option<i64> =
@@ -398,11 +398,11 @@ mod tests {
         // 020 adds agent_slots.inputs_policy (F-6 causal sanitization).
         let migration_020 = include_str!("../../migrations/020_agent_slot_inputs_policy.sql");
         sqlx::query(migration_020).execute(&pool).await.unwrap();
-        // 023 adds agent_slots.bar_history_limit (F-8 rolling-window
+        // 025 adds agent_slots.bar_history_limit (F-8 rolling-window
         // cap + provider prompt cache). AgentStore::insert_slot now
         // writes this column on every save.
-        let migration_023 = include_str!("../../migrations/023_agent_slot_cache_and_window.sql");
-        sqlx::query(migration_023).execute(&pool).await.unwrap();
+        let migration_025 = include_str!("../../migrations/025_agent_slot_cache_and_window.sql");
+        sqlx::query(migration_025).execute(&pool).await.unwrap();
         pool
     }
 

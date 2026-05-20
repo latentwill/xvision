@@ -91,4 +91,19 @@ describe("TraceDock", () => {
     expect(screen.queryByText("s1")).not.toBeInTheDocument();
     expect(await screen.findByText("s3")).toBeInTheDocument();
   });
+
+  test("Trade button (F-7) renders disabled when no broker.call spans are present", async () => {
+    // MOCK_RUN_COMPLETED has no broker.call span — the affordance still
+    // appears so the operator knows the concept exists, but a click is
+    // a no-op. The disabled state surfaces the *reason* via title.
+    useTraceDock.setState({ activeRunId: "run_abc1234", height: "working" });
+    renderDock();
+    await screen.findByTestId("trace-dock-body");
+    const btn = screen.getByTestId("trace-dock-trade-button");
+    expect(btn).toBeDisabled();
+    expect(btn).toHaveAttribute(
+      "title",
+      expect.stringContaining("No broker.call spans"),
+    );
+  });
 });

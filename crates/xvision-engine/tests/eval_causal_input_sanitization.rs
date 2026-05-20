@@ -49,9 +49,11 @@ fn sample_slot(policy: InputsPolicy) -> AgentSlot {
         name: "trader".into(),
         provider: "anthropic".into(),
         model: "claude-sonnet-4-6".into(),
-        system_prompt: "Decide.".into(),
+        system_prompt: "Trade BTC/USD using only the market data, portfolio state, risk limits, and tool results provided in the current evaluation payload. Before acting, compare trend, volatility, drawdown, position exposure, and recent execution context. Return a structured decision with explicit evidence, invalidation level, and risk-aware sizing."
+            .into(),
         skill_ids: vec![],
         max_tokens: Some(4096),
+        temperature: None,
         prompt_version: String::new(),
         inputs_policy: policy,
         bar_history_limit: None,

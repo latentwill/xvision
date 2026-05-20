@@ -16,6 +16,7 @@ export type EvalRunLabels = {
   title: string;
   subtitle: string;
   runId: string;
+  shortRunId: string;
   strategyId: string;
   scenarioId: string;
 };
@@ -33,6 +34,7 @@ export function evalRunLabels(
     title: `${strategyName} on ${scenarioName}`,
     subtitle: `${summary.mode} · ${summary.status}`,
     runId: summary.id,
+    shortRunId: shortId(summary.id, 10),
     strategyId: summary.agent_id,
     scenarioId: summary.scenario_id,
   };

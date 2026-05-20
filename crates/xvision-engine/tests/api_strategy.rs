@@ -75,7 +75,8 @@ async fn create_sample_agent(ctx: &ApiContext, name: &str) -> xvision_engine::ag
                 name: "main".into(),
                 provider: "openai".into(),
                 model: "gpt-4.1-mini".into(),
-                system_prompt: "Trade carefully.".into(),
+                system_prompt: "Review the strategy manifest, scenario context, portfolio exposure, and risk limits before making any trading recommendation. Explain the evidence for the role-specific action, identify invalidation conditions, and return structured output that downstream pipeline tests can consume."
+                    .into(),
                 skill_ids: vec![],
                 max_tokens: Some(1024),
                 temperature: None,
@@ -165,6 +166,7 @@ async fn list_returns_summaries_for_existing_strategys() {
 
             min_warmup_bars: None,
         },
+        hypothesis: None,
         agents: Vec::new(),
         pipeline: xvision_engine::strategies::PipelineDef::default(),
         regime_slot: None,

@@ -11,6 +11,8 @@ import {
 } from "@/features/decisions/positions";
 import { isInflightRunStatus } from "@/lib/run-status";
 import type { EvalRunLabels } from "@/lib/run-display";
+import { formatCostUsd } from "@/lib/format";
+import type { Agent } from "@/api/agents";
 import type {
   DecisionRowDto,
   EquityPoint,
@@ -65,6 +67,9 @@ export function MobileEvalRunDetail({
   detail,
   labels,
   disambiguator,
+  agents,
+  agentsAll,
+  totalCostUsd,
   onCancel,
   cancelling,
   onRetry,
@@ -75,6 +80,9 @@ export function MobileEvalRunDetail({
   detail: RunDetail;
   labels: EvalRunLabels;
   disambiguator: string;
+  agents: { agent_id: string; role: string }[];
+  agentsAll: Agent[];
+  totalCostUsd: number | null;
   onCancel: () => void;
   cancelling: boolean;
   onRetry: () => void;
@@ -118,6 +126,9 @@ export function MobileEvalRunDetail({
             detail={detail}
             labels={labels}
             disambiguator={disambiguator}
+            agents={agents}
+            agentsAll={agentsAll}
+            totalCostUsd={totalCostUsd}
             isLive={isLive}
             liveDuration={liveDuration}
             onRetry={onRetry}
@@ -259,6 +270,9 @@ function SummaryTab({
   detail,
   labels,
   disambiguator,
+  agents,
+  agentsAll,
+  totalCostUsd,
   isLive,
   liveDuration,
   onRetry,
@@ -269,6 +283,9 @@ function SummaryTab({
   detail: RunDetail;
   labels: EvalRunLabels;
   disambiguator: string;
+  agents: { agent_id: string; role: string }[];
+  agentsAll: Agent[];
+  totalCostUsd: number | null;
   isLive: boolean;
   liveDuration: number;
   onRetry: () => void;
@@ -304,6 +321,15 @@ function SummaryTab({
         </div>
       </div>
 
+      <MobileContextStrip
+        strategyId={summary.agent_id}
+        strategyName={labels.strategyName}
+        scenarioId={summary.scenario_id}
+        scenarioName={labels.scenarioName}
+        agents={agents}
+        agentsAll={agentsAll}
+      />
+
       {isLive && (
         <ActivityCard
           liveDuration={liveDuration}
@@ -336,6 +362,11 @@ function SummaryTab({
           label="WIN RATE"
           value={winRate(decisions).value}
           sub={winRate(decisions).sub}
+        />
+        <Stat
+          label="COST"
+          value={formatCostUsd(totalCostUsd)}
+          sub="inference"
         />
       </div>
 
@@ -436,6 +467,75 @@ function ActivityCard({
         />
       </div>
     </div>
+  );
+}
+
+function MobileContextStrip({
+  strategyId,
+  strategyName,
+  scenarioId,
+  scenarioName,
+  agents,
+  agentsAll,
+}: {
+  strategyId: string;
+  strategyName: string;
+  scenarioId: string;
+  scenarioName: string;
+  agents: { agent_id: string; role: string }[];
+  agentsAll: Agent[];
+}) {
+  const agentNameById = new Map(agentsAll.map((a) => [a.agent_id, a.name]));
+  return (
+    <div
+      data-testid="mobile-eval-inspector-context-strip"
+      className="flex flex-wrap items-center gap-1.5 rounded-card border border-border-soft bg-surface px-2.5 py-2"
+    >
+      <MobileContextPill
+        kind="Strategy"
+        to={`/strategies/${encodeURIComponent(strategyId)}`}
+        label={strategyName}
+        idForAria={strategyId}
+      />
+      <MobileContextPill
+        kind="Scenario"
+        to={`/scenarios/${encodeURIComponent(scenarioId)}`}
+        label={scenarioName}
+        idForAria={scenarioId}
+      />
+      {agents.map((ref) => (
+        <MobileContextPill
+          key={`${ref.agent_id}:${ref.role}`}
+          kind={ref.role}
+          to={`/agents/${encodeURIComponent(ref.agent_id)}`}
+          label={agentNameById.get(ref.agent_id) ?? ref.agent_id}
+          idForAria={ref.agent_id}
+        />
+      ))}
+    </div>
+  );
+}
+
+function MobileContextPill({
+  kind,
+  to,
+  label,
+  idForAria,
+}: {
+  kind: string;
+  to: string;
+  label: string;
+  idForAria: string;
+}) {
+  return (
+    <Link
+      to={to}
+      aria-label={`Open ${kind} ${label} (${idForAria})`}
+      className="inline-flex max-w-full items-center gap-1 rounded-sm border border-border-soft px-2 py-1 font-mono text-[10px] text-text-2 hover:border-gold/50 hover:text-text"
+    >
+      <span className="uppercase tracking-[0.16em] text-text-3">{kind}</span>
+      <span className="truncate">{label}</span>
+    </Link>
   );
 }
 

@@ -21,6 +21,7 @@ pub mod agents;
 pub mod audit;
 pub mod chart;
 pub mod eval;
+pub mod experiment;
 pub mod health;
 pub mod scenario;
 pub mod search;
@@ -54,8 +55,12 @@ const MIGRATION_020_AGENT_SLOT_INPUTS_POLICY: &str =
 const MIGRATION_021_EVAL_BATCHES: &str = include_str!("../../migrations/021_eval_batches.sql");
 const MIGRATION_022_EVAL_RUNS_AGENTS_AGENT_ID: &str =
     include_str!("../../migrations/022_eval_runs_agents_agent_id.sql");
-const MIGRATION_023_AGENT_SLOT_CACHE_AND_WINDOW: &str =
-    include_str!("../../migrations/023_agent_slot_cache_and_window.sql");
+const MIGRATION_024_SCENARIO_REGIME_LABELS: &str =
+    include_str!("../../migrations/024_scenario_regime_labels.sql");
+const MIGRATION_023_HYPOTHESIS_AND_EXPERIMENTS: &str =
+    include_str!("../../migrations/023_hypothesis_and_experiments.sql");
+const MIGRATION_025_AGENT_SLOT_CACHE_AND_WINDOW: &str =
+    include_str!("../../migrations/025_agent_slot_cache_and_window.sql");
 
 /// Map of cache_key → per-key mutex used by `eval::bars::load_bars` to
 /// serialize concurrent misses for the same window. Kept inside an outer
@@ -180,6 +185,8 @@ impl ApiContext {
         migrate_agent_slot_inputs_policy(&pool).await?;
         migrate_eval_batches(&pool).await?;
         migrate_eval_runs_agents_agent_id(&pool).await?;
+        migrate_scenario_regime_labels(&pool).await?;
+        migrate_hypothesis_and_experiments(&pool).await?;
         migrate_agent_slot_cache_and_window(&pool).await?;
 
         let ctx = Self::new(pool, actor, xvn_home.to_path_buf());
@@ -520,14 +527,14 @@ async fn migrate_agent_slot_inputs_policy(pool: &SqlitePool) -> ApiResult<()> {
 }
 
 /// Apply the `agent_slots.bar_history_limit` column add from migration
-/// 023 (F-8 rolling-window cap + opt-in prompt cache). Same
+/// 025 (F-8 rolling-window cap + opt-in prompt cache). Same
 /// probe-then-apply pattern as 019 / 020. SQLite has no
 /// `ALTER TABLE ADD COLUMN IF NOT EXISTS`, so we gate on the column
 /// probe to keep `ApiContext::open` idempotent on an already-
 /// initialized home.
 async fn migrate_agent_slot_cache_and_window(pool: &SqlitePool) -> ApiResult<()> {
     if !table_has_column(pool, "agent_slots", "bar_history_limit").await? {
-        sqlx::query(MIGRATION_023_AGENT_SLOT_CACHE_AND_WINDOW)
+        sqlx::query(MIGRATION_025_AGENT_SLOT_CACHE_AND_WINDOW)
             .execute(pool)
             .await?;
     }
@@ -565,6 +572,36 @@ async fn migrate_eval_batches(pool: &SqlitePool) -> ApiResult<()> {
 async fn migrate_eval_runs_agents_agent_id(pool: &SqlitePool) -> ApiResult<()> {
     if !table_has_column(pool, "eval_runs", "agents_agent_id").await? {
         sqlx::query(MIGRATION_022_EVAL_RUNS_AGENTS_AGENT_ID)
+            .execute(pool)
+            .await?;
+    }
+
+    Ok(())
+}
+
+/// Apply migration 022: four regime-label columns on the `scenarios` table.
+/// Gated on column absence so the migration is idempotent on already-upgraded
+/// databases.  All four columns are added atomically (or skipped if already
+/// present) using the same `table_has_column` probe used by prior migrations.
+async fn migrate_scenario_regime_labels(pool: &SqlitePool) -> ApiResult<()> {
+    if table_has_column(pool, "scenarios", "regime_label").await? {
+        // Column present → migration already applied; skip.
+        return Ok(());
+    }
+    sqlx::query(MIGRATION_024_SCENARIO_REGIME_LABELS)
+        .execute(pool)
+        .await
+        .map_err(|e| ApiError::Internal(format!("migrate_scenario_regime_labels: {e}")))?;
+    Ok(())
+}
+
+/// Apply migration 023: `experiments` table.
+/// Gated on `experiments` not existing so the migration is idempotent on
+/// already-upgraded databases. The hypothesis struct field is stored in the
+/// strategy JSON file (not in SQLite), so there is no ALTER TABLE here.
+async fn migrate_hypothesis_and_experiments(pool: &SqlitePool) -> ApiResult<()> {
+    if !table_exists(pool, "experiments").await? {
+        sqlx::query(MIGRATION_023_HYPOTHESIS_AND_EXPERIMENTS)
             .execute(pool)
             .await?;
     }

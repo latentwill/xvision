@@ -15,8 +15,8 @@ allowed_paths:
   - crates/xvision-engine/src/agents/**                         # add bar_history_limit + cache_prefix to AgentSlot
   - crates/xvision-engine/src/eval/executor/paper.rs            # apply bar_history_limit slice
   - crates/xvision-engine/src/eval/executor/backtest.rs         # apply bar_history_limit slice
-  - crates/xvision-engine/migrations/023_agent_slot_cache_and_window.sql       # NEW (if migration needed for bar_history_limit)
-  - crates/xvision-engine/migrations/023_agent_slot_cache_and_window.down.sql  # NEW
+  - crates/xvision-engine/migrations/025_agent_slot_cache_and_window.sql       # NEW (if migration needed for bar_history_limit)
+  - crates/xvision-engine/migrations/025_agent_slot_cache_and_window.down.sql  # NEW
   - team/MANIFEST.md
   - crates/xvision-engine/tests/**
 forbidden_paths:
@@ -34,7 +34,7 @@ verification:
   - cargo test -p xvision-engine eval::executor
   - cargo test -p xvision-engine agent::llm
 acceptance:
-  - **Rolling window**: extend `AgentSlot` with `bar_history_limit: Option<u32>` (None → keep current behavior of sending the full configured window). When `Some(n)`, paper.rs/backtest.rs slice the `bar_history` JSON to the most-recent `n` bars before passing to `bar_seed`. Migration 022 adds the column (NULLable). Down drops it.
+  - **Rolling window**: extend `AgentSlot` with `bar_history_limit: Option<u32>` (None → keep current behavior of sending the full configured window). When `Some(n)`, paper.rs/backtest.rs slice the `bar_history` JSON to the most-recent `n` bars before passing to `bar_seed`. Migration 025 adds the column (NULLable). Down drops it.
   - **Provider prompt cache**: extend `LlmRequest` with `cache_control: Option<CacheControlMode>` (`{None, Ephemeral}`). Mode is plumbed into the outbound JSON for Anthropic (top-level `cache_control: {"type":"ephemeral"}` on the system+last-but-one user blocks per Anthropic's prompt-caching API) and OpenAI-compat (skip — most OpenAI-compat providers don't expose cache_control; emit a `tracing::debug` once per (provider, model) noting cache skipped).
   - **Cache trigger**: enabled by an opt-in env `XVN_PROMPT_CACHE=1` AND when the agent slot has a stable prefix (system_prompt + warmup bars). The "warmup" prefix is everything except the last bar of `bar_history` plus the `current_bar` block — keeping only the newest bar varying.
   - **Stats**: log an `info` line per run with `cache_hint_emitted_calls = N` (how many calls had `cache_control` set in the outbound) so operators can correlate with provider-side cache hit rates.

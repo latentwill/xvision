@@ -172,7 +172,7 @@ pub struct AgentSlot {
     /// a hit on the static portion.
     ///
     /// Persisted as a NULLable INTEGER on `agent_slots.bar_history_limit`
-    /// (migration 022); the store layer maps NULL ↔ `None` and rejects
+    /// (migration 025); the store layer maps NULL ↔ `None` and rejects
     /// non-positive ints (mapping `Some(0)` → `None`) so a stray `0`
     /// can't silently drop every bar from the trader's view.
     ///

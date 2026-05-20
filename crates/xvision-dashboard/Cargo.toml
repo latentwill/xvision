@@ -4,6 +4,11 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish = false
+build = "build.rs"
+
+[build-dependencies]
+toml  = { workspace = true }
+serde = { workspace = true }
 
 [dependencies]
 xvision-core          = { path = "../xvision-core" }
