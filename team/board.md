@@ -18,9 +18,17 @@ V2 work (V2A onboarding + docs, V2B-V4 roadmap) also has its own board:
 
 ## Active
 
-No active tracks. The QA Round 5 wave is fully closed (F-1/F-2/F-3/F-5
-in PR #316, F-4 resolved 2026-05-19). New work enters through an intake
-doc.
+- **Lists v1 — phase 1** (3 parallel-safe foundation tracks implementing
+  `docs/superpowers/specs/2026-05-20-standard-list-component.md`):
+  - [list-component-port-desktop](contracts/list-component-port-desktop.md) — foundation · ready · unblocks 1c + phase-2 migrations
+  - [list-component-port-mobile](contracts/list-component-port-mobile.md) — foundation · ready · also lands the `<MListSheet>` no-popups-rule exemption in `CLAUDE.md`
+  - [list-component-tokens-reconcile](contracts/list-component-tokens-reconcile.md) — integration · ready · rebase-blocked on 1a + 1b (imports both)
+
+  Sequencing: 1a + 1b in parallel; 1c lands after both. Phase-2
+  migration contracts (`list-migrate-eval-runs`, then `-strategies`,
+  then `-decisions-and-tail`) are authored once 1c merges and are
+  the natural absorption point for QA Round 7 F-2/F-3/F-4 (the list
+  wave findings).
 
 ## Reserved
 
@@ -48,14 +56,15 @@ doc.
 - **QA operator round 6** — 3 tracks in `team/intake/2026-05-19-qa-operator-round-6.md`:
   `scenario-form-calendar-whitespace` (P2), `scenario-runs-tab-show-eval-name` (P2),
   `agent-usage-panel-wire-deployed-and-runs` (P1).
-- **Standard list component (design handoff)** — planning intake at
-  `team/intake/2026-05-19-list-component-design-intake.md`. Phase-0
-  spec landed at
+- **Standard list component — phase 2+** — intake at
+  `team/intake/2026-05-19-list-component-design-intake.md`, spec at
   `docs/superpowers/specs/2026-05-20-standard-list-component.md`
   (operator-approved 2026-05-20; mobile `<MListSheet>` kept as a
   narrow, named exemption to the no-popups rule, scoped to phone
-  list filters only). Contracts 1a/1b/1c queued — to be authored
-  next.
+  list filters only). Phase 1 is Active above; phase 2 contracts
+  (`list-migrate-eval-runs`, `list-migrate-strategies`,
+  `list-migrate-decisions-and-tail`) author once phase 1 lands.
+  Phase 3 (`list-component-density-toggle`) is deferred.
 
 ## Recently Closed
 
