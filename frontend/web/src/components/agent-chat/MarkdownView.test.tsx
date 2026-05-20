@@ -20,8 +20,14 @@ describe("MarkdownView", () => {
       />,
     );
 
-    const link = screen.getByRole("link", { name: "bad" });
-    expect(link.getAttribute("href") ?? "").not.toMatch(/^javascript:/i);
+    // react-markdown strips disallowed URL protocols by emptying the
+    // href. An `<a>` without an href has no implicit `link` role, so
+    // we query the anchor directly and assert no <a> in the rendered
+    // tree carries a `javascript:` href.
+    const anchors = Array.from(container.querySelectorAll("a"));
+    for (const a of anchors) {
+      expect(a.getAttribute("href") ?? "").not.toMatch(/^javascript:/i);
+    }
     expect(container.querySelector("script")).not.toBeInTheDocument();
   });
 
