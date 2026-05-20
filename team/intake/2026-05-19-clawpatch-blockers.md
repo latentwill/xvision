@@ -234,3 +234,31 @@ Verification target:
 
 - Re-run `clawpatch revalidate --finding fnd_sig-feat-ui-flow-98a40b66c8-6d2a_48f373bf7f`
   after a broader fix.
+
+## B-9 - WizardPreviewChart memoization generated fix fails validation
+
+- Finding: `fnd_sig-feat-ui-flow-f276b9b4f5-53e4_89387de97b`
+- Severity: low
+- Category: performance
+- Status: open in codebase, deferred from the autonomous clawpatch loop
+
+`clawpatch fix` attempted to memoize the synthesized
+`ScenarioChartPayload` in `WizardPreviewChart.tsx` and added
+`WizardPreviewChart.test.tsx`, but the generated patch failed clawpatch's
+validation after applying. The failed generated code and test file were removed
+so the autonomous loop could continue from a clean tree.
+
+Recommendation from clawpatch:
+
+- Memoize the synthesized `ScenarioChartPayload` with `useMemo` keyed by
+  `query.data`, debounced `asset/from/to/granularity`, and cache status inputs,
+  and use a stable placeholder `created_at` value for preview payloads.
+
+Minimum fix scope from clawpatch:
+
+- `frontend/web/src/components/chart/WizardPreviewChart.tsx`.
+
+Verification target:
+
+- Re-run `clawpatch revalidate --finding fnd_sig-feat-ui-flow-f276b9b4f5-53e4_89387de97b`
+  after a broader fix.
